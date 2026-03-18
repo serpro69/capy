@@ -1006,3 +1006,243 @@ internal/server/server_test.go       — MCP server integration tests
 internal/config/loader_test.go       — config loading tests
 internal/platform/setup_test.go      — setup command tests
 ```
+
+---
+
+## Addendum: Implementation details from code review
+
+The following sections cover implementation details discovered during a thorough review of the context-mode source. They supplement the sections above and must be incorporated into the relevant tasks.
+
+### Sandbox environment security
+
+Create `internal/executor/env.go`:
+
+**`BuildSafeEnv(workDir string) map[string]string`**
+
+1. Start with current process environment (`os.Environ()`)
+2. **Strip dangerous env vars** — maintain a `DENIED` set of ~50 variable names covering: shell (BASH_ENV, ENV, PROMPT_COMMAND, etc.), Node (NODE_OPTIONS, NODE_PATH), Python (PYTHONSTARTUP, PYTHONHOME, etc.), Ruby (RUBYOPT, RUBYLIB), Perl (PERL5OPT, etc.), Elixir/Erlang (ERL_AFLAGS, etc.), Go (GOFLAGS, CGO_CFLAGS, CGO_LDFLAGS), Rust (RUSTC, RUSTFLAGS, etc.), PHP (PHPRC, PHP_INI_SCAN_DIR), R (R_PROFILE, R_PROFILE_USER, R_HOME), dynamic linker (LD_PRELOAD, DYLD_INSERT_LIBRARIES), OpenSSL (OPENSSL_CONF, OPENSSL_ENGINES), compiler (CC, CXX, AR), Git (GIT_TEMPLATE_DIR, GIT_CONFIG_GLOBAL, etc.)
+3. Also strip any env var starting with `BASH_FUNC_` (bash exported functions)
+4. **Apply sandbox overrides:**
+   - `TMPDIR` = workDir
+   - `HOME` = real home directory
+   - `LANG` = `en_US.UTF-8`
+   - `PYTHONDONTWRITEBYTECODE=1`, `PYTHONUNBUFFERED=1`, `PYTHONUTF8=1`
+   - `NO_COLOR=1`
+5. **SSL cert detection:** If `SSL_CERT_FILE` not set, check common paths: `/etc/ssl/cert.pem`, `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`
+6. **Ensure PATH exists:** Default to `/usr/local/bin:/usr/bin:/bin` if missing
+
+The complete list of denied vars is in `context-mode/src/executor.ts` — `#buildSafeEnv()`. Port it exactly.
+
+### Shell-escape detection
+
+Create `internal/security/shell_escape.go`:
+
+**`ExtractShellCommands(code string, language string) []string`**
+
+For each supported language, apply regex patterns to extract embedded shell commands:
+
+- Python: `os.system("cmd")`, `subprocess.run("cmd")`, `subprocess.run(["a", "b"])`
+- JS/TS: `execSync("cmd")`, `spawn("cmd")`
+- Ruby: `system("cmd")`, `` `cmd` ``
+- Go: `exec.Command("cmd")`
+- PHP: `shell_exec("cmd")`, `exec("cmd")`, `system("cmd")`, `passthru("cmd")`, `proc_open("cmd")`
+- Rust: `Command::new("cmd")`
+
+Python's list form `subprocess.run(["rm", "-rf", "/"])` needs special handling — extract array elements and join with spaces.
+
+These extracted commands are then checked against the same Bash deny patterns used for direct shell execution.
+
+Reference: `context-mode/src/security.ts` — `SHELL_ESCAPE_PATTERNS`, `extractShellCommands()`, `extractPythonSubprocessListArgs()`.
+
+### Exit code classification
+
+Create `internal/executor/exit_classify.go`:
+
+**`ClassifyNonZeroExit(language string, exitCode int, stdout, stderr string) (isError bool, output string)`**
+
+- If `language == "shell"` AND `exitCode == 1` AND `strings.TrimSpace(stdout) != ""` → soft fail: `isError = false`, `output = stdout`
+- Otherwise → hard fail: `isError = true`, `output = fmt.Sprintf("Exit code: %d\n\nstdout:\n%s\n\nstderr:\n%s", exitCode, stdout, stderr)`
+
+Reference: `context-mode/src/exit-classify.ts`.
+
+### Lifecycle guard
+
+Create `internal/server/lifecycle.go`:
+
+**`StartLifecycleGuard(onShutdown func()) func()`**
+
+1. Record original `os.Getppid()`
+2. Start a goroutine that checks every 30 seconds: if `os.Getppid()` changed from original (reparented to init/systemd), call `onShutdown()`
+3. Handle OS signals: `SIGTERM`, `SIGINT`, `SIGHUP` → call `onShutdown()`
+4. Return a cleanup function that stops the goroutine and removes signal handlers
+
+Reference: `context-mode/src/lifecycle.ts`.
+
+### Hard cap implementation
+
+In `internal/executor/executor.go`, the `Execute` method must implement stream-level byte tracking:
+
+1. Read stdout/stderr through `io.LimitedReader` or manual byte counting
+2. If combined bytes exceed `hardCapBytes` (100 MB default), kill the process group immediately
+3. Append `[output capped at 100MB — process killed]` to stderr
+
+Reference: `context-mode/src/executor.ts` — `#spawn()` method, `capExceeded` logic.
+
+### Language auto-wrapping
+
+In `internal/executor/executor.go` — the script writing function must handle:
+
+- **Go:** If code doesn't contain `package `, wrap in `package main` with `import "fmt"` and `func main() { ... }`
+- **PHP:** If code doesn't start with `<?`, prepend `<?php\n`
+- **Elixir:** If `mix.exs` exists in project root, prepend BEAM path loading code
+- **Shell:** Set file permissions to `0o700` (executable)
+
+Reference: `context-mode/src/executor.ts` — `#writeScript()`.
+
+### File content wrapping (`execute_file`)
+
+In `internal/executor/executor.go` — implement a `wrapWithFileContent(absolutePath, language, code string) string` function that prepends file-reading boilerplate for each of the 11 languages, providing `FILE_CONTENT_PATH`, `file_path`, and `FILE_CONTENT` variables.
+
+Reference: `context-mode/src/executor.ts` — `#wrapWithFileContent()`. Port the exact boilerplate for each language.
+
+### Three-tier settings in security
+
+Update `internal/security/settings.go` — `LoadRules` must read from **three** files:
+
+1. `.claude/settings.local.json` — project-local
+2. `.claude/settings.json` — project-shared
+3. `~/.claude/settings.json` — global
+
+Each produces a separate `SecurityPolicy` with `deny`, `allow`, and `ask` arrays. Policies are evaluated in precedence order (most local first).
+
+The server uses `evaluateCommandDenyOnly()` (no "ask" prompting). The hook system uses the full `evaluateCommand()` which includes "ask" support.
+
+### File path deny patterns
+
+Update `internal/security/` — add:
+
+**`LoadToolDenyPatterns(toolName, projectDir string) [][]string`**
+- Extract deny globs for a specific tool (e.g., `Read(.env)` → `.env`)
+- Returns an array of arrays (one per settings file, in precedence order)
+
+**`EvaluateFilePath(filePath string, denyGlobs [][]string) (denied bool, matchedPattern string)`**
+- Normalize backslashes to forward slashes
+- Use `fileGlobToRegex` for path-aware matching (`**` matches path segments)
+
+Reference: `context-mode/src/security.ts` — `readToolDenyPatterns()`, `evaluateFilePath()`, `fileGlobToRegex()`.
+
+### Search AND/OR modes and full fallback chain
+
+Update `internal/store/search.go`:
+
+Both `searchPorter` and `searchTrigram` must accept a `mode` parameter (`"AND"` or `"OR"`). In AND mode, terms are quoted and space-joined. In OR mode, terms are joined with `" OR "`.
+
+The `SearchWithFallback` function implements 8 layers:
+
+```
+1. Porter + AND
+2. Porter + OR
+3. Trigram + AND
+4. Trigram + OR
+5. Fuzzy correction → Porter + AND
+6. Fuzzy correction → Porter + OR
+7. Fuzzy correction → Trigram + AND
+8. Fuzzy correction → Trigram + OR
+```
+
+Stop at first layer returning results.
+
+All search functions accept an optional `source` filter (LIKE match on `sources.label`). Separate prepared statements for filtered vs unfiltered.
+
+### Progressive search throttling
+
+In `internal/server/tool_search.go`:
+
+Maintain a call counter and window start time. Per 60-second window:
+- Calls 1–3: `effectiveLimit = min(requestedLimit, 2)`
+- Calls 4–8: `effectiveLimit = 1`, emit throttle warning
+- Calls 9+: return error demanding `batch_execute`
+
+### Smart snippet extraction
+
+Create `internal/server/snippet.go`:
+
+**`ExtractSnippet(content, query string, maxLen int, highlighted string) string`**
+
+1. If content ≤ maxLen, return as-is
+2. If `highlighted` is provided, parse FTS5 STX/ETX markers to find match positions
+3. Fallback: find positions via `strings.Index` on lowercase query terms
+4. Build 300-character windows around each position
+5. Merge overlapping windows
+6. Collect windows until maxLen budget is reached
+7. Add `…` markers for truncated regions
+
+Reference: `context-mode/src/server.ts` — `extractSnippet()`, `positionsFromHighlight()`.
+
+### Distinctive terms
+
+Add to `internal/store/store.go`:
+
+**`GetDistinctiveTerms(sourceID int64, maxTerms int) []string`**
+
+1. Get chunk count for source. If < 3, return empty.
+2. Stream chunks, count document frequency per word
+3. Filter: 2 ≤ appearances ≤ 40% of chunks
+4. Score: `IDF + lengthBonus + identifierBonus`
+5. Return top N terms sorted by score
+
+Reference: `context-mode/src/store.ts` — `getDistinctiveTerms()`.
+
+### `batch_execute` implementation corrections
+
+Update `internal/server/tool_batch.go`:
+
+1. Commands always run as **shell** (`language: "shell"`, not configurable)
+2. Each command runs with `2>&1` appended (merge stderr into stdout)
+3. Each command gets its own `executor.Execute()` call with remaining timeout
+4. After indexing, call `store.GetChunksBySource(sourceID)` to build section inventory
+5. Search is three-tier: scoped to batch source → global fallback (with cross-source warning)
+6. Snippet budget: 3000 bytes (larger than search's 1500)
+7. Default timeout: 60 seconds
+8. Output cap: 80 KB
+
+### `fetch_and_index` implementation corrections
+
+Update `internal/server/tool_fetch.go`:
+
+In Go, the fetch can be done natively (no subprocess needed):
+
+1. `http.Get(url)` with timeout, redirect limit, User-Agent
+2. Read response body, detect Content-Type from header
+3. HTML → markdown conversion via Go library
+4. JSON → pass through (validate with `json.Valid()`)
+5. Everything else → plaintext
+6. Route to `store.Index()` (markdown), `store.IndexJSON()` (JSON), or `store.IndexPlainText()` (plaintext)
+7. Return 3072-byte preview
+
+Key difference from context-mode: no subprocess needed since Go can do HTTP natively. This means no `__CM_CT__:` marker protocol, no temp file bypass.
+
+### Input coercion
+
+In tool handlers, implement defensive parsing for array inputs:
+
+```go
+func coerceStringArray(val interface{}) []string {
+    // If val is already []string, return
+    // If val is a JSON string, try json.Unmarshal into []string
+    // If val is []interface{}, convert elements to strings
+}
+```
+
+This handles Claude Code's double-serialization bug where `["a","b"]` arrives as `"[\"a\",\"b\"]"`.
+
+### Additional files to create
+
+```
+internal/executor/env.go             — BuildSafeEnv (sandbox environment)
+internal/executor/exit_classify.go   — ClassifyNonZeroExit
+internal/security/shell_escape.go    — ExtractShellCommands
+internal/security/file_path.go       — LoadToolDenyPatterns, EvaluateFilePath
+internal/server/lifecycle.go         — StartLifecycleGuard
+internal/server/snippet.go          — ExtractSnippet, positionsFromHighlight
+```

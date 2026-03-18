@@ -797,3 +797,297 @@ Each platform implements:
 ### Standard library coverage
 
 Most functionality uses Go's standard library: `os/exec` (process spawning), `crypto/sha256` (hashing), `database/sql` (via go-sqlite3), `net/http` (URL fetching), `encoding/json` (hook I/O), `path/filepath` (glob matching), `os` (file I/O, env vars), `strings`/`unicode` (text processing).
+
+---
+
+## 13. Addendum: Gaps from Code Review
+
+The following details were discovered during a thorough review of the context-mode source code and `context-mode/docs/llms-full.txt`. They are critical for feature parity and must be incorporated into the implementation.
+
+### 13.1 Sandbox Environment Security
+
+Reference: `context-mode/src/executor.ts` — `#buildSafeEnv()` method.
+
+The executor strips ~50 dangerous environment variables from the sandbox process, organized by category:
+
+| Category | Vars stripped | Risk if kept |
+|----------|--------------|--------------|
+| Shell | `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS4`, `SHELLOPTS`, `BASHOPTS`, `CDPATH`, `INPUTRC`, `BASH_XTRACEFD` | Auto-execute scripts, dump to stdout |
+| Node.js | `NODE_OPTIONS`, `NODE_PATH` | `--require` injection, inspector |
+| Python | `PYTHONSTARTUP`, `PYTHONHOME`, `PYTHONWARNINGS`, `PYTHONBREAKPOINT`, `PYTHONINSPECT` | Startup injection, arbitrary callable |
+| Ruby | `RUBYOPT`, `RUBYLIB` | CLI option injection, module search path |
+| Perl | `PERL5OPT`, `PERL5LIB`, `PERLLIB`, `PERL5DB` | Option/module injection |
+| Elixir/Erlang | `ERL_AFLAGS`, `ERL_FLAGS`, `ELIXIR_ERL_OPTIONS`, `ERL_LIBS` | Eval injection |
+| Go | `GOFLAGS`, `CGO_CFLAGS`, `CGO_LDFLAGS` | Compiler/linker injection |
+| Rust | `RUSTC`, `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `RUSTFLAGS`, `CARGO_BUILD_RUSTC*` | Compiler substitution |
+| PHP | `PHPRC`, `PHP_INI_SCAN_DIR` | `auto_prepend_file` → RCE |
+| R | `R_PROFILE`, `R_PROFILE_USER`, `R_HOME` | Startup script injection |
+| Dynamic linker | `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES` | Shared library injection |
+| OpenSSL | `OPENSSL_CONF`, `OPENSSL_ENGINES` | Engine module loading |
+| Compiler | `CC`, `CXX`, `AR` | Binary substitution |
+| Git | `GIT_TEMPLATE_DIR`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_EXEC_PATH`, `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS` | Hook/command injection |
+
+Additionally, `BASH_FUNC_*` prefixed vars are stripped (bash exported functions).
+
+**Sandbox overrides (always set):**
+- `TMPDIR` = temp directory
+- `HOME` = real home (not sandbox temp)
+- `LANG` = `en_US.UTF-8`
+- `PYTHONDONTWRITEBYTECODE=1`, `PYTHONUNBUFFERED=1`, `PYTHONUTF8=1`
+- `NO_COLOR=1`
+- `SSL_CERT_FILE` = auto-detected from well-known system paths
+
+**Windows-specific:**
+- `MSYS_NO_PATHCONV=1`, `MSYS2_ARG_CONV_EXCL=*`
+- Git Bash unix tools ensured on PATH
+- `Path` → `PATH` normalization
+
+### 13.2 Shell-Escape Detection in Non-Shell Code
+
+Reference: `context-mode/src/security.ts` — `extractShellCommands()`, `SHELL_ESCAPE_PATTERNS`.
+
+When `capy_execute` runs non-shell code (Python, JS, Ruby, etc.), the security layer scans the source code for embedded shell calls using regex patterns. Extracted commands are checked against the same Bash deny patterns used for direct shell execution.
+
+**Patterns detected per language:**
+
+| Language | Patterns |
+|----------|----------|
+| Python | `os.system("...")`, `subprocess.run("...")`, `subprocess.run(["rm", "-rf", "/"])` (list form) |
+| JavaScript/TypeScript | `execSync("...")`, `spawn("...")`, `execFile("...")` |
+| Ruby | `system("...")`, `` `backtick` `` |
+| Go | `exec.Command("...")` |
+| PHP | `shell_exec("...")`, `exec("...")`, `system("...")`, `passthru("...")`, `proc_open("...")` |
+| Rust | `Command::new("...")` |
+
+Python's `subprocess.run(["rm", "-rf", "/"])` list form is specially handled — array elements are extracted and joined with spaces for deny-pattern evaluation.
+
+### 13.3 Exit Code Classification
+
+Reference: `context-mode/src/exit-classify.ts`.
+
+Non-zero exit codes are classified before being reported to the LLM:
+
+- **Soft fail:** `language === "shell"` AND `exitCode === 1` AND `stdout` has non-whitespace content → treated as success (e.g., `grep` returning 1 for "no matches")
+- **Hard fail:** everything else → reported as error with stdout + stderr combined
+
+This prevents the LLM from treating `grep` "no matches" as an error and retrying or escalating.
+
+### 13.4 Lifecycle Guard (Orphan Prevention)
+
+Reference: `context-mode/src/lifecycle.ts`.
+
+MCP servers can become orphaned when their parent process dies (e.g., Claude Code crashes). The lifecycle guard detects this and shuts down cleanly:
+
+1. **Periodic parent PID check** (every 30s) — if `ppid` changed from original (reparented to init/systemd), parent is dead
+2. **Stdin close detection** — broken pipe from parent
+3. **OS signal handling** — `SIGTERM`, `SIGINT`, `SIGHUP` (Unix only)
+
+Go equivalent: goroutine polling `os.Getppid()` + signal handling via `os/signal`.
+
+### 13.5 Hard Cap (100 MB Stream Kill)
+
+Reference: `context-mode/src/executor.ts` — `#hardCapBytes`.
+
+Beyond the soft truncation cap (102.4 KB), there's a hard cap at 100 MB. If combined stdout+stderr exceeds this during streaming, the process group is killed immediately. This prevents memory exhaustion from commands like `yes` or `cat /dev/urandom | base64`.
+
+The hard cap is configurable: `hardCapBytes` option on `PolyglotExecutor`.
+
+### 13.6 Language List Correction
+
+Reference: `context-mode/src/runtime.ts` — `Language` type.
+
+The correct language list is **11 languages** with `shell` (not `bash`/`sh` separately):
+
+`javascript`, `typescript`, `python`, `shell`, `ruby`, `go`, `rust`, `php`, `perl`, `r`, `elixir`
+
+The `shell` language maps to `bash` or `sh` (or PowerShell/cmd.exe on Windows) via runtime detection. **R** was missing from our earlier design — it uses `Rscript` or `r` binary.
+
+### 13.7 Language Auto-Wrapping
+
+Reference: `context-mode/src/executor.ts` — `#writeScript()`.
+
+Before writing the script file, the executor wraps code for certain languages:
+
+- **Go:** If code doesn't contain `package `, wraps in `package main` with `import "fmt"` and `func main() { ... }`
+- **PHP:** If code doesn't start with `<?`, prepends `<?php\n`
+- **Elixir:** If `mix.exs` exists in project root, prepends `Path.wildcard` to add compiled BEAM paths (`*/ebin`)
+
+### 13.8 File Content Wrapping (`execute_file`)
+
+Reference: `context-mode/src/executor.ts` — `#wrapWithFileContent()`.
+
+The `execute_file` tool injects file-reading boilerplate per language, providing `FILE_CONTENT_PATH`, `file_path`, and `FILE_CONTENT` variables:
+
+| Language | Loading mechanism |
+|----------|-------------------|
+| JS/TS | `require("fs").readFileSync(path, "utf-8")` |
+| Python | `open(path, "r", encoding="utf-8").read()` |
+| Shell | `$(cat 'path')` (single-quoted for safety) |
+| Ruby | `File.read(path, encoding: "utf-8")` |
+| Go | `os.ReadFile(path)` converted to string |
+| Rust | `fs::read_to_string(path).unwrap()` |
+| PHP | `file_get_contents(path)` |
+| Perl | Filehandle with `<:encoding(UTF-8)` and `local $/` slurp |
+| R | `readLines(path, warn=FALSE, encoding="UTF-8")` joined with newlines |
+| Elixir | `File.read!(path)` |
+
+### 13.9 Three-Tier Settings Precedence
+
+Reference: `context-mode/src/security.ts` — `readBashPolicies()`.
+
+Security settings are read from **three** files (not two):
+
+1. `.claude/settings.local.json` — project-local, not committed
+2. `.claude/settings.json` — project-shared, committed
+3. `~/.claude/settings.json` — global user settings
+
+Each file can contain `permissions.deny`, `permissions.allow`, and `permissions.ask` arrays. The `ask` decision type is used by hooks (prompt the user) but not by the server (which uses deny-only evaluation via `evaluateCommandDenyOnly()`).
+
+### 13.10 File Path Deny Patterns
+
+Reference: `context-mode/src/security.ts` — `readToolDenyPatterns()`, `evaluateFilePath()`, `fileGlobToRegex()`.
+
+File path patterns are separate from Bash command patterns. They use a different glob syntax (`**` matches path segments, `*` matches non-separator chars) and are extracted from `Tool(glob)` format (e.g., `Read(.env)`, `Read(**/.env*)`).
+
+The `execute_file` tool checks both: file path against Read deny patterns AND code against Bash deny patterns (or shell-escape detection for non-shell languages).
+
+### 13.11 Search: AND/OR Modes and 8-Layer Fallback
+
+Reference: `context-mode/src/store.ts` — `searchWithFallback()`.
+
+The search fallback is more nuanced than "3 tiers". Each tier has AND and OR modes:
+
+```
+Layer 1a: Porter + AND (most precise)
+Layer 1b: Porter + OR  (relaxed)
+Layer 2a: Trigram + AND
+Layer 2b: Trigram + OR
+Layer 3a: Fuzzy + Porter + AND
+Layer 3b: Fuzzy + Porter + OR
+Layer 3c: Fuzzy + Trigram + AND
+Layer 3d: Fuzzy + Trigram + OR
+```
+
+Stops at the first layer that returns results. AND mode spaces terms as required words; OR mode allows any term to match.
+
+### 13.12 Search: Source Filtering
+
+All search methods accept an optional `source` parameter that filters results using `LIKE '%source%'` on `sources.label`. This allows scoped searches (e.g., search only within batch output, or only within a specific indexed document). Separate prepared statements exist for filtered vs unfiltered queries.
+
+### 13.13 Progressive Search Throttling
+
+Reference: `context-mode/src/server.ts` — search tool handler.
+
+To prevent the LLM from flooding context with many individual search calls:
+
+| Calls in 60s window | Behavior |
+|---------------------|----------|
+| 1–3 | Normal: max 2 results per query |
+| 4–8 | Reduced: 1 result per query, warning emitted |
+| 9+ | Blocked: returns error demanding `batch_execute` usage |
+
+The window resets every 60 seconds. This is critical for directing the LLM toward batch operations.
+
+### 13.14 Search Output Caps and Snippet Extraction
+
+Reference: `context-mode/src/server.ts` — `extractSnippet()`, `positionsFromHighlight()`.
+
+**Output caps:**
+- `capy_search`: 40 KB total across all queries
+- `capy_batch_execute`: 80 KB total for search results
+
+**Smart snippet extraction (per search result):**
+1. FTS5 `highlight()` function marks matched terms with STX (char 2) / ETX (char 3) markers
+2. `positionsFromHighlight()` extracts character offsets of matches
+3. 300-character windows are built around each match position
+4. Overlapping windows are merged
+5. Collected until the snippet budget is reached (1500 bytes for search, 3000 bytes for batch)
+6. Fallback to `indexOf` on raw query terms when highlight markers are absent
+
+### 13.15 Distinctive Terms (IDF Scoring)
+
+Reference: `context-mode/src/store.ts` — `getDistinctiveTerms()`.
+
+After indexing, distinctive terms are computed for each source using document frequency scoring:
+
+```
+score = IDF + lengthBonus + identifierBonus
+```
+
+- **IDF:** `log(totalChunks / count)` — rarer terms score higher
+- **Length bonus:** `min(wordLength / 20, 0.5)` — longer words are more specific
+- **Identifier bonus:** 1.5 for words with underscores, 0.8 for words ≥12 chars (likely code identifiers)
+
+These are included in tool responses as "Searchable terms" to help the LLM formulate follow-up queries.
+
+### 13.16 Network I/O Tracking (JS/TS Only)
+
+Reference: `context-mode/src/server.ts` — execute handler, JS/TS instrumentation code.
+
+For JavaScript and TypeScript execution, the code is wrapped in an async IIFE that:
+1. Intercepts `globalThis.fetch` to track response body sizes
+2. Shadows `require('http')`/`require('https')` with wrappers that track data events
+3. Reports total network bytes via `__CM_NET__:<bytes>` on stderr at process exit
+4. The server parses this marker, adds to `sessionStats.bytesSandboxed`, strips the marker from stderr
+
+This tracking is **deferred for the Go port** (would require JS/TS-specific code instrumentation) but should be noted in the design for future implementation.
+
+### 13.17 `fetch_and_index` Implementation Detail
+
+Reference: `context-mode/src/server.ts` — `buildFetchCode()`, `ctx_fetch_and_index` handler.
+
+The fetch is implemented as a JavaScript subprocess that:
+1. Fetches the URL
+2. Detects Content-Type from response headers
+3. For HTML: converts to markdown using Turndown with GFM plugin (removes `script`, `style`, `nav`, `header`, `footer`, `noscript` elements)
+4. **Writes content to a temp file** (not stdout) to bypass the executor's 100 KB truncation cap
+5. Writes only a `__CM_CT__:<type>` marker to stdout for content-type routing
+6. The handler reads the temp file, routes to appropriate indexing strategy (markdown/JSON/plaintext), returns a 3072-byte preview
+
+For the Go port: the fetch can be done natively with `net/http` instead of a subprocess. HTML→markdown conversion needs a Go library.
+
+### 13.18 `batch_execute` Implementation Details
+
+Reference: `context-mode/src/server.ts` — `ctx_batch_execute` handler.
+
+Key details not in the original design:
+
+1. **Commands run sequentially** with individual `smartTruncate` budgets per command (not a single concatenated script — fixes issue #61 where middle commands could be dropped by head/tail truncation)
+2. **Remaining timeout tracking:** Each command gets `totalTimeout - elapsedSoFar`. If exceeded, remaining commands are marked "(skipped — batch timeout exceeded)"
+3. **Shell only:** `batch_execute` commands always run as shell (language is not configurable)
+4. **stderr merged:** Each command runs as `${cmd.command} 2>&1`
+5. **Section inventory:** After indexing, `getChunksBySource()` builds a list of all indexed sections with byte sizes
+6. **Three-tier search fallback:** Scoped search (filtered to batch source label) → global search fallback (if no scoped results). Cross-source results get a warning note.
+7. **Default timeout:** 60 seconds (not 30)
+
+### 13.19 Input Coercion (Double-Serialization Workaround)
+
+Reference: `context-mode/src/server.ts` — `coerceJsonArray()`, `coerceCommandsArray()`.
+
+Claude Code has a bug where array parameters may be double-serialized as JSON strings (e.g., `"[\"a\",\"b\"]"` instead of `["a","b"]`). The server includes defensive coercion via `z.preprocess()` that parses stringified arrays. Additionally, `batch_execute` coerces plain string commands into `{label, command}` objects.
+
+The Go port should include equivalent input normalization.
+
+### 13.20 Plaintext Chunker: Blank-Line Splitting
+
+Reference: `context-mode/src/store.ts` — `#chunkPlainText()`.
+
+The plaintext chunker has a two-phase strategy not fully described in the original design:
+
+1. **First:** Try blank-line splitting (`\n\s*\n`). If the result has 3–200 sections and each section is under 5000 bytes, use this path. Section title is the first line (up to 80 chars) or "Section N".
+2. **Fallback:** Fixed-size 20-line groups with 2-line overlap.
+3. **Small input:** If total lines ≤ `linesPerChunk`, emit a single chunk titled "Output".
+
+### 13.21 JSON Chunker: Identity Field Detection
+
+Reference: `context-mode/src/store.ts` — `#findIdentityField()`, `#chunkJSONArray()`.
+
+When chunking JSON arrays, the chunker looks for identity fields on object elements (checked in order: `id`, `name`, `title`, `path`, `slug`, `key`, `label`). This produces human-readable batch titles like `users > alice...zoe` instead of `users > [0-25]`.
+
+### 13.22 `code_chunk_count` Tracking
+
+The `sources` table tracks both `chunk_count` and `code_chunk_count` (chunks containing code blocks). `IndexResult` includes `codeChunks`. This distinction is surfaced in tool responses.
+
+### 13.23 Reference: Complete llms-full.txt Documentation
+
+A comprehensive single-file reference for the entire context-mode feature set is available at `context-mode/docs/llms-full.txt`. This document covers all tools, schemas, chunking strategies, search algorithms, security model, hook system, and edge cases in detail. It should be the primary reference during implementation.
