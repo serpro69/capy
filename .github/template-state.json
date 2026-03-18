@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "upstream_repo": "serpro69/claude-starter-kit",
+  "template_version": "v0.3.0",
+  "synced_at": "2026-03-18T19:53:37Z",
+  "variables": {
+    "PROJECT_NAME": "memories",
+    "LANGUAGES": "go",
+    "CC_MODEL": "default",
+    "CC_STATUSLINE": "enhanced",
+    "SERENA_INITIAL_PROMPT": ""
+  }
+}
