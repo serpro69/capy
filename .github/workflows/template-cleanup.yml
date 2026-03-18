@@ -1,0 +1,73 @@
+---
+# GitHub Actions Workflow responsible for cleaning up the Claude Starter Kit Template repository from
+# the template-specific files and configurations. This workflow is supposed to be triggered manually by the user
+# after a new template-based repository has been created.
+
+name: Template Cleanup
+on:
+  workflow_dispatch:
+    inputs:
+      CC_MODEL:
+        description: |
+          Default model to use with claude-code.
+          See https://code.claude.com/docs/en/model-config#model-aliases for model aliases.
+        required: true
+        default: default
+        type: choice
+        options:
+          - default
+          - sonnet
+          - sonnet[1m]
+          - opus
+          - opus[1m]
+          - opusplan
+          - haiku
+      LANGUAGES:
+        description: |
+          Programming languages for Serena semantic analysis (required).
+          Comma-separated list (e.g., "python", "python,typescript", "java,kotlin").
+          See Serena docs for supported languages.
+        required: true
+        type: string
+      SERENA_INITIAL_PROMPT:
+        description: Initial prompt/context for Serena semantic analysis.
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  # Run cleaning process only if workflow is triggered by the non-"claude-starter-kit" repository.
+  template-cleanup:
+    name: Template Cleanup
+    runs-on: ubuntu-latest
+    if: github.event.repository.name != 'claude-starter-kit'
+    permissions:
+      contents: write
+    steps:
+      # Check out current repository
+      - name: Fetch Sources
+        uses: actions/checkout@v6
+
+      # Cleanup project using the .github/scripts/template-cleanup.sh script
+      - name: Cleanup
+        env:
+          CC_MODEL: ${{ github.event.inputs.CC_MODEL }}
+          LANGUAGES: ${{ github.event.inputs.LANGUAGES }}
+          SERENA_INITIAL_PROMPT: ${{ github.event.inputs.SERENA_INITIAL_PROMPT }}
+        run: |
+          chmod +x .github/scripts/template-cleanup.sh
+          ./.github/scripts/template-cleanup.sh --ci --no-commit
+
+      # Commit modified files
+      - name: Commit files
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          git commit -m "Template cleanup"
+
+      # Push changes
+      - name: Push changes
+        run: |-
+          BRANCH=$(git branch --show-current)
+          git push origin $BRANCH
