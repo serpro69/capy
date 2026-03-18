@@ -1,0 +1,5 @@
+project_name: "PLACEHOLDER_PROJECT_NAME"
+languages:
+  - bash
+initial_prompt: "PLACEHOLDER_SERENA_INITIAL_PROMPT"
+gitignore: true

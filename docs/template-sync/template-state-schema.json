@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/serpro69/claude-starter-kit/template-state-schema.json",
+  "title": "Template State Manifest",
+  "description": "Schema for .github/template-state.json - tracks template version and substitution variables for sync operations. See docs/wip/template-sync/design.md for variable mapping details.",
+  "type": "object",
+  "required": ["schema_version", "upstream_repo", "template_version", "synced_at", "variables"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Manifest format version for future migrations. Currently only '1' is supported. Increment when breaking changes require migration logic.",
+      "pattern": "^[0-9]+$",
+      "examples": ["1"]
+    },
+    "upstream_repo": {
+      "type": "string",
+      "description": "Source template repository in owner/repo format. Used to fetch upstream templates during sync.",
+      "pattern": "^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$",
+      "examples": ["serpro69/claude-starter-kit"]
+    },
+    "template_version": {
+      "type": "string",
+      "description": "Git tag (e.g., 'v1.0.0') or commit SHA (7+ characters) from initial setup or last sync. Determined via 'git describe --tags' or 'git rev-parse --short HEAD'.",
+      "minLength": 1,
+      "examples": ["v1.0.0", "abc1234def"]
+    },
+    "synced_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of manifest creation or last sync. Generated via 'date -u +%Y-%m-%dT%H:%M:%SZ'.",
+      "format": "date-time",
+      "examples": ["2025-01-27T10:00:00Z"]
+    },
+    "variables": {
+      "type": "object",
+      "description": "All substitution values applied during template cleanup. Variable names match those in .github/scripts/template-cleanup.sh (lines 27-32).",
+      "required": ["PROJECT_NAME", "LANGUAGES"],
+      "additionalProperties": false,
+      "properties": {
+        "PROJECT_NAME": {
+          "type": "string",
+          "description": "Repository name, derived from $(basename \"$REPO_ROOT\") during cleanup. Substituted into .serena/project.yml (project_name).",
+          "minLength": 1,
+          "examples": ["my-project", "claude-starter-kit"]
+        },
+        "LANGUAGES": {
+          "type": "string",
+          "description": "Serena language identifiers for semantic code analysis (required). Comma-separated list converted to YAML array in .serena/project.yml (languages field). See Serena docs for supported values.",
+          "minLength": 1,
+          "examples": ["typescript", "python,typescript", "go,bash"]
+        },
+        "CC_MODEL": {
+          "type": "string",
+          "description": "Claude Code model alias. Substituted into .claude/settings.json (model field). SPECIAL: 'default' triggers line REMOVAL instead of substitution (.github/scripts/template-cleanup.sh lines 297-301).",
+          "default": "default",
+          "examples": ["sonnet", "opus", "haiku", "default"]
+        },
+        "CC_STATUSLINE": {
+          "type": "string",
+          "description": "Claude Code statusline style. 'enhanced' uses statusline_enhanced.sh (rich multi-line with rate limits, git, session timer). 'basic' uses statusline.sh (simple one-line: model + context %). Substituted into .claude/settings.json (statusLine.command field).",
+          "default": "enhanced",
+          "enum": ["enhanced", "basic"],
+          "examples": ["enhanced", "basic"]
+        },
+        "SERENA_INITIAL_PROMPT": {
+          "type": "string",
+          "description": "Initial prompt/context for Serena MCP server. Substituted into .serena/project.yml (initial_prompt field). Only applied if non-empty.",
+          "default": "",
+          "examples": ["", "You are working on a TypeScript project"]
+        }
+      }
+    },
+    "sync_exclusions": {
+      "type": "array",
+      "description": "Optional array of glob patterns for project-relative paths to exclude from template sync. Files matching these patterns will not be added, modified, or flagged as deleted during sync. Patterns use bash case-statement glob syntax where * matches any characters including directory separators.",
+      "default": [],
+      "items": {
+        "type": "string",
+        "description": "Glob pattern for a project-relative path (e.g., '.claude/commands/cove/*')"
+      },
+      "examples": [
+        [],
+        [".claude/commands/cove/*"],
+        [".claude/commands/cove/*", ".claude/skills/cove/*"]
+      ]
+    }
+  }
+}
