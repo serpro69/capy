@@ -253,6 +253,8 @@ Three chunking strategies, matching context-mode exactly:
 - Arrays: batch items by accumulated size up to 4096 bytes. Identity fields checked in order: `id`, `name`, `title`, `slug`, `key`, `label`
 - Falls back to `indexPlainText` if JSON parsing fails
 
+**Code block detection:** After chunking, each chunk is scanned for fenced code blocks (`` ```\w*\n[\s\S]*?``` `` pattern). Chunks containing code blocks get `content_type = "code"`, others get `content_type = "prose"`. The `code_chunk_count` in `IndexResult` is the sum of code-containing chunks. The `content_type` UNINDEXED column in FTS5 enables future filtering by content type.
+
 **Reference:** `context-mode/src/store.ts` — `#chunkMarkdown()`, `#chunkPlainText()`, `#walkJSON()` methods.
 
 ### 3.5 Smart Snippet Extraction
@@ -399,7 +401,19 @@ In Go, this is implemented by reading from `io.Reader` with a counting wrapper t
 
 **Reference:** `context-mode/src/executor.ts` — `#smartTruncate()`, `context-mode/src/truncate.ts`.
 
-### 4.6 Intent-Driven Search Flow
+### 4.6 Exit Code Classification
+
+Shell commands that return exit code 1 with stdout present are classified as **soft failures** (e.g., `grep` with no matches returns exit code 1 but isn't a real error). This matters for `capy_batch_execute` — a soft failure should not abort the batch or mark the result as an error.
+
+Classification logic:
+- Exit code 0 → success
+- Exit code 1 with non-empty stdout → soft failure (return stdout, no error flag)
+- Exit code 1 with empty stdout → real error (return stderr)
+- Exit code > 1 → real error (return stdout + stderr combined)
+
+**Reference:** `context-mode/src/exit-classify.ts` — `ExitClassification` type.
+
+### 4.7 Intent-Driven Search Flow
 
 When `intent` is provided to `capy_execute` or `capy_execute_file` and output exceeds 5000 bytes:
 
@@ -411,7 +425,15 @@ When `intent` is provided to `capy_execute` or `capy_execute_file` and output ex
 
 **Reference:** `context-mode/docs/llms-full.txt` lines 785-793.
 
-### 4.7 Environment Passthrough
+### 4.8 Network I/O Tracking
+
+Context-mode tracks network bytes consumed inside JS/TS subprocesses via a `__CM_NET__` stderr marker. The code is wrapped in an async IIFE with a `fetch` interceptor that reports response body sizes. This is JS-specific and complex.
+
+For capy's initial port: network I/O tracking is limited to `capy_fetch_and_index` (response body size tracked via `bytesSandboxed`). Tracking network bytes from arbitrary `capy_execute` code that does HTTP is deferred — it would require language-specific instrumentation that isn't worth the complexity for the initial port.
+
+**Reference:** `context-mode/docs/llms-full.txt` lines 63-65.
+
+### 4.9 Environment Passthrough
 
 The following environment variables are forwarded to sandboxed subprocesses:
 
@@ -797,6 +819,10 @@ Single binary with subcommands:
 ### 9.1 `capy serve`
 
 Starts the MCP server on stdin/stdout JSON-RPC transport. This is the default behavior when `capy` is invoked without a subcommand (for MCP server registration compatibility: `"command": "capy"`).
+
+**Lifecycle guard:** The server must detect when it becomes orphaned and exit cleanly. Context-mode implements this via `src/lifecycle.ts` which monitors: parent process death (ppid changes to 0 or 1), stdin close (pipe broken), and OS signals (SIGTERM, SIGINT, SIGHUP). In Go, `mcp-go`'s stdio transport handles stdin EOF naturally. Additionally, capy should handle SIGTERM/SIGINT for graceful DB shutdown (flush WAL). A simple signal handler + stdin EOF detection is sufficient — no ppid polling loop needed since Go's stdin read returns EOF when the parent dies.
+
+**Reference:** `context-mode/src/lifecycle.ts`.
 
 ### 9.2 `capy setup`
 

@@ -80,6 +80,8 @@ Implement the SQLite FTS5 knowledge base: schema creation, all three chunking st
 - [ ] Implement `IndexMarkdown(content, source string)`, `IndexPlainText(content, source string)`, `IndexJSON(content, source string)` methods
   - Each returns `IndexResult{SourceID, Label, TotalChunks, CodeChunks}`
   - Insert chunks into both `chunks` and `chunks_trigram` tables
+  - Detect code blocks within each chunk (`` ```\w*\n[\s\S]*?``` `` pattern), set `content_type` to "code" or "prose"
+  - Track `code_chunk_count` in sources table
   - Extract and insert vocabulary words
 - [ ] Implement freshness metadata:
   - `content_hash` (SHA-256) computed on index
@@ -207,6 +209,12 @@ Implement the polyglot code executor: runtime detection, process spawning, outpu
 - [ ] Handle Rust special case: two-step compile (`rustc`) + execute
 - [ ] Handle null/empty output: return `"(no output)"`
 - [ ] Handle non-zero exit code: combine stdout + stderr in result
+- [ ] Implement exit code classification:
+  - Exit 0 → success (return stdout)
+  - Exit 1 with stdout → soft failure (return stdout, not an error — e.g., grep no matches)
+  - Exit 1 with empty stdout → real error (return stderr)
+  - Exit > 1 → real error (return stdout + stderr combined)
+  - Used by `batch_execute` to decide error treatment per command
 
 **Reference:** `context-mode/src/executor.ts`, `context-mode/src/runtime.ts`. `implementation.md` Section 3.
 
@@ -220,6 +228,7 @@ Implement the polyglot code executor: runtime detection, process spawning, outpu
   - FILE_CONTENT injection: verify variable is accessible in subprocess
   - Auto-wrapping: Go package main, PHP `<?php`, Rust compile+run
   - Environment passthrough: verify key env vars are forwarded
+  - Exit classification: exit 0 = success, exit 1 with stdout = soft failure, exit 1 no stdout = error, exit >1 = error
   - Port relevant tests from `context-mode/tests/executor.test.ts`
 
 ---
