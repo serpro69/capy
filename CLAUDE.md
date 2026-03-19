@@ -15,6 +15,3 @@ It's a port of `context-mode` project written in Go, aiming to utilize Go's feat
 # Extra Instructions
 
 @.claude/CLAUDE.extra.md
-
-# Extra Instructions
-@import .claude/CLAUDE.extra.md
