@@ -162,6 +162,8 @@ func chunkMarkdown(content string) []Chunk {
 }
 ```
 
+**Code block detection:** After building each chunk, scan for fenced code blocks via `` ```\w*\n[\s\S]*?``` `` regex. Set `content_type = "code"` if found, `"prose"` otherwise. Track `code_chunk_count` in the sources table for `IndexResult`.
+
 **Edge cases:**
 - Empty input → return single chunk titled "Output" with empty content
 - Content with no headings → single chunk titled "Output"
@@ -694,7 +696,36 @@ func (e *PolyglotExecutor) executeWithHardCap(cmd *exec.Cmd, timeout time.Durati
 }
 ```
 
-### 3.8 Environment Passthrough
+### 3.8 Exit Code Classification
+
+```go
+// internal/executor/executor.go
+
+type ExitClassification struct {
+    IsError bool
+    Output  string
+}
+
+func classifyExit(result *ExecResult) ExitClassification {
+    switch {
+    case result.ExitCode == 0:
+        return ExitClassification{IsError: false, Output: result.Stdout}
+    case result.ExitCode == 1 && strings.TrimSpace(result.Stdout) != "":
+        // Soft failure (e.g., grep no matches) — return stdout, not an error
+        return ExitClassification{IsError: false, Output: result.Stdout}
+    case result.ExitCode == 1 && strings.TrimSpace(result.Stdout) == "":
+        return ExitClassification{IsError: true, Output: result.Stderr}
+    default: // exit code > 1
+        return ExitClassification{IsError: true, Output: result.Stdout + "\n" + result.Stderr}
+    }
+}
+```
+
+This is used by `batch_execute` to decide whether a command's output is treated as an error. Soft failures (exit 1 with stdout) are common for grep, diff, and test commands.
+
+**Reference:** `context-mode/src/exit-classify.ts`.
+
+### 3.9 Environment Passthrough
 
 ```go
 // internal/executor/env.go
