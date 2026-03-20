@@ -1,4 +1,4 @@
-# capy
+# capy 🦫
 
 **Context-Aware Prompting** ...or "Yet another solution to LLM context problem"
 
