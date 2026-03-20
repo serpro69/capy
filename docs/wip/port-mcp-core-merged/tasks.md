@@ -83,22 +83,22 @@
 
 ## Task 6: PolyglotExecutor
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#4-polyglotexecutor-implementation](./implementation.md#4-polyglotexecutor-implementation)
 
 ### Subtasks
-- [ ] 6.1 Create `internal/executor/runtime.go` — `Language` type, `runtimeCandidates` map, `detectRuntimes()` using `exec.LookPath()` with preference order, `buildCommand()` for each language. Rust special case: `__rust_compile_run__`
-- [ ] 6.2 Create `internal/executor/types.go` — `ExecRequest`, `ExecResult` (Stdout, Stderr, ExitCode, TimedOut, Killed, Backgrounded, PID)
-- [ ] 6.3 Create `internal/executor/wrap.go` — `autoWrap(lang, code, projectDir)` for Go/PHP/Elixir wrapping, `injectFileContent(lang, code, absPath)` for all 11 languages
-- [ ] 6.4 Create `internal/executor/env.go` — `BuildSafeEnv(tmpDir string) []string` with denylist of ~50 dangerous env vars (port exact set from `context-mode/src/executor.ts` lines 325-394), sandbox overrides (TMPDIR, HOME, LANG, PYTHON*, NO_COLOR), SSL cert detection, PATH default
-- [ ] 6.5 Create `internal/executor/executor.go` — `PolyglotExecutor` struct, `NewExecutor()`, `Execute(ctx, req)`: temp dir, script writing (correct extension, 0o700 for shell), `exec.CommandContext` with `SysProcAttr{Setpgid: true}`, stdout/stderr capture with hard cap monitoring (100 MB → kill process group), timeout via context, process group kill, smart truncation, temp dir cleanup
-- [ ] 6.6 Implement `ExecuteFile(ctx, req)` — resolve absolute path, inject file content via `injectFileContent()`, delegate to `Execute()`
-- [ ] 6.7 Implement Rust compile+run: `rustc src.rs -o bin` then execute binary
-- [ ] 6.8 Create `internal/executor/truncate.go` — `SmartTruncate(output string, maxBytes int) string` with 60/40 head/tail split, line-boundary snapping, truncation stats in separator
-- [ ] 6.9 Create `internal/executor/exit_classify.go` — `ClassifyNonZeroExit(language, exitCode, stdout, stderr)` with shell soft-fail for exit 1 with stdout
-- [ ] 6.10 Implement background mode: detach process on timeout, record PID, return partial output. `CleanupBackgrounded()` kills all tracked PIDs
-- [ ] 6.11 Write tests: runtime detection, smart truncation (under/over threshold, UTF-8 safety, 60/40 split), safe env (dangerous vars stripped, overrides applied), exit classification (soft fail for grep, hard fail for others), execution of bash and python (at minimum), timeout behavior, hard cap, background mode, file content injection for 3+ languages, auto-wrapping for Go/PHP
+- [x] 6.1 Create `internal/executor/runtime.go` — `Language` type, `runtimeCandidates` map, `detectRuntimes()` using `exec.LookPath()` with preference order, `buildCommand()` for each language. Rust special case: `__rust_compile_run__`
+- [x] 6.2 Create `internal/executor/types.go` — `ExecRequest`, `ExecResult` (Stdout, Stderr, ExitCode, TimedOut, Killed, Backgrounded, PID)
+- [x] 6.3 Create `internal/executor/wrap.go` — `autoWrap(lang, code, projectDir)` for Go/PHP/Elixir wrapping, `injectFileContent(lang, code, absPath)` for all 11 languages
+- [x] 6.4 Create `internal/executor/env.go` — `BuildSafeEnv(tmpDir string) []string` with denylist of ~50 dangerous env vars (port exact set from `context-mode/src/executor.ts` lines 325-394), sandbox overrides (TMPDIR, HOME, LANG, PYTHON*, NO_COLOR), SSL cert detection, PATH default
+- [x] 6.5 Create `internal/executor/executor.go` — `PolyglotExecutor` struct, `NewExecutor()`, `Execute(ctx, req)`: temp dir, script writing (correct extension, 0o700 for shell), process group isolation (`Setpgid: true`), stdout/stderr capture with hard cap monitoring (100 MB → kill process group), timeout via context with process group kill, smart truncation, temp dir cleanup
+- [x] 6.6 Implement `ExecuteFile(ctx, req)` — resolve absolute path, inject file content via `injectFileContent()`, delegate to `Execute()`
+- [x] 6.7 Implement Rust compile+run: `rustc src.rs -o bin` then execute binary
+- [x] 6.8 Create `internal/executor/truncate.go` — `SmartTruncate(output string, maxBytes int) string` with 60/40 head/tail split, line-boundary snapping, truncation stats in separator
+- [x] 6.9 Create `internal/executor/exit_classify.go` — `ClassifyNonZeroExit(language, exitCode, stdout, stderr)` with shell soft-fail for exit 1 with stdout
+- [x] 6.10 Implement background mode: detach process on timeout, record PID, return partial output. `CleanupBackgrounded()` kills all tracked PIDs
+- [x] 6.11 Write tests: runtime detection, smart truncation (under/over threshold, UTF-8 safety, 60/40 split), safe env (dangerous vars stripped, overrides applied), exit classification (soft fail for grep, hard fail for others), execution of bash and python (at minimum), timeout behavior, hard cap, background mode, file content injection for 3+ languages, auto-wrapping for Go/PHP
 
 ## Task 7: Security
 
