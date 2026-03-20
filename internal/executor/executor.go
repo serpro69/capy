@@ -91,7 +91,11 @@ func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecR
 
 	// Rust special case: compile then run.
 	if bin == "__rust_compile_run__" {
-		return e.executeRust(ctx, rt, scriptPath, tmpDir, req)
+		result, err := e.executeRust(ctx, rt, scriptPath, tmpDir, req)
+		if result != nil && result.Backgrounded {
+			cleanupTmp = false
+		}
+		return result, err
 	}
 
 	// Working directory: projectDir for shell, tmpDir for others.
@@ -100,7 +104,11 @@ func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecR
 		workDir = e.projectDir
 	}
 
-	return e.runProcess(ctx, bin, args, workDir, tmpDir, req.Background)
+	result, err := e.runProcess(ctx, bin, args, workDir, tmpDir, req.Background)
+	if result != nil && result.Backgrounded {
+		cleanupTmp = false
+	}
+	return result, err
 }
 
 // ExecuteFile resolves a file path and injects FILE_CONTENT boilerplate.
@@ -152,27 +160,24 @@ func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []st
 		return nil, fmt.Errorf("starting process: %w", err)
 	}
 
-	// Monitor context cancellation and hard cap in a background goroutine.
-	var (
-		timedOut   atomic.Bool
-		hardKilled atomic.Bool
-	)
-	done := make(chan struct{})
+	// Wait for the process in a goroutine so we can return early
+	// in background mode when the context times out.
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- cmd.Wait()
+	}()
+
+	// Monitor context cancellation and hard cap.
+	var hardKilled atomic.Bool
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-done:
-				return
 			case <-ctx.Done():
-				timedOut.Store(true)
 				if !background {
 					killProcessGroup(cmd)
 				}
-				// In background mode, don't kill — let the process run
-				// detached. The caller is responsible for cleanup via
-				// CleanupBackgrounded().
 				return
 			case <-ticker.C:
 				total := stdout.Size() + stderr.Size()
@@ -185,35 +190,51 @@ func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []st
 		}
 	}()
 
-	err := cmd.Wait()
-	close(done)
-
-	result := &ExecResult{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: exitCode(err),
-	}
-
-	if timedOut.Load() {
-		if background {
-			result.Backgrounded = true
-			result.PID = cmd.Process.Pid
+	// Decide how to wait: in background mode, return early on timeout.
+	// In normal mode, wait for the process to finish.
+	if background {
+		select {
+		case waitErr := <-waitDone:
+			// Process finished before timeout — normal result.
+			return e.buildResult(waitErr, &stdout, &stderr, ctx, hardKilled.Load()), nil
+		case <-ctx.Done():
+			// Timeout fired while process still running — background it.
+			result := &ExecResult{
+				Stdout:       SmartTruncate(stdout.String(), e.maxOutputBytes),
+				Stderr:       SmartTruncate(stderr.String(), e.maxOutputBytes),
+				Backgrounded: true,
+				PID:          cmd.Process.Pid,
+			}
 			e.trackBackgroundPid(cmd.Process.Pid)
-		} else {
-			result.TimedOut = true
+			return result, nil
 		}
 	}
 
-	if hardKilled.Load() {
+	// Normal (non-background) path: wait for process to finish.
+	waitErr := <-waitDone
+	return e.buildResult(waitErr, &stdout, &stderr, ctx, hardKilled.Load()), nil
+}
+
+func (e *PolyglotExecutor) buildResult(waitErr error, stdout, stderr *safeBuffer, ctx context.Context, hardKilled bool) *ExecResult {
+	result := &ExecResult{
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		ExitCode: exitCode(waitErr),
+	}
+
+	if ctx.Err() == context.DeadlineExceeded {
+		result.TimedOut = true
+	}
+
+	if hardKilled {
 		result.Killed = true
 		result.Stderr += "\n[output capped at 100MB — process killed]"
 	}
 
-	// Smart truncation.
 	result.Stdout = SmartTruncate(result.Stdout, e.maxOutputBytes)
 	result.Stderr = SmartTruncate(result.Stderr, e.maxOutputBytes)
 
-	return result, nil
+	return result
 }
 
 func (e *PolyglotExecutor) trackBackgroundPid(pid int) {
