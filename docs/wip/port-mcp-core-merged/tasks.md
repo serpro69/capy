@@ -35,22 +35,22 @@
 
 ## Task 3: ContentStore — schema, indexing, and vocabulary
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2
 - **Docs:** [implementation.md#3-contentstore-implementation](./implementation.md#3-contentstore-implementation)
 
 ### Subtasks
-- [ ] 3.1 Create `internal/store/store.go` — `ContentStore` struct with lazy initialization (`getDB()` pattern), `NewContentStore(dbPath, projectDir)`, `Close()` (finalize statements, WAL checkpoint, close DB)
-- [ ] 3.2 Create `internal/store/schema.go` — `initSchema()` with WAL/NORMAL/busy_timeout/foreign_keys pragmas and all CREATE TABLE/VIRTUAL TABLE statements (sources with content_type/last_accessed_at/access_count/content_hash, chunks FTS5 Porter, chunks_trigram FTS5 trigram, vocabulary)
-- [ ] 3.3 Create `internal/store/types.go` — `SearchResult`, `SourceInfo`, `StoreStats`, `IndexResult`, `Chunk` structs
-- [ ] 3.4 Create `internal/store/stopwords.go` — port the 88-word STOPWORDS set from `context-mode/src/store.ts`, expose as `IsStopword(word string) bool`
-- [ ] 3.5 Create `internal/store/detect.go` — `DetectContentType(content string) string` returning "markdown", "json", or "plaintext"
-- [ ] 3.6 Create `internal/store/chunk.go` — implement `chunkMarkdown(content string, maxBytes int) []Chunk`: split by H1-H4 headings, preserve code blocks (track fence state), heading hierarchy as breadcrumb titles, paragraph-boundary fallback for oversized sections, code block detection for content_type
-- [ ] 3.7 Implement `chunkPlainText(content string, linesPerChunk int) []Chunk` in `chunk.go` — two-phase: blank-line splitting (3-200 sections, each <5000 bytes) → fixed 20-line groups with 2-line overlap. Single chunk titled "Output" if small
-- [ ] 3.8 Implement `walkJSON` + `chunkJSONArray` + `findIdentityField` in `chunk.go` — recursive walk with key-path titles, small flat objects as single chunks, nested objects always recurse, array batching with identity field detection (`id`, `name`, `title`, `path`, `slug`, `key`, `label`). Fallback to plaintext on parse error
-- [ ] 3.9 Create `internal/store/index.go` — `Index(content, label, contentType string) (*IndexResult, error)` with dedup (content_hash comparison), auto-detect content type, chunk, insert into both FTS5 tables (in transaction), vocabulary extraction. Also `IndexPlainText()` and `IndexJSON()` entry points
-- [ ] 3.10 Create `internal/store/vocabulary.go` — `extractAndStoreVocabulary(content string)` splitting on `[^\p{L}\p{N}_-]+`, filter 3+ chars and stopwords, INSERT OR IGNORE
-- [ ] 3.11 Write tests: schema idempotency, markdown chunking (headings, code blocks, oversized, no headings, horizontal rules), plaintext chunking (blank-line split, fixed-line fallback, single chunk), JSON chunking (flat, nested, arrays with identity fields, parse failure), indexing (insert, dedup same hash, re-index changed hash), vocabulary extraction, content type detection
+- [x] 3.1 Create `internal/store/store.go` — `ContentStore` struct with lazy initialization (`getDB()` pattern), `NewContentStore(dbPath, projectDir)`, `Close()` (finalize statements, WAL checkpoint, close DB)
+- [x] 3.2 Create `internal/store/schema.go` — `initSchema()` with WAL/NORMAL/busy_timeout/foreign_keys pragmas and all CREATE TABLE/VIRTUAL TABLE statements (sources with content_type/last_accessed_at/access_count/content_hash, chunks FTS5 Porter, chunks_trigram FTS5 trigram, vocabulary)
+- [x] 3.3 Create `internal/store/types.go` — `SearchResult`, `SourceInfo`, `StoreStats`, `IndexResult`, `Chunk` structs
+- [x] 3.4 Create `internal/store/stopwords.go` — port the 88-word STOPWORDS set from `context-mode/src/store.ts`, expose as `IsStopword(word string) bool`
+- [x] 3.5 Create `internal/store/detect.go` — `DetectContentType(content string) string` returning "markdown", "json", or "plaintext"
+- [x] 3.6 Create `internal/store/chunk.go` — implement `chunkMarkdown(content string, maxBytes int) []Chunk`: split by H1-H4 headings, preserve code blocks (track fence state), heading hierarchy as breadcrumb titles, paragraph-boundary fallback for oversized sections, code block detection for content_type
+- [x] 3.7 Implement `chunkPlainText(content string, linesPerChunk int) []Chunk` in `chunk.go` — two-phase: blank-line splitting (3-200 sections, each <5000 bytes) → fixed 20-line groups with 2-line overlap. Single chunk titled "Output" if small
+- [x] 3.8 Implement `walkJSON` + `chunkJSONArray` + `findIdentityField` in `chunk.go` — recursive walk with key-path titles, small flat objects as single chunks, nested objects always recurse, array batching with identity field detection (`id`, `name`, `title`, `path`, `slug`, `key`, `label`). Fallback to plaintext on parse error
+- [x] 3.9 Create `internal/store/index.go` — `Index(content, label, contentType string) (*IndexResult, error)` with dedup (content_hash comparison), auto-detect content type, chunk, insert into both FTS5 tables (in transaction), vocabulary extraction. Also `IndexPlainText()` and `IndexJSON()` entry points
+- [x] 3.10 Create `internal/store/vocabulary.go` — `extractAndStoreVocabulary(content string)` splitting on `[^\p{L}\p{N}_-]+`, filter 3+ chars and stopwords, INSERT OR IGNORE
+- [x] 3.11 Write tests: schema idempotency, markdown chunking (headings, code blocks, oversized, no headings, horizontal rules), plaintext chunking (blank-line split, fixed-line fallback, single chunk), JSON chunking (flat, nested, arrays with identity fields, parse failure), indexing (insert, dedup same hash, re-index changed hash), vocabulary extraction, content type detection
 
 ## Task 4: ContentStore — three-tier search
 
