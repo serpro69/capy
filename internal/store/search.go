@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 var (
@@ -24,20 +25,19 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, source string
 
 	type layer struct {
 		name string
-		fn   func() []SearchResult
+		fn   func(q string) []SearchResult
 	}
 
 	layers := []layer{
-		{"porter+AND", func() []SearchResult { return s.searchPorter(query, limit, source, "AND") }},
-		{"porter+OR", func() []SearchResult { return s.searchPorter(query, limit, source, "OR") }},
-		{"trigram+AND", func() []SearchResult { return s.searchTrigramQuery(query, limit, source, "AND") }},
-		{"trigram+OR", func() []SearchResult { return s.searchTrigramQuery(query, limit, source, "OR") }},
+		{"porter+AND", func(q string) []SearchResult { return s.searchPorter(q, limit, source, "AND") }},
+		{"porter+OR", func(q string) []SearchResult { return s.searchPorter(q, limit, source, "OR") }},
+		{"trigram+AND", func(q string) []SearchResult { return s.searchTrigramQuery(q, limit, source, "AND") }},
+		{"trigram+OR", func(q string) []SearchResult { return s.searchTrigramQuery(q, limit, source, "OR") }},
 	}
 
 	// Layers 1-4: direct search.
 	for _, l := range layers {
-		results := l.fn()
-		if len(results) > 0 {
+		if results := l.fn(query); len(results) > 0 {
 			tagResults(results, l.name)
 			s.trackAccessAsync(results)
 			return results, nil
@@ -48,19 +48,8 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, source string
 	corrected := s.fuzzyCorrectQuery(query)
 	if corrected != "" && corrected != query {
 		for _, l := range layers {
-			name := "fuzzy+" + l.name
-			// Re-bind the layer function with corrected query.
-			var results []SearchResult
-			switch {
-			case strings.HasPrefix(l.name, "porter"):
-				mode := strings.TrimPrefix(l.name, "porter+")
-				results = s.searchPorter(corrected, limit, source, mode)
-			default:
-				mode := strings.TrimPrefix(l.name, "trigram+")
-				results = s.searchTrigramQuery(corrected, limit, source, mode)
-			}
-			if len(results) > 0 {
-				tagResults(results, name)
+			if results := l.fn(corrected); len(results) > 0 {
+				tagResults(results, "fuzzy+"+l.name)
 				s.trackAccessAsync(results)
 				return results, nil
 			}
@@ -181,7 +170,9 @@ func (s *ContentStore) trackAccessAsync(results []SearchResult) {
 	}
 	go func() {
 		for _, id := range sourceIDs {
-			s.stmtTrackAccess.Exec(id)
+			if _, err := s.stmtTrackAccess.Exec(id); err != nil {
+				slog.Debug("access tracking failed", "source_id", id, "error", err)
+			}
 		}
 	}()
 }
@@ -423,6 +414,8 @@ func (s *ContentStore) ListSources() ([]SourceInfo, error) {
 			&si.CodeChunkCount, &indexedAt, &lastAccessedAt, &si.AccessCount, &si.ContentHash); err != nil {
 			continue
 		}
+		si.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
+		si.LastAccessedAt, _ = time.Parse("2006-01-02 15:04:05", lastAccessedAt)
 		sources = append(sources, si)
 	}
 	return sources, nil
