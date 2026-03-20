@@ -142,7 +142,9 @@ func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []st
 	cmd.Env = BuildSafeEnv(tmpDir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	var stdout, stderr bytes.Buffer
+	// Thread-safe buffers: the monitoring goroutine reads Size() while
+	// exec.Cmd's internal goroutines write concurrently.
+	var stdout, stderr safeBuffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -152,7 +154,6 @@ func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []st
 
 	// Monitor context cancellation and hard cap in a background goroutine.
 	var (
-		totalBytes atomic.Int64
 		timedOut   atomic.Bool
 		hardKilled atomic.Bool
 	)
@@ -166,11 +167,16 @@ func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []st
 				return
 			case <-ctx.Done():
 				timedOut.Store(true)
-				killProcessGroup(cmd)
+				if !background {
+					killProcessGroup(cmd)
+				}
+				// In background mode, don't kill — let the process run
+				// detached. The caller is responsible for cleanup via
+				// CleanupBackgrounded().
 				return
 			case <-ticker.C:
-				totalBytes.Store(int64(stdout.Len() + stderr.Len()))
-				if totalBytes.Load() > int64(HardCapBytes) {
+				total := stdout.Size() + stderr.Size()
+				if total > int64(HardCapBytes) {
 					hardKilled.Store(true)
 					killProcessGroup(cmd)
 					return
