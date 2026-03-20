@@ -139,8 +139,11 @@ func TestSearchFuzzyCorrection(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, results, "fuzzy correction should find results for typo")
 	assert.True(t,
-		strings.HasPrefix(results[0].MatchLayer, "fuzzy"),
+		strings.HasPrefix(results[0].MatchLayer, "fuzzy+"),
 		"should match via fuzzy layer, got: %s", results[0].MatchLayer)
+	// Verify the layer name includes the underlying search type.
+	assert.Contains(t, results[0].MatchLayer, "porter",
+		"fuzzy layer should name the underlying search type, got: %s", results[0].MatchLayer)
 }
 
 // --- 8-layer fallback ---
@@ -272,6 +275,12 @@ func TestListSources(t *testing.T) {
 	sources, err := s.ListSources()
 	require.NoError(t, err)
 	assert.Len(t, sources, 2)
+
+	// Timestamps should be parsed (non-zero).
+	for _, src := range sources {
+		assert.False(t, src.IndexedAt.IsZero(), "IndexedAt should be parsed for source %q", src.Label)
+		assert.False(t, src.LastAccessedAt.IsZero(), "LastAccessedAt should be parsed for source %q", src.Label)
+	}
 }
 
 func TestGetChunksBySource(t *testing.T) {
