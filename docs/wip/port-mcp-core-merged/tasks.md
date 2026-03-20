@@ -54,20 +54,20 @@
 
 ## Task 4: ContentStore — three-tier search
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Docs:** [implementation.md#34-search](./implementation.md#34-search)
 
 ### Subtasks
-- [ ] 4.1 Create `internal/store/search.go` — `search(query string, limit int, source string, mode string) []SearchResult` using FTS5 MATCH + `bm25(chunks, 2.0, 1.0)` + `highlight(chunks, 1, char(2), char(3))`. Support AND/OR modes. Separate statements for filtered vs unfiltered
-- [ ] 4.2 Implement `searchTrigram(query string, limit int, source string, mode string) []SearchResult` against `chunks_trigram` table. Sanitize trigram queries: keep only `[a-zA-Z0-9 _-]`, minimum 3-char words
-- [ ] 4.3 Implement `levenshteinDistance(a, b string) int` (standard DP, lowercase), `maxEditDistance(wordLen int) int` (1/2/3 thresholds), `fuzzyCorrect(query string) string` (query vocabulary, find closest within threshold)
-- [ ] 4.4 Implement `SearchWithFallback(query string, limit int, source string) []SearchResult` — 8-layer fallback: Porter+AND → Porter+OR → Trigram+AND → Trigram+OR → Fuzzy(Porter+AND → Porter+OR → Trigram+AND → Trigram+OR). Stop at first layer returning results. Tag each result with `MatchLayer`
-- [ ] 4.5 Implement `sanitizeQuery(query string, mode string) string` — remove quotes/brackets/FTS5 special chars, split, filter stopwords, quote each word, join with mode separator
-- [ ] 4.6 Implement access tracking: on search hit, update `last_accessed_at` and increment `access_count` on matching sources (background goroutine)
-- [ ] 4.7 Implement `GetDistinctiveTerms(sourceID int64, maxTerms int) []string` — stream chunks, count doc frequency, filter by appearance range, IDF + lengthBonus + identifierBonus scoring
-- [ ] 4.8 Implement `GetChunksBySource(sourceID int64) []SearchResult` and `ListSources() []SourceInfo` — direct queries bypassing FTS5 MATCH
-- [ ] 4.9 Write tests: Porter stemming matches, trigram partial matches, fuzzy correction with typos, 8-layer fallback (verify lower layers fire), source filtering, access count incrementing, query sanitization, Levenshtein correctness, distinctive terms IDF scoring, empty query error, no results returns source list
+- [x] 4.1 Create `internal/store/search.go` — `search(query string, limit int, source string, mode string) []SearchResult` using FTS5 MATCH + `bm25(chunks, 2.0, 1.0)` + `highlight(chunks, 1, char(2), char(3))`. Support AND/OR modes. Separate statements for filtered vs unfiltered
+- [x] 4.2 Implement `searchTrigram(query string, limit int, source string, mode string) []SearchResult` against `chunks_trigram` table. Sanitize trigram queries: keep only `[a-zA-Z0-9 _-]`, minimum 3-char words
+- [x] 4.3 Implement `levenshteinDistance(a, b string) int` (standard DP, lowercase), `maxEditDistance(wordLen int) int` (1/2/3 thresholds), `fuzzyCorrect(query string) string` (query vocabulary, find closest within threshold)
+- [x] 4.4 Implement `SearchWithFallback(query string, limit int, source string) []SearchResult` — 8-layer fallback: Porter+AND → Porter+OR → Trigram+AND → Trigram+OR → Fuzzy(Porter+AND → Porter+OR → Trigram+AND → Trigram+OR). Stop at first layer returning results. Tag each result with `MatchLayer`
+- [x] 4.5 Implement `sanitizeQuery(query string, mode string) string` — remove quotes/brackets/FTS5 special chars, split, filter stopwords, quote each word, join with mode separator
+- [x] 4.6 Implement access tracking: on search hit, update `last_accessed_at` and increment `access_count` on matching sources (background goroutine)
+- [x] 4.7 Implement `GetDistinctiveTerms(sourceID int64, maxTerms int) []string` — stream chunks, count doc frequency, filter by appearance range, IDF + lengthBonus + identifierBonus scoring
+- [x] 4.8 Implement `GetChunksBySource(sourceID int64) []SearchResult` and `ListSources() []SourceInfo` — direct queries bypassing FTS5 MATCH
+- [x] 4.9 Write tests: Porter stemming matches, trigram partial matches, fuzzy correction with typos, 8-layer fallback (verify lower layers fire), source filtering, access count incrementing, query sanitization, Levenshtein correctness, distinctive terms IDF scoring, empty query error, no results returns source list
 
 ## Task 5: ContentStore — cleanup and lifecycle
 
