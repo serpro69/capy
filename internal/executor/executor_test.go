@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -286,7 +288,60 @@ func TestExecuteFile(t *testing.T) {
 	assert.Contains(t, result.Stdout, "file content here")
 }
 
-// --- Background cleanup ---
+// --- Background mode ---
+
+func TestBackgroundModeReturnsImmediately(t *testing.T) {
+	e := newTestExecutor(t)
+	if e.Runtimes()[Shell] == "" {
+		t.Skip("no shell runtime")
+	}
+
+	start := time.Now()
+	result, err := e.Execute(context.Background(), ExecRequest{
+		Language:   Shell,
+		Code:       "sleep 60",
+		TimeoutSec: 1,
+		Background: true,
+	})
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+
+	// Should return in ~1s (timeout), not 60s (process completion).
+	assert.Less(t, elapsed, 5*time.Second, "background mode should return after timeout, not wait for process")
+	assert.True(t, result.Backgrounded, "result should be marked as backgrounded")
+	assert.Greater(t, result.PID, 0, "should record the PID")
+	assert.False(t, result.TimedOut, "should not be marked as timed out")
+
+	// PID should be tracked for cleanup.
+	e.bgMu.Lock()
+	_, tracked := e.backgroundPids[result.PID]
+	e.bgMu.Unlock()
+	assert.True(t, tracked, "background PID should be tracked")
+
+	// Kill the background process so the test doesn't hang waiting
+	// for the orphaned cmd.Wait() goroutine.
+	syscall.Kill(-result.PID, syscall.SIGKILL)
+	time.Sleep(200 * time.Millisecond)
+}
+
+func TestBackgroundModeProcessFinishesBeforeTimeout(t *testing.T) {
+	e := newTestExecutor(t)
+	if e.Runtimes()[Shell] == "" {
+		t.Skip("no shell runtime")
+	}
+
+	// Process finishes quickly — should get normal result, not backgrounded.
+	result, err := e.Execute(context.Background(), ExecRequest{
+		Language:   Shell,
+		Code:       `echo "fast"`,
+		TimeoutSec: 2,
+		Background: true,
+	})
+	require.NoError(t, err)
+	assert.False(t, result.Backgrounded, "fast process should not be backgrounded")
+	assert.Equal(t, 0, result.ExitCode)
+	assert.Contains(t, result.Stdout, "fast")
+}
 
 func TestCleanupBackgrounded(t *testing.T) {
 	e := newTestExecutor(t)
