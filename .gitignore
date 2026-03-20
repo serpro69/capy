@@ -24,3 +24,6 @@ logs
 !.claude
 
 context-mode
+
+# binaries
+capy
