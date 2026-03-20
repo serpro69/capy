@@ -7,31 +7,31 @@
 
 ## Task 1: Project bootstrap and build system
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#1-project-bootstrap](./implementation.md#1-project-bootstrap)
 
 ### Subtasks
-- [ ] 1.1 Initialize Go module (`github.com/serpro69/capy`), Go 1.23+
-- [ ] 1.2 Create full directory skeleton: `cmd/capy/`, `internal/server/`, `internal/store/`, `internal/executor/`, `internal/security/`, `internal/hook/`, `internal/adapter/`, `internal/config/`, `internal/session/`
-- [ ] 1.3 Add dependencies: `mcp-go`, `go-sqlite3`, `go-toml/v2`, `cobra`, `testify`
-- [ ] 1.4 Create `Makefile` with targets: `build` (CGO_ENABLED=1, -tags fts5), `test`, `vet`, `clean`
-- [ ] 1.5 Create `cmd/capy/main.go` with cobra root command (default: serve) and subcommand stubs: `serve`, `hook` (positional arg for event), `setup`, `doctor`, `cleanup`
-- [ ] 1.6 Create `internal/version/version.go` with `Version` variable, wire `--version` flag
-- [ ] 1.7 Verify: `make build` produces binary, `./capy --version` works, all subcommands run without panic, `make vet` and `make test` pass
-- [ ] 1.8 Write tests: CLI flag parsing, subcommand routing, version output
+- [x] 1.1 Initialize Go module (`github.com/serpro69/capy`), Go 1.23+
+- [x] 1.2 Create full directory skeleton: `cmd/capy/`, `internal/server/`, `internal/store/`, `internal/executor/`, `internal/security/`, `internal/hook/`, `internal/adapter/`, `internal/config/`, `internal/session/`
+- [x] 1.3 Add dependencies: `mcp-go`, `go-sqlite3`, `go-toml/v2`, `cobra`, `testify`
+- [x] 1.4 Create `Makefile` with targets: `build` (CGO_ENABLED=1, -tags fts5), `test`, `vet`, `clean`
+- [x] 1.5 Create `cmd/capy/main.go` with cobra root command (default: serve) and subcommand stubs: `serve`, `hook` (positional arg for event), `setup`, `doctor`, `cleanup`
+- [x] 1.6 Create `internal/version/version.go` with `Version` variable, wire `--version` flag
+- [x] 1.7 Verify: `make build` produces binary, `./capy --version` works, all subcommands run without panic, `make vet` and `make test` pass
+- [x] 1.8 Write tests: CLI flag parsing, subcommand routing, version output
 
 ## Task 2: Configuration system
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#2-configuration-system](./implementation.md#2-configuration-system)
 
 ### Subtasks
-- [ ] 2.1 Create `internal/config/config.go` with `Config`, `StoreConfig`, `CleanupConfig`, `ExecutorConfig`, `ServerConfig` structs and `DefaultConfig()` function (timeout in seconds: 30, max_output_bytes: 102400, cold_threshold_days: 30, auto_prune: false, log_level: "info")
-- [ ] 2.2 Create `internal/config/loader.go` with `Load(projectDir string) (*Config, error)` — three-level precedence merge: XDG → `.capy/config.toml` → `.capy.toml`
-- [ ] 2.3 Create `internal/config/paths.go` with `DetectProjectRoot()` (CLAUDE_PROJECT_DIR → git root → cwd), `ProjectHash(dir string) string` (SHA-256 first 16 hex chars), `ResolveDBPath(projectDir string) string`
-- [ ] 2.4 Write tests: config defaults, single-file loading, three-level precedence merge, project root detection, project hash determinism, DB path resolution (relative, absolute, XDG default), missing files, malformed TOML error
+- [x] 2.1 Create `internal/config/config.go` with `Config`, `StoreConfig`, `CleanupConfig`, `ExecutorConfig`, `ServerConfig` structs and `DefaultConfig()` function (timeout in seconds: 30, max_output_bytes: 102400, cold_threshold_days: 30, auto_prune: false, log_level: "info")
+- [x] 2.2 Create `internal/config/loader.go` with `Load(projectDir string) (*Config, error)` — three-level precedence merge: XDG → `.capy/config.toml` → `.capy.toml`
+- [x] 2.3 Create `internal/config/paths.go` with `DetectProjectRoot()` (CLAUDE_PROJECT_DIR → git root → cwd), `ProjectHash(dir string) string` (SHA-256 first 16 hex chars), `ResolveDBPath(projectDir string) string`
+- [x] 2.4 Write tests: config defaults, single-file loading, three-level precedence merge, project root detection, project hash determinism, DB path resolution (relative, absolute, XDG default), missing files, malformed TOML error
 
 ## Task 3: ContentStore — schema, indexing, and vocabulary
 
