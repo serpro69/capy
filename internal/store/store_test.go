@@ -1,9 +1,11 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -170,6 +172,38 @@ func TestChunkJSONParseFailure(t *testing.T) {
 	assert.GreaterOrEqual(t, len(chunks), 1, "should fall back to plaintext")
 }
 
+func TestChunkJSONObjectDeterministicOrder(t *testing.T) {
+	// Nested object forces recursion, producing one chunk per key.
+	j := `{"zebra": {"v": 1}, "alpha": {"v": 2}, "middle": {"v": 3}}`
+	// Run multiple times — if order were random, at least one would differ.
+	var first []string
+	for i := range 10 {
+		chunks := chunkJSON(j, maxChunkBytes)
+		var titles []string
+		for _, c := range chunks {
+			titles = append(titles, c.Title)
+		}
+		if i == 0 {
+			first = titles
+		} else {
+			assert.Equal(t, first, titles, "chunk order should be deterministic across runs")
+		}
+	}
+	// Verify sorted key order in titles: alpha before middle before zebra.
+	chunks := chunkJSON(j, maxChunkBytes)
+	require.GreaterOrEqual(t, len(chunks), 3)
+	allTitles := ""
+	for _, c := range chunks {
+		allTitles += c.Title + " "
+	}
+	alphaIdx := strings.Index(allTitles, "alpha")
+	middleIdx := strings.Index(allTitles, "middle")
+	zebraIdx := strings.Index(allTitles, "zebra")
+	require.NotEqual(t, -1, alphaIdx, "alpha should appear in titles")
+	assert.Less(t, alphaIdx, middleIdx)
+	assert.Less(t, middleIdx, zebraIdx)
+}
+
 // --- Identity field ---
 
 func TestFindIdentityField(t *testing.T) {
@@ -226,6 +260,47 @@ func TestIndexAutoDetectsContentType(t *testing.T) {
 	assert.Equal(t, "json", r.ContentType)
 }
 
+func TestIndexConcurrentSameLabelNoDuplicates(t *testing.T) {
+	s := newTestStore(t)
+	// Allow multiple DB connections to widen the race window.
+	db, err := s.getDB()
+	require.NoError(t, err)
+	db.SetMaxOpenConns(10)
+
+	const goroutines = 50
+	var wg sync.WaitGroup
+	// Barrier ensures all goroutines start simultaneously.
+	start := make(chan struct{})
+	errs := make([]error, goroutines)
+
+	for i := range goroutines {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			_, errs[idx] = s.Index(
+				fmt.Sprintf("content-%d", idx),
+				"same-label",
+				"plaintext",
+			)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	// All calls should succeed (no panics, no unhandled errors).
+	for i, err := range errs {
+		assert.NoError(t, err, "goroutine %d", i)
+	}
+
+	// Exactly one source should exist for this label — the last writer wins,
+	// but there must never be duplicates.
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM sources WHERE label = 'same-label'").Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "concurrent Index with same label must produce exactly one source")
+}
+
 // --- Vocabulary ---
 
 func TestVocabularyExtraction(t *testing.T) {
@@ -245,6 +320,27 @@ func TestVocabularyExtraction(t *testing.T) {
 	err = db.QueryRow("SELECT COUNT(*) FROM vocabulary WHERE word = 'the'").Scan(&theCount)
 	require.NoError(t, err)
 	assert.Equal(t, 0, theCount)
+}
+
+func TestVocabularyBatched(t *testing.T) {
+	s := newTestStore(t)
+
+	// Index content with many unique words — all should be inserted.
+	var words []string
+	for i := range 200 {
+		words = append(words, fmt.Sprintf("uniqueword%d", i))
+	}
+	content := strings.Join(words, " ")
+
+	_, err := s.Index(content, "vocab-batch-test", "plaintext")
+	require.NoError(t, err)
+
+	db, _ := s.getDB()
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM vocabulary").Scan(&count)
+	require.NoError(t, err)
+	// All 200 words are >= 3 chars and not stopwords.
+	assert.Equal(t, 200, count, "all unique words should be inserted in batch")
 }
 
 // --- Stopwords ---

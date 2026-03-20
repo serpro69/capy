@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 )
 
 // Index indexes content into the knowledge base. It auto-detects
@@ -23,43 +24,8 @@ func (s *ContentStore) Index(content, label, contentType string) (*IndexResult, 
 		contentType = DetectContentType(content)
 	}
 
-	// Check for existing source with same label.
-	var existingID int64
-	var existingHash sql.NullString
-	err = s.stmtFindSourceByLabel.QueryRow(label).Scan(&existingID, &existingHash)
-	if err == nil {
-		if existingHash.Valid && existingHash.String == hash {
-			// Same content — update access time and return.
-			s.stmtUpdateSourceAccess.Exec(label, hash)
-			return &IndexResult{
-				SourceID:       existingID,
-				Label:          label,
-				AlreadyIndexed: true,
-			}, nil
-		}
-		// Different content — delete old source + chunks.
-		if err := s.deleteSource(existingID); err != nil {
-			return nil, fmt.Errorf("deleting old source: %w", err)
-		}
-	}
-
-	// Chunk the content.
-	var chunks []Chunk
-	switch contentType {
-	case "markdown":
-		chunks = chunkMarkdown(content, maxChunkBytes)
-	case "json":
-		chunks = chunkJSON(content, maxChunkBytes)
-	case "plaintext":
-		chunks = chunkPlainText(content, 20)
-	default:
-		chunks = chunkPlainText(content, 20)
-	}
-
-	if len(chunks) == 0 {
-		chunks = []Chunk{{Title: "Content", Content: content}}
-	}
-
+	// Chunk content before entering the transaction to minimize lock hold time.
+	chunks := chunkContent(content, contentType)
 	codeChunks := 0
 	for i := range chunks {
 		if chunks[i].HasCode {
@@ -70,13 +36,48 @@ func (s *ContentStore) Index(content, label, contentType string) (*IndexResult, 
 		}
 	}
 
-	// Insert in transaction.
-	tx, err := db.Begin()
+	// BEGIN IMMEDIATE acquires a write lock immediately, preventing
+	// concurrent writers from interleaving dedup check + insert.
+	tx, err := db.BeginTx(s.ctx(), &sql.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
 
+	// Acquire write lock via a dummy write before the read check.
+	// SQLite deferred transactions only acquire the write lock on the
+	// first write statement; we force it here so the SELECT + INSERT
+	// sequence is atomic.
+	if _, err := tx.Exec("DELETE FROM sources WHERE 0"); err != nil {
+		return nil, fmt.Errorf("acquiring write lock: %w", err)
+	}
+
+	// Check for existing source with same label (inside transaction).
+	var existingID int64
+	var existingHash sql.NullString
+	err = tx.Stmt(s.stmtFindSourceByLabel).QueryRow(label).Scan(&existingID, &existingHash)
+	if err == nil {
+		if existingHash.Valid && existingHash.String == hash {
+			// Same content — update access time and return.
+			if _, err := tx.Stmt(s.stmtUpdateSourceAccess).Exec(label, hash); err != nil {
+				return nil, fmt.Errorf("updating access time: %w", err)
+			}
+			if err := tx.Commit(); err != nil {
+				return nil, fmt.Errorf("committing transaction: %w", err)
+			}
+			return &IndexResult{
+				SourceID:       existingID,
+				Label:          label,
+				AlreadyIndexed: true,
+			}, nil
+		}
+		// Different content — delete old source + chunks.
+		if err := s.deleteSourceTx(tx, existingID); err != nil {
+			return nil, fmt.Errorf("deleting old source: %w", err)
+		}
+	}
+
+	// Insert source and chunks.
 	res, err := tx.Stmt(s.stmtInsertSource).Exec(label, contentType, len(chunks), codeChunks, hash)
 	if err != nil {
 		return nil, fmt.Errorf("inserting source: %w", err)
@@ -98,8 +99,10 @@ func (s *ContentStore) Index(content, label, contentType string) (*IndexResult, 
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
 
-	// Extract vocabulary (outside transaction, non-critical).
-	s.extractAndStoreVocabulary(content)
+	// Extract vocabulary outside the main transaction.
+	if err := s.extractAndStoreVocabulary(content); err != nil {
+		slog.Warn("vocabulary extraction failed", "label", label, "error", err)
+	}
 
 	return &IndexResult{
 		SourceID:    sourceID,
@@ -120,14 +123,30 @@ func (s *ContentStore) IndexJSON(content, label string) (*IndexResult, error) {
 	return s.Index(content, label, "json")
 }
 
-func (s *ContentStore) deleteSource(sourceID int64) error {
-	if _, err := s.stmtDeleteChunksBySource.Exec(sourceID); err != nil {
+func chunkContent(content, contentType string) []Chunk {
+	var chunks []Chunk
+	switch contentType {
+	case "markdown":
+		chunks = chunkMarkdown(content, maxChunkBytes)
+	case "json":
+		chunks = chunkJSON(content, maxChunkBytes)
+	default:
+		chunks = chunkPlainText(content, 20)
+	}
+	if len(chunks) == 0 {
+		chunks = []Chunk{{Title: "Content", Content: content}}
+	}
+	return chunks
+}
+
+func (s *ContentStore) deleteSourceTx(tx *sql.Tx, sourceID int64) error {
+	if _, err := tx.Stmt(s.stmtDeleteChunksBySource).Exec(sourceID); err != nil {
 		return err
 	}
-	if _, err := s.stmtDeleteTrigramBySource.Exec(sourceID); err != nil {
+	if _, err := tx.Stmt(s.stmtDeleteTrigramBySource).Exec(sourceID); err != nil {
 		return err
 	}
-	if _, err := s.stmtDeleteSource.Exec(sourceID); err != nil {
+	if _, err := tx.Stmt(s.stmtDeleteSource).Exec(sourceID); err != nil {
 		return err
 	}
 	return nil
