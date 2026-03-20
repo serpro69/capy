@@ -1,0 +1,891 @@
+ ▐▛███▜▌   Claude Code v2.1.80
+▝▜█████▛▘  Opus 4.6 (1M context) · Claude Team
+  ▘▘ ▝▝    ~/Projects/personal/capy
+
+❯ can you merge the port-mcp-core v1 and v2 docs using the merge-docs skill     
+during step 1, make sure to also fully explore the @./context-mode repo         
+architecture and codebase (use @./context-mode/llms-full.txt for full           
+reference)                                                                      
+  ⎿  Listed directory context-mode/
+
+⏺ Skill(merge-docs)
+  ⎿  Successfully loaded skill
+
+⏺ Let me start by reading the merge process and finding the relevant docs.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Good. Let me now read all the docs from both versions and the context-mode
+  reference.
+
+  Read 8 files (ctrl+o to expand)
+
+⏺ Now let me read the large files in chunks.
+
+  Read 4 files (ctrl+o to expand)
+
+⏺ Let me continue reading the remaining portions of the docs and the
+  context-mode reference.
+
+  Read 4 files (ctrl+o to expand)
+
+⏺ Let me continue reading the remaining parts.
+
+  Read 4 files (ctrl+o to expand)
+
+⏺ Now let me read the context-mode reference and the remaining v2 implementation
+   doc.  ⎿  Loaded context-mode/CLAUDE.md
+
+  Read 2 files (ctrl+o to expand)
+
+⏺ I've now thoroughly read both v1 and v2 docs, the context-mode reference
+  (llms-full.txt), and understand the full architecture. Let me proceed through
+  the merge process.
+
+  Task Progress:
+  - [x] Step 1: Explore the feature
+  - [ ] Step 2: Merge design docs
+  - [ ] Step 3: Merge implementation docs
+  - [ ] Step 4: Generate task list
+  - [ ] Step 5: Final review
+
+  Step 2: Merge design docs
+
+  I've categorized every section across both design docs. Here's the summary
+  before I start writing:
+
+  Agreements (resolved silently): Both docs agree on the core architecture, tool
+   set (9 tools with capy_ prefix), dependencies, DB schema shape, chunking
+  strategies, 3-tier search, security model, hook system, CLI commands, config
+  precedence, and deferred items. I'll use whichever framing is clearer.
+
+  Gaps filled:
+  - V1's addendum (13.1–13.23) has critical details missing from V2:
+  comprehensive env var stripping (~50 vars), shell-escape detection patterns,
+  8-layer search fallback, input coercion, code_chunk_count tracking, etc. →
+  merged inline
+  - V2 has internal/adapter/ as a separate package from day 1, userpromptsubmit
+  hook, testify dependency, CLAUDE_PROJECT_DIR env var for project root → merged
+   in
+
+  Contradictions resolved (verified against context-mode source):
+
+  Topic: Project hash length
+  V1: 16 chars
+  V2: 12 hex chars
+  Resolution: V2 — matches context-mode
+  ────────────────────────────────────────
+  Topic: Settings files
+  V1: 2 files (corrected to 3 in addendum)
+  V2: 3 files consistently
+  Resolution: V2 — matches context-mode
+  ────────────────────────────────────────
+  Topic: content_type in sources table
+  V1: Present
+  V2: Absent
+  Resolution: V2 — context-mode doesn't have it
+  ────────────────────────────────────────
+  Topic: vocabulary.frequency column
+  V1: Present
+  V2: Absent
+  Resolution: V2 — context-mode uses INSERT OR IGNORE, no frequency
+  ────────────────────────────────────────
+  Topic: max
+  V1:
+  V2:
+  Resolution:
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ You need to read the entire context-mode codebase also to gain a full         
+understanding of what we're porting and how                                     
+
+⏺ You're right. Let me do a thorough exploration of the context-mode codebase
+  before making any merge decisions.
+
+⏺ Explore(Explore context-mode codebase) Sonnet 4.6
+  ⎿  Read(context-mode/src/store.ts)
+     Read(context-mode/src/cli.ts)
+     Read(context-mode/src/session/db.ts)
+     +13 more tool uses (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ Don't launch exploration agents, explore it on your own, read every file      
+fully. You need a full picture                                                  
+
+⏺ Got it. Let me map the codebase and read every file myself.
+
+  Searched for 6 patterns (ctrl+o to expand)
+
+⏺ Let me start reading the core source files systematically.
+
+  Read 7 files (ctrl+o to expand)
+
+⏺ Now the two biggest files — executor.ts and store.ts. These are the core.
+
+  Read 2 files (ctrl+o to expand)
+⏺ Good, now let me read the server.ts — the biggest file.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Now let me read the core hooks — the ones relevant to the Claude Code adapter.
+
+  Read 6 files (ctrl+o to expand)
+
+⏺ Now let me read the adapter types and Claude Code adapter.
+
+  Read 5 files (ctrl+o to expand)
+
+⏺ I now have a thorough understanding of the context-mode codebase. I've read
+  every core source file, the hooks, and the adapter layer. Let me read the
+  CONTRIBUTING.md for the last bit of context, then I can proceed with the
+  merge.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ I've now thoroughly read the full context-mode codebase. Here's what I've
+  covered:
+
+  Core source files (all read fully):
+  - types.ts — ExecResult, IndexResult, SearchResult, StoreStats, SessionEvent,
+  ResumeSnapshot, EventPriority
+  - db-base.ts — SQLiteBase class, WAL pragmas, lazy loading, cleanup helpers
+  - store.ts — ContentStore with full FTS5 schema, 3 chunking strategies,
+  8-layer search fallback, vocabulary, distinctive terms
+  - executor.ts — PolyglotExecutor with 11 languages, process isolation, safe
+  env (~50 denied vars), hard cap, smart truncation, file content wrapping
+  - server.ts — Full MCP server with all 8 tools (execute, execute_file, index,
+  search, fetch_and_index, batch_execute, stats, doctor + upgrade), session
+  stats, intent search, snippet extraction, progressive throttling, input
+  coercion
+  - security.ts — 3-tier settings, glob patterns, chained command splitting,
+  shell-escape detection, file path evaluation
+  - runtime.ts — Runtime detection for 11 languages with fallback chains
+  - truncate.ts — Smart truncation (60/40), capBytes, truncateJSON, escapeXML
+  - exit-classify.ts — Shell exit code soft fail classification
+  - lifecycle.ts — Parent death detection via ppid polling + stdin + signals
+
+  Hook layer (all read fully):
+  - hooks/core/routing.mjs — Pure routing logic, tool aliases, guidance
+  throttle, security integration
+  - hooks/core/formatters.mjs — Platform-specific response formatters
+  (claude-code, gemini-cli, vscode-copilot, cursor)
+  - hooks/core/stdin.mjs — Cross-platform stdin reader
+  - hooks/routing-block.mjs — Routing XML block, READ_GUIDANCE, GREP_GUIDANCE,
+  BASH_GUIDANCE
+  - hooks/pretooluse.mjs — Claude Code pretooluse with self-heal
+  - hooks/sessionstart.mjs — Session lifecycle (startup/compact/resume/clear)
+
+  Adapter layer (all read fully):
+  - adapters/types.ts — Full HookAdapter interface with all methods
+  - adapters/detect.ts — Platform detection (env vars, config dirs, MCP
+  clientInfo)
+  - adapters/claude-code/index.ts — Full ClaudeCodeAdapter implementation
+  - adapters/claude-code/hooks.ts — Hook types, matchers, scripts, validation
+  - adapters/claude-code/config.ts — Re-exports
+
+  Now I have the complete picture. Let me proceed with Step 2 of the merge. I
+  have a solid number of contradictions to surface. Let me start with the first
+  one.
+
+  ---
+  Contradiction 1: Project hash length
+
+  - V1 says: SHA-256 first 16 chars (ProjectHash(projectDir string) string)
+  - V2 says: SHA-256 first 12 hex chars (6 bytes → hex.EncodeToString(h[:6]))
+  - context-mode source: ClaudeCodeAdapter.getSessionDBPath() uses .slice(0, 16)
+   — 16 hex chars
+
+  The session hash in context-mode actually uses 16 hex chars. V1 is correct
+  here.
+
+  However, V1's config section says "SHA-256 first 16 chars" and V2's config
+  section says "SHA-256 first 12 hex chars". Looking at the actual context-mode
+  code more carefully — session-helpers.mjs and
+  ClaudeCodeAdapter.getSessionDBPath() both use .slice(0, 16).
+
+  My recommendation: Use 16 hex chars (matching context-mode). V2's "12 hex
+  chars" is wrong.
+
+  Do you agree, or do you have a preference?
+
+✻ Churned for 2m 8s
+
+❯ Agree                                                                         
+⏺ Contradiction 2: content_type column in sources table
+
+  - V1 schema includes content_type TEXT NOT NULL DEFAULT 'plaintext' on the
+  sources table
+  - V2 schema does not have content_type on sources
+  - context-mode source (store.ts line 194-200): the sources table has id,
+  label, chunk_count, code_chunk_count, indexed_at — no content_type column
+
+  V1 invented a column that doesn't exist in the reference. V2 is correct.
+
+  My recommendation: Drop content_type from sources. The content type
+  distinction lives on the chunks FTS5 tables (UNINDEXED content_type column
+  with "code"/"prose" values), which both docs agree on.
+
+  Agree?
+
+❯ Doesn't v1 specify why we need content_type?                                  
+
+⏺ You're right, let me re-check. Looking back at V1's design doc (line 239):
+
+  ▎ Designed-for (deferred): When session continuity is added, session events 
+  will be indexed into the same per-project ContentStore with a distinct 
+  content_type (e.g., "session-event"). This allows session data to benefit from
+   the same search infrastructure. The tiering system naturally handles session 
+  event lifecycle — recent events are hot, old session data goes cold.
+
+  So V1's rationale is forward-looking: since capy's DB is persistent (unlike
+  context-mode's ephemeral per-process DB), having content_type on sources
+  enables:
+  1. Distinguishing session events from regular indexed content
+  2. Filtering cleanup by source type (e.g., prune session events differently
+  than docs)
+  3. Stats breakdown by content type
+
+  This is a deliberate design addition for the persistent DB model, not an
+  error. Context-mode doesn't need it because its DB dies with the process.
+
+  Revised recommendation: Keep content_type on sources as V1 specifies — it's a
+  justified new column for capy's persistent-DB design.
+
+  Agree?
+
+❯ Agree. Please make sure you understand why there's a discrepancy between v1   
+and v2, going forward, before you propose a recommendation                      
+
+⏺ Point taken. I'll dig into the reasoning behind each discrepancy before
+  recommending.
+
+  Contradiction 3: vocabulary table — frequency column
+
+  - V1 schema: word TEXT PRIMARY KEY, frequency INTEGER NOT NULL DEFAULT 1
+  - V2 schema: word TEXT PRIMARY KEY (no frequency)
+  - context-mode source (store.ts line 218-220): word TEXT PRIMARY KEY only,
+  uses INSERT OR IGNORE (no frequency tracking)
+
+  V1 adds a frequency column. Let me check if V1 explains why.
+
+  Looking at V1's implementation.md (line 209): "Vocabulary extraction: Split
+  chunk content on word boundaries, lowercase, filter stopwords, upsert into
+  vocabulary with frequency increment."
+
+  So V1 envisions upsert-with-increment (INSERT ... ON CONFLICT DO UPDATE SET 
+  frequency = frequency + 1), which would track how often each word appears
+  across all indexed content. This could theoretically improve fuzzy correction
+  — you could prefer higher-frequency corrections over rare ones.
+
+  However, looking at how fuzzyCorrect actually works in context-mode: it
+  queries candidates by length range, then picks the one with the smallest 
+  Levenshtein distance, not the most frequent one. Frequency is never used in
+  the correction logic.
+
+  V2 matches context-mode exactly and keeps things simpler. V1's frequency
+  column adds schema complexity and write overhead (upserts instead of INSERT OR
+   IGNORE) for a signal that the fuzzy correction algorithm doesn't use.
+
+  My recommendation: Drop the frequency column (match V2/context-mode). If we
+  later want frequency-weighted fuzzy correction, it's a trivial migration to
+  add the column. No point carrying unused complexity now.
+
+  Agree?
+
+❯ Agree                                                                         
+
+⏺ Contradiction 4: Security settings — 2 files vs 3 files
+
+  - V1 main design (line 459-461) lists 2 settings files: .claude/settings.json
+  (project) and ~/.claude/settings.json (global). V1's addendum (section 13.9,
+  line 938-943) corrects this to 3 files, adding .claude/settings.local.json.
+  - V2 consistently uses 3 files throughout: .claude/settings.local.json,
+  .claude/settings.json, ~/.claude/settings.json
+  - context-mode source (security.ts line 259-281): readBashPolicies() reads
+  exactly 3 files in precedence order: settings.local.json → settings.json →
+  ~/.claude/settings.json
+
+  V1's main body was written first and missed the local settings file; the
+  addendum caught and corrected it. V2 got it right from the start.
+
+  My recommendation: Use 3 files consistently (V2's approach). The merged doc
+  should not carry V1's initial 2-file version — it was a gap that V1 itself
+  corrected in its addendum.
+
+  Agree?
+
+❯ Agree                                                                         
+
+⏺ Contradiction 5: batch_execute command execution model
+
+  - V1 design (line 377-380): describes commands as array of {language, code} —
+  implying multi-language support
+  - V2 design (section 5.2, line 499-509): describes commands as array of 
+  {label, command} — shell only, with "All commands run sequentially in a single
+   shell process"
+  - context-mode source (server.ts line 1244-1274): commands is
+  z.array(z.object({ label: z.string(), command: z.string() })) — shell only,
+  each command runs as a separate executor.execute({ language: "shell", code: 
+  cmd.command + " 2>&1" })
+
+  V1's {language, code} format is wrong — batch_execute has always been
+  shell-only. The whole point is a lightweight research tool: run several shell
+  commands, index the combined output, search across it. Multi-language would
+  complicate the API for no benefit (you'd use capy_execute for non-shell code).
+
+  V2 gets the shape right ({label, command}), but says "single shell process"
+  which is also wrong — context-mode fixed this in Issue #61 to run each command
+   as a separate executor.execute() call so each gets its own truncation budget.
+
+  My recommendation: Use V2's {label, command} schema, but correct the execution
+   model to match context-mode: each command runs as a separate shell execution
+  (not a single concatenated script). This is critical — Issue #61 showed that
+  concatenating drops middle commands during head/tail truncation.
+
+  Agree?
+
+❯ Yes                                                                           
+
+⏺ Contradiction 6: Adapter package structure — separate internal/adapter/ from 
+  day 1 vs embedded in internal/hook/
+
+  - V1 design (line 86-88): puts the adapter interface in internal/hook/
+  initially, with a note that it "will be extracted into internal/adapter/ when
+  multiple platforms are supported"
+  - V2 design (line 86-89): creates internal/adapter/ as a separate package from
+   day 1 with adapter.go (interface) and claudecode.go (implementation)
+  - context-mode source: has src/adapters/ as a fully separate directory with
+  types.ts, detect.ts, and per-platform subdirectories from day 1
+
+  V1's approach is "start simple, extract later" — put the adapter in hook/ and
+  refactor when needed. V2 follows context-mode's structure by making it a
+  separate package immediately.
+
+  V2's approach is better here for two reasons:
+  1. It matches the reference architecture, making the port mapping clearer
+  2. The adapter interface is already well-defined (context-mode's types.ts has
+  a rich HookAdapter interface). There's no discovery needed — we know what it
+  looks like. Starting with the right package boundary avoids a refactor that we
+   know is coming.
+  3. internal/hook/ imports internal/adapter/ and internal/security/ — clean
+  dependency direction. Merging adapter into hook creates a less clear
+  separation of concerns.
+
+  My recommendation: Use V2's approach — internal/adapter/ as a separate package
+   from day 1.
+
+  Agree?
+
+❯ yes                                                                           
+
+⏺ Contradiction 7: userpromptsubmit hook — included vs not mentioned
+
+  - V1 design (line 524-528): lists 4 hook events — pretooluse, posttooluse,
+  precompact, sessionstart. No mention of userpromptsubmit.
+  - V2 design (section 7.1, line 673-677): lists 5 hook events — adds
+  userpromptsubmit as a stub.
+  - context-mode source: hooks/userpromptsubmit.mjs exists,
+  adapters/claude-code/hooks.ts line 29 defines USER_PROMPT_SUBMIT: 
+  "UserPromptSubmit", and generateHookConfig() registers it.
+
+  V1 was written before userpromptsubmit was added to context-mode (or simply
+  missed it). V2 includes it correctly.
+
+  For capy's initial port, it's a stub either way — but the hook dispatcher
+  should route to it and the adapter interface should define it, matching
+  context-mode's current state. If we omit it, the capy setup command won't
+  register it in settings.json, and adding it later means users have to re-run
+  setup.
+
+  My recommendation: Include userpromptsubmit as a stub hook (V2's approach).
+  Wire it in the dispatcher and register it in capy setup, even though the
+  handler is a pass-through.
+
+  Agree?
+
+❯ Yes                                                                           
+
+⏺ Contradiction 8: Default behavior of capy with no subcommand
+
+  - V1 design (line 67-68): root command capy "prints help/version"
+  - V2 design (section 9.1, line 821): "default behavior when capy is invoked
+  without a subcommand" is to run the MCP server, "for MCP server registration
+  compatibility: "command": "capy" in MCP config"
+  - V2 implementation (line 71-73): root.RunE: serveCmd — default maps to serve
+  - context-mode: MCP config uses "command": "node", "args": ["start.mjs"] — the
+   entry point always starts the server
+
+  V2's reasoning is practical: when MCP config says "command": "capy", the
+  binary must start the server without requiring capy serve. If the default
+  prints help, the MCP server won't start and the user gets a broken setup. V1's
+   "prints help" default would require MCP config to be "command": "capy", 
+  "args": ["serve"] — extra ceremony for no benefit.
+
+  My recommendation: V2's approach — capy with no args defaults to serve
+  behavior. capy --help still prints help (cobra handles this). This is the more
+   ergonomic and MCP-compatible choice.
+
+  Agree?
+
+❯ Yes                                                                           
+
+⏺ Contradiction 9: Lifecycle guard — ppid polling vs stdin EOF only
+
+  - V1 design (line 879-885): full lifecycle guard with ppid polling every 30s +
+   stdin close + OS signals
+  - V2 design (section 9.1, line 823): "A simple signal handler + stdin EOF
+  detection is sufficient — no ppid polling loop needed since Go's stdin read
+  returns EOF when the parent dies"
+  - context-mode source (lifecycle.ts): implements all three — ppid polling (30s
+   interval) + stdin close/end/error + SIGTERM/SIGINT/SIGHUP
+
+  V2 argues ppid polling is unnecessary in Go because stdin EOF is reliable. Let
+   me evaluate this.
+
+  Context-mode added ppid polling specifically because stdin EOF alone was not
+  reliable in all cases — Issue #103 mentions orphaned MCP servers consuming
+  100% CPU. The stdin pipe doesn't always close promptly when the parent crashes
+   (vs exits cleanly). On macOS especially, a parent SIGKILL can leave the
+  child's stdin pipe in a half-open state where it doesn't get EOF for a
+  significant time.
+
+  The ppid check is cheap (one syscall every 30s via os.Getppid()), trivial to
+  implement in Go, and provides a defense-in-depth layer that context-mode found
+   necessary in production.
+
+  My recommendation: V1's approach — implement all three detection methods (ppid
+   polling + stdin + signals), matching context-mode. V2's simplification is a
+  premature optimization that context-mode already proved insufficient through a
+   real bug.
+
+  Agree?
+
+❯ Yes                                                                           
+
+⏺ Contradiction 10: fetch_and_index — subprocess vs native HTTP
+
+  - V1 design (line 409-415): mentions Go's net/http but also discusses
+  HTML-to-markdown library options, doesn't firmly commit to subprocess vs
+  native
+  - V2 design (section 5.5, line 1043-1094): firmly recommends native net/http
+  in-process, with explicit reasoning: "Unlike context-mode which uses a
+  subprocess for fetch isolation, capy can use Go's native net/http since
+  there's no risk of raw data entering context — the Go server process is
+  separate from the LLM context window"
+  - context-mode source (server.ts line 1053-1104): uses a JavaScript subprocess
+   with Turndown for HTML→markdown, writes content to a temp file to bypass the
+  executor's 100KB truncation cap
+
+  Both docs agree on native HTTP for the Go port. V2 articulates the reasoning
+  well — context-mode uses a subprocess because Node.js shares memory with the
+  MCP server, so raw HTML in the server process = raw HTML potentially in
+  context. In Go, the MCP server is a separate binary communicating via JSON-RPC
+   stdio, so in-process HTTP doesn't risk leaking raw content into context.
+
+  The key implementation detail context-mode's subprocess solves is bypassing
+  the 100KB truncation cap. With native HTTP, there's no truncation to bypass —
+  we read the full response body directly and pass it to the store.
+
+  My recommendation: Both docs agree — use native net/http. Use
+  JohannesKaufmann/html-to-markdown for HTML conversion (both docs mention it,
+  V2 confirms GFM table support requirement). No contradiction to resolve here —
+   just confirming agreement.
+
+  Moving on to the next one.
+
+  Contradiction 11: testify as a dependency
+
+  - V1 dependencies (line 784-789): lists 4 required deps — mcp-go, go-sqlite3,
+  go-toml/v2, cobra. No test dependencies mentioned.
+  - V2 dependencies (line 930-934): lists 5 deps — same 4 plus
+  github.com/stretchr/testify for test assertions.
+  - context-mode: uses vitest (the standard for TypeScript)
+
+  V1 doesn't mention test dependencies at all — it's an omission rather than a
+  deliberate exclusion. V2 includes testify as a dev dependency, which is
+  standard practice for Go projects (table-driven tests with assert.Equal are
+  more readable than raw if got != want comparisons).
+
+  My recommendation: Include testify (V2's approach). It's a dev-only dependency
+   that makes tests significantly more readable — this is standard Go practice
+  and not controversial.
+
+  Agree with both?
+
+❯ Yes                                                                           
+
+⏺ Contradiction 12: Sandbox environment strategy — denylist vs allowlist
+
+  - V1 design (section 13.1, lines 809-839) and implementation: describes a
+  denylist approach — start with the full parent environment, strip ~50
+  dangerous vars, apply sandbox overrides
+  - V2 implementation (section 3.9, lines 730-771): describes an allowlist
+  approach — start with a minimal set (PATH, HOME, USER), add specific
+  passthrough vars (auth tokens, infra, network, config), add forced vars
+  - context-mode source (executor.ts lines 319-449): uses the denylist approach
+  — iterates process.env, skips entries in the DENIED set and BASH_FUNC_*
+  prefixed vars, then applies overrides
+
+  This is a meaningful security architecture decision, not just a formatting
+  difference.
+
+  Denylist (V1/context-mode): Start with everything, remove known-bad. Better
+  compatibility — user's project-specific env vars (database URLs, custom API
+  keys, service endpoints) work automatically. Risk is missing a new dangerous
+  var, but context-mode's list is well-researched and CVE-backed.
+
+  Allowlist (V2): Start with nothing, add known-good. Tighter by default, but
+  breaks when users depend on env vars not in the curated list. V2's passthrough
+   list covers common cases but would miss project-specific vars, leading to "my
+   code works in Bash but fails in capy_execute" bug reports.
+
+  Context-mode chose denylist deliberately — the sandbox runs arbitrary user
+  code that may depend on arbitrary env vars. The denylist is the pragmatic
+  choice, battle-tested in production.
+
+  My recommendation: V1's denylist approach, matching context-mode. Port the
+  exact DENIED set from executor.ts lines 325-394.
+
+  Agree?
+
+✻ Worked for 31s
+
+❯ Yes                                                                           
+
+⏺ Contradiction 13: Config timeout units — seconds vs milliseconds
+
+  - V1 config schema (line 609): timeout = 30 with comment "Default execution
+  timeout in seconds"
+  - V2 config schema (line 784): timeout = 30000 with comment "default execution
+   timeout in milliseconds"
+  - context-mode: hardcoded timeout = 30_000 (milliseconds) in the tool API, no
+  user-facing config file
+
+  The tool API uses milliseconds (matching MCP tool parameters). The question is
+   what the TOML config file should use — this is user-facing.
+
+  Seconds in config with internal conversion to ms is more human-friendly:
+  timeout = 30  # seconds, not 30000
+
+  vs milliseconds which is error-prone for users:
+  timeout = 30000  # easy to add/drop a zero
+
+  Go convention for config tends toward human-readable units (e.g.,
+  time.Duration parses strings like "30s"). The internal code and MCP tool
+  parameters would still use milliseconds.
+
+  My recommendation: V1's approach — config in seconds, convert to milliseconds
+  internally. More user-friendly for a TOML config file. The tool API parameters
+   remain in milliseconds (matching context-mode's MCP schema).
+
+  Agree?
+
+✻ Baked for 51s
+
+❯ Yes                                                                           
+
+⏺ Contradiction 14: Freshness boost on search ranking
+
+  - V1 design (line 189-196): "Search result freshness boosting — On top of
+  BM25's TF-IDF score, results are boosted by source freshness... This is a new 
+  feature not present in context-mode"
+  - V1 implementation (line 286-289): "Compute a freshness multiplier based on
+  time since last access (exponential decay), Multiply BM25 rank by freshness
+  boost"
+  - V2: No mention of freshness affecting search ranking. Has freshness metadata
+   (last_accessed_at, access_count) but only for tiering/cleanup, not search
+  scoring.
+  - context-mode: Pure BM25 ranking, no freshness signal (ephemeral DB, so
+  irrelevant)
+
+  V1 proposes multiplying BM25 scores by a freshness factor. This is an original
+   design addition, not a port of existing behavior. The question is whether
+  it's a good idea.
+
+  Arguments against (V2's implicit position):
+  - BM25 is well-understood and predictable. Multiplying by freshness makes
+  search less deterministic — the same query returns different results depending
+   on when content was last accessed, not its relevance.
+  - The tiering system already handles stale content via cleanup. If something
+  is cold and irrelevant, prune it — don't silently demote it in search.
+  - No reference implementation to validate against. We'd be designing and
+  debugging a novel scoring algorithm during what should be a port.
+
+  Arguments for (V1's position):
+  - In a persistent DB, old content accumulates. Freshness could help surface
+  recently-relevant content over dusty archives.
+
+  My recommendation: Drop freshness boost from search ranking (V2's approach).
+  Keep freshness metadata for tiering/cleanup only. BM25 alone is proven. If we
+  find BM25 insufficient on a persistent DB, we can add freshness boost later as
+   a targeted improvement — but don't design untested features during the port.
+
+  Agree?
+
+✻ Crunched for 38s
+
+❯ Yes                                                                           
+
+⏺ I believe I've covered all the material contradictions. Let me list the
+  remaining gaps I'll resolve silently during the merge:
+
+  Gaps filled from V1 into V2 (silently):
+  - Background mode for executor (V1 has it, V2 missed it, context-mode has it)
+  - Build tools redirect in pretooluse (gradle/maven → sandbox, from V1's
+  addendum/context-mode routing.mjs)
+  - Guidance throttle (once-per-session advisory for Read/Grep/Bash — from
+  context-mode, neither doc mentions it)
+  - max_output_bytes corrected to 102400 (V1 had typo 104857)
+  - Network I/O tracking deferred (both agree)
+  - code_chunk_count tracking (both agree)
+
+  Gaps filled from V2 into V1 (silently):
+  - CLAUDE_PROJECT_DIR env var for project root detection (V2 has it, V1 doesn't
+   mention it explicitly)
+  - Explicit package dependency graph with constraint that store and executor
+  must not import each other
+  - Killed field on ExecResult for hard cap exceeded (V2 has it, cleaner than
+  V1's approach)
+
+  Errors corrected silently:
+  - V1's max_output_bytes = 104857 → 102400
+  - V2's project hash 12 hex chars → 16 hex chars
+  - V2's "single shell process" for batch_execute → separate executions per
+  command
+
+  I'll now write the merged design doc. This will be substantial — I'll create
+  it at /docs/wip/port-mcp-core-merged/design.md.
+
+⏺ Bash(mkdir -p
+      /Users/sergio/Projects/personal/capy/docs/wip/port-mcp-core-merged)
+  ⎿  Done
+⏺ Write(docs/wip/port-mcp-core-merged/design.md)
+  ⎿  Wrote 894 lines to docs/wip/port-mcp-core-merged/design.md
+       1 # Design: Port MCP Core to Go
+       2 
+       3 > Reference implementation: `context-mode/` (TypeScript)
+       4 > Target: `capy` — Go MCP server and Claude Code plugin
+       5 
+       6 ## 1. Overview
+       7 
+       8 **capy** is a Go port of the [context-mode](../../context-mode/)
+          TypeScript MCP server and Claude Code plugin. It reduces LLM co
+         ntext window consumption by ~98% by intercepting data-heavy tool
+          calls (Bash, Read, WebFetch, Grep), executing them in sandboxed
+          subprocesses, and indexing raw output into a persistent, per-pr
+         oject SQLite FTS5 knowledge base. Only concise summaries and BM2
+         5-ranked search results enter the context window.
+       9 
+      10 ### Key differences from context-mode
+     … +884 lines (ctrl+o to expand)
+
+⏺ Task Progress:
+  - [x] Step 1: Explore the feature
+  - [x] Step 2: Merge design docs
+  - [ ] Step 3: Merge implementation docs
+  - [ ] Step 4: Generate task list
+  - [ ] Step 5: Final review
+
+  Design doc merged. Before I proceed to Step 3 (merge implementation docs), let
+   me confirm: the design doc is at /docs/wip/port-mcp-core-merged/design.md.
+  Want to review it before I continue, or should I proceed to merging the
+  implementation docs?
+
+✻ Churned for 4m 56s
+
+❯ Looks good. Proceed with merging implementation docs.                         
+
+⏺ Let me re-read the implementation docs to ensure I have them fresh in mind,
+  then write the merged version. I already read them earlier but need to
+  cross-reference specific details against the merged design decisions.
+
+⏺ The implementation docs are large. Let me re-read the sections I need to
+  cross-reference against the merged design decisions — particularly areas where
+   the design merge changed direction.
+
+  Read 2 files (ctrl+o to expand)
+
+⏺ I have the full content of both docs from my earlier reads. Now I'll write the
+   merged implementation doc, incorporating the design decisions we agreed on.
+  This is the biggest artifact — I'll structure it to match the merged design
+  doc sections and include the stronger details from each source.
+
+⏺ Write(docs/wip/port-mcp-core-merged/implementation.md)
+  ⎿  Wrote 1655 lines to docs/wip/port-mcp-core-merged/implementation.md
+       1 # Implementation Guide: Port MCP Core to Go
+       2 
+       3 > Design: [./design.md](./design.md)
+       4 > Reference implementation: `context-mode/` (TypeScript)
+       5 
+       6 This document provides implementation-level details for each com
+         ponent of the capy port. It is meant to be read alongside `desig
+         n.md` and used during implementation sessions.
+       7 
+       8 Each section includes:
+       9 - Exact behavior to implement (with edge cases)
+      10 - Reference to the context-mode source code
+     … +1645 lines (ctrl+o to expand)
+
+⏺ Task Progress:
+  - [x] Step 1: Explore the feature
+  - [x] Step 2: Merge design docs
+  - [x] Step 3: Merge implementation docs
+  - [ ] Step 4: Generate task list
+  - [ ] Step 5: Final review
+
+  Now Step 4 — generate the task list from the merged implementation plan. Let
+  me read the example tasks format first.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Both original task lists have all tasks as "pending"/"Not started" — no status
+   to carry forward. I'll generate fresh tasks from the merged implementation
+  plan.
+
+⏺ Write(docs/wip/port-mcp-core-merged/tasks.md)
+  ⎿  Wrote 242 lines to docs/wip/port-mcp-core-merged/tasks.md
+       1 # Tasks: Port MCP Core to Go
+       2 
+       3 > Design: [./design.md](./design.md)
+       4 > Implementation: [./implementation.md](./implementation.md)
+       5 > Status: pending
+       6 > Created: 2026-03-20
+       7 
+       8 ## Task 1: Project bootstrap and build system
+       9 
+      10 - **Status:** pending
+     … +232 lines (ctrl+o to expand)
+
+⏺ Task Progress:
+  - [x] Step 1: Explore the feature
+  - [x] Step 2: Merge design docs
+  - [x] Step 3: Merge implementation docs
+  - [x] Step 4: Generate task list
+  - [ ] Step 5: Final review
+
+  Step 5: Final Review
+
+  Here's a summary of the merged output:
+
+  Key decisions made
+
+  Resolved via user input (contradictions):
+  1. Project hash: 16 hex chars (matching context-mode, V1 correct)
+  2. content_type on sources: kept (V1's forward-looking design for session
+  continuity)
+  3. vocabulary.frequency column: dropped (unused by fuzzy correction algorithm)
+  4. Settings files: 3 files consistently (V2 correct)
+  5. batch_execute commands: {label, command} schema, separate executions per
+  command
+  6. Adapter package: internal/adapter/ separate from day 1 (V2)
+  7. userpromptsubmit hook: included as stub (V2)
+  8. Default capy behavior: serve (V2, MCP config compatibility)
+  9. Lifecycle guard: all three methods — ppid polling + stdin + signals (V1)
+  10. Config timeout units: seconds in TOML, converted to ms internally (V1)
+  11. testify dependency: included (V2)
+  12. Sandbox env strategy: denylist approach (V1/context-mode)
+  13. fetch_and_index: native Go HTTP (both agree)
+  14. Freshness boost on search: dropped — BM25 only (V2)
+
+  Resolved silently (gaps/errors):
+  - Background mode included (from V1/context-mode)
+  - Build tools redirect (gradle/maven) included (from context-mode routing.mjs)
+  - Guidance throttle (once per session) included (from context-mode)
+  - max_output_bytes fixed to 102400 (V1 typo)
+  - V2's "single shell process" for batch corrected to separate executions
+  - CLAUDE_PROJECT_DIR for project root detection included
+  - Claude Code adapter response format matches hookSpecificOutput wrapper from
+  formatters.mjs
+
+  Output files
+
+  - /docs/wip/port-mcp-core-merged/design.md — unified design (12 sections)
+  - /docs/wip/port-mcp-core-merged/implementation.md — unified implementation
+  guide (10 sections)
+  - /docs/wip/port-mcp-core-merged/tasks.md — 17 tasks derived from merged
+  implementation plan
+
+  Areas that may need further refinement
+
+  - The HTML-to-markdown library choice (JohannesKaufmann/html-to-markdown)
+  should be validated at implementation time for GFM support quality
+  - The exact hookSpecificOutput JSON format should be validated against a live
+  Claude Code session during Task 12
+  - Windows support is deferred — the initial port targets Unix (macOS/Linux)
+  only
+
+  Want me to adjust anything, or are we good?
+
+✻ Sautéed for 8m 43s
+❯ Are both of these mentioned in the implementation docs?                       
+  - The HTML-to-markdown library choice (JohannesKaufmann/html-to-markdown)     
+should be validated at implementation time for GFM support quality              
+  - The exact hookSpecificOutput JSON format should be validated against a live 
+ Claude Code session during Task 12                                             
+
+⏺ The first one is partially covered — Task 15.1 says "Evaluate and integrate"
+  which implies validation, but the implementation doc's fetch_and_index section
+   just states the library name as a given without flagging it as a decision
+  point.
+
+  The second one is specified concretely in section 8.2 with the exact JSON
+  format (I derived it from context-mode/hooks/core/formatters.mjs), so it's not
+   framed as something needing validation — it's stated as the implementation
+  target.
+
+  Both are adequately covered in the docs as they are. I shouldn't have flagged
+  them as open concerns in the review — they're implementation details that are
+  already specified. Let me remove them from the review summary.
+
+  Corrected areas that may need further refinement
+
+  - Windows support is deferred — the initial port targets Unix (macOS/Linux)
+  only
+
+❯ Can we explicitly mention macos + linux (they may have differences in how     
+some things may need to be handled?) or is that overkill?                       
+
+⏺ Not overkill — there are real differences that matter for this codebase:
+
+  - SSL cert paths: the implementation already has platform-specific paths
+  (/etc/ssl/cert.pem for macOS vs /etc/ssl/certs/ca-certificates.crt for Debian
+  vs /etc/pki/tls/certs/ca-bundle.crt for RHEL)
+  - DYLD_INSERT_LIBRARIES (macOS) vs LD_PRELOAD (Linux) — both are in the
+  denylist but for different platforms
+  - Process group signals: syscall.Kill(-pgid, SIGKILL) works on both but edge
+  cases can differ
+  - os.Getppid() behavior: reparenting to PID 1 (Linux systemd) vs PID 1 (macOS
+  launchd) — same check, but worth noting both are covered
+
+  The implementation doc already handles these correctly (the denylist includes
+  both LD_PRELOAD and DYLD_INSERT_LIBRARIES, SSL cert detection checks multiple
+  paths). I'll add an explicit note to the design doc.
+
+⏺ Update(docs/wip/port-mcp-core-merged/design.md)
+  ⎿  File must be read first
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+⏺ Update(docs/wip/port-mcp-core-merged/design.md)
+  ⎿  Added 1 line, removed 1 line
+      355  | R | Rscript | r | — |
+      356  | Elixir | elixir | — | — |
+      357  
+      358 -Runtime detection uses `exec.LookPath()` for each runtime on f
+          -irst use. Results cached via `sync.Once` for the server lifeti
+          -me. Initial port targets Unix (macOS/Linux).                  
+      358 +Runtime detection uses `exec.LookPath()` for each runtime on f
+          +irst use. Results cached via `sync.Once` for the server lifeti
+          +me. Initial port targets **macOS and Linux** (Windows deferred
+          +). Platform differences handled explicitly where they arise: S
+          +SL cert paths (macOS `/etc/ssl/cert.pem` vs Debian/RHEL paths)
+          +, dynamic linker denylist (`DYLD_INSERT_LIBRARIES` on macOS, `
+          +LD_PRELOAD` on Linux), process group semantics.               
+      359  
+      360  ### 4.2 Process Isolation
+      361  
+
+⏺ Done. The design doc now explicitly calls out macOS and Linux as separate
+  targets with their platform-specific differences.
+
+✻ Cogitated for 37s
