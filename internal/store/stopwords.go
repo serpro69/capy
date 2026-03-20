@@ -14,6 +14,11 @@ var stopwords = map[string]struct{}{
 	// Common in code/changelogs
 	"update": {}, "updates": {}, "updated": {}, "deps": {}, "dev": {}, "tests": {}, "test": {},
 	"add": {}, "added": {}, "fix": {}, "fixed": {}, "run": {}, "running": {}, "using": {},
+	// FTS5/search-domain terms (prevent matching on internal metadata)
+	"code": {}, "fuzzy": {}, "porter": {}, "trigram": {}, "prose": {}, "untitled": {},
+	"string": {}, "number": {}, "object": {},
+	// Common data field names (appear in chunk titles/metadata)
+	"name": {}, "title": {}, "label": {}, "path": {}, "slug": {}, "key": {}, "id": {},
 }
 
 // IsStopword returns true if the word is in the stopword set.

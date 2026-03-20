@@ -53,7 +53,7 @@ func TestSmartTruncateOverThreshold(t *testing.T) {
 	truncated := SmartTruncate(output, 1000)
 
 	assert.Less(t, len(truncated), len(output))
-	assert.Contains(t, truncated, "lines omitted")
+	assert.Contains(t, truncated, "truncated")
 }
 
 func TestSmartTruncate60_40Split(t *testing.T) {
@@ -64,7 +64,7 @@ func TestSmartTruncate60_40Split(t *testing.T) {
 	output := strings.Join(lines, "\n")
 	truncated := SmartTruncate(output, 2000)
 
-	parts := strings.SplitN(truncated, "---", 2)
+	parts := strings.SplitN(truncated, "...", 2)
 	require.Len(t, parts, 2, "should have separator")
 
 	head := parts[0]
