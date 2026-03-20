@@ -3,7 +3,9 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -288,9 +290,10 @@ func chunkJSONObject(obj map[string]any, path []string, maxBytes int) []Chunk {
 		return []Chunk{{Title: title, Content: string(serialized), HasCode: true}}
 	}
 
-	// Recurse into each key.
+	// Recurse into each key in sorted order for deterministic output.
 	var chunks []Chunk
-	for key, val := range obj {
+	for _, key := range slices.Sorted(maps.Keys(obj)) {
+		val := obj[key]
 		childPath := append(append([]string{}, path...), key)
 		sub := walkJSON(val, childPath, maxBytes)
 		if len(sub) == 0 {

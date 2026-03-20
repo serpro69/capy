@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -9,6 +10,10 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 )
+
+func (s *ContentStore) ctx() context.Context {
+	return context.Background()
+}
 
 // ContentStore manages the FTS5 knowledge base.
 type ContentStore struct {
