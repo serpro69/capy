@@ -68,7 +68,9 @@ func BuildSafeEnv(tmpDir string) []string {
 
 	// Sandbox overrides.
 	env["TMPDIR"] = tmpDir
-	env["HOME"] = realHome
+	if realHome != "" {
+		env["HOME"] = realHome
+	}
 	env["LANG"] = "en_US.UTF-8"
 	env["PYTHONDONTWRITEBYTECODE"] = "1"
 	env["PYTHONUNBUFFERED"] = "1"

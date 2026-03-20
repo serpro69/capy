@@ -6,10 +6,9 @@ import (
 )
 
 const (
-	MaxOutputBytes = 102400                // 100 KB
-	HardCapBytes   = 100 * 1024 * 1024    // 100 MB
+	MaxOutputBytes = 102400             // 100 KB
+	HardCapBytes   = 100 * 1024 * 1024 // 100 MB
 	headRatio      = 0.6
-	tailRatio      = 0.4
 )
 
 // SmartTruncate truncates output to maxBytes with a 60/40 head/tail split.
