@@ -71,15 +71,15 @@
 
 ## Task 5: ContentStore — cleanup and lifecycle
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Docs:** [implementation.md#39-cleanup](./implementation.md#39-cleanup)
 
 ### Subtasks
-- [ ] 5.1 Create `internal/store/cleanup.go` — `ClassifySources() ([]SourceInfo, error)` classifying as hot/warm/cold based on `last_accessed_at` and config thresholds
-- [ ] 5.2 Implement `Cleanup(maxAgeDays int, dryRun bool) ([]SourceInfo, error)` — find cold sources with access_count = 0, delete chunks from both FTS5 tables + source row (vocabulary is shared, don't delete)
-- [ ] 5.3 Implement `Stats() (*StoreStats, error)` — source/chunk/vocab counts, DB file size, tier distribution
-- [ ] 5.4 Write tests: classify sources with different ages, cleanup dry-run vs force, stats accuracy, recently-accessed sources preserved, sources with access_count > 0 preserved
+- [x] 5.1 Create `internal/store/cleanup.go` — `ClassifySources() ([]SourceInfo, error)` classifying as hot/warm/cold based on `last_accessed_at` and config thresholds
+- [x] 5.2 Implement `Cleanup(maxAgeDays int, dryRun bool) ([]SourceInfo, error)` — find cold sources with access_count = 0, delete chunks from both FTS5 tables + source row (vocabulary is shared, don't delete)
+- [x] 5.3 Implement `Stats() (*StoreStats, error)` — source/chunk/vocab counts, DB file size, tier distribution
+- [x] 5.4 Write tests: classify sources with different ages, cleanup dry-run vs force, stats accuracy, recently-accessed sources preserved, sources with access_count > 0 preserved
 
 ## Task 6: PolyglotExecutor
 
