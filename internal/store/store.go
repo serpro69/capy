@@ -23,16 +23,30 @@ type ContentStore struct {
 	mu sync.Mutex
 	db *sql.DB
 
-	// Prepared statements (populated on init).
-	stmtInsertSource         *sql.Stmt
-	stmtInsertChunk          *sql.Stmt
-	stmtInsertTrigram        *sql.Stmt
-	stmtInsertVocab          *sql.Stmt
-	stmtDeleteChunksBySource *sql.Stmt
+	// Prepared statements — indexing.
+	stmtInsertSource          *sql.Stmt
+	stmtInsertChunk           *sql.Stmt
+	stmtInsertTrigram         *sql.Stmt
+	stmtInsertVocab           *sql.Stmt
+	stmtDeleteChunksBySource  *sql.Stmt
 	stmtDeleteTrigramBySource *sql.Stmt
-	stmtDeleteSource         *sql.Stmt
-	stmtFindSourceByLabel    *sql.Stmt
-	stmtUpdateSourceAccess   *sql.Stmt
+	stmtDeleteSource          *sql.Stmt
+	stmtFindSourceByLabel     *sql.Stmt
+	stmtUpdateSourceAccess    *sql.Stmt
+
+	// Prepared statements — search.
+	stmtSearchPorter         *sql.Stmt
+	stmtSearchPorterFiltered *sql.Stmt
+	stmtSearchTrigram        *sql.Stmt
+	stmtSearchTrigramFiltered *sql.Stmt
+	stmtFuzzyVocab           *sql.Stmt
+
+	// Prepared statements — queries.
+	stmtListSources      *sql.Stmt
+	stmtChunksBySource   *sql.Stmt
+	stmtSourceChunkCount *sql.Stmt
+	stmtChunkContent     *sql.Stmt
+	stmtTrackAccess      *sql.Stmt
 }
 
 // NewContentStore creates a new ContentStore. The database is not opened
@@ -80,6 +94,8 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	var err error
 
+	// --- Indexing ---
+
 	s.stmtInsertSource, err = db.Prepare(`
 		INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash)
 		VALUES (?, ?, ?, ?, ?)`)
@@ -106,14 +122,12 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 		return err
 	}
 
-	s.stmtDeleteChunksBySource, err = db.Prepare(`
-		DELETE FROM chunks WHERE source_id = ?`)
+	s.stmtDeleteChunksBySource, err = db.Prepare(`DELETE FROM chunks WHERE source_id = ?`)
 	if err != nil {
 		return err
 	}
 
-	s.stmtDeleteTrigramBySource, err = db.Prepare(`
-		DELETE FROM chunks_trigram WHERE source_id = ?`)
+	s.stmtDeleteTrigramBySource, err = db.Prepare(`DELETE FROM chunks_trigram WHERE source_id = ?`)
 	if err != nil {
 		return err
 	}
@@ -135,6 +149,109 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 		return err
 	}
 
+	// --- Search ---
+
+	const porterSQL = `
+		SELECT s.label, c.title, c.content, c.source_id, c.content_type,
+			highlight(chunks, 1, char(2), char(3)) AS highlighted,
+			bm25(chunks, 2.0, 1.0) AS rank
+		FROM chunks c
+		JOIN sources s ON s.id = c.source_id
+		WHERE chunks MATCH ?
+		ORDER BY rank
+		LIMIT ?`
+
+	s.stmtSearchPorter, err = db.Prepare(porterSQL)
+	if err != nil {
+		return err
+	}
+
+	s.stmtSearchPorterFiltered, err = db.Prepare(`
+		SELECT s.label, c.title, c.content, c.source_id, c.content_type,
+			highlight(chunks, 1, char(2), char(3)) AS highlighted,
+			bm25(chunks, 2.0, 1.0) AS rank
+		FROM chunks c
+		JOIN sources s ON s.id = c.source_id
+		WHERE chunks MATCH ? AND s.label LIKE '%' || ? || '%'
+		ORDER BY rank
+		LIMIT ?`)
+	if err != nil {
+		return err
+	}
+
+	const trigramSQL = `
+		SELECT s.label, c.title, c.content, c.source_id, c.content_type,
+			highlight(chunks_trigram, 1, char(2), char(3)) AS highlighted,
+			bm25(chunks_trigram, 2.0, 1.0) AS rank
+		FROM chunks_trigram c
+		JOIN sources s ON s.id = c.source_id
+		WHERE chunks_trigram MATCH ?
+		ORDER BY rank
+		LIMIT ?`
+
+	s.stmtSearchTrigram, err = db.Prepare(trigramSQL)
+	if err != nil {
+		return err
+	}
+
+	s.stmtSearchTrigramFiltered, err = db.Prepare(`
+		SELECT s.label, c.title, c.content, c.source_id, c.content_type,
+			highlight(chunks_trigram, 1, char(2), char(3)) AS highlighted,
+			bm25(chunks_trigram, 2.0, 1.0) AS rank
+		FROM chunks_trigram c
+		JOIN sources s ON s.id = c.source_id
+		WHERE chunks_trigram MATCH ? AND s.label LIKE '%' || ? || '%'
+		ORDER BY rank
+		LIMIT ?`)
+	if err != nil {
+		return err
+	}
+
+	s.stmtFuzzyVocab, err = db.Prepare(`
+		SELECT word FROM vocabulary WHERE length(word) BETWEEN ? AND ?`)
+	if err != nil {
+		return err
+	}
+
+	// --- Queries ---
+
+	s.stmtListSources, err = db.Prepare(`
+		SELECT id, label, content_type, chunk_count, code_chunk_count,
+			indexed_at, last_accessed_at, access_count, content_hash
+		FROM sources ORDER BY id DESC`)
+	if err != nil {
+		return err
+	}
+
+	s.stmtChunksBySource, err = db.Prepare(`
+		SELECT c.title, c.content, c.content_type, s.label, c.source_id
+		FROM chunks c
+		JOIN sources s ON s.id = c.source_id
+		WHERE c.source_id = ?
+		ORDER BY c.rowid`)
+	if err != nil {
+		return err
+	}
+
+	s.stmtSourceChunkCount, err = db.Prepare(`
+		SELECT chunk_count FROM sources WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+
+	s.stmtChunkContent, err = db.Prepare(`
+		SELECT content FROM chunks WHERE source_id = ?`)
+	if err != nil {
+		return err
+	}
+
+	s.stmtTrackAccess, err = db.Prepare(`
+		UPDATE sources SET last_accessed_at = datetime('now'), access_count = access_count + 1
+		WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -151,6 +268,10 @@ func (s *ContentStore) Close() error {
 		s.stmtInsertSource, s.stmtInsertChunk, s.stmtInsertTrigram,
 		s.stmtInsertVocab, s.stmtDeleteChunksBySource, s.stmtDeleteTrigramBySource,
 		s.stmtDeleteSource, s.stmtFindSourceByLabel, s.stmtUpdateSourceAccess,
+		s.stmtSearchPorter, s.stmtSearchPorterFiltered,
+		s.stmtSearchTrigram, s.stmtSearchTrigramFiltered,
+		s.stmtFuzzyVocab, s.stmtListSources, s.stmtChunksBySource,
+		s.stmtSourceChunkCount, s.stmtChunkContent, s.stmtTrackAccess,
 	}
 	for _, stmt := range stmts {
 		if stmt != nil {
