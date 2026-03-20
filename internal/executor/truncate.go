@@ -51,9 +51,10 @@ func SmartTruncate(output string, maxBytes int) string {
 		tailLines[i], tailLines[j] = tailLines[j], tailLines[i]
 	}
 
-	omitted := len(lines) - len(headLines) - len(tailLines)
-	separator := fmt.Sprintf("\n\n--- [%d lines omitted, showing %d head + %d tail of %d total] ---\n\n",
-		omitted, len(headLines), len(tailLines), len(lines))
+	skippedLines := len(lines) - len(headLines) - len(tailLines)
+	skippedBytes := len(output) - headBytes - tailBytes
+	separator := fmt.Sprintf("\n\n... [%d lines / %.1fKB truncated — showing first %d + last %d lines] ...\n\n",
+		skippedLines, float64(skippedBytes)/1024.0, len(headLines), len(tailLines))
 
 	return strings.Join(headLines, "\n") + separator + strings.Join(tailLines, "\n")
 }
