@@ -1263,7 +1263,7 @@ internal/server/lifecycle.go      — StartLifecycleGuard()
 // internal/hook/hook.go
 package hook
 
-func Run(event string, adapter adapter.HookAdapter) error {
+func Run(event string, a adapter.HookAdapter, policies []security.SecurityPolicy, projectDir string) error {
     input, err := io.ReadAll(os.Stdin)
     if err != nil {
         return err
@@ -1272,15 +1272,15 @@ func Run(event string, adapter adapter.HookAdapter) error {
     var output []byte
     switch event {
     case "pretooluse":
-        output, err = handlePreToolUse(input, adapter)
+        output, err = handlePreToolUse(input, a, policies, projectDir)
     case "posttooluse":
-        output, err = handlePostToolUse(input, adapter) // stub
+        output, err = handlePostToolUse(input, a) // stub
     case "precompact":
-        output, err = handlePreCompact(input, adapter)   // stub
+        output, err = handlePreCompact(input, a)   // stub
     case "sessionstart":
-        output, err = handleSessionStart(input, adapter) // routing instructions only
+        output, err = handleSessionStart(input, a) // routing instructions only
     case "userpromptsubmit":
-        output, err = handleUserPromptSubmit(input, adapter) // stub
+        output, err = handleUserPromptSubmit(input, a) // stub
     default:
         return fmt.Errorf("unknown hook event: %s", event)
     }

@@ -149,7 +149,7 @@
 
 ### Subtasks
 - [x] 10.1 Create `internal/server/tool_index.go` — `capy_index` handler: parse inputs (content, path, source), call store.Index(), return source ID and chunk count
-- [x] 10.2 Create `internal/server/tool_search.go` — `capy_search` handler: accept queries array or query string (with input coercion), progressive throttling (1-3: max 2, 4-8: max 1 + warning, 9+: blocked), SearchWithFallback per query, smart snippets (1500 bytes), 40 KB total output cap, include source listing when no results, distinctive terms
+- [x] 10.2 Create `internal/server/tool_search.go` — `capy_search` handler: accept queries array or query string (with input coercion), progressive throttling (1-3: max 2, 4-8: max 1 + warning, 9+: blocked), SearchWithFallback per query, smart snippets (1500 bytes), 40 KB total output cap, include source listing when no results
 - [x] 10.3 Create `internal/server/tool_fetch.go` — `capy_fetch_and_index` handler: native Go `net/http` fetch with timeout/redirect limit/User-Agent, content-type routing (HTML → markdown via `JohannesKaufmann/html-to-markdown` stripping script/style/nav/header/footer, JSON → IndexJSON, text → IndexPlainText), 3072-byte preview
 - [x] 10.4 Write tests: index with explicit/auto content type, search with multi-tier results and throttling, fetch_and_index with mock HTTP server (HTML→markdown, JSON, text)
 
@@ -161,7 +161,7 @@
 
 ### Subtasks
 - [x] 11.1 Create `internal/server/tool_stats.go` — `capy_stats` handler: session stats (per-tool bytes/calls, uptime), savings calculation (keptOut, ratio, reductionPct, estimatedTokens), knowledge base stats if store initialized (tier distribution). Format as markdown table
-- [x] 11.2 Create `internal/server/tool_doctor.go` — `capy_doctor` handler: check version, available runtimes, FTS5, config, knowledge base status, hook registration, MCP registration. Format as pass/warn/fail report
+- [x] 11.2 Create `internal/server/tool_doctor.go` — `capy_doctor` handler: check version, available runtimes, FTS5, config, knowledge base status, security policies. Format as pass/warn/fail report. Note: hook/MCP registration checks deferred to Task 14 (requires setup system)
 - [x] 11.3 Create `internal/server/tool_cleanup.go` — `capy_cleanup` handler: parse inputs (max_age_days, dry_run defaults true), call store.Cleanup(), return pruned/would-be-pruned sources
 - [x] 11.4 Write tests: stats with empty/populated store, doctor output format, cleanup dry-run vs force
 
@@ -172,11 +172,11 @@
 - **Docs:** [implementation.md#7-hook-implementation](./implementation.md#7-hook-implementation)
 
 ### Subtasks
-- [x] 12.1 Create `internal/hook/hook.go` — `Run(event string, adapter HookAdapter) error` dispatcher: read stdin JSON, route to handler, write stdout JSON
+- [x] 12.1 Create `internal/hook/hook.go` — `Run(event string, adapter HookAdapter, policies []SecurityPolicy, projectDir string) error` dispatcher: read stdin JSON, route to handler, write stdout JSON
 - [x] 12.2 Create `internal/hook/routing.go` — `RoutingBlock()` returning XML routing instructions, `READ_GUIDANCE`, `GREP_GUIDANCE`, `BASH_GUIDANCE` constants
 - [x] 12.3 Create `internal/hook/guidance.go` — `guidanceOnce(guidanceType string, content string, adapter HookAdapter)` throttle: in-memory set, show each advisory at most once per session
 - [x] 12.4 Create `internal/hook/helpers.go` — `stripQuotedContent()` (heredocs + single/double quoted strings), `stripHeredocs()`, `isCurlOrWget()`, `hasInlineHTTP()`, `isBuildTool()` (gradle, maven), `isCapyTool()`
-- [x] 12.5 Create `internal/hook/pretooluse.go` — full routing logic: Bash (curl/wget → block, inline HTTP → block, build tools → block, other → security check + guidance once), Read (guidance once), Grep (guidance once), WebFetch (deny), Agent/Task (inject routing block, upgrade Bash subagent to general-purpose), capy tools (security checks)
+- [x] 12.5 Create `internal/hook/pretooluse.go` — full routing logic: Bash (security check first, then curl/wget → modify echo, inline HTTP → modify echo, build tools → modify echo, other → guidance once), Read (guidance once), Grep (guidance once), WebFetch (deny), Agent/Task (inject routing block, upgrade Bash subagent to general-purpose), capy tools (security checks)
 - [x] 12.6 Create stub handlers: `posttooluse.go`, `precompact.go`, `sessionstart.go` (routing instructions only), `userpromptsubmit.go`
 - [x] 12.7 Wire `capy hook <event>` subcommand in `cmd/capy/main.go` — load config, load security rules, create adapter, call `Run()`
 - [x] 12.8 Write tests: curl/wget blocked, inline HTTP blocked, build tools blocked, WebFetch denied, Read/Grep guidance (once per session), Agent routing block injected, capy_execute security check, parse error → pass through, full stdin→stdout JSON round-trip
