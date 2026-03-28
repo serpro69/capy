@@ -167,19 +167,19 @@
 
 ## Task 12: Hook system — PreToolUse
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 7, Task 8
 - **Docs:** [implementation.md#7-hook-implementation](./implementation.md#7-hook-implementation)
 
 ### Subtasks
-- [ ] 12.1 Create `internal/hook/hook.go` — `Run(event string, adapter HookAdapter) error` dispatcher: read stdin JSON, route to handler, write stdout JSON
-- [ ] 12.2 Create `internal/hook/routing.go` — `RoutingBlock()` returning XML routing instructions, `READ_GUIDANCE`, `GREP_GUIDANCE`, `BASH_GUIDANCE` constants
-- [ ] 12.3 Create `internal/hook/guidance.go` — `guidanceOnce(guidanceType string, content string, adapter HookAdapter)` throttle: in-memory set, show each advisory at most once per session
-- [ ] 12.4 Create `internal/hook/helpers.go` — `stripQuotedContent()` (heredocs + single/double quoted strings), `stripHeredocs()`, `isCurlOrWget()`, `hasInlineHTTP()`, `isBuildTool()` (gradle, maven), `isCapyTool()`
-- [ ] 12.5 Create `internal/hook/pretooluse.go` — full routing logic: Bash (curl/wget → block, inline HTTP → block, build tools → block, other → security check + guidance once), Read (guidance once), Grep (guidance once), WebFetch (deny), Agent/Task (inject routing block, upgrade Bash subagent to general-purpose), capy tools (security checks)
-- [ ] 12.6 Create stub handlers: `posttooluse.go`, `precompact.go`, `sessionstart.go` (routing instructions only), `userpromptsubmit.go`
-- [ ] 12.7 Wire `capy hook <event>` subcommand in `cmd/capy/main.go` — load config, load security rules, create adapter, call `Run()`
-- [ ] 12.8 Write tests: curl/wget blocked, inline HTTP blocked, build tools blocked, WebFetch denied, Read/Grep guidance (once per session), Agent routing block injected, capy_execute security check, parse error → pass through, full stdin→stdout JSON round-trip
+- [x] 12.1 Create `internal/hook/hook.go` — `Run(event string, adapter HookAdapter) error` dispatcher: read stdin JSON, route to handler, write stdout JSON
+- [x] 12.2 Create `internal/hook/routing.go` — `RoutingBlock()` returning XML routing instructions, `READ_GUIDANCE`, `GREP_GUIDANCE`, `BASH_GUIDANCE` constants
+- [x] 12.3 Create `internal/hook/guidance.go` — `guidanceOnce(guidanceType string, content string, adapter HookAdapter)` throttle: in-memory set, show each advisory at most once per session
+- [x] 12.4 Create `internal/hook/helpers.go` — `stripQuotedContent()` (heredocs + single/double quoted strings), `stripHeredocs()`, `isCurlOrWget()`, `hasInlineHTTP()`, `isBuildTool()` (gradle, maven), `isCapyTool()`
+- [x] 12.5 Create `internal/hook/pretooluse.go` — full routing logic: Bash (curl/wget → block, inline HTTP → block, build tools → block, other → security check + guidance once), Read (guidance once), Grep (guidance once), WebFetch (deny), Agent/Task (inject routing block, upgrade Bash subagent to general-purpose), capy tools (security checks)
+- [x] 12.6 Create stub handlers: `posttooluse.go`, `precompact.go`, `sessionstart.go` (routing instructions only), `userpromptsubmit.go`
+- [x] 12.7 Wire `capy hook <event>` subcommand in `cmd/capy/main.go` — load config, load security rules, create adapter, call `Run()`
+- [x] 12.8 Write tests: curl/wget blocked, inline HTTP blocked, build tools blocked, WebFetch denied, Read/Grep guidance (once per session), Agent routing block injected, capy_execute security check, parse error → pass through, full stdin→stdout JSON round-trip
 
 ## Task 13: Claude Code adapter
 
