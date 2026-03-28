@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -18,21 +19,25 @@ import (
 
 // searchThrottle tracks progressive search throttling per session.
 type searchThrottle struct {
-	mu    sync.Mutex
-	count int
+	mu          sync.Mutex
+	count       int
+	windowStart time.Time
 }
 
-func (t *searchThrottle) increment() int {
+// advance increments the call count and returns the new count and window age.
+// If the window has expired, it resets the window atomically before incrementing.
+func (t *searchThrottle) advance(window time.Duration) (int, time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	age := time.Since(t.windowStart)
+	if age > window {
+		t.count = 0
+		t.windowStart = time.Now()
+		age = 0
+	}
 	t.count++
-	return t.count
-}
-
-func (t *searchThrottle) current() int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.count
+	return t.count, age
 }
 
 // Server is the capy MCP server.
@@ -60,7 +65,7 @@ func NewServer(
 		security:   policies,
 		executor:   exec,
 		stats:      NewSessionStats(),
-		throttle:   &searchThrottle{},
+		throttle:   &searchThrottle{windowStart: time.Now()},
 		projectDir: projectDir,
 	}
 }
