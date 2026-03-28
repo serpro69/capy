@@ -49,7 +49,8 @@ func TestHookRequiresEventArg(t *testing.T) {
 }
 
 func TestSetupSubcommand(t *testing.T) {
-	stdout, _, code := capy(t, "setup")
+	dir := t.TempDir()
+	stdout, _, code := capy(t, "setup", "--project-dir", dir)
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout, "setup")
 }
@@ -61,7 +62,8 @@ func TestDoctorSubcommand(t *testing.T) {
 }
 
 func TestCleanupSubcommand(t *testing.T) {
-	stdout, _, code := capy(t, "cleanup")
+	dir := t.TempDir()
+	stdout, _, code := capy(t, "cleanup", "--project-dir", dir)
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout, "cleanup")
 }
