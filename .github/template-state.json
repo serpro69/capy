@@ -1,13 +1,16 @@
 {
   "schema_version": "1",
-  "upstream_repo": "serpro69/claude-starter-kit",
-  "template_version": "8526b46f37dfb2a5c09b22fdd5b00e2387112ba5",
-  "synced_at": "2026-03-19T15:10:07Z",
+  "upstream_repo": "serpro69/claude-toolbox",
+  "template_version": "0640745d75db146187d12ead2bd1bc933c9f27bc",
+  "synced_at": "2026-03-28T13:32:23Z",
   "variables": {
     "PROJECT_NAME": "memories",
     "LANGUAGES": "go",
     "CC_MODEL": "default",
     "CC_STATUSLINE": "enhanced",
-    "SERENA_INITIAL_PROMPT": ""
-  }
+    "SERENA_INITIAL_PROMPT": "",
+    "CC_EFFORT_LEVEL": "high",
+    "CC_PERMISSION_MODE": "default"
+  },
+  "plugin_migrated": true
 }
