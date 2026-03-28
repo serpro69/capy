@@ -38,9 +38,9 @@ func TestServeSubcommand(t *testing.T) {
 }
 
 func TestHookSubcommand(t *testing.T) {
-	stdout, _, code := capy(t, "hook", "pretooluse")
+	// hook reads JSON from stdin; with empty stdin it passes through cleanly
+	_, _, code := capy(t, "hook", "pretooluse")
 	assert.Equal(t, 0, code)
-	assert.Contains(t, stdout, "hook pretooluse")
 }
 
 func TestHookRequiresEventArg(t *testing.T) {

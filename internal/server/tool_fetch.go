@@ -23,6 +23,9 @@ const (
 	fetchUserAgent   = "capy/1.0 (MCP knowledge indexer)"
 )
 
+// handleFetchAndIndex fetches a URL and indexes the content.
+// Unlike the TS reference (which uses a Node subprocess to bypass executor stdout
+// truncation), Go uses native net/http directly — no truncation constraint applies.
 func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	url := req.GetString("url", "")
 	source := req.GetString("source", "")
@@ -123,6 +126,8 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 
 // convertHTMLToMarkdown converts HTML to markdown, stripping non-content elements.
 // Removes script, style, noscript (base defaults) plus nav, header, footer.
+// Creates a new converter per call rather than using a singleton — this avoids
+// hidden state and is acceptable since fetch_and_index is not a hot path.
 func convertHTMLToMarkdown(html string) (string, error) {
 	conv := converter.NewConverter(
 		converter.WithPlugins(
