@@ -108,7 +108,7 @@
 
 ### Subtasks
 - [x] 7.1 Create `internal/security/settings.go` — `ReadBashPolicies(projectDir string) []SecurityPolicy` reading from 3 files: `.claude/settings.local.json` → `.claude/settings.json` → `~/.claude/settings.json`. `ReadToolDenyPatterns(toolName, projectDir string) [][]string`
-- [x] 7.2 Create `internal/security/glob.go` — `globToRegex(glob string) *regexp.Regexp` (colon syntax: `git:*` → match `git` alone or with args; plain glob: `*` → `[^\s]*`), `fileGlobToRegex(glob string) *regexp.Regexp` (`**` matches path segments, `*` matches non-separator), `parseBashPattern()`, `parseToolPattern()`
+- [x] 7.2 Create `internal/security/glob.go` — `globToRegex(glob string) *regexp.Regexp` (colon syntax: `git:*` → match `git` alone or with args; plain glob: `*` → `.*`), `fileGlobToRegex(glob string) *regexp.Regexp` (`**` matches path segments, `*` matches non-separator), `parseBashPattern()`, `parseToolPattern()`
 - [x] 7.3 Create `internal/security/split.go` — `SplitChainedCommands(command string) []string` splitting on `&&`, `||`, `;`, `|` while respecting single/double quotes and backticks
 - [x] 7.4 Create `internal/security/shell_escape.go` — `ExtractShellCommands(code, language string) []string` with regex patterns for Python, JS/TS, Ruby, Go, PHP, Rust. Include Python subprocess list-form extraction
 - [x] 7.5 Create `internal/security/eval.go` — `EvaluateCommandDenyOnly()` (server-side, deny or allow), `EvaluateCommand()` (hook-side, deny > ask > allow), `EvaluateFilePath()` (normalize backslashes, file glob matching)
@@ -125,7 +125,7 @@
 - [x] 8.2 Create `internal/server/stats.go` — `SessionStats` struct with mutex-protected Calls, BytesReturned, BytesIndexed, BytesSandboxed, and increment methods. `TrackResponse()` computes byte size of response content
 - [x] 8.3 Create `internal/server/tools.go` — register all 9 tools with `mcp-go` including JSON Schema input definitions for each tool
 - [x] 8.4 Create `internal/server/snippet.go` — `ExtractSnippet(content, query string, maxLen int, highlighted string) string` with FTS5 highlight marker parsing (STX/ETX chars 2/3), 300-char window merging, fallback to `strings.Index`. `positionsFromHighlight()` function
-- [x] 8.5 Create `internal/server/lifecycle.go` — `StartLifecycleGuard(onShutdown func()) func()` with ppid polling (30s), stdin close detection, SIGTERM/SIGINT/SIGHUP handling
+- [x] 8.5 Create `internal/server/lifecycle.go` — `StartLifecycleGuard(onShutdown func()) func()` with ppid polling (30s), SIGTERM/SIGINT/SIGHUP handling (stdin close handled by mcp-go stdio transport)
 - [x] 8.6 Implement `Serve(ctx context.Context) error` — create mcp-go server with stdio transport, register tools, start lifecycle guard, block. Wire into `cmd/capy/main.go` serve subcommand. Add unhandled panic recovery
 - [x] 8.7 Write tests: server construction, lazy store initialization, session stats thread-safety, lifecycle guard (mock ppid change), snippet extraction (highlight markers, no markers, overlapping windows), tool registration count
 
