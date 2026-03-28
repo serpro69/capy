@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# template-sync.sh - Synchronize configuration from upstream claude-starter-kit template
+# template-sync.sh - Synchronize configuration from upstream claude-toolbox template
 #
 # This script fetches template updates from the upstream repository and applies
 # project-specific substitutions using values stored in the state manifest.
@@ -37,7 +37,7 @@
 #     - For repos created before sync feature, create manifest manually (see README)
 #
 #   "Version not found":
-#     - Check available tags: git ls-remote --tags https://github.com/serpro69/claude-starter-kit
+#     - Check available tags: git ls-remote --tags https://github.com/serpro69/claude-toolbox
 #     - Use 'latest' for most recent release or 'main' for bleeding edge
 #
 #   "Network error":
@@ -78,6 +78,9 @@ SYNC_EXCLUSIONS=()
 
 # Resolved version (for reporting)
 RESOLVED_VERSION=""
+
+# Plugin migration tracking
+PLUGIN_MIGRATED=false
 
 # =============================================================================
 # Color Output
@@ -139,18 +142,6 @@ cleanup_on_exit() {
 # Helper Functions
 # =============================================================================
 
-# Convert comma-separated languages to YAML array format
-format_languages_yaml() {
-  local input="$1"
-  local indent="${2:-  }"  # default 2-space indent
-  echo "languages:"
-  IFS=',' read -ra langs <<< "$input"
-  for lang in "${langs[@]}"; do
-    lang=$(echo "$lang" | xargs)  # trim whitespace
-    echo "${indent}- $lang"
-  done
-}
-
 # is_excluded()
 # Checks if a file path matches any exclusion pattern.
 #
@@ -200,6 +191,10 @@ check_dependencies() {
 
   if ! command -v curl &>/dev/null; then
     missing+=("curl")
+  fi
+
+  if ! command -v yq &>/dev/null; then
+    missing+=("yq")
   fi
 
   if [[ ${#missing[@]} -gt 0 ]]; then
@@ -354,6 +349,215 @@ validate_manifest() {
   fi
 
   log_success "Manifest validation passed"
+}
+
+# migrate_manifest()
+# Migrates the manifest's upstream_repo from the old repository name
+# (serpro69/claude-starter-kit) to the new name (serpro69/claude-toolbox).
+# This ensures existing users' manifests are updated on their next sync.
+#
+# Returns:
+#   0 on success (migration applied or not needed)
+#   Exits with 1 if manifest rewrite fails
+#
+# Side effects:
+#   Rewrites MANIFEST_PATH in-place if migration needed
+#   Reloads manifest via read_manifest() after rewrite
+#   Logs info message when migration is triggered
+migrate_manifest() {
+  local upstream_repo
+  upstream_repo=$(get_manifest_value '.upstream_repo')
+
+  if [[ "$upstream_repo" == "serpro69/claude-starter-kit" ]]; then
+    log_info "Migrating upstream_repo from serpro69/claude-starter-kit to serpro69/claude-toolbox"
+    local tmp
+    tmp=$(mktemp "/tmp/manifest-migrate.XXXXXX")
+    if ! jq '.upstream_repo = "serpro69/claude-toolbox"' "$MANIFEST_PATH" > "$tmp"; then
+      rm -f "$tmp"
+      log_error "Failed to migrate manifest"
+      exit 1
+    fi
+    mv "$tmp" "$MANIFEST_PATH"
+    read_manifest
+  fi
+}
+
+# backfill_manifest_variables()
+# Adds missing optional variables to the manifest with their default values.
+# This ensures the manifest is always explicit about what values are being used,
+# even for variables that were introduced after the downstream repo was created.
+#
+# Returns:
+#   0 on success
+#
+# Side effects:
+#   Rewrites MANIFEST_PATH in-place if any variables are added
+#   Reloads manifest via read_manifest() after rewrite
+#   Logs info message listing backfilled variables
+backfill_manifest_variables() {
+  local defaults=(
+    "CC_STATUSLINE:enhanced"
+    "CC_EFFORT_LEVEL:high"
+    "CC_PERMISSION_MODE:default"
+  )
+
+  local needs_update=false
+  local backfilled=()
+
+  for entry in "${defaults[@]}"; do
+    local var="${entry%%:*}"
+    local default_val="${entry#*:}"
+    if [[ "$(get_manifest_value ".variables.$var // \"__MISSING__\"")" == "__MISSING__" ]]; then
+      needs_update=true
+      backfilled+=("$var=$default_val")
+    fi
+  done
+
+  if $needs_update; then
+    local tmp
+    tmp=$(mktemp "/tmp/manifest-backfill.XXXXXX")
+    local jq_expr='.'
+    for entry in "${defaults[@]}"; do
+      local var="${entry%%:*}"
+      local default_val="${entry#*:}"
+      if [[ "$(get_manifest_value ".variables.$var // \"__MISSING__\"")" == "__MISSING__" ]]; then
+        jq_expr="$jq_expr | .variables.$var = \"$default_val\""
+      fi
+    done
+    if ! jq "$jq_expr" "$MANIFEST_PATH" > "$tmp"; then
+      rm -f "$tmp"
+      log_warn "Failed to backfill manifest variables"
+      return 0
+    fi
+    mv "$tmp" "$MANIFEST_PATH"
+    log_info "Backfilled missing manifest variables: ${backfilled[*]}"
+    read_manifest
+  fi
+}
+
+# =============================================================================
+# Plugin Migration Functions
+# =============================================================================
+
+# needs_plugin_migration()
+# Checks whether the downstream repo needs to migrate from template-managed
+# skills/commands/hooks to the kk plugin system.
+#
+# Args:
+#   $1 - Path to fetched upstream directory (parent of klaude-plugin/)
+#
+# Returns:
+#   0 if migration is needed
+#   1 if migration is not needed (already migrated or upstream has no plugin)
+needs_plugin_migration() {
+  local upstream_dir="$1"
+
+  # Check if upstream has the plugin
+  if [[ ! -f "$upstream_dir/klaude-plugin/.claude-plugin/plugin.json" ]]; then
+    return 1
+  fi
+
+  # Check if already migrated
+  if [[ -f "$MANIFEST_PATH" ]] && jq -e '.plugin_migrated == true' "$MANIFEST_PATH" &>/dev/null; then
+    return 1
+  fi
+
+  return 0
+}
+
+# run_plugin_migration()
+# Removes template-managed skills, commands, hooks, and validate-bash.sh
+# from the downstream repo and updates settings.json for the plugin system.
+#
+# Side effects:
+#   - Deletes known template-managed files from .claude/
+#   - Updates .claude/settings.json: removes hooks, adds marketplace/plugin config
+#   - Sets plugin_migrated=true in template-state.json
+#   - Appends removed files to DELETED_FILES array
+#   - Logs all actions
+run_plugin_migration() {
+  log_step "Migrating to kk plugin system"
+
+  local upstream_repo
+  upstream_repo=$(get_manifest_value '.upstream_repo')
+
+  # Static list of known template-managed files to remove
+  local dirs_to_remove=(
+    ".claude/skills/analysis-process"
+    ".claude/skills/cove"
+    ".claude/skills/development-guidelines"
+    ".claude/skills/documentation-process"
+    ".claude/skills/implementation-process"
+    ".claude/skills/implementation-review"
+    ".claude/skills/merge-docs"
+    ".claude/skills/solid-code-review"
+    ".claude/skills/testing-process"
+    ".claude/commands/cove"
+    ".claude/commands/implementation-review"
+    ".claude/commands/migrate-from-taskmaster"
+    ".claude/commands/sync-workflow"
+  )
+  local files_to_remove=(
+    ".claude/scripts/validate-bash.sh"
+  )
+
+  # Remove directories
+  for dir in "${dirs_to_remove[@]}"; do
+    if [[ -d "$dir" ]]; then
+      rm -rf "$dir"
+      DELETED_FILES+=("$dir/")
+      log_info "Removed $dir/"
+    fi
+  done
+
+  # Remove individual files
+  for file in "${files_to_remove[@]}"; do
+    if [[ -f "$file" ]]; then
+      rm -f "$file"
+      DELETED_FILES+=("$file")
+      log_info "Removed $file"
+    fi
+  done
+
+  # Clean up empty parent directories
+  rmdir .claude/skills 2>/dev/null || true
+  rmdir .claude/commands 2>/dev/null || true
+
+  # Update settings.json: remove hooks, add marketplace and plugin config
+  local settings_file=".claude/settings.json"
+  if [[ -f "$settings_file" ]]; then
+    local tmp
+    tmp=$(mktemp "/tmp/settings-migrate.XXXXXX")
+    if jq --arg repo "$upstream_repo" \
+      'del(.hooks) |
+       .extraKnownMarketplaces = {
+         "claude-toolbox": {
+           "source": {
+             "source": "github",
+             "repo": $repo
+           }
+         }
+       }' "$settings_file" > "$tmp"; then
+      mv "$tmp" "$settings_file"
+      log_info "Updated $settings_file for plugin system"
+    else
+      rm -f "$tmp"
+      log_warn "Failed to update $settings_file — manual update required"
+    fi
+  fi
+
+  # Set plugin_migrated flag in manifest
+  local tmp
+  tmp=$(mktemp "/tmp/manifest-plugin.XXXXXX")
+  if jq '.plugin_migrated = true' "$MANIFEST_PATH" > "$tmp"; then
+    mv "$tmp" "$MANIFEST_PATH"
+    log_info "Set plugin_migrated flag in manifest"
+  else
+    rm -f "$tmp"
+    log_warn "Failed to update manifest — manual update required"
+  fi
+
+  log_success "Plugin migration complete"
 }
 
 # =============================================================================
@@ -521,7 +725,7 @@ fetch_upstream_templates() {
   if ! git sparse-checkout init --cone --quiet 2>/dev/null; then
     log_warn "Sparse-checkout init failed, continuing with full checkout"
   fi
-  if ! git sparse-checkout set .github/templates .github/workflows/template-sync.yml .github/scripts/template-sync.sh docs/update.sh --quiet 2>/dev/null; then
+  if ! git sparse-checkout set .github/templates .github/workflows/template-sync.yml .github/scripts/template-sync.sh docs/update.sh klaude-plugin/.claude-plugin/plugin.json --quiet 2>/dev/null; then
     log_warn "Sparse-checkout set failed, templates may not exist at this version"
   fi
 
@@ -544,14 +748,6 @@ fetch_upstream_templates() {
 # Substitution Functions
 # =============================================================================
 
-# Escape special characters for sed replacement
-# Usage: escaped=$(escape_sed_replacement "string with /special/ chars")
-escape_sed_replacement() {
-  local str="$1"
-  # Escape: & \ / and newlines for sed replacement string
-  printf '%s' "$str" | sed -e 's/[&\\/]/\\&/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g'
-}
-
 # apply_substitutions()
 # Applies project-specific variable substitutions to fetched template files.
 # Mirrors the substitution logic from template-cleanup.sh for consistency.
@@ -564,7 +760,7 @@ escape_sed_replacement() {
 #   0 on success
 #
 # Substitutions applied:
-#   - Claude Code settings: CC_MODEL
+#   - Claude Code settings: CC_MODEL, CC_EFFORT_LEVEL, CC_PERMISSION_MODE
 #   - Serena settings: PROJECT_NAME, LANGUAGES, SERENA_INITIAL_PROMPT
 #
 # Side effects:
@@ -581,29 +777,51 @@ apply_substitutions() {
   cp -rp "$template_dir"/* "$output_dir/"
 
   # Read all variables from manifest
-  local project_name languages cc_model cc_statusline serena_prompt
+  local project_name languages cc_model cc_effort_level cc_permission_mode cc_statusline serena_prompt
 
   project_name=$(get_manifest_value '.variables.PROJECT_NAME')
   languages=$(get_manifest_value '.variables.LANGUAGES')
   cc_model=$(get_manifest_value '.variables.CC_MODEL')
+  cc_effort_level=$(get_manifest_value '.variables.CC_EFFORT_LEVEL // "high"')
+  cc_permission_mode=$(get_manifest_value '.variables.CC_PERMISSION_MODE // "default"')
   cc_statusline=$(get_manifest_value '.variables.CC_STATUSLINE // "enhanced"')
   serena_prompt=$(get_manifest_value '.variables.SERENA_INITIAL_PROMPT')
 
   # --- Claude Code Settings (claude/settings.json) ---
   local cc_settings_file="$output_dir/claude/settings.json"
   if [[ -f "$cc_settings_file" ]]; then
-    if [[ "$cc_model" == "default" ]]; then
-      # Remove the model line entirely so Claude Code uses its built-in default
-      sed -i '/"model":/d' "$cc_settings_file"
-    else
-      local escaped_model
-      escaped_model=$(escape_sed_replacement "$cc_model")
-      sed -i "s/\"model\": \".*\"/\"model\": \"$escaped_model\"/g" "$cc_settings_file"
+    # Use downstream's settings.json as the base if it exists, so we only
+    # modify managed keys and avoid key-reordering noise in diffs.
+    # Falls back to the upstream template copy for first-time sync.
+    local downstream_settings=".claude/settings.json"
+    if [[ -f "$downstream_settings" ]]; then
+      cp "$downstream_settings" "$cc_settings_file"
     fi
-    # Statusline - template defaults to enhanced (statusline2.sh); switch to basic if requested
+
+    local statusline_script="statusline_enhanced.sh"
     if [[ "$cc_statusline" == "basic" ]]; then
-      sed -i "s/statusline_enhanced\.sh/statusline.sh/g" "$cc_settings_file"
+      statusline_script="statusline.sh"
     fi
+    local upstream_repo
+    upstream_repo=$(get_manifest_value '.upstream_repo')
+    jq \
+      --arg cc_model "$cc_model" \
+      --arg cc_effort_level "$cc_effort_level" \
+      --arg cc_permission_mode "$cc_permission_mode" \
+      --arg statusline_script "$statusline_script" \
+      --arg repo "$upstream_repo" \
+      '
+      # Model: "default" removes the key, otherwise set it
+      if $cc_model == "default" then del(.model) else .model = $cc_model end |
+      # Effort level: "default" removes the key, otherwise set it
+      if $cc_effort_level == "default" then del(.effortLevel) else .effortLevel = $cc_effort_level end |
+      # Permission mode
+      .permissions.defaultMode = $cc_permission_mode |
+      # Statusline script
+      .statusLine.command = (.statusLine.command | gsub("statusline_enhanced\\.sh"; $statusline_script)) |
+      # Plugin marketplace: directory -> github source for downstream
+      .extraKnownMarketplaces."claude-toolbox".source = { "source": "github", "repo": $repo }
+      ' "$cc_settings_file" > "${cc_settings_file}.tmp" && mv "${cc_settings_file}.tmp" "$cc_settings_file"
 
     log_info "Applied Claude Code settings"
   fi
@@ -612,25 +830,16 @@ apply_substitutions() {
   local serena_settings_file="$output_dir/serena/project.yml"
   if [[ -f "$serena_settings_file" ]]; then
     # Project name - always substitute
-    local escaped_project_name
-    escaped_project_name=$(escape_sed_replacement "$project_name")
-    sed -i "s/project_name: \".*\"/project_name: \"$escaped_project_name\"/g" "$serena_settings_file"
+    yq -i ".project_name = \"$project_name\"" "$serena_settings_file"
 
-    # Languages - use awk to replace the entire languages block (multi-line YAML array)
-    local languages_yaml
-    languages_yaml=$(format_languages_yaml "$languages")
-    awk -v new="$languages_yaml" '
-      /^languages:/ { print new; skip=1; next }
-      skip && /^[[:space:]]*-/ { next }
-      skip && /^[^[:space:]]/ { skip=0 }
-      !skip { print }
-    ' "$serena_settings_file" > "$serena_settings_file.tmp" && mv "$serena_settings_file.tmp" "$serena_settings_file"
+    # Languages - convert comma-separated string to YAML array via jq
+    local lang_json
+    lang_json=$(echo "$languages" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
+    yq -i ".languages = $lang_json" "$serena_settings_file"
 
     # Initial prompt - only substitute if provided
     if [[ -n "$serena_prompt" ]]; then
-      local escaped_serena_prompt
-      escaped_serena_prompt=$(escape_sed_replacement "$serena_prompt")
-      sed -i "s/initial_prompt: \"\"/initial_prompt: \"$escaped_serena_prompt\"/g" "$serena_settings_file"
+      yq -i ".initial_prompt = \"$serena_prompt\"" "$serena_settings_file"
     fi
     log_info "Applied Serena settings"
   fi
@@ -831,6 +1040,7 @@ generate_diff_report() {
         echo "excluded_count=${#EXCLUDED_FILES[@]}"
         echo "total_changes=$total_changes"
         echo "resolved_version=$RESOLVED_VERSION"
+        echo "plugin_migrated=$PLUGIN_MIGRATED"
         echo "diff_summary<<EOF"
         generate_markdown_summary "$staging_dir"
         echo "EOF"
@@ -1004,6 +1214,18 @@ generate_markdown_summary() {
     done
     echo ""
   fi
+
+  if $PLUGIN_MIGRATED; then
+    echo "### Plugin Migration"
+    echo ""
+    echo "Skills, commands, and hooks have been migrated to the **kk** plugin."
+    echo "Template-managed files listed under \"Deleted Files\" above were removed."
+    echo ""
+    echo "**After merging this PR:**"
+    echo "1. Run \`/plugin install kk@claude-toolbox\` to install the plugin"
+    echo "2. Commands are now namespaced: \`/project:command\` → \`/kk:dir:command\` (skills remain unprefixed)"
+    echo ""
+  fi
 }
 
 # =============================================================================
@@ -1013,7 +1235,7 @@ generate_markdown_summary() {
 show_help() {
   cat <<'EOF'
 Template Sync Script
-Synchronizes template updates from the upstream claude-starter-kit repository.
+Synchronizes template updates from the upstream claude-toolbox repository.
 
 Usage:
   ./template-sync.sh                    # Sync to latest version
@@ -1139,6 +1361,8 @@ main() {
   # Read and validate manifest
   read_manifest
   validate_manifest
+  migrate_manifest
+  backfill_manifest_variables
 
   # Display manifest info
   if ! $CI_MODE; then
@@ -1171,6 +1395,12 @@ main() {
     echo ""
   fi
 
+  # Run plugin migration if needed (before comparing files)
+  if needs_plugin_migration "$STAGING_DIR/upstream"; then
+    PLUGIN_MIGRATED=true
+    run_plugin_migration
+  fi
+
   # Apply substitutions to fetched templates
   SUBSTITUTED_TEMPLATES_PATH="$STAGING_DIR/substituted"
   apply_substitutions "$FETCHED_TEMPLATES_PATH" "$SUBSTITUTED_TEMPLATES_PATH"
@@ -1186,7 +1416,16 @@ main() {
   fi
 
   # Compare files and generate report
+  # Save migration deletions before compare_files resets arrays
+  local migration_deletions=()
+  if $PLUGIN_MIGRATED; then
+    migration_deletions=("${DELETED_FILES[@]}")
+  fi
   compare_files "$SUBSTITUTED_TEMPLATES_PATH"
+  # Merge migration deletions back
+  if [[ ${#migration_deletions[@]} -gt 0 ]]; then
+    DELETED_FILES+=("${migration_deletions[@]}")
+  fi
   generate_diff_report "$SUBSTITUTED_TEMPLATES_PATH"
 
   # Summary

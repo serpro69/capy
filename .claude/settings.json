@@ -50,7 +50,8 @@
       "Read(./**/venv/)",
       "Read(./**/__pycache__/)"
     ],
-    "ask": []
+    "ask": [],
+    "defaultMode": "default"
   },
   "enabledMcpjsonServers": [],
   "env": {
@@ -59,21 +60,17 @@
     "CLAUDE_STATUSLINE_THEME": "catppuccin",
     "CLAUDE_STATUSLINE_MODE": "dark"
   },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/scripts/validate-bash.sh"
-          }
-        ]
-      }
-    ]
-  },
   "statusLine": {
     "type": "command",
     "command": "bash $CLAUDE_PROJECT_DIR/.claude/scripts/statusline_enhanced.sh"
-  }
+  },
+  "extraKnownMarketplaces": {
+    "claude-toolbox": {
+      "source": {
+        "source": "github",
+        "repo": "serpro69/claude-toolbox"
+      }
+    }
+  },
+  "effortLevel": "high"
 }
