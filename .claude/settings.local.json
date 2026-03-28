@@ -8,7 +8,8 @@
       "Bash(make test:*)",
       "Bash(go test:*)",
       "Bash(go build:*)",
-      "Bash(go vet:*)"
+      "Bash(go vet:*)",
+      "mcp__pal__codereview"
     ]
   }
 }
