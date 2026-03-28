@@ -102,17 +102,17 @@
 
 ## Task 7: Security
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#5-security-implementation](./implementation.md#5-security-implementation)
 
 ### Subtasks
-- [ ] 7.1 Create `internal/security/settings.go` — `ReadBashPolicies(projectDir string) []SecurityPolicy` reading from 3 files: `.claude/settings.local.json` → `.claude/settings.json` → `~/.claude/settings.json`. `ReadToolDenyPatterns(toolName, projectDir string) [][]string`
-- [ ] 7.2 Create `internal/security/glob.go` — `globToRegex(glob string) *regexp.Regexp` (colon syntax: `git:*` → match `git` alone or with args; plain glob: `*` → `[^\s]*`), `fileGlobToRegex(glob string) *regexp.Regexp` (`**` matches path segments, `*` matches non-separator), `parseBashPattern()`, `parseToolPattern()`
-- [ ] 7.3 Create `internal/security/split.go` — `SplitChainedCommands(command string) []string` splitting on `&&`, `||`, `;`, `|` while respecting single/double quotes and backticks
-- [ ] 7.4 Create `internal/security/shell_escape.go` — `ExtractShellCommands(code, language string) []string` with regex patterns for Python, JS/TS, Ruby, Go, PHP, Rust. Include Python subprocess list-form extraction
-- [ ] 7.5 Create `internal/security/eval.go` — `EvaluateCommandDenyOnly()` (server-side, deny or allow), `EvaluateCommand()` (hook-side, deny > ask > allow), `EvaluateFilePath()` (normalize backslashes, file glob matching)
-- [ ] 7.6 Write tests: exact deny match, glob patterns (`*`, `**`, `?`), colon syntax, file path globs (`.env`, `**/.env*`), chained command splitting (with quoted strings and backticks), deny-wins-over-allow, three-tier settings precedence, shell-escape detection for Python/JS/Ruby/Go/PHP/Rust (including Python list form), file path evaluation with backslash normalization
+- [x] 7.1 Create `internal/security/settings.go` — `ReadBashPolicies(projectDir string) []SecurityPolicy` reading from 3 files: `.claude/settings.local.json` → `.claude/settings.json` → `~/.claude/settings.json`. `ReadToolDenyPatterns(toolName, projectDir string) [][]string`
+- [x] 7.2 Create `internal/security/glob.go` — `globToRegex(glob string) *regexp.Regexp` (colon syntax: `git:*` → match `git` alone or with args; plain glob: `*` → `[^\s]*`), `fileGlobToRegex(glob string) *regexp.Regexp` (`**` matches path segments, `*` matches non-separator), `parseBashPattern()`, `parseToolPattern()`
+- [x] 7.3 Create `internal/security/split.go` — `SplitChainedCommands(command string) []string` splitting on `&&`, `||`, `;`, `|` while respecting single/double quotes and backticks
+- [x] 7.4 Create `internal/security/shell_escape.go` — `ExtractShellCommands(code, language string) []string` with regex patterns for Python, JS/TS, Ruby, Go, PHP, Rust. Include Python subprocess list-form extraction
+- [x] 7.5 Create `internal/security/eval.go` — `EvaluateCommandDenyOnly()` (server-side, deny or allow), `EvaluateCommand()` (hook-side, deny > ask > allow), `EvaluateFilePath()` (normalize backslashes, file glob matching)
+- [x] 7.6 Write tests: exact deny match, glob patterns (`*`, `**`, `?`), colon syntax, file path globs (`.env`, `**/.env*`), chained command splitting (with quoted strings and backticks), deny-wins-over-allow, three-tier settings precedence, shell-escape detection for Python/JS/Ruby/Go/PHP/Rust (including Python list form), file path evaluation with backslash normalization
 
 ## Task 8: MCP Server — core setup and tool registration
 

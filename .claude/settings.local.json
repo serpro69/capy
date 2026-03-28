@@ -6,7 +6,9 @@
       "Bash(make build:*)",
       "Bash(make vet:*)",
       "Bash(make test:*)",
-      "Bash(go test:*)"
+      "Bash(go test:*)",
+      "Bash(go build:*)",
+      "Bash(go vet:*)"
     ]
   }
 }
