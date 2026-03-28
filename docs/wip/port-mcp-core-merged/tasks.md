@@ -183,14 +183,14 @@
 
 ## Task 13: Claude Code adapter
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#8-claude-code-adapter](./implementation.md#8-claude-code-adapter)
 
 ### Subtasks
-- [ ] 13.1 Create `internal/adapter/adapter.go` — `HookAdapter` interface (`ParsePreToolUse`, `FormatBlock`, `FormatAllow`, `FormatModify`, `FormatAsk`, `FormatSessionStart`, `Capabilities`), `PreToolUseEvent`, `PlatformCapabilities` types
-- [ ] 13.2 Create `internal/adapter/claudecode.go` — `ClaudeCodeAdapter` implementing all methods: parse `tool_name`/`tool_input`/`session_id`/`transcript_path` from JSON, format responses with `hookSpecificOutput` wrapper and correct field names (`permissionDecision`, `permissionDecisionReason`, `additionalContext`, `updatedInput`). Session ID extraction: transcript_path UUID > session_id > CLAUDE_SESSION_ID env > ppid fallback
-- [ ] 13.3 Write tests: parse Claude Code JSON input, format block/allow/modify/ask/sessionstart responses, session ID extraction from various sources
+- [x] 13.1 Create `internal/adapter/adapter.go` — `HookAdapter` interface (`ParsePreToolUse`, `FormatBlock`, `FormatAllow`, `FormatModify`, `FormatAsk`, `FormatSessionStart`, `Capabilities`), `PreToolUseEvent`, `PlatformCapabilities` types
+- [x] 13.2 Create `internal/adapter/claudecode.go` — `ClaudeCodeAdapter` implementing all methods: parse `tool_name`/`tool_input`/`session_id`/`transcript_path` from JSON, format responses with `hookSpecificOutput` wrapper and correct field names (`permissionDecision`, `permissionDecisionReason`, `additionalContext`, `updatedInput`). Session ID extraction: transcript_path UUID > session_id > CLAUDE_SESSION_ID env > ppid fallback
+- [x] 13.3 Write tests: parse Claude Code JSON input, format block/allow/modify/ask/sessionstart responses, session ID extraction from various sources
 
 ## Task 14: Setup command
 
