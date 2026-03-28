@@ -216,15 +216,7 @@ func toolCleanup() mcp.Tool {
 	)
 }
 
-// ─── Stub handlers (implemented in task 9-11) ──────────────────────────────
-
-func (s *Server) handleExecute(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return errorResult("capy_execute: not yet implemented"), nil
-}
-
-func (s *Server) handleExecuteFile(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return errorResult("capy_execute_file: not yet implemented"), nil
-}
+// ─── Stub handlers (implemented in task 10-11) ─────────────────────────────
 
 func (s *Server) handleIndex(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return errorResult("capy_index: not yet implemented"), nil
@@ -236,10 +228,6 @@ func (s *Server) handleSearch(_ context.Context, _ mcp.CallToolRequest) (*mcp.Ca
 
 func (s *Server) handleFetchAndIndex(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return errorResult("capy_fetch_and_index: not yet implemented"), nil
-}
-
-func (s *Server) handleBatchExecute(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return errorResult("capy_batch_execute: not yet implemented"), nil
 }
 
 func (s *Server) handleStats(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
