@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -214,18 +213,4 @@ func toolCleanup() mcp.Tool {
 			mcp.Description("Preview what would be removed without deleting (default: true)"),
 		),
 	)
-}
-
-// ─── Stub handlers (implemented in task 11) ──────────────────────────────────
-
-func (s *Server) handleStats(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return errorResult("capy_stats: not yet implemented"), nil
-}
-
-func (s *Server) handleDoctor(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return errorResult("capy_doctor: not yet implemented"), nil
-}
-
-func (s *Server) handleCleanup(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return errorResult("capy_cleanup: not yet implemented"), nil
 }

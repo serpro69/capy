@@ -15,6 +15,9 @@ const (
 	Perl       Language = "perl"
 	R          Language = "r"
 	Elixir     Language = "elixir"
+
+	// TotalLanguages is the count of supported languages.
+	TotalLanguages = 11
 )
 
 // ExecRequest describes a code execution request.
