@@ -131,15 +131,15 @@
 
 ## Task 9: MCP Tools — execution tools
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 8
 - **Docs:** [implementation.md#63-tool-handlers](./implementation.md#63-tool-handlers)
 
 ### Subtasks
-- [ ] 9.1 Create `internal/server/tool_execute.go` — `capy_execute` handler: parse inputs, security check (shell: EvaluateCommandDenyOnly, non-shell: ExtractShellCommands + check each), execute, classify non-zero exit codes, intent-driven search flow (if intent AND output > 5000 bytes: index as plaintext, search, return titles + previews + distinctive terms), stats tracking. Include input coercion for double-serialized arrays
-- [ ] 9.2 Create `internal/server/tool_execute_file.go` — `capy_execute_file` handler: check file path against Read deny patterns, check code against Bash/shell-escape patterns, call ExecuteFile(), same intent search and exit classification as execute
-- [ ] 9.3 Create `internal/server/tool_batch.go` — `capy_batch_execute` handler: coerce inputs (string→object, double-serialized arrays), security check each command, execute each **separately** as shell with `2>&1` (own truncation budget, remaining timeout), index combined output as markdown, build section inventory via GetChunksBySource(), three-tier search fallback (scoped → global with cross-source warning), 3000-byte snippets, 80 KB output cap, distinctive terms. Default timeout 60s
-- [ ] 9.4 Write tests: successful execution, security denial (bash deny, shell-escape in Python, file path deny), auto-indexing trigger (output > 5KB + intent), intent search returns titles not full content, exit code classification, batch with multiple commands + search, batch timeout (remaining commands skipped), input coercion, stats tracking
+- [x] 9.1 Create `internal/server/tool_execute.go` — `capy_execute` handler: parse inputs, security check (shell: EvaluateCommandDenyOnly, non-shell: ExtractShellCommands + check each), execute, classify non-zero exit codes, intent-driven search flow (if intent AND output > 5000 bytes: index as plaintext, search, return titles + previews + distinctive terms), stats tracking. Include input coercion for double-serialized arrays
+- [x] 9.2 Create `internal/server/tool_execute_file.go` — `capy_execute_file` handler: check file path against Read deny patterns, check code against Bash/shell-escape patterns, call ExecuteFile(), same intent search and exit classification as execute
+- [x] 9.3 Create `internal/server/tool_batch.go` — `capy_batch_execute` handler: coerce inputs (string→object, double-serialized arrays), security check each command, execute each **separately** as shell with `2>&1` (own truncation budget, remaining timeout), index combined output as markdown, build section inventory via GetChunksBySource(), three-tier search fallback (scoped → global with cross-source warning), 3000-byte snippets, 80 KB output cap, distinctive terms. Default timeout 60s
+- [x] 9.4 Write tests: successful execution, security denial (bash deny, shell-escape in Python, file path deny), auto-indexing trigger (output > 5KB + intent), intent search returns titles not full content, exit code classification, batch with multiple commands + search, batch timeout (remaining commands skipped), input coercion, stats tracking
 
 ## Task 10: MCP Tools — knowledge tools
 
