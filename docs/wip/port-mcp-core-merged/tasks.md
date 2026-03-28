@@ -143,15 +143,15 @@
 
 ## Task 10: MCP Tools — knowledge tools
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 8
 - **Docs:** [implementation.md#63-tool-handlers](./implementation.md#63-tool-handlers)
 
 ### Subtasks
-- [ ] 10.1 Create `internal/server/tool_index.go` — `capy_index` handler: parse inputs (content, path, source), call store.Index(), return source ID and chunk count
-- [ ] 10.2 Create `internal/server/tool_search.go` — `capy_search` handler: accept queries array or query string (with input coercion), progressive throttling (1-3: max 2, 4-8: max 1 + warning, 9+: blocked), SearchWithFallback per query, smart snippets (1500 bytes), 40 KB total output cap, include source listing when no results, distinctive terms
-- [ ] 10.3 Create `internal/server/tool_fetch.go` — `capy_fetch_and_index` handler: native Go `net/http` fetch with timeout/redirect limit/User-Agent, content-type routing (HTML → markdown via `JohannesKaufmann/html-to-markdown` stripping script/style/nav/header/footer, JSON → IndexJSON, text → IndexPlainText), 3072-byte preview
-- [ ] 10.4 Write tests: index with explicit/auto content type, search with multi-tier results and throttling, fetch_and_index with mock HTTP server (HTML→markdown, JSON, text)
+- [x] 10.1 Create `internal/server/tool_index.go` — `capy_index` handler: parse inputs (content, path, source), call store.Index(), return source ID and chunk count
+- [x] 10.2 Create `internal/server/tool_search.go` — `capy_search` handler: accept queries array or query string (with input coercion), progressive throttling (1-3: max 2, 4-8: max 1 + warning, 9+: blocked), SearchWithFallback per query, smart snippets (1500 bytes), 40 KB total output cap, include source listing when no results, distinctive terms
+- [x] 10.3 Create `internal/server/tool_fetch.go` — `capy_fetch_and_index` handler: native Go `net/http` fetch with timeout/redirect limit/User-Agent, content-type routing (HTML → markdown via `JohannesKaufmann/html-to-markdown` stripping script/style/nav/header/footer, JSON → IndexJSON, text → IndexPlainText), 3072-byte preview
+- [x] 10.4 Write tests: index with explicit/auto content type, search with multi-tier results and throttling, fetch_and_index with mock HTTP server (HTML→markdown, JSON, text)
 
 ## Task 11: MCP Tools — utility tools
 
