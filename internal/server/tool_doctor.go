@@ -3,39 +3,42 @@ package server
 import (
 	"context"
 	"fmt"
-	"slices"
-	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/executor"
-	"github.com/serpro69/capy/internal/version"
+	"github.com/serpro69/capy/internal/platform"
 )
 
 func (s *Server) handleDoctor(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var lines []string
-	lines = append(lines, "## capy doctor", "")
-
-	// Version
-	lines = append(lines, fmt.Sprintf("- [x] Version: %s", version.Version))
-
-	// Runtimes
+	// Runtimes — convert executor types to strings for shared check
 	runtimes := s.executor.Runtimes()
-	if len(runtimes) > 0 {
-		langs := make([]string, 0, len(runtimes))
-		for lang := range runtimes {
-			langs = append(langs, string(lang))
-		}
-		slices.Sort(langs)
-		lines = append(lines, fmt.Sprintf("- [x] Runtimes: %d/%d (%s)",
-			len(runtimes), executor.TotalLanguages, strings.Join(langs, ", ")))
-	} else {
-		lines = append(lines, "- [ ] Runtimes: none detected")
+	runtimeStrs := make(map[string]string, len(runtimes))
+	for lang, path := range runtimes {
+		runtimeStrs[string(lang)] = path
 	}
 
-	// FTS5 — try initializing the store
+	// Security stats
+	totalDeny := 0
+	for _, p := range s.security {
+		totalDeny += len(p.Deny)
+	}
+
+	// DB path
+	dbPath := ""
+	if s.config != nil {
+		dbPath = s.config.ResolveDBPath(s.projectDir)
+	}
+
+	// Shared checks
+	results := []platform.CheckResult{
+		platform.CheckVersion(),
+		platform.CheckRuntimes(runtimeStrs, executor.TotalLanguages),
+	}
+
+	// FTS5 — use the store directly since we have it
 	fts5OK := false
 	func() {
-		defer func() { recover() }() // guard against panics
+		defer func() { recover() }()
 		st := s.getStore()
 		if st != nil {
 			_, err := st.Stats()
@@ -43,46 +46,52 @@ func (s *Server) handleDoctor(_ context.Context, _ mcp.CallToolRequest) (*mcp.Ca
 		}
 	}()
 	if fts5OK {
-		lines = append(lines, "- [x] FTS5: available")
+		results = append(results, platform.CheckResult{Name: "FTS5", Status: platform.Pass, Detail: "available"})
 	} else {
-		lines = append(lines, "- [ ] FTS5: unavailable (binary may not be built with -tags fts5)")
+		results = append(results, platform.CheckResult{Name: "FTS5", Status: platform.Fail, Detail: "unavailable (binary may not be built with -tags fts5)"})
 	}
 
 	// Config
-	if s.config != nil {
-		lines = append(lines, fmt.Sprintf("- [x] Config: loaded (db path: %s)", s.config.ResolveDBPath(s.projectDir)))
-	} else {
-		lines = append(lines, "- [-] Config: using defaults")
-	}
+	results = append(results, platform.CheckConfig(s.projectDir, dbPath))
 
-	// Knowledge base
+	// Hook and MCP registration
+	results = append(results,
+		platform.CheckHookRegistration(s.projectDir),
+		platform.CheckMCPRegistration(s.projectDir),
+	)
+
+	// Knowledge base — use store directly for richer stats
 	if s.store != nil {
 		kbStats, err := s.store.Stats()
 		if err == nil {
-			lines = append(lines, fmt.Sprintf("- [x] Knowledge base: %d sources, %d chunks",
-				kbStats.SourceCount, kbStats.ChunkCount))
+			results = append(results, platform.CheckResult{
+				Name:   "Knowledge base",
+				Status: platform.Pass,
+				Detail: fmt.Sprintf("%d sources, %d chunks", kbStats.SourceCount, kbStats.ChunkCount),
+			})
 		} else {
-			lines = append(lines, fmt.Sprintf("- [-] Knowledge base: error reading stats (%v)", err))
+			results = append(results, platform.CheckResult{
+				Name:   "Knowledge base",
+				Status: platform.Warn,
+				Detail: fmt.Sprintf("error reading stats (%v)", err),
+			})
 		}
 	} else {
-		lines = append(lines, "- [-] Knowledge base: not initialized (lazy — will init on first use)")
+		results = append(results, platform.CheckResult{
+			Name:   "Knowledge base",
+			Status: platform.Warn,
+			Detail: "not initialized (lazy — will init on first use)",
+		})
 	}
 
-	// Security policies
-	if len(s.security) > 0 {
-		totalDeny := 0
-		for _, p := range s.security {
-			totalDeny += len(p.Deny)
-		}
-		lines = append(lines, fmt.Sprintf("- [x] Security: %d policy files, %d deny patterns",
-			len(s.security), totalDeny))
-	} else {
-		lines = append(lines, "- [-] Security: no deny policies loaded")
-	}
+	// Security
+	results = append(results, platform.CheckSecurity(totalDeny, len(s.security)))
 
 	// Project dir
-	lines = append(lines, fmt.Sprintf("- [x] Project: %s", s.projectDir))
+	results = append(results, platform.CheckResult{
+		Name: "Project", Status: platform.Pass, Detail: s.projectDir,
+	})
 
-	text := strings.Join(lines, "\n")
+	text := platform.FormatDiagnostics(results)
 	return s.trackToolResponse("capy_doctor", textResult(text)), nil
 }

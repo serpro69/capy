@@ -194,18 +194,18 @@
 
 ## Task 14: Setup command
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 12, Task 13
 - **Docs:** [implementation.md#9-setup-command-implementation](./implementation.md#9-setup-command-implementation)
 
 ### Subtasks
-- [ ] 14.1 Create `internal/platform/setup.go` — `SetupClaudeCode(binaryPath, projectDir string) error`: binary detection via `exec.LookPath`, MCP config merging (`.mcp.json`), hook config merging (`.claude/settings.json`), `.capy/` directory creation
-- [ ] 14.2 Implement idempotent JSON merging — read existing, deep-merge, write back with `json.MarshalIndent`. Preserve existing hooks, MCP servers, permissions
-- [ ] 14.3 Create `internal/platform/routing.go` — `GenerateRoutingInstructions() string` with capy tool names. Append to `CLAUDE.md` checking for existing `<context_window_protection>` block
-- [ ] 14.4 Create `internal/platform/doctor.go` — diagnostic checks reusable by both CLI and MCP tool
-- [ ] 14.5 Wire `setup`, `doctor`, `cleanup` subcommands in `cmd/capy/main.go` with flags: `--platform` (default "claude-code"), `--binary` (optional), `--max-age-days`, `--dry-run`/`--force`
-- [ ] 14.6 Ensure `.capy/` added to `.gitignore` (create or append, check for existing entry)
-- [ ] 14.7 Write tests: setup creates correct files, merges with existing settings without data loss, idempotent (run twice = same result), routing instructions contain capy tool names, doctor detects present/missing runtimes
+- [x] 14.1 Create `internal/platform/setup.go` — `SetupClaudeCode(binaryPath, projectDir string) error`: binary detection via `exec.LookPath` with `os.Executable()` fallback, MCP config merging (`.mcp.json`), hook config merging (`.claude/settings.json`), `.capy/` directory creation
+- [x] 14.2 Implement idempotent JSON merging — read existing, deep-merge, write back with `json.MarshalIndent`. Preserve existing hooks, MCP servers, permissions
+- [x] 14.3 Create `internal/platform/routing.go` — `GenerateRoutingInstructions() string` with capy tool names. Append to `CLAUDE.md` checking for existing routing block
+- [x] 14.4 Create `internal/platform/doctor.go` — diagnostic checks reusable by both CLI and MCP tool
+- [x] 14.5 Wire `setup`, `doctor`, `cleanup` subcommands in `cmd/capy/main.go` with flags: `--platform` (default "claude-code"), `--binary` (optional), `--max-age-days`, `--dry-run`/`--force`
+- [x] 14.6 Ensure `.capy/` added to `.gitignore` (create or append, check for existing entry)
+- [x] 14.7 Write tests: setup creates correct files, merges with existing settings without data loss, idempotent (run twice = same result), routing instructions contain capy tool names, doctor detects present/missing runtimes
 
 ## Task 15: HTML-to-Markdown conversion
 
