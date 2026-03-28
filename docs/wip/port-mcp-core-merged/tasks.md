@@ -116,18 +116,18 @@
 
 ## Task 8: MCP Server — core setup and tool registration
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2, Task 3, Task 6, Task 7
 - **Docs:** [implementation.md#6-mcp-server-implementation](./implementation.md#6-mcp-server-implementation)
 
 ### Subtasks
-- [ ] 8.1 Create `internal/server/server.go` — `Server` struct with store (nil until lazy-init), `storeMu sync.Once`, executor, security policies, config, stats, throttle, projectDir. Constructor `NewServer()`. `getStore()` with `sync.Once`
-- [ ] 8.2 Create `internal/server/stats.go` — `SessionStats` struct with mutex-protected Calls, BytesReturned, BytesIndexed, BytesSandboxed, and increment methods. `TrackResponse()` computes byte size of response content
-- [ ] 8.3 Create `internal/server/tools.go` — register all 9 tools with `mcp-go` including JSON Schema input definitions for each tool
-- [ ] 8.4 Create `internal/server/snippet.go` — `ExtractSnippet(content, query string, maxLen int, highlighted string) string` with FTS5 highlight marker parsing (STX/ETX chars 2/3), 300-char window merging, fallback to `strings.Index`. `positionsFromHighlight()` function
-- [ ] 8.5 Create `internal/server/lifecycle.go` — `StartLifecycleGuard(onShutdown func()) func()` with ppid polling (30s), stdin close detection, SIGTERM/SIGINT/SIGHUP handling
-- [ ] 8.6 Implement `Serve(ctx context.Context) error` — create mcp-go server with stdio transport, register tools, start lifecycle guard, block. Wire into `cmd/capy/main.go` serve subcommand. Add unhandled panic recovery
-- [ ] 8.7 Write tests: server construction, lazy store initialization, session stats thread-safety, lifecycle guard (mock ppid change), snippet extraction (highlight markers, no markers, overlapping windows), tool registration count
+- [x] 8.1 Create `internal/server/server.go` — `Server` struct with store (nil until lazy-init), `storeMu sync.Once`, executor, security policies, config, stats, throttle, projectDir. Constructor `NewServer()`. `getStore()` with `sync.Once`
+- [x] 8.2 Create `internal/server/stats.go` — `SessionStats` struct with mutex-protected Calls, BytesReturned, BytesIndexed, BytesSandboxed, and increment methods. `TrackResponse()` computes byte size of response content
+- [x] 8.3 Create `internal/server/tools.go` — register all 9 tools with `mcp-go` including JSON Schema input definitions for each tool
+- [x] 8.4 Create `internal/server/snippet.go` — `ExtractSnippet(content, query string, maxLen int, highlighted string) string` with FTS5 highlight marker parsing (STX/ETX chars 2/3), 300-char window merging, fallback to `strings.Index`. `positionsFromHighlight()` function
+- [x] 8.5 Create `internal/server/lifecycle.go` — `StartLifecycleGuard(onShutdown func()) func()` with ppid polling (30s), stdin close detection, SIGTERM/SIGINT/SIGHUP handling
+- [x] 8.6 Implement `Serve(ctx context.Context) error` — create mcp-go server with stdio transport, register tools, start lifecycle guard, block. Wire into `cmd/capy/main.go` serve subcommand. Add unhandled panic recovery
+- [x] 8.7 Write tests: server construction, lazy store initialization, session stats thread-safety, lifecycle guard (mock ppid change), snippet extraction (highlight markers, no markers, overlapping windows), tool registration count
 
 ## Task 9: MCP Tools — execution tools
 
