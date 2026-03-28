@@ -32,9 +32,9 @@ func TestVersionFlag(t *testing.T) {
 }
 
 func TestServeSubcommand(t *testing.T) {
-	stdout, _, code := capy(t, "serve")
+	// serve starts MCP JSON-RPC on stdio; with empty stdin it exits cleanly
+	_, _, code := capy(t, "serve")
 	assert.Equal(t, 0, code)
-	assert.Contains(t, stdout, "MCP server")
 }
 
 func TestHookSubcommand(t *testing.T) {
@@ -67,9 +67,9 @@ func TestCleanupSubcommand(t *testing.T) {
 }
 
 func TestDefaultCommandIsServe(t *testing.T) {
-	stdout, _, code := capy(t)
+	// default command is serve; with empty stdin it exits cleanly
+	_, _, code := capy(t)
 	assert.Equal(t, 0, code)
-	assert.Contains(t, stdout, "MCP server")
 }
 
 func TestUnknownSubcommand(t *testing.T) {
