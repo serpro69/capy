@@ -26,6 +26,8 @@ type searchThrottle struct {
 
 // advance increments the call count and returns the new count and window age.
 // If the window has expired, it resets the window atomically before incrementing.
+// Combined into a single lock acquisition to avoid TOCTOU between separate
+// increment/age/reset calls.
 func (t *searchThrottle) advance(window time.Duration) (int, time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
