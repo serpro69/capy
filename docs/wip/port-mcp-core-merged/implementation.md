@@ -896,16 +896,16 @@ type SecurityPolicy struct {
     Ask   []string
 }
 
-func ReadBashPolicies(projectDir string) []SecurityPolicy {
+func ReadBashPolicies(projectDir, globalSettingsPath string) []SecurityPolicy {
     // Load in precedence order (most local first):
     // 1. .claude/settings.local.json
     // 2. .claude/settings.json
-    // 3. ~/.claude/settings.json
+    // 3. ~/.claude/settings.json (or globalSettingsPath if non-empty)
     // Extract only Bash(...) patterns from permissions.deny/allow/ask
     // Missing/invalid files silently skipped
 }
 
-func ReadToolDenyPatterns(toolName, projectDir string) [][]string {
+func ReadToolDenyPatterns(toolName, projectDir, globalSettingsPath string) [][]string {
     // Same 3-tier settings files
     // Extract globs from ToolName(glob) patterns matching toolName
     // Returns array of arrays (one per settings file)
@@ -918,9 +918,9 @@ func ReadToolDenyPatterns(toolName, projectDir string) [][]string {
 // internal/security/glob.go
 
 func globToRegex(glob string, caseInsensitive bool) *regexp.Regexp {
-    // Colon format: "command:argsGlob" → /^command(\s+argsRegex)?$/
+    // Colon format: "command:argsGlob" → /^command(\sargsRegex)?$/
     // Plain glob: "sudo *" → /^sudo .*$/
-    // * → [^\s]* (no whitespace), other regex chars escaped
+    // * → .* (matches anything including whitespace), other regex chars escaped
 }
 
 func fileGlobToRegex(glob string, caseInsensitive bool) *regexp.Regexp {
@@ -980,23 +980,28 @@ func ExtractShellCommands(code, language string) []string {
 ```go
 // internal/security/eval.go
 
+type CommandDecision struct {
+    Decision       string // "allow", "deny", or "ask"
+    MatchedPattern string
+}
+
 // Server-side: deny-only (no "ask" prompting in MCP server)
-func EvaluateCommandDenyOnly(command string, policies []SecurityPolicy) (decision string, matchedPattern string) {
+func EvaluateCommandDenyOnly(command string, policies []SecurityPolicy) CommandDecision {
     segments := SplitChainedCommands(command)
     for _, seg := range segments {
         for _, policy := range policies {
             if match := matchesAnyBashPattern(seg, policy.Deny); match != "" {
-                return "deny", match
+                return CommandDecision{Decision: "deny", MatchedPattern: match}
             }
         }
     }
-    return "allow", ""
+    return CommandDecision{Decision: "allow"}
 }
 
 // Hook-side: full deny > ask > allow evaluation
-func EvaluateCommand(command string, policies []SecurityPolicy) (decision string, matchedPattern string) {
+func EvaluateCommand(command string, policies []SecurityPolicy) CommandDecision {
     // Check deny (on each chained segment) → ask (on full command) → allow
-    // Default: "ask" (no match)
+    // Default: CommandDecision{Decision: "ask"}
 }
 
 // File path checking
@@ -1031,7 +1036,7 @@ internal/security/eval.go         — EvaluateCommandDenyOnly(), EvaluateCommand
 package server
 
 type Server struct {
-    mcpServer  *mcp.Server
+    mcpServer  *mcpserver.MCPServer  // github.com/mark3labs/mcp-go/server
     store      *store.ContentStore
     executor   *executor.PolyglotExecutor
     security   []security.SecurityPolicy
@@ -1172,12 +1177,10 @@ func (s *SessionStats) AddBytesIndexed(bytes int64) { /* ... */ }
 
 func StartLifecycleGuard(onShutdown func()) func() {
     originalPpid := os.Getppid()
-    stopped := false
+    var once sync.Once
 
     shutdown := func() {
-        if stopped { return }
-        stopped = true
-        onShutdown()
+        once.Do(onShutdown)
     }
 
     // P0: Periodic parent PID check (every 30s)
@@ -1200,13 +1203,18 @@ func StartLifecycleGuard(onShutdown func()) func() {
         shutdown()
     }()
 
-    // Return cleanup function
+    // Return cleanup function (signal goroutine exits via done channel)
+    done := make(chan struct{})
+    // ... signal goroutine uses select { case <-sigCh: ... case <-done: }
     return func() {
-        stopped = true
+        close(done)
         ticker.Stop()
         signal.Stop(sigCh)
     }
 }
+// NOTE: Stdin close detection is handled by the mcp-go stdio transport
+// (StdioServer.Listen returns when stdin closes), not by the lifecycle guard.
+
 ```
 
 ### 6.7 Serve Command Integration
