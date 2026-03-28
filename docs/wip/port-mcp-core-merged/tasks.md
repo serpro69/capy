@@ -155,15 +155,15 @@
 
 ## Task 11: MCP Tools — utility tools
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 8
 - **Docs:** [implementation.md#63-tool-handlers](./implementation.md#63-tool-handlers)
 
 ### Subtasks
-- [ ] 11.1 Create `internal/server/tool_stats.go` — `capy_stats` handler: session stats (per-tool bytes/calls, uptime), savings calculation (keptOut, ratio, reductionPct, estimatedTokens), knowledge base stats if store initialized (tier distribution). Format as markdown table
-- [ ] 11.2 Create `internal/server/tool_doctor.go` — `capy_doctor` handler: check version, available runtimes, FTS5, config, knowledge base status, hook registration, MCP registration. Format as pass/warn/fail report
-- [ ] 11.3 Create `internal/server/tool_cleanup.go` — `capy_cleanup` handler: parse inputs (max_age_days, dry_run defaults true), call store.Cleanup(), return pruned/would-be-pruned sources
-- [ ] 11.4 Write tests: stats with empty/populated store, doctor output format, cleanup dry-run vs force
+- [x] 11.1 Create `internal/server/tool_stats.go` — `capy_stats` handler: session stats (per-tool bytes/calls, uptime), savings calculation (keptOut, ratio, reductionPct, estimatedTokens), knowledge base stats if store initialized (tier distribution). Format as markdown table
+- [x] 11.2 Create `internal/server/tool_doctor.go` — `capy_doctor` handler: check version, available runtimes, FTS5, config, knowledge base status, hook registration, MCP registration. Format as pass/warn/fail report
+- [x] 11.3 Create `internal/server/tool_cleanup.go` — `capy_cleanup` handler: parse inputs (max_age_days, dry_run defaults true), call store.Cleanup(), return pruned/would-be-pruned sources
+- [x] 11.4 Write tests: stats with empty/populated store, doctor output format, cleanup dry-run vs force
 
 ## Task 12: Hook system — PreToolUse
 
