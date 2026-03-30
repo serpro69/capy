@@ -12,5 +12,8 @@
       "mcp__pal__codereview",
       "Bash(go tool:*)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "capy"
+  ]
 }
