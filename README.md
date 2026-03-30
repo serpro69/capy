@@ -105,7 +105,7 @@ capy uses TOML configuration with three-level precedence (lowest to highest):
 
 ```toml
 [store]
-path = ".capy/knowledge.db"  # default: XDG data dir
+# path = ".capy/knowledge.db"  # optional override; default: ~/.local/share/capy/<project-hash>/knowledge.db
 
 [store.cleanup]
 cold_threshold_days = 30
