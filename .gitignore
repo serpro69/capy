@@ -8,6 +8,7 @@
 !.github/**
 !.yamlfmt.yaml
 !.yamllint.yml
+!.mcp.json
 
 # Logs
 logs
@@ -29,3 +30,4 @@ homebrew/
 
 # binaries
 /capy
+.capy/
