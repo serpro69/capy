@@ -47,8 +47,8 @@ func TestExecuteFile_FilePathDeny(t *testing.T) {
 		0o644,
 	))
 
-	srv := newTestServer(t, nil)
-	srv.projectDir = tmp
+	// Construct server with tmp as projectDir so readDenyGlobs are loaded correctly
+	srv := newTestServerWithProjectDir(t, nil, tmp)
 
 	r := callExecuteFile(t, srv, map[string]any{
 		"path":     filepath.Join(tmp, ".env"),

@@ -44,15 +44,16 @@ func (t *searchThrottle) advance(window time.Duration) (int, time.Duration) {
 
 // Server is the capy MCP server.
 type Server struct {
-	mcpServer  *mcpserver.MCPServer
-	store      *store.ContentStore
-	executor   *executor.PolyglotExecutor
-	security   []security.SecurityPolicy
-	config     *config.Config
-	stats      *SessionStats
-	throttle   *searchThrottle
-	storeMu    sync.Once
-	projectDir string
+	mcpServer      *mcpserver.MCPServer
+	store          *store.ContentStore
+	executor       *executor.PolyglotExecutor
+	security       []security.SecurityPolicy
+	readDenyGlobs  [][]string // cached Read deny patterns
+	config         *config.Config
+	stats          *SessionStats
+	throttle       *searchThrottle
+	storeMu        sync.Once
+	projectDir     string
 }
 
 // NewServer creates a new Server. The store is lazily initialized on first use.
@@ -63,12 +64,13 @@ func NewServer(
 	projectDir string,
 ) *Server {
 	return &Server{
-		config:     cfg,
-		security:   policies,
-		executor:   exec,
-		stats:      NewSessionStats(),
-		throttle:   &searchThrottle{windowStart: time.Now()},
-		projectDir: projectDir,
+		config:        cfg,
+		security:      policies,
+		readDenyGlobs: security.ReadToolDenyPatterns("Read", projectDir, ""),
+		executor:      exec,
+		stats:         NewSessionStats(),
+		throttle:      &searchThrottle{windowStart: time.Now()},
+		projectDir:    projectDir,
 	}
 }
 

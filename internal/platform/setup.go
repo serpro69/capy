@@ -95,6 +95,8 @@ func mergeHooks(settingsPath, binaryPath string) error {
 	}
 
 	for _, he := range hookEvents {
+		// NOTE: binary paths with spaces are not supported — same as TS reference.
+		// Claude Code splits the command string on spaces when spawning.
 		hookCommand := binaryPath + " hook " + he.CLIArg
 		entry := map[string]any{
 			"matcher": he.Matcher,
