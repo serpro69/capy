@@ -44,19 +44,19 @@
 
 ## Task 4: Install script
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Docs:** [design.md#3-install-script](./design.md#3-install-script-install-sh)
 
 ### Subtasks
-- [ ] 4.1 Create `install.sh` in repo root — POSIX-compatible shell script
-- [ ] 4.2 Detect OS (`uname -s` → `darwin`/`linux`) and architecture (`uname -m` → map `x86_64`→`amd64`, `aarch64`/`arm64`→`arm64`)
-- [ ] 4.3 Fetch latest release tag from GitHub API (`/repos/serpro69/capy/releases/latest`), or accept `VERSION` env var override
-- [ ] 4.4 Download `capy_<version>_<os>_<arch>.tar.gz` and `SHA256SUMS` from the release
-- [ ] 4.5 Verify SHA256 checksum (`sha256sum` on Linux, `shasum -a 256` on macOS), fail on mismatch
-- [ ] 4.6 Extract binary to `INSTALL_DIR` (default `~/.local/bin/`, create if missing)
-- [ ] 4.7 Print success message with next steps (`capy setup` in project directory, PATH hint if `~/.local/bin` is not in PATH)
-- [ ] 4.8 Handle errors: unsupported OS/arch, download failure, checksum mismatch — fail loudly with actionable message
+- [x] 4.1 Create `install.sh` in repo root — POSIX-compatible shell script
+- [x] 4.2 Detect OS (`uname -s` → `darwin`/`linux`) and architecture (`uname -m` → map `x86_64`→`amd64`, `aarch64`/`arm64`→`arm64`)
+- [x] 4.3 Fetch latest release tag from GitHub API (`/repos/serpro69/capy/releases/latest`), or accept `VERSION` env var override
+- [x] 4.4 Download `capy_<version>_<os>_<arch>.tar.gz` and `SHA256SUMS` from the release
+- [x] 4.5 Verify SHA256 checksum (`sha256sum` on Linux, `shasum -a 256` on macOS), fail on mismatch
+- [x] 4.6 Extract binary to `INSTALL_DIR` (default `~/.local/bin/`, create if missing)
+- [x] 4.7 Print success message with next steps (`capy setup` in project directory, PATH hint if `~/.local/bin` is not in PATH)
+- [x] 4.8 Handle errors: unsupported OS/arch, download failure, checksum mismatch — fail loudly with actionable message
 
 ## Task 5: Homebrew tap
 
