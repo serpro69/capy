@@ -11,6 +11,7 @@ import (
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/base"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/commonmark"
+	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/table"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/store"
 )
@@ -80,6 +81,11 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 	content := string(body)
 	contentType := resp.Header.Get("Content-Type")
 
+	// Reject binary content
+	if isBinaryContent(contentType, body) {
+		return errorResult(fmt.Sprintf("Cannot index binary content from %s (Content-Type: %s)", url, contentType)), nil
+	}
+
 	// Track raw bytes
 	s.stats.AddBytesIndexed(int64(len(body)))
 
@@ -133,6 +139,7 @@ func convertHTMLToMarkdown(html string) (string, error) {
 		converter.WithPlugins(
 			base.NewBasePlugin(),
 			commonmark.NewCommonmarkPlugin(),
+			table.NewTablePlugin(),
 		),
 	)
 
@@ -142,4 +149,40 @@ func convertHTMLToMarkdown(html string) (string, error) {
 	conv.Register.TagType("footer", converter.TagTypeRemove, converter.PriorityStandard)
 
 	return conv.ConvertString(html)
+}
+
+// isBinaryContent returns true if the content appears to be binary (images, PDFs, etc.)
+// based on Content-Type header and byte content inspection.
+func isBinaryContent(contentType string, body []byte) bool {
+	// Extract media type (strip parameters like charset, boundary, name)
+	ct := strings.ToLower(contentType)
+	mediaType := strings.TrimSpace(strings.SplitN(ct, ";", 2)[0])
+
+	binaryTypes := []string{
+		"image/", "audio/", "video/", "application/pdf",
+		"application/zip", "application/gzip", "application/octet-stream",
+		"application/x-tar", "application/x-bzip",
+	}
+	for _, prefix := range binaryTypes {
+		if strings.HasPrefix(mediaType, prefix) {
+			return true
+		}
+	}
+
+	// Skip null-byte heuristic when Content-Type explicitly declares a text type —
+	// the header already passed the binary-type check above, so we trust it.
+	// This avoids false positives on UTF-16 encoded text which contains null bytes.
+	if strings.HasPrefix(mediaType, "text/") {
+		return false
+	}
+
+	// Heuristic: check for null bytes in the first 512 bytes
+	checkLen := min(512, len(body))
+	for _, b := range body[:checkLen] {
+		if b == 0 {
+			return true
+		}
+	}
+
+	return false
 }

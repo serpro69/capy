@@ -504,3 +504,133 @@ func TestConvertHTMLToMarkdown_PreservesCodeBlocks(t *testing.T) {
 	assert.Contains(t, md, "func main()")
 	assert.Contains(t, md, "fmt.Println")
 }
+
+func TestConvertHTMLToMarkdown_GFMTables(t *testing.T) {
+	html := `<table>
+<thead><tr><th>Name</th><th>Age</th></tr></thead>
+<tbody>
+<tr><td>Alice</td><td>30</td></tr>
+<tr><td>Bob</td><td>25</td></tr>
+</tbody>
+</table>`
+
+	md, err := convertHTMLToMarkdown(html)
+	require.NoError(t, err)
+	assert.Contains(t, md, "Name")
+	assert.Contains(t, md, "Alice")
+	assert.Contains(t, md, "Bob")
+	assert.Contains(t, md, "|")   // GFM pipe table syntax
+	assert.Contains(t, md, "---") // GFM separator row
+}
+
+func TestConvertHTMLToMarkdown_StripsNoscript(t *testing.T) {
+	html := `<p>Visible content</p><noscript><p>JavaScript required</p></noscript>`
+
+	md, err := convertHTMLToMarkdown(html)
+	require.NoError(t, err)
+	assert.Contains(t, md, "Visible content")
+	assert.NotContains(t, md, "JavaScript required")
+}
+
+func TestConvertHTMLToMarkdown_MalformedHTML(t *testing.T) {
+	// Unclosed tags, missing elements — should not error
+	html := `<h1>Title<p>No closing h1<div><span>Deeply nested</p></div>`
+
+	md, err := convertHTMLToMarkdown(html)
+	require.NoError(t, err)
+	assert.Contains(t, md, "Title")
+	assert.Contains(t, md, "Deeply nested")
+}
+
+func TestConvertHTMLToMarkdown_EmptyInput(t *testing.T) {
+	md, err := convertHTMLToMarkdown("")
+	require.NoError(t, err)
+	assert.Empty(t, strings.TrimSpace(md))
+}
+
+func TestIsBinaryContent(t *testing.T) {
+	t.Run("image content type", func(t *testing.T) {
+		assert.True(t, isBinaryContent("image/png", []byte("PNG data")))
+	})
+
+	t.Run("pdf content type", func(t *testing.T) {
+		assert.True(t, isBinaryContent("application/pdf", []byte("%PDF-1.4")))
+	})
+
+	t.Run("octet-stream", func(t *testing.T) {
+		assert.True(t, isBinaryContent("application/octet-stream", []byte{0x00, 0x01}))
+	})
+
+	t.Run("html is not binary", func(t *testing.T) {
+		assert.False(t, isBinaryContent("text/html", []byte("<html><body>Hello</body></html>")))
+	})
+
+	t.Run("json is not binary", func(t *testing.T) {
+		assert.False(t, isBinaryContent("application/json", []byte(`{"key": "value"}`)))
+	})
+
+	t.Run("null bytes in body with non-text type", func(t *testing.T) {
+		body := []byte("data\x00with\x00nulls")
+		assert.True(t, isBinaryContent("application/json", body))
+	})
+
+	t.Run("clean text body", func(t *testing.T) {
+		assert.False(t, isBinaryContent("text/plain", []byte("clean text content")))
+	})
+
+	t.Run("content type with charset parameter", func(t *testing.T) {
+		assert.True(t, isBinaryContent("image/png; name=photo.png", []byte("PNG")))
+		assert.False(t, isBinaryContent("text/html; charset=utf-8", []byte("<html>")))
+	})
+
+	t.Run("uppercase content type", func(t *testing.T) {
+		assert.True(t, isBinaryContent("APPLICATION/PDF", []byte("%PDF")))
+	})
+
+	t.Run("text type skips null-byte check to avoid UTF-16 false positive", func(t *testing.T) {
+		// UTF-16LE "Hi" = 0x48 0x00 0x69 0x00 — contains null bytes
+		utf16Body := []byte{0x48, 0x00, 0x69, 0x00}
+		assert.False(t, isBinaryContent("text/html; charset=utf-16", utf16Body))
+		assert.False(t, isBinaryContent("text/plain", utf16Body))
+	})
+
+	t.Run("null byte beyond 512-byte window", func(t *testing.T) {
+		body := make([]byte, 1024)
+		for i := range body[:600] {
+			body[i] = 'A'
+		}
+		body[600] = 0x00
+		assert.False(t, isBinaryContent("application/json", body))
+	})
+
+	t.Run("empty body", func(t *testing.T) {
+		assert.False(t, isBinaryContent("application/json", []byte{}))
+	})
+}
+
+func TestFetchAndIndex_BinaryContent(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte{0x89, 0x50, 0x4E, 0x47}) // PNG magic bytes
+	}))
+	defer ts.Close()
+
+	srv := newTestServer(t, nil)
+	r := callFetchAndIndex(t, srv, map[string]any{"url": ts.URL, "source": "test-binary"})
+	assert.True(t, r.IsError)
+	assert.Contains(t, resultText(r), "binary content")
+}
+
+func TestFetchAndIndex_BinaryBodyWithTextContentType(t *testing.T) {
+	// Misconfigured server sends binary data with text Content-Type
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-custom")
+		w.Write([]byte{0x00, 0x01, 0x02, 0x03}) // null bytes
+	}))
+	defer ts.Close()
+
+	srv := newTestServer(t, nil)
+	r := callFetchAndIndex(t, srv, map[string]any{"url": ts.URL, "source": "test-null-bytes"})
+	assert.True(t, r.IsError)
+	assert.Contains(t, resultText(r), "binary content")
+}
