@@ -33,6 +33,7 @@ func main() {
 		newSetupCmd(),
 		newDoctorCmd(),
 		newCleanupCmd(),
+		newWhichCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
