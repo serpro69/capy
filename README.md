@@ -24,16 +24,19 @@ Every MCP tool call dumps raw data into your context window. A single API respon
 
 ## Quick Start
 
-### Prerequisites
-
-- **Go 1.23+** ([install](https://go.dev/dl/))
-- **C compiler** (required for SQLite FTS5):
-  - macOS: `xcode-select --install`
-  - Debian/Ubuntu: `sudo apt install build-essential`
-  - Fedora: `sudo dnf install gcc`
-
 ### Install
 
+**Homebrew** (macOS/Linux):
+```bash
+brew install serpro69/tap/capy
+```
+
+**Shell script** (any Unix):
+```bash
+curl -sSfL https://raw.githubusercontent.com/serpro69/capy/master/install.sh | sh
+```
+
+**Build from source** (requires Go 1.23+ and a C compiler):
 ```bash
 git clone https://github.com/serpro69/capy.git
 cd capy
