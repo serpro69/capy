@@ -23,5 +23,9 @@ logs
 !.serena
 !.claude
 
+# formulae for homebrew
+# here only for convenience, see serpro69/homebrew-tap repo
+homebrew/
+
 # binaries
 /capy
