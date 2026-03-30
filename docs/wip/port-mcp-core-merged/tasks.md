@@ -209,15 +209,15 @@
 
 ## Task 15: HTML-to-Markdown conversion
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#63-tool-handlers](./implementation.md#63-tool-handlers)
 
 ### Subtasks
-- [ ] 15.1 Evaluate and integrate `github.com/JohannesKaufmann/html-to-markdown` (v2) — must support GFM tables and element stripping
-- [ ] 15.2 Implement `htmlToMarkdown(html string) string`: strip `<script>`, `<style>`, `<nav>`, `<header>`, `<footer>`, `<noscript>` elements before conversion, preserve code blocks, GFM tables
-- [ ] 15.3 Handle edge cases: malformed HTML, empty response, binary content detection
-- [ ] 15.4 Write tests: basic HTML article, GFM tables, code blocks, script/style stripping, malformed HTML graceful handling (use `httptest.NewServer`)
+- [x] 15.1 Evaluate and integrate `github.com/JohannesKaufmann/html-to-markdown` (v2) — must support GFM tables and element stripping
+- [x] 15.2 Implement `htmlToMarkdown(html string) string`: strip `<script>`, `<style>`, `<nav>`, `<header>`, `<footer>`, `<noscript>` elements before conversion, preserve code blocks, GFM tables
+- [x] 15.3 Handle edge cases: malformed HTML, empty response, binary content detection
+- [x] 15.4 Write tests: basic HTML article, GFM tables, code blocks, script/style stripping, malformed HTML graceful handling (use `httptest.NewServer`)
 
 ## Task 16: End-to-end integration testing
 
