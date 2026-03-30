@@ -325,11 +325,15 @@ Sources are classified by access recency:
 
 ### 3.9 Stopword List
 
-88 stopwords matching context-mode exactly:
+118 stopwords (102 from context-mode + 16 domain-specific additions):
 
-Common English: the, and, for, are, but, not, you, all, can, had, her, was, one, our, out, has, his, how, its, may, new, now, old, see, way, who, did, get, got, let, say, she, too, use, will, with, this, that, from, they, been, have, many, some, them, than, each, make, like, just, over, such, take, into, year, your, good, could, would, about, which, their, there, other, after, should, through, also, more, most, only, very, when, what, then, these, those, being, does, done, both, same, still, while, where, here, were, much.
+Common English (88): the, and, for, are, but, not, you, all, can, had, her, was, one, our, out, has, his, how, its, may, new, now, old, see, way, who, did, get, got, let, say, she, too, use, will, with, this, that, from, they, been, have, many, some, them, than, each, make, like, just, over, such, take, into, year, your, good, could, would, about, which, their, there, other, after, should, through, also, more, most, only, very, when, what, then, these, those, being, does, done, both, same, still, while, where, here, were, much.
 
-Code/changelog: update, updates, updated, deps, dev, tests, test, add, added, fix, fixed, run, running, using.
+Code/changelog (14): update, updates, updated, deps, dev, tests, test, add, added, fix, fixed, run, running, using.
+
+FTS5/search-domain (9): code, fuzzy, porter, trigram, prose, untitled, string, number, object. These prevent noisy matches on internal metadata terms that appear in chunk titles and type fields.
+
+Data field names (7): name, title, label, path, slug, key, id. These are JSON identity field names used by the chunker — common enough to generate noise in vocabulary extraction without contributing to meaningful fuzzy correction.
 
 ---
 
@@ -559,6 +563,8 @@ Content-type routing (via native Go `net/http`):
 - JSON → JSON chunking (key-path titles)
 - Plain text → plain text chunking (line groups)
 
+**SSRF protection:** Before fetching, `validateFetchURL()` resolves the URL's hostname via DNS and blocks requests to loopback, private (RFC 1918), and link-local IP addresses. Binary content (detected via Content-Type header and null-byte heuristic) is rejected early.
+
 Preview: first 3072 bytes of converted content returned. Rest truncated with `"...[truncated — use search() for full content]"`.
 
 #### capy_stats
@@ -775,13 +781,13 @@ type HookAdapter interface {
     FormatBlock(reason string) ([]byte, error)
     FormatAllow(guidance string) ([]byte, error)
     FormatModify(updatedInput map[string]interface{}) ([]byte, error)
-    ParsePostToolUse(input []byte) (*PostToolUseEvent, error)
-    FormatPostToolUse(context string) ([]byte, error)
-    ParseSessionStart(input []byte) (*SessionStartEvent, error)
+    FormatAsk() ([]byte, error)
     FormatSessionStart(context string) ([]byte, error)
     Capabilities() PlatformCapabilities
 }
 ```
+
+**Deferred methods** (will be added when session continuity is implemented): `ParsePostToolUse`, `FormatPostToolUse`, `ParseSessionStart`. The full context-mode interface includes these but they aren't needed until the PostToolUse and SessionStart hooks are implemented beyond stubs.
 
 **Reference:** `context-mode/src/adapters/types.ts` for the full `HookAdapter` interface. `context-mode/src/adapters/claude-code/` for the Claude Code implementation.
 
