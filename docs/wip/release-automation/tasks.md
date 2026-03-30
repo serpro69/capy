@@ -73,13 +73,13 @@
 
 ## Task 6: README update
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 4, Task 5
 - **Docs:** [design.md#5-readme-update](./design.md#5-readme-update)
 
 ### Subtasks
-- [ ] 6.1 Add installation options to README Quick Start section, above "Build from Source": `brew install serpro69/tap/capy`, `curl -sSfL .../install.sh | sh`, and direct download from GitHub Releases
-- [ ] 6.2 Keep existing "Build from Source" section as-is
+- [x] 6.1 Add installation options to README Quick Start section, above "Build from Source": `brew install serpro69/tap/capy`, `curl -sSfL .../install.sh | sh`, and direct download from GitHub Releases
+- [x] 6.2 Keep existing "Build from Source" section as-is
 
 ## Task 7: Final verification
 
