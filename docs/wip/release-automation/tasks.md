@@ -60,16 +60,16 @@
 
 ## Task 5: Homebrew tap
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Docs:** [design.md#4-homebrew-tap-repository](./design.md#4-homebrew-tap-repository)
 
 ### Subtasks
-- [ ] 5.1 Add `homebrew` job to `release.yml` depending on `release`, skipped for pre-release tags
-- [ ] 5.2 Checkout `serpro69/homebrew-tap` using `HOMEBREW_TAP_TOKEN` secret
-- [ ] 5.3 Download `SHA256SUMS` from the release
-- [ ] 5.4 Generate `Formula/capy.rb` — standard Homebrew formula with: version, `on_macos`/`on_linux` blocks with `Hardware::CPU.arm?`/`Hardware::CPU.intel?` for 3 platform/arch URL+SHA256 combos, `test` block running `capy --version`
-- [ ] 5.5 Commit and push the updated formula to the tap repo
+- [x] 5.1 Add `homebrew` job to `release.yml` depending on `release`, skipped for pre-release tags
+- [x] 5.2 Checkout `serpro69/homebrew-tap` using `HOMEBREW_TAP_TOKEN` secret
+- [x] 5.3 Download `SHA256SUMS` from the release
+- [x] 5.4 Generate `Formula/capy.rb` — standard Homebrew formula with: version, `on_macos`/`on_linux` blocks with `Hardware::CPU.arm?`/`Hardware::CPU.intel?` for 3 platform/arch URL+SHA256 combos, `test` block running `capy --version`
+- [x] 5.5 Commit and push the updated formula to the tap repo
 
 ## Task 6: README update
 
