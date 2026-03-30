@@ -17,30 +17,30 @@
 
 ## Task 2: Release workflow — build matrix
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [design.md#2-release-workflow](./design.md#2-release-workflow-githubworkflowsrelease-yml)
 
 ### Subtasks
-- [ ] 2.1 Create `.github/workflows/release.yml` — trigger on tag push `v*`
-- [ ] 2.2 Define `build` job with matrix strategy: 3 entries (`darwin/arm64` on `macos-latest`, `linux/amd64` on `ubuntu-latest`, `linux/arm64` on `ubuntu-24.04-arm`). Add `concurrency: release-${{ github.ref }}`
-- [ ] 2.3 Each matrix entry: checkout, setup Go, `CGO_ENABLED=1 go build -trimpath -tags fts5 -ldflags "-X .../version.Version=$TAG" -o capy ./cmd/capy/`
-- [ ] 2.4 Smoke test: `./capy --version` and assert output contains the tag string (trim whitespace)
-- [ ] 2.5 Package: `tar czf capy_<version>_<os>_<arch>.tar.gz capy LICENSE.md README.md` (strip `v` prefix from version in filename)
-- [ ] 2.6 Upload tar.gz as GitHub Actions artifact with `retention-days: 1`
+- [x] 2.1 Create `.github/workflows/release.yml` — trigger on tag push `v*`
+- [x] 2.2 Define `build` job with matrix strategy: 3 entries (`darwin/arm64` on `macos-latest`, `linux/amd64` on `ubuntu-latest`, `linux/arm64` on `ubuntu-24.04-arm`). Add `concurrency: release-${{ github.ref }}`
+- [x] 2.3 Each matrix entry: checkout, setup Go, `CGO_ENABLED=1 go build -trimpath -tags fts5 -ldflags "-X .../version.Version=$TAG" -o capy ./cmd/capy/`
+- [x] 2.4 Smoke test: `./capy --version` and assert output contains the tag string (trim whitespace)
+- [x] 2.5 Package: `tar czf capy_<version>_<os>_<arch>.tar.gz capy LICENSE.md README.md` (strip `v` prefix from version in filename)
+- [x] 2.6 Upload tar.gz as GitHub Actions artifact with `retention-days: 1`
 
 ## Task 3: Release workflow — release job
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Docs:** [design.md#2-release-workflow](./design.md#2-release-workflow-githubworkflowsrelease-yml)
 
 ### Subtasks
-- [ ] 3.1 Add `release` job depending on `build`, running on `ubuntu-latest` with `permissions: contents: write`
-- [ ] 3.2 Download all build artifacts via `actions/download-artifact@v4` with `merge-multiple: true`
-- [ ] 3.3 Generate `SHA256SUMS` file: `sha256sum capy_*.tar.gz > SHA256SUMS`
-- [ ] 3.4 Detect pre-release: if tag (`github.ref_name`) contains `-`, pass `--prerelease` to `gh release create`
-- [ ] 3.5 Create GitHub Release: `gh release create $TAG --generate-notes [--prerelease] capy_*.tar.gz SHA256SUMS`
+- [x] 3.1 Add `release` job depending on `build`, running on `ubuntu-latest` with `permissions: contents: write`
+- [x] 3.2 Download all build artifacts via `actions/download-artifact@v4` with `merge-multiple: true`
+- [x] 3.3 Generate `SHA256SUMS` file: `sha256sum capy_*.tar.gz > SHA256SUMS`
+- [x] 3.4 Detect pre-release: if tag (`github.ref_name`) contains `-`, pass `--prerelease` to `gh release create`
+- [x] 3.5 Create GitHub Release: `gh release create $TAG --generate-notes [--prerelease] capy_*.tar.gz SHA256SUMS`
 
 ## Task 4: Install script
 
