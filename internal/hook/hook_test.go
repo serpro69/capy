@@ -17,6 +17,7 @@ func (a *testAdapter) ParsePreToolUse(input []byte) (*adapter.PreToolUseEvent, e
 	var raw struct {
 		ToolName  string         `json:"tool_name"`
 		ToolInput map[string]any `json:"tool_input"`
+		SessionID string         `json:"session_id"`
 	}
 	if err := json.Unmarshal(input, &raw); err != nil {
 		return nil, err
@@ -24,6 +25,7 @@ func (a *testAdapter) ParsePreToolUse(input []byte) (*adapter.PreToolUseEvent, e
 	return &adapter.PreToolUseEvent{
 		ToolName:  raw.ToolName,
 		ToolInput: raw.ToolInput,
+		SessionID: raw.SessionID,
 	}, nil
 }
 
@@ -55,8 +57,17 @@ func (a *testAdapter) Capabilities() adapter.PlatformCapabilities {
 }
 
 func makeInput(toolName string, toolInput map[string]any) []byte {
-	b, _ := json.Marshal(map[string]any{"tool_name": toolName, "tool_input": toolInput})
+	b, _ := json.Marshal(map[string]any{"tool_name": toolName, "tool_input": toolInput, "session_id": "test-session"})
 	return b
+}
+
+// guidanceTestDir creates a temp directory for guidance tests and returns
+// the dir path and a cleanup function.
+func guidanceTestDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	ResetGuidanceFile(dir, "test-session")
+	return dir
 }
 
 func parseResult(t *testing.T, output []byte) map[string]any {
@@ -146,19 +157,19 @@ func TestPreToolUse_BuildToolBlocked(t *testing.T) {
 }
 
 func TestPreToolUse_BashGuidanceOnce(t *testing.T) {
-	ResetGuidanceThrottle()
+	dir := guidanceTestDir(t)
 	a := &testAdapter{}
 
 	// First bash call: guidance
 	input := makeInput("Bash", map[string]any{"command": "echo hello"})
-	output1, err := handlePreToolUse(input, a, nil, "")
+	output1, err := handlePreToolUse(input, a, nil, dir)
 	require.NoError(t, err)
 	require.NotNil(t, output1)
 	result1 := parseResult(t, output1)
 	assert.Equal(t, "context", result1["action"])
 
 	// Second bash call: nil (throttled)
-	output2, err := handlePreToolUse(input, a, nil, "")
+	output2, err := handlePreToolUse(input, a, nil, dir)
 	require.NoError(t, err)
 	assert.Nil(t, output2)
 }
@@ -180,11 +191,11 @@ func TestPreToolUse_WebFetchDenied(t *testing.T) {
 // ─── Read/Grep guidance tests ──────────────────────────────────────────────────
 
 func TestPreToolUse_ReadGuidanceOnce(t *testing.T) {
-	ResetGuidanceThrottle()
+	dir := guidanceTestDir(t)
 	a := &testAdapter{}
 
 	input := makeInput("Read", map[string]any{"file_path": "/tmp/test.txt"})
-	output1, err := handlePreToolUse(input, a, nil, "")
+	output1, err := handlePreToolUse(input, a, nil, dir)
 	require.NoError(t, err)
 	require.NotNil(t, output1)
 	result := parseResult(t, output1)
@@ -192,24 +203,24 @@ func TestPreToolUse_ReadGuidanceOnce(t *testing.T) {
 	assert.Contains(t, result["additionalContext"], "execute_file")
 
 	// Second call: throttled
-	output2, err := handlePreToolUse(input, a, nil, "")
+	output2, err := handlePreToolUse(input, a, nil, dir)
 	require.NoError(t, err)
 	assert.Nil(t, output2)
 }
 
 func TestPreToolUse_GrepGuidanceOnce(t *testing.T) {
-	ResetGuidanceThrottle()
+	dir := guidanceTestDir(t)
 	a := &testAdapter{}
 
 	input := makeInput("Grep", map[string]any{"pattern": "TODO"})
-	output1, err := handlePreToolUse(input, a, nil, "")
+	output1, err := handlePreToolUse(input, a, nil, dir)
 	require.NoError(t, err)
 	require.NotNil(t, output1)
 	result := parseResult(t, output1)
 	assert.Equal(t, "context", result["action"])
 	assert.Contains(t, result["additionalContext"], "sandbox")
 
-	output2, err := handlePreToolUse(input, a, nil, "")
+	output2, err := handlePreToolUse(input, a, nil, dir)
 	require.NoError(t, err)
 	assert.Nil(t, output2)
 }

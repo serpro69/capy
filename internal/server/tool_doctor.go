@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/executor"
@@ -38,7 +39,11 @@ func (s *Server) handleDoctor(_ context.Context, _ mcp.CallToolRequest) (*mcp.Ca
 	// FTS5 — use the store directly since we have it
 	fts5OK := false
 	func() {
-		defer func() { recover() }()
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Debug("FTS5 check panicked", "panic", r)
+			}
+		}()
 		st := s.getStore()
 		if st != nil {
 			_, err := st.Stats()

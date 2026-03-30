@@ -199,13 +199,20 @@ func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []st
 			return e.buildResult(waitErr, &stdout, &stderr, ctx, hardKilled.Load()), nil
 		case <-ctx.Done():
 			// Timeout fired while process still running — background it.
+			pid := cmd.Process.Pid
 			result := &ExecResult{
 				Stdout:       SmartTruncate(stdout.String(), e.maxOutputBytes),
 				Stderr:       SmartTruncate(stderr.String(), e.maxOutputBytes),
 				Backgrounded: true,
-				PID:          cmd.Process.Pid,
+				PID:          pid,
 			}
-			e.trackBackgroundPid(cmd.Process.Pid)
+			e.trackBackgroundPid(pid)
+			// Untrack PID when the process exits to prevent killing
+			// unrelated processes if the OS reuses the PID.
+			go func() {
+				<-waitDone
+				e.untrackBackgroundPid(pid)
+			}()
 			return result, nil
 		}
 	}
@@ -241,6 +248,12 @@ func (e *PolyglotExecutor) trackBackgroundPid(pid int) {
 	e.bgMu.Lock()
 	defer e.bgMu.Unlock()
 	e.backgroundPids[pid] = struct{}{}
+}
+
+func (e *PolyglotExecutor) untrackBackgroundPid(pid int) {
+	e.bgMu.Lock()
+	defer e.bgMu.Unlock()
+	delete(e.backgroundPids, pid)
 }
 
 // CleanupBackgrounded kills all tracked background processes.

@@ -3,6 +3,7 @@ package security
 import (
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // .+ is greedy: for "Bash(echo (foo))" it captures "echo (foo)"
@@ -60,12 +61,25 @@ func convertGlobPart(glob string) string {
 	return b.String()
 }
 
+// regexCache caches compiled glob regexes to avoid recompilation per call.
+var regexCache sync.Map
+
 // globToRegex converts a Bash permission glob to a regex.
 //
 // Two formats:
 //   - Colon: "tree:*" becomes /^tree(\s.*)?$/ (command with optional args)
 //   - Space: "sudo *" becomes /^sudo .*$/ (literal glob match)
+//
+// Results are cached to avoid recompilation in hot paths.
 func globToRegex(glob string, caseInsensitive bool) *regexp.Regexp {
+	key := glob
+	if caseInsensitive {
+		key += "|i"
+	}
+	if cached, ok := regexCache.Load(key); ok {
+		return cached.(*regexp.Regexp)
+	}
+
 	var regexStr string
 
 	if command, argsGlob, ok := strings.Cut(glob, ":"); ok {
@@ -79,8 +93,13 @@ func globToRegex(glob string, caseInsensitive bool) *regexp.Regexp {
 	if caseInsensitive {
 		regexStr = "(?i)" + regexStr
 	}
-	return regexp.MustCompile(regexStr)
+	re := regexp.MustCompile(regexStr)
+	regexCache.Store(key, re)
+	return re
 }
+
+// fileRegexCache caches compiled file glob regexes.
+var fileRegexCache sync.Map
 
 // fileGlobToRegex converts a file path glob to a regex.
 //
@@ -89,7 +108,17 @@ func globToRegex(glob string, caseInsensitive bool) *regexp.Regexp {
 //   - ** matches any number of path segments (including zero)
 //   - * matches anything except path separators
 //   - ? matches a single non-separator character
+//
+// Results are cached to avoid recompilation in hot paths.
 func fileGlobToRegex(glob string, caseInsensitive bool) *regexp.Regexp {
+	key := glob
+	if caseInsensitive {
+		key += "|i"
+	}
+	if cached, ok := fileRegexCache.Load(key); ok {
+		return cached.(*regexp.Regexp)
+	}
+
 	var b strings.Builder
 	i := 0
 
@@ -125,7 +154,9 @@ func fileGlobToRegex(glob string, caseInsensitive bool) *regexp.Regexp {
 	if caseInsensitive {
 		regexStr = "(?i)" + regexStr
 	}
-	return regexp.MustCompile(regexStr)
+	re := regexp.MustCompile(regexStr)
+	fileRegexCache.Store(key, re)
+	return re
 }
 
 // matchesAnyBashPattern checks if a command matches any Bash pattern in the list.

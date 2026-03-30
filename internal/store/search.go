@@ -39,7 +39,7 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, source string
 	for _, l := range layers {
 		if results := l.fn(query); len(results) > 0 {
 			tagResults(results, l.name)
-			s.trackAccessAsync(results)
+			s.trackAccess(results)
 			return results, nil
 		}
 	}
@@ -50,7 +50,7 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, source string
 		for _, l := range layers {
 			if results := l.fn(corrected); len(results) > 0 {
 				tagResults(results, "fuzzy+"+l.name)
-				s.trackAccessAsync(results)
+				s.trackAccess(results)
 				return results, nil
 			}
 		}
@@ -154,27 +154,20 @@ func sanitizeTrigramQuery(query, mode string) string {
 	return strings.Join(filtered, sep)
 }
 
-// trackAccessAsync updates last_accessed_at and access_count for sources
-// that appeared in search results. Runs in a background goroutine.
-func (s *ContentStore) trackAccessAsync(results []SearchResult) {
+// trackAccess updates last_accessed_at and access_count for sources
+// that appeared in search results. Runs synchronously to avoid race
+// conditions with ContentStore.Close() finalizing prepared statements.
+func (s *ContentStore) trackAccess(results []SearchResult) {
 	seen := make(map[int64]bool)
-	var sourceIDs []int64
 	for _, r := range results {
-		if !seen[r.SourceID] {
-			seen[r.SourceID] = true
-			sourceIDs = append(sourceIDs, r.SourceID)
+		if seen[r.SourceID] {
+			continue
+		}
+		seen[r.SourceID] = true
+		if _, err := s.stmtTrackAccess.Exec(r.SourceID); err != nil {
+			slog.Debug("access tracking failed", "source_id", r.SourceID, "error", err)
 		}
 	}
-	if len(sourceIDs) == 0 {
-		return
-	}
-	go func() {
-		for _, id := range sourceIDs {
-			if _, err := s.stmtTrackAccess.Exec(id); err != nil {
-				slog.Debug("access tracking failed", "source_id", id, "error", err)
-			}
-		}
-	}()
 }
 
 // --- Levenshtein + fuzzy correction ---

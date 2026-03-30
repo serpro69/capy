@@ -74,18 +74,19 @@ func TestHookIntegration_NormalBash_Guidance(t *testing.T) {
 }
 
 func TestHookIntegration_NormalBash_ThrottledAfterFirst(t *testing.T) {
-	ResetGuidanceThrottle()
+	dir := t.TempDir()
+	ResetGuidanceFile(dir, "test-session-123")
 	a := ccAdapter()
 
 	// First call: guidance
 	input := ccInput("Bash", map[string]any{"command": "echo first"})
-	output1, err := handlePreToolUse(input, a, nil, "")
+	output1, err := handlePreToolUse(input, a, nil, dir)
 	require.NoError(t, err)
 	require.NotNil(t, output1)
 
 	// Second call: nil (throttled)
 	input2 := ccInput("Bash", map[string]any{"command": "echo second"})
-	output2, err := handlePreToolUse(input2, a, nil, "")
+	output2, err := handlePreToolUse(input2, a, nil, dir)
 	require.NoError(t, err)
 	assert.Nil(t, output2)
 }
