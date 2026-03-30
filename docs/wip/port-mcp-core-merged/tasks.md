@@ -2,7 +2,7 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done
 > Created: 2026-03-20
 
 ## Task 1: Project bootstrap and build system
@@ -233,10 +233,10 @@
 
 ## Task 17: Final verification
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1–16
 
 ### Subtasks
-- [ ] 17.1 Run `testing-process` skill — full test suite (`make test`), verify all tests pass, check coverage, identify gaps
-- [ ] 17.2 Run `documentation-process` skill — ensure README covers: installation, build from source, configuration, CLI commands, MCP tools, security rules, hook system
-- [ ] 17.3 Run `solid-code-review` skill — review all code for SOLID violations, security issues, idiomatic Go patterns, error handling, resource leaks
+- [x] 17.1 Run `testing-process` skill — full test suite (`make test`), verify all tests pass, check coverage, identify gaps
+- [x] 17.2 Run `documentation-process` skill — ensure README covers: installation, build from source, configuration, CLI commands, MCP tools, security rules, hook system
+- [x] 17.3 Run `solid-code-review` skill — review all code for SOLID violations, security issues, idiomatic Go patterns, error handling, resource leaks
