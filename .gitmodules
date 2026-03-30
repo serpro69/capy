@@ -1,0 +1,3 @@
+[submodule "context-mode"]
+	path = context-mode
+	url = https://github.com/mksglu/context-mode.git
