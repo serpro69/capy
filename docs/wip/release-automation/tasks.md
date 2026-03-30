@@ -6,13 +6,13 @@
 
 ## Task 1: CI workflow
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [design.md#1-ci-workflow](./design.md#1-ci-workflow-githubworkflowsci-yml)
 
 ### Subtasks
-- [ ] 1.1 Create `.github/workflows/ci.yml` — trigger on push to `master` and PRs targeting `master`
-- [ ] 1.2 Single job on `ubuntu-latest`: setup Go via `go-version-file: go.mod`, run `go vet -tags fts5 ./...`, then `CGO_ENABLED=1 go test -tags fts5 -race ./...`
+- [x] 1.1 Create `.github/workflows/ci.yml` — trigger on push to `master` and PRs targeting `master`
+- [x] 1.2 Single job on `ubuntu-latest`: setup Go via `go-version-file: go.mod`, run `go vet -tags fts5 ./...`, then `CGO_ENABLED=1 go test -tags fts5 -race ./...`
 - [ ] 1.3 Verify: push a branch, open a PR to master, confirm the workflow runs and passes
 
 ## Task 2: Release workflow — build matrix
