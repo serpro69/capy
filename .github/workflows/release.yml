@@ -76,3 +76,78 @@ jobs:
           PRERELEASE=""
           case "$TAG" in *-*) PRERELEASE="--prerelease" ;; esac
           gh release create "$TAG" --generate-notes $PRERELEASE capy_*.tar.gz SHA256SUMS
+
+  homebrew:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tap repo
+        uses: actions/checkout@v6
+        with:
+          repository: serpro69/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Download checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --pattern SHA256SUMS
+
+      - name: Generate formula
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+
+          SHA_DARWIN_ARM64=$(grep "darwin_arm64" SHA256SUMS | awk '{print $1}')
+          SHA_LINUX_AMD64=$(grep "linux_amd64" SHA256SUMS | awk '{print $1}')
+          SHA_LINUX_ARM64=$(grep "linux_arm64" SHA256SUMS | awk '{print $1}')
+
+          mkdir -p Formula
+          cat > Formula/capy.rb << RUBY
+          class Capy < Formula
+            desc "Context-aware MCP server for LLM context reduction"
+            homepage "https://github.com/serpro69/capy"
+            version "${VERSION}"
+            license "Elastic-2.0"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${BASE_URL}/capy_${VERSION}_darwin_arm64.tar.gz"
+                sha256 "${SHA_DARWIN_ARM64}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "${BASE_URL}/capy_${VERSION}_linux_arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM64}"
+              elsif Hardware::CPU.intel?
+                url "${BASE_URL}/capy_${VERSION}_linux_amd64.tar.gz"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install "capy"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/capy --version")
+            end
+          end
+          RUBY
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' Formula/capy.rb
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/capy.rb
+          git commit -m "Update capy to ${{ github.ref_name }}"
+          git push
