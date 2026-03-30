@@ -10,7 +10,8 @@
       "Bash(go build:*)",
       "Bash(go vet:*)",
       "mcp__pal__codereview",
-      "Bash(go tool:*)"
+      "Bash(go tool:*)",
+      "mcp__capy__capy_search"
     ]
   },
   "enabledMcpjsonServers": [
