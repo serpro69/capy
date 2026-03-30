@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency: release-${{ github.ref }}
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+            runner: macos-latest
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: |
+          CGO_ENABLED=1 go build -trimpath -tags fts5 \
+            -ldflags "-X github.com/serpro69/capy/internal/version.Version=${{ github.ref_name }}" \
+            -o capy ./cmd/capy/
+
+      - name: Smoke test
+        run: |
+          OUTPUT=$(./capy --version)
+          echo "Version output: ${OUTPUT}"
+          echo "${OUTPUT}" | grep -q "${{ github.ref_name }}"
+
+      - name: Package
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          tar czf "capy_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz" capy LICENSE.md README.md
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: capy_*.tar.gz
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: sha256sum capy_*.tar.gz > SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          PRERELEASE=""
+          case "$TAG" in *-*) PRERELEASE="--prerelease" ;; esac
+          gh release create "$TAG" --generate-notes $PRERELEASE capy_*.tar.gz SHA256SUMS
