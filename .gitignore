@@ -9,6 +9,7 @@
 !.yamlfmt.yaml
 !.yamllint.yml
 !.mcp.json
+!.capy.toml
 
 # Logs
 logs
@@ -30,4 +31,7 @@ homebrew/
 
 # binaries
 /capy
-.capy/
+.capy/**
+
+!.capy
+!.capy/knowledge.db
