@@ -9,7 +9,8 @@
       "Bash(go test:*)",
       "Bash(go build:*)",
       "Bash(go vet:*)",
-      "mcp__pal__codereview"
+      "mcp__pal__codereview",
+      "Bash(go tool:*)"
     ]
   }
 }
