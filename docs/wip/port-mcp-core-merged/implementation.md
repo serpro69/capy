@@ -1328,20 +1328,28 @@ func handlePreToolUse(input []byte, adapter adapter.HookAdapter) ([]byte, error)
         // ...
 
         // curl/wget detection (strip quoted content first to avoid false positives)
+        // Uses FormatModify to replace command with echo guidance (matching TS reference)
+        // instead of hard-deny FormatBlock — the LLM sees the guidance in stdout.
         stripped := stripQuotedContent(command)
         if isCurlOrWget(stripped) {
-            return adapter.FormatBlock("Use capy_fetch_and_index to fetch URLs.")
+            return adapter.FormatModify(map[string]any{
+                "command": `echo "capy: curl/wget blocked. Use capy_fetch_and_index(url, source) to fetch URLs, or capy_execute(language, code) to run HTTP calls in sandbox."`,
+            })
         }
 
         // Inline HTTP detection (strip heredocs only)
         noHeredoc := stripHeredocs(command)
         if hasInlineHTTP(noHeredoc) {
-            return adapter.FormatBlock("Use capy_execute to run HTTP code in sandbox.")
+            return adapter.FormatModify(map[string]any{
+                "command": `echo "capy: Inline HTTP blocked. Use capy_execute(language, code) to run HTTP calls in sandbox, or capy_fetch_and_index(url, source) for web pages."`,
+            })
         }
 
         // Build tools (gradle, maven) → redirect to sandbox
         if isBuildTool(stripped) {
-            return adapter.FormatBlock("Use capy_execute(language: \"shell\", code: \"...\") for build tools.")
+            return adapter.FormatModify(map[string]any{
+                "command": `echo "capy: Build tool redirected to sandbox. Use capy_execute(language: \"shell\", code: \"...\") to run this command."`,
+            })
         }
 
         // Allow, but inject routing nudge (once per session via guidance throttle)
