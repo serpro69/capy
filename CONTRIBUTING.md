@@ -201,6 +201,22 @@ go test -tags fts5 -count=1 -v -run TestIntegration ./internal/server/...
 3. Add the tool name to `platform/setup.go:PreToolUseMatcherPattern` so the hook is registered
 4. Write tests in `hook/hook_test.go` (unit, with test adapter) and `hook/integration_test.go` (with Claude Code adapter)
 
+## Releases
+
+Releases are fully automated. Push a semver tag to trigger the pipeline:
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+What happens:
+1. **CI** runs vet + tests (same as every push to master)
+2. **Build** produces binaries on native runners for 3 platforms (darwin/arm64, linux/amd64, linux/arm64)
+3. **Release** creates a GitHub Release with tarballs and SHA256SUMS
+4. **Homebrew** updates the `serpro69/homebrew-tap` formula (stable releases only)
+
+Pre-release tags (e.g., `v1.0.0-rc.1`) create pre-release GitHub Releases and skip the Homebrew update.
+
 ## Code Conventions
 
 - **Error handling**: Wrap errors with context via `fmt.Errorf("doing X: %w", err)`. Don't swallow errors silently — at minimum log with `slog.Debug` or `slog.Warn`.

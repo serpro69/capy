@@ -1,7 +1,7 @@
 # Tasks: Release Automation
 
 > Design: [./design.md](./design.md)
-> Status: pending
+> Status: done
 > Created: 2026-03-30
 
 ## Task 1: CI workflow
@@ -83,10 +83,10 @@
 
 ## Task 7: Final verification
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1–6
 
 ### Subtasks
-- [ ] 7.1 Run `testing-process` skill — verify all existing tests still pass
-- [ ] 7.2 Run `documentation-process` skill — update CONTRIBUTING.md if needed (release process docs)
-- [ ] 7.3 Run `implementation-review` skill — verify implementation matches design doc
+- [x] 7.1 Run `testing-process` skill — verify all existing tests still pass
+- [x] 7.2 Run `documentation-process` skill — update CONTRIBUTING.md if needed (release process docs)
+- [x] 7.3 Run `implementation-review` skill — verify implementation matches design doc
