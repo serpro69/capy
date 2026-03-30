@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 )
@@ -110,9 +111,15 @@ func (s *ContentStore) Stats() (*StoreStats, error) {
 
 	var stats StoreStats
 
-	db.QueryRow("SELECT COUNT(*) FROM sources").Scan(&stats.SourceCount)
-	db.QueryRow("SELECT COUNT(*) FROM chunks").Scan(&stats.ChunkCount)
-	db.QueryRow("SELECT COUNT(*) FROM vocabulary").Scan(&stats.VocabCount)
+	if err := db.QueryRow("SELECT COUNT(*) FROM sources").Scan(&stats.SourceCount); err != nil {
+		slog.Warn("failed to count sources", "error", err)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM chunks").Scan(&stats.ChunkCount); err != nil {
+		slog.Warn("failed to count chunks", "error", err)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM vocabulary").Scan(&stats.VocabCount); err != nil {
+		slog.Warn("failed to count vocabulary", "error", err)
+	}
 
 	// DB file size.
 	if fi, err := os.Stat(s.dbPath); err == nil {

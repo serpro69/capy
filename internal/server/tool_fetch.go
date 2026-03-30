@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -34,6 +36,12 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 	if url == "" {
 		return errorResult("Missing required parameter: url"), nil
 	}
+
+	// SSRF protection: block requests to local/private networks
+	if err := validateFetchURLFunc(url); err != nil {
+		return errorResult(fmt.Sprintf("Blocked URL: %v", err)), nil
+	}
+
 	if source == "" {
 		source = url
 	}
@@ -149,6 +157,35 @@ func convertHTMLToMarkdown(html string) (string, error) {
 	conv.Register.TagType("footer", converter.TagTypeRemove, converter.PriorityStandard)
 
 	return conv.ConvertString(html)
+}
+
+// validateFetchURLFunc is the URL validation function. Package-level var to
+// allow tests to bypass SSRF checks when using httptest.NewServer (localhost).
+var validateFetchURLFunc = validateFetchURL
+
+// validateFetchURL blocks requests to local/private networks to prevent SSRF.
+func validateFetchURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	hostname := parsed.Hostname()
+
+	// Resolve hostname to check the actual IP
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		// If we can't resolve, allow — the HTTP client will fail with a better error
+		return nil
+	}
+
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("access to local/private network address %s (%s) is forbidden", hostname, ip)
+		}
+	}
+
+	return nil
 }
 
 // isBinaryContent returns true if the content appears to be binary (images, PDFs, etc.)

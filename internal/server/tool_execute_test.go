@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,11 +16,18 @@ import (
 
 func newTestServer(t *testing.T, policies []security.SecurityPolicy) *Server {
 	t.Helper()
+	return newTestServerWithProjectDir(t, policies, "")
+}
+
+func newTestServerWithProjectDir(t *testing.T, policies []security.SecurityPolicy, projectDir string) *Server {
+	t.Helper()
 	cfg := config.DefaultConfig()
-	tmp := t.TempDir()
-	cfg.Store.Path = tmp + "/test.db"
-	exec := executor.NewExecutor(tmp, 0)
-	srv := NewServer(cfg, policies, exec, tmp)
+	if projectDir == "" {
+		projectDir = t.TempDir()
+	}
+	cfg.Store.Path = filepath.Join(projectDir, "test.db")
+	exec := executor.NewExecutor(projectDir, 0)
+	srv := NewServer(cfg, policies, exec, projectDir)
 	t.Cleanup(func() { srv.shutdown() })
 	return srv
 }

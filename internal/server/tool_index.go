@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -20,9 +21,16 @@ func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 
 	// Read file content if path provided
 	if path != "" && content == "" {
-		// Resolve relative paths against project root
+		// Resolve relative paths against project root with traversal protection
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(s.projectDir, path)
+			// Ensure resolved path stays within project root (prevents ../../../etc/passwd)
+			cleanPath := filepath.Clean(path)
+			projectRoot := filepath.Clean(s.projectDir)
+			if !strings.HasPrefix(cleanPath, projectRoot+string(filepath.Separator)) && cleanPath != projectRoot {
+				return errorResult("Path escapes project directory"), nil
+			}
+			path = cleanPath
 		}
 		const maxFileSize = 10 * 1024 * 1024 // 10MB
 		info, err := os.Stat(path)

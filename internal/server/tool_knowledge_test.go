@@ -289,6 +289,14 @@ func TestSearch_OutputCap(t *testing.T) {
 
 // ─── Fetch and Index tests ─────────────────────────────────────────────────────
 
+// disableSSRFValidation disables SSRF checks for tests using httptest.NewServer (localhost).
+func disableSSRFValidation(t *testing.T) {
+	t.Helper()
+	orig := validateFetchURLFunc
+	validateFetchURLFunc = func(string) error { return nil }
+	t.Cleanup(func() { validateFetchURLFunc = orig })
+}
+
 func callFetchAndIndex(t *testing.T, srv *Server, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	req := mcp.CallToolRequest{}
@@ -299,6 +307,7 @@ func callFetchAndIndex(t *testing.T, srv *Server, args map[string]any) *mcp.Call
 }
 
 func TestFetchAndIndex_HTML(t *testing.T) {
+	disableSSRFValidation(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `<!DOCTYPE html>
@@ -333,6 +342,7 @@ func TestFetchAndIndex_HTML(t *testing.T) {
 }
 
 func TestFetchAndIndex_JSON(t *testing.T) {
+	disableSSRFValidation(t)
 	data := map[string]any{
 		"name":    "capy",
 		"version": "1.0.0",
@@ -359,6 +369,7 @@ func TestFetchAndIndex_JSON(t *testing.T) {
 }
 
 func TestFetchAndIndex_PlainText(t *testing.T) {
+	disableSSRFValidation(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprint(w, "Line 1: plain text content\nLine 2: more content\nLine 3: even more")
@@ -376,6 +387,7 @@ func TestFetchAndIndex_PlainText(t *testing.T) {
 }
 
 func TestFetchAndIndex_Preview(t *testing.T) {
+	disableSSRFValidation(t)
 	// Large content — verify preview is truncated
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -401,6 +413,7 @@ func TestFetchAndIndex_MissingURL(t *testing.T) {
 }
 
 func TestFetchAndIndex_HTTPError(t *testing.T) {
+	disableSSRFValidation(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -415,6 +428,7 @@ func TestFetchAndIndex_HTTPError(t *testing.T) {
 }
 
 func TestFetchAndIndex_EmptyBody(t *testing.T) {
+	disableSSRFValidation(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		// Write nothing
@@ -430,6 +444,7 @@ func TestFetchAndIndex_EmptyBody(t *testing.T) {
 }
 
 func TestFetchAndIndex_AutoSource(t *testing.T) {
+	disableSSRFValidation(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprint(w, "content")
@@ -446,6 +461,7 @@ func TestFetchAndIndex_AutoSource(t *testing.T) {
 }
 
 func TestFetchAndIndex_StatsTracking(t *testing.T) {
+	disableSSRFValidation(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprint(w, "some content for stats")
@@ -609,6 +625,7 @@ func TestIsBinaryContent(t *testing.T) {
 }
 
 func TestFetchAndIndex_BinaryContent(t *testing.T) {
+	disableSSRFValidation(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		w.Write([]byte{0x89, 0x50, 0x4E, 0x47}) // PNG magic bytes
@@ -622,6 +639,7 @@ func TestFetchAndIndex_BinaryContent(t *testing.T) {
 }
 
 func TestFetchAndIndex_BinaryBodyWithTextContentType(t *testing.T) {
+	disableSSRFValidation(t)
 	// Misconfigured server sends binary data with text Content-Type
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-custom")

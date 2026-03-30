@@ -17,6 +17,7 @@ func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.S
 
 	toolName := event.ToolName
 	toolInput := event.ToolInput
+	sessionID := event.SessionID
 
 	// Use projectDir from event if available, otherwise fall back to the one from CLI
 	if event.ProjectDir != "" {
@@ -33,7 +34,7 @@ func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.S
 	// ─── Bash: security check + routing ───
 	if canonical == "Bash" {
 		command, _ := toolInput["command"].(string)
-		return routeBash(command, policies, a)
+		return routeBash(command, policies, a, projectDir, sessionID)
 	}
 
 	// ─── WebFetch: deny → redirect to sandbox ───
@@ -45,12 +46,12 @@ func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.S
 
 	// ─── Read: guidance once ───
 	if canonical == "Read" {
-		return guidanceOnce("read", READ_GUIDANCE, a)
+		return guidanceOnce("read", READ_GUIDANCE, a, projectDir, sessionID)
 	}
 
 	// ─── Grep: guidance once ───
 	if canonical == "Grep" {
-		return guidanceOnce("grep", GREP_GUIDANCE, a)
+		return guidanceOnce("grep", GREP_GUIDANCE, a, projectDir, sessionID)
 	}
 
 	// ─── Agent/Task: inject routing block into subagent prompt ───
@@ -63,7 +64,7 @@ func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.S
 }
 
 // routeBash handles Bash tool routing: security check, curl/wget, HTTP, build tools, guidance.
-func routeBash(command string, policies []security.SecurityPolicy, a adapter.HookAdapter) ([]byte, error) {
+func routeBash(command string, policies []security.SecurityPolicy, a adapter.HookAdapter, projectDir, sessionID string) ([]byte, error) {
 	// Stage 1: Security check (full evaluateCommand with ask support)
 	if len(policies) > 0 {
 		result := security.EvaluateCommand(command, policies)
@@ -103,7 +104,7 @@ func routeBash(command string, policies []security.SecurityPolicy, a adapter.Hoo
 	}
 
 	// Allow, but inject routing nudge (once per session)
-	return guidanceOnce("bash", BASH_GUIDANCE, a)
+	return guidanceOnce("bash", BASH_GUIDANCE, a, projectDir, sessionID)
 }
 
 // routeAgent injects the routing block into Agent/Task subagent prompts.
