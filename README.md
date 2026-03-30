@@ -16,47 +16,83 @@ This is a deliberate architectural choice, not a missing feature. Context optimi
 
 Every MCP tool call dumps raw data into your context window. A single API response costs 56 KB. Twenty GitHub issues cost 59 KB. One access log - 45 KB. After 30 minutes, 40% of your context is gone. And when the agent compacts the conversation to free space, it forgets which files it was editing, what tasks are in progress, and what you last asked for.
 
-`capy` is an MCP server and Claude Code plugin that solves this:
+`capy` is an MCP server and Claude Code plugin that solves both halves of this problem:
 
 1. **Context Saving** - Sandbox tools keep raw data out of the context window. 315 KB becomes 5.4 KB. ~98% reduction.
 2. **Searchable Knowledge Base** - All sandboxed output is indexed into SQLite FTS5 with BM25 ranking. Use `capy_search` to retrieve specific sections on demand. Three-tier fallback: Porter stemming, trigram substring, fuzzy Levenshtein correction.
+3. **Session Continuity** _(planned)_ - Track file edits, git operations, tasks, errors, and user decisions in SQLite. When the conversation compacts, retrieve only what's relevant via BM25 search instead of dumping everything back into context.
 
-## Installation
+## Quick Start
 
-### Build from Source
+### Prerequisites
 
-Requires Go 1.23+ and a C compiler (CGO is needed for SQLite FTS5).
+- **Go 1.23+** ([install](https://go.dev/dl/))
+- **C compiler** (required for SQLite FTS5):
+  - macOS: `xcode-select --install`
+  - Debian/Ubuntu: `sudo apt install build-essential`
+  - Fedora: `sudo dnf install gcc`
+
+### Install
 
 ```bash
 git clone https://github.com/serpro69/capy.git
 cd capy
 make build
+mv capy /usr/local/bin/   # or anywhere on your PATH
 ```
 
-This produces a `capy` binary in the project root. Move it to your PATH:
+### Setup (Claude Code)
 
-```bash
-mv capy /usr/local/bin/
-```
-
-### Setup
-
-Run the setup command in your project directory:
+In your project directory:
 
 ```bash
 capy setup
+capy doctor   # verify everything is green
 ```
 
-This does four things:
-1. Registers capy hooks in `.claude/settings.json`
-2. Registers the MCP server in `.mcp.json`
-3. Appends routing instructions to `CLAUDE.md`
-4. Adds `.capy/` to `.gitignore`
+That's it. Start using Claude Code normally. capy works automatically:
 
-Verify the installation:
+- **Bash commands** producing large output are nudged toward the sandbox
+- **curl/wget** calls are intercepted and redirected to `capy_fetch_and_index`
+- **WebFetch** is blocked in favor of `capy_fetch_and_index`
+- **Read** for analysis (not editing) is nudged toward `capy_execute_file`
+- **Subagents** get routing instructions injected automatically
 
-```bash
-capy doctor
+You don't need to call capy tools yourself. The LLM learns the routing from the hooks and CLAUDE.md instructions that `capy setup` installed. But you can ask it directly: "use capy_batch_execute to research X" if you want to be explicit.
+
+## How It Works — By Example
+
+### Before capy
+
+```
+You: "Check what's failing in the test suite"
+Claude: *runs `npm test` via Bash*
+→ 89 KB of test output floods context
+→ Context is 40% full after one command
+```
+
+### After capy
+
+```
+You: "Check what's failing in the test suite"
+Claude: *runs capy_batch_execute with commands=["npm test"] and queries=["failing tests", "error messages"]*
+→ 89 KB stays in sandbox, indexed into knowledge base
+→ Only 2.1 KB of matched sections enter context
+→ Claude sees: "3 sections matched 'failing tests' (1,847 lines, 89.2KB)"
+```
+
+### The `intent` parameter
+
+When `capy_execute` or `capy_execute_file` is called with an `intent` parameter and the output exceeds 5 KB, capy automatically:
+1. Indexes the full output into the knowledge base
+2. Searches for sections matching the intent
+3. Returns section titles + previews instead of the full output
+
+```
+capy_execute(language: "shell", code: "git log --oneline -100", intent: "recent authentication changes")
+→ Full git log stays in sandbox
+→ Returns: "4 sections matched 'recent authentication changes'"
+→ Use capy_search to drill into specific sections
 ```
 
 ## Configuration
@@ -76,72 +112,60 @@ cold_threshold_days = 30
 auto_prune = false
 
 [executor]
-timeout = 30             # seconds
+timeout = 30               # seconds
 max_output_bytes = 102400  # 100 KB
 
 [server]
 log_level = "info"
 ```
 
-All settings have sensible defaults. Configuration files are optional.
+All settings have sensible defaults. Configuration files are optional — capy works out of the box.
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `capy serve` | Start the MCP server (default when run with no args) |
+| `capy` or `capy serve` | Start the MCP server (stdio transport) |
 | `capy setup` | Configure capy for the current project |
 | `capy doctor` | Run diagnostics on the installation |
 | `capy cleanup` | Remove stale knowledge base entries |
-| `capy hook <event>` | Handle a Claude Code hook event (internal) |
+| `capy hook <event>` | Handle a hook event (called by Claude Code, not you) |
 
-### Flags
+Global flags: `--project-dir`, `--version`
 
-```
---project-dir    Override project directory detection
---version        Print version and exit
-```
-
-`cleanup` flags:
-```
---max-age-days   Maximum age for cold sources (default: 30)
---dry-run        Preview what would be removed (default: true)
---force          Actually remove stale data
-```
+Cleanup flags: `--max-age-days` (default 30), `--dry-run` (default true), `--force`
 
 ## MCP Tools
 
-capy provides 9 MCP tools. The hook system automatically routes data-heavy operations to the sandbox.
+### Execution
 
-### Execution Tools
+| Tool | What It Does |
+|------|--------------|
+| `capy_execute` | Run code in a sandboxed subprocess. Supports 11 languages: JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, Elixir. Only stdout enters context. Pass `intent` to auto-index large output. |
+| `capy_execute_file` | Inject a file into a sandbox variable (`FILE_CONTENT`) and process it with code you write. The raw file never enters context — only your printed summary does. |
+| `capy_batch_execute` | The primary research tool. Runs multiple shell commands, auto-indexes all output as markdown, and searches with multiple queries — all in ONE call. Replaces dozens of individual Bash calls. |
 
-| Tool | Purpose |
-|------|---------|
-| `capy_execute` | Run code in a sandboxed subprocess. 11 languages: JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, Elixir. Only stdout enters context. |
-| `capy_execute_file` | Read a file into a sandbox variable (`FILE_CONTENT`) and process it. The raw file content never enters context. |
-| `capy_batch_execute` | Run multiple shell commands, auto-index all output, and search with multiple queries in ONE call. The primary tool for research. |
+### Knowledge
 
-### Knowledge Tools
+| Tool | What It Does |
+|------|--------------|
+| `capy_index` | Index text, markdown, or a file path into the FTS5 knowledge base for later search. |
+| `capy_search` | Search indexed content. 8-layer fallback: Porter stemming (AND/OR), trigram substring (AND/OR), then fuzzy Levenshtein-corrected versions of all four. Progressive throttling prevents context flooding from excessive search calls. |
+| `capy_fetch_and_index` | Fetch a URL, convert HTML to markdown (strips nav/script/style/header/footer), index into the knowledge base, return a ~3 KB preview. |
 
-| Tool | Purpose |
-|------|---------|
-| `capy_index` | Index text/markdown/file content into the FTS5 knowledge base for later search. |
-| `capy_search` | Search indexed content with BM25 ranking. 8-layer fallback: Porter+AND, Porter+OR, Trigram+AND, Trigram+OR, then fuzzy-corrected versions of all four. |
-| `capy_fetch_and_index` | Fetch a URL, convert HTML to markdown (stripping nav/script/style), index into the knowledge base, return a preview. |
+### Utility
 
-### Utility Tools
-
-| Tool | Purpose |
-|------|---------|
-| `capy_stats` | Session statistics: bytes saved, context reduction ratio, per-tool breakdown, knowledge base stats. |
-| `capy_doctor` | Diagnostics: version, runtimes, FTS5, config, hooks, MCP registration, security policies. |
-| `capy_cleanup` | Remove cold knowledge base entries that haven't been accessed. |
+| Tool | What It Does |
+|------|--------------|
+| `capy_stats` | Session report: bytes saved, context reduction ratio, per-tool breakdown, knowledge base tier distribution. |
+| `capy_doctor` | Diagnostics: version, available runtimes, FTS5 status, config, hook registration, MCP registration, security policies. |
+| `capy_cleanup` | Remove cold knowledge base entries (never accessed, older than threshold). |
 
 ## Security
 
-capy enforces the same permission rules you already use - but extends them to the MCP sandbox. If you block `sudo`, it's also blocked inside `capy_execute`, `capy_execute_file`, and `capy_batch_execute`.
+capy enforces the same permission rules you already use — but extends them to the MCP sandbox. If you block `sudo` in Claude Code settings, it's also blocked inside `capy_execute`, `capy_execute_file`, and `capy_batch_execute`.
 
-**Zero setup required.** If you haven't configured any permissions, nothing changes. This only activates when you add rules.
+**Zero setup required.** If you haven't configured any permissions, nothing changes.
 
 ```json
 {
@@ -152,51 +176,63 @@ capy enforces the same permission rules you already use - but extends them to th
 }
 ```
 
-Add this to your project's `.claude/settings.json` (or `~/.claude/settings.json` for global rules).
+Add to `.claude/settings.json` (project) or `~/.claude/settings.json` (global). Pattern: `Tool(glob)` where `*` = anything. Colon syntax (`git:*`) matches the command with or without arguments.
 
-The pattern is `Tool(what to match)` where `*` means "anything". Colon syntax (`git:*`) matches the command with or without arguments.
+Chained commands (`&&`, `;`, `|`) are split and checked individually. **deny always wins over allow.**
 
-Commands chained with `&&`, `;`, or `|` are split - each part is checked separately. `echo hello && sudo rm -rf /tmp` is blocked because the `sudo` part matches the deny rule.
+### Sandbox protections
 
-**deny** always wins over **allow**. More specific (project-level) rules override global ones.
-
-### Executor Sandbox
-
-The executor provides additional security layers:
-- **Process group isolation** (`Setpgid`) - child processes can't escape cleanup
-- **Environment sanitization** - ~50 dangerous env vars stripped (LD_PRELOAD, NODE_OPTIONS, PYTHONSTARTUP, etc.)
-- **Output hard cap** - processes killed if stdout+stderr exceeds 100 MB
-- **Timeout enforcement** - configurable per-call, default 30s
-- **Shell-escape detection** - non-shell languages are scanned for embedded shell commands (Python `subprocess`, Go `exec.Command`, etc.)
-- **SSRF protection** - `capy_fetch_and_index` blocks requests to localhost, private networks, and cloud metadata endpoints
+- **Process group isolation** — child processes can't escape cleanup
+- **Environment sanitization** — ~50 dangerous env vars stripped (LD_PRELOAD, NODE_OPTIONS, PYTHONSTARTUP, etc.)
+- **Output hard cap** — processes killed if stdout+stderr exceeds 100 MB
+- **Timeout enforcement** — configurable per-call, default 30s
+- **Shell-escape detection** — non-shell languages scanned for embedded shell commands
+- **SSRF protection** — `capy_fetch_and_index` blocks requests to localhost, private networks, and cloud metadata endpoints
 
 ## Hook System
 
-capy uses Claude Code's hook system to intercept tool calls before they execute. The hooks route data-heavy operations to the sandbox automatically.
+capy uses Claude Code's hook system to intercept tool calls before they execute. After `capy setup`, this works automatically — you don't need to configure anything.
 
-### What Gets Intercepted
+### What gets intercepted
 
-| Tool | Action |
-|------|--------|
-| `curl`/`wget` in Bash | Replaced with echo message directing to `capy_fetch_and_index` |
-| Inline HTTP (`fetch()`, `requests.get()`) in Bash | Replaced with echo message directing to `capy_execute` |
-| Build tools (`gradle`, `maven`) in Bash | Redirected to `capy_execute` sandbox |
-| `WebFetch` | Denied - use `capy_fetch_and_index` instead |
-| `Read` | Advisory shown once: use `capy_execute_file` for analysis |
-| `Grep` | Advisory shown once: use `capy_execute` for large searches |
-| `Agent`/`Task` | Routing instructions injected into subagent prompt; Bash subagents upgraded to general-purpose |
+| Pattern | What happens |
+|---------|-------------|
+| `curl`/`wget` in Bash | Command replaced with message directing to `capy_fetch_and_index` |
+| `fetch()`, `requests.get()`, `http.get()` in Bash | Command replaced with message directing to `capy_execute` |
+| `gradle`, `maven` in Bash | Redirected to `capy_execute` sandbox |
+| `WebFetch` tool | Denied — use `capy_fetch_and_index` instead |
+| `Read` tool | One-time advisory: prefer `capy_execute_file` for analysis |
+| `Grep` tool | One-time advisory: prefer `capy_execute` for large searches |
+| `Agent`/`Task` tools | Routing block injected into subagent prompt; Bash subagents upgraded to general-purpose |
 
-### Supported Platforms
+### Other platforms
 
-Hooks support tool name aliases for multiple platforms:
+`capy setup` currently generates Claude Code configuration. Automated setup for other platforms is planned (`capy setup --platform <name>`).
 
-- **Claude Code** (native)
-- **Gemini CLI** (`run_shell_command`, `read_file`, `grep_search`, `web_fetch`)
-- **OpenCode** (`bash`, `view`, `grep`, `fetch`, `agent`)
-- **Codex CLI** (`shell`, `shell_command`, `exec_command`, `container.exec`, `grep_files`)
-- **Cursor** (`mcp_web_fetch`, `Shell`)
-- **VS Code Copilot** (`run_in_terminal`)
-- **Kiro CLI** (`fs_read`, `execute_bash`)
+Hooks already recognize tool name aliases for these platforms, so the routing logic works once you wire up the MCP server and hook commands manually:
+
+| Platform | Recognized tool aliases |
+|----------|------------------------|
+| Gemini CLI | `run_shell_command`, `read_file`, `grep_search`, `web_fetch` |
+| OpenCode | `bash`, `view`, `grep`, `fetch`, `agent` |
+| Codex CLI | `shell`, `shell_command`, `exec_command`, `container.exec`, `grep_files` |
+| Cursor | `mcp_web_fetch`, `Shell` |
+| VS Code Copilot | `run_in_terminal` |
+| Kiro CLI | `fs_read`, `execute_bash` |
+
+Manual setup: register `capy serve` as an MCP server (stdio transport) and `capy hook <event>` as the hook command in your platform's configuration.
+
+## Troubleshooting
+
+Run `capy doctor` to diagnose issues. Common problems:
+
+| Check | Fix |
+|-------|-----|
+| **FTS5: unavailable** | The binary wasn't built with `-tags fts5`. Rebuild with `make build`. |
+| **Runtimes: 0/11** | No language runtimes found in PATH. Install at least `bash` and `python3`. |
+| **Hooks: not registered** | Run `capy setup` in your project directory. |
+| **MCP: not registered** | Run `capy setup`. Check `.mcp.json` exists in project root. |
+| **MCP: binary not found** | The `capy` binary isn't in PATH. Move it or run `capy setup --binary /path/to/capy`. |
 
 ## Contributing
 
@@ -210,4 +246,4 @@ make build && make test
 
 ## License
 
-Licensed under [Elastic License 2.0](LICENSE) (source-available). You can use it, fork it, modify it, and distribute it. Two things you can't do: offer it as a hosted/managed service, or remove the licensing notices. We chose ELv2 over MIT because MIT permits repackaging the code as a competing closed-source SaaS - ELv2 prevents that while keeping the source available to everyone.
+Licensed under [Elastic License 2.0](LICENSE) (source-available). You can use it, fork it, modify it, and distribute it. Two things you can't do: offer it as a hosted/managed service, or remove the licensing notices.
