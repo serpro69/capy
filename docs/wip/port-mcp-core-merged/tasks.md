@@ -221,15 +221,15 @@
 
 ## Task 16: End-to-end integration testing
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 9, Task 10, Task 11, Task 12, Task 14
 - **Docs:** —
 
 ### Subtasks
-- [ ] 16.1 MCP server integration tests: start server, send capy_execute request, verify response format. Execute with intent + large output → verify auto-index + search. batch_execute with multiple commands + queries. index + search round-trip. fetch_and_index + search. stats counters. cleanup
-- [ ] 16.2 Hook integration tests: pipe real Claude Code hook JSON through `capy hook pretooluse`, verify correct routing decisions. Bash curl → blocked. Normal bash → pass through. WebFetch → denied. Read → guidance. Agent → routing block injected
-- [ ] 16.3 Full pipeline test: setup → hook intercepts → MCP tool handles → store indexes → search retrieves
-- [ ] 16.4 Performance test: index a ~100 KB document, search, verify response time < 1 second
+- [x] 16.1 MCP server integration tests: start server, send capy_execute request, verify response format. Execute with intent + large output → verify auto-index + search. batch_execute with multiple commands + queries. index + search round-trip. fetch_and_index + search. stats counters. cleanup
+- [x] 16.2 Hook integration tests: pipe real Claude Code hook JSON through `capy hook pretooluse`, verify correct routing decisions. Bash curl → blocked. Normal bash → pass through. WebFetch → denied. Read → guidance. Agent → routing block injected
+- [x] 16.3 Full pipeline test: setup → hook intercepts → MCP tool handles → store indexes → search retrieves
+- [x] 16.4 Performance test: index a ~100 KB document, search, verify response time < 1 second
 
 ## Task 17: Final verification
 
