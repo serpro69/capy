@@ -133,6 +133,7 @@ jobs:
 
             def install
               bin.install "capy"
+              generate_completions_from_executable(bin/"capy", shell_parameter_format: :cobra)
             end
 
             test do

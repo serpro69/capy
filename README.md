@@ -139,6 +139,22 @@ Global flags: `--project-dir`, `--version`
 
 Cleanup flags: `--max-age-days` (default 30), `--dry-run` (default true), `--force`
 
+### Shell Completions
+
+Homebrew installs completions automatically. For other installation methods:
+
+```bash
+# Bash (add to ~/.bashrc)
+source <(capy completion bash)
+
+# Zsh (add to ~/.zshrc)
+source <(capy completion zsh)
+
+# Fish
+capy completion fish | source
+# To persist: capy completion fish > ~/.config/fish/completions/capy.fish
+```
+
 ## MCP Tools
 
 ### Execution
