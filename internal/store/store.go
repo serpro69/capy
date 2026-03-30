@@ -67,8 +67,15 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 		return s.db, nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(s.dbPath), 0o755); err != nil {
+	dbDir := filepath.Dir(s.dbPath)
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating DB directory: %w", err)
+	}
+
+	// Write a breadcrumb so the data directory is self-documenting.
+	// Errors are non-fatal — the DB works fine without it.
+	if s.projectDir != "" {
+		_ = os.WriteFile(filepath.Join(dbDir, ".project"), []byte(s.projectDir+"\n"), 0o644)
 	}
 
 	dsn := s.dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"

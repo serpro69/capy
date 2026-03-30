@@ -128,6 +128,7 @@ All settings have sensible defaults. Configuration files are optional — capy w
 | `capy` or `capy serve` | Start the MCP server (stdio transport) |
 | `capy setup` | Configure capy for the current project |
 | `capy doctor` | Run diagnostics on the installation |
+| `capy which` | Print the knowledge base path for the current project |
 | `capy cleanup` | Remove stale knowledge base entries |
 | `capy hook <event>` | Handle a hook event (called by Claude Code, not you) |
 
