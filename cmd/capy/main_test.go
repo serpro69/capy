@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -63,6 +65,12 @@ func TestDoctorSubcommand(t *testing.T) {
 
 func TestCleanupSubcommand(t *testing.T) {
 	dir := t.TempDir()
+	// Write a config that keeps the DB inside the temp dir (avoids leaking to ~/.local/share/capy/)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".capy.toml"),
+		[]byte("[store]\npath = \"test.db\"\n"),
+		0o644,
+	))
 	stdout, _, code := capy(t, "cleanup", "--project-dir", dir)
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout, "cleanup")
