@@ -12,7 +12,10 @@ import (
 // Checkpoints the WAL into the main DB file so the DB is safe for git commits.
 // Best-effort: errors are logged to stderr but never returned.
 func handleSessionEnd(projectDir string) {
-	cfg, _ := config.Load(projectDir)
+	cfg, err := config.Load(projectDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capy: session end config load failed (%v), using defaults\n", err)
+	}
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
