@@ -10,20 +10,20 @@
 
 The context-mode TS reference accumulated ~90 commits since the version capy was ported from. After filtering out CI, bundle, platform-specific (Windows, Bun, KiloCode, Kiro, Zed, Pi, OpenClaw, OpenCode), and docs-only changes, **12 changes** remain relevant to capy's core:
 
-| Priority | Area | Change |
-|----------|------|--------|
-| P0 | Search | Replace cascading fallback with Reciprocal Rank Fusion (RRF) |
-| P0 | Search | Add proximity reranking for multi-term queries |
-| P0 | Search | Increase BM25 title weight from 2x to 5x |
-| P1 | Search | Add `contentType` filter parameter |
-| P1 | Fetch | TTL cache (24h) for `fetch_and_index` |
-| P1 | Store | Source metadata API (`GetSourceMeta`) |
-| P1 | Store | `CleanupStaleSources` (stale = by last_accessed_at, not just access_count=0) |
-| P2 | Batch | Exact source label scoping (= instead of LIKE) |
-| P2 | Search | Empty index early return with guidance |
-| P2 | Hook | curl/wget: allow silent file-output downloads |
-| P2 | Batch | Cross-batch search tip in output |
-| P2 | Stats | TTL cache statistics in session report |
+| Priority | Area | Change | Decision |
+|----------|------|--------|----------|
+| P0 | Search | Replace cascading fallback with Reciprocal Rank Fusion (RRF) | Port |
+| P0 | Search | Add proximity reranking for multi-term queries | Port |
+| P0 | Search | Configurable BM25 title weight (TS hardcodes 5x) | Port with improvement |
+| P1 | Search | Add `contentType` filter parameter | Internal only (not in MCP schema) |
+| P1 | Fetch | TTL cache (configurable, default 24h) for `fetch_and_index` | Port with improvement |
+| P1 | Store | Source metadata API (`GetSourceMeta`) | Port |
+| P1 | Store | `CleanupStaleSources` | Skip — existing `Cleanup` is better |
+| P2 | Batch | Exact source label scoping + remove global fallback | Port |
+| P2 | Search | Empty index early return with guidance | Port |
+| P2 | Hook | curl/wget: allow file-output downloads | Port |
+| P2 | Batch | Cross-batch search tip in output | Port |
+| P2 | Stats | TTL cache statistics in session report | Port |
 
 ### Not applicable (skipped)
 
@@ -35,6 +35,14 @@ The context-mode TS reference accumulated ~90 commits since the version capy was
 - Hook self-heal/stale cleanup — not applicable (Go binary is self-contained)
 - `execFileSync` for rustc — Go already uses `exec.Command` without shell
 
+### Deliberate divergences from upstream
+
+- **`contentType` filter**: wired internally in `SearchOptions` + SQL, but NOT exposed in MCP tool schema (no current caller; avoids LLM prompt noise)
+- **`cleanupStaleSources`**: not ported — existing `Cleanup()` is smarter for persistent DB (considers access patterns, not just age)
+- **BM25 title weight**: configurable via `[store] title_weight` instead of hardcoded 5x (auto-generated headings could be hurt by aggressive boosting)
+- **Proximity formula**: normalized by content length instead of magic constant 100
+- **RRF layers**: 2 (porter OR + trigram OR) instead of TS's porter+trigram with AND/OR variants — OR is a superset, AND is unnecessary with RRF
+
 ---
 
 ## 2. Search Algorithm Overhaul
@@ -43,7 +51,7 @@ The context-mode TS reference accumulated ~90 commits since the version capy was
 
 **Problem:** The current `SearchWithFallback` in `internal/store/search.go` uses cascading layers — tries porter+AND, porter+OR, trigram+AND, trigram+OR in sequence and **stops at the first layer returning results**. This means if porter+AND returns 3 mediocre results, better trigram matches are never seen.
 
-**Solution:** Reciprocal Rank Fusion (Cormack et al. 2009). Run all search layers, then fuse results:
+**Solution:** Reciprocal Rank Fusion (Cormack et al. 2009). Run both search strategies (porter + trigram), then fuse results:
 
 ```
 For each result appearing in layer L at position i:
@@ -54,14 +62,14 @@ If the same chunk appears in multiple layers, scores **add up** — appearing in
 
 **Algorithm:**
 
-1. Run all 4 layers (porter+AND, porter+OR, trigram+AND, trigram+OR), each fetching `max(limit*2, 10)` candidates. **Go improvement:** run all 4 layers concurrently via goroutines — SQLite WAL supports concurrent reads, and Go's goroutines make this trivial. The TS runs them sequentially (single-threaded JS).
+1. Run **2 layers** — porter OR and trigram OR — each fetching `max(limit*2, 10)` candidates. With RRF handling ranking, the AND/OR distinction is unnecessary — OR mode returns a superset, and RRF's fusion scoring handles precision. **Go improvement:** run both layers concurrently via goroutines — SQLite WAL supports concurrent reads. The TS runs them sequentially (single-threaded JS).
 2. Build a map: `chunkKey → { result, fusedScore }`
    - Key by `(source_id, title)` to deduplicate across layers
    - For each appearance at position `i` (0-indexed in the ordered result slice, NOT the BM25 rank float): `fusedScore += 1.0 / (K + float64(i))`
 3. Sort by fused score descending, return top `limit`
 4. **Fuzzy fallback:** If RRF returns fewer than `limit` results, run `fuzzyCorrectQuery`, then repeat the RRF process with the corrected query. Merge results, **deduplicating by the same `(source_id, title)` key** — if a result appeared in both passes, keep the higher fused score.
 
-**Key difference from cascading:** Every layer contributes. A chunk that ranks #1 in trigram and #3 in porter gets a combined score that beats a chunk appearing only in porter at #1.
+**Key difference from cascading:** Both retrieval strategies always contribute. A chunk that ranks #1 in trigram and #3 in porter gets a combined score that beats a chunk appearing only in porter at #1.
 
 ### 2.2 Proximity Reranking
 
@@ -69,29 +77,44 @@ Applied as a **post-processing step** after RRF fusion, only for multi-term quer
 
 For each result:
 1. Find the minimum character window containing all query terms in the content
-2. Compute boost: `proximityBoost = 1.0 + (1.0 / (1.0 + minDistance/100.0))`
-3. Final score: `fusedScore * proximityBoost`
+2. Compute boost: `proximityBoost = 1.0 / (1.0 + float64(minSpan) / float64(max(len(content), 1)))`
+   - Normalizes by content length — a 50-char span in a 100-char chunk is treated differently than a 50-char span in a 10,000-char chunk
+   - Range: (0, 1] — close proximity → ~1.0, scattered → ~0.0
+3. Final score: `fusedScore * (1.0 + proximityBoost)`
 4. Re-sort by final score
 
-Results where terms appear close together get up to 2x boost. Results where terms are scattered across the content get minimal boost (~1.01x for very distant terms).
+**Go improvement over TS formula:** The TS uses a magic constant (`minDist/100`). Normalizing by content length is more principled and adapts to chunk size variation.
 
 **Go improvement:** Instead of re-scanning content with `strings.Index`, use the FTS5 `highlighted` field already present on `SearchResult`. The highlight markers (char(2)/char(3)) pinpoint exact match locations — extracting positions from these markers is faster and more precise than naive string search, especially for stemmed terms where the surface form may not match the query term exactly.
 
-### 2.3 BM25 Title Weight
+### 2.3 BM25 Title Weight (Configurable)
 
-All prepared statements change from `bm25(chunks, 2.0, 1.0)` to `bm25(chunks, 5.0, 1.0)` (and same for `chunks_trigram`). This gives headings 5x weight over body content, improving precision for heading-targeted queries.
+The TS upstream hardcodes `bm25(chunks, 5.0, 1.0)`. However, capy indexes a lot of auto-generated content with meaningless headings (`"Lines 1-20"`, `"Section 3"`, `"batch:git-log,npm-list"`) where boosting titles 5x could hurt ranking.
 
-**Affected statements:** `porterSQL`, `stmtSearchPorterFiltered`, `trigramSQL`, `stmtSearchTrigramFiltered`, and all new variants added for contentType/exact-source filtering.
+**Go improvement — configurable weight:**
+
+```toml
+[store]
+title_weight = 2.0  # default (current behavior); set to 5.0 for upstream TS behavior
+```
+
+- Add `TitleWeight float64` to `StoreConfig` (default 2.0)
+- Thread through `NewContentStore` → dynamic search SQL via `fmt.Sprintf("bm25(%s, %.1f, 1.0)", table, s.titleWeight)`
+- Users who want the upstream 5x behavior can configure it per-project
+- No SQL injection risk: value comes from config, not request input
 
 ---
 
-## 3. ContentType Filter
+## 3. SearchOptions Struct + ContentType Filter (Internal Only)
 
-Add an optional `contentType` parameter (`"code"` or `"prose"`) to search. When provided, SQL queries add `AND c.content_type = ?` to the WHERE clause.
+Introduce `SearchOptions` to replace the growing list of positional parameters:
 
-**Current signature:**
 ```go
-SearchWithFallback(query string, limit int, source string) ([]SearchResult, error)
+type SearchOptions struct {
+    Source          string // LIKE filter (default)
+    ContentType     string // "code", "prose", or "" (no filter)
+    SourceMatchMode string // "like" (default) or "exact"
+}
 ```
 
 **New signature:**
@@ -99,18 +122,15 @@ SearchWithFallback(query string, limit int, source string) ([]SearchResult, erro
 SearchWithFallback(query string, limit int, opts SearchOptions) ([]SearchResult, error)
 ```
 
-Where:
-```go
-type SearchOptions struct {
-    Source          string // LIKE filter (default)
-    ContentType    string // "code", "prose", or "" (no filter)
-    SourceMatchMode string // "like" (default) or "exact"
-}
-```
+**ContentType decision: internal only, NOT exposed in MCP tool schema.** Adding unused parameters to the tool schema adds token overhead to every prompt and gives the LLM another knob to hallucinate on. The `ContentType` field is wired into `SearchOptions` and the SQL WHERE clause so it's available when a use case emerges — exposing it in the schema is then one line. No current caller uses it.
 
-Using an options struct is idiomatic Go and avoids adding more positional parameters as the API evolves. It also cleanly bundles the `SourceMatchMode` needed for batch_execute exact scoping (Section 5).
+**SQL approach:** Remove all 4 prepared search statements (`stmtSearchPorter`, `stmtSearchPorterFiltered`, `stmtSearchTrigram`, `stmtSearchTrigramFiltered`). With RRF always running through `rrfSearch`, there is no separate "hot path" for unfiltered queries. Replace with a single `execDynamicSearch(table, sanitized, limit, opts)` method that builds the WHERE clause dynamically:
 
-**SQL approach:** Instead of pre-preparing N*M statement combinations (the TS approach), Go dynamically builds the WHERE clause and uses `db.Query()` for search queries with optional filters. The base porter/trigram statements (no filters) remain prepared for the hot path. When contentType or exact source matching is needed, the query is built dynamically — this is a cold path and the overhead is negligible for SQLite FTS5.
+- Always includes `{table} MATCH ?`
+- Optionally adds `AND s.label = ?` (exact) or `AND s.label LIKE '%' || ? || '%'` (like) based on `SourceMatchMode`
+- Optionally adds `AND c.content_type = ?` when `ContentType != ""`
+- Uses `s.titleWeight` from config for BM25 weight
+- No SQL injection risk: all dynamic parts are parameterized or from config
 
 ---
 
@@ -156,16 +176,15 @@ fetch_ttl_hours = 24  # default
 
 Loaded via `config.Config` and passed to the fetch handler. This lets users tune caching per-project (e.g., shorter TTL for fast-moving API docs, longer for stable references).
 
-### 4.3 Cleanup Enhancement (cleanupStaleSources)
+### 4.3 Cleanup: No Change (Deliberate Divergence)
 
-The current `Cleanup` method only removes sources with `access_count = 0`. The TS reference added `cleanupStaleSources` which removes any source where `last_accessed_at` is older than N days, regardless of access_count.
+The TS upstream added `cleanupStaleSources(maxAgeDays)` which deletes any source where `last_accessed_at` is older than N days, regardless of access count. **We do not port this.**
 
-Add a new method:
-```go
-func (s *ContentStore) CleanupStaleSources(maxAgeDays int) (int, error)
-```
-
-This deletes sources (and their chunks) where `last_accessed_at < datetime('now', '-N days')`. Returns count of deleted sources. Used internally by the server on startup or by the cleanup tool.
+capy's existing `Cleanup()` is better for a persistent DB:
+- Only removes sources with `access_count = 0` (never accessed via search) AND cold tier AND older than maxAgeDays
+- The TS method would delete sources that were accessed but are old — surprising behavior for a persistent knowledge base ("I searched for React docs last month, why are they gone?")
+- The TS method was designed for an originally-ephemeral DB where aggressive culling makes sense
+- If cruft becomes a real problem, add an `aggressive` flag to existing `Cleanup` rather than a separate method
 
 ---
 
@@ -192,12 +211,7 @@ The `capy_search` tool continues to use LIKE (default) since partial matching is
 
 When `handleSearch` runs and the store has no indexed content, return an `isError: true` response with guidance instead of running queries against an empty database.
 
-New method:
-```go
-func (s *ContentStore) IsEmpty() (bool, error)
-```
-
-Query: `SELECT COUNT(*) FROM sources` — returns true if count is 0.
+Use existing `store.Stats()` method (which already returns `SourceCount`) — no new method needed. Check `kbStats.SourceCount == 0`.
 
 Error message guides the user to index content first using `batch_execute`, `fetch_and_index`, `index`, or `execute`.
 
@@ -207,19 +221,22 @@ Error message guides the user to index content first using `batch_execute`, `fet
 
 **Current:** `isCurlOrWget(stripped)` blanket-blocks all curl/wget.
 
-**New:** Allow curl/wget when writing to a file silently (no stdout flooding):
+**New:** Allow curl/wget when writing to a file (no stdout flooding):
 
 1. Split command on chain operators (`&&`, `||`, `;`)
 2. For each segment containing curl/wget:
    - Check for **file output flags**: curl `-o`/`--output`, wget `-O`/`--output-document`, or shell redirect `>`/`>>`
-   - Check for **silent flags**: curl `-s`/`--silent`, wget `-q`/`--quiet`
-   - If file output AND silent → segment is **safe**
-   - If stdout output or not silent → segment is **unsafe**
+   - If file output present → segment is **safe** (output goes to file, not stdout)
+   - If no file output → segment is **unsafe** (stdout flooding risk)
 3. If ALL curl/wget segments are safe → pass through
 4. If ANY segment is unsafe → block with redirect message (existing behavior)
 
-Example: `curl -sL https://example.com/file.tar.gz -o file.tar.gz` → allowed.
+Note: silent flags (`-s`/`-q`) are NOT required — the TS reference only checks for file output. If the command writes to a file, it's safe regardless of verbosity to stderr.
+
+Example: `curl -L https://example.com/file.tar.gz -o file.tar.gz` → allowed.
+Example: `curl --output data.json https://api.com/data` → allowed.
 Example: `curl https://example.com/api` → blocked.
+Example: `curl -o a.txt url && curl url` → blocked (mixed).
 
 ---
 
