@@ -97,7 +97,7 @@ func TestCheckHookRegistration(t *testing.T) {
 
 		r := CheckHookRegistration(dir)
 		assert.Equal(t, Pass, r.Status)
-		assert.Contains(t, r.Detail, "5/5")
+		assert.Contains(t, r.Detail, "6/6")
 	})
 
 	t.Run("partial hooks", func(t *testing.T) {
@@ -126,7 +126,7 @@ func TestCheckHookRegistration(t *testing.T) {
 
 		r := CheckHookRegistration(dir)
 		assert.Equal(t, Warn, r.Status)
-		assert.Contains(t, r.Detail, "1/5")
+		assert.Contains(t, r.Detail, "1/6")
 	})
 }
 

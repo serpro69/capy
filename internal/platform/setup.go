@@ -63,7 +63,63 @@ func SetupClaudeCode(binaryPath, projectDir string) error {
 		return fmt.Errorf("updating .gitignore: %w", err)
 	}
 
+	// 8. Install git pre-commit hook for WAL checkpoint
+	if err := installPreCommitHook(binaryPath, projectDir); err != nil {
+		// Non-fatal: git hooks are a convenience, not a requirement
+		fmt.Fprintf(os.Stderr, "capy: warning: could not install pre-commit hook: %v\n", err)
+	}
+
 	return nil
+}
+
+// preCommitHookScript returns the content of the git pre-commit hook.
+// It checkpoints the WAL only when the knowledge DB is staged for commit.
+func preCommitHookScript(binaryPath string) string {
+	return fmt.Sprintf(`#!/bin/sh
+# capy: checkpoint WAL before committing knowledge DB
+# Installed by capy setup — safe to remove if not needed.
+
+if git diff --cached --name-only | grep -q '\.capy/knowledge\.db$'; then
+  "%s" checkpoint
+  git add .capy/knowledge.db
+fi
+`, binaryPath)
+}
+
+// installPreCommitHook installs or updates the git pre-commit hook.
+// If a pre-commit hook already exists and doesn't contain the capy marker,
+// appends the checkpoint logic. If it already has it, updates in place.
+func installPreCommitHook(binaryPath, projectDir string) error {
+	hookDir := filepath.Join(projectDir, ".git", "hooks")
+	if _, err := os.Stat(hookDir); os.IsNotExist(err) {
+		return nil // not a git repo, skip
+	}
+
+	hookPath := filepath.Join(hookDir, "pre-commit")
+	marker := "# capy: checkpoint WAL"
+	script := preCommitHookScript(binaryPath)
+
+	existing, err := os.ReadFile(hookPath)
+	if os.IsNotExist(err) {
+		// No existing hook — create new
+		return os.WriteFile(hookPath, []byte(script), 0o755)
+	}
+	if err != nil {
+		return err
+	}
+
+	content := string(existing)
+	if strings.Contains(content, marker) {
+		return nil // already installed
+	}
+
+	// Append to existing hook
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	content += "\n" + script
+
+	return os.WriteFile(hookPath, []byte(content), 0o755)
 }
 
 // PreToolUseMatcherPattern is the pipe-separated matcher for PreToolUse hooks.
