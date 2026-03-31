@@ -79,6 +79,7 @@ var hookEvents = []struct {
 	{"PostToolUse", "posttooluse", ""},
 	{"PreCompact", "precompact", ""},
 	{"SessionStart", "sessionstart", ""},
+	{"SessionEnd", "sessionend", ""},
 	{"UserPromptSubmit", "userpromptsubmit", ""},
 }
 

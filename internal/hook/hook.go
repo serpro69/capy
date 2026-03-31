@@ -29,6 +29,9 @@ func Run(event string, a adapter.HookAdapter, policies []security.SecurityPolicy
 		output, err = handleSessionStart(input, a)
 	case "userpromptsubmit":
 		output, err = handleUserPromptSubmit(input, a)
+	case "sessionend":
+		handleSessionEnd(projectDir)
+		return nil // no output, no error — best effort
 	default:
 		return fmt.Errorf("unknown hook event: %s", event)
 	}
