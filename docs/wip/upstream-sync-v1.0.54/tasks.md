@@ -25,17 +25,18 @@
 - **Docs:** [implementation.md#2-reciprocal-rank-fusion-rrf](./implementation.md#2-reciprocal-rank-fusion-rrf)
 
 ### Subtasks
-- [ ] 2.1 Add `rrfSearch(query string, limit int, opts SearchOptions) []SearchResult` to `internal/store/search.go` — runs all 4 layers with `max(limit*2, 10)` fetch limit, builds fusion map keyed by `sourceID:title`, computes `1/(60+rank)` scores, sorts by fused score
-- [ ] 2.2 Add `proximityRerank(results []SearchResult, query string) []SearchResult` to `internal/store/search.go` — for 2+ word queries, finds minimum character window containing all terms, applies `1 + 1/(1+minDist/100)` boost, re-sorts
-- [ ] 2.3 Replace cascading loop in `SearchWithFallback` with: RRF pass → if < limit results, fuzzy correct → second RRF pass → merge. Tag fuzzy results with `"fuzzy+"` prefix on MatchLayer
-- [ ] 2.4 Update `searchPorter` and `searchTrigramQuery` to accept dynamic limit (they already do via parameter — verify the `fetchLimit` flows through correctly)
-- [ ] 2.5 Write tests in `internal/store/search_test.go`: RRF returns results blended from multiple layers; multi-layer hits rank above single-layer hits; fuzzy correction only triggers when RRF returns < limit
-- [ ] 2.6 Write tests for proximity reranking: multi-term query boosts close terms; single-term skips reranking; all terms absent from content gives boost=1.0
+- [ ] 2.1 Add `rrfSearch(query string, limit int, opts SearchOptions) []SearchResult` to `internal/store/search.go` — runs all 4 layers **concurrently** (goroutines + WaitGroup) with `max(limit*2, 10)` fetch limit, builds fusion map keyed by `sourceID:title`, computes `1/(60+position)` scores (position = slice index, not BM25 rank float), sorts by fused score
+- [ ] 2.2 Add `proximityRerank(results []SearchResult, query string) []SearchResult` to `internal/store/search.go` — for 2+ word queries, extract match positions from FTS5 highlight markers (char(2)/char(3)) in `Highlighted` field, find minimum window, apply `1 + 1/(1+minDist/100)` boost. Fall back to `strings.Index` on content when `Highlighted` is empty.
+- [ ] 2.3 Add `mergeRRFResults(primary, secondary []SearchResult, limit int) []SearchResult` — deduplicates by `(sourceID, title)` key, keeps primary version on conflict, truncates to limit
+- [ ] 2.4 Replace cascading loop in `SearchWithFallback` with: RRF pass → if < limit results, fuzzy correct → second RRF pass → merge via `mergeRRFResults`. Tag fuzzy results with `"fuzzy+"` prefix on MatchLayer
+- [ ] 2.5 Update `searchPorter` and `searchTrigramQuery` to accept dynamic limit (they already do via parameter — verify the `fetchLimit` flows through correctly)
+- [ ] 2.6 Write tests in `internal/store/search_test.go`: RRF returns results blended from multiple layers; multi-layer hits rank above single-layer hits; fuzzy correction only triggers when RRF returns < limit; fuzzy results don't duplicate direct results
+- [ ] 2.7 Write tests for proximity reranking: multi-term query boosts close terms; single-term skips reranking; all terms absent from content gives boost=1.0; highlight-marker-based positions match expected offsets
 
 ## Task 3: ContentType filter on search
 - **Status:** pending
 - **Depends on:** Task 2
-- **Docs:** [implementation.md#13-dynamic-sql-for-filtered-queries](./implementation.md#13-dynamic-sql-for-filtered-queries)
+- **Docs:** [implementation.md#1-search-options-struct--contenttype-filter](./implementation.md#1-search-options-struct--contenttype-filter) (section 1.3)
 
 ### Subtasks
 - [ ] 3.1 Add dynamic SQL builder helpers in `internal/store/search.go`: `searchPorterDynamic(query, limit, opts)` and `searchTrigramDynamic(query, limit, opts)` that build WHERE clauses with optional `content_type = ?` and source match mode (`=` vs `LIKE`)
@@ -54,21 +55,25 @@
 - [ ] 4.2 Add `stmtGetSourceMeta` prepared statement to `internal/store/store.go` — `SELECT label, chunk_count, indexed_at FROM sources WHERE label = ?`; add to `Close()` cleanup list
 - [ ] 4.3 Implement `GetSourceMeta(label string) (*SourceMeta, error)` on `ContentStore` in `internal/store/search.go` — returns `nil, nil` when not found
 - [ ] 4.4 Add `IsEmpty() (bool, error)` to `internal/store/cleanup.go` — `SELECT COUNT(*) FROM sources`
-- [ ] 4.5 Add `force` boolean parameter to `toolFetchAndIndex()` in `internal/server/tools.go`
-- [ ] 4.6 Add TTL cache logic at the start of `handleFetchAndIndex` in `internal/server/tool_fetch.go` — check `GetSourceMeta`, return cache-hit when `< 24h` and `!force`, call `stats.AddCacheHit`
-- [ ] 4.7 Write tests in `internal/store/search_test.go`: `GetSourceMeta` returns nil for unknown label; returns correct label/chunkCount/indexedAt after indexing
-- [ ] 4.8 Write tests in `internal/store/cleanup_test.go`: `IsEmpty` returns true on fresh DB, false after indexing
-- [ ] 4.9 Write tests in `internal/server/tool_knowledge_test.go`: second `fetch_and_index` within 24h returns cache hit text; `force=true` bypasses cache; stats track cache hit
+- [ ] 4.5 Add `CacheConfig` struct with `FetchTTLHours int` to `internal/config/config.go` under `StoreConfig`; default to 24 when unset
+- [ ] 4.6 Add `force` boolean parameter to `toolFetchAndIndex()` in `internal/server/tools.go`
+- [ ] 4.7 Add TTL cache logic at the start of `handleFetchAndIndex` in `internal/server/tool_fetch.go` — check `GetSourceMeta`, compare against configured TTL from `s.config.Store.Cache.FetchTTLHours`, return cache-hit when fresh and `!force`, call `stats.AddCacheHit`
+- [ ] 4.8 Add `CleanupStaleSources(maxAgeDays int) (int, error)` to `internal/store/cleanup.go` — deletes sources where `last_accessed_at` is older than `maxAgeDays` regardless of access_count (unlike existing `Cleanup` which requires `access_count = 0`); execute chunk + trigram + source deletes in a single transaction
+- [ ] 4.9 Write tests in `internal/store/search_test.go`: `GetSourceMeta` returns nil for unknown label; returns correct label/chunkCount/indexedAt after indexing
+- [ ] 4.10 Write tests in `internal/store/cleanup_test.go`: `IsEmpty` returns true on fresh DB, false after indexing; `CleanupStaleSources` removes old sources but preserves recently accessed ones
+- [ ] 4.11 Write tests in `internal/server/tool_knowledge_test.go`: second `fetch_and_index` within TTL returns cache hit text; `force=true` bypasses cache; stats track cache hit
+- [ ] 4.12 Write config test: `FetchTTLHours` defaults to 24 when omitted; custom value is loaded from TOML
 
-## Task 5: Batch execute — exact source scoping + cross-batch tip
+## Task 5: Batch execute — exact source scoping + remove global fallback
 - **Status:** pending
 - **Depends on:** Task 1, Task 3
 - **Docs:** [implementation.md#4-batch-execute-exact-source-scoping](./implementation.md#4-batch-execute-exact-source-scoping)
 
 ### Subtasks
-- [ ] 5.1 In `handleBatchExecute` (`internal/server/tool_batch.go`), change the scoped search to use `SearchOptions{Source: sourceLabel, SourceMatchMode: "exact"}`; keep the global fallback as `SearchOptions{}` (empty, LIKE default)
-- [ ] 5.2 Append cross-batch search tip line to the batch output before the distinctive terms section
-- [ ] 5.3 Write test in `internal/server/tool_batch_test.go`: index content with a similar label beforehand, verify batch search doesn't leak results from the similarly-labeled source
+- [ ] 5.1 In `handleBatchExecute` (`internal/server/tool_batch.go`), change the scoped search to use `SearchOptions{Source: sourceLabel, SourceMatchMode: "exact"}`
+- [ ] 5.2 Remove the Tier 2 global fallback entirely — delete the `crossSource` variable, the fallback `SearchWithFallback(query, 3, "")` call, the cross-source warning message, and the `_(source: ...)_` source tags
+- [ ] 5.3 Append cross-batch search tip line to the batch output before the distinctive terms section
+- [ ] 5.4 Write test in `internal/server/tool_batch_test.go`: index content with a similar label beforehand, verify batch search doesn't leak results from the similarly-labeled source; verify no global fallback results appear when scoped search returns nothing
 
 ## Task 6: Empty index early return
 - **Status:** pending
@@ -99,8 +104,9 @@
 - [ ] 8.1 Add `CacheHits int64` and `CacheBytesSaved int64` fields to `SessionStats` in `internal/server/stats.go`
 - [ ] 8.2 Add `AddCacheHit(estimatedBytes int64)` method to `SessionStats` — atomically increments `CacheHits` and adds to `CacheBytesSaved`
 - [ ] 8.3 Update `Snapshot()` in `internal/server/stats.go` to copy the new fields
-- [ ] 8.4 Add TTL Cache section to `handleStats` in `internal/server/tool_stats.go` — display when `snap.CacheHits > 0`: cache hits, data avoided, network requests saved, TTL remaining
-- [ ] 8.5 Write test: call `AddCacheHit` twice, verify `Snapshot()` returns correct accumulated values
+- [ ] 8.4 Update top-level savings calculation in `handleStats` (`internal/server/tool_stats.go`) to include cache: `totalProcessed := keptOut + totalBytesReturned + snap.CacheBytesSaved`
+- [ ] 8.5 Add TTL Cache section to `handleStats` — display when `snap.CacheHits > 0`: cache hits, data avoided, network requests saved, TTL remaining (using configured TTL from config, not hardcoded 24h)
+- [ ] 8.6 Write test: call `AddCacheHit` twice, verify `Snapshot()` returns correct accumulated values; verify stats report includes cache section
 
 ## Task 9: Final verification
 - **Status:** pending
