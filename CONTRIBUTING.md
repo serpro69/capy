@@ -181,6 +181,8 @@ go test -tags fts5 -count=1 -v -run TestIntegration ./internal/server/...
 
 **Store operations**: All database operations use prepared statements cached on the `ContentStore` struct. New queries need a prepared statement added to `store.go:prepareStatements()` and closed in `store.go:Close()`.
 
+**SQLite WAL checkpoint** (see ADR-015, ADR-016): The knowledge DB uses WAL mode. On `Close()`, the WAL must be flushed into the main `.db` file — otherwise git operations corrupt the database (WAL/SHM sidecar files aren't tracked). The checkpoint requires exclusive WAL access, which means the `database/sql` connection pool must be closed *before* checkpointing. `Close()` handles this by: (1) closing statements, (2) closing the pool, (3) opening a fresh single connection for `PRAGMA wal_checkpoint(TRUNCATE)`. Do not attempt to checkpoint while pool connections are open — it silently degrades to passive (incomplete). The `Checkpoint()` method does the same thing standalone for the `capy checkpoint` CLI command.
+
 **Security checks**: Bash deny patterns are loaded once at server startup. The `matchesAnyBashPattern` function uses cached regexes (`sync.Map`). Shell-escape patterns for non-shell languages are compiled once in `init()`.
 
 **Hook routing** (`hook/pretooluse.go`): The main routing function dispatches on canonical tool name. New tool interceptions go here. Guidance uses file-based persistence (`.capy/guidance-<sessionID>.json`) since hooks run as separate short-lived processes.
