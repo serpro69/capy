@@ -76,6 +76,38 @@ func TestCleanupSubcommand(t *testing.T) {
 	assert.Contains(t, stdout, "cleanup")
 }
 
+func TestCheckpointSubcommand_NoDB(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".capy.toml"),
+		[]byte("[store]\npath = \"test.db\"\n"),
+		0o644,
+	))
+	stdout, _, code := capy(t, "checkpoint", "--project-dir", dir)
+	assert.Equal(t, 0, code)
+	assert.Contains(t, stdout, "no knowledge base")
+}
+
+func TestCheckpointSubcommand_WithDB(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".capy.toml"),
+		[]byte("[store]\npath = \"test.db\"\n"),
+		0o644,
+	))
+
+	// Create a minimal WAL-mode DB
+	cmd := exec.Command("sqlite3", dbPath, "PRAGMA journal_mode=WAL; CREATE TABLE t(id INTEGER); INSERT INTO t VALUES(1);")
+	if err := cmd.Run(); err != nil {
+		t.Skip("sqlite3 CLI not available")
+	}
+
+	stdout, _, code := capy(t, "checkpoint", "--project-dir", dir)
+	assert.Equal(t, 0, code)
+	assert.Contains(t, stdout, "WAL flushed")
+}
+
 func TestDefaultCommandIsServe(t *testing.T) {
 	// default command is serve; with empty stdin it exits cleanly
 	_, _, code := capy(t)
