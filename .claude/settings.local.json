@@ -12,7 +12,10 @@
       "mcp__pal__codereview",
       "Bash(go tool:*)",
       "mcp__capy__capy_search",
-      "mcp__capy__capy_batch_execute"
+      "mcp__capy__capy_batch_execute",
+      "mcp__pal__chat",
+      "mcp__capy__capy_index",
+      "mcp__capy__capy_stats"
     ]
   },
   "enabledMcpjsonServers": [
