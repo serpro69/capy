@@ -254,6 +254,34 @@ Run `capy doctor` to diagnose issues. Common problems:
 | **MCP: not registered** | Run `capy setup`. Check `.mcp.json` exists in project root. |
 | **MCP: binary not found** | The `capy` binary isn't in PATH. Move it or run `capy setup --binary /path/to/capy`. |
 
+## Acknowledgements
+
+capy is a Go reimplementation of [context-mode](https://github.com/mksglu/context-mode), originally written in TypeScript by [@mksglu](https://github.com/mksglu). The core algorithms — FTS5 search with BM25 ranking, three-tier fallback, smart chunking, sandbox architecture — originate from that project.
+
+**Why rewrite it?** context-mode works well, but I wanted to experiment with ideas that are hard to retrofit into the existing architecture — persistent cross-session knowledge bases, tiered freshness metadata, content deduplication, and eventually full session continuity that survives context compaction. Go also gives me a single static binary with no Node.js dependency, which removes an entire class of installation and compatibility issues. This is primarily a personal tool, but it's open source in case others find it useful.
+
+### capy vs context-mode
+
+capy is still in an active porting phase. Not everything from context-mode has been ported yet — multi-platform support, session continuity, and some newer search improvements are in progress. If you need the most complete and battle-tested version today, use [context-mode](https://github.com/mksglu/context-mode). If you prefer a single-binary install and the features listed below, capy may be worth trying.
+
+| | context-mode (TypeScript) | capy (Go) |
+|---|---|---|
+| **Install** | `npm install` — requires Node.js, native module compilation (`better-sqlite3`), platform-specific shims for Bun/nvm4w/Snap | Single static binary — `brew install` or `curl \| sh`. No runtime, no dependencies |
+| **Startup** | Node.js VM boot + module resolution | Native binary, starts in milliseconds |
+| **Memory** | Node.js baseline (~50-80 MB typical) | Go baseline (~10-20 MB typical) |
+| **SQLite** | `better-sqlite3` native addon with Bun fallback — multiple compatibility fixes across versions | `mattn/go-sqlite3` via CGO — one driver, no compatibility layer |
+| **Knowledge base** | Originally ephemeral per-session; persistence added later (v1.0.29) | Persistent per-project from day one — survives across sessions, configurable location |
+| **Content dedup** | Re-indexes on every call | SHA-256 content hashing — skips re-indexing when content is unchanged |
+| **Freshness** | Added via TTL cache (v1.0.29+) | Tiered freshness metadata (`hot`/`warm`/`cold` based on `last_accessed_at`, `access_count`) built into the schema |
+| **Process isolation** | `child_process.execFileSync` | Process group isolation (`Setpgid`) — kills entire process tree on cleanup, not just the parent |
+| **Configuration** | Reads `.claude/settings.json` | Own config system (`.capy.toml`, XDG dirs) plus reads `.claude/settings.json` for security rules |
+| **Platform support** | Claude Code, Cursor, Kiro, Zed, Pi, OpenClaw, OpenCode, Gemini CLI, Codex CLI | Claude Code (more platforms planned) |
+| **Session continuity** | Tracks events across compactions | Planned |
+
+### What's shared
+
+The search algorithm (FTS5 BM25 with Porter stemming, trigram, and fuzzy Levenshtein correction), sandbox execution model, hook-based routing, chunking strategies, and security policy evaluation all originate from context-mode. capy ports these faithfully, diverging only where Go offers a meaningfully better approach.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
