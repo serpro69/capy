@@ -21,6 +21,8 @@ The cross-machine / team-sharing use case (working on two laptops, sharing a KB 
 
 None of these are implemented yet. For now, each machine maintains its own KB. Content hash deduplication (ADR-007) makes re-indexing the same files cheap.
 
+As a stopgap for the two-machine single-user case, `capy checkpoint` flushes the WAL into the main DB file and removes sidecar files, making the DB safe to commit. The workflow: stop capy → `capy checkpoint` → commit → push. On the other machine: pull → capy recreates WAL/SHM on first access. This works but requires discipline and doesn't handle session-derived content reconstruction.
+
 ## Rationale
 
 - SQLite WAL mode uses sidecar files (`.db-wal`, `.db-shm`) that must stay in sync with the main DB file. Git only tracks the main file.
