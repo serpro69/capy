@@ -263,6 +263,24 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 }
 
 // Close finalizes statements, checkpoints WAL, and closes the database.
+//
+// WAL checkpoint architecture (see ADR-016):
+//
+// SQLite WAL mode creates sidecar files (.db-wal, .db-shm) that must be
+// flushed into the main .db file before git operations — git only tracks the
+// main file, and stale sidecars cause corruption on branch switches (ADR-015).
+//
+// Checkpoint requires exclusive WAL access. database/sql maintains a connection
+// pool, and wal_checkpoint(TRUNCATE) silently degrades to passive (incomplete)
+// if other pool connections hold the WAL open. To solve this:
+//
+//  1. Close all prepared statements
+//  2. Close the connection pool (db.Close) — releases all WAL readers
+//  3. Open a fresh single connection and run PRAGMA wal_checkpoint(TRUNCATE)
+//
+// This is the primary checkpoint mechanism. The CLI command `capy checkpoint`
+// uses Checkpoint() which does step 3 standalone (for use when the server is
+// not running). A git pre-commit hook calls `capy checkpoint` as a safety net.
 func (s *ContentStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
