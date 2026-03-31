@@ -8,7 +8,7 @@
 
 ---
 
-## 1. Search Options Struct + ContentType Filter
+## 1. SearchOptions Struct + Configurable BM25 + Dynamic SQL
 
 ### 1.1 New Types
 
@@ -19,12 +19,68 @@ Add `SearchOptions` struct:
 ```go
 type SearchOptions struct {
     Source          string // partial match filter (LIKE '%source%')
-    ContentType     string // "code", "prose", or "" (no filter)
+    ContentType     string // "code", "prose", or "" (no filter) — internal only, not in MCP schema
     SourceMatchMode string // "like" (default) or "exact"
 }
 ```
 
-### 1.2 Update SearchWithFallback Signature
+### 1.2 Configurable BM25 Title Weight
+
+**File:** `internal/config/config.go`
+
+Add to `StoreConfig`:
+```go
+TitleWeight float64 `toml:"title_weight"` // BM25 title weight (default 2.0)
+```
+
+Default: `2.0` (current behavior). Users who want the upstream TS behavior set `title_weight = 5.0`.
+
+**File:** `internal/store/store.go`
+
+Add field to `ContentStore` and update constructor:
+```go
+type ContentStore struct {
+    // ... existing fields ...
+    titleWeight float64
+}
+
+func NewContentStore(dbPath, projectDir string, titleWeight float64) *ContentStore {
+    if titleWeight <= 0 {
+        titleWeight = 2.0
+    }
+    // ...
+}
+```
+
+Update `server.go` to pass `s.config.Store.TitleWeight` through to `NewContentStore`.
+
+### 1.3 Replace Prepared Statements with Dynamic SQL
+
+**File:** `internal/store/store.go`
+
+Remove from `ContentStore` struct: `stmtSearchPorter`, `stmtSearchPorterFiltered`, `stmtSearchTrigram`, `stmtSearchTrigramFiltered`. Remove their preparation in `prepareStatements()` and cleanup in `Close()`.
+
+**File:** `internal/store/search.go`
+
+Add a single `execDynamicSearch` method:
+
+```go
+func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opts SearchOptions) []SearchResult
+```
+
+Logic:
+- Build `SELECT ... FROM {table} c JOIN sources s ON s.id = c.source_id WHERE {table} MATCH ?`
+- Use `fmt.Sprintf("bm25(%s, %.1f, 1.0)", table, s.titleWeight)` for the rank column
+- If `opts.Source != ""`: append source filter
+  - `opts.SourceMatchMode == "exact"`: `AND s.label = ?`
+  - Default: `AND s.label LIKE '%' || ? || '%'`
+- If `opts.ContentType != ""`: append `AND c.content_type = ?`
+- Append `ORDER BY rank LIMIT ?`
+- Build params slice, execute with `s.db.Query()`
+
+No SQL injection risk: table name is always `"chunks"` or `"chunks_trigram"` (hardcoded in callers), titleWeight comes from config (not request input), all user values are parameterized.
+
+### 1.4 Update SearchWithFallback Signature
 
 **File:** `internal/store/search.go`
 
@@ -43,37 +99,25 @@ All callers must be updated:
 - `internal/server/tool_batch.go` — `handleBatchExecute`
 - `internal/store/search_test.go` — all test functions
 
-### 1.3 Dynamic SQL for Filtered Queries
+### 1.5 Update searchPorter and searchTrigramQuery
 
-**File:** `internal/store/search.go`
-
-Add a helper that builds the WHERE clause dynamically:
+Both now always use OR mode (RRF handles ranking) and delegate to `execDynamicSearch`:
 
 ```go
-func (s *ContentStore) searchPorterDynamic(query string, limit int, opts SearchOptions) []SearchResult
-func (s *ContentStore) searchTrigramDynamic(query string, limit int, opts SearchOptions) []SearchResult
+func (s *ContentStore) searchPorter(query string, limit int, opts SearchOptions) []SearchResult {
+    sanitized := sanitizeQuery(query, "OR")
+    if sanitized == "" { return nil }
+    return s.execDynamicSearch("chunks", sanitized, limit, opts)
+}
+
+func (s *ContentStore) searchTrigramQuery(query string, limit int, opts SearchOptions) []SearchResult {
+    sanitized := sanitizeTrigramQuery(query, "OR")
+    if sanitized == "" { return nil }
+    return s.execDynamicSearch("chunks_trigram", sanitized, limit, opts)
+}
 ```
 
-Logic:
-- Start with base SQL (the prepared `porterSQL` / `trigramSQL` constants)
-- If `opts.Source != ""`: append source filter clause
-  - If `opts.SourceMatchMode == "exact"`: `AND s.label = ?`
-  - Else: `AND s.label LIKE '%' || ? || '%'` (existing behavior)
-- If `opts.ContentType != ""`: append `AND c.content_type = ?`
-- Build params slice accordingly
-- Use `db.Query()` (not prepared statement) for the dynamic path
-
-The existing prepared statements (`stmtSearchPorter`, `stmtSearchPorterFiltered`, etc.) can remain for the hot path (no contentType, no exact match). The dynamic path handles the combinatorial cases.
-
-### 1.4 BM25 Title Weight
-
-**File:** `internal/store/store.go`
-
-In `prepareStatements`, change all `bm25(chunks, 2.0, 1.0)` to `bm25(chunks, 5.0, 1.0)` and all `bm25(chunks_trigram, 2.0, 1.0)` to `bm25(chunks_trigram, 5.0, 1.0)`.
-
-There are exactly 4 occurrences: `porterSQL`, `stmtSearchPorterFiltered`, `trigramSQL`, `stmtSearchTrigramFiltered`.
-
-Also update the dynamic SQL builder to use `5.0` weight.
+Remove `execSearch` (the old prepared-statement-based method).
 
 ---
 
@@ -126,15 +170,13 @@ func (s *ContentStore) rrfSearch(query string, limit int, opts SearchOptions) []
 
 Algorithm:
 1. `fetchLimit := max(limit*2, 10)`
-2. Run all 4 layers **concurrently** with `fetchLimit`, collecting results. Use a `sync.WaitGroup` and a mutex-protected slice (or 4 separate result slices gathered after `wg.Wait()`). SQLite WAL mode supports concurrent readers.
+2. Run **2 layers** (porter OR + trigram OR) **concurrently** with `fetchLimit`. Use a `sync.WaitGroup` with 2 separate result slices gathered after `wg.Wait()`. SQLite WAL mode supports concurrent readers. With RRF handling ranking, the AND/OR distinction is unnecessary — OR returns a superset.
 3. Build fusion map: key = `fmt.Sprintf("%d:%s", r.SourceID, r.Title)`
    - For each result at **position `i`** in the layer's ordered result slice (0-indexed — this is the slice index, not the BM25 `rank` float): `score += 1.0 / (K + float64(i))`
    - K = 60
 4. Sort by fused score descending
 5. Apply proximity reranking (if multi-term query)
 6. Return top `limit`
-
-Each layer function (`searchPorter`, `searchTrigramQuery`) already returns `[]SearchResult` — reuse them as-is but with `fetchLimit`.
 
 Add a `mergeRRFResults` helper for deduplicating across pass 1 (direct) and pass 2 (fuzzy):
 
@@ -160,14 +202,19 @@ Only applies when query has 2+ words. For each result:
 The `Highlighted` field already contains char(2)/char(3) markers wrapping matched terms (set by `highlight(chunks, 1, char(2), char(3))`). Extract match positions by scanning for these markers:
 1. Find all `char(2)` positions in `r.Highlighted` — these are match start positions
 2. Map these positions back to the original content (strip markers to get real character offsets)
-3. Find the minimum window containing at least one match per query term
-4. `boost := 1.0 + (1.0 / (1.0 + float64(minWindow)/100.0))`
-5. Multiply the result's fused score by boost
-6. If any term has no highlight marker, boost = 1.0 (no penalty, no bonus)
+3. Find the minimum window containing at least one match per query term using a sweep-line algorithm (see `findMinSpan` below)
+4. Normalize by content length: `boost := 1.0 / (1.0 + float64(minSpan) / float64(max(len(r.Content), 1)))`
+   - Range: (0, 1] — close proximity → ~1.0, scattered → ~0.0
+5. Final score: `fusedScore * (1.0 + boost)`
+6. If any term has no highlight marker, boost = 0.0 (no penalty, no bonus)
 
 This is faster and more accurate than re-scanning content with `strings.Index`, because FTS5 already tokenized and matched terms (including stemmed forms that wouldn't match via naive string search).
 
 **Fallback** — if `Highlighted` is empty (shouldn't happen, but defensive), fall back to `strings.Index` on `strings.ToLower(r.Content)`.
+
+**Helper functions:**
+- `findAllPositions(text, term string) []int` — returns all start positions of term in text
+- `findMinSpan(positionLists [][]int) int` — sweep-line algorithm: advance the pointer at the current minimum, track best span
 
 Re-sort results by boosted score.
 
@@ -218,17 +265,7 @@ Don't forget to:
 - Add `stmtGetSourceMeta` to the `Close()` cleanup list
 - Add the prepared statement in `prepareStatements`
 
-### 3.2 IsEmpty
-
-**File:** `internal/store/cleanup.go` (store queries section)
-
-```go
-func (s *ContentStore) IsEmpty() (bool, error)
-```
-
-Query: `SELECT COUNT(*) FROM sources`. Returns true if count is 0. Add a prepared statement `stmtSourceCount` or use inline query (this is cold path, either works).
-
-### 3.3 TTL Cache in fetch_and_index
+### 3.2 TTL Cache in fetch_and_index
 
 **File:** `internal/server/tool_fetch.go`
 
@@ -269,28 +306,19 @@ type CacheConfig struct {
 
 Set default in config loading: if `FetchTTLHours == 0`, set to `24`.
 
-### 3.4 CleanupStaleSources
+### 3.3 formatAge Helper
 
-**File:** `internal/store/cleanup.go`
+**File:** `internal/server/tool_fetch.go`
 
-New method:
 ```go
-func (s *ContentStore) CleanupStaleSources(maxAgeDays int) (int, error)
+func formatAge(d time.Duration) string {
+    hours := int(d.Hours())
+    if hours > 0 { return fmt.Sprintf("%dh ago", hours) }
+    minutes := int(d.Minutes())
+    if minutes > 0 { return fmt.Sprintf("%dm ago", minutes) }
+    return "just now"
+}
 ```
-
-Unlike existing `Cleanup` (which filters by `access_count = 0`), this deletes any source where `last_accessed_at` is older than `maxAgeDays` days, regardless of access count. Execute in a transaction:
-
-```sql
-DELETE FROM chunks WHERE source_id IN (
-    SELECT id FROM sources WHERE last_accessed_at < datetime('now', '-' || ? || ' days')
-);
-DELETE FROM chunks_trigram WHERE source_id IN (
-    SELECT id FROM sources WHERE last_accessed_at < datetime('now', '-' || ? || ' days')
-);
-DELETE FROM sources WHERE last_accessed_at < datetime('now', '-' || ? || ' days');
-```
-
-Return the count of deleted sources from `changes()`.
 
 ---
 
@@ -344,40 +372,27 @@ out.WriteString("\n💡 To search across ALL indexed content (not just this batc
 
 After parsing parameters and before running queries, check if store is empty:
 
+Use existing `store.Stats()` — no new `IsEmpty()` method needed:
+
 ```go
 st := s.getStore()
-empty, err := st.IsEmpty()
-if err == nil && empty {
-    return s.trackToolResponse("capy_search", errorResult(
-        "The knowledge base is empty — no content has been indexed yet.\n\n" +
-        "Index content first using:\n" +
-        "  • capy_batch_execute(commands, queries) — run commands, auto-index output, and search in one call\n" +
-        "  • capy_fetch_and_index(url) — fetch a URL, index it, then search with capy_search\n" +
-        "  • capy_index(content, source) — manually index text content\n\n" +
-        "After indexing, capy_search becomes available for follow-up queries.",
-    )), nil
+kbStats, err := st.Stats()
+if err == nil && kbStats.SourceCount == 0 {
+    return s.trackToolResponse("capy_search", &mcp.CallToolResult{
+        Content: []mcp.Content{mcp.NewTextContent(
+            "The knowledge base is empty — nothing has been indexed yet.\n\n" +
+            "To populate it, use:\n" +
+            "  • capy_batch_execute(commands, queries) — run commands, auto-index output, and search in one call\n" +
+            "  • capy_fetch_and_index(url) — fetch a URL, index it, then search with capy_search\n" +
+            "  • capy_index(content, source) — manually index text content\n\n" +
+            "After indexing, capy_search becomes available for follow-up queries.",
+        )},
+        IsError: true,
+    }), nil
 }
 ```
 
-Also add `contentType` parameter to `toolSearch()` in `tools.go`:
-
-```go
-mcp.WithString("contentType",
-    mcp.Description("Filter by content type: 'code' or 'prose'"),
-    mcp.Enum("code", "prose"),
-),
-```
-
-And pass it through in `handleSearch`:
-
-```go
-contentType := req.GetString("contentType", "")
-// ...
-results, err := st.SearchWithFallback(q, effectiveLimit, store.SearchOptions{
-    Source:      source,
-    ContentType: contentType,
-})
-```
+Note: `contentType` is NOT added to the MCP tool schema (see design.md, Section 3 — internal only). The handler passes it through `SearchOptions` internally but the parameter is not exposed to the LLM.
 
 ---
 
@@ -390,15 +405,15 @@ results, err := st.SearchWithFallback(q, effectiveLimit, store.SearchOptions{
 Replace the simple `isCurlOrWget` usage in `routeBash` with a smarter check:
 
 ```go
-// isCurlWgetSafe checks if a curl/wget command writes to a file silently.
+// isCurlWgetSafe checks if a curl/wget command writes to a file (not stdout).
 func isCurlWgetSafe(segment string) bool
 ```
 
 Logic:
 - Check if segment contains curl or wget
-- If curl: check for `-o`/`--output` flags or `>`/`>>` redirect, AND `-s`/`--silent` flag
-- If wget: check for `-O`/`--output-document` flags or `>`/`>>` redirect, AND `-q`/`--quiet` flag
-- Return true only if file output AND silent
+- If curl: check for `-o`/`--output` flags or `>`/`>>` redirect
+- If wget: check for `-O`/`--output-document` flags or `>`/`>>` redirect
+- Return true if file output is present (silent flags NOT required — matching TS behavior)
 
 ```go
 // splitChainedCommands splits a shell command on &&, ||, ; operators.
@@ -431,7 +446,7 @@ if isCurlOrWget(stripped) {
     }
     if !allSafe {
         return a.FormatModify(map[string]any{
-            "command": `echo "capy: curl/wget blocked (stdout flood risk). Use capy_fetch_and_index(url, source) to fetch URLs, or capy_execute(language, code) to run HTTP calls in sandbox. File downloads with -o/-s are allowed."`,
+            "command": `echo "capy: curl/wget blocked (stdout flood risk). Use capy_fetch_and_index(url, source) to fetch URLs, or capy_execute(language, code) to run HTTP calls in sandbox. File downloads with -o/--output are allowed."`,
         })
     }
     // All curl/wget segments write to file silently — allow through
@@ -502,16 +517,17 @@ This gives a more accurate picture — cache hits represent data that *would hav
 
 | Area | File | Key Tests |
 |------|------|-----------|
-| RRF search | `internal/store/search_test.go` | RRF returns results from multiple layers; RRF ranks multi-layer hits above single-layer; fuzzy correction activates when RRF returns < limit |
-| Proximity | `internal/store/search_test.go` | Multi-term query boosts close proximity; single-term query skips reranking; missing terms get no penalty |
-| ContentType | `internal/store/search_test.go` | ContentType="code" returns only code chunks; empty contentType returns all |
+| Dynamic SQL | `internal/store/search_test.go` | `execDynamicSearch` with source filter, content type filter, exact match mode; configurable title weight flows through |
+| RRF search | `internal/store/search_test.go` | RRF returns results from both layers; multi-layer hits rank above single-layer; fuzzy correction activates when RRF returns < limit; fuzzy results don't duplicate direct results |
+| Proximity | `internal/store/search_test.go` | Multi-term query boosts close proximity; single-term skips reranking; missing terms get no penalty; `findMinSpan` and `findAllPositions` unit tests |
+| ContentType | `internal/store/search_test.go` | ContentType="code" returns only code chunks; empty contentType returns all (internal only — not in MCP schema) |
 | Source meta | `internal/store/search_test.go` | GetSourceMeta returns nil for unknown; returns correct metadata after indexing |
-| IsEmpty | `internal/store/cleanup_test.go` | True on fresh DB; false after indexing |
-| TTL cache | `internal/server/tool_knowledge_test.go` | Second fetch within 24h returns cache hit; force=true bypasses cache; stats track cache hits |
-| Exact source | `internal/server/tool_batch_test.go` | Batch search doesn't leak cross-source results |
-| curl/wget | `internal/hook/hook_test.go` | `curl -sL url -o file` passes; `curl url` blocked; chained commands evaluated per-segment |
-| Empty index | `internal/server/tool_knowledge_test.go` | Search on empty store returns error with guidance |
-| Cache stats | `internal/server/stats_test.go` | AddCacheHit increments both fields; Snapshot copies them |
+| TTL cache | `internal/server/tool_knowledge_test.go` | Second fetch within TTL returns cache hit; force=true bypasses cache; expired source re-fetches; stats track cache hits |
+| Exact source | `internal/server/tool_batch_test.go` | Batch search doesn't leak cross-source results; no global fallback results when scoped search returns nothing |
+| curl/wget | `internal/hook/hook_test.go` | `curl -o file url` passes; `curl url` blocked; `curl -o a url && curl b` blocked (mixed); `wget -O file url` passes |
+| Empty index | `internal/server/tool_knowledge_test.go` | Search on empty store returns isError with guidance |
+| Cache stats | `internal/server/stats_test.go` | AddCacheHit increments both fields; Snapshot copies them; stats report includes cache section |
+| Config | `internal/config/config_test.go` | TitleWeight defaults to 2.0; FetchTTLHours defaults to 24; custom values load from TOML |
 
 ### Integration Tests
 
