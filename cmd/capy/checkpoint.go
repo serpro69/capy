@@ -28,7 +28,10 @@ has the DB open, the WAL cannot be fully truncated.`,
 				projectDir = config.DetectProjectRoot()
 			}
 
-			cfg, _ := config.Load(projectDir)
+			cfg, err := config.Load(projectDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "capy checkpoint: warning: config load failed (%v), using defaults\n", err)
+			}
 			if cfg == nil {
 				cfg = config.DefaultConfig()
 			}
@@ -49,16 +52,19 @@ has the DB open, the WAL cannot be fully truncated.`,
 				return fmt.Errorf("checkpoint failed: %w", err)
 			}
 
-			// Verify sidecar files are gone.
-			walGone := true
+			// Verify sidecar files are gone or empty.
+			// After PRAGMA wal_checkpoint(TRUNCATE), SQLite may leave a 0-byte
+			// WAL file — that's fine. A non-empty WAL means another process
+			// held the DB open and the checkpoint was incomplete.
+			incomplete := false
 			for _, suffix := range []string{"-wal", "-shm"} {
-				if _, err := os.Stat(dbPath + suffix); err == nil {
-					walGone = false
-					fmt.Fprintf(os.Stderr, "capy checkpoint: warning: %s still exists (is another process using the DB?)\n", dbPath+suffix)
+				if info, err := os.Stat(dbPath + suffix); err == nil && info.Size() > 0 {
+					incomplete = true
+					fmt.Fprintf(os.Stderr, "capy checkpoint: warning: %s still has data (%d bytes) — is another process using the DB?\n", dbPath+suffix, info.Size())
 				}
 			}
 
-			if walGone {
+			if !incomplete {
 				fmt.Printf("capy checkpoint: %s — WAL flushed, safe to commit\n", dbPath)
 			}
 

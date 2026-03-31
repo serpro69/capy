@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/serpro69/capy/internal/config"
 )
 
 // SetupClaudeCode configures capy for a Claude Code project.
@@ -72,32 +74,48 @@ func SetupClaudeCode(binaryPath, projectDir string) error {
 	return nil
 }
 
+// preCommitMarkerStart is the start marker for the capy block in pre-commit hooks.
+const preCommitMarkerStart = "# capy: checkpoint WAL before committing knowledge DB"
+
+// preCommitMarkerEnd is the end marker for the capy block in pre-commit hooks.
+const preCommitMarkerEnd = "# capy: end checkpoint"
+
+// shellEscapePath escapes a path for safe use in single-quoted shell strings.
+func shellEscapePath(path string) string {
+	return strings.ReplaceAll(path, "'", `'\''`)
+}
+
 // preCommitHookScript returns the content of the git pre-commit hook.
 // It checkpoints the WAL only when the knowledge DB is staged for commit.
-func preCommitHookScript(binaryPath string) string {
+// dbPattern is a grep pattern matching the DB path relative to the repo root.
+func preCommitHookScript(binaryPath, dbPattern string) string {
+	safePath := shellEscapePath(binaryPath)
+	safePattern := shellEscapePath(dbPattern)
 	return fmt.Sprintf(`#!/bin/sh
-# capy: checkpoint WAL before committing knowledge DB
+%s
 # Installed by capy setup — safe to remove if not needed.
 
-if git diff --cached --name-only | grep -q '\.capy/knowledge\.db$'; then
-  "%s" checkpoint
-  git add .capy/knowledge.db
+if git diff --cached --name-only | grep -q '%s'; then
+  '%s' checkpoint
+  git diff --cached --name-only | grep '%s' | while read -r f; do git add "$f"; done
 fi
-`, binaryPath)
+%s
+`, preCommitMarkerStart, safePattern, safePath, safePattern, preCommitMarkerEnd)
 }
 
 // installPreCommitHook installs or updates the git pre-commit hook.
-// If a pre-commit hook already exists and doesn't contain the capy marker,
-// appends the checkpoint logic. If it already has it, updates in place.
+// If a pre-commit hook already exists with a capy block, replaces it (handles
+// binary path changes). Otherwise appends the checkpoint logic.
 func installPreCommitHook(binaryPath, projectDir string) error {
 	hookDir := filepath.Join(projectDir, ".git", "hooks")
 	if _, err := os.Stat(hookDir); os.IsNotExist(err) {
 		return nil // not a git repo, skip
 	}
 
+	// Resolve the actual DB path from config so the hook matches custom paths.
+	dbPattern := resolveDBPattern(projectDir)
+	script := preCommitHookScript(binaryPath, dbPattern)
 	hookPath := filepath.Join(hookDir, "pre-commit")
-	marker := "# capy: checkpoint WAL"
-	script := preCommitHookScript(binaryPath)
 
 	existing, err := os.ReadFile(hookPath)
 	if os.IsNotExist(err) {
@@ -109,17 +127,48 @@ func installPreCommitHook(binaryPath, projectDir string) error {
 	}
 
 	content := string(existing)
-	if strings.Contains(content, marker) {
-		return nil // already installed
+
+	// If capy block exists, replace it (handles binary path / DB path changes)
+	if startIdx := strings.Index(content, preCommitMarkerStart); startIdx >= 0 {
+		endIdx := strings.Index(content, preCommitMarkerEnd)
+		if endIdx >= 0 {
+			endIdx += len(preCommitMarkerEnd)
+			// Consume trailing newline if present
+			if endIdx < len(content) && content[endIdx] == '\n' {
+				endIdx++
+			}
+			content = content[:startIdx] + script + content[endIdx:]
+			return os.WriteFile(hookPath, []byte(content), 0o755)
+		}
 	}
 
-	// Append to existing hook
+	// No existing capy block — append
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
 	content += "\n" + script
 
 	return os.WriteFile(hookPath, []byte(content), 0o755)
+}
+
+// resolveDBPattern returns a grep pattern for the knowledge DB path relative
+// to the project root. Falls back to the default `.capy/knowledge.db` if
+// config can't be loaded.
+func resolveDBPattern(projectDir string) string {
+	cfg, err := config.Load(projectDir)
+	if err != nil || cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	dbPath := cfg.ResolveDBPath(projectDir)
+
+	// Make relative to project dir for the git diff pattern
+	rel, err := filepath.Rel(projectDir, dbPath)
+	if err != nil {
+		rel = ".capy/knowledge.db"
+	}
+
+	// Escape dots for grep regex
+	return strings.ReplaceAll(rel, ".", `\.`) + "$"
 }
 
 // PreToolUseMatcherPattern is the pipe-separated matcher for PreToolUse hooks.
@@ -166,7 +215,7 @@ func mergeHooks(settingsPath, binaryPath string) error {
 		}
 
 		existing, _ := hooks[he.Event].([]any)
-		idx := findHookEntry(existing, "capy hook")
+		idx := findHookEntry(existing, "hook "+he.CLIArg)
 		if idx >= 0 {
 			// Update existing capy entry
 			existing[idx] = entry
