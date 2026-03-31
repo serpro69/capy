@@ -54,12 +54,12 @@ If the same chunk appears in multiple layers, scores **add up** — appearing in
 
 **Algorithm:**
 
-1. Run all 4 layers (porter+AND, porter+OR, trigram+AND, trigram+OR), each fetching `max(limit*2, 10)` candidates
+1. Run all 4 layers (porter+AND, porter+OR, trigram+AND, trigram+OR), each fetching `max(limit*2, 10)` candidates. **Go improvement:** run all 4 layers concurrently via goroutines — SQLite WAL supports concurrent reads, and Go's goroutines make this trivial. The TS runs them sequentially (single-threaded JS).
 2. Build a map: `chunkKey → { result, fusedScore }`
    - Key by `(source_id, title)` to deduplicate across layers
-   - For each appearance: `fusedScore += 1.0 / (K + rank_position)`
+   - For each appearance at position `i` (0-indexed in the ordered result slice, NOT the BM25 rank float): `fusedScore += 1.0 / (K + float64(i))`
 3. Sort by fused score descending, return top `limit`
-4. **Fuzzy fallback:** If RRF returns fewer than `limit` results, run `fuzzyCorrectQuery`, then repeat the RRF process with the corrected query. Merge any new results (additive scoring).
+4. **Fuzzy fallback:** If RRF returns fewer than `limit` results, run `fuzzyCorrectQuery`, then repeat the RRF process with the corrected query. Merge results, **deduplicating by the same `(source_id, title)` key** — if a result appeared in both passes, keep the higher fused score.
 
 **Key difference from cascading:** Every layer contributes. A chunk that ranks #1 in trigram and #3 in porter gets a combined score that beats a chunk appearing only in porter at #1.
 
@@ -68,12 +68,14 @@ If the same chunk appears in multiple layers, scores **add up** — appearing in
 Applied as a **post-processing step** after RRF fusion, only for multi-term queries (2+ words).
 
 For each result:
-1. Find the minimum character window containing all query terms in `content` (case-insensitive)
+1. Find the minimum character window containing all query terms in the content
 2. Compute boost: `proximityBoost = 1.0 + (1.0 / (1.0 + minDistance/100.0))`
 3. Final score: `fusedScore * proximityBoost`
 4. Re-sort by final score
 
 Results where terms appear close together get up to 2x boost. Results where terms are scattered across the content get minimal boost (~1.01x for very distant terms).
+
+**Go improvement:** Instead of re-scanning content with `strings.Index`, use the FTS5 `highlighted` field already present on `SearchResult`. The highlight markers (char(2)/char(3)) pinpoint exact match locations — extracting positions from these markers is faster and more precise than naive string search, especially for stemmed terms where the surface form may not match the query term exactly.
 
 ### 2.3 BM25 Title Weight
 
@@ -138,12 +140,21 @@ Returns `nil, nil` when no matching source exists. This is general-purpose — u
 Before fetching a URL, check if the source was recently indexed:
 
 1. Call `GetSourceMeta(label)` where label is `source` param or URL
-2. If meta exists and `time.Since(meta.IndexedAt) < 24h`:
+2. If meta exists and `time.Since(meta.IndexedAt) < TTL`:
    - Return cache-hit response with source info and age
    - Track stats: `stats.AddCacheHit(meta.ChunkCount * 1600)` (estimated ~1.6KB/chunk)
 3. If `force: true` parameter is set, skip the TTL check
 
 **New tool parameter:** `force` (boolean, optional) on `capy_fetch_and_index`.
+
+**Go improvement — configurable TTL:** The TS hardcodes 24h. Since capy has its own config system, the TTL is configurable:
+
+```toml
+[store.cache]
+fetch_ttl_hours = 24  # default
+```
+
+Loaded via `config.Config` and passed to the fetch handler. This lets users tune caching per-project (e.g., shorter TTL for fast-moving API docs, longer for stable references).
 
 ### 4.3 Cleanup Enhancement (cleanupStaleSources)
 
@@ -158,11 +169,15 @@ This deletes sources (and their chunks) where `last_accessed_at < datetime('now'
 
 ---
 
-## 5. Batch Execute: Exact Source Scoping
+## 5. Batch Execute: Exact Source Scoping + Remove Global Fallback
 
-**Problem:** `handleBatchExecute` searches with `source = "batch:label1,label2,..."` using LIKE matching. This can accidentally match previously indexed content with similar labels.
+**Problem 1:** `handleBatchExecute` searches with `source = "batch:label1,label2,..."` using LIKE matching. This can accidentally match previously indexed content with similar labels.
 
-**Solution:** Batch execute uses `SearchOptions{SourceMatchMode: "exact"}` when searching its own output. This generates `s.label = ?` instead of `s.label LIKE '%' || ? || '%'`.
+**Problem 2:** The current Go implementation has a Tier 2 "global fallback" — when scoped search returns no results, it re-searches with no source filter, pulling results from any previously indexed content. The TS removed this in the same commit range, replacing it with scoped-only search. The global fallback is confusing: users see results from unrelated prior batches mixed into their current output with a "cross-source" warning.
+
+**Solution:**
+- Batch execute uses `SearchOptions{SourceMatchMode: "exact"}` when searching its own output. This generates `s.label = ?` instead of `s.label LIKE '%' || ? || '%'`.
+- **Remove the Tier 2 global fallback entirely.** If a query doesn't match the current batch output, return "No matching sections found." The cross-batch search tip (below) directs users to `capy_search` for broader queries.
 
 The `capy_search` tool continues to use LIKE (default) since partial matching is valuable for user-facing queries.
 
@@ -226,3 +241,5 @@ In `handleStats`, when `CacheHits > 0`, add a "TTL Cache" section:
 | Data avoided by cache | X KB |
 | Network requests saved | N |
 | TTL remaining | ~Xh |
+
+Also update the top-level savings calculation to include cache savings: `totalProcessed = keptOut + totalBytesReturned + cacheBytesSaved`. This gives a more accurate picture of total data that would have entered context without capy.

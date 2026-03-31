@@ -96,12 +96,14 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOp
     if len(results) < limit {
         corrected := s.fuzzyCorrectQuery(query)
         if corrected != "" && corrected != query {
-            fuzzyResults := s.rrfSearch(corrected, limit-len(results), opts)
-            results = append(results, fuzzyResults...) // deduplicated inside rrfSearch
-            // Tag fuzzy results
+            fuzzyResults := s.rrfSearch(corrected, limit, opts)
+            // Tag fuzzy results before merging
             for i := range fuzzyResults {
                 fuzzyResults[i].MatchLayer = "fuzzy+" + fuzzyResults[i].MatchLayer
             }
+            // Deduplicate: merge pass 2 into pass 1 by (sourceID, title) key.
+            // If a result exists in both passes, keep pass 1's version (higher confidence).
+            results = mergeRRFResults(results, fuzzyResults, limit)
         }
     }
 
@@ -124,15 +126,23 @@ func (s *ContentStore) rrfSearch(query string, limit int, opts SearchOptions) []
 
 Algorithm:
 1. `fetchLimit := max(limit*2, 10)`
-2. Run all 4 layers with `fetchLimit`, collecting results
+2. Run all 4 layers **concurrently** with `fetchLimit`, collecting results. Use a `sync.WaitGroup` and a mutex-protected slice (or 4 separate result slices gathered after `wg.Wait()`). SQLite WAL mode supports concurrent readers.
 3. Build fusion map: key = `fmt.Sprintf("%d:%s", r.SourceID, r.Title)`
-   - For each result at rank position `i` (0-indexed): `score += 1.0 / (K + float64(i))`
+   - For each result at **position `i`** in the layer's ordered result slice (0-indexed — this is the slice index, not the BM25 `rank` float): `score += 1.0 / (K + float64(i))`
    - K = 60
 4. Sort by fused score descending
 5. Apply proximity reranking (if multi-term query)
 6. Return top `limit`
 
 Each layer function (`searchPorter`, `searchTrigramQuery`) already returns `[]SearchResult` — reuse them as-is but with `fetchLimit`.
+
+Add a `mergeRRFResults` helper for deduplicating across pass 1 (direct) and pass 2 (fuzzy):
+
+```go
+func mergeRRFResults(primary, secondary []SearchResult, limit int) []SearchResult
+```
+
+Build a set of keys from `primary`, append only `secondary` results whose key isn't in the set, truncate to `limit`.
 
 ### 2.3 Proximity Reranking
 
@@ -145,12 +155,19 @@ func proximityRerank(results []SearchResult, query string) []SearchResult
 ```
 
 Only applies when query has 2+ words. For each result:
-1. Split query into terms, lowercase
-2. For each term, find all positions in `strings.ToLower(r.Content)` using `strings.Index` in a loop
-3. Find the minimum window containing all terms (sliding window algorithm)
+
+**Primary approach — use FTS5 highlight markers:**
+The `Highlighted` field already contains char(2)/char(3) markers wrapping matched terms (set by `highlight(chunks, 1, char(2), char(3))`). Extract match positions by scanning for these markers:
+1. Find all `char(2)` positions in `r.Highlighted` — these are match start positions
+2. Map these positions back to the original content (strip markers to get real character offsets)
+3. Find the minimum window containing at least one match per query term
 4. `boost := 1.0 + (1.0 / (1.0 + float64(minWindow)/100.0))`
 5. Multiply the result's fused score by boost
-6. If any term is not found in content, boost = 1.0 (no penalty, no bonus)
+6. If any term has no highlight marker, boost = 1.0 (no penalty, no bonus)
+
+This is faster and more accurate than re-scanning content with `strings.Index`, because FTS5 already tokenized and matched terms (including stemmed forms that wouldn't match via naive string search).
+
+**Fallback** — if `Highlighted` is empty (shouldn't happen, but defensive), fall back to `strings.Index` on `strings.ToLower(r.Content)`.
 
 Re-sort results by boosted score.
 
@@ -217,14 +234,15 @@ Query: `SELECT COUNT(*) FROM sources`. Returns true if count is 0. Add a prepare
 
 At the start of `handleFetchAndIndex`, before the HTTP request:
 
-1. Read `force` parameter: `force := false; if v, ok := args["dry_run"]; ...` — actually use `req.GetArguments()["force"]` with bool type assertion
+1. Read `force` parameter: use `req.GetArguments()["force"]` with bool type assertion
 2. Determine label: `label := source; if label == "" { label = url }`
-3. If `!force`:
+3. Read TTL from config: `ttl := time.Duration(s.config.Store.Cache.FetchTTLHours) * time.Hour` (default 24)
+4. If `!force`:
    - `meta, err := st.GetSourceMeta(label)` (need to call `s.getStore()` early)
-   - If `meta != nil` and `time.Since(meta.IndexedAt) < 24*time.Hour`:
+   - If `meta != nil` and `time.Since(meta.IndexedAt) < ttl`:
      - Compute age string (hours/minutes)
      - `s.stats.AddCacheHit(int64(meta.ChunkCount) * 1600)`
-     - Return cache-hit text response with source info
+     - Return cache-hit text response with source info, including configured TTL
 
 **File:** `internal/server/tools.go`
 
@@ -234,6 +252,22 @@ mcp.WithBoolean("force",
     mcp.Description("Skip cache and re-fetch even if content was recently indexed"),
 ),
 ```
+
+**File:** `internal/config/config.go`
+
+Add cache config to the store section:
+```go
+type StoreConfig struct {
+    // ... existing fields ...
+    Cache CacheConfig
+}
+
+type CacheConfig struct {
+    FetchTTLHours int `toml:"fetch_ttl_hours"` // default: 24
+}
+```
+
+Set default in config loading: if `FetchTTLHours == 0`, set to `24`.
 
 ### 3.4 CleanupStaleSources
 
@@ -270,11 +304,16 @@ In `handleBatchExecute`, the search loop currently does:
 
 ```go
 results, searchErr := st.SearchWithFallback(query, 3, sourceLabel)
-// ...
-results, searchErr = st.SearchWithFallback(query, 3, "")
+crossSource := false
+
+// Tier 2: global fallback
+if len(results) == 0 && searchErr == nil {
+    results, searchErr = st.SearchWithFallback(query, 3, "")
+    crossSource = len(results) > 0
+}
 ```
 
-Change the scoped search to use exact matching:
+**Replace with scoped-only search** (matching TS behavior — global fallback was removed upstream):
 
 ```go
 results, searchErr := st.SearchWithFallback(query, 3, store.SearchOptions{
@@ -283,11 +322,7 @@ results, searchErr := st.SearchWithFallback(query, 3, store.SearchOptions{
 })
 ```
 
-The global fallback remains LIKE (empty source):
-
-```go
-results, searchErr = st.SearchWithFallback(query, 3, store.SearchOptions{})
-```
+Remove the Tier 2 global fallback entirely. Remove the `crossSource` variable and all associated formatting logic (the `> **Note:** No results in current batch output...` message and `_(source: ...)_` tags). When a query has no results in the current batch, it simply shows "No matching sections found." — the cross-batch search tip (Section 4.2) directs users to `capy_search` for broader queries.
 
 ### 4.2 Cross-Batch Search Tip
 
@@ -437,8 +472,8 @@ After the "Knowledge Base" section, add TTL cache section when `snap.CacheHits >
 
 ```go
 if snap.CacheHits > 0 {
-    totalWithCache := totalProcessed + snap.CacheBytesSaved
-    ttlHoursLeft := max(0, 24 - int(time.Since(snap.SessionStart).Hours()))
+    ttlHours := s.config.Store.Cache.FetchTTLHours
+    ttlHoursLeft := max(0, ttlHours - int(time.Since(snap.SessionStart).Hours()))
     lines = append(lines, "", "### TTL Cache", "",
         "| Metric | Value |",
         "|--------|------:|",
@@ -449,6 +484,15 @@ if snap.CacheHits > 0 {
     )
 }
 ```
+
+Also update the top-level savings calculation (earlier in `handleStats`) to include cache savings:
+
+```go
+keptOut := snap.BytesIndexed + snap.BytesSandboxed
+totalProcessed := keptOut + totalBytesReturned + snap.CacheBytesSaved
+```
+
+This gives a more accurate picture — cache hits represent data that *would have* been fetched and processed without TTL caching.
 
 ---
 
