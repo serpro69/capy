@@ -97,15 +97,35 @@ func TestCheckpointSubcommand_WithDB(t *testing.T) {
 		0o644,
 	))
 
-	// Create a minimal WAL-mode DB
+	// Create a WAL-mode DB with data that forces WAL file creation
 	cmd := exec.Command("sqlite3", dbPath, "PRAGMA journal_mode=WAL; CREATE TABLE t(id INTEGER); INSERT INTO t VALUES(1);")
 	if err := cmd.Run(); err != nil {
 		t.Skip("sqlite3 CLI not available")
 	}
 
+	// Write more data to ensure WAL has content
+	cmd = exec.Command("sqlite3", dbPath, "INSERT INTO t VALUES(2); INSERT INTO t VALUES(3);")
+	require.NoError(t, cmd.Run())
+
 	stdout, _, code := capy(t, "checkpoint", "--project-dir", dir)
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout, "WAL flushed")
+
+	// The actual assertion: WAL and SHM files must be gone or empty
+	walPath := dbPath + "-wal"
+	shmPath := dbPath + "-shm"
+	if info, err := os.Stat(walPath); err == nil {
+		assert.Equal(t, int64(0), info.Size(), "WAL file should be empty after checkpoint, got %d bytes", info.Size())
+	}
+	if info, err := os.Stat(shmPath); err == nil {
+		assert.Equal(t, int64(0), info.Size(), "SHM file should be empty after checkpoint, got %d bytes", info.Size())
+	}
+
+	// Data must survive the checkpoint
+	cmd = exec.Command("sqlite3", dbPath, "SELECT COUNT(*) FROM t;")
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "3")
 }
 
 func TestDefaultCommandIsServe(t *testing.T) {

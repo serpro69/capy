@@ -46,6 +46,68 @@ func TestDBDirectoryCreated(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// --- WAL checkpoint ---
+
+func TestCloseCheckpointsWAL(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// Index content to generate WAL data.
+	s := NewContentStore(dbPath, dir)
+	_, err := s.Index("# Test\n\nSome content to index.", "wal-test", "")
+	require.NoError(t, err)
+
+	// Close should checkpoint the WAL.
+	require.NoError(t, s.Close())
+
+	// WAL and SHM must be gone or 0 bytes.
+	if info, err := os.Stat(dbPath + "-wal"); err == nil {
+		assert.Equal(t, int64(0), info.Size(), "WAL should be empty after Close, got %d bytes", info.Size())
+	}
+	if info, err := os.Stat(dbPath + "-shm"); err == nil {
+		assert.Equal(t, int64(0), info.Size(), "SHM should be empty after Close, got %d bytes", info.Size())
+	}
+
+	// Data must survive — reopen and verify.
+	s2 := NewContentStore(dbPath, dir)
+	defer s2.Close()
+	sources, err := s2.ListSources()
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+	assert.Equal(t, "wal-test", sources[0].Label)
+	assert.Greater(t, sources[0].ChunkCount, 0)
+}
+
+func TestCheckpointMethod(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// Index content, then close WITHOUT checkpoint (simulate unclean shutdown).
+	s := NewContentStore(dbPath, dir)
+	_, err := s.Index("# Checkpoint Test\n\nData that must survive.", "cp-test", "")
+	require.NoError(t, err)
+	// Close normally (which checkpoints), then write more via raw SQL to leave WAL dirty.
+	require.NoError(t, s.Close())
+
+	// Reopen, write, close the raw db handle without checkpoint.
+	s2 := NewContentStore(dbPath, dir)
+	_, err = s2.Index("# More data\n\nAnother chunk.", "cp-test-2", "")
+	require.NoError(t, err)
+	// Access internal db directly to close without our checkpoint logic.
+	db, _ := s2.getDB()
+	db.Close()
+	s2.db = nil
+
+	// WAL may have data now. Run Checkpoint() from a fresh store.
+	s3 := NewContentStore(dbPath, dir)
+	require.NoError(t, s3.Checkpoint())
+
+	// WAL must be gone or empty.
+	if info, err := os.Stat(dbPath + "-wal"); err == nil {
+		assert.Equal(t, int64(0), info.Size(), "WAL should be empty after Checkpoint(), got %d bytes", info.Size())
+	}
+}
+
 // --- Content type detection ---
 
 func TestDetectContentTypeJSON(t *testing.T) {
