@@ -33,6 +33,7 @@ func main() {
 		newSetupCmd(),
 		newDoctorCmd(),
 		newCleanupCmd(),
+		newCheckpointCmd(),
 		newWhichCmd(),
 	)
 
