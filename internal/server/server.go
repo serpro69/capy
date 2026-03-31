@@ -100,6 +100,9 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	s.registerTools()
 
+	// Ensure cleanup runs on all exit paths (normal return, signals, parent death).
+	defer s.shutdown()
+
 	// Lifecycle guard: shutdown on parent death or signals
 	stopGuard := StartLifecycleGuard(func() {
 		s.shutdown()
