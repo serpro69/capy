@@ -62,29 +62,28 @@ func TestShutdownCheckpointsWAL(t *testing.T) {
 	projectDir := t.TempDir()
 	dbPath := filepath.Join(projectDir, "test.db")
 
+	// ── Session 1: index content, shutdown ──
+
 	cfg := config.DefaultConfig()
 	cfg.Store.Path = dbPath
 	exec := executor.NewExecutor(projectDir, 0)
 	srv := NewServer(cfg, nil, exec, projectDir)
-
-	// Trigger store init + index content to generate WAL data.
 	srv.registerToolsForTest()
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
-		"content": "# Shutdown Test\n\nData that must survive shutdown.",
-		"source":  "shutdown-test",
+
+	indexReq := mcp.CallToolRequest{}
+	indexReq.Params.Arguments = map[string]any{
+		"content": "# Authentication Guide\n\nUse JWT tokens for API authentication.\n\n## Token Format\n\nTokens are signed with RS256.",
+		"source":  "auth-docs",
 	}
-	result, err := srv.handleIndex(context.Background(), req)
+	result, err := srv.handleIndex(context.Background(), indexReq)
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-
-	// Verify store was initialized and has data.
 	require.NotNil(t, srv.store)
 
-	// Call shutdown — this is what Serve() defers.
+	// Shutdown — this is what defer s.shutdown() does in Serve().
 	srv.shutdown()
 
-	// WAL and SHM must be gone or empty after shutdown.
+	// WAL and SHM must be gone or empty.
 	if info, err := os.Stat(dbPath + "-wal"); err == nil {
 		assert.Equal(t, int64(0), info.Size(),
 			"WAL should be empty after shutdown, got %d bytes", info.Size())
@@ -94,15 +93,31 @@ func TestShutdownCheckpointsWAL(t *testing.T) {
 			"SHM should be empty after shutdown, got %d bytes", info.Size())
 	}
 
-	// Data must survive — reopen the DB directly and check.
+	// ── Session 2: new server, same DB, search for session 1's content ──
+
 	cfg2 := config.DefaultConfig()
 	cfg2.Store.Path = dbPath
-	srv2 := NewServer(cfg2, nil, nil, projectDir)
-	st := srv2.getStore()
-	defer st.Close()
+	exec2 := executor.NewExecutor(projectDir, 0)
+	srv2 := NewServer(cfg2, nil, exec2, projectDir)
+	srv2.registerToolsForTest()
+	defer srv2.shutdown()
 
-	sources, err := st.ListSources()
+	// Search for content indexed in session 1.
+	searchReq := mcp.CallToolRequest{}
+	searchReq.Params.Arguments = map[string]any{
+		"queries": []any{"JWT authentication tokens"},
+	}
+	searchResult, err := srv2.handleSearch(context.Background(), searchReq)
 	require.NoError(t, err)
-	require.Len(t, sources, 1)
-	assert.Equal(t, "shutdown-test", sources[0].Label)
+	require.False(t, searchResult.IsError)
+
+	searchText := ""
+	for _, c := range searchResult.Content {
+		if tc, ok := c.(mcp.TextContent); ok {
+			searchText += tc.Text
+		}
+	}
+	assert.Contains(t, searchText, "auth-docs", "search should find content from session 1")
+	assert.Contains(t, searchText, "JWT", "search should return relevant content")
+	assert.NotContains(t, searchText, "No results found", "search must return results")
 }
