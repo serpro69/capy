@@ -44,11 +44,12 @@ has the DB open, the WAL cannot be fully truncated.`,
 				return nil
 			}
 
-			// Open store — this triggers getDB → schema init → prepareStatements.
-			// Close() does PRAGMA wal_checkpoint(TRUNCATE) and closes the connection,
-			// which removes the WAL and SHM files.
+			// Checkpoint directly via a single SQLite connection.
+			// We don't use ContentStore here because:
+			// 1. NewContentStore is lazy — Close() would no-op on an unopened store
+			// 2. database/sql's connection pool can interfere with checkpoint
 			st := store.NewContentStore(dbPath, projectDir)
-			if err := st.Close(); err != nil {
+			if err := st.Checkpoint(); err != nil {
 				return fmt.Errorf("checkpoint failed: %w", err)
 			}
 

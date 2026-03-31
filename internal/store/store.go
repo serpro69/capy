@@ -286,10 +286,41 @@ func (s *ContentStore) Close() error {
 		}
 	}
 
-	// WAL checkpoint before closing.
-	s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	// WAL checkpoint on a pinned single connection. database/sql's pool can
+	// spread work across connections; the checkpoint must run on one that
+	// sees all WAL frames. Conn() pins a connection for exclusive use.
+	if conn, err := s.db.Conn(context.Background()); err == nil {
+		conn.ExecContext(context.Background(), "PRAGMA wal_checkpoint(TRUNCATE)")
+		conn.Close() // return to pool before db.Close()
+	}
 
 	err := s.db.Close()
 	s.db = nil
 	return err
+}
+
+// Checkpoint flushes the WAL into the main database file using a dedicated
+// single connection (not the connection pool). This is the correct way to
+// checkpoint from outside the running server — e.g., from `capy checkpoint`.
+func (s *ContentStore) Checkpoint() error {
+	dsn := s.dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return fmt.Errorf("opening database for checkpoint: %w", err)
+	}
+	defer db.Close()
+
+	// Force a single connection — no pool interference.
+	db.SetMaxOpenConns(1)
+
+	var busy, log, checkpointed int
+	err = db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed)
+	if err != nil {
+		return fmt.Errorf("checkpoint pragma failed: %w", err)
+	}
+	if busy > 0 {
+		return fmt.Errorf("checkpoint incomplete: %d pages busy (another process has the DB open)", busy)
+	}
+
+	return nil
 }
