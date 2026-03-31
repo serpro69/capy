@@ -124,6 +124,8 @@ log_level = "info"
 
 All settings have sensible defaults. Configuration files are optional — capy works out of the box.
 
+> **Do not track the knowledge DB in git.** SQLite uses WAL sidecar files (`.db-wal`, `.db-shm`) that git doesn't track. Switching branches replaces the DB but leaves stale WAL files behind, corrupting the database. Keep `.capy/knowledge.db` gitignored — each checkout maintains its own independent knowledge base.
+
 ## CLI Commands
 
 | Command | Description |
