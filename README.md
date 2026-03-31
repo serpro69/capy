@@ -124,7 +124,7 @@ log_level = "info"
 
 All settings have sensible defaults. Configuration files are optional — capy works out of the box.
 
-> **Caution with git and the knowledge DB.** SQLite uses WAL sidecar files (`.db-wal`, `.db-shm`) that git doesn't track. Switching branches replaces the DB but leaves stale WAL files behind, corrupting the database. If you want to commit the DB (e.g., to share across machines), run `capy checkpoint` first — it flushes the WAL into the main file and removes the sidecar files. Otherwise, keep `.capy/knowledge.db` gitignored.
+> **Caution with git and the knowledge DB.** SQLite WAL sidecar files (`.db-wal`, `.db-shm`) are created when the DB is written to during a session. capy flushes the WAL on session close automatically, but the files only get cleaned up if the session actually wrote to the DB. If you see stale WAL files (e.g., after upgrading capy or after an unclean shutdown), run `capy checkpoint` to flush them manually. If you want to commit the DB to git (e.g., to share across machines), run `capy checkpoint` first — it flushes the WAL into the main file and removes the sidecar files.
 
 ## CLI Commands
 
