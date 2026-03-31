@@ -13,11 +13,15 @@ To support users who commit the knowledge DB to git (e.g., syncing across machin
 
 Use a two-layer checkpoint strategy:
 
-1. **SessionEnd hook** — best-effort WAL checkpoint when a Claude Code session ends. Covers the common case (session closes, DB left clean). 1.5s timeout, errors logged to stderr, never blocks session exit.
+1. **MCP server shutdown** — `ContentStore.Close()` runs `PRAGMA wal_checkpoint(TRUNCATE)` when the server exits (triggered by lifecycle guard on parent death). This is the primary checkpoint mechanism because the server *owns* the DB connection and can get exclusive WAL access.
 
-2. **Git pre-commit hook** — installed by `capy setup`. Runs `capy checkpoint` when the knowledge DB is staged. Re-stages the DB after checkpoint so git commits the flushed state. Covers both Claude-initiated and manual terminal commits.
+2. **Git pre-commit hook** — installed by `capy setup`. Runs `capy checkpoint` when the knowledge DB is staged. Re-stages the DB after checkpoint so git commits the flushed state. Covers both Claude-initiated and manual terminal commits. Works because the MCP server is typically not running during manual commits.
 
-A `PreToolUse(Bash)` hook intercepting `git commit` commands was evaluated and rejected:
+### Rejected approaches
+
+**SessionEnd hook** was implemented and then removed. The hook fires while the MCP server still holds the DB connection open. A second connection from the hook cannot get exclusive WAL access, so `wal_checkpoint(TRUNCATE)` degrades to a passive checkpoint — leaving data in WAL/SHM files. The MCP server's own shutdown checkpoint is the correct mechanism.
+
+**PreToolUse(Bash)** intercepting `git commit` was evaluated and rejected:
 - Command parsing is unreliable (aliases, pipelines, chained commands)
 - Git commits from the index, not the working tree — checkpointing the DB on disk doesn't help unless it's also re-staged, making the hook intrusive
 - The git pre-commit hook already covers this at the correct layer
@@ -38,7 +42,8 @@ The tradeoff: WAL provides better read performance during concurrent writes (rea
 
 ## Consequences
 
-- `capy checkpoint` CLI command exists for manual use
-- SessionEnd hook registered by `capy setup`
+- `capy checkpoint` CLI command exists for manual use (when server is not running)
+- MCP server checkpoints on shutdown via `ContentStore.Close()`
 - Git pre-commit hook installed by `capy setup` (non-fatal if hooks dir is inaccessible)
-- Future: if WAL mode is dropped, all three checkpoint mechanisms can be removed
+- SessionEnd hook is a no-op placeholder for future cleanup tasks (not checkpoint)
+- Future: if WAL mode is dropped, all checkpoint mechanisms can be removed
