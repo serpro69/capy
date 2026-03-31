@@ -286,16 +286,35 @@ func (s *ContentStore) Close() error {
 		}
 	}
 
-	// WAL checkpoint on a pinned single connection. database/sql's pool can
-	// spread work across connections; the checkpoint must run on one that
-	// sees all WAL frames. Conn() pins a connection for exclusive use.
-	if conn, err := s.db.Conn(context.Background()); err == nil {
-		conn.ExecContext(context.Background(), "PRAGMA wal_checkpoint(TRUNCATE)")
-		conn.Close() // return to pool before db.Close()
-	}
-
+	// Close the connection pool FIRST. This releases all pooled connections
+	// that hold the WAL open. Without this, wal_checkpoint(TRUNCATE) can't
+	// get exclusive access and silently degrades to passive (incomplete).
 	err := s.db.Close()
 	s.db = nil
+
+	// Now checkpoint with a fresh single connection — no other connections
+	// exist, so TRUNCATE gets exclusive access and fully flushes the WAL.
+	if cpErr := s.checkpoint(); cpErr != nil {
+		if err == nil {
+			err = cpErr
+		}
+	}
+
+	return err
+}
+
+// checkpoint opens a dedicated single connection and runs
+// PRAGMA wal_checkpoint(TRUNCATE). Must be called after the
+// connection pool is closed so no other connections hold the WAL.
+func (s *ContentStore) checkpoint() error {
+	dsn := s.dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	return err
 }
 
