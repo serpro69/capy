@@ -128,6 +128,20 @@ func TestCheckpointSubcommand_WithDB(t *testing.T) {
 	assert.Contains(t, string(out), "3")
 }
 
+func TestCheckpointSubcommand_BadConfig(t *testing.T) {
+	dir := t.TempDir()
+	// Write invalid TOML
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".capy.toml"),
+		[]byte("this is not [valid toml\n"),
+		0o644,
+	))
+	// Should still succeed (falls back to defaults) but warn on stderr
+	_, stderr, code := capy(t, "checkpoint", "--project-dir", dir)
+	assert.Equal(t, 0, code)
+	assert.Contains(t, stderr, "config load failed", "should warn about bad config on stderr")
+}
+
 func TestDefaultCommandIsServe(t *testing.T) {
 	// default command is serve; with empty stdin it exits cleanly
 	_, _, code := capy(t)

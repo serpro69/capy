@@ -130,6 +130,44 @@ func TestSetupIdempotent(t *testing.T) {
 	assert.Equal(t, 1, lines, "should not duplicate .gitignore entry")
 }
 
+func TestSetupIdempotent_RenamedBinary(t *testing.T) {
+	dir := t.TempDir()
+
+	// First setup with one binary path
+	require.NoError(t, SetupClaudeCode("/usr/local/bin/my-custom-cli", dir))
+
+	// Second setup with a different binary name (no "capy" in path)
+	require.NoError(t, SetupClaudeCode("/opt/tools/my-custom-cli", dir))
+
+	settingsData, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	require.NoError(t, err)
+
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal(settingsData, &settings))
+
+	hooks := settings["hooks"].(map[string]any)
+
+	// Each hook event should have exactly 1 entry, not 2.
+	// findHookEntry searches for "hook <event>" (e.g., "hook pretooluse"),
+	// not "capy hook", so it finds the entry even with a renamed binary.
+	for _, he := range hookEvents {
+		entries := hooks[he.Event].([]any)
+		assert.Len(t, entries, 1,
+			"hook event %s should have 1 entry after re-setup with different binary, got %d",
+			he.Event, len(entries))
+
+		// Verify the command was updated to the new path
+		entry := entries[0].(map[string]any)
+		innerHooks := entry["hooks"].([]any)
+		hook := innerHooks[0].(map[string]any)
+		cmd := hook["command"].(string)
+		assert.Contains(t, cmd, "/opt/tools/my-custom-cli",
+			"hook %s should use the new binary path", he.Event)
+		assert.NotContains(t, cmd, "/usr/local/bin/",
+			"hook %s should not have the old binary path", he.Event)
+	}
+}
+
 func TestMergePreservesExistingSettings(t *testing.T) {
 	dir := t.TempDir()
 	binaryPath := "/usr/local/bin/capy"
