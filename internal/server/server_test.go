@@ -1,8 +1,12 @@
 package server
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/security"
@@ -52,4 +56,53 @@ func TestToolRegistration(t *testing.T) {
 	require.NotPanics(t, func() {
 		srv.registerToolsForTest()
 	})
+}
+
+func TestShutdownCheckpointsWAL(t *testing.T) {
+	projectDir := t.TempDir()
+	dbPath := filepath.Join(projectDir, "test.db")
+
+	cfg := config.DefaultConfig()
+	cfg.Store.Path = dbPath
+	exec := executor.NewExecutor(projectDir, 0)
+	srv := NewServer(cfg, nil, exec, projectDir)
+
+	// Trigger store init + index content to generate WAL data.
+	srv.registerToolsForTest()
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"content": "# Shutdown Test\n\nData that must survive shutdown.",
+		"source":  "shutdown-test",
+	}
+	result, err := srv.handleIndex(context.Background(), req)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+
+	// Verify store was initialized and has data.
+	require.NotNil(t, srv.store)
+
+	// Call shutdown — this is what Serve() defers.
+	srv.shutdown()
+
+	// WAL and SHM must be gone or empty after shutdown.
+	if info, err := os.Stat(dbPath + "-wal"); err == nil {
+		assert.Equal(t, int64(0), info.Size(),
+			"WAL should be empty after shutdown, got %d bytes", info.Size())
+	}
+	if info, err := os.Stat(dbPath + "-shm"); err == nil {
+		assert.Equal(t, int64(0), info.Size(),
+			"SHM should be empty after shutdown, got %d bytes", info.Size())
+	}
+
+	// Data must survive — reopen the DB directly and check.
+	cfg2 := config.DefaultConfig()
+	cfg2.Store.Path = dbPath
+	srv2 := NewServer(cfg2, nil, nil, projectDir)
+	st := srv2.getStore()
+	defer st.Close()
+
+	sources, err := st.ListSources()
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+	assert.Equal(t, "shutdown-test", sources[0].Label)
 }
