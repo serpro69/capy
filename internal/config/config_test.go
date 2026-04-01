@@ -16,6 +16,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 2.0, cfg.Store.TitleWeight)
 	assert.Equal(t, 30, cfg.Store.Cleanup.ColdThresholdDays)
 	assert.False(t, cfg.Store.Cleanup.AutoPrune)
+	assert.Equal(t, 24, cfg.Store.Cache.FetchTTLHours)
 	assert.Equal(t, "info", cfg.Server.LogLevel)
 	assert.Empty(t, cfg.Store.Path)
 }
@@ -115,6 +116,36 @@ timeout = 45
 	cfg, err := Load(dir)
 	require.NoError(t, err)
 	assert.Equal(t, 2.0, cfg.Store.TitleWeight)
+}
+
+func TestFetchTTLHoursFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	content := `
+[store.cache]
+fetch_ttl_hours = 48
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".capy.toml"), []byte(content), 0o644))
+
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 48, cfg.Store.Cache.FetchTTLHours)
+}
+
+func TestFetchTTLHoursDefaultWhenOmitted(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	content := `
+[executor]
+timeout = 45
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".capy.toml"), []byte(content), 0o644))
+
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 24, cfg.Store.Cache.FetchTTLHours)
 }
 
 func TestLoadMissingFiles(t *testing.T) {

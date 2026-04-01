@@ -55,6 +55,13 @@ type StoreStats struct {
 	ColdCount   int
 }
 
+// SourceMeta is lightweight metadata for a single source (used by TTL cache).
+type SourceMeta struct {
+	Label      string
+	ChunkCount int
+	IndexedAt  time.Time
+}
+
 // IndexResult is returned after indexing content.
 type IndexResult struct {
 	SourceID       int64
