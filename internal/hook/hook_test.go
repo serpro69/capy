@@ -103,6 +103,101 @@ func TestPreToolUse_WgetBlocked(t *testing.T) {
 	assert.Equal(t, "modify", result["action"])
 }
 
+func TestPreToolUse_CurlSilentFileOutputAllowed(t *testing.T) {
+	dir := guidanceTestDir(t)
+	a := &testAdapter{}
+	input := makeInput("Bash", map[string]any{"command": "curl -sSL -o /tmp/file.tar.gz https://example.com/file.tar.gz"})
+	output, err := handlePreToolUse(input, a, nil, dir)
+	require.NoError(t, err)
+	// Should get guidance (first bash call), not a block
+	if output != nil {
+		result := parseResult(t, output)
+		assert.NotEqual(t, "modify", result["action"], "silent curl with -o should be allowed")
+	}
+}
+
+func TestPreToolUse_CurlOutputNoSilentBlocked(t *testing.T) {
+	ResetGuidanceThrottle()
+	a := &testAdapter{}
+	input := makeInput("Bash", map[string]any{"command": "curl -o /tmp/file.tar.gz https://example.com/file.tar.gz"})
+	output, err := handlePreToolUse(input, a, nil, "")
+	require.NoError(t, err)
+	require.NotNil(t, output)
+	result := parseResult(t, output)
+	assert.Equal(t, "modify", result["action"], "curl with -o but no -s should be blocked")
+}
+
+func TestPreToolUse_WgetQuietOutputAllowed(t *testing.T) {
+	dir := guidanceTestDir(t)
+	a := &testAdapter{}
+	input := makeInput("Bash", map[string]any{"command": "wget -qO /tmp/file.tar.gz https://example.com/file.tar.gz"})
+	output, err := handlePreToolUse(input, a, nil, dir)
+	require.NoError(t, err)
+	if output != nil {
+		result := parseResult(t, output)
+		assert.NotEqual(t, "modify", result["action"], "quiet wget with -O should be allowed")
+	}
+}
+
+func TestPreToolUse_WgetNoQuietBlocked(t *testing.T) {
+	ResetGuidanceThrottle()
+	a := &testAdapter{}
+	input := makeInput("Bash", map[string]any{"command": "wget -O /tmp/file.tar.gz https://example.com/file.tar.gz"})
+	output, err := handlePreToolUse(input, a, nil, "")
+	require.NoError(t, err)
+	require.NotNil(t, output)
+	result := parseResult(t, output)
+	assert.Equal(t, "modify", result["action"], "wget with -O but no -q should be blocked")
+}
+
+func TestPreToolUse_CurlChainedMixed(t *testing.T) {
+	ResetGuidanceThrottle()
+	a := &testAdapter{}
+	// One safe segment, one unsafe — should block
+	input := makeInput("Bash", map[string]any{"command": "curl -sSL -o /tmp/a.txt https://a.com && curl https://b.com"})
+	output, err := handlePreToolUse(input, a, nil, "")
+	require.NoError(t, err)
+	require.NotNil(t, output)
+	result := parseResult(t, output)
+	assert.Equal(t, "modify", result["action"], "mixed chain should be blocked")
+}
+
+func TestPreToolUse_CurlChainedAllSafe(t *testing.T) {
+	dir := guidanceTestDir(t)
+	a := &testAdapter{}
+	// Both segments safe — should allow
+	input := makeInput("Bash", map[string]any{"command": "curl -sSL -o /tmp/a.txt https://a.com && curl -sS -o /tmp/b.txt https://b.com"})
+	output, err := handlePreToolUse(input, a, nil, dir)
+	require.NoError(t, err)
+	if output != nil {
+		result := parseResult(t, output)
+		assert.NotEqual(t, "modify", result["action"], "all-safe chain should be allowed")
+	}
+}
+
+func TestPreToolUse_CurlStdoutAliasBlocked(t *testing.T) {
+	ResetGuidanceThrottle()
+	a := &testAdapter{}
+	// -o - outputs to stdout despite file-output flag
+	input := makeInput("Bash", map[string]any{"command": "curl -sS -o - https://example.com"})
+	output, err := handlePreToolUse(input, a, nil, "")
+	require.NoError(t, err)
+	require.NotNil(t, output)
+	result := parseResult(t, output)
+	assert.Equal(t, "modify", result["action"], "curl -o - should be blocked")
+}
+
+func TestPreToolUse_CurlVerboseBlocked(t *testing.T) {
+	ResetGuidanceThrottle()
+	a := &testAdapter{}
+	input := makeInput("Bash", map[string]any{"command": "curl -sSL -v -o /tmp/file.txt https://example.com"})
+	output, err := handlePreToolUse(input, a, nil, "")
+	require.NoError(t, err)
+	require.NotNil(t, output)
+	result := parseResult(t, output)
+	assert.Equal(t, "modify", result["action"], "verbose curl should be blocked")
+}
+
 func TestPreToolUse_CurlInQuotesAllowed(t *testing.T) {
 	ResetGuidanceThrottle()
 	a := &testAdapter{}
@@ -352,6 +447,76 @@ func TestIsCurlOrWget(t *testing.T) {
 	assert.True(t, isCurlOrWget("echo test && curl https://example.com"))
 	assert.False(t, isCurlOrWget("echo curling_iron")) // substring, not command
 	assert.False(t, isCurlOrWget("git log --oneline"))
+}
+
+func TestSplitChainedCommands(t *testing.T) {
+	// Basic operators
+	assert.Equal(t, []string{"echo a", "echo b"}, splitChainedCommands("echo a && echo b"))
+	assert.Equal(t, []string{"echo a", "echo b"}, splitChainedCommands("echo a || echo b"))
+	assert.Equal(t, []string{"echo a", "echo b"}, splitChainedCommands("echo a ; echo b"))
+	assert.Equal(t, []string{"echo a", "echo b"}, splitChainedCommands("echo a | echo b"))
+
+	// Respects single quotes
+	assert.Equal(t, []string{"echo 'a && b'"}, splitChainedCommands("echo 'a && b'"))
+
+	// Respects double quotes
+	assert.Equal(t, []string{`echo "a && b"`}, splitChainedCommands(`echo "a && b"`))
+
+	// Respects backticks
+	assert.Equal(t, []string{"echo `a && b`"}, splitChainedCommands("echo `a && b`"))
+
+	// Mixed: quoted + real operator
+	assert.Equal(t, []string{"echo 'a && b'", "echo c"}, splitChainedCommands("echo 'a && b' && echo c"))
+
+	// Empty/whitespace
+	assert.Equal(t, []string{"echo a"}, splitChainedCommands("echo a"))
+	assert.Empty(t, splitChainedCommands(""))
+}
+
+func TestIsCurlWgetSafe(t *testing.T) {
+	// curl -s -o file → safe
+	assert.True(t, isCurlWgetSafe("curl -sSL -o /tmp/file.tar.gz https://example.com"))
+	assert.True(t, isCurlWgetSafe("curl --silent --output /tmp/file.tar.gz https://example.com"))
+
+	// curl -o file (no silent) → unsafe
+	assert.False(t, isCurlWgetSafe("curl -o /tmp/file.tar.gz https://example.com"))
+	assert.False(t, isCurlWgetSafe("curl --output /tmp/file.tar.gz https://example.com"))
+
+	// curl (no file output) → unsafe
+	assert.False(t, isCurlWgetSafe("curl https://example.com"))
+
+	// curl -s -o - (stdout alias) → unsafe
+	assert.False(t, isCurlWgetSafe("curl -sS -o - https://example.com"))
+	assert.False(t, isCurlWgetSafe("curl -sS -o /dev/stdout https://example.com"))
+
+	// curl with verbose → unsafe
+	assert.False(t, isCurlWgetSafe("curl -sSL -v -o /tmp/file.txt https://example.com"))
+	assert.False(t, isCurlWgetSafe("curl -sS --verbose -o /tmp/file.txt https://example.com"))
+
+	// wget -q -O file → safe
+	assert.True(t, isCurlWgetSafe("wget -qO /tmp/file.tar.gz https://example.com"))
+	assert.True(t, isCurlWgetSafe("wget --quiet --output-document /tmp/file.tar.gz https://example.com"))
+
+	// wget -O file (no quiet) → unsafe
+	assert.False(t, isCurlWgetSafe("wget -O /tmp/file.tar.gz https://example.com"))
+	assert.False(t, isCurlWgetSafe("wget --output-document /tmp/file.tar.gz https://example.com"))
+
+	// wget (no file output) → unsafe
+	assert.False(t, isCurlWgetSafe("wget https://example.com"))
+
+	// wget -q -O - (stdout alias) → unsafe
+	assert.False(t, isCurlWgetSafe("wget -qO - https://example.com"))
+
+	// Non-curl/wget → safe (not our concern)
+	assert.True(t, isCurlWgetSafe("echo hello"))
+
+	// Shell redirect → safe (with silent)
+	assert.True(t, isCurlWgetSafe("curl -sS https://example.com > /tmp/file.txt"))
+	assert.True(t, isCurlWgetSafe("curl -sS https://example.com >/tmp/file.txt"))
+	assert.True(t, isCurlWgetSafe("curl -sS https://example.com >> /tmp/file.txt"))
+
+	// fd dup (2>&1) is NOT file output → unsafe
+	assert.False(t, isCurlWgetSafe("curl -sS https://example.com 2>&1"))
 }
 
 func TestHasInlineHTTP(t *testing.T) {
