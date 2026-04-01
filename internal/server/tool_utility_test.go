@@ -84,6 +84,47 @@ func TestStats_SavingsCalculation(t *testing.T) {
 	assert.Contains(t, text, "sandbox")
 }
 
+func TestStats_CacheSectionIncluded(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	// Simulate cache hits
+	srv.stats.AddCacheHit(3200)
+	srv.stats.AddCacheHit(4800)
+	srv.stats.TrackResponse("capy_execute", 100)
+
+	r := callStats(t, srv)
+	text := resultText(r)
+	assert.Contains(t, text, "TTL Cache")
+	assert.Contains(t, text, "Cache hits")
+	assert.Contains(t, text, "Data avoided by cache")
+	assert.Contains(t, text, "Network requests saved")
+	assert.Contains(t, text, "TTL remaining")
+}
+
+func TestStats_CacheSectionOmittedWhenNoCacheHits(t *testing.T) {
+	srv := newTestServer(t, nil)
+	srv.stats.TrackResponse("capy_execute", 100)
+
+	r := callStats(t, srv)
+	text := resultText(r)
+	assert.NotContains(t, text, "TTL Cache")
+}
+
+func TestStats_CacheBytesSavedInSavingsCalc(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	// 10KB indexed, 500B returned, 5KB cache saved
+	srv.stats.AddBytesIndexed(10000)
+	srv.stats.AddCacheHit(5000)
+	srv.stats.TrackResponse("capy_execute", 500)
+
+	r := callStats(t, srv)
+	text := resultText(r)
+	// totalProcessed = 10000 + 0 + 500 + 5000 = 15500
+	// reduction = (1 - 500/15500)*100 = ~96.8%
+	assert.Contains(t, text, "reduction")
+}
+
 func TestStats_FormatBytes(t *testing.T) {
 	assert.Equal(t, "0.0KB", formatBytes(0))
 	assert.Equal(t, "1.0KB", formatBytes(1024))
