@@ -34,7 +34,7 @@ func newSetupCmd() *cobra.Command {
 			fmt.Println("capy: setup complete")
 			fmt.Println("  - hooks registered in .claude/settings.json")
 			fmt.Println("  - MCP server registered in .mcp.json")
-			fmt.Println("  - routing instructions appended to CLAUDE.md")
+			fmt.Println("  - routing instructions written to .claude/capy/CLAUDE.md")
 			fmt.Println("  - .capy/ added to .gitignore")
 			fmt.Println("\nRun `capy doctor` to verify the installation.")
 			return nil
