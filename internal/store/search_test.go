@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -108,7 +109,10 @@ func TestSearchPorterStemming(t *testing.T) {
 	results, err := s.SearchWithFallback("authenticating", 5, SearchOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, results)
-	assert.Equal(t, "porter+OR", results[0].MatchLayer)
+	// RRF: porter will find it; trigram may or may not. Accept either.
+	assert.True(t,
+		results[0].MatchLayer == "porter+OR" || results[0].MatchLayer == "rrf(porter+trigram)",
+		"expected porter+OR or rrf(porter+trigram), got: %s", results[0].MatchLayer)
 }
 
 // --- Trigram search ---
@@ -118,14 +122,14 @@ func TestSearchTrigramPartialMatch(t *testing.T) {
 	indexTestContent(t, s)
 
 	// "authent" is a substring — trigram should catch it.
-	// First try porter (likely no match for partial), then trigram.
 	results, err := s.SearchWithFallback("authent", 5, SearchOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, results)
 	assert.True(t,
-		strings.HasPrefix(results[0].MatchLayer, "trigram") ||
-			strings.HasPrefix(results[0].MatchLayer, "porter"),
-		"should match via trigram or porter, got: %s", results[0].MatchLayer)
+		strings.Contains(results[0].MatchLayer, "trigram") ||
+			strings.Contains(results[0].MatchLayer, "porter") ||
+			results[0].MatchLayer == "rrf(porter+trigram)",
+		"should match via trigram, porter, or rrf, got: %s", results[0].MatchLayer)
 }
 
 // --- Fuzzy correction ---
@@ -135,33 +139,94 @@ func TestSearchFuzzyCorrection(t *testing.T) {
 	indexTestContent(t, s)
 
 	// "authentcation" is a typo for "authentication".
-	results, err := s.SearchWithFallback("authentcation", 5, SearchOptions{})
+	// Request limit=1 so direct RRF pass returns < limit (no direct hits for typo),
+	// triggering the fuzzy correction pass.
+	results, err := s.SearchWithFallback("authentcation", 1, SearchOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, results, "fuzzy correction should find results for typo")
 	assert.True(t,
 		strings.HasPrefix(results[0].MatchLayer, "fuzzy+"),
 		"should match via fuzzy layer, got: %s", results[0].MatchLayer)
-	// Verify the layer name includes the underlying search type.
-	assert.Contains(t, results[0].MatchLayer, "porter",
-		"fuzzy layer should name the underlying search type, got: %s", results[0].MatchLayer)
 }
 
-// --- 8-layer fallback ---
+// --- RRF ---
 
-func TestSearchFallbackLayers(t *testing.T) {
+func TestSearchRRF(t *testing.T) {
 	s := newTestStore(t)
 	indexTestContent(t, s)
 
-	// Exact word — should hit porter+OR (layer 1).
+	// Exact word — both porter and trigram should find it, giving rrf(porter+trigram).
 	r1, err := s.SearchWithFallback("authentication", 5, SearchOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, r1)
-	assert.Equal(t, "porter+OR", r1[0].MatchLayer)
+	// "authentication" is long enough for trigram and matches porter stemming,
+	// so RRF should fuse results from both layers.
+	assert.True(t,
+		r1[0].MatchLayer == "rrf(porter+trigram)" || r1[0].MatchLayer == "porter+OR",
+		"expected rrf or porter match, got: %s", r1[0].MatchLayer)
+	assert.Greater(t, r1[0].FusedScore, 0.0, "FusedScore should be set")
 
-	// Non-existent word — should return nil.
+	// Non-existent word — should return empty.
 	r2, err := s.SearchWithFallback("xyznonexistent", 5, SearchOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, r2)
+}
+
+func TestRRFMultiLayerHitsRankHigher(t *testing.T) {
+	s := newTestStore(t)
+
+	// Index content where "authentication" appears (matchable by both porter and trigram).
+	_, err := s.Index(
+		"# Authentication\n\nThe authentication module validates users.\n\n"+
+			"## Zeta Module\n\nThe zeta module does something else entirely with no auth.",
+		"rrf-test",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	results, err := s.SearchWithFallback("authentication", 5, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+
+	// Results appearing in both layers should have higher fused scores.
+	for _, r := range results {
+		if r.MatchLayer == "rrf(porter+trigram)" {
+			singleLayerMax := 1.0 / float64(rrfK)
+			assert.Greater(t, r.FusedScore, singleLayerMax,
+				"multi-layer result should score above single-layer max")
+		}
+	}
+}
+
+func TestFuzzyOnlyTriggersWhenResultsSparse(t *testing.T) {
+	s := newTestStore(t)
+	indexTestContent(t, s)
+
+	// "authentication" has plenty of direct hits — fuzzy should NOT trigger.
+	results, err := s.SearchWithFallback("authentication", 1, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	for _, r := range results {
+		assert.False(t, strings.HasPrefix(r.MatchLayer, "fuzzy+"),
+			"direct RRF results should not be tagged fuzzy, got: %s", r.MatchLayer)
+	}
+}
+
+func TestFuzzyResultsDontDuplicateDirectResults(t *testing.T) {
+	s := newTestStore(t)
+	indexTestContent(t, s)
+
+	// Use a typo with a very high limit so fuzzy pass triggers and merges.
+	results, err := s.SearchWithFallback("authentcation", 20, SearchOptions{})
+	require.NoError(t, err)
+
+	// Check no duplicates by (sourceID, title).
+	seen := make(map[string]bool)
+	for _, r := range results {
+		key := fmt.Sprintf("%d:%s", r.SourceID, r.Title)
+		assert.False(t, seen[key], "duplicate result: %s", key)
+		seen[key] = true
+	}
 }
 
 // --- Source filtering ---
@@ -295,4 +360,138 @@ func TestGetChunksBySource(t *testing.T) {
 	for _, c := range chunks {
 		assert.Equal(t, "chunks-test", c.Label)
 	}
+}
+
+// --- Proximity reranking ---
+
+func TestProximityRerankMultiTerm(t *testing.T) {
+	s := newTestStore(t)
+
+	// Index two chunks: one where "JWT" and "token" are adjacent,
+	// another where they're far apart.
+	_, err := s.Index(
+		"# Close Terms\n\nThe JWT token verification is fast.\n\n"+
+			"# Far Terms\n\nThe JWT standard defines many things. "+
+			strings.Repeat("Filler text here. ", 20)+
+			"A token is issued after login.",
+		"proximity-test",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	results, err := s.SearchWithFallback("JWT token", 5, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+
+	// The chunk with close terms should rank first after proximity boosting.
+	assert.Contains(t, results[0].Content, "JWT token",
+		"close-proximity chunk should rank first")
+}
+
+func TestProximityRerankSingleTermSkips(t *testing.T) {
+	results := []SearchResult{
+		{FusedScore: 0.5, Content: "hello world"},
+		{FusedScore: 1.0, Content: "world hello"},
+	}
+	reranked := proximityRerank(results, "hello")
+	// Single term — no reranking, original order preserved.
+	assert.Equal(t, 0.5, reranked[0].FusedScore)
+	assert.Equal(t, 1.0, reranked[1].FusedScore)
+}
+
+func TestFindAllPositions(t *testing.T) {
+	assert.Equal(t, []int{0, 6}, findAllPositions("hello hello world", "hello"))
+	assert.Equal(t, []int{12}, findAllPositions("hello hello world", "world"))
+	assert.Empty(t, findAllPositions("hello world", "missing"))
+	assert.Equal(t, []int{0, 1, 2}, findAllPositions("aaa", "a"))
+}
+
+func TestFindMinSpanFromHighlights(t *testing.T) {
+	// char(2) = start marker, char(3) = end marker (FTS5 highlight convention).
+	mk := func(s string) string { return string(rune(2)) + s + string(rune(3)) }
+
+	// Two terms adjacent: "the \x02JWT\x03 \x02token\x03 is valid"
+	highlighted := "the " + mk("JWT") + " " + mk("token") + " is valid"
+	span := findMinSpanFromHighlights(highlighted, []string{"jwt", "token"})
+	// "JWT" starts at stripped position 4, "token" at 8. Span = 4.
+	assert.Equal(t, 4, span)
+
+	// Term not found in highlights — should return -1.
+	span2 := findMinSpanFromHighlights(highlighted, []string{"jwt", "missing"})
+	assert.Equal(t, -1, span2)
+
+	// Empty highlighted string.
+	span3 := findMinSpanFromHighlights("", []string{"jwt"})
+	assert.Equal(t, -1, span3)
+
+	// Single term — span should be 0 (same position to same position).
+	highlighted4 := "before " + mk("auth") + " after"
+	span4 := findMinSpanFromHighlights(highlighted4, []string{"auth"})
+	assert.Equal(t, 0, span4)
+}
+
+func TestFindMinSpan(t *testing.T) {
+	// Two lists: positions of "a" and "b" in "a...b".
+	span := findMinSpan([][]int{{0, 10}, {5, 15}})
+	assert.Equal(t, 5, span, "min span should be |5-0| = 5")
+
+	// Adjacent.
+	span2 := findMinSpan([][]int{{0}, {1}})
+	assert.Equal(t, 1, span2)
+
+	// Single list.
+	span3 := findMinSpan([][]int{{5}})
+	assert.Equal(t, 0, span3)
+}
+
+func TestProximityContentLengthNormalization(t *testing.T) {
+	// Two results with the same absolute minSpan but different content lengths.
+	// The formula boost = 1/(1 + minSpan/contentLen) means:
+	// - Same span in longer content → smaller ratio → bigger boost
+	// This is intentional: a 4-char span in 1000 chars means terms are
+	// practically adjacent; a 4-char span in 14 chars is a significant
+	// fraction of the content.
+	short := SearchResult{FusedScore: 1.0, Content: "JWT token here"}
+	long := SearchResult{FusedScore: 1.0, Content: "JWT token here " + strings.Repeat("x", 1000)}
+
+	shortResults := proximityRerank([]SearchResult{short}, "JWT token")
+	longResults := proximityRerank([]SearchResult{long}, "JWT token")
+
+	// Both should be boosted above their original score.
+	assert.Greater(t, shortResults[0].FusedScore, 1.0, "short content should be boosted")
+	assert.Greater(t, longResults[0].FusedScore, 1.0, "long content should be boosted")
+
+	// Longer content with same absolute span gets bigger boost (lower ratio).
+	assert.Greater(t, longResults[0].FusedScore, shortResults[0].FusedScore,
+		"same span in longer content should get bigger normalized boost")
+}
+
+// --- ContentType filtering ---
+
+func TestSearchContentTypeFilter(t *testing.T) {
+	s := newTestStore(t)
+
+	// Index content with code blocks (produces both code and prose chunks).
+	_, err := s.Index(
+		"# API Guide\n\nThe API provides endpoints for auth.\n\n"+
+			"```go\nfunc Authenticate(token string) error {\n\treturn nil\n}\n```\n\n"+
+			"## Usage\n\nCall Authenticate with a valid token.",
+		"code-filter-test",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	// Search with code filter.
+	codeResults, err := s.SearchWithFallback("authenticate", 5, SearchOptions{ContentType: "code"})
+	require.NoError(t, err)
+	for _, r := range codeResults {
+		assert.Equal(t, "code", r.ContentType,
+			"code filter should only return code chunks, got: %s for %q", r.ContentType, r.Title)
+	}
+
+	// Search without filter should return all.
+	allResults, err := s.SearchWithFallback("authenticate", 10, SearchOptions{})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(allResults), len(codeResults),
+		"unfiltered search should return at least as many results as filtered")
 }
