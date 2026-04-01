@@ -25,19 +25,19 @@
 - [x] 1.12 Run all store and server tests to verify the refactor is clean
 
 ## Task 2: Reciprocal Rank Fusion (RRF)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#2-reciprocal-rank-fusion-rrf](./implementation.md#2-reciprocal-rank-fusion-rrf)
 
 ### Subtasks
-- [ ] 2.1 Add `rrfSearch(query string, limit int, opts SearchOptions) []SearchResult` to `internal/store/search.go` — runs **2 layers** (porter OR + trigram OR) **concurrently** (goroutines + WaitGroup) with `max(limit*2, 10)` fetch limit, builds fusion map keyed by `sourceID:title`, computes `1/(60+position)` scores (position = slice index, not BM25 rank float), sorts by fused score
-- [ ] 2.2 Add `proximityRerank(results []SearchResult, query string) []SearchResult` — for 2+ word queries, extract match positions from FTS5 highlight markers (char(2)/char(3)) in `Highlighted` field, find minimum window via `findMinSpan`, apply content-length-normalized boost: `1 + 1/(1 + minSpan/contentLen)`. Fall back to `strings.Index` when `Highlighted` is empty.
-- [ ] 2.3 Add helper functions: `findAllPositions(text, term string) []int` and `findMinSpan(positionLists [][]int) int` (sweep-line algorithm)
-- [ ] 2.4 Add `mergeRRFResults(primary, secondary []SearchResult, limit int) []SearchResult` — deduplicates by `(sourceID, title)` key, keeps primary version on conflict, truncates to limit
-- [ ] 2.5 Replace cascading loop in `SearchWithFallback` with: RRF pass → if < limit results, fuzzy correct → second RRF pass → merge via `mergeRRFResults`. Tag fuzzy results with `"fuzzy+"` prefix on MatchLayer
-- [ ] 2.6 Write tests: RRF returns results from both layers; multi-layer hits rank above single-layer; fuzzy correction only triggers when RRF returns < limit; fuzzy results don't duplicate direct results
-- [ ] 2.7 Write tests for proximity: multi-term query boosts close terms; single-term skips; content-length normalization works correctly; `findMinSpan` and `findAllPositions` unit tests
-- [ ] 2.8 Write test: ContentType="code" returns only code chunks; empty contentType returns all (internal SearchOptions, not MCP schema)
+- [x] 2.1 Add `rrfSearch(query string, limit int, opts SearchOptions) []SearchResult` to `internal/store/search.go` — runs **2 layers** (porter OR + trigram OR) **concurrently** (goroutines + WaitGroup) with `max(limit*2, 10)` fetch limit, builds fusion map keyed by `sourceID:title`, computes `1/(60+position)` scores (position = slice index, not BM25 rank float), sorts by fused score
+- [x] 2.2 Add `proximityRerank(results []SearchResult, query string) []SearchResult` — for 2+ word queries, extract match positions from FTS5 highlight markers (char(2)/char(3)) in `Highlighted` field, find minimum window via `findMinSpan`, apply content-length-normalized boost: `1 + 1/(1 + minSpan/contentLen)`. Fall back to `strings.Index` when `Highlighted` is empty.
+- [x] 2.3 Add helper functions: `findAllPositions(text, term string) []int` and `findMinSpan(positionLists [][]int) int` (sweep-line algorithm)
+- [x] 2.4 Add `mergeRRFResults(primary, secondary []SearchResult, limit int) []SearchResult` — deduplicates by `(sourceID, title)` key, keeps primary version on conflict, truncates to limit
+- [x] 2.5 Replace cascading loop in `SearchWithFallback` with: RRF pass → if < limit results, fuzzy correct → second RRF pass → merge via `mergeRRFResults`. Tag fuzzy results with `"fuzzy+"` prefix on MatchLayer
+- [x] 2.6 Write tests: RRF returns results from both layers; multi-layer hits rank above single-layer; fuzzy correction only triggers when RRF returns < limit; fuzzy results don't duplicate direct results
+- [x] 2.7 Write tests for proximity: multi-term query boosts close terms; single-term skips; content-length normalization works correctly; `findMinSpan` and `findAllPositions` unit tests
+- [x] 2.8 Write test: ContentType="code" returns only code chunks; empty contentType returns all (internal SearchOptions, not MCP schema)
 
 ## Task 3: Source metadata + TTL cache
 - **Status:** pending
