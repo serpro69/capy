@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,51 +17,289 @@ var (
 	ftsKeywords     = map[string]bool{"AND": true, "OR": true, "NOT": true, "NEAR": true}
 )
 
-// SearchWithFallback runs a cascading search: porter OR, trigram OR,
-// then fuzzy correction with the same two layers.
+// SearchWithFallback runs Reciprocal Rank Fusion across porter and trigram
+// layers, with fuzzy correction as a secondary pass when results are sparse.
 func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOptions) ([]SearchResult, error) {
 	if _, err := s.getDB(); err != nil {
 		return nil, err
 	}
 
-	type layer struct {
-		name string
-		fn   func(q string) []SearchResult
-	}
+	// RRF pass 1: direct query.
+	results := s.rrfSearch(query, limit, opts)
 
-	layers := []layer{
-		{"porter+OR", func(q string) []SearchResult { return s.searchPorter(q, limit, opts) }},
-		{"trigram+OR", func(q string) []SearchResult { return s.searchTrigramQuery(q, limit, opts) }},
-	}
-
-	// Layers 1-2: direct search.
-	for _, l := range layers {
-		if results := l.fn(query); len(results) > 0 {
-			tagResults(results, l.name)
-			s.trackAccess(results)
-			return results, nil
+	// RRF pass 2: fuzzy correction (only if pass 1 returned fewer than limit).
+	if len(results) < limit {
+		corrected := s.fuzzyCorrectQuery(query)
+		if corrected != "" && corrected != query {
+			fuzzyResults := s.rrfSearch(corrected, limit, opts)
+			for i := range fuzzyResults {
+				fuzzyResults[i].MatchLayer = "fuzzy+" + fuzzyResults[i].MatchLayer
+			}
+			results = mergeRRFResults(results, fuzzyResults, limit)
 		}
 	}
 
-	// Layers 3-4: fuzzy correction, then re-run both layers.
-	corrected := s.fuzzyCorrectQuery(query)
-	if corrected != "" && corrected != query {
-		for _, l := range layers {
-			if results := l.fn(corrected); len(results) > 0 {
-				tagResults(results, "fuzzy+"+l.name)
-				s.trackAccess(results)
-				return results, nil
+	if len(results) > 0 {
+		s.trackAccess(results)
+	}
+	return results, nil
+}
+
+const rrfK = 60 // standard RRF constant
+
+// rrfSearch runs porter and trigram searches concurrently, fuses results
+// using Reciprocal Rank Fusion, applies proximity reranking, and returns
+// the top results.
+func (s *ContentStore) rrfSearch(query string, limit int, opts SearchOptions) []SearchResult {
+	fetchLimit := max(limit*2, 10)
+
+	// Run both layers concurrently — SQLite WAL supports concurrent readers.
+	var porterResults, trigramResults []SearchResult
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		porterResults = s.searchPorter(query, fetchLimit, opts)
+	}()
+	go func() {
+		defer wg.Done()
+		trigramResults = s.searchTrigramQuery(query, fetchLimit, opts)
+	}()
+	wg.Wait()
+
+	// Build fusion map keyed by (sourceID, title).
+	type fusedEntry struct {
+		result     SearchResult
+		fusedScore float64
+	}
+	fusionMap := make(map[string]*fusedEntry)
+
+	addLayer := func(results []SearchResult, layerName string) {
+		for i, r := range results {
+			key := fmt.Sprintf("%d:%s", r.SourceID, r.Title)
+			score := 1.0 / (float64(rrfK) + float64(i))
+			if entry, ok := fusionMap[key]; ok {
+				entry.fusedScore += score
+				// Keep the version with the better individual rank.
+				if r.Rank < entry.result.Rank {
+					entry.result = r
+				}
+			} else {
+				r.MatchLayer = layerName
+				fusionMap[key] = &fusedEntry{result: r, fusedScore: score}
 			}
 		}
 	}
 
-	return nil, nil
+	addLayer(porterResults, "porter+OR")
+	addLayer(trigramResults, "trigram+OR")
+
+	// Flatten and sort by fused score descending.
+	fused := make([]SearchResult, 0, len(fusionMap))
+	for _, entry := range fusionMap {
+		entry.result.FusedScore = entry.fusedScore
+		fused = append(fused, entry.result)
+	}
+	sort.Slice(fused, func(i, j int) bool {
+		return fused[i].FusedScore > fused[j].FusedScore
+	})
+
+	// Tag multi-layer hits. A result appearing in both layers scores above
+	// the single-layer max of 1/(60+0) ≈ 0.01667.
+	singleLayerMax := 1.0 / float64(rrfK)
+	for i := range fused {
+		if fused[i].FusedScore > singleLayerMax {
+			fused[i].MatchLayer = "rrf(porter+trigram)"
+		}
+	}
+
+	// Apply proximity reranking for multi-term queries.
+	fused = proximityRerank(fused, query)
+
+	if len(fused) > limit {
+		fused = fused[:limit]
+	}
+	return fused
 }
 
-func tagResults(results []SearchResult, layer string) {
-	for i := range results {
-		results[i].MatchLayer = layer
+// mergeRRFResults deduplicates primary and secondary results by (sourceID, title).
+// On conflict, the primary version is kept. Truncates to limit.
+func mergeRRFResults(primary, secondary []SearchResult, limit int) []SearchResult {
+	seen := make(map[string]bool, len(primary))
+	for _, r := range primary {
+		key := fmt.Sprintf("%d:%s", r.SourceID, r.Title)
+		seen[key] = true
 	}
+
+	merged := make([]SearchResult, len(primary))
+	copy(merged, primary)
+
+	for _, r := range secondary {
+		key := fmt.Sprintf("%d:%s", r.SourceID, r.Title)
+		if !seen[key] {
+			seen[key] = true
+			merged = append(merged, r)
+		}
+	}
+
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged
+}
+
+// --- Proximity reranking ---
+
+// proximityRerank boosts results where query terms appear close together.
+// Only applies for multi-term queries (2+ words).
+func proximityRerank(results []SearchResult, query string) []SearchResult {
+	// Strip FTS5 special chars so terms match tokenized output (e.g. "error:" → "error").
+	cleaned := ftsSpecialRe.ReplaceAllString(strings.ToLower(query), " ")
+	words := strings.Fields(cleaned)
+	if len(words) < 2 {
+		return results
+	}
+
+	for i := range results {
+		r := &results[i]
+		minSpan := -1
+
+		// Primary: use FTS5 highlight markers (char(2)/char(3)).
+		if r.Highlighted != "" {
+			minSpan = findMinSpanFromHighlights(r.Highlighted, words)
+		}
+
+		// Fallback: strings.Index on raw content.
+		if minSpan < 0 {
+			posLists := make([][]int, len(words))
+			content := strings.ToLower(r.Content)
+			allFound := true
+			for j, w := range words {
+				posLists[j] = findAllPositions(content, w)
+				if len(posLists[j]) == 0 {
+					allFound = false
+					break
+				}
+			}
+			if allFound {
+				minSpan = findMinSpan(posLists)
+			}
+		}
+
+		if minSpan >= 0 {
+			contentLen := max(len(r.Content), 1)
+			boost := 1.0 / (1.0 + float64(minSpan)/float64(contentLen))
+			r.FusedScore *= (1.0 + boost)
+		}
+	}
+
+	// Re-sort by boosted fused score.
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].FusedScore > results[j].FusedScore
+	})
+	return results
+}
+
+// findMinSpanFromHighlights extracts match positions from FTS5 highlight
+// markers (char(2) = start, char(3) = end) and finds the minimum window
+// containing all query terms. Single-pass: tracks stripped byte offset
+// incrementally to avoid repeated string allocations.
+func findMinSpanFromHighlights(highlighted string, terms []string) int {
+	posLists := make([][]int, len(terms))
+	pos := 0
+	strippedPos := 0
+
+	for {
+		startIdx := strings.IndexByte(highlighted[pos:], 2)
+		if startIdx < 0 {
+			break
+		}
+		startIdx += pos
+
+		endIdx := strings.IndexByte(highlighted[startIdx:], 3)
+		if endIdx < 0 {
+			break
+		}
+		endIdx += startIdx
+
+		// Advance stripped position by the unhighlighted text before this marker.
+		strippedPos += startIdx - pos
+
+		matched := strings.ToLower(highlighted[startIdx+1 : endIdx])
+		for i, term := range terms {
+			if strings.Contains(matched, term) {
+				posLists[i] = append(posLists[i], strippedPos)
+			}
+		}
+
+		// Advance stripped position by the matched text length.
+		strippedPos += endIdx - (startIdx + 1)
+		pos = endIdx + 1
+	}
+
+	for _, list := range posLists {
+		if len(list) == 0 {
+			return -1
+		}
+	}
+	return findMinSpan(posLists)
+}
+
+// findAllPositions returns all start positions of term in text.
+func findAllPositions(text, term string) []int {
+	var positions []int
+	start := 0
+	for {
+		idx := strings.Index(text[start:], term)
+		if idx < 0 {
+			break
+		}
+		positions = append(positions, start+idx)
+		start += idx + 1
+	}
+	return positions
+}
+
+// findMinSpan finds the minimum window containing at least one element from
+// each position list using a sweep-line algorithm.
+func findMinSpan(positionLists [][]int) int {
+	n := len(positionLists)
+	if n == 0 {
+		return 0
+	}
+
+	// Initialize pointers — one per list.
+	ptrs := make([]int, n)
+	best := math.MaxInt
+
+	for {
+		// Find current min and max positions across all pointers.
+		curMin, curMax := math.MaxInt, math.MinInt
+		minList := 0
+		for i, p := range ptrs {
+			val := positionLists[i][p]
+			if val < curMin {
+				curMin = val
+				minList = i
+			}
+			if val > curMax {
+				curMax = val
+			}
+		}
+
+		span := curMax - curMin
+		if span < best {
+			best = span
+		}
+
+		// Advance the pointer at the minimum position.
+		ptrs[minList]++
+		if ptrs[minList] >= len(positionLists[minList]) {
+			break
+		}
+	}
+
+	return best
 }
 
 // searchPorter searches the Porter-stemmed FTS5 table (always OR mode).
