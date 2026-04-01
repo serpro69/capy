@@ -221,22 +221,22 @@ Error message guides the user to index content first using `batch_execute`, `fet
 
 **Current:** `isCurlOrWget(stripped)` blanket-blocks all curl/wget.
 
-**New:** Allow curl/wget when writing to a file (no stdout flooding):
+**New:** Allow curl/wget when writing silently to a file (no stdout/stderr flooding):
 
-1. Split command on chain operators (`&&`, `||`, `;`)
-2. For each segment containing curl/wget:
-   - Check for **file output flags**: curl `-o`/`--output`, wget `-O`/`--output-document`, or shell redirect `>`/`>>`
-   - If file output present → segment is **safe** (output goes to file, not stdout)
-   - If no file output → segment is **unsafe** (stdout flooding risk)
-3. If ALL curl/wget segments are safe → pass through
-4. If ANY segment is unsafe → block with redirect message (existing behavior)
+1. Split command on chain operators (`&&`, `||`, `;`, `|`) respecting quoted strings
+2. For each segment containing curl/wget, check 5 safety conditions:
+   - **File output flags**: curl `-o`/`--output`, wget `-O`/`--output-document`, or shell redirect `>`/`>>` (excludes fd dups like `2>&1`)
+   - **No stdout aliases**: `-o -` or `-o /dev/stdout` are blocked (output still goes to stdout)
+   - **No verbose/trace flags**: `-v`, `--verbose`, `--trace`, `-D -` flood stderr into context
+   - **Silent mode required**: curl `-s`/`--silent`, wget `-q`/`--quiet` (suppresses progress bar on stderr)
+   - Combined short flags supported: `-sSLo`, `-qO` are correctly parsed
+3. If ALL curl/wget segments pass all checks → pass through
+4. If ANY segment fails → block with redirect message (existing behavior)
 
-Note: silent flags (`-s`/`-q`) are NOT required — the TS reference only checks for file output. If the command writes to a file, it's safe regardless of verbosity to stderr.
-
-Example: `curl -L https://example.com/file.tar.gz -o file.tar.gz` → allowed.
-Example: `curl --output data.json https://api.com/data` → allowed.
-Example: `curl https://example.com/api` → blocked.
-Example: `curl -o a.txt url && curl url` → blocked (mixed).
+Example: `curl -sSL -o file.tar.gz https://example.com/file.tar.gz` → allowed.
+Example: `curl -o file.tar.gz https://example.com/file.tar.gz` → blocked (no silent).
+Example: `curl https://example.com/api` → blocked (no file output).
+Example: `curl -sSL -o a.txt url && curl url` → blocked (mixed).
 
 ---
 

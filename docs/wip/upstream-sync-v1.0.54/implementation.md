@@ -405,15 +405,17 @@ Note: `contentType` is NOT added to the MCP tool schema (see design.md, Section 
 Replace the simple `isCurlOrWget` usage in `routeBash` with a smarter check:
 
 ```go
-// isCurlWgetSafe checks if a curl/wget command writes to a file (not stdout).
+// isCurlWgetSafe checks if a curl/wget command writes to a file silently (not stdout).
 func isCurlWgetSafe(segment string) bool
 ```
 
-Logic:
+Logic (5 safety checks, matching TS `routing.mjs` behavior):
 - Check if segment contains curl or wget
-- If curl: check for `-o`/`--output` flags or `>`/`>>` redirect
-- If wget: check for `-O`/`--output-document` flags or `>`/`>>` redirect
-- Return true if file output is present (silent flags NOT required — matching TS behavior)
+- **File output**: curl `-o`/`--output` (or combined `-sSLo`), wget `-O`/`--output-document` (or combined `-qO`), or shell redirect `>`/`>>` (excludes fd dups like `2>&1`)
+- **No stdout aliases**: `-o -`, `-o /dev/stdout`, `-O -`, `-O /dev/stdout` → unsafe
+- **No verbose/trace flags**: `-v`, `--verbose`, `--trace`, `-D -` → unsafe
+- **Silent mode required**: curl `-s`/`--silent` (or combined like `-sSL`), wget `-q`/`--quiet` (or combined like `-qO`) → must be present
+- Return true only if all 5 checks pass
 
 ```go
 // splitChainedCommands splits a shell command on &&, ||, ; operators.
