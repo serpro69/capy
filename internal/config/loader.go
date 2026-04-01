@@ -59,6 +59,9 @@ func mergeConfig(dst, src *Config) {
 	if src.Store.Path != "" {
 		dst.Store.Path = src.Store.Path
 	}
+	if src.Store.TitleWeight != 0 {
+		dst.Store.TitleWeight = src.Store.TitleWeight
+	}
 	if src.Store.Cleanup.ColdThresholdDays != 0 {
 		dst.Store.Cleanup.ColdThresholdDays = src.Store.Cleanup.ColdThresholdDays
 	}

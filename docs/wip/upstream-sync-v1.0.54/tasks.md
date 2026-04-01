@@ -6,23 +6,23 @@
 > Created: 2026-03-31
 
 ## Task 1: SearchOptions + configurable BM25 + dynamic SQL
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#1-searchoptions-struct--configurable-bm25--dynamic-sql](./implementation.md#1-searchoptions-struct--configurable-bm25--dynamic-sql)
 
 ### Subtasks
-- [ ] 1.1 Add `SearchOptions` struct to `internal/store/types.go` with `Source`, `ContentType`, and `SourceMatchMode` fields
-- [ ] 1.2 Add `FusedScore float64` field to `SearchResult` in `internal/store/types.go`
-- [ ] 1.3 Add `TitleWeight float64` to `StoreConfig` in `internal/config/config.go` (default 2.0); add `titleWeight float64` field to `ContentStore`; update `NewContentStore` to accept and store it
-- [ ] 1.4 Update `server.go` to pass `s.config.Store.TitleWeight` to `NewContentStore`; update `cmd/capy/cleanup.go` and test helpers similarly
-- [ ] 1.5 Add `execDynamicSearch(table, sanitized string, limit int, opts SearchOptions) []SearchResult` to `internal/store/search.go` — builds WHERE clause dynamically, uses `s.titleWeight` for BM25 weight
-- [ ] 1.6 Remove 4 prepared search statements (`stmtSearchPorter`, `stmtSearchPorterFiltered`, `stmtSearchTrigram`, `stmtSearchTrigramFiltered`) from `ContentStore` struct, `prepareStatements()`, and `Close()`; remove `execSearch`
-- [ ] 1.7 Update `searchPorter` and `searchTrigramQuery` to always use OR mode and delegate to `execDynamicSearch`
-- [ ] 1.8 Change `SearchWithFallback` signature from `(query, limit, source)` to `(query, limit, SearchOptions)` — update function body to read from `opts`
-- [ ] 1.9 Update all callers: `tool_search.go`, `tool_batch.go` — pass `SearchOptions{Source: source}` to preserve existing behavior
-- [ ] 1.10 Update all tests in `internal/store/search_test.go` to use new signature and `NewContentStore` with titleWeight param
-- [ ] 1.11 Add config test: `TitleWeight` defaults to 2.0 when omitted; custom value loads from TOML
-- [ ] 1.12 Run all store and server tests to verify the refactor is clean
+- [x] 1.1 Add `SearchOptions` struct to `internal/store/types.go` with `Source`, `ContentType`, and `SourceMatchMode` fields
+- [x] 1.2 Add `FusedScore float64` field to `SearchResult` in `internal/store/types.go`
+- [x] 1.3 Add `TitleWeight float64` to `StoreConfig` in `internal/config/config.go` (default 2.0); add `titleWeight float64` field to `ContentStore`; update `NewContentStore` to accept and store it
+- [x] 1.4 Update `server.go` to pass `s.config.Store.TitleWeight` to `NewContentStore`; update `cmd/capy/cleanup.go` and test helpers similarly
+- [x] 1.5 Add `execDynamicSearch(table, sanitized string, limit int, opts SearchOptions) []SearchResult` to `internal/store/search.go` — builds WHERE clause dynamically, uses `s.titleWeight` for BM25 weight
+- [x] 1.6 Remove 4 prepared search statements (`stmtSearchPorter`, `stmtSearchPorterFiltered`, `stmtSearchTrigram`, `stmtSearchTrigramFiltered`) from `ContentStore` struct, `prepareStatements()`, and `Close()`; remove `execSearch`
+- [x] 1.7 Update `searchPorter` and `searchTrigramQuery` to always use OR mode and delegate to `execDynamicSearch`
+- [x] 1.8 Change `SearchWithFallback` signature from `(query, limit, source)` to `(query, limit, SearchOptions)` — update function body to read from `opts`
+- [x] 1.9 Update all callers: `tool_search.go`, `tool_batch.go`, `intent_search.go` — pass `SearchOptions{Source: source}` to preserve existing behavior
+- [x] 1.10 Update all tests in `internal/store/search_test.go` to use new signature and `NewContentStore` with titleWeight param
+- [x] 1.11 Add config test: `TitleWeight` defaults to 2.0 when omitted; custom value loads from TOML
+- [x] 1.12 Run all store and server tests to verify the refactor is clean
 
 ## Task 2: Reciprocal Rank Fusion (RRF)
 - **Status:** pending

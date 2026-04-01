@@ -1,7 +1,7 @@
 package store
 
 import (
-	"database/sql"
+	"fmt"
 	"log/slog"
 	"math"
 	"regexp"
@@ -16,9 +16,9 @@ var (
 	ftsKeywords     = map[string]bool{"AND": true, "OR": true, "NOT": true, "NEAR": true}
 )
 
-// SearchWithFallback runs an 8-layer search, stopping at the first layer
-// that returns results.
-func (s *ContentStore) SearchWithFallback(query string, limit int, source string) ([]SearchResult, error) {
+// SearchWithFallback runs a cascading search: porter OR, trigram OR,
+// then fuzzy correction with the same two layers.
+func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOptions) ([]SearchResult, error) {
 	if _, err := s.getDB(); err != nil {
 		return nil, err
 	}
@@ -29,13 +29,11 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, source string
 	}
 
 	layers := []layer{
-		{"porter+AND", func(q string) []SearchResult { return s.searchPorter(q, limit, source, "AND") }},
-		{"porter+OR", func(q string) []SearchResult { return s.searchPorter(q, limit, source, "OR") }},
-		{"trigram+AND", func(q string) []SearchResult { return s.searchTrigramQuery(q, limit, source, "AND") }},
-		{"trigram+OR", func(q string) []SearchResult { return s.searchTrigramQuery(q, limit, source, "OR") }},
+		{"porter+OR", func(q string) []SearchResult { return s.searchPorter(q, limit, opts) }},
+		{"trigram+OR", func(q string) []SearchResult { return s.searchTrigramQuery(q, limit, opts) }},
 	}
 
-	// Layers 1-4: direct search.
+	// Layers 1-2: direct search.
 	for _, l := range layers {
 		if results := l.fn(query); len(results) > 0 {
 			tagResults(results, l.name)
@@ -44,7 +42,7 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, source string
 		}
 	}
 
-	// Layers 5-8: fuzzy correction, then re-run all 4 layers.
+	// Layers 3-4: fuzzy correction, then re-run both layers.
 	corrected := s.fuzzyCorrectQuery(query)
 	if corrected != "" && corrected != query {
 		for _, l := range layers {
@@ -65,33 +63,60 @@ func tagResults(results []SearchResult, layer string) {
 	}
 }
 
-// searchPorter searches the Porter-stemmed FTS5 table.
-func (s *ContentStore) searchPorter(query string, limit int, source, mode string) []SearchResult {
-	sanitized := sanitizeQuery(query, mode)
+// searchPorter searches the Porter-stemmed FTS5 table (always OR mode).
+func (s *ContentStore) searchPorter(query string, limit int, opts SearchOptions) []SearchResult {
+	sanitized := sanitizeQuery(query, "OR")
 	if sanitized == "" {
 		return nil
 	}
-	return s.execSearch(s.stmtSearchPorter, s.stmtSearchPorterFiltered, sanitized, limit, source)
+	return s.execDynamicSearch("chunks", sanitized, limit, opts)
 }
 
-// searchTrigramQuery searches the trigram FTS5 table.
-func (s *ContentStore) searchTrigramQuery(query string, limit int, source, mode string) []SearchResult {
-	sanitized := sanitizeTrigramQuery(query, mode)
+// searchTrigramQuery searches the trigram FTS5 table (always OR mode).
+func (s *ContentStore) searchTrigramQuery(query string, limit int, opts SearchOptions) []SearchResult {
+	sanitized := sanitizeTrigramQuery(query, "OR")
 	if sanitized == "" {
 		return nil
 	}
-	return s.execSearch(s.stmtSearchTrigram, s.stmtSearchTrigramFiltered, sanitized, limit, source)
+	return s.execDynamicSearch("chunks_trigram", sanitized, limit, opts)
 }
 
-func (s *ContentStore) execSearch(stmt, stmtFiltered *sql.Stmt, sanitized string, limit int, source string) []SearchResult {
-	var rows *sql.Rows
-	var err error
-
-	if source != "" {
-		rows, err = stmtFiltered.Query(sanitized, source, limit)
-	} else {
-		rows, err = stmt.Query(sanitized, limit)
+// execDynamicSearch builds and executes a search query with dynamic WHERE clauses.
+// table must be "chunks" or "chunks_trigram" (hardcoded by callers, never from user input).
+func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opts SearchOptions) []SearchResult {
+	db, err := s.getDB()
+	if err != nil {
+		return nil
 	}
+
+	query := fmt.Sprintf(
+		`SELECT s.label, c.title, c.content, c.source_id, c.content_type,
+			highlight(%s, 1, char(2), char(3)) AS highlighted,
+			bm25(%s, %.1f, 1.0) AS rank
+		FROM %s c
+		JOIN sources s ON s.id = c.source_id
+		WHERE %s MATCH ?`,
+		table, table, s.titleWeight, table, table,
+	)
+	params := []any{sanitized}
+
+	if opts.Source != "" {
+		if opts.SourceMatchMode == "exact" {
+			query += " AND s.label = ?"
+		} else {
+			query += " AND s.label LIKE '%' || ? || '%'"
+		}
+		params = append(params, opts.Source)
+	}
+	if opts.ContentType != "" {
+		query += " AND c.content_type = ?"
+		params = append(params, opts.ContentType)
+	}
+
+	query += " ORDER BY rank LIMIT ?"
+	params = append(params, limit)
+
+	rows, err := db.Query(query, params...)
 	if err != nil {
 		slog.Debug("search query failed", "error", err, "query", sanitized)
 		return nil

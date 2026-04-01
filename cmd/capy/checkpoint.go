@@ -48,7 +48,7 @@ has the DB open, the WAL cannot be fully truncated.`,
 			// We don't use ContentStore here because:
 			// 1. NewContentStore is lazy — Close() would no-op on an unopened store
 			// 2. database/sql's connection pool can interfere with checkpoint
-			st := store.NewContentStore(dbPath, projectDir)
+			st := store.NewContentStore(dbPath, projectDir, 0)
 			if err := st.Checkpoint(); err != nil {
 				return fmt.Errorf("checkpoint failed: %w", err)
 			}

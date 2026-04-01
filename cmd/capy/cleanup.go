@@ -31,7 +31,7 @@ func newCleanupCmd() *cobra.Command {
 			}
 
 			dbPath := cfg.ResolveDBPath(projectDir)
-			st := store.NewContentStore(dbPath, projectDir)
+			st := store.NewContentStore(dbPath, projectDir, 0)
 			defer st.Close()
 
 			pruned, err := st.Cleanup(maxAgeDays, dryRun)

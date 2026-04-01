@@ -9,8 +9,9 @@ type Config struct {
 
 // StoreConfig controls the FTS5 knowledge base.
 type StoreConfig struct {
-	Path    string        `toml:"path"`
-	Cleanup CleanupConfig `toml:"cleanup"`
+	Path        string        `toml:"path"`
+	TitleWeight float64       `toml:"title_weight"` // BM25 title weight (default 2.0)
+	Cleanup     CleanupConfig `toml:"cleanup"`
 }
 
 // CleanupConfig controls cold-source pruning.
@@ -34,6 +35,7 @@ type ServerConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Store: StoreConfig{
+			TitleWeight: 2.0,
 			Cleanup: CleanupConfig{
 				ColdThresholdDays: 30,
 				AutoPrune:         false,

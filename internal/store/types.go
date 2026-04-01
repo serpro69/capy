@@ -10,6 +10,13 @@ type Chunk struct {
 	ContentType string // "code" or "prose"
 }
 
+// SearchOptions controls filtering for search queries.
+type SearchOptions struct {
+	Source          string // partial match filter (LIKE '%source%')
+	ContentType     string // "code", "prose", or "" (no filter) — internal only, not in MCP schema
+	SourceMatchMode string // "like" (default) or "exact"
+}
+
 // SearchResult is a single result from a search query.
 type SearchResult struct {
 	Label       string
@@ -19,6 +26,7 @@ type SearchResult struct {
 	ContentType string
 	Highlighted string
 	Rank        float64
+	FusedScore  float64
 	MatchLayer  string
 }
 
