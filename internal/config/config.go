@@ -12,6 +12,12 @@ type StoreConfig struct {
 	Path        string        `toml:"path"`
 	TitleWeight float64       `toml:"title_weight"` // BM25 title weight (default 2.0)
 	Cleanup     CleanupConfig `toml:"cleanup"`
+	Cache       CacheConfig   `toml:"cache"`
+}
+
+// CacheConfig controls fetch TTL caching.
+type CacheConfig struct {
+	FetchTTLHours int `toml:"fetch_ttl_hours"` // default: 24
 }
 
 // CleanupConfig controls cold-source pruning.
@@ -39,6 +45,9 @@ func DefaultConfig() *Config {
 			Cleanup: CleanupConfig{
 				ColdThresholdDays: 30,
 				AutoPrune:         false,
+			},
+			Cache: CacheConfig{
+				FetchTTLHours: 24,
 			},
 		},
 		Executor: ExecutorConfig{

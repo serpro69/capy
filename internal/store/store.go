@@ -39,6 +39,7 @@ type ContentStore struct {
 	stmtFuzzyVocab *sql.Stmt
 
 	// Prepared statements — queries.
+	stmtGetSourceMeta    *sql.Stmt
 	stmtListSources      *sql.Stmt
 	stmtChunksBySource   *sql.Stmt
 	stmtSourceChunkCount *sql.Stmt
@@ -168,6 +169,12 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 
 	// --- Queries ---
 
+	s.stmtGetSourceMeta, err = db.Prepare(`
+		SELECT label, chunk_count, indexed_at FROM sources WHERE label = ?`)
+	if err != nil {
+		return err
+	}
+
 	s.stmtListSources, err = db.Prepare(`
 		SELECT id, label, content_type, chunk_count, code_chunk_count,
 			indexed_at, last_accessed_at, access_count, content_hash
@@ -239,7 +246,7 @@ func (s *ContentStore) Close() error {
 		s.stmtInsertSource, s.stmtInsertChunk, s.stmtInsertTrigram,
 		s.stmtInsertVocab, s.stmtDeleteChunksBySource, s.stmtDeleteTrigramBySource,
 		s.stmtDeleteSource, s.stmtFindSourceByLabel, s.stmtUpdateSourceAccess,
-		s.stmtFuzzyVocab, s.stmtListSources, s.stmtChunksBySource,
+		s.stmtFuzzyVocab, s.stmtGetSourceMeta, s.stmtListSources, s.stmtChunksBySource,
 		s.stmtSourceChunkCount, s.stmtChunkContent, s.stmtTrackAccess,
 	}
 	for _, stmt := range stmts {

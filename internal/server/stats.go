@@ -13,6 +13,7 @@ type SessionStats struct {
 	BytesReturned  map[string]int64
 	BytesIndexed   int64
 	BytesSandboxed int64
+	CacheHits      int64
 	mu             sync.Mutex
 }
 
@@ -47,6 +48,13 @@ func (s *SessionStats) AddBytesSandboxed(n int64) {
 	s.BytesSandboxed += n
 }
 
+// AddCacheHit records a TTL cache hit.
+func (s *SessionStats) AddCacheHit() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.CacheHits++
+}
+
 // Snapshot returns a copy of the current stats, safe for concurrent reads.
 func (s *SessionStats) Snapshot() SessionStats {
 	s.mu.Lock()
@@ -63,5 +71,6 @@ func (s *SessionStats) Snapshot() SessionStats {
 		BytesReturned:  bytesReturned,
 		BytesIndexed:   s.BytesIndexed,
 		BytesSandboxed: s.BytesSandboxed,
+		CacheHits:      s.CacheHits,
 	}
 }
