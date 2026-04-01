@@ -56,6 +56,39 @@ func TestHookIntegration_BashCurl_Modify(t *testing.T) {
 	assert.Contains(t, updated["command"], "fetch_and_index")
 }
 
+// ─── Bash curl silent file output → allowed through ──────────────────────────
+
+func TestHookIntegration_BashCurlSafeDownload_Allowed(t *testing.T) {
+	dir := t.TempDir()
+	ResetGuidanceFile(dir, "test-session-123")
+	a := ccAdapter()
+	input := ccInput("Bash", map[string]any{"command": "curl -sSL -o /tmp/archive.tar.gz https://example.com/archive.tar.gz"})
+	output, err := handlePreToolUse(input, a, nil, dir)
+	require.NoError(t, err)
+
+	// Safe curl should NOT be modified — it either gets guidance (first bash) or nil
+	if output != nil {
+		hso := ccParse(t, output)
+		// Should be guidance context, not a modify/redirect
+		assert.Nil(t, hso["permissionDecision"], "safe curl with -sSL -o should not be redirected")
+		assert.NotEmpty(t, hso["additionalContext"], "should get bash guidance on first call")
+	}
+}
+
+func TestHookIntegration_BashCurlUnsafeNoSilent_Blocked(t *testing.T) {
+	ResetGuidanceThrottle()
+	a := ccAdapter()
+	input := ccInput("Bash", map[string]any{"command": "curl -o /tmp/file.txt https://example.com/data"})
+	output, err := handlePreToolUse(input, a, nil, "")
+	require.NoError(t, err)
+	require.NotNil(t, output)
+
+	hso := ccParse(t, output)
+	assert.Equal(t, "allow", hso["permissionDecision"])
+	updated := hso["updatedInput"].(map[string]any)
+	assert.Contains(t, updated["command"], "blocked")
+}
+
 // ─── Normal bash → context guidance (first call only) ──────────────────────────
 
 func TestHookIntegration_NormalBash_Guidance(t *testing.T) {
