@@ -57,15 +57,15 @@
 - [x] 3.10 Write config test: `FetchTTLHours` defaults to 24 when omitted; custom value is loaded from TOML
 
 ## Task 4: Batch execute — exact source scoping + remove global fallback
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2
 - **Docs:** [implementation.md#4-batch-execute-exact-source-scoping](./implementation.md#4-batch-execute-exact-source-scoping)
 
 ### Subtasks
-- [ ] 4.1 In `handleBatchExecute` (`internal/server/tool_batch.go`), change the scoped search to use `SearchOptions{Source: sourceLabel, SourceMatchMode: "exact"}`
-- [ ] 4.2 Remove the Tier 2 global fallback entirely — delete the `crossSource` variable, the fallback `SearchWithFallback(query, 3, "")` call, the cross-source warning message, and the `_(source: ...)_` source tags
-- [ ] 4.3 Append cross-batch search tip line to the batch output before the distinctive terms section
-- [ ] 4.4 Write test: index content with a similar label beforehand, verify batch search doesn't leak results; verify no global fallback results appear when scoped search returns nothing
+- [x] 4.1 In `handleBatchExecute` (`internal/server/tool_batch.go`), change the scoped search to use `SearchOptions{Source: sourceLabel, SourceMatchMode: "exact"}`
+- [x] 4.2 Remove the Tier 2 global fallback entirely — delete the `crossSource` variable, the fallback `SearchWithFallback(query, 3, "")` call, the cross-source warning message, and the `_(source: ...)_` source tags
+- [x] 4.3 Append cross-batch search tip line to the batch output before the distinctive terms section
+- [x] 4.4 Write test: index content with a similar label beforehand, verify batch search doesn't leak results; verify no global fallback results appear when scoped search returns nothing
 
 ## Task 5: Empty index early return
 - **Status:** pending
