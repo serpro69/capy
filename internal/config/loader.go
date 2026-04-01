@@ -68,6 +68,9 @@ func mergeConfig(dst, src *Config) {
 	if src.Store.Cleanup.AutoPrune {
 		dst.Store.Cleanup.AutoPrune = true
 	}
+	if src.Store.Cache.FetchTTLHours != 0 {
+		dst.Store.Cache.FetchTTLHours = src.Store.Cache.FetchTTLHours
+	}
 
 	// Executor
 	if src.Executor.Timeout != 0 {

@@ -638,6 +638,82 @@ func TestFetchAndIndex_BinaryContent(t *testing.T) {
 	assert.Contains(t, resultText(r), "binary content")
 }
 
+// ─── TTL cache tests ─────────────────────────────────────────────────────────
+
+func TestFetchAndIndex_CacheHit(t *testing.T) {
+	disableSSRFValidation(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "cacheable content for testing")
+	}))
+	defer ts.Close()
+
+	srv := newTestServer(t, nil)
+
+	// First call — should fetch and index
+	r := callFetchAndIndex(t, srv, map[string]any{"url": ts.URL, "source": "cache-test"})
+	assert.False(t, r.IsError)
+	assert.Contains(t, resultText(r), "sections")
+
+	// Second call within TTL — should return cache hit
+	r = callFetchAndIndex(t, srv, map[string]any{"url": ts.URL, "source": "cache-test"})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "Cache hit")
+	assert.Contains(t, text, "cache-test")
+
+	// Stats should track the cache hit
+	snap := srv.stats.Snapshot()
+	assert.Equal(t, int64(1), snap.CacheHits)
+}
+
+func TestFetchAndIndex_ForceBypassesCache(t *testing.T) {
+	disableSSRFValidation(t)
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "content version %d", calls)
+	}))
+	defer ts.Close()
+
+	srv := newTestServer(t, nil)
+
+	// First call
+	callFetchAndIndex(t, srv, map[string]any{"url": ts.URL, "source": "force-test"})
+	assert.Equal(t, 1, calls)
+
+	// Second call with force — should re-fetch
+	r := callFetchAndIndex(t, srv, map[string]any{"url": ts.URL, "source": "force-test", "force": true})
+	assert.False(t, r.IsError)
+	assert.Equal(t, 2, calls)
+	assert.NotContains(t, resultText(r), "Cache hit")
+}
+
+func TestFetchAndIndex_ExpiredCacheRefetches(t *testing.T) {
+	disableSSRFValidation(t)
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "content version %d", calls)
+	}))
+	defer ts.Close()
+
+	srv := newTestServer(t, nil)
+	// Set TTL to 0 so everything is immediately expired
+	srv.config.Store.Cache.FetchTTLHours = 0
+
+	callFetchAndIndex(t, srv, map[string]any{"url": ts.URL, "source": "expire-test"})
+	assert.Equal(t, 1, calls)
+
+	// Second call — TTL is 0h so cache is expired, should re-fetch
+	r := callFetchAndIndex(t, srv, map[string]any{"url": ts.URL, "source": "expire-test"})
+	assert.False(t, r.IsError)
+	assert.Equal(t, 2, calls)
+	assert.NotContains(t, resultText(r), "Cache hit")
+}
+
 // ─── SSRF validation tests ────────────────────────────────────────────────────
 
 func TestValidateFetchURL(t *testing.T) {

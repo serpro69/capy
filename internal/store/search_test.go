@@ -348,6 +348,26 @@ func TestListSources(t *testing.T) {
 	}
 }
 
+func TestGetSourceMeta_Unknown(t *testing.T) {
+	s := newTestStore(t)
+	meta, err := s.GetSourceMeta("nonexistent")
+	require.NoError(t, err)
+	assert.Nil(t, meta)
+}
+
+func TestGetSourceMeta_AfterIndexing(t *testing.T) {
+	s := newTestStore(t)
+	indexTestContent(t, s)
+
+	meta, err := s.GetSourceMeta("auth-middleware")
+	require.NoError(t, err)
+	require.NotNil(t, meta)
+	assert.Equal(t, "auth-middleware", meta.Label)
+	assert.Greater(t, meta.ChunkCount, 0)
+	assert.False(t, meta.IndexedAt.IsZero())
+	assert.WithinDuration(t, time.Now(), meta.IndexedAt, 5*time.Second)
+}
+
 func TestGetChunksBySource(t *testing.T) {
 	s := newTestStore(t)
 

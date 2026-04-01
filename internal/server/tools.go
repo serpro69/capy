@@ -215,6 +215,9 @@ func toolFetchAndIndex() mcp.Tool {
 		mcp.WithString("source",
 			mcp.Description("Label for the indexed content"),
 		),
+		mcp.WithBoolean("force",
+			mcp.Description("Skip cache and re-fetch even if content was recently indexed"),
+		),
 	)
 }
 

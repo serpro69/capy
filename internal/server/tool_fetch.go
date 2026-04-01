@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -32,6 +33,7 @@ const (
 func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	url := req.GetString("url", "")
 	source := req.GetString("source", "")
+	force, _ := req.GetArguments()["force"].(bool)
 
 	if url == "" {
 		return errorResult("Missing required parameter: url"), nil
@@ -40,6 +42,30 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 	// SSRF protection: block requests to local/private networks
 	if err := validateFetchURLFunc(url); err != nil {
 		return errorResult(fmt.Sprintf("Blocked URL: %v", err)), nil
+	}
+
+	label := source
+	if label == "" {
+		label = url
+	}
+
+	// TTL cache check — skip re-fetch if content was recently indexed
+	if !force {
+		st := s.getStore()
+		ttl := time.Duration(s.config.Store.Cache.FetchTTLHours) * time.Hour
+		meta, err := st.GetSourceMeta(label)
+		if err != nil {
+			slog.Warn("cache check failed, proceeding with fetch", "label", label, "error", err)
+		}
+		if err == nil && meta != nil && time.Since(meta.IndexedAt) < ttl {
+			s.stats.AddCacheHit()
+			text := fmt.Sprintf(
+				"**Cache hit** — source %q was indexed %s (%d chunks).\nConfigured TTL: %dh. Use `force: true` to re-fetch.\nUse search(queries: [...], source: %q) for lookups.",
+				meta.Label, formatAge(time.Since(meta.IndexedAt)), meta.ChunkCount,
+				s.config.Store.Cache.FetchTTLHours, meta.Label,
+			)
+			return s.trackToolResponse("capy_fetch_and_index", textResult(text)), nil
+		}
 	}
 
 	if source == "" {
@@ -222,4 +248,18 @@ func isBinaryContent(contentType string, body []byte) bool {
 	}
 
 	return false
+}
+
+// formatAge formats a duration as a human-readable age string.
+func formatAge(d time.Duration) string {
+	if days := int(d.Hours() / 24); days > 0 {
+		return fmt.Sprintf("%dd ago", days)
+	}
+	if hours := int(d.Hours()); hours > 0 {
+		return fmt.Sprintf("%dh ago", hours)
+	}
+	if minutes := int(d.Minutes()); minutes > 0 {
+		return fmt.Sprintf("%dm ago", minutes)
+	}
+	return "just now"
 }

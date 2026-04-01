@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -649,6 +651,26 @@ func (s *ContentStore) GetChunksBySource(sourceID int64) ([]SearchResult, error)
 		results = append(results, r)
 	}
 	return results, nil
+}
+
+// GetSourceMeta returns lightweight metadata for a single source by label.
+// Returns nil, nil when the source is not found.
+func (s *ContentStore) GetSourceMeta(label string) (*SourceMeta, error) {
+	if _, err := s.getDB(); err != nil {
+		return nil, err
+	}
+
+	var meta SourceMeta
+	var indexedAt string
+	err := s.stmtGetSourceMeta.QueryRow(label).Scan(&meta.Label, &meta.ChunkCount, &indexedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	meta.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
+	return &meta, nil
 }
 
 // ListSources returns all indexed sources.

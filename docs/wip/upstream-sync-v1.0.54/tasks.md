@@ -40,21 +40,21 @@
 - [x] 2.8 Write test: ContentType="code" returns only code chunks; empty contentType returns all (internal SearchOptions, not MCP schema)
 
 ## Task 3: Source metadata + TTL cache
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#3-source-metadata--ttl-cache](./implementation.md#3-source-metadata--ttl-cache)
 
 ### Subtasks
-- [ ] 3.1 Add `SourceMeta` struct to `internal/store/types.go`
-- [ ] 3.2 Add `stmtGetSourceMeta` prepared statement to `internal/store/store.go` — `SELECT label, chunk_count, indexed_at FROM sources WHERE label = ?`; add to `Close()` cleanup list
-- [ ] 3.3 Implement `GetSourceMeta(label string) (*SourceMeta, error)` on `ContentStore` — returns `nil, nil` when not found
-- [ ] 3.4 Add `CacheConfig` struct with `FetchTTLHours int` to `internal/config/config.go` under `StoreConfig`; default to 24 when unset
-- [ ] 3.5 Add `force` boolean parameter to `toolFetchAndIndex()` in `internal/server/tools.go`
-- [ ] 3.6 Add `formatAge(d time.Duration) string` helper in `internal/server/tool_fetch.go`
-- [ ] 3.7 Add TTL cache logic at the start of `handleFetchAndIndex` in `internal/server/tool_fetch.go` — check `GetSourceMeta`, compare against configured TTL, return cache-hit when fresh and `!force`, call `stats.AddCacheHit`
-- [ ] 3.8 Write tests in `internal/store/search_test.go`: `GetSourceMeta` returns nil for unknown label; returns correct metadata after indexing
-- [ ] 3.9 Write tests in `internal/server/tool_knowledge_test.go`: second `fetch_and_index` within TTL returns cache hit; `force=true` bypasses cache; expired source re-fetches; stats track cache hit
-- [ ] 3.10 Write config test: `FetchTTLHours` defaults to 24 when omitted; custom value is loaded from TOML
+- [x] 3.1 Add `SourceMeta` struct to `internal/store/types.go`
+- [x] 3.2 Add `stmtGetSourceMeta` prepared statement to `internal/store/store.go` — `SELECT label, chunk_count, indexed_at FROM sources WHERE label = ?`; add to `Close()` cleanup list
+- [x] 3.3 Implement `GetSourceMeta(label string) (*SourceMeta, error)` on `ContentStore` — returns `nil, nil` when not found
+- [x] 3.4 Add `CacheConfig` struct with `FetchTTLHours int` to `internal/config/config.go` under `StoreConfig`; default to 24 when unset
+- [x] 3.5 Add `force` boolean parameter to `toolFetchAndIndex()` in `internal/server/tools.go`
+- [x] 3.6 Add `formatAge(d time.Duration) string` helper in `internal/server/tool_fetch.go`
+- [x] 3.7 Add TTL cache logic at the start of `handleFetchAndIndex` in `internal/server/tool_fetch.go` — check `GetSourceMeta`, compare against configured TTL, return cache-hit when fresh and `!force`, call `stats.AddCacheHit`
+- [x] 3.8 Write tests in `internal/store/search_test.go`: `GetSourceMeta` returns nil for unknown label; returns correct metadata after indexing
+- [x] 3.9 Write tests in `internal/server/tool_knowledge_test.go`: second `fetch_and_index` within TTL returns cache hit; `force=true` bypasses cache; expired source re-fetches; stats track cache hit
+- [x] 3.10 Write config test: `FetchTTLHours` defaults to 24 when omitted; custom value is loaded from TOML
 
 ## Task 4: Batch execute — exact source scoping + remove global fallback
 - **Status:** pending
