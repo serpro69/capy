@@ -108,7 +108,7 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 		}
 	}
 
-	// Search each query with three-tier fallback
+	// Search each query against batch output
 	var queryResults []string
 	outputSize := 0
 
@@ -119,34 +119,20 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 			continue
 		}
 
-		// Tier 1: scoped search
-		results, searchErr := st.SearchWithFallback(query, 3, store.SearchOptions{Source: sourceLabel})
-		crossSource := false
+		results, searchErr := st.SearchWithFallback(query, 3, store.SearchOptions{
+			Source:          sourceLabel,
+			SourceMatchMode: "exact",
+		})
 
-		// Tier 2: global fallback
-		if len(results) == 0 && searchErr == nil {
-			results, searchErr = st.SearchWithFallback(query, 3, store.SearchOptions{})
-			crossSource = len(results) > 0
-		}
-
-		queryResults = append(queryResults, fmt.Sprintf("## %s", query))
-		if crossSource {
-			queryResults = append(queryResults,
-				"> **Note:** No results in current batch output. Showing results from previously indexed content.")
-		}
-		queryResults = append(queryResults, "")
+		queryResults = append(queryResults, fmt.Sprintf("## %s", query), "")
 
 		if searchErr != nil {
 			queryResults = append(queryResults, fmt.Sprintf("(search error: %v)", searchErr), "")
 		} else if len(results) > 0 {
 			for _, r := range results {
 				snippet := ExtractSnippet(r.Content, query, 3000, r.Highlighted)
-				sourceTag := ""
-				if crossSource {
-					sourceTag = fmt.Sprintf(" _(source: %s)_", r.Label)
-				}
 				queryResults = append(queryResults,
-					fmt.Sprintf("### %s%s", r.Title, sourceTag),
+					fmt.Sprintf("### %s", r.Title),
 					snippet, "")
 				outputSize += len(snippet) + len(r.Title)
 			}
@@ -165,6 +151,7 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 	out.WriteString(strings.Join(inventory, "\n"))
 	out.WriteString("\n\n")
 	out.WriteString(strings.Join(queryResults, "\n"))
+	out.WriteString("\n💡 To search across ALL indexed content (not just this batch), use capy_search(queries: [...])\n")
 	if len(terms) > 0 {
 		fmt.Fprintf(&out, "\nSearchable terms for follow-up: %s", strings.Join(terms, ", "))
 	}

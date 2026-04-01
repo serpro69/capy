@@ -85,6 +85,35 @@ func TestBatchExecute_InputCoercion(t *testing.T) {
 	assert.Contains(t, text, "Executed 2 commands")
 }
 
+func TestBatchExecute_ExactSourceScoping(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	// Pre-index content with a label that partially matches "batch:*"
+	// to verify exact scoping doesn't leak results from other sources.
+	callIndex(t, srv, map[string]any{
+		"content": "# Leaked Secret\n\nThis should never appear in batch results. The secret keyword is supercalifragilistic.",
+		"source":  "batch:old-run",
+	})
+
+	// Run a batch that produces output NOT containing "supercalifragilistic"
+	r := callBatch(t, srv, map[string]any{
+		"commands": []any{
+			map[string]any{"label": "Echo Test", "command": "echo hello world"},
+		},
+		"queries": []any{"supercalifragilistic"},
+	})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+
+	// The query should find nothing in this batch — no cross-source leak
+	assert.Contains(t, text, "No matching sections found")
+	assert.NotContains(t, text, "Leaked Secret")
+	assert.NotContains(t, text, "previously indexed")
+
+	// Should have the cross-batch search tip
+	assert.Contains(t, text, "capy_search")
+}
+
 func TestCoerceStringArray(t *testing.T) {
 	tests := []struct {
 		name  string
