@@ -88,17 +88,17 @@
 - [x] 6.4 Write tests: `curl -sSL -o file url` passes; `curl url` blocked; `curl -o file` (no silent) blocked; mixed chains blocked; all-safe chains pass; stdout aliases blocked; verbose blocked; wget -qO passes; combined flag support
 
 ## Task 7: TTL cache statistics
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Docs:** [implementation.md#7-ttl-cache-statistics](./implementation.md#7-ttl-cache-statistics)
 
 ### Subtasks
-- [ ] 7.1 Add `CacheHits int64` and `CacheBytesSaved int64` fields to `SessionStats` in `internal/server/stats.go`
-- [ ] 7.2 Add `AddCacheHit(estimatedBytes int64)` method to `SessionStats` — atomically increments `CacheHits` and adds to `CacheBytesSaved`
-- [ ] 7.3 Update `Snapshot()` in `internal/server/stats.go` to copy the new fields
-- [ ] 7.4 Update top-level savings calculation in `handleStats` to include cache: `totalProcessed := keptOut + totalBytesReturned + snap.CacheBytesSaved`
-- [ ] 7.5 Add TTL Cache section to `handleStats` — display when `snap.CacheHits > 0`, using configured TTL from config
-- [ ] 7.6 Write test: call `AddCacheHit` twice, verify `Snapshot()` returns correct accumulated values; verify stats report includes cache section
+- [x] 7.1 Add `CacheHits int64` and `CacheBytesSaved int64` fields to `SessionStats` in `internal/server/stats.go`
+- [x] 7.2 Add `AddCacheHit(estimatedBytes int64)` method to `SessionStats` — atomically increments `CacheHits` and adds to `CacheBytesSaved`
+- [x] 7.3 Update `Snapshot()` in `internal/server/stats.go` to copy the new fields
+- [x] 7.4 Update top-level savings calculation in `handleStats` to include cache: `totalProcessed := keptOut + totalBytesReturned + snap.CacheBytesSaved`
+- [x] 7.5 Add TTL Cache section to `handleStats` — display when `snap.CacheHits > 0`, using configured TTL from config
+- [x] 7.6 Write test: call `AddCacheHit` twice, verify `Snapshot()` returns correct accumulated values; verify stats report includes cache section
 
 ## Task 8: Final verification
 - **Status:** pending

@@ -58,7 +58,7 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 			slog.Warn("cache check failed, proceeding with fetch", "label", label, "error", err)
 		}
 		if err == nil && meta != nil && time.Since(meta.IndexedAt) < ttl {
-			s.stats.AddCacheHit()
+			s.stats.AddCacheHit(int64(meta.ChunkCount) * 1600) // ~1.6KB per chunk estimate
 			text := fmt.Sprintf(
 				"**Cache hit** — source %q was indexed %s (%d chunks).\nConfigured TTL: %dh. Use `force: true` to re-fetch.\nUse search(queries: [...], source: %q) for lookups.",
 				meta.Label, formatAge(time.Since(meta.IndexedAt)), meta.ChunkCount,
