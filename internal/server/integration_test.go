@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -290,6 +292,42 @@ func TestIntegration_BatchPipeline_ExecuteAndQueryInOneCall(t *testing.T) {
 	})
 	require.False(t, r2.IsError)
 	assert.Contains(t, resultText(r2), "Refactor")
+}
+
+// ─── 16.3b TTL cache → stats pipeline ─────────────────────────────────────────
+
+func TestIntegration_FetchCacheHit_StatsReport(t *testing.T) {
+	disableSSRFValidation(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "# Cached Docs\n\nThis content should only be fetched once during the TTL window.")
+	}))
+	defer ts.Close()
+
+	srv := newTestServer(t, nil)
+
+	// Step 1: First fetch — should actually fetch and index
+	r1 := callFetchAndIndex(t, srv, map[string]any{"url": ts.URL, "source": "pipeline-cache"})
+	require.False(t, r1.IsError)
+	assert.Contains(t, resultText(r1), "sections")
+
+	// Step 2: Second fetch — should return cache hit
+	r2 := callFetchAndIndex(t, srv, map[string]any{"url": ts.URL, "source": "pipeline-cache"})
+	require.False(t, r2.IsError)
+	assert.Contains(t, resultText(r2), "Cache hit")
+
+	// Step 3: Stats report should include TTL Cache section
+	r3 := callStats(t, srv)
+	require.False(t, r3.IsError)
+	text := resultText(r3)
+	assert.Contains(t, text, "TTL Cache")
+	assert.Contains(t, text, "Cache hits")
+	assert.Contains(t, text, "Data avoided by cache")
+
+	// Step 4: Verify stats snapshot has correct values
+	snap := srv.stats.Snapshot()
+	assert.Equal(t, int64(1), snap.CacheHits)
+	assert.Greater(t, snap.CacheBytesSaved, int64(0))
 }
 
 // ─── 16.4 Performance tests ───────────────────────────────────────────────────
