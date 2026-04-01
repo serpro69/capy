@@ -372,6 +372,10 @@ func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opt
 		}
 		results = append(results, r)
 	}
+	if err := rows.Err(); err != nil {
+		slog.Debug("search row iteration failed", "error", err)
+		return nil
+	}
 	return results
 }
 
@@ -534,6 +538,10 @@ func (s *ContentStore) fuzzyCorrectWord(word string) string {
 			bestWord = candidate
 		}
 	}
+	if err := rows.Err(); err != nil {
+		slog.Debug("fuzzy vocab iteration failed", "error", err)
+		return "" // fall back to original word
+	}
 
 	if bestDist <= maxDist {
 		return bestWord
@@ -578,6 +586,9 @@ func (s *ContentStore) GetDistinctiveTerms(sourceID int64, maxTerms int) ([]stri
 		for _, w := range words {
 			docFreq[w]++
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	// Filter and score.
@@ -650,6 +661,9 @@ func (s *ContentStore) GetChunksBySource(sourceID int64) ([]SearchResult, error)
 		}
 		results = append(results, r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return results, nil
 }
 
@@ -696,6 +710,9 @@ func (s *ContentStore) ListSources() ([]SourceInfo, error) {
 		si.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
 		si.LastAccessedAt, _ = time.Parse("2006-01-02 15:04:05", lastAccessedAt)
 		sources = append(sources, si)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return sources, nil
 }
