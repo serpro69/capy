@@ -8,6 +8,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/executor"
+	"github.com/serpro69/capy/internal/store"
 )
 
 const maxBatchOutput = 80 * 1024 // 80 KB total output cap
@@ -119,12 +120,12 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 		}
 
 		// Tier 1: scoped search
-		results, searchErr := st.SearchWithFallback(query, 3, sourceLabel)
+		results, searchErr := st.SearchWithFallback(query, 3, store.SearchOptions{Source: sourceLabel})
 		crossSource := false
 
 		// Tier 2: global fallback
 		if len(results) == 0 && searchErr == nil {
-			results, searchErr = st.SearchWithFallback(query, 3, "")
+			results, searchErr = st.SearchWithFallback(query, 3, store.SearchOptions{})
 			crossSource = len(results) > 0
 		}
 

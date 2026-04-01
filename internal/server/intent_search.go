@@ -3,6 +3,8 @@ package server
 import (
 	"fmt"
 	"strings"
+
+	"github.com/serpro69/capy/internal/store"
 )
 
 const intentSearchThreshold = 5000 // bytes — trigger intent search above this
@@ -22,7 +24,7 @@ func (s *Server) intentSearch(output, intent, source string, maxResults int) str
 		return fmt.Sprintf("%s\n\n(indexing failed: %v — showing truncated output)", preview, err)
 	}
 
-	results, err := st.SearchWithFallback(intent, maxResults, source)
+	results, err := st.SearchWithFallback(intent, maxResults, store.SearchOptions{Source: source})
 	if err != nil {
 		results = nil
 	}
