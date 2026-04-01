@@ -23,9 +23,9 @@ func (s *Server) handleStats(_ context.Context, _ mcp.CallToolRequest) (*mcp.Cal
 	}
 	uptimeMin := time.Since(snap.SessionStart).Minutes()
 
-	// Savings calculation
+	// Savings calculation (includes cache savings — data that would have been fetched)
 	keptOut := snap.BytesIndexed + snap.BytesSandboxed
-	totalProcessed := keptOut + totalBytesReturned
+	totalProcessed := keptOut + totalBytesReturned + snap.CacheBytesSaved
 	savingsRatio := float64(totalProcessed) / float64(max(totalBytesReturned, 1))
 	reductionPct := 0.0
 	if totalProcessed > 0 {
@@ -103,6 +103,20 @@ func (s *Server) handleStats(_ context.Context, _ mcp.CallToolRequest) (*mcp.Cal
 				fmt.Sprintf("| Tier: cold | %d |", kbStats.ColdCount),
 			)
 		}
+	}
+
+	// TTL cache section
+	if snap.CacheHits > 0 {
+		ttlHours := s.config.Store.Cache.FetchTTLHours
+		ttlHoursLeft := max(0, ttlHours-int(time.Since(snap.SessionStart).Hours()))
+		lines = append(lines, "", "### TTL Cache", "",
+			"| Metric | Value |",
+			"|--------|------:|",
+			fmt.Sprintf("| Cache hits | **%d** |", snap.CacheHits),
+			fmt.Sprintf("| Data avoided by cache | **%s** |", formatBytes(snap.CacheBytesSaved)),
+			fmt.Sprintf("| Network requests saved | **%d** |", snap.CacheHits),
+			fmt.Sprintf("| TTL remaining | **~%dh** |", ttlHoursLeft),
+		)
 	}
 
 	lines = append(lines, "", "---",

@@ -675,9 +675,10 @@ func TestFetchAndIndex_CacheHit(t *testing.T) {
 	assert.Contains(t, text, "Cache hit")
 	assert.Contains(t, text, "cache-test")
 
-	// Stats should track the cache hit
+	// Stats should track the cache hit and estimated bytes saved
 	snap := srv.stats.Snapshot()
 	assert.Equal(t, int64(1), snap.CacheHits)
+	assert.Greater(t, snap.CacheBytesSaved, int64(0), "cache bytes saved should be estimated from chunk count")
 }
 
 func TestFetchAndIndex_ForceBypassesCache(t *testing.T) {
