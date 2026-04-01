@@ -77,15 +77,15 @@
 - [x] 5.2 Write test in `internal/server/tool_knowledge_test.go`: search on empty store returns isError response containing guidance text
 
 ## Task 6: Hook — smart curl/wget allowance
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#6-hook-smart-curlwget-allowance](./implementation.md#6-hook-smart-curlwget-allowance)
 
 ### Subtasks
-- [ ] 6.1 Add `splitChainedCommands(cmd string) []string` to `internal/hook/helpers.go` — splits on `&&`, `||`, `;` respecting quoted strings
-- [ ] 6.2 Add `isCurlWgetSafe(segment string) bool` to `internal/hook/helpers.go` — checks for file-output flags only (`-o`/`--output` for curl, `-O`/`--output-document` for wget, or `>`/`>>`). Silent flags NOT required (matching TS behavior).
-- [ ] 6.3 Update `routeBash` in `internal/hook/pretooluse.go` — when `isCurlOrWget(stripped)` is true, split into segments, check each with `isCurlWgetSafe`, only block if any segment is unsafe
-- [ ] 6.4 Write tests: `curl -o file url` passes; `curl --output file url` passes; `curl url` blocked; `curl -o a url && curl b` blocked (mixed); `curl -o a url && curl -o b url` passes; `wget -O file url` passes; `wget url` blocked
+- [x] 6.1 Add `splitChainedCommands(cmd string) []string` to `internal/hook/helpers.go` — splits on `&&`, `||`, `;` respecting quoted strings
+- [x] 6.2 Add `isCurlWgetSafe(segment string) bool` to `internal/hook/helpers.go` — follows TS reference: requires file-output flags + silent mode + no stdout aliases + no verbose flags
+- [x] 6.3 Update `routeBash` in `internal/hook/pretooluse.go` — when `isCurlOrWget(stripped)` is true, split into segments, check each with `isCurlWgetSafe`, only block if any segment is unsafe
+- [x] 6.4 Write tests: `curl -sSL -o file url` passes; `curl url` blocked; `curl -o file` (no silent) blocked; mixed chains blocked; all-safe chains pass; stdout aliases blocked; verbose blocked; wget -qO passes; combined flag support
 
 ## Task 7: TTL cache statistics
 - **Status:** pending

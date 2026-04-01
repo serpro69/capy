@@ -81,11 +81,23 @@ func routeBash(command string, policies []security.SecurityPolicy, a adapter.Hoo
 	// curl/wget detection (strip quoted content to avoid false positives)
 	// Replace command with echo message (FormatModify) instead of hard deny,
 	// matching the TS reference — the LLM sees the guidance in stdout.
+	// Smart check: allow curl/wget that writes to a file silently (#166).
 	stripped := stripQuotedContent(command)
 	if isCurlOrWget(stripped) {
-		return a.FormatModify(map[string]any{
-			"command": `echo "capy: curl/wget blocked. Use capy_fetch_and_index(url, source) to fetch URLs, or capy_execute(language, code) to run HTTP calls in sandbox. Do NOT retry with curl/wget."`,
-		})
+		segments := splitChainedCommands(stripped)
+		allSafe := true
+		for _, seg := range segments {
+			if isCurlOrWget(seg) && !isCurlWgetSafe(seg) {
+				allSafe = false
+				break
+			}
+		}
+		if !allSafe {
+			return a.FormatModify(map[string]any{
+				"command": `echo "capy: curl/wget blocked (stdout flood risk). Use capy_fetch_and_index(url, source) to fetch URLs, or capy_execute(language, code) to run HTTP calls in sandbox. File downloads with -o/--output are allowed."`,
+			})
+		}
+		// All curl/wget segments write to file silently — allow through
 	}
 
 	// Inline HTTP detection (strip only heredocs — code in -e/-c flags should be visible)
