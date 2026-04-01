@@ -105,10 +105,10 @@ func TestSearchPorterStemming(t *testing.T) {
 	indexTestContent(t, s)
 
 	// "authenticating" should match "authentication" via Porter stemming.
-	results, err := s.SearchWithFallback("authenticating", 5, "")
+	results, err := s.SearchWithFallback("authenticating", 5, SearchOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, results)
-	assert.Equal(t, "porter+AND", results[0].MatchLayer)
+	assert.Equal(t, "porter+OR", results[0].MatchLayer)
 }
 
 // --- Trigram search ---
@@ -119,7 +119,7 @@ func TestSearchTrigramPartialMatch(t *testing.T) {
 
 	// "authent" is a substring — trigram should catch it.
 	// First try porter (likely no match for partial), then trigram.
-	results, err := s.SearchWithFallback("authent", 5, "")
+	results, err := s.SearchWithFallback("authent", 5, SearchOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, results)
 	assert.True(t,
@@ -135,7 +135,7 @@ func TestSearchFuzzyCorrection(t *testing.T) {
 	indexTestContent(t, s)
 
 	// "authentcation" is a typo for "authentication".
-	results, err := s.SearchWithFallback("authentcation", 5, "")
+	results, err := s.SearchWithFallback("authentcation", 5, SearchOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, results, "fuzzy correction should find results for typo")
 	assert.True(t,
@@ -152,14 +152,14 @@ func TestSearchFallbackLayers(t *testing.T) {
 	s := newTestStore(t)
 	indexTestContent(t, s)
 
-	// Exact word — should hit porter+AND (layer 1).
-	r1, err := s.SearchWithFallback("authentication", 5, "")
+	// Exact word — should hit porter+OR (layer 1).
+	r1, err := s.SearchWithFallback("authentication", 5, SearchOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, r1)
-	assert.Equal(t, "porter+AND", r1[0].MatchLayer)
+	assert.Equal(t, "porter+OR", r1[0].MatchLayer)
 
 	// Non-existent word — should return nil.
-	r2, err := s.SearchWithFallback("xyznonexistent", 5, "")
+	r2, err := s.SearchWithFallback("xyznonexistent", 5, SearchOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, r2)
 }
@@ -171,7 +171,7 @@ func TestSearchSourceFiltering(t *testing.T) {
 	indexTestContent(t, s)
 
 	// Search with source filter.
-	results, err := s.SearchWithFallback("optimization", 5, "db-optimization")
+	results, err := s.SearchWithFallback("optimization", 5, SearchOptions{Source: "db-optimization"})
 	require.NoError(t, err)
 	require.NotEmpty(t, results)
 	for _, r := range results {
@@ -179,7 +179,7 @@ func TestSearchSourceFiltering(t *testing.T) {
 	}
 
 	// Same query, wrong source filter — should not match.
-	results2, err := s.SearchWithFallback("optimization", 5, "auth-middleware")
+	results2, err := s.SearchWithFallback("optimization", 5, SearchOptions{Source: "auth-middleware"})
 	require.NoError(t, err)
 	assert.Empty(t, results2)
 }
@@ -191,7 +191,7 @@ func TestSearchAccessTracking(t *testing.T) {
 	indexTestContent(t, s)
 
 	// Search to trigger access tracking.
-	results, err := s.SearchWithFallback("authentication", 5, "")
+	results, err := s.SearchWithFallback("authentication", 5, SearchOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, results)
 
@@ -211,7 +211,7 @@ func TestSearchEmptyQuery(t *testing.T) {
 	s := newTestStore(t)
 	indexTestContent(t, s)
 
-	results, err := s.SearchWithFallback("", 5, "")
+	results, err := s.SearchWithFallback("", 5, SearchOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, results)
 }

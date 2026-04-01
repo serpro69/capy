@@ -17,8 +17,9 @@ func (s *ContentStore) ctx() context.Context {
 
 // ContentStore manages the FTS5 knowledge base.
 type ContentStore struct {
-	dbPath     string
-	projectDir string
+	dbPath      string
+	projectDir  string
+	titleWeight float64
 
 	mu sync.Mutex
 	db *sql.DB
@@ -35,11 +36,7 @@ type ContentStore struct {
 	stmtUpdateSourceAccess    *sql.Stmt
 
 	// Prepared statements — search.
-	stmtSearchPorter         *sql.Stmt
-	stmtSearchPorterFiltered *sql.Stmt
-	stmtSearchTrigram        *sql.Stmt
-	stmtSearchTrigramFiltered *sql.Stmt
-	stmtFuzzyVocab           *sql.Stmt
+	stmtFuzzyVocab *sql.Stmt
 
 	// Prepared statements — queries.
 	stmtListSources      *sql.Stmt
@@ -51,10 +48,15 @@ type ContentStore struct {
 
 // NewContentStore creates a new ContentStore. The database is not opened
 // until the first operation (lazy initialization via getDB).
-func NewContentStore(dbPath, projectDir string) *ContentStore {
+// titleWeight controls the BM25 title column weight; values <= 0 default to 2.0.
+func NewContentStore(dbPath, projectDir string, titleWeight float64) *ContentStore {
+	if titleWeight <= 0 {
+		titleWeight = 2.0
+	}
 	return &ContentStore{
-		dbPath:     dbPath,
-		projectDir: projectDir,
+		dbPath:      dbPath,
+		projectDir:  projectDir,
+		titleWeight: titleWeight,
 	}
 }
 
@@ -158,62 +160,6 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 
 	// --- Search ---
 
-	const porterSQL = `
-		SELECT s.label, c.title, c.content, c.source_id, c.content_type,
-			highlight(chunks, 1, char(2), char(3)) AS highlighted,
-			bm25(chunks, 2.0, 1.0) AS rank
-		FROM chunks c
-		JOIN sources s ON s.id = c.source_id
-		WHERE chunks MATCH ?
-		ORDER BY rank
-		LIMIT ?`
-
-	s.stmtSearchPorter, err = db.Prepare(porterSQL)
-	if err != nil {
-		return err
-	}
-
-	s.stmtSearchPorterFiltered, err = db.Prepare(`
-		SELECT s.label, c.title, c.content, c.source_id, c.content_type,
-			highlight(chunks, 1, char(2), char(3)) AS highlighted,
-			bm25(chunks, 2.0, 1.0) AS rank
-		FROM chunks c
-		JOIN sources s ON s.id = c.source_id
-		WHERE chunks MATCH ? AND s.label LIKE '%' || ? || '%'
-		ORDER BY rank
-		LIMIT ?`)
-	if err != nil {
-		return err
-	}
-
-	const trigramSQL = `
-		SELECT s.label, c.title, c.content, c.source_id, c.content_type,
-			highlight(chunks_trigram, 1, char(2), char(3)) AS highlighted,
-			bm25(chunks_trigram, 2.0, 1.0) AS rank
-		FROM chunks_trigram c
-		JOIN sources s ON s.id = c.source_id
-		WHERE chunks_trigram MATCH ?
-		ORDER BY rank
-		LIMIT ?`
-
-	s.stmtSearchTrigram, err = db.Prepare(trigramSQL)
-	if err != nil {
-		return err
-	}
-
-	s.stmtSearchTrigramFiltered, err = db.Prepare(`
-		SELECT s.label, c.title, c.content, c.source_id, c.content_type,
-			highlight(chunks_trigram, 1, char(2), char(3)) AS highlighted,
-			bm25(chunks_trigram, 2.0, 1.0) AS rank
-		FROM chunks_trigram c
-		JOIN sources s ON s.id = c.source_id
-		WHERE chunks_trigram MATCH ? AND s.label LIKE '%' || ? || '%'
-		ORDER BY rank
-		LIMIT ?`)
-	if err != nil {
-		return err
-	}
-
 	s.stmtFuzzyVocab, err = db.Prepare(`
 		SELECT word FROM vocabulary WHERE length(word) BETWEEN ? AND ?`)
 	if err != nil {
@@ -293,8 +239,6 @@ func (s *ContentStore) Close() error {
 		s.stmtInsertSource, s.stmtInsertChunk, s.stmtInsertTrigram,
 		s.stmtInsertVocab, s.stmtDeleteChunksBySource, s.stmtDeleteTrigramBySource,
 		s.stmtDeleteSource, s.stmtFindSourceByLabel, s.stmtUpdateSourceAccess,
-		s.stmtSearchPorter, s.stmtSearchPorterFiltered,
-		s.stmtSearchTrigram, s.stmtSearchTrigramFiltered,
 		s.stmtFuzzyVocab, s.stmtListSources, s.stmtChunksBySource,
 		s.stmtSourceChunkCount, s.stmtChunkContent, s.stmtTrackAccess,
 	}

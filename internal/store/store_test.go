@@ -16,7 +16,7 @@ func newTestStore(t *testing.T) *ContentStore {
 	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
-	s := NewContentStore(dbPath, dir)
+	s := NewContentStore(dbPath, dir, 0)
 	t.Cleanup(func() { s.Close() })
 	return s
 }
@@ -27,7 +27,7 @@ func TestSchemaIdempotency(t *testing.T) {
 
 	// Open, init, close, repeat.
 	for range 2 {
-		s := NewContentStore(dbPath, dir)
+		s := NewContentStore(dbPath, dir, 0)
 		_, err := s.getDB()
 		require.NoError(t, err)
 		require.NoError(t, s.Close())
@@ -37,7 +37,7 @@ func TestSchemaIdempotency(t *testing.T) {
 func TestDBDirectoryCreated(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "sub", "deep", "test.db")
-	s := NewContentStore(dbPath, dir)
+	s := NewContentStore(dbPath, dir, 0)
 	defer s.Close()
 
 	_, err := s.getDB()
@@ -53,7 +53,7 @@ func TestCloseCheckpointsWAL(t *testing.T) {
 	dbPath := filepath.Join(dir, "test.db")
 
 	// Index content to generate WAL data.
-	s := NewContentStore(dbPath, dir)
+	s := NewContentStore(dbPath, dir, 0)
 	_, err := s.Index("# Test\n\nSome content to index.", "wal-test", "")
 	require.NoError(t, err)
 
@@ -69,7 +69,7 @@ func TestCloseCheckpointsWAL(t *testing.T) {
 	}
 
 	// Data must survive — reopen and verify.
-	s2 := NewContentStore(dbPath, dir)
+	s2 := NewContentStore(dbPath, dir, 0)
 	defer s2.Close()
 	sources, err := s2.ListSources()
 	require.NoError(t, err)
@@ -83,14 +83,14 @@ func TestCheckpointMethod(t *testing.T) {
 	dbPath := filepath.Join(dir, "test.db")
 
 	// Index content, then close WITHOUT checkpoint (simulate unclean shutdown).
-	s := NewContentStore(dbPath, dir)
+	s := NewContentStore(dbPath, dir, 0)
 	_, err := s.Index("# Checkpoint Test\n\nData that must survive.", "cp-test", "")
 	require.NoError(t, err)
 	// Close normally (which checkpoints), then write more via raw SQL to leave WAL dirty.
 	require.NoError(t, s.Close())
 
 	// Reopen, write, close the raw db handle without checkpoint.
-	s2 := NewContentStore(dbPath, dir)
+	s2 := NewContentStore(dbPath, dir, 0)
 	_, err = s2.Index("# More data\n\nAnother chunk.", "cp-test-2", "")
 	require.NoError(t, err)
 	// Access internal db directly to close without our checkpoint logic.
@@ -99,7 +99,7 @@ func TestCheckpointMethod(t *testing.T) {
 	s2.db = nil
 
 	// WAL may have data now. Run Checkpoint() from a fresh store.
-	s3 := NewContentStore(dbPath, dir)
+	s3 := NewContentStore(dbPath, dir, 0)
 	require.NoError(t, s3.Checkpoint())
 
 	// WAL must be gone or empty.

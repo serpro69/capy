@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/store"
 )
 
 const (
@@ -64,7 +65,7 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 			continue
 		}
 
-		results, err := st.SearchWithFallback(q, effectiveLimit, source)
+		results, err := st.SearchWithFallback(q, effectiveLimit, store.SearchOptions{Source: source})
 		if err != nil {
 			results = nil
 		}

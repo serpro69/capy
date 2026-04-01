@@ -13,6 +13,7 @@ func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	assert.Equal(t, 30, cfg.Executor.Timeout)
 	assert.Equal(t, 102400, cfg.Executor.MaxOutputBytes)
+	assert.Equal(t, 2.0, cfg.Store.TitleWeight)
 	assert.Equal(t, 30, cfg.Store.Cleanup.ColdThresholdDays)
 	assert.False(t, cfg.Store.Cleanup.AutoPrune)
 	assert.Equal(t, "info", cfg.Server.LogLevel)
@@ -83,6 +84,37 @@ log_level = "error"
 	assert.Equal(t, 1000, cfg.Executor.MaxOutputBytes)
 	// log_level: XDG=warn → .capy.toml=error (wins)
 	assert.Equal(t, "error", cfg.Server.LogLevel)
+}
+
+func TestTitleWeightFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	content := `
+[store]
+title_weight = 5.0
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".capy.toml"), []byte(content), 0o644))
+
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 5.0, cfg.Store.TitleWeight)
+}
+
+func TestTitleWeightDefaultWhenOmitted(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	// TOML that doesn't mention title_weight — default should survive.
+	content := `
+[executor]
+timeout = 45
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".capy.toml"), []byte(content), 0o644))
+
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 2.0, cfg.Store.TitleWeight)
 }
 
 func TestLoadMissingFiles(t *testing.T) {
