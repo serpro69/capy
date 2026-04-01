@@ -68,13 +68,13 @@
 - [x] 4.4 Write test: index content with a similar label beforehand, verify batch search doesn't leak results; verify no global fallback results appear when scoped search returns nothing
 
 ## Task 5: Empty index early return
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#5-empty-index-early-return](./implementation.md#5-empty-index-early-return)
 
 ### Subtasks
-- [ ] 5.1 In `handleSearch` (`internal/server/tool_search.go`), after getting the store, call `st.Stats()` — if `SourceCount == 0`, return `isError` result with guidance message listing available indexing tools
-- [ ] 5.2 Write test in `internal/server/tool_knowledge_test.go`: search on empty store returns isError response containing guidance text
+- [x] 5.1 In `handleSearch` (`internal/server/tool_search.go`), after getting the store, call `st.Stats()` — if `SourceCount == 0`, return `isError` result with guidance message listing available indexing tools
+- [x] 5.2 Write test in `internal/server/tool_knowledge_test.go`: search on empty store returns isError response containing guidance text
 
 ## Task 6: Hook — smart curl/wget allowance
 - **Status:** pending
