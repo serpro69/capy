@@ -120,6 +120,19 @@ func callSearch(t *testing.T, srv *Server, args map[string]any) *mcp.CallToolRes
 	return result
 }
 
+func TestSearch_EmptyIndex(t *testing.T) {
+	srv := newTestServer(t, nil)
+	r := callSearch(t, srv, map[string]any{
+		"queries": []any{"anything"},
+	})
+	assert.True(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "knowledge base is empty")
+	assert.Contains(t, text, "capy_batch_execute")
+	assert.Contains(t, text, "capy_fetch_and_index")
+	assert.Contains(t, text, "capy_index")
+}
+
 func indexTestContent(t *testing.T, srv *Server) {
 	t.Helper()
 	content := "# React Hooks\n\nuseEffect runs side effects in functional components.\n\n## useState\n\nuseState manages local state in components.\n\n## useCallback\n\nuseCallback memoizes callback functions to prevent unnecessary re-renders."

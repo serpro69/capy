@@ -56,6 +56,23 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 	}
 
 	st := s.getStore()
+
+	// Early return when knowledge base is empty — guide the user to indexing tools
+	kbStats, err := st.Stats()
+	if err == nil && kbStats.SourceCount == 0 {
+		return s.trackToolResponse("capy_search", &mcp.CallToolResult{
+			Content: []mcp.Content{mcp.NewTextContent(
+				"The knowledge base is empty — nothing has been indexed yet.\n\n" +
+					"To populate it, use:\n" +
+					"  • capy_batch_execute(commands, queries) — run commands, auto-index output, and search in one call\n" +
+					"  • capy_fetch_and_index(url) — fetch a URL, index it, then search with capy_search\n" +
+					"  • capy_index(content, source) — manually index text content\n\n" +
+					"After indexing, capy_search becomes available for follow-up queries.",
+			)},
+			IsError: true,
+		}), nil
+	}
+
 	var sections []string
 	totalSize := 0
 
