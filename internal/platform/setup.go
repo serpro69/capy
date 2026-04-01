@@ -53,10 +53,10 @@ func SetupClaudeCode(binaryPath, projectDir string) error {
 		return fmt.Errorf("merging MCP config: %w", err)
 	}
 
-	// 6. Append routing instructions to CLAUDE.md
+	// 6. Write routing instructions to .claude/capy/CLAUDE.md and import from root CLAUDE.md
 	claudeMDPath := filepath.Join(projectDir, "CLAUDE.md")
-	if err := appendRoutingInstructions(claudeMDPath); err != nil {
-		return fmt.Errorf("updating CLAUDE.md: %w", err)
+	if err := writeRoutingInstructions(claudeDir, claudeMDPath); err != nil {
+		return fmt.Errorf("updating routing instructions: %w", err)
 	}
 
 	// 7. Add .capy/ to .gitignore
@@ -273,19 +273,48 @@ func mergeMCPServer(mcpPath, binaryPath string) error {
 	return writeJSONFile(mcpPath, root)
 }
 
-// appendRoutingInstructions appends the routing block to CLAUDE.md if not already present.
-func appendRoutingInstructions(claudeMDPath string) error {
+// routingImportRef is the Claude Code import reference for the capy routing instructions file.
+const routingImportRef = "@.claude/capy/CLAUDE.md"
+
+// routingImportBlock is the full block appended to root CLAUDE.md to import capy routing.
+const routingImportBlock = "# capy — MANDATORY routing rules\n\n" + routingImportRef + "\n"
+
+// writeRoutingInstructions writes routing instructions to .claude/capy/CLAUDE.md
+// and ensures root CLAUDE.md imports them. If root CLAUDE.md has the old inline
+// routing block, it is replaced with the import reference.
+func writeRoutingInstructions(claudeDir, claudeMDPath string) error {
+	// Step A: Write .claude/capy/CLAUDE.md (always overwrite — generated content)
+	capyDir := filepath.Join(claudeDir, "capy")
+	if err := os.MkdirAll(capyDir, 0o755); err != nil {
+		return fmt.Errorf("creating .claude/capy directory: %w", err)
+	}
+
+	capyCLAUDEMD := filepath.Join(capyDir, "CLAUDE.md")
+	if err := os.WriteFile(capyCLAUDEMD, []byte(GenerateRoutingInstructions()), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", capyCLAUDEMD, err)
+	}
+
+	// Step B: Ensure root CLAUDE.md imports .claude/capy/CLAUDE.md
 	content, err := os.ReadFile(claudeMDPath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
-	if strings.Contains(string(content), "capy — MANDATORY routing rules") {
-		return nil // already has routing instructions
+	text := string(content)
+
+	// Already has the import → nothing to do
+	if strings.Contains(text, routingImportRef) {
+		return nil
 	}
 
-	instructions := GenerateRoutingInstructions()
+	// Old inline routing block present → replace with import
+	inlineBlock := GenerateRoutingInstructions()
+	if strings.Contains(text, inlineBlock) {
+		text = strings.Replace(text, inlineBlock, routingImportBlock, 1)
+		return os.WriteFile(claudeMDPath, []byte(text), 0o644)
+	}
 
+	// Neither import nor inline → append the import block
 	f, err := os.OpenFile(claudeMDPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
@@ -293,15 +322,15 @@ func appendRoutingInstructions(claudeMDPath string) error {
 	defer f.Close()
 
 	// Add separator if file already has content
-	if len(content) > 0 && !strings.HasSuffix(string(content), "\n\n") {
-		if strings.HasSuffix(string(content), "\n") {
+	if len(content) > 0 && !strings.HasSuffix(text, "\n\n") {
+		if strings.HasSuffix(text, "\n") {
 			fmt.Fprint(f, "\n")
 		} else {
 			fmt.Fprint(f, "\n\n")
 		}
 	}
 
-	_, err = fmt.Fprint(f, instructions)
+	_, err = fmt.Fprint(f, routingImportBlock)
 	return err
 }
 

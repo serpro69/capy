@@ -70,13 +70,20 @@ func TestSetupClaudeCode(t *testing.T) {
 	assert.Equal(t, binaryPath, capyServer["command"])
 	assert.Equal(t, []any{"serve"}, capyServer["args"])
 
-	// Verify CLAUDE.md has routing instructions
+	// Verify .claude/capy/CLAUDE.md has routing instructions
+	capyCLAUDEMD, err := os.ReadFile(filepath.Join(dir, ".claude", "capy", "CLAUDE.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(capyCLAUDEMD), "capy_batch_execute")
+	assert.Contains(t, string(capyCLAUDEMD), "capy_search")
+	assert.Contains(t, string(capyCLAUDEMD), "capy_execute")
+	assert.Contains(t, string(capyCLAUDEMD), "capy — MANDATORY routing rules")
+
+	// Verify root CLAUDE.md has import, not inline routing
 	claudeMD, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(claudeMD), "capy_batch_execute")
-	assert.Contains(t, string(claudeMD), "capy_search")
-	assert.Contains(t, string(claudeMD), "capy_execute")
-	assert.Contains(t, string(claudeMD), "capy — MANDATORY routing rules")
+	assert.Contains(t, string(claudeMD), "@.claude/capy/CLAUDE.md")
+	assert.NotContains(t, string(claudeMD), "capy_batch_execute",
+		"root CLAUDE.md should not contain inline routing instructions")
 
 	// Verify .gitignore has .capy/
 	gitignore, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
@@ -112,11 +119,19 @@ func TestSetupIdempotent(t *testing.T) {
 	servers := mcp["mcpServers"].(map[string]any)
 	assert.Len(t, servers, 1, "should not duplicate capy MCP server")
 
-	// CLAUDE.md should not have duplicate routing instructions
+	// Root CLAUDE.md should not have duplicate imports
 	claudeMD, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	require.NoError(t, err)
-	assert.Equal(t, 1, strings.Count(string(claudeMD), "capy — MANDATORY routing rules"),
-		"should not duplicate routing instructions")
+	assert.Equal(t, 1, strings.Count(string(claudeMD), "@.claude/capy/CLAUDE.md"),
+		"should not duplicate routing import")
+	assert.NotContains(t, string(claudeMD), "capy_batch_execute",
+		"root CLAUDE.md should not contain inline routing instructions")
+
+	// .claude/capy/CLAUDE.md should have routing instructions
+	capyCLAUDEMD, err := os.ReadFile(filepath.Join(dir, ".claude", "capy", "CLAUDE.md"))
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(capyCLAUDEMD), "capy — MANDATORY routing rules"),
+		"should not duplicate routing instructions in capy CLAUDE.md")
 
 	// .gitignore should not have duplicate entries
 	gitignore, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
@@ -257,7 +272,65 @@ func TestMergePreservesExistingCLAUDEMD(t *testing.T) {
 	content := string(claudeMD)
 	assert.Contains(t, content, "# My Project")
 	assert.Contains(t, content, "Some custom instructions.")
-	assert.Contains(t, content, "capy_batch_execute")
+	assert.Contains(t, content, "@.claude/capy/CLAUDE.md")
+	assert.NotContains(t, content, "capy_batch_execute",
+		"root CLAUDE.md should not contain inline routing instructions")
+
+	// Verify routing instructions written to separate file
+	capyCLAUDEMD, err := os.ReadFile(filepath.Join(dir, ".claude", "capy", "CLAUDE.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(capyCLAUDEMD), "capy_batch_execute")
+}
+
+func TestSetupMigratesInlineRouting(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := "/usr/local/bin/capy"
+
+	// Create CLAUDE.md with old inline routing block and content after it
+	before := "# My Project\n\nSome custom instructions.\n\n"
+	after := "\n# Extra Section\n\nMore content after capy block.\n"
+	oldContent := before + GenerateRoutingInstructions() + after
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(oldContent), 0o644))
+
+	require.NoError(t, SetupClaudeCode(binaryPath, dir))
+
+	// Root CLAUDE.md: inline block replaced with import, surrounding content preserved
+	claudeMD, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	require.NoError(t, err)
+	content := string(claudeMD)
+	assert.Contains(t, content, "# My Project")
+	assert.Contains(t, content, "Some custom instructions.")
+	assert.Contains(t, content, "@.claude/capy/CLAUDE.md")
+	assert.Contains(t, content, "# Extra Section")
+	assert.Contains(t, content, "More content after capy block.")
+	assert.NotContains(t, content, "capy_batch_execute",
+		"inline routing should be replaced with import")
+
+	// Routing instructions written to separate file
+	capyCLAUDEMD, err := os.ReadFile(filepath.Join(dir, ".claude", "capy", "CLAUDE.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(capyCLAUDEMD), "capy_batch_execute")
+	assert.Contains(t, string(capyCLAUDEMD), "capy — MANDATORY routing rules")
+}
+
+func TestSetupMigratesInlineRouting_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := "/usr/local/bin/capy"
+
+	// Create CLAUDE.md with old inline routing block
+	oldContent := "# My Project\n\n" + GenerateRoutingInstructions() + "\n# Footer\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(oldContent), 0o644))
+
+	// Run setup twice — first migrates, second should be a no-op
+	require.NoError(t, SetupClaudeCode(binaryPath, dir))
+	require.NoError(t, SetupClaudeCode(binaryPath, dir))
+
+	claudeMD, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	require.NoError(t, err)
+	content := string(claudeMD)
+	assert.Equal(t, 1, strings.Count(content, "@.claude/capy/CLAUDE.md"),
+		"should have exactly one import after migration + re-run")
+	assert.Contains(t, content, "# Footer")
 }
 
 func TestEnsureGitignoreCreatesFile(t *testing.T) {
