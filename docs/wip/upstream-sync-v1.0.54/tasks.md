@@ -2,7 +2,7 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done
 > Created: 2026-03-31
 
 ## Task 1: SearchOptions + configurable BM25 + dynamic SQL
@@ -101,11 +101,11 @@
 - [x] 7.6 Write test: call `AddCacheHit` twice, verify `Snapshot()` returns correct accumulated values; verify stats report includes cache section
 
 ## Task 8: Final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6, Task 7
 
 ### Subtasks
-- [ ] 8.1 Run `testing-process` skill to verify all tasks — full test suite with `-tags fts5`, integration tests, edge cases
-- [ ] 8.2 Run `documentation-process` skill to update any relevant docs
-- [ ] 8.3 Run `solid-code-review` skill with Go input to review the implementation
-- [ ] 8.4 Run `implementation-review` skill to verify implementation matches design and implementation docs
+- [x] 8.1 Run `testing-process` skill to verify all tasks — full test suite with `-tags fts5 -race`, all pass, coverage 78-84% across changed packages
+- [x] 8.2 Run `documentation-process` — fixed curl/wget docs to match TS reference and implementation
+- [x] 8.3 Run `solid-code-review` — found P2 (missing `rows.Err()` checks), fixed across 5 instances
+- [x] 8.4 Run `implementation-review` — found P2/P3 outdated docs for curl/wget silent flags, fixed
