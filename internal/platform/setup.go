@@ -307,10 +307,19 @@ func writeRoutingInstructions(claudeDir, claudeMDPath string) error {
 		return nil
 	}
 
-	// Old inline routing block present → replace with import
-	inlineBlock := GenerateRoutingInstructions()
-	if strings.Contains(text, inlineBlock) {
-		text = strings.Replace(text, inlineBlock, routingImportBlock, 1)
+	// Old inline routing block present → replace with import.
+	// Uses marker-based detection so migration works even when
+	// GenerateRoutingInstructions() output changed between versions.
+	const startMarker = "# capy — MANDATORY routing rules"
+	if startIdx := strings.Index(text, startMarker); startIdx >= 0 {
+		rest := text[startIdx+len(startMarker):]
+		if endIdx := strings.Index(rest, "\n# "); endIdx >= 0 {
+			// Content follows after the capy block — preserve it
+			text = text[:startIdx] + routingImportBlock + rest[endIdx+1:]
+		} else {
+			// Capy block extends to EOF
+			text = text[:startIdx] + routingImportBlock
+		}
 		return os.WriteFile(claudeMDPath, []byte(text), 0o644)
 	}
 

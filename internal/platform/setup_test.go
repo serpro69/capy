@@ -313,6 +313,44 @@ func TestSetupMigratesInlineRouting(t *testing.T) {
 	assert.Contains(t, string(capyCLAUDEMD), "capy — MANDATORY routing rules")
 }
 
+func TestSetupMigratesStaleInlineRouting(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := "/usr/local/bin/capy"
+
+	// Simulate an older version's inline routing block that doesn't match
+	// the current GenerateRoutingInstructions() output (e.g. a tool was
+	// added or wording changed between capy versions).
+	staleBlock := "# capy — MANDATORY routing rules\n\nOld routing content from v0.1.\n\n## Old Section\n\nStale instructions here.\n"
+	before := "# My Project\n\nCustom instructions.\n\n"
+	after := "# Other Section\n\nUser content after capy block.\n"
+	oldContent := before + staleBlock + after
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(oldContent), 0o644))
+
+	require.NoError(t, SetupClaudeCode(binaryPath, dir))
+
+	claudeMD, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	require.NoError(t, err)
+	content := string(claudeMD)
+
+	// Stale inline block replaced with import
+	assert.Contains(t, content, "@.claude/capy/CLAUDE.md")
+	assert.NotContains(t, content, "Old routing content from v0.1",
+		"stale inline routing should be removed")
+	assert.NotContains(t, content, "Stale instructions here",
+		"stale sub-sections should be removed")
+
+	// Surrounding content preserved
+	assert.Contains(t, content, "# My Project")
+	assert.Contains(t, content, "Custom instructions.")
+	assert.Contains(t, content, "# Other Section")
+	assert.Contains(t, content, "User content after capy block.")
+
+	// Current routing written to separate file
+	capyCLAUDEMD, err := os.ReadFile(filepath.Join(dir, ".claude", "capy", "CLAUDE.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(capyCLAUDEMD), "capy_batch_execute")
+}
+
 func TestSetupMigratesInlineRouting_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	binaryPath := "/usr/local/bin/capy"
