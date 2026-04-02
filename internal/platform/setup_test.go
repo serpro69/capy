@@ -25,6 +25,16 @@ func TestSetupClaudeCode(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
 
+	// Verify portable wrapper script created
+	wrapperPath := filepath.Join(dir, capyWrapperRelPath)
+	wrapperData, err := os.ReadFile(wrapperPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(wrapperData), "#!/usr/bin/env bash")
+	assert.Contains(t, string(wrapperData), "exec \"$p\" \"$@\"")
+	wrapperInfo, err := os.Stat(wrapperPath)
+	require.NoError(t, err)
+	assert.NotZero(t, wrapperInfo.Mode()&0o111, "wrapper script should be executable")
+
 	// Verify .claude/settings.json has hooks
 	settingsData, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
 	require.NoError(t, err)
@@ -35,7 +45,7 @@ func TestSetupClaudeCode(t *testing.T) {
 	hooks, ok := settings["hooks"].(map[string]any)
 	require.True(t, ok)
 
-	// Check PreToolUse hook
+	// Check PreToolUse hook uses portable wrapper
 	preToolUse, ok := hooks["PreToolUse"].([]any)
 	require.True(t, ok)
 	require.Len(t, preToolUse, 1)
@@ -47,15 +57,15 @@ func TestSetupClaudeCode(t *testing.T) {
 	require.Len(t, innerHooks, 1)
 	hook := innerHooks[0].(map[string]any)
 	assert.Equal(t, "command", hook["type"])
-	assert.Equal(t, binaryPath+" hook pretooluse", hook["command"])
+	assert.Equal(t, "bash $CLAUDE_PROJECT_DIR/"+capyWrapperRelPath+" hook pretooluse", hook["command"])
 
-	// Check all 5 hook events registered
+	// Check all hook events registered
 	for _, he := range hookEvents {
 		_, ok := hooks[he.Event].([]any)
 		assert.True(t, ok, "hook event %s should be registered", he.Event)
 	}
 
-	// Verify .mcp.json has capy server
+	// Verify .mcp.json has capy server with portable wrapper
 	mcpData, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
 	require.NoError(t, err)
 
@@ -67,8 +77,8 @@ func TestSetupClaudeCode(t *testing.T) {
 
 	capyServer, ok := servers["capy"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, binaryPath, capyServer["command"])
-	assert.Equal(t, []any{"serve"}, capyServer["args"])
+	assert.Equal(t, "bash", capyServer["command"])
+	assert.Equal(t, []any{capyWrapperRelPath, "serve"}, capyServer["args"])
 
 	// Verify .claude/capy/CLAUDE.md has routing instructions
 	capyCLAUDEMD, err := os.ReadFile(filepath.Join(dir, ".claude", "capy", "CLAUDE.md"))
@@ -145,13 +155,12 @@ func TestSetupIdempotent(t *testing.T) {
 	assert.Equal(t, 1, lines, "should not duplicate .gitignore entry")
 }
 
-func TestSetupIdempotent_RenamedBinary(t *testing.T) {
+func TestSetupIdempotent_DifferentBinaryArg(t *testing.T) {
 	dir := t.TempDir()
 
-	// First setup with one binary path
+	// Setup with different --binary args should produce identical configs
+	// since configs use the portable wrapper, not the resolved binary path.
 	require.NoError(t, SetupClaudeCode("/usr/local/bin/my-custom-cli", dir))
-
-	// Second setup with a different binary name (no "capy" in path)
 	require.NoError(t, SetupClaudeCode("/opt/tools/my-custom-cli", dir))
 
 	settingsData, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
@@ -162,24 +171,23 @@ func TestSetupIdempotent_RenamedBinary(t *testing.T) {
 
 	hooks := settings["hooks"].(map[string]any)
 
-	// Each hook event should have exactly 1 entry, not 2.
-	// findHookEntry searches for "hook <event>" (e.g., "hook pretooluse"),
-	// not "capy hook", so it finds the entry even with a renamed binary.
 	for _, he := range hookEvents {
 		entries := hooks[he.Event].([]any)
 		assert.Len(t, entries, 1,
 			"hook event %s should have 1 entry after re-setup with different binary, got %d",
 			he.Event, len(entries))
 
-		// Verify the command was updated to the new path
+		// Verify the command uses the portable wrapper, not any hardcoded path
 		entry := entries[0].(map[string]any)
 		innerHooks := entry["hooks"].([]any)
 		hook := innerHooks[0].(map[string]any)
 		cmd := hook["command"].(string)
-		assert.Contains(t, cmd, "/opt/tools/my-custom-cli",
-			"hook %s should use the new binary path", he.Event)
+		assert.Contains(t, cmd, capyWrapperRelPath,
+			"hook %s should use the portable wrapper script", he.Event)
 		assert.NotContains(t, cmd, "/usr/local/bin/",
-			"hook %s should not have the old binary path", he.Event)
+			"hook %s should not contain a hardcoded binary path", he.Event)
+		assert.NotContains(t, cmd, "/opt/tools/",
+			"hook %s should not contain a hardcoded binary path", he.Event)
 	}
 }
 
@@ -371,6 +379,120 @@ func TestSetupMigratesInlineRouting_Idempotent(t *testing.T) {
 	assert.Contains(t, content, "# Footer")
 }
 
+func TestWriteCapyWrapper(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".claude"), 0o755))
+
+	require.NoError(t, writeCapyWrapper(dir))
+
+	wrapperPath := filepath.Join(dir, capyWrapperRelPath)
+	data, err := os.ReadFile(wrapperPath)
+	require.NoError(t, err)
+
+	content := string(data)
+	assert.Contains(t, content, "#!/usr/bin/env bash")
+	assert.Contains(t, content, `exec "$p" "$@"`)
+	assert.Contains(t, content, "$HOME/.local/bin/capy")
+	assert.Contains(t, content, "/opt/homebrew/bin/capy")
+	assert.Contains(t, content, "/usr/local/bin/capy")
+	assert.Contains(t, content, "$HOME/go/bin/capy")
+	assert.Contains(t, content, "capy not found")
+
+	info, err := os.Stat(wrapperPath)
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&0o111, "wrapper should be executable")
+}
+
+func TestWriteCapyWrapper_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".claude"), 0o755))
+
+	require.NoError(t, writeCapyWrapper(dir))
+	first, err := os.ReadFile(filepath.Join(dir, capyWrapperRelPath))
+	require.NoError(t, err)
+
+	require.NoError(t, writeCapyWrapper(dir))
+	second, err := os.ReadFile(filepath.Join(dir, capyWrapperRelPath))
+	require.NoError(t, err)
+
+	assert.Equal(t, string(first), string(second), "wrapper content should be identical after re-run")
+}
+
+func TestSetupMigratesOldHardcodedHooks(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, ".claude")
+	require.NoError(t, os.MkdirAll(claudeDir, 0o755))
+
+	// Simulate old-format hooks with hardcoded binary path
+	oldHooks := make(map[string]any)
+	for _, he := range hookEvents {
+		oldHooks[he.Event] = []any{
+			map[string]any{
+				"matcher": he.Matcher,
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": "/opt/homebrew/bin/capy hook " + he.CLIArg,
+					},
+				},
+			},
+		}
+	}
+	oldSettings := map[string]any{"hooks": oldHooks}
+	data, _ := json.MarshalIndent(oldSettings, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(claudeDir, "settings.json"), data, 0o644))
+
+	// Simulate old-format MCP config
+	oldMCP := map[string]any{
+		"mcpServers": map[string]any{
+			"capy": map[string]any{
+				"command": "/opt/homebrew/bin/capy",
+				"args":    []any{"serve"},
+			},
+		},
+	}
+	mcpData, _ := json.MarshalIndent(oldMCP, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".mcp.json"), mcpData, 0o644))
+
+	// Run setup — should migrate to wrapper format
+	require.NoError(t, SetupClaudeCode("/usr/local/bin/capy", dir))
+
+	// Verify hooks migrated to wrapper format
+	settingsData, err := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
+	require.NoError(t, err)
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal(settingsData, &settings))
+
+	hooks := settings["hooks"].(map[string]any)
+	for _, he := range hookEvents {
+		entries := hooks[he.Event].([]any)
+		assert.Len(t, entries, 1,
+			"hook event %s should have exactly 1 entry after migration", he.Event)
+
+		entry := entries[0].(map[string]any)
+		innerHooks := entry["hooks"].([]any)
+		hook := innerHooks[0].(map[string]any)
+		cmd := hook["command"].(string)
+		assert.Contains(t, cmd, capyWrapperRelPath,
+			"hook %s should use wrapper script after migration", he.Event)
+		assert.NotContains(t, cmd, "/opt/homebrew/bin/capy",
+			"hook %s should not contain old hardcoded path", he.Event)
+	}
+
+	// Verify MCP migrated to wrapper format
+	mcpResult, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	require.NoError(t, err)
+	var mcp map[string]any
+	require.NoError(t, json.Unmarshal(mcpResult, &mcp))
+
+	servers := mcp["mcpServers"].(map[string]any)
+	capyServer := servers["capy"].(map[string]any)
+	assert.Equal(t, "bash", capyServer["command"],
+		"MCP command should be 'bash' after migration")
+	assert.Equal(t, []any{capyWrapperRelPath, "serve"}, capyServer["args"],
+		"MCP args should use wrapper after migration")
+}
+
 func TestEnsureGitignoreCreatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".gitignore")
@@ -409,12 +531,12 @@ func TestEnsureGitignoreHandlesMissingNewline(t *testing.T) {
 func TestSetupUsesExecutableFallback(t *testing.T) {
 	dir := t.TempDir()
 
-	// When binary path is empty, setup falls back to os.Executable()
-	// This should succeed (we're running as a Go test binary)
+	// When binary path is empty, setup falls back to os.Executable() for
+	// validation but configs always use the portable wrapper.
 	err := SetupClaudeCode("", dir)
 	require.NoError(t, err)
 
-	// Verify the MCP config uses the fallback executable path
+	// Verify the MCP config uses bash + wrapper (not the fallback executable)
 	mcpData, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
 	require.NoError(t, err)
 
@@ -423,8 +545,8 @@ func TestSetupUsesExecutableFallback(t *testing.T) {
 
 	servers := mcp["mcpServers"].(map[string]any)
 	capyServer := servers["capy"].(map[string]any)
-	command := capyServer["command"].(string)
-	assert.NotEmpty(t, command, "should resolve to executable path")
+	assert.Equal(t, "bash", capyServer["command"])
+	assert.Equal(t, []any{capyWrapperRelPath, "serve"}, capyServer["args"])
 }
 
 // splitLines splits a string into lines, similar to strings.Split but handles edge cases.
