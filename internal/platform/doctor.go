@@ -160,11 +160,11 @@ func CheckHookRegistration(projectDir string) CheckResult {
 		}
 	}
 
-	// Check for PreToolUse hook with capy command
+	// Check for capy hook commands (matches both old hardcoded-path and new wrapper formats)
 	registered := 0
 	for _, he := range hookEvents {
 		entries, _ := hooks[he.Event].([]any)
-		if findHookEntry(entries, "capy hook") >= 0 {
+		if findHookEntry(entries, "hook "+he.CLIArg) >= 0 {
 			registered++
 		}
 	}

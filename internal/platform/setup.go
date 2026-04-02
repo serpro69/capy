@@ -11,12 +11,43 @@ import (
 	"github.com/serpro69/capy/internal/config"
 )
 
+// capyWrapperRelPath is the project-relative path to the portable capy wrapper script.
+const capyWrapperRelPath = ".claude/scripts/capy.sh"
+
+// capyWrapperScript is the content of the portable wrapper script.
+// It searches known installation paths for the capy binary and execs the first
+// one found, making configs portable across machines and platforms.
+const capyWrapperScript = `#!/usr/bin/env bash
+
+set -euo pipefail
+
+for p in $(which capy 2>/dev/null) $HOME/.local/bin/capy /opt/homebrew/bin/capy /usr/local/bin/capy $HOME/go/bin/capy capy; do
+  [ -x "$p" ] && exec "$p" "$@"
+done
+
+echo 'capy not found' >&2
+exit 1
+`
+
+// writeCapyWrapper creates the portable wrapper script at .claude/scripts/capy.sh.
+func writeCapyWrapper(projectDir string) error {
+	scriptsDir := filepath.Join(projectDir, ".claude", "scripts")
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		return fmt.Errorf("creating scripts directory: %w", err)
+	}
+	wrapperPath := filepath.Join(projectDir, capyWrapperRelPath)
+	return os.WriteFile(wrapperPath, []byte(capyWrapperScript), 0o755)
+}
+
 // SetupClaudeCode configures capy for a Claude Code project.
 // It merges hook and MCP configurations idempotently, creates the .capy/
 // directory, appends routing instructions to CLAUDE.md, and adds .capy/
 // to .gitignore.
+//
+// Configs reference a portable wrapper script instead of a hardcoded binary
+// path, making them work across machines and platforms (fixes #10).
 func SetupClaudeCode(binaryPath, projectDir string) error {
-	// 1. Resolve binary path
+	// 1. Resolve binary path (validation only — configs use the portable wrapper)
 	if binaryPath == "" {
 		var err error
 		binaryPath, err = exec.LookPath("capy")
@@ -41,32 +72,37 @@ func SetupClaudeCode(binaryPath, projectDir string) error {
 		return fmt.Errorf("creating .claude directory: %w", err)
 	}
 
-	// 4. Merge hooks into .claude/settings.json
+	// 4. Write portable wrapper script (.claude/scripts/capy.sh)
+	if err := writeCapyWrapper(projectDir); err != nil {
+		return fmt.Errorf("writing wrapper script: %w", err)
+	}
+
+	// 5. Merge hooks into .claude/settings.json
 	settingsPath := filepath.Join(claudeDir, "settings.json")
-	if err := mergeHooks(settingsPath, binaryPath); err != nil {
+	if err := mergeHooks(settingsPath); err != nil {
 		return fmt.Errorf("merging hooks: %w", err)
 	}
 
-	// 5. Merge MCP server into .mcp.json
+	// 6. Merge MCP server into .mcp.json
 	mcpPath := filepath.Join(projectDir, ".mcp.json")
-	if err := mergeMCPServer(mcpPath, binaryPath); err != nil {
+	if err := mergeMCPServer(mcpPath); err != nil {
 		return fmt.Errorf("merging MCP config: %w", err)
 	}
 
-	// 6. Write routing instructions to .claude/capy/CLAUDE.md and import from root CLAUDE.md
+	// 7. Write routing instructions to .claude/capy/CLAUDE.md and import from root CLAUDE.md
 	claudeMDPath := filepath.Join(projectDir, "CLAUDE.md")
 	if err := writeRoutingInstructions(claudeDir, claudeMDPath); err != nil {
 		return fmt.Errorf("updating routing instructions: %w", err)
 	}
 
-	// 7. Add .capy/ to .gitignore
+	// 8. Add .capy/ to .gitignore
 	gitignorePath := filepath.Join(projectDir, ".gitignore")
 	if err := ensureGitignoreEntry(gitignorePath, ".capy/"); err != nil {
 		return fmt.Errorf("updating .gitignore: %w", err)
 	}
 
-	// 8. Install git pre-commit hook for WAL checkpoint
-	if err := installPreCommitHook(binaryPath, projectDir); err != nil {
+	// 9. Install git pre-commit hook for WAL checkpoint
+	if err := installPreCommitHook(projectDir); err != nil {
 		// Non-fatal: git hooks are a convenience, not a requirement
 		fmt.Fprintf(os.Stderr, "capy: warning: could not install pre-commit hook: %v\n", err)
 	}
@@ -88,25 +124,24 @@ func shellEscapePath(path string) string {
 // preCommitHookScript returns the content of the git pre-commit hook.
 // It checkpoints the WAL only when the knowledge DB is staged for commit.
 // dbPattern is a grep pattern matching the DB path relative to the repo root.
-func preCommitHookScript(binaryPath, dbPattern string) string {
-	safePath := shellEscapePath(binaryPath)
+func preCommitHookScript(dbPattern string) string {
 	safePattern := shellEscapePath(dbPattern)
 	return fmt.Sprintf(`#!/bin/sh
 %s
 # Installed by capy setup — safe to remove if not needed.
 
 if git diff --cached --name-only | grep -q '%s'; then
-  '%s' checkpoint
+  bash %s checkpoint
   git diff --cached --name-only | grep '%s' | while read -r f; do git add "$f"; done
 fi
 %s
-`, preCommitMarkerStart, safePattern, safePath, safePattern, preCommitMarkerEnd)
+`, preCommitMarkerStart, safePattern, capyWrapperRelPath, safePattern, preCommitMarkerEnd)
 }
 
 // installPreCommitHook installs or updates the git pre-commit hook.
-// If a pre-commit hook already exists with a capy block, replaces it (handles
-// binary path changes). Otherwise appends the checkpoint logic.
-func installPreCommitHook(binaryPath, projectDir string) error {
+// If a pre-commit hook already exists with a capy block, replaces it.
+// Otherwise appends the checkpoint logic.
+func installPreCommitHook(projectDir string) error {
 	hookDir := filepath.Join(projectDir, ".git", "hooks")
 	if _, err := os.Stat(hookDir); os.IsNotExist(err) {
 		return nil // not a git repo, skip
@@ -114,7 +149,7 @@ func installPreCommitHook(binaryPath, projectDir string) error {
 
 	// Resolve the actual DB path from config so the hook matches custom paths.
 	dbPattern := resolveDBPattern(projectDir)
-	script := preCommitHookScript(binaryPath, dbPattern)
+	script := preCommitHookScript(dbPattern)
 	hookPath := filepath.Join(hookDir, "pre-commit")
 
 	existing, err := os.ReadFile(hookPath)
@@ -189,7 +224,8 @@ var hookEvents = []struct {
 }
 
 // mergeHooks reads .claude/settings.json, upserts capy hook entries, and writes back.
-func mergeHooks(settingsPath, binaryPath string) error {
+// Hook commands reference the portable wrapper script via $CLAUDE_PROJECT_DIR.
+func mergeHooks(settingsPath string) error {
 	settings, err := readJSONFile(settingsPath)
 	if err != nil {
 		return err
@@ -201,9 +237,7 @@ func mergeHooks(settingsPath, binaryPath string) error {
 	}
 
 	for _, he := range hookEvents {
-		// NOTE: binary paths with spaces are not supported — same as TS reference.
-		// Claude Code splits the command string on spaces when spawning.
-		hookCommand := binaryPath + " hook " + he.CLIArg
+		hookCommand := "bash $CLAUDE_PROJECT_DIR/" + capyWrapperRelPath + " hook " + he.CLIArg
 		entry := map[string]any{
 			"matcher": he.Matcher,
 			"hooks": []any{
@@ -253,7 +287,8 @@ func findHookEntry(entries []any, commandSubstr string) int {
 }
 
 // mergeMCPServer reads .mcp.json, upserts the capy server entry, and writes back.
-func mergeMCPServer(mcpPath, binaryPath string) error {
+// Uses the portable wrapper script instead of a hardcoded binary path.
+func mergeMCPServer(mcpPath string) error {
 	root, err := readJSONFile(mcpPath)
 	if err != nil {
 		return err
@@ -265,8 +300,8 @@ func mergeMCPServer(mcpPath, binaryPath string) error {
 	}
 
 	servers["capy"] = map[string]any{
-		"command": binaryPath,
-		"args":    []any{"serve"},
+		"command": "bash",
+		"args":    []any{capyWrapperRelPath, "serve"},
 	}
 
 	root["mcpServers"] = servers

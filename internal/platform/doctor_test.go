@@ -92,8 +92,65 @@ func TestCheckHookRegistration(t *testing.T) {
 		require.NoError(t, os.MkdirAll(claudeDir, 0o755))
 
 		// Run setup to create proper hook registration
-		binaryPath := "/usr/local/bin/capy"
-		require.NoError(t, mergeHooks(filepath.Join(claudeDir, "settings.json"), binaryPath))
+		require.NoError(t, mergeHooks(filepath.Join(claudeDir, "settings.json")))
+
+		r := CheckHookRegistration(dir)
+		assert.Equal(t, Pass, r.Status)
+		assert.Contains(t, r.Detail, "6/6")
+	})
+
+	t.Run("detects old hardcoded-path hooks", func(t *testing.T) {
+		dir := t.TempDir()
+		claudeDir := filepath.Join(dir, ".claude")
+		require.NoError(t, os.MkdirAll(claudeDir, 0o755))
+
+		// Old-format hooks with hardcoded binary path
+		oldHooks := make(map[string]any)
+		for _, he := range hookEvents {
+			oldHooks[he.Event] = []any{
+				map[string]any{
+					"matcher": he.Matcher,
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "/opt/homebrew/bin/capy hook " + he.CLIArg,
+						},
+					},
+				},
+			}
+		}
+		settings := map[string]any{"hooks": oldHooks}
+		data, _ := json.MarshalIndent(settings, "", "  ")
+		require.NoError(t, os.WriteFile(filepath.Join(claudeDir, "settings.json"), data, 0o644))
+
+		r := CheckHookRegistration(dir)
+		assert.Equal(t, Pass, r.Status)
+		assert.Contains(t, r.Detail, "6/6")
+	})
+
+	t.Run("detects new wrapper-format hooks", func(t *testing.T) {
+		dir := t.TempDir()
+		claudeDir := filepath.Join(dir, ".claude")
+		require.NoError(t, os.MkdirAll(claudeDir, 0o755))
+
+		// New-format hooks with portable wrapper script
+		newHooks := make(map[string]any)
+		for _, he := range hookEvents {
+			newHooks[he.Event] = []any{
+				map[string]any{
+					"matcher": he.Matcher,
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "bash $CLAUDE_PROJECT_DIR/" + capyWrapperRelPath + " hook " + he.CLIArg,
+						},
+					},
+				},
+			}
+		}
+		settings := map[string]any{"hooks": newHooks}
+		data, _ := json.MarshalIndent(settings, "", "  ")
+		require.NoError(t, os.WriteFile(filepath.Join(claudeDir, "settings.json"), data, 0o644))
 
 		r := CheckHookRegistration(dir)
 		assert.Equal(t, Pass, r.Status)
@@ -155,7 +212,7 @@ func TestCheckMCPRegistration(t *testing.T) {
 
 	t.Run("capy registered", func(t *testing.T) {
 		dir := t.TempDir()
-		require.NoError(t, mergeMCPServer(filepath.Join(dir, ".mcp.json"), "/usr/local/bin/capy"))
+		require.NoError(t, mergeMCPServer(filepath.Join(dir, ".mcp.json")))
 
 		r := CheckMCPRegistration(dir)
 		// Status depends on whether the binary path exists on this system
