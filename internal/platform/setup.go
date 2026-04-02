@@ -17,12 +17,14 @@ const capyWrapperRelPath = ".claude/scripts/capy.sh"
 // capyWrapperScript is the content of the portable wrapper script.
 // It searches known installation paths for the capy binary and execs the first
 // one found, making configs portable across machines and platforms.
+// Paths are quoted to handle spaces (e.g. WSL home dirs like /c/Users/John Doe).
+// Uses `command -v` instead of `which` for POSIX compliance.
 const capyWrapperScript = `#!/usr/bin/env bash
 
 set -euo pipefail
 
-for p in $(which capy 2>/dev/null) $HOME/.local/bin/capy /opt/homebrew/bin/capy /usr/local/bin/capy $HOME/go/bin/capy capy; do
-  [ -x "$p" ] && exec "$p" "$@"
+for p in "$(command -v capy 2>/dev/null || true)" "$HOME/.local/bin/capy" "/opt/homebrew/bin/capy" "/usr/local/bin/capy" "$HOME/go/bin/capy" "capy"; do
+  [ -n "$p" ] && [ -x "$p" ] && exec "$p" "$@"
 done
 
 echo 'capy not found' >&2
@@ -131,7 +133,7 @@ func preCommitHookScript(dbPattern string) string {
 # Installed by capy setup — safe to remove if not needed.
 
 if git diff --cached --name-only | grep -q '%s'; then
-  bash %s checkpoint
+  bash "%s" checkpoint
   git diff --cached --name-only | grep '%s' | while read -r f; do git add "$f"; done
 fi
 %s
