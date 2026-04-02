@@ -15,7 +15,7 @@ func TestInstallPreCommitHook_NewHook(t *testing.T) {
 	hooksDir := filepath.Join(dir, ".git", "hooks")
 	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
 
-	err := installPreCommitHook("/usr/local/bin/capy", dir)
+	err := installPreCommitHook(dir)
 	require.NoError(t, err)
 
 	hookPath := filepath.Join(hooksDir, "pre-commit")
@@ -26,7 +26,7 @@ func TestInstallPreCommitHook_NewHook(t *testing.T) {
 	assert.Contains(t, content, "#!/bin/sh")
 	assert.Contains(t, content, preCommitMarkerStart)
 	assert.Contains(t, content, preCommitMarkerEnd)
-	assert.Contains(t, content, "'/usr/local/bin/capy' checkpoint")
+	assert.Contains(t, content, "bash "+capyWrapperRelPath+" checkpoint")
 	assert.Contains(t, content, "knowledge")
 
 	// Verify executable permission
@@ -45,7 +45,7 @@ func TestInstallPreCommitHook_AppendsToExisting(t *testing.T) {
 	existing := "#!/bin/sh\necho 'existing hook'\n"
 	require.NoError(t, os.WriteFile(hookPath, []byte(existing), 0o755))
 
-	err := installPreCommitHook("/usr/local/bin/capy", dir)
+	err := installPreCommitHook(dir)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(hookPath)
@@ -56,7 +56,7 @@ func TestInstallPreCommitHook_AppendsToExisting(t *testing.T) {
 	assert.Contains(t, content, "existing hook")
 	// Capy checkpoint appended
 	assert.Contains(t, content, preCommitMarkerStart)
-	assert.Contains(t, content, "'/usr/local/bin/capy' checkpoint")
+	assert.Contains(t, content, "bash "+capyWrapperRelPath+" checkpoint")
 }
 
 func TestInstallPreCommitHook_Idempotent(t *testing.T) {
@@ -65,8 +65,8 @@ func TestInstallPreCommitHook_Idempotent(t *testing.T) {
 	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
 
 	// Install twice
-	require.NoError(t, installPreCommitHook("/usr/local/bin/capy", dir))
-	require.NoError(t, installPreCommitHook("/usr/local/bin/capy", dir))
+	require.NoError(t, installPreCommitHook(dir))
+	require.NoError(t, installPreCommitHook(dir))
 
 	data, err := os.ReadFile(filepath.Join(hooksDir, "pre-commit"))
 	require.NoError(t, err)
@@ -76,69 +76,78 @@ func TestInstallPreCommitHook_Idempotent(t *testing.T) {
 	assert.Equal(t, 1, count, "should not duplicate checkpoint hook")
 }
 
-func TestInstallPreCommitHook_UpdatesBinaryPath(t *testing.T) {
+func TestInstallPreCommitHook_PreservesExistingOnReinstall(t *testing.T) {
 	dir := t.TempDir()
 	hooksDir := filepath.Join(dir, ".git", "hooks")
 	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
 
-	// Install with old path
-	require.NoError(t, installPreCommitHook("/old/path/capy", dir))
-
-	data, err := os.ReadFile(filepath.Join(hooksDir, "pre-commit"))
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "'/old/path/capy' checkpoint")
-
-	// Re-install with new path — should update, not duplicate
-	require.NoError(t, installPreCommitHook("/new/path/capy", dir))
-
-	data, err = os.ReadFile(filepath.Join(hooksDir, "pre-commit"))
-	require.NoError(t, err)
-
-	content := string(data)
-	assert.Contains(t, content, "'/new/path/capy' checkpoint")
-	assert.NotContains(t, content, "/old/path/capy")
-	assert.Equal(t, 1, strings.Count(content, preCommitMarkerStart), "should have exactly one capy block")
-}
-
-func TestInstallPreCommitHook_PreservesExistingOnUpdate(t *testing.T) {
-	dir := t.TempDir()
-	hooksDir := filepath.Join(dir, ".git", "hooks")
-	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
-
-	// Create existing hook, then install capy, then update
+	// Create existing hook, then install capy twice
 	hookPath := filepath.Join(hooksDir, "pre-commit")
 	existing := "#!/bin/sh\necho 'my custom hook'\n"
 	require.NoError(t, os.WriteFile(hookPath, []byte(existing), 0o755))
 
-	require.NoError(t, installPreCommitHook("/old/capy", dir))
-	require.NoError(t, installPreCommitHook("/new/capy", dir))
+	require.NoError(t, installPreCommitHook(dir))
+	require.NoError(t, installPreCommitHook(dir))
 
 	data, err := os.ReadFile(hookPath)
 	require.NoError(t, err)
 
 	content := string(data)
 	assert.Contains(t, content, "my custom hook", "existing hook content preserved")
-	assert.Contains(t, content, "'/new/capy' checkpoint", "updated to new path")
-	assert.NotContains(t, content, "/old/capy", "old path removed")
+	assert.Contains(t, content, "bash "+capyWrapperRelPath+" checkpoint")
+	assert.Equal(t, 1, strings.Count(content, preCommitMarkerStart), "should have exactly one capy block")
+}
+
+func TestInstallPreCommitHook_MigratesOldHardcodedPath(t *testing.T) {
+	dir := t.TempDir()
+	hooksDir := filepath.Join(dir, ".git", "hooks")
+	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
+
+	// Simulate old-format pre-commit hook with hardcoded binary path
+	hookPath := filepath.Join(hooksDir, "pre-commit")
+	oldScript := "#!/bin/sh\n" +
+		preCommitMarkerStart + "\n" +
+		"# Installed by capy setup — safe to remove if not needed.\n\n" +
+		"if git diff --cached --name-only | grep -q '\\.capy/knowledge\\.db$'; then\n" +
+		"  '/opt/homebrew/bin/capy' checkpoint\n" +
+		"  git diff --cached --name-only | grep '\\.capy/knowledge\\.db$' | while read -r f; do git add \"$f\"; done\n" +
+		"fi\n" +
+		preCommitMarkerEnd + "\n"
+	require.NoError(t, os.WriteFile(hookPath, []byte(oldScript), 0o755))
+
+	// Re-install — should replace old block with wrapper-based one
+	require.NoError(t, installPreCommitHook(dir))
+
+	data, err := os.ReadFile(hookPath)
+	require.NoError(t, err)
+
+	content := string(data)
+	assert.Contains(t, content, "bash "+capyWrapperRelPath+" checkpoint",
+		"should use wrapper script after migration")
+	assert.NotContains(t, content, "/opt/homebrew/bin/capy",
+		"should not contain old hardcoded path")
+	assert.Equal(t, 1, strings.Count(content, preCommitMarkerStart),
+		"should have exactly one capy block")
 }
 
 func TestInstallPreCommitHook_NoGitDir(t *testing.T) {
 	dir := t.TempDir()
 	// No .git/hooks directory — should silently skip
 
-	err := installPreCommitHook("/usr/local/bin/capy", dir)
+	err := installPreCommitHook(dir)
 	assert.NoError(t, err)
 }
 
-func TestPreCommitHookScript_ContainsBinaryPath(t *testing.T) {
-	script := preCommitHookScript("/opt/custom/capy", `\.capy/knowledge\.db$`)
-	assert.Contains(t, script, "'/opt/custom/capy' checkpoint")
+func TestPreCommitHookScript_UsesWrapper(t *testing.T) {
+	script := preCommitHookScript(`\.capy/knowledge\.db$`)
+	assert.Contains(t, script, "bash "+capyWrapperRelPath+" checkpoint")
 	assert.Contains(t, script, `knowledge\.db`)
+	assert.NotContains(t, script, "/usr/local/bin/capy", "should not contain hardcoded binary path")
 }
 
-func TestPreCommitHookScript_EscapesSingleQuotes(t *testing.T) {
-	script := preCommitHookScript("/path/with'quote/capy", `\.capy/knowledge\.db$`)
-	assert.Contains(t, script, `'/path/with'\''quote/capy' checkpoint`)
+func TestPreCommitHookScript_EscapesDBPattern(t *testing.T) {
+	script := preCommitHookScript(`path/with'quote/db\.db$`)
+	assert.Contains(t, script, `path/with'\''quote/db\.db$`)
 }
 
 func TestInstallPreCommitHook_CustomDBPath(t *testing.T) {
@@ -153,7 +162,7 @@ func TestInstallPreCommitHook_CustomDBPath(t *testing.T) {
 		0o644,
 	))
 
-	require.NoError(t, installPreCommitHook("/usr/local/bin/capy", dir))
+	require.NoError(t, installPreCommitHook(dir))
 
 	data, err := os.ReadFile(filepath.Join(hooksDir, "pre-commit"))
 	require.NoError(t, err)
