@@ -26,7 +26,7 @@ func TestInstallPreCommitHook_NewHook(t *testing.T) {
 	assert.Contains(t, content, "#!/bin/sh")
 	assert.Contains(t, content, preCommitMarkerStart)
 	assert.Contains(t, content, preCommitMarkerEnd)
-	assert.Contains(t, content, "bash "+capyWrapperRelPath+" checkpoint")
+	assert.Contains(t, content, `bash "`+capyWrapperRelPath+`" checkpoint`)
 	assert.Contains(t, content, "knowledge")
 
 	// Verify executable permission
@@ -56,7 +56,7 @@ func TestInstallPreCommitHook_AppendsToExisting(t *testing.T) {
 	assert.Contains(t, content, "existing hook")
 	// Capy checkpoint appended
 	assert.Contains(t, content, preCommitMarkerStart)
-	assert.Contains(t, content, "bash "+capyWrapperRelPath+" checkpoint")
+	assert.Contains(t, content, `bash "`+capyWrapperRelPath+`" checkpoint`)
 }
 
 func TestInstallPreCommitHook_Idempotent(t *testing.T) {
@@ -94,7 +94,7 @@ func TestInstallPreCommitHook_PreservesExistingOnReinstall(t *testing.T) {
 
 	content := string(data)
 	assert.Contains(t, content, "my custom hook", "existing hook content preserved")
-	assert.Contains(t, content, "bash "+capyWrapperRelPath+" checkpoint")
+	assert.Contains(t, content, `bash "`+capyWrapperRelPath+`" checkpoint`)
 	assert.Equal(t, 1, strings.Count(content, preCommitMarkerStart), "should have exactly one capy block")
 }
 
@@ -122,7 +122,7 @@ func TestInstallPreCommitHook_MigratesOldHardcodedPath(t *testing.T) {
 	require.NoError(t, err)
 
 	content := string(data)
-	assert.Contains(t, content, "bash "+capyWrapperRelPath+" checkpoint",
+	assert.Contains(t, content, `bash "`+capyWrapperRelPath+`" checkpoint`,
 		"should use wrapper script after migration")
 	assert.NotContains(t, content, "/opt/homebrew/bin/capy",
 		"should not contain old hardcoded path")
@@ -140,7 +140,7 @@ func TestInstallPreCommitHook_NoGitDir(t *testing.T) {
 
 func TestPreCommitHookScript_UsesWrapper(t *testing.T) {
 	script := preCommitHookScript(`\.capy/knowledge\.db$`)
-	assert.Contains(t, script, "bash "+capyWrapperRelPath+" checkpoint")
+	assert.Contains(t, script, `bash "`+capyWrapperRelPath+`" checkpoint`)
 	assert.Contains(t, script, `knowledge\.db`)
 	assert.NotContains(t, script, "/usr/local/bin/capy", "should not contain hardcoded binary path")
 }
