@@ -48,7 +48,7 @@ func writeCapyWrapper(projectDir string) error {
 //
 // Configs reference a portable wrapper script instead of a hardcoded binary
 // path, making them work across machines and platforms (fixes #10).
-func SetupClaudeCode(binaryPath, projectDir string) error {
+func SetupClaudeCode(binaryPath, projectDir string, target SettingsTarget) error {
 	// 1. Resolve binary path (validation only — configs use the portable wrapper)
 	if binaryPath == "" {
 		var err error
@@ -79,8 +79,21 @@ func SetupClaudeCode(binaryPath, projectDir string) error {
 		return fmt.Errorf("writing wrapper script: %w", err)
 	}
 
-	// 5. Merge hooks into .claude/settings.json
-	settingsPath := filepath.Join(claudeDir, "settings.json")
+	// 5. Merge hooks into target settings file, migrating from the other if needed
+	targetFile := target.SettingsFilename()
+	otherFile := SettingsProject.SettingsFilename()
+	if target == SettingsProject {
+		otherFile = SettingsLocal.SettingsFilename()
+	}
+
+	otherPath := filepath.Join(claudeDir, otherFile)
+	if removed, err := removeCapyHooks(otherPath); err != nil {
+		return fmt.Errorf("removing hooks from %s: %w", otherFile, err)
+	} else if removed {
+		fmt.Fprintf(os.Stderr, "capy: migrated hooks from .claude/%s -> .claude/%s\n", otherFile, targetFile)
+	}
+
+	settingsPath := filepath.Join(claudeDir, targetFile)
 	if err := mergeHooks(settingsPath); err != nil {
 		return fmt.Errorf("merging hooks: %w", err)
 	}
@@ -208,6 +221,24 @@ func resolveDBPattern(projectDir string) string {
 	return strings.ReplaceAll(rel, ".", `\.`) + "$"
 }
 
+// SettingsTarget indicates which Claude Code settings file to write hooks to.
+type SettingsTarget int
+
+const (
+	// SettingsProject targets .claude/settings.json (shared, committed to git).
+	SettingsProject SettingsTarget = iota
+	// SettingsLocal targets .claude/settings.local.json (personal, not committed).
+	SettingsLocal
+)
+
+// SettingsFilename returns the filename for the given settings target.
+func (t SettingsTarget) SettingsFilename() string {
+	if t == SettingsLocal {
+		return "settings.local.json"
+	}
+	return "settings.json"
+}
+
 // PreToolUseMatcherPattern is the pipe-separated matcher for PreToolUse hooks.
 const PreToolUseMatcherPattern = "Bash|WebFetch|Read|Grep|Agent|Task|mcp__*capy*"
 
@@ -263,6 +294,44 @@ func mergeHooks(settingsPath string) error {
 
 	settings["hooks"] = hooks
 	return writeJSONFile(settingsPath, settings)
+}
+
+// removeCapyHooks removes all capy hook entries from a settings file.
+// Returns true if any hooks were removed. Preserves non-capy entries.
+func removeCapyHooks(settingsPath string) (bool, error) {
+	settings, err := readJSONFile(settingsPath)
+	if err != nil {
+		return false, err
+	}
+
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hooks == nil {
+		return false, nil
+	}
+
+	removed := false
+	for _, he := range hookEvents {
+		existing, _ := hooks[he.Event].([]any)
+		idx := findHookEntry(existing, "hook "+he.CLIArg)
+		if idx >= 0 {
+			existing = append(existing[:idx], existing[idx+1:]...)
+			removed = true
+			if len(existing) == 0 {
+				delete(hooks, he.Event)
+			} else {
+				hooks[he.Event] = existing
+			}
+		}
+	}
+
+	if !removed {
+		return false, nil
+	}
+
+	if len(hooks) == 0 {
+		delete(settings, "hooks")
+	}
+	return true, writeJSONFile(settingsPath, settings)
 }
 
 // findHookEntry finds the index of a hook entry whose command contains the given substring.
