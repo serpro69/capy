@@ -256,7 +256,7 @@ var hookEvents = []struct {
 	{"UserPromptSubmit", "userpromptsubmit", ""},
 }
 
-// mergeHooks reads .claude/settings.json, upserts capy hook entries, and writes back.
+// mergeHooks reads the given settings file, upserts capy hook entries, and writes back.
 // Hook commands reference the portable wrapper script via $CLAUDE_PROJECT_DIR.
 func mergeHooks(settingsPath string) error {
 	settings, err := readJSONFile(settingsPath)
