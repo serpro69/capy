@@ -1,24 +1,20 @@
 {
   "permissions": {
     "allow": [
-      "Bash(go mod:*)",
+      "Bash(go build:*)",
       "Bash(go get:*)",
+      "Bash(go mod:*)",
+      "Bash(go test:*)",
+      "Bash(go tool:*)",
+      "Bash(go vet:*)",
       "Bash(make build:*)",
       "Bash(make vet:*)",
       "Bash(make test:*)",
-      "Bash(go test:*)",
-      "Bash(go build:*)",
-      "Bash(go vet:*)",
-      "mcp__pal__codereview",
-      "Bash(go tool:*)",
-      "mcp__capy__capy_search",
-      "mcp__capy__capy_batch_execute",
+      "mcp__capy__*",
       "mcp__pal__chat",
-      "mcp__capy__capy_index",
-      "mcp__capy__capy_stats"
+      "mcp__pal__codereview",
+      "mcp__pal__listmodels"
     ]
   },
-  "enabledMcpjsonServers": [
-    "capy"
-  ]
+  "enabledMcpjsonServers": ["capy"]
 }
