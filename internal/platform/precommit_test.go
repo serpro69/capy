@@ -199,7 +199,7 @@ func TestSetupClaudeCode_InstallsPreCommitHook(t *testing.T) {
 	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
 
 	binaryPath := "/usr/local/bin/capy"
-	require.NoError(t, SetupClaudeCode(binaryPath, dir))
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
 
 	data, err := os.ReadFile(filepath.Join(hooksDir, "pre-commit"))
 	require.NoError(t, err)

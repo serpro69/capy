@@ -52,7 +52,7 @@ func TestHookRequiresEventArg(t *testing.T) {
 
 func TestSetupSubcommand(t *testing.T) {
 	dir := t.TempDir()
-	stdout, _, code := capy(t, "setup", "--project-dir", dir)
+	stdout, _, code := capy(t, "setup", "--project-dir", dir, "--project")
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout, "setup")
 }

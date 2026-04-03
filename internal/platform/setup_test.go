@@ -17,7 +17,7 @@ func TestSetupClaudeCode(t *testing.T) {
 	// Create a fake binary path (doesn't need to be real for setup)
 	binaryPath := "/usr/local/bin/capy"
 
-	err := SetupClaudeCode(binaryPath, dir)
+	err := SetupClaudeCode(binaryPath, dir, SettingsProject)
 	require.NoError(t, err)
 
 	// Verify .capy/ directory created
@@ -106,8 +106,8 @@ func TestSetupIdempotent(t *testing.T) {
 	binaryPath := "/usr/local/bin/capy"
 
 	// Run setup twice
-	require.NoError(t, SetupClaudeCode(binaryPath, dir))
-	require.NoError(t, SetupClaudeCode(binaryPath, dir))
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
 
 	// Settings should not have duplicate hook entries
 	settingsData, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
@@ -160,8 +160,8 @@ func TestSetupIdempotent_DifferentBinaryArg(t *testing.T) {
 
 	// Setup with different --binary args should produce identical configs
 	// since configs use the portable wrapper, not the resolved binary path.
-	require.NoError(t, SetupClaudeCode("/usr/local/bin/my-custom-cli", dir))
-	require.NoError(t, SetupClaudeCode("/opt/tools/my-custom-cli", dir))
+	require.NoError(t, SetupClaudeCode("/usr/local/bin/my-custom-cli", dir, SettingsProject))
+	require.NoError(t, SetupClaudeCode("/opt/tools/my-custom-cli", dir, SettingsProject))
 
 	settingsData, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
 	require.NoError(t, err)
@@ -234,7 +234,7 @@ func TestMergePreservesExistingSettings(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".mcp.json"), mcpData, 0o644))
 
 	// Run setup
-	require.NoError(t, SetupClaudeCode(binaryPath, dir))
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
 
 	// Verify existing permissions preserved
 	settingsData, err := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
@@ -272,7 +272,7 @@ func TestMergePreservesExistingCLAUDEMD(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(existingContent), 0o644))
 
 	binaryPath := "/usr/local/bin/capy"
-	require.NoError(t, SetupClaudeCode(binaryPath, dir))
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
 
 	claudeMD, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	require.NoError(t, err)
@@ -300,7 +300,7 @@ func TestSetupMigratesInlineRouting(t *testing.T) {
 	oldContent := before + GenerateRoutingInstructions() + after
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(oldContent), 0o644))
 
-	require.NoError(t, SetupClaudeCode(binaryPath, dir))
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
 
 	// Root CLAUDE.md: inline block replaced with import, surrounding content preserved
 	claudeMD, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
@@ -334,7 +334,7 @@ func TestSetupMigratesStaleInlineRouting(t *testing.T) {
 	oldContent := before + staleBlock + after
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(oldContent), 0o644))
 
-	require.NoError(t, SetupClaudeCode(binaryPath, dir))
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
 
 	claudeMD, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	require.NoError(t, err)
@@ -368,8 +368,8 @@ func TestSetupMigratesInlineRouting_Idempotent(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(oldContent), 0o644))
 
 	// Run setup twice — first migrates, second should be a no-op
-	require.NoError(t, SetupClaudeCode(binaryPath, dir))
-	require.NoError(t, SetupClaudeCode(binaryPath, dir))
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
 
 	claudeMD, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	require.NoError(t, err)
@@ -456,7 +456,7 @@ func TestSetupMigratesOldHardcodedHooks(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".mcp.json"), mcpData, 0o644))
 
 	// Run setup — should migrate to wrapper format
-	require.NoError(t, SetupClaudeCode("/usr/local/bin/capy", dir))
+	require.NoError(t, SetupClaudeCode("/usr/local/bin/capy", dir, SettingsProject))
 
 	// Verify hooks migrated to wrapper format
 	settingsData, err := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
@@ -534,7 +534,7 @@ func TestSetupUsesExecutableFallback(t *testing.T) {
 
 	// When binary path is empty, setup falls back to os.Executable() for
 	// validation but configs always use the portable wrapper.
-	err := SetupClaudeCode("", dir)
+	err := SetupClaudeCode("", dir, SettingsProject)
 	require.NoError(t, err)
 
 	// Verify the MCP config uses bash + wrapper (not the fallback executable)
@@ -548,6 +548,281 @@ func TestSetupUsesExecutableFallback(t *testing.T) {
 	capyServer := servers["capy"].(map[string]any)
 	assert.Equal(t, "bash", capyServer["command"])
 	assert.Equal(t, []any{capyWrapperRelPath, "serve"}, capyServer["args"])
+}
+
+func TestSetupLocalTarget(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := "/usr/local/bin/capy"
+
+	err := SetupClaudeCode(binaryPath, dir, SettingsLocal)
+	require.NoError(t, err)
+
+	// Hooks should be in settings.local.json
+	localData, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.local.json"))
+	require.NoError(t, err)
+
+	var localSettings map[string]any
+	require.NoError(t, json.Unmarshal(localData, &localSettings))
+
+	hooks, ok := localSettings["hooks"].(map[string]any)
+	require.True(t, ok)
+	for _, he := range hookEvents {
+		_, ok := hooks[he.Event].([]any)
+		assert.True(t, ok, "hook event %s should be registered in settings.local.json", he.Event)
+	}
+
+	// settings.json should NOT exist (no hooks written there)
+	_, err = os.Stat(filepath.Join(dir, ".claude", "settings.json"))
+	assert.True(t, os.IsNotExist(err), "settings.json should not be created when targeting local")
+}
+
+func TestSetupLocalIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := "/usr/local/bin/capy"
+
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsLocal))
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsLocal))
+
+	localData, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.local.json"))
+	require.NoError(t, err)
+
+	var localSettings map[string]any
+	require.NoError(t, json.Unmarshal(localData, &localSettings))
+
+	hooks := localSettings["hooks"].(map[string]any)
+	preToolUse := hooks["PreToolUse"].([]any)
+	assert.Len(t, preToolUse, 1, "should not duplicate PreToolUse entry in local settings")
+}
+
+func TestSetupMigratesProjectToLocal(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := "/usr/local/bin/capy"
+
+	// First setup writes to project (settings.json)
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
+
+	// Verify hooks in settings.json
+	settingsData, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	require.NoError(t, err)
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal(settingsData, &settings))
+	require.NotNil(t, settings["hooks"])
+
+	// Now setup targeting local — should migrate
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsLocal))
+
+	// settings.json should have no capy hooks
+	settingsData, err = os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	require.NoError(t, err)
+	var settingsAfter map[string]any
+	require.NoError(t, json.Unmarshal(settingsData, &settingsAfter))
+	_, hasHooks := settingsAfter["hooks"]
+	assert.False(t, hasHooks, "settings.json should have no hooks after migration to local")
+
+	// settings.local.json should have the hooks
+	localData, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.local.json"))
+	require.NoError(t, err)
+	var localSettings map[string]any
+	require.NoError(t, json.Unmarshal(localData, &localSettings))
+	hooks := localSettings["hooks"].(map[string]any)
+	for _, he := range hookEvents {
+		_, ok := hooks[he.Event].([]any)
+		assert.True(t, ok, "hook event %s should be in settings.local.json after migration", he.Event)
+	}
+}
+
+func TestSetupMigratesLocalToProject(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := "/usr/local/bin/capy"
+
+	// First setup writes to local
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsLocal))
+
+	// Now setup targeting project — should migrate
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
+
+	// settings.local.json should have no capy hooks
+	localData, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.local.json"))
+	require.NoError(t, err)
+	var localSettings map[string]any
+	require.NoError(t, json.Unmarshal(localData, &localSettings))
+	_, hasHooks := localSettings["hooks"]
+	assert.False(t, hasHooks, "settings.local.json should have no hooks after migration to project")
+
+	// settings.json should have the hooks
+	settingsData, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	require.NoError(t, err)
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal(settingsData, &settings))
+	hooks := settings["hooks"].(map[string]any)
+	for _, he := range hookEvents {
+		_, ok := hooks[he.Event].([]any)
+		assert.True(t, ok, "hook event %s should be in settings.json after migration", he.Event)
+	}
+}
+
+func TestSetupMigrationPreservesOtherSettings(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, ".claude")
+	require.NoError(t, os.MkdirAll(claudeDir, 0o755))
+
+	// Create settings.json with capy hooks AND custom hooks + permissions
+	binaryPath := "/usr/local/bin/capy"
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
+
+	// Add custom content to settings.json
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	settingsData, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal(settingsData, &settings))
+	settings["permissions"] = map[string]any{
+		"allow": []any{"Bash(git:*)"},
+	}
+	// Add a custom hook alongside capy's
+	hooks := settings["hooks"].(map[string]any)
+	preToolUse := hooks["PreToolUse"].([]any)
+	preToolUse = append(preToolUse, map[string]any{
+		"matcher": "Bash",
+		"hooks": []any{
+			map[string]any{"type": "command", "command": "/usr/local/bin/my-hook"},
+		},
+	})
+	hooks["PreToolUse"] = preToolUse
+	data, _ := json.MarshalIndent(settings, "", "  ")
+	require.NoError(t, os.WriteFile(settingsPath, data, 0o644))
+
+	// Migrate to local
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsLocal))
+
+	// settings.json should still have permissions and custom hook
+	settingsData, err = os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(settingsData, &settings))
+
+	perms := settings["permissions"].(map[string]any)
+	assert.Contains(t, perms["allow"], "Bash(git:*)")
+
+	hooks = settings["hooks"].(map[string]any)
+	preToolUse = hooks["PreToolUse"].([]any)
+	assert.Len(t, preToolUse, 1, "should have only the custom hook remaining")
+	entry := preToolUse[0].(map[string]any)
+	innerHooks := entry["hooks"].([]any)
+	hook := innerHooks[0].(map[string]any)
+	assert.Equal(t, "/usr/local/bin/my-hook", hook["command"])
+}
+
+func TestRemoveCapyHooks(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	// Create a settings file with capy hooks
+	settings := map[string]any{
+		"hooks": map[string]any{},
+	}
+	hooks := settings["hooks"].(map[string]any)
+	for _, he := range hookEvents {
+		hooks[he.Event] = []any{
+			map[string]any{
+				"matcher": he.Matcher,
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": "bash $CLAUDE_PROJECT_DIR/" + capyWrapperRelPath + " hook " + he.CLIArg,
+					},
+				},
+			},
+		}
+	}
+	data, _ := json.MarshalIndent(settings, "", "  ")
+	require.NoError(t, os.WriteFile(settingsPath, data, 0o644))
+
+	removed, err := removeCapyHooks(settingsPath)
+	require.NoError(t, err)
+	assert.True(t, removed)
+
+	// Verify all hooks removed
+	readData, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(readData, &result))
+	_, hasHooks := result["hooks"]
+	assert.False(t, hasHooks, "hooks key should be removed when empty")
+}
+
+func TestRemoveCapyHooks_NoHooks(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	// File with no hooks
+	data, _ := json.MarshalIndent(map[string]any{"permissions": map[string]any{}}, "", "  ")
+	require.NoError(t, os.WriteFile(settingsPath, data, 0o644))
+
+	removed, err := removeCapyHooks(settingsPath)
+	require.NoError(t, err)
+	assert.False(t, removed)
+}
+
+func TestRemoveCapyHooks_FileNotExist(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "nonexistent.json")
+
+	removed, err := removeCapyHooks(settingsPath)
+	require.NoError(t, err)
+	assert.False(t, removed)
+}
+
+func TestRemoveCapyHooks_PreservesOtherHooks(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				// Custom hook
+				map[string]any{
+					"matcher": "Bash",
+					"hooks": []any{
+						map[string]any{"type": "command", "command": "/usr/local/bin/my-hook"},
+					},
+				},
+				// Capy hook
+				map[string]any{
+					"matcher": PreToolUseMatcherPattern,
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "bash $CLAUDE_PROJECT_DIR/" + capyWrapperRelPath + " hook pretooluse",
+						},
+					},
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(settings, "", "  ")
+	require.NoError(t, os.WriteFile(settingsPath, data, 0o644))
+
+	removed, err := removeCapyHooks(settingsPath)
+	require.NoError(t, err)
+	assert.True(t, removed)
+
+	readData, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(readData, &result))
+
+	hooks := result["hooks"].(map[string]any)
+	preToolUse := hooks["PreToolUse"].([]any)
+	assert.Len(t, preToolUse, 1, "should have only the custom hook")
+	entry := preToolUse[0].(map[string]any)
+	innerHooks := entry["hooks"].([]any)
+	hook := innerHooks[0].(map[string]any)
+	assert.Equal(t, "/usr/local/bin/my-hook", hook["command"])
+}
+
+func TestSettingsTargetFilename(t *testing.T) {
+	assert.Equal(t, "settings.json", SettingsProject.SettingsFilename())
+	assert.Equal(t, "settings.local.json", SettingsLocal.SettingsFilename())
 }
 
 // splitLines splits a string into lines, similar to strings.Split but handles edge cases.
