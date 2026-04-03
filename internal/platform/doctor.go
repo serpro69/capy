@@ -130,42 +130,19 @@ func CheckConfig(projectDir string, dbPath string) CheckResult {
 	}
 }
 
-// CheckHookRegistration verifies that capy hooks are registered in .claude/settings.json.
+// CheckHookRegistration verifies that capy hooks are registered in either
+// .claude/settings.json or .claude/settings.local.json.
 func CheckHookRegistration(projectDir string) CheckResult {
-	settingsPath := filepath.Join(projectDir, ".claude", "settings.json")
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return CheckResult{
-			Name:   "Hooks",
-			Status: Fail,
-			Detail: ".claude/settings.json not found (run `capy setup`)",
-		}
-	}
+	claudeDir := filepath.Join(projectDir, ".claude")
 
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return CheckResult{
-			Name:   "Hooks",
-			Status: Fail,
-			Detail: fmt.Sprintf("cannot parse .claude/settings.json: %v", err),
-		}
-	}
-
-	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
-		return CheckResult{
-			Name:   "Hooks",
-			Status: Fail,
-			Detail: "no hooks configured (run `capy setup`)",
-		}
-	}
-
-	// Check for capy hook commands (matches both old hardcoded-path and new wrapper formats)
+	// Check both settings files for capy hooks
 	registered := 0
-	for _, he := range hookEvents {
-		entries, _ := hooks[he.Event].([]any)
-		if findHookEntry(entries, "hook "+he.CLIArg) >= 0 {
-			registered++
+	foundIn := ""
+	for _, filename := range []string{"settings.json", "settings.local.json"} {
+		n := countCapyHooks(filepath.Join(claudeDir, filename))
+		if n > registered {
+			registered = n
+			foundIn = filename
 		}
 	}
 
@@ -181,15 +158,42 @@ func CheckHookRegistration(projectDir string) CheckResult {
 		return CheckResult{
 			Name:   "Hooks",
 			Status: Warn,
-			Detail: fmt.Sprintf("%d/%d hook events registered", registered, len(hookEvents)),
+			Detail: fmt.Sprintf("%d/%d hook events registered in %s", registered, len(hookEvents), foundIn),
 		}
 	}
 
 	return CheckResult{
 		Name:   "Hooks",
 		Status: Pass,
-		Detail: fmt.Sprintf("%d/%d hook events registered", registered, len(hookEvents)),
+		Detail: fmt.Sprintf("%d/%d hook events registered in %s", registered, len(hookEvents), foundIn),
 	}
+}
+
+// countCapyHooks returns how many capy hook events are registered in the given settings file.
+func countCapyHooks(settingsPath string) int {
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return 0
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return 0
+	}
+
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hooks == nil {
+		return 0
+	}
+
+	count := 0
+	for _, he := range hookEvents {
+		entries, _ := hooks[he.Event].([]any)
+		if findHookEntry(entries, "hook "+he.CLIArg) >= 0 {
+			count++
+		}
+	}
+	return count
 }
 
 // CheckMCPRegistration verifies that capy is registered as an MCP server in .mcp.json.

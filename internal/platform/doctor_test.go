@@ -68,7 +68,7 @@ func TestCheckHookRegistration(t *testing.T) {
 		dir := t.TempDir()
 		r := CheckHookRegistration(dir)
 		assert.Equal(t, Fail, r.Status)
-		assert.Contains(t, r.Detail, "not found")
+		assert.Contains(t, r.Detail, "no capy hooks found")
 	})
 
 	t.Run("no hooks configured", func(t *testing.T) {
@@ -83,20 +83,33 @@ func TestCheckHookRegistration(t *testing.T) {
 
 		r := CheckHookRegistration(dir)
 		assert.Equal(t, Fail, r.Status)
-		assert.Contains(t, r.Detail, "no hooks")
+		assert.Contains(t, r.Detail, "no capy hooks found")
 	})
 
-	t.Run("all hooks registered", func(t *testing.T) {
+	t.Run("all hooks registered in settings.json", func(t *testing.T) {
 		dir := t.TempDir()
 		claudeDir := filepath.Join(dir, ".claude")
 		require.NoError(t, os.MkdirAll(claudeDir, 0o755))
 
-		// Run setup to create proper hook registration
 		require.NoError(t, mergeHooks(filepath.Join(claudeDir, "settings.json")))
 
 		r := CheckHookRegistration(dir)
 		assert.Equal(t, Pass, r.Status)
 		assert.Contains(t, r.Detail, "6/6")
+		assert.Contains(t, r.Detail, "settings.json")
+	})
+
+	t.Run("all hooks registered in settings.local.json", func(t *testing.T) {
+		dir := t.TempDir()
+		claudeDir := filepath.Join(dir, ".claude")
+		require.NoError(t, os.MkdirAll(claudeDir, 0o755))
+
+		require.NoError(t, mergeHooks(filepath.Join(claudeDir, "settings.local.json")))
+
+		r := CheckHookRegistration(dir)
+		assert.Equal(t, Pass, r.Status)
+		assert.Contains(t, r.Detail, "6/6")
+		assert.Contains(t, r.Detail, "settings.local.json")
 	})
 
 	t.Run("detects old hardcoded-path hooks", func(t *testing.T) {
