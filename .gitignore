@@ -24,6 +24,7 @@ logs
 # AI tools
 !.serena
 !.claude
+.claude/worktrees
 
 # formulae for homebrew
 # here only for convenience, see serpro69/homebrew-tap repo
