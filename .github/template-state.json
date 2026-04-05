@@ -4,9 +4,9 @@
   "template_version": "4d6ab3a18ffbf94c59291f8af1a476bee8453f7e",
   "synced_at": "2026-04-05T11:49:52Z",
   "variables": {
-    "PROJECT_NAME": "memories",
+    "PROJECT_NAME": "capy",
     "LANGUAGES": "go",
-    "CC_MODEL": "default",
+    "CC_MODEL": "opus[1m]",
     "CC_STATUSLINE": "enhanced",
     "SERENA_INITIAL_PROMPT": "",
     "CC_EFFORT_LEVEL": "high",
