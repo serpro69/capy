@@ -110,9 +110,9 @@ func SetupClaudeCode(binaryPath, projectDir string, target SettingsTarget) error
 		return fmt.Errorf("updating routing instructions: %w", err)
 	}
 
-	// 8. Add .capy/ to .gitignore
+	// 8. Add .capy/** to .gitignore
 	gitignorePath := filepath.Join(projectDir, ".gitignore")
-	if err := ensureGitignoreEntry(gitignorePath, ".capy/"); err != nil {
+	if err := ensureGitignoreEntry(gitignorePath, ".capy/**"); err != nil {
 		return fmt.Errorf("updating .gitignore: %w", err)
 	}
 
