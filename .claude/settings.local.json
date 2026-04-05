@@ -1,4 +1,73 @@
 {
+  "enabledMcpjsonServers": ["capy"],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/scripts/capy.sh hook posttooluse",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/scripts/capy.sh hook precompact",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/scripts/capy.sh hook pretooluse",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash|WebFetch|Read|Grep|Agent|Task|mcp__*capy*"
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/scripts/capy.sh hook sessionend",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/scripts/capy.sh hook sessionstart",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/scripts/capy.sh hook userpromptsubmit",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(go build:*)",
@@ -15,6 +84,5 @@
       "mcp__pal__codereview",
       "mcp__pal__listmodels"
     ]
-  },
-  "enabledMcpjsonServers": ["capy"]
+  }
 }
