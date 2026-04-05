@@ -1,8 +1,4 @@
 {
-  "attribution": {
-    "commit": "",
-    "pr": ""
-  },
   "effortLevel": "high",
   "enabledMcpjsonServers": [],
   "enabledPlugins": {
@@ -17,8 +13,8 @@
   "extraKnownMarketplaces": {
     "claude-toolbox": {
       "source": {
-        "repo": "serpro69/claude-toolbox",
-        "source": "github"
+        "source": "github",
+        "repo": "serpro69/claude-toolbox"
       }
     }
   },
@@ -26,24 +22,10 @@
   "permissions": {
     "allow": [
       "Bash(cat:*)",
-      "Bash(chmod:*)",
       "Bash(grep:*)",
       "Bash(ls:*)",
       "Bash(mkdir:*)",
       "Bash(sort:*)",
-      "mcp__context7__resolve-library-id",
-      "mcp__context7__get-library-docs",
-      "mcp__serena__get_symbols_overview",
-      "mcp__serena__find_file",
-      "mcp__serena__find_symbol",
-      "mcp__serena__insert_after_symbol",
-      "mcp__serena__insert_before_symbol",
-      "mcp__serena__list_dir",
-      "mcp__serena__replace_symbol_body",
-      "mcp__serena__search_for_pattern",
-      "mcp__serena__think_about_collected_information",
-      "mcp__pal__chat",
-      "mcp__pal__codereview",
       "WebSearch"
     ],
     "ask": [],
