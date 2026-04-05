@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`capy` is an MCP (Model Context Protocol) server and Claude Code plugin that solves context window flooding. Aims to achieve ~98% context reduction (315 KB to 5.4 KB) by keeping raw tool outputs in isolated subprocesses and indexing them into SQLite FTS5 with BM25 ranking. Large command outputs, log files, API responses, and documentation never enter the context window - only concise summaries and search results do.
+`capy` is an MCP (Model Context Protocol) server and Claude Code plugin that solves two main problems: context window flooding and persistent queryable memory. Capy aims to achieve ~98% context reduction (315 KB to 5.4 KB) by keeping raw tool outputs in isolated subprocesses and indexing them into SQLite FTS5 with BM25 ranking. Large command outputs, log files, API responses, and documentation never enter the context window - only concise summaries and search results do.
 
 It's a port of `context-mode` project written in Go, aiming to utilize Go's features to achieve even better context-reduction performance.
 
