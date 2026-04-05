@@ -17,12 +17,11 @@
   "extraKnownMarketplaces": {
     "claude-toolbox": {
       "source": {
-        "repo": "serpro69/claude-toolbox",
-        "source": "github"
+        "source": "github",
+        "repo": "serpro69/claude-toolbox"
       }
     }
   },
-  "model": "opus[1m]",
   "permissions": {
     "allow": [
       "Bash(cat:*)",

@@ -721,27 +721,40 @@ fetch_upstream_templates() {
     fi
   fi
 
-  # Configure sparse-checkout to fetch template files and sync infrastructure
+  # Configure sparse-checkout to fetch config dirs and sync infrastructure
   if ! git sparse-checkout init --cone --quiet 2>/dev/null; then
     log_warn "Sparse-checkout init failed, continuing with full checkout"
   fi
-  if ! git sparse-checkout set .github/templates .github/workflows/template-sync.yml .github/scripts/template-sync.sh docs/update.sh klaude-plugin/.claude-plugin/plugin.json --quiet 2>/dev/null; then
-    log_warn "Sparse-checkout set failed, templates may not exist at this version"
+  if ! git sparse-checkout set .claude .serena .github/workflows/template-sync.yml .github/scripts/template-sync.sh docs/update.sh klaude-plugin/.claude-plugin/plugin.json --quiet 2>/dev/null; then
+    log_warn "Sparse-checkout set failed, config dirs may not exist at this version"
   fi
 
   cd - >/dev/null
 
-  # Verify templates directory exists
-  FETCHED_TEMPLATES_PATH="$work_dir/upstream/.github/templates"
-  if [[ ! -d "$FETCHED_TEMPLATES_PATH" ]]; then
-    log_error "Templates directory not found in upstream at version: $version"
-    log_error "Expected path: .github/templates"
-    log_error "The upstream repository may not have templates at this version,"
+  # Build a staging structure with claude/ and serena/ subdirs (without dot prefix)
+  # so the downstream substitution and comparison pipeline works unchanged.
+  FETCHED_TEMPLATES_PATH="$work_dir/fetched"
+  mkdir -p "$FETCHED_TEMPLATES_PATH"
+
+  local upstream_root="$work_dir/upstream"
+  if [[ -d "$upstream_root/.claude" ]]; then
+    cp -rp "$upstream_root/.claude" "$FETCHED_TEMPLATES_PATH/claude"
+    # settings.local.json is per-repo and must never be synced downstream
+    rm -f "$FETCHED_TEMPLATES_PATH/claude/settings.local.json"
+  fi
+  if [[ -d "$upstream_root/.serena" ]]; then
+    cp -rp "$upstream_root/.serena" "$FETCHED_TEMPLATES_PATH/serena"
+  fi
+
+  if [[ ! -d "$FETCHED_TEMPLATES_PATH/claude" && ! -d "$FETCHED_TEMPLATES_PATH/serena" ]]; then
+    log_error "Config directories not found in upstream at version: $version"
+    log_error "Expected .claude/ and/or .serena/ in the upstream repository."
+    log_error "The upstream repository may not have these directories at this version,"
     log_error "or the repository structure has changed."
     exit 1
   fi
 
-  log_success "Fetched templates from $upstream @ $version"
+  log_success "Fetched config from $upstream @ $version"
 }
 
 # =============================================================================
@@ -790,12 +803,31 @@ apply_substitutions() {
   # --- Claude Code Settings (claude/settings.json) ---
   local cc_settings_file="$output_dir/claude/settings.json"
   if [[ -f "$cc_settings_file" ]]; then
-    # Use downstream's settings.json as the base if it exists, so we only
-    # modify managed keys and avoid key-reordering noise in diffs.
+    # Smart-merge upstream template into downstream's settings.json.
+    # Downstream is "master": existing values are never overwritten.
+    # Upstream fills gaps: new keys/array entries are added.
     # Falls back to the upstream template copy for first-time sync.
     local downstream_settings=".claude/settings.json"
     if [[ -f "$downstream_settings" ]]; then
-      cp "$downstream_settings" "$cc_settings_file"
+      # $cc_settings_file contains the upstream template copy at this point.
+      # Read downstream as jq input, upstream via --slurpfile.
+      if jq --slurpfile upstream "$cc_settings_file" '
+        def smart_merge($u):
+          if (type == "object") and ($u | type == "object") then
+            reduce ($u | keys[]) as $k (.;
+              if has($k) then .[$k] = (.[$k] | smart_merge($u[$k]))
+              else .[$k] = $u[$k] end)
+          elif (type == "array") and ($u | type == "array") then
+            . as $d | . + [$u[] | select(. as $i | $d | index($i) | not)]
+          else . end;
+        smart_merge($upstream[0])
+      ' "$downstream_settings" > "${cc_settings_file}.tmp"; then
+        mv "${cc_settings_file}.tmp" "$cc_settings_file"
+      else
+        log_warn "Smart merge failed — downstream .claude/settings.json may contain invalid JSON"
+        log_warn "Falling back to upstream template for settings.json"
+        rm -f "${cc_settings_file}.tmp"
+      fi
     fi
 
     local statusline_script="statusline_enhanced.sh"
@@ -817,8 +849,10 @@ apply_substitutions() {
       if $cc_effort_level == "default" then del(.effortLevel) else .effortLevel = $cc_effort_level end |
       # Permission mode
       .permissions.defaultMode = $cc_permission_mode |
-      # Statusline script
-      .statusLine.command = (.statusLine.command | gsub("statusline_enhanced\\.sh"; $statusline_script)) |
+      # Statusline script (guard against null/missing statusLine)
+      (if (.statusLine.command | type) == "string" then
+        .statusLine.command |= gsub("statusline_enhanced\\.sh"; $statusline_script)
+      else . end) |
       # Plugin marketplace: directory -> github source for downstream
       .extraKnownMarketplaces."claude-toolbox".source = { "source": "github", "repo": $repo }
       ' "$cc_settings_file" > "${cc_settings_file}.tmp" && mv "${cc_settings_file}.tmp" "$cc_settings_file"

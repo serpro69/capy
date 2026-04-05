@@ -1,8 +1,8 @@
 {
   "schema_version": "1",
   "upstream_repo": "serpro69/claude-toolbox",
-  "template_version": "0640745d75db146187d12ead2bd1bc933c9f27bc",
-  "synced_at": "2026-03-28T13:32:23Z",
+  "template_version": "4d6ab3a18ffbf94c59291f8af1a476bee8453f7e",
+  "synced_at": "2026-04-05T11:49:52Z",
   "variables": {
     "PROJECT_NAME": "memories",
     "LANGUAGES": "go",
