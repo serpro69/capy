@@ -46,7 +46,7 @@ func newSetupCmd() *cobra.Command {
 			fmt.Printf("  - hooks registered in .claude/%s\n", target.SettingsFilename())
 			fmt.Println("  - MCP server registered in .mcp.json")
 			fmt.Println("  - routing instructions written to .claude/capy/CLAUDE.md")
-			fmt.Println("  - .capy/ added to .gitignore")
+			fmt.Println("  - .capy/** added to .gitignore")
 			fmt.Println("\nRun `capy doctor` to verify the installation.")
 			return nil
 		},

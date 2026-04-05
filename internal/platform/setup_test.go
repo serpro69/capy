@@ -148,7 +148,7 @@ func TestSetupIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	lines := 0
 	for _, line := range splitLines(string(gitignore)) {
-		if line == ".capy/" {
+		if line == ".capy/**" {
 			lines++
 		}
 	}
