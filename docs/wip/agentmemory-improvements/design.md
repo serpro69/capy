@@ -88,6 +88,7 @@ The space between parenthesized groups is implicit AND in FTS5. This is more pre
 
 - Applied to **both** Porter and trigram tables. Trigram tokenization handles substrings but cannot map abbreviations to full words (`"db"` shares no trigrams with `"database"`).
 - For trigram queries, the existing min-3-char filter still applies — short synonyms like `"db"` are dropped from trigram queries, which is fine since Porter handles them.
+- **Tokenization order:** The query is first cleaned of FTS5 special characters (same `ftsSpecialRe` used by the existing `sanitizeQuery`), then quoted phrases are detected and preserved intact (e.g., `"db config"` stays as a single FTS5 phrase — no synonym expansion). Only unquoted individual terms are expanded. This prevents breaking FTS5 phrase query syntax.
 - Synonyms are matched after lowercasing but before FTS5 quoting, so the Porter stemmer still applies to expanded terms.
 - The fuzzy correction pass runs after synonym expansion — if a term has synonyms, it's considered "known" and skipped by fuzzy correction.
 
@@ -162,10 +163,12 @@ When a large document is indexed (e.g., React docs with 200+ chunks), a broad se
 
 A post-RRF diversification pass caps results per source (by `SourceID`). After proximity reranking produces the final ranked list, walk the list and enforce a per-source cap:
 
+**Pre-condition: over-fetching.** The FTS5 queries in `rrfSearch` must fetch more candidates than the final `limit` to give diversification a meaningful pool. If the initial query returns only `limit` results and a single source dominates, the second pass has nothing to backfill with except the same skipped results. `rrfSearch` uses a fetch multiplier of 5× (i.e., `fetchLimit = requestedLimit * 5`), and the final truncation to `limit` happens after diversification in `SearchWithFallback`.
+
 1. **First pass:** Accept results in rank order until per-source cap is reached for a given label. Skip over-represented sources.
 2. **Second pass:** If fewer than `limit` results were selected, accept previously-skipped results to fill remaining slots.
 
-This ensures diversification never reduces total result count.
+This ensures diversification has a diverse candidate pool and never reduces total result count below `min(limit, totalCandidates)`.
 
 ### Parameters
 
@@ -197,11 +200,14 @@ A two-step process:
 
 **Step 1: Entity extraction** from the query string:
 - **Quoted phrases:** `"React useEffect"` → extract `React useEffect`
-- **Capitalized identifiers:** `ContentStore`, `FTS5`, `handleBatchExecute` → extracted
+- **Capitalized identifiers:** `ContentStore`, `FTS5`, `handleBatchExecute` → extracted via `\b[A-Z][a-zA-Z0-9_.-]+\b`
+- **Sentence-starter filter:** A single capitalized word at position 0 of the query that lacks identifier patterns (no underscores, dots, or interior capitals like camelCase) is treated as a sentence starter and excluded. E.g., `"Getting started with deploy"` → no entity (just "Getting"), but `"GetConfig options"` → entity `GetConfig` (camelCase signals an identifier).
 - **Stop words filtered:** `The`, `This`, `What`, `How`, `When`, `Where`, `Why`, `Who`, `Which`, `Did`, `Does`, `Do`, `Is`, `Are`, `Was`, `Were`, `Has`, `Have`, `Had`, `Can`, `Could`, `Would`, `Should`, `Will`, `May`, `Might`, `If`, `And`, `But`, `Or`, `Not`, `For`, `From`, `With`, `About`, `After`, `Before`, `Between`
 - **Minimum length:** 2 characters
 
-**Step 2: Post-RRF score boost.** For each result in the RRF-ranked list, check `SearchResult.Content` for case-insensitive exact substring matches of extracted entities. Boost formula: `FusedScore *= (1.0 + 0.3 * matchCount)`. Re-sort after boosting.
+Extraction is independent of the search query transformation (synonym expansion, FTS5 sanitization) and can be performed once at the start of `SearchWithFallback` before any query modification.
+
+**Step 2: Post-RRF score boost.** For each result in the RRF-ranked list, check `SearchResult.Content` for **word-boundary** matches of extracted entities (not plain substring — prevents `"DB"` from matching inside `"sandbox"`). For single-word entities, use case-sensitive matching to respect the user's casing intent. For multi-word quoted phrases, match case-insensitively. Boost formula: `FusedScore *= (1.0 + 0.3 * min(matchCount, 5))` — capped at 5 matches (max 2.5× boost) to prevent a single frequently-mentioned entity from overwhelming RRF normalization. Re-sort after boosting.
 
 ### When it activates
 
@@ -245,11 +251,11 @@ Where:
   - Mixed (code + prose): 0.6 base
   - Prose: 0.5 base
   - Access bonus: `min(0.2, accessCount × 0.02)` — caps at 10 accesses
-- **λ (lambda)** = 0.01 — temporal decay rate
-  - 7 days: decay factor 0.93
-  - 30 days: 0.74
-  - 90 days: 0.41
-  - 180 days: 0.17
+- **λ (lambda)** = 0.045 — temporal decay rate, calibrated so never-accessed code (salience 0.7) reaches the evictable threshold (~0.15) at ~35 days, consistent with the existing cold tier boundary
+  - 7 days: decay factor 0.73
+  - 30 days: 0.26
+  - 60 days: 0.07
+  - 90 days: 0.02
 - **accessBoost** = `1 / (1 + daysSinceLastAccess)` — recent access strongly counters age decay
 - **σ (sigma)** = 0.3 — weight of access boost
 
@@ -264,13 +270,14 @@ Where:
 ### What changes
 
 - `classifyTier()` → computes retention score and maps to tier
-- `Cleanup()` → uses `score < 0.15 AND access_count == 0` for eviction candidates (preserving ADR-011's conservative policy)
+- `Cleanup()` → uses `score < 0.15 AND access_count == 0` for eviction candidates (preserving ADR-011's conservative never-accessed-only policy)
+- `Cleanup()` → drops the `maxAgeDays` parameter. The retention score formula with λ=0.045 subsumes the fixed-day threshold — never-accessed code becomes evictable at ~35 days, making a separate age cutoff redundant. **This amends ADR-011:** the `maxAgeDays` mechanism is replaced by the continuous decay; the conservative eviction principle (only evict never-accessed sources) is preserved.
+- `capy_cleanup` MCP tool schema → `max_age_days` parameter removed
 - `Stats()` → reports tier distribution using scored classification
 - `SourceInfo` → `Tier` field populated from computed score (no new fields)
 
 ### What doesn't change
 
-- `capy_cleanup` MCP tool API — same parameters, same behavior from the user's perspective
 - The conservative-only-evict-never-accessed policy (ADR-011) — retained as-is
 - Database schema — no new columns or tables
 

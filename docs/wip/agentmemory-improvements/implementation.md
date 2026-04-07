@@ -57,16 +57,16 @@ ContentStore.ClassifySources()
 
 **`internal/store/synonyms.go`:**
 
-- Define a package-level `var synonymMap map[string][]string` initialized in `init()`. The map key is each word in a synonym group (lowercased), the value is all other words in that group. For the group `["db", "database", "datastore"]`, the map has three entries: `"db" → ["database", "datastore"]`, `"database" → ["db", "datastore"]`, `"datastore" → ["db", "database"]`.
+- Define a package-level `var synonymMap map[string][]string` initialized in `init()`. The map key is each word in a synonym group (lowercased), the value is all other words in that group. For the group `["db", "database", "datastore"]`, the map has three entries: `"db" → ["database", "datastore"]`, `"database" → ["db", "datastore"]`, `"datastore" → ["db", "database"]`. The `init()` function panics if any term appears in multiple synonym groups (prevents silent overwrites when extending the list).
 - Export function `ExpandSynonyms(term string) []string` — returns synonyms for the lowercased term, or nil if no match.
 - Export function `HasSynonym(term string) bool` — used by fuzzy correction to skip known terms.
 
 **`internal/store/search.go`:**
 
-- New unexported function `sanitizeQueryWithSynonyms(query string) string` — tokenizes, expands each term, wraps synonym groups in FTS5 parentheses `("term" OR "syn1" OR "syn2")`, joins groups with space (implicit AND in FTS5).
+- New unexported function `sanitizeQueryWithSynonyms(query string) string` — applies `ftsSpecialRe` cleanup, detects and preserves quoted phrases intact (passed through as FTS5 exact phrase matches), tokenizes remaining unquoted terms, expands each via `ExpandSynonyms`, wraps synonym groups in FTS5 parentheses `("term" OR "syn1" OR "syn2")`, joins groups with space (implicit AND in FTS5).
 - New unexported function `sanitizeTrigramWithSynonyms(query string) string` — same logic but applies the existing trigram min-3-char filter to each term/synonym.
 - `rrfSearch` calls the new functions instead of `sanitizeQuery`/`sanitizeTrigramQuery`.
-- **Fallback:** If the grouped AND query returns zero results from both layers, re-run with flat OR (current behavior). This is done by checking the combined result count before RRF fusion. If zero, re-query with the original `sanitizeQuery`/`sanitizeTrigramQuery`.
+- **Fallback:** `SearchWithFallback` calls `rrfSearch` with the synonym-expanded query. If the result count is zero (checked after `rrfSearch` returns, before the fuzzy merge), `SearchWithFallback` re-calls `rrfSearch` with the original flat-OR query (using existing `sanitizeQuery`/`sanitizeTrigramQuery`). This keeps fallback logic in `SearchWithFallback` (which already orchestrates the fuzzy fallback) and avoids adding branching inside `rrfSearch`. To support this, `rrfSearch` accepts pre-sanitized Porter and trigram query strings as parameters rather than calling sanitize functions internally.
 - `fuzzyCorrectWord` — add early return if `HasSynonym(word)` is true (synonym-known words don't need fuzzy correction).
 
 ### Testing
@@ -96,7 +96,8 @@ ContentStore.ClassifySources()
 
 - Package-level `var secretPatterns []*regexp.Regexp` compiled in `init()`.
 - Private tag pattern compiled separately: `(?is)<private>.*?</private>`.
-- Export function `StripSecrets(content string) string` — applies private tag stripping first, then all secret patterns. Replacements: private tags → `[REDACTED]`, secrets → `[REDACTED_SECRET]`.
+- Export function `StripSecrets(content string) string` — applies private tag stripping first, then all secret patterns. Replacements: private tags → `[REDACTED]`, secrets → `[REDACTED_SECRET]`. Returns the sanitized string and a `bool` indicating whether any redaction occurred. When redaction occurs, log at debug level: pattern type and match count (never the matched content itself).
+- For the private tag regex, guard with `strings.Contains(content, "<private>")` before running `(?is)<private>.*?</private>` — avoids expensive regex evaluation on the common case where no private tags are present.
 - Patterns are compiled once at init — no per-call regex compilation.
 
 **`internal/store/index.go`:**
@@ -116,13 +117,15 @@ ContentStore.ClassifySources()
   - `TestStripMultiplePatterns` — content with several different secret types
   - `TestPreservesNonSecrets` — normal code/text passes through unchanged
   - `TestShortTokensNotStripped` — short strings that look like prefixes but aren't long enough
+  - `TestFalsePositiveStructLiteral` — Go struct literal like `token: "SomeLongTestValueForMocking"` is not redacted
+  - `TestFalsePositiveMockToken` — test code with mock tokens (e.g., `testToken := "abcdef..."`) is not redacted unless it matches a known prefix pattern
 - Integration: add a test in `internal/store/search_test.go` or `store_test.go` verifying that indexing content containing a secret results in the secret being absent from search results
 
 ## Feature 3: Per-Source Result Diversification
 
 ### Files to modify
 
-- `internal/store/search.go` — add diversification function, integrate into `rrfSearch`
+- `internal/store/search.go` — add diversification function, integrate into `SearchWithFallback`
 - `internal/store/types.go` — add `MaxPerSource` field to `SearchOptions`
 
 ### Implementation details
@@ -133,7 +136,8 @@ ContentStore.ClassifySources()
   - First pass: walk results in rank order, count per `SourceID`. Skip results where count >= `maxPerSource`.
   - Second pass: if selected < limit, fill with previously-skipped results.
   - Return selected slice.
-- Call `diversifyBySource` in `SearchWithFallback` after `mergeRRFResults` (fuzzy merge) and before entity boosting. This ensures diversification sees the full candidate set and is applied exactly once. Do **not** call inside `rrfSearch` (would run twice and be undone by fuzzy merge).
+- **Over-fetching:** `rrfSearch` uses a fetch multiplier of 5× (`fetchLimit = requestedLimit * 5`) to ensure diversification has a meaningful candidate pool. Without this, a single dominant source could fill all `limit` slots, leaving the second pass with nothing to backfill.
+- Call `diversifyBySource` in `SearchWithFallback` after `mergeRRFResults` (fuzzy merge) and before entity boosting. This ensures diversification sees the full candidate set and is applied exactly once. Do **not** call inside `rrfSearch` (would run twice and be undone by fuzzy merge). Final truncation to the requested `limit` happens after diversification.
 - Default `maxPerSource`: 2 (when `SearchOptions.MaxPerSource` is 0).
 
 **`internal/store/types.go`:**
@@ -166,13 +170,15 @@ ContentStore.ClassifySources()
 - Export function `ExtractEntities(query string) []string`:
   - Extract quoted strings via regex `"([^"]+)"`.
   - Extract capitalized identifiers via regex `\b[A-Z][a-zA-Z0-9_.-]+\b`.
+  - **Sentence-starter filter:** A single capitalized word at position 0 that lacks identifier patterns (no underscores, dots, or interior capitals) is excluded.
   - Filter stop words.
   - Filter length < 2.
   - Deduplicate and return.
 - Export function `BoostByEntities(results []SearchResult, entities []string) []SearchResult`:
   - If no entities, return results unchanged.
-  - For each result, count case-insensitive substring matches of entities in `result.Content`.
-  - Multiply `FusedScore` by `(1.0 + 0.3 * matchCount)`.
+  - For each result, count **word-boundary** matches of entities in `result.Content`. Single-word entities use case-sensitive matching; multi-word quoted phrases use case-insensitive matching. This prevents short entities like `"DB"` from matching inside words like `"sandbox"`.
+  - Cap `matchCount` at 5 (max boost of 2.5×).
+  - Multiply `FusedScore` by `(1.0 + 0.3 * min(matchCount, 5))`.
   - Re-sort by FusedScore descending.
   - Return.
 
@@ -192,6 +198,10 @@ ContentStore.ClassifySources()
   - `TestBoostWithEntities` — results containing entity get higher score
   - `TestBoostNoEntitiesPassthrough` — no entities → results unchanged
   - `TestBoostResortsResults` — lower-ranked result with entity match moves up
+  - `TestExtractSentenceStarter` — `Getting started with deploy` → `[]` (sentence starter excluded)
+  - `TestExtractCamelCaseNotFiltered` — `GetConfig options` → `["GetConfig"]` (camelCase preserved)
+  - `TestBoostWordBoundary` — entity `"DB"` does not boost result containing only `"sandbox"`
+  - `TestBoostMatchCountCapped` — entity mentioned 50 times → matchCount capped at 5
 
 ## Feature 5: Retention-Scored Cleanup
 
@@ -207,13 +217,13 @@ ContentStore.ClassifySources()
 - New unexported function `retentionScore(src SourceInfo, now time.Time) float64`:
   - Compute salience from content type: if `src.CodeChunkCount > 0 && src.CodeChunkCount == src.ChunkCount` → 0.7, if `src.CodeChunkCount > 0` → 0.6, else 0.5.
   - Add access bonus: `min(0.2, float64(src.AccessCount) * 0.02)`.
-  - Compute temporal decay: `math.Exp(-0.01 * daysSinceIndexed)`.
+  - Compute temporal decay: `math.Exp(-0.045 * daysSinceIndexed)`.
   - Compute access boost: `1.0 / (1.0 + daysSinceLastAccess)`. If `LastAccessedAt` is zero, access boost is 0.
   - Return `salience * temporalDecay + 0.3 * accessBoost`.
 - Replace `classifyTier(lastAccessed time.Time, now time.Time) string` with `classifyTier(src SourceInfo, now time.Time) string` — calls `retentionScore` and maps to tier string using thresholds (hot >= 0.7, warm >= 0.4, cold >= 0.15, "evictable" below).
 - Update `ClassifySources()` — passes full `SourceInfo` to `classifyTier`.
 - Update `Cleanup()` — eviction candidates are sources with `retentionScore < 0.15 AND access_count == 0`. **Important:** The current code checks `Tier != "cold"` to skip non-candidates — this must be updated to also accept "evictable" (or switch to score-based check directly).
-- Update `Stats()` — the current switch handles only "hot", "warm", "cold". Add "evictable" case (either as a new `EvictableCount` field on `StoreStats` or folded into `ColdCount`). Update the `SourceInfo.Tier` comment in `types.go` to list all four tier values.
+- Update `Stats()` — the current switch handles only "hot", "warm", "cold". Add "evictable" case as a new `EvictableCount` field on `StoreStats` (dedicated field preferred over folding into `ColdCount` — consistent with the observability goal of exposing `RetentionScore`). Update the `SourceInfo.Tier` comment in `types.go` to list all four tier values.
 - Populate `SourceInfo.RetentionScore` during `ClassifySources()` for observability in `capy_stats`.
 
 **`internal/store/types.go`:**
