@@ -1,0 +1,53 @@
+Review Summary (Isolated Mode)
+
+  Reviewers: code-reviewer (Claude sub-agent), pal codereview (gemini-3-pro-preview)
+  Files reviewed: 5 files, 334 lines changed
+
+  ---
+  Corroborated Findings
+
+  (Both reviewers flagged -- highest signal)
+
+  - ✅ [internal/sanitize/sanitize.go:56] Private-tag guard misses mixed-case variants <corroborated>
+    - code-reviewer: P1 | Confidence: 95% -- The 3-way strings.Contains check covers <private>, <PRIVATE>, <Private> but the regex is (?is) (case-insensitive). Any other   casing like <pRiVaTe> skips the regex entirely, leaving secrets exposed.
+    - pal: HIGH -- Same finding. Suggests removing the guard entirely since RE2 handles literal prefix detection efficiently.
+    - Author context: The fast-path guard was specified in the design doc to avoid expensive regex on the common case. The bug is that the guard is incomplete. Fix:   strings.Contains(strings.ToLower(content), "<private>") preserves the fast-path optimization while being correct. The ToLower call is O(n) but so is strings.Contains -- net   cost is one extra pass on content containing private tags, which is rare.
+
+  ---
+  Code Reviewer Findings
+
+  - ✅ [internal/sanitize/sanitize.go:28] Slack pattern has no minimum length
+    - Severity: P1 | Confidence: 90%
+    - xoxb-[A-Za-z0-9\-]+ matches as short as xoxb-a. All other vendor patterns enforce concrete minimums. Real Slack tokens are 50+ chars.
+    - Author context: I followed the design doc's regex literally. A floor of {10,} is reasonable and consistent with the other patterns.
+  - ✅ [internal/sanitize/sanitize.go:44] Generic auth keyword creates false-positive surface
+    - Severity: P2 | Confidence: 75%
+    - auth as a bare alternation matches in non-secret contexts. The 20-char minimum on the value side mitigates but doesn't eliminate the risk.
+    - Author context: The 20-char minimum already filters most false positives. Tightening to auth[_-]?(?:token|key|secret|credential) would be more precise without losing   real matches. Worth doing.
+  - ✅ [internal/sanitize/sanitize_test.go:56] Test suite doesn't catch the guard bug
+    - Severity: P2 | Confidence: 100%
+    - TestStripPrivateTagCaseInsensitive only tests <PRIVATE>, which is in the hardcoded list. Need a test with casing not in the three guards.
+  - ✅ [internal/sanitize/sanitize.go:22] Inconsistent \- escaping in character classes
+    - Severity: P3 | Confidence: 100%
+    - Some patterns use \-, others use -. Purely cosmetic but noisy.
+
+  ---
+  External Review Findings
+
+  - ✅ (comment in code) [internal/sanitize/sanitize.go:44] Generic regex consumes key name + operator in replacement
+    - pal: HIGH -- Pattern replaces api_key=<secret> with [REDACTED_SECRET], consuming the key name and operator. Suggests capture groups to preserve structure:   ${1}[REDACTED_SECRET]${3}.
+    - Author context: This is partially valid. For well-formed JSON ("api_key": "..."), the regex does NOT match because " sits between the key and :. For env-style   (API_KEY=...) and YAML (api_key: ...), the key name is consumed. Since this is FTS5 content (not parsed structured data), losing the key name is a minor searchability   degradation, not a correctness bug. The capture-group approach would preserve context. I'd rate this P2 rather than HIGH.
+  - ❌ [internal/sanitize/sanitize.go:44] Missing := support for Go assignments
+    - pal: HIGH -- apiKey := "longSecret..." won't match because \s*[=:] doesn't handle :=.
+    - Author context: Capy primarily indexes command output, log files, and documentation -- not Go source code. Source files are indexed only if a user explicitly pipes them   through capy_index. This is a P3 edge case, not a HIGH finding.
+  - ✅ (comment in code) [internal/sanitize/sanitize.go:61] 12 sequential regex scans on every indexed document
+    - pal: MEDIUM -- Suggests combining into a single OR'd regex.
+    - Author context: Premature optimization. RE2 alternation with 12 branches of varying complexity can be slower than sequential scans for small-to-medium content. The   current approach is clear and maintainable. No benchmarks suggest this is a bottleneck. Would only revisit if profiling shows it.
+  - ❌ [internal/store/index.go:64] Error handling on existing source lookup
+    - pal: LOW -- Pre-existing code, not part of this diff. Out of scope.
+
+  ---
+  Author-Sourced Findings
+
+  - ❌ [internal/sanitize/sanitize.go:40] JWT pattern has no upper bound <author-sourced>
+    - eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,} could over-match on very long base64 strings that happen to have two dots. Real JWTs are typically 100-800   chars. Low risk in practice since base64 strings with two dots in the right positions are uncommon outside JWTs.
