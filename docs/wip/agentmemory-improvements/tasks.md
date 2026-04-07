@@ -78,3 +78,12 @@
 - [ ] Run `solid-code-review` with `go` — review all new and modified code
 - [ ] Run `implementation-review` — verify implementation matches design.md and implementation.md
 - [ ] Run `documentation-process` — update CONTRIBUTING.md if needed (new `internal/sanitize` package in project structure), no other doc changes expected
+
+## Task 7: Post-Implementation Improvements
+
+**Status:** pending
+**Dependencies:** Task 6
+**Docs section:** [design.md → Addendum](./design.md#addendum-post-implementation-improvements)
+
+- [ ] Run `analysis-process` on the design addendum improvements (currently: Improvement A — synonym-aware proximity reranking). Produce `implementation-v2.md` and `tasks-v2.md` with detailed implementation steps
+- [ ] Execute `tasks-v2.md` via `implementation-process`

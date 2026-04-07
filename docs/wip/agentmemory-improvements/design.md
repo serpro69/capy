@@ -288,3 +288,28 @@ Where:
 **Ebbinghaus-style spaced repetition (agentmemory's full model):** agentmemory tracks per-access timestamps and uses a sum-of-reinforcements model. Rejected as over-engineered for capy's use case — capy already stores `access_count` and `last_accessed_at` which provide sufficient signal. The formula above captures the same intuition (frequent recent access = high retention) without requiring per-access timestamp storage.
 
 **Changing the conservative policy to evict low-scoring accessed sources:** Rejected per ADR-011's rationale. A source accessed 50 times but dormant for 60 days still has value. If aggressive cleanup is ever needed, it should be opt-in via a flag, not the default.
+
+---
+
+## Addendum: Post-Implementation Improvements
+
+Discovered during Task 1 code review. These are enhancements to the core features above, not new features. To be designed and implemented after the core tasks (1–5) are complete.
+
+### Improvement A: Synonym-Aware Proximity Reranking
+
+**Affects:** Feature 1 (Domain Synonym Expansion) × proximity reranking system
+
+**Problem:** `proximityRerank` operates on the raw query terms and looks for them literally in result content. When a document matches via synonym expansion (e.g., query `"k8s config"`, document contains `"kubernetes configuration"`), the proximity reranker can't find `"k8s"` in the content and skips the proximity boost. The document still ranks via RRF fusion but misses the proximity multiplier (up to ~2×).
+
+The behavior is also inconsistent: if the original term happens to be a substring of the synonym (e.g., `"config"` inside `"configuration"`), proximity partially works via `strings.Contains`. But `"k8s"` inside `"kubernetes"` doesn't match.
+
+**Impact:** Limited to multi-term queries where the document uses synonym forms and the original terms aren't substrings. Single-term queries skip proximity entirely. RRF fusion still provides reasonable ranking without the boost. Confirmed during isolated code review (corroborated by both code-reviewer and pal).
+
+**Proposed fix:**
+
+1. In `proximityRerank`, expand each raw query term via `ExpandSynonyms` to build term groups: `[["k8s", "kubernetes", "kube"], ["config", "configuration", "configuring"]]`
+2. Modify `findMinSpanFromHighlights` to accept `[][]string` — match highlighted text against any term in the group
+3. Modify the content fallback to find positions of all terms in each group, merge and sort position lists, then compute min span
+4. Update tests for the new `[][]string` signature
+
+**Scope:** ~50–80 lines in `search.go`, changes to `proximityRerank`, `findMinSpanFromHighlights`, and content fallback. Affects all searches (hot path), so requires careful testing.

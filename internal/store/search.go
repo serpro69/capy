@@ -147,6 +147,9 @@ func (s *ContentStore) rrfSearch(porterQuery, trigramQuery, rawQuery string, lim
 	}
 
 	// Apply proximity reranking for multi-term queries.
+	// Known limitation: proximity uses rawQuery terms, so synonym-matched
+	// results (e.g., query "k8s" matching "kubernetes" in content) don't
+	// receive proximity boost. See design.md addendum for planned fix.
 	fused = proximityRerank(fused, rawQuery)
 
 	if len(fused) > limit {

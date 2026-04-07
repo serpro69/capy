@@ -44,7 +44,7 @@
   - ✅ (with additions) [search.go:39-50] Fallback and fuzzy passes lose synonym expansion — HIGH
     - The OR fallback uses sanitizeQuery(query, "OR") which doesn't expand synonyms. A query like "authn deploy" falls back to flat "authn" OR "deploy", losing the   "authentication" synonym.
     - Author context: This is by design. The fallback exists for the case where AND grouping is too restrictive (only one of two terms exists in the corpus). Using flat OR   without synonyms is intentional — it's the widest net. The fuzzy pass also intentionally uses flat OR because it operates on corrected terms, not the originals. However, I   can see an argument for synonym-expanding the OR fallback too. Worth discussing.
-  - [search.go:177-210] Proximity reranking doesn't consider synonyms — HIGH
+  - ✅ [search.go:177-210] Proximity reranking doesn't consider synonyms — HIGH
     - If a document matched via synonym (query "k8s", content has "kubernetes"), proximity reranking won't find "k8s" in the content, so no proximity boost.
     - Author context: This is a real gap but has a design-level interaction. The proximity reranker operates on raw content text, not FTS5 tokens. The design doc notes:   "capy's existing proximity reranker naturally handles this — results where expanded terms appear close together score higher." This is partially true — if the synonyms   appear close together in content, they get boosted. But if the original query term doesn't appear, no boost. This is a valid enhancement but beyond the current task scope.   The impact is limited: synonym-matched results still rank via RRF fusion, just without the proximity bonus.
   - ✅ [synonyms.go:78] ExpandSynonyms returns mutable slice reference — MEDIUM
