@@ -111,7 +111,7 @@ Capy indexes raw content directly into SQLite FTS5. If a user pipes `.env` conte
 
 ### Design
 
-A new `internal/sanitize/` package provides a `StripSecrets(content string) string` function. It replaces detected secret patterns with `[REDACTED]` placeholders using compiled Go regexes.
+A new `internal/sanitize/` package provides a `StripSecrets(content string) string` function. It replaces detected secret patterns with `[REDACTED_SECRET]` placeholders (or `[REDACTED]` for private tags) using compiled Go regexes.
 
 **Patterns detected** (ported from `agentmemory/src/functions/privacy.ts`):
 
@@ -160,7 +160,7 @@ When a large document is indexed (e.g., React docs with 200+ chunks), a broad se
 
 ### Design
 
-A post-RRF diversification pass caps results per source label. After proximity reranking produces the final ranked list, walk the list and enforce a per-source cap:
+A post-RRF diversification pass caps results per source (by `SourceID`). After proximity reranking produces the final ranked list, walk the list and enforce a per-source cap:
 
 1. **First pass:** Accept results in rank order until per-source cap is reached for a given label. Skip over-represented sources.
 2. **Second pass:** If fewer than `limit` results were selected, accept previously-skipped results to fill remaining slots.
@@ -175,7 +175,7 @@ This ensures diversification never reduces total result count.
 
 ### Where applied
 
-In `rrfSearch` in `internal/store/search.go`, after proximity reranking and before the final `[:limit]` truncation. Applied to both direct and fuzzy-corrected RRF passes. The `mergeRRFResults` function (which deduplicates primary + fuzzy results) runs before diversification, so the diversification sees the full candidate set.
+In `SearchWithFallback` in `internal/store/search.go`, after `mergeRRFResults` (which deduplicates primary + fuzzy results) and before entity boosting. This placement ensures diversification sees the full candidate set from both direct and fuzzy-corrected RRF passes, and is applied exactly once (not separately inside `rrfSearch` where it would run twice and be undone by the fuzzy merge).
 
 ### Alternatives considered
 
@@ -210,6 +210,8 @@ Only when extraction finds at least one entity. For plain lowercase queries like
 ### Where applied
 
 After diversification (Feature 3) and before returning results. The ordering is: RRF fusion → proximity rerank → diversification → entity boost → final truncation.
+
+**Interaction with diversification:** Entity boosting re-sorts results by `FusedScore`, which can reorder diversified results and push multiple results from the same source back to the top. This is intentional — entity matches are a stronger relevance signal than source diversity. When a user searches for a specific identifier like `"ContentStore FTS5"`, results that match both entities should rank highest regardless of source. Diversification remains the default ordering; entity boosting is a targeted override for queries with high-specificity terms.
 
 ### Alternatives considered
 
