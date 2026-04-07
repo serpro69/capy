@@ -515,3 +515,138 @@ func TestSearchContentTypeFilter(t *testing.T) {
 	assert.GreaterOrEqual(t, len(allResults), len(codeResults),
 		"unfiltered search should return at least as many results as filtered")
 }
+
+// --- Synonym expansion ---
+
+func TestSynonymExpansionPorter(t *testing.T) {
+	s := newTestStore(t)
+
+	// Index content mentioning "database performance" — search "db perf" should match.
+	_, err := s.Index(
+		"# Database Performance\n\nOptimize database performance with proper indexing strategies.\n\n"+
+			"## Bottlenecks\n\nIdentify database latency bottlenecks in production.",
+		"db-perf-doc",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	results, err := s.SearchWithFallback("db perf", 5, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results, "synonym expansion should find 'database performance' when searching 'db perf'")
+	assert.Contains(t, strings.ToLower(results[0].Content), "database",
+		"result should contain 'database' (synonym of 'db')")
+}
+
+func TestSynonymExpansionTrigram(t *testing.T) {
+	s := newTestStore(t)
+
+	// "kubernetes" has trigram-matchable length; searching "k8s" should find it via synonym expansion.
+	_, err := s.Index(
+		"# Kubernetes Setup\n\nDeploy your kubernetes cluster with proper configuration.\n\n"+
+			"## Scaling\n\nKubernetes horizontal pod autoscaler manages workload scaling.",
+		"k8s-doc",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	results, err := s.SearchWithFallback("kubernetes", 5, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results, "direct search for 'kubernetes' should find results")
+
+	// Now search with abbreviation.
+	results2, err := s.SearchWithFallback("k8s", 5, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results2, "synonym expansion should find 'kubernetes' when searching 'k8s'")
+}
+
+func TestSynonymFallbackToOR(t *testing.T) {
+	s := newTestStore(t)
+
+	// Index content with only "authentication" — search "auth deploy" where only
+	// "auth" has matches. The AND grouping will fail; fallback to OR should succeed.
+	_, err := s.Index(
+		"# Authentication Guide\n\nThe authentication module handles user identity verification.\n\n"+
+			"## Tokens\n\nJWT tokens are used for stateless authentication.",
+		"auth-only",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	results, err := s.SearchWithFallback("auth deploy", 5, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results,
+		"fallback to OR should return results when only one synonym group matches")
+}
+
+func TestSynonymSkipsFuzzy(t *testing.T) {
+	s := newTestStore(t)
+	indexTestContent(t, s)
+
+	// "perf" is a synonym-known term. fuzzyCorrectWord should return "" for it
+	// (no correction), even if a similar vocabulary word exists.
+	fix := s.fuzzyCorrectWord("perf")
+	assert.Empty(t, fix, "synonym-known term 'perf' should not be fuzzy-corrected")
+
+	fix2 := s.fuzzyCorrectWord("auth")
+	assert.Empty(t, fix2, "synonym-known term 'auth' should not be fuzzy-corrected")
+}
+
+func TestNoSynonymPassthrough(t *testing.T) {
+	s := newTestStore(t)
+
+	// Index content with a unique term that has no synonyms.
+	_, err := s.Index(
+		"# Widget Architecture\n\nThe widget subsystem handles rendering.\n\n"+
+			"## Lifecycle\n\nWidgets follow a mount-update-unmount lifecycle.",
+		"widget-doc",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	results, err := s.SearchWithFallback("widget", 5, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results, "terms without synonyms should still match normally")
+	assert.Contains(t, strings.ToLower(results[0].Content), "widget")
+}
+
+// --- Synonym sanitizer unit tests ---
+
+func TestSanitizeQueryWithSynonyms(t *testing.T) {
+	// Term with synonyms should produce OR group.
+	result := sanitizeQueryWithSynonyms("db")
+	assert.Contains(t, result, `"db"`)
+	assert.Contains(t, result, `"database"`)
+	assert.Contains(t, result, `"datastore"`)
+	assert.Contains(t, result, " OR ")
+	assert.Contains(t, result, "(")
+
+	// Term without synonyms should be quoted without grouping.
+	result2 := sanitizeQueryWithSynonyms("widget")
+	assert.Equal(t, `"widget"`, result2)
+
+	// Multi-term: space between groups = implicit AND.
+	result3 := sanitizeQueryWithSynonyms("db perf")
+	// Should have two parenthesized groups separated by space.
+	assert.Contains(t, result3, `("db"`)
+	assert.Contains(t, result3, `("perf"`)
+
+	// Empty/keyword-only queries return empty.
+	assert.Equal(t, "", sanitizeQueryWithSynonyms(""))
+	assert.Equal(t, "", sanitizeQueryWithSynonyms("AND OR"))
+}
+
+func TestSanitizeTrigramWithSynonyms(t *testing.T) {
+	// "db" is only 2 chars — dropped from trigram. But its synonyms >= 3 chars remain.
+	result := sanitizeTrigramWithSynonyms("db")
+	assert.NotContains(t, result, `"db"`, "2-char term should be dropped from trigram")
+	assert.Contains(t, result, `"database"`)
+	assert.Contains(t, result, `"datastore"`)
+
+	// Term with all synonyms >= 3 chars.
+	result2 := sanitizeTrigramWithSynonyms("perf")
+	assert.Contains(t, result2, `"perf"`)
+	assert.Contains(t, result2, `"performance"`)
+
+	// Short input returns empty.
+	assert.Equal(t, "", sanitizeTrigramWithSynonyms("ab"))
+}
