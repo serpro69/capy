@@ -111,7 +111,7 @@ func TestSearchPorterStemming(t *testing.T) {
 	require.NotEmpty(t, results)
 	// RRF: porter will find it; trigram may or may not. Accept either.
 	assert.True(t,
-		results[0].MatchLayer == "porter+OR" || results[0].MatchLayer == "rrf(porter+trigram)",
+		results[0].MatchLayer == "porter" || results[0].MatchLayer == "rrf(porter+trigram)",
 		"expected porter+OR or rrf(porter+trigram), got: %s", results[0].MatchLayer)
 }
 
@@ -162,7 +162,7 @@ func TestSearchRRF(t *testing.T) {
 	// "authentication" is long enough for trigram and matches porter stemming,
 	// so RRF should fuse results from both layers.
 	assert.True(t,
-		r1[0].MatchLayer == "rrf(porter+trigram)" || r1[0].MatchLayer == "porter+OR",
+		r1[0].MatchLayer == "rrf(porter+trigram)" || r1[0].MatchLayer == "porter",
 		"expected rrf or porter match, got: %s", r1[0].MatchLayer)
 	assert.Greater(t, r1[0].FusedScore, 0.0, "FusedScore should be set")
 
