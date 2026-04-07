@@ -113,8 +113,8 @@ func (s *ContentStore) rrfSearch(porterQuery, trigramQuery, rawQuery string, lim
 		}
 	}
 
-	addLayer(porterResults, "porter+OR")
-	addLayer(trigramResults, "trigram+OR")
+	addLayer(porterResults, "porter")
+	addLayer(trigramResults, "trigram")
 
 	// Flatten and sort by fused score descending.
 	fused := make([]SearchResult, 0, len(fusionMap))
