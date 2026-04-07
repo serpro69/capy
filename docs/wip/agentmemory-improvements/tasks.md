@@ -24,14 +24,14 @@
 
 ## Task 2: Secret Stripping Before Indexing
 
-**Status:** pending
+**Status:** done
 **Dependencies:** none
 **Docs section:** [implementation.md → Feature 2](./implementation.md#feature-2-secret-stripping)
 
-- [ ] Create `internal/sanitize/sanitize.go` with package-level compiled regexes (all 12 patterns from the design doc) in `init()`, and exported function `StripSecrets(content string) string`
-- [ ] Create `internal/sanitize/sanitize_test.go` with tests for: each individual pattern type, multiple patterns in one string, private tags, non-secrets preserved, short tokens not false-positived
-- [ ] Modify `ContentStore.Index()` in `internal/store/index.go` — add `content = sanitize.StripSecrets(content)` after `DetectContentType(content)` and before `contentHash(content)`. Add import for `internal/sanitize`
-- [ ] Add integration test in `internal/store/store_test.go` or `search_test.go`: index content containing a known secret pattern, then search for it, verify the secret is absent from results and replaced with `[REDACTED_SECRET]`
+- [x] Create `internal/sanitize/sanitize.go` with package-level compiled regexes (all 12 patterns from the design doc) in `init()`, and exported function `StripSecrets(content string) string`
+- [x] Create `internal/sanitize/sanitize_test.go` with tests for: each individual pattern type, multiple patterns in one string, private tags, non-secrets preserved, short tokens not false-positived
+- [x] Modify `ContentStore.Index()` in `internal/store/index.go` — add `content = sanitize.StripSecrets(content)` after `DetectContentType(content)` and before `contentHash(content)`. Add import for `internal/sanitize`
+- [x] Add integration test in `internal/store/store_test.go` or `search_test.go`: index content containing a known secret pattern, then search for it, verify the secret is absent from results and replaced with `[REDACTED_SECRET]`
 
 ## Task 3: Per-Source Result Diversification
 

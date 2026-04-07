@@ -675,3 +675,23 @@ func TestFuzzyCorrectedQueryGetsSynonymExpansion(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, results, "fuzzy correction should find results for misspelled synonym-known term")
 }
+
+func TestSecretStrippedBeforeIndexing(t *testing.T) {
+	s := newTestStore(t)
+
+	secret := "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+	content := fmt.Sprintf("# Config\n\nGitHub token: %s\n\nThis document describes deployment config.", secret)
+	_, err := s.Index(content, "config-with-secret", "markdown")
+	require.NoError(t, err)
+
+	// Search for deployment config — should find the document.
+	results, err := s.SearchWithFallback("deployment config", 5, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results, "should find indexed content by non-secret terms")
+
+	// Verify the secret is absent from all returned content.
+	for _, r := range results {
+		assert.NotContains(t, r.Content, secret, "secret should be redacted in search results")
+		assert.NotContains(t, r.Content, "ghp_", "secret prefix should not appear in results")
+	}
+}
