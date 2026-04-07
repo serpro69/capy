@@ -26,14 +26,28 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOp
 		return nil, err
 	}
 
-	// RRF pass 1: direct query.
-	results := s.rrfSearch(query, limit, opts)
+	// Build synonym-expanded queries for both layers.
+	synPorter := sanitizeQueryWithSynonyms(query)
+	synTrigram := sanitizeTrigramWithSynonyms(query)
+
+	// RRF pass 1: synonym-expanded query (implicit AND between groups).
+	results := s.rrfSearch(synPorter, synTrigram, query, limit, opts)
+
+	// Fallback: if synonym AND grouping returned zero results, retry with
+	// flat OR (original behavior) — one term in the corpus is enough.
+	if len(results) == 0 {
+		flatPorter := sanitizeQuery(query, "OR")
+		flatTrigram := sanitizeTrigramQuery(query, "OR")
+		results = s.rrfSearch(flatPorter, flatTrigram, query, limit, opts)
+	}
 
 	// RRF pass 2: fuzzy correction (only if pass 1 returned fewer than limit).
 	if len(results) < limit {
 		corrected := s.fuzzyCorrectQuery(query)
 		if corrected != "" && corrected != query {
-			fuzzyResults := s.rrfSearch(corrected, limit, opts)
+			fuzzyPorter := sanitizeQuery(corrected, "OR")
+			fuzzyTrigram := sanitizeTrigramQuery(corrected, "OR")
+			fuzzyResults := s.rrfSearch(fuzzyPorter, fuzzyTrigram, corrected, limit, opts)
 			for i := range fuzzyResults {
 				fuzzyResults[i].MatchLayer = "fuzzy+" + fuzzyResults[i].MatchLayer
 			}
@@ -51,8 +65,10 @@ const rrfK = 60 // standard RRF constant
 
 // rrfSearch runs porter and trigram searches concurrently, fuses results
 // using Reciprocal Rank Fusion, applies proximity reranking, and returns
-// the top results.
-func (s *ContentStore) rrfSearch(query string, limit int, opts SearchOptions) []SearchResult {
+// the top results. It accepts pre-sanitized FTS5 query strings for both
+// layers so the caller can control synonym expansion vs flat-OR fallback.
+// rawQuery is the original unsanitized query, used for proximity reranking.
+func (s *ContentStore) rrfSearch(porterQuery, trigramQuery, rawQuery string, limit int, opts SearchOptions) []SearchResult {
 	fetchLimit := max(limit*2, 10)
 
 	// Run both layers concurrently — SQLite WAL supports concurrent readers.
@@ -61,11 +77,15 @@ func (s *ContentStore) rrfSearch(query string, limit int, opts SearchOptions) []
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		porterResults = s.searchPorter(query, fetchLimit, opts)
+		if porterQuery != "" {
+			porterResults = s.execDynamicSearch("chunks", porterQuery, fetchLimit, opts)
+		}
 	}()
 	go func() {
 		defer wg.Done()
-		trigramResults = s.searchTrigramQuery(query, fetchLimit, opts)
+		if trigramQuery != "" {
+			trigramResults = s.execDynamicSearch("chunks_trigram", trigramQuery, fetchLimit, opts)
+		}
 	}()
 	wg.Wait()
 
@@ -116,7 +136,7 @@ func (s *ContentStore) rrfSearch(query string, limit int, opts SearchOptions) []
 	}
 
 	// Apply proximity reranking for multi-term queries.
-	fused = proximityRerank(fused, query)
+	fused = proximityRerank(fused, rawQuery)
 
 	if len(fused) > limit {
 		fused = fused[:limit]
@@ -304,22 +324,80 @@ func findMinSpan(positionLists [][]int) int {
 	return best
 }
 
-// searchPorter searches the Porter-stemmed FTS5 table (always OR mode).
-func (s *ContentStore) searchPorter(query string, limit int, opts SearchOptions) []SearchResult {
-	sanitized := sanitizeQuery(query, "OR")
-	if sanitized == "" {
-		return nil
+// sanitizeQueryWithSynonyms expands each query term via the synonym map and
+// wraps synonym groups in FTS5 parentheses with OR. Groups are joined by
+// space (implicit AND in FTS5).
+// Note: quoted phrase preservation is not yet implemented — all FTS5 special
+// characters (including quotes) are stripped before tokenization.
+func sanitizeQueryWithSynonyms(query string) string {
+	cleaned := ftsSpecialRe.ReplaceAllString(query, " ")
+	words := strings.Fields(cleaned)
+	var groups []string
+	for _, w := range words {
+		if w == "" || ftsKeywords[strings.ToUpper(w)] {
+			continue
+		}
+		syns := ExpandSynonyms(w)
+		if len(syns) == 0 {
+			groups = append(groups, `"`+w+`"`)
+		} else {
+			// Build OR group: ("term" OR "syn1" OR "syn2")
+			parts := make([]string, 0, len(syns)+1)
+			parts = append(parts, `"`+w+`"`)
+			for _, s := range syns {
+				parts = append(parts, `"`+s+`"`)
+			}
+			groups = append(groups, "("+strings.Join(parts, " OR ")+")")
+		}
 	}
-	return s.execDynamicSearch("chunks", sanitized, limit, opts)
+	if len(groups) == 0 {
+		return ""
+	}
+	// Space between groups = implicit AND in FTS5.
+	return strings.Join(groups, " ")
 }
 
-// searchTrigramQuery searches the trigram FTS5 table (always OR mode).
-func (s *ContentStore) searchTrigramQuery(query string, limit int, opts SearchOptions) []SearchResult {
-	sanitized := sanitizeTrigramQuery(query, "OR")
-	if sanitized == "" {
-		return nil
+// sanitizeTrigramWithSynonyms is like sanitizeQueryWithSynonyms but applies
+// the trigram min-3-char filter to each term and synonym.
+func sanitizeTrigramWithSynonyms(query string) string {
+	cleaned := trigramCleanRe.ReplaceAllString(query, " ")
+	cleaned = strings.TrimSpace(cleaned)
+	if cleaned == "" {
+		return ""
 	}
-	return s.execDynamicSearch("chunks_trigram", sanitized, limit, opts)
+	words := strings.Fields(cleaned)
+	var groups []string
+	for _, w := range words {
+		syns := ExpandSynonyms(w)
+		if len(syns) == 0 {
+			// No synonyms — apply min-3-char filter to the term itself.
+			if len(w) >= 3 {
+				groups = append(groups, `"`+w+`"`)
+			}
+		} else {
+			// Has synonyms — collect term + synonyms that pass min-3-char filter.
+			parts := make([]string, 0, len(syns)+1)
+			if len(w) >= 3 {
+				parts = append(parts, `"`+w+`"`)
+			}
+			for _, s := range syns {
+				if len(s) >= 3 {
+					parts = append(parts, `"`+s+`"`)
+				}
+			}
+			if len(parts) > 0 {
+				if len(parts) == 1 {
+					groups = append(groups, parts[0])
+				} else {
+					groups = append(groups, "("+strings.Join(parts, " OR ")+")")
+				}
+			}
+		}
+	}
+	if len(groups) == 0 {
+		return ""
+	}
+	return strings.Join(groups, " ")
 }
 
 // execDynamicSearch builds and executes a search query with dynamic WHERE clauses.
@@ -509,8 +587,12 @@ func (s *ContentStore) fuzzyCorrectQuery(query string) string {
 }
 
 // fuzzyCorrectWord finds the closest vocabulary word within edit distance.
-// Returns "" if no correction needed (exact match or no close candidate).
+// Returns "" if no correction needed (exact match, synonym-known, or no close candidate).
 func (s *ContentStore) fuzzyCorrectWord(word string) string {
+	// Synonym-known terms don't need fuzzy correction — they're expanded at query time.
+	if HasSynonym(word) {
+		return ""
+	}
 	maxDist := maxEditDistance(len(word))
 	minLen := len(word) - maxDist
 	maxLen := len(word) + maxDist
