@@ -101,7 +101,7 @@ ContentStore.ClassifySources()
 
 **`internal/store/index.go`:**
 
-- In `Index()`, after `DetectContentType(content)` and before `contentHash(content)`, add: `content = sanitize.StripSecrets(content)`.
+- **Code reorder required:** The current `Index()` calls `contentHash()` *before* `DetectContentType()`. Both must be moved below `StripSecrets()` so that: (1) content type is detected on original content, (2) secrets are stripped, (3) hash is computed on stripped content. The new order is: `DetectContentType(content)` → `content = sanitize.StripSecrets(content)` → `contentHash(content)`.
 - Import `"github.com/serpro69/capy/internal/sanitize"`.
 
 ### Testing
@@ -133,8 +133,7 @@ ContentStore.ClassifySources()
   - First pass: walk results in rank order, count per `SourceID`. Skip results where count >= `maxPerSource`.
   - Second pass: if selected < limit, fill with previously-skipped results.
   - Return selected slice.
-- Call `diversifyBySource` in `rrfSearch` after proximity reranking, before final `[:limit]` truncation.
-- Also call in `mergeRRFResults` — apply diversification to the merged primary+fuzzy results.
+- Call `diversifyBySource` in `SearchWithFallback` after `mergeRRFResults` (fuzzy merge) and before entity boosting. This ensures diversification sees the full candidate set and is applied exactly once. Do **not** call inside `rrfSearch` (would run twice and be undone by fuzzy merge).
 - Default `maxPerSource`: 2 (when `SearchOptions.MaxPerSource` is 0).
 
 **`internal/store/types.go`:**
@@ -213,7 +212,8 @@ ContentStore.ClassifySources()
   - Return `salience * temporalDecay + 0.3 * accessBoost`.
 - Replace `classifyTier(lastAccessed time.Time, now time.Time) string` with `classifyTier(src SourceInfo, now time.Time) string` — calls `retentionScore` and maps to tier string using thresholds (hot >= 0.7, warm >= 0.4, cold >= 0.15, "evictable" below).
 - Update `ClassifySources()` — passes full `SourceInfo` to `classifyTier`.
-- Update `Cleanup()` — eviction candidates are sources with `retentionScore < 0.15 AND access_count == 0`.
+- Update `Cleanup()` — eviction candidates are sources with `retentionScore < 0.15 AND access_count == 0`. **Important:** The current code checks `Tier != "cold"` to skip non-candidates — this must be updated to also accept "evictable" (or switch to score-based check directly).
+- Update `Stats()` — the current switch handles only "hot", "warm", "cold". Add "evictable" case (either as a new `EvictableCount` field on `StoreStats` or folded into `ColdCount`). Update the `SourceInfo.Tier` comment in `types.go` to list all four tier values.
 - Populate `SourceInfo.RetentionScore` during `ClassifySources()` for observability in `capy_stats`.
 
 **`internal/store/types.go`:**
