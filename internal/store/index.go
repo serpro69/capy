@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+
+	"github.com/serpro69/capy/internal/sanitize"
 )
 
 // Index indexes content into the knowledge base. It auto-detects
@@ -18,11 +20,15 @@ func (s *ContentStore) Index(content, label, contentType string) (*IndexResult, 
 		return nil, err
 	}
 
-	hash := contentHash(content)
-
 	if contentType == "" {
 		contentType = DetectContentType(content)
 	}
+
+	// Strip secrets before hashing so that re-indexing with new patterns
+	// produces a different hash and triggers an update.
+	content = sanitize.StripSecrets(content)
+
+	hash := contentHash(content)
 
 	// Chunk content before entering the transaction to minimize lock hold time.
 	chunks := chunkContent(content, contentType)
