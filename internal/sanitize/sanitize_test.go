@@ -16,7 +16,8 @@ func TestStripGenericKeyValue(t *testing.T) {
 		{"password", `password=SuperSecretPassword12345`},
 		{"credential", `credential: longCredentialValue12345678`},
 		{"api-key-dash", `api-key=someAPIKey12345678901234`},
-		{"auth", `auth=SomeAuthTokenValue1234567890`},
+		{"auth-token", `auth_token=SomeAuthTokenValue1234567890`},
+		{"auth-key", `auth-key=SomeAuthKeyValueThat1234567890`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -56,10 +57,18 @@ func TestStripGitHubFinegrainedPAT(t *testing.T) {
 }
 
 func TestStripSlackToken(t *testing.T) {
-	input := `SLACK_TOKEN=xoxb-123456789-abcdefghij`
+	input := `SLACK_TOKEN=xoxb-123456789012-abcdefghij`
 	got := StripSecrets(input)
 	if strings.Contains(got, "xoxb-") {
 		t.Errorf("Slack token not redacted: %q", got)
+	}
+}
+
+func TestSlackShortNotStripped(t *testing.T) {
+	input := `xoxb-short`
+	got := StripSecrets(input)
+	if got != input {
+		t.Errorf("short Slack fragment falsely redacted:\ninput:  %q\noutput: %q", input, got)
 	}
 }
 
@@ -147,10 +156,25 @@ func TestStripPrivateTag(t *testing.T) {
 }
 
 func TestStripPrivateTagCaseInsensitive(t *testing.T) {
-	input := `<PRIVATE>hidden</PRIVATE>`
-	got := StripSecrets(input)
-	if strings.Contains(got, "hidden") {
-		t.Errorf("case-insensitive private tag not redacted: %q", got)
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"all caps", `<PRIVATE>hidden</PRIVATE>`},
+		{"title case", `<Private>hidden</Private>`},
+		{"mixed case", `<pRiVaTe>hidden</pRiVaTe>`},
+		{"upper lower mix", `<priVATE>hidden</priVATE>`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := StripSecrets(tt.input)
+			if strings.Contains(got, "hidden") {
+				t.Errorf("case-insensitive private tag not redacted: %q", got)
+			}
+			if !strings.Contains(got, RedactedPrivate) {
+				t.Errorf("expected %s placeholder, got %q", RedactedPrivate, got)
+			}
+		})
 	}
 }
 
@@ -177,6 +201,15 @@ GITHUB_TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij
 	}
 	if strings.Contains(got, "internal note") {
 		t.Errorf("private tag not redacted")
+	}
+}
+
+func TestBareAuthNotStripped(t *testing.T) {
+	// "auth" alone should not trigger the generic pattern — only auth_token, auth_key, etc.
+	input := `auth=SomeAuthTokenValue1234567890`
+	got := StripSecrets(input)
+	if got != input {
+		t.Errorf("bare 'auth=' falsely redacted:\ninput:  %q\noutput: %q", input, got)
 	}
 }
 
