@@ -20,6 +20,10 @@ var synonymGroups = [][]string{
 	{"repo", "repository"},
 	{"req", "request"},
 	{"res", "response"},
+	// "ts" and "js" are kept bidirectional despite minor ambiguity (e.g., "ts"
+	// matching timestamp variables). In our dev-focused domain, the UX value of
+	// matching TypeScript/JavaScript far outweighs rare, low-ranked false positives.
+	// BM25 ranking naturally pushes incidental "ts" mentions below real TypeScript content.
 	{"ts", "typescript"},
 	{"js", "javascript"},
 	{"pg", "postgres", "postgresql"},
