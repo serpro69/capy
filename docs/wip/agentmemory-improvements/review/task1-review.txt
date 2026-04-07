@@ -33,7 +33,7 @@
     - Severity: P2 | Confidence: 75%
     - A TestSynonymGroupsNoDuplicates would catch issues at test time rather than crashing production.
     - Author context: Agree — cheap to add and makes the invariant explicitly tested.
-  - [synonyms.go:29-30] Hyphenated synonyms ("continuous-integration")
+  - ❌ [synonyms.go:29-30] Hyphenated synonyms ("continuous-integration")
     - Severity: P3 | Confidence: 60%
     - unicode61 tokenizer splits on hyphens, so "continuous-integration" becomes a phrase query for two tokens.
     - Author context: Verified — the schema uses tokenize='porter unicode61' which does split on hyphens. However, FTS5 phrase queries on hyphen-split tokens actually work   correctly: "continuous-integration" matches content where continuous and integration appear adjacent. So this is fine as-is.
