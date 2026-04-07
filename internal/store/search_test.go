@@ -37,7 +37,7 @@ func indexTestContent(t *testing.T, s *ContentStore) {
 
 // --- Query sanitization ---
 
-func TestSanitizeQuery(t *testing.T) {
+func TestSanitizePorterQuery(t *testing.T) {
 	tests := []struct {
 		query, mode, want string
 	}{
@@ -49,12 +49,12 @@ func TestSanitizeQuery(t *testing.T) {
 		{"single", "AND", `"single"`},
 	}
 	for _, tt := range tests {
-		got := sanitizeQuery(tt.query, tt.mode)
-		assert.Equal(t, tt.want, got, "sanitizeQuery(%q, %q)", tt.query, tt.mode)
+		got := sanitizePorterQuery(tt.query, tt.mode, false)
+		assert.Equal(t, tt.want, got, "sanitizePorterQuery(%q, %q, false)", tt.query, tt.mode)
 	}
 }
 
-func TestSanitizeTrigramQuery(t *testing.T) {
+func TestSanitizeTrigramQueryNoSynonyms(t *testing.T) {
 	tests := []struct {
 		query, mode, want string
 	}{
@@ -64,8 +64,8 @@ func TestSanitizeTrigramQuery(t *testing.T) {
 		{"hi lo", "AND", ""},                              // all words < 3 chars
 	}
 	for _, tt := range tests {
-		got := sanitizeTrigramQuery(tt.query, tt.mode)
-		assert.Equal(t, tt.want, got, "sanitizeTrigramQuery(%q, %q)", tt.query, tt.mode)
+		got := sanitizeTrigramQuery(tt.query, tt.mode, false)
+		assert.Equal(t, tt.want, got, "sanitizeTrigramQuery(%q, %q, false)", tt.query, tt.mode)
 	}
 }
 
@@ -611,9 +611,9 @@ func TestNoSynonymPassthrough(t *testing.T) {
 
 // --- Synonym sanitizer unit tests ---
 
-func TestSanitizeQueryWithSynonyms(t *testing.T) {
+func TestSanitizePorterQueryWithSynonyms(t *testing.T) {
 	// Term with synonyms should produce OR group.
-	result := sanitizeQueryWithSynonyms("db")
+	result := sanitizePorterQuery("db", "AND", true)
 	assert.Contains(t, result, `"db"`)
 	assert.Contains(t, result, `"database"`)
 	assert.Contains(t, result, `"datastore"`)
@@ -621,32 +621,57 @@ func TestSanitizeQueryWithSynonyms(t *testing.T) {
 	assert.Contains(t, result, "(")
 
 	// Term without synonyms should be quoted without grouping.
-	result2 := sanitizeQueryWithSynonyms("widget")
+	result2 := sanitizePorterQuery("widget", "AND", true)
 	assert.Equal(t, `"widget"`, result2)
 
-	// Multi-term: space between groups = implicit AND.
-	result3 := sanitizeQueryWithSynonyms("db perf")
-	// Should have two parenthesized groups separated by space.
+	// Multi-term AND: space between groups = implicit AND.
+	result3 := sanitizePorterQuery("db perf", "AND", true)
 	assert.Contains(t, result3, `("db"`)
 	assert.Contains(t, result3, `("perf"`)
+	// Groups should NOT be joined by OR in AND mode.
+	// Count OR occurrences — should only appear inside groups, not between them.
+	assert.NotContains(t, result3, `) OR (`, "AND mode should not join groups with OR")
+
+	// Multi-term OR: groups joined by OR.
+	result4 := sanitizePorterQuery("db perf", "OR", true)
+	assert.Contains(t, result4, `) OR (`, "OR mode should join groups with OR")
 
 	// Empty/keyword-only queries return empty.
-	assert.Equal(t, "", sanitizeQueryWithSynonyms(""))
-	assert.Equal(t, "", sanitizeQueryWithSynonyms("AND OR"))
+	assert.Equal(t, "", sanitizePorterQuery("", "AND", true))
+	assert.Equal(t, "", sanitizePorterQuery("AND OR", "AND", true))
 }
 
-func TestSanitizeTrigramWithSynonyms(t *testing.T) {
+func TestSanitizeTrigramQueryWithSynonyms(t *testing.T) {
 	// "db" is only 2 chars — dropped from trigram. But its synonyms >= 3 chars remain.
-	result := sanitizeTrigramWithSynonyms("db")
+	result := sanitizeTrigramQuery("db", "AND", true)
 	assert.NotContains(t, result, `"db"`, "2-char term should be dropped from trigram")
 	assert.Contains(t, result, `"database"`)
 	assert.Contains(t, result, `"datastore"`)
 
 	// Term with all synonyms >= 3 chars.
-	result2 := sanitizeTrigramWithSynonyms("perf")
+	result2 := sanitizeTrigramQuery("perf", "AND", true)
 	assert.Contains(t, result2, `"perf"`)
 	assert.Contains(t, result2, `"performance"`)
 
 	// Short input returns empty.
-	assert.Equal(t, "", sanitizeTrigramWithSynonyms("ab"))
+	assert.Equal(t, "", sanitizeTrigramQuery("ab", "AND", true))
+}
+
+func TestFuzzyCorrectedQueryGetsSynonymExpansion(t *testing.T) {
+	s := newTestStore(t)
+
+	// Index content with "authentication" and "deployment".
+	_, err := s.Index(
+		"# Auth Deploy Guide\n\nThe authentication service handles deployment tokens.\n\n"+
+			"## Pipeline\n\nAuthentication is required before deployment can proceed.",
+		"auth-deploy",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	// Search with a typo "authentcation" — fuzzy should correct to "authentication"
+	// and synonym expansion should then also match "auth", "authn", etc.
+	results, err := s.SearchWithFallback("authentcation", 5, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results, "fuzzy correction should find results for misspelled synonym-known term")
 }
