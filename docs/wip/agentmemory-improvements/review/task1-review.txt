@@ -1,0 +1,58 @@
+---
+  Review Summary (Isolated Mode)
+
+  Reviewers: code-reviewer (Claude sub-agent), pal codereview (gemini-3-pro-preview)
+  Files reviewed: 4 files, ~380 lines changed/added
+
+  ---
+  Corroborated Findings
+
+  (Both reviewers flagged — highest signal)
+
+  - [synonyms.go:8-50] Stopword/synonym overlap creates silent query failures ⟨corroborated⟩
+    - code-reviewer: P1 | Confidence: 90% — "deps", "test", "tests" exist in both stopword list and synonym groups. Stopwords are stripped at index time but synonym expansion   fires at query time. Expanded terms match nothing. HasSynonym early return also suppresses fuzzy correction that could have salvaged the query.
+    - pal: HIGH — Same analysis. Terms are filtered from vocabulary at index time but expanded at query time, creating a semantic contract violation.
+    - Author context: This is a real bug. The stopword list and synonym groups were ported from different sources (capy's existing stopwords vs agentmemory's synonym list)   without cross-checking. The fix is to remove overlapping terms from synonym groups — they're common words that don't benefit from expansion anyway.
+  - [search.go:329] Misleading comment about quoted phrase preservation ⟨corroborated⟩
+    - code-reviewer: P2 | Confidence: 95% — Comment says "Quoted phrases are preserved intact" but ftsSpecialRe strips all quote chars. The design doc calls for phrase   preservation but it's not implemented.
+    - pal: MEDIUM — Same finding. ftsSpecialRe includes " in the strip set.
+    - Author context: The design doc mentions this as a future capability. The comment is wrong — it should say phrases are NOT currently preserved. The implementation is   correct for the current scope; only the comment needs fixing.
+  - [search.go:116-117] Hardcoded match layer labels ⟨corroborated⟩
+    - code-reviewer: P2 | Confidence: 80% — "porter+OR" / "trigram+OR" are used regardless of whether the query is synonym AND or flat OR.
+    - pal: LOW — Same finding. Suggests simplifying to "porter" / "trigram".
+    - Author context: This is a pre-existing naming from before the refactor. The labels were always "porter+OR" because the old code always used OR mode. Now that we have   AND mode too, the labels are stale. Simplifying to "porter" / "trigram" is the right call — the multi-layer tag "rrf(porter+trigram)" already handles the combined case.
+
+  ---
+  Code Reviewer Findings
+
+  - [synonyms.go:24-25] "ts"/"js" are ambiguous short synonyms
+    - Severity: P1 | Confidence: 85%
+    - "ts" could mean timestamp; "js" is equally overloaded. Bidirectional expansion from 2-char abbreviations risks precision degradation.
+    - Author context: Fair concern. However, in practice capy indexes developer docs and command output where "ts" almost always means TypeScript. The trigram layer already   drops 2-char terms, limiting the blast radius to Porter only. I'd accept this as a P2 to revisit if false positives are observed.
+  - [synonyms.go:55-73] init() panic has no dedicated test
+    - Severity: P2 | Confidence: 75%
+    - A TestSynonymGroupsNoDuplicates would catch issues at test time rather than crashing production.
+    - Author context: Agree — cheap to add and makes the invariant explicitly tested.
+  - [synonyms.go:29-30] Hyphenated synonyms ("continuous-integration")
+    - Severity: P3 | Confidence: 60%
+    - unicode61 tokenizer splits on hyphens, so "continuous-integration" becomes a phrase query for two tokens.
+    - Author context: Verified — the schema uses tokenize='porter unicode61' which does split on hyphens. However, FTS5 phrase queries on hyphen-split tokens actually work   correctly: "continuous-integration" matches content where continuous and integration appear adjacent. So this is fine as-is.
+
+  ---
+  External Review Findings (pal)
+
+  - [search.go:39-50] Fallback and fuzzy passes lose synonym expansion — HIGH
+    - The OR fallback uses sanitizeQuery(query, "OR") which doesn't expand synonyms. A query like "authn deploy" falls back to flat "authn" OR "deploy", losing the   "authentication" synonym.
+    - Author context: This is by design. The fallback exists for the case where AND grouping is too restrictive (only one of two terms exists in the corpus). Using flat OR   without synonyms is intentional — it's the widest net. The fuzzy pass also intentionally uses flat OR because it operates on corrected terms, not the originals. However, I   can see an argument for synonym-expanding the OR fallback too. Worth discussing.
+  - [search.go:177-210] Proximity reranking doesn't consider synonyms — HIGH
+    - If a document matched via synonym (query "k8s", content has "kubernetes"), proximity reranking won't find "k8s" in the content, so no proximity boost.
+    - Author context: This is a real gap but has a design-level interaction. The proximity reranker operates on raw content text, not FTS5 tokens. The design doc notes:   "capy's existing proximity reranker naturally handles this — results where expanded terms appear close together score higher." This is partially true — if the synonyms   appear close together in content, they get boosted. But if the original query term doesn't appear, no boost. This is a valid enhancement but beyond the current task scope.   The impact is limited: synonym-matched results still rank via RRF fusion, just without the proximity bonus.
+  - [synonyms.go:78] ExpandSynonyms returns mutable slice reference — MEDIUM
+    - Direct reference to the global map's slice. If a caller appends to the returned slice, it could corrupt the synonym map.
+    - Author context: None of the current callers mutate the returned slice — they only iterate. The Go convention is to document "do not modify" rather than copy   defensively. However, a defensive copy is cheap (one allocation per expanded term) and protects against future callers. Worth doing.
+
+  ---
+  Author-Sourced Findings
+
+  - [synonyms.go:19] "setup" in config group may collide ⟨author-sourced⟩
+    - {"config", "configuration", "configuring", "setup"} — "setup" is a common general word. Searching "setup" expanding to "configuration" could be surprising. Not a bug,   but worth noting for future tuning.

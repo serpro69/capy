@@ -2,25 +2,25 @@
 
 **Design:** [design.md](./design.md)
 **Implementation:** [implementation.md](./implementation.md)
-**Status:** pending
+**Status:** in-progress
 **Feature branch:** `feat/agentmemory-ports`
 
 ---
 
 ## Task 1: Domain Synonym Expansion
 
-**Status:** pending
+**Status:** done
 **Dependencies:** none
 **Docs section:** [implementation.md → Feature 1](./implementation.md#feature-1-domain-synonym-expansion)
 
-- [ ] Create `internal/store/synonyms.go` with the synonym map (all ~40 groups from the design doc), `init()` to build the bidirectional lookup map, and exported functions `ExpandSynonyms(term string) []string` and `HasSynonym(term string) bool`
-- [ ] Create `internal/store/synonyms_test.go` with tests for: bidirectional lookup, case insensitivity, unknown terms returning nil, `HasSynonym` true/false cases
-- [ ] Add unexported function `sanitizeQueryWithSynonyms(query string) string` in `internal/store/search.go` — tokenize, expand each term via `ExpandSynonyms`, wrap groups in FTS5 parentheses `("term" OR "syn1")`, join with space (implicit AND)
-- [ ] Add unexported function `sanitizeTrigramWithSynonyms(query string) string` in `internal/store/search.go` — same logic but apply existing min-3-char filter to each term/synonym
-- [ ] Modify `rrfSearch` in `internal/store/search.go` to call the new synonym-aware sanitizers instead of `sanitizeQuery`/`sanitizeTrigramQuery`. Add zero-result fallback: if both layers return zero results with grouped AND, re-run with original flat OR sanitizers
-- [ ] Add early return in `fuzzyCorrectWord` when `HasSynonym(word)` is true
-- [ ] Add search integration tests in `internal/store/search_test.go`: `TestSynonymExpansionPorter`, `TestSynonymExpansionTrigram`, `TestSynonymFallbackToOR`, `TestSynonymSkipsFuzzy`, `TestNoSynonymPassthrough`
-- [ ] Verify all existing search tests still pass (no regressions from the AND grouping change)
+- [x] Create `internal/store/synonyms.go` with the synonym map (all ~40 groups from the design doc), `init()` to build the bidirectional lookup map, and exported functions `ExpandSynonyms(term string) []string` and `HasSynonym(term string) bool`
+- [x] Create `internal/store/synonyms_test.go` with tests for: bidirectional lookup, case insensitivity, unknown terms returning nil, `HasSynonym` true/false cases
+- [x] Add unexported function `sanitizeQueryWithSynonyms(query string) string` in `internal/store/search.go` — tokenize, expand each term via `ExpandSynonyms`, wrap groups in FTS5 parentheses `("term" OR "syn1")`, join with space (implicit AND)
+- [x] Add unexported function `sanitizeTrigramWithSynonyms(query string) string` in `internal/store/search.go` — same logic but apply existing min-3-char filter to each term/synonym
+- [x] Modify `rrfSearch` in `internal/store/search.go` to call the new synonym-aware sanitizers instead of `sanitizeQuery`/`sanitizeTrigramQuery`. Add zero-result fallback: if both layers return zero results with grouped AND, re-run with original flat OR sanitizers
+- [x] Add early return in `fuzzyCorrectWord` when `HasSynonym(word)` is true
+- [x] Add search integration tests in `internal/store/search_test.go`: `TestSynonymExpansionPorter`, `TestSynonymExpansionTrigram`, `TestSynonymFallbackToOR`, `TestSynonymSkipsFuzzy`, `TestNoSynonymPassthrough`
+- [x] Verify all existing search tests still pass (no regressions from the AND grouping change)
 
 ## Task 2: Secret Stripping Before Indexing
 
