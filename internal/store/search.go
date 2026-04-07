@@ -26,28 +26,39 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOp
 		return nil, err
 	}
 
-	// Build synonym-expanded queries for both layers.
-	synPorter := sanitizeQueryWithSynonyms(query)
-	synTrigram := sanitizeTrigramWithSynonyms(query)
-
 	// RRF pass 1: synonym-expanded query (implicit AND between groups).
+	synPorter := sanitizePorterQuery(query, "AND", true)
+	synTrigram := sanitizeTrigramQuery(query, "AND", true)
 	results := s.rrfSearch(synPorter, synTrigram, query, limit, opts)
 
 	// Fallback: if synonym AND grouping returned zero results, retry with
-	// flat OR (original behavior) — one term in the corpus is enough.
+	// flat OR using the user's original terms as a precision anchor.
+	// Synonym expansion is intentionally dropped here to avoid relevance
+	// dilution (e.g., "latency" expanding to "slow" in OR mode would drown
+	// the user's intent with unrelated matches).
 	if len(results) == 0 {
-		flatPorter := sanitizeQuery(query, "OR")
-		flatTrigram := sanitizeTrigramQuery(query, "OR")
+		flatPorter := sanitizePorterQuery(query, "OR", false)
+		flatTrigram := sanitizeTrigramQuery(query, "OR", false)
 		results = s.rrfSearch(flatPorter, flatTrigram, query, limit, opts)
 	}
 
 	// RRF pass 2: fuzzy correction (only if pass 1 returned fewer than limit).
+	// Corrected queries re-enter the synonym AND pass first — a typo like
+	// "authentcation" corrected to "authentication" should get full synonym
+	// expansion, not just flat OR.
 	if len(results) < limit {
 		corrected := s.fuzzyCorrectQuery(query)
 		if corrected != "" && corrected != query {
-			fuzzyPorter := sanitizeQuery(corrected, "OR")
-			fuzzyTrigram := sanitizeTrigramQuery(corrected, "OR")
-			fuzzyResults := s.rrfSearch(fuzzyPorter, fuzzyTrigram, corrected, limit, opts)
+			// Try synonym AND on corrected query first.
+			fzPorter := sanitizePorterQuery(corrected, "AND", true)
+			fzTrigram := sanitizeTrigramQuery(corrected, "AND", true)
+			fuzzyResults := s.rrfSearch(fzPorter, fzTrigram, corrected, limit, opts)
+			// If synonym AND on corrected query also returns nothing, fall back to flat OR.
+			if len(fuzzyResults) == 0 {
+				fzPorter = sanitizePorterQuery(corrected, "OR", false)
+				fzTrigram = sanitizeTrigramQuery(corrected, "OR", false)
+				fuzzyResults = s.rrfSearch(fzPorter, fzTrigram, corrected, limit, opts)
+			}
 			for i := range fuzzyResults {
 				fuzzyResults[i].MatchLayer = "fuzzy+" + fuzzyResults[i].MatchLayer
 			}
@@ -324,12 +335,13 @@ func findMinSpan(positionLists [][]int) int {
 	return best
 }
 
-// sanitizeQueryWithSynonyms expands each query term via the synonym map and
-// wraps synonym groups in FTS5 parentheses with OR. Groups are joined by
-// space (implicit AND in FTS5).
+// sanitizePorterQuery cleans a query for the Porter FTS5 table. When
+// expandSyns is true, each term is expanded via the synonym map into an OR
+// group. Mode controls how groups are joined: "AND" uses space (implicit AND
+// in FTS5), "OR" uses " OR ".
 // Note: quoted phrase preservation is not yet implemented — all FTS5 special
 // characters (including quotes) are stripped before tokenization.
-func sanitizeQueryWithSynonyms(query string) string {
+func sanitizePorterQuery(query, mode string, expandSyns bool) string {
 	cleaned := ftsSpecialRe.ReplaceAllString(query, " ")
 	words := strings.Fields(cleaned)
 	var groups []string
@@ -337,29 +349,33 @@ func sanitizeQueryWithSynonyms(query string) string {
 		if w == "" || ftsKeywords[strings.ToUpper(w)] {
 			continue
 		}
-		syns := ExpandSynonyms(w)
-		if len(syns) == 0 {
-			groups = append(groups, `"`+w+`"`)
-		} else {
-			// Build OR group: ("term" OR "syn1" OR "syn2")
-			parts := make([]string, 0, len(syns)+1)
-			parts = append(parts, `"`+w+`"`)
-			for _, s := range syns {
-				parts = append(parts, `"`+s+`"`)
+		if expandSyns {
+			if syns := ExpandSynonyms(w); len(syns) > 0 {
+				parts := make([]string, 0, len(syns)+1)
+				parts = append(parts, `"`+w+`"`)
+				for _, s := range syns {
+					parts = append(parts, `"`+s+`"`)
+				}
+				groups = append(groups, "("+strings.Join(parts, " OR ")+")")
+				continue
 			}
-			groups = append(groups, "("+strings.Join(parts, " OR ")+")")
 		}
+		groups = append(groups, `"`+w+`"`)
 	}
 	if len(groups) == 0 {
 		return ""
 	}
-	// Space between groups = implicit AND in FTS5.
-	return strings.Join(groups, " ")
+	sep := " "
+	if mode == "OR" {
+		sep = " OR "
+	}
+	return strings.Join(groups, sep)
 }
 
-// sanitizeTrigramWithSynonyms is like sanitizeQueryWithSynonyms but applies
-// the trigram min-3-char filter to each term and synonym.
-func sanitizeTrigramWithSynonyms(query string) string {
+// sanitizeTrigramQuery cleans a query for the trigram FTS5 table (min 3 chars
+// per term). When expandSyns is true, each term is expanded via the synonym
+// map; short terms (<3 chars) are dropped but their longer synonyms are kept.
+func sanitizeTrigramQuery(query, mode string, expandSyns bool) string {
 	cleaned := trigramCleanRe.ReplaceAllString(query, " ")
 	cleaned = strings.TrimSpace(cleaned)
 	if cleaned == "" {
@@ -368,36 +384,39 @@ func sanitizeTrigramWithSynonyms(query string) string {
 	words := strings.Fields(cleaned)
 	var groups []string
 	for _, w := range words {
-		syns := ExpandSynonyms(w)
-		if len(syns) == 0 {
-			// No synonyms — apply min-3-char filter to the term itself.
-			if len(w) >= 3 {
-				groups = append(groups, `"`+w+`"`)
-			}
-		} else {
-			// Has synonyms — collect term + synonyms that pass min-3-char filter.
-			parts := make([]string, 0, len(syns)+1)
-			if len(w) >= 3 {
-				parts = append(parts, `"`+w+`"`)
-			}
-			for _, s := range syns {
-				if len(s) >= 3 {
-					parts = append(parts, `"`+s+`"`)
+		if expandSyns {
+			if syns := ExpandSynonyms(w); len(syns) > 0 {
+				parts := make([]string, 0, len(syns)+1)
+				if len(w) >= 3 {
+					parts = append(parts, `"`+w+`"`)
 				}
-			}
-			if len(parts) > 0 {
-				if len(parts) == 1 {
-					groups = append(groups, parts[0])
-				} else {
-					groups = append(groups, "("+strings.Join(parts, " OR ")+")")
+				for _, s := range syns {
+					if len(s) >= 3 {
+						parts = append(parts, `"`+s+`"`)
+					}
 				}
+				if len(parts) > 0 {
+					if len(parts) == 1 {
+						groups = append(groups, parts[0])
+					} else {
+						groups = append(groups, "("+strings.Join(parts, " OR ")+")")
+					}
+				}
+				continue
 			}
+		}
+		if len(w) >= 3 {
+			groups = append(groups, `"`+w+`"`)
 		}
 	}
 	if len(groups) == 0 {
 		return ""
 	}
-	return strings.Join(groups, " ")
+	sep := " "
+	if mode == "OR" {
+		sep = " OR "
+	}
+	return strings.Join(groups, sep)
 }
 
 // execDynamicSearch builds and executes a search query with dynamic WHERE clauses.
@@ -457,50 +476,6 @@ func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opt
 	return results
 }
 
-// sanitizeQuery removes FTS5 special chars, filters keywords, quotes words.
-func sanitizeQuery(query, mode string) string {
-	cleaned := ftsSpecialRe.ReplaceAllString(query, " ")
-	words := strings.Fields(cleaned)
-	var filtered []string
-	for _, w := range words {
-		if w == "" || ftsKeywords[strings.ToUpper(w)] {
-			continue
-		}
-		filtered = append(filtered, `"`+w+`"`)
-	}
-	if len(filtered) == 0 {
-		return ""
-	}
-	sep := " "
-	if mode == "OR" {
-		sep = " OR "
-	}
-	return strings.Join(filtered, sep)
-}
-
-// sanitizeTrigramQuery cleans and filters for trigram search (min 3 chars per word).
-func sanitizeTrigramQuery(query, mode string) string {
-	cleaned := trigramCleanRe.ReplaceAllString(query, " ")
-	cleaned = strings.TrimSpace(cleaned)
-	if len(cleaned) < 3 {
-		return ""
-	}
-	words := strings.Fields(cleaned)
-	var filtered []string
-	for _, w := range words {
-		if len(w) >= 3 {
-			filtered = append(filtered, `"`+w+`"`)
-		}
-	}
-	if len(filtered) == 0 {
-		return ""
-	}
-	sep := " "
-	if mode == "OR" {
-		sep = " OR "
-	}
-	return strings.Join(filtered, sep)
-}
 
 // trackAccess updates last_accessed_at and access_count for sources
 // that appeared in search results. Runs synchronously to avoid race
