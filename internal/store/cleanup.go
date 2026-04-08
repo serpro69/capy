@@ -126,6 +126,10 @@ func (s *ContentStore) Cleanup(dryRun bool) ([]SourceInfo, error) {
 	}
 	defer tx.Rollback()
 
+	// TODO: tx.Stmt() inside the loop creates a new transaction-bound prepared
+	// statement per iteration. Lift these three calls above the loop to reuse
+	// the transaction-bound statements and avoid leaking statement handles when
+	// the candidate list is large.
 	for _, src := range candidates {
 		if _, err := tx.Stmt(s.stmtDeleteChunksBySource).Exec(src.ID); err != nil {
 			return nil, fmt.Errorf("deleting chunks for source %d: %w", src.ID, err)

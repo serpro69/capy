@@ -89,9 +89,14 @@ const rrfK = 60 // standard RRF constant
 
 // rrfSearch runs porter and trigram searches concurrently, fuses results
 // using Reciprocal Rank Fusion, applies proximity reranking, and returns
-// the top results. It accepts pre-sanitized FTS5 query strings for both
+// candidates. It accepts pre-sanitized FTS5 query strings for both
 // layers so the caller can control synonym expansion vs flat-OR fallback.
 // rawQuery is the original unsanitized query, used for proximity reranking.
+//
+// Note: rrfSearch intentionally does NOT truncate results to limit. It fetches
+// limit*5 candidates per layer to give the caller (SearchWithFallback) a large
+// enough pool for diversification and entity boosting. The caller is responsible
+// for applying the final limit after post-processing.
 func (s *ContentStore) rrfSearch(porterQuery, trigramQuery, rawQuery string, limit int, opts SearchOptions) []SearchResult {
 	fetchLimit := max(limit*5, 10)
 
@@ -556,6 +561,11 @@ func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opt
 // trackAccess updates last_accessed_at and access_count for sources
 // that appeared in search results. Runs synchronously to avoid race
 // conditions with ContentStore.Close() finalizing prepared statements.
+//
+// TODO: Each Exec() runs as an implicit autocommit transaction, triggering a
+// disk fsync per source. Wrap the loop in an explicit tx.Begin()/tx.Commit()
+// to collapse fsyncs into a single batch. The 5× fetch multiplier in rrfSearch
+// means more unique sources flow through here now than before.
 func (s *ContentStore) trackAccess(results []SearchResult) {
 	seen := make(map[int64]bool)
 	for _, r := range results {
