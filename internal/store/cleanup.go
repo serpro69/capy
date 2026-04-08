@@ -10,18 +10,19 @@ import (
 
 const (
 	lambdaDecay = 0.045 // temporal decay rate
-	sigmaAccess = 0.3   // weight of access boost
+	sigmaAccess = 0.3   // weight of recency boost
 
 	hotThreshold       = 0.7
 	warmThreshold      = 0.4
 	coldThreshold      = 0.15
-	evictableThreshold = 0.15 // below this = evictable
+	evictableThreshold = coldThreshold // sources below coldThreshold are evictable
 )
 
 // retentionScore computes a continuous retention score for a source.
-// Formula: salience × exp(-λ × daysSinceIndexed) + σ × accessBoost
+// Formula: salience × exp(-λ × daysSinceIndexed) + σ × recencyBoost
+// where salience = baseSalience(contentType) + frequencyBonus(accessCount)
 func retentionScore(src SourceInfo, now time.Time) float64 {
-	// Salience by content type.
+	// Base salience by content type.
 	var salience float64
 	switch {
 	case src.CodeChunkCount > 0 && src.CodeChunkCount == src.ChunkCount:
@@ -32,9 +33,10 @@ func retentionScore(src SourceInfo, now time.Time) float64 {
 		salience = 0.5 // prose
 	}
 
-	// Access frequency bonus: min(0.2, accessCount × 0.02)
-	accessBonus := math.Min(0.2, float64(src.AccessCount)*0.02)
-	salience += accessBonus
+	// Frequency bonus: min(0.2, accessCount × 0.02) — folds into salience,
+	// so it decays with age just like the base content-type weight.
+	frequencyBonus := math.Min(0.2, float64(src.AccessCount)*0.02)
+	salience += frequencyBonus
 
 	// Temporal decay.
 	daysSinceIndexed := now.Sub(src.IndexedAt).Hours() / 24
@@ -43,17 +45,19 @@ func retentionScore(src SourceInfo, now time.Time) float64 {
 	}
 	temporalDecay := math.Exp(-lambdaDecay * daysSinceIndexed)
 
-	// Access boost: 1 / (1 + daysSinceLastAccess), or 0 if never accessed.
-	var accessBoost float64
-	if !src.LastAccessedAt.IsZero() {
+	// Recency boost: 1 / (1 + daysSinceLastAccess), or 0 if never accessed.
+	// Guarded by AccessCount > 0 because the schema sets last_accessed_at to
+	// CURRENT_TIMESTAMP on insert — IsZero() alone would always be true.
+	var recencyBoost float64
+	if src.AccessCount > 0 && !src.LastAccessedAt.IsZero() {
 		daysSinceLastAccess := now.Sub(src.LastAccessedAt).Hours() / 24
 		if daysSinceLastAccess < 0 {
 			daysSinceLastAccess = 0
 		}
-		accessBoost = 1.0 / (1.0 + daysSinceLastAccess)
+		recencyBoost = 1.0 / (1.0 + daysSinceLastAccess)
 	}
 
-	return salience*temporalDecay + sigmaAccess*accessBoost
+	return salience*temporalDecay + sigmaAccess*recencyBoost
 }
 
 // classifyTier maps a SourceInfo to a tier string based on retention score.
