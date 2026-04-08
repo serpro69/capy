@@ -2,7 +2,7 @@
 
 **Design:** [design.md → Addendum](./design.md#improvement-a-synonym-aware-proximity-reranking)
 **Implementation:** [implementation-v2.md](./implementation-v2.md)
-**Status:** pending
+**Status:** done
 
 ---
 
@@ -21,9 +21,9 @@
 
 ## Task 2: Final Verification
 
-**Status:** pending
+**Status:** done
 **Dependencies:** Task 1
 **Docs section:** n/a
 
-- [ ] Run `solid-code-review` — review all new and modified code
-- [ ] Run `implementation-review` — verify implementation matches design.md addendum and implementation-v2.md
+- [x] Run `solid-code-review` — review all new and modified code (isolated mode: APPROVE, 0 P0/P1)
+- [x] Run `implementation-review` — verify implementation matches design.md addendum and implementation-v2.md

@@ -2,7 +2,7 @@
 
 **Design:** [design.md](./design.md)
 **Implementation:** [implementation.md](./implementation.md)
-**Status:** in-progress
+**Status:** done
 **Feature branch:** `feat/agentmemory-ports`
 
 ---
@@ -81,9 +81,9 @@
 
 ## Task 7: Post-Implementation Improvements
 
-**Status:** in-progress
+**Status:** done
 **Dependencies:** Task 6
 **Docs section:** [design.md → Addendum](./design.md#addendum-post-implementation-improvements)
 
 - [x] Run `analysis-process` on the design addendum improvements (currently: Improvement A — synonym-aware proximity reranking). Produce `implementation-v2.md` and `tasks-v2.md` with detailed implementation steps
-- [ ] Execute `tasks-v2.md` via `implementation-process`
+- [x] Execute `tasks-v2.md` via `implementation-process`
