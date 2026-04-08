@@ -137,9 +137,12 @@ func TestBoostResortsResults(t *testing.T) {
 	entities := []string{"ContentStore"}
 	boosted := BoostByEntities(results, entities)
 
-	// After boosting, the ContentStore result (original score 1.0 * 1.3 = 1.3)
-	// is still below 2.0, so check that it got boosted but order depends on value.
-	// Let's use a bigger gap to ensure re-sort.
+	// 1.0 * 1.3 = 1.3 < 2.0, so order unchanged but score should be boosted.
+	if boosted[1].FusedScore != 1.3 {
+		t.Errorf("expected boosted score 1.3, got %f", boosted[1].FusedScore)
+	}
+
+	// Use a bigger gap to verify re-sort actually happens.
 	results2 := []SearchResult{
 		{Content: "no match here", FusedScore: 1.1, SourceID: 1},
 		{Content: "ContentStore is the main ContentStore store", FusedScore: 1.0, SourceID: 2},

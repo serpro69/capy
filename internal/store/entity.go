@@ -60,7 +60,7 @@ func ExtractEntities(query string) []string {
 		if len(phrase) >= 2 {
 			add(phrase)
 		}
-		remaining = strings.Replace(remaining, match[0], " ", 1)
+		remaining = strings.ReplaceAll(remaining, match[0], " ")
 	}
 
 	// Extract capitalized identifiers from remaining (unquoted) text.
@@ -131,7 +131,10 @@ func BoostByEntities(results []SearchResult, entities []string) []SearchResult {
 	for i := range results {
 		matchCount := 0
 		for _, m := range matchers {
-			matches := m.re.FindAllStringIndex(results[i].Content, -1)
+			if matchCount >= 6 {
+				break
+			}
+			matches := m.re.FindAllStringIndex(results[i].Content, 6-matchCount)
 			matchCount += len(matches)
 		}
 		if matchCount > 5 {
