@@ -74,6 +74,11 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOp
 	}
 	results = diversifyBySource(results, limit, maxPerSource)
 
+	// Entity-aware boosting: extract quoted phrases and capitalized
+	// identifiers from the original query, boost results that contain them.
+	entities := ExtractEntities(query)
+	results = BoostByEntities(results, entities)
+
 	if len(results) > 0 {
 		s.trackAccess(results)
 	}

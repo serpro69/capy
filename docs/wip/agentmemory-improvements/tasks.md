@@ -46,13 +46,13 @@
 
 ## Task 4: Entity-Aware Query Boosting
 
-**Status:** pending
+**Status:** done
 **Dependencies:** none
 **Docs section:** [implementation.md → Feature 4](./implementation.md#feature-4-entity-aware-query-boosting)
 
-- [ ] Create `internal/store/entity.go` with stop word map (init), exported `ExtractEntities(query string) []string` (quoted phrases + capitalized identifiers, filtered), and exported `BoostByEntities(results []SearchResult, entities []string) []SearchResult` (score multiplier + re-sort)
-- [ ] Create `internal/store/entity_test.go` with tests for: quoted phrase extraction, capitalized identifier extraction, stop word filtering, no entities from lowercase query, deduplication, boost changes scores, boost re-sorts, no-entity passthrough
-- [ ] Integrate into `SearchWithFallback` in `internal/store/search.go` — after fuzzy merge and diversification, extract entities from original query, apply `BoostByEntities` to results before returning
+- [x] Create `internal/store/entity.go` with stop word map (init), exported `ExtractEntities(query string) []string` (quoted phrases + capitalized identifiers, filtered), and exported `BoostByEntities(results []SearchResult, entities []string) []SearchResult` (score multiplier + re-sort)
+- [x] Create `internal/store/entity_test.go` with tests for: quoted phrase extraction, capitalized identifier extraction, stop word filtering, no entities from lowercase query, deduplication, boost changes scores, boost re-sorts, no-entity passthrough
+- [x] Integrate into `SearchWithFallback` in `internal/store/search.go` — after fuzzy merge and diversification, extract entities from original query, apply `BoostByEntities` to results before returning
 
 ## Task 5: Retention-Scored Cleanup
 
