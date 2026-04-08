@@ -14,8 +14,9 @@ capy's persistent DB (ADR-006) changes the calculus. Deleting a source that was 
 
 Do not port `cleanupStaleSources`. Keep the existing `Cleanup()` method which only removes sources meeting ALL of:
 - `access_count = 0` (never accessed via search)
-- Cold tier (not accessed for 30+ days)
-- Older than `maxAgeDays`
+- Retention score < 0.15 (evictable tier)
+
+**Amendment (2026-04-08):** The `maxAgeDays` parameter and fixed-day tier thresholds were replaced by continuous retention scoring. The score formula (`salience × exp(-λ × days) + σ × accessBoost`) with λ=0.045 subsumes the fixed 30-day threshold — never-accessed code becomes evictable at ~35 days. The conservative never-accessed-only eviction principle is preserved.
 
 ## Rationale
 
@@ -29,5 +30,5 @@ Do not port `cleanupStaleSources`. Keep the existing `Cleanup()` method which on
 
 - capy's knowledge base may grow larger than context-mode's over time
 - `capy_stats` shows tier distribution so users can monitor
-- `capy_cleanup --force` only removes never-accessed cold sources
+- `capy_cleanup --force` only removes never-accessed evictable sources (retention score < 0.15)
 - No automatic background cleanup — always explicit
