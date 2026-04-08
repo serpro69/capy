@@ -26,7 +26,7 @@ Capy's FTS5 search relies on Porter stemming (`tokenize='porter unicode61'`) whi
 
 ### Design
 
-A static lookup table of ~40 developer-domain synonym groups. At search time, each query term is checked against the table. If a match is found, the term is replaced with a parenthesized FTS5 OR group containing the term and all its synonyms.
+A static lookup table of ~36 developer-domain synonym groups. Groups containing terms that overlap with capy's stopword list (e.g., `test`, `deps`) are excluded — stopwords are stripped at index time, so expanding them at query time would produce silent misses. The `init()` function enforces this invariant with a panic guard. At search time, each query term is checked against the table. If a match is found, the term is replaced with a parenthesized FTS5 OR group containing the term and all its synonyms.
 
 **Synonym groups** (ported from `agentmemory/src/state/synonyms.ts`):
 
@@ -37,8 +37,7 @@ db ↔ database ↔ datastore
 perf ↔ performance ↔ latency ↔ throughput ↔ slow ↔ bottleneck
 optim ↔ optimization ↔ optimizing ↔ optimise
 k8s ↔ kubernetes ↔ kube
-config ↔ configuration ↔ configuring ↔ setup
-deps ↔ dependencies ↔ dependency
+config ↔ configuration ↔ configuring
 env ↔ environment
 fn ↔ function
 impl ↔ implementation ↔ implementing
@@ -53,7 +52,6 @@ err ↔ error ↔ errors
 api ↔ endpoint ↔ endpoints
 ci ↔ continuous-integration
 cd ↔ continuous-deployment
-test ↔ testing ↔ tests
 doc ↔ documentation ↔ docs
 infra ↔ infrastructure
 deploy ↔ deployment ↔ deploying
@@ -273,8 +271,8 @@ Where:
 - `Cleanup()` → uses `score < 0.15 AND access_count == 0` for eviction candidates (preserving ADR-011's conservative never-accessed-only policy)
 - `Cleanup()` → drops the `maxAgeDays` parameter. The retention score formula with λ=0.045 subsumes the fixed-day threshold — never-accessed code becomes evictable at ~35 days, making a separate age cutoff redundant. **This amends ADR-011:** the `maxAgeDays` mechanism is replaced by the continuous decay; the conservative eviction principle (only evict never-accessed sources) is preserved.
 - `capy_cleanup` MCP tool schema → `max_age_days` parameter removed
-- `Stats()` → reports tier distribution using scored classification
-- `SourceInfo` → `Tier` field populated from computed score (no new fields)
+- `Stats()` → reports tier distribution using scored classification; `StoreStats` gains an `EvictableCount` field
+- `SourceInfo` → `Tier` field populated from computed score, `RetentionScore` field added for observability
 
 ### What doesn't change
 
