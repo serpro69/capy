@@ -70,14 +70,14 @@
 
 ## Task 6: Final Verification
 
-**Status:** pending
+**Status:** done
 **Dependencies:** Task 1, Task 2, Task 3, Task 4, Task 5
 **Docs section:** n/a
 
-- [ ] Run `testing-process` — full test suite passes with `make test` and `make test-race`
-- [ ] Run `solid-code-review` with `go` — review all new and modified code
-- [ ] Run `implementation-review` — verify implementation matches design.md and implementation.md
-- [ ] Run `documentation-process` — update CONTRIBUTING.md if needed (new `internal/sanitize` package in project structure), no other doc changes expected
+- [x] Run `testing-process` — full test suite passes with `make test` and `make test-race`
+- [x] Run `solid-code-review` with `go` — review all new and modified code
+- [x] Run `implementation-review` — verify implementation matches design.md and implementation.md
+- [x] Run `documentation-process` — update CONTRIBUTING.md if needed (new `internal/sanitize` package in project structure), no other doc changes expected
 
 ## Task 7: Post-Implementation Improvements
 

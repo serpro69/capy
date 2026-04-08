@@ -57,16 +57,16 @@ ContentStore.ClassifySources()
 
 **`internal/store/synonyms.go`:**
 
-- Define a package-level `var synonymMap map[string][]string` initialized in `init()`. The map key is each word in a synonym group (lowercased), the value is all other words in that group. For the group `["db", "database", "datastore"]`, the map has three entries: `"db" → ["database", "datastore"]`, `"database" → ["db", "datastore"]`, `"datastore" → ["db", "database"]`. The `init()` function panics if any term appears in multiple synonym groups (prevents silent overwrites when extending the list).
+- Define a package-level `var synonymMap map[string][]string` initialized in `init()`. The map key is each word in a synonym group (lowercased), the value is all other words in that group. For the group `["db", "database", "datastore"]`, the map has three entries: `"db" → ["database", "datastore"]`, `"database" → ["db", "datastore"]`, `"datastore" → ["db", "database"]`. The `init()` function panics if any term appears in multiple synonym groups (prevents silent overwrites when extending the list) or overlaps with the stopword list (prevents silent query failures — stopwords are stripped at index time so synonym expansion would match nothing).
 - Export function `ExpandSynonyms(term string) []string` — returns synonyms for the lowercased term, or nil if no match.
 - Export function `HasSynonym(term string) bool` — used by fuzzy correction to skip known terms.
 
 **`internal/store/search.go`:**
 
-- New unexported function `sanitizeQueryWithSynonyms(query string) string` — applies `ftsSpecialRe` cleanup, detects and preserves quoted phrases intact (passed through as FTS5 exact phrase matches), tokenizes remaining unquoted terms, expands each via `ExpandSynonyms`, wraps synonym groups in FTS5 parentheses `("term" OR "syn1" OR "syn2")`, joins groups with space (implicit AND in FTS5).
-- New unexported function `sanitizeTrigramWithSynonyms(query string) string` — same logic but applies the existing trigram min-3-char filter to each term/synonym.
-- `rrfSearch` calls the new functions instead of `sanitizeQuery`/`sanitizeTrigramQuery`.
-- **Fallback:** `SearchWithFallback` calls `rrfSearch` with the synonym-expanded query. If the result count is zero (checked after `rrfSearch` returns, before the fuzzy merge), `SearchWithFallback` re-calls `rrfSearch` with the original flat-OR query (using existing `sanitizeQuery`/`sanitizeTrigramQuery`). This keeps fallback logic in `SearchWithFallback` (which already orchestrates the fuzzy fallback) and avoids adding branching inside `rrfSearch`. To support this, `rrfSearch` accepts pre-sanitized Porter and trigram query strings as parameters rather than calling sanitize functions internally.
+- New unexported function `sanitizePorterQuery(query, mode string, expandSyns bool) string` — applies `ftsSpecialRe` cleanup, tokenizes terms, expands each via `ExpandSynonyms` when `expandSyns` is true, wraps synonym groups in FTS5 parentheses `("term" OR "syn1" OR "syn2")`, joins groups with space (implicit AND) or `" OR "` depending on `mode`. Note: quoted phrase preservation is not yet implemented — all FTS5 special characters (including quotes) are stripped before tokenization.
+- New unexported function `sanitizeTrigramQuery(query, mode string, expandSyns bool) string` — same logic but applies the existing trigram min-3-char filter to each term/synonym; short terms (<3 chars) are dropped but their longer synonyms are kept.
+- `SearchWithFallback` calls the new functions and passes pre-sanitized queries to `rrfSearch`.
+- **Fallback:** `SearchWithFallback` calls `rrfSearch` with the synonym-expanded AND query. If the result count is zero, it re-calls `rrfSearch` with a flat-OR query (using `sanitizePorterQuery`/`sanitizeTrigramQuery` with `expandSyns=false`). Synonym expansion is intentionally dropped in the OR fallback to avoid relevance dilution. `rrfSearch` accepts pre-sanitized Porter and trigram query strings as parameters rather than calling sanitize functions internally.
 - `fuzzyCorrectWord` — add early return if `HasSynonym(word)` is true (synonym-known words don't need fuzzy correction).
 
 ### Testing
@@ -94,10 +94,10 @@ ContentStore.ClassifySources()
 
 **`internal/sanitize/sanitize.go`:**
 
-- Package-level `var secretPatterns []*regexp.Regexp` compiled in `init()`.
+- Package-level `var secretPatterns []*regexp.Regexp` compiled at package level via `regexp.MustCompile`.
 - Private tag pattern compiled separately: `(?is)<private>.*?</private>`.
-- Export function `StripSecrets(content string) string` — applies private tag stripping first, then all secret patterns. Replacements: private tags → `[REDACTED]`, secrets → `[REDACTED_SECRET]`. Returns the sanitized string and a `bool` indicating whether any redaction occurred. When redaction occurs, log at debug level: pattern type and match count (never the matched content itself).
-- For the private tag regex, guard with `strings.Contains(content, "<private>")` before running `(?is)<private>.*?</private>` — avoids expensive regex evaluation on the common case where no private tags are present.
+- Export function `StripSecrets(content string) string` — applies private tag stripping first, then all secret patterns. Replacements: private tags → `[REDACTED]`, secrets → `[REDACTED_SECRET]`. Returns the sanitized string.
+- For the private tag regex, guard with `strings.Contains(strings.ToLower(content), "<private>")` before running the regex — avoids expensive regex evaluation on the common case where no private tags are present, while correctly handling mixed-case variants.
 - Patterns are compiled once at init — no per-call regex compilation.
 
 **`internal/store/index.go`:**
@@ -166,7 +166,7 @@ ContentStore.ClassifySources()
 
 **`internal/store/entity.go`:**
 
-- Package-level `var stopWords map[string]bool` initialized in `init()` with the stop word list from the design doc.
+- Package-level `var entityStopWords map[string]bool` initialized in `init()` with the stop word list from the design doc.
 - Export function `ExtractEntities(query string) []string`:
   - Extract quoted strings via regex `"([^"]+)"`.
   - Extract capitalized identifiers via regex `\b[A-Z][a-zA-Z0-9_.-]+\b`.
@@ -220,7 +220,7 @@ ContentStore.ClassifySources()
   - Compute temporal decay: `math.Exp(-0.045 * daysSinceIndexed)`.
   - Compute access boost: `1.0 / (1.0 + daysSinceLastAccess)`. If `LastAccessedAt` is zero, access boost is 0.
   - Return `salience * temporalDecay + 0.3 * accessBoost`.
-- Replace `classifyTier(lastAccessed time.Time, now time.Time) string` with `classifyTier(src SourceInfo, now time.Time) string` — calls `retentionScore` and maps to tier string using thresholds (hot >= 0.7, warm >= 0.4, cold >= 0.15, "evictable" below).
+- Replace `classifyTier(lastAccessed time.Time, now time.Time) string` with `classifyTier(src SourceInfo, now time.Time) (string, float64)` — calls `retentionScore` and maps to tier string using thresholds (hot >= 0.7, warm >= 0.4, cold >= 0.15, "evictable" below). Returns the score alongside the tier to avoid recomputation in `ClassifySources`.
 - Update `ClassifySources()` — passes full `SourceInfo` to `classifyTier`.
 - Update `Cleanup()` — eviction candidates are sources with `retentionScore < 0.15 AND access_count == 0`. **Important:** The current code checks `Tier != "cold"` to skip non-candidates — this must be updated to also accept "evictable" (or switch to score-based check directly).
 - Update `Stats()` — the current switch handles only "hot", "warm", "cold". Add "evictable" case as a new `EvictableCount` field on `StoreStats` (dedicated field preferred over folding into `ColdCount` — consistent with the observability goal of exposing `RetentionScore`). Update the `SourceInfo.Tier` comment in `types.go` to list all four tier values.
