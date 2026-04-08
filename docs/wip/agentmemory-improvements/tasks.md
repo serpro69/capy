@@ -56,17 +56,17 @@
 
 ## Task 5: Retention-Scored Cleanup
 
-**Status:** pending
+**Status:** done
 **Dependencies:** none
 **Docs section:** [implementation.md → Feature 5](./implementation.md#feature-5-retention-scored-cleanup)
 
-- [ ] Add `RetentionScore float64` field to `SourceInfo` in `internal/store/types.go`
-- [ ] Add unexported function `retentionScore(src SourceInfo, now time.Time) float64` in `internal/store/cleanup.go` — implements the formula from the design doc (salience by content type, temporal decay, access boost)
-- [ ] Modify `classifyTier` signature in `internal/store/cleanup.go` to accept `SourceInfo` instead of just `LastAccessedAt`. Compute retention score and map to tier via thresholds (hot >= 0.7, warm >= 0.4, cold >= 0.15, below = evictable)
-- [ ] Update `ClassifySources()` to pass full `SourceInfo` to `classifyTier` and populate `RetentionScore` field
-- [ ] Update `Cleanup()` eviction logic to use `retentionScore < 0.15 AND access_count == 0`
-- [ ] Add new tests in `internal/store/cleanup_test.go`: `TestRetentionScoreNewCodeSource`, `TestRetentionScoreOldUnaccessed`, `TestRetentionScoreOldButAccessed`, `TestRetentionScoreContentTypeWeight`, `TestClassifyTierThresholds`
-- [ ] Update existing cleanup tests (`TestClassifySources`, `TestCleanupDryRun`, `TestCleanupForce`, `TestCleanupPreservesRecentlyAccessed`, `TestCleanupPreservesAccessedSources`) to work with the new scoring — verify backward-compatible behavior
+- [x] Add `RetentionScore float64` field to `SourceInfo` in `internal/store/types.go`
+- [x] Add unexported function `retentionScore(src SourceInfo, now time.Time) float64` in `internal/store/cleanup.go` — implements the formula from the design doc (salience by content type, temporal decay, access boost)
+- [x] Modify `classifyTier` signature in `internal/store/cleanup.go` to accept `SourceInfo` instead of just `LastAccessedAt`. Compute retention score and map to tier via thresholds (hot >= 0.7, warm >= 0.4, cold >= 0.15, below = evictable)
+- [x] Update `ClassifySources()` to pass full `SourceInfo` to `classifyTier` and populate `RetentionScore` field
+- [x] Update `Cleanup()` eviction logic to use `retentionScore < 0.15 AND access_count == 0`
+- [x] Add new tests in `internal/store/cleanup_test.go`: `TestRetentionScoreNewCodeSource`, `TestRetentionScoreOldUnaccessed`, `TestRetentionScoreOldButAccessed`, `TestRetentionScoreContentTypeWeight`, `TestClassifyTierThresholds`
+- [x] Update existing cleanup tests (`TestClassifySources`, `TestCleanupDryRun`, `TestCleanupForce`, `TestCleanupPreservesRecentlyAccessed`, `TestCleanupPreservesAccessedSources`) to work with the new scoring — verify backward-compatible behavior
 
 ## Task 6: Final Verification
 

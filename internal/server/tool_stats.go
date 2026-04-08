@@ -101,6 +101,7 @@ func (s *Server) handleStats(_ context.Context, _ mcp.CallToolRequest) (*mcp.Cal
 				fmt.Sprintf("| Tier: hot | %d |", kbStats.HotCount),
 				fmt.Sprintf("| Tier: warm | %d |", kbStats.WarmCount),
 				fmt.Sprintf("| Tier: cold | %d |", kbStats.ColdCount),
+				fmt.Sprintf("| Tier: evictable | %d |", kbStats.EvictableCount),
 			)
 		}
 	}
