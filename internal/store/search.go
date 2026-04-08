@@ -62,9 +62,17 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOp
 			for i := range fuzzyResults {
 				fuzzyResults[i].MatchLayer = "fuzzy+" + fuzzyResults[i].MatchLayer
 			}
-			results = mergeRRFResults(results, fuzzyResults, limit)
+			results = mergeRRFResults(results, fuzzyResults)
 		}
 	}
+
+	// Per-source diversification: cap results from any single source,
+	// then fill remaining slots with skipped results.
+	maxPerSource := opts.MaxPerSource
+	if maxPerSource <= 0 {
+		maxPerSource = 2
+	}
+	results = diversifyBySource(results, limit, maxPerSource)
 
 	if len(results) > 0 {
 		s.trackAccess(results)
@@ -80,7 +88,7 @@ const rrfK = 60 // standard RRF constant
 // layers so the caller can control synonym expansion vs flat-OR fallback.
 // rawQuery is the original unsanitized query, used for proximity reranking.
 func (s *ContentStore) rrfSearch(porterQuery, trigramQuery, rawQuery string, limit int, opts SearchOptions) []SearchResult {
-	fetchLimit := max(limit*2, 10)
+	fetchLimit := max(limit*5, 10)
 
 	// Run both layers concurrently — SQLite WAL supports concurrent readers.
 	var porterResults, trigramResults []SearchResult
@@ -152,15 +160,13 @@ func (s *ContentStore) rrfSearch(porterQuery, trigramQuery, rawQuery string, lim
 	// receive proximity boost. See design.md addendum for planned fix.
 	fused = proximityRerank(fused, rawQuery)
 
-	if len(fused) > limit {
-		fused = fused[:limit]
-	}
 	return fused
 }
 
 // mergeRRFResults deduplicates primary and secondary results by (sourceID, title).
-// On conflict, the primary version is kept. Truncates to limit.
-func mergeRRFResults(primary, secondary []SearchResult, limit int) []SearchResult {
+// On conflict, the primary version is kept. Does not truncate — the caller
+// applies diversification and final limit.
+func mergeRRFResults(primary, secondary []SearchResult) []SearchResult {
 	seen := make(map[string]bool, len(primary))
 	for _, r := range primary {
 		key := fmt.Sprintf("%d:%s", r.SourceID, r.Title)
@@ -178,10 +184,45 @@ func mergeRRFResults(primary, secondary []SearchResult, limit int) []SearchResul
 		}
 	}
 
-	if len(merged) > limit {
-		merged = merged[:limit]
-	}
 	return merged
+}
+
+// --- Per-source diversification ---
+
+// diversifyBySource caps results from any single source to avoid a dominant
+// source drowning out others. Two-pass: first pass enforces the per-source cap,
+// second pass fills remaining slots with previously skipped results.
+func diversifyBySource(results []SearchResult, limit, maxPerSource int) []SearchResult {
+	if len(results) == 0 {
+		return results
+	}
+
+	selected := make([]SearchResult, 0, min(limit, len(results)))
+	var skipped []SearchResult
+	counts := make(map[int64]int)
+
+	// Pass 1: accept results in rank order, skip when source exceeds cap.
+	for _, r := range results {
+		if counts[r.SourceID] >= maxPerSource {
+			skipped = append(skipped, r)
+			continue
+		}
+		counts[r.SourceID]++
+		selected = append(selected, r)
+	}
+
+	// Pass 2: fill remaining slots with skipped results.
+	for _, r := range skipped {
+		if len(selected) >= limit {
+			break
+		}
+		selected = append(selected, r)
+	}
+
+	if len(selected) > limit {
+		selected = selected[:limit]
+	}
+	return selected
 }
 
 // --- Proximity reranking ---

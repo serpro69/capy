@@ -35,14 +35,14 @@
 
 ## Task 3: Per-Source Result Diversification
 
-**Status:** pending
+**Status:** done
 **Dependencies:** none
 **Docs section:** [implementation.md → Feature 3](./implementation.md#feature-3-per-source-result-diversification)
 
-- [ ] Add `MaxPerSource int` field to `SearchOptions` in `internal/store/types.go`
-- [ ] Add unexported function `diversifyBySource(results []SearchResult, limit, maxPerSource int) []SearchResult` in `internal/store/search.go` — two-pass algorithm: first pass enforces per-`SourceID` cap, second pass fills remaining slots
-- [ ] Integrate `diversifyBySource` into `rrfSearch` — call after proximity reranking, before final `[:limit]`. Use `opts.MaxPerSource` with default 2 when zero
-- [ ] Add tests in `internal/store/search_test.go`: `TestDiversifyBySource` (3 sources, broad query, verify cap), `TestDiversifyFillsRemaining` (second pass fills), `TestDiversifyNoReduction` (total count preserved), `TestDiversifySingleSource` (all from one source when no alternatives)
+- [x] Add `MaxPerSource int` field to `SearchOptions` in `internal/store/types.go`
+- [x] Add unexported function `diversifyBySource(results []SearchResult, limit, maxPerSource int) []SearchResult` in `internal/store/search.go` — two-pass algorithm: first pass enforces per-`SourceID` cap, second pass fills remaining slots
+- [x] Integrate `diversifyBySource` into `SearchWithFallback` — call after fuzzy merge, before `trackAccess`. Use `opts.MaxPerSource` with default 2 when zero. Removed truncation from `rrfSearch` and `mergeRRFResults`; increased fetch multiplier to 5× for over-fetching
+- [x] Add tests in `internal/store/search_test.go`: `TestDiversifyBySource` (3 sources, broad query, verify cap), `TestDiversifyFillsRemaining` (second pass fills), `TestDiversifyNoReduction` (total count preserved), `TestDiversifySingleSource` (all from one source when no alternatives). Also added unit tests: `TestDiversifyBySourceUnit`, `TestDiversifyBySourceEmpty`, `TestDiversifyBySourceAllUnique`
 
 ## Task 4: Entity-Aware Query Boosting
 
