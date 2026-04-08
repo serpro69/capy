@@ -203,6 +203,9 @@ func diversifyBySource(results []SearchResult, limit, maxPerSource int) []Search
 
 	// Pass 1: accept results in rank order, skip when source exceeds cap.
 	for _, r := range results {
+		if len(selected) >= limit {
+			return selected
+		}
 		if counts[r.SourceID] >= maxPerSource {
 			skipped = append(skipped, r)
 			continue
@@ -219,9 +222,6 @@ func diversifyBySource(results []SearchResult, limit, maxPerSource int) []Search
 		selected = append(selected, r)
 	}
 
-	if len(selected) > limit {
-		selected = selected[:limit]
-	}
 	return selected
 }
 
