@@ -747,10 +747,10 @@ func TestDiversifyBySource(t *testing.T) {
 		counts[r.Label]++
 	}
 
-	// Default maxPerSource is 2 — source A should not have more than 2 in the first positions.
-	// Count how many source A results appear in the first min(len(results), 5) positions.
-	assert.LessOrEqual(t, countSourceInTopN(results, "deploy-guide-A", len(results)),
-		maxTopN(len(results)), "source A should be capped by diversification in top results")
+	// Default maxPerSource is 2 — in the diversified top positions (before backfill),
+	// source A should be capped at 2. Pass 1 selects: 2 from A, 2 from B, 1 from C = 5 items.
+	assert.Equal(t, 2, countSourceInTopN(results, "deploy-guide-A", 5),
+		"source A should be capped at 2 in the top 5 diversified results")
 
 	// All three sources should appear in results.
 	assert.Greater(t, counts["deploy-guide-A"], 0, "source A should appear")
@@ -871,10 +871,3 @@ func countSourceInTopN(results []SearchResult, label string, n int) int {
 	return count
 }
 
-// maxTopN returns the maximum allowed count for a single source considering
-// default cap of 2 in pass 1 plus possible backfill in pass 2.
-func maxTopN(totalResults int) int {
-	// With default cap 2 and backfill, a source can appear more than 2 times
-	// but the first 2 slots for that source should be in the pass-1 section.
-	return totalResults // allow all since backfill restores skipped results
-}
