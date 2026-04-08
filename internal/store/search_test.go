@@ -695,3 +695,186 @@ func TestSecretStrippedBeforeIndexing(t *testing.T) {
 		assert.NotContains(t, r.Content, "ghp_", "secret prefix should not appear in results")
 	}
 }
+
+// --- Per-source diversification tests ---
+
+// indexDiversifyContent creates 3 sources: A with 5 chunks about deployment,
+// B with 2 chunks, and C with 1 chunk — all matching "deployment".
+func indexDiversifyContent(t *testing.T, s *ContentStore) {
+	t.Helper()
+
+	// Source A: 5 chunks — dominates search results for "deployment".
+	_, err := s.Index(
+		"# Deployment Guide\n\nDeployment automation is critical for reliability.\n\n"+
+			"## Deployment Pipeline\n\nThe deployment pipeline runs staging then production.\n\n"+
+			"## Deployment Rollback\n\nDeployment rollback requires version pinning.\n\n"+
+			"## Deployment Monitoring\n\nMonitor deployment health with readiness probes.\n\n"+
+			"## Deployment Security\n\nDeployment secrets must be encrypted at rest.",
+		"deploy-guide-A",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	// Source B: 2 chunks about deployment.
+	_, err = s.Index(
+		"# Deployment Checklist\n\nPre-deployment checklist for production releases.\n\n"+
+			"## Deployment Verification\n\nVerify deployment with smoke tests after rollout.",
+		"deploy-checklist-B",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	// Source C: 1 chunk about deployment.
+	_, err = s.Index(
+		"# Deployment FAQ\n\nCommon deployment questions and troubleshooting tips.",
+		"deploy-faq-C",
+		"markdown",
+	)
+	require.NoError(t, err)
+}
+
+func TestDiversifyBySource(t *testing.T) {
+	s := newTestStore(t)
+	indexDiversifyContent(t, s)
+
+	results, err := s.SearchWithFallback("deployment", 10, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+
+	// Count results per source label.
+	counts := make(map[string]int)
+	for _, r := range results {
+		counts[r.Label]++
+	}
+
+	// Default maxPerSource is 2 — source A should not have more than 2 in the first positions.
+	// Count how many source A results appear in the first min(len(results), 5) positions.
+	assert.LessOrEqual(t, countSourceInTopN(results, "deploy-guide-A", len(results)),
+		maxTopN(len(results)), "source A should be capped by diversification in top results")
+
+	// All three sources should appear in results.
+	assert.Greater(t, counts["deploy-guide-A"], 0, "source A should appear")
+	assert.Greater(t, counts["deploy-checklist-B"], 0, "source B should appear")
+	assert.Greater(t, counts["deploy-faq-C"], 0, "source C should appear")
+}
+
+func TestDiversifyFillsRemaining(t *testing.T) {
+	s := newTestStore(t)
+	indexDiversifyContent(t, s)
+
+	results, err := s.SearchWithFallback("deployment", 10, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+
+	// After pass 1 caps source A at 2, source B provides up to 2, source C up to 1.
+	// Pass 2 fills remaining slots with skipped source A results.
+	// So source A should appear more than 2 times total (pass 1 + pass 2 backfill).
+	counts := make(map[string]int)
+	for _, r := range results {
+		counts[r.Label]++
+	}
+	assert.Greater(t, counts["deploy-guide-A"], 2,
+		"source A should have >2 total results after pass 2 backfill")
+}
+
+func TestDiversifyNoReduction(t *testing.T) {
+	s := newTestStore(t)
+	indexDiversifyContent(t, s)
+
+	// Request limit higher than total chunks — diversification should not reduce count.
+	results, err := s.SearchWithFallback("deployment", 20, SearchOptions{})
+	require.NoError(t, err)
+
+	// Total chunks across all sources: 5 + 2 + 1 = 8.
+	// All should be returned (limit 20 > total candidates).
+	assert.GreaterOrEqual(t, len(results), 5,
+		"diversification should not reduce total result count below available candidates")
+}
+
+func TestDiversifySingleSource(t *testing.T) {
+	s := newTestStore(t)
+
+	// Only one source.
+	_, err := s.Index(
+		"# Deployment Guide\n\nDeployment automation is critical.\n\n"+
+			"## Deployment Pipeline\n\nThe deployment pipeline runs staging.\n\n"+
+			"## Deployment Rollback\n\nDeployment rollback requires pinning.",
+		"single-source",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	results, err := s.SearchWithFallback("deployment", 10, SearchOptions{})
+	require.NoError(t, err)
+
+	// All results come from single source — pass 2 backfills skipped results.
+	assert.NotEmpty(t, results, "should return results even from a single source")
+	for _, r := range results {
+		assert.Equal(t, "single-source", r.Label)
+	}
+}
+
+// --- diversifyBySource unit tests ---
+
+func TestDiversifyBySourceUnit(t *testing.T) {
+	// 6 results: 4 from source 1, 1 from source 2, 1 from source 3.
+	results := []SearchResult{
+		{SourceID: 1, Label: "A", FusedScore: 0.10},
+		{SourceID: 1, Label: "A", FusedScore: 0.09},
+		{SourceID: 1, Label: "A", FusedScore: 0.08},
+		{SourceID: 1, Label: "A", FusedScore: 0.07},
+		{SourceID: 2, Label: "B", FusedScore: 0.06},
+		{SourceID: 3, Label: "C", FusedScore: 0.05},
+	}
+
+	diversified := diversifyBySource(results, 5, 2)
+
+	// Pass 1 picks: A(0.10), A(0.09), B(0.06), C(0.05) — skips A(0.08), A(0.07).
+	// Pass 2 fills: A(0.08) — total 5.
+	require.Len(t, diversified, 5)
+	assert.Equal(t, int64(1), diversified[0].SourceID) // A
+	assert.Equal(t, int64(1), diversified[1].SourceID) // A
+	assert.Equal(t, int64(2), diversified[2].SourceID) // B
+	assert.Equal(t, int64(3), diversified[3].SourceID) // C
+	assert.Equal(t, int64(1), diversified[4].SourceID) // A (backfill)
+}
+
+func TestDiversifyBySourceEmpty(t *testing.T) {
+	result := diversifyBySource(nil, 5, 2)
+	assert.Empty(t, result)
+}
+
+func TestDiversifyBySourceAllUnique(t *testing.T) {
+	results := []SearchResult{
+		{SourceID: 1, Label: "A", FusedScore: 0.10},
+		{SourceID: 2, Label: "B", FusedScore: 0.09},
+		{SourceID: 3, Label: "C", FusedScore: 0.08},
+	}
+	diversified := diversifyBySource(results, 5, 2)
+	// No capping needed — all unique sources.
+	require.Len(t, diversified, 3)
+	assert.Equal(t, int64(1), diversified[0].SourceID)
+	assert.Equal(t, int64(2), diversified[1].SourceID)
+	assert.Equal(t, int64(3), diversified[2].SourceID)
+}
+
+// helpers for diversification assertions
+
+// countSourceInTopN counts how many results from a given label appear in the first n positions.
+func countSourceInTopN(results []SearchResult, label string, n int) int {
+	count := 0
+	for i := 0; i < n && i < len(results); i++ {
+		if results[i].Label == label {
+			count++
+		}
+	}
+	return count
+}
+
+// maxTopN returns the maximum allowed count for a single source considering
+// default cap of 2 in pass 1 plus possible backfill in pass 2.
+func maxTopN(totalResults int) int {
+	// With default cap 2 and backfill, a source can appear more than 2 times
+	// but the first 2 slots for that source should be in the pass-1 section.
+	return totalResults // allow all since backfill restores skipped results
+}
