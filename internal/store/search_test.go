@@ -432,21 +432,21 @@ func TestFindMinSpanFromHighlights(t *testing.T) {
 
 	// Two terms adjacent: "the \x02JWT\x03 \x02token\x03 is valid"
 	highlighted := "the " + mk("JWT") + " " + mk("token") + " is valid"
-	span := findMinSpanFromHighlights(highlighted, []string{"jwt", "token"})
+	span := findMinSpanFromHighlights(highlighted, [][]string{{"jwt"}, {"token"}})
 	// "JWT" starts at stripped position 4, "token" at 8. Span = 4.
 	assert.Equal(t, 4, span)
 
 	// Term not found in highlights — should return -1.
-	span2 := findMinSpanFromHighlights(highlighted, []string{"jwt", "missing"})
+	span2 := findMinSpanFromHighlights(highlighted, [][]string{{"jwt"}, {"missing"}})
 	assert.Equal(t, -1, span2)
 
 	// Empty highlighted string.
-	span3 := findMinSpanFromHighlights("", []string{"jwt"})
+	span3 := findMinSpanFromHighlights("", [][]string{{"jwt"}})
 	assert.Equal(t, -1, span3)
 
 	// Single term — span should be 0 (same position to same position).
 	highlighted4 := "before " + mk("auth") + " after"
-	span4 := findMinSpanFromHighlights(highlighted4, []string{"auth"})
+	span4 := findMinSpanFromHighlights(highlighted4, [][]string{{"auth"}})
 	assert.Equal(t, 0, span4)
 }
 
@@ -484,6 +484,86 @@ func TestProximityContentLengthNormalization(t *testing.T) {
 	// Longer content with same absolute span gets bigger boost (lower ratio).
 	assert.Greater(t, longResults[0].FusedScore, shortResults[0].FusedScore,
 		"same span in longer content should get bigger normalized boost")
+}
+
+// --- Synonym-aware proximity ---
+
+func TestProximityRerankWithSynonyms(t *testing.T) {
+	s := newTestStore(t)
+
+	// Index content using full synonym forms — "kubernetes configuration".
+	_, err := s.Index(
+		"# Setup\n\nThe kubernetes configuration must be validated before deploy.\n\n"+
+			"# Other\n\nSome unrelated content about testing and debugging.",
+		"synonym-proximity-test",
+		"markdown",
+	)
+	require.NoError(t, err)
+
+	// Search with abbreviations — "k8s config".
+	results, err := s.SearchWithFallback("k8s config", 5, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+
+	// The chunk with "kubernetes configuration" should get proximity boost
+	// because "k8s" expands to include "kubernetes" and "config" expands
+	// to include "configuration".
+	assert.Contains(t, results[0].Content, "kubernetes configuration",
+		"synonym-matched chunk should rank first via proximity boost")
+}
+
+func TestProximityRerankSynonymHighlights(t *testing.T) {
+	mk := func(s string) string { return string(rune(2)) + s + string(rune(3)) }
+
+	// Highlighted content uses full forms; query uses abbreviations.
+	// "the \x02kubernetes\x03 \x02configuration\x03 is ready"
+	highlighted := "the " + mk("kubernetes") + " " + mk("configuration") + " is ready"
+
+	// Term groups: k8s → [k8s, kubernetes, kube], config → [config, configuration, configuring]
+	termGroups := [][]string{
+		{"k8s", "kubernetes", "kube"},
+		{"config", "configuration", "configuring"},
+	}
+	span := findMinSpanFromHighlights(highlighted, termGroups)
+	// "kubernetes" at stripped pos 4, "configuration" at stripped pos 15. Span = 11.
+	assert.GreaterOrEqual(t, span, 0, "should find a valid span via synonym match")
+	assert.Less(t, span, 50, "span should be reasonable for adjacent terms")
+}
+
+func TestProximityRerankSynonymContentFallback(t *testing.T) {
+	// No highlights — force content fallback path.
+	results := []SearchResult{
+		{FusedScore: 1.0, Content: "the kubernetes configuration is ready"},
+	}
+
+	// Query uses abbreviations that are synonyms of content terms.
+	reranked := proximityRerank(results, "k8s config")
+	assert.Greater(t, reranked[0].FusedScore, 1.0,
+		"content fallback should find synonyms and apply proximity boost")
+}
+
+func TestProximityRerankMixedTerms(t *testing.T) {
+	// One synonym term ("k8s") and one non-synonym term ("search").
+	results := []SearchResult{
+		{FusedScore: 1.0, Content: "kubernetes search is fast and reliable"},
+	}
+
+	reranked := proximityRerank(results, "k8s search")
+	assert.Greater(t, reranked[0].FusedScore, 1.0,
+		"mixed synonym/non-synonym query should still get proximity boost")
+}
+
+func TestProximityRerankNoSynonymPassthrough(t *testing.T) {
+	// Query with no synonym terms — behaviour identical to before.
+	results := []SearchResult{
+		{FusedScore: 1.0, Content: "hello world greeting"},
+		{FusedScore: 0.5, Content: "hello there world is great"},
+	}
+
+	reranked := proximityRerank(results, "hello world")
+	// "hello world" adjacent in first result → bigger boost.
+	assert.Greater(t, reranked[0].FusedScore, reranked[1].FusedScore,
+		"non-synonym query should still rank by proximity")
 }
 
 // --- ContentType filtering ---
