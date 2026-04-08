@@ -221,7 +221,7 @@ func TestCleanup_DryRun_NoColdSources(t *testing.T) {
 	r := callCleanup(t, srv, map[string]any{})
 	assert.False(t, r.IsError)
 	text := resultText(r)
-	assert.Contains(t, text, "No cold sources")
+	assert.Contains(t, text, "No evictable sources")
 }
 
 func TestCleanup_DryRunDefault(t *testing.T) {
@@ -239,19 +239,9 @@ func TestCleanup_ExplicitDryRunFalse(t *testing.T) {
 
 	// Nothing to clean but verify the parameter is accepted
 	r := callCleanup(t, srv, map[string]any{
-		"dry_run":      false,
-		"max_age_days": float64(1),
+		"dry_run": false,
 	})
 	assert.False(t, r.IsError)
-}
-
-func TestCleanup_CustomMaxAge(t *testing.T) {
-	srv := newTestServer(t, nil)
-	r := callCleanup(t, srv, map[string]any{
-		"max_age_days": float64(7),
-	})
-	assert.False(t, r.IsError)
-	assert.Contains(t, resultText(r), "7 days")
 }
 
 func TestCleanup_StatsTracking(t *testing.T) {

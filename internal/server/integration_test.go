@@ -206,16 +206,12 @@ func TestIntegration_CleanupAfterIndex(t *testing.T) {
 	require.False(t, r.IsError)
 	assert.NotContains(t, resultText(r), "No results found")
 
-	// Dry-run cleanup with 0 days should find it
-	r2 := callCleanup(t, srv, map[string]any{
-		"max_age_days": float64(0),
-	})
+	// Dry-run cleanup — freshly indexed content has a high retention score,
+	// so it should NOT be an eviction candidate.
+	r2 := callCleanup(t, srv, map[string]any{})
 	require.False(t, r2.IsError)
 	text := resultText(r2)
-	// With max_age_days=0, freshly indexed content is still 0 days old, so
-	// it depends on whether the cleanup considers <= or < comparison.
-	// Either way, this tests the pipeline without error.
-	assert.False(t, r2.IsError)
+	assert.Contains(t, text, "No evictable sources")
 	_ = text
 }
 

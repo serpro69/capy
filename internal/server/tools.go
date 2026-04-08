@@ -265,10 +265,7 @@ func toolDoctor() mcp.Tool {
 func toolCleanup() mcp.Tool {
 	return mcp.NewTool("capy_cleanup",
 		mcp.WithToolAnnotation(annotationCleanup),
-		mcp.WithDescription("Clean up cold knowledge base entries. Removes sources that haven't been accessed and are older than max_age_days."),
-		mcp.WithNumber("max_age_days",
-			mcp.Description("Remove sources older than this many days (default: 30)"),
-		),
+		mcp.WithDescription("Clean up evictable knowledge base entries. Uses retention scoring (content type, age, access patterns) to identify sources for removal. Only removes never-accessed sources with low retention scores."),
 		mcp.WithBoolean("dry_run",
 			mcp.Description("Preview what would be removed without deleting (default: true)"),
 		),

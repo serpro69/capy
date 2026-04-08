@@ -42,18 +42,20 @@ type SourceInfo struct {
 	LastAccessedAt time.Time
 	AccessCount    int
 	ContentHash    string
-	Tier           string // "hot", "warm", "cold"
+	Tier           string  // "hot", "warm", "cold", "evictable"
+	RetentionScore float64 // computed at query time from salience, decay, and access boost
 }
 
 // StoreStats contains knowledge base statistics.
 type StoreStats struct {
-	SourceCount int
-	ChunkCount  int
-	VocabCount  int
-	DBSizeBytes int64
-	HotCount    int
-	WarmCount   int
-	ColdCount   int
+	SourceCount    int
+	ChunkCount     int
+	VocabCount     int
+	DBSizeBytes    int64
+	HotCount       int
+	WarmCount      int
+	ColdCount      int
+	EvictableCount int
 }
 
 // SourceMeta is lightweight metadata for a single source (used by TTL cache).

@@ -3,17 +3,76 @@ package store
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"time"
 )
 
 const (
-	hotThresholdDays  = 7
-	warmThresholdDays = 30
+	lambdaDecay = 0.045 // temporal decay rate
+	sigmaAccess = 0.3   // weight of access boost
+
+	hotThreshold       = 0.7
+	warmThreshold      = 0.4
+	coldThreshold      = 0.15
+	evictableThreshold = 0.15 // below this = evictable
 )
 
+// retentionScore computes a continuous retention score for a source.
+// Formula: salience × exp(-λ × daysSinceIndexed) + σ × accessBoost
+func retentionScore(src SourceInfo, now time.Time) float64 {
+	// Salience by content type.
+	var salience float64
+	switch {
+	case src.CodeChunkCount > 0 && src.CodeChunkCount == src.ChunkCount:
+		salience = 0.7 // pure code
+	case src.CodeChunkCount > 0:
+		salience = 0.6 // mixed
+	default:
+		salience = 0.5 // prose
+	}
+
+	// Access frequency bonus: min(0.2, accessCount × 0.02)
+	accessBonus := math.Min(0.2, float64(src.AccessCount)*0.02)
+	salience += accessBonus
+
+	// Temporal decay.
+	daysSinceIndexed := now.Sub(src.IndexedAt).Hours() / 24
+	if daysSinceIndexed < 0 {
+		daysSinceIndexed = 0
+	}
+	temporalDecay := math.Exp(-lambdaDecay * daysSinceIndexed)
+
+	// Access boost: 1 / (1 + daysSinceLastAccess), or 0 if never accessed.
+	var accessBoost float64
+	if !src.LastAccessedAt.IsZero() {
+		daysSinceLastAccess := now.Sub(src.LastAccessedAt).Hours() / 24
+		if daysSinceLastAccess < 0 {
+			daysSinceLastAccess = 0
+		}
+		accessBoost = 1.0 / (1.0 + daysSinceLastAccess)
+	}
+
+	return salience*temporalDecay + sigmaAccess*accessBoost
+}
+
+// classifyTier maps a SourceInfo to a tier string based on retention score.
+func classifyTier(src SourceInfo, now time.Time) (string, float64) {
+	score := retentionScore(src, now)
+	switch {
+	case score >= hotThreshold:
+		return "hot", score
+	case score >= warmThreshold:
+		return "warm", score
+	case score >= coldThreshold:
+		return "cold", score
+	default:
+		return "evictable", score
+	}
+}
+
 // ClassifySources returns all sources with tier classification
-// based on last_accessed_at: hot (<7d), warm (<30d), cold (>=30d).
+// based on retention scoring (salience, temporal decay, access boost).
 func (s *ContentStore) ClassifySources() ([]SourceInfo, error) {
 	sources, err := s.ListSources()
 	if err != nil {
@@ -22,30 +81,15 @@ func (s *ContentStore) ClassifySources() ([]SourceInfo, error) {
 
 	now := time.Now()
 	for i := range sources {
-		sources[i].Tier = classifyTier(sources[i].LastAccessedAt, now)
+		sources[i].Tier, sources[i].RetentionScore = classifyTier(sources[i], now)
 	}
 	return sources, nil
 }
 
-func classifyTier(lastAccessed time.Time, now time.Time) string {
-	if lastAccessed.IsZero() {
-		return "cold"
-	}
-	days := int(now.Sub(lastAccessed).Hours() / 24)
-	switch {
-	case days < hotThresholdDays:
-		return "hot"
-	case days < warmThresholdDays:
-		return "warm"
-	default:
-		return "cold"
-	}
-}
-
-// Cleanup removes cold sources that have never been accessed (access_count = 0)
-// and are older than maxAgeDays. If dryRun is true, returns what would be removed
-// without deleting. Vocabulary is shared and never deleted.
-func (s *ContentStore) Cleanup(maxAgeDays int, dryRun bool) ([]SourceInfo, error) {
+// Cleanup removes evictable sources that have never been accessed (access_count = 0).
+// If dryRun is true, returns what would be removed without deleting.
+// Vocabulary is shared and never deleted.
+func (s *ContentStore) Cleanup(dryRun bool) ([]SourceInfo, error) {
 	db, err := s.getDB()
 	if err != nil {
 		return nil, err
@@ -56,17 +100,12 @@ func (s *ContentStore) Cleanup(maxAgeDays int, dryRun bool) ([]SourceInfo, error
 		return nil, err
 	}
 
-	now := time.Now()
 	var candidates []SourceInfo
 	for _, src := range sources {
-		if src.Tier != "cold" {
+		if src.RetentionScore >= evictableThreshold {
 			continue
 		}
 		if src.AccessCount > 0 {
-			continue
-		}
-		age := int(now.Sub(src.IndexedAt).Hours() / 24)
-		if age < maxAgeDays {
 			continue
 		}
 		candidates = append(candidates, src)
@@ -139,6 +178,8 @@ func (s *ContentStore) Stats() (*StoreStats, error) {
 			stats.WarmCount++
 		case "cold":
 			stats.ColdCount++
+		case "evictable":
+			stats.EvictableCount++
 		}
 	}
 

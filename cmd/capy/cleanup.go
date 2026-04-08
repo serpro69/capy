@@ -23,7 +23,6 @@ func newCleanupCmd() *cobra.Command {
 				cfg = config.DefaultConfig()
 			}
 
-			maxAgeDays, _ := cmd.Flags().GetInt("max-age-days")
 			force, _ := cmd.Flags().GetBool("force")
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			if force {
@@ -34,26 +33,27 @@ func newCleanupCmd() *cobra.Command {
 			st := store.NewContentStore(dbPath, projectDir, 0)
 			defer st.Close()
 
-			pruned, err := st.Cleanup(maxAgeDays, dryRun)
+			pruned, err := st.Cleanup(dryRun)
 			if err != nil {
 				return fmt.Errorf("cleanup failed: %w", err)
 			}
 
 			if dryRun {
 				if len(pruned) == 0 {
-					fmt.Println("capy cleanup: no stale sources found")
+					fmt.Println("capy cleanup: no evictable sources found")
 				} else {
-					fmt.Printf("capy: would remove %d stale source(s):\n", len(pruned))
+					fmt.Printf("capy: would remove %d evictable source(s):\n", len(pruned))
 					for _, s := range pruned {
-						fmt.Printf("  - %s (last accessed: %s)\n", s.Label, s.LastAccessedAt.Format("2006-01-02"))
+						fmt.Printf("  - %s (score: %.2f, last accessed: %s)\n",
+							s.Label, s.RetentionScore, s.LastAccessedAt.Format("2006-01-02"))
 					}
 					fmt.Println("\nUse --force to actually remove these sources.")
 				}
 			} else {
 				if len(pruned) == 0 {
-					fmt.Println("capy cleanup: no stale sources found")
+					fmt.Println("capy cleanup: no evictable sources found")
 				} else {
-					fmt.Printf("capy: removed %d stale source(s)\n", len(pruned))
+					fmt.Printf("capy: removed %d evictable source(s)\n", len(pruned))
 					for _, s := range pruned {
 						fmt.Printf("  - %s\n", s.Label)
 					}
@@ -63,7 +63,6 @@ func newCleanupCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Int("max-age-days", 30, "maximum age in days for cold sources")
 	cmd.Flags().Bool("dry-run", true, "show what would be removed without removing")
 	cmd.Flags().Bool("force", false, "actually remove stale data")
 	return cmd

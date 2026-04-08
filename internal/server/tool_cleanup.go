@@ -10,7 +10,6 @@ import (
 )
 
 func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	maxAgeDays := int(req.GetFloat("max_age_days", 30))
 	dryRun := true
 	if v, ok := req.GetArguments()["dry_run"]; ok {
 		if b, ok := v.(bool); ok {
@@ -19,14 +18,14 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	st := s.getStore()
-	pruned, err := st.Cleanup(maxAgeDays, dryRun)
+	pruned, err := st.Cleanup(dryRun)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Cleanup error: %v", err)), nil
 	}
 
 	if len(pruned) == 0 {
 		return s.trackToolResponse("capy_cleanup",
-			textResult(fmt.Sprintf("No cold sources older than %d days found.", maxAgeDays))), nil
+			textResult("No evictable sources found.")), nil
 	}
 
 	var lines []string
