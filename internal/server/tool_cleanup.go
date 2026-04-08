@@ -36,12 +36,12 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	lines = append(lines, "",
-		"| Source | Age | Chunks |",
-		"|--------|-----|--------|",
+		"| Source | Score | Age | Chunks |",
+		"|--------|-------|-----|--------|",
 	)
 	for _, src := range pruned {
 		ageDays := int(time.Since(src.IndexedAt).Hours() / 24)
-		lines = append(lines, fmt.Sprintf("| %s | %dd | %d |", src.Label, ageDays, src.ChunkCount))
+		lines = append(lines, fmt.Sprintf("| %s | %.2f | %dd | %d |", src.Label, src.RetentionScore, ageDays, src.ChunkCount))
 	}
 
 	if dryRun {
