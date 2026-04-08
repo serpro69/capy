@@ -233,7 +233,10 @@ func diversifyBySource(results []SearchResult, limit, maxPerSource int) []Search
 // --- Proximity reranking ---
 
 // proximityRerank boosts results where query terms appear close together.
-// Only applies for multi-term queries (2+ words).
+// Only applies for multi-term queries (2+ words). Each query term is
+// expanded into a synonym group so that synonym-matched content (e.g.,
+// query "k8s config", content "kubernetes configuration") receives the
+// proximity boost.
 func proximityRerank(results []SearchResult, query string) []SearchResult {
 	// Strip FTS5 special chars so terms match tokenized output (e.g. "error:" → "error").
 	cleaned := ftsSpecialRe.ReplaceAllString(strings.ToLower(query), " ")
@@ -242,26 +245,46 @@ func proximityRerank(results []SearchResult, query string) []SearchResult {
 		return results
 	}
 
+	// Build term groups: each group is [original, syn1, syn2, ...].
+	// ExpandSynonyms returns only the *other* group members, so prepend
+	// the original term to form the complete group.
+	termGroups := make([][]string, len(words))
+	for i, w := range words {
+		if syns := ExpandSynonyms(w); len(syns) > 0 {
+			group := make([]string, 0, len(syns)+1)
+			group = append(group, w)
+			group = append(group, syns...)
+			termGroups[i] = group
+		} else {
+			termGroups[i] = []string{w}
+		}
+	}
+
 	for i := range results {
 		r := &results[i]
 		minSpan := -1
 
 		// Primary: use FTS5 highlight markers (char(2)/char(3)).
 		if r.Highlighted != "" {
-			minSpan = findMinSpanFromHighlights(r.Highlighted, words)
+			minSpan = findMinSpanFromHighlights(r.Highlighted, termGroups)
 		}
 
 		// Fallback: strings.Index on raw content.
 		if minSpan < 0 {
-			posLists := make([][]int, len(words))
+			posLists := make([][]int, len(termGroups))
 			content := strings.ToLower(r.Content)
 			allFound := true
-			for j, w := range words {
-				posLists[j] = findAllPositions(content, w)
-				if len(posLists[j]) == 0 {
+			for j, group := range termGroups {
+				var merged []int
+				for _, term := range group {
+					merged = append(merged, findAllPositions(content, term)...)
+				}
+				if len(merged) == 0 {
 					allFound = false
 					break
 				}
+				sort.Ints(merged)
+				posLists[j] = merged
 			}
 			if allFound {
 				minSpan = findMinSpan(posLists)
@@ -284,10 +307,11 @@ func proximityRerank(results []SearchResult, query string) []SearchResult {
 
 // findMinSpanFromHighlights extracts match positions from FTS5 highlight
 // markers (char(2) = start, char(3) = end) and finds the minimum window
-// containing all query terms. Single-pass: tracks stripped byte offset
-// incrementally to avoid repeated string allocations.
-func findMinSpanFromHighlights(highlighted string, terms []string) int {
-	posLists := make([][]int, len(terms))
+// containing all term groups. Each group is a synonym set — a match
+// against any term in the group counts. Single-pass: tracks stripped
+// byte offset incrementally to avoid repeated string allocations.
+func findMinSpanFromHighlights(highlighted string, termGroups [][]string) int {
+	posLists := make([][]int, len(termGroups))
 	pos := 0
 	strippedPos := 0
 
@@ -308,9 +332,12 @@ func findMinSpanFromHighlights(highlighted string, terms []string) int {
 		strippedPos += startIdx - pos
 
 		matched := strings.ToLower(highlighted[startIdx+1 : endIdx])
-		for i, term := range terms {
-			if strings.Contains(matched, term) {
-				posLists[i] = append(posLists[i], strippedPos)
+		for i, group := range termGroups {
+			for _, term := range group {
+				if strings.Contains(matched, term) {
+					posLists[i] = append(posLists[i], strippedPos)
+					break // one match per group per highlight span
+				}
 			}
 		}
 
