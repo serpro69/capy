@@ -101,6 +101,15 @@ func BoostByEntities(results []SearchResult, entities []string) []SearchResult {
 	}
 
 	// Pre-compile word-boundary regexes for each entity.
+	//
+	// TODO(perf): regexp.Compile is called per entity per search invocation.
+	// At current MCP concurrency (single-user) this is fine, but consider an
+	// LRU cache (sync.Map or fixed-capacity) keyed on entity string if search
+	// rate increases.
+	//
+	// TODO(correctness): \b word-boundary assertions fail silently when a
+	// quoted entity starts or ends with a non-word character (e.g., "C++").
+	// Conditionally apply \b only when the edge rune is a word character.
 	type entityMatcher struct {
 		re        *regexp.Regexp
 		multiWord bool
