@@ -261,11 +261,11 @@ Run `capy doctor` to diagnose issues. Common problems:
 
 capy is a Go reimplementation of [context-mode](https://github.com/mksglu/context-mode), originally written in TypeScript by [@mksglu](https://github.com/mksglu). The core algorithms — FTS5 search with BM25 ranking, three-tier fallback, smart chunking, sandbox architecture — originate from that project.
 
-**Why rewrite it?** context-mode works well, but I wanted to experiment with ideas that are hard to retrofit into the existing architecture — persistent cross-session knowledge bases, tiered freshness metadata, content deduplication, and eventually full session continuity that survives context compaction. Go also gives me a single static binary with no Node.js dependency, which removes an entire class of installation and compatibility issues. This is primarily a personal tool, but it's open source in case others find it useful.
+**Why rewrite it?** context-mode works well, BUT! I wanted to experiment with ideas that are hard to retrofit into the existing context-mode architecture — persistent cross-session knowledge bases, tiered freshness metadata, content deduplication, and eventually full session continuity that survives context compaction. Go is much more performant, and it also gives me a single static binary with no Node.js dependency, which removes an entire class of installation and compatibility issues. I also have a very acute allergies on anything that's in the JS/TS/Node ecosystem, installing any kind of js/ts-based tooling, running `npm install` always leaves me with a very bad feeling, so I only do that in extreme circumstances when I don't have any other options. This is primarily a personal tool, but it's open source in case others find it useful.
 
 ### capy vs context-mode
 
-capy is still in an active porting phase. Not everything from context-mode has been ported yet — multi-platform support, session continuity, and some newer search improvements are in progress. If you need the most complete and battle-tested version today, use [context-mode](https://github.com/mksglu/context-mode). If you prefer a single-binary install and the features listed below, capy may be worth trying.
+capy is still in an active development phase. Not everything from context-mode has been ported — multi-platform support, session continuity, and some newer search improvements are in progress. If you need the most complete and battle-tested version today, use [context-mode](https://github.com/mksglu/context-mode). If you prefer a single-binary install and the features listed below, capy may be worth trying.
 
 | | context-mode (TypeScript) | capy (Go) |
 |---|---|---|
