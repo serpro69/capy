@@ -21,14 +21,23 @@ const capyWrapperRelPath = ".claude/scripts/capy.sh"
 // Uses `command -v` instead of `which` for POSIX compliance.
 const capyWrapperScript = `#!/usr/bin/env bash
 
-set -euo pipefail
+# Wrapper that locates and runs the capy binary.
+# Used as a Claude Code hook — must always exit 0 to avoid phantom hook errors.
+# See: https://github.com/serpro69/claude-toolbox/issues/57
+
+set -uo pipefail
 
 for p in "$(command -v capy 2>/dev/null || true)" "$HOME/.local/bin/capy" "/opt/homebrew/bin/capy" "/usr/local/bin/capy" "$HOME/go/bin/capy" "capy"; do
-  [ -n "$p" ] && [ -x "$p" ] && exec "$p" "$@"
+  if [ -n "$p" ] && [ -x "$p" ]; then
+    "$p" "$@" || true
+    exit 0
+  fi
 done
 
-echo 'capy not found' >&2
-exit 1
+# capy not found — deny tool use
+jq -n --arg reason "capy binary not found" \
+	'{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}'
+exit 0
 `
 
 // writeCapyWrapper creates the portable wrapper script at .claude/scripts/capy.sh.
