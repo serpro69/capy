@@ -55,8 +55,10 @@ func RoutingBlock() string {
 // READ_GUIDANCE is the one-time advisory shown when Read is used.
 const READ_GUIDANCE = `<context_guidance>
   <tip>
-    If you are reading this file to Edit it, Read is the correct tool — Edit needs file content in context.
-    If you are reading to analyze or explore, use capy_execute_file(path, language, code) instead — only your printed summary will enter the context.
+    Read is the right default. Use offset/limit to scope large files.
+    Only reach for capy_execute_file when the file is genuinely large (10k+ lines)
+    AND you want a derived answer (count, stats, extracted pattern), not the content itself.
+    If an Edit will follow, just Read — capy_execute_file beforehand is pure overhead.
   </tip>
 </context_guidance>`
 
