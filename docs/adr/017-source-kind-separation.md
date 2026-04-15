@@ -44,7 +44,7 @@ Write sites are responsible for tagging at creation:
 | `tool_fetch.go` (HTTP-fetched content)                                         | `durable`   |
 | `tool_index.go` (explicit user-authored or file-sourced index)                 | `durable`   |
 
-Search (`tool_search.go`) default-excludes `ephemeral` unless the caller sets `include_ephemeral: true` OR passes an explicit `source:` filter that resolves to an ephemeral label. Intra-batch search (`tool_batch.go:124`) already uses `SourceMatchMode: "exact"` — this path is unaffected.
+Search (`tool_search.go`) default-excludes `ephemeral` unless the caller sets `include_kinds: ["ephemeral"]` (or `["durable","ephemeral"]`) OR passes an explicit `source:` filter that resolves to an ephemeral label. The array-shaped `include_kinds` is chosen over a `bool` so a future third kind can be added without a breaking change (see §Variants Considered #1). Intra-batch search (`tool_batch.go:124`) already uses `SourceMatchMode: "exact"` — this path is unaffected.
 
 Cleanup (`cleanup.go`) splits into two code paths:
 
@@ -113,7 +113,7 @@ Add `capy_cleanup --aggressive` that ignores `access_count` and applies a shorte
 - Schema change requires a one-shot migration. Mitigated by `ALTER TABLE … DEFAULT 'durable'` + retroactive `UPDATE` based on existing prefix convention — no user action required.
 - Write-site tagging must be consistent going forward. Mitigated by making `kind` an argument to the `Index` method (not inferred from label), so any new write site is forced to decide.
 - The intent-search path writes ephemeral data into the persistent DB, which feels wasteful but preserves the intra-session re-query use case (see design.md §Open question 1).
-- Users who explicitly relied on ephemeral output surviving long-term (unlikely, but possible) lose that behavior. Mitigated by exposing `include_ephemeral: true` on `capy_search` and a configurable TTL.
+- Users who explicitly relied on ephemeral output surviving long-term (unlikely, but possible) lose that behavior. Mitigated by exposing `include_kinds` on `capy_search` and a configurable TTL.
 
 **Cross-reference**
 
