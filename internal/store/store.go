@@ -34,6 +34,7 @@ type ContentStore struct {
 	stmtDeleteSource          *sql.Stmt
 	stmtFindSourceByLabel     *sql.Stmt
 	stmtUpdateSourceAccess    *sql.Stmt
+	stmtUpdateSourceKind      *sql.Stmt
 
 	// Prepared statements — search.
 	stmtFuzzyVocab *sql.Stmt
@@ -112,8 +113,8 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	// --- Indexing ---
 
 	s.stmtInsertSource, err = db.Prepare(`
-		INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash)
-		VALUES (?, ?, ?, ?, ?)`)
+		INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, kind)
+		VALUES (?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -153,13 +154,19 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	}
 
 	s.stmtFindSourceByLabel, err = db.Prepare(`
-		SELECT id, content_hash FROM sources WHERE label = ?`)
+		SELECT id, content_hash, kind FROM sources WHERE label = ?`)
 	if err != nil {
 		return err
 	}
 
 	s.stmtUpdateSourceAccess, err = db.Prepare(`
 		UPDATE sources SET last_accessed_at = datetime('now') WHERE label = ? AND content_hash = ?`)
+	if err != nil {
+		return err
+	}
+
+	s.stmtUpdateSourceKind, err = db.Prepare(`
+		UPDATE sources SET kind = ?, last_accessed_at = datetime('now') WHERE id = ?`)
 	if err != nil {
 		return err
 	}
@@ -175,14 +182,14 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	// --- Queries ---
 
 	s.stmtGetSourceMeta, err = db.Prepare(`
-		SELECT label, chunk_count, indexed_at FROM sources WHERE label = ?`)
+		SELECT label, chunk_count, indexed_at, kind FROM sources WHERE label = ?`)
 	if err != nil {
 		return err
 	}
 
 	s.stmtListSources, err = db.Prepare(`
 		SELECT id, label, content_type, chunk_count, code_chunk_count,
-			indexed_at, last_accessed_at, access_count, content_hash
+			indexed_at, last_accessed_at, access_count, content_hash, kind
 		FROM sources ORDER BY id DESC`)
 	if err != nil {
 		return err
@@ -251,7 +258,8 @@ func (s *ContentStore) Close() error {
 		s.stmtInsertSource, s.stmtInsertChunk, s.stmtInsertTrigram,
 		s.stmtInsertVocab, s.stmtDeleteChunksBySource, s.stmtDeleteTrigramBySource,
 		s.stmtDeleteSource, s.stmtFindSourceByLabel, s.stmtUpdateSourceAccess,
-		s.stmtFuzzyVocab, s.stmtGetSourceMeta, s.stmtListSources, s.stmtChunksBySource,
+		s.stmtUpdateSourceKind, s.stmtFuzzyVocab, s.stmtGetSourceMeta,
+		s.stmtListSources, s.stmtChunksBySource,
 		s.stmtSourceChunkCount, s.stmtChunkContent, s.stmtTrackAccess,
 	}
 	for _, stmt := range stmts {

@@ -14,7 +14,7 @@ const intentSearchThreshold = 5000 // bytes — trigger intent search above this
 func (s *Server) intentSearch(output, intent, source string, maxResults int) string {
 	st := s.getStore()
 
-	indexed, err := st.IndexPlainText(output, source)
+	indexed, err := st.IndexPlainText(output, source, store.KindEphemeral)
 	if err != nil {
 		// Don't leak full output into context — truncate with error note
 		preview := output

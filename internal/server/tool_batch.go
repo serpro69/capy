@@ -89,7 +89,7 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 	// Index combined output as markdown
 	st := s.getStore()
 	sourceLabel := "batch:" + truncateLabel(commands)
-	indexed, err := st.Index(combinedOutput, sourceLabel, "markdown")
+	indexed, err := st.Index(combinedOutput, sourceLabel, "markdown", store.KindEphemeral)
 	if err != nil {
 		return s.trackToolResponse("capy_batch_execute",
 			errorResult(fmt.Sprintf("indexing error: %v", err))), nil

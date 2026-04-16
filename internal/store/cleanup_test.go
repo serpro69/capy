@@ -265,7 +265,7 @@ func TestStats(t *testing.T) {
 	assert.Greater(t, stats.DBSizeBytes, int64(0), "DB file should exist")
 
 	// Populated store.
-	_, err = s.Index("authentication middleware validates tokens", "test-src", "plaintext")
+	_, err = s.Index("authentication middleware validates tokens", "test-src", "plaintext", KindDurable)
 	require.NoError(t, err)
 
 	stats, err = s.Stats()

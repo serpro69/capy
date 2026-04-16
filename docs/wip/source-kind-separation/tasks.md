@@ -30,23 +30,23 @@
 - [x] 2.5 Concurrent-migration test: run `applyMigrations` from two goroutines against one in-memory DB; assert no errors and the final row distribution matches the single-run case exactly.
 
 ## Task 3: Plumb kind through Index methods and call sites
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Docs:** [implementation.md#step-3-plumb-kind-into-index](./implementation.md#step-3-plumb-kind-into-index)
 
 ### Subtasks
-- [ ] 3.1 Change `Index`/`IndexPlainText`/`IndexJSON` signatures in `internal/store/index.go` to accept a `SourceKind` parameter; reject `""` with an explicit error
-- [ ] 3.2 Update `stmtInsertSource` in `internal/store/store.go` to include `kind` in INSERT column list and bind parameter
-- [ ] 3.3 Extend `stmtFindSourceByLabel` to return `kind`: `SELECT id, content_hash, kind FROM sources WHERE label = ?`. Add a new prepared statement `stmtUpdateSourceKind`: `UPDATE sources SET kind = ?, last_accessed_at = datetime('now') WHERE id = ?`.
-- [ ] 3.4 In `Index`'s hash-match short-circuit (`index.go:66-78`): if `existingHash == hash` AND `existingKind != newKind`, invoke `stmtUpdateSourceKind` in-place — do NOT delete chunks or re-insert. Return `IndexResult{AlreadyIndexed: true}`. Add a test `TestIndex_PromotesKindInPlace` asserting `chunk_count` and chunk rows are unchanged after promotion.
-- [ ] 3.5 Update `GetSourceMeta`, `ListSources`, `ClassifySources` to scan the `kind` column
-- [ ] 3.6 Update `internal/server/tool_execute.go` — pass `store.KindEphemeral` via the intent path
-- [ ] 3.7 Update `internal/server/tool_execute_file.go` — pass `store.KindEphemeral`
-- [ ] 3.8 Update `internal/server/tool_batch.go:92` — pass `store.KindEphemeral`
-- [ ] 3.9 Update `internal/server/intent_search.go:17` — pass `store.KindEphemeral`
-- [ ] 3.10 Update `internal/server/tool_fetch.go` — pass `store.KindDurable` for all three indexing paths (JSON / HTML-to-markdown / plaintext fallback)
-- [ ] 3.11 Update `internal/server/tool_index.go:61` — pass `store.KindDurable`
-- [ ] 3.12 Update existing `internal/store/store_test.go` call sites to pass a kind; add a new `TestIndex_RespectsKind` covering both values
+- [x] 3.1 Change `Index`/`IndexPlainText`/`IndexJSON` signatures in `internal/store/index.go` to accept a `SourceKind` parameter; reject `""` with an explicit error
+- [x] 3.2 Update `stmtInsertSource` in `internal/store/store.go` to include `kind` in INSERT column list and bind parameter
+- [x] 3.3 Extend `stmtFindSourceByLabel` to return `kind`: `SELECT id, content_hash, kind FROM sources WHERE label = ?`. Add a new prepared statement `stmtUpdateSourceKind`: `UPDATE sources SET kind = ?, last_accessed_at = datetime('now') WHERE id = ?`.
+- [x] 3.4 In `Index`'s hash-match short-circuit (`index.go:66-78`): if `existingHash == hash` AND `existingKind != newKind`, invoke `stmtUpdateSourceKind` in-place — do NOT delete chunks or re-insert. Return `IndexResult{AlreadyIndexed: true}`. Add a test `TestIndex_PromotesKindInPlace` asserting `chunk_count` and chunk rows are unchanged after promotion.
+- [x] 3.5 Update `GetSourceMeta`, `ListSources`, `ClassifySources` to scan the `kind` column
+- [x] 3.6 Update `internal/server/tool_execute.go` — pass `store.KindEphemeral` via the intent path
+- [x] 3.7 Update `internal/server/tool_execute_file.go` — pass `store.KindEphemeral`
+- [x] 3.8 Update `internal/server/tool_batch.go:92` — pass `store.KindEphemeral`
+- [x] 3.9 Update `internal/server/intent_search.go:17` — pass `store.KindEphemeral`
+- [x] 3.10 Update `internal/server/tool_fetch.go` — pass `store.KindDurable` for all three indexing paths (JSON / HTML-to-markdown / plaintext fallback)
+- [x] 3.11 Update `internal/server/tool_index.go:61` — pass `store.KindDurable`
+- [x] 3.12 Update existing `internal/store/store_test.go` call sites to pass a kind; add a new `TestIndex_RespectsKind` covering both values
 
 ## Task 4: Search default-excludes ephemeral
 - **Status:** pending
