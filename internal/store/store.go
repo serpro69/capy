@@ -92,6 +92,11 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("initializing schema: %w", err)
 	}
 
+	if err := applyMigrations(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("applying migrations: %w", err)
+	}
+
 	if err := s.prepareStatements(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("preparing statements: %w", err)

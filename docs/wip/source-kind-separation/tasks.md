@@ -18,16 +18,16 @@
 - [x] 1.4 Verify `go build ./...` passes with no behavioral change yet
 
 ## Task 2: Idempotent migration on store open
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#step-2-migration](./implementation.md#step-2-migration)
 
 ### Subtasks
-- [ ] 2.1 Implement `applyMigrations(db *sql.DB) error` in `internal/store/migrate.go` covering only `017_add_source_kind`. No migrations-tracking table yet — idempotency comes from `PRAGMA table_info(sources)` + the naturally idempotent retroactive `UPDATE`.
-- [ ] 2.2 Wrap the migration body in `BEGIN IMMEDIATE`. Inside the transaction: (a) `PRAGMA table_info(sources)` — if `kind` column present, `COMMIT` and return; (b) `ALTER TABLE sources ADD COLUMN kind TEXT NOT NULL DEFAULT 'durable'`; (c) retroactive `UPDATE sources SET kind = 'ephemeral' WHERE label LIKE 'execute:%' OR label LIKE 'file:%' OR label LIKE 'batch:%'`; (d) `COMMIT`.
-- [ ] 2.3 Wire `applyMigrations` into the store-open path with the exact ordering `exec(schemaSQL) → applyMigrations(db) → prepareStatements(db)`. This ordering is load-bearing (Task 3 updates `stmtInsertSource` to reference `kind`).
-- [ ] 2.4 Test: seed an in-memory DB using raw SQL for the pre-migration DDL (sources table without `kind`) + rows with `execute:`/`file:`/`batch:` and non-prefixed labels; run migration; assert column exists, prefixed rows tagged `ephemeral`, non-prefixed rows stay `durable`; run migration a second time — assert no-op (no errors, no row changes).
-- [ ] 2.5 Concurrent-migration test: run `applyMigrations` from two goroutines against one in-memory DB; assert no errors and the final row distribution matches the single-run case exactly.
+- [x] 2.1 Implement `applyMigrations(db *sql.DB) error` in `internal/store/migrate.go` covering only `017_add_source_kind`. No migrations-tracking table yet — idempotency comes from `PRAGMA table_info(sources)` + the naturally idempotent retroactive `UPDATE`.
+- [x] 2.2 Wrap the migration body in `BEGIN IMMEDIATE`. Inside the transaction: (a) `PRAGMA table_info(sources)` — if `kind` column present, `COMMIT` and return; (b) `ALTER TABLE sources ADD COLUMN kind TEXT NOT NULL DEFAULT 'durable'`; (c) retroactive `UPDATE sources SET kind = 'ephemeral' WHERE label LIKE 'execute:%' OR label LIKE 'file:%' OR label LIKE 'batch:%'`; (d) `COMMIT`.
+- [x] 2.3 Wire `applyMigrations` into the store-open path with the exact ordering `exec(schemaSQL) → applyMigrations(db) → prepareStatements(db)`. This ordering is load-bearing (Task 3 updates `stmtInsertSource` to reference `kind`).
+- [x] 2.4 Test: seed an in-memory DB using raw SQL for the pre-migration DDL (sources table without `kind`) + rows with `execute:`/`file:`/`batch:` and non-prefixed labels; run migration; assert column exists, prefixed rows tagged `ephemeral`, non-prefixed rows stay `durable`; run migration a second time — assert no-op (no errors, no row changes).
+- [x] 2.5 Concurrent-migration test: run `applyMigrations` from two goroutines against one in-memory DB; assert no errors and the final row distribution matches the single-run case exactly.
 
 ## Task 3: Plumb kind through Index methods and call sites
 - **Status:** pending
