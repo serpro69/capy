@@ -2,6 +2,19 @@ package store
 
 import "time"
 
+// SourceKind classifies a source's lifecycle for search filtering and cleanup.
+type SourceKind string
+
+const (
+	KindDurable   SourceKind = "durable"
+	KindEphemeral SourceKind = "ephemeral"
+)
+
+// Valid reports whether k is a recognized source kind.
+func (k SourceKind) Valid() bool {
+	return k == KindDurable || k == KindEphemeral
+}
+
 // Chunk represents a unit of indexed content.
 type Chunk struct {
 	Title       string
@@ -42,6 +55,7 @@ type SourceInfo struct {
 	LastAccessedAt time.Time
 	AccessCount    int
 	ContentHash    string
+	Kind           SourceKind
 	Tier           string  // "hot", "warm", "cold", "evictable"
 	RetentionScore float64 // computed at query time from salience, decay, and access boost
 }
@@ -63,6 +77,7 @@ type SourceMeta struct {
 	Label      string
 	ChunkCount int
 	IndexedAt  time.Time
+	Kind       SourceKind
 }
 
 // IndexResult is returned after indexing content.
@@ -72,5 +87,6 @@ type IndexResult struct {
 	TotalChunks    int
 	CodeChunks     int
 	ContentType    string
+	Kind           SourceKind
 	AlreadyIndexed bool
 }
