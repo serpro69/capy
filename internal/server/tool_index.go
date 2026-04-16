@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/store"
 )
 
 func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -58,7 +59,7 @@ func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 	s.stats.AddBytesIndexed(int64(len(content)))
 
 	st := s.getStore()
-	result, err := st.Index(content, source, "")
+	result, err := st.Index(content, source, "", store.KindDurable)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Index error: %v", err)), nil
 	}
