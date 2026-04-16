@@ -129,20 +129,20 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 
 	switch {
 	case strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json"):
-		indexed, err = st.IndexJSON(content, source)
+		indexed, err = st.IndexJSON(content, source, store.KindDurable)
 
 	case strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/xhtml"):
 		md, convErr := convertHTMLToMarkdown(content)
 		if convErr != nil {
 			// Fall back to plain text if conversion fails
-			indexed, err = st.IndexPlainText(content, source)
+			indexed, err = st.IndexPlainText(content, source, store.KindDurable)
 		} else {
 			content = md
-			indexed, err = st.Index(md, source, "")
+			indexed, err = st.Index(md, source, "", store.KindDurable)
 		}
 
 	default:
-		indexed, err = st.IndexPlainText(content, source)
+		indexed, err = st.IndexPlainText(content, source, store.KindDurable)
 	}
 
 	if err != nil {

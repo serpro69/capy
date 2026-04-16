@@ -54,7 +54,7 @@ func TestCloseCheckpointsWAL(t *testing.T) {
 
 	// Index content to generate WAL data.
 	s := NewContentStore(dbPath, dir, 0)
-	_, err := s.Index("# Test\n\nSome content to index.", "wal-test", "")
+	_, err := s.Index("# Test\n\nSome content to index.", "wal-test", "", KindDurable)
 	require.NoError(t, err)
 
 	// Close should checkpoint the WAL.
@@ -84,14 +84,14 @@ func TestCheckpointMethod(t *testing.T) {
 
 	// Index content, then close WITHOUT checkpoint (simulate unclean shutdown).
 	s := NewContentStore(dbPath, dir, 0)
-	_, err := s.Index("# Checkpoint Test\n\nData that must survive.", "cp-test", "")
+	_, err := s.Index("# Checkpoint Test\n\nData that must survive.", "cp-test", "", KindDurable)
 	require.NoError(t, err)
 	// Close normally (which checkpoints), then write more via raw SQL to leave WAL dirty.
 	require.NoError(t, s.Close())
 
 	// Reopen, write, close the raw db handle without checkpoint.
 	s2 := NewContentStore(dbPath, dir, 0)
-	_, err = s2.Index("# More data\n\nAnother chunk.", "cp-test-2", "")
+	_, err = s2.Index("# More data\n\nAnother chunk.", "cp-test-2", "", KindDurable)
 	require.NoError(t, err)
 	// Access internal db directly to close without our checkpoint logic.
 	db, _ := s2.getDB()
@@ -290,13 +290,13 @@ func TestFindIdentityFieldNonObject(t *testing.T) {
 func TestIndexAndDedup(t *testing.T) {
 	s := newTestStore(t)
 
-	r1, err := s.Index("hello world content", "test-source", "plaintext")
+	r1, err := s.Index("hello world content", "test-source", "plaintext", KindDurable)
 	require.NoError(t, err)
 	assert.False(t, r1.AlreadyIndexed)
 	assert.Greater(t, r1.TotalChunks, 0)
 
 	// Same content = dedup.
-	r2, err := s.Index("hello world content", "test-source", "plaintext")
+	r2, err := s.Index("hello world content", "test-source", "plaintext", KindDurable)
 	require.NoError(t, err)
 	assert.True(t, r2.AlreadyIndexed)
 	assert.Equal(t, r1.SourceID, r2.SourceID)
@@ -305,10 +305,10 @@ func TestIndexAndDedup(t *testing.T) {
 func TestIndexChangedContent(t *testing.T) {
 	s := newTestStore(t)
 
-	r1, err := s.Index("version one", "src", "plaintext")
+	r1, err := s.Index("version one", "src", "plaintext", KindDurable)
 	require.NoError(t, err)
 
-	r2, err := s.Index("version two", "src", "plaintext")
+	r2, err := s.Index("version two", "src", "plaintext", KindDurable)
 	require.NoError(t, err)
 	assert.False(t, r2.AlreadyIndexed)
 	assert.NotEqual(t, r1.SourceID, r2.SourceID, "should get new source ID after re-index")
@@ -317,9 +317,110 @@ func TestIndexChangedContent(t *testing.T) {
 func TestIndexAutoDetectsContentType(t *testing.T) {
 	s := newTestStore(t)
 
-	r, err := s.Index(`{"key": "value"}`, "json-src", "")
+	r, err := s.Index(`{"key": "value"}`, "json-src", "", KindDurable)
 	require.NoError(t, err)
 	assert.Equal(t, "json", r.ContentType)
+}
+
+func TestIndex_RespectsKind(t *testing.T) {
+	s := newTestStore(t)
+
+	r1, err := s.Index("ephemeral content", "execute:shell", "plaintext", KindEphemeral)
+	require.NoError(t, err)
+	assert.Equal(t, KindEphemeral, r1.Kind)
+
+	r2, err := s.Index("durable content", "user-doc", "plaintext", KindDurable)
+	require.NoError(t, err)
+	assert.Equal(t, KindDurable, r2.Kind)
+
+	// Verify kind is stored in the DB.
+	db, _ := s.getDB()
+	var kind string
+	err = db.QueryRow("SELECT kind FROM sources WHERE id = ?", r1.SourceID).Scan(&kind)
+	require.NoError(t, err)
+	assert.Equal(t, "ephemeral", kind)
+
+	err = db.QueryRow("SELECT kind FROM sources WHERE id = ?", r2.SourceID).Scan(&kind)
+	require.NoError(t, err)
+	assert.Equal(t, "durable", kind)
+}
+
+func TestIndex_RejectsInvalidKind(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.Index("content", "label", "plaintext", SourceKind("bogus"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid source kind")
+}
+
+func TestIndex_PromotesKindInPlace(t *testing.T) {
+	s := newTestStore(t)
+
+	// Index as ephemeral.
+	r1, err := s.Index("same content", "promote-test", "plaintext", KindEphemeral)
+	require.NoError(t, err)
+	assert.False(t, r1.AlreadyIndexed)
+
+	db, _ := s.getDB()
+
+	// Count chunks before promotion.
+	var chunkCountBefore int
+	err = db.QueryRow("SELECT COUNT(*) FROM chunks WHERE source_id = ?", r1.SourceID).Scan(&chunkCountBefore)
+	require.NoError(t, err)
+
+	// Re-index same content as durable — should promote in-place.
+	r2, err := s.Index("same content", "promote-test", "plaintext", KindDurable)
+	require.NoError(t, err)
+	assert.True(t, r2.AlreadyIndexed)
+	assert.Equal(t, r1.SourceID, r2.SourceID)
+	assert.Equal(t, KindDurable, r2.Kind)
+
+	// Chunks must be unchanged — no re-chunking.
+	var chunkCountAfter int
+	err = db.QueryRow("SELECT COUNT(*) FROM chunks WHERE source_id = ?", r1.SourceID).Scan(&chunkCountAfter)
+	require.NoError(t, err)
+	assert.Equal(t, chunkCountBefore, chunkCountAfter, "promotion must not re-chunk")
+
+	// Verify kind in DB.
+	var kind string
+	err = db.QueryRow("SELECT kind FROM sources WHERE id = ?", r1.SourceID).Scan(&kind)
+	require.NoError(t, err)
+	assert.Equal(t, "durable", kind)
+}
+
+func TestIndex_DemotesKindInPlace(t *testing.T) {
+	s := newTestStore(t)
+
+	// Index as durable.
+	r1, err := s.Index("same content", "demote-test", "plaintext", KindDurable)
+	require.NoError(t, err)
+	assert.False(t, r1.AlreadyIndexed)
+	assert.Equal(t, KindDurable, r1.Kind)
+
+	db, _ := s.getDB()
+
+	var chunkCountBefore int
+	err = db.QueryRow("SELECT COUNT(*) FROM chunks WHERE source_id = ?", r1.SourceID).Scan(&chunkCountBefore)
+	require.NoError(t, err)
+
+	// Re-index same content as ephemeral — should demote in-place.
+	r2, err := s.Index("same content", "demote-test", "plaintext", KindEphemeral)
+	require.NoError(t, err)
+	assert.True(t, r2.AlreadyIndexed)
+	assert.Equal(t, r1.SourceID, r2.SourceID)
+	assert.Equal(t, KindEphemeral, r2.Kind)
+
+	// Chunks must be unchanged — no re-chunking.
+	var chunkCountAfter int
+	err = db.QueryRow("SELECT COUNT(*) FROM chunks WHERE source_id = ?", r1.SourceID).Scan(&chunkCountAfter)
+	require.NoError(t, err)
+	assert.Equal(t, chunkCountBefore, chunkCountAfter, "demotion must not re-chunk")
+
+	// Verify kind in DB.
+	var kind string
+	err = db.QueryRow("SELECT kind FROM sources WHERE id = ?", r1.SourceID).Scan(&kind)
+	require.NoError(t, err)
+	assert.Equal(t, "ephemeral", kind)
 }
 
 func TestIndexConcurrentSameLabelNoDuplicates(t *testing.T) {
@@ -344,6 +445,7 @@ func TestIndexConcurrentSameLabelNoDuplicates(t *testing.T) {
 				fmt.Sprintf("content-%d", idx),
 				"same-label",
 				"plaintext",
+				KindDurable,
 			)
 		}(i)
 	}
@@ -368,7 +470,7 @@ func TestIndexConcurrentSameLabelNoDuplicates(t *testing.T) {
 func TestVocabularyExtraction(t *testing.T) {
 	s := newTestStore(t)
 
-	_, err := s.Index("The authentication middleware validates tokens correctly", "vocab-test", "plaintext")
+	_, err := s.Index("The authentication middleware validates tokens correctly", "vocab-test", "plaintext", KindDurable)
 	require.NoError(t, err)
 
 	db, _ := s.getDB()
@@ -394,7 +496,7 @@ func TestVocabularyBatched(t *testing.T) {
 	}
 	content := strings.Join(words, " ")
 
-	_, err := s.Index(content, "vocab-batch-test", "plaintext")
+	_, err := s.Index(content, "vocab-batch-test", "plaintext", KindDurable)
 	require.NoError(t, err)
 
 	db, _ := s.getDB()

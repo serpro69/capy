@@ -21,6 +21,7 @@ func indexTestContent(t *testing.T, s *ContentStore) {
 			"## Session Management\n\nSessions expire after 30 minutes of inactivity.",
 		"auth-middleware",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -31,6 +32,7 @@ func indexTestContent(t *testing.T, s *ContentStore) {
 			"## Query Planning\n\nUse EXPLAIN to analyze query execution plans.",
 		"db-optimization",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 }
@@ -181,6 +183,7 @@ func TestRRFMultiLayerHitsRankHigher(t *testing.T) {
 			"## Zeta Module\n\nThe zeta module does something else entirely with no auth.",
 		"rrf-test",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -301,7 +304,7 @@ func TestGetDistinctiveTerms(t *testing.T) {
 		"## Deployment\n\nThe deployment pipeline runs automated checks.",
 	}
 	content := "# System Architecture\n\n" + strings.Join(sections, "\n\n")
-	r, err := s.Index(content, "terms-test", "markdown")
+	r, err := s.Index(content, "terms-test", "markdown", KindDurable)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, r.TotalChunks, 3, "need at least 3 chunks for distinctive terms")
 
@@ -323,7 +326,7 @@ func TestGetDistinctiveTermsTooFewChunks(t *testing.T) {
 	s := newTestStore(t)
 
 	// Index small content — will produce < 3 chunks.
-	r, err := s.Index("short content", "small", "plaintext")
+	r, err := s.Index("short content", "small", "plaintext", KindDurable)
 	require.NoError(t, err)
 
 	terms, err := s.GetDistinctiveTerms(r.SourceID, 10)
@@ -371,7 +374,7 @@ func TestGetSourceMeta_AfterIndexing(t *testing.T) {
 func TestGetChunksBySource(t *testing.T) {
 	s := newTestStore(t)
 
-	r, err := s.Index("# Title\n\nContent A\n\n## Sub\n\nContent B", "chunks-test", "markdown")
+	r, err := s.Index("# Title\n\nContent A\n\n## Sub\n\nContent B", "chunks-test", "markdown", KindDurable)
 	require.NoError(t, err)
 
 	chunks, err := s.GetChunksBySource(r.SourceID)
@@ -396,6 +399,7 @@ func TestProximityRerankMultiTerm(t *testing.T) {
 			"A token is issued after login.",
 		"proximity-test",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -497,6 +501,7 @@ func TestProximityRerankWithSynonyms(t *testing.T) {
 			"# Other\n\nSome unrelated content about testing and debugging.",
 		"synonym-proximity-test",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -578,6 +583,7 @@ func TestSearchContentTypeFilter(t *testing.T) {
 			"## Usage\n\nCall Authenticate with a valid token.",
 		"code-filter-test",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -607,6 +613,7 @@ func TestSynonymExpansionPorter(t *testing.T) {
 			"## Bottlenecks\n\nIdentify database latency bottlenecks in production.",
 		"db-perf-doc",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -626,6 +633,7 @@ func TestSynonymExpansionTrigram(t *testing.T) {
 			"## Scaling\n\nKubernetes horizontal pod autoscaler manages workload scaling.",
 		"k8s-doc",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -649,6 +657,7 @@ func TestSynonymFallbackToOR(t *testing.T) {
 			"## Tokens\n\nJWT tokens are used for stateless authentication.",
 		"auth-only",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -680,6 +689,7 @@ func TestNoSynonymPassthrough(t *testing.T) {
 			"## Lifecycle\n\nWidgets follow a mount-update-unmount lifecycle.",
 		"widget-doc",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -746,6 +756,7 @@ func TestFuzzyCorrectedQueryGetsSynonymExpansion(t *testing.T) {
 			"## Pipeline\n\nAuthentication is required before deployment can proceed.",
 		"auth-deploy",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -761,7 +772,7 @@ func TestSecretStrippedBeforeIndexing(t *testing.T) {
 
 	secret := "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
 	content := fmt.Sprintf("# Config\n\nGitHub token: %s\n\nThis document describes deployment config.", secret)
-	_, err := s.Index(content, "config-with-secret", "markdown")
+	_, err := s.Index(content, "config-with-secret", "markdown", KindDurable)
 	require.NoError(t, err)
 
 	// Search for deployment config — should find the document.
@@ -792,6 +803,7 @@ func indexDiversifyContent(t *testing.T, s *ContentStore) {
 			"## Deployment Security\n\nDeployment secrets must be encrypted at rest.",
 		"deploy-guide-A",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -801,6 +813,7 @@ func indexDiversifyContent(t *testing.T, s *ContentStore) {
 			"## Deployment Verification\n\nVerify deployment with smoke tests after rollout.",
 		"deploy-checklist-B",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 
@@ -809,6 +822,7 @@ func indexDiversifyContent(t *testing.T, s *ContentStore) {
 		"# Deployment FAQ\n\nCommon deployment questions and troubleshooting tips.",
 		"deploy-faq-C",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 }
@@ -881,6 +895,7 @@ func TestDiversifySingleSource(t *testing.T) {
 			"## Deployment Rollback\n\nDeployment rollback requires pinning.",
 		"single-source",
 		"markdown",
+		KindDurable,
 	)
 	require.NoError(t, err)
 

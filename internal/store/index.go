@@ -14,10 +14,15 @@ import (
 // Index indexes content into the knowledge base. It auto-detects
 // content type if contentType is empty. Duplicate content (same label
 // and hash) is skipped; changed content replaces the old source.
-func (s *ContentStore) Index(content, label, contentType string) (*IndexResult, error) {
+// kind must be a valid SourceKind (KindDurable or KindEphemeral).
+func (s *ContentStore) Index(content, label, contentType string, kind SourceKind) (*IndexResult, error) {
 	db, err := s.getDB()
 	if err != nil {
 		return nil, err
+	}
+
+	if !kind.Valid() {
+		return nil, fmt.Errorf("invalid source kind %q", kind)
 	}
 
 	if contentType == "" {
@@ -61,12 +66,21 @@ func (s *ContentStore) Index(content, label, contentType string) (*IndexResult, 
 	// Check for existing source with same label (inside transaction).
 	var existingID int64
 	var existingHash sql.NullString
-	err = tx.Stmt(s.stmtFindSourceByLabel).QueryRow(label).Scan(&existingID, &existingHash)
+	var existingKind SourceKind
+	err = tx.Stmt(s.stmtFindSourceByLabel).QueryRow(label).Scan(&existingID, &existingHash, &existingKind)
 	if err == nil {
 		if existingHash.Valid && existingHash.String == hash {
-			// Same content — update access time and return.
-			if _, err := tx.Stmt(s.stmtUpdateSourceAccess).Exec(label, hash); err != nil {
-				return nil, fmt.Errorf("updating access time: %w", err)
+			// Same content — promote/demote kind if needed, update access time.
+			// stmtUpdateSourceKind already sets last_accessed_at, so only
+			// call stmtUpdateSourceAccess when kind is unchanged.
+			if existingKind != kind {
+				if _, err := tx.Stmt(s.stmtUpdateSourceKind).Exec(kind, existingID); err != nil {
+					return nil, fmt.Errorf("updating source kind: %w", err)
+				}
+			} else {
+				if _, err := tx.Stmt(s.stmtUpdateSourceAccess).Exec(label, hash); err != nil {
+					return nil, fmt.Errorf("updating access time: %w", err)
+				}
 			}
 			if err := tx.Commit(); err != nil {
 				return nil, fmt.Errorf("committing transaction: %w", err)
@@ -74,6 +88,7 @@ func (s *ContentStore) Index(content, label, contentType string) (*IndexResult, 
 			return &IndexResult{
 				SourceID:       existingID,
 				Label:          label,
+				Kind:           kind,
 				AlreadyIndexed: true,
 			}, nil
 		}
@@ -84,7 +99,7 @@ func (s *ContentStore) Index(content, label, contentType string) (*IndexResult, 
 	}
 
 	// Insert source and chunks.
-	res, err := tx.Stmt(s.stmtInsertSource).Exec(label, contentType, len(chunks), codeChunks, hash)
+	res, err := tx.Stmt(s.stmtInsertSource).Exec(label, contentType, len(chunks), codeChunks, hash, kind)
 	if err != nil {
 		return nil, fmt.Errorf("inserting source: %w", err)
 	}
@@ -116,17 +131,18 @@ func (s *ContentStore) Index(content, label, contentType string) (*IndexResult, 
 		TotalChunks: len(chunks),
 		CodeChunks:  codeChunks,
 		ContentType: contentType,
+		Kind:        kind,
 	}, nil
 }
 
 // IndexPlainText is a convenience entry point that forces plaintext chunking.
-func (s *ContentStore) IndexPlainText(content, label string) (*IndexResult, error) {
-	return s.Index(content, label, "plaintext")
+func (s *ContentStore) IndexPlainText(content, label string, kind SourceKind) (*IndexResult, error) {
+	return s.Index(content, label, "plaintext", kind)
 }
 
 // IndexJSON is a convenience entry point that forces JSON chunking.
-func (s *ContentStore) IndexJSON(content, label string) (*IndexResult, error) {
-	return s.Index(content, label, "json")
+func (s *ContentStore) IndexJSON(content, label string, kind SourceKind) (*IndexResult, error) {
+	return s.Index(content, label, "json", kind)
 }
 
 func chunkContent(content, contentType string) []Chunk {

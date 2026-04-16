@@ -819,7 +819,7 @@ func (s *ContentStore) GetSourceMeta(label string) (*SourceMeta, error) {
 
 	var meta SourceMeta
 	var indexedAt string
-	err := s.stmtGetSourceMeta.QueryRow(label).Scan(&meta.Label, &meta.ChunkCount, &indexedAt)
+	err := s.stmtGetSourceMeta.QueryRow(label).Scan(&meta.Label, &meta.ChunkCount, &indexedAt, &meta.Kind)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -847,7 +847,7 @@ func (s *ContentStore) ListSources() ([]SourceInfo, error) {
 		var si SourceInfo
 		var indexedAt, lastAccessedAt string
 		if err := rows.Scan(&si.ID, &si.Label, &si.ContentType, &si.ChunkCount,
-			&si.CodeChunkCount, &indexedAt, &lastAccessedAt, &si.AccessCount, &si.ContentHash); err != nil {
+			&si.CodeChunkCount, &indexedAt, &lastAccessedAt, &si.AccessCount, &si.ContentHash, &si.Kind); err != nil {
 			continue
 		}
 		si.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
