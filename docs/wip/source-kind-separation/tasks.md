@@ -7,15 +7,15 @@
 > Created: 2026-04-15
 
 ## Task 1: Schema column and type plumbing
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#step-1-schema-and-types](./implementation.md#step-1-schema-and-types)
 
 ### Subtasks
-- [ ] 1.1 Add `kind TEXT NOT NULL DEFAULT 'durable' CHECK (kind IN ('ephemeral', 'durable'))` to the `sources` CREATE TABLE in `internal/store/schema.go`
-- [ ] 1.2 Add `SourceKind` string alias and `KindDurable`, `KindEphemeral` constants to `internal/store/types.go`, plus a `(k SourceKind) Valid() bool` helper
-- [ ] 1.3 Add `Kind SourceKind` field to `SourceInfo`, `IndexResult`, and `SourceMeta` structs
-- [ ] 1.4 Verify `go build ./...` passes with no behavioral change yet
+- [x] 1.1 Add `kind TEXT NOT NULL DEFAULT 'durable' CHECK (kind IN ('ephemeral', 'durable'))` to the `sources` CREATE TABLE in `internal/store/schema.go`
+- [x] 1.2 Add `SourceKind` string alias and `KindDurable`, `KindEphemeral` constants to `internal/store/types.go`, plus a `(k SourceKind) Valid() bool` helper
+- [x] 1.3 Add `Kind SourceKind` field to `SourceInfo`, `IndexResult`, and `SourceMeta` structs
+- [x] 1.4 Verify `go build ./...` passes with no behavioral change yet
 
 ## Task 2: Idempotent migration on store open
 - **Status:** pending
