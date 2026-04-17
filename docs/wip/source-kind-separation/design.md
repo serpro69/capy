@@ -1,6 +1,6 @@
 # Design: Source-Kind Separation for Persistent Knowledge Store
 
-**Status:** Draft
+**Status:** Accepted (implemented)
 **Date:** 2026-04-15
 **ADR:** [../../adr/017-source-kind-separation.md](../../adr/017-source-kind-separation.md)
 **Implementation plan:** [./implementation.md](./implementation.md)
@@ -199,9 +199,9 @@ type StoreStats struct {
 
 ## Security and edge cases
 
-- **Migration idempotency and concurrency:** the migration runs inside `BEGIN IMMEDIATE` (SQLite acquires the reserved-write lock eagerly). Inside the transaction, re-check `PRAGMA table_info(sources)` and exit early if the `kind` column already exists. Because capy can run as multiple processes against the same DB (ADR-006), two processes opening a pre-migration DB simultaneously both try to migrate; SQLite serializes the write lock, and the second process's `PRAGMA` check sees the column and returns. The retroactive `UPDATE` is itself idempotent — re-running it on `ephemeral`-tagged rows is a no-op. No separate migrations-tracking table is required for this single migration; add one when the second migration lands.
+- **Migration idempotency and concurrency:** the migration runs inside a transaction that holds SQLite's RESERVED write lock for its entire lifetime (acquired eagerly via the `db.Begin()` + dummy-write idiom — same pattern `Index` uses; see `migrate.go:beginImmediate` for details). Inside the transaction, re-check `PRAGMA table_info(sources)` and exit early if the `kind` column already exists. Because capy can run as multiple processes against the same DB (ADR-006), two processes opening a pre-migration DB simultaneously both try to migrate; SQLite serializes the write lock, and the second process's `PRAGMA` check sees the column and returns. The retroactive `UPDATE` is itself idempotent — re-running it on `ephemeral`-tagged rows is a no-op. No separate migrations-tracking table is required for this single migration; add one when the second migration lands.
 - **Content-hash dedup with kind mismatch:** re-indexing identical content under the same label with a different `kind` must NOT force a re-chunk. The hash-match short-circuit in `internal/store/index.go:66-78` is extended to update `kind` in place: `UPDATE sources SET kind = ?, last_accessed_at = datetime('now') WHERE id = ?`. Promotion (ephemeral → durable via `capy_index`) and demotion (unlikely but possible) both route through the short-circuit without re-chunking. See also §Open questions 4.
-- **Concurrent writes:** `Index` already uses `BEGIN IMMEDIATE` via a dummy `DELETE`. No new locking concerns.
+- **Concurrent writes:** `Index` already acquires the RESERVED write lock eagerly via a dummy `DELETE` immediately after `db.Begin()`. The migration reuses the same idiom. No new locking concerns.
 - **TTL clock skew:** uses `datetime('now')` in SQLite so no local time-zone confusion. Tests must not mock `time.Now()` at the store layer for this reason.
 - **Store-open ordering:** the store-initialization path must be `exec(schemaSQL) → applyMigrations(db) → prepareStatements(db)`. Prepared statements reference the `kind` column (per the Index-methods change), so preparing before migration fails on existing pre-migration DBs.
 

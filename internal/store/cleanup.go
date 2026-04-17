@@ -247,18 +247,21 @@ func (s *ContentStore) evict(candidates []SourceInfo, dryRun bool) error {
 	}
 	defer tx.Rollback()
 
-	// TODO: tx.Stmt() inside the loop creates a new transaction-bound prepared
-	// statement per iteration. Lift these three calls above the loop to reuse
-	// the transaction-bound statements and avoid leaking statement handles when
-	// the candidate list is large.
+	// Bind the three prepared statements to the transaction once. Calling
+	// tx.Stmt inside the loop would allocate a fresh transaction-bound
+	// statement per candidate, which compounds on large eviction sweeps.
+	delChunks := tx.Stmt(s.stmtDeleteChunksBySource)
+	delTrigram := tx.Stmt(s.stmtDeleteTrigramBySource)
+	delSource := tx.Stmt(s.stmtDeleteSource)
+
 	for _, src := range candidates {
-		if _, err := tx.Stmt(s.stmtDeleteChunksBySource).Exec(src.ID); err != nil {
+		if _, err := delChunks.Exec(src.ID); err != nil {
 			return fmt.Errorf("deleting chunks for source %d: %w", src.ID, err)
 		}
-		if _, err := tx.Stmt(s.stmtDeleteTrigramBySource).Exec(src.ID); err != nil {
+		if _, err := delTrigram.Exec(src.ID); err != nil {
 			return fmt.Errorf("deleting trigram chunks for source %d: %w", src.ID, err)
 		}
-		if _, err := tx.Stmt(s.stmtDeleteSource).Exec(src.ID); err != nil {
+		if _, err := delSource.Exec(src.ID); err != nil {
 			return fmt.Errorf("deleting source %d: %w", src.ID, err)
 		}
 	}

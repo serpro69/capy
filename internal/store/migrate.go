@@ -2,9 +2,12 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/mattn/go-sqlite3"
 )
 
 // applyMigrations runs all pending one-shot migrations against db.
@@ -24,16 +27,14 @@ func applyMigrations(db *sql.DB) error {
 
 // migrate017AddSourceKind adds the `kind` column to the sources table.
 // Idempotency: PRAGMA table_info detects whether the column already exists.
-// Concurrency: BEGIN IMMEDIATE acquires the write lock eagerly so a second
-// process blocks until the first commits, then re-checks and returns early.
+// Concurrency: beginImmediate acquires the RESERVED write lock eagerly so a
+// second concurrent caller blocks until we commit, then its PRAGMA table_info
+// sees the column and returns early.
 func migrate017AddSourceKind(db *sql.DB) error {
-	// go-sqlite3 maps LevelSerializable to BEGIN IMMEDIATE, which acquires the
-	// write lock eagerly. A second concurrent caller blocks until we commit,
-	// then its PRAGMA table_info sees the column and returns early.
-	//
-	// Retry on SQLITE_BUSY: database/sql's BeginTx may return "database is locked"
-	// before the connection-level busy_timeout applies (the lock contention happens
-	// at the BEGIN statement itself). We retry with backoff for up to ~5s total.
+	// Acquire the write lock eagerly via beginImmediate (see its doc for the
+	// dummy-write mechanism). Retries on SQLITE_BUSY with exponential backoff
+	// because database/sql's BeginTx can surface "database is locked" before
+	// the connection-level busy_timeout kicks in under goroutine contention.
 	tx, err := beginImmediate(db)
 	if err != nil {
 		return fmt.Errorf("begin immediate: %w", err)
@@ -86,10 +87,16 @@ func migrate017AddSourceKind(db *sql.DB) error {
 	return tx.Commit()
 }
 
-// beginImmediate starts a transaction with BEGIN IMMEDIATE semantics, retrying
-// on SQLITE_BUSY with exponential backoff. database/sql's BeginTx can surface
-// "database is locked" before the connection-level busy_timeout kicks in when
-// multiple goroutines contend for BEGIN IMMEDIATE on the same *sql.DB pool.
+// beginImmediate starts a transaction that holds SQLite's RESERVED write lock
+// for its entire lifetime, matching the guarantee of a literal `BEGIN IMMEDIATE`
+// without issuing that statement directly. database/sql's Begin() uses
+// BEGIN DEFERRED, so we upgrade to a write transaction by executing a no-op
+// DELETE immediately after — SQLite acquires the RESERVED lock on the first
+// write of a DEFERRED tx. This matches the idiom used by Index (index.go).
+//
+// Retries on SQLITE_BUSY with exponential backoff because database/sql's
+// BeginTx can surface "database is locked" before the connection-level
+// busy_timeout kicks in when goroutines contend for the write lock.
 func beginImmediate(db *sql.DB) (*sql.Tx, error) {
 	const maxRetries = 10
 	backoff := 10 * time.Millisecond
@@ -105,9 +112,7 @@ func beginImmediate(db *sql.DB) (*sql.Tx, error) {
 			return nil, err
 		}
 
-		// Upgrade to a write transaction by executing a dummy write.
-		// database/sql's Begin() uses BEGIN DEFERRED; this forces the
-		// RESERVED lock acquisition that BEGIN IMMEDIATE would provide.
+		// Force RESERVED-lock acquisition via a no-op write.
 		_, err = tx.Exec("DELETE FROM sources WHERE 0")
 		if err != nil {
 			tx.Rollback() //nolint:errcheck
@@ -123,6 +128,19 @@ func beginImmediate(db *sql.DB) (*sql.Tx, error) {
 	return nil, fmt.Errorf("could not acquire write lock after %d retries", maxRetries)
 }
 
+// isBusy reports whether err is a SQLITE_BUSY / SQLITE_LOCKED condition.
+// Preferred path: typed sqlite3.Error code match. The string fallback catches
+// errors wrapped in ways that strip the typed error (e.g., some database/sql
+// paths return a bare error before reaching the driver error layer).
 func isBusy(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "database is locked")
+	if err == nil {
+		return false
+	}
+	var sqliteErr sqlite3.Error
+	if errors.As(err, &sqliteErr) {
+		return sqliteErr.Code == sqlite3.ErrBusy || sqliteErr.Code == sqlite3.ErrLocked
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked")
 }

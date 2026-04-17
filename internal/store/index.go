@@ -47,18 +47,18 @@ func (s *ContentStore) Index(content, label, contentType string, kind SourceKind
 		}
 	}
 
-	// BEGIN IMMEDIATE acquires a write lock immediately, preventing
-	// concurrent writers from interleaving dedup check + insert.
+	// Acquire SQLite's RESERVED write lock for the whole transaction so the
+	// dedup SELECT and the INSERT/UPDATE that follows cannot interleave with
+	// another writer. database/sql's Begin() issues BEGIN DEFERRED, which
+	// only takes the write lock on the first write statement — we force that
+	// by executing a no-op DELETE right after opening the tx. Same idiom
+	// used by migrate.go's beginImmediate.
 	tx, err := db.BeginTx(s.ctx(), &sql.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Acquire write lock via a dummy write before the read check.
-	// SQLite deferred transactions only acquire the write lock on the
-	// first write statement; we force it here so the SELECT + INSERT
-	// sequence is atomic.
 	if _, err := tx.Exec("DELETE FROM sources WHERE 0"); err != nil {
 		return nil, fmt.Errorf("acquiring write lock: %w", err)
 	}

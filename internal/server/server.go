@@ -84,11 +84,13 @@ func (s *Server) getStore() *store.ContentStore {
 }
 
 // ephemeralTTL resolves the ephemeral-source TTL from config with a
-// safe 24h fallback when s.config is nil (test paths may construct a
-// Server without one). Centralizes the duration conversion so call
-// sites don't each have to nil-guard and multiply.
+// safe 24h fallback. The loader rejects EphemeralTTLHours < 1 so the
+// non-positive branch should be unreachable in production, but we guard
+// it anyway for defense-in-depth — a 0 would cascade into cleanup.go's
+// non-positive-TTL branch and log a warning on every Stats/Cleanup call.
+// Also covers test paths that construct a Server without a config.
 func (s *Server) ephemeralTTL() time.Duration {
-	if s.config == nil {
+	if s.config == nil || s.config.Store.Cleanup.EphemeralTTLHours <= 0 {
 		return 24 * time.Hour
 	}
 	return time.Duration(s.config.Store.Cleanup.EphemeralTTLHours) * time.Hour
