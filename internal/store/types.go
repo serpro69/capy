@@ -64,14 +64,26 @@ type SourceInfo struct {
 
 // StoreStats contains knowledge base statistics.
 type StoreStats struct {
-	SourceCount    int
-	ChunkCount     int
-	VocabCount     int
-	DBSizeBytes    int64
-	HotCount       int
-	WarmCount      int
-	ColdCount      int
-	EvictableCount int
+	SourceCount int
+	ChunkCount  int
+	VocabCount  int
+	DBSizeBytes int64
+
+	// Per-kind source counts.
+	DurableSourceCount   int
+	EphemeralSourceCount int
+
+	// Durable retention tiers — renamed from Hot/Warm/Cold/EvictableCount
+	// to reflect that retention scoring applies only to durable rows.
+	DurableHotCount       int
+	DurableWarmCount      int
+	DurableColdCount      int
+	DurableEvictableCount int
+
+	// Ephemeral TTL buckets. fresh = indexed within TTL; stale = past TTL
+	// and awaiting the next Cleanup() sweep.
+	EphemeralFreshCount int
+	EphemeralStaleCount int
 }
 
 // SourceMeta is lightweight metadata for a single source (used by TTL cache).
