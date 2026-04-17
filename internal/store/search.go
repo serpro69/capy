@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -527,6 +528,18 @@ func effectiveKindFilter(opts SearchOptions) []SourceKind {
 		return []SourceKind{KindDurable}
 	}
 	return opts.IncludeKinds
+}
+
+// KindScopeIncludesEphemeral reports whether a search with the given options
+// would include ephemeral sources, mirroring effectiveKindFilter so callers
+// (e.g., the MCP layer deciding whether to surface ephemeral-recovery hints)
+// never drift from the store's actual filtering rule.
+func KindScopeIncludesEphemeral(opts SearchOptions) bool {
+	kinds := effectiveKindFilter(opts)
+	if kinds == nil {
+		return true // explicit Source override — kind filter is bypassed
+	}
+	return slices.Contains(kinds, KindEphemeral)
 }
 
 // execDynamicSearch builds and executes a search query with dynamic WHERE clauses.

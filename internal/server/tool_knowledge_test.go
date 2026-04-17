@@ -382,7 +382,12 @@ func TestSearch_SessionRecoveryJourney(t *testing.T) {
 		"intent":   "kryptonite-marker payload",
 	})
 	require.False(t, r.IsError, "execute should succeed: %s", resultText(r))
-	require.Contains(t, resultText(r), "Indexed", "intent path must have indexed the output")
+
+	// Assert on observable store state rather than intent-path output text —
+	// avoids coupling to the intent-search threshold or its output format.
+	ephemeralCount, err := srv.getStore().CountSourcesByKind(store.KindEphemeral)
+	require.NoError(t, err)
+	require.Greater(t, ephemeralCount, 0, "intent path must have indexed ephemeral content")
 
 	// Default search excludes ephemeral — must return zero results AND name both recovery paths.
 	r = callSearch(t, srv, map[string]any{
