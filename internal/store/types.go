@@ -59,6 +59,7 @@ type SourceInfo struct {
 	Kind           SourceKind
 	Tier           string  // "hot", "warm", "cold", "evictable"
 	RetentionScore float64 // computed at query time from salience, decay, and access boost
+	EvictionReason string  // "retention" or "ttl" — populated only by Cleanup results
 }
 
 // StoreStats contains knowledge base statistics.
