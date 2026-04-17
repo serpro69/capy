@@ -500,6 +500,35 @@ func sanitizeTrigramQuery(query, mode string, expandSyns bool) string {
 	return strings.Join(groups, sep)
 }
 
+// CountSourcesByKind returns the number of sources with the given kind.
+func (s *ContentStore) CountSourcesByKind(kind SourceKind) (int, error) {
+	db, err := s.getDB()
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sources WHERE kind = ?`, string(kind)).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// effectiveKindFilter resolves the source-kind filter to apply for a search:
+//   - explicit Source set: nil (caller named a source; trust the intent)
+//   - empty IncludeKinds: {KindDurable} (default-exclude ephemeral)
+//   - non-empty IncludeKinds: opts.IncludeKinds verbatim
+//
+// Returning nil means "no kind clause." Returning a slice means "filter to these kinds."
+func effectiveKindFilter(opts SearchOptions) []SourceKind {
+	if opts.Source != "" {
+		return nil
+	}
+	if len(opts.IncludeKinds) == 0 {
+		return []SourceKind{KindDurable}
+	}
+	return opts.IncludeKinds
+}
+
 // execDynamicSearch builds and executes a search query with dynamic WHERE clauses.
 // table must be "chunks" or "chunks_trigram" (hardcoded by callers, never from user input).
 func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opts SearchOptions) []SearchResult {
@@ -530,6 +559,13 @@ func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opt
 	if opts.ContentType != "" {
 		query += " AND c.content_type = ?"
 		params = append(params, opts.ContentType)
+	}
+	if kinds := effectiveKindFilter(opts); kinds != nil {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(kinds)), ",")
+		query += " AND s.kind IN (" + placeholders + ")"
+		for _, k := range kinds {
+			params = append(params, string(k))
+		}
 	}
 
 	query += " ORDER BY rank LIMIT ?"
