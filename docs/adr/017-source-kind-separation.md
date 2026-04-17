@@ -122,3 +122,18 @@ Add `capy_cleanup --aggressive` that ignores `access_count` and applies a shorte
 - ADR-011 (conservative cleanup) — preserved for `durable`; explicitly *not* applied to `ephemeral`.
 - ADR-012 (content-type internal only) — `kind` is *also* internal, following the same convention.
 - ADR-016 (WAL + checkpoint) — index churn from 24 h TTL-eviction is expected to be handled by the existing WAL checkpoint cadence; no new knob required.
+
+## Release notes
+
+User-facing bullets for the release that ships this ADR:
+
+- **Behavior change — `capy_search` default**: ephemeral sources (command output auto-indexed by `capy_execute`, `capy_execute_file`, and `capy_batch_execute`) are now excluded from search results by default. Prose queries no longer compete against `git diff` / `find` / `ls` output in BM25.
+- **Recovery paths for intra-session re-query**: to include ephemeral rows, pass either
+  - `include_kinds: ["durable","ephemeral"]` (both) or `include_kinds: ["ephemeral"]` (ephemeral only), **or**
+  - an explicit `source:` filter naming the ephemeral label prefix, e.g. `source: "execute:shell"`, `source: "file:/abs/path"`, or `source: "batch:git_diff,find"`. An explicit `source:` bypasses kind filtering.
+
+  The zero-results message from `capy_search` names both recovery paths when an ephemeral match exists but is excluded.
+- **Automatic ephemeral TTL**: ephemeral sources are now purged 24 hours after indexing (configurable via `[store.cleanup] ephemeral_ttl_hours`; minimum 1). `access_count` is ignored — intent-search hits no longer extend ephemeral lifetime.
+- **New `capy_cleanup purge_ephemeral` flag**: one-shot scratch clear that runs only the ephemeral TTL path and leaves durable rows untouched regardless of retention score.
+- **Migration**: existing databases are migrated in place on first open. Rows with `execute:` / `file:` / `batch:` label prefixes are retroactively tagged `ephemeral`; all other rows stay `durable`. No user action required.
+- **Stats**: `capy_stats` now reports a durable vs. ephemeral source breakdown, durable retention tiers (hot/warm/cold/evictable), and ephemeral TTL buckets (fresh/stale).

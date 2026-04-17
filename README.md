@@ -112,6 +112,9 @@ capy uses TOML configuration with three-level precedence (lowest to highest):
 
 [store.cleanup]
 cold_threshold_days = 30
+ephemeral_ttl_hours = 24    # lifetime for ephemeral sources (command output, intent-search writes, batch buffers).
+                            # Longer = more intra-session recall; shorter = less DB churn. Minimum 1; values < 1 are
+                            # rejected at load time. For one-shot scratch purging use `capy_cleanup purge_ephemeral=true`.
 auto_prune = false
 
 [executor]
@@ -173,7 +176,7 @@ capy completion fish | source
 | Tool | What It Does |
 |------|--------------|
 | `capy_index` | Index text, markdown, or a file path into the FTS5 knowledge base for later search. |
-| `capy_search` | Search indexed content. 8-layer fallback: Porter stemming (AND/OR), trigram substring (AND/OR), then fuzzy Levenshtein-corrected versions of all four. Progressive throttling prevents context flooding from excessive search calls. |
+| `capy_search` | Search indexed content. 8-layer fallback: Porter stemming (AND/OR), trigram substring (AND/OR), then fuzzy Levenshtein-corrected versions of all four. Progressive throttling prevents context flooding from excessive search calls. Defaults to durable sources only; pass `include_kinds: ["durable","ephemeral"]` or an explicit `source:` filter (e.g. `"execute:shell"`) to recover prior-session command output. |
 | `capy_fetch_and_index` | Fetch a URL, convert HTML to markdown (strips nav/script/style/header/footer), index into the knowledge base, return a ~3 KB preview. |
 
 ### Utility
@@ -182,7 +185,7 @@ capy completion fish | source
 |------|--------------|
 | `capy_stats` | Session report: bytes saved, context reduction ratio, per-tool breakdown, knowledge base tier distribution. |
 | `capy_doctor` | Diagnostics: version, available runtimes, FTS5 status, config, hook registration, MCP registration, security policies. |
-| `capy_cleanup` | Remove cold knowledge base entries (never accessed, older than threshold). |
+| `capy_cleanup` | Remove evictable knowledge base entries via two paths: retention-score eviction for durable sources (never accessed, low score) and strict TTL eviction for ephemeral sources (`ephemeral_ttl_hours`, `access_count` ignored). Pass `purge_ephemeral=true` for a one-shot scratch clear that skips durable retention. |
 
 ## Security
 
