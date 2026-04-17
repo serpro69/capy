@@ -114,11 +114,11 @@
 - [x] 8.4 Release note in the repo's changelog/release process: explicit behavior-change bullet ("`capy_search` now excludes ephemeral sources by default") + explicit recovery-path bullet naming BOTH `include_kinds: ["durable","ephemeral"]` AND `source: "execute:<lang>"` / `"file:<path>"` / `"batch:…"`
 
 ## Task 9: Final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6, Task 7, Task 8
 
 ### Subtasks
-- [ ] 9.1 Run `kk:test` skill — verify full unit + integration test suite, covering migration, search-default, cleanup split, stats, tool-schema
-- [ ] 9.2 Run `kk:document` skill — ensure README, ADR cross-references, and tool-schema descriptions are consistent
-- [ ] 9.3 Run `kk:review-code` skill with Go as language input to audit the implementation
-- [ ] 9.4 Run `kk:review-spec` skill to verify the implementation matches design.md, implementation.md, and ADR-017
+- [x] 9.1 Run `kk:test` skill — verify full unit + integration test suite, covering migration, search-default, cleanup split, stats, tool-schema
+- [x] 9.2 Run `kk:document` skill — ensure README, ADR cross-references, and tool-schema descriptions are consistent
+- [x] 9.3 Run `kk:review-code` skill with Go as language input to audit the implementation
+- [x] 9.4 Run `kk:review-spec` skill to verify the implementation matches design.md, implementation.md, and ADR-017
