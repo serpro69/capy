@@ -190,7 +190,7 @@ func toolIndex() mcp.Tool {
 func toolSearch() mcp.Tool {
 	return mcp.NewTool("capy_search",
 		mcp.WithToolAnnotation(annotationReadOnly),
-		mcp.WithDescription("Search indexed content. Pass ALL search questions as queries array in ONE call. TIPS: 2-4 specific terms per query. Use 'source' to scope results."),
+		mcp.WithDescription("Search indexed content. Pass ALL search questions as queries array in ONE call. TIPS: 2-4 specific terms per query. Use 'source' to scope results. By default returns only durable sources (fetched/indexed reference content); ephemeral command output is excluded — pass include_kinds: [\"durable\",\"ephemeral\"] or an explicit source: filter to recover it."),
 		mcp.WithArray("queries",
 			mcp.Description("Array of search queries. Batch ALL questions in one call."),
 			mcp.Items(map[string]any{"type": "string"}),
@@ -199,7 +199,11 @@ func toolSearch() mcp.Tool {
 			mcp.Description("Results per query (default: 3)"),
 		),
 		mcp.WithString("source",
-			mcp.Description("Filter to a specific indexed source (partial match)."),
+			mcp.Description("Filter to a specific indexed source (partial match). When set, kind filtering is bypassed — caller's named source wins."),
+		),
+		mcp.WithArray("include_kinds",
+			mcp.Description("Source kinds to include. Accepted values: \"durable\" (fetched/indexed reference content) and \"ephemeral\" (auto-indexed command output from capy_execute / capy_execute_file / capy_batch_execute). Default: [\"durable\"] only. Use [\"durable\",\"ephemeral\"] to recover prior session command output."),
+			mcp.Items(map[string]any{"type": "string", "enum": []string{"durable", "ephemeral"}}),
 		),
 	)
 }

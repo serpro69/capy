@@ -252,6 +252,121 @@ func TestSearchSourceFiltering(t *testing.T) {
 	assert.Empty(t, results2)
 }
 
+// --- Kind filtering ---
+
+// indexMixedKinds seeds two sources matching the same query term, one durable
+// and one ephemeral. Both contain "kubernetes" so a single query can hit either.
+func indexMixedKinds(t *testing.T, s *ContentStore) {
+	t.Helper()
+	_, err := s.Index(
+		"# Kubernetes Reference\n\nkubernetes orchestrates containers across nodes.\n\n"+
+			"## Pods\n\nA pod is the smallest deployable unit in kubernetes.",
+		"k8s-docs",
+		"markdown",
+		KindDurable,
+	)
+	require.NoError(t, err)
+
+	_, err = s.Index(
+		"# kubectl get pods output\n\nkubernetes cluster shows running pods here.",
+		"execute:shell",
+		"markdown",
+		KindEphemeral,
+	)
+	require.NoError(t, err)
+}
+
+func TestSearch_DefaultExcludesEphemeral(t *testing.T) {
+	s := newTestStore(t)
+	indexMixedKinds(t, s)
+
+	results, err := s.SearchWithFallback("kubernetes pods", 10, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	for _, r := range results {
+		assert.NotEqual(t, "execute:shell", r.Label,
+			"default search must not surface ephemeral sources, got: %s", r.Label)
+	}
+}
+
+func TestSearch_IncludeKindsBoth(t *testing.T) {
+	s := newTestStore(t)
+	indexMixedKinds(t, s)
+
+	results, err := s.SearchWithFallback("kubernetes pods", 10, SearchOptions{
+		IncludeKinds: []SourceKind{KindDurable, KindEphemeral},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+
+	labels := map[string]bool{}
+	for _, r := range results {
+		labels[r.Label] = true
+	}
+	assert.True(t, labels["k8s-docs"], "durable source missing from results: %v", labels)
+	assert.True(t, labels["execute:shell"], "ephemeral source missing from results: %v", labels)
+}
+
+func TestSearch_IncludeKindsEphemeralOnly(t *testing.T) {
+	s := newTestStore(t)
+	indexMixedKinds(t, s)
+
+	results, err := s.SearchWithFallback("kubernetes pods", 10, SearchOptions{
+		IncludeKinds: []SourceKind{KindEphemeral},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	for _, r := range results {
+		assert.Equal(t, "execute:shell", r.Label,
+			"ephemeral-only filter must not surface durable sources, got: %s", r.Label)
+	}
+}
+
+func TestSearch_ExplicitSourceOverridesKindFilter(t *testing.T) {
+	s := newTestStore(t)
+	indexMixedKinds(t, s)
+
+	// IncludeKinds defaults to durable only, but explicit Source overrides
+	// the kind filter so the ephemeral row surfaces.
+	results, err := s.SearchWithFallback("kubernetes pods", 10, SearchOptions{
+		Source: "execute:shell",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	for _, r := range results {
+		assert.Equal(t, "execute:shell", r.Label,
+			"explicit-source filter must scope to that source, got: %s", r.Label)
+	}
+}
+
+func TestSearch_FuzzyCorrectionRespectsKindFilter(t *testing.T) {
+	s := newTestStore(t)
+	indexMixedKinds(t, s)
+
+	// "kubernets" is a typo — fuzzy correction should fix it to "kubernetes".
+	// Default filter (durable only) must still apply through the fuzzy re-entry.
+	results, err := s.SearchWithFallback("kubernets pods", 1, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results, "fuzzy correction should find durable results for typo")
+	for _, r := range results {
+		assert.NotEqual(t, "execute:shell", r.Label,
+			"fuzzy-corrected query must inherit the durable-only filter, got: %s", r.Label)
+	}
+}
+
+func TestCountSourcesByKind(t *testing.T) {
+	s := newTestStore(t)
+	indexMixedKinds(t, s)
+
+	durable, err := s.CountSourcesByKind(KindDurable)
+	require.NoError(t, err)
+	assert.Equal(t, 1, durable)
+
+	ephemeral, err := s.CountSourcesByKind(KindEphemeral)
+	require.NoError(t, err)
+	assert.Equal(t, 1, ephemeral)
+}
+
 // --- Access tracking ---
 
 func TestSearchAccessTracking(t *testing.T) {

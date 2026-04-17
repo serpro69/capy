@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -221,7 +222,7 @@ func TestSearch_NoQueries(t *testing.T) {
 
 func TestSearch_NoResults_ShowsSources(t *testing.T) {
 	srv := newTestServer(t, nil)
-	indexTestContent(t, srv)
+	indexTestContent(t, srv) // seeds a durable "react-docs" source
 
 	r := callSearch(t, srv, map[string]any{
 		"queries": []any{"xyznonexistentterm123"},
@@ -229,6 +230,178 @@ func TestSearch_NoResults_ShowsSources(t *testing.T) {
 	assert.False(t, r.IsError)
 	text := resultText(r)
 	assert.Contains(t, text, "No results found")
+	assert.Contains(t, text, "Indexed sources:", "must show the source list when all queries return empty")
+	assert.Contains(t, text, "react-docs", "must name the indexed durable source in the fallback listing")
+}
+
+func TestSearch_NoResults_HidesEphemeralSources(t *testing.T) {
+	srv := newTestServer(t, nil)
+	seedMixedKindCorpus(t, srv) // seeds one durable (k8s-docs) and one ephemeral (execute:shell)
+
+	// extractIndexedSourcesSection returns the text after "Indexed sources:" so that
+	// assertions target only the fallback listing, not the ephemeral-recovery hint
+	// (which names "execute:shell" as an example).
+	extract := func(text string) string {
+		_, after, ok := strings.Cut(text, "Indexed sources:")
+		if !ok {
+			return ""
+		}
+		return after
+	}
+
+	// Default call: ephemeral is excluded from both search and the fallback listing.
+	r := callSearch(t, srv, map[string]any{
+		"queries": []any{"xyznonexistentterm123"},
+	})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	listing := extract(text)
+	require.NotEmpty(t, listing, "fallback listing must be present")
+	assert.Contains(t, listing, "k8s-docs", "durable source must appear in fallback listing")
+	assert.NotContains(t, listing, "execute:shell", "ephemeral source must NOT appear in the listing by default")
+
+	// Opting into ephemeral lists both kinds.
+	r = callSearch(t, srv, map[string]any{
+		"queries":       []any{"xyznonexistentterm123"},
+		"include_kinds": []any{"durable", "ephemeral"},
+	})
+	assert.False(t, r.IsError)
+	listing = extract(resultText(r))
+	require.NotEmpty(t, listing)
+	assert.Contains(t, listing, "k8s-docs")
+	assert.Contains(t, listing, "execute:shell", "opting into ephemeral surfaces it in the fallback listing")
+}
+
+// seedMixedKindCorpus seeds the store with one durable and one ephemeral source,
+// both matching the query "kubernetes pods".
+func seedMixedKindCorpus(t *testing.T, srv *Server) {
+	t.Helper()
+	st := srv.getStore()
+	_, err := st.Index(
+		"# Kubernetes Reference\n\nkubernetes orchestrates containers across nodes.\n\n"+
+			"## Pods\n\nA pod is the smallest deployable unit in kubernetes.",
+		"k8s-docs",
+		"markdown",
+		store.KindDurable,
+	)
+	require.NoError(t, err)
+
+	_, err = st.Index(
+		"# kubectl get pods output\n\nkubernetes cluster shows running pods here.",
+		"execute:shell",
+		"markdown",
+		store.KindEphemeral,
+	)
+	require.NoError(t, err)
+}
+
+func TestSearch_DefaultExcludesEphemeral(t *testing.T) {
+	srv := newTestServer(t, nil)
+	seedMixedKindCorpus(t, srv)
+
+	r := callSearch(t, srv, map[string]any{
+		"queries": []any{"kubernetes pods"},
+	})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "k8s-docs", "default search must surface durable sources")
+	assert.NotContains(t, text, "execute:shell", "default search must hide ephemeral sources")
+}
+
+func TestSearch_IncludeKindsEphemeralOnly(t *testing.T) {
+	srv := newTestServer(t, nil)
+	seedMixedKindCorpus(t, srv)
+
+	r := callSearch(t, srv, map[string]any{
+		"queries":       []any{"kubernetes pods"},
+		"include_kinds": []any{"ephemeral"},
+	})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "execute:shell", "ephemeral-only filter must surface execute:shell")
+	assert.NotContains(t, text, "k8s-docs", "ephemeral-only filter must hide durable sources")
+}
+
+func TestSearch_IncludeKindsBoth(t *testing.T) {
+	srv := newTestServer(t, nil)
+	seedMixedKindCorpus(t, srv)
+
+	r := callSearch(t, srv, map[string]any{
+		"queries":       []any{"kubernetes pods"},
+		"include_kinds": []any{"durable", "ephemeral"},
+	})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "k8s-docs")
+	assert.Contains(t, text, "execute:shell")
+}
+
+func TestSearch_IncludeKindsRejectsUnknown(t *testing.T) {
+	srv := newTestServer(t, nil)
+	seedMixedKindCorpus(t, srv)
+
+	r := callSearch(t, srv, map[string]any{
+		"queries":       []any{"kubernetes"},
+		"include_kinds": []any{"durable", "scratch"},
+	})
+	assert.True(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "scratch", "error must name the offending value")
+	assert.Contains(t, text, "durable", "error must name the accepted set")
+	assert.Contains(t, text, "ephemeral", "error must name the accepted set")
+}
+
+func TestSearch_ZeroResultsNamesRecoveryPaths(t *testing.T) {
+	srv := newTestServer(t, nil)
+	seedMixedKindCorpus(t, srv)
+
+	// Query matches ONLY the ephemeral row (kubectl is unique to it).
+	r := callSearch(t, srv, map[string]any{
+		"queries": []any{"kubectl"},
+	})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "No results found")
+	// Both recovery paths must be named.
+	assert.Contains(t, text, `include_kinds: ["durable","ephemeral"]`)
+	assert.Contains(t, text, `source: "execute:`)
+	assert.Contains(t, text, "ephemeral source(s) present but excluded")
+}
+
+// Session-recovery journey: capy_execute writes ephemeral content via intent
+// search; default capy_search excludes it; include_kinds: ["ephemeral"] recovers it.
+func TestSearch_SessionRecoveryJourney(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	// Generate >5KB of output containing the searchable phrase so intent search
+	// triggers and writes the content to the store as ephemeral.
+	code := `for i in $(seq 1 200); do echo "line ${i} contains kryptonite-marker payload data here"; done`
+	r := callTool(t, srv, map[string]any{
+		"language": "shell",
+		"code":     code,
+		"intent":   "kryptonite-marker payload",
+	})
+	require.False(t, r.IsError, "execute should succeed: %s", resultText(r))
+	require.Contains(t, resultText(r), "Indexed", "intent path must have indexed the output")
+
+	// Default search excludes ephemeral — must return zero results AND name both recovery paths.
+	r = callSearch(t, srv, map[string]any{
+		"queries": []any{"kryptonite-marker payload"},
+	})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "No results found")
+	assert.Contains(t, text, `include_kinds: ["durable","ephemeral"]`)
+	assert.Contains(t, text, `source: "execute:`)
+
+	// Same query with include_kinds: ["ephemeral"] must surface the ephemeral hit.
+	r = callSearch(t, srv, map[string]any{
+		"queries":       []any{"kryptonite-marker payload"},
+		"include_kinds": []any{"ephemeral"},
+	})
+	assert.False(t, r.IsError)
+	text = resultText(r)
+	assert.Contains(t, text, "kryptonite-marker", "ephemeral content must appear when include_kinds=ephemeral")
 }
 
 func TestSearch_ProgressiveThrottling(t *testing.T) {

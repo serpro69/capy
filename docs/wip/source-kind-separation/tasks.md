@@ -49,20 +49,20 @@
 - [x] 3.12 Update existing `internal/store/store_test.go` call sites to pass a kind; add a new `TestIndex_RespectsKind` covering both values
 
 ## Task 4: Search default-excludes ephemeral
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Docs:** [implementation.md#step-4-search-filter](./implementation.md#step-4-search-filter)
 
 ### Subtasks
-- [ ] 4.1 Add `IncludeKinds []SourceKind` to `SearchOptions` in `internal/store/types.go` (array chosen over `bool` to leave room for a future third kind without a breaking change)
-- [ ] 4.2 In `internal/store/search.go`, derive effective kind filter: if `opts.Source != ""` → no filter (explicit-source override); else if `opts.IncludeKinds` empty → `{KindDurable}`; else → `opts.IncludeKinds`. Thread through `rrfSearch` and `execDynamicSearch`
-- [ ] 4.3 In `execDynamicSearch` (at `search.go:505`, already joins `sources s`), append `AND s.kind IN (?, …)` bound from the effective filter. Porter and trigram layers share this path; fuzzy correction re-enters via `rrfSearch` and inherits automatically
-- [ ] 4.4 Add `include_kinds: string[]` argument to the `capy_search` MCP tool schema in `internal/server/tool_search.go`. Validate elements against `{"durable", "ephemeral"}`; reject unknowns with an error that lists the accepted set. Map strings to `SourceKind` constants and wire into `SearchOptions.IncludeKinds`
-- [ ] 4.5 Strengthen the zero-results guidance in `tool_search.go`: when 0 results AND ephemeral was excluded, run `SELECT COUNT(*) FROM sources WHERE kind = 'ephemeral'`. If non-zero, surface both recovery paths explicitly: `include_kinds: ["durable","ephemeral"]` and `source: "execute:<lang>"` / `source: "file:<path>"` / `source: "batch:…"` with a concrete example
-- [ ] 4.6 Store-level test: mixed DB (1 durable + 1 ephemeral row both matching the query) — `SearchOptions{}` returns only durable; `IncludeKinds: []SourceKind{KindDurable, KindEphemeral}` returns both; explicit `Source: "execute:shell"` returns ephemeral regardless of `IncludeKinds`
-- [ ] 4.7 Store-level test: fuzzy-correction query over a misspelling returns kind-filtered results — assert no ephemeral leakage when `IncludeKinds` is empty
-- [ ] 4.8 Integration test in `internal/server/tool_knowledge_test.go`: invoke `handleSearch` against a mixed-corpus store. Default call → ephemeral excluded. `include_kinds: ["ephemeral"]` → only ephemeral. Unknown value → error naming accepted set
-- [ ] 4.9 Integration test (session-recovery journey): `capy_execute(code=…, intent=…)` to index ephemeral content. Then `capy_search(query=<matching phrase>)` with no source filter → assert zero results AND the message names both recovery paths. Then same query with `include_kinds: ["ephemeral"]` → assert the ephemeral row appears
+- [x] 4.1 Add `IncludeKinds []SourceKind` to `SearchOptions` in `internal/store/types.go` (array chosen over `bool` to leave room for a future third kind without a breaking change)
+- [x] 4.2 In `internal/store/search.go`, derive effective kind filter: if `opts.Source != ""` → no filter (explicit-source override); else if `opts.IncludeKinds` empty → `{KindDurable}`; else → `opts.IncludeKinds`. Thread through `rrfSearch` and `execDynamicSearch`
+- [x] 4.3 In `execDynamicSearch` (at `search.go:505`, already joins `sources s`), append `AND s.kind IN (?, …)` bound from the effective filter. Porter and trigram layers share this path; fuzzy correction re-enters via `rrfSearch` and inherits automatically
+- [x] 4.4 Add `include_kinds: string[]` argument to the `capy_search` MCP tool schema in `internal/server/tool_search.go`. Validate elements against `{"durable", "ephemeral"}`; reject unknowns with an error that lists the accepted set. Map strings to `SourceKind` constants and wire into `SearchOptions.IncludeKinds`
+- [x] 4.5 Strengthen the zero-results guidance in `tool_search.go`: when 0 results AND ephemeral was excluded, run `SELECT COUNT(*) FROM sources WHERE kind = 'ephemeral'`. If non-zero, surface both recovery paths explicitly: `include_kinds: ["durable","ephemeral"]` and `source: "execute:<lang>"` / `source: "file:<path>"` / `source: "batch:…"` with a concrete example
+- [x] 4.6 Store-level test: mixed DB (1 durable + 1 ephemeral row both matching the query) — `SearchOptions{}` returns only durable; `IncludeKinds: []SourceKind{KindDurable, KindEphemeral}` returns both; explicit `Source: "execute:shell"` returns ephemeral regardless of `IncludeKinds`
+- [x] 4.7 Store-level test: fuzzy-correction query over a misspelling returns kind-filtered results — assert no ephemeral leakage when `IncludeKinds` is empty
+- [x] 4.8 Integration test in `internal/server/tool_knowledge_test.go`: invoke `handleSearch` against a mixed-corpus store. Default call → ephemeral excluded. `include_kinds: ["ephemeral"]` → only ephemeral. Unknown value → error naming accepted set
+- [x] 4.9 Integration test (session-recovery journey): `capy_execute(code=…, intent=…)` to index ephemeral content. Then `capy_search(query=<matching phrase>)` with no source filter → assert zero results AND the message names both recovery paths. Then same query with `include_kinds: ["ephemeral"]` → assert the ephemeral row appears
 
 ## Task 5: Split cleanup into durable and ephemeral paths
 - **Status:** pending

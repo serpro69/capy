@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,6 +38,11 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 
 	limit := int(req.GetFloat("limit", 3))
 	source := req.GetString("source", "")
+
+	includeKinds, err := parseIncludeKinds(args["include_kinds"])
+	if err != nil {
+		return errorResult("Error: " + err.Error()), nil
+	}
 
 	// Progressive throttling (atomic check+reset+increment)
 	callNum, windowAge := s.throttle.advance(searchWindowDuration)
@@ -75,6 +81,15 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 
 	var sections []string
 	totalSize := 0
+	hasResults := false
+
+	// Lazily fetched once if any query returns zero results while ephemeral is excluded.
+	// Cached across queries in this request; a concurrent write could shift the count
+	// by ±1 — acceptable, the user-facing number is directional, not authoritative.
+	// -1 = not yet checked.
+	ephemeralIncluded := includesEphemeral(source, includeKinds)
+	ephemeralExcluded := !ephemeralIncluded
+	ephemeralCount := -1
 
 	for _, q := range queryList {
 		if totalSize > searchMaxTotalBytes {
@@ -82,16 +97,38 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 			continue
 		}
 
-		results, err := st.SearchWithFallback(q, effectiveLimit, store.SearchOptions{Source: source})
+		results, err := st.SearchWithFallback(q, effectiveLimit, store.SearchOptions{
+			Source:       source,
+			IncludeKinds: includeKinds,
+		})
 		if err != nil {
 			results = nil
 		}
 
 		if len(results) == 0 {
-			sections = append(sections, fmt.Sprintf("## %s\nNo results found.", q))
+			noResults := fmt.Sprintf("## %s\nNo results found.", q)
+			if ephemeralExcluded {
+				if ephemeralCount < 0 {
+					if n, cErr := st.CountSourcesByKind(store.KindEphemeral); cErr == nil {
+						ephemeralCount = n
+					} else {
+						ephemeralCount = 0
+					}
+				}
+				if ephemeralCount > 0 {
+					noResults += fmt.Sprintf(
+						"\n\n%d ephemeral source(s) present but excluded by default. To include command output from capy_execute / capy_execute_file / capy_batch_execute, retry with:\n"+
+							"  • include_kinds: [\"durable\",\"ephemeral\"]  (search across both kinds), or\n"+
+							"  • source: \"execute:<lang>\" / \"file:<path>\" / \"batch:…\"  (explicit-source override; e.g., source: \"execute:shell\")",
+						ephemeralCount,
+					)
+				}
+			}
+			sections = append(sections, noResults)
 			continue
 		}
 
+		hasResults = true
 		var formatted []string
 		for _, r := range results {
 			header := fmt.Sprintf("--- [%s] ---", r.Label)
@@ -115,18 +152,62 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 		)
 	}
 
-	if strings.TrimSpace(output) == "" {
+	// When no query produced any results, append the list of indexed sources
+	// to help the caller pick a better query. Preserves per-query messages
+	// (including the ephemeral-recovery hint) by appending rather than overwriting.
+	// Ephemeral labels are filtered out unless the caller opted into ephemeral,
+	// to keep the listing consistent with the default-exclude-ephemeral contract.
+	if !hasResults {
 		sources, _ := st.ListSources()
-		if len(sources) > 0 {
-			var parts []string
-			for _, src := range sources {
-				parts = append(parts, fmt.Sprintf("%q (%d sections)", src.Label, src.ChunkCount))
+		var parts []string
+		for _, src := range sources {
+			if !ephemeralIncluded && src.Kind == store.KindEphemeral {
+				continue
 			}
-			output = "No results found.\nIndexed sources: " + strings.Join(parts, ", ")
-		} else {
-			output = "No results found."
+			parts = append(parts, fmt.Sprintf("%q (%d sections)", src.Label, src.ChunkCount))
+		}
+		if len(parts) > 0 {
+			output += "\n\nIndexed sources: " + strings.Join(parts, ", ")
 		}
 	}
 
 	return s.trackToolResponse("capy_search", textResult(output)), nil
+}
+
+// parseIncludeKinds normalizes the include_kinds argument to a typed slice.
+// Returns (nil, nil) when absent or empty so the store layer applies the default.
+func parseIncludeKinds(raw any) ([]store.SourceKind, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	values := coerceStringArray(raw)
+	if len(values) == 0 {
+		return nil, nil
+	}
+	out := make([]store.SourceKind, 0, len(values))
+	seen := make(map[store.SourceKind]bool, len(values))
+	for _, v := range values {
+		k := store.SourceKind(v)
+		if !k.Valid() {
+			return nil, fmt.Errorf("invalid include_kinds value %q (accepted: \"durable\", \"ephemeral\")", v)
+		}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	return out, nil
+}
+
+// includesEphemeral reports whether the resolved kind filter would include ephemeral sources.
+func includesEphemeral(source string, kinds []store.SourceKind) bool {
+	if source != "" {
+		// Explicit source override — kind filter is bypassed entirely.
+		return true
+	}
+	if len(kinds) == 0 {
+		return false
+	}
+	return slices.Contains(kinds, store.KindEphemeral)
 }
