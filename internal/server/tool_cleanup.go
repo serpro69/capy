@@ -7,18 +7,33 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/store"
 )
 
 func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
 	dryRun := true
-	if v, ok := req.GetArguments()["dry_run"]; ok {
+	if v, ok := args["dry_run"]; ok {
 		if b, ok := v.(bool); ok {
 			dryRun = b
 		}
 	}
+	purgeEphemeral := false
+	if v, ok := args["purge_ephemeral"]; ok {
+		if b, ok := v.(bool); ok {
+			purgeEphemeral = b
+		}
+	}
 
 	st := s.getStore()
-	pruned, err := st.Cleanup(dryRun, s.ephemeralTTL())
+	ttl := s.ephemeralTTL()
+	var pruned []store.SourceInfo
+	var err error
+	if purgeEphemeral {
+		pruned, err = st.PurgeEphemeral(ttl, dryRun)
+	} else {
+		pruned, err = st.Cleanup(dryRun, ttl)
+	}
 	if err != nil {
 		return errorResult(fmt.Sprintf("Cleanup error: %v", err)), nil
 	}
