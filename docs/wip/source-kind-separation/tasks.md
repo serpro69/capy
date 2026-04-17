@@ -3,7 +3,7 @@
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
 > ADR: [../../adr/017-source-kind-separation.md](../../adr/017-source-kind-separation.md)
-> Status: pending
+> Status: done
 > Created: 2026-04-15
 
 ## Task 1: Schema column and type plumbing
