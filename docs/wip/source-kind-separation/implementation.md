@@ -30,7 +30,7 @@ This plan is ordered so each step leaves the build green and tests passing. Comm
 **Files:** `internal/store/store.go`, new file `internal/store/migrate.go` (or inline into `store.go` if under ~40 LOC).
 
 - Implement `applyMigrations(db *sql.DB) error` covering only the one migration needed right now (`017_add_source_kind`). No migrations-tracking table yet — `PRAGMA table_info(sources)` gives idempotency for free, and the retroactive `UPDATE` is itself idempotent (tagging already-`ephemeral` rows as `ephemeral` is a no-op). Add a tracking table when the second migration lands.
-- Wrap the migration in a single transaction using `BEGIN IMMEDIATE` so SQLite acquires the reserved-write lock up-front. Two concurrent capy processes opening a pre-migration DB both attempt migration; the second acquires the lock after the first commits, re-checks `PRAGMA table_info`, sees the column exists, and returns without writing.
+- Wrap the migration in a single transaction that holds the RESERVED write lock for its full lifetime. database/sql's `Begin()` issues BEGIN DEFERRED, so force the upgrade to RESERVED by executing a no-op DELETE immediately after opening the tx (same idiom used by `Index`). Two concurrent capy processes opening a pre-migration DB both attempt migration; the second acquires the lock after the first commits, re-checks `PRAGMA table_info`, sees the column exists, and returns without writing. Retry on `SQLITE_BUSY` with exponential backoff to paper over the window where database/sql surfaces "database is locked" before the driver's busy_timeout kicks in.
 - Inside the transaction:
   1. `PRAGMA table_info(sources)` — scan for the `kind` column. If present, `COMMIT` and return (no-op).
   2. `ALTER TABLE sources ADD COLUMN kind TEXT NOT NULL DEFAULT 'durable'`.
@@ -101,7 +101,7 @@ This plan is ordered so each step leaves the build green and tests passing. Comm
 
 ### <a id="step-6-stats"></a>Step 6 — Per-kind stats
 
-**Files:** `internal/store/cleanup.go` (where `Stats` lives), `internal/store/types.go`, `internal/server/tool_stats.go`, `internal/server/stats.go`.
+**Files:** `internal/store/cleanup.go` (where `Stats` lives), `internal/store/types.go`, `internal/server/tool_stats.go`.
 
 - In `StoreStats`, **rename** the existing `HotCount`/`WarmCount`/`ColdCount`/`EvictableCount` fields to `DurableHotCount`/`DurableWarmCount`/`DurableColdCount`/`DurableEvictableCount` — do not duplicate. Retention scoring only runs on durable rows, so the original names would be silently misleading after this change.
 - Add `DurableSourceCount`, `EphemeralSourceCount`, `EphemeralFreshCount`, `EphemeralStaleCount` (see design.md §Stats changes for the exact shape).

@@ -1,6 +1,6 @@
 # ADR-017: Separate ephemeral and durable sources in the knowledge store
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-15
 **Supersedes:** Amends (but does not replace) ADR-006, ADR-007, ADR-011.
 
