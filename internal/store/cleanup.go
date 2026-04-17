@@ -141,6 +141,21 @@ func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL time.Duration) ([]Sourc
 	return merged, nil
 }
 
+// PurgeEphemeral evicts ephemeral sources past the TTL window, skipping
+// durable retention entirely. Intended for a one-shot "clear scratch"
+// operation exposed via capy_cleanup's purge_ephemeral flag. Durable
+// rows are never touched, regardless of retention score.
+func (s *ContentStore) PurgeEphemeral(ttl time.Duration, dryRun bool) ([]SourceInfo, error) {
+	ephemeral, err := s.cleanupEphemeral(ttl, dryRun)
+	if err != nil {
+		return nil, err
+	}
+	for i := range ephemeral {
+		ephemeral[i].EvictionReason = "ttl"
+	}
+	return ephemeral, nil
+}
+
 // cleanupDurable applies retention-score-based eviction to durable sources.
 // A source is a candidate iff its retentionScore is below the evictable
 // threshold AND it has never been accessed. ephemeralTTL is threaded

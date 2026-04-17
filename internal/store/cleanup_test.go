@@ -383,6 +383,59 @@ func TestStats(t *testing.T) {
 	assert.Equal(t, 0, stats.DurableEvictableCount)
 }
 
+// ─── PurgeEphemeral (Task 7 convenience flag) ────────────────────────────
+
+func TestPurgeEphemeralLeavesDurableUntouched(t *testing.T) {
+	s := newTestStore(t)
+	db, err := s.getDB()
+	require.NoError(t, err)
+
+	// Durable row that would normally be evicted by retention (60-day-old
+	// prose, never accessed). PurgeEphemeral must NOT touch it.
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('stale-durable', 'plaintext', 1, 0, 'h1', datetime('now', '-60 days'), datetime('now', '-60 days'), 0, 'durable')`)
+	// Stale ephemeral row past TTL — should be evicted with reason "ttl".
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('execute:shell-old', 'plaintext', 1, 0, 'h2', datetime('now', '-48 hours'), datetime('now', '-48 hours'), 0, 'ephemeral')`)
+	// Fresh ephemeral row within TTL — should be preserved.
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('execute:shell-young', 'plaintext', 1, 0, 'h3', datetime('now', '-1 hours'), datetime('now', '-1 hours'), 0, 'ephemeral')`)
+
+	pruned, err := s.PurgeEphemeral(24*time.Hour, false)
+	require.NoError(t, err)
+	require.Len(t, pruned, 1, "only the stale ephemeral row should be pruned")
+	assert.Equal(t, "execute:shell-old", pruned[0].Label)
+	assert.Equal(t, "ttl", pruned[0].EvictionReason)
+
+	// Confirm the durable low-retention row is still present.
+	var durableCount int
+	db.QueryRow(`SELECT COUNT(*) FROM sources WHERE label = 'stale-durable'`).Scan(&durableCount)
+	assert.Equal(t, 1, durableCount, "PurgeEphemeral must not delete durable rows")
+
+	// Young ephemeral row should also remain.
+	var youngCount int
+	db.QueryRow(`SELECT COUNT(*) FROM sources WHERE label = 'execute:shell-young'`).Scan(&youngCount)
+	assert.Equal(t, 1, youngCount, "fresh ephemeral row must be preserved")
+}
+
+func TestPurgeEphemeralDryRun(t *testing.T) {
+	s := newTestStore(t)
+	db, err := s.getDB()
+	require.NoError(t, err)
+
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('execute:shell-old', 'plaintext', 1, 0, 'h1', datetime('now', '-48 hours'), datetime('now', '-48 hours'), 0, 'ephemeral')`)
+
+	pruned, err := s.PurgeEphemeral(24*time.Hour, true)
+	require.NoError(t, err)
+	require.Len(t, pruned, 1)
+	assert.Equal(t, "ttl", pruned[0].EvictionReason)
+
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM sources WHERE label = 'execute:shell-old'`).Scan(&count)
+	assert.Equal(t, 1, count, "dry run must not delete the row")
+}
+
 func TestStatsPerKind(t *testing.T) {
 	s := newTestStore(t)
 	db, err := s.getDB()
