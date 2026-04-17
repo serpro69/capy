@@ -30,7 +30,19 @@ func Load(projectDir string) (*Config, error) {
 		}
 	}
 
+	if err := validate(cfg); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
+}
+
+// validate enforces invariants on the merged configuration.
+func validate(cfg *Config) error {
+	if cfg.Store.Cleanup.EphemeralTTLHours < 1 {
+		return fmt.Errorf("[store.cleanup] ephemeral_ttl_hours must be >= 1 (use capy_cleanup purge_ephemeral=true for one-shot aggressive purging)")
+	}
+	return nil
 }
 
 // loadAndMerge reads a TOML file and merges non-zero values into cfg.
@@ -49,8 +61,29 @@ func loadAndMerge(cfg *Config, path string) error {
 		return err
 	}
 
+	// Validate explicit values that the zero-aware merger can't distinguish
+	// from "unset". Pointer-based detection catches user-written 0s.
+	var detect detectionOverlay
+	if err := toml.Unmarshal(data, &detect); err != nil {
+		return err
+	}
+	if detect.Store.Cleanup.EphemeralTTLHours != nil && *detect.Store.Cleanup.EphemeralTTLHours < 1 {
+		return fmt.Errorf("[store.cleanup] ephemeral_ttl_hours must be >= 1 (use capy_cleanup purge_ephemeral=true for one-shot aggressive purging)")
+	}
+
 	mergeConfig(cfg, &overlay)
 	return nil
+}
+
+// detectionOverlay uses pointer fields to distinguish "user wrote 0" from
+// "user omitted the key", which the zero-value merge in mergeConfig can't do.
+// Only the keys that need strict zero-rejection appear here.
+type detectionOverlay struct {
+	Store struct {
+		Cleanup struct {
+			EphemeralTTLHours *int `toml:"ephemeral_ttl_hours"`
+		} `toml:"cleanup"`
+	} `toml:"store"`
 }
 
 // mergeConfig overwrites fields in dst with non-zero values from src.
@@ -64,6 +97,9 @@ func mergeConfig(dst, src *Config) {
 	}
 	if src.Store.Cleanup.ColdThresholdDays != 0 {
 		dst.Store.Cleanup.ColdThresholdDays = src.Store.Cleanup.ColdThresholdDays
+	}
+	if src.Store.Cleanup.EphemeralTTLHours != 0 {
+		dst.Store.Cleanup.EphemeralTTLHours = src.Store.Cleanup.EphemeralTTLHours
 	}
 	if src.Store.Cleanup.AutoPrune {
 		dst.Store.Cleanup.AutoPrune = true

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/store"
@@ -33,7 +34,8 @@ func newCleanupCmd() *cobra.Command {
 			st := store.NewContentStore(dbPath, projectDir, 0)
 			defer st.Close()
 
-			pruned, err := st.Cleanup(dryRun)
+			ephemeralTTL := time.Duration(cfg.Store.Cleanup.EphemeralTTLHours) * time.Hour
+			pruned, err := st.Cleanup(dryRun, ephemeralTTL)
 			if err != nil {
 				return fmt.Errorf("cleanup failed: %w", err)
 			}
@@ -44,8 +46,7 @@ func newCleanupCmd() *cobra.Command {
 				} else {
 					fmt.Printf("capy: would remove %d evictable source(s):\n", len(pruned))
 					for _, s := range pruned {
-						fmt.Printf("  - %s (score: %.2f, last accessed: %s)\n",
-							s.Label, s.RetentionScore, s.LastAccessedAt.Format("2006-01-02"))
+						fmt.Printf("  - %s (%s)\n", s.Label, formatCleanupDetail(s))
 					}
 					fmt.Println("\nUse --force to actually remove these sources.")
 				}
@@ -55,7 +56,7 @@ func newCleanupCmd() *cobra.Command {
 				} else {
 					fmt.Printf("capy: removed %d evictable source(s)\n", len(pruned))
 					for _, s := range pruned {
-						fmt.Printf("  - %s\n", s.Label)
+						fmt.Printf("  - %s (%s)\n", s.Label, formatCleanupDetail(s))
 					}
 				}
 			}
@@ -66,4 +67,14 @@ func newCleanupCmd() *cobra.Command {
 	cmd.Flags().Bool("dry-run", true, "show what would be removed without removing")
 	cmd.Flags().Bool("force", false, "actually remove stale data")
 	return cmd
+}
+
+// formatCleanupDetail renders per-source eviction detail, switching between
+// retention-score framing and TTL-age framing based on EvictionReason.
+func formatCleanupDetail(s store.SourceInfo) string {
+	if s.EvictionReason == "ttl" {
+		return fmt.Sprintf("reason: ttl, age: %s", time.Since(s.IndexedAt).Truncate(time.Minute))
+	}
+	return fmt.Sprintf("reason: retention, score: %.2f, last accessed: %s",
+		s.RetentionScore, s.LastAccessedAt.Format("2006-01-02"))
 }

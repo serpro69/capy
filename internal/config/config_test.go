@@ -210,3 +210,81 @@ func TestResolveDBPathAbsolute(t *testing.T) {
 	path := cfg.ResolveDBPath("/my/project")
 	assert.Equal(t, "/custom/path/knowledge.db", path)
 }
+
+func TestEphemeralTTLHoursDefault(t *testing.T) {
+	cfg := DefaultConfig()
+	assert.Equal(t, 24, cfg.Store.Cleanup.EphemeralTTLHours)
+}
+
+func TestEphemeralTTLHoursFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	content := `
+[store.cleanup]
+ephemeral_ttl_hours = 48
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".capy.toml"), []byte(content), 0o644))
+
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 48, cfg.Store.Cleanup.EphemeralTTLHours)
+}
+
+func TestEphemeralTTLHoursRejectsZero(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	content := `
+[store.cleanup]
+ephemeral_ttl_hours = 0
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".capy.toml"), []byte(content), 0o644))
+
+	_, err := Load(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ephemeral_ttl_hours must be >= 1")
+	assert.Contains(t, err.Error(), "purge_ephemeral=true")
+}
+
+func TestEphemeralTTLHoursRejectsNegative(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	content := `
+[store.cleanup]
+ephemeral_ttl_hours = -1
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".capy.toml"), []byte(content), 0o644))
+
+	_, err := Load(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ephemeral_ttl_hours must be >= 1")
+}
+
+func TestEphemeralTTLHoursAcceptsOne(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	content := `
+[store.cleanup]
+ephemeral_ttl_hours = 1
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".capy.toml"), []byte(content), 0o644))
+
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cfg.Store.Cleanup.EphemeralTTLHours)
+}
+
+func TestEphemeralTTLHoursDefaultsWhenOmitted(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	content := `
+[store.cleanup]
+cold_threshold_days = 15
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".capy.toml"), []byte(content), 0o644))
+
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 24, cfg.Store.Cleanup.EphemeralTTLHours)
+	assert.Equal(t, 15, cfg.Store.Cleanup.ColdThresholdDays)
+}

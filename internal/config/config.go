@@ -21,8 +21,16 @@ type CacheConfig struct {
 }
 
 // CleanupConfig controls cold-source pruning.
+//
+// EphemeralTTLHours sets the lifetime for ephemeral sources (command output,
+// intent-search writes, batch buffers). Values < 1 are rejected at load time;
+// 0 is not treated as "disabled" (there is no disabled mode) nor as "purge
+// everything" (use `capy_cleanup purge_ephemeral=true` instead). Default 24.
+// Longer values preserve more intra-session recall; shorter values reduce DB
+// churn.
 type CleanupConfig struct {
 	ColdThresholdDays int  `toml:"cold_threshold_days"`
+	EphemeralTTLHours int  `toml:"ephemeral_ttl_hours"`
 	AutoPrune         bool `toml:"auto_prune"`
 }
 
@@ -44,6 +52,7 @@ func DefaultConfig() *Config {
 			TitleWeight: 2.0,
 			Cleanup: CleanupConfig{
 				ColdThresholdDays: 30,
+				EphemeralTTLHours: 24,
 				AutoPrune:         false,
 			},
 			Cache: CacheConfig{
