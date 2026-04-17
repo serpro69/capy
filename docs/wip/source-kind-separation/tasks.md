@@ -93,7 +93,7 @@
 - [x] 6.6 Test: `Stats()` on a mixed DB returns correct per-kind counts; `Durable*` tiers reflect only durable rows; `Ephemeral*` counts reflect only ephemeral rows
 
 ## Task 7: `purge_ephemeral` convenience flag on capy_cleanup
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** Task 5
 - **Docs:** [implementation.md#step-7-tool-cleanup-purge-flag](./implementation.md#step-7-tool-cleanup-purge-flag)
 
