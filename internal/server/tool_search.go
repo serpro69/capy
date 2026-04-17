@@ -63,7 +63,7 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 	st := s.getStore()
 
 	// Early return when knowledge base is empty — guide the user to indexing tools
-	kbStats, err := st.Stats()
+	kbStats, err := st.Stats(s.ephemeralTTL())
 	if err == nil && kbStats.SourceCount == 0 {
 		return s.trackToolResponse("capy_search", &mcp.CallToolResult{
 			Content: []mcp.Content{mcp.NewTextContent(

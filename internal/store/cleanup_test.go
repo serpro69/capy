@@ -159,15 +159,20 @@ func TestClassifySources(t *testing.T) {
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count)
 		VALUES ('cold-source', 'plaintext', 1, 0, 'h3', datetime('now', '-60 days'), datetime('now', '-60 days'), 0)`)
 
-	sources, err := s.ClassifySources()
+	sources, err := s.ClassifySources(24 * time.Hour)
 	require.NoError(t, err)
 	require.Len(t, sources, 3)
 
 	tiers := make(map[string]string)
 	for _, src := range sources {
 		tiers[src.Label] = src.Tier
-		// RetentionScore should be populated.
-		assert.Greater(t, src.RetentionScore, 0.0, "retention score should be positive for %s", src.Label)
+		// RetentionScore is only populated for durable rows — ephemeral
+		// rows get TTL-based tiering and leave RetentionScore at 0. All
+		// three seed rows above default to durable (no kind column in
+		// their INSERT), so every row must score positive here.
+		if src.Kind == KindDurable {
+			assert.Greater(t, src.RetentionScore, 0.0, "retention score should be positive for durable %s", src.Label)
+		}
 	}
 	assert.Equal(t, "hot", tiers["hot-source"])
 	assert.Equal(t, "warm", tiers["warm-source"])
@@ -352,7 +357,7 @@ func TestStats(t *testing.T) {
 	s := newTestStore(t)
 
 	// Empty store.
-	stats, err := s.Stats()
+	stats, err := s.Stats(24 * time.Hour)
 	require.NoError(t, err)
 	assert.Equal(t, 0, stats.SourceCount)
 	assert.Equal(t, 0, stats.ChunkCount)
@@ -363,15 +368,55 @@ func TestStats(t *testing.T) {
 	_, err = s.Index("authentication middleware validates tokens", "test-src", "plaintext", KindDurable)
 	require.NoError(t, err)
 
-	stats, err = s.Stats()
+	stats, err = s.Stats(24 * time.Hour)
 	require.NoError(t, err)
 	assert.Equal(t, 1, stats.SourceCount)
+	assert.Equal(t, 1, stats.DurableSourceCount)
+	assert.Equal(t, 0, stats.EphemeralSourceCount)
 	assert.Greater(t, stats.ChunkCount, 0)
 	assert.Greater(t, stats.VocabCount, 0)
 	// Freshly indexed but never-searched source scores right at the hot/warm boundary
 	// (code: 0.7 × ~1.0 = ~0.7). Sub-millisecond timing between SQL insert and Go
 	// scoring may push it to warm. Either tier is correct for a fresh, unused source.
-	assert.Equal(t, 1, stats.HotCount+stats.WarmCount, "freshly indexed source should be hot or warm")
-	assert.Equal(t, 0, stats.ColdCount)
-	assert.Equal(t, 0, stats.EvictableCount)
+	assert.Equal(t, 1, stats.DurableHotCount+stats.DurableWarmCount, "freshly indexed source should be hot or warm")
+	assert.Equal(t, 0, stats.DurableColdCount)
+	assert.Equal(t, 0, stats.DurableEvictableCount)
+}
+
+func TestStatsPerKind(t *testing.T) {
+	s := newTestStore(t)
+	db, err := s.getDB()
+	require.NoError(t, err)
+
+	// Durable rows spanning tiers.
+	// Hot: recent code with recency boost.
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('durable-hot', 'code', 5, 5, 'h1', datetime('now'), datetime('now'), 1, 'durable')`)
+	// Evictable: 60-day-old prose, never accessed.
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('durable-evictable', 'plaintext', 1, 0, 'h2', datetime('now', '-60 days'), datetime('now', '-60 days'), 0, 'durable')`)
+	// Ephemeral fresh (1h old).
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('execute:shell-fresh', 'plaintext', 1, 0, 'h3', datetime('now', '-1 hours'), datetime('now', '-1 hours'), 0, 'ephemeral')`)
+	// Ephemeral stale (48h old).
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('execute:shell-stale', 'plaintext', 1, 0, 'h4', datetime('now', '-48 hours'), datetime('now', '-48 hours'), 0, 'ephemeral')`)
+
+	stats, err := s.Stats(24 * time.Hour)
+	require.NoError(t, err)
+
+	assert.Equal(t, 4, stats.SourceCount)
+	assert.Equal(t, 2, stats.DurableSourceCount)
+	assert.Equal(t, 2, stats.EphemeralSourceCount)
+
+	// Durable tier counts should sum to DurableSourceCount; ephemeral rows
+	// must never appear in durable tier buckets.
+	totalDurableTiers := stats.DurableHotCount + stats.DurableWarmCount +
+		stats.DurableColdCount + stats.DurableEvictableCount
+	assert.Equal(t, 2, totalDurableTiers, "durable tier counts should cover all durable rows")
+	assert.Equal(t, 1, stats.DurableEvictableCount, "60-day-old prose with 0 accesses should be evictable")
+
+	// Ephemeral fresh/stale split respects the TTL cutoff.
+	assert.Equal(t, 1, stats.EphemeralFreshCount)
+	assert.Equal(t, 1, stats.EphemeralStaleCount)
 }
