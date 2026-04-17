@@ -1,8 +1,17 @@
 # capy
 
+<b>🚧 Fork in progress, expect some dust 🚧</b>
+
 **C**ontext-**A**ware **P**rompting ...or "**Y**et another solution to LLM context problem"
 
 [![GitHub stars](https://img.shields.io/github/stars/serpro69/capy?style=for-the-badge&color=yellow)](https://github.com/serpro69/capy/stargazers) [![GitHub forks](https://img.shields.io/github/forks/serpro69/capy?style=for-the-badge&color=blue)](https://github.com/serpro69/capy/network/members) [![Last commit](https://img.shields.io/github/last-commit/serpro69/capy?style=for-the-badge&color=green)](https://github.com/serpro69/capy/commits) [![License: ELv2](https://img.shields.io/badge/License-ELv2-blue.svg?style=for-the-badge)](LICENSE)
+
+> [!IMPORTANT]
+> This project was created with the help of Claude-Code. Is it, however, reviewed, tested, and reworked with a human-in-the-loop.
+>
+> No AI slop here. Purely AI-made skills are hot garbage, and that's putting it mildly.
+>
+> That said, if you have any problems with code that is written by AI - you've been warned. But, then again, why would you be interested in AI-related configs and skills in the first place... `¯\_(ツ)_/¯`
 
 ## Privacy & Architecture
 
@@ -27,16 +36,19 @@ Every MCP tool call dumps raw data into your context window. A single API respon
 ### Install
 
 **Homebrew** (macOS/Linux):
+
 ```bash
 brew install serpro69/tap/capy
 ```
 
 **Shell script** (any Unix):
+
 ```bash
 curl -sSfL https://raw.githubusercontent.com/serpro69/capy/master/install.sh | sh
 ```
 
 **Build from source** (requires Go 1.23+ and a C compiler):
+
 ```bash
 git clone https://github.com/serpro69/capy.git
 cd capy
@@ -87,6 +99,7 @@ Claude: *runs capy_batch_execute with commands=["npm test"] and queries=["failin
 ### The `intent` parameter
 
 When `capy_execute` or `capy_execute_file` is called with an `intent` parameter and the output exceeds 5 KB, capy automatically:
+
 1. Indexes the full output into the knowledge base
 2. Searches for sections matching the intent
 3. Returns section titles + previews instead of the full output
@@ -131,15 +144,15 @@ All settings have sensible defaults. Configuration files are optional — capy w
 
 ## CLI Commands
 
-| Command | Description |
-|---------|-------------|
-| `capy` or `capy serve` | Start the MCP server (stdio transport) |
-| `capy setup` | Configure capy for the current project |
-| `capy doctor` | Run diagnostics on the installation |
-| `capy which` | Print the knowledge base path for the current project |
-| `capy cleanup` | Remove stale knowledge base entries |
-| `capy checkpoint` | Flush WAL into main DB file for safe git commits |
-| `capy hook <event>` | Handle a hook event (called by Claude Code, not you) |
+| Command                | Description                                           |
+| ---------------------- | ----------------------------------------------------- |
+| `capy` or `capy serve` | Start the MCP server (stdio transport)                |
+| `capy setup`           | Configure capy for the current project                |
+| `capy doctor`          | Run diagnostics on the installation                   |
+| `capy which`           | Print the knowledge base path for the current project |
+| `capy cleanup`         | Remove stale knowledge base entries                   |
+| `capy checkpoint`      | Flush WAL into main DB file for safe git commits      |
+| `capy hook <event>`    | Handle a hook event (called by Claude Code, not you)  |
 
 Global flags: `--project-dir`, `--version`
 
@@ -165,26 +178,26 @@ capy completion fish | source
 
 ### Execution
 
-| Tool | What It Does |
-|------|--------------|
-| `capy_execute` | Run code in a sandboxed subprocess. Supports 11 languages: JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, Elixir. Only stdout enters context. Pass `intent` to auto-index large output. |
-| `capy_execute_file` | Inject a file into a sandbox variable (`FILE_CONTENT`) and process it with code you write. The raw file never enters context — only your printed summary does. |
-| `capy_batch_execute` | The primary research tool. Runs multiple shell commands, auto-indexes all output as markdown, and searches with multiple queries — all in ONE call. Replaces dozens of individual Bash calls. |
+| Tool                 | What It Does                                                                                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `capy_execute`       | Run code in a sandboxed subprocess. Supports 11 languages: JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, Elixir. Only stdout enters context. Pass `intent` to auto-index large output. |
+| `capy_execute_file`  | Inject a file into a sandbox variable (`FILE_CONTENT`) and process it with code you write. The raw file never enters context — only your printed summary does.                                                |
+| `capy_batch_execute` | The primary research tool. Runs multiple shell commands, auto-indexes all output as markdown, and searches with multiple queries — all in ONE call. Replaces dozens of individual Bash calls.                 |
 
 ### Knowledge
 
-| Tool | What It Does |
-|------|--------------|
-| `capy_index` | Index text, markdown, or a file path into the FTS5 knowledge base for later search. |
-| `capy_search` | Search indexed content. 8-layer fallback: Porter stemming (AND/OR), trigram substring (AND/OR), then fuzzy Levenshtein-corrected versions of all four. Progressive throttling prevents context flooding from excessive search calls. Defaults to durable sources only; pass `include_kinds: ["durable","ephemeral"]` or an explicit `source:` filter (e.g. `"execute:shell"`) to recover prior-session command output. |
-| `capy_fetch_and_index` | Fetch a URL, convert HTML to markdown (strips nav/script/style/header/footer), index into the knowledge base, return a ~3 KB preview. |
+| Tool                   | What It Does                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `capy_index`           | Index text, markdown, or a file path into the FTS5 knowledge base for later search.                                                                                                                                                                                                                                                                                                                                    |
+| `capy_search`          | Search indexed content. 8-layer fallback: Porter stemming (AND/OR), trigram substring (AND/OR), then fuzzy Levenshtein-corrected versions of all four. Progressive throttling prevents context flooding from excessive search calls. Defaults to durable sources only; pass `include_kinds: ["durable","ephemeral"]` or an explicit `source:` filter (e.g. `"execute:shell"`) to recover prior-session command output. |
+| `capy_fetch_and_index` | Fetch a URL, convert HTML to markdown (strips nav/script/style/header/footer), index into the knowledge base, return a ~3 KB preview.                                                                                                                                                                                                                                                                                  |
 
 ### Utility
 
-| Tool | What It Does |
-|------|--------------|
-| `capy_stats` | Session report: bytes saved, context reduction ratio, per-tool breakdown, knowledge base tier distribution. |
-| `capy_doctor` | Diagnostics: version, available runtimes, FTS5 status, config, hook registration, MCP registration, security policies. |
+| Tool           | What It Does                                                                                                                                                                                                                                                                                                          |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `capy_stats`   | Session report: bytes saved, context reduction ratio, per-tool breakdown, knowledge base tier distribution.                                                                                                                                                                                                           |
+| `capy_doctor`  | Diagnostics: version, available runtimes, FTS5 status, config, hook registration, MCP registration, security policies.                                                                                                                                                                                                |
 | `capy_cleanup` | Remove evictable knowledge base entries via two paths: retention-score eviction for durable sources (never accessed, low score) and strict TTL eviction for ephemeral sources (`ephemeral_ttl_hours`, `access_count` ignored). Pass `purge_ephemeral=true` for a one-shot scratch clear that skips durable retention. |
 
 ## Security
@@ -221,15 +234,15 @@ capy uses Claude Code's hook system to intercept tool calls before they execute.
 
 ### What gets intercepted
 
-| Pattern | What happens |
-|---------|-------------|
-| `curl`/`wget` in Bash | Command replaced with message directing to `capy_fetch_and_index` |
-| `fetch()`, `requests.get()`, `http.get()` in Bash | Command replaced with message directing to `capy_execute` |
-| `gradle`, `maven` in Bash | Redirected to `capy_execute` sandbox |
-| `WebFetch` tool | Denied — use `capy_fetch_and_index` instead |
-| `Read` tool | One-time advisory: prefer `capy_execute_file` for analysis |
-| `Grep` tool | One-time advisory: prefer `capy_execute` for large searches |
-| `Agent`/`Task` tools | Routing block injected into subagent prompt; Bash subagents upgraded to general-purpose |
+| Pattern                                           | What happens                                                                            |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `curl`/`wget` in Bash                             | Command replaced with message directing to `capy_fetch_and_index`                       |
+| `fetch()`, `requests.get()`, `http.get()` in Bash | Command replaced with message directing to `capy_execute`                               |
+| `gradle`, `maven` in Bash                         | Redirected to `capy_execute` sandbox                                                    |
+| `WebFetch` tool                                   | Denied — use `capy_fetch_and_index` instead                                             |
+| `Read` tool                                       | One-time advisory: prefer `capy_execute_file` for analysis                              |
+| `Grep` tool                                       | One-time advisory: prefer `capy_execute` for large searches                             |
+| `Agent`/`Task` tools                              | Routing block injected into subagent prompt; Bash subagents upgraded to general-purpose |
 
 ### Other platforms
 
@@ -237,14 +250,14 @@ capy uses Claude Code's hook system to intercept tool calls before they execute.
 
 Hooks already recognize tool name aliases for these platforms, so the routing logic works once you wire up the MCP server and hook commands manually:
 
-| Platform | Recognized tool aliases |
-|----------|------------------------|
-| Gemini CLI | `run_shell_command`, `read_file`, `grep_search`, `web_fetch` |
-| OpenCode | `bash`, `view`, `grep`, `fetch`, `agent` |
-| Codex CLI | `shell`, `shell_command`, `exec_command`, `container.exec`, `grep_files` |
-| Cursor | `mcp_web_fetch`, `Shell` |
-| VS Code Copilot | `run_in_terminal` |
-| Kiro CLI | `fs_read`, `execute_bash` |
+| Platform        | Recognized tool aliases                                                  |
+| --------------- | ------------------------------------------------------------------------ |
+| Gemini CLI      | `run_shell_command`, `read_file`, `grep_search`, `web_fetch`             |
+| OpenCode        | `bash`, `view`, `grep`, `fetch`, `agent`                                 |
+| Codex CLI       | `shell`, `shell_command`, `exec_command`, `container.exec`, `grep_files` |
+| Cursor          | `mcp_web_fetch`, `Shell`                                                 |
+| VS Code Copilot | `run_in_terminal`                                                        |
+| Kiro CLI        | `fs_read`, `execute_bash`                                                |
 
 Manual setup: register `capy serve` as an MCP server (stdio transport) and `capy hook <event>` as the hook command in your platform's configuration.
 
@@ -252,12 +265,12 @@ Manual setup: register `capy serve` as an MCP server (stdio transport) and `capy
 
 Run `capy doctor` to diagnose issues. Common problems:
 
-| Check | Fix |
-|-------|-----|
-| **FTS5: unavailable** | The binary wasn't built with `-tags fts5`. Rebuild with `make build`. |
-| **Runtimes: 0/11** | No language runtimes found in PATH. Install at least `bash` and `python3`. |
-| **Hooks: not registered** | Run `capy setup` in your project directory. |
-| **MCP: not registered** | Run `capy setup`. Check `.mcp.json` exists in project root. |
+| Check                     | Fix                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------ |
+| **FTS5: unavailable**     | The binary wasn't built with `-tags fts5`. Rebuild with `make build`.                |
+| **Runtimes: 0/11**        | No language runtimes found in PATH. Install at least `bash` and `python3`.           |
+| **Hooks: not registered** | Run `capy setup` in your project directory.                                          |
+| **MCP: not registered**   | Run `capy setup`. Check `.mcp.json` exists in project root.                          |
 | **MCP: binary not found** | The `capy` binary isn't in PATH. Move it or run `capy setup --binary /path/to/capy`. |
 
 ## Acknowledgements
@@ -270,19 +283,19 @@ capy is a Go reimplementation of [context-mode](https://github.com/mksglu/contex
 
 capy is still in an active development phase. Not everything from context-mode has been ported — multi-platform support, session continuity, and some newer search improvements are in progress. If you need the most complete and battle-tested version today, use [context-mode](https://github.com/mksglu/context-mode). If you prefer a single-binary install and the features listed below, capy may be worth trying.
 
-| | context-mode (TypeScript) | capy (Go) |
-|---|---|---|
-| **Install** | `npm install` — requires Node.js, native module compilation (`better-sqlite3`), platform-specific shims for Bun/nvm4w/Snap | Single static binary — `brew install` or `curl \| sh`. No runtime, no dependencies |
-| **Startup** | Node.js VM boot + module resolution | Native binary, starts in milliseconds |
-| **Memory** | Node.js baseline (~50-80 MB typical) | Go baseline (~10-20 MB typical) |
-| **SQLite** | `better-sqlite3` native addon with Bun fallback — multiple compatibility fixes across versions | `mattn/go-sqlite3` via CGO — one driver, no compatibility layer |
-| **Knowledge base** | Originally ephemeral per-session; persistence added later (v1.0.29) | Persistent per-project from day one — survives across sessions, configurable location |
-| **Content dedup** | Re-indexes on every call | SHA-256 content hashing — skips re-indexing when content is unchanged |
-| **Freshness** | Added via TTL cache (v1.0.29+) | Tiered freshness metadata (`hot`/`warm`/`cold` based on `last_accessed_at`, `access_count`) built into the schema |
-| **Process isolation** | `child_process.execFileSync` | Process group isolation (`Setpgid`) — kills entire process tree on cleanup, not just the parent |
-| **Configuration** | Reads `.claude/settings.json` | Own config system (`.capy.toml`, XDG dirs) plus reads `.claude/settings.json` for security rules |
-| **Platform support** | Claude Code, Cursor, Kiro, Zed, Pi, OpenClaw, OpenCode, Gemini CLI, Codex CLI | Claude Code (more platforms planned) |
-| **Session continuity** | Tracks events across compactions | Planned |
+|                        | context-mode (TypeScript)                                                                                                  | capy (Go)                                                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **Install**            | `npm install` — requires Node.js, native module compilation (`better-sqlite3`), platform-specific shims for Bun/nvm4w/Snap | Single static binary — `brew install` or `curl \| sh`. No runtime, no dependencies                                |
+| **Startup**            | Node.js VM boot + module resolution                                                                                        | Native binary, starts in milliseconds                                                                             |
+| **Memory**             | Node.js baseline (~50-80 MB typical)                                                                                       | Go baseline (~10-20 MB typical)                                                                                   |
+| **SQLite**             | `better-sqlite3` native addon with Bun fallback — multiple compatibility fixes across versions                             | `mattn/go-sqlite3` via CGO — one driver, no compatibility layer                                                   |
+| **Knowledge base**     | Originally ephemeral per-session; persistence added later (v1.0.29)                                                        | Persistent per-project from day one — survives across sessions, configurable location                             |
+| **Content dedup**      | Re-indexes on every call                                                                                                   | SHA-256 content hashing — skips re-indexing when content is unchanged                                             |
+| **Freshness**          | Added via TTL cache (v1.0.29+)                                                                                             | Tiered freshness metadata (`hot`/`warm`/`cold` based on `last_accessed_at`, `access_count`) built into the schema |
+| **Process isolation**  | `child_process.execFileSync`                                                                                               | Process group isolation (`Setpgid`) — kills entire process tree on cleanup, not just the parent                   |
+| **Configuration**      | Reads `.claude/settings.json`                                                                                              | Own config system (`.capy.toml`, XDG dirs) plus reads `.claude/settings.json` for security rules                  |
+| **Platform support**   | Claude Code, Cursor, Kiro, Zed, Pi, OpenClaw, OpenCode, Gemini CLI, Codex CLI                                              | Claude Code (more platforms planned)                                                                              |
+| **Session continuity** | Tracks events across compactions                                                                                           | Planned                                                                                                           |
 
 ### What's shared
 
