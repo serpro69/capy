@@ -65,19 +65,19 @@
 - [x] 4.9 Integration test (session-recovery journey): `capy_execute(code=…, intent=…)` to index ephemeral content. Then `capy_search(query=<matching phrase>)` with no source filter → assert zero results AND the message names both recovery paths. Then same query with `include_kinds: ["ephemeral"]` → assert the ephemeral row appears
 
 ## Task 5: Split cleanup into durable and ephemeral paths
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Docs:** [implementation.md#step-5-cleanup-split](./implementation.md#step-5-cleanup-split)
 
 ### Subtasks
-- [ ] 5.1 Add `EphemeralTTLHours int` (default 24) to `config.CleanupConfig` in `internal/config/config.go` (TOML key `ephemeral_ttl_hours` under `[store.cleanup]`, alongside `cold_threshold_days`). In the loader, reject values `< 1` with error `"[store.cleanup] ephemeral_ttl_hours must be >= 1 (use capy_cleanup purge_ephemeral=true for one-shot aggressive purging)"`
-- [ ] 5.2 Add `EvictionReason string` field to `SourceInfo` (values `"retention"`, `"ttl"`)
-- [ ] 5.3 Extract current retention-based logic from `Cleanup` into a helper `cleanupDurable`
-- [ ] 5.4 Implement `cleanupEphemeral(ttl time.Duration, dryRun bool)` — pure TTL eviction via `indexed_at < datetime('now', '-N hours')`, ignores `access_count`, same transactional deletion shape
-- [ ] 5.5 Rewrite `Cleanup(dryRun bool)` to call both helpers, merge results, tag each `SourceInfo` with its `EvictionReason`
-- [ ] 5.6 Update `internal/server/tool_cleanup.go` to render an `EvictionReason` column in the output table
-- [ ] 5.7 Test: seeded mixed DB — old ephemeral rows evicted with reason `ttl`; young ephemeral rows preserved; ephemeral row with `access_count = 5` but age > TTL is still evicted (this is the immortality-gate fix test); durable retention logic unchanged from current behavior
-- [ ] 5.8 Config-loader test: `ephemeral_ttl_hours = 0` and `ephemeral_ttl_hours = -1` both fail with the documented error; `ephemeral_ttl_hours = 1` loads successfully
+- [x] 5.1 Add `EphemeralTTLHours int` (default 24) to `config.CleanupConfig` in `internal/config/config.go` (TOML key `ephemeral_ttl_hours` under `[store.cleanup]`, alongside `cold_threshold_days`). In the loader, reject values `< 1` with error `"[store.cleanup] ephemeral_ttl_hours must be >= 1 (use capy_cleanup purge_ephemeral=true for one-shot aggressive purging)"`
+- [x] 5.2 Add `EvictionReason string` field to `SourceInfo` (values `"retention"`, `"ttl"`)
+- [x] 5.3 Extract current retention-based logic from `Cleanup` into a helper `cleanupDurable`
+- [x] 5.4 Implement `cleanupEphemeral(ttl time.Duration, dryRun bool)` — pure TTL eviction via `indexed_at < datetime('now', '-N hours')`, ignores `access_count`, same transactional deletion shape
+- [x] 5.5 Rewrite `Cleanup(dryRun bool)` to call both helpers, merge results, tag each `SourceInfo` with its `EvictionReason`
+- [x] 5.6 Update `internal/server/tool_cleanup.go` to render an `EvictionReason` column in the output table
+- [x] 5.7 Test: seeded mixed DB — old ephemeral rows evicted with reason `ttl`; young ephemeral rows preserved; ephemeral row with `access_count = 5` but age > TTL is still evicted (this is the immortality-gate fix test); durable retention logic unchanged from current behavior
+- [x] 5.8 Config-loader test: `ephemeral_ttl_hours = 0` and `ephemeral_ttl_hours = -1` both fail with the documented error; `ephemeral_ttl_hours = 1` loads successfully
 
 ## Task 6: Per-kind statistics
 - **Status:** pending

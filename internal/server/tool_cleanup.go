@@ -18,7 +18,8 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	st := s.getStore()
-	pruned, err := st.Cleanup(dryRun)
+	ephemeralTTL := time.Duration(s.config.Store.Cleanup.EphemeralTTLHours) * time.Hour
+	pruned, err := st.Cleanup(dryRun, ephemeralTTL)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Cleanup error: %v", err)), nil
 	}
@@ -28,20 +29,35 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 			textResult("No evictable sources found.")), nil
 	}
 
+	var durableN, ephemeralN int
+	for _, src := range pruned {
+		if src.EvictionReason == "ttl" {
+			ephemeralN++
+		} else {
+			durableN++
+		}
+	}
+
 	var lines []string
+	summary := fmt.Sprintf("%d durable (retention), %d ephemeral (TTL)", durableN, ephemeralN)
 	if dryRun {
-		lines = append(lines, fmt.Sprintf("## Cleanup preview (dry run) — %d sources would be removed:", len(pruned)))
+		lines = append(lines, fmt.Sprintf("## Cleanup preview (dry run) — %d sources would be removed: %s", len(pruned), summary))
 	} else {
-		lines = append(lines, fmt.Sprintf("## Cleanup — %d sources removed:", len(pruned)))
+		lines = append(lines, fmt.Sprintf("## Cleanup — %d sources removed: %s", len(pruned), summary))
 	}
 
 	lines = append(lines, "",
-		"| Source | Score | Age | Chunks |",
-		"|--------|-------|-----|--------|",
+		"| Source | Reason | Score | Age | Chunks |",
+		"|--------|--------|-------|-----|--------|",
 	)
 	for _, src := range pruned {
-		ageDays := int(time.Since(src.IndexedAt).Hours() / 24)
-		lines = append(lines, fmt.Sprintf("| %s | %.2f | %dd | %d |", src.Label, src.RetentionScore, ageDays, src.ChunkCount))
+		ageHours := time.Since(src.IndexedAt).Hours()
+		ageStr := fmt.Sprintf("%dd", int(ageHours/24))
+		if src.EvictionReason == "ttl" && ageHours < 48 {
+			ageStr = fmt.Sprintf("%.1fh", ageHours)
+		}
+		lines = append(lines, fmt.Sprintf("| %s | %s | %.2f | %s | %d |",
+			src.Label, src.EvictionReason, src.RetentionScore, ageStr, src.ChunkCount))
 	}
 
 	if dryRun {

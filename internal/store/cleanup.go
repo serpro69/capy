@@ -90,15 +90,41 @@ func (s *ContentStore) ClassifySources() ([]SourceInfo, error) {
 	return sources, nil
 }
 
-// Cleanup removes evictable sources that have never been accessed (access_count = 0).
+// Cleanup removes sources via two independent paths:
+//   - durable: retention-score-based eviction (ADR-011) for `kind = 'durable'`.
+//   - ephemeral: strict TTL eviction for `kind = 'ephemeral'` — ignores
+//     access_count so intent-search hits don't extend lifetime (ADR-017).
+//
 // If dryRun is true, returns what would be removed without deleting.
+// The returned slice tags each SourceInfo with EvictionReason ("retention"
+// or "ttl") so callers can render per-kind breakdowns.
 // Vocabulary is shared and never deleted.
-func (s *ContentStore) Cleanup(dryRun bool) ([]SourceInfo, error) {
-	db, err := s.getDB()
+func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL time.Duration) ([]SourceInfo, error) {
+	durable, err := s.cleanupDurable(dryRun)
+	if err != nil {
+		return nil, err
+	}
+	ephemeral, err := s.cleanupEphemeral(ephemeralTTL, dryRun)
 	if err != nil {
 		return nil, err
 	}
 
+	merged := make([]SourceInfo, 0, len(durable)+len(ephemeral))
+	for _, src := range durable {
+		src.EvictionReason = "retention"
+		merged = append(merged, src)
+	}
+	for _, src := range ephemeral {
+		src.EvictionReason = "ttl"
+		merged = append(merged, src)
+	}
+	return merged, nil
+}
+
+// cleanupDurable applies retention-score-based eviction to durable sources.
+// A source is a candidate iff its retentionScore is below the evictable
+// threshold AND it has never been accessed.
+func (s *ContentStore) cleanupDurable(dryRun bool) ([]SourceInfo, error) {
 	sources, err := s.ClassifySources()
 	if err != nil {
 		return nil, err
@@ -106,6 +132,9 @@ func (s *ContentStore) Cleanup(dryRun bool) ([]SourceInfo, error) {
 
 	var candidates []SourceInfo
 	for _, src := range sources {
+		if src.Kind != KindDurable {
+			continue
+		}
 		if src.RetentionScore >= evictableThreshold {
 			continue
 		}
@@ -115,14 +144,73 @@ func (s *ContentStore) Cleanup(dryRun bool) ([]SourceInfo, error) {
 		candidates = append(candidates, src)
 	}
 
-	if dryRun || len(candidates) == 0 {
-		return candidates, nil
+	return candidates, s.evict(candidates, dryRun)
+}
+
+// cleanupEphemeral evicts ephemeral sources whose indexed_at is older than
+// ttl. access_count is intentionally ignored — intent-search writes must not
+// extend ephemeral lifetime (ADR-017). Non-positive ttl is treated as the
+// safe default of 24 h.
+func (s *ContentStore) cleanupEphemeral(ttl time.Duration, dryRun bool) ([]SourceInfo, error) {
+	db, err := s.getDB()
+	if err != nil {
+		return nil, err
 	}
 
-	// Delete in transaction.
+	if ttl <= 0 {
+		slog.Warn("cleanupEphemeral: non-positive TTL supplied, falling back to 24h",
+			"ttl", ttl)
+		ttl = 24 * time.Hour
+	}
+	cutoff := time.Now().Add(-ttl).UTC().Format("2006-01-02 15:04:05")
+
+	rows, err := db.Query(`
+		SELECT id, label, content_type, chunk_count, code_chunk_count,
+			indexed_at, last_accessed_at, access_count, content_hash, kind
+		FROM sources
+		WHERE kind = ? AND indexed_at < ?
+		ORDER BY id DESC`, KindEphemeral, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("selecting stale ephemeral sources: %w", err)
+	}
+	defer rows.Close()
+
+	var candidates []SourceInfo
+	for rows.Next() {
+		var si SourceInfo
+		var indexedAt, lastAccessedAt string
+		if err := rows.Scan(&si.ID, &si.Label, &si.ContentType, &si.ChunkCount,
+			&si.CodeChunkCount, &indexedAt, &lastAccessedAt, &si.AccessCount,
+			&si.ContentHash, &si.Kind); err != nil {
+			continue
+		}
+		si.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
+		si.LastAccessedAt, _ = time.Parse("2006-01-02 15:04:05", lastAccessedAt)
+		candidates = append(candidates, si)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return candidates, s.evict(candidates, dryRun)
+}
+
+// evict performs the transactional delete for a list of candidates. On
+// dryRun or an empty list it is a no-op. Safe to call from both cleanup
+// paths — the three prepared statements are keyed by source id.
+func (s *ContentStore) evict(candidates []SourceInfo, dryRun bool) error {
+	if dryRun || len(candidates) == 0 {
+		return nil
+	}
+
+	db, err := s.getDB()
+	if err != nil {
+		return err
+	}
+
 	tx, err := db.Begin()
 	if err != nil {
-		return nil, fmt.Errorf("beginning cleanup transaction: %w", err)
+		return fmt.Errorf("beginning cleanup transaction: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -132,21 +220,20 @@ func (s *ContentStore) Cleanup(dryRun bool) ([]SourceInfo, error) {
 	// the candidate list is large.
 	for _, src := range candidates {
 		if _, err := tx.Stmt(s.stmtDeleteChunksBySource).Exec(src.ID); err != nil {
-			return nil, fmt.Errorf("deleting chunks for source %d: %w", src.ID, err)
+			return fmt.Errorf("deleting chunks for source %d: %w", src.ID, err)
 		}
 		if _, err := tx.Stmt(s.stmtDeleteTrigramBySource).Exec(src.ID); err != nil {
-			return nil, fmt.Errorf("deleting trigram chunks for source %d: %w", src.ID, err)
+			return fmt.Errorf("deleting trigram chunks for source %d: %w", src.ID, err)
 		}
 		if _, err := tx.Stmt(s.stmtDeleteSource).Exec(src.ID); err != nil {
-			return nil, fmt.Errorf("deleting source %d: %w", src.ID, err)
+			return fmt.Errorf("deleting source %d: %w", src.ID, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("committing cleanup: %w", err)
+		return fmt.Errorf("committing cleanup: %w", err)
 	}
-
-	return candidates, nil
+	return nil
 }
 
 // Stats returns knowledge base statistics.
