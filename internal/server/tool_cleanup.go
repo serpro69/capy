@@ -30,7 +30,7 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	var pruned []store.SourceInfo
 	var err error
 	if purgeEphemeral {
-		pruned, err = st.PurgeEphemeral(ttl, dryRun)
+		pruned, err = st.PurgeEphemeral(dryRun, ttl)
 	} else {
 		pruned, err = st.Cleanup(dryRun, ttl)
 	}
@@ -53,11 +53,15 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	var lines []string
+	heading := "Cleanup"
+	if purgeEphemeral {
+		heading = "Cleanup (ephemeral purge)"
+	}
 	summary := fmt.Sprintf("%d durable (retention), %d ephemeral (TTL)", durableN, ephemeralN)
 	if dryRun {
-		lines = append(lines, fmt.Sprintf("## Cleanup preview (dry run) — %d sources would be removed: %s", len(pruned), summary))
+		lines = append(lines, fmt.Sprintf("## %s preview (dry run) — %d sources would be removed: %s", heading, len(pruned), summary))
 	} else {
-		lines = append(lines, fmt.Sprintf("## Cleanup — %d sources removed: %s", len(pruned), summary))
+		lines = append(lines, fmt.Sprintf("## %s — %d sources removed: %s", heading, len(pruned), summary))
 	}
 
 	lines = append(lines, "",

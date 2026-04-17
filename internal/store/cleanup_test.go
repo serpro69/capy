@@ -401,7 +401,7 @@ func TestPurgeEphemeralLeavesDurableUntouched(t *testing.T) {
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
 		VALUES ('execute:shell-young', 'plaintext', 1, 0, 'h3', datetime('now', '-1 hours'), datetime('now', '-1 hours'), 0, 'ephemeral')`)
 
-	pruned, err := s.PurgeEphemeral(24*time.Hour, false)
+	pruned, err := s.PurgeEphemeral(false, 24*time.Hour)
 	require.NoError(t, err)
 	require.Len(t, pruned, 1, "only the stale ephemeral row should be pruned")
 	assert.Equal(t, "execute:shell-old", pruned[0].Label)
@@ -426,7 +426,7 @@ func TestPurgeEphemeralDryRun(t *testing.T) {
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
 		VALUES ('execute:shell-old', 'plaintext', 1, 0, 'h1', datetime('now', '-48 hours'), datetime('now', '-48 hours'), 0, 'ephemeral')`)
 
-	pruned, err := s.PurgeEphemeral(24*time.Hour, true)
+	pruned, err := s.PurgeEphemeral(true, 24*time.Hour)
 	require.NoError(t, err)
 	require.Len(t, pruned, 1)
 	assert.Equal(t, "ttl", pruned[0].EvictionReason)
@@ -434,6 +434,14 @@ func TestPurgeEphemeralDryRun(t *testing.T) {
 	var count int
 	db.QueryRow(`SELECT COUNT(*) FROM sources WHERE label = 'execute:shell-old'`).Scan(&count)
 	assert.Equal(t, 1, count, "dry run must not delete the row")
+}
+
+func TestPurgeEphemeralEmptyStore(t *testing.T) {
+	s := newTestStore(t)
+
+	pruned, err := s.PurgeEphemeral(false, 24*time.Hour)
+	require.NoError(t, err)
+	assert.Empty(t, pruned, "PurgeEphemeral on an empty store must return no candidates")
 }
 
 func TestStatsPerKind(t *testing.T) {

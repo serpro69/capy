@@ -124,7 +124,7 @@ func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL time.Duration) ([]Sourc
 	if err != nil {
 		return nil, err
 	}
-	ephemeral, err := s.cleanupEphemeral(ephemeralTTL, dryRun)
+	ephemeral, err := s.cleanupEphemeral(dryRun, ephemeralTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -134,10 +134,7 @@ func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL time.Duration) ([]Sourc
 		src.EvictionReason = "retention"
 		merged = append(merged, src)
 	}
-	for _, src := range ephemeral {
-		src.EvictionReason = "ttl"
-		merged = append(merged, src)
-	}
+	merged = append(merged, ephemeral...)
 	return merged, nil
 }
 
@@ -145,15 +142,8 @@ func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL time.Duration) ([]Sourc
 // durable retention entirely. Intended for a one-shot "clear scratch"
 // operation exposed via capy_cleanup's purge_ephemeral flag. Durable
 // rows are never touched, regardless of retention score.
-func (s *ContentStore) PurgeEphemeral(ttl time.Duration, dryRun bool) ([]SourceInfo, error) {
-	ephemeral, err := s.cleanupEphemeral(ttl, dryRun)
-	if err != nil {
-		return nil, err
-	}
-	for i := range ephemeral {
-		ephemeral[i].EvictionReason = "ttl"
-	}
-	return ephemeral, nil
+func (s *ContentStore) PurgeEphemeral(dryRun bool, ttl time.Duration) ([]SourceInfo, error) {
+	return s.cleanupEphemeral(dryRun, ttl)
 }
 
 // cleanupDurable applies retention-score-based eviction to durable sources.
@@ -190,8 +180,10 @@ func (s *ContentStore) cleanupDurable(dryRun bool, ephemeralTTL time.Duration) (
 // cleanupEphemeral evicts ephemeral sources whose indexed_at is older than
 // ttl. access_count is intentionally ignored — intent-search writes must not
 // extend ephemeral lifetime (ADR-017). Non-positive ttl is treated as the
-// safe default of 24 h.
-func (s *ContentStore) cleanupEphemeral(ttl time.Duration, dryRun bool) ([]SourceInfo, error) {
+// safe default of 24 h. Every returned SourceInfo carries
+// EvictionReason = "ttl" — the stamping lives here so Cleanup and
+// PurgeEphemeral don't each have to remember to tag.
+func (s *ContentStore) cleanupEphemeral(dryRun bool, ttl time.Duration) ([]SourceInfo, error) {
 	db, err := s.getDB()
 	if err != nil {
 		return nil, err
@@ -226,6 +218,7 @@ func (s *ContentStore) cleanupEphemeral(ttl time.Duration, dryRun bool) ([]Sourc
 		}
 		si.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
 		si.LastAccessedAt, _ = time.Parse("2006-01-02 15:04:05", lastAccessedAt)
+		si.EvictionReason = "ttl"
 		candidates = append(candidates, si)
 	}
 	if err := rows.Err(); err != nil {
