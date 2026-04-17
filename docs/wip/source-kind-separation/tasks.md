@@ -93,14 +93,14 @@
 - [x] 6.6 Test: `Stats()` on a mixed DB returns correct per-kind counts; `Durable*` tiers reflect only durable rows; `Ephemeral*` counts reflect only ephemeral rows
 
 ## Task 7: `purge_ephemeral` convenience flag on capy_cleanup
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** Task 5
 - **Docs:** [implementation.md#step-7-tool-cleanup-purge-flag](./implementation.md#step-7-tool-cleanup-purge-flag)
 
 ### Subtasks
-- [ ] 7.1 Add `purge_ephemeral bool` to the `capy_cleanup` MCP tool schema
-- [ ] 7.2 When set, `Cleanup` runs only `cleanupEphemeral` and skips `cleanupDurable` — implement via a new method `PurgeEphemeral(dryRun bool)` or via an options struct
-- [ ] 7.3 Test: `purge_ephemeral: true` leaves durable rows with low retention scores untouched
+- [x] 7.1 Add `purge_ephemeral bool` to the `capy_cleanup` MCP tool schema
+- [x] 7.2 When set, `Cleanup` runs only `cleanupEphemeral` and skips `cleanupDurable` — implement via a new method `PurgeEphemeral(dryRun bool)` or via an options struct
+- [x] 7.3 Test: `purge_ephemeral: true` leaves durable rows with low retention scores untouched
 
 ## Task 8: Configuration and documentation
 - **Status:** pending
