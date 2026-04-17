@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -87,7 +86,13 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 	// Cached across queries in this request; a concurrent write could shift the count
 	// by ±1 — acceptable, the user-facing number is directional, not authoritative.
 	// -1 = not yet checked.
-	ephemeralIncluded := includesEphemeral(source, includeKinds)
+	//
+	// KindScopeIncludesEphemeral derives from the same rule (effectiveKindFilter) used
+	// by the store's SQL layer, so this boolean can never drift from actual search behavior.
+	ephemeralIncluded := store.KindScopeIncludesEphemeral(store.SearchOptions{
+		Source:       source,
+		IncludeKinds: includeKinds,
+	})
 	ephemeralExcluded := !ephemeralIncluded
 	ephemeralCount := -1
 
@@ -200,14 +205,3 @@ func parseIncludeKinds(raw any) ([]store.SourceKind, error) {
 	return out, nil
 }
 
-// includesEphemeral reports whether the resolved kind filter would include ephemeral sources.
-func includesEphemeral(source string, kinds []store.SourceKind) bool {
-	if source != "" {
-		// Explicit source override — kind filter is bypassed entirely.
-		return true
-	}
-	if len(kinds) == 0 {
-		return false
-	}
-	return slices.Contains(kinds, store.KindEphemeral)
-}
