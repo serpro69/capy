@@ -18,8 +18,7 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	st := s.getStore()
-	ephemeralTTL := time.Duration(s.config.Store.Cleanup.EphemeralTTLHours) * time.Hour
-	pruned, err := st.Cleanup(dryRun, ephemeralTTL)
+	pruned, err := st.Cleanup(dryRun, s.ephemeralTTL())
 	if err != nil {
 		return errorResult(fmt.Sprintf("Cleanup error: %v", err)), nil
 	}

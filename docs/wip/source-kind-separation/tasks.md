@@ -80,17 +80,17 @@
 - [x] 5.8 Config-loader test: `ephemeral_ttl_hours = 0` and `ephemeral_ttl_hours = -1` both fail with the documented error; `ephemeral_ttl_hours = 1` loads successfully
 
 ## Task 6: Per-kind statistics
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 5
 - **Docs:** [implementation.md#step-6-stats](./implementation.md#step-6-stats)
 
 ### Subtasks
-- [ ] 6.1 In `StoreStats` (`internal/store/types.go`), rename `HotCount`/`WarmCount`/`ColdCount`/`EvictableCount` → `DurableHotCount`/`DurableWarmCount`/`DurableColdCount`/`DurableEvictableCount`. Do NOT keep the old names as duplicates
-- [ ] 6.2 Add `DurableSourceCount`, `EphemeralSourceCount`, `EphemeralFreshCount`, `EphemeralStaleCount` fields
-- [ ] 6.3 Update `Stats()`/`ClassifySources()` in `internal/store/cleanup.go` — `classifyTier` applies only to `kind = 'durable'` rows (populating the `Durable*` tier counts); for `kind = 'ephemeral'` bucket as `fresh` (within TTL) or `stale` (past TTL)
-- [ ] 6.4 Grep the codebase for `HotCount`, `WarmCount`, `ColdCount`, `EvictableCount` (unprefixed) and update every reader in lockstep. `internal/server/tool_stats.go` is the primary one; tests may also reference them
-- [ ] 6.5 Update `internal/server/tool_stats.go` to render two sections: durable tiers (renamed fields) + ephemeral fresh/stale
-- [ ] 6.6 Test: `Stats()` on a mixed DB returns correct per-kind counts; `Durable*` tiers reflect only durable rows; `Ephemeral*` counts reflect only ephemeral rows
+- [x] 6.1 In `StoreStats` (`internal/store/types.go`), rename `HotCount`/`WarmCount`/`ColdCount`/`EvictableCount` → `DurableHotCount`/`DurableWarmCount`/`DurableColdCount`/`DurableEvictableCount`. Do NOT keep the old names as duplicates
+- [x] 6.2 Add `DurableSourceCount`, `EphemeralSourceCount`, `EphemeralFreshCount`, `EphemeralStaleCount` fields
+- [x] 6.3 Update `Stats()`/`ClassifySources()` in `internal/store/cleanup.go` — `classifyTier` applies only to `kind = 'durable'` rows (populating the `Durable*` tier counts); for `kind = 'ephemeral'` bucket as `fresh` (within TTL) or `stale` (past TTL)
+- [x] 6.4 Grep the codebase for `HotCount`, `WarmCount`, `ColdCount`, `EvictableCount` (unprefixed) and update every reader in lockstep. `internal/server/tool_stats.go` is the primary one; tests may also reference them
+- [x] 6.5 Update `internal/server/tool_stats.go` to render two sections: durable tiers (renamed fields) + ephemeral fresh/stale
+- [x] 6.6 Test: `Stats()` on a mixed DB returns correct per-kind counts; `Durable*` tiers reflect only durable rows; `Ephemeral*` counts reflect only ephemeral rows
 
 ## Task 7: `purge_ephemeral` convenience flag on capy_cleanup
 - **Status:** pending

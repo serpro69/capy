@@ -75,16 +75,36 @@ func classifyTier(src SourceInfo, now time.Time) (string, float64) {
 	}
 }
 
-// ClassifySources returns all sources with tier classification
-// based on retention scoring (salience, temporal decay, access boost).
-func (s *ContentStore) ClassifySources() ([]SourceInfo, error) {
+// ClassifySources returns all sources with tier classification.
+//
+// Durable rows get retention-score-based tiers (hot/warm/cold/evictable,
+// see classifyTier). Ephemeral rows are bucketed by age against
+// ephemeralTTL: "fresh" when indexed within the TTL window, "stale" when
+// past it and awaiting the next Cleanup() sweep. RetentionScore is left
+// at 0 for ephemeral rows — retention math is meaningless for TTL-lived
+// content. Non-positive ephemeralTTL falls back to the safe 24h default,
+// matching cleanupEphemeral.
+func (s *ContentStore) ClassifySources(ephemeralTTL time.Duration) ([]SourceInfo, error) {
 	sources, err := s.ListSources()
 	if err != nil {
 		return nil, err
 	}
 
+	if ephemeralTTL <= 0 {
+		ephemeralTTL = 24 * time.Hour
+	}
 	now := time.Now()
+	ttlCutoff := now.Add(-ephemeralTTL)
+
 	for i := range sources {
+		if sources[i].Kind == KindEphemeral {
+			if sources[i].IndexedAt.Before(ttlCutoff) {
+				sources[i].Tier = "stale"
+			} else {
+				sources[i].Tier = "fresh"
+			}
+			continue
+		}
 		sources[i].Tier, sources[i].RetentionScore = classifyTier(sources[i], now)
 	}
 	return sources, nil
@@ -100,7 +120,7 @@ func (s *ContentStore) ClassifySources() ([]SourceInfo, error) {
 // or "ttl") so callers can render per-kind breakdowns.
 // Vocabulary is shared and never deleted.
 func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL time.Duration) ([]SourceInfo, error) {
-	durable, err := s.cleanupDurable(dryRun)
+	durable, err := s.cleanupDurable(dryRun, ephemeralTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -123,9 +143,14 @@ func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL time.Duration) ([]Sourc
 
 // cleanupDurable applies retention-score-based eviction to durable sources.
 // A source is a candidate iff its retentionScore is below the evictable
-// threshold AND it has never been accessed.
-func (s *ContentStore) cleanupDurable(dryRun bool) ([]SourceInfo, error) {
-	sources, err := s.ClassifySources()
+// threshold AND it has never been accessed. ephemeralTTL is threaded
+// through only so ClassifySources can bucket ephemeral rows consistently;
+// it does not influence durable eviction.
+func (s *ContentStore) cleanupDurable(dryRun bool, ephemeralTTL time.Duration) ([]SourceInfo, error) {
+	// ClassifySources walks both kinds; the ephemeral branch is wasted
+	// work here but negligible at the corpus sizes this store targets.
+	// Keep the single entrypoint for consistency with Stats().
+	sources, err := s.ClassifySources(ephemeralTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -236,8 +261,11 @@ func (s *ContentStore) evict(candidates []SourceInfo, dryRun bool) error {
 	return nil
 }
 
-// Stats returns knowledge base statistics.
-func (s *ContentStore) Stats() (*StoreStats, error) {
+// Stats returns knowledge base statistics. ephemeralTTL is required to
+// bucket ephemeral sources into fresh/stale — callers should pass the
+// same TTL they use for Cleanup (typically
+// `config.Store.Cleanup.EphemeralTTLHours`).
+func (s *ContentStore) Stats(ephemeralTTL time.Duration) (*StoreStats, error) {
 	db, err := s.getDB()
 	if err != nil {
 		return nil, err
@@ -260,21 +288,32 @@ func (s *ContentStore) Stats() (*StoreStats, error) {
 		stats.DBSizeBytes = fi.Size()
 	}
 
-	// Tier distribution.
-	sources, err := s.ClassifySources()
+	// Per-kind counts and durable tier / ephemeral fresh-stale distribution.
+	sources, err := s.ClassifySources(ephemeralTTL)
 	if err != nil {
 		return &stats, nil
 	}
 	for _, src := range sources {
+		if src.Kind == KindEphemeral {
+			stats.EphemeralSourceCount++
+			switch src.Tier {
+			case "fresh":
+				stats.EphemeralFreshCount++
+			case "stale":
+				stats.EphemeralStaleCount++
+			}
+			continue
+		}
+		stats.DurableSourceCount++
 		switch src.Tier {
 		case "hot":
-			stats.HotCount++
+			stats.DurableHotCount++
 		case "warm":
-			stats.WarmCount++
+			stats.DurableWarmCount++
 		case "cold":
-			stats.ColdCount++
+			stats.DurableColdCount++
 		case "evictable":
-			stats.EvictableCount++
+			stats.DurableEvictableCount++
 		}
 	}
 

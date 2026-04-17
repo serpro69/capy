@@ -89,20 +89,37 @@ func (s *Server) handleStats(_ context.Context, _ mcp.CallToolRequest) (*mcp.Cal
 
 	// Knowledge base stats (only if store was initialized)
 	if s.store != nil {
-		kbStats, err := s.store.Stats()
+		kbStats, err := s.store.Stats(s.ephemeralTTL())
 		if err == nil && kbStats.SourceCount > 0 {
 			lines = append(lines, "", "### Knowledge Base", "",
 				"| Metric | Value |",
 				"|--------|------:|",
-				fmt.Sprintf("| Sources | %d |", kbStats.SourceCount),
+				fmt.Sprintf("| Sources | %d (durable: %d, ephemeral: %d) |",
+					kbStats.SourceCount, kbStats.DurableSourceCount, kbStats.EphemeralSourceCount),
 				fmt.Sprintf("| Chunks | %d |", kbStats.ChunkCount),
 				fmt.Sprintf("| Vocabulary | %d terms |", kbStats.VocabCount),
 				fmt.Sprintf("| DB size | %s |", formatBytes(kbStats.DBSizeBytes)),
-				fmt.Sprintf("| Tier: hot | %d |", kbStats.HotCount),
-				fmt.Sprintf("| Tier: warm | %d |", kbStats.WarmCount),
-				fmt.Sprintf("| Tier: cold | %d |", kbStats.ColdCount),
-				fmt.Sprintf("| Tier: evictable | %d |", kbStats.EvictableCount),
 			)
+			if kbStats.DurableSourceCount > 0 {
+				lines = append(lines, "",
+					"#### Durable retention tiers",
+					"| Tier | Count |",
+					"|------|------:|",
+					fmt.Sprintf("| hot | %d |", kbStats.DurableHotCount),
+					fmt.Sprintf("| warm | %d |", kbStats.DurableWarmCount),
+					fmt.Sprintf("| cold | %d |", kbStats.DurableColdCount),
+					fmt.Sprintf("| evictable | %d |", kbStats.DurableEvictableCount),
+				)
+			}
+			if kbStats.EphemeralSourceCount > 0 {
+				lines = append(lines, "",
+					"#### Ephemeral TTL buckets",
+					"| Bucket | Count |",
+					"|--------|------:|",
+					fmt.Sprintf("| fresh | %d |", kbStats.EphemeralFreshCount),
+					fmt.Sprintf("| stale | %d |", kbStats.EphemeralStaleCount),
+				)
+			}
 		}
 	}
 
