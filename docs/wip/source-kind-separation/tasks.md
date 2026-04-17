@@ -103,15 +103,15 @@
 - [x] 7.3 Test: `purge_ephemeral: true` leaves durable rows with low retention scores untouched
 
 ## Task 8: Configuration and documentation
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 5, Task 7
 - **Docs:** [implementation.md#step-8-config-docs](./implementation.md#step-8-config-docs)
 
 ### Subtasks
-- [ ] 8.1 Document `[store.cleanup] ephemeral_ttl_hours` in the example `.capy.toml` and in `internal/config/config.go` Go doc — default 24, minimum 1, meaning, and the trade-off (longer = more intra-session recall, shorter = less DB churn)
-- [ ] 8.2 Document `include_kinds` in the `capy_search` tool description — accepted values (`"durable"`, `"ephemeral"`), default behavior (durable only), and the session-recovery use case
-- [ ] 8.3 Document `purge_ephemeral` in the `capy_cleanup` tool description
-- [ ] 8.4 Release note in the repo's changelog/release process: explicit behavior-change bullet ("`capy_search` now excludes ephemeral sources by default") + explicit recovery-path bullet naming BOTH `include_kinds: ["durable","ephemeral"]` AND `source: "execute:<lang>"` / `"file:<path>"` / `"batch:…"`
+- [x] 8.1 Document `[store.cleanup] ephemeral_ttl_hours` in the example `.capy.toml` and in `internal/config/config.go` Go doc — default 24, minimum 1, meaning, and the trade-off (longer = more intra-session recall, shorter = less DB churn)
+- [x] 8.2 Document `include_kinds` in the `capy_search` tool description — accepted values (`"durable"`, `"ephemeral"`), default behavior (durable only), and the session-recovery use case
+- [x] 8.3 Document `purge_ephemeral` in the `capy_cleanup` tool description
+- [x] 8.4 Release note in the repo's changelog/release process: explicit behavior-change bullet ("`capy_search` now excludes ephemeral sources by default") + explicit recovery-path bullet naming BOTH `include_kinds: ["durable","ephemeral"]` AND `source: "execute:<lang>"` / `"file:<path>"` / `"batch:…"`
 
 ## Task 9: Final verification
 - **Status:** pending
