@@ -388,6 +388,38 @@ func TestSearchAccessTracking(t *testing.T) {
 	assert.Greater(t, accessCount, 0, "access_count should be incremented after search hit")
 }
 
+// trackAccess wraps its per-source Exec calls in a single transaction to
+// batch fsyncs; this test guards that every distinct source in a result
+// set still gets exactly one bump and the commit happens.
+func TestSearchAccessTrackingMultipleSources(t *testing.T) {
+	s := newTestStore(t)
+	indexTestContent(t, s)
+
+	// Query matches both auth-middleware and db-optimization chunks
+	// (both mention "queries"/"query" and "tokens"/"rate" respectively — a
+	// broad term catches both). Fall back to explicit multi-term OR.
+	results, err := s.SearchWithFallback("authentication optimization", 10, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+
+	// Verify at least both seeded labels appear — otherwise the test
+	// doesn't exercise the multi-source batch path.
+	hit := map[string]bool{}
+	for _, r := range results {
+		hit[r.Label] = true
+	}
+	require.True(t, hit["auth-middleware"], "expected auth-middleware in results")
+	require.True(t, hit["db-optimization"], "expected db-optimization in results")
+
+	db, _ := s.getDB()
+	for _, label := range []string{"auth-middleware", "db-optimization"} {
+		var n int
+		err := db.QueryRow("SELECT access_count FROM sources WHERE label = ?", label).Scan(&n)
+		require.NoError(t, err, "label: %s", label)
+		assert.Equal(t, 1, n, "each distinct source in the result set should be bumped exactly once")
+	}
+}
+
 // --- Empty query ---
 
 func TestSearchEmptyQuery(t *testing.T) {

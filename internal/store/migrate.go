@@ -75,7 +75,13 @@ func migrate017AddSourceKind(db *sql.DB) error {
 		return fmt.Errorf("alter table: %w", err)
 	}
 
-	// Retroactively tag ephemeral rows by label prefix.
+	// Retroactively tag ephemeral rows by label prefix. Contract: every
+	// ephemeral source labeled pre-migration was written by capy_execute /
+	// capy_execute_file / capy_batch_execute, which use the `execute:`, `file:`,
+	// and `batch:` prefixes exclusively. If a future ephemeral source type
+	// introduces a new prefix, extend this list AND add a fresh one-shot
+	// migration — don't retro-edit this one (it has already run on installed
+	// DBs).
 	if _, err := tx.Exec(`
 		UPDATE sources SET kind = 'ephemeral'
 		WHERE label LIKE 'execute:%'
