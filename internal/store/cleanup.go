@@ -130,10 +130,7 @@ func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL time.Duration) ([]Sourc
 	}
 
 	merged := make([]SourceInfo, 0, len(durable)+len(ephemeral))
-	for _, src := range durable {
-		src.EvictionReason = "retention"
-		merged = append(merged, src)
-	}
+	merged = append(merged, durable...)
 	merged = append(merged, ephemeral...)
 	return merged, nil
 }
@@ -171,6 +168,7 @@ func (s *ContentStore) cleanupDurable(dryRun bool, ephemeralTTL time.Duration) (
 		if src.AccessCount > 0 {
 			continue
 		}
+		src.EvictionReason = "retention"
 		candidates = append(candidates, src)
 	}
 
@@ -214,6 +212,7 @@ func (s *ContentStore) cleanupEphemeral(dryRun bool, ttl time.Duration) ([]Sourc
 		if err := rows.Scan(&si.ID, &si.Label, &si.ContentType, &si.ChunkCount,
 			&si.CodeChunkCount, &indexedAt, &lastAccessedAt, &si.AccessCount,
 			&si.ContentHash, &si.Kind); err != nil {
+			slog.Warn("cleanupEphemeral: row scan failed, skipping", "error", err)
 			continue
 		}
 		si.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
@@ -241,11 +240,14 @@ func (s *ContentStore) evict(candidates []SourceInfo, dryRun bool) error {
 		return err
 	}
 
-	tx, err := db.Begin()
+	// Use beginImmediate so the eviction sweep gets the same retry-on-BUSY
+	// backoff as the migration and Index paths; a plain db.Begin() surfaces
+	// SQLITE_BUSY mid-transaction under write contention.
+	tx, err := beginImmediate(db)
 	if err != nil {
 		return fmt.Errorf("beginning cleanup transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	// Bind the three prepared statements to the transaction once. Calling
 	// tx.Stmt inside the loop would allocate a fresh transaction-bound

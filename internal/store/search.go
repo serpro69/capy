@@ -586,7 +586,9 @@ func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opt
 
 	rows, err := db.Query(query, params...)
 	if err != nil {
-		slog.Debug("search query failed", "error", err, "query", sanitized)
+		// Warn, not Debug: a malformed query degrades silently to "no results"
+		// otherwise, hiding real SQL bugs from operators.
+		slog.Warn("search query failed", "error", err, "query", sanitized)
 		return nil
 	}
 	defer rows.Close()
@@ -595,12 +597,13 @@ func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opt
 	for rows.Next() {
 		var r SearchResult
 		if err := rows.Scan(&r.Label, &r.Title, &r.Content, &r.SourceID, &r.ContentType, &r.Highlighted, &r.Rank); err != nil {
+			slog.Warn("search row scan failed, skipping", "error", err)
 			continue
 		}
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {
-		slog.Debug("search row iteration failed", "error", err)
+		slog.Warn("search row iteration failed", "error", err)
 		return nil
 	}
 	return results
@@ -611,20 +614,35 @@ func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opt
 // that appeared in search results. Runs synchronously to avoid race
 // conditions with ContentStore.Close() finalizing prepared statements.
 //
-// TODO: Each Exec() runs as an implicit autocommit transaction, triggering a
-// disk fsync per source. Wrap the loop in an explicit tx.Begin()/tx.Commit()
-// to collapse fsyncs into a single batch. The 5× fetch multiplier in rrfSearch
-// means more unique sources flow through here now than before.
+// Updates run inside a single transaction so the loop produces one fsync
+// instead of one per source — the 5× fetch multiplier in rrfSearch pushes
+// more unique sources through here than the pre-RRF path.
 func (s *ContentStore) trackAccess(results []SearchResult) {
+	db, err := s.getDB()
+	if err != nil {
+		return
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		slog.Debug("access tracking: begin tx failed", "error", err)
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	stmt := tx.Stmt(s.stmtTrackAccess)
 	seen := make(map[int64]bool)
 	for _, r := range results {
 		if seen[r.SourceID] {
 			continue
 		}
 		seen[r.SourceID] = true
-		if _, err := s.stmtTrackAccess.Exec(r.SourceID); err != nil {
+		if _, err := stmt.Exec(r.SourceID); err != nil {
 			slog.Debug("access tracking failed", "source_id", r.SourceID, "error", err)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		slog.Debug("access tracking: commit failed", "error", err)
 	}
 }
 
