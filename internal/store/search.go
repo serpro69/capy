@@ -232,7 +232,7 @@ func diversifyBySource(results []SearchResult, limit, maxPerSource int) []Search
 	return selected
 }
 
-// --- Proximity reranking ---
+// --- Reranking (title-match + proximity) ---
 
 // rerank applies title-match boost and proximity reranking to fused results.
 // Title-match boost applies to all queries (including single-term).
@@ -731,11 +731,13 @@ func maxEditDistance(wordLen int) int {
 // fuzzyCorrectQuery corrects each word in the query using vocabulary.
 // Returns the corrected query, or "" if no correction was made.
 func (s *ContentStore) fuzzyCorrectQuery(query string) string {
-	words := strings.Fields(strings.ToLower(query))
+	cleaned := ftsSpecialRe.ReplaceAllString(strings.ToLower(query), " ")
+	words := strings.Fields(cleaned)
 	corrected := false
 	var result []string
 
 	for _, word := range words {
+		word = strings.Trim(word, ".,!?;:")
 		if len(word) < 3 {
 			result = append(result, word)
 			continue
@@ -767,15 +769,15 @@ func (s *ContentStore) fuzzyCorrectWord(word string) string {
 		return ""
 	}
 
-	s.fuzzyCacheMu.Lock()
+	s.fuzzyCacheMu.RLock()
 	if cached, ok := s.fuzzyCache[word]; ok {
-		s.fuzzyCacheMu.Unlock()
+		s.fuzzyCacheMu.RUnlock()
 		if cached == nil {
 			return ""
 		}
 		return *cached
 	}
-	s.fuzzyCacheMu.Unlock()
+	s.fuzzyCacheMu.RUnlock()
 
 	maxDist := maxEditDistance(len(word))
 	minLen := len(word) - maxDist
@@ -807,7 +809,7 @@ func (s *ContentStore) fuzzyCorrectWord(word string) string {
 	}
 	if err := rows.Err(); err != nil {
 		slog.Debug("fuzzy vocab iteration failed", "error", err)
-		return ""
+		return "" // intentionally not cached — DB errors are transient
 	}
 
 	if bestDist <= maxDist {
