@@ -2,7 +2,7 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done
 > Created: 2026-04-22
 
 ## Task 1: Shared query term helper + stopword filtering + dedup
@@ -86,11 +86,11 @@
 - [x] 7.5 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
 
 ## Task 8: Final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6, Task 7
 
 ### Subtasks
-- [ ] 8.1 Run `test` skill — full test suite with `-tags fts5 -race`, all pass
-- [ ] 8.2 Run `document` skill to update any relevant docs
-- [ ] 8.3 Run `review-code` skill with Go input to review the implementation
-- [ ] 8.4 Run `review-spec` skill to verify implementation matches design and implementation docs
+- [x] 8.1 Run `test` skill — full test suite with `-tags fts5 -race`, all pass
+- [x] 8.2 Run `document` skill to update any relevant docs
+- [x] 8.3 Run `review-code` skill with Go input to review the implementation
+- [x] 8.4 Run `review-spec` skill to verify implementation matches design and implementation docs
