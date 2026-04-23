@@ -6,7 +6,7 @@
 > Created: 2026-04-22
 
 ## Task 1: Shared query term helper + stopword filtering + dedup
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#1-shared-query-term-helper--stopword-filtering--dedup](./implementation.md#1-shared-query-term-helper--stopword-filtering--dedup)
 
