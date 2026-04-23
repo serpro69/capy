@@ -15,7 +15,7 @@ func TestOptimizeFTSTriggersAfterThreshold(t *testing.T) {
 	// Index enough to cross the optimizeEvery threshold (50 chunks).
 	for i := range 60 {
 		_, err := s.Index(
-			"# Heading\n\nSome content for optimization test.\n\n## Details\n\nMore details here.",
+			fmt.Sprintf("# Authentication Middleware %d\n\nThe middleware validates JWT tokens.\n\n## Verification\n\nTokens verified using RS256 algorithm.", i),
 			fmt.Sprintf("opt-test-%d", i),
 			"markdown",
 			KindEphemeral,
@@ -24,8 +24,14 @@ func TestOptimizeFTSTriggersAfterThreshold(t *testing.T) {
 	}
 
 	// After indexing, the counter should have been reset (optimize fired).
-	// The counter value should be less than optimizeEvery.
 	assert.Less(t, s.insertCount.Load(), optimizeEvery)
+
+	// Verify the auto-triggered optimize didn't corrupt the FTS index.
+	db, err := s.getDB()
+	require.NoError(t, err)
+	var count int
+	require.NoError(t, db.QueryRow("SELECT count(*) FROM chunks").Scan(&count))
+	assert.Greater(t, count, 0, "FTS index should have chunks after optimize")
 }
 
 func TestOptimizeFTSDoesNotBreakSearch(t *testing.T) {
@@ -41,7 +47,9 @@ func TestOptimizeFTSDoesNotBreakSearch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Manually trigger optimize.
-	s.optimizeFTS()
+	db, err2 := s.getDB()
+	require.NoError(t, err2)
+	s.optimizeFTS(db)
 
 	// Search should still return results.
 	results, err := s.SearchWithFallback("authentication", 5, SearchOptions{})
