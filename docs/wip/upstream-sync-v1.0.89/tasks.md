@@ -28,15 +28,15 @@
 - [x] 2.3 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
 
 ## Task 3: Title-match boost in proximity reranking
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#3-title-match-boost-in-proximity-reranking](./implementation.md#3-title-match-boost-in-proximity-reranking)
 
 ### Subtasks
-- [ ] 3.1 Rename `proximityRerank` → `rerank` in `internal/store/search.go` and update call site in `rrfSearch` — replace `words` extraction with `filterQueryTerms(query)` call; move the `len < 2` early-return to guard only the proximity span section (not title-match boost)
-- [ ] 3.2 Add title-match boost inside the `for i := range results` loop — count term hits in lowercased title, apply content-type-aware weight (code: 0.6, prose: 0.3), multiply `FusedScore *= (1.0 + titleBoost)`
-- [ ] 3.3 Write tests in `internal/store/search_test.go`: single-term query boosts code chunk with matching title over one with generic title; multi-term query combines title and proximity boosts; prose chunks get lower title weight than code chunks
-- [ ] 3.4 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass, existing proximity tests unchanged
+- [x] 3.1 Rename `proximityRerank` → `rerank` in `internal/store/search.go` and update call site in `rrfSearch` — replace `words` extraction with `filterQueryTerms(query)` call; move the `len < 2` early-return to guard only the proximity span section (not title-match boost)
+- [x] 3.2 Add title-match boost inside the `for i := range results` loop — count term hits in lowercased title, apply content-type-aware weight (code: 0.6, prose: 0.3), multiply `FusedScore *= (1.0 + titleBoost)`
+- [x] 3.3 Write tests in `internal/store/search_test.go`: single-term query boosts code chunk with matching title over one with generic title; multi-term query combines title and proximity boosts; prose chunks get lower title weight than code chunks
+- [x] 3.4 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass, existing proximity tests unchanged
 
 ## Task 4: Fuzzy correction cache
 - **Status:** pending

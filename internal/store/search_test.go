@@ -643,15 +643,16 @@ func TestProximityRerankMultiTerm(t *testing.T) {
 		"close-proximity chunk should rank first")
 }
 
-func TestProximityRerankSingleTermSkips(t *testing.T) {
+func TestRerankSingleTermNoProximity(t *testing.T) {
 	results := []SearchResult{
 		{FusedScore: 0.5, Content: "hello world"},
 		{FusedScore: 1.0, Content: "world hello"},
 	}
-	reranked := proximityRerank(results, "hello")
-	// Single term — no reranking, original order preserved.
-	assert.Equal(t, 0.5, reranked[0].FusedScore)
-	assert.Equal(t, 1.0, reranked[1].FusedScore)
+	reranked := rerank(results, "hello")
+	// Single term, no titles — no title boost, no proximity boost.
+	// Scores unchanged, sorted by fused score descending.
+	assert.Equal(t, 1.0, reranked[0].FusedScore)
+	assert.Equal(t, 0.5, reranked[1].FusedScore)
 }
 
 func TestFindAllPositions(t *testing.T) {
@@ -709,8 +710,8 @@ func TestProximityContentLengthNormalization(t *testing.T) {
 	short := SearchResult{FusedScore: 1.0, Content: "JWT token here"}
 	long := SearchResult{FusedScore: 1.0, Content: "JWT token here " + strings.Repeat("x", 1000)}
 
-	shortResults := proximityRerank([]SearchResult{short}, "JWT token")
-	longResults := proximityRerank([]SearchResult{long}, "JWT token")
+	shortResults := rerank([]SearchResult{short}, "JWT token")
+	longResults := rerank([]SearchResult{long}, "JWT token")
 
 	// Both should be boosted above their original score.
 	assert.Greater(t, shortResults[0].FusedScore, 1.0, "short content should be boosted")
@@ -773,7 +774,7 @@ func TestProximityRerankSynonymContentFallback(t *testing.T) {
 	}
 
 	// Query uses abbreviations that are synonyms of content terms.
-	reranked := proximityRerank(results, "k8s config")
+	reranked := rerank(results, "k8s config")
 	assert.Greater(t, reranked[0].FusedScore, 1.0,
 		"content fallback should find synonyms and apply proximity boost")
 }
@@ -784,7 +785,7 @@ func TestProximityRerankMixedTerms(t *testing.T) {
 		{FusedScore: 1.0, Content: "kubernetes search is fast and reliable"},
 	}
 
-	reranked := proximityRerank(results, "k8s search")
+	reranked := rerank(results, "k8s search")
 	assert.Greater(t, reranked[0].FusedScore, 1.0,
 		"mixed synonym/non-synonym query should still get proximity boost")
 }
@@ -796,10 +797,52 @@ func TestProximityRerankNoSynonymPassthrough(t *testing.T) {
 		{FusedScore: 0.5, Content: "hello there world is great"},
 	}
 
-	reranked := proximityRerank(results, "hello world")
+	reranked := rerank(results, "hello world")
 	// "hello world" adjacent in first result → bigger boost.
 	assert.Greater(t, reranked[0].FusedScore, reranked[1].FusedScore,
 		"non-synonym query should still rank by proximity")
+}
+
+// --- Title-match boost ---
+
+func TestTitleMatchBoostSingleTerm(t *testing.T) {
+	results := []SearchResult{
+		{FusedScore: 1.0, Title: "Lines 1-20", Content: "The ContentStore handles indexing.", ContentType: "code"},
+		{FusedScore: 1.0, Title: "ContentStore", Content: "The ContentStore handles indexing.", ContentType: "code"},
+	}
+	reranked := rerank(results, "ContentStore")
+	assert.Greater(t, reranked[0].FusedScore, 1.0,
+		"title-matching result should be boosted")
+	assert.Equal(t, "ContentStore", reranked[0].Title,
+		"result with matching title should rank first")
+}
+
+func TestTitleMatchBoostMultiTerm(t *testing.T) {
+	results := []SearchResult{
+		{FusedScore: 1.0, Title: "Utilities", Content: "content store operations here", ContentType: "code"},
+		{FusedScore: 1.0, Title: "Content Store", Content: "content store operations here", ContentType: "code"},
+	}
+	reranked := rerank(results, "content store")
+	assert.Equal(t, "Content Store", reranked[0].Title,
+		"result with title matching both terms should rank first")
+}
+
+func TestTitleMatchBoostProseWeightLowerThanCode(t *testing.T) {
+	results := []SearchResult{
+		{FusedScore: 1.0, Title: "ContentStore", Content: "The ContentStore handles indexing.", ContentType: "prose"},
+		{FusedScore: 1.0, Title: "ContentStore", Content: "The ContentStore handles indexing.", ContentType: "code"},
+	}
+	reranked := rerank(results, "ContentStore")
+	var proseScore, codeScore float64
+	for _, r := range reranked {
+		if r.ContentType == "prose" {
+			proseScore = r.FusedScore
+		} else {
+			codeScore = r.FusedScore
+		}
+	}
+	assert.Greater(t, codeScore, proseScore,
+		"code chunks should get higher title-match weight than prose")
 }
 
 // --- ContentType filtering ---

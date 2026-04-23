@@ -165,11 +165,7 @@ func (s *ContentStore) rrfSearch(porterQuery, trigramQuery, rawQuery string, lim
 		}
 	}
 
-	// Apply proximity reranking for multi-term queries.
-	// Known limitation: proximity uses rawQuery terms, so synonym-matched
-	// results (e.g., query "k8s" matching "kubernetes" in content) don't
-	// receive proximity boost. See design.md addendum for planned fix.
-	fused = proximityRerank(fused, rawQuery)
+	fused = rerank(fused, rawQuery)
 
 	return fused
 }
@@ -238,73 +234,86 @@ func diversifyBySource(results []SearchResult, limit, maxPerSource int) []Search
 
 // --- Proximity reranking ---
 
-// proximityRerank boosts results where query terms appear close together.
-// Only applies for multi-term queries (2+ words). Each query term is
-// expanded into a synonym group so that synonym-matched content (e.g.,
-// query "k8s config", content "kubernetes configuration") receives the
-// proximity boost.
-func proximityRerank(results []SearchResult, query string) []SearchResult {
-	// Strip FTS5 special chars so terms match tokenized output (e.g. "error:" → "error").
-	cleaned := ftsSpecialRe.ReplaceAllString(strings.ToLower(query), " ")
-	words := strings.Fields(cleaned)
-	if len(words) < 2 {
+// rerank applies title-match boost and proximity reranking to fused results.
+// Title-match boost applies to all queries (including single-term).
+// Proximity boost only applies for multi-term queries (2+ terms).
+func rerank(results []SearchResult, query string) []SearchResult {
+	terms := filterQueryTerms(query)
+	if len(terms) == 0 {
 		return results
 	}
 
-	// Build term groups: each group is [original, syn1, syn2, ...].
-	// ExpandSynonyms returns only the *other* group members, so prepend
-	// the original term to form the complete group.
-	termGroups := make([][]string, len(words))
-	for i, w := range words {
-		if syns := ExpandSynonyms(w); len(syns) > 0 {
-			group := make([]string, 0, len(syns)+1)
-			group = append(group, w)
-			group = append(group, syns...)
-			termGroups[i] = group
-		} else {
-			termGroups[i] = []string{w}
-		}
-	}
-
+	// Title-match boost: reward results whose title contains query terms.
 	for i := range results {
 		r := &results[i]
-		minSpan := -1
-
-		// Primary: use FTS5 highlight markers (char(2)/char(3)).
-		if r.Highlighted != "" {
-			minSpan = findMinSpanFromHighlights(r.Highlighted, termGroups)
-		}
-
-		// Fallback: strings.Index on raw content.
-		if minSpan < 0 {
-			posLists := make([][]int, len(termGroups))
-			content := strings.ToLower(r.Content)
-			allFound := true
-			for j, group := range termGroups {
-				var merged []int
-				for _, term := range group {
-					merged = append(merged, findAllPositions(content, term)...)
-				}
-				if len(merged) == 0 {
-					allFound = false
-					break
-				}
-				sort.Ints(merged)
-				posLists[j] = merged
-			}
-			if allFound {
-				minSpan = findMinSpan(posLists)
+		lowerTitle := strings.ToLower(r.Title)
+		titleHits := 0
+		for _, t := range terms {
+			if strings.Contains(lowerTitle, t) {
+				titleHits++
 			}
 		}
-
-		if minSpan >= 0 {
-			contentLen := max(len(r.Content), 1)
-			boost := 1.0 / (1.0 + float64(minSpan)/float64(contentLen))
-			r.FusedScore *= (1.0 + boost)
+		if titleHits > 0 {
+			weight := 0.3
+			if r.ContentType == "code" {
+				weight = 0.6
+			}
+			titleBoost := weight * (float64(titleHits) / float64(len(terms)))
+			r.FusedScore *= (1.0 + titleBoost)
 		}
 	}
 
-	// Re-sort by boosted fused score.
+	// Proximity span boost (multi-term only).
+	if len(terms) >= 2 {
+		termGroups := make([][]string, len(terms))
+		for i, w := range terms {
+			if syns := ExpandSynonyms(w); len(syns) > 0 {
+				group := make([]string, 0, len(syns)+1)
+				group = append(group, w)
+				group = append(group, syns...)
+				termGroups[i] = group
+			} else {
+				termGroups[i] = []string{w}
+			}
+		}
+
+		for i := range results {
+			r := &results[i]
+			minSpan := -1
+
+			if r.Highlighted != "" {
+				minSpan = findMinSpanFromHighlights(r.Highlighted, termGroups)
+			}
+
+			if minSpan < 0 {
+				posLists := make([][]int, len(termGroups))
+				content := strings.ToLower(r.Content)
+				allFound := true
+				for j, group := range termGroups {
+					var merged []int
+					for _, term := range group {
+						merged = append(merged, findAllPositions(content, term)...)
+					}
+					if len(merged) == 0 {
+						allFound = false
+						break
+					}
+					sort.Ints(merged)
+					posLists[j] = merged
+				}
+				if allFound {
+					minSpan = findMinSpan(posLists)
+				}
+			}
+
+			if minSpan >= 0 {
+				contentLen := max(len(r.Content), 1)
+				boost := 1.0 / (1.0 + float64(minSpan)/float64(contentLen))
+				r.FusedScore *= (1.0 + boost)
+			}
+		}
+	}
+
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].FusedScore > results[j].FusedScore
 	})
