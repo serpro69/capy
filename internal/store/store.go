@@ -11,6 +11,8 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+const fuzzyCacheMaxSize = 256
+
 func (s *ContentStore) ctx() context.Context {
 	return context.Background()
 }
@@ -36,6 +38,10 @@ type ContentStore struct {
 	stmtUpdateSourceAccess    *sql.Stmt
 	stmtUpdateSourceKind      *sql.Stmt
 
+	// Fuzzy correction cache: nil value = "no correction"; key-missing = "not cached".
+	fuzzyCacheMu sync.Mutex
+	fuzzyCache   map[string]*string
+
 	// Prepared statements — search.
 	stmtFuzzyVocab *sql.Stmt
 
@@ -59,6 +65,7 @@ func NewContentStore(dbPath, projectDir string, titleWeight float64) *ContentSto
 		dbPath:      dbPath,
 		projectDir:  projectDir,
 		titleWeight: titleWeight,
+		fuzzyCache:  make(map[string]*string),
 	}
 }
 
