@@ -35,20 +35,30 @@ All tests require `-tags fts5`. Use `make test` or `go test -tags fts5 -count=1 
 
 **Verify:** existing tests still pass (`go test -tags fts5 ./internal/store/...`). No behavioral change yet.
 
-### 1.2 Schema migration
+### 1.2 Schema migration and migration tracker
 
-**File:** `internal/store/migrate.go`
+**Files:** `internal/store/migrate.go`, `internal/store/schema.go`
 
-Add a new migration that alters the CHECK constraint on `sources.kind` to accept `'session'`. SQLite does not support `ALTER TABLE ... ALTER CONSTRAINT`, so the migration must:
+This is the second migration, which triggers the TODO at `migrate.go:15-16`. Three things must happen:
 
-1. Create a new table with the updated CHECK constraint.
-2. Copy all data from the old table.
-3. Drop the old table.
-4. Rename the new table.
+**A. Add a migration-tracking table.** Before running the new migration, create:
+```sql
+CREATE TABLE IF NOT EXISTS migrations (
+  name TEXT PRIMARY KEY,
+  applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+```
+Then retroactively record migration 017 as already applied (`INSERT OR IGNORE INTO migrations (name) VALUES ('017_add_source_kind')`). This replaces the PRAGMA-based idempotency check for future migrations.
 
-Follow the existing migration pattern in `migrate.go`. The migration number should be the next sequential one.
+**B. Handle two DB populations.** There are two shapes of `sources` table in the wild:
+- **Migrated DBs** (had `ALTER TABLE ADD COLUMN kind`): these lack a CHECK constraint entirely (SQLite's ALTER TABLE ADD COLUMN does not support CHECK — see `migrate.go:67-69`). Inserting `kind='session'` already works. The migration just needs to record itself in the tracker.
+- **Fresh DBs** (created with `schemaSQL`): these have `CHECK (kind IN ('ephemeral', 'durable'))`. These require a table rebuild: create new table with updated CHECK → copy data → drop old → rename.
 
-**Verify:** `go test -tags fts5 ./internal/store/...` — migration applies cleanly. Open a test DB, insert a source with `kind = 'session'`, confirm no constraint violation.
+Detection: attempt `INSERT INTO sources (label, content_type, kind) VALUES ('__migration_probe', 'plaintext', 'session')` inside the transaction. If it succeeds, rollback the probe row — no table rebuild needed. If it fails with a constraint error, do the table rebuild.
+
+**C. Update `schemaSQL`** in `schema.go` to include `'session'` in the CHECK constraint so future fresh DBs accept the new kind.
+
+**Verify:** `go test -tags fts5 ./internal/store/...` — migration applies on both fresh and migrated DBs. Insert `kind='session'` succeeds. Migration tracker table exists with both migrations recorded.
 
 ### 1.3 Config: SessionTTLDays
 
@@ -72,25 +82,32 @@ Follow the existing migration pattern in `migrate.go`. The migration number shou
 **File:** `internal/store/cleanup.go`
 
 - Rename `cleanupEphemeral` to `cleanupByTTL(kind SourceKind, ttl time.Duration)`. The only change: the `WHERE kind = ?` parameter becomes the `kind` argument instead of hardcoded `KindEphemeral`.
-- Update `Cleanup()` to call `cleanupByTTL` twice: once for `KindEphemeral` with ephemeral TTL, once for `KindSession` with session TTL.
+- Update `Cleanup()` signature to `Cleanup(dryRun bool, ephemeralTTL, sessionTTL time.Duration)`. Call `cleanupByTTL` twice: once for `KindEphemeral` with ephemeral TTL, once for `KindSession` with session TTL. Pass both TTLs through to `cleanupDurable` → `ClassifySources`.
 - Update `PurgeEphemeral` to call `cleanupByTTL(KindEphemeral, ttl)`.
 - Add `PurgeSession(dryRun bool, ttl time.Duration)` that calls `cleanupByTTL(KindSession, ttl)`.
-- Update `ClassifySources` to handle `KindSession` with fresh/stale bucketing using session TTL.
-- Update `Stats()` to accept both TTLs (or a TTL map) and populate session counters.
+- Update `ClassifySources(ephemeralTTL, sessionTTL time.Duration)` to handle `KindSession` with fresh/stale bucketing using the session TTL.
+- Update `Stats(ephemeralTTL, sessionTTL time.Duration)` to pass both TTLs to `ClassifySources` and populate session counters.
+- Update all callers of `Cleanup`, `ClassifySources`, and `Stats` to pass both TTLs. Key callers: `tool_cleanup.go`, `tool_stats.go`, `server.go`.
 
 **Verify:** `go test -tags fts5 ./internal/store/...` — existing ephemeral cleanup tests pass. Add tests for session TTL cleanup: index a session-kind source, advance clock past TTL, verify eviction.
 
 ### 1.5 Search: Update default IncludeKinds
 
+**File:** `internal/store/search.go`
+
+- Update `effectiveKindFilter()` at line ~569: change default return from `[]SourceKind{KindDurable}` to `[]SourceKind{KindDurable, KindSession}`.
+- Add `KindScopeIncludesSession(opts SearchOptions) bool` mirroring `KindScopeIncludesEphemeral` (or generalize both to `KindScopeIncludes(opts SearchOptions, kind SourceKind) bool`).
+
 **File:** `internal/server/tool_search.go`
 
-- Update the default `IncludeKinds` from `[KindDurable]` to `[KindDurable, KindSession]`.
+- Update `parseIncludeKinds` error message at line ~197: change `"accepted: \"durable\", \"ephemeral\""` to include `"session"`.
+- Add session-aware no-results hint alongside the existing ephemeral hint at line ~124: when sessions are excluded but session sources exist, surface a recovery hint.
 
 **File:** `internal/server/intent_search.go` (if applicable)
 
 - Verify intent search does not need session kind changes (it writes ephemeral, searches durable).
 
-**Verify:** index a session-kind source manually, search for its content, verify it appears in results. Verify ephemeral sources are still excluded by default.
+**Verify:** index a session-kind source manually, search for its content, verify it appears in results. Verify ephemeral sources are still excluded by default. Verify `parseIncludeKinds` accepts `"session"` as a valid value.
 
 ---
 
@@ -199,22 +216,28 @@ Returns true if:
 
 ### 3.1 Transcript chunking function
 
+**New file:** `internal/session/chunk.go`
+
+The chunker lives in `internal/session/` (NOT `internal/store/chunk.go`) because it operates directly on the structured `ParsedSession` data. This avoids the anti-pattern of serializing structured metadata (tool names, subagent info) into text and then re-parsing it with regexes.
+
+Add `ChunkSession(session *ParsedSession, transcript string, maxBytes int) []store.Chunk`:
+
+- Takes both the structured `ParsedSession` (for metadata: tool names, subagent info, timestamps) and the plaintext transcript (for chunk content).
+- Sliding window of ~4 turn pairs with 1 turn pair overlap. Window boundaries are computed from `ParsedSession.TurnPairs` indices.
+- Each chunk's content is the corresponding slice of the transcript text.
+- Each chunk title is built from structured data: `Session <datetime> | Turns <start>-<end> | Tools: <names>`. When sub-agent turns are in the window: append `| Subagent: <type>`.
+- Chunks exceeding `maxBytes` (default `store.MaxChunkBytes` = 4096) are split using `store.SplitOversized` (export the existing helper from `chunk.go`).
+- `HasCode` is set by checking for code fences in the chunk content (reuse `store.ChunkHasCode`).
+
 **File:** `internal/store/chunk.go`
 
-Add `chunkTranscript(content string, linesPerChunk int) []Chunk`:
-
-- Split on `Human:` turn boundaries (not arbitrary lines).
-- Sliding window of ~4 turn pairs with 1 turn pair overlap.
-- Each chunk title: `Session <datetime> | Turns <start>-<end> | Tools: <names>`. When sub-agent turns are present: append `| Subagent: <type>`.
-- Tool names and subagent info are extracted from the transcript text itself (parse `[Tools: ...]` lines and `--- Subagent: ... ---` markers).
-- Chunks exceeding `maxChunkBytes` are split using existing `splitOversized`.
-- Content type on all chunks: `"session"`.
+- Export `SplitOversized` and `ChunkHasCode` (rename from `splitOversized` and `chunkHasCode`) so the session package can reuse them. Alternatively, expose a `MaxChunkBytes` constant.
 
 **File:** `internal/store/index.go`
 
-- Update `chunkContent` to route `"session"` content type to `chunkTranscript`.
+- The `chunkContent` router does NOT need a `"session"` case. Session chunking is called directly by the sweep orchestrator, which passes pre-chunked `[]store.Chunk` to a new `IndexChunked` method (or calls `Index` with the transcript and lets the existing plaintext fallback handle it — but the former is cleaner since we already have structured chunks).
 
-**Verify:** unit tests with a multi-turn transcript. Verify: correct window boundaries, overlap, title generation, oversized splitting.
+**Verify:** unit tests in `internal/session/chunk_test.go` with a multi-turn ParsedSession. Verify: correct window boundaries, overlap, title generation from structured data, oversized splitting.
 
 ---
 
@@ -256,10 +279,10 @@ Add the mtime comparison logic:
 Add the main sweep function:
 
 ```go
-func Sweep(store *store.ContentStore, projectDir string) (indexed int, skipped int, errors int)
+func Sweep(ctx context.Context, store *store.ContentStore, projectDir string) (indexed int, skipped int, errors int)
 ```
 
-Orchestrates: discovery → list files → mtime gate → parse → gate → transcript → index.
+Accepts `context.Context` as first parameter (standard Go convention for any function doing I/O). Checks `ctx.Err()` between files for cooperative cancellation. Orchestrates: discovery → list files → mtime gate → parse → gate → transcript → chunk → index.
 
 Logs at info level: `"session sweep complete"` with indexed/skipped/error counts.
 Logs at warn level: individual parse failures.
@@ -270,20 +293,20 @@ Logs at warn level: individual parse failures.
 
 **File:** `internal/server/server.go`
 
-In `Serve()`, after `s.registerTools()` and before `stdio.Listen()`:
+In `Serve()`, after `s.registerTools()` and before `stdio.Listen()`. The goroutine must derive its context from the server's `ctx` parameter (NOT `context.Background()`) so it participates in cooperative cancellation when the server shuts down. This prevents the goroutine from outliving `Serve()` and calling `getStore()` after `shutdown()` has closed the store.
 
 ```go
 go func() {
-    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
     defer cancel()
-    indexed, skipped, errs := session.Sweep(s.getStore(), s.projectDir)
+    indexed, skipped, errs := session.Sweep(sweepCtx, s.getStore(), s.projectDir)
     if indexed > 0 || errs > 0 {
         slog.Info("session sweep", "indexed", indexed, "skipped", skipped, "errors", errs)
     }
 }()
 ```
 
-**Verify:** start the server with synthetic session files present, verify they get indexed. Start again, verify no re-indexing (mtime gate).
+**Verify:** start the server with synthetic session files present, verify they get indexed. Start again, verify no re-indexing (mtime gate). Shut down the server mid-sweep (if possible), verify clean cancellation.
 
 ---
 
