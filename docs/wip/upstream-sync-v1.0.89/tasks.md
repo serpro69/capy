@@ -52,38 +52,38 @@
 - [x] 4.6 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass (race detector catches any mutex issues)
 
 ## Task 5: Periodic FTS5 optimize
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#5-periodic-fts5-optimize](./implementation.md#5-periodic-fts5-optimize)
 
 ### Subtasks
-- [ ] 5.1 Add `insertCount atomic.Int64` field to `ContentStore` in `internal/store/store.go`; add `optimizeEvery int64 = 50` constant
-- [ ] 5.2 Add `optimizeFTS()` method to `ContentStore` — runs `INSERT INTO chunks(chunks) VALUES ('optimize')` and same for `chunks_trigram`, logs warning on failure
-- [ ] 5.3 In `Index` in `internal/store/index.go`, after successful `tx.Commit()`, increment via `s.insertCount.Add(int64(len(chunks)))` and call `s.optimizeFTS()` + `s.insertCount.Store(0)` when threshold reached
-- [ ] 5.4 Write tests in `internal/store/search_test.go` or new `internal/store/optimize_test.go`: index enough chunks to trigger optimize, verify no error; verify optimize failure doesn't break indexing
-- [ ] 5.5 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
+- [x] 5.1 Add `insertCount atomic.Int64` field to `ContentStore` in `internal/store/store.go`; add `optimizeEvery int64 = 50` constant
+- [x] 5.2 Add `optimizeFTS()` method to `ContentStore` — runs `INSERT INTO chunks(chunks) VALUES ('optimize')` and same for `chunks_trigram`, logs warning on failure
+- [x] 5.3 In `Index` in `internal/store/index.go`, after successful `tx.Commit()`, increment via `s.insertCount.Add(int64(len(chunks)))` and call `s.optimizeFTS()` + `s.insertCount.Store(0)` when threshold reached
+- [x] 5.4 Write tests in `internal/store/search_test.go` or new `internal/store/optimize_test.go`: index enough chunks to trigger optimize, verify no error; verify optimize failure doesn't break indexing
+- [x] 5.5 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
 
 ## Task 6: mmap_size pragma
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#6-mmap_size-pragma](./implementation.md#6-mmap_size-pragma)
 
 ### Subtasks
-- [ ] 6.1 In `getDB()` in `internal/store/store.go`, add `db.Exec("PRAGMA mmap_size = 268435456")` after `sql.Open` and before `db.Exec(schemaSQL)` — log warning on failure (non-fatal)
-- [ ] 6.2 Write test in `internal/store/store_test.go`: after store init, query `PRAGMA mmap_size` returns non-zero value
-- [ ] 6.3 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
+- [x] 6.1 In `getDB()` in `internal/store/store.go`, add `db.Exec("PRAGMA mmap_size = 268435456")` after `sql.Open` and before `db.Exec(schemaSQL)` — log warning on failure (non-fatal)
+- [x] 6.2 Write test in `internal/store/store_test.go`: after store init, query `PRAGMA mmap_size` returns non-zero value
+- [x] 6.3 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
 
 ## Task 7: Corrupt DB detection and recovery
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 6 (mmap pragma is part of the open sequence)
 - **Docs:** [implementation.md#7-corrupt-db-detection-and-recovery](./implementation.md#7-corrupt-db-detection-and-recovery)
 
 ### Subtasks
-- [ ] 7.1 Create `internal/store/retry.go` — move `isBusy` from `migrate.go`, add `isSQLiteCorruption(err error) bool` (checks `"malformed"`, `"not a database"`, `"corrupt"`, `"disk image is malformed"`), add `backupCorruptDB(dbPath string)` (renames `.db`, `.db-wal`, `.db-shm` to `.corrupt.<timestamp>`, ignores missing WAL/SHM)
-- [ ] 7.2 Extract the open sequence in `getDB()` into `openDB() (*sql.DB, error)` — covers sql.Open → mmap pragma → schemaSQL → migrations → prepareStatements
-- [ ] 7.3 Update `getDB()` to call `openDB()`, and on corruption error + file exists, call `backupCorruptDB()` then retry `openDB()` once; propagate error on retry failure
-- [ ] 7.4 Write tests: garbage file at DB path triggers recovery and produces working store; `.corrupt.<timestamp>` backup file exists; non-corruption error doesn't trigger recovery; retry failure propagates; `isBusy` still works from retry.go (move test if needed)
-- [ ] 7.5 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
+- [x] 7.1 Create `internal/store/retry.go` — move `isBusy` from `migrate.go`, add `isSQLiteCorruption(err error) bool` (checks `"malformed"`, `"not a database"`, `"corrupt"`, `"disk image is malformed"`), add `backupCorruptDB(dbPath string)` (renames `.db`, `.db-wal`, `.db-shm` to `.corrupt.<timestamp>`, ignores missing WAL/SHM)
+- [x] 7.2 Extract the open sequence in `getDB()` into `openDB() (*sql.DB, error)` — covers sql.Open → mmap pragma → schemaSQL → migrations → prepareStatements
+- [x] 7.3 Update `getDB()` to call `openDB()`, and on corruption error + file exists, call `backupCorruptDB()` then retry `openDB()` once; propagate error on retry failure
+- [x] 7.4 Write tests: garbage file at DB path triggers recovery and produces working store; `.corrupt.<timestamp>` backup file exists; non-corruption error doesn't trigger recovery; retry failure propagates; `isBusy` still works from retry.go (move test if needed)
+- [x] 7.5 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
 
 ## Task 8: Final verification
 - **Status:** pending

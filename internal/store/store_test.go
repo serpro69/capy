@@ -507,6 +507,97 @@ func TestVocabularyBatched(t *testing.T) {
 	assert.Equal(t, 200, count, "all unique words should be inserted in batch")
 }
 
+// --- Corrupt DB recovery ---
+
+func TestCorruptDBRecovery(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// Write garbage to simulate corruption.
+	require.NoError(t, os.WriteFile(dbPath, []byte("this is not a database"), 0o644))
+
+	s := NewContentStore(dbPath, dir, 0)
+	defer s.Close()
+
+	// Should recover: back up corrupt file and create a working DB.
+	_, err := s.getDB()
+	require.NoError(t, err)
+
+	// Backup file should exist with .corrupt. suffix.
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	found := false
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".corrupt.") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "corrupt backup file should exist")
+
+	// Store should be functional.
+	_, err = s.Index("test content", "recovery-test", "plaintext", KindDurable)
+	assert.NoError(t, err)
+}
+
+func TestCorruptDBRecoveryPreservesBackup(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	garbage := []byte("not a sqlite database")
+
+	require.NoError(t, os.WriteFile(dbPath, garbage, 0o644))
+
+	s := NewContentStore(dbPath, dir, 0)
+	defer s.Close()
+
+	_, err := s.getDB()
+	require.NoError(t, err)
+
+	// Read the backup and verify it contains the original garbage.
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".corrupt.") {
+			content, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			require.NoError(t, err)
+			assert.Equal(t, garbage, content)
+			return
+		}
+	}
+	t.Fatal("no backup file found")
+}
+
+func TestNonCorruptionErrorDoesNotTriggerRecovery(t *testing.T) {
+	// Point at a non-existent nested directory — this is a "creating DB directory"
+	// error, not corruption. Should not attempt recovery.
+	s := NewContentStore("/dev/null/impossible/path/test.db", "", 0)
+	_, err := s.getDB()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "creating DB directory")
+}
+
+func TestIsSQLiteCorruption(t *testing.T) {
+	assert.True(t, isSQLiteCorruption(fmt.Errorf("file is not a database")))
+	assert.True(t, isSQLiteCorruption(fmt.Errorf("database disk image is malformed")))
+	assert.True(t, isSQLiteCorruption(fmt.Errorf("database or disk is corrupt")))
+	assert.False(t, isSQLiteCorruption(fmt.Errorf("database is locked")))
+	assert.False(t, isSQLiteCorruption(nil))
+}
+
+// --- mmap pragma ---
+
+func TestMmapPragmaSet(t *testing.T) {
+	s := newTestStore(t)
+
+	db, err := s.getDB()
+	require.NoError(t, err)
+
+	var mmapSize int64
+	err = db.QueryRow("PRAGMA mmap_size").Scan(&mmapSize)
+	require.NoError(t, err)
+	assert.Greater(t, mmapSize, int64(0), "mmap_size should be non-zero after init")
+}
+
 // --- Stopwords ---
 
 func TestIsStopword(t *testing.T) {

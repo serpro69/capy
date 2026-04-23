@@ -120,6 +120,11 @@ func (s *ContentStore) Index(content, label, contentType string, kind SourceKind
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
 
+	if s.insertCount.Add(int64(len(chunks))) >= optimizeEvery {
+		s.optimizeFTS()
+		s.insertCount.Store(0)
+	}
+
 	// Extract vocabulary outside the main transaction.
 	if err := s.extractAndStoreVocabulary(content); err != nil {
 		slog.Warn("vocabulary extraction failed", "label", label, "error", err)
