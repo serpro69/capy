@@ -33,7 +33,7 @@
 - **Docs:** [implementation.md#3-title-match-boost-in-proximity-reranking](./implementation.md#3-title-match-boost-in-proximity-reranking)
 
 ### Subtasks
-- [ ] 3.1 Refactor `proximityRerank` in `internal/store/search.go` — replace `words` extraction with `filterQueryTerms(query)` call; move the `len < 2` early-return to guard only the proximity span section (not title-match boost)
+- [ ] 3.1 Rename `proximityRerank` → `rerank` in `internal/store/search.go` and update call site in `rrfSearch` — replace `words` extraction with `filterQueryTerms(query)` call; move the `len < 2` early-return to guard only the proximity span section (not title-match boost)
 - [ ] 3.2 Add title-match boost inside the `for i := range results` loop — count term hits in lowercased title, apply content-type-aware weight (code: 0.6, prose: 0.3), multiply `FusedScore *= (1.0 + titleBoost)`
 - [ ] 3.3 Write tests in `internal/store/search_test.go`: single-term query boosts code chunk with matching title over one with generic title; multi-term query combines title and proximity boosts; prose chunks get lower title weight than code chunks
 - [ ] 3.4 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass, existing proximity tests unchanged
@@ -57,9 +57,9 @@
 - **Docs:** [implementation.md#5-periodic-fts5-optimize](./implementation.md#5-periodic-fts5-optimize)
 
 ### Subtasks
-- [ ] 5.1 Add `insertCount int` field to `ContentStore` in `internal/store/store.go`; add `optimizeEvery = 50` constant
+- [ ] 5.1 Add `insertCount atomic.Int64` field to `ContentStore` in `internal/store/store.go`; add `optimizeEvery int64 = 50` constant
 - [ ] 5.2 Add `optimizeFTS()` method to `ContentStore` — runs `INSERT INTO chunks(chunks) VALUES ('optimize')` and same for `chunks_trigram`, logs warning on failure
-- [ ] 5.3 In `Index` in `internal/store/index.go`, after successful `tx.Commit()`, increment `s.insertCount` by `len(chunks)` and call `s.optimizeFTS()` + reset counter when threshold reached
+- [ ] 5.3 In `Index` in `internal/store/index.go`, after successful `tx.Commit()`, increment via `s.insertCount.Add(int64(len(chunks)))` and call `s.optimizeFTS()` + `s.insertCount.Store(0)` when threshold reached
 - [ ] 5.4 Write tests in `internal/store/search_test.go` or new `internal/store/optimize_test.go`: index enough chunks to trigger optimize, verify no error; verify optimize failure doesn't break indexing
 - [ ] 5.5 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
 
@@ -79,12 +79,11 @@
 - **Docs:** [implementation.md#7-corrupt-db-detection-and-recovery](./implementation.md#7-corrupt-db-detection-and-recovery)
 
 ### Subtasks
-- [ ] 7.1 Add `isSQLiteCorruption(err error) bool` to `internal/store/store.go` — checks error string for `"malformed"`, `"not a database"`, `"corrupt"`, `"disk image is malformed"`
+- [ ] 7.1 Create `internal/store/retry.go` — move `isBusy` from `migrate.go`, add `isSQLiteCorruption(err error) bool` (checks `"malformed"`, `"not a database"`, `"corrupt"`, `"disk image is malformed"`), add `backupCorruptDB(dbPath string)` (renames `.db`, `.db-wal`, `.db-shm` to `.corrupt.<timestamp>`, ignores missing WAL/SHM)
 - [ ] 7.2 Extract the open sequence in `getDB()` into `openDB() (*sql.DB, error)` — covers sql.Open → mmap pragma → schemaSQL → migrations → prepareStatements
-- [ ] 7.3 Add `backupCorruptDB()` method to `ContentStore` — renames `.db`, `.db-wal`, `.db-shm` to `.corrupt.<timestamp>` suffix; logs warning with backup path
-- [ ] 7.4 Update `getDB()` to call `openDB()`, and on corruption error + file exists, call `backupCorruptDB()` then retry `openDB()` once; propagate error on retry failure
-- [ ] 7.5 Write tests in `internal/store/store_test.go`: garbage file at DB path triggers recovery and produces working store; `.corrupt.<timestamp>` backup file exists; non-corruption error doesn't trigger recovery; retry failure propagates
-- [ ] 7.6 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
+- [ ] 7.3 Update `getDB()` to call `openDB()`, and on corruption error + file exists, call `backupCorruptDB()` then retry `openDB()` once; propagate error on retry failure
+- [ ] 7.4 Write tests: garbage file at DB path triggers recovery and produces working store; `.corrupt.<timestamp>` backup file exists; non-corruption error doesn't trigger recovery; retry failure propagates; `isBusy` still works from retry.go (move test if needed)
+- [ ] 7.5 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
 
 ## Task 8: Final verification
 - **Status:** pending

@@ -3,7 +3,7 @@
 > Design: [./design.md](./design.md)
 > Tasks: [./tasks.md](./tasks.md)
 
-## 1. Shared query term helper + stopword filtering + dedup
+## 1. Shared query term helper + stopword filtering + dedup {#stopword-pipeline}
 
 **Files:** `internal/store/search.go`
 
@@ -45,7 +45,7 @@ Note: trigram needs its own regex cleaning (`trigramCleanRe` strips non-alphanum
 
 ---
 
-## 2. Skip fuzzy correction on stopwords
+## 2. Skip fuzzy correction on stopwords {#fuzzy-stopword-skip}
 
 **File:** `internal/store/search.go`, function `fuzzyCorrectQuery`
 
@@ -69,13 +69,15 @@ This skips the DB query and levenshtein scan for stopwords.
 
 ---
 
-## 3. Title-match boost in proximity reranking
+## 3. Title-match boost in reranking {#title-boost}
 
-**File:** `internal/store/search.go`, function `proximityRerank`
+**File:** `internal/store/search.go`, function `proximityRerank` → renamed to `rerank`
 
-### 3.1 Add title-match boost
+### 3.1 Rename and add title-match boost
 
-At the start of `proximityRerank`, after computing `words` from the query, use `filterQueryTerms` to get non-stopword deduplicated terms. Then inside the `for i := range results` loop, before the existing proximity span calculation:
+Rename `proximityRerank` to `rerank` — the function now handles title-match boost and stopword filtering beyond just proximity. Update the call site in `rrfSearch`.
+
+At the start of `rerank`, after computing `words` from the query, use `filterQueryTerms` to get non-stopword deduplicated terms. Then inside the `for i := range results` loop, before the existing proximity span calculation:
 
 1. Lowercase `results[i].Title`
 2. Count how many terms from `filterQueryTerms` appear in the lowercased title (`titleHits`)
@@ -114,7 +116,7 @@ sort.Slice(...)
 
 ---
 
-## 4. Fuzzy correction cache
+## 4. Fuzzy correction cache {#fuzzy-cache}
 
 **Files:** `internal/store/store.go` (struct + init), `internal/store/search.go` (read/write), `internal/store/index.go` (invalidation)
 
@@ -183,7 +185,7 @@ This is conservative — clears on any vocab insert, even if the new words don't
 
 ---
 
-## 5. Periodic FTS5 optimize
+## 5. Periodic FTS5 optimize {#fts5-optimize}
 
 **Files:** `internal/store/store.go` (field), `internal/store/index.go` (trigger)
 
@@ -192,22 +194,22 @@ This is conservative — clears on any vocab insert, even if the new words don't
 In `store.go`, add to the struct:
 
 ```
-insertCount int
+insertCount atomic.Int64
 ```
 
-Add a constant: `const optimizeEvery = 50`
+Add a constant: `const optimizeEvery int64 = 50`
 
-No mutex needed — `insertCount` is only modified inside `Index`, which holds SQLite's write lock (BEGIN IMMEDIATE transaction), so concurrent calls are serialized.
+Use `atomic.Int64` — concurrent `Index` calls serialize on the write transaction, but the post-commit counter update runs after the lock is released and could race.
 
 ### 5.2 Trigger optimize after commit in `Index`
 
 In `index.go`, after the successful `tx.Commit()` and before vocabulary extraction:
 
 ```
-s.insertCount += len(chunks)
-if s.insertCount >= optimizeEvery {
+s.insertCount.Add(int64(len(chunks)))
+if s.insertCount.Load() >= optimizeEvery {
     s.optimizeFTS()
-    s.insertCount = 0
+    s.insertCount.Store(0)
 }
 ```
 
@@ -236,7 +238,7 @@ func (s *ContentStore) optimizeFTS() {
 
 ---
 
-## 6. mmap_size pragma
+## 6. mmap_size pragma {#mmap-pragma}
 
 **File:** `internal/store/store.go`, function `getDB`
 
@@ -262,17 +264,25 @@ if _, err := db.Exec("PRAGMA mmap_size = 268435456"); err != nil {
 
 ---
 
-## 7. Corrupt DB detection and recovery
+## 7. Corrupt DB detection and recovery {#corrupt-recovery}
 
-**File:** `internal/store/store.go`, function `getDB`
+**Files:** `internal/store/retry.go` (new), `internal/store/store.go`, `internal/store/migrate.go`
 
-### 7.1 Add corruption detection helper
+### 7.1 Create `retry.go` with shared SQLite error helpers
+
+Create `internal/store/retry.go`. Move `isBusy` from `migrate.go` here (same package — just delete the definition from migrate.go). Add:
 
 ```
 func isSQLiteCorruption(err error) bool
 ```
 
 Check error string for: `"malformed"`, `"not a database"`, `"corrupt"`, `"disk image is malformed"`. mattn/go-sqlite3 surfaces these from SQLite's C library as error messages.
+
+```
+func backupCorruptDB(dbPath string)
+```
+
+Renames `.db`, `.db-wal`, `.db-shm` to `.corrupt.<timestamp>` suffix (timestamp via `time.Now().Format("20060102T150405")`). Ignores `os.ErrNotExist` for WAL/SHM. Logs warning with backup paths.
 
 ### 7.2 Add backup-and-recreate logic to `getDB`
 

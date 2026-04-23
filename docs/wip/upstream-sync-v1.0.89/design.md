@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-The context-mode TS reference accumulated ~150 commits since the v1.0.54 sync point. After filtering out CI, bundle, platform-specific (Windows, Bun, KiloCode, Kiro, Zed, Pi, OpenClaw, OpenCode), docs-only, and test-infrastructure changes, **7 changes** are relevant to capy's core. An additional **6 changes** are deliberately skipped with documented rationale.
+The context-mode TS reference accumulated ~258 commits since the v1.0.54 sync point. After filtering out CI, bundle, platform-specific (Windows, Bun, KiloCode, Kiro, Zed, Pi, OpenClaw, OpenCode), docs-only, and test-infrastructure changes, **7 changes** are relevant to capy's core. An additional **6 changes** are deliberately skipped with documented rationale.
 
 ### Ported changes
 
@@ -98,7 +98,7 @@ This pairs with the fuzzy cache (§5) — stopword skipping avoids the DB hit en
 
 ### 4.2 Solution
 
-Add a title-match boost computed inside `proximityRerank`, before the proximity calculation:
+Rename `proximityRerank` to `rerank` (it now handles title-match boost + stopword filtering beyond just proximity) and add a title-match boost before the proximity calculation:
 
 1. Use `filterQueryTerms(query)` (from §2.3) to get non-stopword, deduplicated terms
 2. Count how many terms appear in the lowercased title (`titleHits`)
@@ -143,9 +143,9 @@ FTS5 b-trees fragment over many insert/delete cycles. Over a session with dozens
 
 Track inserts and run SQLite's built-in optimize command periodically:
 
-- **Field:** `insertCount int` on `ContentStore`
-- **Increment:** At the end of `Index` in `index.go`, after successful commit, increment by `len(chunks)` (total chunks inserted across both FTS5 tables)
-- **Trigger:** When `insertCount >= 50`, run optimize on both tables:
+- **Field:** `insertCount atomic.Int64` on `ContentStore` — atomic because concurrent `Index` calls serialize on the write transaction but the post-commit counter update could race
+- **Increment:** At the end of `Index` in `index.go`, after successful commit, add `len(chunks)` via `s.insertCount.Add(int64(len(chunks)))`
+- **Trigger:** When `s.insertCount.Load() >= 50`, run optimize on both tables:
   ```sql
   INSERT INTO chunks(chunks) VALUES ('optimize')
   INSERT INTO chunks_trigram(chunks_trigram) VALUES ('optimize')
@@ -207,6 +207,8 @@ Detect corruption in `getDB()` and recover by renaming (not deleting):
 - Corrupt file is preserved for forensic inspection or `sqlite3 .recover`
 - If DB was git-tracked, `git checkout -- capy.db` restores the last committed version
 - Only one retry — avoids infinite loops on persistent filesystem errors
+
+**File organization:** Extract `isBusy` from `migrate.go` and place alongside the new corruption helpers (`isSQLiteCorruption`, `backupCorruptDB`) in a new `internal/store/retry.go`. This groups all SQLite error classification and recovery utilities in one place.
 
 ---
 
