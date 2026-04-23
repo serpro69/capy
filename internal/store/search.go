@@ -430,8 +430,8 @@ func filterQueryTerms(query string) []string {
 	seen := make(map[string]bool, len(words))
 	deduped := make([]string, 0, len(words))
 	for _, w := range words {
-		lower := strings.ToLower(w)
-		if seen[lower] {
+		lower := strings.ToLower(strings.Trim(w, ".,!?;:"))
+		if lower == "" || seen[lower] {
 			continue
 		}
 		seen[lower] = true
@@ -494,31 +494,33 @@ func sanitizeTrigramQuery(query, mode string, expandSyns bool) string {
 	terms := filterQueryTerms(query)
 	var groups []string
 	for _, w := range terms {
-		tclean := trigramCleanRe.ReplaceAllString(w, "")
-		if expandSyns {
-			if syns := ExpandSynonyms(w); len(syns) > 0 {
-				parts := make([]string, 0, len(syns)+1)
-				if len(tclean) >= 3 {
-					parts = append(parts, `"`+tclean+`"`)
-				}
-				for _, s := range syns {
-					sc := trigramCleanRe.ReplaceAllString(s, "")
-					if len(sc) >= 3 {
-						parts = append(parts, `"`+sc+`"`)
+		subs := strings.Fields(trigramCleanRe.ReplaceAllString(w, " "))
+		for _, sub := range subs {
+			if expandSyns {
+				if syns := ExpandSynonyms(sub); len(syns) > 0 {
+					parts := make([]string, 0, len(syns)+1)
+					if len(sub) >= 3 {
+						parts = append(parts, `"`+sub+`"`)
 					}
-				}
-				if len(parts) > 0 {
-					if len(parts) == 1 {
-						groups = append(groups, parts[0])
-					} else {
-						groups = append(groups, "("+strings.Join(parts, " OR ")+")")
+					for _, s := range syns {
+						sc := trigramCleanRe.ReplaceAllString(s, "")
+						if len(sc) >= 3 {
+							parts = append(parts, `"`+sc+`"`)
+						}
 					}
+					if len(parts) > 0 {
+						if len(parts) == 1 {
+							groups = append(groups, parts[0])
+						} else {
+							groups = append(groups, "("+strings.Join(parts, " OR ")+")")
+						}
+					}
+					continue
 				}
-				continue
 			}
-		}
-		if len(tclean) >= 3 {
-			groups = append(groups, `"`+tclean+`"`)
+			if len(sub) >= 3 {
+				groups = append(groups, `"`+sub+`"`)
+			}
 		}
 	}
 	if len(groups) == 0 {

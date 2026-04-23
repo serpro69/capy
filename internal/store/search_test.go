@@ -134,6 +134,27 @@ func TestSanitizeTrigramQueryStopwordFiltering(t *testing.T) {
 	assert.Equal(t, `"error"`, result)
 }
 
+func TestFilterQueryTermsPunctuationTrimming(t *testing.T) {
+	// Trailing punctuation is trimmed before stopword check
+	got := filterQueryTerms("the, error. in! code?")
+	assert.Equal(t, []string{"error", "in"}, got)
+
+	// Punctuation-only tokens are dropped
+	got2 := filterQueryTerms("hello ... world")
+	assert.Equal(t, []string{"hello", "world"}, got2)
+}
+
+func TestSanitizeTrigramQueryPunctuatedTerms(t *testing.T) {
+	// "k8s.io" should split into "k8s" and not concatenate to "k8sio"
+	result := sanitizeTrigramQuery("k8s.io", "AND", false)
+	assert.Equal(t, `"k8s"`, result, "dot-separated terms should split, not concatenate")
+
+	// "config.yaml" should produce two trigram-valid terms
+	result2 := sanitizeTrigramQuery("config.yaml", "AND", false)
+	assert.Contains(t, result2, `"config"`)
+	assert.Contains(t, result2, `"yaml"`)
+}
+
 // --- Levenshtein ---
 
 func TestLevenshteinDistance(t *testing.T) {
