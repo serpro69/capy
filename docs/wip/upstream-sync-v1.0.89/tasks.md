@@ -6,16 +6,16 @@
 > Created: 2026-04-22
 
 ## Task 1: Shared query term helper + stopword filtering + dedup
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** —
 - **Docs:** [implementation.md#1-shared-query-term-helper--stopword-filtering--dedup](./implementation.md#1-shared-query-term-helper--stopword-filtering--dedup)
 
 ### Subtasks
-- [ ] 1.1 Add `filterQueryTerms(query string) []string` to `internal/store/search.go` — strips FTS5 special chars, splits, lowercases, deduplicates case-insensitively, filters stopwords via `IsStopword`, falls back to unfiltered list if all removed
-- [ ] 1.2 Update `sanitizePorterQuery` in `internal/store/search.go` to use `filterQueryTerms` for initial word extraction, then apply synonym expansion and group building on the filtered terms
-- [ ] 1.3 Update `sanitizeTrigramQuery` in `internal/store/search.go` to use `filterQueryTerms` for initial word extraction, then apply `trigramCleanRe` and ≥3-char filter on surviving terms
-- [ ] 1.4 Write tests in `internal/store/search_test.go`: query with stopwords produces FTS5 query without them; duplicate-cased terms deduplicate; all-stopword query falls back to unfiltered; existing search tests still pass
-- [ ] 1.5 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
+- [x] 1.1 Add `filterQueryTerms(query string) []string` to `internal/store/search.go` — strips FTS5 special chars, splits, lowercases, deduplicates case-insensitively, filters stopwords via `IsStopword`, falls back to unfiltered list if all removed
+- [x] 1.2 Update `sanitizePorterQuery` in `internal/store/search.go` to use `filterQueryTerms` for initial word extraction, then apply synonym expansion and group building on the filtered terms
+- [x] 1.3 Update `sanitizeTrigramQuery` in `internal/store/search.go` to use `filterQueryTerms` for initial word extraction, then apply `trigramCleanRe` and ≥3-char filter on surviving terms
+- [x] 1.4 Write tests in `internal/store/search_test.go`: query with stopwords produces FTS5 query without them; duplicate-cased terms deduplicate; all-stopword query falls back to unfiltered; existing search tests still pass
+- [x] 1.5 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
 
 ## Task 2: Skip fuzzy correction on stopwords
 - **Status:** pending

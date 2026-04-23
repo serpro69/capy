@@ -45,7 +45,7 @@ func TestSanitizePorterQuery(t *testing.T) {
 	}{
 		{"hello world", "AND", `"hello" "world"`},
 		{"hello world", "OR", `"hello" OR "world"`},
-		{`test "quoted" [brackets]`, "AND", `"test" "quoted" "brackets"`},
+		{`test "quoted" [brackets]`, "AND", `"quoted" "brackets"`},
 		{"AND OR NOT NEAR", "AND", ""},
 		{"", "AND", ""},
 		{"single", "AND", `"single"`},
@@ -69,6 +69,69 @@ func TestSanitizeTrigramQueryNoSynonyms(t *testing.T) {
 		got := sanitizeTrigramQuery(tt.query, tt.mode, false)
 		assert.Equal(t, tt.want, got, "sanitizeTrigramQuery(%q, %q, false)", tt.query, tt.mode)
 	}
+}
+
+// --- filterQueryTerms ---
+
+func TestFilterQueryTerms(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{
+			name:  "removes stopwords",
+			query: "the error in the code",
+			want:  []string{"error", "in"},
+		},
+		{
+			name:  "deduplicates case-insensitively",
+			query: "Error error ERROR",
+			want:  []string{"error"},
+		},
+		{
+			name:  "all-stopword query falls back to unfiltered",
+			query: "the and for",
+			want:  []string{"the", "and", "for"},
+		},
+		{
+			name:  "strips FTS5 special chars",
+			query: `"error:" [test] (hello)`,
+			want:  []string{"error", "hello"},
+		},
+		{
+			name:  "empty query returns nil",
+			query: "",
+			want:  nil,
+		},
+		{
+			name:  "mixed stopwords and real terms",
+			query: "the authentication for deployment",
+			want:  []string{"authentication", "deployment"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterQueryTerms(tt.query)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSanitizePorterQueryStopwordFiltering(t *testing.T) {
+	// "the error in the code" → "the" and "code" are stopwords, "in" is not
+	result := sanitizePorterQuery("the error in the code", "AND", false)
+	assert.Equal(t, `"error" "in"`, result)
+
+	// Duplicate-cased terms are deduplicated
+	result2 := sanitizePorterQuery("Error error ERROR", "AND", false)
+	assert.Equal(t, `"error"`, result2)
+}
+
+func TestSanitizeTrigramQueryStopwordFiltering(t *testing.T) {
+	// "the error in the code" → stopwords removed, "in" < 3 chars dropped by trigram
+	result := sanitizeTrigramQuery("the error in the code", "AND", false)
+	assert.Equal(t, `"error"`, result)
 }
 
 // --- Levenshtein ---
