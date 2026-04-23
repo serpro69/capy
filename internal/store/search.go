@@ -731,6 +731,10 @@ func (s *ContentStore) fuzzyCorrectQuery(query string) string {
 			result = append(result, word)
 			continue
 		}
+		if IsStopword(word) {
+			result = append(result, word)
+			continue
+		}
 		fix := s.fuzzyCorrectWord(word)
 		if fix != "" {
 			result = append(result, fix)

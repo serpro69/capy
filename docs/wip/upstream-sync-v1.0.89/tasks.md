@@ -18,14 +18,14 @@
 - [x] 1.5 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
 
 ## Task 2: Skip fuzzy correction on stopwords
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#2-skip-fuzzy-correction-on-stopwords](./implementation.md#2-skip-fuzzy-correction-on-stopwords)
 
 ### Subtasks
-- [ ] 2.1 In `fuzzyCorrectQuery` in `internal/store/search.go`, add `IsStopword(word)` check after the `len(word) < 3` guard — skip the word (append as-is) without calling `fuzzyCorrectWord`
-- [ ] 2.2 Write test in `internal/store/search_test.go`: `fuzzyCorrectQuery` with mixed stopwords and a typo corrects only the typo and leaves stopwords untouched
-- [ ] 2.3 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
+- [x] 2.1 In `fuzzyCorrectQuery` in `internal/store/search.go`, add `IsStopword(word)` check after the `len(word) < 3` guard — skip the word (append as-is) without calling `fuzzyCorrectWord`
+- [x] 2.2 Write test in `internal/store/search_test.go`: `fuzzyCorrectQuery` with mixed stopwords and a typo corrects only the typo and leaves stopwords untouched
+- [x] 2.3 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass
 
 ## Task 3: Title-match boost in proximity reranking
 - **Status:** pending

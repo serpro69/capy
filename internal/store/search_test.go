@@ -911,6 +911,28 @@ func TestSynonymSkipsFuzzy(t *testing.T) {
 	assert.Empty(t, fix2, "synonym-known term 'auth' should not be fuzzy-corrected")
 }
 
+func TestFuzzyCorrectQuerySkipsStopwords(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.Index(
+		"# Code Review\n\nThe code review process catches errors early.\n\n"+
+			"## Common Errors\n\nOff-by-one errors are the most frequent bug type.",
+		"code-review",
+		"markdown",
+		KindDurable,
+	)
+	require.NoError(t, err)
+
+	// "the" and "in" are stopwords; "errro" is a typo for "error"; "code" is exact vocab.
+	// Stopwords should pass through uncorrected without hitting fuzzyCorrectWord.
+	corrected := s.fuzzyCorrectQuery("the errro in code")
+	assert.NotEmpty(t, corrected, "should return corrected query when a typo is present")
+	assert.Contains(t, corrected, "the", "stopword 'the' should pass through unchanged")
+	assert.Contains(t, corrected, "in", "stopword 'in' should pass through unchanged")
+	assert.Contains(t, corrected, "error", "typo 'errro' should be corrected to 'error'")
+	assert.Contains(t, corrected, "code", "exact vocab word should pass through unchanged")
+}
+
 func TestNoSynonymPassthrough(t *testing.T) {
 	s := newTestStore(t)
 
