@@ -120,9 +120,11 @@ func (s *ContentStore) Index(content, label, contentType string, kind SourceKind
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
 
-	if s.insertCount.Add(int64(len(chunks))) >= optimizeEvery {
-		s.optimizeFTS()
-		s.insertCount.Store(0)
+	after := s.insertCount.Add(int64(len(chunks)))
+	if after >= optimizeEvery {
+		if s.insertCount.CompareAndSwap(after, 0) {
+			s.optimizeFTS(db)
+		}
 	}
 
 	// Extract vocabulary outside the main transaction.
