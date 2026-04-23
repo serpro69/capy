@@ -39,7 +39,7 @@ type ContentStore struct {
 	stmtUpdateSourceKind      *sql.Stmt
 
 	// Fuzzy correction cache: nil value = "no correction"; key-missing = "not cached".
-	fuzzyCacheMu sync.Mutex
+	fuzzyCacheMu sync.RWMutex
 	fuzzyCache   map[string]*string
 
 	// Prepared statements — search.
