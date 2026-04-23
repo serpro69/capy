@@ -4,14 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 const fuzzyCacheMaxSize = 256
+
+const optimizeEvery int64 = 50
 
 func (s *ContentStore) ctx() context.Context {
 	return context.Background()
@@ -37,6 +41,8 @@ type ContentStore struct {
 	stmtFindSourceByLabel     *sql.Stmt
 	stmtUpdateSourceAccess    *sql.Stmt
 	stmtUpdateSourceKind      *sql.Stmt
+
+	insertCount atomic.Int64
 
 	// Fuzzy correction cache: nil value = "no correction"; key-missing = "not cached".
 	fuzzyCacheMu sync.RWMutex
@@ -70,6 +76,7 @@ func NewContentStore(dbPath, projectDir string, titleWeight float64) *ContentSto
 }
 
 // getDB returns the database connection, initializing it on first call.
+// On corruption, it backs up the corrupt file and retries once.
 func (s *ContentStore) getDB() (*sql.DB, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -83,16 +90,36 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("creating DB directory: %w", err)
 	}
 
-	// Write a breadcrumb so the data directory is self-documenting.
-	// Errors are non-fatal — the DB works fine without it.
 	if s.projectDir != "" {
 		_ = os.WriteFile(filepath.Join(dbDir, ".project"), []byte(s.projectDir+"\n"), 0o644)
 	}
 
+	db, err := s.openDB()
+	if err != nil && isSQLiteCorruption(err) && fileExists(s.dbPath) {
+		slog.Warn("corrupt database detected, backing up and recreating", "path", s.dbPath, "error", err)
+		backupCorruptDB(s.dbPath)
+		db, err = s.openDB()
+		if err != nil {
+			return nil, fmt.Errorf("opening database after recovery: %w", err)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	s.db = db
+	return db, nil
+}
+
+func (s *ContentStore) openDB() (*sql.DB, error) {
 	dsn := s.dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
+	}
+
+	if _, err := db.Exec("PRAGMA mmap_size = 268435456"); err != nil {
+		slog.Warn("failed to set mmap_size pragma", "error", err)
 	}
 
 	if _, err := db.Exec(schemaSQL); err != nil {
@@ -110,8 +137,12 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("preparing statements: %w", err)
 	}
 
-	s.db = db
 	return db, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func (s *ContentStore) prepareStatements(db *sql.DB) error {
@@ -305,6 +336,19 @@ func (s *ContentStore) checkpoint() error {
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	return err
+}
+
+func (s *ContentStore) optimizeFTS() {
+	db, err := s.getDB()
+	if err != nil {
+		return
+	}
+	if _, err := db.Exec("INSERT INTO chunks(chunks) VALUES ('optimize')"); err != nil {
+		slog.Warn("FTS5 optimize failed for chunks", "error", err)
+	}
+	if _, err := db.Exec("INSERT INTO chunks_trigram(chunks_trigram) VALUES ('optimize')"); err != nil {
+		slog.Warn("FTS5 optimize failed for chunks_trigram", "error", err)
+	}
 }
 
 // Checkpoint flushes the WAL into the main database file using a dedicated
