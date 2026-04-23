@@ -417,6 +417,40 @@ func findMinSpan(positionLists [][]int) int {
 	return best
 }
 
+// filterQueryTerms strips FTS5 special chars, splits, lowercases,
+// deduplicates case-insensitively, and filters stopwords. Falls back
+// to the deduplicated (unfiltered) list if all terms are stopwords.
+func filterQueryTerms(query string) []string {
+	cleaned := ftsSpecialRe.ReplaceAllString(query, " ")
+	words := strings.Fields(cleaned)
+	if len(words) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool, len(words))
+	deduped := make([]string, 0, len(words))
+	for _, w := range words {
+		lower := strings.ToLower(w)
+		if seen[lower] {
+			continue
+		}
+		seen[lower] = true
+		deduped = append(deduped, lower)
+	}
+
+	filtered := make([]string, 0, len(deduped))
+	for _, w := range deduped {
+		if !IsStopword(w) {
+			filtered = append(filtered, w)
+		}
+	}
+
+	if len(filtered) == 0 {
+		return deduped
+	}
+	return filtered
+}
+
 // sanitizePorterQuery cleans a query for the Porter FTS5 table. When
 // expandSyns is true, each term is expanded via the synonym map into an OR
 // group. Mode controls how groups are joined: "AND" uses space (implicit AND
@@ -424,11 +458,10 @@ func findMinSpan(positionLists [][]int) int {
 // Note: quoted phrase preservation is not yet implemented — all FTS5 special
 // characters (including quotes) are stripped before tokenization.
 func sanitizePorterQuery(query, mode string, expandSyns bool) string {
-	cleaned := ftsSpecialRe.ReplaceAllString(query, " ")
-	words := strings.Fields(cleaned)
+	terms := filterQueryTerms(query)
 	var groups []string
-	for _, w := range words {
-		if w == "" || ftsKeywords[strings.ToUpper(w)] {
+	for _, w := range terms {
+		if ftsKeywords[strings.ToUpper(w)] {
 			continue
 		}
 		if expandSyns {
@@ -458,23 +491,20 @@ func sanitizePorterQuery(query, mode string, expandSyns bool) string {
 // per term). When expandSyns is true, each term is expanded via the synonym
 // map; short terms (<3 chars) are dropped but their longer synonyms are kept.
 func sanitizeTrigramQuery(query, mode string, expandSyns bool) string {
-	cleaned := trigramCleanRe.ReplaceAllString(query, " ")
-	cleaned = strings.TrimSpace(cleaned)
-	if cleaned == "" {
-		return ""
-	}
-	words := strings.Fields(cleaned)
+	terms := filterQueryTerms(query)
 	var groups []string
-	for _, w := range words {
+	for _, w := range terms {
+		tclean := trigramCleanRe.ReplaceAllString(w, "")
 		if expandSyns {
 			if syns := ExpandSynonyms(w); len(syns) > 0 {
 				parts := make([]string, 0, len(syns)+1)
-				if len(w) >= 3 {
-					parts = append(parts, `"`+w+`"`)
+				if len(tclean) >= 3 {
+					parts = append(parts, `"`+tclean+`"`)
 				}
 				for _, s := range syns {
-					if len(s) >= 3 {
-						parts = append(parts, `"`+s+`"`)
+					sc := trigramCleanRe.ReplaceAllString(s, "")
+					if len(sc) >= 3 {
+						parts = append(parts, `"`+sc+`"`)
 					}
 				}
 				if len(parts) > 0 {
@@ -487,8 +517,8 @@ func sanitizeTrigramQuery(query, mode string, expandSyns bool) string {
 				continue
 			}
 		}
-		if len(w) >= 3 {
-			groups = append(groups, `"`+w+`"`)
+		if len(tclean) >= 3 {
+			groups = append(groups, `"`+tclean+`"`)
 		}
 	}
 	if len(groups) == 0 {
