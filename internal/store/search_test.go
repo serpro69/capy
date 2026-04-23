@@ -1372,9 +1372,9 @@ func TestFuzzyCacheSizeCapEviction(t *testing.T) {
 	assert.Equal(t, fuzzyCacheMaxSize, len(s.fuzzyCache))
 	s.fuzzyCacheMu.Unlock()
 
-	// Next cachefuzzy call should evict all and start fresh.
+	// Next cacheFuzzy call should evict all and start fresh.
 	val := "test"
-	s.cachefuzzy("newword", &val)
+	s.cacheFuzzy("newword", &val)
 
 	s.fuzzyCacheMu.Lock()
 	assert.Equal(t, 1, len(s.fuzzyCache), "cache should have been evicted and contain only the new entry")

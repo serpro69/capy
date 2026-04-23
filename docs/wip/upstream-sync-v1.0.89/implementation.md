@@ -125,7 +125,7 @@ sort.Slice(...)
 In `store.go`, add to the `ContentStore` struct:
 
 ```
-fuzzyCacheMu sync.Mutex
+fuzzyCacheMu sync.RWMutex
 fuzzyCache   map[string]*string  // nil value = "no correction"; key-missing = "not cached"
 ```
 
@@ -138,13 +138,13 @@ Add a constant: `const fuzzyCacheMaxSize = 256`
 At the top of `fuzzyCorrectWord` in `search.go`, before the DB query:
 
 ```
-s.fuzzyCacheMu.Lock()
+s.fuzzyCacheMu.RLock()
 if cached, ok := s.fuzzyCache[word]; ok {
-    s.fuzzyCacheMu.Unlock()
+    s.fuzzyCacheMu.RUnlock()
     if cached == nil { return "" }
     return *cached
 }
-s.fuzzyCacheMu.Unlock()
+s.fuzzyCacheMu.RUnlock()
 ```
 
 ### 4.3 Write path in `fuzzyCorrectWord`
@@ -206,10 +206,11 @@ Use `atomic.Int64` — concurrent `Index` calls serialize on the write transacti
 In `index.go`, after the successful `tx.Commit()` and before vocabulary extraction:
 
 ```
-s.insertCount.Add(int64(len(chunks)))
-if s.insertCount.Load() >= optimizeEvery {
-    s.optimizeFTS()
-    s.insertCount.Store(0)
+after := s.insertCount.Add(int64(len(chunks)))
+if after >= optimizeEvery {
+    if s.insertCount.CompareAndSwap(after, 0) {
+        s.optimizeFTS(db)
+    }
 }
 ```
 
@@ -218,9 +219,7 @@ if s.insertCount.Load() >= optimizeEvery {
 In `store.go` or `index.go`:
 
 ```
-func (s *ContentStore) optimizeFTS() {
-    db, err := s.getDB()
-    if err != nil { return }
+func (s *ContentStore) optimizeFTS(db *sql.DB) {
     if _, err := db.Exec("INSERT INTO chunks(chunks) VALUES ('optimize')"); err != nil {
         slog.Warn("FTS5 optimize failed for chunks", "error", err)
     }
