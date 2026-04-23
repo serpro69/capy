@@ -128,6 +128,18 @@ func TestSanitizePorterQueryStopwordFiltering(t *testing.T) {
 	assert.Equal(t, `"error"`, result2)
 }
 
+func TestSanitizePorterQueryDotSeparatedTerms(t *testing.T) {
+	// "k8s.io" — filterQueryTerms preserves the dot (ftsSpecialRe doesn't strip it).
+	// Porter FTS5 tokenizer handles the dot at query time, but verify our sanitizer
+	// produces a valid quoted literal so it reaches the tokenizer intact.
+	result := sanitizePorterQuery("k8s.io", "AND", false)
+	assert.Equal(t, `"k8s.io"`, result)
+
+	// "config.yaml" — both parts are valid terms joined by dot
+	result2 := sanitizePorterQuery("config.yaml", "AND", false)
+	assert.Equal(t, `"config.yaml"`, result2)
+}
+
 func TestSanitizeTrigramQueryStopwordFiltering(t *testing.T) {
 	// "the error in the code" → stopwords removed, "in" < 3 chars dropped by trigram
 	result := sanitizeTrigramQuery("the error in the code", "AND", false)
