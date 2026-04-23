@@ -39,17 +39,17 @@
 - [x] 3.4 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass, existing proximity tests unchanged
 
 ## Task 4: Fuzzy correction cache
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Docs:** [implementation.md#4-fuzzy-correction-cache](./implementation.md#4-fuzzy-correction-cache)
 
 ### Subtasks
-- [ ] 4.1 Add `fuzzyCacheMu sync.Mutex` and `fuzzyCache map[string]*string` fields to `ContentStore` in `internal/store/store.go`; initialize map in `NewContentStore`; add `fuzzyCacheMaxSize = 256` constant
-- [ ] 4.2 Add cache read at top of `fuzzyCorrectWord` in `internal/store/search.go` — lock, check map, unlock, return on hit
-- [ ] 4.3 Add cache write before return in `fuzzyCorrectWord` — lock, evict-all if over max, store `*string` (nil for no correction), unlock
-- [ ] 4.4 Add cache invalidation at end of `extractAndStoreVocabulary` in `internal/store/index.go` — lock, replace map with fresh empty map, unlock
-- [ ] 4.5 Write tests in `internal/store/search_test.go`: second fuzzy call for same word uses cache; cache cleared after vocab insert; cache size cap triggers eviction
-- [ ] 4.6 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass (race detector catches any mutex issues)
+- [x] 4.1 Add `fuzzyCacheMu sync.Mutex` and `fuzzyCache map[string]*string` fields to `ContentStore` in `internal/store/store.go`; initialize map in `NewContentStore`; add `fuzzyCacheMaxSize = 256` constant
+- [x] 4.2 Add cache read at top of `fuzzyCorrectWord` in `internal/store/search.go` — lock, check map, unlock, return on hit
+- [x] 4.3 Add cache write before return in `fuzzyCorrectWord` — lock, evict-all if over max, store `*string` (nil for no correction), unlock
+- [x] 4.4 Add cache invalidation at end of `extractAndStoreVocabulary` in `internal/store/index.go` — lock, replace map with fresh empty map, unlock
+- [x] 4.5 Write tests in `internal/store/search_test.go`: second fuzzy call for same word uses cache; cache cleared after vocab insert; cache size cap triggers eviction
+- [x] 4.6 Verify: `go test -tags fts5 -race ./internal/store/...` — all pass (race detector catches any mutex issues)
 
 ## Task 5: Periodic FTS5 optimize
 - **Status:** pending

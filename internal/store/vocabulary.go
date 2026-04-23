@@ -48,5 +48,13 @@ func (s *ContentStore) extractAndStoreVocabulary(content string) error {
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	s.fuzzyCacheMu.Lock()
+	s.fuzzyCache = make(map[string]*string)
+	s.fuzzyCacheMu.Unlock()
+
+	return nil
 }
