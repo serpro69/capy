@@ -766,6 +766,17 @@ func (s *ContentStore) fuzzyCorrectWord(word string) string {
 	if HasSynonym(word) {
 		return ""
 	}
+
+	s.fuzzyCacheMu.Lock()
+	if cached, ok := s.fuzzyCache[word]; ok {
+		s.fuzzyCacheMu.Unlock()
+		if cached == nil {
+			return ""
+		}
+		return *cached
+	}
+	s.fuzzyCacheMu.Unlock()
+
 	maxDist := maxEditDistance(len(word))
 	minLen := len(word) - maxDist
 	maxLen := len(word) + maxDist
@@ -785,7 +796,8 @@ func (s *ContentStore) fuzzyCorrectWord(word string) string {
 			continue
 		}
 		if candidate == word {
-			return "" // Exact match — no correction needed.
+			s.cachefuzzy(word, nil)
+			return ""
 		}
 		dist := levenshteinDistance(word, candidate)
 		if dist < bestDist {
@@ -795,13 +807,24 @@ func (s *ContentStore) fuzzyCorrectWord(word string) string {
 	}
 	if err := rows.Err(); err != nil {
 		slog.Debug("fuzzy vocab iteration failed", "error", err)
-		return "" // fall back to original word
+		return ""
 	}
 
 	if bestDist <= maxDist {
+		s.cachefuzzy(word, &bestWord)
 		return bestWord
 	}
+	s.cachefuzzy(word, nil)
 	return ""
+}
+
+func (s *ContentStore) cachefuzzy(word string, result *string) {
+	s.fuzzyCacheMu.Lock()
+	if len(s.fuzzyCache) >= fuzzyCacheMaxSize {
+		s.fuzzyCache = make(map[string]*string)
+	}
+	s.fuzzyCache[word] = result
+	s.fuzzyCacheMu.Unlock()
 }
 
 // --- Distinctive terms ---

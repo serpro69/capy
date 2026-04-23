@@ -1262,3 +1262,113 @@ func countSourceInTopN(results []SearchResult, label string, n int) int {
 	return count
 }
 
+// --- Fuzzy correction cache ---
+
+func TestFuzzyCacheHit(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.Index(
+		"# Errors\n\nThe error handling module catches errors early.\n\n"+
+			"## Common Errors\n\nOff-by-one errors are the most frequent bug type.",
+		"cache-test",
+		"markdown",
+		KindDurable,
+	)
+	require.NoError(t, err)
+
+	// First call — populates cache via DB.
+	fix1 := s.fuzzyCorrectWord("errro")
+	require.NotEmpty(t, fix1, "should correct 'errro' to a vocab word")
+
+	// Verify cache entry exists.
+	s.fuzzyCacheMu.Lock()
+	cached, ok := s.fuzzyCache["errro"]
+	s.fuzzyCacheMu.Unlock()
+	require.True(t, ok, "cache should contain entry after first call")
+	require.NotNil(t, cached)
+	assert.Equal(t, fix1, *cached)
+
+	// Second call — should return same result (from cache).
+	fix2 := s.fuzzyCorrectWord("errro")
+	assert.Equal(t, fix1, fix2)
+}
+
+func TestFuzzyCacheNilForNoCorrection(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.Index(
+		"# Widgets\n\nThe widget subsystem handles rendering of widgets.",
+		"cache-nil-test",
+		"markdown",
+		KindDurable,
+	)
+	require.NoError(t, err)
+
+	// "widget" is an exact vocab match with no synonyms — no correction needed.
+	fix := s.fuzzyCorrectWord("widget")
+	assert.Empty(t, fix)
+
+	s.fuzzyCacheMu.Lock()
+	cached, ok := s.fuzzyCache["widget"]
+	s.fuzzyCacheMu.Unlock()
+	require.True(t, ok, "cache should contain entry for exact match")
+	assert.Nil(t, cached, "nil value means no correction")
+}
+
+func TestFuzzyCacheClearedAfterVocabInsert(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.Index(
+		"# Errors\n\nThe error handling module catches errors early.",
+		"cache-clear-test",
+		"markdown",
+		KindDurable,
+	)
+	require.NoError(t, err)
+
+	// Populate cache.
+	s.fuzzyCorrectWord("errro")
+	s.fuzzyCacheMu.Lock()
+	preCacheLen := len(s.fuzzyCache)
+	s.fuzzyCacheMu.Unlock()
+	require.Greater(t, preCacheLen, 0)
+
+	// Index new content — triggers extractAndStoreVocabulary which clears cache.
+	_, err = s.Index(
+		"# Authentication\n\nThe authentication module validates users.",
+		"cache-clear-new",
+		"markdown",
+		KindDurable,
+	)
+	require.NoError(t, err)
+
+	s.fuzzyCacheMu.Lock()
+	postCacheLen := len(s.fuzzyCache)
+	s.fuzzyCacheMu.Unlock()
+	assert.Equal(t, 0, postCacheLen, "cache should be cleared after vocab insert")
+}
+
+func TestFuzzyCacheSizeCapEviction(t *testing.T) {
+	s := newTestStore(t)
+
+	// Manually fill the cache beyond max size.
+	s.fuzzyCacheMu.Lock()
+	for i := range fuzzyCacheMaxSize {
+		key := fmt.Sprintf("word%d", i)
+		s.fuzzyCache[key] = nil
+	}
+	assert.Equal(t, fuzzyCacheMaxSize, len(s.fuzzyCache))
+	s.fuzzyCacheMu.Unlock()
+
+	// Next cachefuzzy call should evict all and start fresh.
+	val := "test"
+	s.cachefuzzy("newword", &val)
+
+	s.fuzzyCacheMu.Lock()
+	assert.Equal(t, 1, len(s.fuzzyCache), "cache should have been evicted and contain only the new entry")
+	cached, ok := s.fuzzyCache["newword"]
+	s.fuzzyCacheMu.Unlock()
+	require.True(t, ok)
+	assert.Equal(t, "test", *cached)
+}
+
