@@ -12,10 +12,10 @@
 
 ### Subtasks
 - [ ] 1.1 Add `KindSession SourceKind = "session"` to `internal/store/types.go`, update `Valid()`, add session fields to `StoreStats`
-- [ ] 1.2 Add schema migration in `internal/store/migrate.go` to update CHECK constraint on `sources.kind` to accept `'session'`
+- [ ] 1.2 Add migration-tracking table to `internal/store/migrate.go`, retroactively record migration 017, then add new migration for `session` kind CHECK constraint. Handle both DB populations (migrated DBs without CHECK, fresh DBs with CHECK). Update `schemaSQL` in `schema.go`.
 - [ ] 1.3 Add `SessionTTLDays int` to `CleanupConfig` in `internal/config/config.go` (default 60), add validation in `loader.go`, add `sessionTTL()` to server
-- [ ] 1.4 Generalize `cleanupEphemeral` → `cleanupByTTL(kind, ttl)` in `internal/store/cleanup.go`, update `Cleanup()` to call it for both ephemeral and session, add `PurgeSession()`, update `ClassifySources` and `Stats()` for session kind
-- [ ] 1.5 Update default `IncludeKinds` in `internal/server/tool_search.go` from `[KindDurable]` to `[KindDurable, KindSession]`
+- [ ] 1.4 Generalize `cleanupEphemeral` → `cleanupByTTL(kind, ttl)` in `internal/store/cleanup.go`. Update signatures: `Cleanup(dryRun, ephemeralTTL, sessionTTL)`, `ClassifySources(ephemeralTTL, sessionTTL)`, `Stats(ephemeralTTL, sessionTTL)`. Add `PurgeSession()`. Update all callers (`tool_cleanup.go`, `tool_stats.go`, `server.go`).
+- [ ] 1.5 Update default kind filter in `effectiveKindFilter()` at `internal/store/search.go` from `[KindDurable]` to `[KindDurable, KindSession]`. Add `KindScopeIncludesSession` (or generalize to `KindScopeIncludes`). Update `parseIncludeKinds` error message in `tool_search.go` to include `"session"`. Add session no-results hint alongside ephemeral hint.
 - [ ] 1.6 Write tests for all above: migration applies, session kind accepted, TTL cleanup works, search includes sessions
 
 ## Task 2: Session JSONL parser
@@ -37,9 +37,9 @@
 
 ### Subtasks
 - [ ] 3.1 Create `internal/session/transcript.go` to convert `ParsedSession` → plaintext transcript string with `Human:`/`Assistant:` format, `[Tools: ...]` lines, `[Session summary: ...]` entries, and `--- Subagent ---` delimiters
-- [ ] 3.2 Add `chunkTranscript` function to `internal/store/chunk.go`: sliding window of ~4 turn pairs, 1-pair overlap, split on `Human:` boundaries, title generation with datetime/turn range/tools/subagent info
-- [ ] 3.3 Update `chunkContent` in `internal/store/index.go` to route `"session"` content type to `chunkTranscript`
-- [ ] 3.4 Write unit tests: transcript builder output, chunk boundaries, overlap, title format, oversized chunk splitting
+- [ ] 3.2 Create `internal/session/chunk.go` with `ChunkSession(session *ParsedSession, transcript string, maxBytes int) []store.Chunk`: sliding window of ~4 turn pairs, 1-pair overlap, title generation from structured `ParsedSession` data (NOT parsed from transcript text). Export `SplitOversized` and `ChunkHasCode` from `internal/store/chunk.go` for reuse.
+- [ ] 3.3 Wire session chunking into the sweep orchestrator (Task 4.3) — chunks are produced by the session package and passed to the store's `Index` (or a new `IndexChunked`). No `"session"` case needed in `chunkContent`.
+- [ ] 3.4 Write unit tests in `internal/session/chunk_test.go`: transcript builder output, chunk window boundaries from structured TurnPairs, overlap, title format, oversized chunk splitting
 
 ## Task 4: Sweep mechanism
 - **Status:** pending
@@ -49,8 +49,8 @@
 ### Subtasks
 - [ ] 4.1 Create `internal/session/sweep.go` with `SessionDir(projectDir string)` — path mangling (replace `/` and `.` with `-`), directory existence check
 - [ ] 4.2 Add mtime gate logic: query `session:` sources from store, build `uuid → indexed_at` map, compare `max(file.mtime, subagents_dir.mtime)` against indexed_at
-- [ ] 4.3 Add `Sweep(store, projectDir)` orchestrator: discovery → list → mtime gate → parse → gate → transcript → index. Log results.
-- [ ] 4.4 Integrate into `Server.Serve()` as background goroutine with 30s context timeout
+- [ ] 4.3 Add `Sweep(ctx context.Context, store, projectDir)` orchestrator: accepts context for cooperative cancellation, checks `ctx.Err()` between files. Discovery → list → mtime gate → parse → gate → transcript → chunk → index. Log results.
+- [ ] 4.4 Integrate into `Server.Serve()` as background goroutine. Derive context from server's `ctx` parameter (NOT `context.Background()`), apply 30s timeout on top: `context.WithTimeout(ctx, 30*time.Second)`
 - [ ] 4.5 Write unit tests in `internal/session/sweep_test.go`: directory derivation, mtime gate logic. Write integration test with temp directory of synthetic session files.
 
 ## Task 5: CLI and tool updates

@@ -57,7 +57,7 @@ session:2026-04-05T12:06:26Z:102ad512-759a-43ad-8805-353ce341f65c
 
 ### Sweep Algorithm
 
-Runs once per server boot in a background goroutine with 30s timeout:
+Runs once per server boot in a background goroutine. The goroutine derives its context from the server's `ctx` parameter (not `context.Background()`) so it participates in cooperative cancellation on server shutdown. A 30s timeout is applied on top of the server context.
 
 1. Derive session directory from `projectDir` via path mangling.
 2. List all `.jsonl` files.
@@ -168,7 +168,9 @@ Tool-result-only user messages are omitted from the transcript entirely. The `[T
 
 ### Sliding Window
 
-Chunking uses a sliding window of ~4 turn pairs with 1-pair overlap, adapted from `chunkPlainText` in `internal/store/chunk.go`. The split happens on turn boundaries (the `Human:` prefix), not arbitrary line counts.
+Chunking lives in `internal/session/chunk.go` (NOT in `internal/store/chunk.go`) because it operates directly on the structured `ParsedSession` / `[]TurnPair` data. This avoids serializing structured metadata (tool names, subagent info) into text format and then re-parsing it with regexes — a maintenance trap. The session chunker produces `[]store.Chunk` that the store's `Index()` function consumes directly.
+
+The chunking strategy uses a sliding window of ~4 turn pairs with 1-pair overlap. The split happens on turn pair boundaries, not arbitrary line counts.
 
 - **Window size:** ~4 turn pairs. Preserves enough conversational context for BM25 to match multi-turn decisions.
 - **Overlap:** 1 turn pair. If a decision spans two chunks, the overlapping turn appears in both.
@@ -184,21 +186,28 @@ The title exploits the BM25 title-weight boost in `internal/store/search.go` for
 
 ### Content Type
 
-Chunks use content type `"session"` — a new value added to the taxonomy alongside `"code"`, `"prose"`, `"plaintext"`, `"markdown"`, `"json"`.
+Two distinct content-type concepts apply:
+
+- **Source-level** (`sources.content_type` column): `"session"` — a new value alongside `"plaintext"`, `"markdown"`, `"json"`. This is what `chunkContent` routes on to select the chunking strategy.
+- **Chunk-level** (`chunks.content_type` column): `"code"` or `"prose"` — determined by `Index()` based on `HasCode` (presence of code fences). Session chunks will almost always be `"prose"` since conversation text rarely contains triple-backtick code fences.
+
+The source-level `"session"` value is used for content routing and display. The chunk-level `"code"`/`"prose"` classification is unchanged — `Index()` at `index.go:41-47` overrides every chunk's ContentType based on `HasCode` regardless of the source content type.
 
 ## Storage
 
 ### Schema Migration
 
-The `sources` table CHECK constraint changes:
-```sql
--- Before
-CHECK (kind IN ('ephemeral', 'durable'))
--- After
-CHECK (kind IN ('ephemeral', 'durable', 'session'))
-```
+This is the second migration, which triggers the TODO in `migrate.go:15-16`: _"add a migrations-tracking table when the second migration lands."_ The migration must:
 
-Added via `applyMigrations` in `internal/store/migrate.go`, following the existing migration pattern.
+1. **Add a migration-tracking table** (`CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP)`). Record migration 017 as already applied (it ran via the old mechanism). Use this table for idempotency checks going forward.
+
+2. **Handle two DB populations:**
+   - **Migrated DBs** (pre-ADR-017, then had `ALTER TABLE ADD COLUMN kind`): these lack the CHECK constraint entirely because SQLite's ALTER TABLE ADD COLUMN does not support CHECK (see `migrate.go:67-69`). Inserting `kind='session'` already works — no table rebuild needed, just record the migration.
+   - **Fresh DBs** (post-ADR-017, created with `schemaSQL`): these have `CHECK (kind IN ('ephemeral', 'durable'))`. These require a table rebuild: create new table with updated CHECK → copy data → drop old → rename.
+
+3. **Update `schemaSQL`** in `schema.go` to include `'session'` in the CHECK constraint for future fresh DBs.
+
+The idempotency check for the table-rebuild path: query `migrations` table for this migration name. If present, skip. If `migrations` table doesn't exist yet, create it and record migration 017 as already applied before proceeding.
 
 ### Types
 
@@ -210,6 +219,12 @@ Added via `applyMigrations` in `internal/store/migrate.go`, following the existi
 
 Sessions use strict TTL, same mechanism as ephemeral. `cleanupEphemeral` is generalized to `cleanupByTTL(kind SourceKind, ttl time.Duration)` and called twice from `Cleanup()`: once for ephemeral (24h), once for session (60 days).
 
+TTL plumbing cascade: `Cleanup()` currently passes `ephemeralTTL` to `cleanupDurable()` → `ClassifySources(ephemeralTTL)`. With two TTLs, this chain must be updated:
+- `Cleanup(dryRun bool, ephemeralTTL, sessionTTL time.Duration)` — accepts both TTLs.
+- `ClassifySources(ephemeralTTL, sessionTTL time.Duration)` — uses the appropriate TTL for each kind's fresh/stale bucketing.
+- `Stats(ephemeralTTL, sessionTTL time.Duration)` — passes both through to `ClassifySources`.
+- `cleanupDurable` passes both to `ClassifySources` for consistent tier classification.
+
 ### Config
 
 `CleanupConfig` gains:
@@ -219,7 +234,12 @@ SessionTTLDays int `toml:"session_ttl_days"` // default: 60, minimum: 1
 
 ### Search
 
-Default `IncludeKinds` changes from `[KindDurable]` to `[KindDurable, KindSession]`. The existing `WHERE kind IN (...)` SQL clause supports this.
+The default kind filter lives in `effectiveKindFilter()` at `internal/store/search.go:564-571` (NOT in `tool_search.go`). Change the default return from `[]SourceKind{KindDurable}` to `[]SourceKind{KindDurable, KindSession}`.
+
+Cascade updates required:
+- `parseIncludeKinds` error message at `tool_search.go:197`: update from `"accepted: \"durable\", \"ephemeral\""` to include `"session"`.
+- `KindScopeIncludesEphemeral` at `search.go:578`: add a `KindScopeIncludesSession` counterpart (or generalize to `KindScopeIncludes(opts, kind)`) for no-results hints.
+- No-results hint at `tool_search.go:124-130`: add session-aware recovery path alongside the existing ephemeral hint (e.g., "N session source(s) present; to exclude, use `include_kinds: [\"durable\"]`").
 
 ### Stats
 
@@ -245,23 +265,25 @@ SessionStaleCount  int
 | `internal/store/schema.go` | CHECK constraint (via migration) |
 | `internal/store/migrate.go` | New migration for `session` kind |
 | `internal/store/cleanup.go` | Generalize `cleanupEphemeral` → `cleanupByTTL`, add session cleanup path |
-| `internal/store/chunk.go` | New `chunkTranscript` function |
-| `internal/store/index.go` | Handle `"session"` content type routing to `chunkTranscript` |
+| `internal/store/index.go` | Handle `"session"` content type routing to session package chunker |
 | `internal/store/types.go` | `StoreStats` session counters |
 | `internal/config/config.go` | `SessionTTLDays` in `CleanupConfig` |
 | `internal/config/loader.go` | Validation for `SessionTTLDays` |
 | `internal/server/server.go` | Background goroutine for session sweep |
 | `internal/server/tool_cleanup.go` | `purge_session` parameter |
 | `internal/server/tool_stats.go` | Session stats rendering |
-| `internal/server/tool_search.go` | Default `IncludeKinds` update |
+| `internal/store/search.go` | Default `IncludeKinds` in `effectiveKindFilter()`, add `KindScopeIncludesSession` |
+| `internal/server/tool_search.go` | Update `parseIncludeKinds` error message, add session no-results hint |
 | `cmd/capy/cleanup.go` | `--kind` CLI flag |
 
 New files:
 | File | Purpose |
 |------|---------|
 | `internal/session/parse.go` | JSONL parsing, message filtering, transcript building |
+| `internal/session/chunk.go` | Transcript chunking (operates on `ParsedSession` directly, not serialized text) |
 | `internal/session/sweep.go` | Session directory discovery, mtime gate, sweep orchestration |
 | `internal/session/parse_test.go` | Unit tests for parsing and filtering |
+| `internal/session/chunk_test.go` | Unit tests for transcript chunking |
 | `internal/session/sweep_test.go` | Unit tests for sweep mechanism |
 
 ## Open Questions
