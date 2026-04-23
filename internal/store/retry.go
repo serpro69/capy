@@ -32,11 +32,14 @@ func isSQLiteCorruption(err error) bool {
 	if err == nil {
 		return false
 	}
+	var sqliteErr sqlite3.Error
+	if errors.As(err, &sqliteErr) {
+		return sqliteErr.Code == sqlite3.ErrCorrupt || sqliteErr.Code == sqlite3.ErrNotADB
+	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "malformed") ||
 		strings.Contains(msg, "not a database") ||
-		strings.Contains(msg, "corrupt") ||
-		strings.Contains(msg, "disk image is malformed")
+		strings.Contains(msg, "corrupt")
 }
 
 func backupCorruptDB(dbPath string) {

@@ -95,7 +95,7 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 	}
 
 	db, err := s.openDB()
-	if err != nil && isSQLiteCorruption(err) && fileExists(s.dbPath) {
+	if err != nil && isSQLiteCorruption(err) {
 		slog.Warn("corrupt database detected, backing up and recreating", "path", s.dbPath, "error", err)
 		backupCorruptDB(s.dbPath)
 		db, err = s.openDB()
@@ -140,10 +140,6 @@ func (s *ContentStore) openDB() (*sql.DB, error) {
 	return db, nil
 }
 
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
 
 func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	var err error
@@ -338,11 +334,7 @@ func (s *ContentStore) checkpoint() error {
 	return err
 }
 
-func (s *ContentStore) optimizeFTS() {
-	db, err := s.getDB()
-	if err != nil {
-		return
-	}
+func (s *ContentStore) optimizeFTS(db *sql.DB) {
 	if _, err := db.Exec("INSERT INTO chunks(chunks) VALUES ('optimize')"); err != nil {
 		slog.Warn("FTS5 optimize failed for chunks", "error", err)
 	}
