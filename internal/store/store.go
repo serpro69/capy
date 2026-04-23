@@ -140,7 +140,6 @@ func (s *ContentStore) openDB() (*sql.DB, error) {
 	return db, nil
 }
 
-
 func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	var err error
 

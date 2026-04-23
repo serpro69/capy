@@ -798,7 +798,7 @@ func (s *ContentStore) fuzzyCorrectWord(word string) string {
 			continue
 		}
 		if candidate == word {
-			s.cachefuzzy(word, nil)
+			s.cacheFuzzy(word, nil)
 			return ""
 		}
 		dist := levenshteinDistance(word, candidate)
@@ -813,14 +813,14 @@ func (s *ContentStore) fuzzyCorrectWord(word string) string {
 	}
 
 	if bestDist <= maxDist {
-		s.cachefuzzy(word, &bestWord)
+		s.cacheFuzzy(word, &bestWord)
 		return bestWord
 	}
-	s.cachefuzzy(word, nil)
+	s.cacheFuzzy(word, nil)
 	return ""
 }
 
-func (s *ContentStore) cachefuzzy(word string, result *string) {
+func (s *ContentStore) cacheFuzzy(word string, result *string) {
 	s.fuzzyCacheMu.Lock()
 	if len(s.fuzzyCache) >= fuzzyCacheMaxSize {
 		s.fuzzyCache = make(map[string]*string)
