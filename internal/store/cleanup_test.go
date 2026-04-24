@@ -159,7 +159,7 @@ func TestClassifySources(t *testing.T) {
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count)
 		VALUES ('cold-source', 'plaintext', 1, 0, 'h3', datetime('now', '-60 days'), datetime('now', '-60 days'), 0)`)
 
-	sources, err := s.ClassifySources(24 * time.Hour)
+	sources, err := s.ClassifySources(24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 	require.Len(t, sources, 3)
 
@@ -192,7 +192,7 @@ func TestCleanupDryRun(t *testing.T) {
 	db.Exec(`INSERT INTO chunks_trigram (title, content, source_id, content_type) VALUES ('t', 'c', 1, 'prose')`)
 
 	// Dry run should return candidates but not delete.
-	candidates, err := s.Cleanup(true, 24*time.Hour)
+	candidates, err := s.Cleanup(true, 24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 	assert.Len(t, candidates, 1)
 	assert.Equal(t, "stale", candidates[0].Label)
@@ -215,7 +215,7 @@ func TestCleanupForce(t *testing.T) {
 	db.Exec(`INSERT INTO chunks_trigram (title, content, source_id, content_type) VALUES ('t', 'c', 1, 'prose')`)
 
 	// Force cleanup should delete.
-	removed, err := s.Cleanup(false, 24*time.Hour)
+	removed, err := s.Cleanup(false, 24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 	assert.Len(t, removed, 1)
 
@@ -239,7 +239,7 @@ func TestCleanupPreservesRecentlyAccessed(t *testing.T) {
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count)
 		VALUES ('recent-access', 'plaintext', 1, 0, 'h1', datetime('now', '-60 days'), datetime('now', '-1 day'), 1)`)
 
-	candidates, err := s.Cleanup(true, 24*time.Hour)
+	candidates, err := s.Cleanup(true, 24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 	assert.Empty(t, candidates, "recently accessed source should not be a cleanup candidate")
 }
@@ -253,7 +253,7 @@ func TestCleanupPreservesAccessedSources(t *testing.T) {
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count)
 		VALUES ('accessed', 'plaintext', 1, 0, 'h1', datetime('now', '-60 days'), datetime('now', '-60 days'), 5)`)
 
-	candidates, err := s.Cleanup(true, 24*time.Hour)
+	candidates, err := s.Cleanup(true, 24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 	assert.Empty(t, candidates, "source with access_count > 0 should not be a cleanup candidate")
 }
@@ -276,7 +276,7 @@ func TestCleanupEphemeralTTL(t *testing.T) {
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
 		VALUES ('execute:shell-hot', 'plaintext', 1, 0, 'eph-hot', datetime('now', '-48 hours'), datetime('now', '-1 hours'), 5, 'ephemeral')`)
 
-	pruned, err := s.Cleanup(true, 24*time.Hour)
+	pruned, err := s.Cleanup(true, 24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 
 	labels := make(map[string]string)
@@ -301,7 +301,7 @@ func TestCleanupDurableOnlyRespectsKind(t *testing.T) {
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
 		VALUES ('execute:shell-young', 'plaintext', 1, 0, 'eph-young', datetime('now', '-1 hours'), datetime('now', '-1 hours'), 0, 'ephemeral')`)
 
-	pruned, err := s.Cleanup(true, 24*time.Hour)
+	pruned, err := s.Cleanup(true, 24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 
 	require.Len(t, pruned, 1, "only the durable candidate should be pruned")
@@ -320,7 +320,7 @@ func TestCleanupMergedReasons(t *testing.T) {
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
 		VALUES ('execute:shell-old', 'plaintext', 1, 0, 'h2', datetime('now', '-48 hours'), datetime('now', '-48 hours'), 0, 'ephemeral')`)
 
-	pruned, err := s.Cleanup(false, 24*time.Hour)
+	pruned, err := s.Cleanup(false, 24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 	require.Len(t, pruned, 2)
 
@@ -347,7 +347,7 @@ func TestCleanupEphemeralIgnoresAccessCount(t *testing.T) {
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
 		VALUES ('execute:shell', 'plaintext', 1, 0, 'h1', datetime('now', '-48 hours'), datetime('now', '-5 minutes'), 50, 'ephemeral')`)
 
-	pruned, err := s.Cleanup(true, 24*time.Hour)
+	pruned, err := s.Cleanup(true, 24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 	require.Len(t, pruned, 1)
 	assert.Equal(t, "ttl", pruned[0].EvictionReason)
@@ -357,7 +357,7 @@ func TestStats(t *testing.T) {
 	s := newTestStore(t)
 
 	// Empty store.
-	stats, err := s.Stats(24 * time.Hour)
+	stats, err := s.Stats(24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 	assert.Equal(t, 0, stats.SourceCount)
 	assert.Equal(t, 0, stats.ChunkCount)
@@ -368,7 +368,7 @@ func TestStats(t *testing.T) {
 	_, err = s.Index("authentication middleware validates tokens", "test-src", "plaintext", KindDurable)
 	require.NoError(t, err)
 
-	stats, err = s.Stats(24 * time.Hour)
+	stats, err = s.Stats(24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 	assert.Equal(t, 1, stats.SourceCount)
 	assert.Equal(t, 1, stats.DurableSourceCount)
@@ -463,7 +463,7 @@ func TestStatsPerKind(t *testing.T) {
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
 		VALUES ('execute:shell-stale', 'plaintext', 1, 0, 'h4', datetime('now', '-48 hours'), datetime('now', '-48 hours'), 0, 'ephemeral')`)
 
-	stats, err := s.Stats(24 * time.Hour)
+	stats, err := s.Stats(24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 
 	assert.Equal(t, 4, stats.SourceCount)
@@ -480,4 +480,89 @@ func TestStatsPerKind(t *testing.T) {
 	// Ephemeral fresh/stale split respects the TTL cutoff.
 	assert.Equal(t, 1, stats.EphemeralFreshCount)
 	assert.Equal(t, 1, stats.EphemeralStaleCount)
+}
+
+// ─── Session kind: cleanup, purge, stats ─────────────────────────────────
+
+func TestSessionKindAccepted(t *testing.T) {
+	s := newTestStore(t)
+	r, err := s.Index("session content about authentication decisions", "session:2026-04-05T12:00:00Z:abc123", "plaintext", KindSession)
+	require.NoError(t, err)
+	assert.False(t, r.AlreadyIndexed)
+	assert.Equal(t, KindSession, r.Kind)
+}
+
+func TestCleanupSessionTTL(t *testing.T) {
+	s := newTestStore(t)
+	db, err := s.getDB()
+	require.NoError(t, err)
+
+	sessionTTL := 60 * 24 * time.Hour
+
+	// Old session (90 days ago) — should be evicted by TTL.
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('session:old', 'session', 1, 0, 'sess-old', datetime('now', '-90 days'), datetime('now', '-90 days'), 0, 'session')`)
+	// Young session (7 days ago) — should be preserved.
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('session:young', 'session', 1, 0, 'sess-young', datetime('now', '-7 days'), datetime('now', '-7 days'), 0, 'session')`)
+	// Old session with many accesses — TTL must override.
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('session:accessed', 'session', 1, 0, 'sess-acc', datetime('now', '-90 days'), datetime('now', '-1 days'), 5, 'session')`)
+
+	pruned, err := s.Cleanup(true, 24*time.Hour, sessionTTL)
+	require.NoError(t, err)
+
+	labels := make(map[string]string)
+	for _, p := range pruned {
+		labels[p.Label] = p.EvictionReason
+	}
+	assert.Equal(t, "ttl", labels["session:old"], "old session evicted with reason 'ttl'")
+	assert.Equal(t, "ttl", labels["session:accessed"], "session past TTL evicted even with access_count > 0")
+	_, youngPresent := labels["session:young"]
+	assert.False(t, youngPresent, "young session within TTL preserved")
+}
+
+func TestPurgeSessionLeavesDurableUntouched(t *testing.T) {
+	s := newTestStore(t)
+	db, err := s.getDB()
+	require.NoError(t, err)
+
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('stale-durable', 'plaintext', 1, 0, 'h1', datetime('now', '-60 days'), datetime('now', '-60 days'), 0, 'durable')`)
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('session:old', 'session', 1, 0, 'h2', datetime('now', '-90 days'), datetime('now', '-90 days'), 0, 'session')`)
+
+	pruned, err := s.PurgeSession(false, 60*24*time.Hour)
+	require.NoError(t, err)
+	require.Len(t, pruned, 1)
+	assert.Equal(t, "session:old", pruned[0].Label)
+	assert.Equal(t, "ttl", pruned[0].EvictionReason)
+
+	var durableCount int
+	db.QueryRow(`SELECT COUNT(*) FROM sources WHERE label = 'stale-durable'`).Scan(&durableCount)
+	assert.Equal(t, 1, durableCount, "PurgeSession must not delete durable rows")
+}
+
+func TestStatsIncludesSessionKind(t *testing.T) {
+	s := newTestStore(t)
+	db, err := s.getDB()
+	require.NoError(t, err)
+
+	sessionTTL := 60 * 24 * time.Hour
+
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('session:fresh', 'session', 1, 0, 'h1', datetime('now', '-7 days'), datetime('now', '-7 days'), 0, 'session')`)
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('session:stale', 'session', 1, 0, 'h2', datetime('now', '-90 days'), datetime('now', '-90 days'), 0, 'session')`)
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('durable-hot', 'code', 5, 5, 'h3', datetime('now'), datetime('now'), 1, 'durable')`)
+
+	stats, err := s.Stats(24*time.Hour, sessionTTL)
+	require.NoError(t, err)
+
+	assert.Equal(t, 3, stats.SourceCount)
+	assert.Equal(t, 1, stats.DurableSourceCount)
+	assert.Equal(t, 2, stats.SessionSourceCount)
+	assert.Equal(t, 1, stats.SessionFreshCount)
+	assert.Equal(t, 1, stats.SessionStaleCount)
 }
