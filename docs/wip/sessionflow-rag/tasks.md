@@ -6,7 +6,7 @@
 > Created: 2026-04-23
 
 ## Task 1: Storage foundation — KindSession, migration, config
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#phase-1-storage-foundation](./implementation.md#phase-1-storage-foundation)
 

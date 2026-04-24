@@ -188,6 +188,9 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 			if ephemeralExcluded && src.Kind == store.KindEphemeral {
 				continue
 			}
+			if sessionExcluded && src.Kind == store.KindSession {
+				continue
+			}
 			parts = append(parts, fmt.Sprintf("%q (%d sections)", src.Label, src.ChunkCount))
 		}
 		if len(parts) > 0 {
