@@ -42,6 +42,9 @@ func validate(cfg *Config) error {
 	if cfg.Store.Cleanup.EphemeralTTLHours < 1 {
 		return fmt.Errorf("[store.cleanup] ephemeral_ttl_hours must be >= 1 (use capy_cleanup purge_ephemeral=true for one-shot aggressive purging)")
 	}
+	if cfg.Store.Cleanup.SessionTTLDays < 1 {
+		return fmt.Errorf("[store.cleanup] session_ttl_days must be >= 1 (use capy_cleanup purge_session=true for one-shot aggressive purging)")
+	}
 	return nil
 }
 
@@ -70,6 +73,9 @@ func loadAndMerge(cfg *Config, path string) error {
 	if detect.Store.Cleanup.EphemeralTTLHours != nil && *detect.Store.Cleanup.EphemeralTTLHours < 1 {
 		return fmt.Errorf("[store.cleanup] ephemeral_ttl_hours must be >= 1 (use capy_cleanup purge_ephemeral=true for one-shot aggressive purging)")
 	}
+	if detect.Store.Cleanup.SessionTTLDays != nil && *detect.Store.Cleanup.SessionTTLDays < 1 {
+		return fmt.Errorf("[store.cleanup] session_ttl_days must be >= 1 (use capy_cleanup purge_session=true for one-shot aggressive purging)")
+	}
 
 	mergeConfig(cfg, &overlay)
 	return nil
@@ -82,6 +88,7 @@ type detectionOverlay struct {
 	Store struct {
 		Cleanup struct {
 			EphemeralTTLHours *int `toml:"ephemeral_ttl_hours"`
+			SessionTTLDays    *int `toml:"session_ttl_days"`
 		} `toml:"cleanup"`
 	} `toml:"store"`
 }
@@ -100,6 +107,9 @@ func mergeConfig(dst, src *Config) {
 	}
 	if src.Store.Cleanup.EphemeralTTLHours != 0 {
 		dst.Store.Cleanup.EphemeralTTLHours = src.Store.Cleanup.EphemeralTTLHours
+	}
+	if src.Store.Cleanup.SessionTTLDays != 0 {
+		dst.Store.Cleanup.SessionTTLDays = src.Store.Cleanup.SessionTTLDays
 	}
 	if src.Store.Cleanup.AutoPrune {
 		dst.Store.Cleanup.AutoPrune = true

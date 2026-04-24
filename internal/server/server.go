@@ -96,6 +96,15 @@ func (s *Server) ephemeralTTL() time.Duration {
 	return time.Duration(s.config.Store.Cleanup.EphemeralTTLHours) * time.Hour
 }
 
+// sessionTTL resolves the session-source TTL from config with a safe 60-day
+// fallback. Mirrors ephemeralTTL for the session kind.
+func (s *Server) sessionTTL() time.Duration {
+	if s.config == nil || s.config.Store.Cleanup.SessionTTLDays <= 0 {
+		return 60 * 24 * time.Hour
+	}
+	return time.Duration(s.config.Store.Cleanup.SessionTTLDays) * 24 * time.Hour
+}
+
 // Serve starts the MCP server on stdio and blocks until shutdown.
 func (s *Server) Serve(ctx context.Context) error {
 	// Unhandled panic recovery

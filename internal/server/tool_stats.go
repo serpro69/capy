@@ -89,7 +89,7 @@ func (s *Server) handleStats(_ context.Context, _ mcp.CallToolRequest) (*mcp.Cal
 
 	// Knowledge base stats (only if store was initialized)
 	if s.store != nil {
-		kbStats, err := s.store.Stats(s.ephemeralTTL())
+		kbStats, err := s.store.Stats(s.ephemeralTTL(), s.sessionTTL())
 		if err == nil && kbStats.SourceCount > 0 {
 			lines = append(lines, "", "### Knowledge Base", "",
 				"| Metric | Value |",

@@ -26,13 +26,14 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	st := s.getStore()
-	ttl := s.ephemeralTTL()
+	ephTTL := s.ephemeralTTL()
+	sessTTL := s.sessionTTL()
 	var pruned []store.SourceInfo
 	var err error
 	if purgeEphemeral {
-		pruned, err = st.PurgeEphemeral(dryRun, ttl)
+		pruned, err = st.PurgeEphemeral(dryRun, ephTTL)
 	} else {
-		pruned, err = st.Cleanup(dryRun, ttl)
+		pruned, err = st.Cleanup(dryRun, ephTTL, sessTTL)
 	}
 	if err != nil {
 		return errorResult(fmt.Sprintf("Cleanup error: %v", err)), nil

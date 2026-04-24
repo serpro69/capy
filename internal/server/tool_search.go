@@ -63,7 +63,7 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 	st := s.getStore()
 
 	// Early return when knowledge base is empty — guide the user to indexing tools
-	kbStats, err := st.Stats(s.ephemeralTTL())
+	kbStats, err := st.Stats(s.ephemeralTTL(), s.sessionTTL())
 	if err == nil && kbStats.SourceCount == 0 {
 		return s.trackToolResponse("capy_search", &mcp.CallToolResult{
 			Content: []mcp.Content{mcp.NewTextContent(
@@ -89,12 +89,14 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 	//
 	// KindScopeIncludesEphemeral derives from the same rule (effectiveKindFilter) used
 	// by the store's SQL layer, so this boolean can never drift from actual search behavior.
-	ephemeralIncluded := store.KindScopeIncludesEphemeral(store.SearchOptions{
+	searchOpts := store.SearchOptions{
 		Source:       source,
 		IncludeKinds: includeKinds,
-	})
-	ephemeralExcluded := !ephemeralIncluded
+	}
+	ephemeralExcluded := !store.KindScopeIncludes(searchOpts, store.KindEphemeral)
+	sessionExcluded := !store.KindScopeIncludes(searchOpts, store.KindSession)
 	ephemeralCount := -1
+	sessionCount := -1
 
 	for _, q := range queryList {
 		if totalSize > searchMaxTotalBytes {
@@ -126,6 +128,23 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 							"  • include_kinds: [\"durable\",\"ephemeral\"]  (search across both kinds), or\n"+
 							"  • source: \"execute:<lang>\" / \"file:<path>\" / \"batch:…\"  (explicit-source override; e.g., source: \"execute:shell\")",
 						ephemeralCount,
+					)
+				}
+			}
+			if sessionExcluded {
+				if sessionCount < 0 {
+					if n, cErr := st.CountSourcesByKind(store.KindSession); cErr == nil {
+						sessionCount = n
+					} else {
+						sessionCount = 0
+					}
+				}
+				if sessionCount > 0 {
+					noResults += fmt.Sprintf(
+						"\n\n%d session source(s) present but excluded. To include past conversations, retry with:\n"+
+							"  • include_kinds: [\"durable\",\"session\"]  (search across both kinds), or\n"+
+							"  • source: \"session:\"  (explicit-source override)",
+						sessionCount,
 					)
 				}
 			}
@@ -166,7 +185,7 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 		sources, _ := st.ListSources()
 		var parts []string
 		for _, src := range sources {
-			if !ephemeralIncluded && src.Kind == store.KindEphemeral {
+			if ephemeralExcluded && src.Kind == store.KindEphemeral {
 				continue
 			}
 			parts = append(parts, fmt.Sprintf("%q (%d sections)", src.Label, src.ChunkCount))
@@ -194,7 +213,7 @@ func parseIncludeKinds(raw any) ([]store.SourceKind, error) {
 	for _, v := range values {
 		k := store.SourceKind(v)
 		if !k.Valid() {
-			return nil, fmt.Errorf("invalid include_kinds value %q (accepted: \"durable\", \"ephemeral\")", v)
+			return nil, fmt.Errorf("invalid include_kinds value %q (accepted: \"durable\", \"ephemeral\", \"session\")", v)
 		}
 		if seen[k] {
 			continue
