@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS sources (
   last_accessed_at TEXT DEFAULT CURRENT_TIMESTAMP,
   access_count INTEGER NOT NULL DEFAULT 0,
   content_hash TEXT,
-  kind TEXT NOT NULL DEFAULT 'durable' CHECK (kind IN ('ephemeral', 'durable'))
+  kind TEXT NOT NULL DEFAULT 'durable' CHECK (kind IN ('ephemeral', 'durable', 'session'))
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(

@@ -170,6 +170,72 @@ func TestMigration017_Concurrent(t *testing.T) {
 	assert.Equal(t, 2, durCount, "durable count")
 }
 
+func TestMigration018_AddsSessionKindOnFreshDB(t *testing.T) {
+	// Fresh DB created with old schemaSQL (CHECK only has ephemeral, durable).
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+
+	oldSchema := `CREATE TABLE IF NOT EXISTS sources (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		label TEXT NOT NULL,
+		content_type TEXT NOT NULL DEFAULT 'plaintext',
+		chunk_count INTEGER NOT NULL DEFAULT 0,
+		code_chunk_count INTEGER NOT NULL DEFAULT 0,
+		indexed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+		last_accessed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+		access_count INTEGER NOT NULL DEFAULT 0,
+		content_hash TEXT,
+		kind TEXT NOT NULL DEFAULT 'durable' CHECK (kind IN ('ephemeral', 'durable'))
+	);`
+	_, err = db.Exec(oldSchema)
+	require.NoError(t, err)
+
+	require.NoError(t, applyMigrations(db))
+
+	// 'session' kind should now be insertable.
+	_, err = db.Exec(`INSERT INTO sources (label, content_type, kind) VALUES ('test-session', 'session', 'session')`)
+	assert.NoError(t, err, "kind='session' should be accepted after migration")
+
+	// Migrations table should exist with both migrations recorded.
+	var count int
+	err = db.QueryRow(`SELECT COUNT(*) FROM migrations`).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count, "both migrations should be recorded")
+}
+
+func TestMigration018_NoOpOnMigratedDB(t *testing.T) {
+	// Migrated DB: ALTER TABLE ADD COLUMN (no CHECK), session already works.
+	db := openPreMigrationDB(t, []string{"execute:shell", "docs"})
+	require.NoError(t, applyMigrations(db))
+
+	// 'session' kind should be insertable (no CHECK constraint at all).
+	_, err := db.Exec(`INSERT INTO sources (label, content_type, kind) VALUES ('test-session', 'session', 'session')`)
+	assert.NoError(t, err)
+
+	// Migration should be recorded.
+	var name string
+	err = db.QueryRow(`SELECT name FROM migrations WHERE name = '018_add_session_kind'`).Scan(&name)
+	require.NoError(t, err)
+	assert.Equal(t, "018_add_session_kind", name)
+}
+
+func TestMigration018_Idempotent(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	_, err = db.Exec(schemaSQL)
+	require.NoError(t, err)
+
+	require.NoError(t, applyMigrations(db))
+	require.NoError(t, applyMigrations(db))
+
+	var count int
+	err = db.QueryRow(`SELECT COUNT(*) FROM migrations WHERE name = '018_add_session_kind'`).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "migration should be recorded exactly once")
+}
+
 func TestMigration017_PostMigrationDBIsNoOp(t *testing.T) {
 	// Simulate a DB that already has the kind column (created with current schema).
 	db, err := sql.Open("sqlite3", ":memory:")

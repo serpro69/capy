@@ -31,6 +31,7 @@ type CacheConfig struct {
 type CleanupConfig struct {
 	ColdThresholdDays int  `toml:"cold_threshold_days"`
 	EphemeralTTLHours int  `toml:"ephemeral_ttl_hours"`
+	SessionTTLDays    int  `toml:"session_ttl_days"`
 	AutoPrune         bool `toml:"auto_prune"`
 }
 
@@ -53,6 +54,7 @@ func DefaultConfig() *Config {
 			Cleanup: CleanupConfig{
 				ColdThresholdDays: 30,
 				EphemeralTTLHours: 24,
+				SessionTTLDays:    60,
 				AutoPrune:         false,
 			},
 			Cache: CacheConfig{

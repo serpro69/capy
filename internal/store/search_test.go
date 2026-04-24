@@ -1384,3 +1384,59 @@ func TestFuzzyCacheSizeCapEviction(t *testing.T) {
 	assert.Equal(t, "test", *cached)
 }
 
+// ─── Session kind search tests ────────────────────────────────────────────
+
+func TestSearch_SessionIncludedByDefault(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.Index("authentication middleware validates tokens correctly", "docs-auth", "plaintext", KindDurable)
+	require.NoError(t, err)
+	_, err = s.Index("we decided to use JWT for authentication in the session discussion", "session:2026-04-05T12:00:00Z:abc123", "plaintext", KindSession)
+	require.NoError(t, err)
+
+	results, err := s.SearchWithFallback("authentication", 10, SearchOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+
+	labels := map[string]bool{}
+	for _, r := range results {
+		labels[r.Label] = true
+	}
+	assert.True(t, labels["docs-auth"], "durable source should appear")
+	assert.True(t, labels["session:2026-04-05T12:00:00Z:abc123"], "session source should appear by default")
+}
+
+func TestSearch_SessionExcludedWhenNotInIncludeKinds(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.Index("authentication middleware validates tokens correctly", "docs-auth", "plaintext", KindDurable)
+	require.NoError(t, err)
+	_, err = s.Index("we decided to use JWT for authentication in the session discussion", "session:2026-04-05T12:00:00Z:abc123", "plaintext", KindSession)
+	require.NoError(t, err)
+
+	results, err := s.SearchWithFallback("authentication", 10, SearchOptions{
+		IncludeKinds: []SourceKind{KindDurable},
+	})
+	require.NoError(t, err)
+	for _, r := range results {
+		assert.NotEqual(t, "session:2026-04-05T12:00:00Z:abc123", r.Label,
+			"session source should be excluded when IncludeKinds is durable-only")
+	}
+}
+
+func TestKindScopeIncludes(t *testing.T) {
+	defaultOpts := SearchOptions{}
+	assert.True(t, KindScopeIncludes(defaultOpts, KindDurable))
+	assert.True(t, KindScopeIncludes(defaultOpts, KindSession))
+	assert.False(t, KindScopeIncludes(defaultOpts, KindEphemeral))
+
+	durableOnly := SearchOptions{IncludeKinds: []SourceKind{KindDurable}}
+	assert.True(t, KindScopeIncludes(durableOnly, KindDurable))
+	assert.False(t, KindScopeIncludes(durableOnly, KindSession))
+	assert.False(t, KindScopeIncludes(durableOnly, KindEphemeral))
+
+	withSource := SearchOptions{Source: "session:"}
+	assert.True(t, KindScopeIncludes(withSource, KindSession))
+	assert.True(t, KindScopeIncludes(withSource, KindEphemeral))
+}
+
