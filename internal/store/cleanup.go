@@ -78,12 +78,12 @@ func classifyTier(src SourceInfo, now time.Time) (string, float64) {
 // ClassifySources returns all sources with tier classification.
 //
 // Durable rows get retention-score-based tiers (hot/warm/cold/evictable,
-// see classifyTier). Ephemeral rows are bucketed by age against
-// ephemeralTTL: "fresh" when indexed within the TTL window, "stale" when
-// past it and awaiting the next Cleanup() sweep. RetentionScore is left
-// at 0 for ephemeral rows — retention math is meaningless for TTL-lived
-// content. Non-positive ephemeralTTL falls back to the safe 24h default,
-// matching cleanupEphemeral.
+// see classifyTier). Ephemeral and session rows are bucketed by age
+// against their respective TTLs: "fresh" when indexed within the TTL
+// window, "stale" when past it and awaiting the next Cleanup() sweep.
+// RetentionScore is left at 0 for TTL-based rows — retention math is
+// meaningless for TTL-lived content. Non-positive TTLs fall back to safe
+// defaults (24h for ephemeral, 60 days for session).
 func (s *ContentStore) ClassifySources(ephemeralTTL, sessionTTL time.Duration) ([]SourceInfo, error) {
 	sources, err := s.ListSources()
 	if err != nil {
@@ -121,11 +121,12 @@ func (s *ContentStore) ClassifySources(ephemeralTTL, sessionTTL time.Duration) (
 	return sources, nil
 }
 
-// Cleanup removes sources via two independent paths:
+// Cleanup removes sources via three independent paths:
 //   - durable: retention-score-based eviction (ADR-011) for `kind = 'durable'`.
-//   - ephemeral: strict TTL eviction for `kind = 'ephemeral'` — ignores
-//     access_count so intent-search hits don't extend lifetime (ADR-017).
+//   - ephemeral: strict TTL eviction for `kind = 'ephemeral'` (ADR-017).
+//   - session: strict TTL eviction for `kind = 'session'`.
 //
+// TTL-based eviction ignores access_count — search hits must not extend lifetime.
 // If dryRun is true, returns what would be removed without deleting.
 // The returned slice tags each SourceInfo with EvictionReason ("retention"
 // or "ttl") so callers can render per-kind breakdowns.
