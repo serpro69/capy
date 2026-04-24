@@ -3,20 +3,27 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
 // applyMigrations runs all pending one-shot migrations against db.
 // Each migration is idempotent: re-running on an already-migrated DB is a no-op.
 //
-// Currently covers:
+// Covers:
 //   - 017_add_source_kind: adds the `kind` column to the sources table and
 //     retroactively tags ephemeral rows by label prefix.
-// TODO: add a migrations-tracking table when the second migration lands;
-// until then, per-migration PRAGMA table_info checks provide idempotency.
+//   - 018_add_session_kind: adds a migration-tracking table and extends the
+//     CHECK constraint to accept 'session' as a valid kind value.
 func applyMigrations(db *sql.DB) error {
 	if err := migrate017AddSourceKind(db); err != nil {
 		return fmt.Errorf("migration 017_add_source_kind: %w", err)
+	}
+	if err := ensureMigrationsTable(db); err != nil {
+		return fmt.Errorf("creating migrations table: %w", err)
+	}
+	if err := migrate018AddSessionKind(db); err != nil {
+		return fmt.Errorf("migration 018_add_session_kind: %w", err)
 	}
 	return nil
 }
@@ -128,5 +135,131 @@ func beginImmediate(db *sql.DB) (*sql.Tx, error) {
 		return tx, nil
 	}
 	return nil, fmt.Errorf("could not acquire write lock after %d retries", maxRetries)
+}
+
+// ensureMigrationsTable creates the migration-tracking table and retroactively
+// records migration 017 (which used PRAGMA-based idempotency checks). Future
+// migrations use this table for idempotency instead.
+func ensureMigrationsTable(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS migrations (
+			name TEXT PRIMARY KEY,
+			applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+		)`)
+	if err != nil {
+		return fmt.Errorf("creating table: %w", err)
+	}
+	_, err = db.Exec(`INSERT OR IGNORE INTO migrations (name) VALUES ('017_add_source_kind')`)
+	if err != nil {
+		return fmt.Errorf("recording migration 017: %w", err)
+	}
+	return nil
+}
+
+// migrationApplied checks whether a named migration has already run.
+func migrationApplied(tx *sql.Tx, name string) (bool, error) {
+	var count int
+	err := tx.QueryRow(`SELECT COUNT(*) FROM migrations WHERE name = ?`, name).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("checking migration %s: %w", name, err)
+	}
+	return count > 0, nil
+}
+
+// migrate018AddSessionKind extends the CHECK constraint on the sources table to
+// accept 'session' as a valid kind value. Two DB populations exist:
+//   - Migrated DBs (ALTER TABLE ADD COLUMN in 017): no CHECK constraint at all,
+//     so 'session' inserts already work. Just record the migration.
+//   - Fresh DBs (created with schemaSQL): have CHECK (kind IN ('ephemeral', 'durable')).
+//     These require a table rebuild to widen the constraint.
+//
+// Detection: inspect the CREATE TABLE DDL in sqlite_master. If the DDL
+// contains 'session' in the CHECK, the schema is already current (fresh DB
+// created with updated schemaSQL). If not, a table rebuild is needed.
+func migrate018AddSessionKind(db *sql.DB) error {
+	tx, err := beginImmediate(db)
+	if err != nil {
+		return fmt.Errorf("begin immediate: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	applied, err := migrationApplied(tx, "018_add_session_kind")
+	if err != nil {
+		return err
+	}
+	if applied {
+		return tx.Commit()
+	}
+
+	needsRebuild, err := sourcesDDLLacksSession(tx)
+	if err != nil {
+		return err
+	}
+	if needsRebuild {
+		if err := rebuildSourcesTable(tx); err != nil {
+			return fmt.Errorf("rebuilding sources table: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(`INSERT INTO migrations (name) VALUES ('018_add_session_kind')`); err != nil {
+		return fmt.Errorf("recording migration: %w", err)
+	}
+	return tx.Commit()
+}
+
+// sourcesDDLLacksSession checks whether the sources table's DDL contains a
+// CHECK constraint that does NOT include 'session'. Returns true if a rebuild
+// is needed, false if the schema already accepts 'session' (either because the
+// CHECK includes it or because there's no CHECK at all — ALTER TABLE path).
+func sourcesDDLLacksSession(tx *sql.Tx) (bool, error) {
+	var ddl string
+	err := tx.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='sources'`).Scan(&ddl)
+	if err != nil {
+		return false, fmt.Errorf("reading sources DDL: %w", err)
+	}
+	hasCheck := strings.Contains(ddl, "CHECK")
+	hasSession := strings.Contains(ddl, "'session'")
+	// Rebuild only when there IS a CHECK that does NOT include 'session'.
+	return hasCheck && !hasSession, nil
+}
+
+// rebuildSourcesTable replaces the sources table with one that has an updated
+// CHECK constraint accepting 'session'. SQLite does not support ALTER TABLE
+// to modify constraints, so we create a new table, copy data, drop old, rename.
+func rebuildSourcesTable(tx *sql.Tx) error {
+	if _, err := tx.Exec(`
+		CREATE TABLE sources_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			label TEXT NOT NULL,
+			content_type TEXT NOT NULL DEFAULT 'plaintext',
+			chunk_count INTEGER NOT NULL DEFAULT 0,
+			code_chunk_count INTEGER NOT NULL DEFAULT 0,
+			indexed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			last_accessed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			access_count INTEGER NOT NULL DEFAULT 0,
+			content_hash TEXT,
+			kind TEXT NOT NULL DEFAULT 'durable' CHECK (kind IN ('ephemeral', 'durable', 'session'))
+		)`); err != nil {
+		return fmt.Errorf("creating sources_new: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO sources_new (id, label, content_type, chunk_count, code_chunk_count,
+			indexed_at, last_accessed_at, access_count, content_hash, kind)
+		SELECT id, label, content_type, chunk_count, code_chunk_count,
+			indexed_at, last_accessed_at, access_count, content_hash, kind
+		FROM sources`); err != nil {
+		return fmt.Errorf("copying data: %w", err)
+	}
+
+	if _, err := tx.Exec(`DROP TABLE sources`); err != nil {
+		return fmt.Errorf("dropping old table: %w", err)
+	}
+
+	if _, err := tx.Exec(`ALTER TABLE sources_new RENAME TO sources`); err != nil {
+		return fmt.Errorf("renaming table: %w", err)
+	}
+
+	return nil
 }
 

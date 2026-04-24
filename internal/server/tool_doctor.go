@@ -30,6 +30,7 @@ func (s *Server) handleDoctor(_ context.Context, _ mcp.CallToolRequest) (*mcp.Ca
 		dbPath = s.config.ResolveDBPath(s.projectDir)
 	}
 	ephemeralTTL := s.ephemeralTTL()
+	sessionTTL := s.sessionTTL()
 
 	// Shared checks
 	results := []platform.CheckResult{
@@ -47,7 +48,7 @@ func (s *Server) handleDoctor(_ context.Context, _ mcp.CallToolRequest) (*mcp.Ca
 		}()
 		st := s.getStore()
 		if st != nil {
-			_, err := st.Stats(ephemeralTTL)
+			_, err := st.Stats(ephemeralTTL, sessionTTL)
 			fts5OK = err == nil
 		}
 	}()
@@ -68,7 +69,7 @@ func (s *Server) handleDoctor(_ context.Context, _ mcp.CallToolRequest) (*mcp.Ca
 
 	// Knowledge base — use store directly for richer stats
 	if s.store != nil {
-		kbStats, err := s.store.Stats(ephemeralTTL)
+		kbStats, err := s.store.Stats(ephemeralTTL, sessionTTL)
 		if err == nil {
 			results = append(results, platform.CheckResult{
 				Name:   "Knowledge base",

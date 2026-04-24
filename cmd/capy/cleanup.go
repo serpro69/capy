@@ -35,7 +35,8 @@ func newCleanupCmd() *cobra.Command {
 			defer st.Close()
 
 			ephemeralTTL := time.Duration(cfg.Store.Cleanup.EphemeralTTLHours) * time.Hour
-			pruned, err := st.Cleanup(dryRun, ephemeralTTL)
+			sessionTTL := time.Duration(cfg.Store.Cleanup.SessionTTLDays) * 24 * time.Hour
+			pruned, err := st.Cleanup(dryRun, ephemeralTTL, sessionTTL)
 			if err != nil {
 				return fmt.Errorf("cleanup failed: %w", err)
 			}

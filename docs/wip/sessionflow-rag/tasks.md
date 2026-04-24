@@ -6,17 +6,17 @@
 > Created: 2026-04-23
 
 ## Task 1: Storage foundation — KindSession, migration, config
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** —
 - **Docs:** [implementation.md#phase-1-storage-foundation](./implementation.md#phase-1-storage-foundation)
 
 ### Subtasks
-- [ ] 1.1 Add `KindSession SourceKind = "session"` to `internal/store/types.go`, update `Valid()`, add session fields to `StoreStats`
-- [ ] 1.2 Add migration-tracking table to `internal/store/migrate.go`, retroactively record migration 017, then add new migration for `session` kind CHECK constraint. Handle both DB populations (migrated DBs without CHECK, fresh DBs with CHECK). Update `schemaSQL` in `schema.go`.
-- [ ] 1.3 Add `SessionTTLDays int` to `CleanupConfig` in `internal/config/config.go` (default 60), add validation in `loader.go`, add `sessionTTL()` to server
-- [ ] 1.4 Generalize `cleanupEphemeral` → `cleanupByTTL(kind, ttl)` in `internal/store/cleanup.go`. Update signatures: `Cleanup(dryRun, ephemeralTTL, sessionTTL)`, `ClassifySources(ephemeralTTL, sessionTTL)`, `Stats(ephemeralTTL, sessionTTL)`. Add `PurgeSession()`. Update all callers (`tool_cleanup.go`, `tool_stats.go`, `server.go`).
-- [ ] 1.5 Update default kind filter in `effectiveKindFilter()` at `internal/store/search.go` from `[KindDurable]` to `[KindDurable, KindSession]`. Add `KindScopeIncludesSession` (or generalize to `KindScopeIncludes`). Update `parseIncludeKinds` error message in `tool_search.go` to include `"session"`. Add session no-results hint alongside ephemeral hint.
-- [ ] 1.6 Write tests for all above: migration applies, session kind accepted, TTL cleanup works, search includes sessions
+- [x] 1.1 Add `KindSession SourceKind = "session"` to `internal/store/types.go`, update `Valid()`, add session fields to `StoreStats`
+- [x] 1.2 Add migration-tracking table to `internal/store/migrate.go`, retroactively record migration 017, then add new migration for `session` kind CHECK constraint. Handle both DB populations (migrated DBs without CHECK, fresh DBs with CHECK). Update `schemaSQL` in `schema.go`.
+- [x] 1.3 Add `SessionTTLDays int` to `CleanupConfig` in `internal/config/config.go` (default 60), add validation in `loader.go`, add `sessionTTL()` to server
+- [x] 1.4 Generalize `cleanupEphemeral` → `cleanupByTTL(kind, ttl)` in `internal/store/cleanup.go`. Update signatures: `Cleanup(dryRun, ephemeralTTL, sessionTTL)`, `ClassifySources(ephemeralTTL, sessionTTL)`, `Stats(ephemeralTTL, sessionTTL)`. Add `PurgeSession()`. Update all callers (`tool_cleanup.go`, `tool_stats.go`, `server.go`).
+- [x] 1.5 Update default kind filter in `effectiveKindFilter()` at `internal/store/search.go` from `[KindDurable]` to `[KindDurable, KindSession]`. Add `KindScopeIncludesSession` (or generalize to `KindScopeIncludes`). Update `parseIncludeKinds` error message in `tool_search.go` to include `"session"`. Add session no-results hint alongside ephemeral hint.
+- [x] 1.6 Write tests for all above: migration applies, session kind accepted, TTL cleanup works, search includes sessions
 
 ## Task 2: Session JSONL parser
 - **Status:** pending
