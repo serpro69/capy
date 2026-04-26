@@ -10,6 +10,7 @@
 !.yamllint.yml
 !.mcp.json
 !.capy.toml
+!.sessions/
 
 # Logs
 logs
