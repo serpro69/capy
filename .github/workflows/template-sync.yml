@@ -26,9 +26,6 @@ jobs:
     name: Sync Template
     runs-on: ubuntu-latest
     if: github.event.repository.name != 'claude-toolbox'
-    permissions:
-      contents: write
-      pull-requests: write
     outputs:
       has_changes: ${{ steps.sync.outputs.has_changes }}
       old_version: ${{ steps.manifest.outputs.old_version }}
@@ -154,12 +151,19 @@ jobs:
     needs: sync
     if: needs.sync.outputs.has_changes == 'true' && inputs.dry_run == false
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        if: ${{ vars.CLAUDE_TOOLBOX_APP_ID != '' || vars.JEAN_CLAWDER_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.CLAUDE_TOOLBOX_APP_ID || vars.JEAN_CLAWDER_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_TOOLBOX_APP_KEY || secrets.JEAN_CLAWDER_APP_KEY }}
+
       - name: Checkout Repository
         uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - name: Download Staged Changes
         uses: actions/download-artifact@v7
@@ -200,6 +204,14 @@ jobs:
             echo "Applied changes to .serena/"
           fi
 
+          # Copy codex config files
+          if [[ -d "$STAGING_DIR/codex" ]]; then
+            mkdir -p .codex
+            cp -r "$STAGING_DIR/codex/"* .codex/ 2>/dev/null || true
+            chmod +x .codex/scripts/*.sh 2>/dev/null || true
+            echo "Applied changes to .codex/"
+          fi
+
           # Copy workflow files (sync infrastructure)
           if [[ -d "$STAGING_DIR/workflows" ]]; then
             cp -r "$STAGING_DIR/workflows/"* .github/workflows/ 2>/dev/null || true
@@ -211,6 +223,24 @@ jobs:
             cp -r "$STAGING_DIR/scripts/"* .github/scripts/ 2>/dev/null || true
             chmod +x .github/scripts/*.sh 2>/dev/null || true
             echo "Applied changes to .github/scripts/"
+          fi
+
+          # Ensure .codex is not gitignored in downstream repos
+          # Many repos use ".*" to ignore all dotdirs; without "!.codex" the synced files are silently dropped
+          if [[ -d "$STAGING_DIR/codex" && -f ".gitignore" ]]; then
+            if git check-ignore -q .codex 2>/dev/null; then
+              if ! grep -q '^!\.codex' .gitignore; then
+                # Find the right place: after existing !.claude or !.serena lines
+                if grep -q '^!\.claude' .gitignore; then
+                  sed -i '/^!\.claude$/a !.codex' .gitignore
+                elif grep -q '^!\.serena' .gitignore; then
+                  sed -i '/^!\.serena$/a !.codex' .gitignore
+                else
+                  printf '!.codex\n' >> .gitignore
+                fi
+                echo "Added !.codex to .gitignore (was excluded by .* pattern)"
+              fi
+            fi
           fi
 
           # Auto-append @import reference for CLAUDE.extra.md on first sync
@@ -244,7 +274,7 @@ jobs:
           fi
 
           # Backfill missing optional variables with defaults
-          DEFAULTS='{"CC_STATUSLINE":"enhanced","CC_EFFORT_LEVEL":"high","CC_PERMISSION_MODE":"default"}'
+          DEFAULTS='{"CC_STATUSLINE":"enhanced","CC_EFFORT_LEVEL":"high","CC_PERMISSION_MODE":"default","CODEX_MODEL":"gpt-5.5","CODEX_APPROVAL_POLICY":"on-request"}'
           for key in $(echo "$DEFAULTS" | jq -r 'keys[]'); do
             if [[ "$(jq -r ".variables.$key // \"__MISSING__\"" .github/template-state.json)" == "__MISSING__" ]]; then
               default_val=$(echo "$DEFAULTS" | jq -r ".$key")
@@ -273,12 +303,13 @@ jobs:
             echo "existing_pr=$EXISTING_PR" >> "$GITHUB_OUTPUT"
           fi
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
 
       - name: Create Pull Request
         id: create-pr
         uses: peter-evans/create-pull-request@v8
         with:
+          token: ${{ steps.app-token.outputs.token || github.token }}
           branch: template-sync/${{ needs.sync.outputs.new_version }}
           delete-branch: true
           title: "chore: sync template ${{ needs.sync.outputs.old_version }} → ${{ needs.sync.outputs.new_version }}"
