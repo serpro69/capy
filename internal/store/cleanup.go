@@ -78,13 +78,13 @@ func classifyTier(src SourceInfo, now time.Time) (string, float64) {
 // ClassifySources returns all sources with tier classification.
 //
 // Durable rows get retention-score-based tiers (hot/warm/cold/evictable,
-// see classifyTier). Ephemeral rows are bucketed by age against
-// ephemeralTTL: "fresh" when indexed within the TTL window, "stale" when
-// past it and awaiting the next Cleanup() sweep. RetentionScore is left
-// at 0 for ephemeral rows — retention math is meaningless for TTL-lived
-// content. Non-positive ephemeralTTL falls back to the safe 24h default,
-// matching cleanupEphemeral.
-func (s *ContentStore) ClassifySources(ephemeralTTL time.Duration) ([]SourceInfo, error) {
+// see classifyTier). Ephemeral and session rows are bucketed by age
+// against their respective TTLs: "fresh" when indexed within the TTL
+// window, "stale" when past it and awaiting the next Cleanup() sweep.
+// RetentionScore is left at 0 for TTL-based rows — retention math is
+// meaningless for TTL-lived content. Non-positive TTLs fall back to safe
+// defaults (24h for ephemeral, 60 days for session).
+func (s *ContentStore) ClassifySources(ephemeralTTL, sessionTTL time.Duration) ([]SourceInfo, error) {
 	sources, err := s.ListSources()
 	if err != nil {
 		return nil, err
@@ -93,45 +93,62 @@ func (s *ContentStore) ClassifySources(ephemeralTTL time.Duration) ([]SourceInfo
 	if ephemeralTTL <= 0 {
 		ephemeralTTL = 24 * time.Hour
 	}
+	if sessionTTL <= 0 {
+		sessionTTL = 60 * 24 * time.Hour
+	}
 	now := time.Now()
-	ttlCutoff := now.Add(-ephemeralTTL)
+	ephCutoff := now.Add(-ephemeralTTL)
+	sessCutoff := now.Add(-sessionTTL)
 
 	for i := range sources {
-		if sources[i].Kind == KindEphemeral {
-			if sources[i].IndexedAt.Before(ttlCutoff) {
+		switch sources[i].Kind {
+		case KindEphemeral:
+			if sources[i].IndexedAt.Before(ephCutoff) {
 				sources[i].Tier = "stale"
 			} else {
 				sources[i].Tier = "fresh"
 			}
-			continue
+		case KindSession:
+			if sources[i].IndexedAt.Before(sessCutoff) {
+				sources[i].Tier = "stale"
+			} else {
+				sources[i].Tier = "fresh"
+			}
+		default:
+			sources[i].Tier, sources[i].RetentionScore = classifyTier(sources[i], now)
 		}
-		sources[i].Tier, sources[i].RetentionScore = classifyTier(sources[i], now)
 	}
 	return sources, nil
 }
 
-// Cleanup removes sources via two independent paths:
+// Cleanup removes sources via three independent paths:
 //   - durable: retention-score-based eviction (ADR-011) for `kind = 'durable'`.
-//   - ephemeral: strict TTL eviction for `kind = 'ephemeral'` — ignores
-//     access_count so intent-search hits don't extend lifetime (ADR-017).
+//   - ephemeral: strict TTL eviction for `kind = 'ephemeral'` (ADR-017).
+//   - session: strict TTL eviction for `kind = 'session'`.
 //
+// TTL-based eviction ignores access_count — search hits must not extend lifetime.
 // If dryRun is true, returns what would be removed without deleting.
 // The returned slice tags each SourceInfo with EvictionReason ("retention"
 // or "ttl") so callers can render per-kind breakdowns.
 // Vocabulary is shared and never deleted.
-func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL time.Duration) ([]SourceInfo, error) {
-	durable, err := s.cleanupDurable(dryRun, ephemeralTTL)
+func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL, sessionTTL time.Duration) ([]SourceInfo, error) {
+	durable, err := s.cleanupDurable(dryRun, ephemeralTTL, sessionTTL)
 	if err != nil {
 		return nil, err
 	}
-	ephemeral, err := s.cleanupEphemeral(dryRun, ephemeralTTL)
+	ephemeral, err := s.cleanupByTTL(KindEphemeral, dryRun, ephemeralTTL)
+	if err != nil {
+		return nil, err
+	}
+	session, err := s.cleanupByTTL(KindSession, dryRun, sessionTTL)
 	if err != nil {
 		return nil, err
 	}
 
-	merged := make([]SourceInfo, 0, len(durable)+len(ephemeral))
+	merged := make([]SourceInfo, 0, len(durable)+len(ephemeral)+len(session))
 	merged = append(merged, durable...)
 	merged = append(merged, ephemeral...)
+	merged = append(merged, session...)
 	return merged, nil
 }
 
@@ -140,7 +157,13 @@ func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL time.Duration) ([]Sourc
 // operation exposed via capy_cleanup's purge_ephemeral flag. Durable
 // rows are never touched, regardless of retention score.
 func (s *ContentStore) PurgeEphemeral(dryRun bool, ttl time.Duration) ([]SourceInfo, error) {
-	return s.cleanupEphemeral(dryRun, ttl)
+	return s.cleanupByTTL(KindEphemeral, dryRun, ttl)
+}
+
+// PurgeSession evicts session sources past the TTL window. Mirrors
+// PurgeEphemeral for the session kind.
+func (s *ContentStore) PurgeSession(dryRun bool, ttl time.Duration) ([]SourceInfo, error) {
+	return s.cleanupByTTL(KindSession, dryRun, ttl)
 }
 
 // cleanupDurable applies retention-score-based eviction to durable sources.
@@ -148,11 +171,8 @@ func (s *ContentStore) PurgeEphemeral(dryRun bool, ttl time.Duration) ([]SourceI
 // threshold AND it has never been accessed. ephemeralTTL is threaded
 // through only so ClassifySources can bucket ephemeral rows consistently;
 // it does not influence durable eviction.
-func (s *ContentStore) cleanupDurable(dryRun bool, ephemeralTTL time.Duration) ([]SourceInfo, error) {
-	// ClassifySources walks both kinds; the ephemeral branch is wasted
-	// work here but negligible at the corpus sizes this store targets.
-	// Keep the single entrypoint for consistency with Stats().
-	sources, err := s.ClassifySources(ephemeralTTL)
+func (s *ContentStore) cleanupDurable(dryRun bool, ephemeralTTL, sessionTTL time.Duration) ([]SourceInfo, error) {
+	sources, err := s.ClassifySources(ephemeralTTL, sessionTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -175,22 +195,25 @@ func (s *ContentStore) cleanupDurable(dryRun bool, ephemeralTTL time.Duration) (
 	return candidates, s.evict(candidates, dryRun)
 }
 
-// cleanupEphemeral evicts ephemeral sources whose indexed_at is older than
-// ttl. access_count is intentionally ignored — intent-search writes must not
-// extend ephemeral lifetime (ADR-017). Non-positive ttl is treated as the
-// safe default of 24 h. Every returned SourceInfo carries
-// EvictionReason = "ttl" — the stamping lives here so Cleanup and
-// PurgeEphemeral don't each have to remember to tag.
-func (s *ContentStore) cleanupEphemeral(dryRun bool, ttl time.Duration) ([]SourceInfo, error) {
+// cleanupByTTL evicts sources of the given kind whose indexed_at is older than
+// ttl. access_count is intentionally ignored — TTL-based kinds must not have
+// their lifetime extended by search hits (ADR-017). Non-positive ttl falls
+// back to a safe default (24h for ephemeral, 60 days for session).
+func (s *ContentStore) cleanupByTTL(kind SourceKind, dryRun bool, ttl time.Duration) ([]SourceInfo, error) {
 	db, err := s.getDB()
 	if err != nil {
 		return nil, err
 	}
 
 	if ttl <= 0 {
-		slog.Warn("cleanupEphemeral: non-positive TTL supplied, falling back to 24h",
-			"ttl", ttl)
-		ttl = 24 * time.Hour
+		switch kind {
+		case KindSession:
+			ttl = 60 * 24 * time.Hour
+		default:
+			ttl = 24 * time.Hour
+		}
+		slog.Warn("cleanupByTTL: non-positive TTL supplied, using default",
+			"kind", kind, "ttl", ttl)
 	}
 	cutoff := time.Now().Add(-ttl).UTC().Format("2006-01-02 15:04:05")
 
@@ -199,9 +222,9 @@ func (s *ContentStore) cleanupEphemeral(dryRun bool, ttl time.Duration) ([]Sourc
 			indexed_at, last_accessed_at, access_count, content_hash, kind
 		FROM sources
 		WHERE kind = ? AND indexed_at < ?
-		ORDER BY id DESC`, KindEphemeral, cutoff)
+		ORDER BY id DESC`, kind, cutoff)
 	if err != nil {
-		return nil, fmt.Errorf("selecting stale ephemeral sources: %w", err)
+		return nil, fmt.Errorf("selecting stale %s sources: %w", kind, err)
 	}
 	defer rows.Close()
 
@@ -212,7 +235,7 @@ func (s *ContentStore) cleanupEphemeral(dryRun bool, ttl time.Duration) ([]Sourc
 		if err := rows.Scan(&si.ID, &si.Label, &si.ContentType, &si.ChunkCount,
 			&si.CodeChunkCount, &indexedAt, &lastAccessedAt, &si.AccessCount,
 			&si.ContentHash, &si.Kind); err != nil {
-			slog.Warn("cleanupEphemeral: row scan failed, skipping", "error", err)
+			slog.Warn("cleanupByTTL: row scan failed, skipping", "kind", kind, "error", err)
 			continue
 		}
 		si.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
@@ -278,7 +301,7 @@ func (s *ContentStore) evict(candidates []SourceInfo, dryRun bool) error {
 // bucket ephemeral sources into fresh/stale — callers should pass the
 // same TTL they use for Cleanup (typically
 // `config.Store.Cleanup.EphemeralTTLHours`).
-func (s *ContentStore) Stats(ephemeralTTL time.Duration) (*StoreStats, error) {
+func (s *ContentStore) Stats(ephemeralTTL, sessionTTL time.Duration) (*StoreStats, error) {
 	db, err := s.getDB()
 	if err != nil {
 		return nil, err
@@ -301,13 +324,14 @@ func (s *ContentStore) Stats(ephemeralTTL time.Duration) (*StoreStats, error) {
 		stats.DBSizeBytes = fi.Size()
 	}
 
-	// Per-kind counts and durable tier / ephemeral fresh-stale distribution.
-	sources, err := s.ClassifySources(ephemeralTTL)
+	// Per-kind counts and tier distribution.
+	sources, err := s.ClassifySources(ephemeralTTL, sessionTTL)
 	if err != nil {
 		return &stats, nil
 	}
 	for _, src := range sources {
-		if src.Kind == KindEphemeral {
+		switch src.Kind {
+		case KindEphemeral:
 			stats.EphemeralSourceCount++
 			switch src.Tier {
 			case "fresh":
@@ -315,18 +339,26 @@ func (s *ContentStore) Stats(ephemeralTTL time.Duration) (*StoreStats, error) {
 			case "stale":
 				stats.EphemeralStaleCount++
 			}
-			continue
-		}
-		stats.DurableSourceCount++
-		switch src.Tier {
-		case "hot":
-			stats.DurableHotCount++
-		case "warm":
-			stats.DurableWarmCount++
-		case "cold":
-			stats.DurableColdCount++
-		case "evictable":
-			stats.DurableEvictableCount++
+		case KindSession:
+			stats.SessionSourceCount++
+			switch src.Tier {
+			case "fresh":
+				stats.SessionFreshCount++
+			case "stale":
+				stats.SessionStaleCount++
+			}
+		default:
+			stats.DurableSourceCount++
+			switch src.Tier {
+			case "hot":
+				stats.DurableHotCount++
+			case "warm":
+				stats.DurableWarmCount++
+			case "cold":
+				stats.DurableColdCount++
+			case "evictable":
+				stats.DurableEvictableCount++
+			}
 		}
 	}
 

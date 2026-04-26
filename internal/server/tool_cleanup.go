@@ -26,13 +26,14 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	st := s.getStore()
-	ttl := s.ephemeralTTL()
+	ephTTL := s.ephemeralTTL()
+	sessTTL := s.sessionTTL()
 	var pruned []store.SourceInfo
 	var err error
 	if purgeEphemeral {
-		pruned, err = st.PurgeEphemeral(dryRun, ttl)
+		pruned, err = st.PurgeEphemeral(dryRun, ephTTL)
 	} else {
-		pruned, err = st.Cleanup(dryRun, ttl)
+		pruned, err = st.Cleanup(dryRun, ephTTL, sessTTL)
 	}
 	if err != nil {
 		return errorResult(fmt.Sprintf("Cleanup error: %v", err)), nil
@@ -43,11 +44,14 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 			textResult("No evictable sources found.")), nil
 	}
 
-	var durableN, ephemeralN int
+	var durableN, ephemeralN, sessionN int
 	for _, src := range pruned {
-		if src.EvictionReason == "ttl" {
+		switch {
+		case src.EvictionReason == "ttl" && src.Kind == store.KindSession:
+			sessionN++
+		case src.EvictionReason == "ttl":
 			ephemeralN++
-		} else {
+		default:
 			durableN++
 		}
 	}
@@ -57,7 +61,7 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	if purgeEphemeral {
 		heading = "Cleanup (ephemeral purge)"
 	}
-	summary := fmt.Sprintf("%d durable (retention), %d ephemeral (TTL)", durableN, ephemeralN)
+	summary := fmt.Sprintf("%d durable (retention), %d ephemeral (TTL), %d session (TTL)", durableN, ephemeralN, sessionN)
 	if dryRun {
 		lines = append(lines, fmt.Sprintf("## %s preview (dry run) — %d sources would be removed: %s", heading, len(pruned), summary))
 	} else {
