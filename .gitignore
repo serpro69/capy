@@ -24,6 +24,7 @@ logs
 # AI tools
 !.serena
 !.claude
+!.codex
 .claude/worktrees
 
 # formulae for homebrew

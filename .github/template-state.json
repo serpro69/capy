@@ -1,8 +1,8 @@
 {
   "schema_version": "1",
   "upstream_repo": "serpro69/claude-toolbox",
-  "template_version": "aff3ba2aa712e95a0678412daa22c21cda4b5aa0",
-  "synced_at": "2026-04-07T18:45:49Z",
+  "template_version": "feat/codex_support",
+  "synced_at": "2026-04-26T19:16:23Z",
   "variables": {
     "PROJECT_NAME": "capy",
     "LANGUAGES": "go",
@@ -10,7 +10,9 @@
     "CC_STATUSLINE": "enhanced",
     "SERENA_INITIAL_PROMPT": "",
     "CC_EFFORT_LEVEL": "high",
-    "CC_PERMISSION_MODE": "default"
+    "CC_PERMISSION_MODE": "default",
+    "CODEX_APPROVAL_POLICY": "on-request",
+    "CODEX_MODEL": "gpt-5.5"
   },
   "plugin_migrated": true
 }
