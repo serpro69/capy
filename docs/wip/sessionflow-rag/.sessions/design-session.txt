@@ -1,0 +1,1293 @@
+ ▐▛███▜▌   Claude Code v2.1.116
+▝▜█████▛▘  Opus 4.7 (1M context) · Claude Team
+  ▘▘ ▝▝    ~/Projects/personal/capy
+
+❯ Let's chat about this feature https://github.com/serpro69/capy/issues/24      
+
+● Let me fetch that issue.
+
+  Ran 1 bash command (ctrl+o to expand)
+
+● Interesting one. Here's the core idea as I understand it: Claude Code sessions
+   in ~/.claude/projects contain decisions, rationale, and context that's lost
+  after the conversation ends. You want to index them into capy's FTS5 knowledge
+   base under a session source kind so you can search past sessions on demand.
+
+  A few questions and thoughts:
+
+  Format challenge. Claude Code sessions are JSONL files with message objects
+  (role, content, tool calls, tool results). The raw format is noisy — tool
+  results alone can be massive. You'd need to decide what to index: just the
+  human/assistant text turns? Summaries? Or everything including tool output?
+
+  My take: index human messages and assistant text responses, skip raw tool
+  results. Tool output is ephemeral (file contents, grep results) and would
+  pollute search results. The valuable signal is in the decisions and reasoning.
+
+  Ingestion trigger. Two options:
+  1. On-demand — a command like capy_index_sessions that scans and indexes
+  session files when explicitly called
+  2. Automatic — a hook or background process that indexes sessions as they
+  close
+
+  On-demand is simpler and fits capy's current architecture better. No daemon,
+  no file watchers.
+
+  Chunking strategy. Sessions can be long. You'd want to chunk by conversation
+  turns (or small groups of turns) rather than dumping an entire session as one
+  document. That way BM25 can surface the specific exchange where a decision was
+   made, not a 50K-token blob.
+
+  Dedup / staleness. Sessions accumulate. You'd need a way to track which
+  sessions have already been indexed (hash or mtime) to avoid re-indexing on
+  every scan.
+
+  What's your thinking on scope here — minimal MVP (just index the text, search
+  it) or something more structured (extract decisions, tag by project, etc.)?
+
+❯ 1. Format - yes, only the human/assistant conversations. Skip raw tool        
+  results, file edits (I guess they're part of tool results). Also need to take 
+   care of sessions that didn't have any meaningful inputs, for example a human 
+   started claude-code to configre it via `/config` command, and then closed    
+  the session; anything related to inner-workings of claude-code basically.     
+  2. Ingestion - automatic, offload the burden to a hook that runs on session   
+  end. Don't expose the functionality to the mcp so that the assistant doesn't  
+  need to think of yet another available tooling.                               
+  3. Chunking - that's a good question. We want sessions to be searchable for   
+  sure.                                                                         
+  4. I think this needs have longer TTL at least, sessions are important as     
+  they show "progress over time" for a given project.                           
+  5. Scope - more structured. But your examples aren't exactly correct, tagging 
+   by project, for example, is irrelevant since capy operates within a boundary 
+   of a single project.                                                         
+                                                                                
+  Chat with pal about all of this for more details and a second opinion.        
+
+● Good inputs. Let me get PAL's take on this.
+
+● Let me share the relevant architecture files with PAL for proper context.
+
+  Searched for 3 patterns, called pal (ctrl+o to expand)
+
+● Good analysis from PAL. Here's my synthesis — where I agree, where I'd push
+  back, and the open decisions.
+
+  Chunking — agree with sliding window, but details matter. 4 turn pairs with
+  1-pair overlap is a reasonable starting point. Converting to transcript format
+   (Human: ...\nAssistant: ...) before chunking makes sense — reuses
+  chunkPlainText logic rather than inventing something new. The key insight:
+  split on turn boundaries, not arbitrary line counts.
+
+  Filtering — mostly agree, one correction. The / command filter should be
+  per-message, not per-session. Someone might /config then have a real
+  conversation. The session-level gate should be: minimum 2 meaningful turn
+  pairs AND minimum ~200 chars of assistant text. That catches the "opened and
+  closed" sessions cleanly.
+
+  Metadata — the tool-name extraction is a genuinely good idea. Even without
+  tool outputs, knowing "we used Bash and Edit here" makes chunks findable for
+  queries like "when did we set up the CI pipeline." Storing tool names in the
+  chunk title or as a prefix exploits the existing BM25 title boost in search.
+
+  Dedup — clean, use existing content_hash. No new tracking table. Session
+  filename as label, hash of the filtered transcript as content_hash. Re-indexes
+   automatically if the session grew (Claude Code can append to sessions on
+  resume).
+
+  The three gotchas PAL flagged are all real:
+
+  1. DB lock contention — this is the biggest risk. The session-end hook runs
+  while the MCP server may still be shutting down. We need to either: (a) ensure
+   the hook uses beginImmediate with proper busy backoff, or (b) defer indexing
+  to next session start instead.
+  2. Retention — PAL is right that sessions would get classified as prose and
+  evicted. We need either a new KindSession with its own retention rules, or
+  just set a significantly higher base TTL for session-sourced chunks. Given
+  your requirement for "progress over time," I'd lean toward a dedicated kind.
+  3. Hook latency — parsing a large JSONL file synchronously at session end
+  would be noticeable. The hook should fork the actual work into a background
+  process (or we index at next session start instead, which sidesteps both this
+  and the DB lock issue).
+
+  My strongest opinion: index at session start, not session end. It solves two
+  problems at once — no DB lock contention with the dying server, and no UX
+  penalty when closing. The trade-off is a one-session delay before content
+  becomes searchable, which seems fine since you'd never search the current
+  session anyway.
+
+  What do you think — session-start indexing, or do you want to solve the
+  session-end concurrency?
+
+✻ Cooked for 1m 44s
+
+❯ 2. I think I already mentioned in the issue that we probably want a new kind? 
+                                                                                
+  Indexing at session start is OK, but can we solve the problem of not          
+  duplicating the sessions? How would we know which session to save when we've  
+  started a new session?                                                        
+
+● You're right, you explicitly said "separate session source kind" in the issue
+  — I should have picked that up instead of treating it as an open question. A
+  new KindSession with its own retention rules, settled.
+
+  For the dedup question — you don't need to know which session just ended. You
+  do a sweep:
+
+  1. Session-start hook fires for the new session
+  2. Scan all session files in ~/.claude/projects/<project-hash>/
+  3. For each file, use the filename as the label and pass it through Index()
+  4. The existing content_hash check in Index() handles the rest — if the hash
+  matches, it returns AlreadyIndexed: true and moves on. If the file grew
+  (resumed session), the hash differs and it re-indexes.
+  5. The just-started session is either empty or has one turn — gets filtered
+  out by the minimum turn count heuristic
+
+  The concern is performance: parsing every JSONL file on every session start
+  just to compute hashes gets expensive with hundreds of sessions. Two options:
+
+  A. Mtime gate — before parsing a file, compare its mtime against the
+  indexed_at timestamp on the stored source. If the file hasn't been modified
+  since we last indexed it, skip entirely. No parsing, no hashing. Only new or
+  modified files get processed.
+
+  B. Watermark file — write a simple timestamp file (e.g.
+  .capy_session_indexed_at) after each sweep. On next sweep, only look at files
+  with mtime newer than the watermark. Even cheaper than checking per-file
+  against the DB.
+
+  I'd lean toward A since it uses the existing source metadata and handles the
+  edge case where a session file was modified but the source record was cleaned
+  up for some other reason. B is simpler but slightly more fragile.
+
+  Either way the steady-state cost is: one stat() per session file + full parse
+  only for the one session that actually ended. That's negligible.
+
+  Does this address your concern, or do you see a hole in the sweep approach?
+
+✻ Cooked for 34s
+
+❯ sounds good                                                                   
+                                                                                
+  continue the pal chat to further converse and corroborate the idea and        
+  concerns                                                                      
+
+  Called pal (ctrl+o to expand)
+
+● PAL came back with some sharp corrections. Here's the important stuff:
+
+  Session discovery — solved. The hook already receives projectDir. Use the
+  existing ProjectHash in config/paths.go to derive the sessions directory. No
+  discovery needed.
+
+  Retention — time-based TTL, not scoring. PAL argues sessions decay with time,
+  not access frequency. Suggests treating KindSession like KindEphemeral but
+  with 30-60 day TTL — adapt cleanupEphemeral to accept per-kind TTLs. I think
+  this is right. The existing retentionScore math is tuned for code/prose
+  salience and would mistreat sessions.
+
+  Resumed sessions — full re-index, no incremental. Agreed. deleteSourceTx +
+  re-insert in one transaction is milliseconds. Building an incremental chunk
+  updater for this is over-engineering.
+
+  Compact markers — keep them. When Claude Code compacts a conversation, the
+  summary is dense, high-signal text. Good for BM25. Treat as assistant text. I
+  agree with this — compaction summaries are arguably more searchable than the
+  raw conversation.
+
+  Content — keep raw, don't strip markdown. FTS5 porter tokenizer already
+  normalizes. Code blocks in assistant responses are often the actual
+  decisions/answers. Stripping them removes the highest-value content.
+
+  The big one — E. Don't index in the hook. Index at MCP server startup.
+
+  PAL caught a real lifecycle problem I missed: the session-start hook is a
+  short-lived process. If you fork a goroutine inside it, it dies when the hook
+  exits. Synchronous indexing blocks Claude Code's startup.
+
+  The fix: trigger the sweep in the MCP server's init sequence instead. The MCP
+  server is a long-lived process that Claude Code boots at session start. A
+  background goroutine there has safe DB access, doesn't block the UI, and the
+  1-2 second delay is invisible since the user is just starting to type.
+
+  This is a better answer than what I proposed. The hook can still be the
+  trigger (it already boots the server), but the actual indexing logic lives in
+  the server lifecycle, not the hook.
+
+  What's your read on these? Particularly the MCP server startup vs hook
+  question — it changes where the code lives.
+
+✻ Cooked for 1m 13s
+
+※ recap: We're designing sessionflow RAG (issue #24) to make past Claude Code sessions searchable via FTS5. We finished the design discussion with PAL and converged on key decisions. Next step is getting your sign-off on triggering indexing at MCP server startup instead of in the hook. (disable recaps in /config)
+
+❯ agree on all counts                                                           
+
+● Good. The design is solid. Let me capture the final decisions:
+
+  1. New KindSession — dedicated source kind, time-based TTL (30-60 days),
+  bypasses durable retention scoring
+  2. Trigger: MCP server startup — background goroutine in server init, not in
+  the hook
+  3. Sweep approach — scan all session files, mtime gate to skip unchanged,
+  existing content_hash for dedup
+  4. Session discovery — projectDir from hook context + ProjectHash() to find
+  session directory
+  5. Chunking — sliding window of ~4 turn pairs, 1-pair overlap, transcript
+  format via adapted chunkPlainText
+  6. Filtering — skip system messages, images, tool results; keep compact
+  summaries; per-message / command filter; session gate: min 2 turn pairs + min
+  ~200 chars assistant text
+  7. Metadata — tool names extracted from tool_use blocks into chunk title for
+  BM25 boost; "session" content type
+  8. Resumed sessions — full re-index, no incremental
+  9. Content — raw, no stripping
+
+  Want to move to the design phase? I can run kk:design to produce the spec and
+  task breakdown.
+
+❯ yes run the kk:design                                                         
+
+● Skill(kk:design)
+  ⎿  Successfully loaded skill
+
+● Let me read the process files to understand the workflow.
+
+  Read 3 files (ctrl+o to expand)
+
+● Starting the design process. First, profile detection and codebase
+  understanding in parallel.
+
+  Read 8 files (ctrl+o to expand)
+● Profile detection: no design-phase profiles match. The Go profile has no ## 
+  Design signals section (extension-based only), and k8s/k8s-operator tokens
+  don't appear in the idea prose. Proceeding with generic guidance.
+
+  Now let me understand the codebase — reading the key files that this feature
+  will touch.
+
+  Read 10 files (ctrl+o to expand)
+
+● Now let me check docs and the session end hook for additional context.
+
+  Read 4 files, listed 2 directories (ctrl+o to expand)
+
+● Let me check the most relevant ADR for source kinds.
+
+  Read 2 files (ctrl+o to expand)
+
+● Good, I have a solid understanding of the codebase now. Let me move to Step 3
+  — refinement questions to fill remaining gaps.
+
+  Task Progress:
+  - [x] Step 1: Understand the current state of the project
+  - [x] Step 2: Check the documentation
+  - [ ] Step 3: Help refine the idea/feature
+  - [ ] Step 4: Describe the design
+  - [ ] Step 5: Document the design
+  - [ ] Step 6: Create the task list
+
+  Question 1 of ~5:
+
+  When someone searches via capy_search, should session chunks be included by 
+  default (like durable) or excluded by default (like ephemeral)?
+
+  The argument for included: sessions contain decisions and rationale — exactly
+  the kind of context you'd want surfacing when you search "why did we choose
+  X". The whole point of this feature is making that searchable.
+
+  The argument for excluded: session text is noisy compared to curated durable
+  content (fetched docs, explicitly indexed files). BM25 term frequencies in
+  conversational text are different from structured docs — session chunks could
+  dilute search quality for non-session queries.
+
+  My recommendation: included by default. The filtering heuristics (min 2 turn
+  pairs, skip tool output, min 200 chars) already strip the noise. What remains
+  is high-signal conversation. Users who don't want it can exclude via
+  include_kinds.
+
+  Which way do you lean?
+
+✻ Baked for 1m 38s
+
+❯ agree with recommendation                                                     
+
+● Question 2 of ~5:
+
+  Should the session TTL be configurable via .capy.toml, and what default? We
+  discussed 30-60 days.
+
+  The ephemeral TTL pattern already exists in CleanupConfig as
+  ephemeral_ttl_hours. I'd add session_ttl_days (days, not hours — sessions live
+   longer and hours granularity is pointless).
+
+  For the default: 30 days. That's a full sprint cycle. Sessions older than a
+  month are rarely useful — the decisions they captured have either been
+  implemented (visible in code/git) or abandoned. Users who want longer can bump
+   it in config.
+
+  Sound right, or do you want a different default?
+
+❯ configurable, default 60                                                      
+
+● Question 3 of ~5:
+
+  I need to understand the actual Claude Code session file format. Let me check
+  what's in your sessions directory to see the real structure.
+
+  Read 1 file, listed 2 directories, ran 2 bash commands (ctrl+o to expand)
+
+● Good, now I understand the format. Key observations:
+
+  - Directory naming: Claude Code uses path-based names (not hashes) like
+  -home-sergio-Projects-personal-capy
+  - Message types: user, assistant, attachment, file-history-snapshot,
+  permission-mode, last-prompt
+  - User messages: content can be a string or array of blocks (text,
+  tool_result)
+  - Assistant messages: content is an array of blocks (text, thinking, tool_use)
+  - Non-JSONL entries: Some UUIDs have bare directories (not .jsonl) alongside
+  them
+
+  This changes the session discovery approach. The directory is NOT hash-based —
+   it's a path-mangled name. So we can't use ProjectHash() to find it.
+
+  Question 3: How should we resolve the session directory? Two options:
+
+  A. Derive it the same way Claude Code does — replace / with - in the absolute
+  project path and look in ~/.claude/projects/. I can reverse-engineer the exact
+   mangling from the directory names we just saw.
+
+  B. Accept the session directory path as a config option in .capy.toml, with
+  auto-detection as default.
+
+  I'd go with A (auto-detection only) — it's deterministic and adding config for
+   it is premature. If Claude Code changes its naming convention, we update the
+  detection. Does that work?
+
+✻ Sautéed for 34s
+
+❯ We can go with auto-detection, but we need to consider one of capy's          
+  philosophies - sharable knowledge via commitable knowledge.db. Different OSes 
+   will have different paths for the same project. Different people might have  
+  the project commited in different directories. We need to solve this problem  
+  otherwise we break the "sharable" part of capy                                
+
+● That's a sharp catch. You're right — the session directory path is
+  machine-specific (-home-sergio-... vs -home-alice-code-...), so if we bake
+  paths into labels or rely on path-based discovery assumptions, the committed
+  knowledge.db becomes non-portable.
+
+  The fix is to separate the two concerns:
+
+  1. Discovery (finding session files) — inherently local. Only works on the
+  machine where sessions exist. Path derivation lives here and never leaks into
+  the DB.
+  2. Labels (what gets stored in the DB) — must be path-agnostic. Use the
+  session UUID, not the file path: session:102ad512-759a-43ad-8805-353ce341f65c.
+   The UUID is universally unique and not tied to any machine or directory
+  structure.
+
+  This way:
+  - Machine A indexes its sessions with UUID-based labels, commits the DB
+  - Machine B pulls the DB, gets all of A's session knowledge — searchable
+  immediately
+  - Machine B scans its own local session directory (different path, different
+  sessions), indexes its own sessions with their own UUIDs — no collisions, no
+  conflicts
+  - The mtime gate is a local-only optimization — on a fresh machine with a
+  shared DB, the content_hash dedup still prevents re-indexing identical content
+
+  The only open question: if the same person uses the same project on two
+  machines (say laptop + desktop), different sessions produce different UUIDs
+  anyway, so there's no conflict.
+
+  Question 4: Does the session: label prefix convention work for you, or do you
+  want something richer (e.g. including the session date)?
+
+✻ Cooked for 37s
+
+❯ I want dates included so we can display results as a history, not just        
+  individual sessions                                                           
+
+● Makes sense. Label format:
+  session:2026-04-05:102ad512-759a-43ad-8805-353ce341f65c — date first for
+  chronological sorting, full UUID for uniqueness. The date comes from the first
+   user message timestamp in the JSONL.
+
+  Combined with the chunk title format we already agreed on (Session 2026-04-05 
+  | Turns 1-4 | Tools: Bash, Edit), this gives you two levels of chronological
+  ordering: session-level from the label, turn-level from the chunk title.
+
+  A search for source: "session:" returns all session chunks, sorted by date. A
+  search for source: "session:2026-04" narrows to April 2026. The existing
+  LIKE-based source filter already supports this.
+
+  Question 5 (last one):
+
+  For stats reporting in capy_stats — session sources need their own section
+  alongside durable and ephemeral. The current stats struct has
+  DurableSourceCount, EphemeralSourceCount, and tier breakdowns for each.
+
+  For sessions, I'd add SessionSourceCount and two TTL buckets mirroring
+  ephemeral: SessionFreshCount (within TTL) and SessionStaleCount (past TTL,
+  awaiting cleanup). No retention tiers since sessions use strict TTL.
+
+  Straightforward enough, or do you want something different in the stats view?
+
+❯ Looks fine                                                                    
+
+● Good, all decisions are locked. Moving to Step 4 — I'll describe the design in
+   sections, asking for confirmation after each.
+
+  Task Progress:
+  - [x] Step 1: Understand the current state of the project
+  - [x] Step 2: Check the documentation
+  - [x] Step 3: Help refine the idea/feature
+  - [ ] Step 4: Describe the design
+  - [ ] Step 5: Document the design
+  - [ ] Step 6: Create the task list
+
+  ---
+  Section 1: Overview and Problem Statement
+
+  Claude Code stores conversation sessions as JSONL files in
+  ~/.claude/projects/<project-dir-name>/. These sessions contain valuable
+  decisions, rationale, and context that is currently lost after conversations
+  end. capy already solves context flooding and provides persistent queryable
+  memory, but only for content explicitly indexed during a session — the
+  conversations themselves are invisible to future searches.
+
+  Sessionflow RAG makes past sessions automatically searchable by indexing their
+   human/assistant text content into capy's FTS5 knowledge base. A background
+  sweep runs at MCP server startup, parsing session JSONL files, filtering out
+  noise (tool results, system messages, trivial sessions), chunking the
+  conversational text into BM25-friendly windows, and indexing them under a new
+  KindSession source kind. Sessions are included in default search results and
+  have a configurable TTL (default 60 days) to preserve "progress over time" for
+   the project.
+
+  The feature is entirely automatic — no MCP tool is exposed, the assistant
+  never needs to think about it, and the indexed content stays portable across
+  machines by using machine-agnostic labels (session UUID + date, not file
+  paths).
+
+  ---
+  Does this overview capture it correctly?
+
+❯ yes, but maybe date+time is better?                                           
+
+● Agreed — session:2026-04-05T12:06:26Z:102ad512-759a-43ad-8805-353ce341f65c.
+  Multiple sessions per day should be orderable. Updated.
+
+  ---
+  Section 2: Session File Parsing and Filtering
+
+  Session JSONL files contain one JSON object per line. Each line has a type
+  field: user, assistant, attachment, file-history-snapshot, permission-mode,
+  last-prompt. Only user and assistant types carry conversation content.
+
+  User messages have message.content as either a plain string or an array of
+  content blocks. We extract only string content and {"type": "text"} blocks.
+  tool_result blocks are dropped entirely — they contain raw tool output (file
+  contents, command output) that would pollute BM25 term frequencies. Human
+  messages starting with / (slash commands like /config, /compact, /help) are
+  skipped.
+
+  Assistant messages have message.content as an array of blocks. We extract
+  {"type": "text"} blocks only. tool_use blocks are not included in the
+  transcript text, but we extract the name field from each for metadata (tool
+  names appear in chunk titles for searchability). thinking blocks are skipped —
+   they're internal reasoning and not part of the visible conversation.
+
+  Compact summaries — when Claude Code compacts a conversation, the resulting
+  summary message is dense, high-signal assistant text. These are kept and
+  treated as regular assistant text. They're excellent for BM25.
+
+  Session-level gate: after filtering, a session must have at least 2 meaningful
+   turn pairs (human + assistant text response) AND at least 200 characters of
+  total assistant text. Sessions that don't pass are skipped entirely — this
+  catches config-only sessions, quick one-off commands, and aborted
+  conversations.
+
+  ---
+  Sound right?
+
+※ recap: We're designing sessionflow RAG to auto-index Claude Code session transcripts into capy's FTS5 knowledge base. Currently walking through the design section by section for approval — next up is your confirmation on the session parsing and filtering rules I just described. (disable recaps in /config)
+
+❯ Looks good, but have you thorougly explored the jsonl files and are confident 
+   what we keep vs what we drop?                                                
+  You can use @~/.claude/projects/-home-sergio-Projects-personal-capy and       
+  @~/.claude/projects/-home-sergio-Projects-personal-claude-toolbox directories 
+   for exploration, I'm very active in these projects right now, so they should 
+   provide a good sample                                                        
+  ⎿  Listed directory ../../../.claude/projects/-home-sergio-Projects-personal-capy/
+  ⎿  Listed directory ../../../.claude/projects/-home-sergio-Projects-personal-claude-toolbox/
+● Good call — let me do a thorough exploration of the actual session formats
+  across both projects.
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ Looks good, but have you thorougly explored the jsonl files and are confident 
+   what we keep vs what we drop?                                                
+  You can use @~/.claude/projects/-home-sergio-Projects-personal-capy and       
+  @~/.claude/projects/-home-sergio-Projects-personal-claude-toolbox directories 
+   for exploration, I'm very active in these projects right now, so they should 
+   provide a good sample. Launch 10 exploration agents to explore all sessions  
+  in both directories and gather all the data we need.                          
+  ⎿  Listed directory ../../../.claude/projects/-home-sergio-Projects-personal-capy/
+  ⎿  Listed directory ../../../.claude/projects/-home-sergio-Projects-personal-claude-toolbox/
+
+● Launching 10 exploration agents across both project directories to build a
+  complete picture of the JSONL format.
+
+● 10 background agents launched (↓ to manage)
+   ├ Session types catalog (capy)
+   ├ Session types catalog (toolbox)
+   ├ User message structure deep dive
+   ├ Assistant message structure deep dive
+   ├ Special message types analysis
+   ├ Bare directories investigation
+   ├ Session size and length distribution
+   ├ Edge case sessions analysis
+   ├ Tool usage metadata extraction
+   └ Slash commands and noise patterns
+
+● All 10 agents launched. They're analyzing:
+
+  1. Types catalog — every message type across capy sessions
+  2. Types catalog — same for claude-toolbox sessions
+  3. User message structure — content formats, block types, field structures
+  4. Assistant message structure — text, thinking, tool_use block details
+  5. Special message types — attachments, snapshots, compact markers, system
+  messages
+  6. Bare directories — what the non-JSONL entries are
+  7. Size/length distribution — session metrics, filter threshold impact
+  8. Edge cases — short sessions, config-only, resumed, malformed
+  9. Tool usage metadata — tool name formats and frequencies
+  10. Slash commands & noise — user message patterns to filter
+
+  I'll synthesize findings as they come back.
+
+✻ Brewed for 1m 11s
+
+● Agent "Session types catalog (toolbox)" completed
+
+● First agent back (toolbox types). Notable new types I hadn't accounted for:
+  system (162), progress (108), queue-operation (20), custom-title (6),
+  agent-name (6). These are all candidates for filtering out. Waiting for the
+  remaining agents.
+
+● Agent "Session types catalog (capy)" completed
+
+● Agent "Assistant message structure deep dive" completed
+
+● Agent "Session size and length distribution" completed
+
+● Three more agents back. Key findings accumulating:
+
+  - Thinking blocks are empty — the thinking field is "" with only a signature
+  (base64). Actual thought content is stripped by Claude Code. Skip these
+  entirely, they have zero indexable content.
+  - Assistant content is always an array, never a string. Simplifies our parser.
+  - 46% of sessions filtered out by our "min 2 turn pairs + 200 chars"
+  heuristic. Good signal-to-noise ratio.
+  - Largest session is 2.5 MB / 118K chars of assistant text — we definitely
+  need the chunking strategy.
+
+  Waiting on 6 more agents.
+
+● Agent "Bare directories investigation" completed
+
+● Important discovery from the bare directories agent: those directories contain
+   sub-agent conversations. Each has subagents/*.jsonl files with full
+  conversation transcripts (same JSONL schema), plus *.meta.json with agent
+  type/description. There's also a rare tool-results/ dir for offloaded large
+  tool outputs.
+
+  This means if we only parse top-level .jsonl files, we miss sub-agent work —
+  which is often where detailed research and implementation happens. We'll need
+  to decide whether to include sub-agent conversations. I'll hold that question
+  until all agents report back.
+
+● Agent "User message structure deep dive" completed
+
+● User message deep dive confirms: 80% of user messages are tool result arrays,
+  only 19% are direct human text. The toolUseResult top-level field is Claude
+  Code's structured annotation — separate from message.content. We skip both
+  tool_result blocks and toolUseResult entirely.
+
+  Interesting finding: 83 text blocks appear inside user arrays alongside
+  tool_results — described as "interruptions, injected skill instructions." Need
+   to decide if those carry signal or noise.
+
+  Let me clean up that analysis script the agent created.
+
+  Ran 1 bash command (ctrl+o to expand)
+  ⎿  PreToolUse:Bash hook returned blocking error  ⎿  Blocked by security policy: matches deny pattern Bash(rm:*)
+
+● Agent "Slash commands and noise patterns" completed
+
+● Agent "Special message types analysis" completed
+
+● Two critical findings from the latest agents:
+
+  Slash commands don't appear in stored sessions at all — zero found across 96
+  files. Either Claude Code strips them before writing to JSONL or handles them
+  before they become messages. Our / filter is still worth having defensively,
+  but it won't fire in practice.
+
+  system/away_summary is the compaction equivalent — 11 occurrences, free-text
+  recap paragraphs written when the user returns after being away. These are
+  dense session state summaries. We should keep these. There is NO dedicated
+  compact/summary type — context compaction is API-internal and leaves no JSONL
+  record.
+
+  Noise breakdown confirmed: 77.5% of user messages are pure tool_result returns
+   (skip), only 18.7% are real human input. Short messages like "yes", "looks
+  good" (3.9%) are low-signal individually but I'd keep them — the assistant
+  response following "yes, proceed" is often where the decision is articulated.
+
+  Updated filtering rules based on findings:
+  - Skip tool_result-only user messages (no text blocks)
+  - Skip system/turn_duration, system/local_command
+  - Keep system/away_summary — high-signal summaries
+  - Skip all attachment, file-history-snapshot, permission-mode, progress,
+  queue-operation, custom-title, agent-name, last-prompt
+  - Skip thinking blocks (content is empty/stripped, only signature remains)
+  - Filter <system-reminder> tags from text blocks if present
+
+  Still waiting on 2 agents: edge cases and tool usage metadata.
+
+✻ Brewed for 33s
+
+● Agent "Tool usage metadata extraction" completed
+
+● Tool metadata agent back. Clean results:
+
+  - 25 unique tools, always at message.content[i].name — no variants
+  - Exactly 1 tool_use per assistant message — never more. Simplifies
+  extraction.
+  - Top 3 (Read/Bash/Edit) cover 68% of all calls
+  - MCP tools follow mcp__<server>__<tool> convention — we could normalize to
+  capy:search etc. in chunk titles for better BM25 recall
+
+  One agent remaining: edge cases.
+
+● Agent "Edge case sessions analysis" completed
+
+● All 10 agents are back. Let me synthesize the complete picture.
+
+  ---
+  Complete JSONL format taxonomy — what to KEEP vs SKIP:
+
+  ┌────────────────────────┬────────────────────┬──────────────────────────┐
+  │      Record type       │      Decision      │          Reason          │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ user (string content)  │ KEEP               │ Direct human input       │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ user (text blocks in   │ KEEP               │ Human text, strip        │
+  │ array)                 │                    │ <system-reminder> tags   │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ user (tool_result      │ SKIP               │ Automatic SDK returns,   │
+  │ only)                  │                    │ no human content         │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ assistant text blocks  │ KEEP               │ Core conversational      │
+  │                        │                    │ content                  │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ assistant thinking     │ SKIP               │ Content stripped, only   │
+  │ blocks                 │                    │ signature remains        │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ assistant tool_use     │ EXTRACT name only  │ Tool names go in chunk   │
+  │ blocks                 │                    │ title metadata           │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ system/away_summary    │ KEEP               │ Dense session recap,     │
+  │                        │                    │ high signal              │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ system/turn_duration   │ SKIP               │ Timing metadata          │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ system/local_command   │ SKIP               │ Slash command stdout     │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ attachment (all        │ SKIP               │ Infrastructure metadata  │
+  │ subtypes)              │                    │                          │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ file-history-snapshot  │ SKIP               │ File backup metadata     │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │                        │ SKIP (but count    │                          │
+  │ permission-mode        │ for resume         │ Startup metadata         │
+  │                        │ detection)         │                          │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ progress               │ SKIP               │ Progress indicators      │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ queue-operation        │ SKIP               │ Queue metadata           │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ custom-title,          │ SKIP               │ Session labels           │
+  │ agent-name             │                    │                          │
+  ├────────────────────────┼────────────────────┼──────────────────────────┤
+  │ last-prompt            │ SKIP               │ UI state                 │
+  └────────────────────────┴────────────────────┴──────────────────────────┘
+
+  Key corrections to our earlier assumptions:
+
+  1. Thinking blocks are useless — content is stripped, only base64 signature
+  remains
+  2. No slash commands in stored JSONL — / filter is defensive only
+  3. Compaction has no dedicated type — system/away_summary is closest, plus 2
+  sessions had "compacted" in user entries
+  4. Sub-agent conversations exist in <uuid>/subagents/*.jsonl — same schema,
+  parseable
+  5. 25 of 96 sessions are resumed (>2 permission-mode entries) — our mtime gate
+   + full re-index handles this
+  6. Always exactly 1 tool_use per assistant message — extraction is trivial
+
+  Also, some agents left temp scripts in the project directory — I'll clean
+  those up after we finish the design.
+
+  Now, one new question from the bare directories finding: should we index 
+  sub-agent conversations? Sub-agents do research, exploration, and
+  implementation work. That's high-value content. But it adds complexity
+  (recursing into directories, handling isSidechain: true). I'd include them in
+  the parent session's source — same label, additional turns appended to the
+  transcript. Thoughts?
+❯ agree, agents sub-sessions carry imporant context, and yes, they should be in 
+   parrent session's source (maybe with an additional label indicating it comes 
+   from subagent?)                                                              
+
+● Good. Sub-agent turns get a marker in the transcript like:
+
+  --- Subagent: Explore — "Explore setup command implementation" ---
+  Human: ...
+  Assistant: ...
+  --- End subagent ---
+
+  The agent type and description come from meta.json. This makes sub-agent
+  context searchable — "explore setup command" would match. Chunk titles can
+  also include Subagent: Explore when the window contains sub-agent turns.
+
+  Let me continue the design sections. We have all the data we need now.
+
+  ---
+  Section 3: Chunking Strategy
+
+  Session transcripts are converted to a plaintext format before chunking. Each
+  turn becomes:
+
+  Human: <text>
+  Assistant: <text>
+  [Tools: Read, Edit, Bash]
+
+  Tool-result-only user messages are omitted. system/away_summary entries are
+  inserted inline as [Session summary: <text>]. Sub-agent conversations are
+  delimited with --- Subagent: <type> — "<description>" --- and --- End subagent
+   --- markers.
+
+  Chunking uses a sliding window of ~4 turn pairs with 1-pair overlap, adapted
+  from chunkPlainText. The split happens on turn boundaries (the Human: prefix),
+   not arbitrary line counts. This preserves conversational coherence — a
+  question and its answer always stay together.
+
+  Each chunk gets a title: Session 2026-04-05T12:06:26Z | Turns 3-6 | Tools: 
+  Read, Edit. When the window contains sub-agent turns, the title appends | 
+  Subagent: Explore. MCP tool names are normalized from mcp__capy__capy_search
+  to capy:search for readability.
+
+  Chunks exceeding maxChunkBytes (4096) are split at paragraph boundaries using
+  the existing splitOversized logic. The overlap ensures continuity: if a
+  decision spans two chunks, the overlapping turn appears in both, so BM25 can
+  surface either.
+
+  The content type is "session" — a new value added to the content type taxonomy
+   alongside "code", "prose", "plaintext", "markdown", "json".
+
+  ---
+  Does this look right?
+
+❯ looks correct with one small note - let's not normalize mcp tool names        
+
+● Noted — MCP tool names stay as-is (mcp__capy__capy_search, not normalized).
+
+  ---
+  Section 4: Storage — KindSession, Schema, and Cleanup
+
+  A new KindSession source kind is added alongside KindDurable and
+  KindEphemeral. This requires:
+
+  Schema migration: The sources table CHECK constraint changes from CHECK (kind 
+  IN ('ephemeral', 'durable')) to CHECK (kind IN ('ephemeral', 'durable', 
+  'session')). Added via applyMigrations in migrate.go, following the existing
+  migration pattern.
+
+  types.go: Add KindSession SourceKind = "session". Update Valid() to accept it.
+   Add "session" as a content type constant.
+
+  Cleanup: Sessions use strict TTL (like ephemeral), not retention scoring (like
+   durable). cleanupEphemeral is generalized to accept a kind+TTL pair — it
+  becomes cleanupByTTL(kind SourceKind, ttl time.Duration). Cleanup() calls it
+  twice: once for ephemeral (24h default), once for session (60 days default).
+  The logic is identical — indexed_at < cutoff — just different TTL and kind
+  values.
+
+  Config: CleanupConfig gains SessionTTLDays int (default 60, minimum 1).
+  Validated at load time like EphemeralTTLHours.
+
+  Search: Sessions are included in default search results.
+  SearchOptions.IncludeKinds default changes from [durable] to [durable, 
+  session]. Users can exclude sessions via include_kinds: ["durable"] if
+  desired.
+
+  Stats: StoreStats gains SessionSourceCount, SessionFreshCount,
+  SessionStaleCount — same fresh/stale bucketing as ephemeral, based on the
+  session TTL.
+
+  ---
+  Sound right?
+
+❯ Looks good. Would the cli also allow cleanup by kind?                         
+
+● Yes, makes sense. Two levels:
+
+  MCP tool (capy_cleanup): Add purge_session boolean flag, mirroring the
+  existing purge_ephemeral pattern. Consistent with ADR-017's design.
+
+  CLI (capy cleanup): Currently just proxies to the same cleanup logic. We could
+   add a --kind flag for more flexibility:
+  - capy cleanup — runs all paths (durable retention + ephemeral TTL + session
+  TTL)
+  - capy cleanup --kind session — runs only session TTL cleanup
+  - capy cleanup --kind ephemeral — runs only ephemeral TTL cleanup
+
+  The --kind flag is more extensible than per-kind booleans on the CLI side. The
+   MCP tool keeps individual boolean flags since MCP params are flat.
+
+  Does that split work, or do you want it handled differently?
+
+❯ looks good                                                                    
+
+● ---
+  Section 5: Session Discovery and Sweep Mechanism
+
+  Session indexing is triggered at MCP server startup as a background goroutine.
+   The sweep runs once per server boot — not continuously.
+
+  Discovery: Claude Code stores sessions in ~/.claude/projects/<dir-name>/ where
+   <dir-name> is the absolute project path with / replaced by - and leading -
+  (e.g. -home-sergio-Projects-personal-capy). The server already knows
+  projectDir — it derives the session directory by mangling that path the same
+  way Claude Code does, then verifying the directory exists.
+
+  Sweep algorithm:
+  1. List all .jsonl files in the session directory
+  2. For each file, stat() to get mtime
+  3. Query the store for a source with label session:<datetime>:<uuid> — but
+  since we don't know the datetime before parsing, we need a different mtime
+  gate. Instead: query all sources with session: prefix, build a map of uuid → 
+  indexed_at. Compare file mtime against indexed_at. If mtime <= indexed_at,
+  skip.
+  4. For files that pass the mtime gate: parse JSONL, apply filtering, build
+  transcript, compute content_hash
+  5. Call Index() with the session label, content type "session", and
+  KindSession. Existing dedup handles the rest.
+  6. For sessions with sub-agent directories (<uuid>/subagents/*.jsonl): parse
+  sub-agent files and append to the parent transcript before chunking.
+
+  Current session exclusion: The session that just started will have a
+  near-empty JSONL file. It passes through the sweep but gets filtered out by
+  the session-level gate (< 2 turn pairs).
+
+  Error handling: Parse failures on individual sessions are logged and skipped —
+   one corrupt file doesn't block the sweep. The goroutine has a timeout (30s
+  default) to avoid blocking startup indefinitely.
+
+  ---
+  Does this look right?
+
+❯ looks good, but also chat with pal about the sweep algorithm to corroborate   
+
+  Called pal (ctrl+o to expand)
+
+● PAL validated the sweep algorithm and raised good points:
+
+  A. O(n) query — not a problem. SELECT ... WHERE label LIKE 'session:%' on a
+  few thousand rows is sub-millisecond. No index needed.
+
+  B. UUID lookup from label — solve in Go. Split the label string
+  session:<datetime>:<uuid> to extract UUID, build an in-memory map. O(1) lookup
+   per file.
+
+  C. Sub-agent mtime — good catch. Don't rely on parent mtime alone. Take
+  max(parent.mtime, subagents_dir.mtime) so changes to sub-agent files trigger
+  re-indexing.
+
+  D. Race condition — JSONL saves us. Append-only format means partial reads
+  only affect the last line. Just skip lines that fail json.Unmarshal. The
+  session-level gate filters out the near-empty active session anyway.
+
+  E. 30s timeout — plenty. Even a cold-start sweep of 50+ sessions would finish
+  in ~2 seconds. 30s is a safety net.
+
+  F. Directory mangling — needs verification. PAL flagged that Claude Code's
+  naming might not be a simple / → - replacement. We already observed the actual
+   format (-home-sergio-Projects-personal-capy), which IS the path with /
+  replaced by -. But we should verify there's no hash suffix or other variation.
+   Let me quick-check that.
+
+  Listed 1 directory (ctrl+o to expand)
+
+● Confirmed — it's a straightforward path mangling: replace both / and . with -.
+   The -home-sergio--config-nvim entry reveals that . in .config also becomes -,
+   producing the double dash. No hash suffix, no other transformation.
+
+  The mangling function: strings.NewReplacer("/", "-", ".", 
+  "-").Replace(absProjectDir)
+
+  One caveat to document: this is based on observation, not official Claude Code
+   docs. If they change the convention, this breaks. But it's deterministic and
+  easy to update.
+
+  Let me continue with the remaining design sections.
+
+  ---
+  Section 6: Integration Points
+
+  Server startup (server.go): After NewServer(), the Serve() method fires a
+  background goroutine that runs the session sweep. It needs access to
+  projectDir (already on the Server struct) and the store (via getStore()). The
+  goroutine runs with a 30s context timeout and logs results at info level
+  (sessions indexed count) or warn level (parse failures).
+
+  No new MCP tools: The feature is invisible to the assistant. No tool
+  registration, no schema changes to exposed tools. The only visible effect is
+  that capy_search returns session chunks and capy_stats shows session metrics.
+
+  Cleanup integration: Cleanup() gains a third call to cleanupByTTL(KindSession,
+   sessionTTL). The MCP capy_cleanup tool gains purge_session boolean. The CLI
+  gains --kind flag.
+
+  Search integration: SearchOptions.IncludeKinds default changes from
+  [KindDurable] to [KindDurable, KindSession]. The search SQL WHERE kind IN 
+  (...) clause already supports this since ADR-017.
+
+  Stats integration: StoreStats adds session-specific counters. ClassifySources
+  handles KindSession with the same fresh/stale bucketing as ephemeral (using
+  session TTL instead of ephemeral TTL).
+
+  ---
+  Does this capture all the integration points?
+
+✻ Brewed for 1m 37s
+
+❯ yes                                                                           
+
+● ---
+  Section 7: Testing Strategy
+
+  Unit tests — new internal/store/ test file for session-specific logic:
+  - Session JSONL parsing: valid files, malformed lines (skip gracefully), empty
+   sessions, sessions with only tool results
+  - Transcript building: verify correct filtering (tool_result skipped, thinking
+   skipped, away_summary kept, system-reminder tags stripped)
+  - Sub-agent transcript merging: verify markers, ordering, meta.json parsing
+  - Session-level gate: verify min turn pairs and min char thresholds
+  - chunkTranscript: verify sliding window splits on turn boundaries, overlap,
+  title generation with tool names
+  - KindSession lifecycle: indexing, dedup via content_hash, cleanup via TTL
+
+  Integration tests — in internal/server/integration_test.go:
+  - Full round-trip: index a synthetic session file → search for session content
+   → verify results surface
+  - Sweep mechanism: place test JSONL files in a temp directory, run the sweep,
+  verify correct sessions indexed
+  - Mtime gate: index a session, re-run sweep, verify no re-indexing
+  (AlreadyIndexed). Modify file, re-run, verify re-indexed.
+  - Cleanup: index sessions, advance clock past TTL, run cleanup, verify
+  eviction
+  - Stats: verify session counters appear correctly
+
+  Test fixtures: synthetic JSONL files with known content, covering the message
+  types we discovered (user string content, user array content, assistant
+  text+tool_use, system/away_summary, sub-agent sidechains).
+
+  ---
+  That's the full design. Ready to move to Step 5 — documenting everything in
+  /docs/wip/sessionflow-rag/. Shall I proceed?
+
+❯ Proceed to next step                                                          
+
+● Task Progress:
+  - [x] Step 1: Understand the current state of the project
+  - [x] Step 2: Check the documentation
+  - [x] Step 3: Help refine the idea/feature
+  - [x] Step 4: Describe the design
+  - [ ] Step 5: Document the design
+  - [ ] Step 6: Create the task list
+
+  Ran 1 bash command (ctrl+o to expand)
+
+● Write(docs/wip/sessionflow-rag/design.md)
+  ⎿  Wrote 157 lines to docs/wip/sessionflow-rag/design.md
+      1 # Sessionflow RAG — Design Document
+      3 > **Issue:** [#24](https://github.com/serpro69/capy/issues/24)
+      4 > **Status:** Draft
+      6 
+      7 ## Problem
+      9 Claude Code stores conversation sessions as JSONL files in `~/.cl
+        aude/projects/<project-dir-name>/`. These sessions contain valuab
+        ions end. capy already solves context flooding and provides persi
+        stent queryable memory, but only for content explicitly indexed d
+        uture searches.
+     … +219 lines (ctrl+o to expand)
+
+  Read 1 file (ctrl+o to expand)
+
+● The file was truncated during write. Let me complete it and write the full
+  design doc properly.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(docs/wip/sessionflow-rag/design.md)
+  ⎿  Added 120 lines, removed 1 line
+      154  ```
+      155  Human: <user text>
+      156  Assistant: <assistant text>
+      157 -[Tools: Read, Edit, mcp__capy__capy_search]                   
+      157   No newline at end of file
+      158 +[Tools: Read, Edit, mcp__capy__capy_search]                   
+      159 +                                                              
+      160 +[Session summary: <away_summary text>]                        
+      161 +                                                              
+      162 +--- Subagent: Explore — "Explore setup command implementation"
+          + ---                                                          
+      163 +Human: <subagent user text>                                   
+      164 +Assistant: <subagent assistant text>                          
+      165 +--- End subagent ---                                          
+      166 +```                                                           
+      167 +                                                              
+      168 +Tool-result-only user messages are omitted from the transcript
+          + entirely. The `[Tools: ...]` line appears only when the assis
+          +tant message contained `tool_use` blocks. Tool names are kept 
+          +as-is (no normalization of MCP tool names).                   
+      169 +                                                              
+      170 +### Sliding Window                                            
+      171 +                                                              
+      172 +Chunking uses a sliding window of ~4 turn pairs with 1-pair ov
+          +erlap, adapted from `chunkPlainText` in `internal/store/chunk.
+          +go`. The split happens on turn boundaries (the `Human:` prefix
+          +), not arbitrary line counts.                                 
+      173 +                                                              
+      174 +- **Window size:** ~4 turn pairs. Preserves enough conversatio
+          +nal context for BM25 to match multi-turn decisions.           
+      175 +- **Overlap:** 1 turn pair. If a decision spans two chunks, th
+          +e overlapping turn appears in both.                           
+      176 +- **Oversized chunks:** Split at paragraph boundaries using ex
+          +isting `splitOversized` logic when exceeding `maxChunkBytes` (
+          +4096).                                                        
+      177 +                                                              
+      178 +### Chunk Titles                                              
+      179 +                                                              
+      180 +Format: `Session 2026-04-05T12:06:26Z | Turns 3-6 | Tools: Rea
+          +d, Edit`                                                      
+      181 +                                                              
+      182 +When the window contains sub-agent turns: `Session 2026-04-05T
+          +12:06:26Z | Turns 3-6 | Subagent: Explore | Tools: Read, Edit`
+      183 +                                                              
+      184 +The title exploits the BM25 title-weight boost in `internal/st
+          +ore/search.go` for targeted retrieval.                        
+      185 +                                                              
+      186 +### Content Type                                              
+      187 +                                                              
+      188 +Chunks use content type `"session"` — a new value added to the
+          + taxonomy alongside `"code"`, `"prose"`, `"plaintext"`, `"mark
+          +down"`, `"json"`.                                             
+      189 +                                                              
+      190 +## Storage                                                    
+      191 +                                                              
+      192 +### Schema Migration                                          
+      193 +                                                              
+      194 +The `sources` table CHECK constraint changes:                 
+      195 +```sql                                                        
+      196 +-- Before                                                     
+      197 +CHECK (kind IN ('ephemeral', 'durable'))                      
+      198 +-- After                                                      
+      199 +CHECK (kind IN ('ephemeral', 'durable', 'session'))           
+      200 +```                                                           
+      201 +                                                              
+      202 +Added via `applyMigrations` in `internal/store/migrate.go`, fo
+          +llowing the existing migration pattern.                       
+      203 +                                                              
+      204 +### Types                                                     
+      205 +                                                              
+      206 +- `KindSession SourceKind = "session"` added to `internal/stor
+          +e/types.go`.                                                  
+      207 +- `Valid()` updated to accept `KindSession`.                  
+      208 +- `"session"` added as a content type value.                  
+      209 +                                                              
+      210 +### Cleanup                                                   
+      211 +                                                              
+      212 +Sessions use strict TTL, same mechanism as ephemeral. `cleanup
+          +Ephemeral` is generalized to `cleanupByTTL(kind SourceKind, tt
+          +l time.Duration)` and called twice from `Cleanup()`: once for 
+          +ephemeral (24h), once for session (60 days).                  
+      213 +                                                              
+      214 +### Config                                                    
+      215 +                                                              
+      216 +`CleanupConfig` gains:                                        
+      217 +```go                                                         
+      218 +SessionTTLDays int `toml:"session_ttl_days"` // default: 60, m
+          +inimum: 1                                                     
+      219 +```                                                           
+      220 +                                                              
+      221 +### Search                                                    
+      222 +                                                              
+      223 +Default `IncludeKinds` changes from `[KindDurable]` to `[KindD
+          +urable, KindSession]`. The existing `WHERE kind IN (...)` SQL 
+          +clause supports this.                                         
+      224 +                                                              
+      225 +### Stats                                                     
+      226 +                                                              
+      227 +`StoreStats` gains:                                           
+      228 +```go                                                         
+      229 +SessionSourceCount int                                        
+      230 +SessionFreshCount  int                                        
+      231 +SessionStaleCount  int                                        
+      232 +```                                                           
+      233 +                                                              
+      234 +`ClassifySources` handles `KindSession` with fresh/stale bucke
+          +ting using the session TTL.                                   
+      235 +                                                              
+      236 +### CLI Cleanup                                               
+      237 +                                                              
+      238 +- **MCP tool (`capy_cleanup`):** gains `purge_session` boolean
+          + flag (mirrors `purge_ephemeral`).                            
+      239 +- **CLI (`capy cleanup`):** gains `--kind` flag for kind-speci
+          +fic cleanup (`capy cleanup --kind session`).                  
+      240 +                                                              
+      241 +## Integration Points                                         
+      242 +                                                              
+      243 +| Component | Change |                                        
+      244 +|-----------|--------|                                        
+      245 +| `internal/store/types.go` | `KindSession`, `Valid()`, conten
+          +t type |                                                      
+      246 +| `internal/store/schema.go` | CHECK constraint (via migration
+          +) |                                                           
+      247 +| `internal/store/migrate.go` | New migration for `session` ki
+          +nd |                                                          
+      248 +| `internal/store/cleanup.go` | Generalize `cleanupEphemeral` 
+          +→ `cleanupByTTL`, add session cleanup path |                  
+      249 +| `internal/store/chunk.go` | New `chunkTranscript` function |
+      250 +| `internal/store/index.go` | Handle `"session"` content type 
+          +routing to `chunkTranscript` |                                
+      251 +| `internal/store/types.go` | `StoreStats` session counters | 
+      252 +| `internal/config/config.go` | `SessionTTLDays` in `CleanupCo
+          +nfig` |                                                       
+      253 +| `internal/config/loader.go` | Validation for `SessionTTLDays
+          +` |                                                           
+      254 +| `internal/server/server.go` | Background goroutine for sessi
+          +on sweep |                                                    
+      255 +| `internal/server/tool_cleanup.go` | `purge_session` paramete
+          +r |                                                           
+      256 +| `internal/server/tool_stats.go` | Session stats rendering | 
+      257 +| `internal/server/tool_search.go` | Default `IncludeKinds` up
+          +date |                                                        
+      258 +| `cmd/capy/cleanup.go` | `--kind` CLI flag |                 
+      259 +                                                              
+      260 +New files:                                                    
+      261 +| File | Purpose |                                            
+      262 +|------|---------|                                            
+      263 +| `internal/session/parse.go` | JSONL parsing, message filteri
+          +ng, transcript building |                                     
+      264 +| `internal/session/sweep.go` | Session directory discovery, m
+          +time gate, sweep orchestration |                              
+      265 +| `internal/session/parse_test.go` | Unit tests for parsing an
+          +d filtering |                                                 
+      266 +| `internal/session/sweep_test.go` | Unit tests for sweep mech
+          +anism |                                                       
+      267 +                                                              
+      268 +## Open Questions                                             
+      269 +                                                              
+      270 +None — all design decisions have been made. See the PAL consul
+          +tation thread for the full decision log including alternatives
+          + considered.                                                  
+      271 +                                                              
+      272 +## References                                                 
+      273 +                                                              
+      274 +- [ADR-017: Source kind separation](../../adr/017-source-kind-
+          +separation.md) — establishes the `kind` column and `IncludeKin
+          +ds` array design                                              
+      275 +- [ADR-011: Conservative cleanup policy](../../adr/011-conserv
+          +ative-cleanup-policy.md) — retention scoring (not used for ses
+          +sions)                                                        
+      276 +- [GitHub issue #24](https://github.com/serpro69/capy/issues/2
+          +4) — original feature request                                 
+      277 +- Claude Code session format: JSONL in `~/.claude/projects/<di
+          +r-name>/`, analyzed from 96 sessions across 2 projects        
+      278   No newline at end of file
+
+● Now the implementation plan.
+
+● Write(docs/wip/sessionflow-rag/implementation.md)
+  ⎿  Wrote 343 lines to docs/wip/sessionflow-rag/implementation.md
+      1 # Sessionflow RAG — Implementation Plan
+      2 
+      3 > **Design:** [./design.md](./design.md)
+      5 > **Created:** 2026-04-23
+      6 
+      7 This plan is ordered for incremental development. Each task build
+        s on the previous and can be verified independently. The develope
+        r should be familiar with Go and SQLite but may have no prior con
+      8 
+      9 ## Prerequisites
+     … +423 lines (ctrl+o to expand)
+
+● Now the task list.
+
+● Write(docs/wip/sessionflow-rag/tasks.md)
+  ⎿  Wrote 76 lines to docs/wip/sessionflow-rag/tasks.md
+       1 # Tasks: Sessionflow RAG
+       2 
+       3 > Design: [./design.md](./design.md)
+       4 > Implementation: [./implementation.md](./implementation.md)
+       5 > Status: pending
+       6 > Created: 2026-04-23
+       7 
+       8 ## Task 1: Storage foundation — KindSession, migration, config
+       9 - **Status:** pending
+      10 - **Depends on:** —
+     … +115 lines (ctrl+o to expand)
+● Now let me index the key architecture decisions to capy's knowledge base.
+
+  Called capy (ctrl+o to expand)
+
+● Task Progress:
+  - [x] Step 1: Understand the current state of the project
+  - [x] Step 2: Check the documentation
+  - [x] Step 3: Help refine the idea/feature
+  - [x] Step 4: Describe the design
+  - [x] Step 5: Document the design
+  - [x] Step 6: Create the task list
+
+  Design phase complete. Here's what was produced:
+
+  Files created:
+  - /docs/wip/sessionflow-rag/design.md — full design document with decisions,
+  format taxonomy, filtering rules, sweep algorithm
+  - /docs/wip/sessionflow-rag/implementation.md — 6-phase implementation plan
+  with file-level guidance and verification steps
+  - /docs/wip/sessionflow-rag/tasks.md — 6 tasks, 27 subtasks, ordered for
+  incremental development
+
+  Key decisions documented:
+  - KindSession with 60-day configurable TTL
+  - MCP server startup trigger (not hooks)
+  - Machine-agnostic labels (session:<datetime>:<uuid>)
+  - Sub-agent conversations included in parent session
+  - Complete JSONL format taxonomy from 96-session analysis (10 exploration
+  agents)
+  - Sweep algorithm validated by PAL consultation
+
+  Knowledge indexed: Architecture decisions stored in capy under
+  kk:arch-decisions.
+
+  There are a few temp Python scripts left by the exploration agents in the
+  project directory (analyze_user_messages.py, analyze_jsonl_types.py,
+  analyze_edge_cases.py). Those need cleanup — the rm command is blocked by your
+   security policy. You can delete them manually or grant permission.
+
+✻ Cooked for 4m 7s
