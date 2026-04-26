@@ -6,7 +6,7 @@
   "variables": {
     "PROJECT_NAME": "capy",
     "LANGUAGES": "go",
-    "CC_MODEL": "opus[1m]",
+    "CC_MODEL": "claude-opus-4-6[1m]",
     "CC_STATUSLINE": "enhanced",
     "SERENA_INITIAL_PROMPT": "",
     "CC_EFFORT_LEVEL": "high",
