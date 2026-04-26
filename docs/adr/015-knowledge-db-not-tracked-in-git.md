@@ -1,6 +1,6 @@
 # ADR-015: Knowledge DB must not be tracked in git
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-019](019-encrypted-knowledge-db.md)
 **Date:** 2026-03-31
 
 ## Context
