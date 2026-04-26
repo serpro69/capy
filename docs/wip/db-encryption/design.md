@@ -60,9 +60,11 @@ Passphrase validation: warn (not reject) below 32 characters. Consistent with th
 
 **PRAGMA path (SQLCipher / option 1 or 3):** `PRAGMA key` is per-connection, but `database/sql` maintains a connection pool. The main pool in `openDB()` does NOT call `SetMaxOpenConns(1)` — only `checkpoint()` and `Checkpoint()` do. Under concurrent MCP tool calls, the pool creates additional connections that would lack the encryption key, causing silent failures. This is the same class of issue identified for `PRAGMA mmap_size` (see `kk:arch-decisions` — "mmap_size pragma requires Exec, not DSN"), where `ConnectHook` was identified as the upgrade path.
 
+**Critical: DSN pragma ordering.** In `mattn/go-sqlite3` v1.14.37, `SQLiteDriver.Open` executes DSN-driven pragmas (`_journal_mode`, `_synchronous`, `_busy_timeout`, `_foreign_keys`) *before* invoking `ConnectHook`. On an encrypted DB, these pragmas would fail before `PRAGMA key` is applied. Therefore, for the PRAGMA path, all pragmas must be removed from the DSN and moved into the ConnectHook, executed after `PRAGMA key`. The DSN becomes just the bare DB path.
+
 For the PRAGMA path, there are two sub-options:
-- **ConnectHook (preferred):** Register a custom `sqlite3.SQLiteDriver` with a `ConnectHook` that executes `PRAGMA key` on every new connection. `retry.go` already uses a named import of `mattn/go-sqlite3` (not blank import), so the pattern is available in the codebase. This ensures every pool connection is keyed.
-- **SetMaxOpenConns(1) (fallback):** Serialize all DB access through one connection. Acceptable for a single-user tool but limits concurrency under parallel MCP calls.
+- **ConnectHook (preferred):** Register a custom `sqlite3.SQLiteDriver` with a `ConnectHook` that executes, in order: (1) `PRAGMA key`, (2) `PRAGMA journal_mode=WAL`, (3) `PRAGMA synchronous=NORMAL`, (4) `PRAGMA busy_timeout=5000`, (5) `PRAGMA foreign_keys=ON`. `retry.go` already uses a named import of `mattn/go-sqlite3` (not blank import), so the pattern is available in the codebase. This ensures every pool connection is keyed and configured.
+- **SetMaxOpenConns(1) (fallback):** Serialize all DB access through one connection. Acceptable for a single-user tool but limits concurrency under parallel MCP calls. DSN pragmas must still be removed and applied via post-open Exec calls (after PRAGMA key).
 
 **URI path (sqlite3mc / option 2):** Append `&cipher=chacha20&key=<url-encoded-passphrase>` to the DSN string. The key is applied automatically to every connection the pool creates — **no pool issue**. This is a strong reason to prefer option 2 in the PoC.
 
@@ -84,16 +86,17 @@ New CLI command in `cmd/capy/encrypt.go`. Dual-purpose: initial encryption (unen
 
 1. Resolve DB path from config (`config.Load` + `ResolveDBPath`).
 2. Verify DB file exists.
-3. Open source DB with old key (empty = unencrypted). Run canary query to verify access.
-4. Create temp target: `<dbpath>.enc.tmp`.
-5. Attach target with new key: `ATTACH DATABASE '<target>' AS target KEY '<new-key>'`.
-6. Export: `SELECT sqlcipher_export('target')` (SQLCipher) or equivalent (sqlite3mc — see PoC task for verification).
-7. Detach and close source.
-8. Back up original: rename `<dbpath>` → `<dbpath>.bak`.
-9. Rename temp to final: `<dbpath>.enc.tmp` → `<dbpath>`.
-10. Remove orphaned WAL/SHM sidecars from original.
-11. Verify: reopen new DB with new key, run canary query.
-12. Print: `"Encrypted: <dbpath>. Backup at <dbpath>.bak"`.
+3. Open source DB with old key (empty = unencrypted) using `SetMaxOpenConns(1)` for exclusive access. Run canary query to verify access.
+4. Checkpoint the source DB (`PRAGMA wal_checkpoint(TRUNCATE)`) to flush WAL into the main file. This ensures the export captures all data and eliminates sidecars.
+5. Create temp target: `<dbpath>.enc.tmp`.
+6. Attach target with new key: `ATTACH DATABASE '<target>' AS target KEY '<new-key>'`.
+7. Export: `SELECT sqlcipher_export('target')` (SQLCipher) or equivalent (sqlite3mc — see PoC task for verification).
+8. Detach and close source.
+9. Remove WAL/SHM sidecars at their original paths: `<dbpath>-wal` and `<dbpath>-shm` (SQLite names sidecars based on the DB path, not the renamed path).
+10. Back up original: rename `<dbpath>` → `<dbpath>.bak`.
+11. Rename temp to final: `<dbpath>.enc.tmp` → `<dbpath>`.
+12. Verify: reopen new DB with new key, run canary query.
+13. Print: `"Encrypted: <dbpath>. Backup at <dbpath>.bak"`.
 
 If any step fails after the backup rename, `.bak` preserves the original. The temp file is cleaned up on error.
 

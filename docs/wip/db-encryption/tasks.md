@@ -19,7 +19,7 @@
 - [ ] Test option 2: build sqlite3mc from amalgamation source, link against it, run validation checklist (including URI-param encryption)
 - [ ] Test option 3 (only if 1 and 2 fail): add `go.mod` replace directive for jgiannuzzi fork, run validation checklist
 - [ ] Validation checklist: encrypted DB creation, FTS5 search, reopen with correct key, reopen with wrong key fails, WAL mode works, `sqlcipher_export` (or equivalent) works for both unencrypted→encrypted and re-key, checkpoint works
-- [ ] For PRAGMA path: verify ConnectHook applies key to all pool connections under concurrent access
+- [ ] For PRAGMA path: verify ConnectHook applies key to all pool connections under concurrent access; verify DSN pragmas removed and moved into ConnectHook (after PRAGMA key)
 - [ ] For URI path: verify key auto-applies to pool connections without ConnectHook
 - [ ] Document which option was selected and any caveats
 
@@ -45,10 +45,10 @@
 **Dependencies:** Task 2
 **Docs:** [implementation.md §2.2, §2.3](./implementation.md#22-key-reading-and-validation)
 
-- [ ] Create `internal/store/encryption.go` with `readEncryptionKey()` function
-- [ ] Unit test: empty key → error, short key → warning + returned, 32+ chars → returned
+- [ ] Create `internal/store/encryption.go` with `RequireEncryptionKey()` (errors on empty env) and `EncryptionKeyFromEnv()` (returns empty string if unset, for use by `capy encrypt` prompt flow)
+- [ ] Unit test: `RequireEncryptionKey` — empty → error, short → warning + returned, 32+ → returned. `EncryptionKeyFromEnv` — empty → empty string, set → value
 - [ ] Modify `openDB()` in `store.go`: read key, apply via PRAGMA+ConnectHook or URI (based on PoC), add canary query
-- [ ] If PRAGMA path: register custom `sqlite3.SQLiteDriver` with `ConnectHook` for per-connection key; switch from blank import to named import
+- [ ] If PRAGMA path: register custom `sqlite3.SQLiteDriver` with `ConnectHook` — apply PRAGMA key first, then all DSN pragmas (journal_mode, synchronous, busy_timeout, foreign_keys) in the hook; remove pragmas from DSN string
 - [ ] If URI path: append cipher+key params to DSN string (URL-encode passphrase)
 - [ ] Update `checkpoint()` and `Checkpoint()` to apply key to fresh connections
 - [ ] Update test helpers to set `CAPY_DB_KEY` for all store tests
@@ -65,7 +65,7 @@
 
 - [ ] Create `internal/terminal/prompt.go` with `ReadPassphrase()` and `ReadPassphraseConfirm()` using `golang.org/x/term`
 - [ ] Manual test passphrase prompting (no echo, correct string)
-- [ ] Create `cmd/capy/encrypt.go` with full encryption/re-key flow (open source → attach target → sqlcipher_export → rename)
+- [ ] Create `cmd/capy/encrypt.go` with full encryption/re-key flow (open source with exclusive access → checkpoint source → attach target → sqlcipher_export → remove sidecars at original paths → rename)
 - [ ] Register command in `cmd/capy/main.go`
 - [ ] Manual test: initial encryption (unencrypted → encrypted, empty old key)
 - [ ] Manual test: key rotation (encrypted → re-encrypted, old key provided)
@@ -97,8 +97,8 @@
 **Dependencies:** Task 4, Task 5
 **Docs:** [implementation.md §Phase 5](./implementation.md#phase-5-documentation)
 
-- [ ] Write `docs/adr/019-encrypted-knowledge-db.md` (already drafted — verify against final implementation)
-- [ ] Update `docs/adr/015-knowledge-db-not-tracked-in-git.md` status to superseded (already done — verify)
+- [ ] Verify `docs/adr/019-encrypted-knowledge-db.md` matches final implementation (already drafted — update if PoC changed design decisions)
+- [ ] Verify `docs/adr/015-knowledge-db-not-tracked-in-git.md` status is superseded (already done — confirm cross-references)
 - [ ] Add encryption workflow section to `README.md`: CAPY_DB_KEY setup, initial encryption, cross-machine sync, key rotation, passphrase recommendations
 - [ ] Follow the documented README workflow on a clean checkout to verify accuracy
 
