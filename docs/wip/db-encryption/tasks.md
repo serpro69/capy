@@ -18,7 +18,9 @@
 - [ ] Test option 1: install `libsqlcipher-dev`, build with `-tags "fts5 libsqlite3"` + CGo flags, run validation checklist
 - [ ] Test option 2: build sqlite3mc from amalgamation source, link against it, run validation checklist (including URI-param encryption)
 - [ ] Test option 3 (only if 1 and 2 fail): add `go.mod` replace directive for jgiannuzzi fork, run validation checklist
-- [ ] Validation checklist: encrypted DB creation, FTS5 search, reopen with correct key, reopen with wrong key fails, WAL mode works, `sqlcipher_export` works, checkpoint works
+- [ ] Validation checklist: encrypted DB creation, FTS5 search, reopen with correct key, reopen with wrong key fails, WAL mode works, `sqlcipher_export` (or equivalent) works for both unencrypted→encrypted and re-key, checkpoint works
+- [ ] For PRAGMA path: verify ConnectHook applies key to all pool connections under concurrent access
+- [ ] For URI path: verify key auto-applies to pool connections without ConnectHook
 - [ ] Document which option was selected and any caveats
 
 ---
@@ -45,7 +47,9 @@
 
 - [ ] Create `internal/store/encryption.go` with `readEncryptionKey()` function
 - [ ] Unit test: empty key → error, short key → warning + returned, 32+ chars → returned
-- [ ] Modify `openDB()` in `store.go`: read key, apply via PRAGMA or URI (based on PoC), add canary query
+- [ ] Modify `openDB()` in `store.go`: read key, apply via PRAGMA+ConnectHook or URI (based on PoC), add canary query
+- [ ] If PRAGMA path: register custom `sqlite3.SQLiteDriver` with `ConnectHook` for per-connection key; switch from blank import to named import
+- [ ] If URI path: append cipher+key params to DSN string (URL-encode passphrase)
 - [ ] Update `checkpoint()` and `Checkpoint()` to apply key to fresh connections
 - [ ] Update test helpers to set `CAPY_DB_KEY` for all store tests
 - [ ] Verify: `make test` passes, `make test-race` passes
@@ -77,7 +81,7 @@
 **Dependencies:** Task 3
 **Docs:** [implementation.md §Phase 4](./implementation.md#phase-4-safety-guardrails)
 
-- [ ] Update pre-commit hook: if `knowledge.db` is staged, check first 16 bytes against plaintext SQLite header
+- [ ] Update `preCommitHookScript()` in `internal/platform/setup.go`: add inline shell header check (first 15 bytes vs `"SQLite format 3"`)
 - [ ] Reject commit with clear message if unencrypted DB is staged
 - [ ] Update `.gitignore`: add `.capy/knowledge.db-wal` and `.capy/knowledge.db-shm`
 - [ ] Verify: stage unencrypted DB → commit blocked

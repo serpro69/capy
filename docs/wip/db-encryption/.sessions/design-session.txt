@@ -86,7 +86,7 @@
 
   Want me to update the sessionflow-rag design doc and fix the .gitignore?
 
-✻ Brewed for 1m 28s
+✻ Cooked for 1m 28s
 
 ❯ And why can't we just encrypt the db with a very strong encryption (use the   
   strongest available to date) and a long key. Or require user with auth, again 
@@ -135,7 +135,7 @@
   Want me to go with Option A (strip session rows from sharing pathways) and
   update the design doc?
 
-✻ Worked for 35s
+✻ Cooked for 35s
 
 ❯ But I want session sharing, just not sharing it with the world. Imagine not   
   even sharing withing the team, but a simple scenario when 1 person works on   
@@ -195,7 +195,7 @@
   Want me to proceed with this split — update the sessionflow-rag design with
   the safety guardrails and draft a skeleton design doc for DB encryption?
 
-✻ Cogitated for 1m 48s
+✻ Cooked for 1m 48s
 
 ❯ Let's keep sessionflow-rag design as is, we don't need to rush it and we      
   don't need to change the scope of it. Use kk:design to design and document    
@@ -276,7 +276,7 @@
 
   Which behavior do you want?
 
-✻ Cogitated for 2m 11s
+✻ Cooked for 2m 11s
 
 ❯ B                                                                             
 
@@ -355,7 +355,7 @@
 
   Agree with the reversal, or prefer your original order?
 
-✻ Worked for 31s
+✻ Brewed for 31s
 
 ❯ Sounds good. But we should document the flow for the users in the README      
 
@@ -482,7 +482,7 @@
   Does this approach work for you, or do you want a fully vendored amalgamation
   (more self-contained but more maintenance)?
 
-✻ Cooked for 1m 18s
+✻ Sautéed for 1m 18s
 
 ※ recap: Designing a DB encryption feature for capy so knowledge.db can be safely committed to git. We're choosing the SQLCipher integration approach. Next step: you tell me whether linking against system-installed SQLCipher is fine or you want a vendored amalgamation instead. (disable recaps in /config)
 
@@ -522,7 +522,7 @@
 
   Want me to install libsqlcipher-dev and run the proof-of-concept?
 
-✻ Baked for 1m 3s
+✻ Worked for 1m 3s
 
 ❯ we can just download the binaries? https://utelle.github.io/SQLite3MultipleCi 
   phers/docs/installation/install_overview/#releases-and-binaries               
@@ -829,6 +829,661 @@
   documents encrypted+checkpointed = safe to commit
   - ADR-015: updated status to Superseded by ADR-019
 
-✻ Baked for 3m 31s
+✻ Churned for 3m 31s
 
 ※ recap: Designing mandatory encryption for knowledge.db so it's safe to commit and sync across machines. All design docs, implementation plan, tasks, and ADR-019 are written. Next step is running the driver proof-of-concept to pick the encryption backend. (disable recaps in /config)
+
+❯ /export design-session.txt                                                    
+  ⎿  Conversation exported to:
+     /home/sergio/Projects/personal/capy/design-session.txt
+
+※ recap: Designing mandatory encryption for knowledge.db so it's safe to commit and portable across machines. Design docs, implementation plan, tasks, and ADR-019 are all written. Next step is running the design review before implementation begins. (disable recaps in /config)
+
+❯ I did a review of the docs in another session, below are the findings. I want 
+   you to make a checklist for each finding, corroborate it, then fix if it's a 
+   valid issue.                                                                 
+                                                                                
+  ---                                                                           
+                                                                                
+  Design Review: DB Encryption                                                  
+                                                                                
+  Scope: design.md + implementation.md                                          
+  Overall assessment: CONCERNS_FOUND                                            
+  Documents:                                                                    
+                                                                                
+  - Design: docs/wip/db-encryption/design.md                                    
+  - Implementation: docs/wip/db-encryption/implementation.md                    
+                                                                                
+  Summary: 6 findings: 1 critical, 1 high, 3 medium, 1 low                      
+                                                                                
+  ---                                                                           
+  Findings                                                                      
+                                                                                
+  P0 - Critical                                                                 
+                                                                                
+  - [TECH_RISK] PRAGMA path doesn't handle database/sql connection pool         
+    - Section: design.md §Connection Changes; implementation.md §2.3            
+    - Confidence: 9/10 — Verified against codebase. openDB() at store.go:114    
+  does NOT set SetMaxOpenConns(1) (only checkpoint() at line 331 and            
+  Checkpoint() at line 357 do). The main pool is unbounded. Prior arch decision 
+   already documented this exact class of issue for PRAGMA mmap_size and        
+  identified ConnectHook as the upgrade path.                                   
+    - Description: The design says "After sql.Open(), execute PRAGMA key = ? as 
+   the very first statement." But database/sql maintains a connection pool.     
+  PRAGMA key only applies to whichever connection handles that Exec call. Under 
+   concurrent MCP tool calls, the pool creates additional connections that      
+  won't have the encryption key — those connections will fail to read the       
+  encrypted DB. This is a silent, load-dependent failure: single-threaded tests 
+   pass, concurrent production traffic breaks.                                  
+    - Evidence: store.go:116 uses sql.Open("sqlite3", dsn) with default pool    
+  settings. store.go:13 uses blank import (_ "github.com/mattn/go-sqlite3") —   
+  no access to ConnectHook. Only checkpoint functions restrict to               
+  MaxOpenConns(1).                                                              
+    - Recommendation: The design must address per-connection key application    
+  for the PRAGMA path. Three options, in order of preference:                   
+        i. URI path (option 2): Key in DSN is automatically applied             
+  per-connection — no pool issue. This should be a strong factor favoring       
+  option 2 in the PoC.                                                          
+      ii. ConnectHook: Register a custom sqlite3.SQLiteDriver with a            
+  ConnectHook that runs PRAGMA key on every new connection. Requires switching  
+  store.go from blank import to named import (already done in retry.go, so the  
+  pattern exists).                                                              
+      iii. SetMaxOpenConns(1): Simplest fix — serialize all DB access through   
+  one connection. Already used for checkpoint connections. Acceptable for a     
+  single-user tool, but the design should explicitly acknowledge the            
+  serialization trade-off.                                                      
+                                                                                
+  P1 - High                                                                     
+                                                                                
+  - [MISSING] Mandatory encryption is a breaking change — migration strategy    
+  absent                                                                        
+    - Section: design.md §Key Management                                        
+    - Confidence: 7/10 — The design clearly states "Mandatory. If unset, capy   
+  refuses to start." This is intentional, but the implications aren't           
+  discussed.                                                                    
+    - Description: Existing users who upgrade capy will immediately be unable   
+  to start until they set CAPY_DB_KEY and run capy encrypt. The design provides 
+   the mechanics (capy encrypt) but doesn't discuss: (a) whether this warrants  
+  a major version bump, (b) how users are notified (error message alone may be  
+  insufficient), (c) whether users who don't need cross-machine portability     
+  should be forced to encrypt. A single-machine user gains friction with no     
+  security benefit.                                                             
+    - Evidence: design.md §Key Management: "If unset, capy refuses to start     
+  with: CAPY_DB_KEY environment variable is required."                          
+    - Recommendation: Either: (1) make encryption opt-in (capy works without    
+  key, capy encrypt enables it, pre-commit hook enforces it only for committed  
+  DBs), or (2) keep mandatory but add an explicit "Breaking Changes" section    
+  documenting the migration path, version bump rationale, and first-run         
+  experience for upgrading users. Option 1 is cleaner — the pre-commit hook     
+  already prevents unencrypted commits, so mandatory encryption adds friction   
+  without additional safety.                                                    
+                                                                                
+  P2 - Medium                                                                   
+                                                                                
+  - [AMBIGUOUS] Pre-commit header check — mechanism unspecified                 
+    - Section: design.md §Pre-commit Hook; implementation.md §4.1               
+    - Confidence: 8/10 — The current hook is a shell script generated by        
+  preCommitHookScript() in setup.go:151. The check must run at commit time, not 
+   at hook-install time.                                                        
+    - Description: The design says "verify it's encrypted by inspecting the     
+  file header" but doesn't specify whether this check lives in the generated    
+  shell script (e.g., head -c 16 file | grep -q "SQLite format 3") or via a     
+  capy subcommand called from the script (e.g., capy encrypt --check). The      
+  implementation plan says to add this to precommit.go (Go code), which         
+  conflates hook-installation code with hook-runtime code.                      
+    - Evidence: Current hook script (setup.go:153-162) is pure shell — it calls 
+   bash capy checkpoint. The header check needs to be in the same shell script  
+  or invoke a capy subcommand.                                                  
+    - Recommendation: Specify explicitly. The cleanest approach: add the        
+  16-byte header check inline in the shell script (zero dependencies, head -c   
+  16 | od -A n -t x1 compared against the SQLite magic bytes). Alternatively,   
+  add a capy encrypt --verify flag and call it from the script.                 
+  - [AMBIGUOUS] sqlcipher_export portability across driver options              
+    - Section: design.md §capy encrypt Command; implementation.md §3.2          
+    - Confidence: 6/10 — sqlite3mc likely supports sqlcipher_export in          
+  compatibility mode, but this is unverified.                                   
+    - Description: The encrypt flow uses sqlcipher_export('target') — a         
+  SQLCipher-specific function. The design claims to be "driver-agnostic" but    
+  the encrypt command is written entirely in SQLCipher terms. If option 2       
+  (system sqlite3mc) wins and the default cipher is ChaCha20-Poly1305, does     
+  sqlcipher_export work? sqlite3mc has its own export mechanisms that may       
+  differ.                                                                       
+    - Evidence: design.md §Design Decisions: "Design is driver-agnostic." But   
+  §capy encrypt: "Execute: SELECT sqlcipher_export('target')."                  
+    - Recommendation: Add a row to the PoC validation checklist explicitly      
+  testing sqlcipher_export (or equivalent) for each option. If sqlite3mc        
+  requires a different export mechanism, document the per-driver encrypt flow.  
+  - [INCONSISTENT] internal/platform/precommit.go doesn't exist                 
+    - Section: design.md §Integration Points; implementation.md §4.1            
+    - Confidence: 10/10 — Verified: file does not exist. Pre-commit logic is in 
+   internal/platform/setup.go (functions preCommitHookScript at line 151,       
+  installPreCommitHook at line 168). Test file precommit_test.go exists but not 
+   the referenced source file.                                                  
+    - Description: Both documents reference internal/platform/precommit.go as   
+  the location for the header check. The implementation plan hedges with "(or   
+  wherever the pre-commit hook logic lives)" but the design integration table   
+  states it definitively. A developer following the plan would create a new     
+  file instead of modifying the existing one.                                   
+    - Recommendation: Update both documents to reference                        
+  internal/platform/setup.go. Consider whether the header check should be a new 
+   function in setup.go (added to preCommitHookScript) or a separate file.      
+                                                                                
+  P3 - Low                                                                      
+                                                                                
+  - [INCOMPLETE] Implementation prerequisites missing loader.go                 
+    - Section: implementation.md §Prerequisites                                 
+    - Confidence: 10/10 — config.Load() is in internal/config/loader.go:17, not 
+   in config.go as implied by the prerequisites list.                           
+    - Description: The prerequisites list internal/config/config.go for Config, 
+   StoreConfig, DefaultConfig(). But config.Load (used directly in capy encrypt 
+   step 1) lives in internal/config/loader.go. A developer unfamiliar with the  
+  codebase would look in the wrong file.                                        
+    - Recommendation: Add internal/config/loader.go — Load() to the             
+  prerequisites list.                                                           
+                                                                                
+  ---                                                                           
+  Clean Areas                                                                   
+                                                                                
+  - Problem statement and motivation — Clear, well-scoped, with proper ADR      
+  cross-references. The security rationale (sensitive session transcripts,      
+  stolen laptop threat model) justifies the feature.                            
+  - Driver strategy — Thorough evaluation of 3 options, ranked by preference,   
+  with explicit pros/cons. The PoC-first approach is sound.                     
+  - Key management — env-var-only, no persistence, read-at-connection-time.     
+  Consistent with crypto tool conventions (age, GPG). Passphrase warning        
+  threshold at 32 chars is reasonable.                                          
+  - Encrypt command flow — Detailed 12-step process with backup/rollback        
+  strategy. Error handling covers partial failures. Key rotation reuses the     
+  same flow elegantly.                                                          
+  - ADR cross-references — All three referenced ADRs (015, 016, 019) exist. The 
+   supersession chain (015 → 019) is correct.                                   
+  - Codebase references — All referenced source files exist: store.go,          
+  config.go, paths.go, checkpoint.go, main.go, setup.go. Functions (openDB,     
+  getDB, checkpoint, Checkpoint, ResolveDBPath, DetectProjectRoot, config.Load) 
+   all verified present.                                                        
+  - .gitignore — Line 38 (!.capy/knowledge.db) confirmed. WAL/SHM sidecar       
+  additions are correct.                                                        
+  - Implementation phasing — Logical dependency ordering (PoC → build → core →  
+  CLI → guardrails → docs → verify). Each phase has clear verification          
+  criteria.                                                                     
+  - Checkpoint integration — Both checkpoint() and Checkpoint() correctly       
+  identified as needing key application. Both already use SetMaxOpenConns(1),   
+  so the pool issue doesn't apply to them.                                      
+
+● Good review. Let me corroborate each finding against the codebase, then fix
+  the valid ones.
+
+  Searched for 4 patterns, read 2 files, listed 1 directory (ctrl+o to expand)
+
+● All findings corroborated. Here's the checklist:
+
+  P0 — PRAGMA path connection pool
+  - Verified: openDB() at store.go:116 — no SetMaxOpenConns(1), pool unbounded
+  - Verified: retry.go already uses named import github.com/mattn/go-sqlite3
+  (not blank import) — ConnectHook pattern is available
+  - Verified: only checkpoint() (line 331) and Checkpoint() (line 357) set
+  SetMaxOpenConns(1)
+  - Verdict: VALID. Real silent failure under concurrent MCP calls for the
+  PRAGMA path.
+
+  P1 — Mandatory encryption breaking change
+  - Verified: design says "key required, always encrypted" — explicit user
+  decision during design session
+  - Verdict: VALID but intentional. Fix: add "Breaking Changes" section rather
+  than change the decision.
+
+  P2 — Pre-commit header check mechanism
+  - Verified: hook is a shell script generated by preCommitHookScript() at
+  setup.go:151
+  - Verified: no precommit.go exists
+  - Verdict: VALID. Mechanism must be shell-inline or a capy subcommand.
+
+  P2 — sqlcipher_export portability
+  - sqlite3mc supports sqlcipher_export in SQLCipher compat mode, but
+  non-SQLCipher ciphers may use different export
+  - Verdict: VALID. PoC must explicitly test the export mechanism.
+
+  P2 — precommit.go doesn't exist
+  - Verified: file is internal/platform/setup.go, not precommit.go
+  - Verdict: VALID. Straightforward reference error.
+
+  P3 — Missing loader.go in prerequisites
+  - Verified: config.Load() is at loader.go:17
+  - Verdict: VALID.
+
+  All 6 findings are valid. Fixing now.
+
+  Read 1 file (ctrl+o to expand)
+
+● Now applying all fixes to the design doc.
+
+● Update(docs/wip/db-encryption/design.md)
+  ⎿  Added 7 lines, removed 3 lines
+      58  
+      59  `openDB()` in `store.go` is the single integration point. The c
+          hange depends on the PoC result:
+      60  
+      61 -**PRAGMA path (SQLCipher / option 1 or 3):** After `sql.Open()`
+         -, execute `PRAGMA key = ?` as the very first statement — before
+         - mmap_size, schema init, migrations, or any other operation. Se
+         -quence becomes: open → PRAGMA key → PRAGMA mmap_size → schema →
+         - migrations → prepared statements.                             
+      61 +**PRAGMA path (SQLCipher / option 1 or 3):** `PRAGMA key` is pe
+         +r-connection, but `database/sql` maintains a connection pool. T
+         +he main pool in `openDB()` does NOT call `SetMaxOpenConns(1)` —
+         + only `checkpoint()` and `Checkpoint()` do. Under concurrent MC
+         +P tool calls, the pool creates additional connections that woul
+         +d lack the encryption key, causing silent failures. This is the
+         + same class of issue identified for `PRAGMA mmap_size` (see `kk
+         +:arch-decisions` — "mmap_size pragma requires Exec, not DSN"), 
+         +where `ConnectHook` was identified as the upgrade path.        
+      62  
+      63 -**URI path (sqlite3mc / option 2):** Append `&cipher=chacha20&k
+         -ey=<url-encoded-passphrase>` to the DSN string. No post-open PR
+         -AGMA needed.                                                   
+      63 +For the PRAGMA path, there are two sub-options:                
+      64 +- **ConnectHook (preferred):** Register a custom `sqlite3.SQLit
+         +eDriver` with a `ConnectHook` that executes `PRAGMA key` on eve
+         +ry new connection. `retry.go` already uses a named import of `m
+         +attn/go-sqlite3` (not blank import), so the pattern is availabl
+         +e in the codebase. This ensures every pool connection is keyed.
+      65 +- **SetMaxOpenConns(1) (fallback):** Serialize all DB access th
+         +rough one connection. Acceptable for a single-user tool but lim
+         +its concurrency under parallel MCP calls.                      
+      66  
+      65 -Both `checkpoint()` (internal, called from `Close()`) and `Chec
+         -kpoint()` (public, called from `capy checkpoint` CLI) open fres
+         -h connections and must apply the same key via the same mechanis
+         -m.                                                             
+      67 +**URI path (sqlite3mc / option 2):** Append `&cipher=chacha20&k
+         +ey=<url-encoded-passphrase>` to the DSN string. The key is appl
+         +ied automatically to every connection the pool creates — **no p
+         +ool issue**. This is a strong reason to prefer option 2 in the 
+         +PoC.                                                           
+      68  
+      69 +Both `checkpoint()` (internal, called from `Close()`) and `Chec
+         +kpoint()` (public, called from `capy checkpoint` CLI) open fres
+         +h connections with `SetMaxOpenConns(1)` and must apply the same
+         + key via the same mechanism.                                   
+      70 +                                                               
+      71  **Wrong-key detection:** After applying the key, execute a cana
+          ry query (`SELECT count(*) FROM sqlite_master`). SQLCipher/sqli
+          te3mc return a generic error on wrong key. The wrapper translat
+          es this to: `"wrong passphrase or corrupted database"`.
+      72  
+      73  ### `capy encrypt` Command
+
+● Update(docs/wip/db-encryption/design.md)
+  ⎿  Added 10 lines, removed 2 lines
+      101  
+      102  ### Pre-commit Hook
+      103  
+      104 -The existing hook in `internal/platform/` calls `capy checkpoi
+          -nt` before commits. It gains one additional check: if `knowled
+          -ge.db` is staged for commit, verify it's encrypted by inspecti
+          -ng the file header.                                           
+      104 +The existing hook is a shell script generated by `preCommitHoo
+          +kScript()` in `internal/platform/setup.go` (line 151). It runs
+          + `capy checkpoint` when the DB file is staged. The script gain
+          +s an inline header check before the checkpoint call:          
+      105  
+      106 -An unencrypted SQLite DB starts with the 16-byte magic string 
+          -`"SQLite format 3\000"`. An encrypted DB has random bytes. If 
+          -the header matches the plaintext signature, the hook rejects t
+          -he commit: `"Refusing to commit unencrypted knowledge.db. Run 
+          -'capy encrypt' first."`.                                      
+      106 +```sh                                                         
+      107 +# Check for unencrypted DB — first 15 bytes of an unencrypted 
+          +SQLite DB are "SQLite format 3"                               
+      108 +if head -c 15 "$f" 2>/dev/null | grep -q 'SQLite format 3'; th
+          +en                                                            
+      109 +  echo "capy: refusing to commit unencrypted $f. Run 'capy enc
+          +rypt' first." >&2                                             
+      110 +  exit 1                                                      
+      111 +fi                                                            
+      112 +```                                                           
+      113  
+      114 +An unencrypted SQLite DB starts with the 16-byte magic string 
+          +`"SQLite format 3\000"`. An encrypted DB has random bytes at t
+          +he start. The check is inline shell (no capy subcommand depend
+          +ency) — `head` and `grep` are available in any POSIX environme
+          +nt.                                                           
+      115 +                                                              
+      116  The check only fires when the DB file is staged — it does not 
+           affect commits that don't touch the DB.
+      117  
+      118  ### .gitignore
+
+● Update(docs/wip/db-encryption/design.md)
+  ⎿  Added 1 line, removed 1 line
+      87  3. Open source DB with old key (empty = unencrypted). Run canar
+          y query to verify access.
+      88  4. Create temp target: `<dbpath>.enc.tmp`.
+      89  5. Attach target with new key: `ATTACH DATABASE '<target>' AS t
+          arget KEY '<new-key>'`.
+      90 -6. Export: `SELECT sqlcipher_export('target')`.                
+      90 +6. Export: `SELECT sqlcipher_export('target')` (SQLCipher) or e
+         +quivalent (sqlite3mc — see PoC task for verification).         
+      91  7. Detach and close source.
+      92  8. Back up original: rename `<dbpath>` → `<dbpath>.bak`.
+      93  9. Rename temp to final: `<dbpath>.enc.tmp` → `<dbpath>`.
+● Update(docs/wip/db-encryption/design.md)
+  ⎿  Added 1 line, removed 1 line
+      144  | `internal/store/store.go` | `checkpoint()`, `Checkpoint()`: 
+           apply key to fresh connections |
+      145  | `cmd/capy/encrypt.go` | New CLI command for encryption and k
+           ey rotation |
+      146  | `cmd/capy/main.go` | Register `encrypt` subcommand |
+      147 -| `internal/platform/precommit.go` | Header check for unencryp
+          -ted DB |                                                      
+      147 +| `internal/platform/setup.go` | Header check in generated pre
+          +-commit hook script (`preCommitHookScript()`) |               
+      148  | `.gitignore` | Add WAL/SHM sidecar ignore rules |
+      149  | `Makefile` | Update build tags/flags for encryption backend 
+           |
+      150  | `go.mod` | Possibly add `replace` directive (option 3) or no
+            change (options 1-2) |
+
+● Now add the Breaking Changes section to design.md.
+
+● Update(docs/wip/db-encryption/design.md)
+  ⎿  Added 15 lines
+      150  | `go.mod` | Possibly add `replace` directive (option 3) or no
+            change (options 1-2) |
+      151  | `README.md` | Encryption setup and workflow documentation |
+      152  
+      153 +## Breaking Changes                                           
+      154 +                                                              
+      155 +Mandatory encryption is a breaking change. Existing users who 
+          +upgrade capy will be unable to start until they set `CAPY_DB_K
+          +EY` and run `capy encrypt`. This warrants a major version bump
+          + (v1.0.0 or next major).                                      
+      156 +                                                              
+      157 +**First-run experience for upgrading users:**                 
+      158 +                                                              
+      159 +1. User upgrades capy, runs it → error: `"CAPY_DB_KEY environm
+          +ent variable is required (see: capy encrypt --help)"`.        
+      160 +2. User sets `CAPY_DB_KEY` in their shell profile.            
+      161 +3. User runs `capy encrypt` → prompted for current key (empty,
+          + since DB is unencrypted) → DB encrypted.                     
+      162 +4. capy starts normally.                                      
+      163 +                                                              
+      164 +The error message must be actionable — it names the env var, p
+          +oints to `capy encrypt --help`, and explains why. The `capy en
+          +crypt --help` text includes the full setup workflow.          
+      165 +                                                              
+      166 +**CHANGELOG entry** must call this out prominently as a breaki
+          +ng change with step-by-step migration instructions.           
+      167 +                                                              
+      168  ## Open Questions
+      169  
+      170  - **Which driver option wins the PoC?** Options 1-3 are tested
+            in order. The design is intentionally driver-agnostic so the 
+           answer doesn't change anything beyond `openDB()` and the Makef
+           ile.
+
+● Now fix the implementation.md.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(docs/wip/db-encryption/implementation.md)
+  ⎿  Added 1 line
+      12  - `CONTRIBUTING.md` — build instructions, test patterns, projec
+          t structure
+      13  - `internal/store/store.go` — `ContentStore`, `openDB()`, `getD
+          B()`, `checkpoint()`, `Checkpoint()`, `Close()`
+      14  - `internal/config/config.go` — `Config`, `StoreConfig`, `Defau
+          ltConfig()`
+      15 +- `internal/config/loader.go` — `Load()`, config precedence, va
+         +lidation                                                       
+      16  - `internal/config/paths.go` — `ResolveDBPath()`, `DetectProjec
+          tRoot()`
+      17  - `cmd/capy/checkpoint.go` — existing checkpoint CLI command (m
+          odel for `encrypt`)
+      18  - `internal/platform/setup.go` — pre-commit hook setup
+
+● Update(docs/wip/db-encryption/implementation.md)
+  ⎿  Added 8 lines, removed 3 lines
+       99  
+      100  Modify `openDB()` to apply encryption. The exact mechanism dep
+           ends on the PoC result:
+      101  
+      102 -**PRAGMA path:** After `sql.Open()`, before any other statemen
+          -t, execute `PRAGMA key = ?` with the passphrase. Sequence: ope
+          -n → PRAGMA key → canary query → PRAGMA mmap_size → schema → mi
+          -grations → prepared statements.                               
+      102 +**PRAGMA path:** `PRAGMA key` is per-connection, but `database
+          +/sql` maintains a connection pool. `openDB()` does NOT call `S
+          +etMaxOpenConns(1)` — concurrent MCP tool calls can create addi
+          +tional pool connections that lack the key. Two sub-options:   
+      103  
+      104 -**URI path:** Construct DSN with encryption parameters appende
+          -d before the existing pragmas. Passphrase must be URL-encoded.
+          - Then: open → canary query → PRAGMA mmap_size → schema → migra
+          -tions → prepared statements.                                  
+      104 +- *ConnectHook (preferred):* Register a custom `sqlite3.SQLite
+          +Driver` with a `ConnectHook` that executes `PRAGMA key` on eve
+          +ry new connection. `retry.go` already uses a named import of `
+          +mattn/go-sqlite3`, so the pattern is available. Switch `store.
+          +go` from blank import to named import (or reuse `retry.go`'s i
+          +mport). Register the custom driver with a distinct name (e.g.,
+          + `"sqlite3_encrypted"`), then use `sql.Open("sqlite3_encrypted
+          +", dsn)`.                                                     
+      105 +- *SetMaxOpenConns(1) (fallback):* Add `db.SetMaxOpenConns(1)`
+          + after `sql.Open()`. Serializes all DB access. Acceptable for 
+          +single-user but limits concurrency.                           
+      106  
+      107 +Sequence with ConnectHook: open (ConnectHook runs PRAGMA key o
+          +n each connection) → canary query → PRAGMA mmap_size → schema 
+          +→ migrations → prepared statements.                           
+      108 +                                                              
+      109 +**URI path (preferred if option 2 wins):** Construct DSN with 
+          +encryption parameters appended before the existing pragmas. Pa
+          +ssphrase must be URL-encoded. The key is applied automatically
+          + to every pool connection — **no ConnectHook or pool restricti
+          +on needed**. Then: open → canary query → PRAGMA mmap_size → sc
+          +hema → migrations → prepared statements.                      
+      110 +                                                              
+      111  The canary query (`SELECT count(*) FROM sqlite_master`) detect
+           s wrong-key errors early. On failure, wrap the error: `"wrong 
+           passphrase or corrupted database (check CAPY_DB_KEY)"`.
+      112  
+      113  **File:** `internal/store/store.go` — `checkpoint()` and `Chec
+           kpoint()`
+      114  
+      110 -Both methods open fresh `sql.Open()` connections. Apply the sa
+          -me key mechanism (PRAGMA or URI) to these connections. Read th
+          -e passphrase from `os.Getenv("CAPY_DB_KEY")` at call time.    
+      115 +Both methods open fresh `sql.Open()` connections with `SetMaxO
+          +penConns(1)`. Apply the same key mechanism (PRAGMA or URI) to 
+          +these connections. Read the passphrase from `os.Getenv("CAPY_D
+          +B_KEY")` at call time. The pool issue does not apply to checkp
+          +oint connections since they already restrict to a single conne
+          +ction.                                                        
+      116  
+      117  **Verify:** `make test` — all existing tests must pass. Tests 
+           now require `CAPY_DB_KEY` to be set (update test helpers to se
+           t a test key). Manually verify: start capy with key set → work
+           s; start without key → clear error message; start with wrong k
+           ey → clear error message.
+      118  
+
+● Update(docs/wip/db-encryption/implementation.md)
+  ⎿  Added 1 line, removed 1 line
+      156  6. Open source DB with old key (if empty, open without encrypt
+           ion pragma). Run canary query.
+      157  7. Create temp file `<dbpath>.enc.tmp`.
+      158  8. Execute: `ATTACH DATABASE '<temp>' AS target KEY '<new-key>
+           '`.
+      159 -9. Execute: `SELECT sqlcipher_export('target')`.              
+      159 +9. Execute: `SELECT sqlcipher_export('target')` (SQLCipher) or
+          + equivalent export mechanism (sqlite3mc — verified during PoC)
+          +.                                                             
+      160  10. Execute: `DETACH DATABASE target`.
+      161  11. Close source DB.
+      162  12. Rename `<dbpath>` → `<dbpath>.bak`.
+
+● Update(docs/wip/db-encryption/implementation.md)
+  ⎿  Added 8 lines, removed 5 lines
+      184  
+      185  ### 4.1 Pre-commit hook: reject unencrypted DB
+      186  
+      187 -**File:** `internal/platform/precommit.go` (or wherever the pr
+          -e-commit hook logic lives)                                    
+      187 +**File:** `internal/platform/setup.go` — `preCommitHookScript(
+          +)` (line 151)                                                 
+      188  
+      189 -Add a check: if `knowledge.db` (or the configured DB filename)
+          - is in the git staging area, read its first 16 bytes. If they 
+          -match `"SQLite format 3\000"` (the plaintext SQLite magic head
+          -er), reject the commit with:                                  
+      189 +The pre-commit hook is a shell script generated by `preCommitH
+          +ookScript()`. Add an inline header check before the existing `
+          +capy checkpoint` call: for each staged DB file, read the first
+          + 15 bytes and compare against `"SQLite format 3"` (the plainte
+          +xt SQLite magic string). If matched, reject:                  
+      190  
+      191 +```sh                                                         
+      192 +if head -c 15 "$f" 2>/dev/null | grep -q 'SQLite format 3'; th
+          +en                                                            
+      193 +  echo "capy: refusing to commit unencrypted $f. Run 'capy enc
+          +rypt' first." >&2                                             
+      194 +  exit 1                                                      
+      195 +fi                                                            
+      196  ```
+      192 -capy: refusing to commit unencrypted knowledge.db. Run 'capy e
+          -ncrypt' first.                                                
+      193 -```                                                           
+      197  
+      195 -The check only fires when the DB file is staged — normal commi
+          -ts that don't touch the DB are unaffected.                    
+      198 +The check is pure POSIX shell (no capy dependency at commit ti
+          +me). It fires only when the DB file is staged — normal commits
+          + are unaffected.                                              
+      199  
+      200  **Verify:** Stage an unencrypted DB → commit blocked. Stage an
+            encrypted DB → commit proceeds. No DB staged → commit proceed
+           s.
+      201  
+
+● Now add the sqlcipher_export portability item to the PoC validation checklist.
+
+● Update(docs/wip/db-encryption/implementation.md)
+  ⎿  Added 3 lines, removed 1 line
+      54  - [ ] Close and reopen with correct key succeeds
+      55  - [ ] Reopen with wrong key fails cleanly
+      56  - [ ] WAL mode works with encryption
+      57 -- [ ] `sqlcipher_export` or equivalent migration works         
+      57 +- [ ] `sqlcipher_export` or equivalent migration works (test bo
+         +th unencrypted→encrypted and re-key paths)                     
+      58  - [ ] Checkpoint (PRAGMA wal_checkpoint(TRUNCATE)) works on enc
+          rypted DB
+      59 +- [ ] For PRAGMA path: verify ConnectHook applies key to all po
+         +ol connections (open DB, run concurrent queries, no wrong-key e
+         +rrors)                                                         
+      60 +- [ ] For URI path: verify key is applied automatically to pool
+         + connections without ConnectHook                               
+      61  
+      62  **Verify:** The PoC test passes with at least one option. Docum
+          ent which option was selected and any caveats in a comment at t
+          he top of the test file.
+      63  
+
+● Now update the tasks.md to reflect the fixes (pre-commit file reference, PoC
+  checklist additions).
+
+● Update(docs/wip/db-encryption/tasks.md)
+  ⎿  Added 3 lines, removed 1 line
+      18  - [ ] Test option 1: install `libsqlcipher-dev`, build with `-t
+          ags "fts5 libsqlite3"` + CGo flags, run validation checklist
+      19  - [ ] Test option 2: build sqlite3mc from amalgamation source, 
+          link against it, run validation checklist (including URI-param 
+          encryption)
+      20  - [ ] Test option 3 (only if 1 and 2 fail): add `go.mod` replac
+          e directive for jgiannuzzi fork, run validation checklist
+      21 -- [ ] Validation checklist: encrypted DB creation, FTS5 search,
+         - reopen with correct key, reopen with wrong key fails, WAL mode
+         - works, `sqlcipher_export` works, checkpoint works             
+      21 +- [ ] Validation checklist: encrypted DB creation, FTS5 search,
+         + reopen with correct key, reopen with wrong key fails, WAL mode
+         + works, `sqlcipher_export` (or equivalent) works for both unenc
+         +rypted→encrypted and re-key, checkpoint works                  
+      22 +- [ ] For PRAGMA path: verify ConnectHook applies key to all po
+         +ol connections under concurrent access                         
+      23 +- [ ] For URI path: verify key auto-applies to pool connections
+         + without ConnectHook                                           
+      24  - [ ] Document which option was selected and any caveats
+      25  
+      26  ---
+
+● Update(docs/wip/db-encryption/tasks.md)
+  ⎿  Added 3 lines, removed 1 line
+      47  
+      48  - [ ] Create `internal/store/encryption.go` with `readEncryptio
+          nKey()` function
+      49  - [ ] Unit test: empty key → error, short key → warning + retur
+          ned, 32+ chars → returned
+      50 -- [ ] Modify `openDB()` in `store.go`: read key, apply via PRAG
+         -MA or URI (based on PoC), add canary query                     
+      50 +- [ ] Modify `openDB()` in `store.go`: read key, apply via PRAG
+         +MA+ConnectHook or URI (based on PoC), add canary query         
+      51 +- [ ] If PRAGMA path: register custom `sqlite3.SQLiteDriver` wi
+         +th `ConnectHook` for per-connection key; switch from blank impo
+         +rt to named import                                             
+      52 +- [ ] If URI path: append cipher+key params to DSN string (URL-
+         +encode passphrase)                                             
+      53  - [ ] Update `checkpoint()` and `Checkpoint()` to apply key to 
+          fresh connections
+      54  - [ ] Update test helpers to set `CAPY_DB_KEY` for all store te
+          sts
+      55  - [ ] Verify: `make test` passes, `make test-race` passes
+
+● Update(docs/wip/db-encryption/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      81  **Dependencies:** Task 3
+      82  **Docs:** [implementation.md §Phase 4](./implementation.md#phas
+          e-4-safety-guardrails)
+      83  
+      84 -- [ ] Update pre-commit hook: if `knowledge.db` is staged, chec
+         -k first 16 bytes against plaintext SQLite header               
+      84 +- [ ] Update `preCommitHookScript()` in `internal/platform/setu
+         +p.go`: add inline shell header check (first 15 bytes vs `"SQLit
+         +e format 3"`)                                                  
+      85  - [ ] Reject commit with clear message if unencrypted DB is sta
+          ged
+      86  - [ ] Update `.gitignore`: add `.capy/knowledge.db-wal` and `.c
+          apy/knowledge.db-shm`
+      87  - [ ] Verify: stage unencrypted DB → commit blocked
+
+● All 6 findings fixed:
+
+  Finding: P0 — PRAGMA pool issue
+  Fix: design.md §Connection Changes rewritten: documents pool problem,
+  specifies
+    ConnectHook as preferred fix, notes URI path avoids it entirely.
+    implementation.md §2.3 updated with ConnectHook registration details. PoC
+    checklist gains concurrent-access test items.
+  ────────────────────────────────────────
+  Finding: P1 — Breaking change undocumented
+  Fix: design.md gains §Breaking Changes section: first-run UX, CHANGELOG
+    requirement, version bump.
+  ────────────────────────────────────────
+  Finding: P2 — Pre-commit mechanism unspecified
+  Fix: design.md §Pre-commit Hook specifies inline shell (head -c 15 | grep).
+    implementation.md §4.1 updated with exact shell snippet and file reference
+    (setup.go:151).
+  ────────────────────────────────────────
+  Finding: P2 — sqlcipher_export portability
+  Fix: design.md and implementation.md note driver-dependent export. PoC
+    checklist explicitly tests export for each option including both migration
+    paths.
+  ────────────────────────────────────────
+  Finding: P2 — precommit.go doesn't exist
+  Fix: All references changed to internal/platform/setup.go —
+    preCommitHookScript().
+  ────────────────────────────────────────
+  Finding: P3 — Missing loader.go
+  Fix: Added internal/config/loader.go — Load() to implementation.md
+    prerequisites.
+
+✻ Crunched for 2m 48s
