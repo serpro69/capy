@@ -81,19 +81,19 @@ Provide a `Makefile` comment or variable explaining the encryption backend choic
 
 **New file:** `internal/store/encryption.go`
 
-Add a function to read and validate the encryption passphrase:
+Add two functions to read and validate the encryption passphrase:
 
 ```
-func readEncryptionKey() (string, error)
+func RequireEncryptionKey() (string, error)
+func EncryptionKeyFromEnv() string
 ```
 
-- Reads `CAPY_DB_KEY` from environment.
-- Returns error if empty: `"CAPY_DB_KEY environment variable is required"`.
-- Logs a warning (not error) if length < 32 characters.
+- `RequireEncryptionKey()` reads `CAPY_DB_KEY` from environment. Returns error if empty: `"CAPY_DB_KEY environment variable is required"`. Logs warning if length < 32 characters. Used by `openDB()` and server startup — contexts where the key is mandatory.
+- `EncryptionKeyFromEnv()` reads `CAPY_DB_KEY` from environment and returns it (empty string if unset, no error). Used by `capy encrypt` which has its own fallback to interactive prompting when the env var is unset.
 
-This is a standalone function, not a method on `ContentStore`, because `capy encrypt` needs it too without constructing a full store.
+Both are standalone functions (not methods on `ContentStore`) because `capy encrypt` needs them without constructing a full store.
 
-**Verify:** Unit test with mocked env var: empty → error, short → warning logged + key returned, 32+ chars → key returned.
+**Verify:** Unit test with mocked env var: `RequireEncryptionKey` — empty → error, short → warning + returned, 32+ → returned. `EncryptionKeyFromEnv` — empty → empty string returned, set → value returned.
 
 ### 2.3 Integrate encryption into `openDB()`
 
@@ -103,10 +103,10 @@ Modify `openDB()` to apply encryption. The exact mechanism depends on the PoC re
 
 **PRAGMA path:** `PRAGMA key` is per-connection, but `database/sql` maintains a connection pool. `openDB()` does NOT call `SetMaxOpenConns(1)` — concurrent MCP tool calls can create additional pool connections that lack the key. Two sub-options:
 
-- *ConnectHook (preferred):* Register a custom `sqlite3.SQLiteDriver` with a `ConnectHook` that executes `PRAGMA key` on every new connection. `retry.go` already uses a named import of `mattn/go-sqlite3`, so the pattern is available. Switch `store.go` from blank import to named import (or reuse `retry.go`'s import). Register the custom driver with a distinct name (e.g., `"sqlite3_encrypted"`), then use `sql.Open("sqlite3_encrypted", dsn)`.
-- *SetMaxOpenConns(1) (fallback):* Add `db.SetMaxOpenConns(1)` after `sql.Open()`. Serializes all DB access. Acceptable for single-user but limits concurrency.
+- *ConnectHook (preferred):* Register a custom `sqlite3.SQLiteDriver` with a `ConnectHook` that executes `PRAGMA key` on every new connection. **Critical:** `mattn/go-sqlite3` runs DSN pragmas *before* `ConnectHook`. All pragmas must be removed from the DSN and moved into the ConnectHook, executed after `PRAGMA key`. The DSN becomes just the bare DB path. `ConnectHook` sequence: (1) `PRAGMA key`, (2) `PRAGMA journal_mode=WAL`, (3) `PRAGMA synchronous=NORMAL`, (4) `PRAGMA busy_timeout=5000`, (5) `PRAGMA foreign_keys=ON`. `retry.go` already uses a named import of `mattn/go-sqlite3`, so the pattern is available. Register the custom driver with a distinct name (e.g., `"sqlite3_encrypted"`), then use `sql.Open("sqlite3_encrypted", dsn)`.
+- *SetMaxOpenConns(1) (fallback):* Add `db.SetMaxOpenConns(1)` after `sql.Open()`. Serializes all DB access. Acceptable for single-user but limits concurrency. DSN pragmas must still be removed and applied via post-open Exec calls after `PRAGMA key`.
 
-Sequence with ConnectHook: open (ConnectHook runs PRAGMA key on each connection) → canary query → PRAGMA mmap_size → schema → migrations → prepared statements.
+Sequence with ConnectHook: open (ConnectHook runs PRAGMA key + all pragmas on each connection) → canary query → PRAGMA mmap_size → schema → migrations → prepared statements.
 
 **URI path (preferred if option 2 wins):** Construct DSN with encryption parameters appended before the existing pragmas. Passphrase must be URL-encoded. The key is applied automatically to every pool connection — **no ConnectHook or pool restriction needed**. Then: open → canary query → PRAGMA mmap_size → schema → migrations → prepared statements.
 
@@ -155,17 +155,18 @@ New cobra command registered in `main.go`. Flow:
 3. Prompt for current passphrase (empty = unencrypted).
 4. Read new passphrase from `CAPY_DB_KEY` or prompt interactively (with confirm).
 5. Validate new passphrase length (warn if < 32).
-6. Open source DB with old key (if empty, open without encryption pragma). Run canary query.
-7. Create temp file `<dbpath>.enc.tmp`.
-8. Execute: `ATTACH DATABASE '<temp>' AS target KEY '<new-key>'`.
-9. Execute: `SELECT sqlcipher_export('target')` (SQLCipher) or equivalent export mechanism (sqlite3mc — verified during PoC).
-10. Execute: `DETACH DATABASE target`.
-11. Close source DB.
-12. Rename `<dbpath>` → `<dbpath>.bak`.
-13. Rename `<dbpath>.enc.tmp` → `<dbpath>`.
-14. Remove stale `<dbpath>.bak-wal` and `<dbpath>.bak-shm` if present.
-15. Verify: open new DB with new key, canary query.
-16. Print success message with backup path.
+6. Open source DB with old key (if empty, open without encryption pragma) using `SetMaxOpenConns(1)` for exclusive access. Run canary query.
+7. Checkpoint source: `PRAGMA wal_checkpoint(TRUNCATE)` to flush WAL and eliminate sidecars.
+8. Create temp file `<dbpath>.enc.tmp`.
+9. Execute: `ATTACH DATABASE '<temp>' AS target KEY '<new-key>'`.
+10. Execute: `SELECT sqlcipher_export('target')` (SQLCipher) or equivalent export mechanism (sqlite3mc — verified during PoC).
+11. Execute: `DETACH DATABASE target`.
+12. Close source DB.
+13. Remove WAL/SHM sidecars at original paths: `<dbpath>-wal` and `<dbpath>-shm` (SQLite names sidecars based on the DB path, not any renamed path — these must be removed before renaming).
+14. Rename `<dbpath>` → `<dbpath>.bak`.
+15. Rename `<dbpath>.enc.tmp` → `<dbpath>`.
+16. Verify: open new DB with new key, canary query.
+17. Print success message with backup path.
 
 Error handling: if steps 8-10 fail, remove temp file. If step 12-13 fail, the `.bak` preserves the original. Print clear instructions on failure.
 
@@ -220,15 +221,12 @@ Add WAL/SHM sidecar ignore rules after the existing `!.capy/knowledge.db` line:
 
 ### 5.1 ADR-019
 
-**New file:** `docs/adr/019-encrypted-knowledge-db.md`
+**Existing file:** `docs/adr/019-encrypted-knowledge-db.md` (already drafted during design phase)
+**Existing file:** `docs/adr/015-knowledge-db-not-tracked-in-git.md` (already updated to `Superseded by ADR-019`)
 
-Write the ADR as designed (see design.md §ADR-019 section). Supersedes ADR-015.
+Verify both ADRs are consistent with the final implementation. Update if the PoC resulted in design changes (e.g., cipher choice, driver selection). Ensure cross-references are correct.
 
-**File:** `docs/adr/015-knowledge-db-not-tracked-in-git.md`
-
-Update status from `Accepted` to `Superseded by ADR-019`.
-
-**Verify:** Both ADR files exist and cross-reference each other.
+**Verify:** Both ADR files exist, cross-reference each other, and match the implemented behavior.
 
 ### 5.2 README: encryption workflow
 
