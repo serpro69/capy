@@ -12,6 +12,7 @@ Read these files before starting:
 - `CONTRIBUTING.md` — build instructions, test patterns, project structure
 - `internal/store/store.go` — `ContentStore`, `openDB()`, `getDB()`, `checkpoint()`, `Checkpoint()`, `Close()`
 - `internal/config/config.go` — `Config`, `StoreConfig`, `DefaultConfig()`
+- `internal/config/loader.go` — `Load()`, config precedence, validation
 - `internal/config/paths.go` — `ResolveDBPath()`, `DetectProjectRoot()`
 - `cmd/capy/checkpoint.go` — existing checkpoint CLI command (model for `encrypt`)
 - `internal/platform/setup.go` — pre-commit hook setup
@@ -53,8 +54,10 @@ Build a standalone test program (`internal/store/encryption_poc_test.go` or a te
 - [ ] Close and reopen with correct key succeeds
 - [ ] Reopen with wrong key fails cleanly
 - [ ] WAL mode works with encryption
-- [ ] `sqlcipher_export` or equivalent migration works
+- [ ] `sqlcipher_export` or equivalent migration works (test both unencrypted→encrypted and re-key paths)
 - [ ] Checkpoint (PRAGMA wal_checkpoint(TRUNCATE)) works on encrypted DB
+- [ ] For PRAGMA path: verify ConnectHook applies key to all pool connections (open DB, run concurrent queries, no wrong-key errors)
+- [ ] For URI path: verify key is applied automatically to pool connections without ConnectHook
 
 **Verify:** The PoC test passes with at least one option. Document which option was selected and any caveats in a comment at the top of the test file.
 
@@ -98,15 +101,20 @@ This is a standalone function, not a method on `ContentStore`, because `capy enc
 
 Modify `openDB()` to apply encryption. The exact mechanism depends on the PoC result:
 
-**PRAGMA path:** After `sql.Open()`, before any other statement, execute `PRAGMA key = ?` with the passphrase. Sequence: open → PRAGMA key → canary query → PRAGMA mmap_size → schema → migrations → prepared statements.
+**PRAGMA path:** `PRAGMA key` is per-connection, but `database/sql` maintains a connection pool. `openDB()` does NOT call `SetMaxOpenConns(1)` — concurrent MCP tool calls can create additional pool connections that lack the key. Two sub-options:
 
-**URI path:** Construct DSN with encryption parameters appended before the existing pragmas. Passphrase must be URL-encoded. Then: open → canary query → PRAGMA mmap_size → schema → migrations → prepared statements.
+- *ConnectHook (preferred):* Register a custom `sqlite3.SQLiteDriver` with a `ConnectHook` that executes `PRAGMA key` on every new connection. `retry.go` already uses a named import of `mattn/go-sqlite3`, so the pattern is available. Switch `store.go` from blank import to named import (or reuse `retry.go`'s import). Register the custom driver with a distinct name (e.g., `"sqlite3_encrypted"`), then use `sql.Open("sqlite3_encrypted", dsn)`.
+- *SetMaxOpenConns(1) (fallback):* Add `db.SetMaxOpenConns(1)` after `sql.Open()`. Serializes all DB access. Acceptable for single-user but limits concurrency.
+
+Sequence with ConnectHook: open (ConnectHook runs PRAGMA key on each connection) → canary query → PRAGMA mmap_size → schema → migrations → prepared statements.
+
+**URI path (preferred if option 2 wins):** Construct DSN with encryption parameters appended before the existing pragmas. Passphrase must be URL-encoded. The key is applied automatically to every pool connection — **no ConnectHook or pool restriction needed**. Then: open → canary query → PRAGMA mmap_size → schema → migrations → prepared statements.
 
 The canary query (`SELECT count(*) FROM sqlite_master`) detects wrong-key errors early. On failure, wrap the error: `"wrong passphrase or corrupted database (check CAPY_DB_KEY)"`.
 
 **File:** `internal/store/store.go` — `checkpoint()` and `Checkpoint()`
 
-Both methods open fresh `sql.Open()` connections. Apply the same key mechanism (PRAGMA or URI) to these connections. Read the passphrase from `os.Getenv("CAPY_DB_KEY")` at call time.
+Both methods open fresh `sql.Open()` connections with `SetMaxOpenConns(1)`. Apply the same key mechanism (PRAGMA or URI) to these connections. Read the passphrase from `os.Getenv("CAPY_DB_KEY")` at call time. The pool issue does not apply to checkpoint connections since they already restrict to a single connection.
 
 **Verify:** `make test` — all existing tests must pass. Tests now require `CAPY_DB_KEY` to be set (update test helpers to set a test key). Manually verify: start capy with key set → works; start without key → clear error message; start with wrong key → clear error message.
 
@@ -150,7 +158,7 @@ New cobra command registered in `main.go`. Flow:
 6. Open source DB with old key (if empty, open without encryption pragma). Run canary query.
 7. Create temp file `<dbpath>.enc.tmp`.
 8. Execute: `ATTACH DATABASE '<temp>' AS target KEY '<new-key>'`.
-9. Execute: `SELECT sqlcipher_export('target')`.
+9. Execute: `SELECT sqlcipher_export('target')` (SQLCipher) or equivalent export mechanism (sqlite3mc — verified during PoC).
 10. Execute: `DETACH DATABASE target`.
 11. Close source DB.
 12. Rename `<dbpath>` → `<dbpath>.bak`.
@@ -178,15 +186,18 @@ Register: `rootCmd.AddCommand(newEncryptCmd())`.
 
 ### 4.1 Pre-commit hook: reject unencrypted DB
 
-**File:** `internal/platform/precommit.go` (or wherever the pre-commit hook logic lives)
+**File:** `internal/platform/setup.go` — `preCommitHookScript()` (line 151)
 
-Add a check: if `knowledge.db` (or the configured DB filename) is in the git staging area, read its first 16 bytes. If they match `"SQLite format 3\000"` (the plaintext SQLite magic header), reject the commit with:
+The pre-commit hook is a shell script generated by `preCommitHookScript()`. Add an inline header check before the existing `capy checkpoint` call: for each staged DB file, read the first 15 bytes and compare against `"SQLite format 3"` (the plaintext SQLite magic string). If matched, reject:
 
+```sh
+if head -c 15 "$f" 2>/dev/null | grep -q 'SQLite format 3'; then
+  echo "capy: refusing to commit unencrypted $f. Run 'capy encrypt' first." >&2
+  exit 1
+fi
 ```
-capy: refusing to commit unencrypted knowledge.db. Run 'capy encrypt' first.
-```
 
-The check only fires when the DB file is staged — normal commits that don't touch the DB are unaffected.
+The check is pure POSIX shell (no capy dependency at commit time). It fires only when the DB file is staged — normal commits are unaffected.
 
 **Verify:** Stage an unencrypted DB → commit blocked. Stage an encrypted DB → commit proceeds. No DB staged → commit proceeds.
 
