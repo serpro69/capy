@@ -86,7 +86,7 @@
 
   Want me to update the sessionflow-rag design doc and fix the .gitignore?
 
-✻ Cooked for 1m 28s
+✻ Worked for 1m 28s
 
 ❯ And why can't we just encrypt the db with a very strong encryption (use the   
   strongest available to date) and a long key. Or require user with auth, again 
@@ -135,7 +135,7 @@
   Want me to go with Option A (strip session rows from sharing pathways) and
   update the design doc?
 
-✻ Cooked for 35s
+✻ Sautéed for 35s
 
 ❯ But I want session sharing, just not sharing it with the world. Imagine not   
   even sharing withing the team, but a simple scenario when 1 person works on   
@@ -195,7 +195,7 @@
   Want me to proceed with this split — update the sessionflow-rag design with
   the safety guardrails and draft a skeleton design doc for DB encryption?
 
-✻ Cooked for 1m 48s
+✻ Baked for 1m 48s
 
 ❯ Let's keep sessionflow-rag design as is, we don't need to rush it and we      
   don't need to change the scope of it. Use kk:design to design and document    
@@ -355,7 +355,7 @@
 
   Agree with the reversal, or prefer your original order?
 
-✻ Brewed for 31s
+✻ Crunched for 31s
 
 ❯ Sounds good. But we should document the flow for the users in the README      
 
@@ -442,7 +442,7 @@
 
   Does this section track? Any concerns about the driver swap?
 
-✻ Brewed for 1m 59s
+✻ Sautéed for 1m 59s
 
 ❯ go-sqlcipher had last commit 6 years ago                                      
 
@@ -482,7 +482,7 @@
   Does this approach work for you, or do you want a fully vendored amalgamation
   (more self-contained but more maintenance)?
 
-✻ Sautéed for 1m 18s
+✻ Cogitated for 1m 18s
 
 ※ recap: Designing a DB encryption feature for capy so knowledge.db can be safely committed to git. We're choosing the SQLCipher integration approach. Next step: you tell me whether linking against system-installed SQLCipher is fine or you want a vendored amalgamation instead. (disable recaps in /config)
 
@@ -522,7 +522,7 @@
 
   Want me to install libsqlcipher-dev and run the proof-of-concept?
 
-✻ Worked for 1m 3s
+✻ Cooked for 1m 3s
 
 ❯ we can just download the binaries? https://utelle.github.io/SQLite3MultipleCi 
   phers/docs/installation/install_overview/#releases-and-binaries               
@@ -829,7 +829,7 @@
   documents encrypted+checkpointed = safe to commit
   - ADR-015: updated status to Superseded by ADR-019
 
-✻ Churned for 3m 31s
+✻ Cooked for 3m 31s
 
 ※ recap: Designing mandatory encryption for knowledge.db so it's safe to commit and sync across machines. All design docs, implementation plan, tasks, and ADR-019 are written. Next step is running the driver proof-of-concept to pick the encryption backend. (disable recaps in /config)
 
@@ -1486,4 +1486,536 @@
   Fix: Added internal/config/loader.go — Load() to implementation.md
     prerequisites.
 
-✻ Crunched for 2m 48s
+✻ Worked for 2m 48s
+
+❯ /export design-session.txt                                                    
+  ⎿  Conversation exported to:
+     /home/sergio/Projects/personal/capy/design-session.txt
+
+❯ I did another review, here are the findings. As before, for each finding,     
+  corroborate that it's a real issue that needs to be fixed, and only then fix  
+  it.                                                                           
+                                                                                
+  ---                                                                           
+                                                                                
+  • ## Design Review: db-encryption                                             
+                                                                                
+    Scope: design.md + implementation.md                                        
+    Overall assessment: CONCERNS_FOUND                                          
+    Summary: 4 findings: P0 0, P1 2, P2 2, P3 0. I also indexed the two P1      
+  patterns into capy KB.                                                        
+                                                                                
+    ## Findings                                                                 
+                                                                                
+    ### P1 - High                                                               
+                                                                                
+    - TECH_RISK: PRAGMA-key path assumes the wrong ConnectHook order            
+      Section: docs/wip/db-encryption/design.md:61,                             
+  docs/wip/db-encryption/implementation.md:104                                  
+      Confidence: 9/10. mattn/go-sqlite3 runs DSN pragmas before ConnectHook,   
+  so _journal_mode can run before PRAGMA key.                                   
+      Recommendation: For PRAGMA-key backends, remove encryption-sensitive DSN  
+  pragmas and apply key first, then per-connection pragmas in the initializer.  
+  Add a PoC check                                                               
+      using capy’s real DSN.                                                    
+    - TECH_RISK: Encryption migration mishandles WAL/SHM sidecars               
+      Section: docs/wip/db-encryption/design.md:83,                             
+  docs/wip/db-encryption/implementation.md:158                                  
+      Confidence: 9/10. After renaming knowledge.db to knowledge.db.bak,        
+  sidecars remain knowledge.db-wal and knowledge.db-shm, not .bak-wal.          
+      Recommendation: Require exclusive access, checkpoint source before        
+  export, then remove or preserve the original-path sidecars before verifying   
+  the new encrypted DB.                                                         
+                                                                                
+    ### P2 - Medium                                                             
+                                                                                
+    - AMBIGUOUS: Key-reading helper conflicts with capy encrypt prompt flow     
+      Section: docs/wip/db-encryption/implementation.md:80                      
+      Confidence: 8/10. readEncryptionKey() errors when env is empty, but capy  
+  encrypt is supposed to prompt when CAPY_DB_KEY is unset.                      
+      Recommendation: Split env-only key loading from interactive passphrase    
+  prompting.                                                                    
+    - STRUCTURE: ADR phase is stale                                             
+      Section: docs/wip/db-encryption/implementation.md:221                     
+      Confidence: 10/10. docs/adr/019-encrypted-knowledge-db.md already exists, 
+   and ADR-015 is already superseded.                                           
+      Recommendation: Change Phase 5 from “create/update” to “verify/update     
+  existing ADRs.”                                                               
+                                                                                
+    ## Clean Areas                                                              
+                                                                                
+    The docs correctly identify mandatory encryption as a breaking change, call 
+   out the connection-pool risk, name the main code integration points, and     
+  include wrong-key,                                                            
+    checkpoint, re-key, and cross-machine verification.                         
+
+● Let me corroborate each finding.
+
+  Searched for 1 pattern, called capy, ran 1 shell command (ctrl+o to expand)
+
+● Now let me check finding 3 and 4.
+
+  Searched for 1 pattern, listed 1 directory (ctrl+o to expand)
+
+● All 4 findings corroborated:
+
+  ┌─────────────────────┬─────────┬─────────────────────────────────────────┐
+  │       Finding       │ Verdict │                Evidence                 │
+  ├─────────────────────┼─────────┼─────────────────────────────────────────┤
+  │                     │         │ KB entry confirms DSN pragmas run       │
+  │ P1 ConnectHook      │ VALID   │ before ConnectHook. store.go:115 DSN    │
+  │ order               │         │ has _journal_mode=WAL etc. — all would  │
+  │                     │         │ fail before PRAGMA key.                 │
+  ├─────────────────────┼─────────┼─────────────────────────────────────────┤
+  │ P1 WAL/SHM sidecar  │         │ Sidecars are <dbpath>-wal, not          │
+  │ naming              │ VALID   │ <dbpath>.bak-wal. Step 14 references    │
+  │                     │         │ wrong paths.                            │
+  ├─────────────────────┼─────────┼─────────────────────────────────────────┤
+  │ P2                  │         │ Function errors on empty env, but capy  │
+  │ readEncryptionKey   │ VALID   │ encrypt needs empty env to trigger      │
+  │ conflicts           │         │ prompt flow.                            │
+  ├─────────────────────┼─────────┼─────────────────────────────────────────┤
+  │ P2 ADR phase stale  │ VALID   │ ADR-019 already exists, ADR-015 already │
+  │                     │         │  superseded.                            │
+  └─────────────────────┴─────────┴─────────────────────────────────────────┘
+
+  Fixing all four.
+
+  Read 1 file (ctrl+o to expand)
+● Now applying all four fixes. Starting with design.md.
+
+  Fix P1 — ConnectHook order: The PRAGMA path must move DSN pragmas into the
+  ConnectHook, applied after PRAGMA key.
+
+● Update(docs/wip/db-encryption/design.md)
+  ⎿  Added 4 lines, removed 2 lines
+      60  
+      61  **PRAGMA path (SQLCipher / option 1 or 3):** `PRAGMA key` is pe
+          r-connection, but `database/sql` maintains a connection pool. T
+          he main pool in `openDB()` does NOT call `SetMaxOpenConns(1)` —
+           only `checkpoint()` and `Checkpoint()` do. Under concurrent MC
+          P tool calls, the pool creates additional connections that woul
+          d lack the encryption key, causing silent failures. This is the
+           same class of issue identified for `PRAGMA mmap_size` (see `kk
+          :arch-decisions` — "mmap_size pragma requires Exec, not DSN"), 
+          where `ConnectHook` was identified as the upgrade path.
+      62  
+      63 +**Critical: DSN pragma ordering.** In `mattn/go-sqlite3` v1.14.
+         +37, `SQLiteDriver.Open` executes DSN-driven pragmas (`_journal_
+         +mode`, `_synchronous`, `_busy_timeout`, `_foreign_keys`) *befor
+         +e* invoking `ConnectHook`. On an encrypted DB, these pragmas wo
+         +uld fail before `PRAGMA key` is applied. Therefore, for the PRA
+         +GMA path, all pragmas must be removed from the DSN and moved in
+         +to the ConnectHook, executed after `PRAGMA key`. The DSN become
+         +s just the bare DB path.                                       
+      64 +                                                               
+      65  For the PRAGMA path, there are two sub-options:
+      64 -- **ConnectHook (preferred):** Register a custom `sqlite3.SQLit
+         -eDriver` with a `ConnectHook` that executes `PRAGMA key` on eve
+         -ry new connection. `retry.go` already uses a named import of `m
+         -attn/go-sqlite3` (not blank import), so the pattern is availabl
+         -e in the codebase. This ensures every pool connection is keyed.
+      65 -- **SetMaxOpenConns(1) (fallback):** Serialize all DB access th
+         -rough one connection. Acceptable for a single-user tool but lim
+         -its concurrency under parallel MCP calls.                      
+      66 +- **ConnectHook (preferred):** Register a custom `sqlite3.SQLit
+         +eDriver` with a `ConnectHook` that executes, in order: (1) `PRA
+         +GMA key`, (2) `PRAGMA journal_mode=WAL`, (3) `PRAGMA synchronou
+         +s=NORMAL`, (4) `PRAGMA busy_timeout=5000`, (5) `PRAGMA foreign_
+         +keys=ON`. `retry.go` already uses a named import of `mattn/go-s
+         +qlite3` (not blank import), so the pattern is available in the 
+         +codebase. This ensures every pool connection is keyed and confi
+         +gured.                                                         
+      67 +- **SetMaxOpenConns(1) (fallback):** Serialize all DB access th
+         +rough one connection. Acceptable for a single-user tool but lim
+         +its concurrency under parallel MCP calls. DSN pragmas must stil
+         +l be removed and applied via post-open Exec calls (after PRAGMA
+         + key).                                                         
+      68  
+      69  **URI path (sqlite3mc / option 2):** Append `&cipher=chacha20&k
+          ey=<url-encoded-passphrase>` to the DSN string. The key is appl
+          ied automatically to every connection the pool creates — **no p
+          ool issue**. This is a strong reason to prefer option 2 in the 
+          PoC.
+      70  
+
+● Fix P1 — WAL/SHM sidecar naming: Checkpoint source before export, remove
+  correct sidecar paths.
+
+● Update(docs/wip/db-encryption/design.md)
+  ⎿  Added 11 lines, removed 10 lines
+       86  
+       87  1. Resolve DB path from config (`config.Load` + `ResolveDBPath
+           `).
+       88  2. Verify DB file exists.
+       89 -3. Open source DB with old key (empty = unencrypted). Run cana
+          -ry query to verify access.                                    
+       90 -4. Create temp target: `<dbpath>.enc.tmp`.                    
+       91 -5. Attach target with new key: `ATTACH DATABASE '<target>' AS 
+          -target KEY '<new-key>'`.                                      
+       92 -6. Export: `SELECT sqlcipher_export('target')` (SQLCipher) or 
+          -equivalent (sqlite3mc — see PoC task for verification).       
+       93 -7. Detach and close source.                                   
+       94 -8. Back up original: rename `<dbpath>` → `<dbpath>.bak`.      
+       95 -9. Rename temp to final: `<dbpath>.enc.tmp` → `<dbpath>`.     
+       96 -10. Remove orphaned WAL/SHM sidecars from original.           
+       97 -11. Verify: reopen new DB with new key, run canary query.     
+       98 -12. Print: `"Encrypted: <dbpath>. Backup at <dbpath>.bak"`.   
+       89 +3. Open source DB with old key (empty = unencrypted) using `Se
+          +tMaxOpenConns(1)` for exclusive access. Run canary query to ve
+          +rify access.                                                  
+       90 +4. Checkpoint the source DB (`PRAGMA wal_checkpoint(TRUNCATE)`
+          +) to flush WAL into the main file. This ensures the export cap
+          +tures all data and eliminates sidecars.                       
+       91 +5. Create temp target: `<dbpath>.enc.tmp`.                    
+       92 +6. Attach target with new key: `ATTACH DATABASE '<target>' AS 
+          +target KEY '<new-key>'`.                                      
+       93 +7. Export: `SELECT sqlcipher_export('target')` (SQLCipher) or 
+          +equivalent (sqlite3mc — see PoC task for verification).       
+       94 +8. Detach and close source.                                   
+       95 +9. Remove WAL/SHM sidecars at their original paths: `<dbpath>-
+          +wal` and `<dbpath>-shm` (SQLite names sidecars based on the DB
+          + path, not the renamed path).                                 
+       96 +10. Back up original: rename `<dbpath>` → `<dbpath>.bak`.     
+       97 +11. Rename temp to final: `<dbpath>.enc.tmp` → `<dbpath>`.    
+       98 +12. Verify: reopen new DB with new key, run canary query.     
+       99 +13. Print: `"Encrypted: <dbpath>. Backup at <dbpath>.bak"`.   
+      100  
+      101  If any step fails after the backup rename, `.bak` preserves th
+           e original. The temp file is cleaned up on error.
+      102  
+
+● Now fix implementation.md — P1 ConnectHook order, P1 sidecar naming, P2
+  readEncryptionKey, P2 ADR phase.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(docs/wip/db-encryption/implementation.md)
+  ⎿  Added 3 lines, removed 3 lines
+      103  
+      104  **PRAGMA path:** `PRAGMA key` is per-connection, but `database
+           /sql` maintains a connection pool. `openDB()` does NOT call `S
+           etMaxOpenConns(1)` — concurrent MCP tool calls can create addi
+           tional pool connections that lack the key. Two sub-options:
+      105  
+      106 -- *ConnectHook (preferred):* Register a custom `sqlite3.SQLite
+          -Driver` with a `ConnectHook` that executes `PRAGMA key` on eve
+          -ry new connection. `retry.go` already uses a named import of `
+          -mattn/go-sqlite3`, so the pattern is available. Switch `store.
+          -go` from blank import to named import (or reuse `retry.go`'s i
+          -mport). Register the custom driver with a distinct name (e.g.,
+          - `"sqlite3_encrypted"`), then use `sql.Open("sqlite3_encrypted
+          -", dsn)`.                                                     
+      107 -- *SetMaxOpenConns(1) (fallback):* Add `db.SetMaxOpenConns(1)`
+          - after `sql.Open()`. Serializes all DB access. Acceptable for 
+          -single-user but limits concurrency.                           
+      106 +- *ConnectHook (preferred):* Register a custom `sqlite3.SQLite
+          +Driver` with a `ConnectHook` that executes `PRAGMA key` on eve
+          +ry new connection. **Critical:** `mattn/go-sqlite3` runs DSN p
+          +ragmas *before* `ConnectHook`. All pragmas must be removed fro
+          +m the DSN and moved into the ConnectHook, executed after `PRAG
+          +MA key`. The DSN becomes just the bare DB path. `ConnectHook` 
+          +sequence: (1) `PRAGMA key`, (2) `PRAGMA journal_mode=WAL`, (3)
+          + `PRAGMA synchronous=NORMAL`, (4) `PRAGMA busy_timeout=5000`, 
+          +(5) `PRAGMA foreign_keys=ON`. `retry.go` already uses a named 
+          +import of `mattn/go-sqlite3`, so the pattern is available. Reg
+          +ister the custom driver with a distinct name (e.g., `"sqlite3_
+          +encrypted"`), then use `sql.Open("sqlite3_encrypted", dsn)`.  
+      107 +- *SetMaxOpenConns(1) (fallback):* Add `db.SetMaxOpenConns(1)`
+          + after `sql.Open()`. Serializes all DB access. Acceptable for 
+          +single-user but limits concurrency. DSN pragmas must still be 
+          +removed and applied via post-open Exec calls after `PRAGMA key
+          +`.                                                            
+      108  
+      109 -Sequence with ConnectHook: open (ConnectHook runs PRAGMA key o
+          -n each connection) → canary query → PRAGMA mmap_size → schema 
+          -→ migrations → prepared statements.                           
+      109 +Sequence with ConnectHook: open (ConnectHook runs PRAGMA key +
+          + all pragmas on each connection) → canary query → PRAGMA mmap_
+          +size → schema → migrations → prepared statements.             
+      110  
+      111  **URI path (preferred if option 2 wins):** Construct DSN with 
+           encryption parameters appended before the existing pragmas. Pa
+           ssphrase must be URL-encoded. The key is applied automatically
+            to every pool connection — **no ConnectHook or pool restricti
+           on needed**. Then: open → canary query → PRAGMA mmap_size → sc
+           hema → migrations → prepared statements.
+      112  
+
+● Fix P2 — readEncryptionKey split:
+
+● Update(docs/wip/db-encryption/implementation.md)
+  ⎿  Added 7 lines, removed 7 lines
+      81  
+      82  **New file:** `internal/store/encryption.go`
+      83  
+      84 -Add a function to read and validate the encryption passphrase: 
+      84 +Add two functions to read and validate the encryption passphras
+         +e:                                                             
+      85  
+      86  ```
+      87 -func readEncryptionKey() (string, error)                       
+      87 +func RequireEncryptionKey() (string, error)                    
+      88 +func EncryptionKeyFromEnv() string                             
+      89  ```
+      90  
+      90 -- Reads `CAPY_DB_KEY` from environment.                        
+      91 -- Returns error if empty: `"CAPY_DB_KEY environment variable is
+         - required"`.                                                   
+      92 -- Logs a warning (not error) if length < 32 characters.        
+      91 +- `RequireEncryptionKey()` reads `CAPY_DB_KEY` from environment
+         +. Returns error if empty: `"CAPY_DB_KEY environment variable is
+         + required"`. Logs warning if length < 32 characters. Used by `o
+         +penDB()` and server startup — contexts where the key is mandato
+         +ry.                                                            
+      92 +- `EncryptionKeyFromEnv()` reads `CAPY_DB_KEY` from environment
+         + and returns it (empty string if unset, no error). Used by `cap
+         +y encrypt` which has its own fallback to interactive prompting 
+         +when the env var is unset.                                     
+      93  
+      94 -This is a standalone function, not a method on `ContentStore`, 
+         -because `capy encrypt` needs it too without constructing a full
+         - store.                                                        
+      94 +Both are standalone functions (not methods on `ContentStore`) b
+         +ecause `capy encrypt` needs them without constructing a full st
+         +ore.                                                           
+      95  
+      96 -**Verify:** Unit test with mocked env var: empty → error, short
+         - → warning logged + key returned, 32+ chars → key returned.    
+      96 +**Verify:** Unit test with mocked env var: `RequireEncryptionKe
+         +y` — empty → error, short → warning + returned, 32+ → returned.
+         + `EncryptionKeyFromEnv` — empty → empty string returned, set → 
+         +value returned.                                                
+      97  
+      98  ### 2.3 Integrate encryption into `openDB()`
+      99  
+
+● Fix P1 — sidecar naming in implementation.md step 14:
+
+● Update(docs/wip/db-encryption/implementation.md)
+  ⎿  Added 12 lines, removed 11 lines
+      155  3. Prompt for current passphrase (empty = unencrypted).
+      156  4. Read new passphrase from `CAPY_DB_KEY` or prompt interactiv
+           ely (with confirm).
+      157  5. Validate new passphrase length (warn if < 32).
+      158 -6. Open source DB with old key (if empty, open without encrypt
+          -ion pragma). Run canary query.                                
+      159 -7. Create temp file `<dbpath>.enc.tmp`.                       
+      160 -8. Execute: `ATTACH DATABASE '<temp>' AS target KEY '<new-key>
+          -'`.                                                           
+      161 -9. Execute: `SELECT sqlcipher_export('target')` (SQLCipher) or
+          - equivalent export mechanism (sqlite3mc — verified during PoC)
+          -.                                                             
+      162 -10. Execute: `DETACH DATABASE target`.                        
+      163 -11. Close source DB.                                          
+      164 -12. Rename `<dbpath>` → `<dbpath>.bak`.                       
+      165 -13. Rename `<dbpath>.enc.tmp` → `<dbpath>`.                   
+      166 -14. Remove stale `<dbpath>.bak-wal` and `<dbpath>.bak-shm` if 
+          -present.                                                      
+      167 -15. Verify: open new DB with new key, canary query.           
+      168 -16. Print success message with backup path.                   
+      158 +6. Open source DB with old key (if empty, open without encrypt
+          +ion pragma) using `SetMaxOpenConns(1)` for exclusive access. R
+          +un canary query.                                              
+      159 +7. Checkpoint source: `PRAGMA wal_checkpoint(TRUNCATE)` to flu
+          +sh WAL and eliminate sidecars.                                
+      160 +8. Create temp file `<dbpath>.enc.tmp`.                       
+      161 +9. Execute: `ATTACH DATABASE '<temp>' AS target KEY '<new-key>
+          +'`.                                                           
+      162 +10. Execute: `SELECT sqlcipher_export('target')` (SQLCipher) o
+          +r equivalent export mechanism (sqlite3mc — verified during PoC
+          +).                                                            
+      163 +11. Execute: `DETACH DATABASE target`.                        
+      164 +12. Close source DB.                                          
+      165 +13. Remove WAL/SHM sidecars at original paths: `<dbpath>-wal` 
+          +and `<dbpath>-shm` (SQLite names sidecars based on the DB path
+          +, not any renamed path — these must be removed before renaming
+          +).                                                            
+      166 +14. Rename `<dbpath>` → `<dbpath>.bak`.                       
+      167 +15. Rename `<dbpath>.enc.tmp` → `<dbpath>`.                   
+      168 +16. Verify: open new DB with new key, canary query.           
+      169 +17. Print success message with backup path.                   
+      170  
+      171  Error handling: if steps 8-10 fail, remove temp file. If step 
+           12-13 fail, the `.bak` preserves the original. Print clear ins
+           tructions on failure.
+      172  
+
+● Fix P2 — ADR phase stale:
+
+● Update(docs/wip/db-encryption/implementation.md)
+  ⎿  Added 4 lines, removed 7 lines
+      221  
+      222  ### 5.1 ADR-019
+      223  
+      224 -**New file:** `docs/adr/019-encrypted-knowledge-db.md`        
+      224 +**Existing file:** `docs/adr/019-encrypted-knowledge-db.md` (a
+          +lready drafted during design phase)                           
+      225 +**Existing file:** `docs/adr/015-knowledge-db-not-tracked-in-g
+          +it.md` (already updated to `Superseded by ADR-019`)           
+      226  
+      226 -Write the ADR as designed (see design.md §ADR-019 section). Su
+          -persedes ADR-015.                                             
+      227 +Verify both ADRs are consistent with the final implementation.
+          + Update if the PoC resulted in design changes (e.g., cipher ch
+          +oice, driver selection). Ensure cross-references are correct. 
+      228  
+      228 -**File:** `docs/adr/015-knowledge-db-not-tracked-in-git.md`   
+      229 +**Verify:** Both ADR files exist, cross-reference each other, 
+          +and match the implemented behavior.                           
+      230  
+      230 -Update status from `Accepted` to `Superseded by ADR-019`.     
+      231 -                                                              
+      232 -**Verify:** Both ADR files exist and cross-reference each othe
+          -r.                                                            
+      233 -                                                              
+      231  ### 5.2 README: encryption workflow
+      232  
+      233  **File:** `README.md`
+
+● Now update tasks.md to reflect the fixes.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(docs/wip/db-encryption/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      19  - [ ] Test option 2: build sqlite3mc from amalgamation source, 
+          link against it, run validation checklist (including URI-param 
+          encryption)
+      20  - [ ] Test option 3 (only if 1 and 2 fail): add `go.mod` replac
+          e directive for jgiannuzzi fork, run validation checklist
+      21  - [ ] Validation checklist: encrypted DB creation, FTS5 search,
+           reopen with correct key, reopen with wrong key fails, WAL mode
+           works, `sqlcipher_export` (or equivalent) works for both unenc
+          rypted→encrypted and re-key, checkpoint works
+      22 -- [ ] For PRAGMA path: verify ConnectHook applies key to all po
+         -ol connections under concurrent access                         
+      22 +- [ ] For PRAGMA path: verify ConnectHook applies key to all po
+         +ol connections under concurrent access; verify DSN pragmas remo
+         +ved and moved into ConnectHook (after PRAGMA key)              
+      23  - [ ] For URI path: verify key auto-applies to pool connections
+           without ConnectHook
+      24  - [ ] Document which option was selected and any caveats
+      25  
+
+● Update(docs/wip/db-encryption/tasks.md)
+  ⎿  Added 2 lines, removed 2 lines
+      45  **Dependencies:** Task 2
+      46  **Docs:** [implementation.md §2.2, §2.3](./implementation.md#22
+          -key-reading-and-validation)
+      47  
+      48 -- [ ] Create `internal/store/encryption.go` with `readEncryptio
+         -nKey()` function                                               
+      49 -- [ ] Unit test: empty key → error, short key → warning + retur
+         -ned, 32+ chars → returned                                      
+      48 +- [ ] Create `internal/store/encryption.go` with `RequireEncryp
+         +tionKey()` (errors on empty env) and `EncryptionKeyFromEnv()` (
+         +returns empty string if unset, for use by `capy encrypt` prompt
+         + flow)                                                         
+      49 +- [ ] Unit test: `RequireEncryptionKey` — empty → error, short 
+         +→ warning + returned, 32+ → returned. `EncryptionKeyFromEnv` — 
+         +empty → empty string, set → value                              
+      50  - [ ] Modify `openDB()` in `store.go`: read key, apply via PRAG
+          MA+ConnectHook or URI (based on PoC), add canary query
+      51  - [ ] If PRAGMA path: register custom `sqlite3.SQLiteDriver` wi
+          th `ConnectHook` for per-connection key; switch from blank impo
+          rt to named import
+      52  - [ ] If URI path: append cipher+key params to DSN string (URL-
+          encode passphrase)
+
+● Update(docs/wip/db-encryption/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      48  - [ ] Create `internal/store/encryption.go` with `RequireEncryp
+          tionKey()` (errors on empty env) and `EncryptionKeyFromEnv()` (
+          returns empty string if unset, for use by `capy encrypt` prompt
+           flow)
+      49  - [ ] Unit test: `RequireEncryptionKey` — empty → error, short 
+          → warning + returned, 32+ → returned. `EncryptionKeyFromEnv` — 
+          empty → empty string, set → value
+      50  - [ ] Modify `openDB()` in `store.go`: read key, apply via PRAG
+          MA+ConnectHook or URI (based on PoC), add canary query
+      51 -- [ ] If PRAGMA path: register custom `sqlite3.SQLiteDriver` wi
+         -th `ConnectHook` for per-connection key; switch from blank impo
+         -rt to named import                                             
+      51 +- [ ] If PRAGMA path: register custom `sqlite3.SQLiteDriver` wi
+         +th `ConnectHook` — apply PRAGMA key first, then all DSN pragmas
+         + (journal_mode, synchronous, busy_timeout, foreign_keys) in the
+         + hook; remove pragmas from DSN string                          
+      52  - [ ] If URI path: append cipher+key params to DSN string (URL-
+          encode passphrase)
+      53  - [ ] Update `checkpoint()` and `Checkpoint()` to apply key to 
+          fresh connections
+      54  - [ ] Update test helpers to set `CAPY_DB_KEY` for all store te
+          sts
+
+● Update(docs/wip/db-encryption/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      65  
+      66  - [ ] Create `internal/terminal/prompt.go` with `ReadPassphrase
+          ()` and `ReadPassphraseConfirm()` using `golang.org/x/term`
+      67  - [ ] Manual test passphrase prompting (no echo, correct string
+          )
+      68 -- [ ] Create `cmd/capy/encrypt.go` with full encryption/re-key 
+         -flow (open source → attach target → sqlcipher_export → rename) 
+      68 +- [ ] Create `cmd/capy/encrypt.go` with full encryption/re-key 
+         +flow (open source with exclusive access → checkpoint source → a
+         +ttach target → sqlcipher_export → remove sidecars at original p
+         +aths → rename)                                                 
+      69  - [ ] Register command in `cmd/capy/main.go`
+      70  - [ ] Manual test: initial encryption (unencrypted → encrypted,
+           empty old key)
+      71  - [ ] Manual test: key rotation (encrypted → re-encrypted, old 
+          key provided)
+
+● Update(docs/wip/db-encryption/tasks.md)
+  ⎿  Added 2 lines, removed 2 lines
+       97  **Dependencies:** Task 4, Task 5
+       98  **Docs:** [implementation.md §Phase 5](./implementation.md#pha
+           se-5-documentation)
+       99  
+      100 -- [ ] Write `docs/adr/019-encrypted-knowledge-db.md` (already 
+          -drafted — verify against final implementation)                
+      101 -- [ ] Update `docs/adr/015-knowledge-db-not-tracked-in-git.md`
+          - status to superseded (already done — verify)                 
+      100 +- [ ] Verify `docs/adr/019-encrypted-knowledge-db.md` matches 
+          +final implementation (already drafted — update if PoC changed 
+          +design decisions)                                             
+      101 +- [ ] Verify `docs/adr/015-knowledge-db-not-tracked-in-git.md`
+          + status is superseded (already done — confirm cross-references
+          +)                                                             
+      102  - [ ] Add encryption workflow section to `README.md`: CAPY_DB_
+           KEY setup, initial encryption, cross-machine sync, key rotatio
+           n, passphrase recommendations
+      103  - [ ] Follow the documented README workflow on a clean checkou
+           t to verify accuracy
+      104  
+
+● All 4 findings fixed:
+
+  Finding: P1 ConnectHook order
+  Fix: design.md and implementation.md: documented that DSN pragmas run before
+    ConnectHook; for PRAGMA path, all pragmas must be removed from DSN and moved
+
+    into ConnectHook after PRAGMA key. Added to PoC checklist.
+  ────────────────────────────────────────
+  Finding: P1 WAL/SHM sidecar naming
+  Fix: design.md and implementation.md: encrypt flow now checkpoints source
+    before export, removes sidecars at <dbpath>-wal/<dbpath>-shm (original
+  paths)
+     before renaming, uses SetMaxOpenConns(1) for exclusive access.
+  ────────────────────────────────────────
+  Finding: P2 readEncryptionKey conflicts
+  Fix: implementation.md and tasks.md: split into RequireEncryptionKey() (errors
+
+    on empty, for server) and EncryptionKeyFromEnv() (returns empty string, for
+    encrypt command's prompt fallback).
+  ────────────────────────────────────────
+  Finding: P2 ADR phase stale
+  Fix: implementation.md and tasks.md: changed from "write/create" to
+    "verify/update existing" for both ADR-019 and ADR-015.
+
+✻ Churned for 2m 32s
+
+❯ commit                                                                        
+
+  Ran 3 shell commands (ctrl+o to expand)
