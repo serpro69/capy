@@ -27,14 +27,14 @@
 
 ## Task 2: Build System Update
 
-**Status:** pending
+**Status:** done
 **Dependencies:** Task 1
 **Docs:** [implementation.md §2.1](./implementation.md#21-update-build-system)
 
-- [ ] Update `Makefile` — no CGo flag changes needed (option 3 bundles the amalgamation); remove `libsqlite3` references if any
-- [ ] Verify `go.mod` replace directive (already added in Task 1 PoC)
-- [ ] Verify `make build` succeeds
-- [ ] Verify `make test` succeeds
+- [x] Update `Makefile` — no CGo flag changes needed (option 3 bundles the amalgamation); remove `libsqlite3` references if any
+- [x] Verify `go.mod` replace directive (already added in Task 1 PoC)
+- [x] Verify `make build` succeeds
+- [x] Verify `make test` succeeds
 
 ---
 
