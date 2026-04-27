@@ -2,6 +2,8 @@ module github.com/serpro69/capy
 
 go 1.25.2
 
+replace github.com/mattn/go-sqlite3 => github.com/jgiannuzzi/go-sqlite3 v1.14.35-0.20260227142656-2c447b9a2806
+
 require (
 	github.com/mark3labs/mcp-go v0.46.0
 	github.com/mattn/go-sqlite3 v1.14.37
