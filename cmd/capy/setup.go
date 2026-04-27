@@ -22,36 +22,54 @@ func newSetupCmd() *cobra.Command {
 			}
 
 			binaryPath, _ := cmd.Flags().GetString("binary")
-
 			p, _ := cmd.Flags().GetString("platform")
-			if p != "claude-code" {
-				return fmt.Errorf("unsupported platform: %s (only claude-code is supported)", p)
-			}
 
-			local, _ := cmd.Flags().GetBool("local")
-			project, _ := cmd.Flags().GetBool("project")
+			setupClaude := p == "" || p == "claude-code"
+			setupCodex := p == "" || p == "codex"
 
-			target, err := resolveSettingsTarget(local, project)
-			if err != nil {
-				return err
+			if !setupClaude && !setupCodex {
+				return fmt.Errorf("unsupported platform: %s (supported: claude-code, codex)", p)
 			}
 
 			fmt.Printf("capy: setting up for project %s\n", projectDir)
 
-			if err := platform.SetupClaudeCode(binaryPath, projectDir, target); err != nil {
-				return fmt.Errorf("setup failed: %w", err)
+			if setupClaude {
+				local, _ := cmd.Flags().GetBool("local")
+				project, _ := cmd.Flags().GetBool("project")
+
+				target, err := resolveSettingsTarget(local, project)
+				if err != nil {
+					return err
+				}
+
+				if err := platform.SetupClaudeCode(binaryPath, projectDir, target); err != nil {
+					return fmt.Errorf("Claude Code setup failed: %w", err)
+				}
+
+				fmt.Println("capy: Claude Code setup complete")
+				fmt.Printf("  - hooks registered in .claude/%s\n", target.SettingsFilename())
+				fmt.Println("  - MCP server registered in .mcp.json")
+				fmt.Println("  - routing instructions written to .capy/AGENTS.md")
+				fmt.Println("  - .capy/** added to .gitignore")
 			}
 
-			fmt.Println("capy: setup complete")
-			fmt.Printf("  - hooks registered in .claude/%s\n", target.SettingsFilename())
-			fmt.Println("  - MCP server registered in .mcp.json")
-			fmt.Println("  - routing instructions written to .claude/capy/CLAUDE.md")
-			fmt.Println("  - .capy/** added to .gitignore")
+			if setupCodex {
+				if err := platform.SetupCodex(binaryPath, projectDir); err != nil {
+					return fmt.Errorf("Codex setup failed: %w", err)
+				}
+
+				fmt.Println("capy: Codex setup complete")
+				fmt.Println("  - MCP server registered in .codex/config.toml")
+				fmt.Println("  - routing instructions written to .capy/AGENTS.md")
+				fmt.Println("  - wrapper script written to .codex/scripts/capy.sh")
+				fmt.Println("  - .capy/** added to .gitignore")
+			}
+
 			fmt.Println("\nRun `capy doctor` to verify the installation.")
 			return nil
 		},
 	}
-	cmd.Flags().String("platform", "claude-code", "target platform")
+	cmd.Flags().String("platform", "", "target platform (claude-code, codex); default: both")
 	cmd.Flags().String("binary", "", "path to capy binary")
 	cmd.Flags().Bool("local", false, "write hooks to .claude/settings.local.json (personal, not committed)")
 	cmd.Flags().Bool("project", false, "write hooks to .claude/settings.json (shared, synced across repos)")
