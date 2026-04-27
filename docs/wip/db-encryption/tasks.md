@@ -10,18 +10,18 @@
 
 ## Task 1: Driver Proof of Concept
 
-**Status:** pending
+**Status:** done
 **Dependencies:** none
 **Docs:** [implementation.md §Phase 1](./implementation.md#phase-1-driver-proof-of-concept)
 
-- [ ] Create PoC test file (`internal/store/encryption_poc_test.go` or temp binary)
-- [ ] Test option 1: install `libsqlcipher-dev`, build with `-tags "fts5 libsqlite3"` + CGo flags, run validation checklist
-- [ ] Test option 2: build sqlite3mc from amalgamation source, link against it, run validation checklist (including URI-param encryption)
-- [ ] Test option 3 (only if 1 and 2 fail): add `go.mod` replace directive for jgiannuzzi fork, run validation checklist
-- [ ] Validation checklist: encrypted DB creation, FTS5 search, reopen with correct key, reopen with wrong key fails, WAL mode works, `sqlcipher_export` (or equivalent) works for both unencrypted→encrypted and re-key, checkpoint works
-- [ ] For PRAGMA path: verify ConnectHook applies key to all pool connections under concurrent access; verify DSN pragmas removed and moved into ConnectHook (after PRAGMA key)
-- [ ] For URI path: verify key auto-applies to pool connections without ConnectHook
-- [ ] Document which option was selected and any caveats
+- [x] Create PoC test file (`internal/store/encryption_poc_test.go` or temp binary)
+- [x] Test option 1: install `libsqlcipher-dev`, build with `-tags "fts5 libsqlite3"` + CGo flags, run validation checklist
+- [ ] ~~Test option 2: build sqlite3mc from amalgamation source~~ (skipped — option 3 succeeded)
+- [x] Test option 3 (only if 1 and 2 fail): add `go.mod` replace directive for jgiannuzzi fork, run validation checklist
+- [x] Validation checklist: encrypted DB creation, FTS5 search, reopen with correct key, reopen with wrong key fails, WAL mode works, PRAGMA rekey + backup API (replaces sqlcipher_export) for both unencrypted→encrypted and re-key, checkpoint works
+- [x] For PRAGMA path: verified ConnectHook NOT viable — mattn/go-sqlite3 runs PRAGMA synchronous before ConnectHook, which fails on encrypted DBs
+- [x] For URI path: verify key auto-applies to pool connections without ConnectHook
+- [x] Document which option was selected and any caveats
 
 ---
 
