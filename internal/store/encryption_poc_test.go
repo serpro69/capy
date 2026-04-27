@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -39,12 +40,25 @@ import (
 // Run:
 //   go test -tags fts5 -run TestEncryptionPoC -v -count=1 ./internal/store/
 
+// pocEscapeSQLString escapes a string for use in a SQL single-quoted literal
+// by doubling all single quotes (standard SQL escaping).
+func pocEscapeSQLString(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+// pocURIEscapePassphrase percent-encodes a passphrase for use in a SQLite URI.
+// SQLite's URI parser follows RFC 3986, so spaces must be %20 (not +).
+// url.QueryEscape uses + for spaces, which SQLite reads literally as '+'.
+func pocURIEscapePassphrase(s string) string {
+	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+}
+
 // pocEncryptedDSN builds a DSN with sqlite3mc URI-parameter encryption.
 // The file: prefix ensures mattn/go-sqlite3 passes the full URI (including
 // cipher/key params) through to sqlite3_open_v2 (see sqlite3.go:1451-1453).
 func pocEncryptedDSN(dbPath, passphrase string) string {
 	return fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=%s",
-		dbPath, url.QueryEscape(passphrase))
+		dbPath, pocURIEscapePassphrase(passphrase))
 }
 
 // pocBackup copies all pages from srcConn to destConn using the SQLite backup API.
@@ -250,8 +264,8 @@ func TestEncryptionPoC(t *testing.T) {
 			t.Fatalf("expected 1 row pre-rekey, got %d", srcCount)
 		}
 
-		// Encrypt in-place via PRAGMA rekey
-		if _, err := rekeyDB.Exec("PRAGMA rekey = '" + passphrase + "'"); err != nil {
+		// Encrypt in-place via PRAGMA rekey (escape passphrase for SQL literal)
+		if _, err := rekeyDB.Exec("PRAGMA rekey = '" + pocEscapeSQLString(passphrase) + "'"); err != nil {
 			t.Fatalf("PRAGMA rekey: %v", err)
 		}
 		rekeyDB.Close()
@@ -374,5 +388,84 @@ func TestEncryptionPoC(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Log("URI params apply key to all pool connections under concurrent access")
+	})
+
+	// Passphrases with SQL-special and URI-special characters.
+	// Proves both the URI path (url.QueryEscape) and PRAGMA rekey
+	// (pocEscapeSQLString) handle adversarial input correctly.
+	t.Run("special_char_passphrase", func(t *testing.T) {
+		specialPhrases := []string{
+			"pass'phrase-with-single-quote-32chars!!",
+			"pass with spaces & ampersand = equals",
+			`pass"double"quote+plus%percent!!!!!!`,
+			"páss-with-üñíçödé-chars-32-long!!!!",
+		}
+
+		for i, sp := range specialPhrases {
+			subDir := filepath.Join(tmpDir, fmt.Sprintf("special_%d", i))
+			os.MkdirAll(subDir, 0o755)
+
+			// Create encrypted DB via URI path
+			spPath := filepath.Join(subDir, "test.db")
+			spDSN := pocEncryptedDSN(spPath, sp)
+			db, err := sql.Open("sqlite3", spDSN)
+			if err != nil {
+				t.Fatalf("[%d] open: %v", i, err)
+			}
+			if _, err := db.Exec("CREATE TABLE t (v TEXT)"); err != nil {
+				t.Fatalf("[%d] create: %v", i, err)
+			}
+			if _, err := db.Exec("INSERT INTO t VALUES (?)", sp); err != nil {
+				t.Fatalf("[%d] insert: %v", i, err)
+			}
+			db.Close()
+
+			// Reopen and verify
+			db2, err := sql.Open("sqlite3", pocEncryptedDSN(spPath, sp))
+			if err != nil {
+				t.Fatalf("[%d] reopen: %v", i, err)
+			}
+			var got string
+			if err := db2.QueryRow("SELECT v FROM t").Scan(&got); err != nil {
+				t.Fatalf("[%d] query: %v", i, err)
+			}
+			db2.Close()
+			if got != sp {
+				t.Fatalf("[%d] round-trip mismatch: got %q, want %q", i, got, sp)
+			}
+
+			// Test PRAGMA rekey with same special passphrase
+			plainPath := filepath.Join(subDir, "plain.db")
+			pdb, _ := sql.Open("sqlite3", plainPath)
+			pdb.Exec("CREATE TABLE t2 (v TEXT)")
+			pdb.Exec("INSERT INTO t2 VALUES (?)", "rekey-test")
+			pdb.Close()
+
+			rkDSN := fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=", plainPath)
+			rkDB, err := sql.Open("sqlite3", rkDSN)
+			if err != nil {
+				t.Fatalf("[%d] rekey open: %v", i, err)
+			}
+			rkDB.SetMaxOpenConns(1)
+			if _, err := rkDB.Exec("PRAGMA rekey = '" + pocEscapeSQLString(sp) + "'"); err != nil {
+				t.Fatalf("[%d] PRAGMA rekey with special chars: %v", i, err)
+			}
+			rkDB.Close()
+
+			// Verify rekeyed DB is readable
+			vdb, err := sql.Open("sqlite3", pocEncryptedDSN(plainPath, sp))
+			if err != nil {
+				t.Fatalf("[%d] verify rekey open: %v", i, err)
+			}
+			var val string
+			if err := vdb.QueryRow("SELECT v FROM t2").Scan(&val); err != nil {
+				t.Fatalf("[%d] verify rekey query: %v", i, err)
+			}
+			vdb.Close()
+			if val != "rekey-test" {
+				t.Fatalf("[%d] rekey round-trip mismatch: got %q", i, val)
+			}
+		}
+		t.Log("special-character passphrases work for both URI and PRAGMA rekey paths")
 	})
 }
