@@ -14,6 +14,9 @@ import (
 // capyWrapperRelPath is the project-relative path to the portable capy wrapper script.
 const capyWrapperRelPath = ".claude/scripts/capy.sh"
 
+// codexWrapperRelPath is the project-relative path to the capy wrapper for Codex.
+const codexWrapperRelPath = ".codex/scripts/capy.sh"
+
 // capyWrapperScript is the content of the portable wrapper script.
 // It searches known installation paths for the capy binary and execs the first
 // one found, making configs portable across machines and platforms.
@@ -40,14 +43,19 @@ jq -n --arg reason "capy binary not found" \
 exit 0
 `
 
-// writeCapyWrapper creates the portable wrapper script at .claude/scripts/capy.sh.
-func writeCapyWrapper(projectDir string) error {
-	scriptsDir := filepath.Join(projectDir, ".claude", "scripts")
+// writeWrapperScript creates the portable wrapper script at the given relative path.
+func writeWrapperScript(projectDir, relPath string) error {
+	scriptsDir := filepath.Join(projectDir, filepath.Dir(relPath))
 	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
 		return fmt.Errorf("creating scripts directory: %w", err)
 	}
-	wrapperPath := filepath.Join(projectDir, capyWrapperRelPath)
+	wrapperPath := filepath.Join(projectDir, relPath)
 	return os.WriteFile(wrapperPath, []byte(capyWrapperScript), 0o755)
+}
+
+// writeCapyWrapper creates the portable wrapper script at .claude/scripts/capy.sh.
+func writeCapyWrapper(projectDir string) error {
+	return writeWrapperScript(projectDir, capyWrapperRelPath)
 }
 
 // SetupClaudeCode configures capy for a Claude Code project.
@@ -77,7 +85,7 @@ func SetupClaudeCode(binaryPath, projectDir string, target SettingsTarget) error
 		return fmt.Errorf("creating .capy directory: %w", err)
 	}
 
-	// 3. Create .claude/ directory (needed for settings.json)
+	// 3. Create .claude/ directory (needed for settings.json and scripts)
 	claudeDir := filepath.Join(projectDir, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		return fmt.Errorf("creating .claude directory: %w", err)
@@ -113,15 +121,22 @@ func SetupClaudeCode(binaryPath, projectDir string, target SettingsTarget) error
 		return fmt.Errorf("merging MCP config: %w", err)
 	}
 
-	// 7. Write routing instructions to .claude/capy/CLAUDE.md and import from root CLAUDE.md
-	claudeMDPath := filepath.Join(projectDir, "CLAUDE.md")
-	if err := writeRoutingInstructions(claudeDir, claudeMDPath); err != nil {
-		return fmt.Errorf("updating routing instructions: %w", err)
+	// 7. Write routing instructions to .capy/AGENTS.md and import from root CLAUDE.md
+	if err := writeAgentsFile(projectDir); err != nil {
+		return fmt.Errorf("writing routing instructions: %w", err)
 	}
+	claudeMDPath := filepath.Join(projectDir, "CLAUDE.md")
+	if err := ensureClaudeMDImport(claudeMDPath); err != nil {
+		return fmt.Errorf("updating CLAUDE.md import: %w", err)
+	}
+	cleanupOldRoutingFile(projectDir)
 
-	// 8. Add .capy/** to .gitignore
+	// 8. Add .capy/** to .gitignore with exception for AGENTS.md
 	gitignorePath := filepath.Join(projectDir, ".gitignore")
 	if err := ensureGitignoreEntry(gitignorePath, ".capy/**"); err != nil {
+		return fmt.Errorf("updating .gitignore: %w", err)
+	}
+	if err := ensureGitignoreEntry(gitignorePath, "!.capy/AGENTS.md"); err != nil {
 		return fmt.Errorf("updating .gitignore: %w", err)
 	}
 
@@ -130,6 +145,65 @@ func SetupClaudeCode(binaryPath, projectDir string, target SettingsTarget) error
 		// Non-fatal: git hooks are a convenience, not a requirement
 		fmt.Fprintf(os.Stderr, "capy: warning: could not install pre-commit hook: %v\n", err)
 	}
+
+	return nil
+}
+
+// SetupCodex configures capy for a Codex project.
+// It detects the .codex directory, writes the portable wrapper script to
+// .codex/scripts/capy.sh, creates the .capy/ directory, and adds .capy/
+// to .gitignore.
+func SetupCodex(binaryPath, projectDir string) error {
+	// 1. Resolve binary path (validation only — configs use the portable wrapper)
+	if binaryPath == "" {
+		var err error
+		binaryPath, err = exec.LookPath("capy")
+		if err != nil {
+			binaryPath, err = os.Executable()
+			if err != nil {
+				return fmt.Errorf("capy binary not found in PATH; use --binary to specify location")
+			}
+		}
+	}
+
+	// 2. Create .codex/ directory
+	codexDir := filepath.Join(projectDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		return fmt.Errorf("creating .codex directory: %w", err)
+	}
+
+	// 3. Create .capy/ directory
+	capyDir := filepath.Join(projectDir, ".capy")
+	if err := os.MkdirAll(capyDir, 0o755); err != nil {
+		return fmt.Errorf("creating .capy directory: %w", err)
+	}
+
+	// 4. Write routing instructions to .capy/AGENTS.md
+	if err := writeAgentsFile(projectDir); err != nil {
+		return fmt.Errorf("writing routing instructions: %w", err)
+	}
+
+	// 5. Write portable wrapper script (.codex/scripts/capy.sh)
+	if err := writeWrapperScript(projectDir, codexWrapperRelPath); err != nil {
+		return fmt.Errorf("writing wrapper script: %w", err)
+	}
+
+	// 6. Merge MCP server into .codex/config.toml
+	configTomlPath := filepath.Join(projectDir, ".codex", "config.toml")
+	if err := mergeCodexMCPServer(configTomlPath); err != nil {
+		return fmt.Errorf("merging Codex MCP config: %w", err)
+	}
+
+	// 7. Add .capy/** to .gitignore with exception for AGENTS.md
+	gitignorePath := filepath.Join(projectDir, ".gitignore")
+	if err := ensureGitignoreEntry(gitignorePath, ".capy/**"); err != nil {
+		return fmt.Errorf("updating .gitignore: %w", err)
+	}
+	if err := ensureGitignoreEntry(gitignorePath, "!.capy/AGENTS.md"); err != nil {
+		return fmt.Errorf("updating .gitignore: %w", err)
+	}
+
+	cleanupOldRoutingFile(projectDir)
 
 	return nil
 }
@@ -388,28 +462,68 @@ func mergeMCPServer(mcpPath string) error {
 	return writeJSONFile(mcpPath, root)
 }
 
-// routingImportRef is the Claude Code import reference for the capy routing instructions file.
-const routingImportRef = "@.claude/capy/CLAUDE.md"
+// codexMCPMarker is the TOML table header that indicates capy is registered as an MCP server.
+const codexMCPMarker = "[mcp_servers.capy]"
+
+// codexMCPBlock is the TOML block appended to config.toml to register capy.
+const codexMCPBlock = `[mcp_servers.capy]
+command = "bash"
+args = ["` + codexWrapperRelPath + `", "serve"]
+`
+
+// mergeCodexMCPServer ensures .codex/config.toml has a [mcp_servers.capy] entry.
+// Uses string-based detection and append to preserve existing formatting and comments.
+func mergeCodexMCPServer(configPath string) error {
+	content, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	text := string(content)
+
+	if strings.Contains(text, codexMCPMarker) {
+		return nil
+	}
+
+	f, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if len(content) > 0 && !strings.HasSuffix(text, "\n") {
+		fmt.Fprint(f, "\n")
+	}
+	if len(content) > 0 && !strings.HasSuffix(text, "\n\n") {
+		fmt.Fprint(f, "\n")
+	}
+
+	_, err = fmt.Fprint(f, codexMCPBlock)
+	return err
+}
+
+// agentsRelPath is the platform-neutral path to generated routing instructions.
+const agentsRelPath = ".capy/AGENTS.md"
+
+// routingImportRef is the Claude Code import reference for the routing instructions file.
+const routingImportRef = "@.capy/AGENTS.md"
+
+// oldRoutingImportRef is the previous import path, used for migration.
+const oldRoutingImportRef = "@.claude/capy/CLAUDE.md"
 
 // routingImportBlock is the full block appended to root CLAUDE.md to import capy routing.
 const routingImportBlock = "# capy — MANDATORY routing rules\n\n" + routingImportRef + "\n"
 
-// writeRoutingInstructions writes routing instructions to .claude/capy/CLAUDE.md
-// and ensures root CLAUDE.md imports them. If root CLAUDE.md has the old inline
-// routing block, it is replaced with the import reference.
-func writeRoutingInstructions(claudeDir, claudeMDPath string) error {
-	// Step A: Write .claude/capy/CLAUDE.md (always overwrite — generated content)
-	capyDir := filepath.Join(claudeDir, "capy")
-	if err := os.MkdirAll(capyDir, 0o755); err != nil {
-		return fmt.Errorf("creating .claude/capy directory: %w", err)
-	}
+// writeAgentsFile writes routing instructions to .capy/AGENTS.md.
+func writeAgentsFile(projectDir string) error {
+	agentsPath := filepath.Join(projectDir, agentsRelPath)
+	return os.WriteFile(agentsPath, []byte(GenerateRoutingInstructions()), 0o644)
+}
 
-	capyCLAUDEMD := filepath.Join(capyDir, "CLAUDE.md")
-	if err := os.WriteFile(capyCLAUDEMD, []byte(GenerateRoutingInstructions()), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", capyCLAUDEMD, err)
-	}
-
-	// Step B: Ensure root CLAUDE.md imports .claude/capy/CLAUDE.md
+// ensureClaudeMDImport ensures root CLAUDE.md imports the routing instructions
+// from .capy/AGENTS.md. Handles migration from inline routing blocks and from
+// the old .claude/capy/CLAUDE.md import path.
+func ensureClaudeMDImport(claudeMDPath string) error {
 	content, err := os.ReadFile(claudeMDPath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -417,9 +531,15 @@ func writeRoutingInstructions(claudeDir, claudeMDPath string) error {
 
 	text := string(content)
 
-	// Already has the import → nothing to do
+	// Already has the current import → nothing to do
 	if strings.Contains(text, routingImportRef) {
 		return nil
+	}
+
+	// Old import path (.claude/capy/CLAUDE.md) → replace with new path
+	if strings.Contains(text, oldRoutingImportRef) {
+		text = strings.ReplaceAll(text, oldRoutingImportRef, routingImportRef)
+		return os.WriteFile(claudeMDPath, []byte(text), 0o644)
 	}
 
 	// Old inline routing block present → replace with import.
@@ -429,10 +549,8 @@ func writeRoutingInstructions(claudeDir, claudeMDPath string) error {
 	if startIdx := strings.Index(text, startMarker); startIdx >= 0 {
 		rest := text[startIdx+len(startMarker):]
 		if endIdx := strings.Index(rest, "\n# "); endIdx >= 0 {
-			// Content follows after the capy block — preserve it
 			text = text[:startIdx] + routingImportBlock + rest[endIdx+1:]
 		} else {
-			// Capy block extends to EOF
 			text = text[:startIdx] + routingImportBlock
 		}
 		return os.WriteFile(claudeMDPath, []byte(text), 0o644)
@@ -445,7 +563,6 @@ func writeRoutingInstructions(claudeDir, claudeMDPath string) error {
 	}
 	defer f.Close()
 
-	// Add separator if file already has content
 	if len(content) > 0 && !strings.HasSuffix(text, "\n\n") {
 		if strings.HasSuffix(text, "\n") {
 			fmt.Fprint(f, "\n")
@@ -456,6 +573,13 @@ func writeRoutingInstructions(claudeDir, claudeMDPath string) error {
 
 	_, err = fmt.Fprint(f, routingImportBlock)
 	return err
+}
+
+// cleanupOldRoutingFile removes the old .claude/capy/CLAUDE.md if it exists.
+func cleanupOldRoutingFile(projectDir string) {
+	oldPath := filepath.Join(projectDir, ".claude", "capy", "CLAUDE.md")
+	os.Remove(oldPath)
+	os.Remove(filepath.Join(projectDir, ".claude", "capy"))
 }
 
 // ensureGitignoreEntry adds an entry to .gitignore if not already present.

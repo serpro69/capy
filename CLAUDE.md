@@ -18,4 +18,4 @@ It's a port of `context-mode` project written in Go, aiming to utilize Go's feat
 
 # capy — MANDATORY routing rules
 
-@.claude/capy/CLAUDE.md
+@.capy/AGENTS.md
