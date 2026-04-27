@@ -31,11 +31,10 @@
 **Dependencies:** Task 1
 **Docs:** [implementation.md §2.1](./implementation.md#21-update-build-system)
 
-- [ ] Update `Makefile` with encryption-specific build tags and CGo flags (based on PoC winner)
-- [ ] Update `go.mod` if option 3 was selected (replace directive)
+- [ ] Update `Makefile` — no CGo flag changes needed (option 3 bundles the amalgamation); remove `libsqlite3` references if any
+- [ ] Verify `go.mod` replace directive (already added in Task 1 PoC)
 - [ ] Verify `make build` succeeds
 - [ ] Verify `make test` succeeds
-- [ ] Verify correct library linkage (`ldd capy` for options 1-2)
 
 ---
 
@@ -47,10 +46,9 @@
 
 - [ ] Create `internal/store/encryption.go` with `RequireEncryptionKey()` (errors on empty env) and `EncryptionKeyFromEnv()` (returns empty string if unset, for use by `capy encrypt` prompt flow)
 - [ ] Unit test: `RequireEncryptionKey` — empty → error, short → warning + returned, 32+ → returned. `EncryptionKeyFromEnv` — empty → empty string, set → value
-- [ ] Modify `openDB()` in `store.go`: read key, apply via PRAGMA+ConnectHook or URI (based on PoC), add canary query
-- [ ] If PRAGMA path: register custom `sqlite3.SQLiteDriver` with `ConnectHook` — apply PRAGMA key first, then all DSN pragmas (journal_mode, synchronous, busy_timeout, foreign_keys) in the hook; remove pragmas from DSN string
-- [ ] If URI path: append cipher+key params to DSN string (URL-encode passphrase)
-- [ ] Update `checkpoint()` and `Checkpoint()` to apply key to fresh connections
+- [ ] Modify `openDB()` in `store.go`: read key, build URI DSN with `file:` prefix + `cipher=sqlcipher&legacy=4&key=<url-encoded>` + existing DSN pragmas, add canary query (`SELECT count(*) FROM sqlite_master`)
+- [ ] URI path (PoC winner): append cipher+key params to DSN string (URL-encode passphrase); keep existing `_journal_mode`, `_synchronous`, `_busy_timeout`, `_foreign_keys` as DSN params — they run after key is applied via URI
+- [ ] Update `checkpoint()` and `Checkpoint()` to build URI DSN with key for fresh connections
 - [ ] Update test helpers to set `CAPY_DB_KEY` for all store tests
 - [ ] Verify: `make test` passes, `make test-race` passes
 - [ ] Manual verify: start capy with key → works, without key → clear error, wrong key → clear error
@@ -65,7 +63,7 @@
 
 - [ ] Create `internal/terminal/prompt.go` with `ReadPassphrase()` and `ReadPassphraseConfirm()` using `golang.org/x/term`
 - [ ] Manual test passphrase prompting (no echo, correct string)
-- [ ] Create `cmd/capy/encrypt.go` with full encryption/re-key flow (open source with exclusive access → checkpoint source → attach target → sqlcipher_export → remove sidecars at original paths → rename)
+- [ ] Create `cmd/capy/encrypt.go` with full encryption/re-key flow: initial encryption uses file copy + `PRAGMA rekey` (in-place encrypt on the copy); re-key uses SQLite backup API between two encrypted connections. Both paths preserve the original via `.bak` rename before swapping. Note: `sqlcipher_export` is NOT available in sqlite3mc — see PoC test header for details.
 - [ ] Register command in `cmd/capy/main.go`
 - [ ] Manual test: initial encryption (unencrypted → encrypted, empty old key)
 - [ ] Manual test: key rotation (encrypted → re-encrypted, old key provided)
