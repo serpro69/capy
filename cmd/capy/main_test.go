@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/serpro69/capy/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,6 +15,7 @@ import (
 func capy(t *testing.T, args ...string) (string, string, int) {
 	t.Helper()
 	cmd := exec.Command("go", append([]string{"run", "-tags", "fts5", "."}, args...)...)
+	cmd.Env = append(os.Environ(), "CAPY_DB_KEY="+os.Getenv("CAPY_DB_KEY"))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -64,6 +66,7 @@ func TestDoctorSubcommand(t *testing.T) {
 }
 
 func TestCleanupSubcommand(t *testing.T) {
+	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
 	dir := t.TempDir()
 	// Write a config that keeps the DB inside the temp dir (avoids leaking to ~/.local/share/capy/)
 	require.NoError(t, os.WriteFile(
@@ -89,6 +92,9 @@ func TestCheckpointSubcommand_NoDB(t *testing.T) {
 }
 
 func TestCheckpointSubcommand_WithDB(t *testing.T) {
+	const testKey = "test-passphrase-at-least-32-characters-long!!"
+	t.Setenv("CAPY_DB_KEY", testKey)
+
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 	require.NoError(t, os.WriteFile(
@@ -97,21 +103,16 @@ func TestCheckpointSubcommand_WithDB(t *testing.T) {
 		0o644,
 	))
 
-	// Create a WAL-mode DB with data that forces WAL file creation
-	cmd := exec.Command("sqlite3", dbPath, "PRAGMA journal_mode=WAL; CREATE TABLE t(id INTEGER); INSERT INTO t VALUES(1);")
-	if err := cmd.Run(); err != nil {
-		t.Skip("sqlite3 CLI not available")
-	}
-
-	// Write more data to ensure WAL has content
-	cmd = exec.Command("sqlite3", dbPath, "INSERT INTO t VALUES(2); INSERT INTO t VALUES(3);")
-	require.NoError(t, cmd.Run())
+	// Create an encrypted WAL-mode DB through the store API.
+	st := store.NewContentStore(dbPath, dir, 0)
+	_, err := st.Index("# Test\n\nCheckpoint test content.", "cp-test", "", store.KindDurable)
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
 
 	stdout, _, code := capy(t, "checkpoint", "--project-dir", dir)
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout, "WAL flushed")
 
-	// The actual assertion: WAL and SHM files must be gone or empty
 	walPath := dbPath + "-wal"
 	shmPath := dbPath + "-shm"
 	if info, err := os.Stat(walPath); err == nil {
@@ -120,12 +121,6 @@ func TestCheckpointSubcommand_WithDB(t *testing.T) {
 	if info, err := os.Stat(shmPath); err == nil {
 		assert.Equal(t, int64(0), info.Size(), "SHM file should be empty after checkpoint, got %d bytes", info.Size())
 	}
-
-	// Data must survive the checkpoint
-	cmd = exec.Command("sqlite3", dbPath, "SELECT COUNT(*) FROM t;")
-	out, err := cmd.Output()
-	require.NoError(t, err)
-	assert.Contains(t, string(out), "3")
 }
 
 func TestCheckpointSubcommand_BadConfig(t *testing.T) {

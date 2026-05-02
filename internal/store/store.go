@@ -95,6 +95,9 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 	}
 
 	db, err := s.openDB()
+	if err != nil && isWrongPassphrase(err) && !isGarbageFile(s.dbPath) {
+		return nil, err
+	}
 	if err != nil && isSQLiteCorruption(err) {
 		slog.Warn("corrupt database detected, backing up and recreating", "path", s.dbPath, "error", err)
 		backupCorruptDB(s.dbPath)
@@ -112,10 +115,21 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 }
 
 func (s *ContentStore) openDB() (*sql.DB, error) {
-	dsn := s.dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"
+	key, err := RequireEncryptionKey()
+	if err != nil {
+		return nil, err
+	}
+
+	dsn := encryptedDSN(s.dbPath, key) +
+		"&_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
+	}
+
+	if _, err := db.Exec("SELECT count(*) FROM sqlite_master"); err != nil {
+		db.Close()
+		return nil, &errWrongPassphrase{wrapped: err}
 	}
 
 	if _, err := db.Exec("PRAGMA mmap_size = 268435456"); err != nil {
@@ -322,7 +336,13 @@ func (s *ContentStore) Close() error {
 // PRAGMA wal_checkpoint(TRUNCATE). Must be called after the
 // connection pool is closed so no other connections hold the WAL.
 func (s *ContentStore) checkpoint() error {
-	dsn := s.dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
+	key := EncryptionKeyFromEnv()
+	var dsn string
+	if key != "" {
+		dsn = encryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
+	} else {
+		dsn = s.dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
+	}
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return err
@@ -346,7 +366,11 @@ func (s *ContentStore) optimizeFTS(db *sql.DB) {
 // single connection (not the connection pool). This is the correct way to
 // checkpoint from outside the running server — e.g., from `capy checkpoint`.
 func (s *ContentStore) Checkpoint() error {
-	dsn := s.dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
+	key, err := RequireEncryptionKey()
+	if err != nil {
+		return err
+	}
+	dsn := encryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return fmt.Errorf("opening database for checkpoint: %w", err)
