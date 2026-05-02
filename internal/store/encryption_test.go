@@ -56,10 +56,21 @@ func TestEncryptedDSN(t *testing.T) {
 
 func TestEncryptedDSN_SpecialChars(t *testing.T) {
 	dsn := encryptedDSN("/tmp/test.db", "pass'phrase&with=special+chars")
-	assert.Contains(t, dsn, "file:/tmp/test.db?cipher=sqlcipher&legacy=4&key=")
-	assert.NotContains(t, dsn, "'")
-	assert.NotContains(t, dsn, "&with")
-	assert.NotContains(t, dsn, "=special")
+	assert.Equal(t,
+		"file:/tmp/test.db?cipher=sqlcipher&legacy=4&key=pass%27phrase%26with%3Dspecial%2Bchars",
+		dsn)
+}
+
+func TestEncryptedDSN_PathWithSpecialChars(t *testing.T) {
+	dsn := encryptedDSN("/tmp/path with spaces/test#1.db", "key")
+	assert.Equal(t,
+		"file:/tmp/path with spaces/test%231.db?cipher=sqlcipher&legacy=4&key=key",
+		dsn)
+
+	dsn2 := encryptedDSN("/tmp/path?query/test.db", "key")
+	assert.Equal(t,
+		"file:/tmp/path%3Fquery/test.db?cipher=sqlcipher&legacy=4&key=key",
+		dsn2)
 }
 
 func TestEscapeSQLString(t *testing.T) {

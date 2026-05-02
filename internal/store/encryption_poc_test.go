@@ -4,10 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 
@@ -39,27 +37,6 @@ import (
 //
 // Run:
 //   go test -tags fts5 -run TestEncryptionPoC -v -count=1 ./internal/store/
-
-// pocEscapeSQLString escapes a string for use in a SQL single-quoted literal
-// by doubling all single quotes (standard SQL escaping).
-func pocEscapeSQLString(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
-}
-
-// pocURIEscapePassphrase percent-encodes a passphrase for use in a SQLite URI.
-// SQLite's URI parser follows RFC 3986, so spaces must be %20 (not +).
-// url.QueryEscape uses + for spaces, which SQLite reads literally as '+'.
-func pocURIEscapePassphrase(s string) string {
-	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
-}
-
-// pocEncryptedDSN builds a DSN with sqlite3mc URI-parameter encryption.
-// The file: prefix ensures mattn/go-sqlite3 passes the full URI (including
-// cipher/key params) through to sqlite3_open_v2 (see sqlite3.go:1451-1453).
-func pocEncryptedDSN(dbPath, passphrase string) string {
-	return fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=%s",
-		dbPath, pocURIEscapePassphrase(passphrase))
-}
 
 // pocBackup copies all pages from srcConn to destConn using the SQLite backup API.
 // Both connections must already be open and keyed (via URI params or otherwise).
@@ -108,7 +85,7 @@ func TestEncryptionPoC(t *testing.T) {
 	// Gate check: verify the encryption extension is loaded and URI params work.
 	t.Run("encryption_active", func(t *testing.T) {
 		checkPath := filepath.Join(tmpDir, "gate_check.db")
-		dsn := pocEncryptedDSN(checkPath, passphrase)
+		dsn := encryptedDSN(checkPath, passphrase)
 		db, err := sql.Open("sqlite3", dsn)
 		if err != nil {
 			t.Fatalf("opening db: %v", err)
@@ -131,7 +108,7 @@ func TestEncryptionPoC(t *testing.T) {
 	})
 
 	t.Run("create_encrypted_db_with_fts5", func(t *testing.T) {
-		dsn := pocEncryptedDSN(dbPath, passphrase) +
+		dsn := encryptedDSN(dbPath, passphrase) +
 			"&_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"
 		db, err := sql.Open("sqlite3", dsn)
 		if err != nil {
@@ -175,7 +152,7 @@ func TestEncryptionPoC(t *testing.T) {
 	})
 
 	t.Run("reopen_correct_key", func(t *testing.T) {
-		dsn := pocEncryptedDSN(dbPath, passphrase) +
+		dsn := encryptedDSN(dbPath, passphrase) +
 			"&_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"
 		db, err := sql.Open("sqlite3", dsn)
 		if err != nil {
@@ -194,7 +171,7 @@ func TestEncryptionPoC(t *testing.T) {
 	})
 
 	t.Run("wrong_key_fails", func(t *testing.T) {
-		dsn := pocEncryptedDSN(dbPath, wrongPass) +
+		dsn := encryptedDSN(dbPath, wrongPass) +
 			"&_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"
 		db, err := sql.Open("sqlite3", dsn)
 		if err != nil {
@@ -210,7 +187,7 @@ func TestEncryptionPoC(t *testing.T) {
 	})
 
 	t.Run("wal_checkpoint", func(t *testing.T) {
-		dsn := pocEncryptedDSN(dbPath, passphrase) +
+		dsn := encryptedDSN(dbPath, passphrase) +
 			"&_journal_mode=WAL&_busy_timeout=5000"
 		db, err := sql.Open("sqlite3", dsn)
 		if err != nil {
@@ -265,7 +242,7 @@ func TestEncryptionPoC(t *testing.T) {
 		}
 
 		// Encrypt in-place via PRAGMA rekey (escape passphrase for SQL literal)
-		if _, err := rekeyDB.Exec("PRAGMA rekey = '" + pocEscapeSQLString(passphrase) + "'"); err != nil {
+		if _, err := rekeyDB.Exec("PRAGMA rekey = '" + escapeSQLString(passphrase) + "'"); err != nil {
 			t.Fatalf("PRAGMA rekey: %v", err)
 		}
 		rekeyDB.Close()
@@ -280,7 +257,7 @@ func TestEncryptionPoC(t *testing.T) {
 		}
 
 		// Verify the encrypted DB is readable with the correct key
-		verifyDSN := pocEncryptedDSN(plainPath, passphrase)
+		verifyDSN := encryptedDSN(plainPath, passphrase)
 		verifyDB, err := sql.Open("sqlite3", verifyDSN)
 		if err != nil {
 			t.Fatalf("opening rekeyed db: %v", err)
@@ -301,7 +278,7 @@ func TestEncryptionPoC(t *testing.T) {
 		const newPass = "new-passphrase-at-least-32-characters-long!!!!"
 		rekeyPath := filepath.Join(tmpDir, "rekeyed.db")
 
-		srcDSN := pocEncryptedDSN(dbPath, passphrase) + "&_busy_timeout=5000"
+		srcDSN := encryptedDSN(dbPath, passphrase) + "&_busy_timeout=5000"
 		srcDB, err := sql.Open("sqlite3", srcDSN)
 		if err != nil {
 			t.Fatalf("opening encrypted db: %v", err)
@@ -311,7 +288,7 @@ func TestEncryptionPoC(t *testing.T) {
 			t.Fatalf("checkpoint before rekey: %v", err)
 		}
 
-		destDSN := pocEncryptedDSN(rekeyPath, newPass)
+		destDSN := encryptedDSN(rekeyPath, newPass)
 		destDB, err := sql.Open("sqlite3", destDSN)
 		if err != nil {
 			t.Fatalf("opening rekey target: %v", err)
@@ -324,7 +301,7 @@ func TestEncryptionPoC(t *testing.T) {
 		srcDB.Close()
 		destDB.Close()
 
-		newDSN := pocEncryptedDSN(rekeyPath, newPass)
+		newDSN := encryptedDSN(rekeyPath, newPass)
 		newDB, err := sql.Open("sqlite3", newDSN)
 		if err != nil {
 			t.Fatalf("opening rekeyed db: %v", err)
@@ -339,7 +316,7 @@ func TestEncryptionPoC(t *testing.T) {
 			t.Fatalf("expected 1 row after rekey, got %d", count)
 		}
 
-		oldDSN := pocEncryptedDSN(rekeyPath, passphrase)
+		oldDSN := encryptedDSN(rekeyPath, passphrase)
 		oldDB, err := sql.Open("sqlite3", oldDSN)
 		if err != nil {
 			t.Fatalf("opening rekeyed db with old key: %v", err)
@@ -354,7 +331,7 @@ func TestEncryptionPoC(t *testing.T) {
 	})
 
 	t.Run("pool_concurrent_access", func(t *testing.T) {
-		dsn := pocEncryptedDSN(dbPath, passphrase) +
+		dsn := encryptedDSN(dbPath, passphrase) +
 			"&_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"
 		db, err := sql.Open("sqlite3", dsn)
 		if err != nil {
@@ -392,7 +369,7 @@ func TestEncryptionPoC(t *testing.T) {
 
 	// Passphrases with SQL-special and URI-special characters.
 	// Proves both the URI path (url.QueryEscape) and PRAGMA rekey
-	// (pocEscapeSQLString) handle adversarial input correctly.
+	// (escapeSQLString) handle adversarial input correctly.
 	t.Run("special_char_passphrase", func(t *testing.T) {
 		specialPhrases := []string{
 			"pass'phrase-with-single-quote-32chars!!",
@@ -407,7 +384,7 @@ func TestEncryptionPoC(t *testing.T) {
 
 			// Create encrypted DB via URI path
 			spPath := filepath.Join(subDir, "test.db")
-			spDSN := pocEncryptedDSN(spPath, sp)
+			spDSN := encryptedDSN(spPath, sp)
 			db, err := sql.Open("sqlite3", spDSN)
 			if err != nil {
 				t.Fatalf("[%d] open: %v", i, err)
@@ -421,7 +398,7 @@ func TestEncryptionPoC(t *testing.T) {
 			db.Close()
 
 			// Reopen and verify
-			db2, err := sql.Open("sqlite3", pocEncryptedDSN(spPath, sp))
+			db2, err := sql.Open("sqlite3", encryptedDSN(spPath, sp))
 			if err != nil {
 				t.Fatalf("[%d] reopen: %v", i, err)
 			}
@@ -447,13 +424,13 @@ func TestEncryptionPoC(t *testing.T) {
 				t.Fatalf("[%d] rekey open: %v", i, err)
 			}
 			rkDB.SetMaxOpenConns(1)
-			if _, err := rkDB.Exec("PRAGMA rekey = '" + pocEscapeSQLString(sp) + "'"); err != nil {
+			if _, err := rkDB.Exec("PRAGMA rekey = '" + escapeSQLString(sp) + "'"); err != nil {
 				t.Fatalf("[%d] PRAGMA rekey with special chars: %v", i, err)
 			}
 			rkDB.Close()
 
 			// Verify rekeyed DB is readable
-			vdb, err := sql.Open("sqlite3", pocEncryptedDSN(plainPath, sp))
+			vdb, err := sql.Open("sqlite3", encryptedDSN(plainPath, sp))
 			if err != nil {
 				t.Fatalf("[%d] verify rekey open: %v", i, err)
 			}
