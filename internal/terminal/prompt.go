@@ -1,8 +1,8 @@
 package terminal
 
 import (
-	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -64,12 +64,27 @@ func openTTY() (int, *os.File, bool) {
 }
 
 func readLine(f *os.File) (string, error) {
-	scanner := bufio.NewScanner(f)
-	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil {
+	var sb strings.Builder
+	buf := make([]byte, 1)
+	var readAny bool
+	for {
+		n, err := f.Read(buf)
+		if n > 0 {
+			readAny = true
+			if buf[0] == '\n' {
+				break
+			}
+			sb.WriteByte(buf[0])
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
 			return "", fmt.Errorf("reading input: %w", err)
 		}
+	}
+	if !readAny {
 		return "", fmt.Errorf("no input provided")
 	}
-	return strings.TrimRight(scanner.Text(), "\r\n"), nil
+	return strings.TrimRight(sb.String(), "\r"), nil
 }
