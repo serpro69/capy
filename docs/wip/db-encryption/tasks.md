@@ -57,19 +57,19 @@
 
 ## Task 4: `capy encrypt` Command
 
-**Status:** pending
+**Status:** in-progress
 **Dependencies:** Task 3
 **Docs:** [implementation.md §Phase 3](./implementation.md#phase-3-capy-encrypt-command)
 
-- [ ] Create `internal/terminal/prompt.go` with `ReadPassphrase()` and `ReadPassphraseConfirm()` using `golang.org/x/term`
-- [ ] Manual test passphrase prompting (no echo, correct string)
-- [ ] Create `cmd/capy/encrypt.go` with full encryption/re-key flow: initial encryption uses file copy + `PRAGMA rekey` (in-place encrypt on the copy); re-key uses SQLite backup API between two encrypted connections. Both paths preserve the original via `.bak` rename before swapping. Note: `sqlcipher_export` is NOT available in sqlite3mc — see PoC test header for details.
-- [ ] Register command in `cmd/capy/main.go`
-- [ ] Manual test: initial encryption (unencrypted → encrypted, empty old key)
-- [ ] Manual test: key rotation (encrypted → re-encrypted, old key provided)
-- [ ] Manual test: wrong old key → clear error
-- [ ] Manual test: passphrase < 32 chars → warning printed
-- [ ] Verify backup file created and original recoverable on failure
+- [x] Create `internal/terminal/prompt.go` with `ReadPassphrase()` and `ReadPassphraseConfirm()` using `golang.org/x/term`
+- [x] Manual test passphrase prompting (no echo, correct string)
+- [x] Create `cmd/capy/encrypt.go` with full encryption/re-key flow: initial encryption uses file copy + `PRAGMA rekey` (in-place encrypt on the copy); re-key uses SQLite backup API between two encrypted connections. Both paths preserve the original via `.bak` rename before swapping. Note: `sqlcipher_export` is NOT available in sqlite3mc — see PoC test header for details.
+- [x] Register command in `cmd/capy/main.go`
+- [x] Manual test: initial encryption (unencrypted → encrypted, empty old key)
+- [x] Manual test: key rotation (encrypted → re-encrypted, old key provided)
+- [x] Manual test: wrong old key → clear error
+- [x] Manual test: passphrase < 32 chars → warning printed
+- [x] Verify backup file created and original recoverable on failure
 
 ---
 
