@@ -30,6 +30,7 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestGetStore_LazyInit(t *testing.T) {
+	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
 	cfg := config.DefaultConfig()
 	// Override DB path to temp dir so it doesn't pollute real XDG
 	cfg.Store.Path = t.TempDir() + "/test.db"
@@ -59,6 +60,7 @@ func TestToolRegistration(t *testing.T) {
 }
 
 func TestShutdownCheckpointsWAL(t *testing.T) {
+	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
 	projectDir := t.TempDir()
 	dbPath := filepath.Join(projectDir, "test.db")
 

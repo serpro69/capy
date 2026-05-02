@@ -12,8 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testEncryptionKey = "test-passphrase-at-least-32-characters-long!!"
+
 func newTestStore(t *testing.T) *ContentStore {
 	t.Helper()
+	t.Setenv(encryptionKeyEnv, testEncryptionKey)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 	s := NewContentStore(dbPath, dir, 0)
@@ -22,6 +25,7 @@ func newTestStore(t *testing.T) *ContentStore {
 }
 
 func TestSchemaIdempotency(t *testing.T) {
+	t.Setenv(encryptionKeyEnv, testEncryptionKey)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
@@ -35,6 +39,7 @@ func TestSchemaIdempotency(t *testing.T) {
 }
 
 func TestDBDirectoryCreated(t *testing.T) {
+	t.Setenv(encryptionKeyEnv, testEncryptionKey)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "sub", "deep", "test.db")
 	s := NewContentStore(dbPath, dir, 0)
@@ -49,6 +54,7 @@ func TestDBDirectoryCreated(t *testing.T) {
 // --- WAL checkpoint ---
 
 func TestCloseCheckpointsWAL(t *testing.T) {
+	t.Setenv(encryptionKeyEnv, testEncryptionKey)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
@@ -79,6 +85,7 @@ func TestCloseCheckpointsWAL(t *testing.T) {
 }
 
 func TestCheckpointMethod(t *testing.T) {
+	t.Setenv(encryptionKeyEnv, testEncryptionKey)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
@@ -510,6 +517,7 @@ func TestVocabularyBatched(t *testing.T) {
 // --- Corrupt DB recovery ---
 
 func TestCorruptDBRecovery(t *testing.T) {
+	t.Setenv(encryptionKeyEnv, testEncryptionKey)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
@@ -541,6 +549,7 @@ func TestCorruptDBRecovery(t *testing.T) {
 }
 
 func TestCorruptDBRecoveryPreservesBackup(t *testing.T) {
+	t.Setenv(encryptionKeyEnv, testEncryptionKey)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 	garbage := []byte("not a sqlite database")
@@ -568,6 +577,7 @@ func TestCorruptDBRecoveryPreservesBackup(t *testing.T) {
 }
 
 func TestNonCorruptionErrorDoesNotTriggerRecovery(t *testing.T) {
+	t.Setenv(encryptionKeyEnv, testEncryptionKey)
 	// Point at a non-existent nested directory — this is a "creating DB directory"
 	// error, not corruption. Should not attempt recovery.
 	s := NewContentStore("/dev/null/impossible/path/test.db", "", 0)

@@ -21,6 +21,7 @@ func newTestServer(t *testing.T, policies []security.SecurityPolicy) *Server {
 
 func newTestServerWithProjectDir(t *testing.T, policies []security.SecurityPolicy, projectDir string) *Server {
 	t.Helper()
+	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
 	cfg := config.DefaultConfig()
 	if projectDir == "" {
 		projectDir = t.TempDir()

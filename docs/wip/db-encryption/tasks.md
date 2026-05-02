@@ -40,18 +40,18 @@
 
 ## Task 3: Core Encryption Integration
 
-**Status:** pending
+**Status:** done
 **Dependencies:** Task 2
 **Docs:** [implementation.md §2.2, §2.3](./implementation.md#22-key-reading-and-validation)
 
-- [ ] Create `internal/store/encryption.go` with `RequireEncryptionKey()` (errors on empty env) and `EncryptionKeyFromEnv()` (returns empty string if unset, for use by `capy encrypt` prompt flow)
-- [ ] Unit test: `RequireEncryptionKey` — empty → error, short → warning + returned, 32+ → returned. `EncryptionKeyFromEnv` — empty → empty string, set → value
-- [ ] Modify `openDB()` in `store.go`: read key, build URI DSN with `file:` prefix + `cipher=sqlcipher&legacy=4&key=<url-encoded>` + existing DSN pragmas, add canary query (`SELECT count(*) FROM sqlite_master`)
-- [ ] URI path (PoC winner): append cipher+key params to DSN string (URL-encode passphrase); keep existing `_journal_mode`, `_synchronous`, `_busy_timeout`, `_foreign_keys` as DSN params — they run after key is applied via URI
-- [ ] Update `checkpoint()` and `Checkpoint()` to build URI DSN with key for fresh connections
-- [ ] Update test helpers to set `CAPY_DB_KEY` for all store tests
-- [ ] Verify: `make test` passes, `make test-race` passes
-- [ ] Manual verify: start capy with key → works, without key → clear error, wrong key → clear error
+- [x] Create `internal/store/encryption.go` with `RequireEncryptionKey()` (errors on empty env) and `EncryptionKeyFromEnv()` (returns empty string if unset, for use by `capy encrypt` prompt flow)
+- [x] Unit test: `RequireEncryptionKey` — empty → error, short → warning + returned, 32+ → returned. `EncryptionKeyFromEnv` — empty → empty string, set → value
+- [x] Modify `openDB()` in `store.go`: read key, build URI DSN with `file:` prefix + `cipher=sqlcipher&legacy=4&key=<url-encoded>` + existing DSN pragmas, add canary query (`SELECT count(*) FROM sqlite_master`)
+- [x] URI path (PoC winner): append cipher+key params to DSN string (URL-encode passphrase); keep existing `_journal_mode`, `_synchronous`, `_busy_timeout`, `_foreign_keys` as DSN params — they run after key is applied via URI
+- [x] Update `checkpoint()` and `Checkpoint()` to build URI DSN with key for fresh connections
+- [x] Update test helpers to set `CAPY_DB_KEY` for all store tests
+- [x] Verify: `make test` passes, `make test-race` passes
+- [x] Manual verify: start capy with key → works, without key → clear error, wrong key → clear error
 
 ---
 
