@@ -120,7 +120,7 @@ func (s *ContentStore) openDB() (*sql.DB, error) {
 		return nil, err
 	}
 
-	dsn := encryptedDSN(s.dbPath, key) +
+	dsn := EncryptedDSN(s.dbPath, key) +
 		"&_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
@@ -343,7 +343,7 @@ func (s *ContentStore) checkpoint() error {
 	if err != nil {
 		return err
 	}
-	dsn := encryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
+	dsn := EncryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return err
@@ -371,7 +371,7 @@ func (s *ContentStore) Checkpoint() error {
 	if err != nil {
 		return err
 	}
-	dsn := encryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
+	dsn := EncryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return fmt.Errorf("opening database for checkpoint: %w", err)

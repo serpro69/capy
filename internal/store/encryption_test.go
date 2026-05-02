@@ -41,40 +41,40 @@ func TestEncryptionKeyFromEnv_Set(t *testing.T) {
 }
 
 func TestURIEscapePassphrase(t *testing.T) {
-	assert.Equal(t, "simple", uriEscapePassphrase("simple"))
-	assert.Equal(t, "has%20space", uriEscapePassphrase("has space"))
-	assert.Equal(t, "has%26amp", uriEscapePassphrase("has&amp"))
-	assert.Equal(t, "has%3Dequals", uriEscapePassphrase("has=equals"))
-	assert.Equal(t, "has%25percent", uriEscapePassphrase("has%percent"))
-	assert.Equal(t, "has%2Bplus", uriEscapePassphrase("has+plus"))
+	assert.Equal(t, "simple", URIEscapePassphrase("simple"))
+	assert.Equal(t, "has%20space", URIEscapePassphrase("has space"))
+	assert.Equal(t, "has%26amp", URIEscapePassphrase("has&amp"))
+	assert.Equal(t, "has%3Dequals", URIEscapePassphrase("has=equals"))
+	assert.Equal(t, "has%25percent", URIEscapePassphrase("has%percent"))
+	assert.Equal(t, "has%2Bplus", URIEscapePassphrase("has+plus"))
 }
 
 func TestEncryptedDSN(t *testing.T) {
-	dsn := encryptedDSN("/tmp/test.db", "my passphrase")
+	dsn := EncryptedDSN("/tmp/test.db", "my passphrase")
 	assert.Equal(t, "file:/tmp/test.db?cipher=sqlcipher&legacy=4&key=my%20passphrase", dsn)
 }
 
 func TestEncryptedDSN_SpecialChars(t *testing.T) {
-	dsn := encryptedDSN("/tmp/test.db", "pass'phrase&with=special+chars")
+	dsn := EncryptedDSN("/tmp/test.db", "pass'phrase&with=special+chars")
 	assert.Equal(t,
 		"file:/tmp/test.db?cipher=sqlcipher&legacy=4&key=pass%27phrase%26with%3Dspecial%2Bchars",
 		dsn)
 }
 
 func TestEncryptedDSN_PathWithSpecialChars(t *testing.T) {
-	dsn := encryptedDSN("/tmp/path with spaces/test#1.db", "key")
+	dsn := EncryptedDSN("/tmp/path with spaces/test#1.db", "key")
 	assert.Equal(t,
 		"file:/tmp/path with spaces/test%231.db?cipher=sqlcipher&legacy=4&key=key",
 		dsn)
 
-	dsn2 := encryptedDSN("/tmp/path?query/test.db", "key")
+	dsn2 := EncryptedDSN("/tmp/path?query/test.db", "key")
 	assert.Equal(t,
 		"file:/tmp/path%3Fquery/test.db?cipher=sqlcipher&legacy=4&key=key",
 		dsn2)
 }
 
 func TestEscapeSQLString(t *testing.T) {
-	assert.Equal(t, "no quotes", escapeSQLString("no quotes"))
-	assert.Equal(t, "it''s escaped", escapeSQLString("it's escaped"))
-	assert.Equal(t, "double''''quote", escapeSQLString("double''quote"))
+	assert.Equal(t, "no quotes", EscapeSQLString("no quotes"))
+	assert.Equal(t, "it''s escaped", EscapeSQLString("it's escaped"))
+	assert.Equal(t, "double''''quote", EscapeSQLString("double''quote"))
 }

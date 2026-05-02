@@ -38,17 +38,17 @@ func isGarbageFile(path string) bool {
 
 const encryptionKeyEnv = "CAPY_DB_KEY"
 
-const minPassphraseLength = 32
+const MinPassphraseLength = 32
 
 // RequireEncryptionKey reads CAPY_DB_KEY from the environment.
 // Returns an error if the key is empty. Logs a warning if the key
-// is shorter than minPassphraseLength.
+// is shorter than MinPassphraseLength.
 func RequireEncryptionKey() (string, error) {
 	key := os.Getenv(encryptionKeyEnv)
 	if key == "" {
 		return "", fmt.Errorf("%s environment variable is required (see: capy encrypt --help)", encryptionKeyEnv)
 	}
-	if len(key) < minPassphraseLength {
+	if len(key) < MinPassphraseLength {
 		slog.Warn("encryption passphrase is short — 32+ characters recommended",
 			"length", len(key))
 	}
@@ -62,23 +62,28 @@ func EncryptionKeyFromEnv() string {
 	return os.Getenv(encryptionKeyEnv)
 }
 
-// uriEscapePassphrase percent-encodes a passphrase for use in a SQLite URI.
+// URIEscapePassphrase percent-encodes a passphrase for use in a SQLite URI.
 // SQLite's URI parser follows RFC 3986, so spaces must be %20 (not +).
-func uriEscapePassphrase(s string) string {
+func URIEscapePassphrase(s string) string {
 	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
 }
 
-// encryptedDSN builds a DSN with sqlite3mc URI-parameter encryption.
-// The file: prefix ensures mattn/go-sqlite3 passes the full URI through
-// to sqlite3_open_v2 (including cipher/key params).
-func encryptedDSN(dbPath, passphrase string) string {
-	safePath := strings.NewReplacer("?", "%3F", "#", "%23").Replace(dbPath)
-	return fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=%s",
-		safePath, uriEscapePassphrase(passphrase))
+// URIEscapePath escapes a file path for use in a SQLite URI by
+// percent-encoding ? and # which have special meaning in URIs.
+func URIEscapePath(s string) string {
+	return strings.NewReplacer("?", "%3F", "#", "%23").Replace(s)
 }
 
-// escapeSQLString escapes a string for use in a SQL single-quoted literal
-// by doubling all single quotes. Used by capy encrypt (Task 4) for PRAGMA rekey.
-func escapeSQLString(s string) string {
+// EncryptedDSN builds a DSN with sqlite3mc URI-parameter encryption.
+// The file: prefix ensures mattn/go-sqlite3 passes the full URI through
+// to sqlite3_open_v2 (including cipher/key params).
+func EncryptedDSN(dbPath, passphrase string) string {
+	return fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=%s",
+		URIEscapePath(dbPath), URIEscapePassphrase(passphrase))
+}
+
+// EscapeSQLString escapes a string for use in a SQL single-quoted literal
+// by doubling all single quotes. Used by capy encrypt for PRAGMA rekey.
+func EscapeSQLString(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
 }
