@@ -15,7 +15,10 @@ import (
 func capy(t *testing.T, args ...string) (string, string, int) {
 	t.Helper()
 	cmd := exec.Command("go", append([]string{"run", "-tags", "fts5", "."}, args...)...)
-	cmd.Env = append(os.Environ(), "CAPY_DB_KEY="+os.Getenv("CAPY_DB_KEY"))
+	cmd.Env = os.Environ()
+	if v := os.Getenv("CAPY_DB_KEY"); v != "" {
+		cmd.Env = append(cmd.Env, "CAPY_DB_KEY="+v)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -121,6 +124,14 @@ func TestCheckpointSubcommand_WithDB(t *testing.T) {
 	if info, err := os.Stat(shmPath); err == nil {
 		assert.Equal(t, int64(0), info.Size(), "SHM file should be empty after checkpoint, got %d bytes", info.Size())
 	}
+
+	// Data must survive the checkpoint.
+	st2 := store.NewContentStore(dbPath, dir, 0)
+	defer st2.Close()
+	sources, err := st2.ListSources()
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+	assert.Equal(t, "cp-test", sources[0].Label)
 }
 
 func TestCheckpointSubcommand_BadConfig(t *testing.T) {

@@ -72,12 +72,13 @@ func uriEscapePassphrase(s string) string {
 // The file: prefix ensures mattn/go-sqlite3 passes the full URI through
 // to sqlite3_open_v2 (including cipher/key params).
 func encryptedDSN(dbPath, passphrase string) string {
+	safePath := strings.NewReplacer("?", "%3F", "#", "%23").Replace(dbPath)
 	return fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=%s",
-		dbPath, uriEscapePassphrase(passphrase))
+		safePath, uriEscapePassphrase(passphrase))
 }
 
 // escapeSQLString escapes a string for use in a SQL single-quoted literal
-// by doubling all single quotes (standard SQL escaping).
+// by doubling all single quotes. Used by capy encrypt (Task 4) for PRAGMA rekey.
 func escapeSQLString(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
 }

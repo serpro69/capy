@@ -129,7 +129,10 @@ func (s *ContentStore) openDB() (*sql.DB, error) {
 
 	if _, err := db.Exec("SELECT count(*) FROM sqlite_master"); err != nil {
 		db.Close()
-		return nil, &errWrongPassphrase{wrapped: err}
+		if isSQLiteCorruption(err) {
+			return nil, &errWrongPassphrase{wrapped: err}
+		}
+		return nil, fmt.Errorf("canary query failed: %w", err)
 	}
 
 	if _, err := db.Exec("PRAGMA mmap_size = 268435456"); err != nil {
@@ -336,13 +339,11 @@ func (s *ContentStore) Close() error {
 // PRAGMA wal_checkpoint(TRUNCATE). Must be called after the
 // connection pool is closed so no other connections hold the WAL.
 func (s *ContentStore) checkpoint() error {
-	key := EncryptionKeyFromEnv()
-	var dsn string
-	if key != "" {
-		dsn = encryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
-	} else {
-		dsn = s.dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
+	key, err := RequireEncryptionKey()
+	if err != nil {
+		return err
 	}
+	dsn := encryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return err
