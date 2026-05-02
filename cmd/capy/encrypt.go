@@ -88,12 +88,14 @@ func encryptPlain(dbPath, newKey string) error {
 	if err != nil {
 		return err
 	}
-	defer srcDB.Close()
 
 	if err := checkpointDB(srcDB); err != nil {
+		srcDB.Close()
 		return err
 	}
-	srcDB.Close()
+	if err := srcDB.Close(); err != nil {
+		return fmt.Errorf("closing source database: %w", err)
+	}
 
 	tmpPath := dbPath + ".enc.tmp"
 	if err := copyFile(dbPath, tmpPath); err != nil {
@@ -106,6 +108,7 @@ func encryptPlain(dbPath, newKey string) error {
 		return fmt.Errorf("opening copy for rekey: %w", err)
 	}
 
+	// security: PRAGMA values cannot use ? placeholders; EscapeSQLString doubles single-quotes
 	if _, err := tmpDB.Exec("PRAGMA rekey = '" + store.EscapeSQLString(newKey) + "'"); err != nil {
 		tmpDB.Close()
 		os.Remove(tmpPath)
@@ -123,25 +126,29 @@ func rekeyEncrypted(dbPath, oldKey, newKey string) error {
 	if err != nil {
 		return err
 	}
-	defer srcDB.Close()
 
 	if err := checkpointDB(srcDB); err != nil {
+		srcDB.Close()
 		return err
 	}
 
 	tmpPath := dbPath + ".enc.tmp"
 	destDB, err := openEncrypted(tmpPath, newKey)
 	if err != nil {
+		srcDB.Close()
 		return fmt.Errorf("creating target database: %w", err)
 	}
 
 	if err := backupDB(destDB, srcDB); err != nil {
 		destDB.Close()
+		srcDB.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("backup API: %w", err)
 	}
 	destDB.Close()
-	srcDB.Close()
+	if err := srcDB.Close(); err != nil {
+		return fmt.Errorf("closing source database: %w", err)
+	}
 
 	return swapAndVerify(dbPath, tmpPath, newKey)
 }
@@ -160,9 +167,7 @@ func openUnencrypted(dbPath string) (*sql.DB, error) {
 }
 
 func openWithCipherCodec(dbPath, key string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=%s",
-		store.URIEscapePath(dbPath), store.URIEscapePassphrase(key))
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite3", store.EncryptedDSN(dbPath, key))
 	if err != nil {
 		return nil, err
 	}
@@ -185,9 +190,13 @@ func openEncrypted(dbPath, key string) (*sql.DB, error) {
 }
 
 func checkpointDB(db *sql.DB) error {
-	_, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	var busy, log, checkpointed int
+	err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed)
 	if err != nil {
 		return fmt.Errorf("checkpoint failed: %w", err)
+	}
+	if busy > 0 {
+		return fmt.Errorf("checkpoint incomplete: %d pages busy (is the server still running?)", busy)
 	}
 	return nil
 }
@@ -240,15 +249,23 @@ func swapAndVerify(dbPath, tmpPath, newKey string) error {
 	}
 
 	if err := os.Rename(tmpPath, dbPath); err != nil {
-		os.Rename(bakPath, dbPath)
+		if rerr := os.Rename(bakPath, dbPath); rerr != nil {
+			fmt.Fprintf(os.Stderr, "capy encrypt: CRITICAL: rollback failed: %v\n", rerr)
+			fmt.Fprintf(os.Stderr, "capy encrypt: manual recovery: backup at %s\n", bakPath)
+		}
 		return fmt.Errorf("moving encrypted database into place: %w", err)
 	}
 
 	verifyDB, err := openEncrypted(dbPath, newKey)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "capy encrypt: WARNING: verification failed (%v), restoring backup\n", err)
-		os.Rename(dbPath, tmpPath)
-		os.Rename(bakPath, dbPath)
+		if rerr := os.Rename(dbPath, tmpPath); rerr != nil {
+			fmt.Fprintf(os.Stderr, "capy encrypt: CRITICAL: could not move failed db aside: %v\n", rerr)
+		}
+		if rerr := os.Rename(bakPath, dbPath); rerr != nil {
+			fmt.Fprintf(os.Stderr, "capy encrypt: CRITICAL: rollback failed: %v\n", rerr)
+			fmt.Fprintf(os.Stderr, "capy encrypt: manual recovery: backup at %s\n", bakPath)
+		}
 		os.Remove(tmpPath)
 		return fmt.Errorf("verification failed: %w", err)
 	}
@@ -259,14 +276,19 @@ func swapAndVerify(dbPath, tmpPath, newKey string) error {
 	return nil
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, srcInfo.Mode())
 	if err != nil {
 		return err
 	}

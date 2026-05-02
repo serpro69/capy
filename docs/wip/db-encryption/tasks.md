@@ -57,7 +57,7 @@
 
 ## Task 4: `capy encrypt` Command
 
-**Status:** in-progress
+**Status:** done
 **Dependencies:** Task 3
 **Docs:** [implementation.md §Phase 3](./implementation.md#phase-3-capy-encrypt-command)
 
