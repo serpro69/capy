@@ -99,6 +99,7 @@ func encryptPlain(dbPath, newKey string) error {
 
 	tmpPath := dbPath + ".enc.tmp"
 	if err := copyFile(dbPath, tmpPath); err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("copying database: %w", err)
 	}
 

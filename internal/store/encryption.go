@@ -2,7 +2,9 @@ package store
 
 import (
 	"errors"
+	"bytes"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -52,11 +54,10 @@ func isUnencryptedDB(path string) bool {
 	}
 	defer f.Close()
 	header := make([]byte, 15)
-	n, err := f.Read(header)
-	if err != nil || n < 15 {
+	if _, err := io.ReadFull(f, header); err != nil {
 		return false
 	}
-	return string(header) == string(sqliteHeaderMagic)
+	return bytes.Equal(header, sqliteHeaderMagic)
 }
 
 const encryptionKeyEnv = "CAPY_DB_KEY"
