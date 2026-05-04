@@ -115,6 +115,141 @@ func TestEncryptionLifecycle(t *testing.T) {
 	}
 }
 
+// TestEncryptPlainWALMode reproduces the bug where PRAGMA rekey fails on a
+// database in WAL journal mode. The fix switches to DELETE mode before rekey.
+func TestEncryptPlainWALMode(t *testing.T) {
+	const passphrase = "test-wal-rekey-passphrase-32-chars-long!!"
+
+	dir := t.TempDir()
+
+	t.Run("rekey_fails_in_wal_mode", func(t *testing.T) {
+		dbPath := filepath.Join(dir, "wal_fail.db")
+		db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+		require.NoError(t, err)
+
+		_, err = db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO t VALUES (1, 'wal test')")
+		require.NoError(t, err)
+
+		db.SetMaxOpenConns(1)
+		_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		require.NoError(t, err)
+		db.Close()
+
+		var journalMode string
+		rkDSN := fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=", dbPath)
+		rkDB, err := sql.Open("sqlite3", rkDSN)
+		require.NoError(t, err)
+		rkDB.SetMaxOpenConns(1)
+
+		require.NoError(t, rkDB.QueryRow("PRAGMA journal_mode").Scan(&journalMode))
+		assert.Equal(t, "wal", journalMode, "source DB should be in WAL mode")
+
+		_, err = rkDB.Exec("PRAGMA rekey = '" + EscapeSQLString(passphrase) + "'")
+		assert.Error(t, err, "PRAGMA rekey should fail in WAL mode")
+		assert.Contains(t, err.Error(), "WAL journal mode")
+		rkDB.Close()
+	})
+
+	t.Run("rekey_succeeds_after_switching_to_delete", func(t *testing.T) {
+		dbPath := filepath.Join(dir, "wal_fix.db")
+		db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+		require.NoError(t, err)
+
+		_, err = db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO t VALUES (1, 'wal fix test')")
+		require.NoError(t, err)
+
+		db.SetMaxOpenConns(1)
+		_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		require.NoError(t, err)
+		db.Close()
+
+		rkDSN := fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=", dbPath)
+		rkDB, err := sql.Open("sqlite3", rkDSN)
+		require.NoError(t, err)
+		rkDB.SetMaxOpenConns(1)
+
+		var journalMode string
+		require.NoError(t, rkDB.QueryRow("PRAGMA journal_mode").Scan(&journalMode))
+		assert.Equal(t, "wal", journalMode)
+
+		_, err = rkDB.Exec("PRAGMA journal_mode = DELETE")
+		require.NoError(t, err)
+
+		require.NoError(t, rkDB.QueryRow("PRAGMA journal_mode").Scan(&journalMode))
+		assert.Equal(t, "delete", journalMode)
+
+		_, err = rkDB.Exec("PRAGMA rekey = '" + EscapeSQLString(passphrase) + "'")
+		require.NoError(t, err, "PRAGMA rekey should succeed after switching to DELETE mode")
+		rkDB.Close()
+
+		raw, err := os.ReadFile(dbPath)
+		require.NoError(t, err)
+		require.True(t, len(raw) >= 15)
+		assert.NotEqual(t, "SQLite format 3", string(raw[:15]), "file should be encrypted")
+
+		verifyDB, err := sql.Open("sqlite3", EncryptedDSN(dbPath, passphrase))
+		require.NoError(t, err)
+		defer verifyDB.Close()
+
+		var val string
+		require.NoError(t, verifyDB.QueryRow("SELECT val FROM t WHERE id = 1").Scan(&val))
+		assert.Equal(t, "wal fix test", val)
+	})
+
+	t.Run("full_encryptPlain_flow_with_wal_and_fts5", func(t *testing.T) {
+		dbPath := filepath.Join(dir, "full_flow.db")
+
+		db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+		require.NoError(t, err)
+		_, err = db.Exec("CREATE VIRTUAL TABLE fts USING fts5(content)")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO fts (content) VALUES (?)", "WAL mode encryption test content")
+		require.NoError(t, err)
+		db.SetMaxOpenConns(1)
+		_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		require.NoError(t, err)
+		db.Close()
+
+		tmpPath := dbPath + ".enc.tmp"
+		copyTestFile(t, dbPath, tmpPath)
+
+		tmpDB, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=", tmpPath))
+		require.NoError(t, err)
+		tmpDB.SetMaxOpenConns(1)
+
+		_, err = tmpDB.Exec("PRAGMA journal_mode = DELETE")
+		require.NoError(t, err)
+
+		_, err = tmpDB.Exec("PRAGMA rekey = '" + EscapeSQLString(passphrase) + "'")
+		require.NoError(t, err)
+		tmpDB.Close()
+
+		raw, err := os.ReadFile(tmpPath)
+		require.NoError(t, err)
+		require.True(t, len(raw) >= 15)
+		assert.NotEqual(t, "SQLite format 3", string(raw[:15]), "file should be encrypted")
+
+		verifyDB, err := openEncryptedDB(tmpPath, passphrase)
+		require.NoError(t, err)
+		defer verifyDB.Close()
+
+		var content string
+		require.NoError(t, verifyDB.QueryRow("SELECT content FROM fts WHERE fts MATCH ?", "encryption").Scan(&content))
+		assert.Contains(t, content, "WAL mode encryption test content")
+	})
+}
+
+func copyTestFile(t *testing.T, src, dst string) {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dst, data, 0o644))
+}
+
 func openEncryptedDB(dbPath, key string) (*sql.DB, error) {
 	dsn := EncryptedDSN(dbPath, key) + "&_busy_timeout=5000"
 	db, err := sql.Open("sqlite3", dsn)
