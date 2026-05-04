@@ -177,16 +177,25 @@ The original database is preserved as `<path>.bak`.
 
 ### Cross-machine sync
 
-Encrypt the DB, then commit it to git:
+By default, the knowledge DB lives under `~/.local/share/capy/` (XDG data), which is outside git. To enable cross-machine sync, configure a project-local path first:
+
+```toml
+# .capy.toml (or .capy/config.toml)
+[store]
+path = ".capy/knowledge.db"
+```
+
+Then encrypt, checkpoint, and commit:
 
 ```bash
+capy encrypt       # encrypt if not already done
 capy checkpoint    # flush WAL into main file
 git add .capy/knowledge.db
 git commit -m "Update knowledge base"
 git push
 ```
 
-On the other machine:
+On the other machine (same `store.path` config must be present):
 
 ```bash
 git pull
