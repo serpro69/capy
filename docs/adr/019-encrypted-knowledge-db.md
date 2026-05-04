@@ -44,5 +44,5 @@ What this ADR does NOT change:
 
 - `CAPY_DB_KEY` is required to run capy. Breaking change for existing users — must run `capy encrypt` on existing DBs.
 - Build system uses the jgiannuzzi/go-sqlite3 fork (sqlite3mc amalgamation bundled) via `go.mod` replace directive. No system library dependency.
-- Cross-machine workflow becomes: set `CAPY_DB_KEY` → `capy encrypt` (once) → `capy checkpoint` → commit. On other machine: pull → set `CAPY_DB_KEY` → capy starts.
+- Cross-machine workflow requires `store.path` configured to a project-local path (e.g., `.capy/knowledge.db`), then: set `CAPY_DB_KEY` → `capy encrypt` (once) → `capy checkpoint` → commit. On other machine: pull → set `CAPY_DB_KEY` → capy starts.
 - README must document the encryption setup and workflow.
