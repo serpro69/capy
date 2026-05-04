@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -166,4 +167,41 @@ func TestDefaultCommandIsServe(t *testing.T) {
 func TestUnknownSubcommand(t *testing.T) {
 	_, _, code := capy(t, "nonexistent")
 	require.NotEqual(t, 0, code)
+}
+
+func TestEncryptPlain_WALMode(t *testing.T) {
+	const passphrase = "test-encrypt-plain-at-least-32-characters!!"
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+	require.NoError(t, err)
+	_, err = db.Exec("CREATE VIRTUAL TABLE fts USING fts5(content)")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO fts (content) VALUES (?)", "encrypt plain wal test")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	require.NoError(t, err)
+	db.Close()
+
+	require.NoError(t, encryptPlain(dbPath, passphrase))
+
+	raw, err := os.ReadFile(dbPath)
+	require.NoError(t, err)
+	require.True(t, len(raw) >= 15)
+	assert.NotEqual(t, "SQLite format 3", string(raw[:15]), "file should be encrypted")
+
+	bakPath := dbPath + ".bak"
+	_, err = os.Stat(bakPath)
+	assert.NoError(t, err, "backup file should exist")
+
+	verifyDB, err := sql.Open("sqlite3", store.EncryptedDSN(dbPath, passphrase))
+	require.NoError(t, err)
+	defer verifyDB.Close()
+
+	var content string
+	require.NoError(t, verifyDB.QueryRow("SELECT content FROM fts WHERE fts MATCH ?", "encrypt").Scan(&content))
+	assert.Equal(t, "encrypt plain wal test", content)
 }
