@@ -99,16 +99,21 @@ Both are standalone functions (not methods on `ContentStore`) because `capy encr
 
 **File:** `internal/store/store.go`
 
-Modify `openDB()` to apply encryption. The exact mechanism depends on the PoC result:
+Modify `openDB()` to apply encryption.
+
+> **PoC result:** Option 3 (jgiannuzzi fork with sqlite3mc) won the PoC. The URI-parameter path is used — no ConnectHook or pool restriction needed. The PRAGMA path and ConnectHook sub-options described below were evaluated during design but not implemented.
+
+**Implemented: URI path (Option 3).** Construct DSN with `EncryptedDSN()` which prepends `file:` and appends `?cipher=sqlcipher&legacy=4&key=<url-encoded-passphrase>` before the existing pragmas (`_journal_mode`, `_synchronous`, `_busy_timeout`, `_foreign_keys`). The key is applied at `sqlite3_open_v2` time, automatically to every pool connection — no ConnectHook or pool restriction needed. Sequence: open → canary query → PRAGMA mmap_size → schema → migrations → prepared statements.
+
+<details>
+<summary>PRAGMA path alternatives (not implemented — preserved for reference)</summary>
 
 **PRAGMA path:** `PRAGMA key` is per-connection, but `database/sql` maintains a connection pool. `openDB()` does NOT call `SetMaxOpenConns(1)` — concurrent MCP tool calls can create additional pool connections that lack the key. Two sub-options:
 
-- *ConnectHook (preferred):* Register a custom `sqlite3.SQLiteDriver` with a `ConnectHook` that executes `PRAGMA key` on every new connection. **Critical:** `mattn/go-sqlite3` runs DSN pragmas *before* `ConnectHook`. All pragmas must be removed from the DSN and moved into the ConnectHook, executed after `PRAGMA key`. The DSN becomes just the bare DB path. `ConnectHook` sequence: (1) `PRAGMA key`, (2) `PRAGMA journal_mode=WAL`, (3) `PRAGMA synchronous=NORMAL`, (4) `PRAGMA busy_timeout=5000`, (5) `PRAGMA foreign_keys=ON`. `retry.go` already uses a named import of `mattn/go-sqlite3`, so the pattern is available. Register the custom driver with a distinct name (e.g., `"sqlite3_encrypted"`), then use `sql.Open("sqlite3_encrypted", dsn)`.
-- *SetMaxOpenConns(1) (fallback):* Add `db.SetMaxOpenConns(1)` after `sql.Open()`. Serializes all DB access. Acceptable for single-user but limits concurrency. DSN pragmas must still be removed and applied via post-open Exec calls after `PRAGMA key`.
+- *ConnectHook:* Register a custom `sqlite3.SQLiteDriver` with a `ConnectHook` that executes `PRAGMA key` on every new connection. **Critical:** `mattn/go-sqlite3` runs DSN pragmas *before* `ConnectHook`. All pragmas must be removed from the DSN and moved into the ConnectHook, executed after `PRAGMA key`.
+- *SetMaxOpenConns(1):* Serialize all DB access through one connection. Acceptable for single-user but limits concurrency.
 
-Sequence with ConnectHook: open (ConnectHook runs PRAGMA key + all pragmas on each connection) → canary query → PRAGMA mmap_size → schema → migrations → prepared statements.
-
-**URI path (preferred if option 2 wins):** Construct DSN with encryption parameters appended before the existing pragmas. Passphrase must be URL-encoded. The key is applied automatically to every pool connection — **no ConnectHook or pool restriction needed**. Then: open → canary query → PRAGMA mmap_size → schema → migrations → prepared statements.
+</details>
 
 The canary query (`SELECT count(*) FROM sqlite_master`) detects wrong-key errors early. On failure, wrap the error: `"wrong passphrase or corrupted database (check CAPY_DB_KEY)"`.
 
@@ -204,16 +209,7 @@ The check is pure POSIX shell (no capy dependency at commit time). It fires only
 
 ### 4.2 Update `.gitignore`
 
-**File:** `.gitignore`
-
-Add WAL/SHM sidecar ignore rules after the existing `!.capy/knowledge.db` line:
-
-```
-.capy/knowledge.db-wal
-.capy/knowledge.db-shm
-```
-
-**Verify:** `git status` does not show WAL/SHM files after capy runs.
+> **Not needed.** The existing `.capy/**` glob in `.gitignore` already ignores all files under `.capy/` except those with explicit `!` exceptions. WAL/SHM sidecars are covered by this rule — adding explicit entries would be redundant.
 
 ---
 
