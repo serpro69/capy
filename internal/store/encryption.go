@@ -60,6 +60,19 @@ func isUnencryptedDB(path string) bool {
 	return bytes.Equal(header, sqliteHeaderMagic)
 }
 
+// ValidateEncryptionReady checks that CAPY_DB_KEY is set and, if the DB file
+// already exists, that it is actually encrypted. Returns nil if the DB does
+// not exist yet (it will be created encrypted on first use).
+func ValidateEncryptionReady(dbPath string) error {
+	if _, err := RequireEncryptionKey(); err != nil {
+		return err
+	}
+	if isUnencryptedDB(dbPath) {
+		return &errUnencryptedDB{path: dbPath}
+	}
+	return nil
+}
+
 const encryptionKeyEnv = "CAPY_DB_KEY"
 
 const MinPassphraseLength = 32

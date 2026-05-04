@@ -41,8 +41,9 @@ func TestVersionFlag(t *testing.T) {
 
 func TestServeSubcommand(t *testing.T) {
 	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
+	dir := t.TempDir()
 	// serve starts MCP JSON-RPC on stdio; with empty stdin it exits cleanly
-	_, _, code := capy(t, "serve")
+	_, _, code := capy(t, "serve", "--project-dir", dir)
 	assert.Equal(t, 0, code)
 }
 
@@ -51,6 +52,28 @@ func TestServeSubcommand_NoKey(t *testing.T) {
 	_, stderr, code := capy(t, "serve")
 	assert.NotEqual(t, 0, code)
 	assert.Contains(t, stderr, "CAPY_DB_KEY")
+}
+
+func TestServeSubcommand_UnencryptedDB(t *testing.T) {
+	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".capy.toml"),
+		[]byte("[store]\npath = \"test.db\"\n"),
+		0o644,
+	))
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec("CREATE TABLE t (id INTEGER)")
+	require.NoError(t, err)
+	db.Close()
+
+	_, stderr, code := capy(t, "serve", "--project-dir", dir)
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "not encrypted")
+	assert.Contains(t, stderr, "capy encrypt")
 }
 
 func TestHookSubcommand(t *testing.T) {
@@ -159,8 +182,9 @@ func TestCheckpointSubcommand_BadConfig(t *testing.T) {
 
 func TestDefaultCommandIsServe(t *testing.T) {
 	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
+	dir := t.TempDir()
 	// default command is serve; with empty stdin it exits cleanly
-	_, _, code := capy(t)
+	_, _, code := capy(t, "--project-dir", dir)
 	assert.Equal(t, 0, code)
 }
 

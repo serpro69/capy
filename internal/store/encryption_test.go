@@ -151,3 +151,46 @@ func TestOpenDB_UnencryptedDB_ClearError(t *testing.T) {
 	assert.Contains(t, err.Error(), "not encrypted")
 	assert.Contains(t, err.Error(), "capy encrypt")
 }
+
+func TestValidateEncryptionReady(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("no_key", func(t *testing.T) {
+		t.Setenv(encryptionKeyEnv, "")
+		err := ValidateEncryptionReady(filepath.Join(dir, "any.db"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), encryptionKeyEnv)
+	})
+
+	t.Run("key_set_no_db", func(t *testing.T) {
+		t.Setenv(encryptionKeyEnv, "test-passphrase-at-least-32-characters!!")
+		err := ValidateEncryptionReady(filepath.Join(dir, "nonexistent.db"))
+		assert.NoError(t, err)
+	})
+
+	t.Run("key_set_encrypted_db", func(t *testing.T) {
+		t.Setenv(encryptionKeyEnv, "test-passphrase-at-least-32-characters!!")
+		dbPath := filepath.Join(dir, "encrypted.db")
+		db, err := sql.Open("sqlite3", EncryptedDSN(dbPath, "test-passphrase-at-least-32-characters!!"))
+		require.NoError(t, err)
+		_, err = db.Exec("CREATE TABLE t (id INTEGER)")
+		require.NoError(t, err)
+		db.Close()
+
+		assert.NoError(t, ValidateEncryptionReady(dbPath))
+	})
+
+	t.Run("key_set_unencrypted_db", func(t *testing.T) {
+		t.Setenv(encryptionKeyEnv, "test-passphrase-at-least-32-characters!!")
+		dbPath := filepath.Join(dir, "plain.db")
+		db, err := sql.Open("sqlite3", dbPath)
+		require.NoError(t, err)
+		_, err = db.Exec("CREATE TABLE t (id INTEGER)")
+		require.NoError(t, err)
+		db.Close()
+
+		err = ValidateEncryptionReady(dbPath)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not encrypted")
+	})
+}

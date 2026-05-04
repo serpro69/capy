@@ -33,7 +33,7 @@ func serveRunE(cmd *cobra.Command, _ []string) error {
 		cfg = config.DefaultConfig()
 	}
 
-	if _, err := store.RequireEncryptionKey(); err != nil {
+	if err := store.ValidateEncryptionReady(cfg.ResolveDBPath(projectDir)); err != nil {
 		return fmt.Errorf("capy serve: %w", err)
 	}
 
