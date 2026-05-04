@@ -1110,6 +1110,61 @@ func TestPreCommitHookAllowsNoDBStaged(t *testing.T) {
 	assert.NoError(t, err, "commit should succeed when no DB is staged: %s", output)
 }
 
+func TestInstallPreCommitHook_ReplaceNoDoubleShebang(t *testing.T) {
+	dir := t.TempDir()
+	hookDir := filepath.Join(dir, ".git", "hooks")
+	require.NoError(t, os.MkdirAll(hookDir, 0o755))
+	hookPath := filepath.Join(hookDir, "pre-commit")
+
+	// Simulate an existing hook: shebang + custom content + old capy block + trailing content
+	oldBlock := preCommitHookBlock(`\.capy/knowledge\.db$`)
+	existing := "#!/bin/sh\necho 'custom pre-hook'\n" + oldBlock + "echo 'custom post-hook'\n"
+	require.NoError(t, os.WriteFile(hookPath, []byte(existing), 0o755))
+
+	require.NoError(t, installPreCommitHook(dir))
+
+	result, err := os.ReadFile(hookPath)
+	require.NoError(t, err)
+	content := string(result)
+
+	assert.Equal(t, 1, strings.Count(content, "#!/bin/sh"),
+		"should have exactly one shebang after replace")
+	assert.True(t, strings.HasPrefix(content, "#!/bin/sh\n"),
+		"shebang should remain at the top")
+	assert.Contains(t, content, "echo 'custom pre-hook'",
+		"should preserve content before capy block")
+	assert.Contains(t, content, "echo 'custom post-hook'",
+		"should preserve content after capy block")
+	assert.Contains(t, content, preCommitMarkerStart,
+		"should contain updated capy block")
+}
+
+func TestInstallPreCommitHook_AppendNoDoubleShebang(t *testing.T) {
+	dir := t.TempDir()
+	hookDir := filepath.Join(dir, ".git", "hooks")
+	require.NoError(t, os.MkdirAll(hookDir, 0o755))
+	hookPath := filepath.Join(hookDir, "pre-commit")
+
+	// Existing hook with no capy block
+	existing := "#!/bin/sh\necho 'other hook logic'\n"
+	require.NoError(t, os.WriteFile(hookPath, []byte(existing), 0o755))
+
+	require.NoError(t, installPreCommitHook(dir))
+
+	result, err := os.ReadFile(hookPath)
+	require.NoError(t, err)
+	content := string(result)
+
+	assert.Equal(t, 1, strings.Count(content, "#!/bin/sh"),
+		"should have exactly one shebang after append")
+	assert.Contains(t, content, "echo 'other hook logic'",
+		"should preserve existing hook content")
+	assert.Contains(t, content, preCommitMarkerStart,
+		"should append capy block")
+	assert.Contains(t, content, preCommitMarkerEnd,
+		"should append complete capy block")
+}
+
 // splitLines splits a string into lines, similar to strings.Split but handles edge cases.
 func splitLines(s string) []string {
 	if s == "" {
