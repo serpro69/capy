@@ -108,6 +108,13 @@ func encryptPlain(dbPath, newKey string) error {
 		return fmt.Errorf("opening copy for rekey: %w", err)
 	}
 
+	// sqlite3mc does not support PRAGMA rekey in WAL journal mode
+	if _, err := tmpDB.Exec("PRAGMA journal_mode = DELETE"); err != nil {
+		tmpDB.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("switching journal mode for rekey: %w", err)
+	}
+
 	// security: PRAGMA values cannot use ? placeholders; EscapeSQLString doubles single-quotes
 	if _, err := tmpDB.Exec("PRAGMA rekey = '" + store.EscapeSQLString(newKey) + "'"); err != nil {
 		tmpDB.Close()
