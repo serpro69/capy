@@ -39,9 +39,17 @@ func TestVersionFlag(t *testing.T) {
 }
 
 func TestServeSubcommand(t *testing.T) {
+	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
 	// serve starts MCP JSON-RPC on stdio; with empty stdin it exits cleanly
 	_, _, code := capy(t, "serve")
 	assert.Equal(t, 0, code)
+}
+
+func TestServeSubcommand_NoKey(t *testing.T) {
+	t.Setenv("CAPY_DB_KEY", "")
+	_, stderr, code := capy(t, "serve")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "CAPY_DB_KEY")
 }
 
 func TestHookSubcommand(t *testing.T) {
@@ -149,6 +157,7 @@ func TestCheckpointSubcommand_BadConfig(t *testing.T) {
 }
 
 func TestDefaultCommandIsServe(t *testing.T) {
+	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
 	// default command is serve; with empty stdin it exits cleanly
 	_, _, code := capy(t)
 	assert.Equal(t, 0, code)
