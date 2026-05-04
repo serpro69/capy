@@ -14,7 +14,7 @@ The core tension: session data is the most valuable content in the DB (decisions
 
 ## Decision
 
-`knowledge.db` is encrypted at rest using a SQLite encryption extension (SQLCipher or SQLite3MultipleCiphers). Encryption is mandatory — capy refuses to start without a passphrase.
+`knowledge.db` is encrypted at rest using SQLite3MultipleCiphers (sqlite3mc) in SQLCipher v4 compatibility mode, via the [jgiannuzzi/go-sqlite3](https://github.com/jgiannuzzi/go-sqlite3) fork (`go.mod` replace directive). The cipher is AES-256-CBC with HMAC-SHA512 and PBKDF2-HMAC-SHA512 key derivation (256,000 iterations). Encryption is mandatory — capy refuses to start without a passphrase.
 
 Committing the encrypted DB to git is safe when two conditions are met:
 
@@ -36,13 +36,13 @@ What this ADR does NOT change:
 ## Rationale
 
 - Encryption at rest makes the DB file content-opaque without the passphrase. A cloned repo, stolen backup, or shared filesystem exposes only ciphertext.
-- SQLite encryption extensions (SQLCipher, sqlite3mc) operate below the SQLite API — FTS5, WAL mode, all queries work unchanged. No application-level encryption/decryption that would break full-text search.
+- sqlite3mc operates below the SQLite API — FTS5, WAL mode, all queries work unchanged. No application-level encryption/decryption that would break full-text search. URI-parameter encryption (`?cipher=sqlcipher&legacy=4&key=...`) applies the key at `sqlite3_open_v2` time, avoiding PRAGMA-ordering issues with the `database/sql` connection pool.
 - Environment variable for the key follows the 12-factor pattern and avoids secrets in config files, shell history (unlike CLI flags), or the DB itself.
 - Mandatory encryption (vs optional) eliminates the risk class of "forgot to encrypt before sharing." The pre-commit hook is a second safety net.
 
 ## Consequences
 
 - `CAPY_DB_KEY` is required to run capy. Breaking change for existing users — must run `capy encrypt` on existing DBs.
-- Build system gains a dependency on a SQLite encryption library (system library or bundled amalgamation).
+- Build system uses the jgiannuzzi/go-sqlite3 fork (sqlite3mc amalgamation bundled) via `go.mod` replace directive. No system library dependency.
 - Cross-machine workflow becomes: set `CAPY_DB_KEY` → `capy encrypt` (once) → `capy checkpoint` → commit. On other machine: pull → set `CAPY_DB_KEY` → capy starts.
 - README must document the encryption setup and workflow.

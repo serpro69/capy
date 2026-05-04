@@ -93,14 +93,14 @@
 
 ## Task 6: Documentation
 
-**Status:** pending
+**Status:** done
 **Dependencies:** Task 4, Task 5
 **Docs:** [implementation.md §Phase 5](./implementation.md#phase-5-documentation)
 
-- [ ] Verify `docs/adr/019-encrypted-knowledge-db.md` matches final implementation (already drafted — update if PoC changed design decisions)
-- [ ] Verify `docs/adr/015-knowledge-db-not-tracked-in-git.md` status is superseded (already done — confirm cross-references)
-- [ ] Add encryption workflow section to `README.md`: CAPY_DB_KEY setup, initial encryption, cross-machine sync, key rotation, passphrase recommendations
-- [ ] Follow the documented README workflow on a clean checkout to verify accuracy
+- [x] Verify `docs/adr/019-encrypted-knowledge-db.md` matches final implementation (already drafted — update if PoC changed design decisions)
+- [x] Verify `docs/adr/015-knowledge-db-not-tracked-in-git.md` status is superseded (already done — confirm cross-references)
+- [x] Add encryption workflow section to `README.md`: CAPY_DB_KEY setup, initial encryption, cross-machine sync, key rotation, passphrase recommendations
+- [x] Follow the documented README workflow on a clean checkout to verify accuracy
 
 ---
 

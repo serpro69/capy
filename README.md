@@ -142,6 +142,74 @@ All settings have sensible defaults. Configuration files are optional — capy w
 
 > **Caution with git and the knowledge DB.** SQLite WAL sidecar files (`.db-wal`, `.db-shm`) are created when the DB is written to during a session. capy flushes the WAL on session close automatically, but the files only get cleaned up if the session actually wrote to the DB. If you see stale WAL files (e.g., after upgrading capy or after an unclean shutdown), run `capy checkpoint` to flush them manually. If you want to commit the DB to git (e.g., to share across machines), run `capy checkpoint` first — it flushes the WAL into the main file and removes the sidecar files.
 
+## Encryption
+
+The knowledge database is encrypted at rest. capy refuses to start without a passphrase.
+
+### Setup
+
+Set `CAPY_DB_KEY` in your shell profile:
+
+```bash
+# Generate a strong passphrase (32+ characters recommended)
+export CAPY_DB_KEY=$(openssl rand -base64 48)
+echo "export CAPY_DB_KEY='$CAPY_DB_KEY'" >> ~/.zshrc  # or ~/.bashrc
+```
+
+Or use [direnv](https://direnv.net/) for per-project keys:
+
+```bash
+echo "export CAPY_DB_KEY='your-passphrase-here'" >> .envrc
+direnv allow
+```
+
+### Initial encryption
+
+Existing unencrypted databases must be encrypted before capy will use them:
+
+```bash
+export CAPY_DB_KEY='your-passphrase-here'
+capy encrypt
+# When prompted for the current passphrase, press Enter (empty = unencrypted).
+```
+
+The original database is preserved as `<path>.bak`.
+
+### Cross-machine sync
+
+Encrypt the DB, then commit it to git:
+
+```bash
+capy checkpoint    # flush WAL into main file
+git add .capy/knowledge.db
+git commit -m "Update knowledge base"
+git push
+```
+
+On the other machine:
+
+```bash
+git pull
+export CAPY_DB_KEY='same-passphrase'
+capy serve         # DB opens with your key
+```
+
+The pre-commit hook rejects unencrypted databases automatically — run `capy encrypt` first if the commit is blocked.
+
+### Key rotation
+
+```bash
+export CAPY_DB_KEY='new-passphrase'
+capy encrypt
+# Enter the OLD passphrase when prompted.
+```
+
+### Passphrase recommendations
+
+- **32+ characters.** Shorter passphrases work but trigger a warning.
+- **Generated, not memorized.** `openssl rand -base64 48` or a password manager.
+- **Never in config files.** Use environment variables, direnv, or a secrets manager. Config files are committed to repos.
+
 ## CLI Commands
 
 | Command                | Description                                           |
@@ -152,6 +220,7 @@ All settings have sensible defaults. Configuration files are optional — capy w
 | `capy which`           | Print the knowledge base path for the current project |
 | `capy cleanup`         | Remove stale knowledge base entries                   |
 | `capy checkpoint`      | Flush WAL into main DB file for safe git commits      |
+| `capy encrypt`         | Encrypt the knowledge DB or rotate its encryption key |
 | `capy hook <event>`    | Handle a hook event (called by Claude Code, not you)  |
 
 Global flags: `--project-dir`, `--version`

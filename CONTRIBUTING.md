@@ -5,10 +5,11 @@
 ### Prerequisites
 
 - **Go 1.23+** ([install](https://go.dev/dl/))
-- **C compiler** — required for CGO (SQLite FTS5):
+- **C compiler** — required for CGO (SQLite FTS5 + encryption):
   - macOS: `xcode-select --install`
   - Debian/Ubuntu: `sudo apt install build-essential`
   - Fedora: `sudo dnf install gcc`
+  - No external SQLite library needed — the build uses a `go.mod` replace directive to bundle sqlite3mc (SQLite3MultipleCiphers) via the jgiannuzzi/go-sqlite3 fork
 - **Language runtimes** (optional) — for testing the executor against specific languages:
   - At minimum: `bash`, `python3`
   - Full set: `node`/`bun`, `tsx`/`ts-node`, `ruby`, `go`, `rustc`, `php`, `perl`, `Rscript`, `elixir`
@@ -25,7 +26,11 @@ This produces a `./capy` binary. The `-tags fts5` build tag is handled by the Ma
 
 ### Verify
 
+Tests require the `CAPY_DB_KEY` environment variable (any non-empty string works for tests):
+
 ```bash
+export CAPY_DB_KEY=test-key-for-development
+
 make test       # run all tests
 make vet        # static analysis
 make test-race  # tests with race detector
@@ -34,7 +39,7 @@ make test-race  # tests with race detector
 ## Project Structure
 
 ```
-cmd/capy/           CLI entry points (serve, hook, setup, doctor, cleanup)
+cmd/capy/           CLI entry points (serve, hook, setup, doctor, cleanup, checkpoint, encrypt)
 internal/
   adapter/          Platform adapter interface + Claude Code implementation
   config/           TOML config loading, project root detection, path resolution
@@ -43,7 +48,7 @@ internal/
   platform/         Setup command, doctor diagnostics, routing instructions
   security/         Settings parsing, glob matching, command splitting, shell-escape detection
   server/           MCP server, 9 tool handlers, stats, lifecycle, snippets
-  store/            SQLite FTS5 knowledge base (schema, indexing, chunking, search, cleanup)
+  store/            SQLite FTS5 knowledge base (schema, indexing, chunking, search, cleanup, encryption)
   version/          Version variable (set at build via ldflags)
 ```
 
@@ -51,9 +56,14 @@ internal/
 
 ### Running Tests
 
-All tests require the `fts5` build tag. The Makefile handles this:
+All tests require:
+
+1. The `fts5` build tag (handled by the Makefile)
+2. The `CAPY_DB_KEY` environment variable set to any non-empty string
 
 ```bash
+export CAPY_DB_KEY=test-key-for-development       # set once per shell session
+
 make test                                         # all tests
 make test-race                                    # with race detector
 go test -tags fts5 -count=1 ./internal/store/...  # single package
@@ -61,7 +71,9 @@ go test -tags fts5 -count=1 -run TestSearch ./internal/store/...  # single test
 go test -tags fts5 -count=1 -v ./internal/hook/...  # verbose
 ```
 
-Without `-tags fts5` you'll get cryptic `no such module: fts5` errors from SQLite. This is the #1 gotcha.
+Top gotchas:
+- Without `-tags fts5` you'll get cryptic `no such module: fts5` errors from SQLite.
+- Without `CAPY_DB_KEY` you'll get `CAPY_DB_KEY environment variable is required` errors from store tests.
 
 ### Coverage
 
@@ -181,7 +193,7 @@ go test -tags fts5 -count=1 -v -run TestIntegration ./internal/server/...
 
 **Store operations**: All database operations use prepared statements cached on the `ContentStore` struct. New queries need a prepared statement added to `store.go:prepareStatements()` and closed in `store.go:Close()`.
 
-**SQLite WAL checkpoint** (see ADR-015, ADR-016): The knowledge DB uses WAL mode. On `Close()`, the WAL must be flushed into the main `.db` file — otherwise git operations corrupt the database (WAL/SHM sidecar files aren't tracked). The checkpoint requires exclusive WAL access, which means the `database/sql` connection pool must be closed *before* checkpointing. `Close()` handles this by: (1) closing statements, (2) closing the pool, (3) opening a fresh single connection for `PRAGMA wal_checkpoint(TRUNCATE)`. Do not attempt to checkpoint while pool connections are open — it silently degrades to passive (incomplete). The `Checkpoint()` method does the same thing standalone for the `capy checkpoint` CLI command.
+**SQLite WAL checkpoint** (see ADR-015, ADR-016, ADR-019): The knowledge DB uses WAL mode with mandatory encryption (sqlite3mc, SQLCipher v4 compat). On `Close()`, the WAL must be flushed into the main `.db` file — otherwise git operations corrupt the database (WAL/SHM sidecar files aren't tracked). The checkpoint requires exclusive WAL access, which means the `database/sql` connection pool must be closed *before* checkpointing. `Close()` handles this by: (1) closing statements, (2) closing the pool, (3) opening a fresh single connection (with the encryption key via URI parameters) for `PRAGMA wal_checkpoint(TRUNCATE)`. Do not attempt to checkpoint while pool connections are open — it silently degrades to passive (incomplete). The `Checkpoint()` method does the same thing standalone for the `capy checkpoint` CLI command.
 
 **Important nuance**: WAL/SHM files only exist when the DB has been written to during a session. `Close()` checkpoints whatever WAL frames the current session created. If the server starts but no writes happen (e.g., empty `capy serve` → Ctrl+C), there's nothing to checkpoint and any pre-existing WAL files from a *previous* session remain untouched. This means stale WAL files from an older binary version or unclean shutdown require a manual `capy checkpoint` to flush.
 
