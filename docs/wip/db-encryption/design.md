@@ -66,7 +66,7 @@ For the PRAGMA path, there are two sub-options:
 - **ConnectHook (preferred):** Register a custom `sqlite3.SQLiteDriver` with a `ConnectHook` that executes, in order: (1) `PRAGMA key`, (2) `PRAGMA journal_mode=WAL`, (3) `PRAGMA synchronous=NORMAL`, (4) `PRAGMA busy_timeout=5000`, (5) `PRAGMA foreign_keys=ON`. `retry.go` already uses a named import of `mattn/go-sqlite3` (not blank import), so the pattern is available in the codebase. This ensures every pool connection is keyed and configured.
 - **SetMaxOpenConns(1) (fallback):** Serialize all DB access through one connection. Acceptable for a single-user tool but limits concurrency under parallel MCP calls. DSN pragmas must still be removed and applied via post-open Exec calls (after PRAGMA key).
 
-**URI path (sqlite3mc / option 2):** Append `&cipher=chacha20&key=<url-encoded-passphrase>` to the DSN string. The key is applied automatically to every connection the pool creates — **no pool issue**. This is a strong reason to prefer option 2 in the PoC.
+**URI path (sqlite3mc / option 3 — PoC winner):** Append `&cipher=sqlcipher&legacy=4&key=<url-encoded-passphrase>` to the DSN string. The key is applied at `sqlite3_open_v2` time, automatically to every connection the pool creates — **no pool issue**. This is the path the PoC selected.
 
 Both `checkpoint()` (internal, called from `Close()`) and `Checkpoint()` (public, called from `capy checkpoint` CLI) open fresh connections with `SetMaxOpenConns(1)` and must apply the same key via the same mechanism.
 
@@ -84,23 +84,33 @@ New CLI command in `cmd/capy/encrypt.go`. Dual-purpose: initial encryption (unen
 
 **Encryption process:**
 
+sqlite3mc does NOT provide `sqlcipher_export()`. Two separate paths are used depending on whether the source DB is unencrypted or already encrypted:
+
+**Initial encryption (unencrypted → encrypted):** File copy + `PRAGMA rekey`.
+
 1. Resolve DB path from config (`config.Load` + `ResolveDBPath`).
 2. Verify DB file exists.
-3. Open source DB with old key (empty = unencrypted) using `SetMaxOpenConns(1)` for exclusive access. Run canary query to verify access.
-4. Checkpoint the source DB (`PRAGMA wal_checkpoint(TRUNCATE)`) to flush WAL into the main file. This ensures the export captures all data and eliminates sidecars.
-5. Create temp target: `<dbpath>.enc.tmp`.
-6. Attach target with new key: `ATTACH DATABASE '<target>' AS target KEY '<new-key>'`.
-7. Export: `SELECT sqlcipher_export('target')` (SQLCipher) or equivalent (sqlite3mc — see PoC task for verification).
-8. Detach and close source.
-9. Remove WAL/SHM sidecars at their original paths: `<dbpath>-wal` and `<dbpath>-shm` (SQLite names sidecars based on the DB path, not the renamed path).
-10. Back up original: rename `<dbpath>` → `<dbpath>.bak`.
-11. Rename temp to final: `<dbpath>.enc.tmp` → `<dbpath>`.
-12. Verify: reopen new DB with new key, run canary query.
-13. Print: `"Encrypted: <dbpath>. Backup at <dbpath>.bak"`.
+3. Open source DB without encryption, `SetMaxOpenConns(1)`. Run canary query.
+4. Checkpoint source (`PRAGMA wal_checkpoint(TRUNCATE)`). Close source.
+5. Copy file to `<dbpath>.enc.tmp`.
+6. Open copy with sqlite3mc cipher codec (empty key — DB is still unencrypted at this point).
+7. `PRAGMA rekey = '<new-key>'` — encrypts in place.
+8. Close. Swap via rename: original → `.bak`, temp → original.
+9. Verify: reopen with new key, canary query.
 
-If any step fails after the backup rename, `.bak` preserves the original. The temp file is cleaned up on error.
+**Key rotation (encrypted → encrypted):** SQLite backup API.
 
-Key rotation is identical — step 3 opens with the old key instead of no key.
+1–2. Same as above.
+3. Open source DB with old key, `SetMaxOpenConns(1)`. Run canary query.
+4. Checkpoint source.
+5. Open new empty DB at `<dbpath>.enc.tmp` with new key.
+6. Backup API (`sqlite3_backup_init/step/finish`) copies all pages from source to dest.
+7. Close both. Swap via rename.
+8. Verify: reopen with new key, canary query.
+
+The backup API does NOT work across the unencrypted/encrypted boundary, which is why initial encryption uses the PRAGMA rekey path instead.
+
+Both paths: remove WAL/SHM sidecars before rename, preserve original as `.bak`. If any step fails after the backup rename, `.bak` preserves the original. The temp file is cleaned up on error.
 
 ### Pre-commit Hook
 
@@ -120,14 +130,7 @@ The check only fires when the DB file is staged — it does not affect commits t
 
 ### .gitignore
 
-The existing `!.capy/knowledge.db` (line 38) stays — it's now intentional. Two lines are added for the WAL/SHM sidecars:
-
-```
-.capy/knowledge.db-wal
-.capy/knowledge.db-shm
-```
-
-These sidecars are always transient. `capy checkpoint` flushes them into the main file.
+The existing `!.capy/knowledge.db` stays — it's now intentional. No explicit WAL/SHM ignore rules are needed: the `.capy/**` glob already ignores all files under `.capy/` except those with explicit `!` exceptions. The sidecars (`.db-wal`, `.db-shm`) are always transient — `capy checkpoint` flushes them into the main file.
 
 ### README Documentation
 
