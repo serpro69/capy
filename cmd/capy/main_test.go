@@ -34,7 +34,8 @@ func capy(t *testing.T, args ...string) (string, string, int) {
 }
 
 func TestVersionFlag(t *testing.T) {
-	stdout, _, code := capy(t, "--version")
+	dir := t.TempDir()
+	stdout, _, code := capy(t, "--version", "--project-dir", dir)
 	assert.Equal(t, 0, code)
 	assert.NotEmpty(t, stdout)
 }
@@ -49,7 +50,8 @@ func TestServeSubcommand(t *testing.T) {
 
 func TestServeSubcommand_NoKey(t *testing.T) {
 	t.Setenv("CAPY_DB_KEY", "")
-	_, stderr, code := capy(t, "serve")
+	dir := t.TempDir()
+	_, stderr, code := capy(t, "serve", "--project-dir", dir)
 	assert.NotEqual(t, 0, code)
 	assert.Contains(t, stderr, "CAPY_DB_KEY")
 }
@@ -77,13 +79,15 @@ func TestServeSubcommand_UnencryptedDB(t *testing.T) {
 }
 
 func TestHookSubcommand(t *testing.T) {
+	dir := t.TempDir()
 	// hook reads JSON from stdin; with empty stdin it passes through cleanly
-	_, _, code := capy(t, "hook", "pretooluse")
+	_, _, code := capy(t, "hook", "pretooluse", "--project-dir", dir)
 	assert.Equal(t, 0, code)
 }
 
 func TestHookRequiresEventArg(t *testing.T) {
-	_, _, code := capy(t, "hook")
+	dir := t.TempDir()
+	_, _, code := capy(t, "hook", "--project-dir", dir)
 	assert.NotEqual(t, 0, code)
 }
 
@@ -95,7 +99,8 @@ func TestSetupSubcommand(t *testing.T) {
 }
 
 func TestDoctorSubcommand(t *testing.T) {
-	stdout, _, code := capy(t, "doctor")
+	dir := t.TempDir()
+	stdout, _, code := capy(t, "doctor", "--project-dir", dir)
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout, "doctor")
 }
@@ -189,7 +194,8 @@ func TestDefaultCommandIsServe(t *testing.T) {
 }
 
 func TestUnknownSubcommand(t *testing.T) {
-	_, _, code := capy(t, "nonexistent")
+	dir := t.TempDir()
+	_, _, code := capy(t, "nonexistent", "--project-dir", dir)
 	require.NotEqual(t, 0, code)
 }
 
