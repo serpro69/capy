@@ -219,18 +219,17 @@ func shellEscapePath(path string) string {
 	return strings.ReplaceAll(path, "'", `'\''`)
 }
 
-// preCommitHookScript returns the content of the git pre-commit hook.
-// It checkpoints the WAL only when the knowledge DB is staged for commit.
-// dbPattern is a grep pattern matching the DB path relative to the repo root.
 // preCommitHookBlock returns just the capy block (no shebang).
 // Used by installPreCommitHook for replace/append into existing hooks.
+// dbPattern is a grep pattern matching the DB path relative to the repo root.
 func preCommitHookBlock(dbPattern string) string {
 	safePattern := shellEscapePath(dbPattern)
 	return fmt.Sprintf(`%s
 # Installed by capy setup — safe to remove if not needed.
 
-if git diff --cached --name-only | grep -q '%s'; then
-  git diff --cached --name-only | grep '%s' | while read -r f; do
+staged_dbs=$(git diff --cached --name-only | grep '%s' || true)
+if [ -n "$staged_dbs" ]; then
+  echo "$staged_dbs" | while read -r f; do
     if head -c 15 "$f" 2>/dev/null | grep -q 'SQLite format 3'; then
       echo "capy: refusing to commit unencrypted $f. Run 'capy encrypt' first." >&2
       exit 1
@@ -238,10 +237,10 @@ if git diff --cached --name-only | grep -q '%s'; then
   done
   if [ $? -ne 0 ]; then exit 1; fi
   bash "%s" checkpoint
-  git diff --cached --name-only | grep '%s' | while read -r f; do git add "$f"; done
+  echo "$staged_dbs" | while read -r f; do git add "$f"; done
 fi
 %s
-`, preCommitMarkerStart, safePattern, safePattern, capyWrapperRelPath, safePattern, preCommitMarkerEnd)
+`, preCommitMarkerStart, safePattern, capyWrapperRelPath, preCommitMarkerEnd)
 }
 
 // preCommitHookScript returns a complete hook script with shebang.

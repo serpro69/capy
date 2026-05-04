@@ -1011,6 +1011,8 @@ func TestSettingsTargetFilename(t *testing.T) {
 func TestPreCommitHookScriptContainsEncryptionCheck(t *testing.T) {
 	script := preCommitHookScript(`\.capy/knowledge\.db$`)
 
+	assert.Contains(t, script, "staged_dbs=",
+		"should capture staged DB files once")
 	assert.Contains(t, script, `head -c 15 "$f"`,
 		"should check first 15 bytes of staged DB files")
 	assert.Contains(t, script, `SQLite format 3`,
