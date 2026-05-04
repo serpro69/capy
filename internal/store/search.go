@@ -566,21 +566,25 @@ func effectiveKindFilter(opts SearchOptions) []SourceKind {
 		return nil
 	}
 	if len(opts.IncludeKinds) == 0 {
-		return []SourceKind{KindDurable}
+		return []SourceKind{KindDurable, KindSession}
 	}
 	return opts.IncludeKinds
 }
 
-// KindScopeIncludesEphemeral reports whether a search with the given options
-// would include ephemeral sources, mirroring effectiveKindFilter so callers
-// (e.g., the MCP layer deciding whether to surface ephemeral-recovery hints)
+// KindScopeIncludes reports whether a search with the given options would
+// include sources of the given kind, mirroring effectiveKindFilter so callers
 // never drift from the store's actual filtering rule.
-func KindScopeIncludesEphemeral(opts SearchOptions) bool {
+func KindScopeIncludes(opts SearchOptions, kind SourceKind) bool {
 	kinds := effectiveKindFilter(opts)
 	if kinds == nil {
 		return true // explicit Source override — kind filter is bypassed
 	}
-	return slices.Contains(kinds, KindEphemeral)
+	return slices.Contains(kinds, kind)
+}
+
+// KindScopeIncludesEphemeral is a convenience wrapper for backward compatibility.
+func KindScopeIncludesEphemeral(opts SearchOptions) bool {
+	return KindScopeIncludes(opts, KindEphemeral)
 }
 
 // execDynamicSearch builds and executes a search query with dynamic WHERE clauses.

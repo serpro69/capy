@@ -8,11 +8,12 @@ type SourceKind string
 const (
 	KindDurable   SourceKind = "durable"
 	KindEphemeral SourceKind = "ephemeral"
+	KindSession   SourceKind = "session"
 )
 
 // Valid reports whether k is a recognized source kind.
 func (k SourceKind) Valid() bool {
-	return k == KindDurable || k == KindEphemeral
+	return k == KindDurable || k == KindEphemeral || k == KindSession
 }
 
 // Chunk represents a unit of indexed content.
@@ -84,6 +85,11 @@ type StoreStats struct {
 	// and awaiting the next Cleanup() sweep.
 	EphemeralFreshCount int
 	EphemeralStaleCount int
+
+	// Session TTL buckets (same semantics as ephemeral).
+	SessionSourceCount int
+	SessionFreshCount  int
+	SessionStaleCount  int
 }
 
 // SourceMeta is lightweight metadata for a single source (used by TTL cache).
