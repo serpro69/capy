@@ -106,13 +106,13 @@
 
 ## Task 7: Final Verification
 
-**Status:** pending
+**Status:** in-progress
 **Dependencies:** Task 3, Task 4, Task 5, Task 6
 **Docs:** [implementation.md §Phase 6](./implementation.md#phase-6-final-verification)
 
-- [ ] `make test` — all tests pass
-- [ ] `make test-race` — no race conditions
-- [ ] Add integration test: full encryption lifecycle (create encrypted DB → index → close → reopen → search → re-key → verify)
+- [x] `make test` — all tests pass
+- [x] `make test-race` — no race conditions
+- [x] Add integration test: full encryption lifecycle (create encrypted DB → index → close → reopen → search → re-key → verify)
 - [ ] Manual cross-machine simulation: encrypt → checkpoint → commit → clone to new dir → set key → verify content searchable
 - [ ] Run `kk:review-code` on final diff
 - [ ] Run `kk:review-spec` to verify implementation matches design and implementation docs
