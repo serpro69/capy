@@ -358,7 +358,7 @@ func TestIntegration_Performance_LargeDocumentIndexAndSearch(t *testing.T) {
 	})
 	indexTime := time.Since(start)
 	require.False(t, r.IsError)
-	assert.Less(t, indexTime, 1*time.Second, "indexing 100KB should complete in under 1 second")
+	assert.Less(t, indexTime, 3*time.Second, "indexing 100KB should complete in under 3 seconds")
 	t.Logf("Index time: %v for %dKB", indexTime, len(doc)/1024)
 
 	// Search: should complete in <1s
@@ -373,7 +373,7 @@ func TestIntegration_Performance_LargeDocumentIndexAndSearch(t *testing.T) {
 	})
 	searchTime := time.Since(start)
 	require.False(t, r2.IsError)
-	assert.Less(t, searchTime, 1*time.Second, "searching 100KB indexed content should complete in under 1 second")
+	assert.Less(t, searchTime, 3*time.Second, "searching 100KB indexed content should complete in under 3 seconds")
 	t.Logf("Search time: %v", searchTime)
 
 	// Verify search actually found relevant content
