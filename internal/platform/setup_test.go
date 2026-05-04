@@ -3,6 +3,7 @@ package platform
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1005,6 +1006,106 @@ func TestRemoveCapyHooks_PreservesOtherHooks(t *testing.T) {
 func TestSettingsTargetFilename(t *testing.T) {
 	assert.Equal(t, "settings.json", SettingsProject.SettingsFilename())
 	assert.Equal(t, "settings.local.json", SettingsLocal.SettingsFilename())
+}
+
+func TestPreCommitHookScriptContainsEncryptionCheck(t *testing.T) {
+	script := preCommitHookScript(`\.capy/knowledge\.db$`)
+
+	assert.Contains(t, script, `head -c 15 "$f"`,
+		"should check first 15 bytes of staged DB files")
+	assert.Contains(t, script, `SQLite format 3`,
+		"should detect unencrypted SQLite magic string")
+	assert.Contains(t, script, `refusing to commit unencrypted`,
+		"should print rejection message")
+	assert.Contains(t, script, `capy encrypt`,
+		"should point user to capy encrypt")
+	assert.Contains(t, script, `if [ $? -ne 0 ]; then exit 1; fi`,
+		"should propagate subshell exit code")
+}
+
+// initTestGitRepo creates a temp git repo with an initial commit and a
+// pre-commit hook installed with a known DB pattern. Uses preCommitHookScript
+// directly instead of installPreCommitHook, which resolves the DB path via
+// config and would produce a pattern pointing outside the temp repo.
+func initTestGitRepo(t *testing.T) (string, func(args ...string)) {
+	t.Helper()
+	dir := t.TempDir()
+
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v failed: %s", args, out)
+	}
+
+	runGit("init")
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
+	runGit("config", "commit.gpgsign", "false")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README"), []byte("init"), 0o644))
+	runGit("add", "README")
+	runGit("commit", "-m", "initial")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".capy"), 0o755))
+
+	hookDir := filepath.Join(dir, ".git", "hooks")
+	script := preCommitHookScript(`\.capy/knowledge\.db$`)
+	require.NoError(t, os.WriteFile(filepath.Join(hookDir, "pre-commit"), []byte(script), 0o755))
+
+	return dir, runGit
+}
+
+func TestPreCommitHookRejectsUnencryptedDB(t *testing.T) {
+	dir, runGit := initTestGitRepo(t)
+
+	// Create an unencrypted SQLite DB (starts with "SQLite format 3\000")
+	sqliteMagic := append([]byte("SQLite format 3"), 0x00)
+	dbContent := make([]byte, 4096)
+	copy(dbContent, sqliteMagic)
+	dbPath := filepath.Join(dir, ".capy", "knowledge.db")
+	require.NoError(t, os.WriteFile(dbPath, dbContent, 0o644))
+
+	runGit("add", "-f", dbPath)
+
+	cmd := exec.Command("git", "commit", "-m", "should fail")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	assert.Error(t, err, "commit should fail for unencrypted DB")
+	assert.Contains(t, string(output), "refusing to commit unencrypted",
+		"hook should print rejection message")
+}
+
+func TestPreCommitHookAllowsEncryptedDB(t *testing.T) {
+	dir, runGit := initTestGitRepo(t)
+
+	// Create an "encrypted" DB (deterministic non-SQLite bytes)
+	dbContent := make([]byte, 4096)
+	for i := range dbContent {
+		dbContent[i] = byte(i % 251)
+	}
+	dbPath := filepath.Join(dir, ".capy", "knowledge.db")
+	require.NoError(t, os.WriteFile(dbPath, dbContent, 0o644))
+
+	runGit("add", "-f", dbPath)
+
+	cmd := exec.Command("git", "commit", "-m", "encrypted db ok")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	assert.NoError(t, err, "commit should succeed for encrypted DB: %s", output)
+}
+
+func TestPreCommitHookAllowsNoDBStaged(t *testing.T) {
+	dir, runGit := initTestGitRepo(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "other.txt"), []byte("hello"), 0o644))
+	runGit("add", "other.txt")
+
+	cmd := exec.Command("git", "commit", "-m", "no db staged")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	assert.NoError(t, err, "commit should succeed when no DB is staged: %s", output)
 }
 
 // splitLines splits a string into lines, similar to strings.Split but handles edge cases.

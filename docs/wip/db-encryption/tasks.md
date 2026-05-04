@@ -75,17 +75,19 @@
 
 ## Task 5: Safety Guardrails
 
-**Status:** pending
+**Status:** done
 **Dependencies:** Task 3
 **Docs:** [implementation.md §Phase 4](./implementation.md#phase-4-safety-guardrails)
 
-- [ ] Update `preCommitHookScript()` in `internal/platform/setup.go`: add inline shell header check (first 15 bytes vs `"SQLite format 3"`)
-- [ ] Reject commit with clear message if unencrypted DB is staged
-- [ ] Update `.gitignore`: add `.capy/knowledge.db-wal` and `.capy/knowledge.db-shm`
-- [ ] Verify: stage unencrypted DB → commit blocked
-- [ ] Verify: stage encrypted DB → commit proceeds
-- [ ] Verify: no DB staged → commit proceeds
-- [ ] Verify: `git status` does not show WAL/SHM sidecars
+- [x] Update `preCommitHookScript()` in `internal/platform/setup.go`: add inline shell header check (first 15 bytes vs `"SQLite format 3"`)
+- [x] Reject commit with clear message if unencrypted DB is staged
+- [x] ~~Update `.gitignore`: add `.capy/knowledge.db-wal` and `.capy/knowledge.db-shm`~~ — skipped: already ignored by `.capy/**` rule; explicit entries would be redundant
+- [x] Verify: stage unencrypted DB → commit blocked
+- [x] Verify: stage encrypted DB → commit proceeds
+- [x] Verify: no DB staged → commit proceeds
+- [x] ~~Verify: `git status` does not show WAL/SHM sidecars~~ — covered by `.capy/**` rule
+
+**Bonus fix:** Split `preCommitHookScript` into `preCommitHookBlock` (no shebang) + `preCommitHookScript` (with shebang). `installPreCommitHook` now uses the block-only variant for replace/append, fixing a pre-existing double-shebang bug.
 
 ---
 
