@@ -9,6 +9,7 @@ import (
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/security"
 	"github.com/serpro69/capy/internal/server"
+	"github.com/serpro69/capy/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -30,6 +31,10 @@ func serveRunE(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "capy: config warning: %v (using defaults)\n", err)
 		cfg = config.DefaultConfig()
+	}
+
+	if _, err := store.RequireEncryptionKey(); err != nil {
+		return fmt.Errorf("capy serve: %w", err)
 	}
 
 	policies := security.ReadBashPolicies(projectDir, "")
