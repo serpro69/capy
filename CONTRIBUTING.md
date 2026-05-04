@@ -197,6 +197,8 @@ go test -tags fts5 -count=1 -v -run TestIntegration ./internal/server/...
 
 **Important nuance**: WAL/SHM files only exist when the DB has been written to during a session. `Close()` checkpoints whatever WAL frames the current session created. If the server starts but no writes happen (e.g., empty `capy serve` → Ctrl+C), there's nothing to checkpoint and any pre-existing WAL files from a *previous* session remain untouched. This means stale WAL files from an older binary version or unclean shutdown require a manual `capy checkpoint` to flush.
 
+**WAL and PRAGMA rekey incompatibility** (see ADR-020): sqlite3mc does not support `PRAGMA rekey` in WAL journal mode. `capy encrypt`'s `encryptPlain` path (unencrypted → encrypted) must switch the temporary copy to `PRAGMA journal_mode = DELETE` before rekeying. The key-rotation path (`rekeyEncrypted`) uses the SQLite backup API and is unaffected. WAL mode is restored automatically when the store reopens the encrypted DB (the DSN includes `_journal_mode=WAL`).
+
 **Security checks**: Bash deny patterns are loaded once at server startup. The `matchesAnyBashPattern` function uses cached regexes (`sync.Map`). Shell-escape patterns for non-shell languages are compiled once in `init()`.
 
 **Hook routing** (`hook/pretooluse.go`): The main routing function dispatches on canonical tool name. New tool interceptions go here. Guidance uses file-based persistence (`.capy/guidance-<sessionID>.json`) since hooks run as separate short-lived processes.

@@ -153,27 +153,37 @@ Prompts twice, returns error if they don't match.
 
 **New file:** `cmd/capy/encrypt.go`
 
-New cobra command registered in `main.go`. Flow:
+New cobra command registered in `main.go`. Two paths depending on whether the source DB is already encrypted:
+
+**`encryptPlain` (unencrypted → encrypted):**
 
 1. Resolve DB path (same pattern as `checkpoint.go`: `--project-dir` flag, `config.Load`, `ResolveDBPath`).
 2. Verify DB file exists.
 3. Prompt for current passphrase (empty = unencrypted).
 4. Read new passphrase from `CAPY_DB_KEY` or prompt interactively (with confirm).
 5. Validate new passphrase length (warn if < 32).
-6. Open source DB with old key (if empty, open without encryption pragma) using `SetMaxOpenConns(1)` for exclusive access. Run canary query.
-7. Checkpoint source: `PRAGMA wal_checkpoint(TRUNCATE)` to flush WAL and eliminate sidecars.
-8. Create temp file `<dbpath>.enc.tmp`.
-9. Execute: `ATTACH DATABASE '<temp>' AS target KEY '<new-key>'`.
-10. Execute: `SELECT sqlcipher_export('target')` (SQLCipher) or equivalent export mechanism (sqlite3mc — verified during PoC).
-11. Execute: `DETACH DATABASE target`.
-12. Close source DB.
-13. Remove WAL/SHM sidecars at original paths: `<dbpath>-wal` and `<dbpath>-shm` (SQLite names sidecars based on the DB path, not any renamed path — these must be removed before renaming).
-14. Rename `<dbpath>` → `<dbpath>.bak`.
-15. Rename `<dbpath>.enc.tmp` → `<dbpath>`.
-16. Verify: open new DB with new key, canary query.
-17. Print success message with backup path.
+6. Open source DB unencrypted, run canary query.
+7. Checkpoint source: `PRAGMA wal_checkpoint(TRUNCATE)` to flush WAL and eliminate sidecars. Close source.
+8. Copy DB file to `<dbpath>.enc.tmp`.
+9. Open copy with cipher codec (empty key) via `EncryptedDSN`.
+10. Switch journal mode: `PRAGMA journal_mode = DELETE` — sqlite3mc does not support `PRAGMA rekey` in WAL mode.
+11. Execute: `PRAGMA rekey = '<new-key>'` (in-place encryption of the copy).
+12. Close copy.
+13. Swap and verify (see below).
 
-Error handling: if steps 8-10 fail, remove temp file. If step 12-13 fail, the `.bak` preserves the original. Print clear instructions on failure.
+**`rekeyEncrypted` (key rotation):**
+
+Uses the SQLite backup API — opens source with old key, creates destination with new key, copies all pages via `sqlite3_backup_init/step/finish`. WAL mode is not a concern here since the backup API creates a fresh DB.
+
+**`swapAndVerify` (common tail):**
+
+1. Remove WAL/SHM sidecars at original paths.
+2. Rename `<dbpath>` → `<dbpath>.bak`.
+3. Rename `<dbpath>.enc.tmp` → `<dbpath>`.
+4. Verify: open new DB with new key, canary query.
+5. Print success message with backup path.
+
+Error handling: if encryption fails, remove temp file. If swap fails, attempt rollback from `.bak`. Print clear instructions on failure.
 
 **File:** `cmd/capy/main.go`
 
