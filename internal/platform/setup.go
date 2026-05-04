@@ -222,18 +222,32 @@ func shellEscapePath(path string) string {
 // preCommitHookScript returns the content of the git pre-commit hook.
 // It checkpoints the WAL only when the knowledge DB is staged for commit.
 // dbPattern is a grep pattern matching the DB path relative to the repo root.
-func preCommitHookScript(dbPattern string) string {
+// preCommitHookBlock returns just the capy block (no shebang).
+// Used by installPreCommitHook for replace/append into existing hooks.
+func preCommitHookBlock(dbPattern string) string {
 	safePattern := shellEscapePath(dbPattern)
-	return fmt.Sprintf(`#!/bin/sh
-%s
+	return fmt.Sprintf(`%s
 # Installed by capy setup — safe to remove if not needed.
 
 if git diff --cached --name-only | grep -q '%s'; then
+  git diff --cached --name-only | grep '%s' | while read -r f; do
+    if head -c 15 "$f" 2>/dev/null | grep -q 'SQLite format 3'; then
+      echo "capy: refusing to commit unencrypted $f. Run 'capy encrypt' first." >&2
+      exit 1
+    fi
+  done
+  if [ $? -ne 0 ]; then exit 1; fi
   bash "%s" checkpoint
   git diff --cached --name-only | grep '%s' | while read -r f; do git add "$f"; done
 fi
 %s
-`, preCommitMarkerStart, safePattern, capyWrapperRelPath, safePattern, preCommitMarkerEnd)
+`, preCommitMarkerStart, safePattern, safePattern, capyWrapperRelPath, safePattern, preCommitMarkerEnd)
+}
+
+// preCommitHookScript returns a complete hook script with shebang.
+// Used when creating a brand-new pre-commit hook file.
+func preCommitHookScript(dbPattern string) string {
+	return "#!/bin/sh\n" + preCommitHookBlock(dbPattern)
 }
 
 // installPreCommitHook installs or updates the git pre-commit hook.
@@ -247,19 +261,19 @@ func installPreCommitHook(projectDir string) error {
 
 	// Resolve the actual DB path from config so the hook matches custom paths.
 	dbPattern := resolveDBPattern(projectDir)
-	script := preCommitHookScript(dbPattern)
 	hookPath := filepath.Join(hookDir, "pre-commit")
 
 	existing, err := os.ReadFile(hookPath)
 	if os.IsNotExist(err) {
-		// No existing hook — create new
-		return os.WriteFile(hookPath, []byte(script), 0o755)
+		// No existing hook — create new with shebang
+		return os.WriteFile(hookPath, []byte(preCommitHookScript(dbPattern)), 0o755)
 	}
 	if err != nil {
 		return err
 	}
 
 	content := string(existing)
+	block := preCommitHookBlock(dbPattern)
 
 	// If capy block exists, replace it (handles binary path / DB path changes)
 	if startIdx := strings.Index(content, preCommitMarkerStart); startIdx >= 0 {
@@ -270,7 +284,7 @@ func installPreCommitHook(projectDir string) error {
 			if endIdx < len(content) && content[endIdx] == '\n' {
 				endIdx++
 			}
-			content = content[:startIdx] + script + content[endIdx:]
+			content = content[:startIdx] + block + content[endIdx:]
 			return os.WriteFile(hookPath, []byte(content), 0o755)
 		}
 	}
@@ -279,7 +293,7 @@ func installPreCommitHook(projectDir string) error {
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
-	content += "\n" + script
+	content += "\n" + block
 
 	return os.WriteFile(hookPath, []byte(content), 0o755)
 }
