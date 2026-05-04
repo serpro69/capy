@@ -1,6 +1,9 @@
 package store
 
 import (
+	"database/sql"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -77,4 +80,74 @@ func TestEscapeSQLString(t *testing.T) {
 	assert.Equal(t, "no quotes", EscapeSQLString("no quotes"))
 	assert.Equal(t, "it''s escaped", EscapeSQLString("it's escaped"))
 	assert.Equal(t, "double''''quote", EscapeSQLString("double''quote"))
+}
+
+func TestIsUnencryptedDB(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("plaintext_sqlite", func(t *testing.T) {
+		dbPath := filepath.Join(dir, "plain.db")
+		db, err := sql.Open("sqlite3", dbPath)
+		require.NoError(t, err)
+		_, err = db.Exec("CREATE TABLE t (id INTEGER)")
+		require.NoError(t, err)
+		db.Close()
+		assert.True(t, isUnencryptedDB(dbPath))
+	})
+
+	t.Run("encrypted_sqlite", func(t *testing.T) {
+		dbPath := filepath.Join(dir, "encrypted.db")
+		dsn := EncryptedDSN(dbPath, "test-passphrase-at-least-32-characters!!")
+		db, err := sql.Open("sqlite3", dsn)
+		require.NoError(t, err)
+		_, err = db.Exec("CREATE TABLE t (id INTEGER)")
+		require.NoError(t, err)
+		db.Close()
+		assert.False(t, isUnencryptedDB(dbPath))
+	})
+
+	t.Run("nonexistent_file", func(t *testing.T) {
+		assert.False(t, isUnencryptedDB(filepath.Join(dir, "nope.db")))
+	})
+
+	t.Run("empty_file", func(t *testing.T) {
+		dbPath := filepath.Join(dir, "empty.db")
+		require.NoError(t, os.WriteFile(dbPath, []byte{}, 0o644))
+		assert.False(t, isUnencryptedDB(dbPath))
+	})
+
+	t.Run("short_file", func(t *testing.T) {
+		dbPath := filepath.Join(dir, "short.db")
+		require.NoError(t, os.WriteFile(dbPath, []byte("too short"), 0o644))
+		assert.False(t, isUnencryptedDB(dbPath))
+	})
+}
+
+func TestErrUnencryptedDB(t *testing.T) {
+	err := &errUnencryptedDB{path: "/tmp/test.db"}
+	assert.Contains(t, err.Error(), "not encrypted")
+	assert.Contains(t, err.Error(), "capy encrypt")
+}
+
+func TestOpenDB_UnencryptedDB_ClearError(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "unencrypted.db")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec("CREATE TABLE t (id INTEGER)")
+	require.NoError(t, err)
+	db.Close()
+
+	t.Setenv(encryptionKeyEnv, "test-passphrase-at-least-32-characters!!")
+	s := NewContentStore(dbPath, dir, 0)
+	defer s.Close()
+
+	_, err = s.SearchWithFallback("anything", 5, SearchOptions{})
+	require.Error(t, err)
+
+	var unencErr *errUnencryptedDB
+	assert.ErrorAs(t, err, &unencErr, "should be errUnencryptedDB, got: %v", err)
+	assert.Contains(t, err.Error(), "not encrypted")
+	assert.Contains(t, err.Error(), "capy encrypt")
 }

@@ -130,6 +130,9 @@ func (s *ContentStore) openDB() (*sql.DB, error) {
 	if _, err := db.Exec("SELECT count(*) FROM sqlite_master"); err != nil {
 		db.Close()
 		if isSQLiteCorruption(err) {
+			if isUnencryptedDB(s.dbPath) {
+				return nil, &errUnencryptedDB{path: s.dbPath}
+			}
 			return nil, &errWrongPassphrase{wrapped: err}
 		}
 		return nil, fmt.Errorf("canary query failed: %w", err)

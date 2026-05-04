@@ -36,6 +36,29 @@ func isGarbageFile(path string) bool {
 	return info.Size() > 0 && info.Size() < 512
 }
 
+// sqliteHeaderMagic is the 15-byte plaintext header of an unencrypted SQLite DB.
+var sqliteHeaderMagic = []byte("SQLite format 3")
+
+type errUnencryptedDB struct{ path string }
+
+func (e *errUnencryptedDB) Error() string {
+	return fmt.Sprintf("database at %s is not encrypted — run 'capy encrypt' first", e.path)
+}
+
+func isUnencryptedDB(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	header := make([]byte, 15)
+	n, err := f.Read(header)
+	if err != nil || n < 15 {
+		return false
+	}
+	return string(header) == string(sqliteHeaderMagic)
+}
+
 const encryptionKeyEnv = "CAPY_DB_KEY"
 
 const MinPassphraseLength = 32
