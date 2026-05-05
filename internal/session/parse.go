@@ -44,7 +44,7 @@ func (s *ParsedSession) IsIndexable() bool {
 
 var (
 	sysReminderRe = regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`)
-	noiseTagRe    = regexp.MustCompile(`(?s)<(local-command-caveat|local-command-stdout|command-name|command-message|command-args)>.*?</(local-command-caveat|local-command-stdout|command-message|command-name|command-args)>`)
+	noiseTagRe = regexp.MustCompile(`(?s)<local-command-caveat>.*?</local-command-caveat>|<local-command-stdout>.*?</local-command-stdout>|<command-name>.*?</command-name>|<command-message>.*?</command-message>|<command-args>.*?</command-args>`)
 )
 
 // jsonlLine is the top-level structure of each JSONL entry.
@@ -106,7 +106,7 @@ func ParseSession(path string) (*ParsedSession, error) {
 	assistantLastIdx := make(map[string]int) // message.id → index in entries
 
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++
@@ -147,6 +147,8 @@ func ParseSession(path string) (*ParsedSession, error) {
 			entry.msgID = msgID
 			if prevIdx, exists := assistantLastIdx[msgID]; exists {
 				entries[prevIdx].order = -1 // mark superseded
+				entries[prevIdx].line.Message = nil
+				entries[prevIdx].rawMsg.Content = nil
 			}
 			assistantLastIdx[msgID] = len(entries)
 			entries = append(entries, entry)
@@ -158,7 +160,7 @@ func ParseSession(path string) (*ParsedSession, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading session file: %w", err)
+		slog.Warn("scanner error, processing lines read so far", "file", path, "line", lineNum, "error", err)
 	}
 
 	// Second pass: extract text from deduplicated entries and build messages.
@@ -272,17 +274,11 @@ func extractUserText(raw json.RawMessage) string {
 	return strings.Join(texts, "\n")
 }
 
-// cleanUserText strips noise tags and checks for slash commands.
+// cleanUserText strips noise tags from user message text.
 func cleanUserText(text string) string {
 	text = sysReminderRe.ReplaceAllString(text, "")
 	text = noiseTagRe.ReplaceAllString(text, "")
 	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-	if strings.HasPrefix(text, "/") {
-		return ""
-	}
 	return text
 }
 
