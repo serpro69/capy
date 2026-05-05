@@ -31,6 +31,10 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 		}
 	}
 
+	if purgeEphemeral && purgeSession {
+		return errorResult("purge_ephemeral and purge_session are mutually exclusive"), nil
+	}
+
 	st := s.getStore()
 	ephTTL := s.ephemeralTTL()
 	sessTTL := s.sessionTTL()
@@ -55,10 +59,10 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 
 	var durableN, ephemeralN, sessionN int
 	for _, src := range pruned {
-		switch {
-		case src.EvictionReason == "ttl" && src.Kind == store.KindSession:
+		switch src.Kind {
+		case store.KindSession:
 			sessionN++
-		case src.EvictionReason == "ttl":
+		case store.KindEphemeral:
 			ephemeralN++
 		default:
 			durableN++
