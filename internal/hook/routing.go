@@ -22,7 +22,8 @@ func RoutingBlock() string {
 
   <forbidden_actions>
     - DO NOT use Bash for commands producing >20 lines of output.
-    - DO NOT use Read for analysis (use execute_file). Read IS correct for files you intend to Edit.
+    - For large files (10k+ lines), prefer execute_file when you only need derived answers (counts, patterns). Read IS correct for any file you need to understand, follow as instructions, or edit.
+    - DO NOT use capy_index on instruction files (skills, checklists, configs, plugin files). Read them directly — they must be internalized whole, not searched as fragments.
     - DO NOT use WebFetch (use capy_fetch_and_index instead).
     - Bash is ONLY for git/mkdir/rm/mv/navigation.
   </forbidden_actions>
