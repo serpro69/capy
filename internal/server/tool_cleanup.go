@@ -24,15 +24,24 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 			purgeEphemeral = b
 		}
 	}
+	purgeSession := false
+	if v, ok := args["purge_session"]; ok {
+		if b, ok := v.(bool); ok {
+			purgeSession = b
+		}
+	}
 
 	st := s.getStore()
 	ephTTL := s.ephemeralTTL()
 	sessTTL := s.sessionTTL()
 	var pruned []store.SourceInfo
 	var err error
-	if purgeEphemeral {
+	switch {
+	case purgeEphemeral:
 		pruned, err = st.PurgeEphemeral(dryRun, ephTTL)
-	} else {
+	case purgeSession:
+		pruned, err = st.PurgeSession(dryRun, sessTTL)
+	default:
 		pruned, err = st.Cleanup(dryRun, ephTTL, sessTTL)
 	}
 	if err != nil {
@@ -58,8 +67,11 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 
 	var lines []string
 	heading := "Cleanup"
-	if purgeEphemeral {
+	switch {
+	case purgeEphemeral:
 		heading = "Cleanup (ephemeral purge)"
+	case purgeSession:
+		heading = "Cleanup (session purge)"
 	}
 	summary := fmt.Sprintf("%d durable (retention), %d ephemeral (TTL), %d session (TTL)", durableN, ephemeralN, sessionN)
 	if dryRun {

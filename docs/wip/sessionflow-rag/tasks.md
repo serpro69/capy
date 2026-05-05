@@ -54,15 +54,15 @@
 - [x] 4.5 Write unit tests in `internal/session/sweep_test.go`: directory derivation, mtime gate logic. Write integration test with temp directory of synthetic session files.
 
 ## Task 5: CLI and tool updates
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** Task 1, Task 4
 - **Docs:** [implementation.md#phase-5-cli-and-tool-updates](./implementation.md#phase-5-cli-and-tool-updates)
 
 ### Subtasks
-- [ ] 5.1 Add `purge_session` boolean parameter to `capy_cleanup` MCP tool in `internal/server/tool_cleanup.go`
-- [ ] 5.2 Add `--kind` string flag to `cmd/capy/cleanup.go` CLI command
-- [ ] 5.3 Update stats rendering in `internal/server/tool_stats.go` to include session source count and fresh/stale breakdown
-- [ ] 5.4 Write tests for cleanup with purge_session, stats with session sources
+- [x] 5.1 Add `purge_session` boolean parameter to `capy_cleanup` MCP tool in `internal/server/tool_cleanup.go`
+- [x] 5.2 Add `--kind` string flag to `cmd/capy/cleanup.go` CLI command
+- [x] 5.3 Update stats rendering in `internal/server/tool_stats.go` to include session source count and fresh/stale breakdown
+- [x] 5.4 Write tests for cleanup with purge_session, stats with session sources
 
 ## Task 6: Final verification
 - **Status:** pending

@@ -29,6 +29,10 @@ func newCleanupCmd() *cobra.Command {
 			if force {
 				dryRun = false
 			}
+			kind, _ := cmd.Flags().GetString("kind")
+			if kind != "" && kind != "ephemeral" && kind != "session" {
+				return fmt.Errorf("invalid --kind value %q: accepted values are \"ephemeral\", \"session\"", kind)
+			}
 
 			dbPath := cfg.ResolveDBPath(projectDir)
 			st := store.NewContentStore(dbPath, projectDir, 0)
@@ -36,7 +40,16 @@ func newCleanupCmd() *cobra.Command {
 
 			ephemeralTTL := time.Duration(cfg.Store.Cleanup.EphemeralTTLHours) * time.Hour
 			sessionTTL := time.Duration(cfg.Store.Cleanup.SessionTTLDays) * 24 * time.Hour
-			pruned, err := st.Cleanup(dryRun, ephemeralTTL, sessionTTL)
+			var pruned []store.SourceInfo
+			var err error
+			switch kind {
+			case "ephemeral":
+				pruned, err = st.PurgeEphemeral(dryRun, ephemeralTTL)
+			case "session":
+				pruned, err = st.PurgeSession(dryRun, sessionTTL)
+			default:
+				pruned, err = st.Cleanup(dryRun, ephemeralTTL, sessionTTL)
+			}
 			if err != nil {
 				return fmt.Errorf("cleanup failed: %w", err)
 			}
@@ -67,6 +80,7 @@ func newCleanupCmd() *cobra.Command {
 	}
 	cmd.Flags().Bool("dry-run", true, "show what would be removed without removing")
 	cmd.Flags().Bool("force", false, "actually remove stale data")
+	cmd.Flags().String("kind", "", "only clean up sources of this kind (\"ephemeral\" or \"session\")")
 	return cmd
 }
 
