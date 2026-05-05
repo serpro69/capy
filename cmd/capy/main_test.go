@@ -129,7 +129,7 @@ func TestCleanupSubcommand_KindSession(t *testing.T) {
 	))
 	stdout, _, code := capy(t, "cleanup", "--kind", "session", "--project-dir", dir)
 	assert.Equal(t, 0, code)
-	assert.Contains(t, stdout, "cleanup")
+	assert.Contains(t, stdout, "no evictable sources found")
 }
 
 func TestCleanupSubcommand_KindInvalid(t *testing.T) {

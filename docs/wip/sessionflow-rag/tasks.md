@@ -54,7 +54,7 @@
 - [x] 4.5 Write unit tests in `internal/session/sweep_test.go`: directory derivation, mtime gate logic. Write integration test with temp directory of synthetic session files.
 
 ## Task 5: CLI and tool updates
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** Task 1, Task 4
 - **Docs:** [implementation.md#phase-5-cli-and-tool-updates](./implementation.md#phase-5-cli-and-tool-updates)
 
