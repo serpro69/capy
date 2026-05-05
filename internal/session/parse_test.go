@@ -831,7 +831,9 @@ func TestParseSubagents(t *testing.T) {
 
 	// Write meta.json.
 	metaData, _ := json.Marshal(agentMeta{AgentType: "Explore", Description: "Explore API endpoints"})
-	os.WriteFile(filepath.Join(subagentsDir, "agent-af9a804171ec.meta.json"), metaData, 0o644)
+	if err := os.WriteFile(filepath.Join(subagentsDir, "agent-af9a804171ec.meta.json"), metaData, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	pairs, err := ParseSubagents(sessionDir)
 	if err != nil {
@@ -1023,6 +1025,135 @@ func TestParseSession_SessionIDFromFilename(t *testing.T) {
 
 	if session.SessionID != "deadbeef-1234-5678-9abc-def012345678" {
 		t.Errorf("SessionID = %q, want UUID from filename", session.SessionID)
+	}
+}
+
+func TestParseSession_TypeInferredFromMessageRole(t *testing.T) {
+	dir := t.TempDir()
+	path := writeJSONL(t, dir, "inferred.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "u1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"sessionId": "inferred-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "What is the project structure?",
+			},
+		},
+		// Assistant line without top-level "type" — type inferred from message.role.
+		{
+			"uuid":      "a1",
+			"timestamp": "2026-04-05T12:00:05Z",
+			"sessionId": "inferred-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "The project uses a standard Go layout with internal packages for core logic and cmd for CLI entry points."},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u2",
+			"timestamp": "2026-04-05T12:01:00Z",
+			"sessionId": "inferred-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Thanks for the clear explanation",
+			},
+		},
+		{
+			"uuid":      "a2",
+			"timestamp": "2026-04-05T12:01:05Z",
+			"sessionId": "inferred-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "You're welcome! Feel free to ask about any specific package or module."},
+				},
+			},
+		},
+	})
+
+	session, err := ParseSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(session.TurnPairs) != 2 {
+		t.Fatalf("got %d turn pairs, want 2 (type inferred from message.role)", len(session.TurnPairs))
+	}
+
+	if session.TurnPairs[0].AssistantText == "" {
+		t.Error("assistant text should be extracted when type is inferred from message.role")
+	}
+}
+
+func TestParseSession_UserTextStartingWithSlash(t *testing.T) {
+	dir := t.TempDir()
+	path := writeJSONL(t, dir, "slashpath.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "u1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"sessionId": "slashpath-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "/etc/hosts has a misconfiguration, can you check it?",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a1",
+			"timestamp": "2026-04-05T12:00:05Z",
+			"sessionId": "slashpath-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "I'll check the hosts file configuration for any issues with DNS resolution or incorrect entries."},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u2",
+			"timestamp": "2026-04-05T12:01:00Z",
+			"sessionId": "slashpath-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "That fixed it",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a2",
+			"timestamp": "2026-04-05T12:01:05Z",
+			"sessionId": "slashpath-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Great! The hosts file is now properly configured with the correct entries."},
+				},
+			},
+		},
+	})
+
+	session, err := ParseSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(session.TurnPairs) != 2 {
+		t.Fatalf("got %d turn pairs, want 2 (path starting with / should not be filtered)", len(session.TurnPairs))
+	}
+
+	if session.TurnPairs[0].HumanText != "/etc/hosts has a misconfiguration, can you check it?" {
+		t.Errorf("user text starting with / was incorrectly filtered: %q", session.TurnPairs[0].HumanText)
 	}
 }
 
