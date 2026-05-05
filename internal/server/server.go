@@ -55,6 +55,7 @@ type Server struct {
 	stats          *SessionStats
 	throttle       *searchThrottle
 	storeMu        sync.Once
+	bgWg           sync.WaitGroup
 	projectDir     string
 }
 
@@ -126,7 +127,10 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	// Background session sweep: index past Claude Code conversations.
 	// Derives context from the server's ctx so it cancels on shutdown.
+	// WaitGroup ensures the goroutine completes before shutdown() closes the store.
+	s.bgWg.Add(1)
 	go func() {
+		defer s.bgWg.Done()
 		sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		indexed, skipped, errs := session.Sweep(sweepCtx, s.getStore(), s.projectDir)
@@ -150,11 +154,13 @@ func (s *Server) Serve(ctx context.Context) error {
 	return stdio.Listen(ctx, os.Stdin, os.Stdout)
 }
 
-// shutdown cleans up resources.
+// shutdown cleans up resources. Waits for background goroutines to finish
+// before closing the store to avoid operating on a closed database.
 func (s *Server) shutdown() {
 	if s.executor != nil {
 		s.executor.CleanupBackgrounded()
 	}
+	s.bgWg.Wait()
 	if s.store != nil {
 		_ = s.store.Close()
 	}

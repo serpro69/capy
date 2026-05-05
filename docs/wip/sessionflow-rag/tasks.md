@@ -42,7 +42,7 @@
 - [x] 3.4 Write unit tests in `internal/session/chunk_test.go`: transcript builder output, chunk window boundaries from structured TurnPairs, overlap, title format, oversized chunk splitting
 
 ## Task 4: Sweep mechanism
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3
 - **Docs:** [implementation.md#phase-4-sweep-integration](./implementation.md#phase-4-sweep-integration)
 
