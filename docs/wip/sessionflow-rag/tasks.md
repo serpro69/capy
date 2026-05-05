@@ -49,7 +49,7 @@
 ### Subtasks
 - [ ] 4.1 Create `internal/session/sweep.go` with `SessionDir(projectDir string)` — path mangling (replace `/` and `.` with `-`), directory existence check
 - [ ] 4.2 Add mtime gate logic: query `session:` sources from store, build `uuid → indexed_at` map, compare `max(file.mtime, subagents_dir.mtime)` against indexed_at
-- [ ] 4.3 Add `Sweep(ctx context.Context, store, projectDir)` orchestrator: accepts context for cooperative cancellation, checks `ctx.Err()` between files. Discovery → list → mtime gate → parse → gate → transcript → chunk → index. Log results.
+- [ ] 4.3 Add `Sweep(ctx context.Context, store, projectDir)` orchestrator: accepts context for cooperative cancellation, checks `ctx.Err()` between files. Discovery → list → mtime gate → parse → gate → transcript → chunk → index. Log results. Include format-degradation detection: when a session parses to 0 turn pairs but the file is non-trivial (>1KB), log a warning with the session's `version` field to surface potential JSONL format changes (see ADR-021).
 - [ ] 4.4 Integrate into `Server.Serve()` as background goroutine. Derive context from server's `ctx` parameter (NOT `context.Background()`), apply 30s timeout on top: `context.WithTimeout(ctx, 30*time.Second)`
 - [ ] 4.5 Write unit tests in `internal/session/sweep_test.go`: directory derivation, mtime gate logic. Write integration test with temp directory of synthetic session files.
 
@@ -71,6 +71,7 @@
 ### Subtasks
 - [ ] 6.1 Run `test` skill to verify all tasks — full test suite (`make test`, `make test-race`), integration tests, edge cases
 - [ ] 6.2 Add end-to-end integration test in `internal/server/integration_test.go`: synthetic sessions → sweep → search → verify results → cleanup → verify eviction
-- [ ] 6.3 Run `document` skill to write ADR-019 for KindSession decision, update CONTRIBUTING.md if needed
-- [ ] 6.4 Run `review-code` skill to review the implementation
-- [ ] 6.5 Run `review-spec` skill to verify implementation matches design and implementation docs
+- [ ] 6.3 Add canary integration test that looks for real session files in `~/.claude/projects/`, parses several (prefer files with different `version` fields for maximum format coverage), and asserts basic invariants (non-zero turn pairs, valid session ID, non-zero assistant chars). `t.Skip` if no sessions found (CI-safe). Catches JSONL format drift on developer machines. See ADR-021.
+- [ ] 6.4 Run `document` skill to write ADR-019 for KindSession decision, update CONTRIBUTING.md if needed
+- [ ] 6.5 Run `review-code` skill to review the implementation
+- [ ] 6.6 Run `review-spec` skill to verify implementation matches design and implementation docs
