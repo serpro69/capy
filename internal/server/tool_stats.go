@@ -94,8 +94,8 @@ func (s *Server) handleStats(_ context.Context, _ mcp.CallToolRequest) (*mcp.Cal
 			lines = append(lines, "", "### Knowledge Base", "",
 				"| Metric | Value |",
 				"|--------|------:|",
-				fmt.Sprintf("| Sources | %d (durable: %d, ephemeral: %d) |",
-					kbStats.SourceCount, kbStats.DurableSourceCount, kbStats.EphemeralSourceCount),
+				fmt.Sprintf("| Sources | %d (durable: %d, ephemeral: %d, session: %d) |",
+					kbStats.SourceCount, kbStats.DurableSourceCount, kbStats.EphemeralSourceCount, kbStats.SessionSourceCount),
 				fmt.Sprintf("| Chunks | %d |", kbStats.ChunkCount),
 				fmt.Sprintf("| Vocabulary | %d terms |", kbStats.VocabCount),
 				fmt.Sprintf("| DB size | %s |", formatBytes(kbStats.DBSizeBytes)),
@@ -118,6 +118,15 @@ func (s *Server) handleStats(_ context.Context, _ mcp.CallToolRequest) (*mcp.Cal
 					"|--------|------:|",
 					fmt.Sprintf("| fresh | %d |", kbStats.EphemeralFreshCount),
 					fmt.Sprintf("| stale | %d |", kbStats.EphemeralStaleCount),
+				)
+			}
+			if kbStats.SessionSourceCount > 0 {
+				lines = append(lines, "",
+					"#### Session TTL buckets",
+					"| Bucket | Count |",
+					"|--------|------:|",
+					fmt.Sprintf("| fresh | %d |", kbStats.SessionFreshCount),
+					fmt.Sprintf("| stale | %d |", kbStats.SessionStaleCount),
 				)
 			}
 		}
