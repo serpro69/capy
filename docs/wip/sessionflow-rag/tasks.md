@@ -42,16 +42,16 @@
 - [x] 3.4 Write unit tests in `internal/session/chunk_test.go`: transcript builder output, chunk window boundaries from structured TurnPairs, overlap, title format, oversized chunk splitting
 
 ## Task 4: Sweep mechanism
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** Task 1, Task 2, Task 3
 - **Docs:** [implementation.md#phase-4-sweep-integration](./implementation.md#phase-4-sweep-integration)
 
 ### Subtasks
-- [ ] 4.1 Create `internal/session/sweep.go` with `SessionDir(projectDir string)` — path mangling (replace `/` and `.` with `-`), directory existence check
-- [ ] 4.2 Add mtime gate logic: query `session:` sources from store, build `uuid → indexed_at` map, compare `max(file.mtime, subagents_dir.mtime)` against indexed_at
-- [ ] 4.3 Add `Sweep(ctx context.Context, store, projectDir)` orchestrator: accepts context for cooperative cancellation, checks `ctx.Err()` between files. Discovery → list → mtime gate → parse → gate → transcript → chunk → index. Log results. Include format-degradation detection: when a session parses to 0 turn pairs but the file is non-trivial (>1KB), log a warning with the session's `version` field to surface potential JSONL format changes (see ADR-021).
-- [ ] 4.4 Integrate into `Server.Serve()` as background goroutine. Derive context from server's `ctx` parameter (NOT `context.Background()`), apply 30s timeout on top: `context.WithTimeout(ctx, 30*time.Second)`
-- [ ] 4.5 Write unit tests in `internal/session/sweep_test.go`: directory derivation, mtime gate logic. Write integration test with temp directory of synthetic session files.
+- [x] 4.1 Create `internal/session/sweep.go` with `SessionDir(projectDir string)` — path mangling (replace `/` and `.` with `-`), directory existence check
+- [x] 4.2 Add mtime gate logic: query `session:` sources from store, build `uuid → indexed_at` map, compare `max(file.mtime, subagents_dir.mtime)` against indexed_at
+- [x] 4.3 Add `Sweep(ctx context.Context, store, projectDir)` orchestrator: accepts context for cooperative cancellation, checks `ctx.Err()` between files. Discovery → list → mtime gate → parse → gate → transcript → chunk → index. Log results. Include format-degradation detection: when a session parses to 0 turn pairs but the file is non-trivial (>1KB), log a warning with the session's `version` field to surface potential JSONL format changes (see ADR-021).
+- [x] 4.4 Integrate into `Server.Serve()` as background goroutine. Derive context from server's `ctx` parameter (NOT `context.Background()`), apply 30s timeout on top: `context.WithTimeout(ctx, 30*time.Second)`
+- [x] 4.5 Write unit tests in `internal/session/sweep_test.go`: directory derivation, mtime gate logic. Write integration test with temp directory of synthetic session files.
 
 ## Task 5: CLI and tool updates
 - **Status:** pending
