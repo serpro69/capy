@@ -442,11 +442,12 @@ func TestSetupCodex(t *testing.T) {
 	assert.Contains(t, string(agentsMD), "capy — MANDATORY routing rules")
 	assert.Contains(t, string(agentsMD), "capy_batch_execute")
 
-	// Verify .codex/config.toml has MCP server
+	// Verify .codex/config.toml has MCP server with env_vars
 	configToml, err := os.ReadFile(filepath.Join(dir, ".codex", "config.toml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(configToml), "[mcp_servers.capy]")
 	assert.Contains(t, string(configToml), codexWrapperRelPath)
+	assert.Contains(t, string(configToml), `env_vars = ["CAPY_DB_KEY"]`)
 
 	// Verify .gitignore has .capy/** and AGENTS.md exception
 	gitignore, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
@@ -508,6 +509,7 @@ func TestMergeCodexMCPServer_NewFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "[mcp_servers.capy]")
 	assert.Contains(t, string(data), codexWrapperRelPath)
+	assert.Contains(t, string(data), `env_vars = ["CAPY_DB_KEY"]`)
 }
 
 func TestMergeCodexMCPServer_PreservesExisting(t *testing.T) {
@@ -532,7 +534,7 @@ func TestMergeCodexMCPServer_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
 
-	existing := "model = \"gpt-5.5\"\n\n[mcp_servers.capy]\ncommand = \"bash\"\nargs = [\".codex/scripts/capy.sh\", \"serve\"]\n"
+	existing := "model = \"gpt-5.5\"\n\n[mcp_servers.capy]\ncommand = \"bash\"\nargs = [\".codex/scripts/capy.sh\", \"serve\"]\nenv_vars = [\"CAPY_DB_KEY\"]\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(existing), 0o644))
 
 	require.NoError(t, mergeCodexMCPServer(configPath))
@@ -540,6 +542,42 @@ func TestMergeCodexMCPServer_Idempotent(t *testing.T) {
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 	assert.Equal(t, existing, string(data), "should not modify file when MCP server already exists")
+}
+
+func TestMergeCodexMCPServer_UpdatesStaleBlock(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+
+	// Old block without env_vars
+	stale := "model = \"gpt-5.5\"\n\n[mcp_servers.capy]\ncommand = \"bash\"\nargs = [\".codex/scripts/capy.sh\", \"serve\"]\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(stale), 0o644))
+
+	require.NoError(t, mergeCodexMCPServer(configPath))
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	content := string(data)
+	assert.Contains(t, content, `env_vars = ["CAPY_DB_KEY"]`, "should add env_vars to stale block")
+	assert.Contains(t, content, `model = "gpt-5.5"`, "should preserve existing config")
+	assert.Equal(t, 1, strings.Count(content, "[mcp_servers.capy]"), "should not duplicate section")
+}
+
+func TestMergeCodexMCPServer_UpdatesStaleBlock_PreservesFollowing(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+
+	// Old block without env_vars, followed by another section
+	stale := "[mcp_servers.capy]\ncommand = \"bash\"\nargs = [\".codex/scripts/capy.sh\", \"serve\"]\n\n[mcp_servers.other]\ncommand = \"node\"\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(stale), 0o644))
+
+	require.NoError(t, mergeCodexMCPServer(configPath))
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	content := string(data)
+	assert.Contains(t, content, `env_vars = ["CAPY_DB_KEY"]`)
+	assert.Contains(t, content, "[mcp_servers.other]", "should preserve following section")
+	assert.Contains(t, content, `command = "node"`, "should preserve following section content")
 }
 
 func TestSetupCodex_WrapperMatchesClaudeCode(t *testing.T) {

@@ -479,13 +479,17 @@ func mergeMCPServer(mcpPath string) error {
 const codexMCPMarker = "[mcp_servers.capy]"
 
 // codexMCPBlock is the TOML block appended to config.toml to register capy.
+// env_vars forwards CAPY_DB_KEY from the local environment so the MCP server
+// can decrypt the knowledge database.
 const codexMCPBlock = `[mcp_servers.capy]
 command = "bash"
 args = ["` + codexWrapperRelPath + `", "serve"]
+env_vars = ["CAPY_DB_KEY"]
 `
 
-// mergeCodexMCPServer ensures .codex/config.toml has a [mcp_servers.capy] entry.
-// Uses string-based detection and append to preserve existing formatting and comments.
+// mergeCodexMCPServer ensures .codex/config.toml has an up-to-date [mcp_servers.capy] entry.
+// If the block exists but is stale (e.g. missing env_vars), it is replaced in-place.
+// Uses string-based detection to preserve existing formatting and comments.
 func mergeCodexMCPServer(configPath string) error {
 	content, err := os.ReadFile(configPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -495,7 +499,11 @@ func mergeCodexMCPServer(configPath string) error {
 	text := string(content)
 
 	if strings.Contains(text, codexMCPMarker) {
-		return nil
+		updated, changed := replaceCodexMCPBlock(text)
+		if !changed {
+			return nil
+		}
+		return os.WriteFile(configPath, []byte(updated), 0o644)
 	}
 
 	f, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
@@ -513,6 +521,36 @@ func mergeCodexMCPServer(configPath string) error {
 
 	_, err = fmt.Fprint(f, codexMCPBlock)
 	return err
+}
+
+// replaceCodexMCPBlock replaces the [mcp_servers.capy] TOML table in text with
+// codexMCPBlock if they differ. Returns the updated text and whether a change
+// was made. A TOML table runs from its header to the next table header or EOF.
+func replaceCodexMCPBlock(text string) (string, bool) {
+	markerIdx := strings.Index(text, codexMCPMarker)
+	if markerIdx < 0 {
+		return text, false
+	}
+
+	afterMarker := text[markerIdx+len(codexMCPMarker):]
+	blockEndRel := len(afterMarker)
+	if pos := strings.Index(afterMarker, "\n["); pos >= 0 {
+		blockEndRel = pos + 1
+	}
+	blockEnd := markerIdx + len(codexMCPMarker) + blockEndRel
+
+	existing := text[markerIdx:blockEnd]
+
+	if strings.TrimRight(existing, " \t\n\r") == strings.TrimRight(codexMCPBlock, " \t\n\r") {
+		return text, false
+	}
+
+	replacement := codexMCPBlock
+	if blockEnd < len(text) && !strings.HasSuffix(codexMCPBlock, "\n\n") {
+		replacement = strings.TrimRight(replacement, "\n") + "\n\n"
+	}
+
+	return text[:markerIdx] + replacement + text[blockEnd:], true
 }
 
 // agentsRelPath is the platform-neutral path to generated routing instructions.
