@@ -19,16 +19,16 @@
 - [x] 1.6 Write tests for all above: migration applies, session kind accepted, TTL cleanup works, search includes sessions
 
 ## Task 2: Session JSONL parser
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** —
 - **Docs:** [implementation.md#phase-2-session-parsing](./implementation.md#phase-2-session-parsing)
 
 ### Subtasks
-- [ ] 2.1 Create `internal/session/parse.go` with JSONL parser: line-by-line reading, type routing, text extraction, tool name extraction, system-reminder stripping
-- [ ] 2.2 Define `ParsedSession` and `TurnPair` types with session metadata (SessionID, StartTime, TotalAssistantChars)
-- [ ] 2.3 Add sub-agent parsing: discover `<uuid>/subagents/` directory, parse `agent-*.jsonl` and `agent-*.meta.json`, return sub-agent turn pairs with metadata
-- [ ] 2.4 Add `IsIndexable()` session-level gate: min 2 turn pairs, min 200 chars assistant text
-- [ ] 2.5 Write unit tests in `internal/session/parse_test.go` with synthetic JSONL fixtures covering: valid session, empty session, tool-result-only session, away_summary, system-reminder tags, sub-agent conversations, malformed JSON lines
+- [x] 2.1 Create `internal/session/parse.go` with JSONL parser: line-by-line reading, type routing, text extraction, tool name extraction, system-reminder stripping
+- [x] 2.2 Define `ParsedSession` and `TurnPair` types with session metadata (SessionID, StartTime, TotalAssistantChars)
+- [x] 2.3 Add sub-agent parsing: discover `<uuid>/subagents/` directory, parse `agent-*.jsonl` and `agent-*.meta.json`, return sub-agent turn pairs with metadata
+- [x] 2.4 Add `IsIndexable()` session-level gate: min 2 turn pairs, min 200 chars assistant text
+- [x] 2.5 Write unit tests in `internal/session/parse_test.go` with synthetic JSONL fixtures covering: valid session, empty session, tool-result-only session, away_summary, system-reminder tags, sub-agent conversations, malformed JSON lines
 
 ## Task 3: Transcript builder and chunking
 - **Status:** pending
