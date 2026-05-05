@@ -31,15 +31,15 @@
 - [x] 2.5 Write unit tests in `internal/session/parse_test.go` with synthetic JSONL fixtures covering: valid session, empty session, tool-result-only session, away_summary, system-reminder tags, sub-agent conversations, malformed JSON lines
 
 ## Task 3: Transcript builder and chunking
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Docs:** [implementation.md#phase-2-session-parsing](./implementation.md#phase-2-session-parsing), [implementation.md#phase-3-chunking](./implementation.md#phase-3-chunking)
 
 ### Subtasks
-- [ ] 3.1 Create `internal/session/transcript.go` to convert `ParsedSession` → plaintext transcript string with `Human:`/`Assistant:` format, `[Tools: ...]` lines, `[Session summary: ...]` entries, and `--- Subagent ---` delimiters
-- [ ] 3.2 Create `internal/session/chunk.go` with `ChunkSession(session *ParsedSession, transcript string, maxBytes int) []store.Chunk`: sliding window of ~4 turn pairs, 1-pair overlap, title generation from structured `ParsedSession` data (NOT parsed from transcript text). Export `SplitOversized` and `ChunkHasCode` from `internal/store/chunk.go` for reuse.
-- [ ] 3.3 Wire session chunking into the sweep orchestrator (Task 4.3) — chunks are produced by the session package and passed to the store's `Index` (or a new `IndexChunked`). No `"session"` case needed in `chunkContent`.
-- [ ] 3.4 Write unit tests in `internal/session/chunk_test.go`: transcript builder output, chunk window boundaries from structured TurnPairs, overlap, title format, oversized chunk splitting
+- [x] 3.1 Create `internal/session/transcript.go` to convert `ParsedSession` → plaintext transcript string with `Human:`/`Assistant:` format, `[Tools: ...]` lines, `[Session summary: ...]` entries, and `--- Subagent ---` delimiters
+- [x] 3.2 Create `internal/session/chunk.go` with `ChunkSession(session *ParsedSession, transcript string, maxBytes int) []store.Chunk`: sliding window of ~4 turn pairs, 1-pair overlap, title generation from structured `ParsedSession` data (NOT parsed from transcript text). Export `SplitOversized` and `ChunkHasCode` from `internal/store/chunk.go` for reuse.
+- [x] 3.3 Wire session chunking into the sweep orchestrator (Task 4.3) — chunks are produced by the session package and passed to the store's `Index` (or a new `IndexChunked`). No `"session"` case needed in `chunkContent`.
+- [x] 3.4 Write unit tests in `internal/session/chunk_test.go`: transcript builder output, chunk window boundaries from structured TurnPairs, overlap, title format, oversized chunk splitting
 
 ## Task 4: Sweep mechanism
 - **Status:** pending

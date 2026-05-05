@@ -135,7 +135,7 @@ func TestDetectContentTypePlaintext(t *testing.T) {
 
 func TestChunkMarkdownHeadings(t *testing.T) {
 	md := "# Title\n\nIntro text\n\n## Section A\n\nContent A\n\n## Section B\n\nContent B"
-	chunks := chunkMarkdown(md, maxChunkBytes)
+	chunks := chunkMarkdown(md, MaxChunkBytes)
 
 	require.GreaterOrEqual(t, len(chunks), 2)
 	assert.Contains(t, chunks[0].Title, "Title")
@@ -143,7 +143,7 @@ func TestChunkMarkdownHeadings(t *testing.T) {
 
 func TestChunkMarkdownCodeBlocks(t *testing.T) {
 	md := "# Code Example\n\n```go\nfunc main() {}\n```\n\nSome prose after"
-	chunks := chunkMarkdown(md, maxChunkBytes)
+	chunks := chunkMarkdown(md, MaxChunkBytes)
 
 	found := false
 	for _, c := range chunks {
@@ -155,7 +155,7 @@ func TestChunkMarkdownCodeBlocks(t *testing.T) {
 }
 
 func TestChunkMarkdownOversized(t *testing.T) {
-	// Create content that exceeds maxChunkBytes.
+	// Create content that exceeds MaxChunkBytes.
 	var sb strings.Builder
 	sb.WriteString("# Big Section\n\n")
 	for range 100 {
@@ -167,14 +167,14 @@ func TestChunkMarkdownOversized(t *testing.T) {
 
 func TestChunkMarkdownNoHeadings(t *testing.T) {
 	text := "Just some text\nwith no headings\nat all"
-	chunks := chunkMarkdown(text, maxChunkBytes)
+	chunks := chunkMarkdown(text, MaxChunkBytes)
 	require.Len(t, chunks, 1)
 	assert.Equal(t, "Content", chunks[0].Title)
 }
 
 func TestChunkMarkdownHorizontalRules(t *testing.T) {
 	md := "# A\n\nText\n\n---\n\n# B\n\nMore text"
-	chunks := chunkMarkdown(md, maxChunkBytes)
+	chunks := chunkMarkdown(md, MaxChunkBytes)
 	assert.GreaterOrEqual(t, len(chunks), 2)
 }
 
@@ -212,13 +212,13 @@ func TestChunkPlainTextSingleChunk(t *testing.T) {
 
 func TestChunkJSONFlat(t *testing.T) {
 	j := `{"name": "test", "value": 42}`
-	chunks := chunkJSON(j, maxChunkBytes)
+	chunks := chunkJSON(j, MaxChunkBytes)
 	require.GreaterOrEqual(t, len(chunks), 1)
 }
 
 func TestChunkJSONNested(t *testing.T) {
 	j := `{"outer": {"inner": {"deep": "value"}}}`
-	chunks := chunkJSON(j, maxChunkBytes)
+	chunks := chunkJSON(j, MaxChunkBytes)
 	assert.GreaterOrEqual(t, len(chunks), 1)
 	// Should have key-path titles.
 	found := false
@@ -232,12 +232,12 @@ func TestChunkJSONNested(t *testing.T) {
 
 func TestChunkJSONArrayWithIdentity(t *testing.T) {
 	j := `[{"id": 1, "name": "first"}, {"id": 2, "name": "second"}, {"id": 3, "name": "third"}]`
-	chunks := chunkJSON(j, maxChunkBytes)
+	chunks := chunkJSON(j, MaxChunkBytes)
 	require.GreaterOrEqual(t, len(chunks), 1)
 }
 
 func TestChunkJSONParseFailure(t *testing.T) {
-	chunks := chunkJSON("not json at all {{{", maxChunkBytes)
+	chunks := chunkJSON("not json at all {{{", MaxChunkBytes)
 	assert.GreaterOrEqual(t, len(chunks), 1, "should fall back to plaintext")
 }
 
@@ -247,7 +247,7 @@ func TestChunkJSONObjectDeterministicOrder(t *testing.T) {
 	// Run multiple times — if order were random, at least one would differ.
 	var first []string
 	for i := range 10 {
-		chunks := chunkJSON(j, maxChunkBytes)
+		chunks := chunkJSON(j, MaxChunkBytes)
 		var titles []string
 		for _, c := range chunks {
 			titles = append(titles, c.Title)
@@ -259,7 +259,7 @@ func TestChunkJSONObjectDeterministicOrder(t *testing.T) {
 		}
 	}
 	// Verify sorted key order in titles: alpha before middle before zebra.
-	chunks := chunkJSON(j, maxChunkBytes)
+	chunks := chunkJSON(j, MaxChunkBytes)
 	require.GreaterOrEqual(t, len(chunks), 3)
 	allTitles := ""
 	for _, c := range chunks {
