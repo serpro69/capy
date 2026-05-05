@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/security"
+	"github.com/serpro69/capy/internal/session"
 	"github.com/serpro69/capy/internal/store"
 	"github.com/serpro69/capy/internal/version"
 )
@@ -121,6 +123,17 @@ func (s *Server) Serve(ctx context.Context) error {
 	)
 
 	s.registerTools()
+
+	// Background session sweep: index past Claude Code conversations.
+	// Derives context from the server's ctx so it cancels on shutdown.
+	go func() {
+		sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		indexed, skipped, errs := session.Sweep(sweepCtx, s.getStore(), s.projectDir)
+		if indexed > 0 || errs > 0 {
+			slog.Info("session sweep", "indexed", indexed, "skipped", skipped, "errors", errs)
+		}
+	}()
 
 	// Ensure cleanup runs on all exit paths (normal return, signals, parent death).
 	defer s.shutdown()

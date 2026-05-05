@@ -1,0 +1,224 @@
+package session
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/serpro69/capy/internal/store"
+)
+
+// SessionDir returns the Claude Code session directory for the given project.
+// Claude Code mangles the absolute project path by replacing "/" and "." with "-"
+// and stores sessions under ~/.claude/projects/<mangled>/.
+func SessionDir(projectDir string) (string, error) {
+	abs, err := filepath.Abs(projectDir)
+	if err != nil {
+		return "", fmt.Errorf("resolving absolute path: %w", err)
+	}
+
+	mangled := manglePath(abs)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving home directory: %w", err)
+	}
+
+	dir := filepath.Join(home, ".claude", "projects", mangled)
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", fmt.Errorf("session directory not found: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("session path is not a directory: %s", dir)
+	}
+	return dir, nil
+}
+
+// manglePath replaces "/" and "." with "-" to match Claude Code's directory naming.
+func manglePath(absPath string) string {
+	return strings.NewReplacer("/", "-", ".", "-").Replace(absPath)
+}
+
+// Sweep discovers, parses, and indexes Claude Code session files for the given
+// project. It checks ctx.Err() between files for cooperative cancellation.
+//
+// Returns counts of indexed, skipped, and errored sessions.
+func Sweep(ctx context.Context, cs *store.ContentStore, projectDir string) (indexed, skipped, errors int) {
+	dir, err := SessionDir(projectDir)
+	if err != nil {
+		slog.Debug("session sweep: directory not found, skipping", "project", projectDir, "error", err)
+		return 0, 0, 0
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		slog.Warn("session sweep: cannot list directory", "dir", dir, "error", err)
+		return 0, 0, 1
+	}
+
+	var jsonlFiles []os.DirEntry
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+			jsonlFiles = append(jsonlFiles, e)
+		}
+	}
+
+	if len(jsonlFiles) == 0 {
+		return 0, 0, 0
+	}
+
+	indexedMap, err := buildIndexedAtMap(cs)
+	if err != nil {
+		slog.Warn("session sweep: cannot query existing sources", "error", err)
+		return 0, 0, 1
+	}
+
+	for _, entry := range jsonlFiles {
+		if ctx.Err() != nil {
+			slog.Info("session sweep: cancelled", "indexed", indexed, "remaining", len(jsonlFiles)-indexed-skipped-errors)
+			return indexed, skipped, errors
+		}
+
+		uuid := strings.TrimSuffix(entry.Name(), ".jsonl")
+		jsonlPath := filepath.Join(dir, entry.Name())
+
+		if shouldSkip(dir, uuid, entry, indexedMap) {
+			skipped++
+			continue
+		}
+
+		if err := indexSession(ctx, cs, dir, uuid, jsonlPath); err != nil {
+			slog.Warn("session sweep: index failed", "file", entry.Name(), "error", err)
+			errors++
+			continue
+		}
+		indexed++
+	}
+
+	return indexed, skipped, errors
+}
+
+// buildIndexedAtMap queries existing session sources and returns uuid → indexed_at.
+func buildIndexedAtMap(cs *store.ContentStore) (map[string]time.Time, error) {
+	sources, err := cs.ListSources()
+	if err != nil {
+		return nil, err
+	}
+
+	m := make(map[string]time.Time)
+	for _, src := range sources {
+		if src.Kind != store.KindSession {
+			continue
+		}
+		uuid := extractUUIDFromLabel(src.Label)
+		if uuid != "" {
+			m[uuid] = src.IndexedAt
+		}
+	}
+	return m, nil
+}
+
+// extractUUIDFromLabel extracts the UUID from a "session:<ISO-datetime>:<uuid>" label.
+// The datetime contains colons (e.g., "2026-04-05T12:06:26Z"), so we find the UUID
+// after the "Z:" marker that ends the ISO 8601 timestamp.
+func extractUUIDFromLabel(label string) string {
+	if !strings.HasPrefix(label, "session:") {
+		return ""
+	}
+	// Find "Z:" which ends the ISO timestamp and precedes the UUID.
+	_, uuid, ok := strings.Cut(label, "Z:")
+	if !ok {
+		return ""
+	}
+	return uuid
+}
+
+// shouldSkip returns true if the session file has not changed since last indexing.
+// Compares max(file.mtime, subagents_dir.mtime) against the stored indexed_at time.
+func shouldSkip(dir, uuid string, entry os.DirEntry, indexedMap map[string]time.Time) bool {
+	indexedAt, exists := indexedMap[uuid]
+	if !exists {
+		return false
+	}
+
+	effectiveMtime := fileMtime(entry)
+
+	subagentsDir := filepath.Join(dir, uuid, "subagents")
+	if info, err := os.Stat(subagentsDir); err == nil {
+		if info.ModTime().After(effectiveMtime) {
+			effectiveMtime = info.ModTime()
+		}
+	}
+
+	return !effectiveMtime.After(indexedAt)
+}
+
+// fileMtime extracts the modification time from a DirEntry.
+func fileMtime(entry os.DirEntry) time.Time {
+	info, err := entry.Info()
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
+}
+
+// indexSession parses, validates, and indexes a single session file.
+func indexSession(ctx context.Context, cs *store.ContentStore, dir, uuid, jsonlPath string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	parsed, err := ParseSession(jsonlPath)
+	if err != nil {
+		return fmt.Errorf("parsing: %w", err)
+	}
+
+	// Parse sub-agents if the session directory exists.
+	sessionBareDir := filepath.Join(dir, uuid)
+	subPairs, err := ParseSubagents(sessionBareDir)
+	if err != nil {
+		slog.Warn("session sweep: sub-agent parse partial failure", "session", uuid, "error", err)
+	}
+	if len(subPairs) > 0 {
+		parsed.TurnPairs = append(parsed.TurnPairs, subPairs...)
+		for _, sp := range subPairs {
+			parsed.TotalAssistantChars += len(sp.AssistantText)
+		}
+	}
+
+	if !parsed.IsIndexable() {
+		fi, _ := os.Stat(jsonlPath)
+		if fi != nil && fi.Size() > 1024 && len(parsed.TurnPairs) == 0 {
+			slog.Warn("session parsed to 0 turns",
+				"file", filepath.Base(jsonlPath),
+				"size", fi.Size(),
+			)
+		}
+		return nil
+	}
+
+	tr := BuildTranscript(parsed)
+	chunks := ChunkSession(parsed, tr, 0)
+	if len(chunks) == 0 {
+		return nil
+	}
+
+	label := buildLabel(parsed)
+	_, err = cs.IndexChunked(tr.Text, label, "session", store.KindSession, chunks)
+	if err != nil {
+		return fmt.Errorf("indexing: %w", err)
+	}
+
+	return nil
+}
+
+// buildLabel creates a machine-agnostic label: "session:<ISO-datetime>:<UUID>".
+func buildLabel(s *ParsedSession) string {
+	ts := s.StartTime.UTC().Format("2006-01-02T15:04:05Z")
+	return fmt.Sprintf("session:%s:%s", ts, s.SessionID)
+}
