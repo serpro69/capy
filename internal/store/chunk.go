@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const maxChunkBytes = 4096
+const MaxChunkBytes = 4096
 
 var (
 	headingRe    = regexp.MustCompile(`^(#{1,4})\s+(.+)$`)
@@ -22,7 +22,7 @@ var (
 // chunkMarkdown splits markdown content by headings with code-block awareness.
 func chunkMarkdown(content string, maxBytes int) []Chunk {
 	if maxBytes <= 0 {
-		maxBytes = maxChunkBytes
+		maxBytes = MaxChunkBytes
 	}
 
 	lines := strings.Split(content, "\n")
@@ -42,11 +42,11 @@ func chunkMarkdown(content string, maxBytes int) []Chunk {
 			return
 		}
 		title := buildHeadingTitle(headingStack)
-		hasCode := chunkHasCode(text)
+		hasCode := ChunkHasCode(text)
 		if len(text) <= maxBytes {
 			chunks = append(chunks, Chunk{Title: title, Content: text, HasCode: hasCode})
 		} else {
-			chunks = append(chunks, splitOversized(text, title, maxBytes)...)
+			chunks = append(chunks, SplitOversized(text, title, maxBytes)...)
 		}
 		currentLines = nil
 	}
@@ -92,7 +92,7 @@ func chunkMarkdown(content string, maxBytes int) []Chunk {
 		chunks = append(chunks, Chunk{
 			Title:   "Content",
 			Content: strings.TrimSpace(content),
-			HasCode: chunkHasCode(content),
+			HasCode: ChunkHasCode(content),
 		})
 	}
 
@@ -112,8 +112,8 @@ func buildHeadingTitle(stack [4]string) string {
 	return strings.Join(parts, " > ")
 }
 
-// splitOversized splits a chunk that exceeds maxBytes at paragraph boundaries.
-func splitOversized(text, title string, maxBytes int) []Chunk {
+// SplitOversized splits a chunk that exceeds maxBytes at paragraph boundaries.
+func SplitOversized(text, title string, maxBytes int) []Chunk {
 	paragraphs := blankLineRe.Split(text, -1)
 	var chunks []Chunk
 	var buf strings.Builder
@@ -129,7 +129,7 @@ func splitOversized(text, title string, maxBytes int) []Chunk {
 			chunks = append(chunks, Chunk{
 				Title:   title,
 				Content: content,
-				HasCode: chunkHasCode(content),
+				HasCode: ChunkHasCode(content),
 			})
 			// Keep last 2 lines as overlap.
 			lines := strings.Split(content, "\n")
@@ -155,13 +155,13 @@ func splitOversized(text, title string, maxBytes int) []Chunk {
 		chunks = append(chunks, Chunk{
 			Title:   title,
 			Content: content,
-			HasCode: chunkHasCode(content),
+			HasCode: ChunkHasCode(content),
 		})
 	}
 	return chunks
 }
 
-func chunkHasCode(content string) bool {
+func ChunkHasCode(content string) bool {
 	return codeBlockRe.MatchString(content)
 }
 
@@ -241,7 +241,7 @@ func firstLine(text string, maxLen int) string {
 // walkJSON recursively chunks a parsed JSON value.
 func walkJSON(v any, path []string, maxBytes int) []Chunk {
 	if maxBytes <= 0 {
-		maxBytes = maxChunkBytes
+		maxBytes = MaxChunkBytes
 	}
 
 	switch val := v.(type) {

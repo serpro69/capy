@@ -16,11 +16,6 @@ import (
 // and hash) is skipped; changed content replaces the old source.
 // kind must be a valid SourceKind (KindDurable or KindEphemeral).
 func (s *ContentStore) Index(content, label, contentType string, kind SourceKind) (*IndexResult, error) {
-	db, err := s.getDB()
-	if err != nil {
-		return nil, err
-	}
-
 	if !kind.Valid() {
 		return nil, fmt.Errorf("invalid source kind %q", kind)
 	}
@@ -33,10 +28,36 @@ func (s *ContentStore) Index(content, label, contentType string, kind SourceKind
 	// produces a different hash and triggers an update.
 	content = sanitize.StripSecrets(content)
 
-	hash := contentHash(content)
-
 	// Chunk content before entering the transaction to minimize lock hold time.
 	chunks := chunkContent(content, contentType)
+
+	return s.indexPreparedChunks(content, label, contentType, kind, chunks)
+}
+
+// IndexChunked indexes pre-chunked content into the knowledge base. The caller
+// provides the full transcript (for hashing/vocabulary) and the pre-built chunks.
+// This is used by session indexing where chunking happens in the session package.
+func (s *ContentStore) IndexChunked(transcript, label, contentType string, kind SourceKind, chunks []Chunk) (*IndexResult, error) {
+	if !kind.Valid() {
+		return nil, fmt.Errorf("invalid source kind %q", kind)
+	}
+
+	transcript = sanitize.StripSecrets(transcript)
+
+	return s.indexPreparedChunks(transcript, label, contentType, kind, chunks)
+}
+
+// indexPreparedChunks is the shared transaction body for Index and IndexChunked.
+// content is used for hashing and vocabulary extraction; chunks are the pre-built
+// pieces to store.
+func (s *ContentStore) indexPreparedChunks(content, label, contentType string, kind SourceKind, chunks []Chunk) (*IndexResult, error) {
+	db, err := s.getDB()
+	if err != nil {
+		return nil, err
+	}
+
+	hash := contentHash(content)
+
 	codeChunks := 0
 	for i := range chunks {
 		if chunks[i].HasCode {
@@ -71,8 +92,6 @@ func (s *ContentStore) Index(content, label, contentType string, kind SourceKind
 	if err == nil {
 		if existingHash.Valid && existingHash.String == hash {
 			// Same content — promote/demote kind if needed, update access time.
-			// stmtUpdateSourceKind already sets last_accessed_at, so only
-			// call stmtUpdateSourceAccess when kind is unchanged.
 			if existingKind != kind {
 				if _, err := tx.Stmt(s.stmtUpdateSourceKind).Exec(kind, existingID); err != nil {
 					return nil, fmt.Errorf("updating source kind: %w", err)
@@ -156,9 +175,9 @@ func chunkContent(content, contentType string) []Chunk {
 	var chunks []Chunk
 	switch contentType {
 	case "markdown":
-		chunks = chunkMarkdown(content, maxChunkBytes)
+		chunks = chunkMarkdown(content, MaxChunkBytes)
 	case "json":
-		chunks = chunkJSON(content, maxChunkBytes)
+		chunks = chunkJSON(content, MaxChunkBytes)
 	default:
 		chunks = chunkPlainText(content, 20)
 	}
