@@ -269,12 +269,15 @@ func toolDoctor() mcp.Tool {
 func toolCleanup() mcp.Tool {
 	return mcp.NewTool("capy_cleanup",
 		mcp.WithToolAnnotation(annotationCleanup),
-		mcp.WithDescription("Clean up evictable knowledge base entries. By default runs two paths: retention-score eviction for durable sources (content type, age, access patterns — only never-accessed sources with low scores) and strict TTL eviction for ephemeral sources (indexed_at past ephemeral_ttl_hours, access_count ignored). Set purge_ephemeral=true for a one-shot scratch purge that skips durable retention."),
+		mcp.WithDescription("Clean up evictable knowledge base entries. By default runs three paths: retention-score eviction for durable sources, strict TTL eviction for ephemeral sources, and strict TTL eviction for session sources. Set purge_ephemeral=true or purge_session=true for kind-specific purges that skip other paths."),
 		mcp.WithBoolean("dry_run",
 			mcp.Description("Preview what would be removed without deleting (default: true)"),
 		),
 		mcp.WithBoolean("purge_ephemeral",
-			mcp.Description("When true, only evict ephemeral sources past the TTL window; durable sources are untouched regardless of retention score (default: false)"),
+			mcp.Description("When true, only evict ephemeral sources past the TTL window; durable and session sources are untouched (default: false)"),
+		),
+		mcp.WithBoolean("purge_session",
+			mcp.Description("When true, only evict session sources past the TTL window; durable and ephemeral sources are untouched (default: false)"),
 		),
 	)
 }

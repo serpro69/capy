@@ -119,6 +119,32 @@ func TestCleanupSubcommand(t *testing.T) {
 	assert.Contains(t, stdout, "cleanup")
 }
 
+func TestCleanupSubcommand_KindSession(t *testing.T) {
+	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".capy.toml"),
+		[]byte("[store]\npath = \"test.db\"\n"),
+		0o644,
+	))
+	stdout, _, code := capy(t, "cleanup", "--kind", "session", "--project-dir", dir)
+	assert.Equal(t, 0, code)
+	assert.Contains(t, stdout, "cleanup")
+}
+
+func TestCleanupSubcommand_KindInvalid(t *testing.T) {
+	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".capy.toml"),
+		[]byte("[store]\npath = \"test.db\"\n"),
+		0o644,
+	))
+	_, stderr, code := capy(t, "cleanup", "--kind", "bogus", "--project-dir", dir)
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "invalid --kind value")
+}
+
 func TestCheckpointSubcommand_NoDB(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(

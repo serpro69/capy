@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -125,6 +126,35 @@ func TestStats_CacheBytesSavedInSavingsCalc(t *testing.T) {
 	assert.Contains(t, text, "reduction")
 }
 
+func TestStats_WithSessionSources(t *testing.T) {
+	srv := newTestServer(t, nil)
+	st := srv.getStore()
+
+	_, err := st.Index("session transcript content", "session:2026-05-01T10:00:00Z:abc-123", "session", store.KindSession)
+	require.NoError(t, err)
+
+	r := callStats(t, srv)
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "session: 1")
+	assert.Contains(t, text, "Session TTL buckets")
+	assert.Contains(t, text, "fresh")
+}
+
+func TestStats_SessionSectionOmittedWhenNoSessions(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	callIndex(t, srv, map[string]any{
+		"content": "# Durable only content for this test.",
+		"source":  "durable-only",
+	})
+
+	r := callStats(t, srv)
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.NotContains(t, text, "Session TTL buckets")
+}
+
 func TestStats_FormatBytes(t *testing.T) {
 	assert.Equal(t, "0.0KB", formatBytes(0))
 	assert.Equal(t, "1.0KB", formatBytes(1024))
@@ -242,6 +272,45 @@ func TestCleanup_ExplicitDryRunFalse(t *testing.T) {
 		"dry_run": false,
 	})
 	assert.False(t, r.IsError)
+}
+
+func TestCleanup_PurgeSessionAccepted(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	// purge_session parameter is accepted; no stale sessions exist so nothing evicted.
+	r := callCleanup(t, srv, map[string]any{"purge_session": true})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "No evictable sources")
+}
+
+func TestCleanup_PurgeSessionPreservesFreshSessions(t *testing.T) {
+	srv := newTestServer(t, nil)
+	st := srv.getStore()
+
+	// Index a fresh session source — should NOT be evicted (within TTL).
+	_, err := st.Index("session transcript content", "session:2026-05-01T00:00:00Z:test-uuid", "session", store.KindSession)
+	require.NoError(t, err)
+
+	r := callCleanup(t, srv, map[string]any{"purge_session": true, "dry_run": false})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "No evictable sources")
+}
+
+func TestCleanup_PurgeSessionDoesNotTouchDurable(t *testing.T) {
+	srv := newTestServer(t, nil)
+	st := srv.getStore()
+
+	// Index a very old durable source (would be evictable by retention).
+	_, err := st.Index("old durable content", "old-durable-source", "plaintext", store.KindDurable)
+	require.NoError(t, err)
+
+	// purge_session should not touch durable sources at all.
+	r := callCleanup(t, srv, map[string]any{"purge_session": true, "dry_run": false})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.NotContains(t, text, "old-durable-source")
 }
 
 func TestCleanup_StatsTracking(t *testing.T) {
