@@ -19,7 +19,7 @@
 - [x] 1.6 Write tests for all above: migration applies, session kind accepted, TTL cleanup works, search includes sessions
 
 ## Task 2: Session JSONL parser
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#phase-2-session-parsing](./implementation.md#phase-2-session-parsing)
 
