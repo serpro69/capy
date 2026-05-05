@@ -234,8 +234,7 @@ func TestSweep_Integration(t *testing.T) {
 
 	// Create a test store.
 	dbPath := filepath.Join(tmp, "test.db")
-	os.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-sweep-integration-32b")
-	defer os.Unsetenv("CAPY_ENCRYPTION_KEY")
+	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-sweep-integration-32b")
 
 	cs := store.NewContentStore(dbPath, tmp, 2.0)
 	defer cs.Close()
@@ -243,19 +242,19 @@ func TestSweep_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// Index session 1.
-	err := indexSession(ctx, cs, tmp, uuid1, filepath.Join(tmp, uuid1+".jsonl"))
+	err := indexSession(ctx, cs, tmp, uuid1)
 	if err != nil {
 		t.Fatalf("indexSession(uuid1) failed: %v", err)
 	}
 
 	// Index session 2.
-	err = indexSession(ctx, cs, tmp, uuid2, filepath.Join(tmp, uuid2+".jsonl"))
+	err = indexSession(ctx, cs, tmp, uuid2)
 	if err != nil {
 		t.Fatalf("indexSession(uuid2) failed: %v", err)
 	}
 
 	// Index trivial session — should be silently skipped (not an error).
-	err = indexSession(ctx, cs, tmp, uuid3, trivialPath)
+	err = indexSession(ctx, cs, tmp, uuid3)
 	if err != nil {
 		t.Fatalf("indexSession(trivial) failed: %v", err)
 	}
@@ -303,8 +302,7 @@ func TestSweep_ContextCancellation(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(tmp, "test.db")
-	os.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-sweep-cancel-test-32")
-	defer os.Unsetenv("CAPY_ENCRYPTION_KEY")
+	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-sweep-cancel-test-32")
 
 	cs := store.NewContentStore(dbPath, tmp, 2.0)
 	defer cs.Close()
@@ -314,7 +312,7 @@ func TestSweep_ContextCancellation(t *testing.T) {
 	cancel()
 
 	// indexSession should bail out on cancelled context.
-	err := indexSession(ctx, cs, tmp, "session-cancel-a", filepath.Join(tmp, "session-cancel-a.jsonl"))
+	err := indexSession(ctx, cs, tmp, "session-cancel-a")
 	if err == nil {
 		t.Error("expected error from cancelled context")
 	}
@@ -340,14 +338,13 @@ func TestSweep_NonTrivialZeroTurns(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(tmp, "test.db")
-	os.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-degradation-test-32")
-	defer os.Unsetenv("CAPY_ENCRYPTION_KEY")
+	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-degradation-test-32")
 
 	cs := store.NewContentStore(dbPath, tmp, 2.0)
 	defer cs.Close()
 
 	// Should not error — just silently skip the non-indexable session.
-	err := indexSession(context.Background(), cs, tmp, uuid, jsonlPath)
+	err := indexSession(context.Background(), cs, tmp, uuid)
 	if err != nil {
 		t.Fatalf("expected no error for non-indexable session, got: %v", err)
 	}
