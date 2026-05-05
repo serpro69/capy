@@ -286,6 +286,7 @@ Accepts `context.Context` as first parameter (standard Go convention for any fun
 
 Logs at info level: `"session sweep complete"` with indexed/skipped/error counts.
 Logs at warn level: individual parse failures.
+Logs at warn level: when a non-trivial file (>1KB) produces 0 turn pairs, including the session `version` field — surfaces potential JSONL format drift (see ADR-021).
 
 **Verify:** integration test with a temp directory containing synthetic session files. Verify: correct files indexed, mtime gate works, gate filters trivial sessions, errors are logged and skipped.
 
