@@ -80,19 +80,18 @@ func Sweep(ctx context.Context, cs *store.ContentStore, projectDir string) (inde
 
 	for _, entry := range jsonlFiles {
 		if ctx.Err() != nil {
-			slog.Info("session sweep: cancelled", "indexed", indexed, "remaining", len(jsonlFiles)-indexed-skipped-errors)
+			slog.Info("session sweep: cancelled", "indexed", indexed, "skipped", skipped, "errors", errors)
 			return indexed, skipped, errors
 		}
 
 		uuid := strings.TrimSuffix(entry.Name(), ".jsonl")
-		jsonlPath := filepath.Join(dir, entry.Name())
 
 		if shouldSkip(dir, uuid, entry, indexedMap) {
 			skipped++
 			continue
 		}
 
-		if err := indexSession(ctx, cs, dir, uuid, jsonlPath); err != nil {
+		if err := indexSession(ctx, cs, dir, uuid); err != nil {
 			slog.Warn("session sweep: index failed", "file", entry.Name(), "error", err)
 			errors++
 			continue
@@ -110,7 +109,7 @@ func buildIndexedAtMap(cs *store.ContentStore) (map[string]time.Time, error) {
 		return nil, err
 	}
 
-	m := make(map[string]time.Time)
+	m := make(map[string]time.Time, len(sources))
 	for _, src := range sources {
 		if src.Kind != store.KindSession {
 			continue
@@ -124,18 +123,19 @@ func buildIndexedAtMap(cs *store.ContentStore) (map[string]time.Time, error) {
 }
 
 // extractUUIDFromLabel extracts the UUID from a "session:<ISO-datetime>:<uuid>" label.
-// The datetime contains colons (e.g., "2026-04-05T12:06:26Z"), so we find the UUID
-// after the "Z:" marker that ends the ISO 8601 timestamp.
+// The UUID is always the last colon-delimited segment. Using LastIndex avoids coupling
+// to the specific datetime format (which contains internal colons).
 func extractUUIDFromLabel(label string) string {
-	if !strings.HasPrefix(label, "session:") {
+	const prefix = "session:"
+	if !strings.HasPrefix(label, prefix) {
 		return ""
 	}
-	// Find "Z:" which ends the ISO timestamp and precedes the UUID.
-	_, uuid, ok := strings.Cut(label, "Z:")
-	if !ok {
+	idx := strings.LastIndex(label, ":")
+	// The last ":" must be past the prefix (i.e., there's a datetime segment between).
+	if idx <= len(prefix)-1 || idx == len(label)-1 {
 		return ""
 	}
-	return uuid
+	return label[idx+1:]
 }
 
 // shouldSkip returns true if the session file has not changed since last indexing.
@@ -168,11 +168,12 @@ func fileMtime(entry os.DirEntry) time.Time {
 }
 
 // indexSession parses, validates, and indexes a single session file.
-func indexSession(ctx context.Context, cs *store.ContentStore, dir, uuid, jsonlPath string) error {
+func indexSession(ctx context.Context, cs *store.ContentStore, dir, uuid string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 
+	jsonlPath := filepath.Join(dir, uuid+".jsonl")
 	parsed, err := ParseSession(jsonlPath)
 	if err != nil {
 		return fmt.Errorf("parsing: %w", err)
