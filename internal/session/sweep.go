@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/serpro69/capy/internal/sanitize"
 	"github.com/serpro69/capy/internal/store"
 )
 
@@ -91,12 +92,17 @@ func Sweep(ctx context.Context, cs *store.ContentStore, projectDir string) (inde
 			continue
 		}
 
-		if err := indexSession(ctx, cs, dir, uuid); err != nil {
+		ok, err := indexSession(ctx, cs, dir, uuid)
+		if err != nil {
 			slog.Warn("session sweep: index failed", "file", entry.Name(), "error", err)
 			errors++
 			continue
 		}
-		indexed++
+		if ok {
+			indexed++
+		} else {
+			skipped++
+		}
 	}
 
 	return indexed, skipped, errors
@@ -168,18 +174,20 @@ func fileMtime(entry os.DirEntry) time.Time {
 }
 
 // indexSession parses, validates, and indexes a single session file.
-func indexSession(ctx context.Context, cs *store.ContentStore, dir, uuid string) error {
+// Returns (true, nil) if the session was indexed, (false, nil) if it was
+// skipped (not indexable / empty), or (false, err) on failure.
+func indexSession(ctx context.Context, cs *store.ContentStore, dir, uuid string) (bool, error) {
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return false, ctx.Err()
 	}
 
 	jsonlPath := filepath.Join(dir, uuid+".jsonl")
 	parsed, err := ParseSession(jsonlPath)
 	if err != nil {
-		return fmt.Errorf("parsing: %w", err)
+		return false, fmt.Errorf("parsing: %w", err)
 	}
 
-	// Parse sub-agents if the session directory exists.
+	// Log-and-continue: partial sub-agent failure does not fail the session.
 	sessionBareDir := filepath.Join(dir, uuid)
 	subPairs, err := ParseSubagents(sessionBareDir)
 	if err != nil {
@@ -200,22 +208,23 @@ func indexSession(ctx context.Context, cs *store.ContentStore, dir, uuid string)
 				"size", fi.Size(),
 			)
 		}
-		return nil
+		return false, nil
 	}
 
 	tr := BuildTranscript(parsed)
+	tr.Text = sanitize.StripSecrets(tr.Text)
 	chunks := ChunkSession(parsed, tr, 0)
 	if len(chunks) == 0 {
-		return nil
+		return false, nil
 	}
 
 	label := buildLabel(parsed)
 	_, err = cs.IndexChunked(tr.Text, label, "session", store.KindSession, chunks)
 	if err != nil {
-		return fmt.Errorf("indexing: %w", err)
+		return false, fmt.Errorf("indexing: %w", err)
 	}
 
-	return nil
+	return true, nil
 }
 
 // buildLabel creates a machine-agnostic label: "session:<ISO-datetime>:<UUID>".

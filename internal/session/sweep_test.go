@@ -207,17 +207,11 @@ func writeTestSession(t *testing.T, dir, uuid string) string {
 	return jsonlPath
 }
 
-func TestSweep_Integration(t *testing.T) {
+func TestIndexSession_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	// We need a known project dir that maps to a temp session directory.
-	// Since SessionDir uses os.UserHomeDir, we'll test Sweep by constructing
-	// a scenario where the session dir exists at the expected path.
-	//
-	// Instead, we test the indexSession function directly which doesn't
-	// depend on home directory layout.
 	tmp := t.TempDir()
 	uuid1 := "session-aaa-111"
 	uuid2 := "session-bbb-222"
@@ -242,19 +236,19 @@ func TestSweep_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// Index session 1.
-	err := indexSession(ctx, cs, tmp, uuid1)
+	_, err := indexSession(ctx, cs, tmp, uuid1)
 	if err != nil {
 		t.Fatalf("indexSession(uuid1) failed: %v", err)
 	}
 
 	// Index session 2.
-	err = indexSession(ctx, cs, tmp, uuid2)
+	_, err = indexSession(ctx, cs, tmp, uuid2)
 	if err != nil {
 		t.Fatalf("indexSession(uuid2) failed: %v", err)
 	}
 
 	// Index trivial session — should be silently skipped (not an error).
-	err = indexSession(ctx, cs, tmp, uuid3)
+	_, err = indexSession(ctx, cs, tmp, uuid3)
 	if err != nil {
 		t.Fatalf("indexSession(trivial) failed: %v", err)
 	}
@@ -312,7 +306,7 @@ func TestSweep_ContextCancellation(t *testing.T) {
 	cancel()
 
 	// indexSession should bail out on cancelled context.
-	err := indexSession(ctx, cs, tmp, "session-cancel-a")
+	_, err := indexSession(ctx, cs, tmp, "session-cancel-a")
 	if err == nil {
 		t.Error("expected error from cancelled context")
 	}
@@ -344,9 +338,12 @@ func TestSweep_NonTrivialZeroTurns(t *testing.T) {
 	defer cs.Close()
 
 	// Should not error — just silently skip the non-indexable session.
-	err := indexSession(context.Background(), cs, tmp, uuid)
+	indexed, err := indexSession(context.Background(), cs, tmp, uuid)
 	if err != nil {
 		t.Fatalf("expected no error for non-indexable session, got: %v", err)
+	}
+	if indexed {
+		t.Error("degraded session should not have been indexed")
 	}
 
 	// Verify nothing was indexed.
@@ -383,5 +380,150 @@ func TestSessionDir_WithRealHome(t *testing.T) {
 	expectedDir := filepath.Join(home, ".claude", "projects", expectedMangled)
 	if !strings.Contains(err.Error(), expectedDir) && !strings.Contains(err.Error(), "not found") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSweep_Orchestrator(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// Set up a fake HOME with .claude/projects/<mangled>/ containing session files.
+	tmpHome := t.TempDir()
+	projectDir := "/test/project"
+	mangled := manglePath(projectDir)
+	sessionDir := filepath.Join(tmpHome, ".claude", "projects", mangled)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	uuid1 := "sweep-orch-aaa"
+	uuid2 := "sweep-orch-bbb"
+	writeTestSession(t, sessionDir, uuid1)
+	writeTestSession(t, sessionDir, uuid2)
+
+	// Trivial session that should be gated.
+	trivialPath := filepath.Join(sessionDir, "sweep-orch-trivial.jsonl")
+	if err := os.WriteFile(trivialPath, []byte(`{"type":"user","message":{"role":"user","content":"hi"}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-sweep-orchestrator-32")
+
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	cs := store.NewContentStore(dbPath, projectDir, 2.0)
+	defer cs.Close()
+
+	// First sweep: should index 2 valid sessions, skip trivial.
+	indexed, skipped, errs := Sweep(context.Background(), cs, projectDir)
+	if errs != 0 {
+		t.Errorf("expected 0 errors, got %d", errs)
+	}
+	if indexed != 2 {
+		t.Errorf("expected 2 indexed, got %d", indexed)
+	}
+
+	// Set file mtimes to the past so the mtime gate sees them as unchanged.
+	// indexed_at has second precision; file mtimes have nanosecond precision,
+	// so files written in the same second as indexing appear "newer."
+	pastTime := time.Now().Add(-time.Minute)
+	for _, name := range []string{uuid1 + ".jsonl", uuid2 + ".jsonl"} {
+		p := filepath.Join(sessionDir, name)
+		if err := os.Chtimes(p, pastTime, pastTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Second sweep: all sessions should be skipped (mtime gate).
+	indexed2, skipped2, errs2 := Sweep(context.Background(), cs, projectDir)
+	if errs2 != 0 {
+		t.Errorf("second sweep: expected 0 errors, got %d", errs2)
+	}
+	if indexed2 != 0 {
+		t.Errorf("second sweep: expected 0 indexed (mtime gate), got %d", indexed2)
+	}
+	// 3 files total: 2 mtime-gated + 1 trivial (IsIndexable gate) = 3 skipped.
+	if skipped2 != 3 {
+		t.Errorf("second sweep: expected 3 skipped, got %d", skipped2)
+	}
+	_ = skipped
+}
+
+func TestSweep_SecretSanitization(t *testing.T) {
+	tmp := t.TempDir()
+	uuid := "session-with-secrets"
+	ts := time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+
+	// Build a session where the assistant response contains a secret.
+	var lines []string
+	for i := range 3 {
+		userContent, _ := json.Marshal(map[string]any{
+			"type":      "user",
+			"uuid":      "u" + string(rune('1'+i)),
+			"timestamp": ts,
+			"sessionId": uuid,
+			"message": map[string]any{
+				"id":   "um" + string(rune('1'+i)),
+				"role": "user",
+				"content": "How do I configure the API key?",
+			},
+		})
+		lines = append(lines, string(userContent))
+
+		secretText := "Set ANTHROPIC_API_KEY=sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAA to configure."
+		if i > 0 {
+			secretText = strings.Repeat("This is safe assistant text for padding. ", 10)
+		}
+		assistContent, _ := json.Marshal(map[string]any{
+			"type":      "assistant",
+			"uuid":      "a" + string(rune('1'+i)),
+			"timestamp": ts,
+			"sessionId": uuid,
+			"message": map[string]any{
+				"id":   "am" + string(rune('1'+i)),
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": secretText},
+				},
+			},
+		})
+		lines = append(lines, string(assistContent))
+	}
+
+	jsonlPath := filepath.Join(tmp, uuid+".jsonl")
+	if err := os.WriteFile(jsonlPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dbPath := filepath.Join(tmp, "test.db")
+	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-secret-sanitize-test")
+
+	cs := store.NewContentStore(dbPath, tmp, 2.0)
+	defer cs.Close()
+
+	ok, err := indexSession(context.Background(), cs, tmp, uuid)
+	if err != nil {
+		t.Fatalf("indexSession failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected session to be indexed")
+	}
+
+	// Search for the indexed content and verify the secret was redacted.
+	results, err := cs.SearchWithFallback("API key configure", 10, store.SearchOptions{
+		IncludeKinds: []store.SourceKind{store.KindSession},
+	})
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected search results")
+	}
+
+	for _, r := range results {
+		if strings.Contains(r.Content, "sk-ant-api03") {
+			t.Errorf("secret not sanitized in search result content: %s", r.Content)
+		}
 	}
 }
