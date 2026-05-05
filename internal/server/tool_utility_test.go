@@ -274,6 +274,15 @@ func TestCleanup_ExplicitDryRunFalse(t *testing.T) {
 	assert.False(t, r.IsError)
 }
 
+func TestCleanup_PurgeBothMutuallyExclusive(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	r := callCleanup(t, srv, map[string]any{"purge_ephemeral": true, "purge_session": true})
+	assert.True(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "mutually exclusive")
+}
+
 func TestCleanup_PurgeSessionAccepted(t *testing.T) {
 	srv := newTestServer(t, nil)
 
