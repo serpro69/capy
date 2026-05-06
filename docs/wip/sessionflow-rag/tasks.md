@@ -2,7 +2,7 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done
 > Created: 2026-04-23
 
 ## Task 1: Storage foundation — KindSession, migration, config
@@ -65,13 +65,13 @@
 - [x] 5.4 Write tests for cleanup with purge_session, stats with session sources
 
 ## Task 6: Final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5
 
 ### Subtasks
-- [ ] 6.1 Run `test` skill to verify all tasks — full test suite (`make test`, `make test-race`), integration tests, edge cases
-- [ ] 6.2 Add end-to-end integration test in `internal/server/integration_test.go`: synthetic sessions → sweep → search → verify results → cleanup → verify eviction
-- [ ] 6.3 Add canary integration test that looks for real session files in `~/.claude/projects/`, parses several (prefer files with different `version` fields for maximum format coverage), and asserts basic invariants (non-zero turn pairs, valid session ID, non-zero assistant chars). `t.Skip` if no sessions found (CI-safe). Catches JSONL format drift on developer machines. See ADR-021.
-- [ ] 6.4 Run `document` skill to write ADR-019 for KindSession decision, update CONTRIBUTING.md if needed
-- [ ] 6.5 Run `review-code` skill to review the implementation
-- [ ] 6.6 Run `review-spec` skill to verify implementation matches design and implementation docs
+- [x] 6.1 Run `test` skill to verify all tasks — full test suite (`make test`, `make test-race`), integration tests, edge cases
+- [x] 6.2 Add end-to-end integration test in `internal/server/integration_test.go`: synthetic sessions → sweep → search → verify results → cleanup → verify eviction
+- [x] 6.3 Add canary integration test that looks for real session files in `~/.claude/projects/`, parses several (prefer files with different `version` fields for maximum format coverage), and asserts basic invariants (non-zero turn pairs, valid session ID, non-zero assistant chars). `t.Skip` if no sessions found (CI-safe). Catches JSONL format drift on developer machines. See ADR-021.
+- [x] 6.4 Run `document` skill to write ADR-019 for KindSession decision, update CONTRIBUTING.md if needed
+- [x] 6.5 Run `review-code` skill to review the implementation
+- [x] 6.6 Run `review-spec` skill to verify implementation matches design and implementation docs

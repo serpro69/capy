@@ -73,7 +73,7 @@ A cluster of these warnings after a Claude Code update is the signal that the pa
 
 If session RAG proves valuable enough to warrant stronger guarantees:
 
-1. **Canary integration test** (Task 6.3). A test that discovers real session files from the local machine (`~/.claude/projects/`), parses several (preferring files with different `version` fields for maximum format coverage), and asserts basic invariants (non-zero turn pairs, valid session ID, non-zero assistant chars). Uses `t.Skip` when no sessions are found, making it CI-safe while catching format drift on developer machines.
+1. **Canary integration test** (Task 6.3). ✅ Implemented in `internal/session/canary_test.go`. Discovers real session files from `~/.claude/projects/`, parses up to 20 across projects, and asserts basic invariants (non-empty session ID, non-zero assistant chars when turn pairs exist, non-zero StartTime). Uses `t.Skip` when no sessions are found (CI-safe).
 
 2. **Version-aware warnings.** The sweep could track the highest `version` value seen in successfully-parsed sessions and warn when it encounters a version jump that correlates with degraded extraction. This avoids hard pinning while still surfacing version-correlated breakage.
 

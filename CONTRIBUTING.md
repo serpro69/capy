@@ -48,6 +48,7 @@ internal/
   platform/         Setup command, doctor diagnostics, routing instructions
   security/         Settings parsing, glob matching, command splitting, shell-escape detection
   server/           MCP server, 9 tool handlers, stats, lifecycle, snippets
+  session/          Claude Code session JSONL parsing, transcript building, chunking, sweep indexing
   store/            SQLite FTS5 knowledge base (schema, indexing, chunking, search, cleanup, encryption)
   version/          Version variable (set at build via ldflags)
 ```
