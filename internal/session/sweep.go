@@ -45,11 +45,99 @@ func manglePath(absPath string) string {
 	return strings.NewReplacer("/", "-", ".", "-").Replace(absPath)
 }
 
+// SweepOptions controls sweep behavior.
+type SweepOptions struct {
+	Reindex bool // ignore mtime checks, force re-parse of all sessions
+}
+
+// SessionDiagnostic holds per-session parse results for dry-run reporting.
+type SessionDiagnostic struct {
+	UUID           string
+	Size           int64
+	TurnPairs      int
+	MainPairs      int
+	AssistantChars int
+	Indexable      bool
+	AlreadyIndexed bool
+	ParseError     string
+}
+
+// DryRunSweep parses all sessions without indexing and returns per-session diagnostics.
+// Pass a non-nil ContentStore to check already-indexed status; pass nil to skip that check.
+func DryRunSweep(projectDir string, cs *store.ContentStore, opts SweepOptions) ([]SessionDiagnostic, error) {
+	dir, err := SessionDir(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("session directory: %w", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("listing directory: %w", err)
+	}
+
+	var indexedMap map[string]time.Time
+	if !opts.Reindex && cs != nil {
+		indexedMap, _ = buildIndexedAtMap(cs)
+	}
+
+	var results []SessionDiagnostic
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		uuid := strings.TrimSuffix(e.Name(), ".jsonl")
+		info, _ := e.Info()
+
+		d := SessionDiagnostic{UUID: uuid}
+		if info != nil {
+			d.Size = info.Size()
+		}
+
+		if !opts.Reindex && indexedMap != nil {
+			if _, exists := indexedMap[uuid]; exists {
+				d.AlreadyIndexed = true
+			}
+		}
+
+		parsed, err := ParseSession(filepath.Join(dir, e.Name()))
+		if err != nil {
+			d.ParseError = err.Error()
+			results = append(results, d)
+			continue
+		}
+
+		subPairs, _ := ParseSubagents(filepath.Join(dir, uuid))
+		if len(subPairs) > 0 {
+			parsed.TurnPairs = append(parsed.TurnPairs, subPairs...)
+			for _, sp := range subPairs {
+				parsed.TotalAssistantChars += len(sp.AssistantText)
+			}
+		}
+
+		d.TurnPairs = len(parsed.TurnPairs)
+		for _, tp := range parsed.TurnPairs {
+			if !tp.IsSubagent {
+				d.MainPairs++
+			}
+		}
+		d.AssistantChars = parsed.TotalAssistantChars
+		d.Indexable = parsed.IsIndexable()
+		results = append(results, d)
+	}
+
+	return results, nil
+}
+
 // Sweep discovers, parses, and indexes Claude Code session files for the given
 // project. It checks ctx.Err() between files for cooperative cancellation.
 //
 // Returns counts of indexed, skipped, and errored sessions.
 func Sweep(ctx context.Context, cs *store.ContentStore, projectDir string) (indexed, skipped, errors int) {
+	return SweepWithOptions(ctx, cs, projectDir, SweepOptions{})
+}
+
+// SweepWithOptions is like Sweep but accepts options to control behavior.
+func SweepWithOptions(ctx context.Context, cs *store.ContentStore, projectDir string, opts SweepOptions) (indexed, skipped, errors int) {
 	dir, err := SessionDir(projectDir)
 	if err != nil {
 		slog.Debug("session sweep: directory not found, skipping", "project", projectDir, "error", err)
@@ -87,7 +175,7 @@ func Sweep(ctx context.Context, cs *store.ContentStore, projectDir string) (inde
 
 		uuid := strings.TrimSuffix(entry.Name(), ".jsonl")
 
-		if shouldSkip(dir, uuid, entry, indexedMap) {
+		if !opts.Reindex && shouldSkip(dir, uuid, entry, indexedMap) {
 			skipped++
 			continue
 		}
