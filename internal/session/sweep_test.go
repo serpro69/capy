@@ -602,3 +602,165 @@ func TestSweep_SecretSanitization_MultiWindow(t *testing.T) {
 		}
 	}
 }
+
+func TestDryRunSweep(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	projectDir := filepath.Join(home, "project")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mangled := manglePath(projectDir)
+	sessionDir := filepath.Join(home, ".claude", "projects", mangled)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeTestSession(t, sessionDir, "sess-aaa")
+	writeTestSession(t, sessionDir, "sess-bbb")
+	if err := os.WriteFile(filepath.Join(sessionDir, "sess-tiny.jsonl"), []byte(`{"type":"user","message":{"role":"user","content":"x"}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := DryRunSweep(projectDir, nil, SweepOptions{})
+	if err != nil {
+		t.Fatalf("DryRunSweep failed: %v", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("got %d results, want 3", len(results))
+	}
+
+	indexableCount := 0
+	for _, d := range results {
+		if d.Indexable {
+			indexableCount++
+			if d.MainPairs < 2 {
+				t.Errorf("session %s: indexable but mainPairs=%d", d.UUID, d.MainPairs)
+			}
+			if d.AssistantChars < 200 {
+				t.Errorf("session %s: indexable but chars=%d", d.UUID, d.AssistantChars)
+			}
+		}
+		if d.Size <= 0 {
+			t.Errorf("session %s: size=%d, want > 0", d.UUID, d.Size)
+		}
+	}
+	if indexableCount != 2 {
+		t.Errorf("got %d indexable sessions, want 2", indexableCount)
+	}
+}
+
+func TestDryRunSweep_AlreadyIndexed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	projectDir := filepath.Join(home, "project")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mangled := manglePath(projectDir)
+	sessionDir := filepath.Join(home, ".claude", "projects", mangled)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeTestSession(t, sessionDir, "sess-indexed")
+
+	dbPath := filepath.Join(projectDir, ".capy", "test.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-dryrun-indexed-32byt")
+
+	cs := store.NewContentStore(dbPath, projectDir, 2.0)
+	defer cs.Close()
+
+	ctx := context.Background()
+	_, err := indexSession(ctx, cs, sessionDir, "sess-indexed")
+	if err != nil {
+		t.Fatalf("indexSession failed: %v", err)
+	}
+
+	results, err := DryRunSweep(projectDir, cs, SweepOptions{})
+	if err != nil {
+		t.Fatalf("DryRunSweep failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+
+	if !results[0].AlreadyIndexed {
+		t.Error("expected session to be marked as already indexed")
+	}
+
+	// With Reindex, should NOT be marked as already indexed.
+	results2, err := DryRunSweep(projectDir, cs, SweepOptions{Reindex: true})
+	if err != nil {
+		t.Fatalf("DryRunSweep(reindex) failed: %v", err)
+	}
+	if results2[0].AlreadyIndexed {
+		t.Error("with Reindex=true, session should not be marked as already indexed")
+	}
+}
+
+func TestSweepWithOptions_Reindex(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	projectDir := filepath.Join(home, "project")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mangled := manglePath(projectDir)
+	sessionDir := filepath.Join(home, ".claude", "projects", mangled)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeTestSession(t, sessionDir, "sess-reindex")
+
+	dbPath := filepath.Join(projectDir, ".capy", "test.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-reindex-sweep-32byte")
+
+	cs := store.NewContentStore(dbPath, projectDir, 2.0)
+	defer cs.Close()
+
+	ctx := context.Background()
+
+	// First sweep indexes the session.
+	indexed, _, errs := SweepWithOptions(ctx, cs, projectDir, SweepOptions{})
+	if indexed != 1 {
+		t.Fatalf("first sweep: indexed=%d, want 1", indexed)
+	}
+	if errs != 0 {
+		t.Fatalf("first sweep: errors=%d, want 0", errs)
+	}
+
+	// Reindex sweep re-processes even though the content hasn't changed.
+	// With content_hash dedup, the store updates access time but no error occurs.
+	indexed2, _, errs2 := SweepWithOptions(ctx, cs, projectDir, SweepOptions{Reindex: true})
+	if indexed2 != 1 {
+		t.Fatalf("reindex sweep: indexed=%d, want 1 (re-processed)", indexed2)
+	}
+	if errs2 != 0 {
+		t.Fatalf("reindex sweep: errors=%d, want 0", errs2)
+	}
+}
