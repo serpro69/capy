@@ -16,20 +16,31 @@ import (
 // SessionDir returns the Claude Code session directory for the given project.
 // Claude Code mangles the absolute project path by replacing "/" and "." with "-"
 // and stores sessions under ~/.claude/projects/<mangled>/.
+//
+// If the given path is already under ~/.claude/projects/ (i.e. it is itself a
+// session directory), it is validated and returned directly without mangling.
 func SessionDir(projectDir string) (string, error) {
 	abs, err := filepath.Abs(projectDir)
 	if err != nil {
 		return "", fmt.Errorf("resolving absolute path: %w", err)
 	}
 
-	mangled := manglePath(abs)
-
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolving home directory: %w", err)
 	}
 
-	dir := filepath.Join(home, ".claude", "projects", mangled)
+	claudeDir := filepath.Join(home, ".claude", "projects")
+	prefix := claudeDir + string(filepath.Separator)
+
+	var dir string
+	if strings.HasPrefix(abs, prefix) {
+		dir = abs
+	} else {
+		mangled := manglePath(abs)
+		dir = filepath.Join(claudeDir, mangled)
+	}
+
 	info, err := os.Stat(dir)
 	if err != nil {
 		return "", fmt.Errorf("session directory not found: %w", err)
