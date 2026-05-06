@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -524,6 +525,80 @@ func TestSweep_SecretSanitization(t *testing.T) {
 	for _, r := range results {
 		if strings.Contains(r.Content, "sk-ant-api03") {
 			t.Errorf("secret not sanitized in search result content: %s", r.Content)
+		}
+	}
+}
+
+func TestSweep_SecretSanitization_MultiWindow(t *testing.T) {
+	tmp := t.TempDir()
+	uuid := "session-secret-multiwindow"
+	ts := time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+
+	// Build a session with 8 turns (forces multi-window chunking with window=4).
+	// The first turn contains a long secret whose redaction changes the string
+	// length, shifting all subsequent byte offsets.
+	longSecret := "sk-ant-api03-" + strings.Repeat("A", 80)
+	var lines []string
+	for i := range 8 {
+		q := fmt.Sprintf("Question number %d about the system", i+1)
+		a := fmt.Sprintf("Answer %d with enough text. ", i+1) + strings.Repeat("Padding content here. ", 8)
+		if i == 0 {
+			a = fmt.Sprintf("Set ANTHROPIC_API_KEY=%s to configure. %s", longSecret, strings.Repeat("More detail. ", 10))
+		}
+
+		userContent, _ := json.Marshal(map[string]any{
+			"type": "user", "uuid": fmt.Sprintf("u%d", i),
+			"timestamp": ts, "sessionId": uuid,
+			"message": map[string]any{
+				"id": fmt.Sprintf("um%d", i), "role": "user", "content": q,
+			},
+		})
+		assistContent, _ := json.Marshal(map[string]any{
+			"type": "assistant", "uuid": fmt.Sprintf("a%d", i),
+			"timestamp": ts, "sessionId": uuid,
+			"message": map[string]any{
+				"id": fmt.Sprintf("am%d", i), "role": "assistant",
+				"content": []map[string]any{{"type": "text", "text": a}},
+			},
+		})
+		lines = append(lines, string(userContent), string(assistContent))
+	}
+
+	jsonlPath := filepath.Join(tmp, uuid+".jsonl")
+	if err := os.WriteFile(jsonlPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dbPath := filepath.Join(tmp, "test.db")
+	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-multiwindow-secret-test")
+
+	cs := store.NewContentStore(dbPath, tmp, 2.0)
+	defer cs.Close()
+
+	ok, err := indexSession(context.Background(), cs, tmp, uuid)
+	if err != nil {
+		t.Fatalf("indexSession failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected session to be indexed")
+	}
+
+	results, err := cs.SearchWithFallback("Question number system", 10, store.SearchOptions{
+		IncludeKinds: []store.SourceKind{store.KindSession},
+	})
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected search results for multi-window session")
+	}
+
+	for _, r := range results {
+		if strings.Contains(r.Content, "sk-ant-api03") {
+			t.Errorf("secret leaked in chunk content")
+		}
+		if strings.Contains(r.Content, longSecret) {
+			t.Errorf("full secret string found in chunk")
 		}
 	}
 }
