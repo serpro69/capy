@@ -108,7 +108,7 @@ Claude Code JSONL files contain one JSON object per line. Each has a `type` fiel
 - `message.content` is always an array.
 - Block types: `text` (keep), `tool_use` (extract `name` field only), `thinking` (skip — content is empty string, only `signature` field has data).
 - Tool name path: `message.content[i].name` where `message.content[i].type == "tool_use"`.
-- Exactly 1 `tool_use` per assistant message (observed invariant).
+- **Progressive snapshots are non-cumulative:** Claude Code writes one content block per JSONL line, each sharing the same `message.id`. A typical assistant response produces 2-4 lines: `[thinking]`, `[text]`, `[tool_use]`, `[tool_use]`. The parser merges all blocks sharing the same `message.id` into a single logical message, deduplicating by (type, text, name) to also handle cumulative snapshot formats gracefully.
 
 ### Sub-Agent Conversations
 
