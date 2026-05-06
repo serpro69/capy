@@ -237,6 +237,16 @@ func TestUnmanglePath_DottedDir(t *testing.T) {
 	assert.Equal(t, projectDir, got)
 }
 
+func TestUnmanglePath_InteriorDot(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "my.repo", "sub")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+
+	mangled := strings.NewReplacer("/", "-", ".", "-").Replace(projectDir)
+	got := unmanglePath(mangled)
+	assert.Equal(t, projectDir, got)
+}
+
 func TestUnmanglePath_NoMatch(t *testing.T) {
 	got := unmanglePath("-nonexistent-project-path")
 	assert.Empty(t, got)
