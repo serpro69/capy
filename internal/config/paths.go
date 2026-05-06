@@ -92,7 +92,7 @@ func ResolveSourceProject(projectDir string) (ProjectDirResolution, error) {
 
 	claudeDir, err := ClaudeProjectsDir()
 	if err != nil {
-		return ProjectDirResolution{SourceDir: abs}, nil
+		return ProjectDirResolution{}, fmt.Errorf("resolving claude projects dir: %w", err)
 	}
 
 	prefix := claudeDir + string(filepath.Separator)
@@ -120,9 +120,6 @@ func unmanglePath(mangled string) string {
 		return ""
 	}
 	parts := strings.Split(mangled[1:], "-")
-	if len(parts) == 0 {
-		return ""
-	}
 	return unmangledProbe("/", parts)
 }
 
@@ -131,9 +128,8 @@ func unmanglePath(mangled string) string {
 // directories. Tries shortest segments first with backtracking so that
 // literal dashes in directory names (e.g. "claude-starter-kit") are handled.
 //
-// Each "-" in the mangled name could have been "/", ".", or a literal "-".
-// The function tries "/" first (path separator), then "." (for hidden dirs
-// like .config), then "-" (literal dash in directory names).
+// Uses os.Stat (not os.ReadDir) because parent directories may not be
+// listable even when children are accessible — e.g. /var/folders/ on macOS.
 func unmangledProbe(prefix string, parts []string) string {
 	if len(parts) == 0 {
 		return prefix
@@ -141,7 +137,6 @@ func unmangledProbe(prefix string, parts []string) string {
 	for i := 1; i <= len(parts); i++ {
 		segment := strings.Join(parts[:i], "-")
 
-		// Try as a path component (the "-" was originally "/").
 		candidate := filepath.Join(prefix, segment)
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			if i == len(parts) {
@@ -152,9 +147,9 @@ func unmangledProbe(prefix string, parts []string) string {
 			}
 		}
 
-		// Try with a leading dot (the "-" before this segment was ".").
-		// Only when this is the first segment — a dot-prefixed directory
-		// like ".hidden" mangles to "-hidden", colliding with "/hidden".
+		// A dot-prefixed directory like ".hidden" mangles to "-hidden",
+		// colliding with a path separator. Try the dot variant for the
+		// first segment only (dots only appear at the start of a name).
 		if i == 1 {
 			dotCandidate := filepath.Join(prefix, "."+segment)
 			if info, err := os.Stat(dotCandidate); err == nil && info.IsDir() {
