@@ -70,6 +70,7 @@ type contentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 	Name string `json:"name"`
+	ID   string `json:"id"`
 }
 
 // parsedMessage is an intermediate representation after JSONL deduplication.
@@ -92,14 +93,15 @@ func ParseSession(path string) (*ParsedSession, error) {
 
 	sessionID := strings.TrimSuffix(filepath.Base(path), ".jsonl")
 
-	// First pass: parse all lines and deduplicate assistant progressive snapshots
-	// by message.id (keep last occurrence which has the most complete content).
+	// First pass: parse all lines and merge assistant progressive snapshots
+	// by message.id. Claude Code writes one content block per JSONL line
+	// (non-cumulative), so we collect all blocks sharing the same message.id.
 	type rawEntry struct {
-		order   int
-		line    jsonlLine
-		msgID   string // message.id for assistant dedup; uuid for others
-		rawMsg  jsonlMessage
-		hasMsgP bool // whether Message field was present and parsed
+		line         jsonlLine
+		msgID        string // message.id for assistant merge; uuid for others
+		rawMsg       jsonlMessage
+		hasMsgP      bool           // whether Message field was present and parsed
+		mergedBlocks []contentBlock // accumulated blocks from all progressive snapshots
 	}
 
 	var entries []rawEntry
@@ -121,7 +123,7 @@ func ParseSession(path string) (*ParsedSession, error) {
 			continue
 		}
 
-		entry := rawEntry{order: lineNum, line: line}
+		entry := rawEntry{line: line}
 
 		if len(line.Message) > 0 && string(line.Message) != "null" {
 			var msg jsonlMessage
@@ -145,13 +147,34 @@ func ParseSession(path string) (*ParsedSession, error) {
 				msgID = line.UUID
 			}
 			entry.msgID = msgID
-			if prevIdx, exists := assistantLastIdx[msgID]; exists {
-				entries[prevIdx].order = -1 // mark superseded
-				entries[prevIdx].line.Message = nil
-				entries[prevIdx].rawMsg.Content = nil
+
+			var blocks []contentBlock
+			if entry.hasMsgP && len(entry.rawMsg.Content) > 0 {
+				if err := json.Unmarshal(entry.rawMsg.Content, &blocks); err != nil {
+					slog.Warn("skipping malformed assistant content", "file", path, "line", lineNum, "error", err)
+				}
 			}
-			assistantLastIdx[msgID] = len(entries)
-			entries = append(entries, entry)
+
+			if prevIdx, exists := assistantLastIdx[msgID]; exists {
+				target := &entries[prevIdx]
+				for _, nb := range blocks {
+					dup := false
+					for _, eb := range target.mergedBlocks {
+						if eb.Type == nb.Type && eb.Text == nb.Text && eb.Name == nb.Name && eb.ID == nb.ID {
+							dup = true
+							break
+						}
+					}
+					if !dup {
+						target.mergedBlocks = append(target.mergedBlocks, nb)
+					}
+				}
+			} else {
+				entry.mergedBlocks = blocks
+				entry.rawMsg.Content = nil
+				assistantLastIdx[msgID] = len(entries)
+				entries = append(entries, entry)
+			}
 		case "system":
 			if line.Subtype == "away_summary" {
 				entry.msgID = line.UUID
@@ -169,10 +192,6 @@ func ParseSession(path string) (*ParsedSession, error) {
 	foundSessionID := sessionID
 
 	for _, entry := range entries {
-		if entry.order < 0 {
-			continue // superseded progressive snapshot
-		}
-
 		ts, _ := time.Parse(time.RFC3339Nano, entry.line.Timestamp)
 		if entry.line.SessionID != "" {
 			foundSessionID = entry.line.SessionID
@@ -198,10 +217,10 @@ func ParseSession(path string) (*ParsedSession, error) {
 			})
 
 		case "assistant":
-			if !entry.hasMsgP {
+			if len(entry.mergedBlocks) == 0 {
 				continue
 			}
-			text, toolNames := extractAssistantContent(entry.rawMsg.Content)
+			text, toolNames := extractAssistantBlocks(entry.mergedBlocks)
 			if text == "" && len(toolNames) == 0 {
 				continue
 			}
@@ -282,17 +301,8 @@ func cleanUserText(text string) string {
 	return text
 }
 
-// extractAssistantContent extracts text and tool names from assistant content blocks.
-func extractAssistantContent(raw json.RawMessage) (string, []string) {
-	if len(raw) == 0 {
-		return "", nil
-	}
-
-	var blocks []contentBlock
-	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return "", nil
-	}
-
+// extractAssistantBlocks extracts text and tool names from pre-parsed content blocks.
+func extractAssistantBlocks(blocks []contentBlock) (string, []string) {
 	var texts []string
 	var toolNames []string
 	for _, b := range blocks {
@@ -307,9 +317,7 @@ func extractAssistantContent(raw json.RawMessage) (string, []string) {
 				toolNames = append(toolNames, b.Name)
 			}
 		}
-		// thinking blocks: skip (content is empty/signature only)
 	}
-
 	return strings.Join(texts, "\n"), toolNames
 }
 

@@ -123,11 +123,12 @@ Create a session JSONL parser that reads a file and produces a filtered transcri
 2. Parses each line as JSON.
 3. Routes on `type` field:
    - `"user"`: extract text content (string or text blocks from array). Skip tool_result-only messages. Skip messages starting with `/`. Strip `<system-reminder>` tags.
-   - `"assistant"`: extract text from `text` blocks. Extract tool names from `tool_use` blocks. Skip `thinking` blocks.
+   - `"assistant"`: merge progressive snapshots (see below), then extract text from `text` blocks. Extract tool names from `tool_use` blocks. Skip `thinking` blocks.
    - `"system"` with `subtype == "away_summary"`: extract `content` field.
    - All other types: skip.
-4. Builds turn pairs: a turn pair is a human text message followed by assistant text response(s). Tool names from assistant tool_use blocks are collected per turn.
-5. Extracts session metadata: first user message timestamp (for the label datetime), session UUID (from `sessionId` field or filename).
+4. **Progressive snapshot merging:** Claude Code writes one content block per JSONL line, all sharing the same `message.id` (non-cumulative format). A single assistant response typically produces 2-4 lines: `[thinking]`, `[text]`, `[tool_use]`, etc. The parser collects all blocks across lines sharing the same `message.id` into a single logical message, deduplicating by `(type, text, name, id)` to also handle cumulative snapshot formats. This happens in the first pass before text extraction.
+5. Builds turn pairs: a turn pair is a human text message followed by assistant text response(s). Tool names from assistant tool_use blocks are collected per turn.
+6. Extracts session metadata: first user message timestamp (for the label datetime), session UUID (from `sessionId` field or filename).
 
 **Output type:**
 
