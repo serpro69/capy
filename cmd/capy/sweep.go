@@ -25,15 +25,9 @@ func newSweepCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if res.IsSessionDir && res.SourceDir != "" {
-					projectDir = res.SourceDir
-				} else if res.IsSessionDir {
-					// Source project no longer exists (renamed/deleted).
-					// Use the session directory directly — SessionDir will
-					// pass it through, and we use it for DB hashing too.
+				projectDir = res.SourceDir
+				if res.IsSessionDir && res.SourceDir == "" {
 					projectDir = res.SessionDir
-				} else {
-					projectDir = res.SourceDir
 				}
 			}
 
