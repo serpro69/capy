@@ -36,6 +36,7 @@ func main() {
 		newCheckpointCmd(),
 		newEncryptCmd(),
 		newWhichCmd(),
+		newSweepCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

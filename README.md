@@ -228,6 +228,7 @@ capy encrypt
 | `capy doctor`          | Run diagnostics on the installation                   |
 | `capy which`           | Print the knowledge base path for the current project |
 | `capy cleanup`         | Remove stale knowledge base entries                   |
+| `capy sweep`           | Index past sessions (dry-run by default, `--force` to index, `--reindex` to re-parse all) |
 | `capy checkpoint`      | Flush WAL into main DB file for safe git commits      |
 | `capy encrypt`         | Encrypt the knowledge DB or rotate its encryption key |
 | `capy hook <event>`    | Handle a hook event (called by Claude Code, not you)  |
