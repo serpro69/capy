@@ -211,8 +211,12 @@ func indexSession(ctx context.Context, cs *store.ContentStore, dir, uuid string)
 		return false, nil
 	}
 
+	// Sanitize turn pair text before building the transcript so that byte
+	// offsets are computed on already-redacted content. Sanitizing tr.Text
+	// after BuildTranscript would invalidate offsets when redacted strings
+	// differ in length from the originals.
+	sanitizeParsedSession(parsed)
 	tr := BuildTranscript(parsed)
-	tr.Text = sanitize.StripSecrets(tr.Text)
 	chunks := ChunkSession(parsed, tr, 0)
 	if len(chunks) == 0 {
 		return false, nil
@@ -225,6 +229,15 @@ func indexSession(ctx context.Context, cs *store.ContentStore, dir, uuid string)
 	}
 
 	return true, nil
+}
+
+// sanitizeParsedSession strips secrets from all turn pair text in-place,
+// so that BuildTranscript produces a transcript with consistent byte offsets.
+func sanitizeParsedSession(s *ParsedSession) {
+	for i := range s.TurnPairs {
+		s.TurnPairs[i].HumanText = sanitize.StripSecrets(s.TurnPairs[i].HumanText)
+		s.TurnPairs[i].AssistantText = sanitize.StripSecrets(s.TurnPairs[i].AssistantText)
+	}
 }
 
 // buildLabel creates a machine-agnostic label: "session:<ISO-datetime>:<UUID>".
