@@ -515,6 +515,301 @@ func TestParseSession_ProgressiveSnapshots(t *testing.T) {
 	}
 }
 
+func TestParseSession_NonCumulativeSnapshots(t *testing.T) {
+	dir := t.TempDir()
+	// Real Claude Code format: each content block is a separate JSONL line
+	// with the same message.id but only 1 block per line (non-cumulative).
+	path := writeJSONL(t, dir, "noncum.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "u1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"sessionId": "noncum-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Read the config file and fix the settings",
+			},
+		},
+		// Block 1: thinking (separate line)
+		{
+			"type":      "assistant",
+			"uuid":      "a1-snap1",
+			"timestamp": "2026-04-05T12:00:01Z",
+			"sessionId": "noncum-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "thinking", "thinking": "", "signature": "sig1"},
+				},
+			},
+		},
+		// Block 2: text (separate line, same message.id)
+		{
+			"type":      "assistant",
+			"uuid":      "a1-snap2",
+			"timestamp": "2026-04-05T12:00:02Z",
+			"sessionId": "noncum-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Let me read the config file first."},
+				},
+			},
+		},
+		// Block 3: tool_use (separate line, same message.id)
+		{
+			"type":      "assistant",
+			"uuid":      "a1-snap3",
+			"timestamp": "2026-04-05T12:00:03Z",
+			"sessionId": "noncum-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "tool_use", "id": "toolu_001", "name": "Read", "input": map[string]any{"path": "/config.toml"}},
+				},
+			},
+		},
+		// Tool result
+		{
+			"type":      "user",
+			"uuid":      "u2",
+			"timestamp": "2026-04-05T12:00:04Z",
+			"sessionId": "noncum-session",
+			"message": map[string]any{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "tool_result", "tool_use_id": "toolu_001", "content": []map[string]any{
+						{"type": "text", "text": "timeout = 30"},
+					}},
+				},
+			},
+		},
+		// Second assistant message, also non-cumulative
+		{
+			"type":      "assistant",
+			"uuid":      "a2-snap1",
+			"timestamp": "2026-04-05T12:00:05Z",
+			"sessionId": "noncum-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "thinking", "thinking": "", "signature": "sig2"},
+				},
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a2-snap2",
+			"timestamp": "2026-04-05T12:00:06Z",
+			"sessionId": "noncum-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "The timeout is set too low. Let me fix it."},
+				},
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a2-snap3",
+			"timestamp": "2026-04-05T12:00:07Z",
+			"sessionId": "noncum-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "tool_use", "id": "toolu_002", "name": "Edit", "input": map[string]any{"path": "/config.toml"}},
+				},
+			},
+		},
+		// Second tool result
+		{
+			"type":      "user",
+			"uuid":      "u3",
+			"timestamp": "2026-04-05T12:00:08Z",
+			"sessionId": "noncum-session",
+			"message": map[string]any{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "tool_result", "tool_use_id": "toolu_002", "content": []map[string]any{
+						{"type": "text", "text": "ok"},
+					}},
+				},
+			},
+		},
+		// Final human message
+		{
+			"type":      "user",
+			"uuid":      "u4",
+			"timestamp": "2026-04-05T12:01:00Z",
+			"sessionId": "noncum-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Perfect, that fixed it",
+			},
+		},
+		// Final assistant — single text block
+		{
+			"type":      "assistant",
+			"uuid":      "a3",
+			"timestamp": "2026-04-05T12:01:05Z",
+			"sessionId": "noncum-session",
+			"message": map[string]any{
+				"id":   "msg_003",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "The config is updated and working now."},
+				},
+			},
+		},
+	})
+
+	session, err := ParseSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Two turn pairs: "Read the config..." → merged assistant with text + tools,
+	// then "Perfect..." → final assistant text.
+	// Tool-result-only user messages (u2, u3) are filtered out by extractUserText
+	// and don't create turn pair boundaries, so both msg_001 and msg_002 accumulate
+	// into the first turn pair.
+	if len(session.TurnPairs) != 2 {
+		t.Fatalf("got %d turn pairs, want 2", len(session.TurnPairs))
+	}
+
+	tp0 := session.TurnPairs[0]
+	if !strings.Contains(tp0.AssistantText, "Let me read the config file first.") {
+		t.Errorf("turn 0: missing text from first assistant block, got %q", tp0.AssistantText)
+	}
+	if !strings.Contains(tp0.AssistantText, "The timeout is set too low.") {
+		t.Errorf("turn 0: missing text from second assistant block, got %q", tp0.AssistantText)
+	}
+	if len(tp0.ToolNames) < 2 {
+		t.Fatalf("turn 0: want >= 2 tool names, got %v", tp0.ToolNames)
+	}
+	if tp0.ToolNames[0] != "Read" || tp0.ToolNames[1] != "Edit" {
+		t.Errorf("turn 0: ToolNames = %v, want [Read, Edit]", tp0.ToolNames)
+	}
+
+	tp1 := session.TurnPairs[1]
+	if tp1.AssistantText != "The config is updated and working now." {
+		t.Errorf("turn 1: AssistantText = %q", tp1.AssistantText)
+	}
+
+	if session.TotalAssistantChars <= 0 {
+		t.Errorf("TotalAssistantChars = %d, want > 0", session.TotalAssistantChars)
+	}
+}
+
+func TestParseSession_CumulativeSnapshotsDedup(t *testing.T) {
+	dir := t.TempDir()
+	// Cumulative format: each snapshot repeats previous blocks and adds new ones.
+	// Verify dedup prevents duplicate text in the merged result.
+	path := writeJSONL(t, dir, "cumdedup.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "u1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"sessionId": "cumdedup-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Explain the architecture",
+			},
+		},
+		// Snapshot 1: thinking only
+		{
+			"type":      "assistant",
+			"uuid":      "a1-snap1",
+			"timestamp": "2026-04-05T12:00:01Z",
+			"sessionId": "cumdedup-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "thinking", "thinking": "", "signature": "sig1"},
+				},
+			},
+		},
+		// Snapshot 2: thinking + text (cumulative)
+		{
+			"type":      "assistant",
+			"uuid":      "a1-snap2",
+			"timestamp": "2026-04-05T12:00:02Z",
+			"sessionId": "cumdedup-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "thinking", "thinking": "", "signature": "sig1"},
+					{"type": "text", "text": "The system uses clean architecture."},
+				},
+			},
+		},
+		// Snapshot 3: thinking + text + tool_use (cumulative)
+		{
+			"type":      "assistant",
+			"uuid":      "a1-snap3",
+			"timestamp": "2026-04-05T12:00:03Z",
+			"sessionId": "cumdedup-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "thinking", "thinking": "", "signature": "sig1"},
+					{"type": "text", "text": "The system uses clean architecture."},
+					{"type": "tool_use", "id": "toolu_001", "name": "Read", "input": map[string]any{"path": "/arch.md"}},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u2",
+			"timestamp": "2026-04-05T12:01:00Z",
+			"sessionId": "cumdedup-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Thanks for the explanation",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a2",
+			"timestamp": "2026-04-05T12:01:05Z",
+			"sessionId": "cumdedup-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Happy to help!"},
+				},
+			},
+		},
+	})
+
+	session, err := ParseSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(session.TurnPairs) != 2 {
+		t.Fatalf("got %d turn pairs, want 2", len(session.TurnPairs))
+	}
+
+	tp := session.TurnPairs[0]
+	if tp.AssistantText != "The system uses clean architecture." {
+		t.Errorf("expected single text (no duplicates from cumulative dedup), got %q", tp.AssistantText)
+	}
+	if len(tp.ToolNames) != 1 || tp.ToolNames[0] != "Read" {
+		t.Errorf("ToolNames = %v, want [Read]", tp.ToolNames)
+	}
+}
+
 func TestParseSession_SlashCommands(t *testing.T) {
 	dir := t.TempDir()
 	path := writeJSONL(t, dir, "slash.jsonl", []jsonlEntry{
