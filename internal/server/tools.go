@@ -202,8 +202,8 @@ func toolSearch() mcp.Tool {
 			mcp.Description("Filter to a specific indexed source (partial match). When set, kind filtering is bypassed — caller's named source wins."),
 		),
 		mcp.WithArray("include_kinds",
-			mcp.Description("Source kinds to include. Accepted values: \"durable\" (fetched/indexed reference content) and \"ephemeral\" (auto-indexed command output from capy_execute / capy_execute_file / capy_batch_execute). Default: [\"durable\"] only. Use [\"durable\",\"ephemeral\"] to recover prior session command output."),
-			mcp.Items(map[string]any{"type": "string", "enum": []string{"durable", "ephemeral"}}),
+			mcp.Description("Source kinds to include. Accepted values: \"durable\" (fetched/indexed reference content, retained by retention score), \"ephemeral\" (auto-indexed command output from capy_execute / capy_execute_file / capy_batch_execute, swept by TTL), and \"session\" (past conversation transcripts indexed by `capy sweep`, swept by TTL). Default: [\"durable\"] only. Use [\"durable\",\"ephemeral\"] to recover prior command output, or [\"durable\",\"session\"] to search past conversations."),
+			mcp.Items(map[string]any{"type": "string", "enum": []string{"durable", "ephemeral", "session"}}),
 		),
 	)
 }
