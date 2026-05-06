@@ -124,41 +124,45 @@ func unmanglePath(mangled string) string {
 }
 
 // unmangledProbe recursively builds a filesystem path by re-joining mangled
-// segments with "-" and checking which combinations correspond to existing
-// directories. Tries shortest segments first with backtracking so that
-// literal dashes in directory names (e.g. "claude-starter-kit") are handled.
+// segments and checking which combinations correspond to existing directories.
+// Tries shortest segments first with backtracking so that literal dashes and
+// dots in directory names are handled correctly.
 //
-// Uses os.Stat (not os.ReadDir) because parent directories may not be
-// listable even when children are accessible — e.g. /var/folders/ on macOS.
+// Each "-" in the mangled name could originally have been "/", ".", or a
+// literal "-". For each grouping of parts the function tries "-" (literal
+// dash), "." (interior dot, e.g. "my.repo"), and "." as a leading prefix
+// (hidden dirs like ".config"). Uses os.Stat rather than os.ReadDir because
+// parent directories may not be listable on macOS (/var/folders/).
 func unmangledProbe(prefix string, parts []string) string {
 	if len(parts) == 0 {
 		return prefix
 	}
 	for i := 1; i <= len(parts); i++ {
-		segment := strings.Join(parts[:i], "-")
+		dashSegment := strings.Join(parts[:i], "-")
 
-		candidate := filepath.Join(prefix, segment)
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+		candidates := []string{filepath.Join(prefix, dashSegment)}
+
+		if i > 1 {
+			dotSegment := strings.Join(parts[:i], ".")
+			candidates = append(candidates, filepath.Join(prefix, dotSegment))
+		}
+
+		// A dot-prefixed directory like ".hidden" mangles to "-hidden",
+		// colliding with a path separator.
+		if i == 1 {
+			candidates = append(candidates, filepath.Join(prefix, "."+dashSegment))
+		}
+
+		for _, candidate := range candidates {
+			info, err := os.Stat(candidate)
+			if err != nil || !info.IsDir() {
+				continue
+			}
 			if i == len(parts) {
 				return candidate
 			}
 			if result := unmangledProbe(candidate, parts[i:]); result != "" {
 				return result
-			}
-		}
-
-		// A dot-prefixed directory like ".hidden" mangles to "-hidden",
-		// colliding with a path separator. Try the dot variant for the
-		// first segment only (dots only appear at the start of a name).
-		if i == 1 {
-			dotCandidate := filepath.Join(prefix, "."+segment)
-			if info, err := os.Stat(dotCandidate); err == nil && info.IsDir() {
-				if i == len(parts) {
-					return dotCandidate
-				}
-				if result := unmangledProbe(dotCandidate, parts[i:]); result != "" {
-					return result
-				}
 			}
 		}
 	}
