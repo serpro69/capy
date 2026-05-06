@@ -2,14 +2,20 @@ package server
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/session"
+	"github.com/serpro69/capy/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -380,6 +386,139 @@ func TestIntegration_Performance_LargeDocumentIndexAndSearch(t *testing.T) {
 	text := resultText(r2)
 	assert.Contains(t, text, "algorithm")
 	assert.Contains(t, text, "config")
+}
+
+// ─── Session sweep integration tests ─────────────────────────────────────────
+
+func TestIntegration_SessionSweep_SearchAndCleanup(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// Set up a fake HOME with session files in the expected Claude Code layout.
+	// Use a real temp dir as projectDir so the server can create its DB there.
+	tmpHome := t.TempDir()
+	projectDir := t.TempDir()
+	mangled := strings.NewReplacer("/", "-", ".", "-").Replace(projectDir)
+	sessionDir := filepath.Join(tmpHome, ".claude", "projects", mangled)
+
+	require.NoError(t, os.MkdirAll(sessionDir, 0o755))
+	t.Setenv("HOME", tmpHome)
+
+	uuid1 := "integ-sess-aaa"
+	uuid2 := "integ-sess-bbb"
+	writeSessionJSONL(t, sessionDir, uuid1, "How do I configure the database?",
+		"You can configure the database by setting DATABASE_URL in your environment.")
+	writeSessionJSONL(t, sessionDir, uuid2, "Explain goroutine scheduling",
+		"Go uses an M:N scheduler with work stealing. Goroutines are multiplexed onto OS threads.")
+
+	srv := newTestServerWithProjectDir(t, nil, projectDir)
+
+	// Trigger sweep by calling the indexer directly (same path as server startup).
+	st := srv.getStore()
+	indexed, _, errs := session.Sweep(context.Background(), st, projectDir)
+	require.Equal(t, 0, errs)
+	require.Equal(t, 2, indexed)
+
+	// Search for session content — sessions are included in default search.
+	r := callSearch(t, srv, map[string]any{
+		"queries": []any{"database configuration", "goroutine scheduler"},
+	})
+	require.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "database")
+	assert.Contains(t, text, "goroutine")
+
+	// Verify labels follow the session:<datetime>:<uuid> format.
+	for _, q := range []string{uuid1, uuid2} {
+		assert.Contains(t, text, q, "search results must contain the session UUID in label")
+	}
+
+	// Filter to session-only search.
+	r2 := callSearch(t, srv, map[string]any{
+		"queries":       []any{"database configuration"},
+		"include_kinds": []any{"session"},
+	})
+	require.False(t, r2.IsError)
+	assert.Contains(t, resultText(r2), "database")
+
+	// Exclude sessions — results should vanish.
+	r3 := callSearch(t, srv, map[string]any{
+		"queries":       []any{"database configuration"},
+		"include_kinds": []any{"durable"},
+	})
+	require.False(t, r3.IsError)
+	assert.Contains(t, resultText(r3), "No results found")
+
+	// Reset throttle window so subsequent searches aren't rate-limited.
+	srv.throttle.mu.Lock()
+	srv.throttle.count = 0
+	srv.throttle.windowStart = time.Now()
+	srv.throttle.mu.Unlock()
+
+	// Backdate session sources so TTL eviction sees them as stale.
+	// PurgeSession uses second-precision timestamps, so freshly indexed
+	// sources in the same second would survive even a 1ns TTL.
+	backdateSessionSources(t, srv)
+
+	evicted, err := st.PurgeSession(false, 60*24*time.Hour)
+	require.NoError(t, err)
+	assert.Len(t, evicted, 2, "both sessions should be evicted after backdating past TTL")
+
+	// Verify sessions are gone — KB is now empty since sessions were the only content.
+	r5 := callSearch(t, srv, map[string]any{
+		"queries":       []any{"database configuration"},
+		"include_kinds": []any{"durable", "session"},
+	})
+	assert.True(t, r5.IsError, "search on empty KB returns error")
+	assert.Contains(t, resultText(r5), "empty")
+}
+
+// backdateSessionSources opens the server's DB and sets session sources' indexed_at
+// to 90 days ago, making them eligible for TTL eviction with the default 60-day TTL.
+func backdateSessionSources(t *testing.T, srv *Server) {
+	t.Helper()
+	dbPath := srv.config.ResolveDBPath(srv.projectDir)
+	key, err := store.RequireEncryptionKey()
+	require.NoError(t, err)
+	dsn := store.EncryptedDSN(dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
+	db, err := sql.Open("sqlite3", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+	past := time.Now().Add(-90 * 24 * time.Hour).UTC().Format("2006-01-02 15:04:05")
+	_, err = db.Exec("UPDATE sources SET indexed_at = ? WHERE kind = 'session'", past)
+	require.NoError(t, err)
+}
+
+// writeSessionJSONL creates a synthetic session JSONL file with 3 turn pairs.
+func writeSessionJSONL(t *testing.T, dir, uuid, question, answer string) {
+	t.Helper()
+	ts := time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	var lines []string
+	for i := range 3 {
+		q := fmt.Sprintf("%s (turn %d)", question, i+1)
+		a := fmt.Sprintf("%s Details for turn %d with enough padding text to pass the gate. %s",
+			answer, i+1, strings.Repeat("More context here. ", 5))
+
+		user, err := json.Marshal(map[string]any{
+			"type": "user", "uuid": fmt.Sprintf("u%d", i),
+			"timestamp": ts, "sessionId": uuid,
+			"message": map[string]any{"id": fmt.Sprintf("um%d", i), "role": "user", "content": q},
+		})
+		require.NoError(t, err)
+		asst, err := json.Marshal(map[string]any{
+			"type": "assistant", "uuid": fmt.Sprintf("a%d", i),
+			"timestamp": ts, "sessionId": uuid,
+			"message": map[string]any{
+				"id": fmt.Sprintf("am%d", i), "role": "assistant",
+				"content": []map[string]any{{"type": "text", "text": a}},
+			},
+		})
+		require.NoError(t, err)
+		lines = append(lines, string(user), string(asst))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, uuid+".jsonl"),
+		[]byte(strings.Join(lines, "\n")+"\n"), 0o644))
 }
 
 func TestIntegration_Performance_BatchExecuteWithSearch(t *testing.T) {
