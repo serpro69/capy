@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -165,6 +166,85 @@ func TestLoadMalformedTOML(t *testing.T) {
 
 	_, err := Load(dir)
 	assert.Error(t, err)
+}
+
+func TestResolveSourceProject_RegularPath(t *testing.T) {
+	dir := t.TempDir()
+	res, err := ResolveSourceProject(dir)
+	require.NoError(t, err)
+	assert.Equal(t, dir, res.SourceDir)
+	assert.False(t, res.IsSessionDir)
+}
+
+func TestResolveSourceProject_SessionDir(t *testing.T) {
+	// Create a fake project directory structure:
+	// /tmp/.../a/b/my-project   (source project with a literal dash)
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "a", "b", "my-project")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+
+	// Build the mangled name that Claude Code would produce.
+	mangled := strings.NewReplacer("/", "-", ".", "-").Replace(projectDir)
+
+	// Create the session directory under a fake HOME.
+	tmpHome := t.TempDir()
+	sessionDir := filepath.Join(tmpHome, ".claude", "projects", mangled)
+	require.NoError(t, os.MkdirAll(sessionDir, 0o755))
+	t.Setenv("HOME", tmpHome)
+
+	res, err := ResolveSourceProject(sessionDir)
+	require.NoError(t, err)
+	assert.True(t, res.IsSessionDir)
+	assert.Equal(t, projectDir, res.SourceDir)
+	assert.Equal(t, sessionDir, res.SessionDir)
+}
+
+func TestResolveSourceProject_SessionDir_OrphanedProject(t *testing.T) {
+	tmpHome := t.TempDir()
+	// A session directory whose source project no longer exists on disk.
+	sessionDir := filepath.Join(tmpHome, ".claude", "projects", "-gone-project-dir")
+	require.NoError(t, os.MkdirAll(sessionDir, 0o755))
+	t.Setenv("HOME", tmpHome)
+
+	res, err := ResolveSourceProject(sessionDir)
+	require.NoError(t, err)
+	assert.True(t, res.IsSessionDir)
+	assert.Empty(t, res.SourceDir)
+	assert.Equal(t, sessionDir, res.SessionDir)
+}
+
+func TestUnmanglePath(t *testing.T) {
+	// Build a real directory tree to probe against.
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "Projects", "claude-starter-kit")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+
+	mangled := strings.NewReplacer("/", "-", ".", "-").Replace(projectDir)
+	got := unmanglePath(mangled)
+	assert.Equal(t, projectDir, got)
+}
+
+func TestUnmanglePath_DottedDir(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, ".hidden", "sub")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+
+	mangled := strings.NewReplacer("/", "-", ".", "-").Replace(projectDir)
+	got := unmanglePath(mangled)
+	// Dots in directory names become "-", same as "/" — un-mangling may not
+	// recover the original if both /hidden/sub and .hidden/sub exist. But when
+	// only one exists, it should resolve.
+	assert.Equal(t, projectDir, got)
+}
+
+func TestUnmanglePath_NoMatch(t *testing.T) {
+	got := unmanglePath("-nonexistent-project-path")
+	assert.Empty(t, got)
+}
+
+func TestUnmanglePath_NoLeadingDash(t *testing.T) {
+	got := unmanglePath("relative-path")
+	assert.Empty(t, got)
 }
 
 func TestDetectProjectRoot(t *testing.T) {

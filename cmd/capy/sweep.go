@@ -20,6 +20,21 @@ func newSweepCmd() *cobra.Command {
 			projectDir, _ := cmd.Flags().GetString("project-dir")
 			if projectDir == "" {
 				projectDir = config.DetectProjectRoot()
+			} else {
+				res, err := config.ResolveSourceProject(projectDir)
+				if err != nil {
+					return err
+				}
+				if res.IsSessionDir && res.SourceDir != "" {
+					projectDir = res.SourceDir
+				} else if res.IsSessionDir {
+					// Source project no longer exists (renamed/deleted).
+					// Use the session directory directly — SessionDir will
+					// pass it through, and we use it for DB hashing too.
+					projectDir = res.SessionDir
+				} else {
+					projectDir = res.SourceDir
+				}
 			}
 
 			cfg, _ := config.Load(projectDir)
