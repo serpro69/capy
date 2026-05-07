@@ -50,15 +50,15 @@
 - [x] 3.4 Update tests in `internal/session/chunk_test.go`: turn pairs with `mcp__pal__chat` and `Read` in `ToolNames` → chunk title contains `| PAL: chat | Tools: Read`.
 
 ## Task 4: Sanitization and re-index mechanism
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Docs:** [implementation-v2.md#phase-4-sanitization-and-re-index](./implementation-v2.md#phase-4-sanitization-and-re-index)
 
 ### Subtasks
-- [ ] 4.1 Update `sanitizeParsedSession` in `internal/session/sweep.go` (line 335-339) to also sanitize `ToolMeta` entries via `sanitize.StripSecrets`. Tier 1 content is already covered (it's in `AssistantText`).
-- [ ] 4.2 Add tests: TurnPair with `ToolMeta: ["[Grep: password=hunter2]"]` → sanitized. Agent description containing secret → sanitized.
-- [ ] 4.3 Expose `capy sweep --reindex` CLI flag that calls `SweepWithOptions` with `Reindex: true`. The existing `SweepOptions.Reindex` field already bypasses the mtime gate — just needs CLI wiring.
-- [ ] 4.4 Add test: `capy sweep --reindex` re-parses sessions regardless of mtime. Without flag, unchanged sessions are skipped.
+- [x] 4.1 Update `sanitizeParsedSession` in `internal/session/sweep.go` (line 335-339) to also sanitize `ToolMeta` entries via `sanitize.StripSecrets`. Tier 1 content is already covered (it's in `AssistantText`).
+- [x] 4.2 Add tests: TurnPair with `ToolMeta: ["[Grep: password=hunter2]"]` → sanitized. Agent description containing secret → sanitized.
+- [x] 4.3 Expose `capy sweep --reindex` CLI flag that calls `SweepWithOptions` with `Reindex: true`. The existing `SweepOptions.Reindex` field already bypasses the mtime gate — just needs CLI wiring. *(Pre-existing in `cmd/capy/sweep.go`)*
+- [x] 4.4 Add test: `capy sweep --reindex` re-parses sessions regardless of mtime. Without flag, unchanged sessions are skipped. *(Pre-existing: `TestSweepWithOptions_Reindex`, `TestDryRunSweep_AlreadyIndexed`)*
 
 ## Task 5: Comparison test (semi-manual)
 - **Status:** pending
