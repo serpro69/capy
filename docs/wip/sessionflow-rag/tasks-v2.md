@@ -26,38 +26,50 @@
 - [ ] 2.1 Add `Input json.RawMessage json:"input"` to `contentBlock` struct in `internal/session/parse.go` (line 69-74). Verify existing tests pass unchanged.
 - [ ] 2.2 Add `ToolMeta []string` field to `TurnPair` struct (alongside existing `ToolNames`). Add `toolMeta []string` to `parsedMessage` struct.
 - [ ] 2.3 Update `extractAssistantBlocks` to accept/use `DefaultRegistry`. For each `tool_use` block: call `registry.Lookup(b.Name)`, route on action (Promote → append to texts + toolNames, Enrich → append to toolMeta + toolNames, Skip → do nothing). Return updated signature `(text string, toolNames []string, toolMeta []string)`.
-- [ ] 2.4 Update `buildTurnPairs` to accumulate and pass through `toolMeta` into `TurnPair.ToolMeta`. Verify: `flushPair` logic at line 335 unchanged — PAL-bearing turns survive because promoted text is in `currentAssistantText`; pure Tier 2 tool-only turns still discarded.
-- [ ] 2.5 Verify `ParseSubagents` still works with updated `extractAssistantBlocks` signature. Sub-agent sessions get the same enrichment.
-- [ ] 2.6 Update tests in `internal/session/parse_test.go`: tool-only turn with PAL → turn survives with PAL block as AssistantText. Tool-only turn with only Read → discarded. Mixed turn (text + PAL + Read) → correct content. `TotalAssistantChars` includes Tier 1. Session with only PAL conversations meeting threshold → `IsIndexable` returns true.
+- [ ] 2.4 Update `buildTurnPairs` to accumulate and pass through `toolMeta` into `TurnPair.ToolMeta`. Verify: `flushPair` logic unchanged — PAL-bearing turns survive because promoted text is in `currentAssistantText`; pure Tier 2 tool-only turns still discarded.
+- [ ] 2.5 Update `ParseSubagents` (parse.go:412-420) to copy `ToolMeta` field when wrapping sub-agent turn pairs. Currently only copies `HumanText`, `AssistantText`, `ToolNames` — `ToolMeta` would be silently dropped without this.
+- [ ] 2.6 Update tests in `internal/session/parse_test.go`: tool-only turn with PAL → turn survives with PAL block as AssistantText. Tool-only turn with only Read → discarded. Mixed turn (text + PAL + Read) → correct content. `TotalAssistantChars` includes Tier 1. Session with only PAL conversations meeting threshold → `IsIndexable` returns true. Sub-agent turn pairs include `ToolMeta`.
 
-## Task 3: Transcript rendering changes
+## Task 3: Transcript and chunk title changes
 - **Status:** pending
 - **Depends on:** Task 2
 - **Docs:** [implementation-v2.md#phase-3-transcript-changes](./implementation-v2.md#phase-3-transcript-changes)
 
 ### Subtasks
 - [ ] 3.1 In `BuildTranscript` (`internal/session/transcript.go`), replace `[Tools: ...]` comma-separated line with per-line rendering of `tp.ToolMeta` entries. Apply same change in `writeSubagentBlock`.
-- [ ] 3.2 Verify `buildChunkTitle` in `chunk.go` still works — it uses `ToolNames` which is still populated for Promote and Enrich tools. No changes needed to chunk.go.
+- [ ] 3.2 Update `buildChunkTitle` in `chunk.go` to format PAL tools as `| PAL: <subtool>` (strip `mcp__pal__` prefix) instead of raw `| Tools: mcp__pal__chat`. Non-PAL tools continue under `| Tools:`. Similar to existing `| Subagent:` label pattern.
 - [ ] 3.3 Update tests in `internal/session/transcript_test.go`: turns with ToolMeta → enriched metadata lines. Turns with PAL in AssistantText → PAL delimiter blocks in assistant section. Empty ToolMeta → no metadata lines. Sub-agent turns with ToolMeta → enriched lines inside sub-agent block.
+- [ ] 3.4 Update tests in `internal/session/chunk_test.go`: turn pairs with `mcp__pal__chat` and `Read` in `ToolNames` → chunk title contains `| PAL: chat | Tools: Read`.
 
-## Task 4: Comparison test (semi-manual)
+## Task 4: Sanitization and re-index mechanism
 - **Status:** pending
-- **Depends on:** Task 1, Task 2, Task 3
-- **Docs:** [implementation-v2.md#phase-4-comparison-test](./implementation-v2.md#phase-4-comparison-test)
+- **Depends on:** Task 2
+- **Docs:** [implementation-v2.md#phase-4-sanitization-and-re-index](./implementation-v2.md#phase-4-sanitization-and-re-index)
 
 ### Subtasks
-- [ ] 4.1 Capture v1 baseline: query the session that produced the v2 design docs via `capy_search` with specific queries ("whitelist vs pattern-based extraction", "TotalAssistantChars contamination", "PAL design reasoning", "parse.go tool_use"). Record chunk count, titles, content snippets, which queries return results.
-- [ ] 4.2 Re-index with v2: delete session source entry or touch the JSONL file to force re-indexing. Restart MCP server.
-- [ ] 4.3 Capture v2 results: run same queries. Record same metrics.
-- [ ] 4.4 Correctness comparison: PAL delimiter blocks present? Enriched `[Read: ...]` lines? `mcp__capy__*` absent? Bash absent? PAL-only turns preserved? Chunk count reasonable?
-- [ ] 4.5 Usefulness comparison: do the specific queries find the PAL discussions? Does the narrative coherence improve? Document findings. If usefulness doesn't improve meaningfully, reconsider before shipping.
+- [ ] 4.1 Update `sanitizeParsedSession` in `internal/session/sweep.go` (line 335-339) to also sanitize `ToolMeta` entries via `sanitize.StripSecrets`. Tier 1 content is already covered (it's in `AssistantText`).
+- [ ] 4.2 Add tests: TurnPair with `ToolMeta: ["[Grep: password=hunter2]"]` → sanitized. Agent description containing secret → sanitized.
+- [ ] 4.3 Expose `capy sweep --reindex` CLI flag that calls `SweepWithOptions` with `Reindex: true`. The existing `SweepOptions.Reindex` field already bypasses the mtime gate — just needs CLI wiring.
+- [ ] 4.4 Add test: `capy sweep --reindex` re-parses sessions regardless of mtime. Without flag, unchanged sessions are skipped.
 
-## Task 5: Final verification
+## Task 5: Comparison test (semi-manual)
 - **Status:** pending
 - **Depends on:** Task 1, Task 2, Task 3, Task 4
+- **Docs:** [implementation-v2.md#phase-5-comparison-test](./implementation-v2.md#phase-5-comparison-test)
 
 ### Subtasks
-- [ ] 5.1 Run `test` skill — full test suite (`make test`, `make test-race`), verify no regressions
-- [ ] 5.2 Run `document` skill — update CONTRIBUTING.md if the `tools.go` extractor pattern is worth documenting
-- [ ] 5.3 Run `review-code` skill with Go input to review the implementation
-- [ ] 5.4 Run `review-spec` skill to verify implementation matches design-v2.md and implementation-v2.md
+- [ ] 5.1 Capture v1 baseline: query the session that produced the v2 design docs via `capy_search` with specific queries ("whitelist vs pattern-based extraction", "TotalAssistantChars contamination", "PAL design reasoning", "parse.go tool_use"). Record chunk count, titles, content snippets, which queries return results.
+- [ ] 5.2 Re-index with v2: run `capy sweep --reindex` to force re-parse all sessions with the v2 parser.
+- [ ] 5.3 Capture v2 results: run same queries. Record same metrics.
+- [ ] 5.4 Correctness comparison: PAL delimiter blocks present? Enriched `[Read: ...]` lines? `mcp__capy__*` absent? Bash absent? PAL-only turns preserved? Chunk count reasonable?
+- [ ] 5.5 Usefulness comparison: do the specific queries find the PAL discussions? Does the narrative coherence improve? Document findings. If usefulness doesn't improve meaningfully, reconsider before shipping.
+
+## Task 6: Final verification
+- **Status:** pending
+- **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5
+
+### Subtasks
+- [ ] 6.1 Run `test` skill — full test suite (`make test`, `make test-race`), verify no regressions
+- [ ] 6.2 Run `document` skill — update CONTRIBUTING.md if the `tools.go` extractor pattern is worth documenting
+- [ ] 6.3 Run `review-code` skill with Go input to review the implementation
+- [ ] 6.4 Run `review-spec` skill to verify implementation matches design-v2.md and implementation-v2.md
