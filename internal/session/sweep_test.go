@@ -451,6 +451,80 @@ func TestSweep_Orchestrator(t *testing.T) {
 	_ = skipped
 }
 
+func TestSanitizeParsedSession_SubagentDesc(t *testing.T) {
+	s := &ParsedSession{
+		TurnPairs: []TurnPair{
+			{
+				HumanText:    "question",
+				AssistantText: "answer",
+				IsSubagent:   true,
+				SubagentDesc: "fetch data using token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+			},
+		},
+	}
+	sanitizeParsedSession(s)
+
+	got := s.TurnPairs[0].SubagentDesc
+	want := "fetch data using token=[REDACTED_SECRET]"
+	if got != want {
+		t.Errorf("SubagentDesc = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizeParsedSession_ToolMeta(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolMeta []string
+		want     []string
+	}{
+		{
+			name:     "grep pattern with secret",
+			toolMeta: []string{`[Grep: password=sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAA]`},
+			want:     []string{`[Grep: password=[REDACTED_SECRET]]`},
+		},
+		{
+			name:     "agent description with secret",
+			toolMeta: []string{`[Agent: Explore — "fetch token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij from API"]`},
+			want:     []string{`[Agent: Explore — "fetch token=[REDACTED_SECRET] from API"]`},
+		},
+		{
+			name:     "mixed clean and dirty entries",
+			toolMeta: []string{`[Read: internal/session/parse.go]`, `[Grep: api_key=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA]`},
+			want:     []string{`[Read: internal/session/parse.go]`, `[Grep: [REDACTED_SECRET]]`},
+		},
+		{
+			name:     "clean entries unchanged",
+			toolMeta: []string{`[Read: config.go]`, `[Edit: types.go]`},
+			want:     []string{`[Read: config.go]`, `[Edit: types.go]`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &ParsedSession{
+				TurnPairs: []TurnPair{
+					{
+						HumanText:     "test question",
+						AssistantText: "test answer",
+						ToolMeta:      tt.toolMeta,
+					},
+				},
+			}
+			sanitizeParsedSession(s)
+
+			got := s.TurnPairs[0].ToolMeta
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d entries, want %d", len(got), len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("ToolMeta[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestSweep_SecretSanitization(t *testing.T) {
 	tmp := t.TempDir()
 	uuid := "session-with-secrets"

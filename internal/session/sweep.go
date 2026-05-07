@@ -336,8 +336,10 @@ func sanitizeParsedSession(s *ParsedSession) {
 	for i := range s.TurnPairs {
 		s.TurnPairs[i].HumanText = sanitize.StripSecrets(s.TurnPairs[i].HumanText)
 		s.TurnPairs[i].AssistantText = sanitize.StripSecrets(s.TurnPairs[i].AssistantText)
-		// TODO(v2-Task4): sanitize ToolMeta entries — file paths, grep patterns,
-		// and Agent descriptions can embed secrets. See tasks-v2.md subtask 4.1.
+		for j := range s.TurnPairs[i].ToolMeta {
+			s.TurnPairs[i].ToolMeta[j] = sanitize.StripSecrets(s.TurnPairs[i].ToolMeta[j])
+		}
+		s.TurnPairs[i].SubagentDesc = sanitize.StripSecrets(s.TurnPairs[i].SubagentDesc)
 	}
 }
 
