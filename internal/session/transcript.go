@@ -19,9 +19,9 @@ type TurnOffset struct {
 }
 
 // BuildTranscript converts a ParsedSession into a plaintext transcript string
-// with Human:/Assistant: format, [Tools: ...] lines, [Session summary: ...] entries,
-// and --- Subagent --- delimiters. Consecutive subagent turns from the same agent
-// are grouped under a single delimiter block.
+// with Human:/Assistant: format, enriched metadata lines (from ToolMeta),
+// [Session summary: ...] entries, and --- Subagent --- delimiters. Consecutive
+// subagent turns from the same agent are grouped under a single delimiter block.
 //
 // Returns the transcript text and per-turn-pair byte offsets so chunking can
 // slice content by turn pair boundaries without re-serializing.
@@ -53,8 +53,8 @@ func BuildTranscript(s *ParsedSession) TranscriptResult {
 		} else {
 			fmt.Fprintf(&b, "Human: %s\n", tp.HumanText)
 			fmt.Fprintf(&b, "Assistant: %s\n", tp.AssistantText)
-			if len(tp.ToolNames) > 0 {
-				fmt.Fprintf(&b, "[Tools: %s]\n", strings.Join(tp.ToolNames, ", "))
+			for _, meta := range tp.ToolMeta {
+				fmt.Fprintf(&b, "%s\n", meta)
 			}
 		}
 
@@ -95,8 +95,8 @@ func writeSubagentBlock(b *strings.Builder, pairs []TurnPair, start int, offsets
 
 		fmt.Fprintf(b, "Human: %s\n", pairs[i].HumanText)
 		fmt.Fprintf(b, "Assistant: %s\n", pairs[i].AssistantText)
-		if len(pairs[i].ToolNames) > 0 {
-			fmt.Fprintf(b, "[Tools: %s]\n", strings.Join(pairs[i].ToolNames, ", "))
+		for _, meta := range pairs[i].ToolMeta {
+			fmt.Fprintf(b, "%s\n", meta)
 		}
 
 		// For the first turn in the group, include the opening delimiter.
