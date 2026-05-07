@@ -14,16 +14,16 @@
 - [x] 0.1 Capture v1 baseline: run `go run -tags fts5 ./cmd/dump-session/ .capy/knowledge.db b73c8a63 > docs/wip/sessionflow-rag/comparison-baseline-session.md` to dump all chunks for session `b73c8a63` (the v2 design session). This file is consumed by Task 5 for the two-lens comparison. This MUST run before any code changes to capture the v1 index state.
 
 ## Task 1: Extractor registry and tool extractors
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation-v2.md#phase-1-extractor-registry](./implementation-v2.md#phase-1-extractor-registry)
 
 ### Subtasks
-- [ ] 1.1 Create `internal/session/tools.go` with `Action` enum (`ActionSkip`, `ActionEnrich`, `ActionPromote`), `ToolExtractor` struct (`Extract func(json.RawMessage) string`, `Action`), and `ExtractorRegistry` struct with `Lookup(name) (ToolExtractor, bool)` method
-- [ ] 1.2 Implement shared PAL extractor: unmarshal `prompt` field, truncate to 768 chars with `... (truncated, N chars total)` suffix, wrap in `--- PAL: <subtool> ---` / `--- End PAL ---` delimiters. Register for exact names: `mcp__pal__chat`, `mcp__pal__thinkdeep`, `mcp__pal__codereview`, `mcp__pal__consensus`, `mcp__pal__analyze`, `mcp__pal__debug`, `mcp__pal__planner`, `mcp__pal__challenge`, `mcp__pal__secaudit`, `mcp__pal__refactor`. All with `ActionPromote`.
-- [ ] 1.3 Implement Tier 2 extractors: `Read` (`file_path` → `[Read: <path>]`), `Write` (`file_path`), `Edit` (`file_path`), `Grep` (`pattern`), `Agent` (`description` + `subagent_type` → `[Agent: <type> — "<desc>"]`). All with `ActionEnrich`.
-- [ ] 1.4 Create `NewDefaultRegistry()` constructor that builds the full registry. Expose as package-level `DefaultRegistry`.
-- [ ] 1.5 Write unit tests in `internal/session/tools_test.go`: each extractor with valid input, malformed input, empty fields. PAL truncation at boundary (≤768 no suffix, >768 with suffix). Registry lookup: exact match found, unknown tool not found. Test that `mcp__capy__capy_search` and `Bash` are not in the registry.
+- [x] 1.1 Create `internal/session/tools.go` with `Action` enum (`ActionSkip`, `ActionEnrich`, `ActionPromote`), `ToolExtractor` struct (`Extract func(json.RawMessage) string`, `Action`), and `ExtractorRegistry` struct with `Lookup(name) (ToolExtractor, bool)` method
+- [x] 1.2 Implement shared PAL extractor: unmarshal `prompt` field, truncate to 768 chars with `... (truncated, N chars total)` suffix, wrap in `--- PAL: <subtool> ---` / `--- End PAL ---` delimiters. Register for exact names: `mcp__pal__chat`, `mcp__pal__thinkdeep`, `mcp__pal__codereview`, `mcp__pal__consensus`, `mcp__pal__analyze`, `mcp__pal__debug`, `mcp__pal__planner`, `mcp__pal__challenge`, `mcp__pal__secaudit`, `mcp__pal__refactor`. All with `ActionPromote`.
+- [x] 1.3 Implement Tier 2 extractors: `Read` (`file_path` → `[Read: <path>]`), `Write` (`file_path`), `Edit` (`file_path`), `Grep` (`pattern`), `Agent` (`description` + `subagent_type` → `[Agent: <type> — "<desc>"]`). All with `ActionEnrich`.
+- [x] 1.4 Create `NewDefaultRegistry()` constructor that builds the full registry. Expose as package-level `DefaultRegistry`.
+- [x] 1.5 Write unit tests in `internal/session/tools_test.go`: each extractor with valid input, malformed input, empty fields. PAL truncation at boundary (≤768 no suffix, >768 with suffix). Registry lookup: exact match found, unknown tool not found. Test that `mcp__capy__capy_search` and `Bash` are not in the registry.
 
 ## Task 2: Parser changes — contentBlock, extractAssistantBlocks, TurnPair
 - **Status:** pending
