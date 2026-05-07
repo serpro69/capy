@@ -25,6 +25,7 @@ type TurnPair struct {
 	HumanText    string
 	AssistantText string
 	ToolNames    []string
+	ToolMeta     []string
 	IsSubagent   bool
 	SubagentType string
 	SubagentDesc string
@@ -67,10 +68,11 @@ type jsonlMessage struct {
 
 // contentBlock represents a single block within message.content arrays.
 type contentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-	Name string `json:"name"`
-	ID   string `json:"id"`
+	Type  string          `json:"type"`
+	Text  string          `json:"text"`
+	Name  string          `json:"name"`
+	ID    string          `json:"id"`
+	Input json.RawMessage `json:"input"`
 }
 
 // parsedMessage is an intermediate representation after JSONL deduplication.
@@ -80,6 +82,7 @@ type parsedMessage struct {
 	sessionID string
 	text      string   // extracted human/assistant text
 	toolNames []string // tool_use names (assistant only)
+	toolMeta  []string // enriched tool metadata lines (assistant only)
 }
 
 // ParseSession reads a Claude Code session JSONL file and returns structured
@@ -220,7 +223,7 @@ func ParseSession(path string) (*ParsedSession, error) {
 			if len(entry.mergedBlocks) == 0 {
 				continue
 			}
-			text, toolNames := extractAssistantBlocks(entry.mergedBlocks)
+			text, toolNames, toolMeta := extractAssistantBlocks(entry.mergedBlocks)
 			if text == "" && len(toolNames) == 0 {
 				continue
 			}
@@ -230,6 +233,7 @@ func ParseSession(path string) (*ParsedSession, error) {
 				sessionID: foundSessionID,
 				text:      text,
 				toolNames: toolNames,
+				toolMeta:  toolMeta,
 			})
 
 		case "system":
@@ -301,10 +305,12 @@ func cleanUserText(text string) string {
 	return text
 }
 
-// extractAssistantBlocks extracts text and tool names from pre-parsed content blocks.
-func extractAssistantBlocks(blocks []contentBlock) (string, []string) {
+// extractAssistantBlocks extracts text, tool names, and enriched tool metadata
+// from pre-parsed content blocks using the extractor registry.
+func extractAssistantBlocks(blocks []contentBlock) (string, []string, []string) {
 	var texts []string
 	var toolNames []string
+	var toolMeta []string
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
@@ -313,12 +319,28 @@ func extractAssistantBlocks(blocks []contentBlock) (string, []string) {
 				texts = append(texts, t)
 			}
 		case "tool_use":
-			if b.Name != "" {
+			ext, ok := DefaultRegistry.Lookup(b.Name)
+			if !ok {
+				continue
+			}
+			extracted := ext.Extract(b.Input)
+			switch ext.Action {
+			case ActionPromote:
+				if extracted != "" {
+					texts = append(texts, extracted)
+				}
+				toolNames = append(toolNames, b.Name)
+			case ActionEnrich:
+				if extracted != "" {
+					toolMeta = append(toolMeta, extracted)
+				} else {
+					toolMeta = append(toolMeta, fmt.Sprintf("[%s]", b.Name))
+				}
 				toolNames = append(toolNames, b.Name)
 			}
 		}
 	}
-	return strings.Join(texts, "\n"), toolNames
+	return strings.Join(texts, "\n"), toolNames, toolMeta
 }
 
 // buildTurnPairs groups sequential user→assistant messages into pairs.
@@ -330,12 +352,14 @@ func buildTurnPairs(messages []parsedMessage) ([]TurnPair, int) {
 	var pendingHuman *parsedMessage
 	var currentAssistantText []string
 	var currentToolNames []string
+	var currentToolMeta []string
 
 	flushPair := func() {
 		if pendingHuman == nil || len(currentAssistantText) == 0 {
 			pendingHuman = nil
 			currentAssistantText = nil
 			currentToolNames = nil
+			currentToolMeta = nil
 			return
 		}
 		aText := strings.Join(currentAssistantText, "\n")
@@ -344,10 +368,12 @@ func buildTurnPairs(messages []parsedMessage) ([]TurnPair, int) {
 			HumanText:    pendingHuman.text,
 			AssistantText: aText,
 			ToolNames:    currentToolNames,
+			ToolMeta:     currentToolMeta,
 		})
 		pendingHuman = nil
 		currentAssistantText = nil
 		currentToolNames = nil
+		currentToolMeta = nil
 	}
 
 	for i := range messages {
@@ -362,6 +388,7 @@ func buildTurnPairs(messages []parsedMessage) ([]TurnPair, int) {
 				currentAssistantText = append(currentAssistantText, msg.text)
 			}
 			currentToolNames = append(currentToolNames, msg.toolNames...)
+			currentToolMeta = append(currentToolMeta, msg.toolMeta...)
 
 		case "away_summary":
 			flushPair()
@@ -414,6 +441,7 @@ func ParseSubagents(sessionDir string) ([]TurnPair, error) {
 				HumanText:    tp.HumanText,
 				AssistantText: tp.AssistantText,
 				ToolNames:    tp.ToolNames,
+				ToolMeta:     tp.ToolMeta,
 				IsSubagent:   true,
 				SubagentType: agentType,
 				SubagentDesc: agentDesc,
