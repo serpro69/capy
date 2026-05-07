@@ -39,15 +39,15 @@
 - [x] 2.6 Update tests in `internal/session/parse_test.go`: tool-only turn with PAL → turn survives with PAL block as AssistantText. Tool-only turn with only Read → discarded. Mixed turn (text + PAL + Read) → correct content. `TotalAssistantChars` includes Tier 1. Session with only PAL conversations meeting threshold → `IsIndexable` returns true. Sub-agent turn pairs include `ToolMeta`.
 
 ## Task 3: Transcript and chunk title changes
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Docs:** [implementation-v2.md#phase-3-transcript-changes](./implementation-v2.md#phase-3-transcript-changes)
 
 ### Subtasks
-- [ ] 3.1 In `BuildTranscript` (`internal/session/transcript.go`), replace `[Tools: ...]` comma-separated line with per-line rendering of `tp.ToolMeta` entries. Apply same change in `writeSubagentBlock`.
-- [ ] 3.2 Update `buildChunkTitle` in `chunk.go` to format PAL tools as `| PAL: <subtool>` (strip `mcp__pal__` prefix) instead of raw `| Tools: mcp__pal__chat`. Non-PAL tools continue under `| Tools:`. Similar to existing `| Subagent:` label pattern.
-- [ ] 3.3 Update tests in `internal/session/transcript_test.go`: turns with ToolMeta → enriched metadata lines. Turns with PAL in AssistantText → PAL delimiter blocks in assistant section. Empty ToolMeta → no metadata lines. Sub-agent turns with ToolMeta → enriched lines inside sub-agent block.
-- [ ] 3.4 Update tests in `internal/session/chunk_test.go`: turn pairs with `mcp__pal__chat` and `Read` in `ToolNames` → chunk title contains `| PAL: chat | Tools: Read`.
+- [x] 3.1 In `BuildTranscript` (`internal/session/transcript.go`), replace `[Tools: ...]` comma-separated line with per-line rendering of `tp.ToolMeta` entries. Apply same change in `writeSubagentBlock`.
+- [x] 3.2 Update `buildChunkTitle` in `chunk.go` to format PAL tools as `| PAL: <subtool>` (strip `mcp__pal__` prefix) instead of raw `| Tools: mcp__pal__chat`. Non-PAL tools continue under `| Tools:`. Similar to existing `| Subagent:` label pattern.
+- [x] 3.3 Update tests in `internal/session/transcript_test.go`: turns with ToolMeta → enriched metadata lines. Turns with PAL in AssistantText → PAL delimiter blocks in assistant section. Empty ToolMeta → no metadata lines. Sub-agent turns with ToolMeta → enriched lines inside sub-agent block.
+- [x] 3.4 Update tests in `internal/session/chunk_test.go`: turn pairs with `mcp__pal__chat` and `Read` in `ToolNames` → chunk title contains `| PAL: chat | Tools: Read`.
 
 ## Task 4: Sanitization and re-index mechanism
 - **Status:** pending
