@@ -6,12 +6,12 @@
 > Created: 2026-05-07
 
 ## Task 0: Capture v1 baseline for comparison test
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation-v2.md#phase-5-comparison-test](./implementation-v2.md#phase-5-comparison-test)
 
 ### Subtasks
-- [ ] 0.1 Capture v1 baseline: query the session that produced the v2 design docs via `capy_search` with specific queries ("whitelist vs pattern-based extraction", "TotalAssistantChars contamination", "PAL design reasoning", "parse.go tool_use"). Write results to `docs/wip/sessionflow-rag/comparison-baseline.md` — chunk count, titles, content snippets, which queries returned results. This file is consumed by Task 5 for the two-lens comparison. This MUST run before any code changes to capture the v1 index state.
+- [x] 0.1 Capture v1 baseline: run `go run -tags fts5 ./cmd/dump-session/ .capy/knowledge.db b73c8a63 > docs/wip/sessionflow-rag/comparison-baseline-session.md` to dump all chunks for session `b73c8a63` (the v2 design session). This file is consumed by Task 5 for the two-lens comparison. This MUST run before any code changes to capture the v1 index state.
 
 ## Task 1: Extractor registry and tool extractors
 - **Status:** pending
@@ -67,8 +67,8 @@
 
 ### Subtasks
 - [ ] 5.1 Re-index with v2: run `capy sweep --reindex` to force re-parse all sessions with the v2 parser.
-- [ ] 5.2 Capture v2 results: run same queries from Task 0.1. Write results to `docs/wip/sessionflow-rag/comparison-v2.md`. Compare against `comparison-baseline.md` from Task 0.
-- [ ] 5.3 Correctness comparison: PAL delimiter blocks present? Enriched `[Read: ...]` lines? `mcp__capy__*` absent? Bash absent? PAL-only turns preserved? Chunk count reasonable?
+- [ ] 5.2 Capture v2 results: run `go run -tags fts5 ./cmd/dump-session/ .capy/knowledge.db b73c8a63 > docs/wip/sessionflow-rag/comparison-v2-session.md` to dump the re-indexed session. Compare against `comparison-baseline-session.md` from Task 0.
+- [ ] 5.3 Correctness comparison: PAL delimiter blocks present? Enriched `[Read: ...]` lines? `mcp__capy__*` absent? Bash absent? PAL-only turns preserved? Chunk count reasonable? Compare both dumps against the raw JSONL gists for ground truth: [v2 design session (b73c8a63)](https://gist.github.com/serpro69/4a9cd49433fd447cd234db7ab88ac6ea), [v1 design session (b5ee5362)](https://gist.github.com/serpro69/5f5bef3734ddd548b0881c0f03802980).
 - [ ] 5.4 Usefulness comparison: do the specific queries find the PAL discussions? Does the narrative coherence improve? Document findings. If usefulness doesn't improve meaningfully, reconsider before shipping.
 
 ## Task 6: Final verification
@@ -80,3 +80,4 @@
 - [ ] 6.2 Run `document` skill — update CONTRIBUTING.md if the `tools.go` extractor pattern is worth documenting
 - [ ] 6.3 Run `review-code` skill with Go input to review the implementation
 - [ ] 6.4 Run `review-spec` skill to verify implementation matches design-v2.md and implementation-v2.md
+- [ ] 6.5 Delete `cmd/dump-session/` — temporary utility, not part of the shipped CLI
