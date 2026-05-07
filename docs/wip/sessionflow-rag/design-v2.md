@@ -169,14 +169,35 @@ All changes are confined to `internal/session/`:
 
 ## Re-indexing
 
-The sweep's `content_hash` dedup detects that the v2 parser produces different transcript content. On the first server boot after upgrade, every session will have a hash mismatch and be re-indexed. Subsequent boots return to the mtime-gated fast path.
+The sweep's mtime gate (`shouldSkip` in `sweep.go:248`) compares file modification time against the stored `indexed_at` timestamp. If the JSONL file hasn't been modified, the session is skipped **before** parsing — the content_hash in `index.go:93` is never reached. A parser-only change (like v2) produces different transcripts for the same unchanged files, but the mtime gate prevents re-parsing.
 
-For users with many sessions, this one-time re-sweep may exceed the 30-second timeout. This should be logged clearly so users understand the first-boot delay.
+The sweep already supports a `SweepOptions{Reindex: true}` flag (`sweep.go:60-62`) that bypasses the mtime gate. The `SweepWithOptions` function at line 151 respects it. However, this is not currently exposed through the MCP server startup path (which calls `Sweep()` with default options).
+
+**Required for v2:** Expose a one-time re-index mechanism. Options (choose one during implementation):
+1. **CLI flag:** `capy sweep --reindex` — explicit, user-controlled.
+2. **Parser-version salt:** Append a version string to the content hash so parser changes produce different hashes. Automatic but adds permanent overhead.
+3. **Documented manual step:** Instruct users to run `capy cleanup --kind session` to purge all session sources, then restart the server. Simplest, no code change.
+
+Option 1 is preferred — it uses the existing `SweepOptions.Reindex` mechanism and makes the re-index explicit.
+
+## Secret Sanitization
+
+The existing `sanitizeParsedSession` (`sweep.go:335-339`) strips secrets from `HumanText` and `AssistantText`. The new `ToolMeta` field must also be sanitized — a Grep pattern like `[Grep: password=hunter2]` or an Agent description containing secrets would otherwise pass through unsanitized.
+
+**Required:** Update `sanitizeParsedSession` to iterate `ToolMeta` entries and apply `sanitize.StripSecrets` to each. Add test coverage for secrets in Grep patterns and Agent descriptions.
+
+Note: Tier 1 promoted content (PAL blocks) is already covered because it's injected into `AssistantText` during parsing — `sanitizeParsedSession` sanitizes it along with the rest of the assistant text.
+
+## Chunk Title Formatting
+
+The v1 chunk title format is `Session <datetime> | Turns <start>-<end> | Tools: mcp__pal__chat, Read`. The `buildChunkTitle` function (`chunk.go:94`) renders raw `ToolNames` directly.
+
+For v2, promoted PAL tools should appear as `| PAL: chat` (not `| Tools: mcp__pal__chat`) in chunk titles for cleaner BM25 boosting. This requires a small update to `buildChunkTitle`: when rendering tool names, strip `mcp__pal__` prefix for promoted tools and group them under a `PAL:` label, similar to the existing `Subagent:` label.
 
 ## Open Questions
 
 - **tool_result capture (v3):** If search quality evaluation shows missing PAL responses hurt retrieval, add `tool_use_id` correlation in the parser. Tracked as a known limitation.
-- **Sweep timeout:** Should the 30-second timeout be increased for the one-time re-index, or made proportional to session count?
+- **Re-index mechanism:** Option 1 (CLI flag) preferred, but decision deferred to implementation.
 
 ## References
 

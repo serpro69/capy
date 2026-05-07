@@ -183,13 +183,13 @@ The existing `flushPair` logic at line 335 checks `len(currentAssistantText) == 
 - `TotalAssistantChars` includes PAL block text
 - Session with only PAL conversations → `IsIndexable` returns true if ≥200 chars
 
-### 2.5 Update ParseSession callers
+### 2.5 Update ParseSubagents to propagate ToolMeta
 
 **File:** `internal/session/parse.go`
 
-Ensure `ParseSubagents` still works — it calls `ParseSession` which calls `extractAssistantBlocks`. The updated return signature must be handled. Sub-agent sessions get the same enrichment treatment (PAL calls inside sub-agents would also be promoted).
+`ParseSubagents` (line 412-420) manually constructs new `TurnPair` structs, copying `HumanText`, `AssistantText`, `ToolNames`. It must also copy the new `ToolMeta` field. Without this, enriched metadata from sub-agent sessions is silently dropped.
 
-**Verify:** existing sub-agent parse tests pass.
+**Verify:** unit test: parse a sub-agent JSONL containing Read calls → resulting TurnPair has populated `ToolMeta`.
 
 ---
 
@@ -225,19 +225,43 @@ Apply the same change in `writeSubagentBlock` (line 98-99) — sub-agent turns a
 - Turn with empty ToolMeta → no metadata lines (clean)
 - Sub-agent turn with ToolMeta → enriched lines inside sub-agent block
 
-### 3.2 Verify chunk title generation still works
+### 3.2 Update chunk title generation for PAL tools
 
 **File:** `internal/session/chunk.go`
 
-`buildChunkTitle` (line 94) uses `tp.ToolNames` to build the `| Tools: Read, Edit` part of chunk titles. This field is still populated for non-Skip tools (Promote and Enrich both add to `ToolNames`). No changes needed to chunk.go.
+`buildChunkTitle` (line 94) uses `tp.ToolNames` to build the `| Tools: name1, name2` part of chunk titles. Currently it renders raw tool names, which produces `| Tools: mcp__pal__chat, Read`.
 
-**Verify:** existing chunk tests pass. Add a test with Tier 1 tool names appearing in chunk titles.
+Update the title builder: when a tool name starts with `mcp__pal__`, strip the prefix and collect under a `PAL:` label (similar to the existing `Subagent:` label). Non-PAL tools render under `Tools:` as before. Example: `Session <datetime> | Turns 3-6 | PAL: chat | Tools: Read, Edit`.
+
+**Verify:** unit test: turn pairs with `mcp__pal__chat` and `Read` in `ToolNames` → title contains `| PAL: chat | Tools: Read`.
 
 ---
 
-## Phase 4: Comparison Test
+## Phase 4: Sanitization and Re-index
 
-### 4.1 Baseline capture
+### 4.1 Update sanitizeParsedSession for ToolMeta
+
+**File:** `internal/session/sweep.go`
+
+`sanitizeParsedSession` (line 335-339) currently sanitizes only `HumanText` and `AssistantText`. Add a loop over `ToolMeta` entries to apply `sanitize.StripSecrets` to each.
+
+Note: Tier 1 promoted content (PAL blocks) is already covered because it's part of `AssistantText`.
+
+**Verify:** unit test: TurnPair with `ToolMeta: ["[Grep: password=hunter2]"]` → sanitized. TurnPair with PAL block in AssistantText containing a secret → sanitized via existing path.
+
+### 4.2 Expose re-index mechanism
+
+**File:** `cmd/capy/sweep.go` (or extend existing CLI)
+
+The sweep already supports `SweepOptions{Reindex: true}` which bypasses the mtime gate. Expose this via `capy sweep --reindex` CLI flag. The MCP server startup path continues to use `Sweep()` (no re-index) — the flag is for explicit one-time use after parser upgrades.
+
+**Verify:** `capy sweep --reindex` re-parses all sessions regardless of mtime. Without the flag, unchanged sessions are skipped.
+
+---
+
+## Phase 5: Comparison Test
+
+### 5.1 Baseline capture
 
 Before merging v2 changes, capture the v1 indexed content for the current session (the session that produced these v2 design docs). Query via:
 
@@ -254,18 +278,18 @@ capy_search(
 
 Record: chunk count, chunk titles, content snippets, which queries return results.
 
-### 4.2 Re-index with v2
+### 5.2 Re-index with v2
 
 After implementing all changes:
 1. Delete the session's source entry (or modify the session file's mtime to force re-indexing).
 2. Restart the MCP server to trigger a sweep.
 3. The v2 parser produces enriched transcripts; content_hash mismatch triggers re-indexing.
 
-### 4.3 Post-v2 capture
+### 5.3 Post-v2 capture
 
 Run the same queries from 4.1. Record the same metrics.
 
-### 4.4 Two-lens comparison (semi-manual)
+### 5.4 Two-lens comparison (semi-manual)
 
 **Correctness lens:**
 - PAL delimiter blocks present in chunks?
@@ -285,13 +309,13 @@ Document findings. If usefulness doesn't improve meaningfully, reconsider the de
 
 ---
 
-## Phase 5: Final Verification
+## Phase 6: Final Verification
 
-### 5.1 Full test suite
+### 6.1 Full test suite
 
 Run `make test` and `make test-race`. All existing tests must pass. No regressions.
 
-### 5.2 Review and documentation
+### 6.2 Review and documentation
 
 - Run `kk:review-code` on the final diff.
 - Run `kk:review-spec` to verify implementation matches design-v2.md.
