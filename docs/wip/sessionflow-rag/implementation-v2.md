@@ -173,6 +173,8 @@ Updated return signature: `(text string, toolNames []string, toolMeta []string)`
 
 Update `buildTurnPairs` to accumulate `toolMeta` alongside `toolNames` and include it in the constructed `TurnPair`.
 
+Declare `currentToolMeta []string` alongside `currentToolNames` (line 332). In the assistant message handler, append `msg.toolMeta` entries to `currentToolMeta` (mirroring line 364 for toolNames). In `flushPair`, include `currentToolMeta` in the constructed `TurnPair.ToolMeta`, then reset `currentToolMeta = nil` alongside the existing `currentToolNames = nil` reset (line 350). The reset is safety-critical — without it, metadata leaks between turn pairs.
+
 The existing `flushPair` logic at line 335 checks `len(currentAssistantText) == 0`. This remains correct: Promote-tier tool content is already in `currentAssistantText` (injected by `extractAssistantBlocks`), so PAL-bearing turns survive. Pure Tier 2/Skip tool-only turns still have empty `currentAssistantText` and are correctly discarded.
 
 `TotalAssistantChars` — the existing `totalChars += len(aText)` in `buildTurnPairs` automatically includes Tier 1 promoted text because it's part of `aText`. This is correct: Tier 1 content IS first-class assistant text and should count toward `IsIndexable`.

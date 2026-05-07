@@ -5,6 +5,14 @@
 > Status: pending
 > Created: 2026-05-07
 
+## Task 0: Capture v1 baseline for comparison test
+- **Status:** pending
+- **Depends on:** —
+- **Docs:** [implementation-v2.md#phase-5-comparison-test](./implementation-v2.md#phase-5-comparison-test)
+
+### Subtasks
+- [ ] 0.1 Capture v1 baseline: query the session that produced the v2 design docs via `capy_search` with specific queries ("whitelist vs pattern-based extraction", "TotalAssistantChars contamination", "PAL design reasoning", "parse.go tool_use"). Write results to `docs/wip/sessionflow-rag/comparison-baseline.md` — chunk count, titles, content snippets, which queries returned results. This file is consumed by Task 5 for the two-lens comparison. This MUST run before any code changes to capture the v1 index state.
+
 ## Task 1: Extractor registry and tool extractors
 - **Status:** pending
 - **Depends on:** —
@@ -54,19 +62,18 @@
 
 ## Task 5: Comparison test (semi-manual)
 - **Status:** pending
-- **Depends on:** Task 1, Task 2, Task 3, Task 4
+- **Depends on:** Task 0, Task 1, Task 2, Task 3, Task 4
 - **Docs:** [implementation-v2.md#phase-5-comparison-test](./implementation-v2.md#phase-5-comparison-test)
 
 ### Subtasks
-- [ ] 5.1 Capture v1 baseline: query the session that produced the v2 design docs via `capy_search` with specific queries ("whitelist vs pattern-based extraction", "TotalAssistantChars contamination", "PAL design reasoning", "parse.go tool_use"). Record chunk count, titles, content snippets, which queries return results.
-- [ ] 5.2 Re-index with v2: run `capy sweep --reindex` to force re-parse all sessions with the v2 parser.
-- [ ] 5.3 Capture v2 results: run same queries. Record same metrics.
-- [ ] 5.4 Correctness comparison: PAL delimiter blocks present? Enriched `[Read: ...]` lines? `mcp__capy__*` absent? Bash absent? PAL-only turns preserved? Chunk count reasonable?
-- [ ] 5.5 Usefulness comparison: do the specific queries find the PAL discussions? Does the narrative coherence improve? Document findings. If usefulness doesn't improve meaningfully, reconsider before shipping.
+- [ ] 5.1 Re-index with v2: run `capy sweep --reindex` to force re-parse all sessions with the v2 parser.
+- [ ] 5.2 Capture v2 results: run same queries from Task 0.1. Write results to `docs/wip/sessionflow-rag/comparison-v2.md`. Compare against `comparison-baseline.md` from Task 0.
+- [ ] 5.3 Correctness comparison: PAL delimiter blocks present? Enriched `[Read: ...]` lines? `mcp__capy__*` absent? Bash absent? PAL-only turns preserved? Chunk count reasonable?
+- [ ] 5.4 Usefulness comparison: do the specific queries find the PAL discussions? Does the narrative coherence improve? Document findings. If usefulness doesn't improve meaningfully, reconsider before shipping.
 
 ## Task 6: Final verification
 - **Status:** pending
-- **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5
+- **Depends on:** Task 0, Task 1, Task 2, Task 3, Task 4, Task 5
 
 ### Subtasks
 - [ ] 6.1 Run `test` skill — full test suite (`make test`, `make test-race`), verify no regressions

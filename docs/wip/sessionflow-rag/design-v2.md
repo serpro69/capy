@@ -54,8 +54,10 @@ A new file `internal/session/tools.go` houses a table-driven registry mapping to
 Each extractor returns a `(text, Action)` tuple where Action is one of:
 
 - **`Promote`** — Content becomes part of `AssistantText`. Creates searchable transcript content. Tier 1 content counts toward `IsIndexable` thresholds because it IS first-class content.
-- **`Enrich`** — Content becomes a metadata line (`[Read: path]`) appended after assistant text. Does NOT create turns — only decorates text-bearing turns. Does NOT count toward `IsIndexable`.
+- **`Enrich`** — Content becomes a metadata line (`[Read: path]`) appended after assistant text. Does NOT create turns — only decorates text-bearing turns. Does NOT count toward `IsIndexable`. Extractors return empty string on malformed/missing input; Enrich falls back to `[<Name>]` (name-only).
 - **`Skip`** — Tool is dropped entirely. No metadata, no content, no ToolNames entry.
+
+Extractors are pure functions that return empty string on failure. For Promote, empty string silently drops the block (no partial content). For Enrich, empty string degrades to name-only metadata.
 
 **Why Tier 1 content counts toward `IsIndexable`:** A session that is pure PAL design consultation with no "natural" assistant text is still a design session worth indexing. The gate should treat promoted content as first-class. (Identified during PAL review — without this, PAL-only sessions would be incorrectly filtered out.)
 
@@ -120,6 +122,7 @@ These replace the v1 `[Tools: Read, Bash]` comma-separated line with per-tool en
 |---------|--------|
 | `mcp__capy__*` | Self-referential (capy indexing its own tool calls) |
 | `mcp__claude_ai_*` | Authentication infrastructure noise |
+| `mcp__serena__*` | Structured JSON inputs (name paths, file paths) — lower search value than Read/Edit paths and high noise from nested symbol identifiers |
 | `Bash` | Routine navigation, noisy commands (see Decision 4) |
 | All unknown tools | Unevaluated — not in policy table |
 
@@ -147,6 +150,8 @@ Review this design for session indexing...
 ```
 
 Order: assistant speech → promoted blocks → enriched metadata lines. Bottom-loading of metadata (all Tier 2 after Tier 1) is acceptable — Claude typically places tool calls after the text block in a single response.
+
+**Ordering assumption:** The parser processes `mergedBlocks` in JSONL line order. This produces speech-before-tools ordering because Claude currently emits text blocks before tool_use blocks in progressive snapshots. If Claude's emission order changes, the parser would need an explicit sort-by-type step. This is low risk — the ordering has been stable across all observed session files.
 
 ### Decision 8: tool_result Capture Deferred to v3
 
