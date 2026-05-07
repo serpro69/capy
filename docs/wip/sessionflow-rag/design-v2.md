@@ -199,9 +199,28 @@ The v1 chunk title format is `Session <datetime> | Turns <start>-<end> | Tools: 
 
 For v2, promoted PAL tools should appear as `| PAL: chat` (not `| Tools: mcp__pal__chat`) in chunk titles for cleaner BM25 boosting. This requires a small update to `buildChunkTitle`: when rendering tool names, strip `mcp__pal__` prefix for promoted tools and group them under a `PAL:` label, similar to the existing `Subagent:` label.
 
+## Known Limitations
+
+### Turn boundary collapse (not addressed in v2)
+
+The v1 turn-pair model accumulates assistant text between human messages. When tool-only turns (Read, Bash, Edit) are discarded, the surviving text fragments from multiple separate assistant responses get concatenated into a single turn pair. A sequence like:
+
+```
+Assistant: "I'll fetch the issue" → tool_use(Read) → tool_result →
+Assistant: "Good, now let me explore" → tool_use(Read) → tool_result →
+Assistant: "Now I see the problem"
+```
+
+...collapses into one turn pair where the assistant appears to say all three things in a single response. In the v2 design session baseline, "Turns 1-4" spans ~50+ actual JSONL messages because intermediate tool-only turns are discarded and the remaining text fragments stitch together.
+
+V2's Promote tier partially addresses this for PAL turns (they survive as separate turn pairs), but the 76+ non-PAL tool-only turns in a typical session still collapse. The result: chunks contain text from different conversation phases, making the narrative harder to follow and reducing BM25 precision.
+
+**Why not fixed in v2:** This is a turn-pair model concern, not a content enrichment concern. Preserving turn boundaries for tool-interleaved conversations would significantly increase chunk count for exploration-heavy sessions and requires rethinking how `buildTurnPairs` constructs pairs — a larger change than v2's extractor-based approach. Tracked for v3 evaluation alongside `tool_result` capture.
+
 ## Open Questions
 
 - **tool_result capture (v3):** If search quality evaluation shows missing PAL responses hurt retrieval, add `tool_use_id` correlation in the parser. Tracked as a known limitation.
+- **Turn boundary preservation (v3):** If the comparison test shows the collapsing problem significantly hurts retrieval quality, rethink how `buildTurnPairs` handles tool-interleaved conversations.
 - **Re-index mechanism:** Option 1 (CLI flag) preferred, but decision deferred to implementation.
 
 ## References
@@ -209,4 +228,6 @@ For v2, promoted PAL tools should appear as `| PAL: chat` (not `| Tools: mcp__pa
 - [GitHub issue #41](https://github.com/serpro69/capy/issues/41) — Session indexing loses tool call content and PAL conversations
 - [design.md](./design.md) — v1 design (predecessor)
 - [implementation.md](./implementation.md) — v1 implementation plan
+- [Raw JSONL — v2 design session (b73c8a63)](https://gist.github.com/serpro69/4a9cd49433fd447cd234db7ab88ac6ea) — main session + 2 subagent JSONL files, used as comparison test reference
+- [Raw JSONL — v1 design session (b5ee5362)](https://gist.github.com/serpro69/5f5bef3734ddd548b0881c0f03802980) — original session analyzed in issue #41
 - PAL consultation log: 2 sessions, 6 rounds total. Key decisions: whitelist over pattern-based (round 1), YAGNI fallback (round 2), 768-char truncation compromise (round 3), Tier 1 counts toward IsIndexable (round 4, caught by PAL), Bash demoted to Skip (round 6, caught by user)
