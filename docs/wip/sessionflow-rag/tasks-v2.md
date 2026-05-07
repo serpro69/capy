@@ -26,17 +26,17 @@
 - [x] 1.5 Write unit tests in `internal/session/tools_test.go`: each extractor with valid input, malformed input, empty fields. PAL truncation at boundary (≤768 no suffix, >768 with suffix). Registry lookup: exact match found, unknown tool not found. Test that `mcp__capy__capy_search` and `Bash` are not in the registry.
 
 ## Task 2: Parser changes — contentBlock, extractAssistantBlocks, TurnPair
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation-v2.md#phase-2-parser-changes](./implementation-v2.md#phase-2-parser-changes)
 
 ### Subtasks
-- [ ] 2.1 Add `Input json.RawMessage json:"input"` to `contentBlock` struct in `internal/session/parse.go` (line 69-74). Verify existing tests pass unchanged.
-- [ ] 2.2 Add `ToolMeta []string` field to `TurnPair` struct (alongside existing `ToolNames`). Add `toolMeta []string` to `parsedMessage` struct.
-- [ ] 2.3 Update `extractAssistantBlocks` to accept/use `DefaultRegistry`. For each `tool_use` block: call `registry.Lookup(b.Name)`, route on action (Promote → append to texts + toolNames, Enrich → append to toolMeta + toolNames, Skip → do nothing). Return updated signature `(text string, toolNames []string, toolMeta []string)`.
-- [ ] 2.4 Update `buildTurnPairs` to accumulate and pass through `toolMeta` into `TurnPair.ToolMeta`. Verify: `flushPair` logic unchanged — PAL-bearing turns survive because promoted text is in `currentAssistantText`; pure Tier 2 tool-only turns still discarded.
-- [ ] 2.5 Update `ParseSubagents` (parse.go:412-420) to copy `ToolMeta` field when wrapping sub-agent turn pairs. Currently only copies `HumanText`, `AssistantText`, `ToolNames` — `ToolMeta` would be silently dropped without this.
-- [ ] 2.6 Update tests in `internal/session/parse_test.go`: tool-only turn with PAL → turn survives with PAL block as AssistantText. Tool-only turn with only Read → discarded. Mixed turn (text + PAL + Read) → correct content. `TotalAssistantChars` includes Tier 1. Session with only PAL conversations meeting threshold → `IsIndexable` returns true. Sub-agent turn pairs include `ToolMeta`.
+- [x] 2.1 Add `Input json.RawMessage json:"input"` to `contentBlock` struct in `internal/session/parse.go` (line 69-74). Verify existing tests pass unchanged.
+- [x] 2.2 Add `ToolMeta []string` field to `TurnPair` struct (alongside existing `ToolNames`). Add `toolMeta []string` to `parsedMessage` struct.
+- [x] 2.3 Update `extractAssistantBlocks` to accept/use `DefaultRegistry`. For each `tool_use` block: call `registry.Lookup(b.Name)`, route on action (Promote → append to texts + toolNames, Enrich → append to toolMeta + toolNames, Skip → do nothing). Return updated signature `(text string, toolNames []string, toolMeta []string)`.
+- [x] 2.4 Update `buildTurnPairs` to accumulate and pass through `toolMeta` into `TurnPair.ToolMeta`. Verify: `flushPair` logic unchanged — PAL-bearing turns survive because promoted text is in `currentAssistantText`; pure Tier 2 tool-only turns still discarded.
+- [x] 2.5 Update `ParseSubagents` (parse.go:412-420) to copy `ToolMeta` field when wrapping sub-agent turn pairs. Currently only copies `HumanText`, `AssistantText`, `ToolNames` — `ToolMeta` would be silently dropped without this.
+- [x] 2.6 Update tests in `internal/session/parse_test.go`: tool-only turn with PAL → turn survives with PAL block as AssistantText. Tool-only turn with only Read → discarded. Mixed turn (text + PAL + Read) → correct content. `TotalAssistantChars` includes Tier 1. Session with only PAL conversations meeting threshold → `IsIndexable` returns true. Sub-agent turn pairs include `ToolMeta`.
 
 ## Task 3: Transcript and chunk title changes
 - **Status:** pending
