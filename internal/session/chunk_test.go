@@ -30,7 +30,7 @@ func TestBuildTranscript_Basic(t *testing.T) {
 		StartTime: time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC),
 		TurnPairs: []TurnPair{
 			{HumanText: "Hello", AssistantText: "Hi there"},
-			{HumanText: "Fix bug", AssistantText: "Done", ToolNames: []string{"Edit"}},
+			{HumanText: "Fix bug", AssistantText: "Done", ToolNames: []string{"Edit"}, ToolMeta: []string{"[Edit: main.go]"}},
 		},
 	}
 
@@ -43,15 +43,15 @@ func TestBuildTranscript_Basic(t *testing.T) {
 	if !strings.Contains(got, "Assistant: Hi there") {
 		t.Errorf("missing assistant text, got:\n%s", got)
 	}
-	if !strings.Contains(got, "[Tools: Edit]") {
-		t.Errorf("missing tools line, got:\n%s", got)
+	if !strings.Contains(got, "[Edit: main.go]") {
+		t.Errorf("missing enriched metadata line, got:\n%s", got)
 	}
-	// First turn should NOT have a tools line.
+	// First turn should NOT have metadata lines.
 	lines := strings.Split(got, "\n")
 	for i, line := range lines {
 		if strings.Contains(line, "Assistant: Hi there") {
-			if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "[Tools:") {
-				t.Error("first turn should not have tools line")
+			if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "[") {
+				t.Error("first turn should not have metadata lines")
 			}
 		}
 	}
@@ -319,6 +319,48 @@ func TestBuildChunkTitle_Format(t *testing.T) {
 	}
 	if !strings.Contains(title, "Tools: Read, Edit") {
 		t.Errorf("tool names wrong: %s", title)
+	}
+}
+
+func TestBuildChunkTitle_PALToolsSeparated(t *testing.T) {
+	s := &ParsedSession{
+		SessionID: "abc",
+		StartTime: time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC),
+		TurnPairs: []TurnPair{
+			{HumanText: "A", AssistantText: "B", ToolNames: []string{"mcp__pal__chat", "Read"}},
+			{HumanText: "C", AssistantText: "D", ToolNames: []string{"Edit"}},
+		},
+	}
+
+	title := buildChunkTitle(s, 0, 1)
+
+	if !strings.Contains(title, "| PAL: chat") {
+		t.Errorf("PAL label missing from title: %s", title)
+	}
+	if !strings.Contains(title, "| Tools: Read, Edit") {
+		t.Errorf("non-PAL tools wrong in title: %s", title)
+	}
+	if strings.Contains(title, "mcp__pal__") {
+		t.Errorf("raw mcp__pal__ prefix should not appear in title: %s", title)
+	}
+}
+
+func TestBuildChunkTitle_MultiplePALTools(t *testing.T) {
+	s := &ParsedSession{
+		SessionID: "abc",
+		StartTime: time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC),
+		TurnPairs: []TurnPair{
+			{HumanText: "A", AssistantText: "B", ToolNames: []string{"mcp__pal__chat", "mcp__pal__thinkdeep"}},
+		},
+	}
+
+	title := buildChunkTitle(s, 0, 0)
+
+	if !strings.Contains(title, "| PAL: chat, thinkdeep") {
+		t.Errorf("multiple PAL tools wrong in title: %s", title)
+	}
+	if strings.Contains(title, "| Tools:") {
+		t.Errorf("no Tools label expected when only PAL tools present: %s", title)
 	}
 }
 

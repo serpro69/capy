@@ -89,8 +89,9 @@ func extractWindowContent(transcript string, offsets []TurnOffset, start, end in
 }
 
 // buildChunkTitle builds a BM25-friendly title from structured session data.
-// Format: "Session <datetime> | Turns <start>-<end> | Tools: <names>"
-// With subagent: "Session <datetime> | Turns <start>-<end> | Subagent: <type> | Tools: <names>"
+// Format: "Session <datetime> | Turns <start>-<end> | PAL: <subtool> | Tools: <names>"
+// With subagent: "Session <datetime> | Turns <start>-<end> | Subagent: <type> | PAL: <subtool> | Tools: <names>"
+// PAL tools (mcp__pal__ prefix) are separated under a PAL: label; other tools under Tools:.
 func buildChunkTitle(session *ParsedSession, start, end int) string {
 	var b strings.Builder
 
@@ -98,6 +99,8 @@ func buildChunkTitle(session *ParsedSession, start, end int) string {
 	fmt.Fprintf(&b, "Session %s | Turns %d-%d", ts, start+1, end+1)
 
 	subagentTypes := make(map[string]bool)
+	palSet := make(map[string]bool)
+	var palOrder []string
 	toolSet := make(map[string]bool)
 	var toolOrder []string
 
@@ -107,9 +110,16 @@ func buildChunkTitle(session *ParsedSession, start, end int) string {
 			subagentTypes[tp.SubagentType] = true
 		}
 		for _, name := range tp.ToolNames {
-			if !toolSet[name] {
-				toolSet[name] = true
-				toolOrder = append(toolOrder, name)
+			if subtool, ok := strings.CutPrefix(name, "mcp__pal__"); ok {
+				if !palSet[subtool] {
+					palSet[subtool] = true
+					palOrder = append(palOrder, subtool)
+				}
+			} else {
+				if !toolSet[name] {
+					toolSet[name] = true
+					toolOrder = append(toolOrder, name)
+				}
 			}
 		}
 	}
@@ -117,6 +127,10 @@ func buildChunkTitle(session *ParsedSession, start, end int) string {
 	if len(subagentTypes) > 0 {
 		types := slices.Sorted(maps.Keys(subagentTypes))
 		fmt.Fprintf(&b, " | Subagent: %s", strings.Join(types, ", "))
+	}
+
+	if len(palOrder) > 0 {
+		fmt.Fprintf(&b, " | PAL: %s", strings.Join(palOrder, ", "))
 	}
 
 	if len(toolOrder) > 0 {
