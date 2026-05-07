@@ -352,7 +352,7 @@ func TestParseSession_ToolUseExtraction(t *testing.T) {
 				"role": "assistant",
 				"content": []map[string]any{
 					{"type": "text", "text": "Let me read the config file first to understand the current settings."},
-					{"type": "tool_use", "id": "toolu_001", "name": "Read", "input": map[string]any{"path": "/config.toml"}},
+					{"type": "tool_use", "id": "toolu_001", "name": "Read", "input": map[string]any{"file_path": "/config.toml"}},
 				},
 			},
 		},
@@ -381,7 +381,7 @@ func TestParseSession_ToolUseExtraction(t *testing.T) {
 				"role": "assistant",
 				"content": []map[string]any{
 					{"type": "text", "text": "I see the issue — the timeout is set too low. Let me fix it."},
-					{"type": "tool_use", "id": "toolu_002", "name": "Edit", "input": map[string]any{"path": "/config.toml"}},
+					{"type": "tool_use", "id": "toolu_002", "name": "Edit", "input": map[string]any{"file_path": "/config.toml"}},
 				},
 			},
 		},
@@ -424,11 +424,23 @@ func TestParseSession_ToolUseExtraction(t *testing.T) {
 	}
 
 	tp := session.TurnPairs[0]
-	if len(tp.ToolNames) < 1 {
-		t.Fatalf("turn 0 should have tool names, got %v", tp.ToolNames)
+	if len(tp.ToolNames) < 2 {
+		t.Fatalf("turn 0 should have 2 tool names, got %v", tp.ToolNames)
 	}
 	if tp.ToolNames[0] != "Read" {
 		t.Errorf("turn 0 ToolNames[0] = %q, want %q", tp.ToolNames[0], "Read")
+	}
+	if tp.ToolNames[1] != "Edit" {
+		t.Errorf("turn 0 ToolNames[1] = %q, want %q", tp.ToolNames[1], "Edit")
+	}
+	if len(tp.ToolMeta) != 2 {
+		t.Fatalf("turn 0 ToolMeta = %v, want 2 entries", tp.ToolMeta)
+	}
+	if tp.ToolMeta[0] != "[Read: /config.toml]" {
+		t.Errorf("turn 0 ToolMeta[0] = %q, want [Read: /config.toml]", tp.ToolMeta[0])
+	}
+	if tp.ToolMeta[1] != "[Edit: /config.toml]" {
+		t.Errorf("turn 0 ToolMeta[1] = %q, want [Edit: /config.toml]", tp.ToolMeta[1])
 	}
 }
 
@@ -568,7 +580,7 @@ func TestParseSession_NonCumulativeSnapshots(t *testing.T) {
 				"id":   "msg_001",
 				"role": "assistant",
 				"content": []map[string]any{
-					{"type": "tool_use", "id": "toolu_001", "name": "Read", "input": map[string]any{"path": "/config.toml"}},
+					{"type": "tool_use", "id": "toolu_001", "name": "Read", "input": map[string]any{"file_path": "/config.toml"}},
 				},
 			},
 		},
@@ -623,7 +635,7 @@ func TestParseSession_NonCumulativeSnapshots(t *testing.T) {
 				"id":   "msg_002",
 				"role": "assistant",
 				"content": []map[string]any{
-					{"type": "tool_use", "id": "toolu_002", "name": "Edit", "input": map[string]any{"path": "/config.toml"}},
+					{"type": "tool_use", "id": "toolu_002", "name": "Edit", "input": map[string]any{"file_path": "/config.toml"}},
 				},
 			},
 		},
@@ -763,7 +775,7 @@ func TestParseSession_CumulativeSnapshotsDedup(t *testing.T) {
 				"content": []map[string]any{
 					{"type": "thinking", "thinking": "", "signature": "sig1"},
 					{"type": "text", "text": "The system uses clean architecture."},
-					{"type": "tool_use", "id": "toolu_001", "name": "Read", "input": map[string]any{"path": "/arch.md"}},
+					{"type": "tool_use", "id": "toolu_001", "name": "Read", "input": map[string]any{"file_path": "/arch.md"}},
 				},
 			},
 		},
@@ -1384,6 +1396,690 @@ func TestParseSession_TypeInferredFromMessageRole(t *testing.T) {
 
 	if session.TurnPairs[0].AssistantText == "" {
 		t.Error("assistant text should be extracted when type is inferred from message.role")
+	}
+}
+
+func TestParseSession_PALToolPromoted(t *testing.T) {
+	dir := t.TempDir()
+	path := writeJSONL(t, dir, "pal.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "u1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"sessionId": "pal-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Review the design for session indexing",
+			},
+		},
+		// Assistant turn: text + PAL tool_use only (no other text after PAL)
+		{
+			"type":      "assistant",
+			"uuid":      "a1",
+			"timestamp": "2026-04-05T12:00:05Z",
+			"sessionId": "pal-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Let me consult PAL for a review."},
+					{"type": "tool_use", "id": "toolu_001", "name": "mcp__pal__chat", "input": map[string]any{
+						"prompt": "Review this design for session indexing. Consider whether the chunking strategy preserves enough context.",
+					}},
+				},
+			},
+		},
+		// Tool result (user message)
+		{
+			"type":      "user",
+			"uuid":      "u2",
+			"timestamp": "2026-04-05T12:00:10Z",
+			"sessionId": "pal-session",
+			"message": map[string]any{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "tool_result", "tool_use_id": "toolu_001", "content": []map[string]any{
+						{"type": "text", "text": "PAL response here"},
+					}},
+				},
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a2",
+			"timestamp": "2026-04-05T12:00:15Z",
+			"sessionId": "pal-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "PAL confirmed the design approach looks solid."},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u3",
+			"timestamp": "2026-04-05T12:01:00Z",
+			"sessionId": "pal-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Good, let's proceed",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a3",
+			"timestamp": "2026-04-05T12:01:05Z",
+			"sessionId": "pal-session",
+			"message": map[string]any{
+				"id":   "msg_003",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Starting implementation now."},
+				},
+			},
+		},
+	})
+
+	session, err := ParseSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(session.TurnPairs) != 2 {
+		t.Fatalf("got %d turn pairs, want 2", len(session.TurnPairs))
+	}
+
+	tp := session.TurnPairs[0]
+	if !strings.Contains(tp.AssistantText, "--- PAL: chat ---") {
+		t.Error("PAL delimiter block missing from AssistantText")
+	}
+	if !strings.Contains(tp.AssistantText, "Review this design for session indexing") {
+		t.Error("PAL prompt content missing from AssistantText")
+	}
+	if !strings.Contains(tp.AssistantText, "--- End PAL ---") {
+		t.Error("PAL end delimiter missing from AssistantText")
+	}
+	if !strings.Contains(tp.AssistantText, "Let me consult PAL") {
+		t.Error("original assistant text missing")
+	}
+
+	found := false
+	for _, name := range tp.ToolNames {
+		if name == "mcp__pal__chat" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("mcp__pal__chat missing from ToolNames: %v", tp.ToolNames)
+	}
+}
+
+func TestParseSession_PALOnlyTurnSurvives(t *testing.T) {
+	dir := t.TempDir()
+	path := writeJSONL(t, dir, "palonly.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "u1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"sessionId": "palonly-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Check this with PAL",
+			},
+		},
+		// Tool-only assistant turn: only PAL tool_use, no text block
+		{
+			"type":      "assistant",
+			"uuid":      "a1",
+			"timestamp": "2026-04-05T12:00:05Z",
+			"sessionId": "palonly-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "tool_use", "id": "toolu_001", "name": "mcp__pal__thinkdeep", "input": map[string]any{
+						"prompt": "Analyze the trade-offs between whitelist and pattern-based tool extraction approaches for session indexing.",
+					}},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u2",
+			"timestamp": "2026-04-05T12:00:10Z",
+			"sessionId": "palonly-session",
+			"message": map[string]any{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "tool_result", "tool_use_id": "toolu_001", "content": []map[string]any{
+						{"type": "text", "text": "PAL response"},
+					}},
+				},
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a2",
+			"timestamp": "2026-04-05T12:00:15Z",
+			"sessionId": "palonly-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "After deep analysis, the whitelist approach is better. It provides explicit control over what enters the index."},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u3",
+			"timestamp": "2026-04-05T12:01:00Z",
+			"sessionId": "palonly-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Agreed",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a3",
+			"timestamp": "2026-04-05T12:01:05Z",
+			"sessionId": "palonly-session",
+			"message": map[string]any{
+				"id":   "msg_003",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Good, moving forward with that decision."},
+				},
+			},
+		},
+	})
+
+	session, err := ParseSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// PAL-only tool turn should survive as a turn pair because promoted content
+	// becomes AssistantText.
+	if len(session.TurnPairs) != 2 {
+		t.Fatalf("got %d turn pairs, want 2 (PAL-only turn should survive)", len(session.TurnPairs))
+	}
+
+	tp := session.TurnPairs[0]
+	if !strings.Contains(tp.AssistantText, "--- PAL: thinkdeep ---") {
+		t.Errorf("PAL-only turn missing promoted content: %q", tp.AssistantText)
+	}
+}
+
+func TestParseSession_ReadOnlyTurnDiscarded(t *testing.T) {
+	dir := t.TempDir()
+	path := writeJSONL(t, dir, "readonly.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "u1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"sessionId": "readonly-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Explore the codebase",
+			},
+		},
+		// Tool-only assistant turn: only Read/Edit calls, no text
+		{
+			"type":      "assistant",
+			"uuid":      "a1",
+			"timestamp": "2026-04-05T12:00:05Z",
+			"sessionId": "readonly-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "tool_use", "id": "toolu_001", "name": "Read", "input": map[string]any{"file_path": "/parse.go"}},
+					{"type": "tool_use", "id": "toolu_002", "name": "Read", "input": map[string]any{"file_path": "/chunk.go"}},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u2",
+			"timestamp": "2026-04-05T12:00:10Z",
+			"sessionId": "readonly-session",
+			"message": map[string]any{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "tool_result", "tool_use_id": "toolu_001", "content": []map[string]any{
+						{"type": "text", "text": "file contents"},
+					}},
+					{"type": "tool_result", "tool_use_id": "toolu_002", "content": []map[string]any{
+						{"type": "text", "text": "file contents"},
+					}},
+				},
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a2",
+			"timestamp": "2026-04-05T12:00:15Z",
+			"sessionId": "readonly-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "I see the parser implementation. The code uses a three-pass approach for JSONL processing."},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u3",
+			"timestamp": "2026-04-05T12:01:00Z",
+			"sessionId": "readonly-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Good overview",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a3",
+			"timestamp": "2026-04-05T12:01:05Z",
+			"sessionId": "readonly-session",
+			"message": map[string]any{
+				"id":   "msg_003",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Happy to elaborate on any part."},
+				},
+			},
+		},
+	})
+
+	session, err := ParseSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Tool-only Read turn should be discarded (Enrich doesn't create turns).
+	// But the text from msg_002 accumulates into the same turn pair.
+	if len(session.TurnPairs) != 2 {
+		t.Fatalf("got %d turn pairs, want 2 (Read-only turn discarded)", len(session.TurnPairs))
+	}
+
+	tp := session.TurnPairs[0]
+	if !strings.Contains(tp.AssistantText, "three-pass approach") {
+		t.Errorf("text from second assistant message missing: %q", tp.AssistantText)
+	}
+	// ToolMeta should have the enriched Read lines from the tool-only turn
+	// accumulated into this turn pair.
+	if len(tp.ToolMeta) != 2 {
+		t.Fatalf("ToolMeta = %v, want 2 entries", tp.ToolMeta)
+	}
+	if tp.ToolMeta[0] != "[Read: /parse.go]" {
+		t.Errorf("ToolMeta[0] = %q, want [Read: /parse.go]", tp.ToolMeta[0])
+	}
+}
+
+func TestParseSession_MixedTurn_TextPALRead(t *testing.T) {
+	dir := t.TempDir()
+	path := writeJSONL(t, dir, "mixed_v2.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "u1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"sessionId": "mixed-v2",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Check the design and review with PAL",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a1",
+			"timestamp": "2026-04-05T12:00:05Z",
+			"sessionId": "mixed-v2",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Let me review the design with PAL and check the implementation."},
+					{"type": "tool_use", "id": "toolu_001", "name": "mcp__pal__chat", "input": map[string]any{
+						"prompt": "Review this design for session indexing",
+					}},
+					{"type": "tool_use", "id": "toolu_002", "name": "Read", "input": map[string]any{
+						"file_path": "internal/session/parse.go",
+					}},
+					{"type": "tool_use", "id": "toolu_003", "name": "Read", "input": map[string]any{
+						"file_path": "internal/session/chunk.go",
+					}},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u2",
+			"timestamp": "2026-04-05T12:01:00Z",
+			"sessionId": "mixed-v2",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Looks good",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a2",
+			"timestamp": "2026-04-05T12:01:05Z",
+			"sessionId": "mixed-v2",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Great, proceeding with implementation."},
+				},
+			},
+		},
+	})
+
+	session, err := ParseSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(session.TurnPairs) != 2 {
+		t.Fatalf("got %d turn pairs, want 2", len(session.TurnPairs))
+	}
+
+	tp := session.TurnPairs[0]
+	// AssistantText: speech + PAL block
+	if !strings.Contains(tp.AssistantText, "Let me review the design") {
+		t.Error("speech text missing")
+	}
+	if !strings.Contains(tp.AssistantText, "--- PAL: chat ---") {
+		t.Error("PAL block missing from AssistantText")
+	}
+	// ToolMeta: Read enriched lines
+	if len(tp.ToolMeta) != 2 {
+		t.Fatalf("ToolMeta = %v, want 2 entries", tp.ToolMeta)
+	}
+	if tp.ToolMeta[0] != "[Read: internal/session/parse.go]" {
+		t.Errorf("ToolMeta[0] = %q", tp.ToolMeta[0])
+	}
+	if tp.ToolMeta[1] != "[Read: internal/session/chunk.go]" {
+		t.Errorf("ToolMeta[1] = %q", tp.ToolMeta[1])
+	}
+	// ToolNames: all three tools
+	if len(tp.ToolNames) != 3 {
+		t.Fatalf("ToolNames = %v, want 3 entries", tp.ToolNames)
+	}
+}
+
+func TestParseSession_SkippedToolsExcluded(t *testing.T) {
+	dir := t.TempDir()
+	path := writeJSONL(t, dir, "skipped.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "u1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"sessionId": "skipped-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Search for something",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a1",
+			"timestamp": "2026-04-05T12:00:05Z",
+			"sessionId": "skipped-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Let me search for that."},
+					{"type": "tool_use", "id": "toolu_001", "name": "Bash", "input": map[string]any{
+						"command": "git log --oneline",
+					}},
+					{"type": "tool_use", "id": "toolu_002", "name": "mcp__capy__capy_search", "input": map[string]any{
+						"queries": []string{"session indexing"},
+					}},
+					{"type": "tool_use", "id": "toolu_003", "name": "mcp__serena__find_symbol", "input": map[string]any{
+						"name_path": "ParseSession",
+					}},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u2",
+			"timestamp": "2026-04-05T12:01:00Z",
+			"sessionId": "skipped-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Thanks",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a2",
+			"timestamp": "2026-04-05T12:01:05Z",
+			"sessionId": "skipped-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "You're welcome."},
+				},
+			},
+		},
+	})
+
+	session, err := ParseSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(session.TurnPairs) != 2 {
+		t.Fatalf("got %d turn pairs, want 2", len(session.TurnPairs))
+	}
+
+	tp := session.TurnPairs[0]
+	// Bash, capy, serena are all Skip — no ToolNames, no ToolMeta
+	if len(tp.ToolNames) != 0 {
+		t.Errorf("ToolNames should be empty for skipped tools, got %v", tp.ToolNames)
+	}
+	if len(tp.ToolMeta) != 0 {
+		t.Errorf("ToolMeta should be empty for skipped tools, got %v", tp.ToolMeta)
+	}
+}
+
+func TestParseSession_TotalAssistantCharsIncludesPAL(t *testing.T) {
+	dir := t.TempDir()
+
+	palPrompt := strings.Repeat("design reasoning text ", 20) // ~440 chars
+	path := writeJSONL(t, dir, "palchars.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "u1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"sessionId": "palchars-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Review the design",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a1",
+			"timestamp": "2026-04-05T12:00:05Z",
+			"sessionId": "palchars-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "tool_use", "id": "toolu_001", "name": "mcp__pal__chat", "input": map[string]any{
+						"prompt": palPrompt,
+					}},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u2",
+			"timestamp": "2026-04-05T12:00:10Z",
+			"sessionId": "palchars-session",
+			"message": map[string]any{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "tool_result", "tool_use_id": "toolu_001", "content": []map[string]any{
+						{"type": "text", "text": "PAL response"},
+					}},
+				},
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a2",
+			"timestamp": "2026-04-05T12:00:15Z",
+			"sessionId": "palchars-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "The design looks good based on PAL's analysis."},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u3",
+			"timestamp": "2026-04-05T12:01:00Z",
+			"sessionId": "palchars-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Proceed",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a3",
+			"timestamp": "2026-04-05T12:01:05Z",
+			"sessionId": "palchars-session",
+			"message": map[string]any{
+				"id":   "msg_003",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Starting now."},
+				},
+			},
+		},
+	})
+
+	session, err := ParseSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// TotalAssistantChars must include the PAL promoted content
+	if session.TotalAssistantChars < len(palPrompt) {
+		t.Errorf("TotalAssistantChars = %d, should include PAL content (prompt len %d)",
+			session.TotalAssistantChars, len(palPrompt))
+	}
+
+	// With PAL content, session should be indexable
+	if !session.IsIndexable() {
+		t.Error("session with PAL content should be indexable")
+	}
+}
+
+func TestParseSubagents_ToolMetaPropagated(t *testing.T) {
+	dir := t.TempDir()
+	sessionDir := filepath.Join(dir, "abc123")
+	subagentsDir := filepath.Join(sessionDir, "subagents")
+	if err := os.MkdirAll(subagentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeJSONL(t, subagentsDir, "agent-sub001.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "su1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"isSidechain": true,
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Find the parse implementation",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "sa1",
+			"timestamp": "2026-04-05T12:00:10Z",
+			"isSidechain": true,
+			"message": map[string]any{
+				"id":   "msg_sub_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Found the parser in parse.go."},
+					{"type": "tool_use", "id": "toolu_s01", "name": "Read", "input": map[string]any{
+						"file_path": "internal/session/parse.go",
+					}},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "su2",
+			"timestamp": "2026-04-05T12:01:00Z",
+			"isSidechain": true,
+			"message": map[string]any{
+				"role":    "user",
+				"content": "What about the tests?",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "sa2",
+			"timestamp": "2026-04-05T12:01:10Z",
+			"isSidechain": true,
+			"message": map[string]any{
+				"id":   "msg_sub_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Tests are in parse_test.go."},
+					{"type": "tool_use", "id": "toolu_s02", "name": "Grep", "input": map[string]any{
+						"pattern": "func Test",
+					}},
+				},
+			},
+		},
+	})
+
+	metaData, _ := json.Marshal(agentMeta{AgentType: "Explore", Description: "Find parser code"})
+	os.WriteFile(filepath.Join(subagentsDir, "agent-sub001.meta.json"), metaData, 0o644)
+
+	pairs, err := ParseSubagents(sessionDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(pairs) != 2 {
+		t.Fatalf("got %d sub-agent pairs, want 2", len(pairs))
+	}
+
+	if len(pairs[0].ToolMeta) != 1 || pairs[0].ToolMeta[0] != "[Read: internal/session/parse.go]" {
+		t.Errorf("pair 0 ToolMeta = %v, want [Read: internal/session/parse.go]", pairs[0].ToolMeta)
+	}
+	if len(pairs[1].ToolMeta) != 1 || pairs[1].ToolMeta[0] != "[Grep: func Test]" {
+		t.Errorf("pair 1 ToolMeta = %v, want [Grep: func Test]", pairs[1].ToolMeta)
+	}
+
+	for _, p := range pairs {
+		if !p.IsSubagent {
+			t.Error("sub-agent pair should have IsSubagent=true")
+		}
 	}
 }
 
