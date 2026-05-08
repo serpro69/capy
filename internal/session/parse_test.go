@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2145,6 +2146,80 @@ func TestParseSession_UserTextStartingWithSlash(t *testing.T) {
 
 	if session.TurnPairs[0].HumanText != "/etc/hosts has a misconfiguration, can you check it?" {
 		t.Errorf("user text starting with / was incorrectly filtered: %q", session.TurnPairs[0].HumanText)
+	}
+}
+
+func TestParseSession_PALEmptyInputNotInToolNames(t *testing.T) {
+	dir := t.TempDir()
+	path := writeJSONL(t, dir, "pal-empty.jsonl", []jsonlEntry{
+		{
+			"type":      "user",
+			"uuid":      "u1",
+			"timestamp": "2026-04-05T12:00:00Z",
+			"sessionId": "pal-empty-session",
+			"message": map[string]any{
+				"role":    "user",
+				"content": "Review this code",
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a1",
+			"timestamp": "2026-04-05T12:00:05Z",
+			"sessionId": "pal-empty-session",
+			"message": map[string]any{
+				"id":   "msg_001",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Let me check with PAL."},
+					{"type": "tool_use", "id": "toolu_001", "name": "mcp__pal__chat", "input": map[string]any{}},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"uuid":      "u2",
+			"timestamp": "2026-04-05T12:00:10Z",
+			"sessionId": "pal-empty-session",
+			"message": map[string]any{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "tool_result", "tool_use_id": "toolu_001", "content": []map[string]any{
+						{"type": "text", "text": "PAL response"},
+					}},
+				},
+			},
+		},
+		{
+			"type":      "assistant",
+			"uuid":      "a2",
+			"timestamp": "2026-04-05T12:00:15Z",
+			"sessionId": "pal-empty-session",
+			"message": map[string]any{
+				"id":   "msg_002",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "text", "text": "Done reviewing."},
+				},
+			},
+		},
+	})
+
+	session, err := ParseSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(session.TurnPairs) != 1 {
+		t.Fatalf("got %d turn pairs, want 1", len(session.TurnPairs))
+	}
+
+	tp := session.TurnPairs[0]
+	if slices.Contains(tp.ToolNames, "mcp__pal__chat") {
+		t.Errorf("empty PAL input should not appear in ToolNames, got: %v", tp.ToolNames)
+	}
+	if strings.Contains(tp.AssistantText, "--- PAL: chat ---") {
+		t.Error("empty PAL input should not produce a PAL delimiter block")
 	}
 }
 
