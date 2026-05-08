@@ -334,6 +334,7 @@ func extractAssistantBlocks(blocks []contentBlock) (string, []string, []string) 
 				if extracted != "" {
 					toolMeta = append(toolMeta, extracted)
 				} else {
+					// Record that the tool was called even without extractable detail.
 					toolMeta = append(toolMeta, fmt.Sprintf("[%s]", b.Name))
 				}
 				toolNames = append(toolNames, b.Name)

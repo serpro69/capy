@@ -213,6 +213,20 @@ go test -tags fts5 -count=1 -v -run TestIntegration ./internal/server/...
 5. Write unit tests in `server/tool_<name>_test.go`
 6. Add an integration test in `server/integration_test.go` if the tool interacts with the store
 
+### Adding a New Tool Extractor (Session Indexing)
+
+The session parser uses a table-driven `ExtractorRegistry` (`internal/session/tools.go`) to decide how each tool's `tool_use` input appears in indexed transcripts. Three actions:
+
+- **`ActionPromote`** — tool input becomes part of `AssistantText` (survives even on tool-only turns). Used for conversational tools like PAL.
+- **`ActionEnrich`** — tool input becomes a metadata line (e.g., `[Read: path/to/file.go]`). Only appears on turns that already have text.
+- **`ActionSkip`** — tool is omitted from transcript metadata. Default for unregistered tools.
+
+To add a new extractor:
+
+1. Write an extract function: `func(input json.RawMessage) string` — parse the JSON input, return a human-readable string (empty string = graceful skip)
+2. Register it in `NewDefaultRegistry()` in `tools.go` with the exact tool name and appropriate action
+3. Add a test in `tools_test.go` covering valid input, malformed input, and empty fields
+
 ### Adding a New Hook Interception
 
 1. Add the routing logic to `hook/pretooluse.go:handlePreToolUse()`

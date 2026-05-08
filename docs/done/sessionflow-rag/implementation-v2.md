@@ -154,7 +154,7 @@ For each `tool_use` block:
 2. If not found → Skip (do nothing, don't add to toolNames or toolMeta).
 3. If found, call `extractor.Extract(b.Input)` to get formatted text.
 4. Based on `extractor.Action`:
-   - `ActionPromote` → append formatted text to `texts` slice (becomes part of AssistantText). Add name to `toolNames`.
+   - `ActionPromote` → if formatted text is non-empty, append to `texts` slice (becomes part of AssistantText) and add name to `toolNames`. If empty (malformed input), silently drop both — no partial content, no misleading chunk title entry.
    - `ActionEnrich` → if formatted text is non-empty, append to `toolMeta`. If empty, append name-only fallback `[<name>]` to `toolMeta`. Add name to `toolNames`.
    - `ActionSkip` → do nothing.
 
