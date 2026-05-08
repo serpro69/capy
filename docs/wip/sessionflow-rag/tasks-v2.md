@@ -67,7 +67,7 @@
 
 ### Subtasks
 - [x] 5.1 Re-index with v2: run `capy sweep --reindex` to force re-parse all sessions with the v2 parser.
-- [x] 5.2 Capture v2 results: run `go run -tags fts5 ./cmd/dump-session/ .capy/knowledge.db b73c8a63 > docs/wip/sessionflow-rag/comparison-v2-session.md` to dump the re-indexed session. Compare against `comparison-baseline-session.md` from Task 0.
+- [x] 5.2 Capture v2 results: run `go run -tags fts5 ./cmd/dump-session/ .capy/knowledge.db b73c8a63 > docs/wip/sessionflow-rag/comparison-baseline-session-v2.md` to dump the re-indexed session. Compare against `comparison-baseline-session.md` from Task 0.
 - [x] 5.3 Correctness comparison: PAL delimiter blocks present? Enriched `[Read: ...]` lines? `mcp__capy__*` absent? Bash absent? PAL-only turns preserved? Chunk count reasonable? Compare both dumps against the raw JSONL gists for ground truth: [v2 design session (b73c8a63)](https://gist.github.com/serpro69/4a9cd49433fd447cd234db7ab88ac6ea), [v1 design session (b5ee5362)](https://gist.github.com/serpro69/5f5bef3734ddd548b0881c0f03802980).
 - [x] 5.4 Usefulness comparison: do the specific queries find the PAL discussions? Does the narrative coherence improve? Document findings. If usefulness doesn't improve meaningfully, reconsider before shipping.
 

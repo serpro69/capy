@@ -328,8 +328,8 @@ func extractAssistantBlocks(blocks []contentBlock) (string, []string, []string) 
 			case ActionPromote:
 				if extracted != "" {
 					texts = append(texts, extracted)
+					toolNames = append(toolNames, b.Name)
 				}
-				toolNames = append(toolNames, b.Name)
 			case ActionEnrich:
 				if extracted != "" {
 					toolMeta = append(toolMeta, extracted)
