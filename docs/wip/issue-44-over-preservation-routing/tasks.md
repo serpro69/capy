@@ -27,9 +27,10 @@
 
 ### Subtasks
 - [ ] 2.1 In `handleSearch()` (`internal/server/tool_search.go` lines 184-199): replace the `ListSources()` + per-source formatting loop with `CountSourcesByKind()` calls for non-excluded kinds
-- [ ] 2.2 Format a single summary line: count of sources and sections for each included kind, plus pointer to `capy_stats` for details
-- [ ] 2.3 Write/update test: trigger no-results with multiple indexed sources → assert output contains count summary, does NOT contain individual source labels, still contains ephemeral/session hints when applicable
-- [ ] 2.4 Verify: `go test -tags fts5 ./internal/server/...`
+- [ ] 2.2 Format a single summary line: source count per included kind, plus pointer to `capy_stats` for details (section counts intentionally omitted — source count is sufficient)
+- [ ] 2.3 Update the ephemeral-excluded hint (`tool_search.go:126-131`): add fetched content alongside command output. Change text to mention that ephemeral sources now include both command output and fetched web pages, and add `source: "<label>"` as a recovery path alongside `include_kinds`
+- [ ] 2.4 Write/update test: trigger no-results with multiple indexed sources → assert output contains count summary, does NOT contain individual source labels, still contains updated ephemeral/session hints when applicable
+- [ ] 2.5 Verify: `go test -tags fts5 ./internal/server/...`
 
 ## Task 3: Update tool descriptions
 - **Status:** pending
@@ -41,7 +42,8 @@
 - [ ] 3.2 `toolBatchExecute()` in `tools.go`: remove "THIS IS THE PRIMARY TOOL", reframe as broad exploration/extraction tool with "NOT for" guidance
 - [ ] 3.3 `toolFetchAndIndex()` in `tools.go`: update description to mention ephemeral default, `kind` parameter, and `source:` filter pattern for follow-up search
 - [ ] 3.4 `toolSearch()` in `tools.go`: fix stale description — change default from "durable only" to "durable and session", remove "fetched/indexed reference content" parenthetical, update `include_kinds` help text to match actual `effectiveKindFilter` behavior
-- [ ] 3.5 Verify: `go build ./...`, start MCP server, call `tools/list`, inspect descriptions
+- [ ] 3.5 `toolExecuteFile()` in `tools.go`: soften "PREFER THIS OVER Read/cat" to align with comprehension-vs-extraction principle. Reframe: "for large files (10k+ lines) where you only need derived answers. Read is correct when you need to understand or edit the file."
+- [ ] 3.6 Verify: `go build ./...`, start MCP server, call `tools/list`, inspect descriptions
 
 ## Task 4: Full routing rewrite (AGENTS.md + generated routing blocks)
 - **Status:** pending
@@ -54,9 +56,10 @@
 - [ ] 4.3 Rewrite `RoutingBlock()` in `internal/hook/routing.go` — replace "MUST use capy", "Primary tool", "DO NOT use Bash >20 lines", "Bash is ONLY for" with task-aware comprehension-vs-extraction guidance
 - [ ] 4.4 Update `BASH_GUIDANCE` constant in `internal/hook/routing.go` — replace "Bash is best for: git, mkdir, rm, mv, navigation, and short-output commands only" with task-aware guidance
 - [ ] 4.5 Review `GREP_GUIDANCE` and `READ_GUIDANCE` constants — update if they contradict the new routing principle (READ_GUIDANCE is likely fine as-is)
-- [ ] 4.6 Verify routing clarity: does AGENTS.md unambiguously route `git diff` to Bash? Does `RoutingBlock()` do the same for subagents? Does it explain when to pass `kind: "durable"` to fetch?
-- [ ] 4.7 Verify no orphaned references: check if other docs reference AGENTS.md sections that were renamed or removed
-- [ ] 4.8 Run tests: `go test -tags fts5 ./internal/hook/... ./internal/platform/...`
+- [ ] 4.6 Review build-tool redirect in `internal/hook/pretooluse.go:111-116` — `isBuildTool()` hard-redirects Gradle/Maven to `capy_execute`, but build output is sequential (test results, compilation errors) where order matters. Either remove the redirect, soften it to guidance, or add an exception for build commands that produce comprehension-required output
+- [ ] 4.7 Verify routing clarity: does AGENTS.md unambiguously route `git diff` to Bash? Does `RoutingBlock()` do the same for subagents? Does it explain when to pass `kind: "durable"` to fetch?
+- [ ] 4.8 Verify no orphaned references: check if other docs reference AGENTS.md sections that were renamed or removed
+- [ ] 4.9 Run tests: `go test -tags fts5 ./internal/hook/... ./internal/platform/...`
 
 ## Task 5: Final verification
 - **Status:** pending
