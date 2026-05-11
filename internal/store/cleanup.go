@@ -121,17 +121,28 @@ func (s *ContentStore) ClassifySources(ephemeralTTL, sessionTTL time.Duration) (
 	return sources, nil
 }
 
-// Cleanup removes sources via three independent paths:
+// Cleanup removes sources via four independent paths:
+//   - oversized: sources whose total content exceeds maxSourceBytes (any kind).
 //   - durable: retention-score-based eviction (ADR-011) for `kind = 'durable'`.
 //   - ephemeral: strict TTL eviction for `kind = 'ephemeral'` (ADR-017).
 //   - session: strict TTL eviction for `kind = 'session'`.
 //
 // TTL-based eviction ignores access_count — search hits must not extend lifetime.
 // If dryRun is true, returns what would be removed without deleting.
-// The returned slice tags each SourceInfo with EvictionReason ("retention"
-// or "ttl") so callers can render per-kind breakdowns.
+// The returned slice tags each SourceInfo with EvictionReason ("retention",
+// "ttl", or "oversized") so callers can render per-kind breakdowns.
 // Vocabulary is shared and never deleted.
 func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL, sessionTTL time.Duration) ([]SourceInfo, error) {
+	oversized, err := s.cleanupOversized(dryRun)
+	if err != nil {
+		return nil, err
+	}
+	// Collect IDs already evicted so downstream passes don't re-process them.
+	evictedIDs := make(map[int64]bool, len(oversized))
+	for _, src := range oversized {
+		evictedIDs[src.ID] = true
+	}
+
 	durable, err := s.cleanupDurable(dryRun, ephemeralTTL, sessionTTL)
 	if err != nil {
 		return nil, err
@@ -145,10 +156,27 @@ func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL, sessionTTL time.Durati
 		return nil, err
 	}
 
-	merged := make([]SourceInfo, 0, len(durable)+len(ephemeral)+len(session))
-	merged = append(merged, durable...)
+	merged := make([]SourceInfo, 0, len(oversized)+len(durable)+len(ephemeral)+len(session))
+	merged = append(merged, oversized...)
+	for _, src := range durable {
+		if !evictedIDs[src.ID] {
+			merged = append(merged, src)
+		}
+	}
 	merged = append(merged, ephemeral...)
 	merged = append(merged, session...)
+
+	// Auto-vacuum when freelist exceeds 20% of total pages after a non-dry-run
+	// eviction. This reclaims dead pages left by deleted rows.
+	if !dryRun && len(merged) > 0 {
+		if ratio := s.FreelistRatio(); ratio > 0.20 {
+			slog.Info("auto-vacuum triggered", "freelist_ratio", fmt.Sprintf("%.1f%%", ratio*100))
+			if err := s.Vacuum(); err != nil {
+				slog.Warn("auto-vacuum failed", "error", err)
+			}
+		}
+	}
+
 	return merged, nil
 }
 
@@ -164,6 +192,52 @@ func (s *ContentStore) PurgeEphemeral(dryRun bool, ttl time.Duration) ([]SourceI
 // PurgeEphemeral for the session kind.
 func (s *ContentStore) PurgeSession(dryRun bool, ttl time.Duration) ([]SourceInfo, error) {
 	return s.cleanupByTTL(KindSession, dryRun, ttl)
+}
+
+// cleanupOversized finds and evicts sources whose total content size exceeds
+// the configured maxSourceBytes limit. These sources should never have been
+// indexed at the current limit — evicting is a correction, not a policy change.
+func (s *ContentStore) cleanupOversized(dryRun bool) ([]SourceInfo, error) {
+	db, err := s.getDB()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := db.Query(`
+		SELECT s.id, s.label, s.content_type, s.chunk_count, s.code_chunk_count,
+			s.indexed_at, s.last_accessed_at, s.access_count, s.content_hash, s.kind,
+			COALESCE(SUM(LENGTH(c.content)), 0) AS content_bytes
+		FROM sources s
+		LEFT JOIN chunks c ON CAST(c.source_id AS INTEGER) = s.id
+		GROUP BY s.id
+		HAVING content_bytes > ?
+		ORDER BY content_bytes DESC`, s.maxSourceBytes)
+	if err != nil {
+		return nil, fmt.Errorf("selecting oversized sources: %w", err)
+	}
+	defer rows.Close()
+
+	var candidates []SourceInfo
+	for rows.Next() {
+		var si SourceInfo
+		var indexedAt, lastAccessedAt string
+		var contentBytes int64
+		if err := rows.Scan(&si.ID, &si.Label, &si.ContentType, &si.ChunkCount,
+			&si.CodeChunkCount, &indexedAt, &lastAccessedAt, &si.AccessCount,
+			&si.ContentHash, &si.Kind, &contentBytes); err != nil {
+			slog.Warn("cleanupOversized: row scan failed, skipping", "error", err)
+			continue
+		}
+		si.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
+		si.LastAccessedAt, _ = time.Parse("2006-01-02 15:04:05", lastAccessedAt)
+		si.EvictionReason = "oversized"
+		candidates = append(candidates, si)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return candidates, s.evict(candidates, dryRun)
 }
 
 // cleanupDurable applies retention-score-based eviction to durable sources.
@@ -295,6 +369,37 @@ func (s *ContentStore) evict(candidates []SourceInfo, dryRun bool) error {
 		return fmt.Errorf("committing cleanup: %w", err)
 	}
 	return nil
+}
+
+// EvictByLabel force-evicts a source by its exact label, regardless of
+// retention score, TTL, or access count. Returns the evicted SourceInfo
+// or an error if the label is not found.
+func (s *ContentStore) EvictByLabel(label string, dryRun bool) (*SourceInfo, error) {
+	db, err := s.getDB()
+	if err != nil {
+		return nil, err
+	}
+
+	var si SourceInfo
+	var indexedAt, lastAccessedAt string
+	err = db.QueryRow(`
+		SELECT id, label, content_type, chunk_count, code_chunk_count,
+			indexed_at, last_accessed_at, access_count, content_hash, kind
+		FROM sources WHERE label = ?`, label).Scan(
+		&si.ID, &si.Label, &si.ContentType, &si.ChunkCount,
+		&si.CodeChunkCount, &indexedAt, &lastAccessedAt, &si.AccessCount,
+		&si.ContentHash, &si.Kind)
+	if err != nil {
+		return nil, fmt.Errorf("source not found: %q", label)
+	}
+	si.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
+	si.LastAccessedAt, _ = time.Parse("2006-01-02 15:04:05", lastAccessedAt)
+	si.EvictionReason = "manual"
+
+	if err := s.evict([]SourceInfo{si}, dryRun); err != nil {
+		return nil, err
+	}
+	return &si, nil
 }
 
 // Stats returns knowledge base statistics. ephemeralTTL is required to
