@@ -44,8 +44,8 @@ func newCleanupCmd() *cobra.Command {
 			st := store.NewContentStore(dbPath, projectDir, 0, cfg.Store.MaxSourceBytes)
 			defer st.Close()
 
-			// Explicit vacuum only.
-			if vacuum && sourceLabel == "" && kind == "" && !force {
+			// Explicit vacuum without cleanup.
+			if vacuum && !force && sourceLabel == "" && kind == "" {
 				if err := st.Vacuum(); err != nil {
 					return fmt.Errorf("vacuum failed: %w", err)
 				}
@@ -81,6 +81,16 @@ func newCleanupCmd() *cobra.Command {
 			}
 			if err != nil {
 				return fmt.Errorf("cleanup failed: %w", err)
+			}
+
+			// Explicit --vacuum with --force: always vacuum after cleanup,
+			// regardless of freelist ratio (auto-vacuum may have already run
+			// inside Cleanup if ratio > 20%, but the user asked explicitly).
+			if vacuum && !dryRun {
+				if err := st.Vacuum(); err != nil {
+					return fmt.Errorf("vacuum failed: %w", err)
+				}
+				fmt.Println("capy: vacuum complete")
 			}
 
 			if dryRun {

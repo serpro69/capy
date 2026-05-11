@@ -158,13 +158,13 @@ func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL, sessionTTL time.Durati
 
 	merged := make([]SourceInfo, 0, len(oversized)+len(durable)+len(ephemeral)+len(session))
 	merged = append(merged, oversized...)
-	for _, src := range durable {
-		if !evictedIDs[src.ID] {
-			merged = append(merged, src)
+	for _, lists := range [][]SourceInfo{durable, ephemeral, session} {
+		for _, src := range lists {
+			if !evictedIDs[src.ID] {
+				merged = append(merged, src)
+			}
 		}
 	}
-	merged = append(merged, ephemeral...)
-	merged = append(merged, session...)
 
 	// Auto-vacuum when freelist exceeds 20% of total pages after a non-dry-run
 	// eviction. This reclaims dead pages left by deleted rows.
