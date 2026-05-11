@@ -231,7 +231,7 @@ func TestIndexSession_Integration(t *testing.T) {
 	dbPath := filepath.Join(tmp, "test.db")
 	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-sweep-integration-32b")
 
-	cs := store.NewContentStore(dbPath, tmp, 2.0)
+	cs := store.NewContentStore(dbPath, tmp, 2.0, 0)
 	defer cs.Close()
 
 	ctx := context.Background()
@@ -299,7 +299,7 @@ func TestSweep_ContextCancellation(t *testing.T) {
 	dbPath := filepath.Join(tmp, "test.db")
 	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-sweep-cancel-test-32")
 
-	cs := store.NewContentStore(dbPath, tmp, 2.0)
+	cs := store.NewContentStore(dbPath, tmp, 2.0, 0)
 	defer cs.Close()
 
 	// Cancel immediately.
@@ -335,7 +335,7 @@ func TestSweep_NonTrivialZeroTurns(t *testing.T) {
 	dbPath := filepath.Join(tmp, "test.db")
 	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-degradation-test-32")
 
-	cs := store.NewContentStore(dbPath, tmp, 2.0)
+	cs := store.NewContentStore(dbPath, tmp, 2.0, 0)
 	defer cs.Close()
 
 	// Should not error — just silently skip the non-indexable session.
@@ -413,7 +413,7 @@ func TestSweep_Orchestrator(t *testing.T) {
 	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-sweep-orchestrator-32")
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	cs := store.NewContentStore(dbPath, projectDir, 2.0)
+	cs := store.NewContentStore(dbPath, projectDir, 2.0, 0)
 	defer cs.Close()
 
 	// First sweep: should index 2 valid sessions, skip trivial.
@@ -574,7 +574,7 @@ func TestSweep_SecretSanitization(t *testing.T) {
 	dbPath := filepath.Join(tmp, "test.db")
 	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-secret-sanitize-test")
 
-	cs := store.NewContentStore(dbPath, tmp, 2.0)
+	cs := store.NewContentStore(dbPath, tmp, 2.0, 0)
 	defer cs.Close()
 
 	ok, err := indexSession(context.Background(), cs, tmp, uuid)
@@ -646,7 +646,7 @@ func TestSweep_SecretSanitization_MultiWindow(t *testing.T) {
 	dbPath := filepath.Join(tmp, "test.db")
 	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-multiwindow-secret-test")
 
-	cs := store.NewContentStore(dbPath, tmp, 2.0)
+	cs := store.NewContentStore(dbPath, tmp, 2.0, 0)
 	defer cs.Close()
 
 	ok, err := indexSession(context.Background(), cs, tmp, uuid)
@@ -756,7 +756,7 @@ func TestDryRunSweep_AlreadyIndexed(t *testing.T) {
 	}
 	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-dryrun-indexed-32byt")
 
-	cs := store.NewContentStore(dbPath, projectDir, 2.0)
+	cs := store.NewContentStore(dbPath, projectDir, 2.0, 0)
 	defer cs.Close()
 
 	ctx := context.Background()
@@ -814,7 +814,7 @@ func TestSweepWithOptions_Reindex(t *testing.T) {
 	}
 	t.Setenv("CAPY_ENCRYPTION_KEY", "test-key-for-reindex-sweep-32byte")
 
-	cs := store.NewContentStore(dbPath, projectDir, 2.0)
+	cs := store.NewContentStore(dbPath, projectDir, 2.0, 0)
 	defer cs.Close()
 
 	ctx := context.Background()

@@ -18,6 +18,7 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 			dryRun = b
 		}
 	}
+	sourceLabel := req.GetString("source", "")
 	purgeEphemeral := false
 	if v, ok := args["purge_ephemeral"]; ok {
 		if b, ok := v.(bool); ok {
@@ -34,8 +35,26 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	if purgeEphemeral && purgeSession {
 		return errorResult("purge_ephemeral and purge_session are mutually exclusive"), nil
 	}
+	if sourceLabel != "" && (purgeEphemeral || purgeSession) {
+		return errorResult("source cannot be combined with purge_ephemeral or purge_session"), nil
+	}
 
 	st := s.getStore()
+
+	// Source-specific eviction: single source by exact label.
+	if sourceLabel != "" {
+		evicted, err := st.EvictByLabel(sourceLabel, dryRun)
+		if err != nil {
+			return errorResult(fmt.Sprintf("Cleanup error: %v", err)), nil
+		}
+		action := "would be removed"
+		if !dryRun {
+			action = "removed"
+		}
+		text := fmt.Sprintf("Source %q (%s, %d chunks) %s.", evicted.Label, evicted.Kind, evicted.ChunkCount, action)
+		return s.trackToolResponse("capy_cleanup", textResult(text)), nil
+	}
+
 	ephTTL := s.ephemeralTTL()
 	sessTTL := s.sessionTTL()
 	var pruned []store.SourceInfo
@@ -57,8 +76,11 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 			textResult("No evictable sources found.")), nil
 	}
 
-	var durableN, ephemeralN, sessionN int
+	var durableN, ephemeralN, sessionN, oversizedN int
 	for _, src := range pruned {
+		if src.EvictionReason == "oversized" {
+			oversizedN++
+		}
 		switch src.Kind {
 		case store.KindSession:
 			sessionN++
@@ -77,7 +99,16 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	case purgeSession:
 		heading = "Cleanup (session purge)"
 	}
-	summary := fmt.Sprintf("%d durable (retention), %d ephemeral (TTL), %d session (TTL)", durableN, ephemeralN, sessionN)
+	var parts []string
+	if oversizedN > 0 {
+		parts = append(parts, fmt.Sprintf("%d oversized", oversizedN))
+	}
+	parts = append(parts,
+		fmt.Sprintf("%d durable (retention)", durableN),
+		fmt.Sprintf("%d ephemeral (TTL)", ephemeralN),
+		fmt.Sprintf("%d session (TTL)", sessionN),
+	)
+	summary := strings.Join(parts, ", ")
 	if dryRun {
 		lines = append(lines, fmt.Sprintf("## %s preview (dry run) — %d sources would be removed: %s", heading, len(pruned), summary))
 	} else {

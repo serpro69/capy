@@ -170,7 +170,7 @@ func TestCheckpointSubcommand_WithDB(t *testing.T) {
 	))
 
 	// Create an encrypted WAL-mode DB through the store API.
-	st := store.NewContentStore(dbPath, dir, 0)
+	st := store.NewContentStore(dbPath, dir, 0, 0)
 	_, err := st.Index("# Test\n\nCheckpoint test content.", "cp-test", "", store.KindDurable)
 	require.NoError(t, err)
 	require.NoError(t, st.Close())
@@ -189,7 +189,7 @@ func TestCheckpointSubcommand_WithDB(t *testing.T) {
 	}
 
 	// Data must survive the checkpoint.
-	st2 := store.NewContentStore(dbPath, dir, 0)
+	st2 := store.NewContentStore(dbPath, dir, 0, 0)
 	defer st2.Close()
 	sources, err := st2.ListSources()
 	require.NoError(t, err)

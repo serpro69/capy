@@ -81,7 +81,7 @@ func NewServer(
 func (s *Server) getStore() *store.ContentStore {
 	s.storeMu.Do(func() {
 		dbPath := s.config.ResolveDBPath(s.projectDir)
-		s.store = store.NewContentStore(dbPath, s.projectDir, s.config.Store.TitleWeight)
+		s.store = store.NewContentStore(dbPath, s.projectDir, s.config.Store.TitleWeight, s.config.Store.MaxSourceBytes)
 	})
 	return s.store
 }

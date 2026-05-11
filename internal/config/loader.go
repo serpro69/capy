@@ -102,6 +102,9 @@ func mergeConfig(dst, src *Config) {
 	if src.Store.TitleWeight != 0 {
 		dst.Store.TitleWeight = src.Store.TitleWeight
 	}
+	if src.Store.MaxSourceBytes != 0 {
+		dst.Store.MaxSourceBytes = src.Store.MaxSourceBytes
+	}
 	if src.Store.Cleanup.ColdThresholdDays != 0 {
 		dst.Store.Cleanup.ColdThresholdDays = src.Store.Cleanup.ColdThresholdDays
 	}

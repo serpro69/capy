@@ -140,7 +140,7 @@ func TestOpenDB_UnencryptedDB_ClearError(t *testing.T) {
 	db.Close()
 
 	t.Setenv(encryptionKeyEnv, "test-passphrase-at-least-32-characters!!")
-	s := NewContentStore(dbPath, dir, 0)
+	s := NewContentStore(dbPath, dir, 0, 0)
 	defer s.Close()
 
 	_, err = s.SearchWithFallback("anything", 5, SearchOptions{})
