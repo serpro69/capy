@@ -1,0 +1,726 @@
+ ▐▛███▜▌   Claude Code v2.1.138
+▝▜█████▛▘  Opus 4.6 · Claude Team
+  ▘▘ ▝▝    ~/Projects/personal/capy
+
+  Using Opus 4.6 (from .claude/settings.json) · /model to change
+
+❯ https://github.com/serpro69/capy/issues/44                                    
+  Analyze the issue, make sure you understand the root cause, and the fix path. 
+   Then do an analysis on the proposed fix: how will it affect existing users?  
+  does it reduce durable knowledge usability? does it increase or decrese value 
+   of capy? any other concerns? any other improvements?                         
+
+⏺ Let me fetch the issue and understand the codebase context.
+
+  Called capy 2 times (ctrl+o to expand)
+
+⏺ Good, I have the full issue. Now let me look at the current implementation to
+  understand the affected code paths.
+
+⏺ Explore(Explore fetch_and_index and kind handling)
+  ⎿  Done (13 tool uses · 40.4k tokens · 46s)
+  (ctrl+o to expand)
+
+⏺ Excellent. Now I have full context on the issue and the codebase. Here's my
+  analysis:
+
+  ---
+  Issue #44 — Root Cause
+
+  The core problem is a kind assignment mismatch: capy_fetch_and_index and
+  capy_index hardcode KindDurable with no override. This means every fetched
+  GitHub issue, PR page, log, or investigation artifact gets permanent retention
+   scoring — even though most of this content is session-scoped task context
+  that becomes worthless after the conversation ends.
+
+  The secondary problem is unbounded search fallback listings leaking capy's own
+   control-plane output into context, undermining the tool's purpose.
+
+  ---
+  Analysis of the Proposed Fix (7 suggestions)
+
+  1. "Make fetched web content ephemeral by default, add kind parameter"
+
+  Impact on existing users: This is a breaking behavioral change. Today, users
+  who capy_fetch_and_index reference docs (API docs, library guides) rely on
+  them persisting across sessions. Flipping default to ephemeral means those
+  docs vanish after 24h TTL.
+
+  My take: The suggestion is directionally right but the default is wrong. The
+  better fix: keep durable as default for capy_index (explicit user intent to
+  persist), but add a kind parameter to capy_fetch_and_index defaulting to
+  ephemeral. Rationale: fetching a URL is usually investigative; if you want it
+  durable, opt in. This is a defensible split — explicit indexing = durable
+  intent, fetching = transient by default.
+
+  2. "Add capy_promote(source) tool"
+
+  Good idea, low urgency. The implicit promote path already exists in
+  indexPreparedChunks (re-index with different kind). A dedicated tool would be
+  cleaner UX but the plumbing works today. Worth doing, not blocking.
+
+  3. "Hard-cap search fallback listings"
+
+  Unambiguously good. This is a context pollution bug, not a design question.
+  The source inventory listing should be capped with a summary count. No
+  tradeoffs.
+
+  4. "capy_fetch_preview / capy_fetch_context mode"
+
+  Redundant if #1 is done well. If capy_fetch_and_index accepts kind: 
+  "ephemeral", you don't need a separate tool. A separate tool adds API surface
+  without clear value.
+
+  5. "Tune tool descriptions"
+
+  Correct but already partially addressed. AGENTS.md already says "Read is
+  default, capy for large output." Could be stronger in the tool descriptions
+  themselves. Low effort, worth doing.
+
+  6. "Add bytes_processed / bytes_indexed stats"
+
+  Nice-to-have, orthogonal. Related to #43's source-size guards. Not part of the
+   core fix.
+
+  7. "Separate default lifetimes by source origin"
+
+  This is the real design insight and subsumes #1 and #4. Instead of a single
+  default, the kind should be determined by the source origin: command output →
+  ephemeral (already done), fetched pages → ephemeral (proposed), explicit
+  capy_index → durable (already done). This is the cleanest mental model.
+
+  ---
+  Does this reduce durable knowledge usability?
+
+  No, if done right. The key is that capy_index (explicit "remember this") stays
+   durable by default. capy_fetch_and_index gaining a kind parameter with
+  ephemeral default doesn't remove any capability — users who want durable
+  fetches pass kind: "durable". The implicit promote path means even ephemeral
+  content can be promoted later.
+
+  The risk is agent prompt drift: if AGENTS.md and tool descriptions aren't
+  updated together, agents might stop persisting docs they should. But that's a
+  documentation task, not a design flaw.
+
+  Does it increase or decrease capy's value?
+
+  Net increase. Capy's pitch is "only valuable knowledge persists." Today it
+  violates that by durably storing throwaway GitHub issues. Fixing this makes
+  the knowledge DB higher-signal and reduces bloat (#43 follow-on). The
+  retention scoring system works better when it's not diluted with task
+  artifacts.
+
+  Other concerns
+
+  1. Migration: Existing knowledge DBs have durable rows that should be
+  ephemeral. A one-time cleanup or re-scoring pass might be warranted, but not
+  strictly necessary — retention scoring will eventually demote cold durable
+  entries.
+  2. The search default includes session but excludes ephemeral
+  (effectiveKindFilter returns {durable, session}). If fetched content becomes
+  ephemeral, it won't appear in default searches. This needs attention — either
+  the default should include ephemeral, or there should be a "recent" scope that
+   includes it. Otherwise, fetching a page and immediately searching it won't
+  work without explicit include_kinds.
+  3. The fallback listing cap (#3) should be done first — it's a bug, not a
+  design choice, and it's the quickest win.
+
+✻ Worked for 1m 41s
+
+❯ agree on all counts                                                           
+  have you also looked at the linked gist that contains 2 exported sessions?    
+  when you look at the AI behavior , will your above suggestions fix that?      
+  E.g., AI is doing review-code, and then runs diffs via capy abstraction, then 
+   queries those via capy, instead of just "git diff". The same for finding     
+  files, grep/rg , and so on. It seems that in those cases at the very least    
+  capy adds noise, and at worse it makes it harder to find relevant content or  
+  it gets lost completely                                                       
+  is that a valid concern, are we addressing it?                                
+
+⏺ Let me find and analyze the gist with the exported sessions.
+
+  Called capy 2 times (ctrl+o to expand)
+
+⏺ The gist is large (109KB). Let me search for the specific anti-patterns the
+  user described.
+
+  Called capy 3 times (ctrl+o to expand)
+
+⏺ Let me get the raw gist files directly — the HTML rendering is losing the
+  actual session content.
+
+  Called capy (ctrl+o to expand)
+
+⏺ Now I have a clear picture. Let me also check AGENTS.md to see the current
+  routing instructions that are driving this behavior.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Now I have the full picture. Here's my analysis:
+
+  ---
+  The Gist Sessions Reveal a Deeper Problem
+
+  Your concern is valid and it's not fully addressed by the 7 suggestions in the
+   issue. The sessions show two distinct anti-patterns:
+
+  Anti-pattern 1: "Capy as universal router"
+
+  The review-code session routes git diff master...HEAD through
+  capy_batch_execute, producing 128.8KB of raw diff that gets chunked into 16
+  sections, then immediately queried with BM25 search. Then it does it again —
+  reading every changed file through a second capy_batch_execute call (169.7KB,
+  74 sections), then querying those fragments via capy_search.
+
+  The problem: For code review, the AI needs to comprehend the full diff — every
+   line, in order, with surrounding context. BM25 search returns ranked
+  fragments. You literally cannot do a proper code review by keyword-searching
+  fragments of a diff. You'll miss subtle bugs that span chunk boundaries, miss
+  context that wasn't in the top-N results, and miss interactions between
+  changes in different files.
+
+  This is the same anti-pattern AGENTS.md already calls out for instruction
+  files ("indexing turns a coherent document into a bag of fragments") — but it
+  applies equally to diffs, and AGENTS.md doesn't say that.
+
+  Anti-pattern 2: "Capy for known-small output"
+
+  git status --short, wc -l, git branch --show-current — all routed through
+  capy_batch_execute. These produce 1-25 lines. The overhead of sandbox +
+  indexing + BM25 query is pure waste. The AI sees the AGENTS.md line "Bash is
+  ONLY for: git, mkdir, rm, mv..." but the capy_batch_execute description says
+  "THIS IS THE PRIMARY TOOL" — and the primacy instruction wins.
+
+  What the 7 suggestions fix vs. what they don't
+
+  Problem: Durable-by-default for fetched pages
+  Fixed by suggestions?: Yes (#1, #7)
+  ────────────────────────────────────────
+  Problem: Unbounded fallback listings
+  Fixed by suggestions?: Yes (#3)
+  ────────────────────────────────────────
+  Problem: Tool description over-bias
+  Fixed by suggestions?: Partially (#5) — but the language is too vague
+  ────────────────────────────────────────
+  Problem: Diff-via-BM25 destroying review quality
+  Fixed by suggestions?: No
+  ────────────────────────────────────────
+  Problem: Small commands routed through sandbox
+  Fixed by suggestions?: No
+  ────────────────────────────────────────
+  Problem: Loss of sequential/structural information
+  Fixed by suggestions?: No
+
+  What's actually needed beyond the 7 suggestions
+
+  The root cause is in AGENTS.md lines 25-29 and the tool hierarchy on lines 
+  53-58. The "Bash is ONLY for" allowlist is too restrictive, and the hierarchy
+  positions capy_batch_execute as "Primary tool" unconditionally. This creates a
+   gravity well — agents default to capy for everything because the instructions
+   say to.
+
+  The fix needs to be in AGENTS.md itself — a task-awareness heuristic:
+
+  1. Diffs and structured sequential content should never go through capy. git 
+  diff, git log, file reads for review — these require full sequential
+  comprehension, not BM25 fragments. Add this as an explicit anti-pattern
+  alongside the existing ones.
+  2. The "Bash is ONLY for" allowlist needs to become a "Bash is fine for" 
+  guideline with a size threshold, not a hard block. Something like: "Bash is
+  appropriate for commands that produce <~50 lines. For commands that produce
+  hundreds or thousands of lines of raw output that you only need to search, use
+   capy."
+  3. The tool hierarchy needs a preamble: "Choose the tool based on what you
+  need from the output — full comprehension vs. targeted extraction. Capy is for
+   targeted extraction from large output. Direct tools (Bash, Read) are for
+  content you need to understand fully."
+  4. Code review specifically should be called out: when doing review-code, the
+  diff is the thing being reviewed — it must enter context whole (or in
+  file-sized chunks via Read), not be fragmented through BM25.
+
+  Does this decrease capy's value?
+
+  No — it increases it by preventing misuse that makes capy look bad. Right now,
+   when an AI uses capy for a diff review and produces a mediocre review because
+   it only saw BM25 fragments, that's capy making the output worse. Correct
+  routing means capy is only used where it genuinely helps, which makes the
+  context savings real instead of illusory.
+
+  Bottom line
+
+  The 7 suggestions are valid and should be implemented, but they address the
+  storage/retention side of the problem. The gist sessions expose a
+  routing/comprehension problem that lives in AGENTS.md's tool selection rules.
+  Both need to be fixed together, or agents will keep routing diffs and small
+  commands through capy even after the kind/retention changes land.
+
+✻ Cogitated for 1m 17s
+
+❯ This seems like a feature design, rather than a quick fix? Should we use      
+  kk:design?                                                                    
+
+⏺ Yes, absolutely. This touches routing rules, tool behavior, storage semantics,
+   and agent-facing documentation — that's a design problem, not a patch. Let me
+   kick it off.
+
+⏺ Skill(kk:design)
+  ⎿  Successfully loaded skill
+
+⏺ Starting the design skill. First, loading all instruction files before
+  engaging with the content.
+
+  Read 3 files (ctrl+o to expand)
+
+⏺ Good. Now running profile detection — keyword scan against the idea prose.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ The idea prose mentions Go files (tool_fetch.go, tool_index.go, etc.) and
+  Go-specific paths. The Go profile matches.
+
+⏺ User answered Claude's questions:
+  ⎿  · This involves Go source changes (tool_fetch.go, tool_index.go, 
+     store/search.go, etc.). Activate the Go profile for design guidance? → Yes
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ The design involves SQLite database access (store layer), so I should load the
+   database checklist.
+  Read 1 file (ctrl+o to expand)
+
+⏺ Good. All instructions loaded. Now let me execute Step 1 (understand the
+  project state) and Step 2 (check documentation) by exploring the relevant code
+   and docs.
+
+  Read 3 files (ctrl+o to expand)
+
+⏺ Now let me check the search fallback listing behavior and docs.
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+⏺ Let me check the relevant ADRs and the tool registration to understand the MCP
+   schema surface.
+
+  Read 2 files (ctrl+o to expand)
+
+⏺ Good — I now have a complete picture of the codebase state. Let me also check
+  for prior arch decisions and conventions in the capy knowledge base, then
+  search the existing docs structure.
+
+  Listed 1 directory, called capy (ctrl+o to expand)
+
+⏺ Now I also notice something important — the search fallback listing at
+  tool_search.go:184-199 just dumped a massive unbounded source list. That's
+  exactly the bug described in the issue, and I just experienced it firsthand.
+  Good — confirms the problem is real.
+
+  Now I have full context. Let me proceed to Step 3 — refinement questions, one
+  at a time.
+
+  Task Progress:
+  - [x] Step 1: Understand the current state of the project
+  - [x] Step 2: Check the documentation
+  - [ ] Step 3: Help refine the idea/feature
+  - [ ] Step 4: Describe the design
+  - [ ] Step 5: Document the design
+  - [ ] Step 6: Create the task list
+
+  Here's my first refinement question:
+
+⏺ User answered Claude's questions:
+  ⎿  · For capy_fetch_and_index, should the default kind change to ephemeral 
+     (with opt-in durable), or should we keep durable as default but add a kind 
+     parameter? The tradeoff: ephemeral-default means existing users who fetch 
+     reference docs (API docs, library guides) lose cross-session persistence 
+     unless they pass kind:'durable'. Durable-default preserves backwards 
+     compatibility but doesn't fix the issue's core complaint about GitHub 
+     issues/PRs polluting the DB. → Ephemeral default is good. We're in 
+     pre-release, breaking things is ok. But we should provide AI instructions 
+     on when to use which somehow
+
+⏺ Good — ephemeral default for fetch, with guidance on when to opt into durable.
+   Next question:
+
+⏺ User answered Claude's questions:
+  ⎿  · For the AGENTS.md routing problem — the root cause is that tool 
+     descriptions and AGENTS.md both push agents toward capy for everything. The
+      fix needs two parts: (1) soften tool descriptions, (2) rewrite AGENTS.md 
+     routing rules. How aggressive should the AGENTS.md rewrite be? → Full 
+     rewrite
+
+⏺ User answered Claude's questions:
+  ⎿  · Should we add an explicit capy_promote tool, or is the implicit re-index 
+     promotion path (call capy_index on already-indexed content with the same 
+     label) sufficient? A dedicated tool is cleaner UX but adds API surface. → 
+     No new tool
+
+⏺ User answered Claude's questions:
+  ⎿  · The search fallback source listing (tool_search.go:184-199) is unbounded 
+     — I just saw it dump 100+ sources. How should it be capped? → what's your 
+     recommendation and why?
+
+⏺ I'd go with "Summary only" (option 3). Here's why:
+
+  The source listing exists to help the agent figure out what's available to 
+  search. But in practice, dumping source labels is rarely actionable — the
+  agent doesn't know which label contains the answer to its query. It's
+  cargo-cult helpfulness that costs real context tokens.
+
+  A single summary line ("12 durable sources (847 sections) indexed") gives the
+  agent the same signal: "there is content, your query just didn't match." If
+  the agent actually needs to browse sources, capy_stats already provides a
+  detailed breakdown — that's the right tool for introspection, not a search
+  fallback.
+
+  The per-query "ephemeral excluded" and "session excluded" hints
+  (tool_search.go:117-151) are already good — they tell the agent why it got no
+  results and how to fix it. Adding a source dump on top is noise that dilutes
+  those targeted hints.
+
+⏺ User answered Claude's questions:
+  ⎿  · Agree with summary-only approach for source listings? → Yes, summary only
+
+⏺ User answered Claude's questions:
+  ⎿  · Should capy_index also get a kind parameter (defaulting to durable), or 
+     should it stay hardcoded to durable? The argument for adding it: symmetry 
+     with fetch, and it enables the 're-index to promote' pattern more 
+     explicitly. The argument against: capy_index represents deliberate user 
+     intent to persist, adding kind muddies that signal. → Keep durable-only
+
+⏺ User answered Claude's questions:
+  ⎿  · The capy_execute tool description says 'MANDATORY: Use for any command 
+     where output exceeds 20 lines' and lists 'git log, git diff' as examples. 
+     This directly causes the review-code anti-pattern. Should we remove git 
+     commands from the capy_execute examples and explicitly list them as 'use 
+     Bash directly' in both the tool description and AGENTS.md? → Yes, all git 
+     via Bash
+
+⏺ Good. One final refinement question before I describe the design:
+
+⏺ User answered Claude's questions:
+  ⎿  · Since fetch_and_index will default to ephemeral, and effectiveKindFilter 
+     currently returns {durable, session} (excludes ephemeral), freshly fetched 
+     content won't appear in default searches. This breaks the current workflow 
+     of 'fetch then search'. Should we change the search default to include 
+     ephemeral? → Keep excluding ephemeral, but make sure the agent knows that 
+     fetch-then-search needs an extra search kind to be included
+
+⏺ All refinement questions answered. Let me now describe the design in sections.
+
+  ---
+  Section 1: Problem Statement & Solution Overview
+
+  This feature addresses two related problems from issue #44:
+
+  Problem A — Over-preservation. capy_fetch_and_index and capy_index hardcode
+  KindDurable, turning transient task artifacts (GitHub issues, PR pages,
+  investigation logs) into permanent DB residents. This causes knowledge DB
+  bloat and BM25 pollution — transient content competes with curated reference
+  docs in search ranking.
+
+  Problem B — Over-routing. AGENTS.md and tool descriptions push agents to route
+   all commands through capy, including operations where BM25-fragmented search
+  actively degrades quality. Code review sessions route git diff through
+  capy_batch_execute, destroying the sequential comprehension needed for proper
+  review. Small commands (git status, wc -l) get routed through sandbox+index
+  for zero context savings.
+
+  Solution: Two coordinated changes:
+  1. Storage fix: Add kind parameter to capy_fetch_and_index (default:
+  ephemeral). Update tool description and AGENTS.md to guide agents on when to
+  opt into kind: "durable".
+  2. Routing fix: Full rewrite of AGENTS.md and tool descriptions. Replace the
+  current "capy is the primary tool" framing with a task-aware decision tree:
+  comprehension tasks use direct tools; extraction tasks use capy. Cap the
+  search fallback source listing to a summary-only line.
+
+  Does this framing look right so far?
+
+✻ Churned for 2m 49s
+
+❯ yes                                                                           
+
+⏺ Section 2: Storage Changes — fetch_and_index kind parameter
+
+  The capy_fetch_and_index tool gets a new optional kind parameter accepting
+  "durable" or "ephemeral", defaulting to "ephemeral".
+
+  Code changes in internal/server/tool_fetch.go: The handler reads kind from
+  request arguments, validates it, and passes it to all three indexing call
+  sites (JSON, HTML→markdown, plain-text fallback) at lines 132-145. Currently
+  all three hardcode store.KindDurable — they'll use the resolved kind instead.
+
+  Code changes in internal/server/tools.go: The toolFetchAndIndex() definition
+  gains a new mcp.WithString("kind", ...) parameter with an enum of ["durable", 
+  "ephemeral"] and description explaining when to use each. The tool description
+   itself is updated to mention that fetched content is ephemeral by default and
+   won't appear in default searches — the agent must use source: or
+  include_kinds to query it afterward.
+
+  What stays unchanged:
+  - capy_index remains hardcoded KindDurable — it represents deliberate intent
+  to persist.
+  - capy_batch_execute auto-indexing remains KindEphemeral — correct already.
+  - The store layer's Index/IndexJSON/IndexPlainText methods already accept a
+  kind parameter — no store changes needed.
+  - The implicit promote/demote path in indexPreparedChunks (re-index same label
+   with different kind) continues working. No new capy_promote tool.
+
+  Impact on fetch-then-search workflow: Since ephemeral content is excluded from
+   default search, the fetch response preview (~3KB) is the primary way agents
+  consume fetched content. For deeper lookups, agents pass source: "<label>"
+  (which bypasses kind filtering) or include_kinds: ["durable", "ephemeral"].
+  The fetch response text already instructs this pattern: "use search(queries: 
+  [...], source: %q)" — the source: filter naturally works because it bypasses
+  kind filtering.
+
+  Does this section look right?
+
+✻ Sautéed for 17s
+
+❯ yes                                                                           
+
+⏺ Section 3: Search Fallback Listing Cap
+
+  The search handler's no-results path at tool_search.go:184-199 currently dumps
+   every indexed source label with chunk counts — completely unbounded. In the
+  gist session, this produced a massive source inventory that is itself context
+  pollution from capy's own control plane.
+
+  Change: Replace the per-source listing with a summary-only line. When no query
+   produces results and there are indexed sources available:
+
+  12 durable sources (847 sections) indexed. Refine your query terms, or use
+  capy_stats for source details.
+
+  The implementation at tool_search.go:184-199 currently calls st.ListSources(),
+   iterates all sources, filters by kind, and formats each as "label" (N 
+  sections). This gets replaced with a count query — the store already has
+  CountSourcesByKind() at search.go:546-556. We call it for each non-excluded
+  kind and format a single summary line.
+
+  What stays unchanged:
+  - The per-query "ephemeral excluded" and "session excluded" hints at lines
+  117-151 — these are targeted, actionable guidance that helps agents fix their
+  query. They stay.
+  - The throttle warnings at lines 172-177 — these are rate-limit feedback, not
+  source listings. They stay.
+  - capy_stats remains the right tool for detailed source browsing and
+  introspection.
+
+  Net effect: A no-results response drops from potentially thousands of
+  characters (one line per source × 100+ sources) to a single ~80 character
+  line. The ephemeral/session recovery hints still tell the agent why it got no
+  results and how to fix it.
+
+  Does this look right?
+
+✻ Crunched for 12s
+
+❯ yes                                                                           
+⏺ Section 4: AGENTS.md Full Rewrite & Tool Description Updates
+
+  This is the biggest change and addresses the routing/comprehension problem.
+  The core principle shift: from "capy is the primary tool, use Bash only for
+  exceptions" to "choose the tool based on what you need from the output."
+
+  New AGENTS.md structure:
+
+  1. Decision principle (replaces tool hierarchy). One sentence: "Use capy when
+  you need to extract specific facts from large output. Use direct tools (Bash,
+  Read) when you need to comprehend content fully." This replaces the current
+  "GATHER → FOLLOW-UP → PROCESSING → WEB → INDEX" numbered hierarchy that
+  positions capy_batch_execute as primary.
+  2. When to use capy (positive guidance). High-volume exploration passes (rg 
+  --files across a large repo, broad symbol searches), API responses you'll
+  query, fetching web pages for reference lookup, processing large log files.
+  The common thread: output is large (hundreds+ lines) and you only need
+  targeted facts, not full comprehension.
+  3. When NOT to use capy (anti-patterns — expanded from current). This section
+  is critical:
+    - Git commands always use Bash directly. Diffs, logs, status, branch — these
+   are comprehension content or small output. A code review needs the full diff
+  in context, not BM25 fragments. Remove git log, git diff from capy_execute
+  examples.
+    - Small-output commands use Bash directly. Anything producing <~50 lines: wc
+   -l, ls, git status, file, etc. The sandbox+index overhead exceeds any context
+   savings.
+    - Content you need to comprehend fully uses Read/Bash. Code review diffs,
+  files you'll edit, instruction documents, checklists — BM25 fragments destroy
+  structural relationships. This generalizes the existing anti-pattern about
+  instruction files.
+    - Sequential/ordered content uses Read/Bash. Diffs, logs, test output where
+  order matters — BM25 ranking reorders by relevance, losing the sequence.
+  4. Blocked commands (trimmed from current). Keep curl/wget/WebFetch blocks —
+  those are genuinely useful redirections. Remove the overly broad "Bash is ONLY
+   for" restriction.
+  5. Source kinds and search (updated). Reflects fetch_and_index defaulting to
+  ephemeral. Adds guidance: "After fetching, use source: '<label>' for follow-up
+   queries — this bypasses kind filtering."
+  6. Fetch durability guidance. New section: when to pass kind: "durable" to
+  fetch_and_index — API docs, library references, specifications you'll need
+  across sessions. Default ephemeral is right for: GitHub issues/PRs,
+  investigation artifacts, temporary task context.
+
+  Tool description changes in tools.go:
+
+  - capy_execute: Remove "MANDATORY" and "git queries (git log, git diff)" from
+  examples. Reframe as "for commands producing large output where you only need
+  extracted facts."
+  - capy_batch_execute: Remove "THIS IS THE PRIMARY TOOL." Reframe as "for broad
+   exploration passes where you need to run multiple commands and extract
+  specific answers."
+  - capy_fetch_and_index: Add note that content is ephemeral by default and
+  describe the kind parameter.
+
+  Does this look right?
+
+✻ Cogitated for 23s
+
+❯ yes                                                                           
+
+⏺ Section 5: ADR, Migration, and Edge Cases
+
+  New ADR (ADR-023). Documents the fetch default-kind change and the routing
+  philosophy shift. References ADR-017 (source-kind separation) as the
+  foundation this builds on. Key decisions to record:
+  - fetch_and_index defaults to ephemeral — rationale: most fetched content is
+  investigative task context, not curated knowledge.
+  - capy_index stays durable-only — rationale: explicit indexing = explicit
+  intent to persist.
+  - No capy_promote tool — implicit re-index via capy_index with same label
+  handles promotion.
+  - Routing rewrite from "capy-first" to "task-aware" — rationale: BM25
+  fragmentation destroys comprehension quality for diffs, reviews, and
+  sequential content.
+
+  Migration and backwards compatibility. No schema migration needed — the kind
+  column and its values already exist from ADR-017. The only behavioral change
+  is the default kind assigned by fetch_and_index. Existing durable rows from
+  prior fetches stay durable. New fetches without explicit kind: "durable" will
+  be ephemeral.
+
+  Edge cases to handle:
+  1. Fetch cache interaction. The TTL cache check at tool_fetch.go:53-68 looks
+  up by label. If a source was previously fetched as durable and is now
+  re-fetched (default ephemeral), the cache hit returns the old durable entry.
+  The force: true path bypasses cache and re-indexes — the store's
+  indexPreparedChunks will update the kind in-place. This is correct behavior:
+  cache respects existing content, force re-fetch respects new intent.
+  2. AGENTS.md injection into subagents. The current subagent routing block
+  (line 76-78) auto-injects AGENTS.md into spawned agents. The rewrite must
+  preserve this — subagents need the same routing guidance. No structural change
+   needed, just content update.
+  3. Cross-runtime compatibility. AGENTS.md is read by both Claude Code and
+  Codex. The rewrite must use plain language, not runtime-specific tool names.
+  Current AGENTS.md already does this (references MCP tool names which are
+  universal).
+  4. The capy_execute intent parameter. This auto-indexes large output as
+  ephemeral and returns BM25 results — correct for its use case (extracting from
+   command output). No change needed.
+
+  Does this look right?
+
+✻ Worked for 18s
+
+❯ yes, but the ADR should be documented now, not as a future task               
+
+⏺ You're right — the ADR captures the decision, and we've made the decisions.
+  Let me write it now.
+
+⏺ Write(docs/adr/023-fetch-ephemeral-default-and-routing-rewrite.md)
+  ⎿  Wrote 127 lines to
+     docs/adr/023-fetch-ephemeral-default-and-routing-rewrite.md
+      1 # ADR-023: Fetch ephemeral-by-default and task-aware routing rewr
+        ite
+      2 
+      4 **Date:** 2026-05-11
+      5 **Supersedes:** Amends ADR-017 (fetch_and_index kind assignment).
+      6 
+      7 ## Context
+      8 
+        d two related problems from production session transcript analysi
+        s (Codex and Claude Code):
+     … +229 lines (ctrl+o to expand)
+
+⏺ ADR-023 written. Now moving to Step 5 — documenting the full design and
+  implementation plan.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Write(docs/wip/issue-44-over-preservation-routing/design.md)
+  ⎿  Wrote 29 lines to
+     docs/wip/issue-44-over-preservation-routing/design.md
+      1 # Design: Fix over-preservation and over-routing (Issue #44)
+      2 
+      3 **Issue:** [#44](https://github.com/serpro69/capy/issues/44)
+        adr/023-fetch-ephemeral-default-and-routing-rewrite.md)
+      5 **Status:** Design complete
+      6 
+      7 ## Overview
+      8 
+        cts in the knowledge DB and agents over-routing operations throug
+        h capy where it hurts quality.
+     … +38 lines (ctrl+o to expand)
+
+⏺ Write(docs/wip/issue-44-over-preservation-routing/implementation.md)
+  ⎿  Wrote 169 lines to
+     docs/wip/issue-44-over-preservation-routing/implementation.md
+       1 # Implementation Plan: Fix over-preservation and over-routing (I
+       2 
+       3 **Design:** [design.md](design.md)
+         -rewrite.md)
+       6 ## Prerequisites
+       7 
+         ver/tools.go`
+       9 - Understanding of the source-kind system from ADR-017: `kind` c
+         sion` constants in `internal/store/schema.go`
+         ch.go:558-571`
+     … +244 lines (ctrl+o to expand)
+
+⏺ Now Step 6 — the task list.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Write(docs/wip/issue-44-over-preservation-routing/tasks.md)
+  ⎿  Wrote 64 lines to docs/wip/issue-44-over-preservation-routing/tasks.md
+       1 # Tasks: Fix over-preservation and over-routing (Issue #44)
+       2 
+       3 > Design: [./design.md](./design.md)
+       4 > Implementation: [./implementation.md](./implementation.md)
+       5 > ADR: [023-fetch-ephemeral-default-and-routing-rewrite](../../a
+       6 > Status: pending
+       7 > Created: 2026-05-11
+       8 
+       9 ## Task 1: Add `kind` parameter to `capy_fetch_and_index`
+      10 - **Status:** pending
+     … +90 lines (ctrl+o to expand)
+
+⏺ Task Progress:
+  - [x] Step 1: Understand the current state of the project
+  - [x] Step 2: Check the documentation
+  - [x] Step 3: Help refine the idea/feature
+  - [x] Step 4: Describe the design
+  - [x] Step 5: Document the design
+  - [x] Step 6: Create the task list
+
+  Design phase complete. Created:
+
+  - docs/adr/023-fetch-ephemeral-default-and-routing-rewrite.md — ADR
+  documenting all 5 decisions (fetch ephemeral default, no promote tool,
+  summary-only search fallback, AGENTS.md full rewrite, tool description
+  updates)
+  - docs/wip/issue-44-over-preservation-routing/design.md — Design overview and
+  decision table
+  - docs/wip/issue-44-over-preservation-routing/implementation.md — Detailed
+  implementation plan with file paths, line numbers, what to change/not change,
+  and verification steps
+  - docs/wip/issue-44-over-preservation-routing/tasks.md — 5 tasks with checkbox
+   subtasks, dependencies, and doc links
+
+  The work breaks down as: Task 1 (fetch kind param) and Task 2 (search cap) are
+   independent and can be done in parallel. Task 3 (tool descriptions) depends
+  on Task 1. Task 4 (AGENTS.md rewrite) depends on 1+3. Task 5 is final
+  verification.
+
+✻ Crunched for 3m 0s
