@@ -17,9 +17,9 @@
 Add a new optional `kind` string parameter with enum `["durable", "ephemeral"]`. Update the tool description to mention ephemeral default and the `source:` filter pattern for follow-up search.
 
 **`internal/server/tool_fetch.go` — `handleFetchAndIndex()` function (line 33-165):**
-1. Read the `kind` argument from request. Default to `store.KindEphemeral` if absent or empty.
-2. Validate: must be `"durable"` or `"ephemeral"` (use `store.SourceKind.Valid()` — but note it also accepts `"session"`, so validate explicitly against the two allowed values).
-3. Replace all three `store.KindDurable` literals at lines 132, 138, 141, 145 with the resolved kind variable.
+1. Read and validate the `kind` argument **before** the TTL cache check (before line 52). Default to `store.KindEphemeral` if absent or empty. Validate explicitly against `"durable"`/`"ephemeral"` only (reject `"session"` and invalid values). This must happen first because the cache check needs to compare the requested kind against the cached kind.
+2. Modify the TTL cache check (lines 52-68): after finding a cache hit, compare `meta.Kind` (available on `SourceMeta` at `internal/store/types.go:100`) against the requested kind. If they differ, bypass the cache and proceed with re-fetch+re-index so the kind change takes effect. This prevents the cache from silently swallowing kind changes (e.g., a previously-durable source that should now be ephemeral).
+3. Replace all four `store.KindDurable` literals at lines 132, 138, 141, 145 with the resolved kind variable.
 4. Update the response text (line 159-163) to indicate whether content was indexed as durable or ephemeral, and remind about `source:` filter for follow-up queries on ephemeral content.
 
 ### What NOT to change
@@ -37,6 +37,9 @@ Add a new optional `kind` string parameter with enum `["durable", "ephemeral"]`.
   - Fetches with `kind: "durable"` → assert stored as durable
   - Fetches with `kind: "ephemeral"` → assert stored as ephemeral
   - Fetches with `kind: "invalid"` → assert error response
+  - Fetches with `kind: "session"` → assert error response
+  - Fetches a URL as durable, then re-fetches same URL with `kind: "ephemeral"` (within cache TTL) → assert cache is bypassed and kind is updated to ephemeral
+  - Fetches a URL (default ephemeral), then re-fetches same URL with `kind: "durable"` → assert cache is bypassed and kind is updated to durable
 
 ## Task 2: Cap search fallback source listing
 
@@ -56,14 +59,14 @@ if len(parts) > 0 {
 }
 ```
 
-With a summary-only approach using `CountSourcesByKind`:
+With a summary-only approach using `CountSourcesByKind` (which returns source count only — section count is not needed for a directional summary):
 ```
 durableCount, _ := st.CountSourcesByKind(store.KindDurable)
-// Also count session if not excluded, for a combined total
+// Also count session if not excluded
 // Format: "12 durable sources indexed. Refine your query terms, or use capy_stats for source details."
 ```
 
-Count only non-excluded kinds (respect `ephemeralExcluded` and `sessionExcluded` flags already computed at lines 96-97). Format a single line with the count and a pointer to `capy_stats`.
+Count only non-excluded kinds (respect `ephemeralExcluded` and `sessionExcluded` flags already computed at lines 96-97). Format a single line with source counts per kind and a pointer to `capy_stats`. Section counts are intentionally omitted — the source count is sufficient to tell the agent "content exists, your query didn't match" and `capy_stats` provides the detailed breakdown.
 
 The `ListSources()` call is no longer needed in this path — remove it. If `ListSources` is unused elsewhere after this change, leave it (it's a store-layer method that may have other consumers or future uses).
 
@@ -97,9 +100,13 @@ The `ListSources()` call is no longer needed in this path — remove it. If `Lis
 **`internal/server/tools.go` — `toolFetchAndIndex()` (lines 211-226):**
 - Update description to mention ephemeral default: "Fetches URL content, converts HTML to markdown, indexes as ephemeral (24h TTL, excluded from default search), and returns a ~3KB preview. Use source: filter or include_kinds for follow-up search. Pass kind: 'durable' for reference docs you want to persist across sessions."
 
+**`internal/server/tools.go` — `toolSearch()` (lines 190-209):**
+- Fix the main description (line 193): change `"By default returns only durable sources (fetched/indexed reference content)"` to `"By default returns durable and session sources"`. Remove the parenthetical that calls fetched content "reference content" — after this change, fetched content is ephemeral by default.
+- Fix the `include_kinds` description (line 205): change `"Default: [\"durable\"] only"` to `"Default: [\"durable\", \"session\"]"` to match the actual behavior in `effectiveKindFilter` at `search.go:569`. Update the `"durable"` parenthetical from `"fetched/indexed reference content, retained by retention score"` to `"explicitly indexed reference content, retained by retention score"` since fetched content is no longer durable by default.
+
 ### What NOT to change
 
-- `toolSearch()`, `toolIndex()`, `toolExecuteFile()`, `toolStats()`, `toolDoctor()`, `toolCleanup()` — no changes needed.
+- `toolIndex()`, `toolExecuteFile()`, `toolStats()`, `toolDoctor()`, `toolCleanup()` — no changes needed.
 - Tool annotations (read-only/destructive hints) — no changes.
 
 ### Verify
@@ -107,7 +114,17 @@ The `ListSources()` call is no longer needed in this path — remove it. If `Lis
 - `go build ./...` compiles
 - Manual inspection: start capy MCP server, call `tools/list`, verify updated descriptions render correctly in the tool listing.
 
-## Task 4: Full AGENTS.md rewrite
+## Task 4: Full routing rewrite (AGENTS.md + generated routing blocks)
+
+### Important: Three routing surfaces
+
+There are three places where routing rules live — all three must be updated together:
+
+1. **`.capy/AGENTS.md`** — the static file read by agents directly from the repo.
+2. **`internal/platform/routing.go:18` — `GenerateRoutingInstructions()`** — generates the same routing block that `capy setup` writes into CLAUDE.md/AGENTS.md. Contains the identical "MANDATORY", "ONLY for", "Primary tool" language. This is the source-of-truth for the file-based routing block.
+3. **`internal/hook/routing.go:6` — `RoutingBlock()`** — the XML routing block injected at runtime into subagent prompts (via `pretooluse.go:139`) and session start (via `sessionstart.go:6`). Contains "You MUST use capy", "Primary tool for research", "DO NOT use Bash for commands producing >20 lines", "Bash is ONLY for git/mkdir/rm/mv/navigation". Plus the guidance constants `BASH_GUIDANCE`, `GREP_GUIDANCE`, `READ_GUIDANCE` at lines 57-84.
+
+Rewriting only AGENTS.md leaves the runtime-injected routing (`RoutingBlock()`) and the setup-generated routing (`GenerateRoutingInstructions()`) still pushing the old "capy-first" behavior. Subagents in particular get their routing from `RoutingBlock()`, not from AGENTS.md.
 
 ### What to change
 
@@ -145,11 +162,26 @@ The new document structure:
 
 10. **capy commands table.** Carry forward: `capy stats`, `capy doctor`.
 
+**`internal/platform/routing.go` — `GenerateRoutingInstructions()` (line 18-111):**
+Rewrite the generated routing block to match the new AGENTS.md content. This function should produce the same task-aware routing text as AGENTS.md. The content is written to disk during `capy setup`, so it must be self-contained (no @-imports).
+
+**`internal/hook/routing.go` — `RoutingBlock()` (line 6-54):**
+Rewrite the XML routing block to match the new task-aware routing principle. Key changes:
+- Replace `"You MUST use capy MCP tools"` with the comprehension-vs-extraction decision principle.
+- Replace `"Primary tool for research"` in the hierarchy with extraction-focused guidance.
+- Replace `"DO NOT use Bash for commands producing >20 lines"` with the nuanced rule (Bash for git, small commands, comprehension content).
+- Replace `"Bash is ONLY for git/mkdir/rm/mv/navigation"` with the positive framing.
+
+**`internal/hook/routing.go` — guidance constants (lines 57-84):**
+Update `BASH_GUIDANCE` (line 76-84): replace `"Bash is best for: git, mkdir, rm, mv, navigation, and short-output commands only"` with task-aware guidance that doesn't imply Bash is a last resort.
+Review `GREP_GUIDANCE` and `READ_GUIDANCE` — these may be fine as-is since they already provide nuanced advice.
+
 ### What NOT to change
 
 - `CLAUDE.md` reference to AGENTS.md (`@.capy/AGENTS.md`) — keep the include.
 - `.claude/CLAUDE.extra.md` — no changes needed.
-- Hook configurations or settings — no changes.
+- `internal/hook/pretooluse.go` and `internal/hook/sessionstart.go` — these are injection points, not content sources. They call `RoutingBlock()` which we're updating.
+- `internal/platform/setup.go` — the setup logic that writes routing to disk and replaces stale blocks stays the same; only the content from `GenerateRoutingInstructions()` changes.
 
 ### Verify
 
