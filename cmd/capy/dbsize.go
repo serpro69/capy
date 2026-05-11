@@ -34,11 +34,20 @@ func newDBSizeCmd() *cobra.Command {
 
 			fmt.Printf("Database: %s\n\n", dbPath)
 
-			fmt.Println("=== Table sizes (pages × page_size) ===")
-			fmt.Printf("  %-30s %10s %10s\n", "Table", "Pages", "Size")
-			fmt.Printf("  %-30s %10s %10s\n", "-----", "-----", "----")
-			for _, t := range breakdown.Tables {
-				fmt.Printf("  %-30s %10d %10s\n", t.Name, t.Pages, humanBytes(t.Bytes))
+			if breakdown.HasDBStat {
+				fmt.Println("=== Table sizes (pages × page_size) ===")
+				fmt.Printf("  %-30s %10s %10s\n", "Table", "Pages", "Size")
+				fmt.Printf("  %-30s %10s %10s\n", "-----", "-----", "----")
+				for _, t := range breakdown.Tables {
+					fmt.Printf("  %-30s %10d %10s\n", t.Name, t.Pages, humanBytes(t.Bytes))
+				}
+			} else {
+				fmt.Println("=== Table row counts (dbstat unavailable — per-table sizes require SQLITE_ENABLE_DBSTAT_VTAB) ===")
+				fmt.Printf("  %-30s %10s\n", "Table", "Rows")
+				fmt.Printf("  %-30s %10s\n", "-----", "----")
+				for _, t := range breakdown.Tables {
+					fmt.Printf("  %-30s %10d\n", t.Name, t.RowCount)
+				}
 			}
 			fmt.Println()
 
