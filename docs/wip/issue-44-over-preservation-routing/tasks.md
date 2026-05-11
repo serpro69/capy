@@ -13,11 +13,12 @@
 
 ### Subtasks
 - [ ] 1.1 Add optional `kind` string parameter (enum: `["durable", "ephemeral"]`) to `toolFetchAndIndex()` in `internal/server/tools.go`
-- [ ] 1.2 In `handleFetchAndIndex()` (`internal/server/tool_fetch.go`): read `kind` from request, default to `store.KindEphemeral`, validate against `"durable"`/`"ephemeral"` only (reject `"session"` and invalid values)
-- [ ] 1.3 Replace all four `store.KindDurable` literals at the indexing call sites (lines 132, 138, 141, 145) with the resolved kind variable
-- [ ] 1.4 Update the response text to indicate whether content was indexed as durable or ephemeral, and remind about `source:` filter for ephemeral follow-up queries
-- [ ] 1.5 Add tests in `tool_fetch_test.go`: no-kind → ephemeral, `kind: "durable"` → durable, `kind: "ephemeral"` → ephemeral, `kind: "invalid"` → error, `kind: "session"` → error
-- [ ] 1.6 Verify: `go build ./...` and `go test -tags fts5 ./internal/server/...`
+- [ ] 1.2 In `handleFetchAndIndex()` (`internal/server/tool_fetch.go`): read and validate `kind` **before** the TTL cache check (before line 52). Default to `store.KindEphemeral`, validate against `"durable"`/`"ephemeral"` only (reject `"session"` and invalid values)
+- [ ] 1.3 Modify the TTL cache check (lines 52-68): after cache hit, compare `meta.Kind` against requested kind. If they differ, bypass cache and proceed with re-fetch+re-index
+- [ ] 1.4 Replace all four `store.KindDurable` literals at the indexing call sites (lines 132, 138, 141, 145) with the resolved kind variable
+- [ ] 1.5 Update the response text to indicate whether content was indexed as durable or ephemeral, and remind about `source:` filter for ephemeral follow-up queries
+- [ ] 1.6 Add tests in `tool_fetch_test.go`: no-kind → ephemeral, `kind: "durable"` → durable, `kind: "ephemeral"` → ephemeral, `kind: "invalid"` → error, `kind: "session"` → error, cache-hit with kind mismatch → cache bypassed and kind updated
+- [ ] 1.7 Verify: `go build ./...` and `go test -tags fts5 ./internal/server/...`
 
 ## Task 2: Cap search fallback source listing
 - **Status:** pending
@@ -39,17 +40,23 @@
 - [ ] 3.1 `toolExecute()` in `tools.go`: remove "MANDATORY" prefix, remove "git queries (git log, git diff)" from examples, reframe as extraction tool with positive/negative guidance
 - [ ] 3.2 `toolBatchExecute()` in `tools.go`: remove "THIS IS THE PRIMARY TOOL", reframe as broad exploration/extraction tool with "NOT for" guidance
 - [ ] 3.3 `toolFetchAndIndex()` in `tools.go`: update description to mention ephemeral default, `kind` parameter, and `source:` filter pattern for follow-up search
-- [ ] 3.4 Verify: `go build ./...`, start MCP server, call `tools/list`, inspect descriptions
+- [ ] 3.4 `toolSearch()` in `tools.go`: fix stale description — change default from "durable only" to "durable and session", remove "fetched/indexed reference content" parenthetical, update `include_kinds` help text to match actual `effectiveKindFilter` behavior
+- [ ] 3.5 Verify: `go build ./...`, start MCP server, call `tools/list`, inspect descriptions
 
-## Task 4: Full AGENTS.md rewrite
+## Task 4: Full routing rewrite (AGENTS.md + generated routing blocks)
 - **Status:** pending
 - **Depends on:** Task 1, Task 3
-- **Docs:** [implementation.md § Task 4](./implementation.md#task-4-full-agentsmd-rewrite)
+- **Docs:** [implementation.md § Task 4](./implementation.md#task-4-full-routing-rewrite-agentsmd--generated-routing-blocks)
 
 ### Subtasks
 - [ ] 4.1 Write new `.capy/AGENTS.md` with task-aware routing structure: decision principle, when to use direct tools, when to use capy, blocked commands, source kinds, Read vs capy_execute_file, output constraints, subagent routing, capy commands
-- [ ] 4.2 Verify routing clarity: does the document unambiguously route `git diff` to Bash? Does it route broad `rg` to capy? Does it explain when to pass `kind: "durable"` to fetch?
-- [ ] 4.3 Verify no orphaned references: check if other docs reference AGENTS.md sections that were renamed or removed
+- [ ] 4.2 Rewrite `GenerateRoutingInstructions()` in `internal/platform/routing.go` to produce the same task-aware routing content as AGENTS.md
+- [ ] 4.3 Rewrite `RoutingBlock()` in `internal/hook/routing.go` — replace "MUST use capy", "Primary tool", "DO NOT use Bash >20 lines", "Bash is ONLY for" with task-aware comprehension-vs-extraction guidance
+- [ ] 4.4 Update `BASH_GUIDANCE` constant in `internal/hook/routing.go` — replace "Bash is best for: git, mkdir, rm, mv, navigation, and short-output commands only" with task-aware guidance
+- [ ] 4.5 Review `GREP_GUIDANCE` and `READ_GUIDANCE` constants — update if they contradict the new routing principle (READ_GUIDANCE is likely fine as-is)
+- [ ] 4.6 Verify routing clarity: does AGENTS.md unambiguously route `git diff` to Bash? Does `RoutingBlock()` do the same for subagents? Does it explain when to pass `kind: "durable"` to fetch?
+- [ ] 4.7 Verify no orphaned references: check if other docs reference AGENTS.md sections that were renamed or removed
+- [ ] 4.8 Run tests: `go test -tags fts5 ./internal/hook/... ./internal/platform/...`
 
 ## Task 5: Final verification
 - **Status:** pending

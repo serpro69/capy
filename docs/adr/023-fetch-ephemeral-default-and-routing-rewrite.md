@@ -44,11 +44,15 @@ The implicit promote/demote path already exists in `indexPreparedChunks`: re-ind
 
 ### D3: Search fallback listing capped to summary-only
 
-Replace the unbounded per-source listing in the search handler's no-results path with a single summary line: source count and total section count. Per-query "ephemeral excluded" and "session excluded" hints are preserved — they provide targeted, actionable guidance. Detailed source browsing belongs in `capy_stats`, not in search fallback output.
+Replace the unbounded per-source listing in the search handler's no-results path with a single summary line: source count per included kind. Section counts are intentionally omitted — source count is sufficient for a directional "content exists, refine your query" signal, and `capy_stats` provides the detailed breakdown. Per-query "ephemeral excluded" and "session excluded" hints are preserved — they provide targeted, actionable guidance.
 
-### D4: Full AGENTS.md rewrite — task-aware routing
+### D4: Full routing rewrite — AGENTS.md, generated routing block, and runtime hook
 
-Replace the current "capy is the primary tool, use Bash only for exceptions" framing with a task-aware decision tree:
+Replace the current "capy is the primary tool, use Bash only for exceptions" framing with a task-aware decision tree across all three routing surfaces:
+
+1. **`.capy/AGENTS.md`** — the static file agents read from the repo.
+2. **`internal/platform/routing.go` — `GenerateRoutingInstructions()`** — the routing block written to CLAUDE.md/AGENTS.md during `capy setup`.
+3. **`internal/hook/routing.go` — `RoutingBlock()`** — the XML routing block injected at runtime into subagent prompts and session start. Plus the `BASH_GUIDANCE`, `GREP_GUIDANCE` constants.
 
 **Core principle:** Use capy when you need to *extract* specific facts from large output. Use direct tools (Bash, Read) when you need to *comprehend* content fully.
 
@@ -59,11 +63,16 @@ Key routing rules:
 - **Sequential/ordered content uses Read/Bash.** BM25 ranking reorders by relevance, destroying sequence.
 - **High-volume exploration and extraction uses capy.** Broad `rg` searches, API responses, large log analysis — content is large and you only need targeted facts.
 
-### D5: Tool description updates
+### D5: Fetch cache must respect kind changes
+
+The TTL cache check in `handleFetchAndIndex` (line 52-68) returns a cache hit before any kind handling runs. If a source was previously fetched as durable and is within the TTL window, a re-fetch with `kind: "ephemeral"` silently returns the old durable entry without re-indexing. Fix: parse/validate `kind` before the cache check; when the requested kind differs from `meta.Kind` (available on `SourceMeta`), bypass the cache and proceed with re-fetch+re-index.
+
+### D6: Tool description updates
 
 - `capy_execute`: Remove "MANDATORY" prefix and "git queries (git log, git diff)" from examples.
 - `capy_batch_execute`: Remove "THIS IS THE PRIMARY TOOL." Reframe as exploration/extraction tool.
 - `capy_fetch_and_index`: Document ephemeral default and `kind` parameter. Note that follow-up search needs `source:` filter or `include_kinds`.
+- `capy_search`: Fix stale description. Main description says "returns only durable sources (fetched/indexed reference content)" — change to "returns durable and session sources" and remove the parenthetical about fetched content. Fix `include_kinds` description: change default from `[\"durable\"] only` to `[\"durable\", \"session\"]` to match actual `effectiveKindFilter` behavior. Update `"durable"` parenthetical from "fetched/indexed reference content" to "explicitly indexed reference content".
 
 ## Variants Considered
 
