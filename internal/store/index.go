@@ -11,6 +11,19 @@ import (
 	"github.com/serpro69/capy/internal/sanitize"
 )
 
+const DefaultMaxSourceBytes = 2 * 1024 * 1024
+
+// SourceTooLargeError is returned when content exceeds the configured
+// MaxSourceBytes limit. Callers can use errors.As to extract the details.
+type SourceTooLargeError struct {
+	Size  int
+	Limit int
+}
+
+func (e *SourceTooLargeError) Error() string {
+	return fmt.Sprintf("source too large: %d bytes exceeds %d byte limit (configure store.max_source_bytes to adjust)", e.Size, e.Limit)
+}
+
 // Index indexes content into the knowledge base. It auto-detects
 // content type if contentType is empty. Duplicate content (same label
 // and hash) is skipped; changed content replaces the old source.
@@ -18,6 +31,10 @@ import (
 func (s *ContentStore) Index(content, label, contentType string, kind SourceKind) (*IndexResult, error) {
 	if !kind.Valid() {
 		return nil, fmt.Errorf("invalid source kind %q", kind)
+	}
+
+	if len(content) > s.maxSourceBytes {
+		return nil, &SourceTooLargeError{Size: len(content), Limit: s.maxSourceBytes}
 	}
 
 	if contentType == "" {
@@ -40,6 +57,10 @@ func (s *ContentStore) Index(content, label, contentType string, kind SourceKind
 func (s *ContentStore) IndexChunked(transcript, label, contentType string, kind SourceKind, chunks []Chunk) (*IndexResult, error) {
 	if !kind.Valid() {
 		return nil, fmt.Errorf("invalid source kind %q", kind)
+	}
+
+	if len(transcript) > s.maxSourceBytes {
+		return nil, &SourceTooLargeError{Size: len(transcript), Limit: s.maxSourceBytes}
 	}
 
 	transcript = sanitize.StripSecrets(transcript)

@@ -23,9 +23,10 @@ func (s *ContentStore) ctx() context.Context {
 
 // ContentStore manages the FTS5 knowledge base.
 type ContentStore struct {
-	dbPath      string
-	projectDir  string
-	titleWeight float64
+	dbPath         string
+	projectDir     string
+	titleWeight    float64
+	maxSourceBytes int
 
 	mu sync.Mutex
 	db *sql.DB
@@ -63,15 +64,21 @@ type ContentStore struct {
 // NewContentStore creates a new ContentStore. The database is not opened
 // until the first operation (lazy initialization via getDB).
 // titleWeight controls the BM25 title column weight; values <= 0 default to 2.0.
-func NewContentStore(dbPath, projectDir string, titleWeight float64) *ContentStore {
+// maxSourceBytes caps the total content size accepted by Index/IndexChunked;
+// values <= 0 default to DefaultMaxSourceBytes.
+func NewContentStore(dbPath, projectDir string, titleWeight float64, maxSourceBytes int) *ContentStore {
 	if titleWeight <= 0 {
 		titleWeight = 2.0
 	}
+	if maxSourceBytes <= 0 {
+		maxSourceBytes = DefaultMaxSourceBytes
+	}
 	return &ContentStore{
-		dbPath:      dbPath,
-		projectDir:  projectDir,
-		titleWeight: titleWeight,
-		fuzzyCache:  make(map[string]*string),
+		dbPath:         dbPath,
+		projectDir:     projectDir,
+		titleWeight:    titleWeight,
+		maxSourceBytes: maxSourceBytes,
+		fuzzyCache:     make(map[string]*string),
 	}
 }
 
@@ -364,6 +371,44 @@ func (s *ContentStore) optimizeFTS(db *sql.DB) {
 	if _, err := db.Exec("INSERT INTO chunks_trigram(chunks_trigram) VALUES ('optimize')"); err != nil {
 		slog.Warn("FTS5 optimize failed for chunks_trigram", "error", err)
 	}
+}
+
+// Vacuum runs VACUUM to reclaim dead pages from the database file. Opens a
+// dedicated single connection (not the pool) since VACUUM rewrites the entire
+// file — with SQLCipher this also re-encrypts, so it's heavier than plain SQLite.
+func (s *ContentStore) Vacuum() error {
+	key, err := RequireEncryptionKey()
+	if err != nil {
+		return err
+	}
+	dsn := EncryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=10000"
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return fmt.Errorf("opening database for vacuum: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	if _, err := db.Exec("VACUUM"); err != nil {
+		return fmt.Errorf("vacuum failed: %w", err)
+	}
+	return nil
+}
+
+// FreelistRatio returns the ratio of freelist pages to total pages.
+// Returns 0 if total pages is 0 or on any error.
+func (s *ContentStore) FreelistRatio() float64 {
+	db, err := s.getDB()
+	if err != nil {
+		return 0
+	}
+	var freelist, total int64
+	db.QueryRow("PRAGMA freelist_count").Scan(&freelist)
+	db.QueryRow("PRAGMA page_count").Scan(&total)
+	if total == 0 {
+		return 0
+	}
+	return float64(freelist) / float64(total)
 }
 
 // Checkpoint flushes the WAL into the main database file using a dedicated

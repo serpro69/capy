@@ -26,6 +26,8 @@ Do not port `cleanupStaleSources`. Keep the existing `Cleanup()` method which on
 - If aggressive cleanup is ever needed, add an `aggressive` flag to existing `Cleanup` rather than a separate method
 - DB size concerns are mitigated by tiered freshness reporting in `capy_stats` — users can see what's cold and manually clean up
 
+**Amendment (2026-05-11):** Cleanup now also evicts sources whose total content size exceeds the configured `MaxSourceBytes` limit (default 2 MB), regardless of access count or retention score. This corrects sources that should never have been indexed at the current limit — see ADR-022. Auto-VACUUM triggers when freelist pages exceed 20% of total pages after a non-dry-run cleanup. The conservative never-accessed-only eviction principle is preserved for normally-sized durable sources.
+
 ## Consequences
 
 - capy's knowledge base may grow larger than context-mode's over time

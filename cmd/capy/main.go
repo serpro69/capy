@@ -37,6 +37,7 @@ func main() {
 		newEncryptCmd(),
 		newWhichCmd(),
 		newSweepCmd(),
+		newDBSizeCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

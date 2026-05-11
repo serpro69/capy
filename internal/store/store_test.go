@@ -19,7 +19,7 @@ func newTestStore(t *testing.T) *ContentStore {
 	t.Setenv(encryptionKeyEnv, testEncryptionKey)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
-	s := NewContentStore(dbPath, dir, 0)
+	s := NewContentStore(dbPath, dir, 0, 0)
 	t.Cleanup(func() { s.Close() })
 	return s
 }
@@ -31,7 +31,7 @@ func TestSchemaIdempotency(t *testing.T) {
 
 	// Open, init, close, repeat.
 	for range 2 {
-		s := NewContentStore(dbPath, dir, 0)
+		s := NewContentStore(dbPath, dir, 0, 0)
 		_, err := s.getDB()
 		require.NoError(t, err)
 		require.NoError(t, s.Close())
@@ -42,7 +42,7 @@ func TestDBDirectoryCreated(t *testing.T) {
 	t.Setenv(encryptionKeyEnv, testEncryptionKey)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "sub", "deep", "test.db")
-	s := NewContentStore(dbPath, dir, 0)
+	s := NewContentStore(dbPath, dir, 0, 0)
 	defer s.Close()
 
 	_, err := s.getDB()
@@ -59,7 +59,7 @@ func TestCloseCheckpointsWAL(t *testing.T) {
 	dbPath := filepath.Join(dir, "test.db")
 
 	// Index content to generate WAL data.
-	s := NewContentStore(dbPath, dir, 0)
+	s := NewContentStore(dbPath, dir, 0, 0)
 	_, err := s.Index("# Test\n\nSome content to index.", "wal-test", "", KindDurable)
 	require.NoError(t, err)
 
@@ -75,7 +75,7 @@ func TestCloseCheckpointsWAL(t *testing.T) {
 	}
 
 	// Data must survive — reopen and verify.
-	s2 := NewContentStore(dbPath, dir, 0)
+	s2 := NewContentStore(dbPath, dir, 0, 0)
 	defer s2.Close()
 	sources, err := s2.ListSources()
 	require.NoError(t, err)
@@ -90,14 +90,14 @@ func TestCheckpointMethod(t *testing.T) {
 	dbPath := filepath.Join(dir, "test.db")
 
 	// Index content, then close WITHOUT checkpoint (simulate unclean shutdown).
-	s := NewContentStore(dbPath, dir, 0)
+	s := NewContentStore(dbPath, dir, 0, 0)
 	_, err := s.Index("# Checkpoint Test\n\nData that must survive.", "cp-test", "", KindDurable)
 	require.NoError(t, err)
 	// Close normally (which checkpoints), then write more via raw SQL to leave WAL dirty.
 	require.NoError(t, s.Close())
 
 	// Reopen, write, close the raw db handle without checkpoint.
-	s2 := NewContentStore(dbPath, dir, 0)
+	s2 := NewContentStore(dbPath, dir, 0, 0)
 	_, err = s2.Index("# More data\n\nAnother chunk.", "cp-test-2", "", KindDurable)
 	require.NoError(t, err)
 	// Access internal db directly to close without our checkpoint logic.
@@ -106,7 +106,7 @@ func TestCheckpointMethod(t *testing.T) {
 	s2.db = nil
 
 	// WAL may have data now. Run Checkpoint() from a fresh store.
-	s3 := NewContentStore(dbPath, dir, 0)
+	s3 := NewContentStore(dbPath, dir, 0, 0)
 	require.NoError(t, s3.Checkpoint())
 
 	// WAL must be gone or empty.
@@ -524,7 +524,7 @@ func TestCorruptDBRecovery(t *testing.T) {
 	// Write garbage to simulate corruption.
 	require.NoError(t, os.WriteFile(dbPath, []byte("this is not a database"), 0o644))
 
-	s := NewContentStore(dbPath, dir, 0)
+	s := NewContentStore(dbPath, dir, 0, 0)
 	defer s.Close()
 
 	// Should recover: back up corrupt file and create a working DB.
@@ -556,7 +556,7 @@ func TestCorruptDBRecoveryPreservesBackup(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(dbPath, garbage, 0o644))
 
-	s := NewContentStore(dbPath, dir, 0)
+	s := NewContentStore(dbPath, dir, 0, 0)
 	defer s.Close()
 
 	_, err := s.getDB()
@@ -580,7 +580,7 @@ func TestNonCorruptionErrorDoesNotTriggerRecovery(t *testing.T) {
 	t.Setenv(encryptionKeyEnv, testEncryptionKey)
 	// Point at a non-existent nested directory — this is a "creating DB directory"
 	// error, not corruption. Should not attempt recovery.
-	s := NewContentStore("/dev/null/impossible/path/test.db", "", 0)
+	s := NewContentStore("/dev/null/impossible/path/test.db", "", 0, 0)
 	_, err := s.getDB()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "creating DB directory")

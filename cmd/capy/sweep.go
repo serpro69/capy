@@ -41,7 +41,7 @@ func newSweepCmd() *cobra.Command {
 			opts := session.SweepOptions{Reindex: reindex}
 
 			dbPath := cfg.ResolveDBPath(projectDir)
-			st := store.NewContentStore(dbPath, projectDir, 0)
+			st := store.NewContentStore(dbPath, projectDir, 0, 0)
 			defer st.Close()
 
 			if force {

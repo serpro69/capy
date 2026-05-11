@@ -9,10 +9,11 @@ type Config struct {
 
 // StoreConfig controls the FTS5 knowledge base.
 type StoreConfig struct {
-	Path        string        `toml:"path"`
-	TitleWeight float64       `toml:"title_weight"` // BM25 title weight (default 2.0)
-	Cleanup     CleanupConfig `toml:"cleanup"`
-	Cache       CacheConfig   `toml:"cache"`
+	Path           string        `toml:"path"`
+	TitleWeight    float64       `toml:"title_weight"`     // BM25 title weight (default 2.0)
+	MaxSourceBytes int           `toml:"max_source_bytes"` // hard cap on total content per source (default 2 MB)
+	Cleanup        CleanupConfig `toml:"cleanup"`
+	Cache          CacheConfig   `toml:"cache"`
 }
 
 // CacheConfig controls fetch TTL caching.
@@ -50,7 +51,8 @@ type ServerConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Store: StoreConfig{
-			TitleWeight: 2.0,
+			TitleWeight:    2.0,
+			MaxSourceBytes: 2 * 1024 * 1024,
 			Cleanup: CleanupConfig{
 				ColdThresholdDays: 30,
 				EphemeralTTLHours: 24,

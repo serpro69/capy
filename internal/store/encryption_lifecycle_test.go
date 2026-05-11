@@ -26,7 +26,7 @@ func TestEncryptionLifecycle(t *testing.T) {
 
 	// Phase 1: Create encrypted DB, index content, close.
 	t.Setenv(encryptionKeyEnv, key1)
-	s := NewContentStore(dbPath, dir, 0)
+	s := NewContentStore(dbPath, dir, 0, 0)
 
 	_, err := s.Index("# Encryption Test\n\nThe quick brown fox jumps over the lazy dog.", "lifecycle-doc", "", KindDurable)
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestEncryptionLifecycle(t *testing.T) {
 
 	// Phase 2: Reopen with correct key, verify content is searchable.
 	t.Setenv(encryptionKeyEnv, key1)
-	s2 := NewContentStore(dbPath, dir, 0)
+	s2 := NewContentStore(dbPath, dir, 0, 0)
 	defer s2.Close()
 
 	results, err := s2.SearchWithFallback("quick brown fox", 5, SearchOptions{})
@@ -60,7 +60,7 @@ func TestEncryptionLifecycle(t *testing.T) {
 
 	// Phase 3: Wrong key fails cleanly.
 	t.Setenv(encryptionKeyEnv, wrongKey)
-	s3 := NewContentStore(dbPath, dir, 0)
+	s3 := NewContentStore(dbPath, dir, 0, 0)
 	_, err = s3.SearchWithFallback("anything", 5, SearchOptions{})
 	require.Error(t, err, "wrong key should produce an error")
 	assert.True(t, isWrongPassphrase(err), "error should be errWrongPassphrase, got: %v", err)
@@ -86,7 +86,7 @@ func TestEncryptionLifecycle(t *testing.T) {
 
 	// Phase 5: Old key fails on re-keyed DB.
 	t.Setenv(encryptionKeyEnv, key1)
-	s4 := NewContentStore(dbPath, dir, 0)
+	s4 := NewContentStore(dbPath, dir, 0, 0)
 	_, err = s4.SearchWithFallback("anything", 5, SearchOptions{})
 	require.Error(t, err, "old key should fail after re-key")
 	assert.True(t, isWrongPassphrase(err), "error should be errWrongPassphrase, got: %v", err)
@@ -94,7 +94,7 @@ func TestEncryptionLifecycle(t *testing.T) {
 
 	// Phase 6: New key works, content survived re-key.
 	t.Setenv(encryptionKeyEnv, key2)
-	s5 := NewContentStore(dbPath, dir, 0)
+	s5 := NewContentStore(dbPath, dir, 0, 0)
 	defer s5.Close()
 
 	results, err = s5.SearchWithFallback("quick brown fox", 5, SearchOptions{})

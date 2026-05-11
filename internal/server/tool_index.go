@@ -33,13 +33,16 @@ func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 			}
 			path = cleanPath
 		}
-		const maxFileSize = 10 * 1024 * 1024 // 10MB
+		maxFileSize := int64(s.config.Store.MaxSourceBytes)
+		if maxFileSize <= 0 {
+			maxFileSize = int64(store.DefaultMaxSourceBytes)
+		}
 		info, err := os.Stat(path)
 		if err != nil {
 			return errorResult(fmt.Sprintf("Failed to read file: %v", err)), nil
 		}
 		if info.Size() > maxFileSize {
-			return errorResult(fmt.Sprintf("File too large (>%dMB)", maxFileSize/(1024*1024))), nil
+			return errorResult(fmt.Sprintf("File too large: %d bytes exceeds %d byte limit (configure store.max_source_bytes to adjust)", info.Size(), maxFileSize)), nil
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
