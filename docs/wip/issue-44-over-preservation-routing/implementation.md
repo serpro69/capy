@@ -70,9 +70,12 @@ Count only non-excluded kinds (respect `ephemeralExcluded` and `sessionExcluded`
 
 The `ListSources()` call is no longer needed in this path — remove it. If `ListSources` is unused elsewhere after this change, leave it (it's a store-layer method that may have other consumers or future uses).
 
+**`internal/server/tool_search.go` — ephemeral-excluded hint (lines 126-131):**
+Update the hint text. Currently it says `"To include command output from capy_execute / capy_execute_file / capy_batch_execute"` — after fetch defaults to ephemeral, this is incomplete. Change to mention that ephemeral sources now include both command output and fetched web pages. Add `source: "<label>"` as a recovery path (it's already in the session-excluded hint pattern but missing from the ephemeral one).
+
 ### What NOT to change
 
-- Per-query "ephemeral excluded" / "session excluded" hints at lines 117-151 — these are targeted and actionable. Keep them.
+- Per-query "session excluded" hints at lines 134-150 — these are already correct. Keep them.
 - Throttle warnings at lines 172-177 — keep them.
 - The `ListSources` store method itself — don't delete it; other code paths or `capy_stats` may use it.
 
@@ -106,7 +109,13 @@ The `ListSources()` call is no longer needed in this path — remove it. If `Lis
 
 ### What NOT to change
 
-- `toolIndex()`, `toolExecuteFile()`, `toolStats()`, `toolDoctor()`, `toolCleanup()` — no changes needed.
+**`internal/server/tools.go` — `toolExecuteFile()` (lines 145-172):**
+- Soften "PREFER THIS OVER Read/cat for: log files, data files (CSV, JSON, XML), large source files for analysis." — the "PREFER THIS OVER Read" language contradicts the new comprehension-vs-extraction principle where Read is the default.
+- Reframe: "Read a file and process it without loading contents into context. Best for large files (10k+ lines) where you only need derived answers (counts, patterns, structural summary). Read is correct when you need to understand or edit the file. Available: [%s]."
+
+### What NOT to change
+
+- `toolIndex()`, `toolStats()`, `toolDoctor()`, `toolCleanup()` — no changes needed.
 - Tool annotations (read-only/destructive hints) — no changes.
 
 ### Verify
@@ -180,7 +189,10 @@ Review `GREP_GUIDANCE` and `READ_GUIDANCE` — these may be fine as-is since the
 
 - `CLAUDE.md` reference to AGENTS.md (`@.capy/AGENTS.md`) — keep the include.
 - `.claude/CLAUDE.extra.md` — no changes needed.
-- `internal/hook/pretooluse.go` and `internal/hook/sessionstart.go` — these are injection points, not content sources. They call `RoutingBlock()` which we're updating.
+- `internal/hook/sessionstart.go` — injection point only; calls `RoutingBlock()` which we're updating.
+
+**`internal/hook/pretooluse.go` — build-tool redirect (lines 111-116):**
+`isBuildTool()` hard-redirects Gradle/Maven commands to `capy_execute`. Build output is sequential — test results, compilation errors, dependency resolution — where order matters for comprehension. This contradicts the new "sequential/ordered content uses direct tools" principle. Review and decide: either remove the redirect entirely (let AGENTS.md guidance handle it), soften it to a guidance nudge (like `BASH_GUIDANCE`), or keep it with a documented exception explaining why build output specifically benefits from sandbox extraction despite being sequential. The decision should be consistent with how we treat other large-output commands under the new routing principle.
 - `internal/platform/setup.go` — the setup logic that writes routing to disk and replaces stale blocks stays the same; only the content from `GenerateRoutingInstructions()` changes.
 
 ### Verify
