@@ -80,6 +80,7 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	for _, src := range pruned {
 		if src.EvictionReason == "oversized" {
 			oversizedN++
+			continue
 		}
 		switch src.Kind {
 		case store.KindSession:
