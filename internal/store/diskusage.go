@@ -6,9 +6,10 @@ import (
 )
 
 type TableSize struct {
-	Name  string
-	Pages int64
-	Bytes int64
+	Name     string
+	Pages    int64
+	Bytes    int64
+	RowCount int64 // populated by fallback when dbstat is unavailable
 }
 
 type KindSize struct {
@@ -32,6 +33,7 @@ type DiskUsageBreakdown struct {
 	FreelistPages int64
 	VocabTerms    int64
 	Tables        []TableSize
+	HasDBStat     bool // true when dbstat vtable is available (per-table page counts are accurate)
 	Kinds         []KindSize
 	TopSources    []TopSource
 }
@@ -54,13 +56,14 @@ func (s *ContentStore) DiskUsage() (*DiskUsageBreakdown, error) {
 	db.QueryRow("SELECT COUNT(*) FROM vocabulary").Scan(&b.VocabTerms)
 
 	rows, err := db.Query(`
-		SELECT name, SUM(pageno) as pages
+		SELECT name, COUNT(*) as pages
 		FROM dbstat
 		GROUP BY name
 		ORDER BY pages DESC`)
 	if err != nil {
 		b.Tables = s.tableSizesFallback()
 	} else {
+		b.HasDBStat = true
 		defer rows.Close()
 		for rows.Next() {
 			var t TableSize
@@ -130,7 +133,7 @@ func (s *ContentStore) tableSizesFallback() []TableSize {
 		rows.Scan(&name)
 		var count int64
 		db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %q", name)).Scan(&count)
-		tables = append(tables, TableSize{Name: name, Pages: count})
+		tables = append(tables, TableSize{Name: name, RowCount: count})
 	}
 	return tables
 }
