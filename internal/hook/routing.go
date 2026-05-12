@@ -1,32 +1,38 @@
 package hook
 
 // RoutingBlock returns the XML routing instructions injected into subagent
-// prompts and session start events. Guides the LLM to use capy MCP tools
-// instead of raw Bash/Read/WebFetch.
+// prompts and session start events. Guides the LLM on when to use capy MCP
+// tools vs direct tools based on comprehension-vs-extraction needs.
 func RoutingBlock() string {
 	return `<context_window_protection>
-  <priority_instructions>
-    Raw tool output floods your context window. You MUST use capy
-    MCP tools to keep raw data in the sandbox.
-  </priority_instructions>
+  <routing_principle>
+    Choose tools based on what you need from the output:
+    - Comprehension (understand full content) → Bash, Read
+    - Extraction (specific facts from large output) → capy tools
+  </routing_principle>
 
-  <tool_selection_hierarchy>
-    1. GATHER: capy_batch_execute(commands, queries)
-       - Primary tool for research. Runs all commands, auto-indexes, and searches.
-       - ONE call replaces many individual steps.
-    2. FOLLOW-UP: capy_search(queries: ["q1", "q2", ...])
-       - Use for all follow-up questions. ONE call, many queries.
-    3. PROCESSING: capy_execute(language, code) | capy_execute_file(path, language, code)
-       - Use for API calls, log analysis, and data processing.
-  </tool_selection_hierarchy>
+  <direct_tools>
+    Use Bash/Read for:
+    - Git commands (diffs, logs, status) — always Bash
+    - Small-output commands (less than ~50 lines)
+    - Files to comprehend or edit (Read)
+    - Sequential/ordered content (test output, build logs)
+    - Instruction files, checklists, configs (Read whole)
+  </direct_tools>
 
-  <forbidden_actions>
-    - DO NOT use Bash for commands producing >20 lines of output.
-    - For large files (10k+ lines), prefer execute_file when you only need derived answers (counts, patterns). Read IS correct for any file you need to understand, follow as instructions, or edit.
-    - DO NOT use capy_index on instruction files (skills, checklists, configs, plugin files). Read them directly — they must be internalized whole, not searched as fragments.
-    - DO NOT use WebFetch (use capy_fetch_and_index instead).
-    - Bash is ONLY for git/mkdir/rm/mv/navigation.
-  </forbidden_actions>
+  <capy_tools>
+    Use capy for:
+    - capy_batch_execute: broad exploration, multiple commands + queries in ONE call
+    - capy_execute / capy_execute_file: large-output extraction (hundreds+ lines)
+    - capy_fetch_and_index: web content (default ephemeral; kind: "durable" for reference docs)
+    - capy_search: query indexed content (batch questions as array)
+  </capy_tools>
+
+  <blocked>
+    - curl/wget in Bash → use capy_fetch_and_index or capy_execute
+    - Inline HTTP in Bash → use capy_execute
+    - WebFetch → use capy_fetch_and_index
+  </blocked>
 
   <output_constraints>
     <word_limit>Keep your final response under 500 words.</word_limit>
@@ -66,19 +72,18 @@ const READ_GUIDANCE = `<context_guidance>
 // GREP_GUIDANCE is the one-time advisory shown when Grep is used.
 const GREP_GUIDANCE = `<context_guidance>
   <tip>
-    This operation may flood your context window. To stay efficient:
-    - Use capy_execute(language: "shell", code: "...") to run searches in the sandbox.
-    - Only your final printed summary will enter the context.
+    Grep results can be large. If you need all matches for comprehension, this is fine.
+    For extraction from large result sets, use capy_execute(language: "shell", code: "grep ...")
+    to run in sandbox — only your printed summary enters context.
   </tip>
 </context_guidance>`
 
 // BASH_GUIDANCE is the one-time advisory shown when Bash is used (and not blocked).
 const BASH_GUIDANCE = `<context_guidance>
   <tip>
-    This Bash command may produce large output. To stay efficient:
-    - Use capy_batch_execute(commands, queries) for multiple commands
-    - Use capy_execute(language: "shell", code: "...") to run in sandbox
-    - Only your final printed summary will enter the context.
-    - Bash is best for: git, mkdir, rm, mv, navigation, and short-output commands only.
+    This Bash command may produce large output. Consider:
+    - If you need to comprehend the full output (diffs, test results, logs): Bash is correct.
+    - If you only need extracted facts from large output: use capy_execute or capy_batch_execute.
+    - For multiple commands + search in ONE call: capy_batch_execute.
   </tip>
 </context_guidance>`

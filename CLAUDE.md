@@ -16,6 +16,6 @@ It's a port of `context-mode` project written in Go, aiming to utilize Go's feat
 
 @.claude/CLAUDE.extra.md
 
-# capy — MANDATORY routing rules
+# capy — context-window routing
 
 @.capy/AGENTS.md

@@ -75,14 +75,6 @@ func hasInlineHTTP(cmd string) bool {
 	return false
 }
 
-// buildToolRe matches build tools: gradle, gradlew, mvn, mvnw.
-var buildToolRe = regexp.MustCompile(`(?i)(^|\s|&&|\||\;)(\.\/gradlew|gradlew|gradle|\.\/mvnw|mvnw|mvn)\s`)
-
-// isBuildTool returns true if the (stripped) command invokes a build tool.
-func isBuildTool(stripped string) bool {
-	return buildToolRe.MatchString(stripped)
-}
-
 // splitChainedCommands splits a shell command on &&, ||, ;, and | operators,
 // respecting single-quoted, double-quoted, and backtick-quoted strings.
 func splitChainedCommands(cmd string) []string {

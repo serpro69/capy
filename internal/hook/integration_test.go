@@ -262,8 +262,7 @@ func TestHookIntegration_GeminiAlias_CurlBlocked(t *testing.T) {
 
 // ─── Build tool routing ────────────────────────────────────────────────────────
 
-func TestHookIntegration_GradleBuild_Redirected(t *testing.T) {
-	ResetGuidanceThrottle()
+func TestHookIntegration_GradleBuild_Guidance(t *testing.T) {
 	a := ccAdapter()
 	input := ccInput("Bash", map[string]any{"command": "./gradlew build"})
 	output, err := handlePreToolUse(input, a, nil, "")
@@ -271,9 +270,9 @@ func TestHookIntegration_GradleBuild_Redirected(t *testing.T) {
 	require.NotNil(t, output)
 
 	hso := ccParse(t, output)
-	assert.Equal(t, "allow", hso["permissionDecision"])
-	updated := hso["updatedInput"].(map[string]any)
-	assert.Contains(t, updated["command"], "sandbox")
+	ctx, ok := hso["additionalContext"].(string)
+	require.True(t, ok, "expected additionalContext for build tool guidance")
+	assert.Contains(t, ctx, "context_guidance")
 }
 
 // ─── Session start ─────────────────────────────────────────────────────────────

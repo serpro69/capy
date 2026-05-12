@@ -562,8 +562,14 @@ const routingImportRef = "@.capy/AGENTS.md"
 // oldRoutingImportRef is the previous import path, used for migration.
 const oldRoutingImportRef = "@.claude/capy/CLAUDE.md"
 
+// routingImportHeading is the current heading for the routing import block.
+const routingImportHeading = "# capy — context-window routing"
+
+// oldRoutingImportHeading is the previous heading, used for migration.
+const oldRoutingImportHeading = "# capy — MANDATORY routing rules"
+
 // routingImportBlock is the full block appended to root CLAUDE.md to import capy routing.
-const routingImportBlock = "# capy — MANDATORY routing rules\n\n" + routingImportRef + "\n"
+const routingImportBlock = routingImportHeading + "\n\n" + routingImportRef + "\n"
 
 // writeAgentsFile writes routing instructions to .capy/AGENTS.md.
 func writeAgentsFile(projectDir string) error {
@@ -582,27 +588,41 @@ func ensureClaudeMDImport(claudeMDPath string) error {
 
 	text := string(content)
 
-	// Already has the current import → nothing to do
+	// Already has the current import → migrate heading if stale
 	if strings.Contains(text, routingImportRef) {
+		if strings.Contains(text, oldRoutingImportHeading) {
+			text = strings.Replace(text, oldRoutingImportHeading, routingImportHeading, 1)
+			return os.WriteFile(claudeMDPath, []byte(text), 0o644)
+		}
 		return nil
 	}
 
-	// Old import path (.claude/capy/CLAUDE.md) → replace with new path
+	// Old import path (.claude/capy/CLAUDE.md) → replace with new path and heading
 	if strings.Contains(text, oldRoutingImportRef) {
 		text = strings.ReplaceAll(text, oldRoutingImportRef, routingImportRef)
+		if strings.Contains(text, oldRoutingImportHeading) {
+			text = strings.Replace(text, oldRoutingImportHeading, routingImportHeading, 1)
+		}
 		return os.WriteFile(claudeMDPath, []byte(text), 0o644)
 	}
 
-	// Old inline routing block present → replace with import.
-	// Uses marker-based detection so migration works even when
-	// GenerateRoutingInstructions() output changed between versions.
-	const startMarker = "# capy — MANDATORY routing rules"
-	if startIdx := strings.Index(text, startMarker); startIdx >= 0 {
-		rest := text[startIdx+len(startMarker):]
+	// Inline routing block present → replace with import.
+	// Check both old and current headings so migration works across versions.
+	markerIdx := -1
+	markerLen := 0
+	if idx := strings.Index(text, oldRoutingImportHeading); idx >= 0 {
+		markerIdx = idx
+		markerLen = len(oldRoutingImportHeading)
+	} else if idx := strings.Index(text, routingImportHeading); idx >= 0 {
+		markerIdx = idx
+		markerLen = len(routingImportHeading)
+	}
+	if markerIdx >= 0 {
+		rest := text[markerIdx+markerLen:]
 		if endIdx := strings.Index(rest, "\n# "); endIdx >= 0 {
-			text = text[:startIdx] + routingImportBlock + rest[endIdx+1:]
+			text = text[:markerIdx] + routingImportBlock + rest[endIdx+1:]
 		} else {
-			text = text[:startIdx] + routingImportBlock
+			text = text[:markerIdx] + routingImportBlock
 		}
 		return os.WriteFile(claudeMDPath, []byte(text), 0o644)
 	}

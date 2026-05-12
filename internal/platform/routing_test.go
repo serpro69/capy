@@ -26,9 +26,11 @@ func TestGenerateRoutingInstructions(t *testing.T) {
 	}
 
 	// Must contain key sections
-	assert.Contains(t, instructions, "BLOCKED commands")
-	assert.Contains(t, instructions, "REDIRECTED tools")
-	assert.Contains(t, instructions, "Tool selection hierarchy")
+	assert.Contains(t, instructions, "Decision principle")
+	assert.Contains(t, instructions, "When to use direct tools")
+	assert.Contains(t, instructions, "When to use capy tools")
+	assert.Contains(t, instructions, "Blocked commands")
+	assert.Contains(t, instructions, "Source kinds")
 	assert.Contains(t, instructions, "Subagent routing")
 	assert.Contains(t, instructions, "Output constraints")
 	assert.Contains(t, instructions, "capy commands")

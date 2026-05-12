@@ -235,19 +235,16 @@ func TestPreToolUse_FetchBlocked(t *testing.T) {
 	assert.Equal(t, "modify", result["action"])
 }
 
-func TestPreToolUse_BuildToolBlocked(t *testing.T) {
-	ResetGuidanceThrottle()
+func TestPreToolUse_BuildToolGuidance(t *testing.T) {
 	a := &testAdapter{}
 	for _, cmd := range []string{"./gradlew build", "gradle test", "mvn clean install", "./mvnw package"} {
-		ResetGuidanceThrottle()
 		input := makeInput("Bash", map[string]any{"command": cmd})
 		output, err := handlePreToolUse(input, a, nil, "")
 		require.NoError(t, err)
-		require.NotNil(t, output, "expected modify for: %s", cmd)
+		require.NotNil(t, output, "expected guidance for: %s", cmd)
 		result := parseResult(t, output)
-		assert.Equal(t, "modify", result["action"], "expected modify for: %s", cmd)
-		updated := result["updatedInput"].(map[string]any)
-		assert.Contains(t, updated["command"], "sandbox", "for: %s", cmd)
+		assert.Equal(t, "context", result["action"], "expected guidance for: %s", cmd)
+		assert.Contains(t, result["additionalContext"], "context_guidance", "for: %s", cmd)
 	}
 }
 
@@ -524,15 +521,6 @@ func TestHasInlineHTTP(t *testing.T) {
 	assert.True(t, hasInlineHTTP(`requests.get('https://api.com')`))
 	assert.True(t, hasInlineHTTP(`http.get('http://localhost:3000')`))
 	assert.False(t, hasInlineHTTP("echo hello world"))
-}
-
-func TestIsBuildTool(t *testing.T) {
-	assert.True(t, isBuildTool("./gradlew build"))
-	assert.True(t, isBuildTool("gradle test"))
-	assert.True(t, isBuildTool("mvn clean install"))
-	assert.True(t, isBuildTool("./mvnw package"))
-	assert.False(t, isBuildTool("go build ./..."))
-	assert.False(t, isBuildTool("npm run build"))
 }
 
 func TestIsCapyTool(t *testing.T) {
