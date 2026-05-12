@@ -124,7 +124,7 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 				}
 				if ephemeralCount > 0 {
 					noResults += fmt.Sprintf(
-						"\n\n%d ephemeral source(s) present but excluded by default. Ephemeral sources include command output (capy_execute / capy_batch_execute) and fetched web pages (capy_fetch_and_index). To include them, retry with:\n"+
+						"\n\n%d ephemeral source(s) present but excluded by default. Ephemeral sources include command output (capy_execute / capy_execute_file / capy_batch_execute) and fetched web pages (capy_fetch_and_index). To include them, retry with:\n"+
 							"  • include_kinds: [\"durable\",\"ephemeral\"]  (search across both kinds), or\n"+
 							"  • source: \"<label>\"  (explicit-source filter bypasses kind filtering)",
 						ephemeralCount,

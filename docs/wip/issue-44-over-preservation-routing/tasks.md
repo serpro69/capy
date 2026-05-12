@@ -3,7 +3,7 @@
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
 > ADR: [023-fetch-ephemeral-default-and-routing-rewrite](../../adr/023-fetch-ephemeral-default-and-routing-rewrite.md)
-> Status: pending
+> Status: done
 > Created: 2026-05-11
 
 ## Task 1: Add `kind` parameter to `capy_fetch_and_index`
@@ -62,13 +62,13 @@
 - [x] 4.9 Run tests: `go test -tags fts5 ./internal/hook/... ./internal/platform/...`
 
 ## Task 5: Final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4
 
 ### Subtasks
-- [ ] 5.1 Run `go build ./...` — verify compilation
-- [ ] 5.2 Run `go test -tags fts5 ./...` — verify all tests pass
-- [ ] 5.3 Run `kk:test` to verify test coverage for new/changed code
-- [ ] 5.4 Run `kk:document` to update any relevant documentation
-- [ ] 5.5 Run `kk:review-code` with Go profile to review all changes
-- [ ] 5.6 Run `kk:review-spec` to verify implementation matches design.md, implementation.md, and ADR-023
+- [x] 5.1 Run `go build ./...` — verify compilation
+- [x] 5.2 Run `go test -tags fts5 ./...` — verify all tests pass
+- [x] 5.3 Run `kk:test` to verify test coverage for new/changed code
+- [x] 5.4 Run `kk:document` to update any relevant documentation
+- [x] 5.5 Run `kk:review-code` with Go profile to review all changes
+- [x] 5.6 Run `kk:review-spec` to verify implementation matches design.md, implementation.md, and ADR-023
