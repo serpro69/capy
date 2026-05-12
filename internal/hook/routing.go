@@ -32,8 +32,7 @@ func RoutingBlock() string {
   <blocked>
     - curl/wget in Bash → use capy_fetch_and_index or capy_execute
     - Inline HTTP in Bash → use capy_execute
-    - WebFetch → use capy_fetch_and_index
-    Note: For web comprehension, use runtime-native tools (gh, WebSearch) when available
+    - WebFetch → for git issues/PRs/MRs: platform CLI (gh issue view) or WebSearch; for large content: capy_fetch_and_index
   </blocked>
 
   <output_constraints>

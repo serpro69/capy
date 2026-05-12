@@ -37,11 +37,10 @@ func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.S
 		return routeBash(command, policies, a, projectDir, sessionID)
 	}
 
-	// ─── WebFetch: deny → redirect to sandbox ───
+	// ─── WebFetch: deny → redirect with comprehension-aware guidance ───
 	if canonical == "WebFetch" {
 		url, _ := toolInput["url"].(string)
-		reason := fmt.Sprintf("capy: WebFetch blocked. Use capy_fetch_and_index(url: %q) to fetch this URL in sandbox. Then use capy_search(queries: [...]) to query results.", url)
-		return a.FormatBlock(reason)
+		return a.FormatBlock(webFetchBlockMessage(url))
 	}
 
 	// ─── Read: guidance once ───
@@ -139,48 +138,51 @@ func routeAgent(toolInput map[string]any, a adapter.HookAdapter) ([]byte, error)
 	return a.FormatModify(updated)
 }
 
-// routeCapyTool runs security checks on capy MCP tools.
+// routeCapyTool runs security checks and routing guidance on capy MCP tools.
 func routeCapyTool(toolName string, toolInput map[string]any, policies []security.SecurityPolicy, projectDir string, a adapter.HookAdapter) ([]byte, error) {
-	if len(policies) == 0 {
-		return nil, nil
-	}
-
-	// Determine which tool variant we're dealing with
-	switch {
-	case strings.HasSuffix(toolName, "execute") && !strings.HasSuffix(toolName, "batch_execute"):
-		// capy_execute: check shell code against deny policies
-		lang, _ := toolInput["language"].(string)
-		if lang == "shell" {
-			code, _ := toolInput["code"].(string)
-			return checkCommandSecurity(code, policies, a)
-		}
-
-	case strings.HasSuffix(toolName, "execute_file"):
-		// capy_execute_file: check file path + shell code
-		filePath, _ := toolInput["path"].(string)
-		if filePath != "" {
-			denyGlobs := security.ReadToolDenyPatterns("Read", projectDir, "")
-			denied, pattern := security.EvaluateFilePath(filePath, denyGlobs)
-			if denied {
-				return a.FormatBlock(fmt.Sprintf("Blocked by security policy: file path matches Read deny pattern %s", pattern))
+	// Security checks (only when policies exist)
+	if len(policies) > 0 {
+		switch {
+		case strings.HasSuffix(toolName, "execute") && !strings.HasSuffix(toolName, "batch_execute"):
+			lang, _ := toolInput["language"].(string)
+			if lang == "shell" {
+				code, _ := toolInput["code"].(string)
+				return checkCommandSecurity(code, policies, a)
 			}
-		}
-		lang, _ := toolInput["language"].(string)
-		if lang == "shell" {
-			code, _ := toolInput["code"].(string)
-			return checkCommandSecurity(code, policies, a)
-		}
 
-	case strings.HasSuffix(toolName, "batch_execute"):
-		// capy_batch_execute: check each command
-		commands, _ := toolInput["commands"].([]any)
-		for _, entry := range commands {
-			if m, ok := entry.(map[string]any); ok {
-				cmd, _ := m["command"].(string)
-				if result, err := checkCommandSecurity(cmd, policies, a); result != nil || err != nil {
-					return result, err
+		case strings.HasSuffix(toolName, "execute_file"):
+			filePath, _ := toolInput["path"].(string)
+			if filePath != "" {
+				denyGlobs := security.ReadToolDenyPatterns("Read", projectDir, "")
+				denied, pattern := security.EvaluateFilePath(filePath, denyGlobs)
+				if denied {
+					return a.FormatBlock(fmt.Sprintf("Blocked by security policy: file path matches Read deny pattern %s", pattern))
 				}
 			}
+			lang, _ := toolInput["language"].(string)
+			if lang == "shell" {
+				code, _ := toolInput["code"].(string)
+				return checkCommandSecurity(code, policies, a)
+			}
+
+		case strings.HasSuffix(toolName, "batch_execute"):
+			commands, _ := toolInput["commands"].([]any)
+			for _, entry := range commands {
+				if m, ok := entry.(map[string]any); ok {
+					cmd, _ := m["command"].(string)
+					if result, err := checkCommandSecurity(cmd, policies, a); result != nil || err != nil {
+						return result, err
+					}
+				}
+			}
+		}
+	}
+
+	// GitHub URL comprehension guidance for fetch_and_index (fires every call, not once-per-session)
+	if strings.HasSuffix(toolName, "fetch_and_index") {
+		url, _ := toolInput["url"].(string)
+		if guidance := fetchGuidance(url); guidance != "" {
+			return a.FormatAllow(guidance)
 		}
 	}
 
