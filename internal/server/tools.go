@@ -118,7 +118,7 @@ func toolExecute(langList string) mcp.Tool {
 	return mcp.NewTool("capy_execute",
 		mcp.WithToolAnnotation(annotationExecute),
 		mcp.WithDescription(fmt.Sprintf(
-			"MANDATORY: Use for any command where output exceeds 20 lines. Execute code in a sandboxed subprocess. Only stdout enters context — raw data stays in the subprocess. Available: [%s]. PREFER THIS OVER BASH for: API calls (gh, curl, aws), test runners (npm test, pytest), git queries (git log, git diff), data processing, and ANY CLI command that may produce large output. Bash should only be used for file mutations, git writes, and navigation.",
+			"Execute code in a sandboxed subprocess for large-output extraction. Only stdout enters context — raw data stays in the subprocess. Available: [%s]. Best for: API calls, broad searches (rg, grep), log analysis, data processing, and commands producing hundreds+ lines where you only need extracted facts. NOT for: git commands (use Bash), small-output commands (<50 lines, use Bash), content you need to comprehend fully (use Read/Bash).",
 			langList,
 		)),
 		mcp.WithString("language",
@@ -146,7 +146,7 @@ func toolExecuteFile(langList string) mcp.Tool {
 	return mcp.NewTool("capy_execute_file",
 		mcp.WithToolAnnotation(annotationExecute),
 		mcp.WithDescription(fmt.Sprintf(
-			"Read a file and process it without loading contents into context. The file is read into a FILE_CONTENT variable inside the sandbox. Only your printed summary enters context. Available: [%s]. PREFER THIS OVER Read/cat for: log files, data files (CSV, JSON, XML), large source files for analysis.",
+			"Read a file and process it without loading contents into context. The file is read into a FILE_CONTENT variable inside the sandbox. Only your printed summary enters context. Available: [%s]. Best for large files (10k+ lines) where you only need derived answers (counts, patterns, structural summary). Read is correct when you need to understand or edit the file.",
 			langList,
 		)),
 		mcp.WithString("path",
@@ -190,7 +190,7 @@ func toolIndex() mcp.Tool {
 func toolSearch() mcp.Tool {
 	return mcp.NewTool("capy_search",
 		mcp.WithToolAnnotation(annotationReadOnly),
-		mcp.WithDescription("Search indexed content. Pass ALL search questions as queries array in ONE call. TIPS: 2-4 specific terms per query. Use 'source' to scope results. By default returns only durable sources (fetched/indexed reference content); ephemeral command output is excluded — pass include_kinds: [\"durable\",\"ephemeral\"] or an explicit source: filter to recover it."),
+		mcp.WithDescription("Search indexed content. Pass ALL search questions as queries array in ONE call. TIPS: 2-4 specific terms per query. Use 'source' to scope results. By default returns durable and session sources; ephemeral content (command output, fetched web pages) is excluded — pass include_kinds: [\"durable\",\"ephemeral\"] or an explicit source: filter to recover it."),
 		mcp.WithArray("queries",
 			mcp.Description("Array of search queries. Batch ALL questions in one call."),
 			mcp.Items(map[string]any{"type": "string"}),
@@ -202,7 +202,7 @@ func toolSearch() mcp.Tool {
 			mcp.Description("Filter to a specific indexed source (partial match). When set, kind filtering is bypassed — caller's named source wins."),
 		),
 		mcp.WithArray("include_kinds",
-			mcp.Description("Source kinds to include. Accepted values: \"durable\" (fetched/indexed reference content, retained by retention score), \"ephemeral\" (auto-indexed command output from capy_execute / capy_execute_file / capy_batch_execute, swept by TTL), and \"session\" (past conversation transcripts indexed by `capy sweep`, swept by TTL). Default: [\"durable\"] only. Use [\"durable\",\"ephemeral\"] to recover prior command output, or [\"durable\",\"session\"] to search past conversations."),
+			mcp.Description("Source kinds to include. Accepted values: \"durable\" (explicitly indexed reference content, retained by retention score), \"ephemeral\" (auto-indexed command output and fetched web pages, swept by TTL), and \"session\" (past conversation transcripts indexed by `capy sweep`, swept by TTL). Default: [\"durable\", \"session\"]. Use [\"durable\",\"ephemeral\"] to recover prior command output or fetched pages, or [\"durable\",\"ephemeral\",\"session\"] to search everything."),
 			mcp.Items(map[string]any{"type": "string", "enum": []string{"durable", "ephemeral", "session"}}),
 		),
 	)
@@ -211,7 +211,7 @@ func toolSearch() mcp.Tool {
 func toolFetchAndIndex() mcp.Tool {
 	return mcp.NewTool("capy_fetch_and_index",
 		mcp.WithToolAnnotation(annotationFetch),
-		mcp.WithDescription("Fetches URL content, converts HTML to markdown, indexes into searchable knowledge base, and returns a ~3KB preview. Full content stays in sandbox — use capy_search for deeper lookups. Content-type aware: HTML→markdown, JSON→chunked by key paths, text→indexed directly."),
+		mcp.WithDescription("Fetches URL content, converts HTML to markdown, indexes as ephemeral (24h TTL, excluded from default search), and returns a ~3KB preview. Use source: filter or include_kinds for follow-up search. Pass kind: 'durable' for reference docs you want to persist across sessions. Content-type aware: HTML→markdown, JSON→chunked by key paths, text→indexed directly."),
 		mcp.WithString("url",
 			mcp.Required(),
 			mcp.Description("The URL to fetch and index"),
@@ -232,7 +232,7 @@ func toolFetchAndIndex() mcp.Tool {
 func toolBatchExecute() mcp.Tool {
 	return mcp.NewTool("capy_batch_execute",
 		mcp.WithToolAnnotation(annotationExecute),
-		mcp.WithDescription("Execute multiple commands in ONE call, auto-index all output, and search with multiple queries. Returns search results directly — no follow-up calls needed. THIS IS THE PRIMARY TOOL. Use this instead of multiple execute() calls."),
+		mcp.WithDescription("Execute multiple commands in ONE call, auto-index all output, and search with multiple queries. Returns search results directly — no follow-up calls needed. Best for broad exploration passes where you need to run multiple commands and extract specific answers from combined output. NOT for: git diffs, small commands, or content you need to read fully."),
 		mcp.WithArray("commands",
 			mcp.Required(),
 			mcp.Description("Commands to execute as a batch. Each command object has: label (section header), command (shell command to execute)."),
