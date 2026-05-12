@@ -21,16 +21,16 @@
 - [x] 1.7 Verify: `go build ./...` and `go test -tags fts5 ./internal/server/...`
 
 ## Task 2: Cap search fallback source listing
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md § Task 2](./implementation.md#task-2-cap-search-fallback-source-listing)
 
 ### Subtasks
-- [ ] 2.1 In `handleSearch()` (`internal/server/tool_search.go` lines 184-199): replace the `ListSources()` + per-source formatting loop with `CountSourcesByKind()` calls for non-excluded kinds
-- [ ] 2.2 Format a single summary line: source count per included kind, plus pointer to `capy_stats` for details (section counts intentionally omitted — source count is sufficient)
-- [ ] 2.3 Update the ephemeral-excluded hint (`tool_search.go:126-131`): add fetched content alongside command output. Change text to mention that ephemeral sources now include both command output and fetched web pages, and add `source: "<label>"` as a recovery path alongside `include_kinds`
-- [ ] 2.4 Write/update test: trigger no-results with multiple indexed sources → assert output contains count summary, does NOT contain individual source labels, still contains updated ephemeral/session hints when applicable
-- [ ] 2.5 Verify: `go test -tags fts5 ./internal/server/...`
+- [x] 2.1 In `handleSearch()` (`internal/server/tool_search.go` lines 184-199): replace the `ListSources()` + per-source formatting loop with `CountSourcesByKind()` calls for non-excluded kinds
+- [x] 2.2 Format a single summary line: source count per included kind, plus pointer to `capy_stats` for details (section counts intentionally omitted — source count is sufficient)
+- [x] 2.3 Update the ephemeral-excluded hint (`tool_search.go:126-131`): add fetched content alongside command output. Change text to mention that ephemeral sources now include both command output and fetched web pages, and add `source: "<label>"` as a recovery path alongside `include_kinds`
+- [x] 2.4 Write/update test: trigger no-results with multiple indexed sources → assert output contains count summary, does NOT contain individual source labels, still contains updated ephemeral/session hints when applicable
+- [x] 2.5 Verify: `go test -tags fts5 ./internal/server/...`
 
 ## Task 3: Update tool descriptions
 - **Status:** pending
