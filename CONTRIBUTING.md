@@ -44,6 +44,7 @@ internal/
   adapter/          Platform adapter interface + Claude Code implementation
   config/           TOML config loading, project root detection, path resolution
   executor/         Polyglot code executor (11 languages, process isolation)
+  giturl/           Git platform URL detection (shared by hook and server)
   hook/             Hook event routing (PreToolUse, PostToolUse, etc.)
   platform/         Setup command, doctor diagnostics, routing instructions
   security/         Settings parsing, glob matching, command splitting, shell-escape detection

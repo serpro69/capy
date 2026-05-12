@@ -178,10 +178,13 @@ func routeCapyTool(toolName string, toolInput map[string]any, policies []securit
 		}
 	}
 
-	// GitHub URL comprehension guidance for fetch_and_index (fires every call, not once-per-session)
+	// Git platform URL enforcement for fetch_and_index (fires every call)
 	if strings.HasSuffix(toolName, "fetch_and_index") {
 		url, _ := toolInput["url"].(string)
-		if guidance := fetchGuidance(url); guidance != "" {
+		if msg := gitPlatformBlockMessage(url); msg != "" {
+			return a.FormatBlock(msg)
+		}
+		if guidance := gistGuidance(url); guidance != "" {
 			return a.FormatAllow(guidance)
 		}
 	}
