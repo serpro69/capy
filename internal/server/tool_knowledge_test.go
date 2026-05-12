@@ -230,46 +230,37 @@ func TestSearch_NoResults_ShowsSources(t *testing.T) {
 	assert.False(t, r.IsError)
 	text := resultText(r)
 	assert.Contains(t, text, "No results found")
-	assert.Contains(t, text, "Indexed sources:", "must show the source list when all queries return empty")
-	assert.Contains(t, text, "react-docs", "must name the indexed durable source in the fallback listing")
+	assert.Contains(t, text, "1 durable", "must show durable count in fallback summary")
+	assert.Contains(t, text, "source(s) indexed", "must show the count summary when all queries return empty")
+	assert.Contains(t, text, "capy_stats", "must point to capy_stats for details")
+	assert.NotContains(t, text, "react-docs", "must NOT leak individual source labels")
 }
 
-func TestSearch_NoResults_HidesEphemeralSources(t *testing.T) {
+func TestSearch_NoResults_HidesEphemeralFromCountSummary(t *testing.T) {
 	srv := newTestServer(t, nil)
 	seedMixedKindCorpus(t, srv) // seeds one durable (k8s-docs) and one ephemeral (execute:shell)
 
-	// extractIndexedSourcesSection returns the text after "Indexed sources:" so that
-	// assertions target only the fallback listing, not the ephemeral-recovery hint
-	// (which names "execute:shell" as an example).
-	extract := func(text string) string {
-		_, after, ok := strings.Cut(text, "Indexed sources:")
-		if !ok {
-			return ""
-		}
-		return after
-	}
-
-	// Default call: ephemeral is excluded from both search and the fallback listing.
+	// Default call: ephemeral is excluded — count summary should show durable only.
 	r := callSearch(t, srv, map[string]any{
 		"queries": []any{"xyznonexistentterm123"},
 	})
 	assert.False(t, r.IsError)
 	text := resultText(r)
-	listing := extract(text)
-	require.NotEmpty(t, listing, "fallback listing must be present")
-	assert.Contains(t, listing, "k8s-docs", "durable source must appear in fallback listing")
-	assert.NotContains(t, listing, "execute:shell", "ephemeral source must NOT appear in the listing by default")
+	assert.Contains(t, text, "1 durable", "count summary must include durable sources")
+	assert.NotContains(t, text, "1 ephemeral source(s) indexed", "ephemeral must NOT appear in count summary by default")
+	assert.NotContains(t, text, "session", "no session sources seeded — must not appear")
+	assert.NotContains(t, text, "k8s-docs", "individual source labels must not appear")
+	assert.NotContains(t, text, "execute:shell", "individual source labels must not appear")
 
-	// Opting into ephemeral lists both kinds.
+	// Opting into ephemeral includes it in the count summary.
 	r = callSearch(t, srv, map[string]any{
 		"queries":       []any{"xyznonexistentterm123"},
 		"include_kinds": []any{"durable", "ephemeral"},
 	})
 	assert.False(t, r.IsError)
-	listing = extract(resultText(r))
-	require.NotEmpty(t, listing)
-	assert.Contains(t, listing, "k8s-docs")
-	assert.Contains(t, listing, "execute:shell", "opting into ephemeral surfaces it in the fallback listing")
+	text = resultText(r)
+	assert.Contains(t, text, "1 durable", "durable count must appear")
+	assert.Contains(t, text, "1 ephemeral", "opting into ephemeral surfaces it in count summary")
 }
 
 // seedMixedKindCorpus seeds the store with one durable and one ephemeral source,
@@ -364,7 +355,7 @@ func TestSearch_ZeroResultsNamesRecoveryPaths(t *testing.T) {
 	assert.Contains(t, text, "No results found")
 	// Both recovery paths must be named.
 	assert.Contains(t, text, `include_kinds: ["durable","ephemeral"]`)
-	assert.Contains(t, text, `source: "execute:`)
+	assert.Contains(t, text, `source: "<label>"`)
 	assert.Contains(t, text, "ephemeral source(s) present but excluded")
 }
 
@@ -397,7 +388,7 @@ func TestSearch_SessionRecoveryJourney(t *testing.T) {
 	text := resultText(r)
 	assert.Contains(t, text, "No results found")
 	assert.Contains(t, text, `include_kinds: ["durable","ephemeral"]`)
-	assert.Contains(t, text, `source: "execute:`)
+	assert.Contains(t, text, `source: "<label>"`)
 
 	// Same query with include_kinds: ["ephemeral"] must surface the ephemeral hit.
 	r = callSearch(t, srv, map[string]any{
@@ -476,6 +467,91 @@ func TestSearch_OutputCap(t *testing.T) {
 	assert.False(t, r.IsError)
 	text := resultText(r)
 	assert.Contains(t, text, "output cap reached")
+}
+
+func indexAs(t *testing.T, srv *Server, content, label string, kind store.SourceKind) {
+	t.Helper()
+	st := srv.getStore()
+	_, err := st.IndexPlainText(content, label, kind)
+	require.NoError(t, err)
+}
+
+func TestSearch_NoResults_ShowsCountSummary(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	indexAs(t, srv, "Golang testing patterns and best practices for unit tests", "go-testing", store.KindDurable)
+	indexAs(t, srv, "Python data science libraries overview and tutorials", "python-ds", store.KindDurable)
+
+	r := callSearch(t, srv, map[string]any{
+		"queries": []string{"xyznonexistent12345"},
+	})
+
+	text := resultText(r)
+	assert.Contains(t, text, "2 durable")
+	assert.Contains(t, text, "source(s) indexed")
+	assert.Contains(t, text, "capy_stats")
+	assert.NotContains(t, text, "go-testing")
+	assert.NotContains(t, text, "python-ds")
+}
+
+func TestSearch_NoResults_CountSummaryRespectsKindScope(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	indexAs(t, srv, "Durable reference documentation content here", "ref-docs", store.KindDurable)
+	indexAs(t, srv, "Ephemeral command output from shell execution", "execute:shell", store.KindEphemeral)
+	indexAs(t, srv, "Session transcript from past conversation", "session:abc", store.KindSession)
+
+	r := callSearch(t, srv, map[string]any{
+		"queries": []string{"xyznonexistent12345"},
+	})
+	text := resultText(r)
+	assert.Contains(t, text, "1 durable")
+	assert.Contains(t, text, "1 session")
+	assert.NotContains(t, text, "1 ephemeral source(s) indexed")
+
+	r = callSearch(t, srv, map[string]any{
+		"queries":       []string{"xyznonexistent12345"},
+		"include_kinds": []string{"durable", "ephemeral"},
+	})
+	text = resultText(r)
+	assert.Contains(t, text, "1 durable")
+	assert.Contains(t, text, "1 ephemeral")
+	assert.NotContains(t, text, "1 session source(s) indexed")
+}
+
+func TestSearch_NoResults_EphemeralHintMentionsFetchedContent(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	indexAs(t, srv, "Some ephemeral content from a fetched web page", "fetch:example.com", store.KindEphemeral)
+
+	r := callSearch(t, srv, map[string]any{
+		"queries": []string{"xyznonexistent12345"},
+	})
+
+	text := resultText(r)
+	assert.Contains(t, text, "ephemeral source(s) present but excluded")
+	assert.Contains(t, text, "fetched web pages")
+	assert.Contains(t, text, "capy_fetch_and_index")
+	assert.Contains(t, text, "source: \"<label>\"")
+}
+
+func TestSearch_NoResults_NoSourceLabelsLeaked(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	indexAs(t, srv, "Alpha documentation about widget configuration", "alpha-docs", store.KindDurable)
+	indexAs(t, srv, "Beta release notes and migration guide", "beta-notes", store.KindDurable)
+	indexAs(t, srv, "Command output from shell grep command", "execute:shell", store.KindEphemeral)
+
+	r := callSearch(t, srv, map[string]any{
+		"queries":       []string{"xyznonexistent12345"},
+		"include_kinds": []string{"durable", "ephemeral"},
+	})
+
+	text := resultText(r)
+	assert.NotContains(t, text, "alpha-docs")
+	assert.NotContains(t, text, "beta-notes")
+	assert.NotContains(t, text, "execute:shell")
+	assert.NotContains(t, text, "sections)")
 }
 
 // ─── Fetch and Index tests ─────────────────────────────────────────────────────

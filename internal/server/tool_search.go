@@ -124,9 +124,9 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 				}
 				if ephemeralCount > 0 {
 					noResults += fmt.Sprintf(
-						"\n\n%d ephemeral source(s) present but excluded by default. To include command output from capy_execute / capy_execute_file / capy_batch_execute, retry with:\n"+
+						"\n\n%d ephemeral source(s) present but excluded by default. Ephemeral sources include command output (capy_execute / capy_batch_execute) and fetched web pages (capy_fetch_and_index). To include them, retry with:\n"+
 							"  • include_kinds: [\"durable\",\"ephemeral\"]  (search across both kinds), or\n"+
-							"  • source: \"execute:<lang>\" / \"file:<path>\" / \"batch:…\"  (explicit-source override; e.g., source: \"execute:shell\")",
+							"  • source: \"<label>\"  (explicit-source filter bypasses kind filtering)",
 						ephemeralCount,
 					)
 				}
@@ -176,25 +176,22 @@ func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.
 		)
 	}
 
-	// When no query produced any results, append the list of indexed sources
-	// to help the caller pick a better query. Preserves per-query messages
-	// (including the ephemeral-recovery hint) by appending rather than overwriting.
-	// Ephemeral labels are filtered out unless the caller opted into ephemeral,
-	// to keep the listing consistent with the default-exclude-ephemeral contract.
+	// Count sources for each kind within the caller's search scope.
+	// Only *included* kinds are counted here; *excluded* kinds are handled by
+	// the per-query ephemeral/session hints above (the two paths are disjoint).
 	if !hasResults {
-		sources, _ := st.ListSources()
-		var parts []string
-		for _, src := range sources {
-			if ephemeralExcluded && src.Kind == store.KindEphemeral {
+		countParts := make([]string, 0, 3)
+		for _, kind := range []store.SourceKind{store.KindDurable, store.KindEphemeral, store.KindSession} {
+			if !store.KindScopeIncludes(searchOpts, kind) {
 				continue
 			}
-			if sessionExcluded && src.Kind == store.KindSession {
-				continue
+			n, err := st.CountSourcesByKind(kind)
+			if err == nil && n > 0 {
+				countParts = append(countParts, fmt.Sprintf("%d %s", n, kind))
 			}
-			parts = append(parts, fmt.Sprintf("%q (%d sections)", src.Label, src.ChunkCount))
 		}
-		if len(parts) > 0 {
-			output += "\n\nIndexed sources: " + strings.Join(parts, ", ")
+		if len(countParts) > 0 {
+			output += fmt.Sprintf("\n\n%s source(s) indexed. Refine your query terms, or use capy_stats for source details.", strings.Join(countParts, ", "))
 		}
 	}
 
