@@ -46,20 +46,20 @@
 - [x] 3.6 Verify: `go build ./...`, start MCP server, call `tools/list`, inspect descriptions
 
 ## Task 4: Full routing rewrite (AGENTS.md + generated routing blocks)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 3
 - **Docs:** [implementation.md § Task 4](./implementation.md#task-4-full-routing-rewrite-agentsmd--generated-routing-blocks)
 
 ### Subtasks
-- [ ] 4.1 Write new `.capy/AGENTS.md` with task-aware routing structure: decision principle, when to use direct tools, when to use capy, blocked commands, source kinds, Read vs capy_execute_file, output constraints, subagent routing, capy commands
-- [ ] 4.2 Rewrite `GenerateRoutingInstructions()` in `internal/platform/routing.go` to produce the same task-aware routing content as AGENTS.md
-- [ ] 4.3 Rewrite `RoutingBlock()` in `internal/hook/routing.go` — replace "MUST use capy", "Primary tool", "DO NOT use Bash >20 lines", "Bash is ONLY for" with task-aware comprehension-vs-extraction guidance
-- [ ] 4.4 Update `BASH_GUIDANCE` constant in `internal/hook/routing.go` — replace "Bash is best for: git, mkdir, rm, mv, navigation, and short-output commands only" with task-aware guidance
-- [ ] 4.5 Review `GREP_GUIDANCE` and `READ_GUIDANCE` constants — update if they contradict the new routing principle (READ_GUIDANCE is likely fine as-is)
-- [ ] 4.6 Review build-tool redirect in `internal/hook/pretooluse.go:111-116` — `isBuildTool()` hard-redirects Gradle/Maven to `capy_execute`, but build output is sequential (test results, compilation errors) where order matters. Either remove the redirect, soften it to guidance, or add an exception for build commands that produce comprehension-required output
-- [ ] 4.7 Verify routing clarity: does AGENTS.md unambiguously route `git diff` to Bash? Does `RoutingBlock()` do the same for subagents? Does it explain when to pass `kind: "durable"` to fetch?
-- [ ] 4.8 Verify no orphaned references: check if other docs reference AGENTS.md sections that were renamed or removed
-- [ ] 4.9 Run tests: `go test -tags fts5 ./internal/hook/... ./internal/platform/...`
+- [x] 4.1 Write new `.capy/AGENTS.md` with task-aware routing structure: decision principle, when to use direct tools, when to use capy, blocked commands, source kinds, Read vs capy_execute_file, output constraints, subagent routing, capy commands
+- [x] 4.2 Rewrite `GenerateRoutingInstructions()` in `internal/platform/routing.go` to produce the same task-aware routing content as AGENTS.md
+- [x] 4.3 Rewrite `RoutingBlock()` in `internal/hook/routing.go` — replace "MUST use capy", "Primary tool", "DO NOT use Bash >20 lines", "Bash is ONLY for" with task-aware comprehension-vs-extraction guidance
+- [x] 4.4 Update `BASH_GUIDANCE` constant in `internal/hook/routing.go` — replace "Bash is best for: git, mkdir, rm, mv, navigation, and short-output commands only" with task-aware guidance
+- [x] 4.5 Review `GREP_GUIDANCE` and `READ_GUIDANCE` constants — update if they contradict the new routing principle (READ_GUIDANCE is likely fine as-is)
+- [x] 4.6 Review build-tool redirect in `internal/hook/pretooluse.go:111-116` — removed hard redirect; build tools now receive BASH_GUIDANCE instead, consistent with comprehension-vs-extraction principle (build output is sequential comprehension content)
+- [x] 4.7 Verify routing clarity: does AGENTS.md unambiguously route `git diff` to Bash? Does `RoutingBlock()` do the same for subagents? Does it explain when to pass `kind: "durable"` to fetch?
+- [x] 4.8 Verify no orphaned references: check if other docs reference AGENTS.md sections that were renamed or removed
+- [x] 4.9 Run tests: `go test -tags fts5 ./internal/hook/... ./internal/platform/...`
 
 ## Task 5: Final verification
 - **Status:** pending
