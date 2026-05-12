@@ -69,11 +69,10 @@ Every indexed entry has a **kind** that controls its lifecycle and search visibi
 |------|-----------------|-----------|-------------------------------|
 | ` + "`durable`" + ` | ` + "`capy_index`" + `, ` + "`capy_fetch_and_index(kind: \"durable\")`" + ` | Retention-score tiers (hot → warm → cold → evictable) | Yes |
 | ` + "`ephemeral`" + ` | ` + "`capy_execute`" + `, ` + "`capy_execute_file`" + `, ` + "`capy_batch_execute`" + `, ` + "`capy_fetch_and_index`" + ` (default) | Strict TTL — swept after expiry | No |
-| ` + "`session`" + ` | ` + "`capy sweep`" + ` (indexes past conversation transcripts) | Strict TTL — swept after expiry | No |
+| ` + "`session`" + ` | ` + "`capy sweep`" + ` (indexes past conversation transcripts) | Strict TTL — swept after expiry | Yes |
 
 **Querying non-default kinds:** pass ` + "`include_kinds`" + ` to ` + "`capy_search`" + `:
 - ` + "`include_kinds: [\"durable\", \"ephemeral\"]`" + ` — recover output from earlier commands in this session
-- ` + "`include_kinds: [\"durable\", \"session\"]`" + ` — search past conversation transcripts
 - ` + "`include_kinds: [\"durable\", \"ephemeral\", \"session\"]`" + ` — search everything
 - Or use ` + "`source: \"<label>\"`" + ` to bypass kind filtering entirely (matches any kind)
 

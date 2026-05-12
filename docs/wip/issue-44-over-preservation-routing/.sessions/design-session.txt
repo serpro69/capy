@@ -723,4 +723,4 @@
   on Task 1. Task 4 (AGENTS.md rewrite) depends on 1+3. Task 5 is final
   verification.
 
-✻ Crunched for 3m 0s
+✻ Crunched for 3m 0
