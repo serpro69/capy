@@ -33,17 +33,17 @@
 - [x] 2.5 Verify: `go test -tags fts5 ./internal/server/...`
 
 ## Task 3: Update tool descriptions
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md § Task 3](./implementation.md#task-3-update-tool-descriptions-in-toolsgo)
 
 ### Subtasks
-- [ ] 3.1 `toolExecute()` in `tools.go`: remove "MANDATORY" prefix, remove "git queries (git log, git diff)" from examples, reframe as extraction tool with positive/negative guidance
-- [ ] 3.2 `toolBatchExecute()` in `tools.go`: remove "THIS IS THE PRIMARY TOOL", reframe as broad exploration/extraction tool with "NOT for" guidance
-- [ ] 3.3 `toolFetchAndIndex()` in `tools.go`: update description to mention ephemeral default, `kind` parameter, and `source:` filter pattern for follow-up search
-- [ ] 3.4 `toolSearch()` in `tools.go`: fix stale description — change default from "durable only" to "durable and session", remove "fetched/indexed reference content" parenthetical, update `include_kinds` help text to match actual `effectiveKindFilter` behavior
-- [ ] 3.5 `toolExecuteFile()` in `tools.go`: soften "PREFER THIS OVER Read/cat" to align with comprehension-vs-extraction principle. Reframe: "for large files (10k+ lines) where you only need derived answers. Read is correct when you need to understand or edit the file."
-- [ ] 3.6 Verify: `go build ./...`, start MCP server, call `tools/list`, inspect descriptions
+- [x] 3.1 `toolExecute()` in `tools.go`: remove "MANDATORY" prefix, remove "git queries (git log, git diff)" from examples, reframe as extraction tool with positive/negative guidance
+- [x] 3.2 `toolBatchExecute()` in `tools.go`: remove "THIS IS THE PRIMARY TOOL", reframe as broad exploration/extraction tool with "NOT for" guidance
+- [x] 3.3 `toolFetchAndIndex()` in `tools.go`: update description to mention ephemeral default, `kind` parameter, and `source:` filter pattern for follow-up search
+- [x] 3.4 `toolSearch()` in `tools.go`: fix stale description — change default from "durable only" to "durable and session", remove "fetched/indexed reference content" parenthetical, update `include_kinds` help text to match actual `effectiveKindFilter` behavior
+- [x] 3.5 `toolExecuteFile()` in `tools.go`: soften "PREFER THIS OVER Read/cat" to align with comprehension-vs-extraction principle. Reframe: "for large files (10k+ lines) where you only need derived answers. Read is correct when you need to understand or edit the file."
+- [x] 3.6 Verify: `go build ./...`, start MCP server, call `tools/list`, inspect descriptions
 
 ## Task 4: Full routing rewrite (AGENTS.md + generated routing blocks)
 - **Status:** pending
