@@ -40,13 +40,6 @@ func RoutingBlock() string {
       Write artifacts (code, configs, PRDs) to FILES. NEVER return them as inline text.
       Return only: file path + 1-line description.
     </artifact_policy>
-    <response_format>
-      Your response must be a concise summary:
-      - Actions taken (2-3 bullets)
-      - File paths created/modified
-      - Knowledge base source labels (so parent can search)
-      - Key findings
-    </response_format>
   </output_constraints>
 
   <capy_commands>
