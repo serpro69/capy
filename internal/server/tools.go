@@ -222,6 +222,10 @@ func toolFetchAndIndex() mcp.Tool {
 		mcp.WithBoolean("force",
 			mcp.Description("Skip cache and re-fetch even if content was recently indexed"),
 		),
+		mcp.WithString("kind",
+			mcp.Description("Source kind for indexed content: 'ephemeral' (default, 24h TTL, excluded from default search) or 'durable' (retained by retention score, included in default search). Use 'durable' for reference docs you want to persist across sessions."),
+			mcp.Enum("durable", "ephemeral"),
+		),
 	)
 }
 
