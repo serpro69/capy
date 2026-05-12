@@ -71,9 +71,13 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 		}
 		if err == nil && meta != nil && time.Since(meta.IndexedAt) < ttl && meta.Kind == kind {
 			s.stats.AddCacheHit(int64(meta.ChunkCount) * 1600) // ~1.6KB per chunk estimate
+			kindInfo := string(meta.Kind)
+			if meta.Kind == store.KindEphemeral {
+				kindInfo += ", excluded from default search"
+			}
 			text := fmt.Sprintf(
 				"**Cache hit** — source %q was indexed %s (%d chunks, %s).\nConfigured TTL: %dh. Use `force: true` to re-fetch.\nUse search(queries: [...], source: %q) for lookups.",
-				meta.Label, formatAge(time.Since(meta.IndexedAt)), meta.ChunkCount, meta.Kind,
+				meta.Label, formatAge(time.Since(meta.IndexedAt)), meta.ChunkCount, kindInfo,
 				s.config.Store.Cache.FetchTTLHours, meta.Label,
 			)
 			return s.trackToolResponse("capy_fetch_and_index", textResult(text)), nil
