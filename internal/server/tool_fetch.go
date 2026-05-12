@@ -16,6 +16,7 @@ import (
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/commonmark"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/table"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/giturl"
 	"github.com/serpro69/capy/internal/store"
 )
 
@@ -54,6 +55,13 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 	// SSRF protection: block requests to local/private networks
 	if err := validateFetchURLFunc(url); err != nil {
 		return errorResult(fmt.Sprintf("Blocked URL: %v", err)), nil
+	}
+
+	// Git platform issue/PR/MR URLs should use platform CLI for comprehension,
+	// not BM25-fragmented indexing. Block at the server level so this works for
+	// ALL MCP clients (Claude Code, Codex, Cursor, etc.), not just those running hooks.
+	if info, ok := giturl.ParsePlatformURL(url); ok {
+		return s.trackToolResponse("capy_fetch_and_index", textResult(gitPlatformRedirectMessage(info))), nil
 	}
 
 	label := source
@@ -271,6 +279,22 @@ func isBinaryContent(contentType string, body []byte) bool {
 	}
 
 	return false
+}
+
+// gitPlatformRedirectMessage returns the redirect text when capy_fetch_and_index
+// is called with a git platform issue/PR/MR URL.
+func gitPlatformRedirectMessage(info giturl.Info) string {
+	alternative := "your platform's CLI or WebSearch"
+	if ghCmd := info.GhCommand(); ghCmd != "" {
+		alternative = "`" + ghCmd + "`"
+	}
+
+	return fmt.Sprintf(
+		"**Not fetched** — this URL points to a %s (#%s).\n\n"+
+			"For full comprehension, use %s instead.\n"+
+			"capy_fetch_and_index BM25-fragments content, losing sequential context.",
+		info.KindDisplay(), info.Number, alternative,
+	)
 }
 
 // formatAge formats a duration as a human-readable age string.
