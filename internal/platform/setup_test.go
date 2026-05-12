@@ -87,7 +87,7 @@ func TestSetupClaudeCode(t *testing.T) {
 	assert.Contains(t, string(agentsMD), "capy_batch_execute")
 	assert.Contains(t, string(agentsMD), "capy_search")
 	assert.Contains(t, string(agentsMD), "capy_execute")
-	assert.Contains(t, string(agentsMD), "capy — MANDATORY routing rules")
+	assert.Contains(t, string(agentsMD), "capy — context-window routing")
 
 	// Verify root CLAUDE.md has import, not inline routing
 	claudeMD, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
@@ -142,7 +142,7 @@ func TestSetupIdempotent(t *testing.T) {
 	// .capy/AGENTS.md should have routing instructions
 	agentsMD, err := os.ReadFile(filepath.Join(dir, agentsRelPath))
 	require.NoError(t, err)
-	assert.Equal(t, 1, strings.Count(string(agentsMD), "capy — MANDATORY routing rules"),
+	assert.Equal(t, 1, strings.Count(string(agentsMD), "capy — context-window routing"),
 		"should not duplicate routing instructions in AGENTS.md")
 
 	// .gitignore should not have duplicate entries
@@ -320,7 +320,7 @@ func TestSetupMigratesInlineRouting(t *testing.T) {
 	agentsMD, err := os.ReadFile(filepath.Join(dir, agentsRelPath))
 	require.NoError(t, err)
 	assert.Contains(t, string(agentsMD), "capy_batch_execute")
-	assert.Contains(t, string(agentsMD), "capy — MANDATORY routing rules")
+	assert.Contains(t, string(agentsMD), "capy — context-window routing")
 }
 
 func TestSetupMigratesStaleInlineRouting(t *testing.T) {
@@ -413,6 +413,34 @@ func TestSetupMigratesInlineRouting_Idempotent(t *testing.T) {
 	assert.Contains(t, content, "# Footer")
 }
 
+func TestSetupMigratesStaleHeading(t *testing.T) {
+	dir := t.TempDir()
+	binaryPath := "/usr/local/bin/capy"
+
+	// Simulate a CLAUDE.md that already has the current import ref but
+	// still uses the old heading (user who ran setup with a previous binary).
+	oldContent := "# My Project\n\n# capy — MANDATORY routing rules\n\n@.capy/AGENTS.md\n\n# Footer\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(oldContent), 0o644))
+
+	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
+
+	claudeMD, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	require.NoError(t, err)
+	content := string(claudeMD)
+
+	// Heading should be updated
+	assert.Contains(t, content, "# capy — context-window routing")
+	assert.NotContains(t, content, "# capy — MANDATORY routing rules")
+
+	// Import ref should not be duplicated
+	assert.Equal(t, 1, strings.Count(content, "@.capy/AGENTS.md"),
+		"should not duplicate import ref during heading migration")
+
+	// Surrounding content preserved
+	assert.Contains(t, content, "# My Project")
+	assert.Contains(t, content, "# Footer")
+}
+
 func TestSetupCodex(t *testing.T) {
 	dir := t.TempDir()
 	binaryPath := "/usr/local/bin/capy"
@@ -439,7 +467,7 @@ func TestSetupCodex(t *testing.T) {
 	// Verify .capy/AGENTS.md has routing instructions
 	agentsMD, err := os.ReadFile(filepath.Join(dir, agentsRelPath))
 	require.NoError(t, err)
-	assert.Contains(t, string(agentsMD), "capy — MANDATORY routing rules")
+	assert.Contains(t, string(agentsMD), "capy — context-window routing")
 	assert.Contains(t, string(agentsMD), "capy_batch_execute")
 
 	// Verify .codex/config.toml has MCP server with env_vars

@@ -108,13 +108,6 @@ func routeBash(command string, policies []security.SecurityPolicy, a adapter.Hoo
 		})
 	}
 
-	// Build tools (gradle, maven) → redirect to sandbox
-	if isBuildTool(stripped) {
-		return a.FormatModify(map[string]any{
-			"command": `echo "capy: Build tool redirected to sandbox. Use capy_execute(language: \"shell\", code: \"...\") to run this command. Do NOT retry with Bash."`,
-		})
-	}
-
 	// Allow, but inject routing nudge (once per session)
 	return guidanceOnce("bash", BASH_GUIDANCE, a, projectDir, sessionID)
 }
