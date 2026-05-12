@@ -532,6 +532,7 @@ func TestSearch_NoResults_EphemeralHintMentionsFetchedContent(t *testing.T) {
 	assert.Contains(t, text, "ephemeral source(s) present but excluded")
 	assert.Contains(t, text, "fetched web pages")
 	assert.Contains(t, text, "capy_fetch_and_index")
+	assert.Contains(t, text, "capy_execute_file")
 	assert.Contains(t, text, "source: \"<label>\"")
 }
 

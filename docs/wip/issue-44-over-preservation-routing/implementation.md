@@ -71,7 +71,7 @@ Count only non-excluded kinds (respect `ephemeralExcluded` and `sessionExcluded`
 The `ListSources()` call is no longer needed in this path — remove it. If `ListSources` is unused elsewhere after this change, leave it (it's a store-layer method that may have other consumers or future uses).
 
 **`internal/server/tool_search.go` — ephemeral-excluded hint (lines 126-131):**
-Update the hint text. Currently it says `"To include command output from capy_execute / capy_execute_file / capy_batch_execute"` — after fetch defaults to ephemeral, this is incomplete. Change to mention that ephemeral sources now include both command output and fetched web pages. Add `source: "<label>"` as a recovery path (it's already in the session-excluded hint pattern but missing from the ephemeral one).
+Update the hint text. Currently it says `"To include command output from capy_execute / capy_execute_file / capy_batch_execute"` — after fetch defaults to ephemeral, this is incomplete. Change to mention that ephemeral sources now include both command output (capy_execute / capy_execute_file / capy_batch_execute) and fetched web pages (capy_fetch_and_index). Add `source: "<label>"` as a recovery path (it's already in the session-excluded hint pattern but missing from the ephemeral one).
 
 ### What NOT to change
 
@@ -106,8 +106,6 @@ Update the hint text. Currently it says `"To include command output from capy_ex
 **`internal/server/tools.go` — `toolSearch()` (lines 190-209):**
 - Fix the main description (line 193): change `"By default returns only durable sources (fetched/indexed reference content)"` to `"By default returns durable and session sources"`. Remove the parenthetical that calls fetched content "reference content" — after this change, fetched content is ephemeral by default.
 - Fix the `include_kinds` description (line 205): change `"Default: [\"durable\"] only"` to `"Default: [\"durable\", \"session\"]"` to match the actual behavior in `effectiveKindFilter` at `search.go:569`. Update the `"durable"` parenthetical from `"fetched/indexed reference content, retained by retention score"` to `"explicitly indexed reference content, retained by retention score"` since fetched content is no longer durable by default.
-
-### What NOT to change
 
 **`internal/server/tools.go` — `toolExecuteFile()` (lines 145-172):**
 - Soften "PREFER THIS OVER Read/cat for: log files, data files (CSV, JSON, XML), large source files for analysis." — the "PREFER THIS OVER Read" language contradicts the new comprehension-vs-extraction principle where Read is the default.
