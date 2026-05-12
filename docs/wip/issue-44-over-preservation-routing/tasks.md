@@ -7,18 +7,18 @@
 > Created: 2026-05-11
 
 ## Task 1: Add `kind` parameter to `capy_fetch_and_index`
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md § Task 1](./implementation.md#task-1-add-kind-parameter-to-capy_fetch_and_index)
 
 ### Subtasks
-- [ ] 1.1 Add optional `kind` string parameter (enum: `["durable", "ephemeral"]`) to `toolFetchAndIndex()` in `internal/server/tools.go`
-- [ ] 1.2 In `handleFetchAndIndex()` (`internal/server/tool_fetch.go`): read and validate `kind` **before** the TTL cache check (before line 52). Default to `store.KindEphemeral`, validate against `"durable"`/`"ephemeral"` only (reject `"session"` and invalid values)
-- [ ] 1.3 Modify the TTL cache check (lines 52-68): after cache hit, compare `meta.Kind` against requested kind. If they differ, bypass cache and proceed with re-fetch+re-index
-- [ ] 1.4 Replace all four `store.KindDurable` literals at the indexing call sites (lines 132, 138, 141, 145) with the resolved kind variable
-- [ ] 1.5 Update the response text to indicate whether content was indexed as durable or ephemeral, and remind about `source:` filter for ephemeral follow-up queries
-- [ ] 1.6 Add tests in `tool_fetch_test.go`: no-kind → ephemeral, `kind: "durable"` → durable, `kind: "ephemeral"` → ephemeral, `kind: "invalid"` → error, `kind: "session"` → error, cache-hit with kind mismatch → cache bypassed and kind updated
-- [ ] 1.7 Verify: `go build ./...` and `go test -tags fts5 ./internal/server/...`
+- [x] 1.1 Add optional `kind` string parameter (enum: `["durable", "ephemeral"]`) to `toolFetchAndIndex()` in `internal/server/tools.go`
+- [x] 1.2 In `handleFetchAndIndex()` (`internal/server/tool_fetch.go`): read and validate `kind` **before** the TTL cache check (before line 52). Default to `store.KindEphemeral`, validate against `"durable"`/`"ephemeral"` only (reject `"session"` and invalid values)
+- [x] 1.3 Modify the TTL cache check (lines 52-68): after cache hit, compare `meta.Kind` against requested kind. If they differ, bypass cache and proceed with re-fetch+re-index
+- [x] 1.4 Replace all four `store.KindDurable` literals at the indexing call sites (lines 132, 138, 141, 145) with the resolved kind variable
+- [x] 1.5 Update the response text to indicate whether content was indexed as durable or ephemeral, and remind about `source:` filter for ephemeral follow-up queries
+- [x] 1.6 Add tests in `tool_fetch_test.go`: no-kind → ephemeral, `kind: "durable"` → durable, `kind: "ephemeral"` → ephemeral, `kind: "invalid"` → error, `kind: "session"` → error, cache-hit with kind mismatch → cache bypassed and kind updated
+- [x] 1.7 Verify: `go build ./...` and `go test -tags fts5 ./internal/server/...`
 
 ## Task 2: Cap search fallback source listing
 - **Status:** pending

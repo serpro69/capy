@@ -34,9 +34,21 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 	url := req.GetString("url", "")
 	source := req.GetString("source", "")
 	force, _ := req.GetArguments()["force"].(bool)
+	kindStr := req.GetString("kind", "")
 
 	if url == "" {
 		return errorResult("Missing required parameter: url"), nil
+	}
+
+	// Validate at the boundary before cache check and network fetch — gives a clean
+	// error cheaply. The store also validates at write time as defense-in-depth.
+	kind := store.KindEphemeral
+	if kindStr != "" {
+		k := store.SourceKind(kindStr)
+		if k != store.KindDurable && k != store.KindEphemeral {
+			return errorResult(fmt.Sprintf("Invalid kind %q: accepted values are \"durable\" and \"ephemeral\"", kindStr)), nil
+		}
+		kind = k
 	}
 
 	// SSRF protection: block requests to local/private networks
@@ -57,11 +69,11 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 		if err != nil {
 			slog.Warn("cache check failed, proceeding with fetch", "label", label, "error", err)
 		}
-		if err == nil && meta != nil && time.Since(meta.IndexedAt) < ttl {
+		if err == nil && meta != nil && time.Since(meta.IndexedAt) < ttl && meta.Kind == kind {
 			s.stats.AddCacheHit(int64(meta.ChunkCount) * 1600) // ~1.6KB per chunk estimate
 			text := fmt.Sprintf(
-				"**Cache hit** — source %q was indexed %s (%d chunks).\nConfigured TTL: %dh. Use `force: true` to re-fetch.\nUse search(queries: [...], source: %q) for lookups.",
-				meta.Label, formatAge(time.Since(meta.IndexedAt)), meta.ChunkCount,
+				"**Cache hit** — source %q was indexed %s (%d chunks, %s).\nConfigured TTL: %dh. Use `force: true` to re-fetch.\nUse search(queries: [...], source: %q) for lookups.",
+				meta.Label, formatAge(time.Since(meta.IndexedAt)), meta.ChunkCount, meta.Kind,
 				s.config.Store.Cache.FetchTTLHours, meta.Label,
 			)
 			return s.trackToolResponse("capy_fetch_and_index", textResult(text)), nil
@@ -129,20 +141,19 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 
 	switch {
 	case strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json"):
-		indexed, err = st.IndexJSON(content, source, store.KindDurable)
+		indexed, err = st.IndexJSON(content, source, kind)
 
 	case strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/xhtml"):
 		md, convErr := convertHTMLToMarkdown(content)
 		if convErr != nil {
-			// Fall back to plain text if conversion fails
-			indexed, err = st.IndexPlainText(content, source, store.KindDurable)
+			indexed, err = st.IndexPlainText(content, source, kind)
 		} else {
 			content = md
-			indexed, err = st.Index(md, source, "", store.KindDurable)
+			indexed, err = st.Index(md, source, "", kind)
 		}
 
 	default:
-		indexed, err = st.IndexPlainText(content, source, store.KindDurable)
+		indexed, err = st.IndexPlainText(content, source, kind)
 	}
 
 	if err != nil {
@@ -156,9 +167,17 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 	}
 	totalKB := fmt.Sprintf("%.1f", float64(len(content))/1024)
 
+	kindNote := fmt.Sprintf("Indexed as **%s**", kind)
+	if kind == store.KindEphemeral {
+		kindNote += fmt.Sprintf(
+			" (24h TTL, excluded from default search — use `source: %q` or `include_kinds: [\"durable\",\"ephemeral\"]` for follow-up queries)",
+			indexed.Label,
+		)
+	}
+
 	text := fmt.Sprintf(
-		"Fetched and indexed **%d sections** (%sKB) from: %s\nFull content indexed in sandbox — use search(queries: [...], source: %q) for specific lookups.\n\n---\n\n%s",
-		indexed.TotalChunks, totalKB, indexed.Label, indexed.Label, preview,
+		"Fetched and indexed **%d sections** (%sKB) from: %s\n%s\nUse search(queries: [...], source: %q) for specific lookups.\n\n---\n\n%s",
+		indexed.TotalChunks, totalKB, indexed.Label, kindNote, indexed.Label, preview,
 	)
 
 	return s.trackToolResponse("capy_fetch_and_index", textResult(text)), nil
