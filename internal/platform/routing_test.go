@@ -61,8 +61,12 @@ func TestRoutingBlockWebComprehension(t *testing.T) {
 		"routing block should mention authoritative web pages for comprehension")
 	assert.Contains(t, block, "runtime web tools",
 		"routing block should reference runtime web tools as alternative")
-	assert.Contains(t, block, "web comprehension",
-		"routing block blocked section should mention web comprehension alternative")
+
+	// WebFetch redirect must split comprehension vs extraction paths (issue #49)
+	assert.Contains(t, block, "git issues/PRs/MRs",
+		"routing block should route git platform URLs to direct tools")
+	assert.Contains(t, block, "gh issue view",
+		"routing block should mention gh CLI as example")
 }
 
 func TestCapyToolNamesComplete(t *testing.T) {
