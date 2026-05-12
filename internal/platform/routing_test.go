@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/serpro69/capy/internal/hook"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -42,6 +43,26 @@ func TestGenerateRoutingInstructions(t *testing.T) {
 
 	// Must reference sandbox execution
 	assert.Contains(t, instructions, "sandbox")
+
+	// Must distinguish web comprehension from web extraction (issue #47)
+	assert.Contains(t, instructions, "authoritative web pages",
+		"routing instructions should guide web comprehension to direct tools")
+	assert.Contains(t, instructions, "gh issue view",
+		"routing instructions should mention gh CLI as a runtime web tool")
+	assert.Contains(t, instructions, "WebSearch",
+		"routing instructions should mention WebSearch as a runtime web tool")
+}
+
+func TestRoutingBlockWebComprehension(t *testing.T) {
+	block := hook.RoutingBlock()
+
+	// Must distinguish web comprehension from extraction (issue #47)
+	assert.Contains(t, block, "authoritative web pages",
+		"routing block should mention authoritative web pages for comprehension")
+	assert.Contains(t, block, "runtime web tools",
+		"routing block should reference runtime web tools as alternative")
+	assert.Contains(t, block, "web comprehension",
+		"routing block blocked section should mention web comprehension alternative")
 }
 
 func TestCapyToolNamesComplete(t *testing.T) {

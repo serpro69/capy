@@ -18,13 +18,14 @@ func RoutingBlock() string {
     - Files to comprehend or edit (Read)
     - Sequential/ordered content (test output, build logs)
     - Instruction files, checklists, configs (Read whole)
+    - Small authoritative web pages (issues, PRs, specs) — runtime web tools (gh, WebSearch) when available
   </direct_tools>
 
   <capy_tools>
     Use capy for:
     - capy_batch_execute: broad exploration, multiple commands + queries in ONE call
     - capy_execute / capy_execute_file: large-output extraction (hundreds+ lines)
-    - capy_fetch_and_index: web content (default ephemeral; kind: "durable" for reference docs)
+    - capy_fetch_and_index: large web content for extraction (default ephemeral; kind: "durable" for reference docs). NOT for small pages needing comprehension — use runtime web tools
     - capy_search: query indexed content (batch questions as array)
   </capy_tools>
 
@@ -32,6 +33,7 @@ func RoutingBlock() string {
     - curl/wget in Bash → use capy_fetch_and_index or capy_execute
     - Inline HTTP in Bash → use capy_execute
     - WebFetch → use capy_fetch_and_index
+    Note: For web comprehension, use runtime-native tools (gh, WebSearch) when available
   </blocked>
 
   <output_constraints>

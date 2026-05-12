@@ -211,7 +211,7 @@ func toolSearch() mcp.Tool {
 func toolFetchAndIndex() mcp.Tool {
 	return mcp.NewTool("capy_fetch_and_index",
 		mcp.WithToolAnnotation(annotationFetch),
-		mcp.WithDescription("Fetches URL content, converts HTML to markdown, indexes as ephemeral (24h TTL, excluded from default search), and returns a ~3KB preview. Use source: filter or include_kinds for follow-up search. Pass kind: 'durable' for reference docs you want to persist across sessions. Content-type aware: HTML→markdown, JSON→chunked by key paths, text→indexed directly."),
+		mcp.WithDescription("Fetches URL content, converts HTML to markdown, indexes as ephemeral (24h TTL, excluded from default search), and returns a ~3KB preview. Best for large web artifacts where you need extracted facts or follow-up searchable context. For small authoritative pages (issues, PRs, specs) you need to comprehend fully, prefer runtime-native tools (gh CLI, WebSearch) when available. Use source: filter or include_kinds for follow-up search. Pass kind: 'durable' for reference docs you want to persist across sessions. Content-type aware: HTML→markdown, JSON→chunked by key paths, text→indexed directly."),
 		mcp.WithString("url",
 			mcp.Required(),
 			mcp.Description("The URL to fetch and index"),
