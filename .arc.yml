@@ -1,0 +1,8 @@
+github:
+  defaultBranch: master
+
+diff:
+  requireTestPlan: false
+
+land:
+  defaultMergeMethod: rebase
