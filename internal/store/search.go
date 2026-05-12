@@ -557,7 +557,7 @@ func (s *ContentStore) CountSourcesByKind(kind SourceKind) (int, error) {
 
 // effectiveKindFilter resolves the source-kind filter to apply for a search:
 //   - explicit Source set: nil (caller named a source; trust the intent)
-//   - empty IncludeKinds: {KindDurable} (default-exclude ephemeral)
+//   - empty IncludeKinds: {KindDurable, KindSession} (default-exclude ephemeral)
 //   - non-empty IncludeKinds: opts.IncludeKinds verbatim
 //
 // Returning nil means "no kind clause." Returning a slice means "filter to these kinds."
