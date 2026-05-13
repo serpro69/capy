@@ -24,7 +24,6 @@ logs
 *.sw?
 
 # AI tools
-!.serena
 !.claude
 !.codex
 .claude/worktrees

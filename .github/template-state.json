@@ -1,18 +1,18 @@
 {
   "schema_version": "1",
   "upstream_repo": "serpro69/claude-toolbox",
-  "template_version": "kill_serena",
-  "synced_at": "2026-05-13T20:28:08Z",
+  "template_version": "v0.13.0",
+  "synced_at": "2026-05-13T20:40:29Z",
   "variables": {
     "PROJECT_NAME": "capy",
     "LANGUAGES": "go",
     "CC_MODEL": "claude-opus-4-6[1m]",
     "CC_STATUSLINE": "enhanced",
-    "SERENA_INITIAL_PROMPT": "",
     "CC_EFFORT_LEVEL": "high",
     "CC_PERMISSION_MODE": "default",
     "CODEX_APPROVAL_POLICY": "on-request",
-    "CODEX_MODEL": "gpt-5.5"
+    "CODEX_MODEL": "gpt-5.5",
+    "SKIP_CAPY": "false"
   },
   "plugin_migrated": true
 }
