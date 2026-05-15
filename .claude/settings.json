@@ -26,7 +26,8 @@
       "Bash(ls:*)",
       "Bash(mkdir:*)",
       "Bash(sort:*)",
-      "WebSearch"
+      "WebSearch",
+      "Skill(kk:*)"
     ],
     "ask": [],
     "defaultMode": "default",
