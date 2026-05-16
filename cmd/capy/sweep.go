@@ -69,7 +69,7 @@ func runSweepDryRun(st *store.ContentStore, projectDir string, opts session.Swee
 	fmt.Printf("%-38s %8s %5s %5s %8s  %s\n", "UUID", "SIZE", "PAIRS", "MAIN", "CHARS", "STATUS")
 	fmt.Println("-----------------------------------------------------------------------------------------------")
 
-	var indexable, alreadyIndexed, notIndexable, parseErrors int
+	var indexable, alreadyIndexed, stale, notIndexable, parseErrors int
 	for _, d := range results {
 		status := sweepStatus(d)
 		fmt.Printf("%-38s %8s %5d %5d %8d  %s\n",
@@ -80,6 +80,8 @@ func runSweepDryRun(st *store.ContentStore, projectDir string, opts session.Swee
 			parseErrors++
 		case d.AlreadyIndexed:
 			alreadyIndexed++
+		case d.Stale:
+			stale++
 		case d.Indexable:
 			indexable++
 		default:
@@ -87,11 +89,11 @@ func runSweepDryRun(st *store.ContentStore, projectDir string, opts session.Swee
 		}
 	}
 
-	fmt.Printf("\nTotal: %d | Indexable: %d | Already indexed: %d | Not indexable: %d | Errors: %d\n",
-		len(results), indexable, alreadyIndexed, notIndexable, parseErrors)
+	fmt.Printf("\nTotal: %d | Indexable: %d | Stale: %d | Already indexed: %d | Not indexable: %d | Errors: %d\n",
+		len(results), indexable, stale, alreadyIndexed, notIndexable, parseErrors)
 
-	if indexable > 0 {
-		fmt.Println("\nUse --force to index the indexable sessions.")
+	if indexable+stale > 0 {
+		fmt.Println("\nUse --force to index the indexable/stale sessions.")
 	}
 
 	return nil
@@ -115,6 +117,9 @@ func sweepStatus(d session.SessionDiagnostic) string {
 	}
 	if d.AlreadyIndexed {
 		return "already indexed"
+	}
+	if d.Stale {
+		return "stale (modified since last index)"
 	}
 	if d.Indexable {
 		return "indexable"

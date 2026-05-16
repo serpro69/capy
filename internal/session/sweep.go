@@ -70,6 +70,7 @@ type SessionDiagnostic struct {
 	AssistantChars int
 	Indexable      bool
 	AlreadyIndexed bool
+	Stale          bool // indexed before but file modified since — will be re-indexed
 	ParseError     string
 }
 
@@ -106,7 +107,11 @@ func DryRunSweep(projectDir string, cs *store.ContentStore, opts SweepOptions) (
 
 		if !opts.Reindex && indexedMap != nil {
 			if _, exists := indexedMap[uuid]; exists {
-				d.AlreadyIndexed = true
+				if shouldSkip(dir, uuid, e, indexedMap) {
+					d.AlreadyIndexed = true
+				} else {
+					d.Stale = true
+				}
 			}
 		}
 
