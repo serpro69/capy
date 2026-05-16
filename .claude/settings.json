@@ -27,7 +27,8 @@
       "Bash(mkdir:*)",
       "Bash(sort:*)",
       "WebSearch",
-      "Skill(kk:*)"
+      "Skill(kk:*)",
+      "Read(~/.claude/plugins/cache/claude-toolbox/*)"
     ],
     "ask": [],
     "defaultMode": "default",
