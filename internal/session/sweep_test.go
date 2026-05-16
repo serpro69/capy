@@ -765,6 +765,14 @@ func TestDryRunSweep_AlreadyIndexed(t *testing.T) {
 		t.Fatalf("indexSession failed: %v", err)
 	}
 
+	// Set file mtime to the past so it appears unchanged relative to indexed_at
+	// (indexed_at has second precision; file mtime has nanosecond precision).
+	pastTime := time.Now().Add(-time.Minute)
+	jsonlPath := filepath.Join(sessionDir, "sess-indexed.jsonl")
+	if err := os.Chtimes(jsonlPath, pastTime, pastTime); err != nil {
+		t.Fatal(err)
+	}
+
 	results, err := DryRunSweep(projectDir, cs, SweepOptions{})
 	if err != nil {
 		t.Fatalf("DryRunSweep failed: %v", err)
@@ -776,6 +784,26 @@ func TestDryRunSweep_AlreadyIndexed(t *testing.T) {
 
 	if !results[0].AlreadyIndexed {
 		t.Error("expected session to be marked as already indexed")
+	}
+	if results[0].Stale {
+		t.Error("unchanged session should not be marked as stale")
+	}
+
+	// Touch the file to make it newer than indexed_at → should be stale, not already indexed.
+	futureTime := time.Now().Add(time.Hour)
+	if err := os.Chtimes(jsonlPath, futureTime, futureTime); err != nil {
+		t.Fatal(err)
+	}
+
+	staleResults, err := DryRunSweep(projectDir, cs, SweepOptions{})
+	if err != nil {
+		t.Fatalf("DryRunSweep (stale check) failed: %v", err)
+	}
+	if staleResults[0].AlreadyIndexed {
+		t.Error("stale session should not be marked as already indexed")
+	}
+	if !staleResults[0].Stale {
+		t.Error("session modified after indexing should be marked as stale")
 	}
 
 	// With Reindex, should NOT be marked as already indexed.
