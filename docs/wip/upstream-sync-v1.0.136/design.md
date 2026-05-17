@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-The context-mode TS reference accumulated ~703 commits since the v1.0.89 sync point. After filtering out CI, bundle, platform-specific (Windows, Bun, KiloCode, Kiro, Zed, Pi, OpenClaw, OpenCode, Codex, Cursor, VS Code, Copilot, headless), docs-only, test-infra, stats/analytics/insight, adapter, lifecycle, and version-bump changes, **11 changes** are relevant to capy's core. An additional **10+ categories** are deliberately skipped with documented rationale.
+The context-mode TS reference accumulated ~703 commits since the v1.0.89 sync point. After filtering out CI, bundle, platform-specific (Windows, Bun, KiloCode, Kiro, Zed, Pi, OpenClaw, OpenCode, Codex, Cursor, VS Code, Copilot, headless), docs-only, test-infra, stats/analytics/insight, adapter, lifecycle, and version-bump changes, **12 changes** are relevant to capy's core. An additional **10+ categories** are deliberately skipped with documented rationale.
 
 ### Ported changes
 
@@ -17,6 +17,7 @@ The context-mode TS reference accumulated ~703 commits since the v1.0.89 sync po
 | P0 | Search | Phrase frequency boost in proximity reranker | #349 (`2c63add`) |
 | P0 | Search | Hash-based stale detection with auto-refresh on search | #317 (`472634a`) |
 | P0 | Security | SSRF guard: scheme validation + DNS rebinding defense | #476, #401 (`ef9eeaa`, `65aa685`, `6017d85`, `8ef04c6`) |
+| P0 | Security | Apply Read deny-policy to `capy_index(path)` before file read | #442, #451 (`82690b8`) |
 | P0 | Security | Path traversal bypass in file deny evaluation | (`02f71f8`) |
 | P1 | Security | TOCTOU fix: re-check deny policy on stale auto-refresh | #442 (`8b0f2d4`) |
 | P1 | Security | Executor env deny list: .NET/C# profiler hijack vectors | (`e0e79b7`) |
@@ -122,15 +123,15 @@ O(1) in SQLite. No data migration needed — existing sources get `NULL` for `fi
 
 **`search.go`:** At the top of `SearchWithFallback`, before the RRF pass, call `s.refreshStaleSources()`:
 
-1. Query `SELECT label, file_path, content_hash, indexed_at FROM sources WHERE file_path IS NOT NULL`
+1. Query `SELECT label, file_path, content_hash, indexed_at, content_type, kind FROM sources WHERE file_path IS NOT NULL`
 2. For each source:
+   - **Deny-policy check:** call `s.denyChecker(filePath)` before any I/O — skip if denied (see §6b TOCTOU fix)
    - **mtime gate (fast path):** `os.Stat(filePath).ModTime()` — skip if mtime ≤ `indexedAt`
    - **SHA-256 comparison:** `os.ReadFile(filePath)`, hash — skip if hash matches `content_hash`
-   - **Re-index:** call `s.Index(newContent, label, ...)` which handles dedup/replace via existing hash-compare logic
+   - **Re-index:** call `s.IndexWithFilePath(newContent, label, contentType, kind, filePath)` — preserving the existing `content_type`, `kind`, and `file_path` so the source remains file-backed and retains its lifecycle semantics after refresh. Must NOT use generic `s.Index()` which writes `file_path = NULL`, breaking future stale detection
 3. Graceful handling:
    - Deleted files: `os.Stat` returns error → skip, keep cached results
    - Read errors: log warning, skip (never break search for stale detection)
-   - Deny-policy check: call `s.denyChecker(filePath)` before reading (see §6b TOCTOU fix)
 
 **Observability:** `LastRefreshCount int` field on `ContentStore` — tracks how many sources were refreshed in the last `SearchWithFallback` call.
 
@@ -187,14 +188,16 @@ Explicit `source` parameter still takes priority.
 
 ### 5.2 Solution
 
-Compose the cache key from `label + "|" + url`. Use this composite key for the `GetSourceMeta` lookup only. The actual storage label for indexing remains `source` (line 97), keeping search labels clean.
+Compose a key from `label + "|" + url` and use it as **both the cache lookup key and the storage label**. This matches the upstream approach: `composeFetchCacheKey` is used for `GetSourceMeta` (cache check) and as the source label when indexing, so the cache lookup on subsequent calls hits the correct entry.
 
 Add a `composeFetchCacheKey(label, url string) string` helper. The pipe separator is safe because URLs don't contain raw `|` (it's percent-encoded) and labels are either user-chosen or default to the URL itself.
 
+`capy_search(source: "my-label")` still finds these sources because search uses `LIKE '%' || ? || '%'` matching — the user-chosen label substring is contained in the composite key. Document this in the tool's response message.
+
 ### 5.3 Files touched
 
-- `internal/server/tool_fetch.go`: add `composeFetchCacheKey`, use for cache lookup + as storage label
-- `internal/server/tool_fetch_test.go`: test that two URLs with same label get separate cache entries
+- `internal/server/tool_fetch.go`: add `composeFetchCacheKey`, use for both cache lookup and storage label
+- `internal/server/tool_fetch_test.go`: test that two URLs with same explicit source get separate cache entries; test that `source:` partial-match search still finds composite-keyed sources
 
 ---
 
@@ -212,7 +215,17 @@ The current `validateFetchURL` (tool_fetch.go:224-246) resolves DNS and checks I
 
 **New file `internal/server/ssrf.go`:**
 
-`classifyIP(ip net.IP) error` — returns an error if the IP is loopback, private, link-local unicast, link-local multicast, or otherwise forbidden. Extracted from the existing `validateFetchURL` for reuse.
+`classifyIP(rawIP string) error` — accepts a raw IP string (not `net.IP`) to handle zone-id stripping and IPv4-mapped IPv6 before classification. Returns an error if the IP is forbidden. Classification categories, matching the upstream `classifyIp`:
+
+1. **Zone-ID stripping:** Strip RFC 6874 zone identifiers (`fe80::1%eth0`, URL-encoded `%25eth0`) before any classification. Without this, `::1%eth0` fails to match loopback and falls through to "allowed"
+2. **IPv4-mapped IPv6:** Detect `::ffff:A.B.C.D` and recurse through the IPv4 classifier
+3. **IPv6 hard-block:** unspecified (`::`) , link-local (`fe80::/10`), multicast (`ff00::/8`)
+4. **IPv6 private:** loopback (`::1`), ULA (`fc00::/7`)
+5. **IPv4 hard-block:** `0.0.0.0/8` (current network), `169.254.0.0/16` (link-local incl. IMDS), `224.0.0.0+` (multicast/reserved)
+6. **IPv4 private:** loopback (`127.0.0.0/8`), RFC1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`)
+7. **Malformed/non-IP strings:** block (fail-closed)
+
+Since capy blocks both "hard-block" and "private" categories (stricter than upstream's default), the function returns a single error for any non-public IP.
 
 `validateFetchScheme(rawURL string) error` — parses URL, rejects any scheme not in `{"http", "https"}`. Explicitly blocks `file`, `gopher`, `javascript`, `data`, and empty scheme.
 
@@ -231,7 +244,7 @@ This collapses the TOCTOU window to zero — DNS resolution and IP classificatio
 #### 6a.3 Files touched
 
 - `internal/server/ssrf.go` (new): `classifyIP`, `validateFetchScheme`, `newSSRFSafeTransport`
-- `internal/server/ssrf_test.go` (new): unit tests for scheme validation, IP classification
+- `internal/server/ssrf_test.go` (new): unit tests for scheme validation, IP classification covering: `0.0.0.0/8`, `::`, `::ffff:127.0.0.1`, `fe80::1%eth0` (zone-id), `224.0.0.1` (multicast), `169.254.169.254` (IMDS), `127.0.0.1`, `10.0.0.1`, `192.168.1.1`, malformed strings, valid public IPs
 - `internal/server/tool_fetch.go`: use new SSRF functions, remove old `validateFetchURL`
 - `internal/server/tool_fetch_test.go`: update tests for new SSRF guard
 
@@ -319,6 +332,23 @@ if deniedEnvVars[key] || strings.HasPrefix(key, "BASH_FUNC_") || strings.HasPref
 - `internal/executor/env.go`: add .NET vars to `deniedEnvVars`, add `COMPlus_` prefix check
 - `internal/executor/env_test.go`: test that CORECLR_PROFILER and COMPlus_* are stripped
 
+### 6e. Apply Read Deny-Policy to `capy_index(path)`
+
+#### 6e.1 Problem
+
+`handleIndex` in `tool_index.go` accepts an arbitrary `path` and reads it with `os.Stat`/`os.ReadFile` without calling `checkFilePathDenyPolicy`. The parallel tool `handleExecuteFile` already guards file access via the same deny policy. This creates a search-index exfiltration path: any file readable by the MCP server process can be indexed into FTS5 and later surfaced by `capy_search`, bypassing the documented Read deny-pattern mitigation (e.g., `.ssh/id_rsa`, `.env`, `~/.aws/credentials`).
+
+#### 6e.2 Solution
+
+Add a `checkFilePathDenyPolicy` call in `handleIndex` before any file I/O, matching the pattern used by `handleExecuteFile`. The check runs when `path != ""` (file-backed indexing), and no-ops when only `content` is provided (inline content branch unaffected).
+
+Placement: immediately after extracting the `path` parameter, before the `filepath.IsAbs` / path resolution logic. This ensures that both the raw user-supplied path AND (after §6c fix) its resolved absolute form are checked against deny globs.
+
+#### 6e.3 Files touched
+
+- `internal/server/tool_index.go`: add `checkFilePathDenyPolicy` call before file read
+- `internal/server/tool_knowledge_test.go`: test that denied paths return error and never index into FTS5; inline content with a source label matching a deny pattern still works
+
 ---
 
 ## 7. Batch Concurrency
@@ -338,7 +368,7 @@ Add an optional `concurrency` parameter (int, 1-8, default 1) to the MCP tool sc
 1. Cap `concurrency` at `min(concurrency, len(commands), 8)` — never more goroutines than commands
 2. Pre-allocate `results := make([]string, len(commands))` — index-keyed for order preservation
 3. Create `errgroup.Group` with `g.SetLimit(concurrency)`
-4. Each command gets a per-command timeout: `time.Duration(timeout) * time.Millisecond / time.Duration(len(commands))` (evenly split the budget)
+4. Each command gets the **full** `timeout` value (matching upstream). This is the correct semantic for parallel I/O: commands run concurrently, so the wall-clock time is bounded by `timeout` not `timeout * N`. A timed-out command records `(timed out)` in its result slot without affecting siblings
 5. Each goroutine writes to `results[i]` — no shared state, no mutex needed
 6. `g.Wait()` blocks until all complete. Errors in one command don't abort others (each goroutine handles its own errors and writes error text to its result slot)
 7. After all commands complete, join `results` in order and proceed to indexing (serial)

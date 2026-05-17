@@ -13,7 +13,7 @@ Changes are ordered by dependency chain and priority. Security fixes come before
 **Task 1: SSRF Guard Improvements** (design §6a)
 
 Create `internal/server/ssrf.go` with three functions:
-- `classifyIP(ip net.IP) error` — extract IP classification from existing `validateFetchURL`. Return descriptive errors ("loopback address forbidden", "private network forbidden", etc.)
+- `classifyIP(rawIP string) error` — accepts raw IP string, strips zone-IDs, handles IPv4-mapped IPv6 via recursion, classifies against all categories (see design §6a.2 for full list). Return descriptive errors ("loopback address forbidden", "private network forbidden", "link-local address forbidden", etc.)
 - `validateFetchScheme(rawURL string) error` — parse URL, reject any scheme not in `{"http", "https"}`. Block `file`, `gopher`, `javascript`, `data`, empty scheme explicitly
 - `newSSRFSafeTransport() *http.Transport` — custom `DialContext` that resolves DNS via `net.DefaultResolver.LookupIPAddr`, classifies every IP via `classifyIP`, dials first passing IP. Use `net.Dialer` for the actual TCP connection after validation
 
@@ -49,6 +49,14 @@ Modify `internal/executor/env.go`:
 
 → verify: `go test ./internal/executor/ -run TestBuildSafeEnv` including test that CORECLR_PROFILER and COMPlus_EnableDiagnostics are stripped
 
+**Task 3b: Apply Read Deny-Policy to `capy_index(path)`** (design §6e)
+
+Modify `internal/server/tool_index.go`:
+- Add `s.checkFilePathDenyPolicy(path)` call immediately after extracting the `path` parameter (before the `filepath.IsAbs` resolution logic at line 26). When `path == ""` (inline content), skip the check
+- If denied, return the deny-policy error result and never proceed to file I/O
+
+→ verify: `go test ./internal/server/ -run TestIndexDenyPolicy` covering: denied absolute path returns error and produces no FTS5 chunks; denied relative path with `../` traversal returns error; inline `content` with a `source` label matching a deny pattern still indexes successfully (deny only applies to `path`)
+
 ### Phase 2: Search Quality (P0-P1)
 
 **Task 4: Phrase Frequency Reranker** (design §2)
@@ -79,13 +87,13 @@ Note on position lists: The existing code builds `posLists` from `termGroups` (s
 
 **5c. Stale detection:**
 - `internal/store/search.go`: add `denyChecker func(string) bool` field on `ContentStore`, add `SetDenyChecker(fn func(string) bool)` method, add `refreshStaleSources()` method. Call `refreshStaleSources()` at the top of `SearchWithFallback` before the RRF pass. Add `LastRefreshCount int` field for observability
-- `refreshStaleSources` queries sources with non-NULL `file_path`, checks mtime, then hash, then re-indexes. Before reading, calls `s.denyChecker(filePath)` if set — skip if denied
+- `refreshStaleSources` queries `SELECT label, file_path, content_hash, indexed_at, content_type, kind FROM sources WHERE file_path IS NOT NULL`. Before reading, calls `s.denyChecker(filePath)` if set — skip if denied. After confirming content changed, re-indexes via `s.IndexWithFilePath(newContent, label, contentType, kind, filePath)` — preserving the existing `content_type`, `kind`, and `file_path`. Must NOT use generic `Index()` which writes `file_path = NULL`, permanently breaking stale detection for that source
 
 **5d. Tool + server wiring:**
 - `internal/server/tool_index.go`: when file is read from disk, call `st.IndexWithFilePath(content, source, "", store.KindDurable, path)` instead of `st.Index`
 - `internal/server/server.go`: after creating the store, call `store.SetDenyChecker(...)` wiring to `security.EvaluateFilePath` with `s.projectDir` and `s.readDenyGlobs`
 
-→ verify: `go test ./internal/store/ -run TestStaleDetection` covering: fresh file (no refresh), modified file (auto-refresh), content-only source (no stale check), deleted file (graceful skip), denied file (skip on refresh)
+→ verify: `go test ./internal/store/ -run TestStaleDetection` covering: fresh file (no refresh), modified file (auto-refresh), content-only source (no stale check), deleted file (graceful skip), denied file (skip on refresh), **second-update regression** (modify file twice — source must remain file-backed after first refresh and detect the second change)
 
 ### Phase 3: Server/Tool Fixes (P1-P2)
 
@@ -100,8 +108,8 @@ Modify `internal/server/tool_index.go` line 52-53:
 
 Modify `internal/server/tool_fetch.go`:
 - Add `composeFetchCacheKey(label, url string) string` returning `label + "|" + url`
-- Line 76: change `st.GetSourceMeta(label)` to `st.GetSourceMeta(composeFetchCacheKey(label, url))`
-- Lines 96-97 area: when indexing, use `composeFetchCacheKey(source, url)` as the storage label so cache lookup matches on next call. But search still works via `source:` partial matching
+- Line 76: change `st.GetSourceMeta(label)` to `st.GetSourceMeta(composeFetchCacheKey(label, url))` for cache lookup
+- When indexing (around line 155-168): use `composeFetchCacheKey(source, url)` as the **storage label** (not just for lookup). This ensures the cache lookup on the next call for the same label+url hits the correct entry. Search via `source:` partial matching still works because `LIKE '%' || ? || '%'` matches the user's label substring within the composite key
 
 → verify: `go test ./internal/server/ -run TestFetchCache` including: two URLs with same explicit source get separate cache entries
 
@@ -114,7 +122,7 @@ Modify `internal/server/tool_batch.go`:
 - Extract existing serial loop into `executeBatchSerial(ctx, commands, timeout, executor) []string`
 - Add `executeBatchParallel(ctx, commands, timeout, concurrency, executor) []string`:
   - Pre-allocate `results := make([]string, len(commands))`
-  - Per-command timeout: `perCmdTimeout := time.Duration(timeout) * time.Millisecond / time.Duration(len(commands))`
+  - Each command gets the **full** `timeout` value (matching upstream). Commands run concurrently so wall-clock is bounded by timeout, not timeout*N. A timed-out command records `(timed out)` in its slot without affecting siblings
   - Use `errgroup.Group` with `g.SetLimit(concurrency)`
   - Each goroutine writes to `results[i]` — no shared state
   - Errors are handled per-command (written as error text to result slot)
@@ -157,7 +165,7 @@ Modify `Execute` method in the shell branch (line 83-86):
 
 ### Phase 5: Verification
 
-**Task 11: Final Verification**
+**Task 12: Final Verification**
 
 - Run full test suite: `go test ./...`
 - Run `review-code` skill on the accumulated diff
