@@ -62,15 +62,8 @@ Modify `internal/server/tool_index.go`:
 
 Add to `internal/store/search.go`:
 - `countAdjacentPairs(positionLists [][]int, terms []string, gap int) int` — sweep-line algorithm counting ordered adjacent pairs within gap window. Each right position consumed at most once
-- Inside `rerank()`, after the existing `minSpan` computation (around line 309-311): compute `adjacentPairs := countAdjacentPairs(posLists, terms, 30)` using the non-synonym-expanded `terms` (the raw filtered terms, not `termGroups`) and the basic `posLists` (positions of raw terms in content). Compute `phraseBoost := 0.5 * math.Min(1.0, float64(adjacentPairs)/4.0)`. Apply to boost: `r.FusedScore *= (1.0 + titleBoost + proximityBoost + phraseBoost)` — wait, re-check current code...
-
-**Important:** The current code applies title boost and proximity boost separately:
-- Title boost: `r.FusedScore *= (1.0 + titleBoost)` (line 261)
-- Proximity boost: `r.FusedScore *= (1.0 + boost)` (line 312)
-
-The TS reference combines them: `return { result: r, boost: titleBoost + proximityBoost + phraseBoost }`. We should follow the TS approach to keep the phrase boost consistent with proximity. However, the current capy code applies them multiplicatively. **Keep capy's multiplicative approach** but add phrase boost alongside proximity: change the proximity block to compute `boost := proximityBoost + phraseBoost` and apply as `r.FusedScore *= (1.0 + boost)`.
-
-Note on position lists: The existing code builds `posLists` from `termGroups` (synonym-expanded). For `countAdjacentPairs`, use the raw terms (not synonym-expanded) since adjacent-pair detection should reward exact consecutive occurrences, not synonym matches. Build a separate `rawPosLists` from the raw `terms` for this purpose.
+- Inside `rerank()`, in the multi-term proximity block: `countAdjacentPairs` builds its own position lists from raw (non-synonym-expanded) `terms` against `strings.ToLower(r.Content)`. This scan is always performed — it cannot reuse the existing `posLists` because those are synonym-expanded (wrong `terms[i].length` offsets) and may be nil when `minSpan` was found via the highlight fast path (`search.go:284-286`)
+- Compute `phraseBoost := 0.5 * math.Min(1.0, float64(adjacentPairs)/4.0)`. Add to proximity boost: `r.FusedScore *= (1.0 + proximityBoost + phraseBoost)`. Title boost remains a separate multiplicative pass (capy's existing two-pass approach, deliberate divergence from TS's single additive pass)
 
 → verify: `go test ./internal/store/ -run TestCountAdjacentPairs` + `go test ./internal/store/ -run TestRerank` including test case: short doc with 4+ adjacent pairs outranks long doc with 1 occurrence at same minSpan
 
@@ -83,17 +76,19 @@ Note on position lists: The existing code builds `posLists` from `termGroups` (s
 **5b. Index changes:**
 - `internal/store/store.go:175-177`: modify `stmtInsertSource` from 6 columns to 7 — add `file_path` after `kind`
 - `internal/store/index.go`: add `filePath string` parameter to `indexPreparedChunks` signature (currently has `content, label, contentType string, kind SourceKind, chunks []Chunk`). Convert to `sql.NullString{String: filePath, Valid: filePath != ""}` before `stmtInsertSource.Exec`. Update both callers: `Index` passes `""`, new `IndexWithFilePath` passes the actual path. Add `IndexWithFilePath(content, label, contentType string, kind SourceKind, filePath string) (*IndexResult, error)` as a public entry point
-- Update `stmtFindSourceByLabel` to also return `file_path` for completeness (not strictly needed for stale detection but keeps the query consistent)
+- Update `stmtFindSourceByLabel` to also return `file_path` — needed to detect the NULL→non-NULL transition in the dedup path
+- In the same-hash dedup path (`index.go:113-133`): when `filePath != ""` and the existing source has `file_path = NULL`, update the source row to set `file_path` via new `stmtUpdateSourceFilePath`. This handles the case where a source was first indexed inline (file_path=NULL) then re-indexed from a file path with identical content
+- Add any new prepared statements (`stmtUpdateSourceFilePath`, stale detection queries) to the `Close()` method's statement list (`store.go:317-324`). Missing entries leak statements
 
 **5c. Stale detection:**
-- `internal/store/search.go`: add `denyChecker func(string) bool` field, `SetDenyChecker` method, `lastRefreshTime time.Time` field (5-second cooldown — skip refresh if called within 5s), `LastRefreshCount int` field. Add `refreshStaleSources()` method. Call at top of `SearchWithFallback` before RRF pass — early-return if cooldown hasn't elapsed
-- `refreshStaleSources` queries `SELECT label, file_path, content_hash, indexed_at, content_type, kind FROM sources WHERE file_path IS NOT NULL`. Before reading, calls `s.denyChecker(filePath)` if set — skip if denied. After confirming content changed, re-indexes via `s.IndexWithFilePath(newContent, label, contentType, kind, filePath)` — preserving the existing `content_type`, `kind`, and `file_path`. Must NOT use generic `Index()` which writes `file_path = NULL`, permanently breaking stale detection for that source
+- `internal/store/search.go`: add `denyChecker func(string) bool` field, `SetDenyChecker` method, `lastRefreshTime atomic.Int64` (Unix nanos, 5-second cooldown). `refreshStaleSources() int` returns refresh count (not stored globally — avoids concurrency issues). Call at top of `SearchWithFallback` before RRF pass — early-return if cooldown hasn't elapsed
+- `refreshStaleSources` queries `SELECT label, file_path, content_hash, indexed_at, content_type, kind FROM sources WHERE file_path IS NOT NULL`. Parse `indexed_at` with format `"2006-01-02 15:04:05"` (consistent with `cleanup.go:231`). Compare `mtime.UTC()` against parsed time (SQLite `CURRENT_TIMESTAMP` is UTC). Before reading, calls `s.denyChecker(filePath)` — skip if denied. Use fd-bound reads: `os.Open(filePath)` → `f.Stat()` (verify `IsRegular()`) → `io.ReadAll(f)` to prevent swap between deny check and read. **Hash comparison must use sanitized content:** `sanitize.StripSecrets(rawContent)` then `contentHash(sanitized)` — capy's stored `content_hash` is computed from post-`StripSecrets` content (`index.go:46`). Comparing raw bytes would cause infinite refresh for secret-bearing files. After confirming change, re-index via `s.IndexWithFilePath(sanitizedContent, label, contentType, kind, filePath)`
 
 **5d. Tool + server wiring:**
-- `internal/server/tool_index.go`: when file is read from disk, call `st.IndexWithFilePath(content, source, "", store.KindDurable, path)` instead of `st.Index`
+- `internal/server/tool_index.go`: when file is read from disk, use fd-bound pattern (`os.Open` → `f.Stat` → verify `IsRegular()` → `io.ReadAll`), then call `st.IndexWithFilePath(content, source, "", store.KindDurable, path)`
 - `internal/server/server.go`: after creating the store, call `store.SetDenyChecker(...)` wiring to `security.EvaluateFilePath` with `s.projectDir` and `s.readDenyGlobs`
 
-→ verify: `go test ./internal/store/ -run TestStaleDetection` covering: fresh file (no refresh), modified file (auto-refresh), content-only source (no stale check), deleted file (graceful skip), denied file (skip on refresh), **second-update regression** (modify file twice — source must remain file-backed after first refresh and detect the second change)
+→ verify: `go test ./internal/store/ -run TestStaleDetection` covering: fresh file (no refresh), modified file (auto-refresh), content-only source (no stale check), deleted file (graceful skip), denied file (skip on refresh), **second-update regression** (modify file twice — source remains file-backed after first refresh and detects second change), **secret-bearing file** (file with secrets produces matching hash after sanitization), **NULL→non-NULL file_path** (inline-indexed source re-indexed from file path gets file_path attached)
 
 ### Phase 3: Server/Tool Fixes (P1-P2)
 
@@ -132,23 +127,39 @@ Modify `internal/server/tool_batch.go`:
 Modify `internal/server/server.go`:
 - Add `concurrency` to `capy_batch_execute` tool schema as optional integer, min 1, max 8
 
-→ verify: `go test ./internal/server/ -run TestBatchConcurrency` covering: serial at concurrency=1 (same behavior), parallel speedup at concurrency=4 with sleep commands, output ordering preserved, per-command error isolation
+→ verify: `go test ./internal/server/ -run TestBatchConcurrency` covering: serial at concurrency=1 (same behavior), parallel speedup at concurrency=4 with sleep commands, output ordering preserved, per-command error isolation. Note: executor is thread-safe (`sync.Once` for detection, `sync.Mutex` for background PIDs). Stats tracking happens after the parallel phase completes (serial).
+
+**Task 8b: Fetch-and-Index Batch Requests** (design §7b)
+
+Modify `internal/server/tool_fetch.go`:
+- Add `requests` parameter parsing (array of `{url, source?}` objects) as alternative to `url`+`source`
+- When `requests` provided: fetch all URLs concurrently via `errgroup.Group` with `SetLimit(concurrency)`, serialize FTS5 writes after all fetches complete
+- Per-URL cache check via `composeFetchCacheKey`. Cached URLs skipped
+- Batch response: per-URL preview capped at 384 chars, aggregate summary
+
+Modify `internal/server/server.go`:
+- Add `requests` and `concurrency` to `capy_fetch_and_index` MCP schema
+
+→ verify: `go test ./internal/server/ -run TestFetchBatch` covering: single-URL backward compat, batch mode, partial cache hits, output preview capping
 
 **Task 9: Extend Cleanup with purge_all** (design §8)
 
 Add to `internal/store/cleanup.go`:
-- `PurgeAll(dryRun bool) (int, error)` — if dryRun, return count of sources; else DELETE FROM sources, chunks, chunks_trigram, vocabulary, then VACUUM
+- `PurgeAll(dryRun bool) (PurgeCounts, error)` — if dryRun, return counts of sources/chunks/vocab; else DELETE FROM sources, chunks, chunks_trigram, vocabulary, clear fuzzy cache (`s.fuzzyCacheMu.Lock(); s.fuzzyCache = make(map[string]*string); s.fuzzyCacheMu.Unlock()`), then VACUUM
+
+Add to `internal/server/stats.go`:
+- `Reset()` method on `SessionStats` — zero all counters, re-initialize maps under mutex
 
 Modify `internal/server/tool_cleanup.go`:
 - Parse `purge_all` boolean parameter
 - Mutual exclusion with `source`, `purge_ephemeral`, `purge_session`
 - When set, call `st.PurgeAll(dryRun)` and also `s.stats.Reset()` if not dryRun
-- Format response: "Purged all N sources and M chunks. Knowledge base reset."
+- Format response from structured `PurgeCounts`: "Purged N sources, M chunks, K vocab entries. Knowledge base reset."
 
 Modify `internal/server/server.go`:
 - Add `purge_all` to `capy_cleanup` tool schema as optional boolean
 
-→ verify: `go test ./internal/server/ -run TestCleanupPurgeAll` covering: dry run reports counts, actual purge empties all tables, mutual exclusion enforced
+→ verify: `go test ./internal/server/ -run TestCleanupPurgeAll` covering: dry run reports counts, actual purge empties all tables + clears fuzzy cache, mutual exclusion enforced, post-purge fuzzy correction returns no stale results
 
 ### Phase 4: Executor (P2)
 
@@ -165,7 +176,7 @@ Modify `Execute` method in the shell branch (line 83-86):
 
 ### Phase 5: Verification
 
-**Task 12: Final Verification**
+**Task 13: Final Verification**
 
 - Run full test suite: `go test ./...`
 - Run `review-code` skill on the accumulated diff

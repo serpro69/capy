@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-The context-mode TS reference accumulated ~703 commits since the v1.0.89 sync point. After filtering out CI, bundle, platform-specific (Windows, Bun, KiloCode, Kiro, Zed, Pi, OpenClaw, OpenCode, Codex, Cursor, VS Code, Copilot, headless), docs-only, test-infra, stats/analytics/insight, adapter, lifecycle, and version-bump changes, **12 changes** are relevant to capy's core. An additional **10+ categories** are deliberately skipped with documented rationale.
+The context-mode TS reference accumulated ~703 commits since the v1.0.89 sync point. After filtering out CI, bundle, platform-specific (Windows, Bun, KiloCode, Kiro, Zed, Pi, OpenClaw, OpenCode, Codex, Cursor, VS Code, Copilot, headless), docs-only, test-infra, stats/analytics/insight, adapter, lifecycle, and version-bump changes, **13 changes** are relevant to capy's core. An additional **10+ categories** are deliberately skipped with documented rationale.
 
 ### Ported changes
 
@@ -24,6 +24,7 @@ The context-mode TS reference accumulated ~703 commits since the v1.0.89 sync po
 | P1 | Server | Canonicalize index source label to resolved absolute path | (`e7a3eda`) |
 | P1 | Server | Fetch cache key includes URL to prevent cross-URL collision | (`1f1243e`) |
 | P1 | Server | Batch concurrency: opt-in `concurrency: 1-8` for I/O-bound batches | #349, (`1d991a2`, `b392c2f`) |
+| P1 | Server | Fetch-and-index batch requests with concurrency | (`b392c2f`) |
 | P2 | Server | Extend cleanup with project-scope purge (`purge_all`) | #520 (`823fd36`, `d11c583`) |
 | P2 | Executor | Preserve shell executor PATH after startup | #459 (`702dc75`) |
 
@@ -42,6 +43,8 @@ The context-mode TS reference accumulated ~703 commits since the v1.0.89 sync po
 | Server | Suppress startup banner (#522) | TS MCP SDK-specific stdout management |
 | DB | Node:sqlite gate (#461, #551) | TS-specific adapter for Node's built-in SQLite vs better-sqlite3 |
 | Platform | All platform-specific changes | Windows, Bun, adapters (Pi, Codex, OpenCode, Cursor, VS Code, Copilot, headless, etc.) — not applicable to Go's single-binary architecture |
+| Session | Tool-result/MCP-tool-call extraction in session parser | Capy's session parser explicitly deferred tool_result capture to v3 (`docs/done/sessionflow-rag/design-v2.md:156`). Upstream now captures `tool_response` and `AskUserQuestion` answers — evaluate as a separate session-extraction improvement, not a sync item |
+| Server | Optional no-timeout semantics for execute/batch_execute | Upstream allows `timeout: undefined` (no server-side timer, host RPC timeout governs). Capy defaults to 60s. Preserving capy's default is intentional — a missing timeout in capy would mean unbounded subprocess lifetime. Document as deliberate divergence if needed |
 | CI/Docs | All CI, docs, test-infra, bundle changes | Infrastructure-only, no runtime behavior |
 
 ### Capy-specific features not in upstream (preserved)
@@ -65,6 +68,8 @@ These capy features have no upstream equivalent and must be preserved during the
 | Cleanup policy | Conservative (never-accessed + cold + age) | Aggressive (age-only stale deletion) | Persistent DB needs conservative pruning (ADR-011) |
 | SSRF default | Block loopback + private + link-local | Allow loopback + private | Capy is stricter by default — no `CTX_FETCH_STRICT` toggle |
 | Fetch TTL | Configurable via `.capy.toml` | Hardcoded 24h | Config system makes this trivial (ADR-013) |
+| Reranker boost application | Title boost and proximity+phrase boost applied as separate multiplicative passes | All three combined additively in one pass | Capy's multiplicative separation is a deliberate divergence (ADR-014) |
+| Stale hash comparison | Compares against sanitized content hash (post-`StripSecrets`) | Compares against raw content hash (no secret stripping) | Capy strips secrets before indexing; raw hash would cause infinite refresh for secret-bearing files |
 
 ---
 
@@ -82,7 +87,9 @@ Add a `countAdjacentPairs(positionLists [][]int, terms []string, gap int) int` h
 
 **Boost formula:** `phraseBoost = 0.5 * min(1.0, float64(adjacentPairs) / 4.0)` — saturates at 4 hits to prevent keyword-stuffed documents from dominating. Cap of 0.5 sits below max proximity (~1.0) and in the title-boost range (0.3-0.6).
 
-**Integration point:** Inside `rerank()` in the multi-term proximity block (after computing `minSpan`), compute `adjacentPairs` using the same `posLists` already built for span calculation. `phraseBoost` is added to `proximityBoost` and applied as a single multiplicative factor: `r.FusedScore *= (1.0 + proximityBoost + phraseBoost)`. Title boost remains a separate multiplicative pass (`r.FusedScore *= (1.0 + titleBoost)`), matching capy's existing two-pass approach. This differs from the TS reference which combines all three additively — capy's multiplicative separation is a deliberate divergence preserved from ADR-014. No interaction with capy's synonym expansion, entity boosting, or diversification.
+**Integration point:** Inside `rerank()`, in the multi-term proximity block, after computing `minSpan`. `countAdjacentPairs` must build its own position lists from raw (non-synonym-expanded) terms against `r.Content` — it cannot reuse the existing `posLists` for two reasons: (1) existing `posLists` are built from `termGroups` (synonym-expanded), so `terms[i].length` offsets would be wrong when a match came from a synonym; (2) the highlight fast path (`search.go:284-286`) skips position-list construction entirely, so `posLists` may be nil. The raw-term scan is always performed from content, independent of how `minSpan` was computed.
+
+`phraseBoost` is added to `proximityBoost` and applied as a single multiplicative factor: `r.FusedScore *= (1.0 + proximityBoost + phraseBoost)`. Title boost remains a separate multiplicative pass (`r.FusedScore *= (1.0 + titleBoost)`), matching capy's existing two-pass approach. This differs from the TS reference which combines all three additively — capy's multiplicative separation is a deliberate divergence preserved from ADR-014. No interaction with capy's synonym expansion, entity boosting, or diversification.
 
 ### 2.3 Files touched
 
@@ -119,6 +126,8 @@ O(1) in SQLite. No data migration needed — existing sources get `NULL` for `fi
 
 **`index.go`:** Add `IndexWithFilePath(content, label, contentType string, kind SourceKind, filePath string) (*IndexResult, error)`. Both `Index` and `IndexWithFilePath` funnel through `indexPreparedChunks` — add a `filePath string` parameter to its signature. `Index` passes `""`, `IndexWithFilePath` passes the actual path. `indexPreparedChunks` converts to `sql.NullString{String: filePath, Valid: filePath != ""}` before the `stmtInsertSource.Exec` call. Modify `stmtInsertSource` (currently 6 columns in `store.go:175-177`) to include `file_path` as the 7th column.
 
+**Same-hash dedup path (`index.go:113-133`):** When `existingHash == hash` (same content), the current code returns early after updating kind or access time — it never updates `file_path`. If a source was first indexed via `Index()` (file_path=NULL) and then re-indexed via `IndexWithFilePath()` with the same content, `file_path` stays NULL and stale detection never activates. Fix: in the dedup path, when `filePath != ""` and the existing source has `file_path = NULL`, update the source row to set `file_path`. Add a `stmtUpdateSourceFilePath` prepared statement (`UPDATE sources SET file_path = ? WHERE id = ?`) and include it in `Close()`'s statement list. Also query `file_path` in `stmtFindSourceByLabel` to detect the NULL→non-NULL transition.
+
 ### 3.5 Search path changes
 
 **`search.go`:** At the top of `SearchWithFallback`, before the RRF pass, call `s.refreshStaleSources()`:
@@ -126,16 +135,16 @@ O(1) in SQLite. No data migration needed — existing sources get `NULL` for `fi
 1. Query `SELECT label, file_path, content_hash, indexed_at, content_type, kind FROM sources WHERE file_path IS NOT NULL`
 2. For each source:
    - **Deny-policy check:** call `s.denyChecker(filePath)` before any I/O — skip if denied (see §6b TOCTOU fix)
-   - **mtime gate (fast path):** `os.Stat(filePath).ModTime()` — skip if mtime ≤ `indexedAt`
-   - **SHA-256 comparison:** `os.ReadFile(filePath)`, hash — skip if hash matches `content_hash`
-   - **Re-index:** call `s.IndexWithFilePath(newContent, label, contentType, kind, filePath)` — preserving the existing `content_type`, `kind`, and `file_path` so the source remains file-backed and retains its lifecycle semantics after refresh. Must NOT use generic `s.Index()` which writes `file_path = NULL`, breaking future stale detection
+   - **mtime gate (fast path):** `os.Stat(filePath).ModTime()` — skip if mtime ≤ `indexedAt`. Parse `indexed_at` with format `"2006-01-02 15:04:05"` (consistent with `cleanup.go:231`, `search.go:970`). SQLite's `CURRENT_TIMESTAMP` stores UTC, and `time.Parse` returns UTC when no timezone is specified, so the comparison with `ModTime()` (local time) must convert one side — use `mtime.UTC()` before comparing
+   - **SHA-256 comparison:** `os.ReadFile(filePath)`, then `sanitize.StripSecrets(rawContent)`, then `contentHash(sanitized)` — compare against stored `content_hash`. **Critical:** capy strips secrets before hashing at index time (`index.go:46`), so the stored hash is of the sanitized content. Comparing raw file bytes against the sanitized hash would cause permanent mismatches for any file containing secrets, triggering infinite re-indexing. The TS reference hashes raw bytes (it has no secret stripping), so this is a capy-specific divergence.
+   - **Re-index:** call `s.IndexWithFilePath(sanitizedContent, label, contentType, kind, filePath)` — pass the already-sanitized content to avoid double-stripping. Preserves `content_type`, `kind`, and `file_path` so the source remains file-backed. Must NOT use generic `s.Index()` which writes `file_path = NULL`, breaking future stale detection
 3. Graceful handling:
    - Deleted files: `os.Stat` returns error → skip, keep cached results
    - Read errors: log warning, skip (never break search for stale detection)
 
-**Cooldown:** Add a `lastRefreshTime time.Time` field on `ContentStore`. Skip `refreshStaleSources` entirely if called within the last 5 seconds. The TS reference has no throttling, but capy runs as a separate MCP server where each search is an IPC round-trip — the per-file `stat` syscalls add non-trivial latency when many file-backed sources are indexed. A 5-second cooldown is short enough that genuinely stale files are caught within a few searches, but avoids redundant stat storms on rapid query bursts (e.g., batch searches). This is a capy-specific addition matching the conservative approach from ADR-011.
+**Cooldown:** Skip `refreshStaleSources` if called within the last 5 seconds. Use `atomic.Int64` storing `lastRefreshTime` as Unix nanoseconds — concurrent `SearchWithFallback` calls (via `rrfSearch`'s goroutines at `search.go:104`) would race on a bare `time.Time` field. The TS reference has no throttling, but capy runs as a separate MCP server where each search is an IPC round-trip — the per-file `stat` syscalls add non-trivial latency when many file-backed sources are indexed. A 5-second cooldown is short enough that genuinely stale files are caught within a few searches, but avoids redundant stat storms on rapid query bursts (e.g., batch searches). This is a capy-specific addition matching the conservative approach from ADR-011.
 
-**Observability:** `LastRefreshCount int` field on `ContentStore` — tracks how many sources were refreshed in the last `SearchWithFallback` call.
+**Observability:** `refreshStaleSources` returns the refresh count rather than storing it on a global field (avoids concurrency issues). The caller can log or expose it as needed.
 
 ### 3.6 Interaction with existing features
 
@@ -247,6 +256,8 @@ Since capy blocks both "hard-block" and "private" categories (stricter than upst
 
 This collapses the TOCTOU window to zero — DNS resolution and IP classification happen at connect time, not in a separate pre-flight step.
 
+**Redirect safety:** `http.Client` follows redirects (up to `fetchMaxRedirect = 10`). Each redirect to a new host opens a new TCP connection, triggering `DialContext` with full IP classification. Same-host redirects (different path) reuse the validated connection — safe because the IP was already validated at connect time.
+
 #### 6a.3 Files touched
 
 - `internal/server/ssrf.go` (new): `classifyIP`, `validateFetchScheme`, `newSSRFSafeTransport`
@@ -290,9 +301,12 @@ Fail-closed: if the checker errors or returns true, skip the re-read rather than
 #### 6c.2 Solution
 
 Add an optional `projectRoot string` parameter to `EvaluateFilePath`. When non-empty:
-1. Resolve the input path to absolute: `filepath.Join(projectRoot, filePath)` then `filepath.Clean`
-2. Match deny globs against both the raw input AND the resolved absolute path
-3. Either match triggers denial
+1. Resolve the input path to absolute: `filepath.Join(projectRoot, filePath)` then `filepath.Clean` (lexical resolution)
+2. Resolve symlinks via `filepath.EvalSymlinks` to get the canonical path (catches symlink escapes like `safe-link -> /etc/passwd`)
+3. Match deny globs against all three candidates: raw input, lexical absolute, and canonical realpath
+4. Either match triggers denial
+
+**fd-bound reads for `capy_index(path)` and stale refresh:** The upstream TOCTOU fix (`8b0f2d4`) uses `openSync`/`fstatSync`/`readFileSync(fd)` to bind the deny check, stat, and read to a single file descriptor — preventing a swap between the deny check and the actual read. In Go, use `os.Open(path)` → `f.Stat()` → `io.ReadAll(f)` on the same `*os.File` handle. Applies to both `handleIndex` (tool_index.go) and `refreshStaleSources` (search.go). The `f.Stat()` result also verifies the target is a regular file (`st.Mode().IsRegular()`), blocking FIFO/device/socket reads.
 
 Update `checkFilePathDenyPolicy` in `security_check.go` to pass `s.projectDir`. Callers that don't pass `projectRoot` (empty string) see identical behavior — backward compatible.
 
@@ -399,6 +413,28 @@ Add an optional `concurrency` parameter (int, 1-8, default 1) to the MCP tool sc
 - `internal/server/tool_batch_test.go`: test serial preserved at concurrency=1, parallel speedup at concurrency>1, output ordering, per-command error isolation
 - `go.mod`: add `golang.org/x/sync` dependency (if not already present)
 
+## 7b. Fetch-and-Index Batch Requests with Concurrency
+
+### 7b.1 Problem
+
+`capy_fetch_and_index` accepts a single URL. LLM agents researching multiple sources must call the tool N times sequentially. The TS reference added a batch mode: `requests: [{url, source}, ...]` with `concurrency: 1-8`.
+
+### 7b.2 Solution
+
+Add `requests` (array of `{url, source?}` objects) as an alternative to the existing `url`+`source` parameters. Preserve backward compatibility: when `url` is provided (legacy single-URL mode), behavior is identical. When `requests` is provided, fetch all URLs with the concurrency pool from §7 (`errgroup.Group` with `SetLimit`).
+
+**Parallel fetches, serial FTS5 writes:** HTTP fetches run concurrently, but `store.Index` calls are serialized to avoid SQLite WAL contention. Each goroutine fetches and converts HTML→markdown, then writes to a result slot. After all fetches complete, index sequentially.
+
+**Batch response:** Per-URL preview capped at 384 chars in batch mode (~3KB total for 8 URLs) so context savings hold. Aggregate summary: "Fetched and indexed N URLs (XKB total)."
+
+**Cache:** Each URL is checked against the TTL cache independently using `composeFetchCacheKey`. Cached URLs are skipped.
+
+### 7b.3 Files touched
+
+- `internal/server/tool_fetch.go`: add `requests` parameter parsing, batch execution path
+- `internal/server/server.go`: update `capy_fetch_and_index` MCP schema with `requests` and `concurrency` params
+- `internal/server/tool_fetch_test.go`: test single-URL backward compat, batch mode, partial cache hits
+
 ---
 
 ## 8. Extend Cleanup with Project-Scope Purge
@@ -411,13 +447,14 @@ Add an optional `concurrency` parameter (int, 1-8, default 1) to the MCP tool sc
 
 Add a `purge_all: true` boolean parameter to the cleanup tool. When set:
 
-1. Delete ALL rows from `sources`, `chunks`, `chunks_trigram`, and `vocabulary`. Note: vocabulary is normally preserved across cleanups (it benefits fuzzy correction — see `cleanup.go:134`), but `purge_all` is a full knowledge-base reset. Including vocabulary ensures the store is truly empty and the fuzzy cache is invalidated cleanly
-2. Reset stats via `s.stats.Reset()`
-3. Run `VACUUM` to reclaim disk space
+1. Delete ALL rows from `sources`, `chunks`, `chunks_trigram`, and `vocabulary`. Note: vocabulary is normally preserved across cleanups (it benefits fuzzy correction — see `cleanup.go:134`), but `purge_all` is a full knowledge-base reset. Including vocabulary ensures the store is truly empty
+2. Clear the in-memory fuzzy cache: `s.fuzzyCacheMu.Lock(); s.fuzzyCache = make(map[string]*string); s.fuzzyCacheMu.Unlock()`. Without this, the cache holds stale corrections pointing to non-existent vocabulary words until the 256-entry eviction threshold is hit. (Vocabulary insertion clears the cache at `vocabulary.go:55-57`, but DELETE doesn't trigger it.)
+3. Reset stats. `SessionStats` currently has no `Reset()` method — add one that zeroes all counters and re-initializes maps under the mutex
+4. Run `VACUUM` to reclaim disk space
 
 The existing `dry_run` parameter applies: when true, report total source/chunk counts that would be purged without acting. Mutually exclusive with `source`, `purge_ephemeral`, and `purge_session`.
 
-Add a `PurgeAll(dryRun bool) (int, error)` method to `ContentStore` that returns the number of sources purged.
+Add a `PurgeAll(dryRun bool) (PurgeCounts, error)` method to `ContentStore` that returns structured counts (sources, chunks, vocab entries purged). The handler formats the response from these.
 
 ### 8.3 Files touched
 

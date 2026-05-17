@@ -24,9 +24,9 @@
 - **Docs:** [design.md#6c-path-traversal-bypass-in-file-deny-evaluation](./design.md#6c-path-traversal-bypass-in-file-deny-evaluation), [implementation.md#task-2-path-traversal-bypass-fix](./implementation.md#task-2-path-traversal-bypass-fix)
 
 ### Subtasks
-- [ ] 2.1 Modify `EvaluateFilePath` in `internal/security/eval.go` to accept `projectRoot string` as third parameter — when non-empty and path is relative, resolve to absolute via `filepath.Clean(filepath.Join(projectRoot, filePath))`, match deny globs against both raw and resolved
+- [ ] 2.1 Modify `EvaluateFilePath` in `internal/security/eval.go` to accept `projectRoot string` as third parameter — match deny globs against three candidates: raw input, lexical absolute (`filepath.Clean(filepath.Join(projectRoot, filePath))`), and canonical realpath (`filepath.EvalSymlinks`)
 - [ ] 2.2 Update all three callers to pass `projectRoot`: `internal/server/security_check.go:45` (pass `s.projectDir`), `internal/hook/pretooluse.go:157` (pass `projectDir`), and deny checker closure in `server.go` (pass `s.projectDir`)
-- [ ] 2.3 Add tests in `internal/security/eval_test.go` — relative `../../.ssh/id_rsa` from projectRoot `/home/user/project` caught by glob `/home/user/.ssh/**`; absolute paths still work; empty projectRoot preserves old behavior
+- [ ] 2.3 Add tests — relative `../../.ssh/id_rsa` caught by glob, absolute paths work, empty projectRoot preserves old behavior, **symlink escape** (symlink pointing to denied target is caught via realpath), **non-regular file** guard in fd-bound read callers
 
 ## Task 3: Executor env deny list expansion
 - **Status:** pending
@@ -54,7 +54,7 @@
 
 ### Subtasks
 - [ ] 4.1 Add `countAdjacentPairs(positionLists [][]int, terms []string, gap int) int` to `internal/store/search.go` — sweep-line algorithm, each right position consumed at most once
-- [ ] 4.2 Integrate into `rerank()`: after minSpan computation, build raw-term position lists (not synonym-expanded), compute `phraseBoost = 0.5 * min(1.0, adjacentPairs/4.0)`, add to proximity boost before applying to `FusedScore`
+- [ ] 4.2 Integrate into `rerank()`: `countAdjacentPairs` always builds its own position lists from raw `terms` against `r.Content` (cannot reuse existing `posLists` — they're synonym-expanded, and may be nil when minSpan came from highlights). Compute `phraseBoost = 0.5 * min(1.0, adjacentPairs/4.0)`, add to proximity boost: `r.FusedScore *= (1.0 + proximityBoost + phraseBoost)`
 - [ ] 4.3 Add unit tests for `countAdjacentPairs` in `internal/store/search_test.go` — 0 pairs when terms don't appear, 1 pair for single adjacent occurrence, saturation at 4+, greedy consumption (no double-counting)
 - [ ] 4.4 Add integration test: short doc with 4 adjacent pairs outranks long doc with 1 occurrence at same minSpan
 
@@ -66,12 +66,12 @@
 ### Subtasks
 - [ ] 5.1 Add `file_path TEXT` to `CREATE TABLE sources` in `internal/store/schema.go`
 - [ ] 5.2 Add migration in `internal/store/migrate.go` for `ALTER TABLE sources ADD COLUMN file_path TEXT`
-- [ ] 5.3 Modify `stmtInsertSource` in `store.go:175-177` from 6 to 7 columns (add `file_path`). Add `filePath string` parameter to `indexPreparedChunks` signature — `Index` passes `""`, new `IndexWithFilePath` passes actual path. Convert to `sql.NullString` before `Exec`
-- [ ] 5.4 Add `denyChecker func(string) bool` field, `SetDenyChecker` method, `lastRefreshTime time.Time` (5-second cooldown), `LastRefreshCount int` field, and `refreshStaleSources()` method to `internal/store/search.go` — early-return if cooldown hasn't elapsed; query `SELECT label, file_path, content_hash, indexed_at, content_type, kind FROM sources WHERE file_path IS NOT NULL`, check deny before read, mtime gate → SHA-256 compare → re-index via `IndexWithFilePath(newContent, label, contentType, kind, filePath)` preserving all existing metadata
-- [ ] 5.5 Call `refreshStaleSources()` at the top of `SearchWithFallback` before the RRF pass
-- [ ] 5.6 Update `internal/server/tool_index.go` — when file is read from disk, call `st.IndexWithFilePath` instead of `st.Index`, passing resolved absolute path
+- [ ] 5.3 Modify `stmtInsertSource` in `store.go:175-177` from 6 to 7 columns (add `file_path`). Add `filePath string` parameter to `indexPreparedChunks` signature — `Index` passes `""`, new `IndexWithFilePath` passes actual path. Convert to `sql.NullString` before `Exec`. In same-hash dedup path (`index.go:113-133`): when `filePath != ""` and existing source has `file_path = NULL`, update via new `stmtUpdateSourceFilePath`. Add new prepared statements to `Close()` list (`store.go:317-324`)
+- [ ] 5.4 Add `denyChecker func(string) bool` field, `SetDenyChecker` method, `lastRefreshTime atomic.Int64` (5-second cooldown), and `refreshStaleSources() int` method (returns count, no global field) to `internal/store/search.go`. Parse `indexed_at` with `"2006-01-02 15:04:05"` format, compare `mtime.UTC()`. Use fd-bound reads: `os.Open` → `f.Stat()` (verify `IsRegular()`) → `io.ReadAll`. Hash comparison: `sanitize.StripSecrets(rawContent)` then `contentHash(sanitized)` — stored hash is of post-StripSecrets content. Re-index via `IndexWithFilePath(sanitizedContent, label, contentType, kind, filePath)`
+- [ ] 5.5 Call `refreshStaleSources()` at the top of `SearchWithFallback` before the RRF pass — early-return if cooldown hasn't elapsed
+- [ ] 5.6 Update `internal/server/tool_index.go` — use fd-bound pattern (`os.Open` → `f.Stat` → verify `IsRegular()` → `io.ReadAll`) when reading file, then call `st.IndexWithFilePath`
 - [ ] 5.7 Wire deny checker in `internal/server/server.go` — after creating store, call `store.SetDenyChecker(...)` using `security.EvaluateFilePath` with `s.projectDir` and `s.readDenyGlobs`
-- [ ] 5.8 Add tests in `internal/store/search_test.go` (or new `stale_test.go`) — fresh file (no refresh), modified file (auto-refresh), content-only source (no stale check), deleted file (graceful skip), denied file (skip on refresh), **second-update regression** (modify file twice — source remains file-backed after first refresh and detects second change)
+- [ ] 5.8 Add tests covering: fresh file (no refresh), modified file (auto-refresh), content-only source (no stale check), deleted file (graceful skip), denied file (skip on refresh), **second-update regression** (modify twice — remains file-backed), **secret-bearing file** (sanitized hash matches), **NULL→non-NULL file_path** (inline then file-path re-index), **symlink escape** (symlink to denied target blocked), **non-regular file** (FIFO/device skipped)
 
 ## Task 6: Canonicalize index source label
 - **Status:** pending
@@ -106,16 +106,29 @@
 - [ ] 8.6 Add `concurrency` to `capy_batch_execute` MCP tool schema in `internal/server/server.go` — optional integer, min 1, max 8, with description guiding LLM usage
 - [ ] 8.7 Add tests: serial at concurrency=1 (identical behavior), parallel speedup with sleep commands, output ordering preserved, per-command error isolation
 
+## Task 8b: Fetch-and-index batch requests
+- **Status:** pending
+- **Depends on:** Task 7 (fetch cache key), Task 8 (concurrency primitives)
+- **Docs:** [design.md#7b-fetch-and-index-batch-requests-with-concurrency](./design.md#7b-fetch-and-index-batch-requests-with-concurrency), [implementation.md#task-8b-fetch-and-index-batch-requests](./implementation.md#task-8b-fetch-and-index-batch-requests)
+
+### Subtasks
+- [ ] 8b.1 Add `requests` parameter parsing in `tool_fetch.go` — array of `{url, source?}` objects, alternative to `url`+`source`
+- [ ] 8b.2 Batch execution: fetch concurrently via `errgroup.Group`, serialize FTS5 writes after all fetches complete. Per-URL cache check via `composeFetchCacheKey`
+- [ ] 8b.3 Batch response: per-URL preview capped at 384 chars, aggregate summary
+- [ ] 8b.4 Add `requests` and `concurrency` to `capy_fetch_and_index` MCP schema in `server.go`
+- [ ] 8b.5 Add tests: single-URL backward compat, batch mode, partial cache hits, preview capping
+
 ## Task 9: Extend cleanup with project-scope purge
 - **Status:** pending
 - **Depends on:** —
 - **Docs:** [design.md#8-extend-cleanup-with-project-scope-purge](./design.md#8-extend-cleanup-with-project-scope-purge), [implementation.md#task-9-extend-cleanup-with-purge_all](./implementation.md#task-9-extend-cleanup-with-purge_all)
 
 ### Subtasks
-- [ ] 9.1 Add `PurgeAll(dryRun bool) (int, error)` to `internal/store/cleanup.go` — if dryRun return source count, else DELETE FROM sources/chunks/chunks_trigram/vocabulary then VACUUM
-- [ ] 9.2 Add `purge_all` boolean parameter to `handleCleanup` in `internal/server/tool_cleanup.go` — mutual exclusion with source/purge_ephemeral/purge_session, call `st.PurgeAll`, call `s.stats.Reset()` if not dryRun
-- [ ] 9.3 Add `purge_all` to `capy_cleanup` MCP tool schema in `internal/server/server.go`
-- [ ] 9.4 Add tests: dry run reports counts, actual purge empties all tables, mutual exclusion enforced
+- [ ] 9.1 Add `PurgeCounts` struct and `PurgeAll(dryRun bool) (PurgeCounts, error)` to `internal/store/cleanup.go` — if dryRun return counts; else DELETE FROM sources/chunks/chunks_trigram/vocabulary, clear fuzzy cache (`fuzzyCacheMu.Lock; fuzzyCache = make(...); Unlock`), then VACUUM
+- [ ] 9.2 Add `Reset()` method to `SessionStats` in `internal/server/stats.go` — zero all counters and re-initialize maps under mutex
+- [ ] 9.3 Add `purge_all` boolean parameter to `handleCleanup` in `internal/server/tool_cleanup.go` — mutual exclusion with source/purge_ephemeral/purge_session, call `st.PurgeAll`, call `s.stats.Reset()` if not dryRun
+- [ ] 9.4 Add `purge_all` to `capy_cleanup` MCP tool schema in `internal/server/server.go`
+- [ ] 9.5 Add tests: dry run reports counts, actual purge empties all tables + clears fuzzy cache, mutual exclusion enforced, post-purge fuzzy correction returns no stale results
 
 ## Task 10: Preserve shell executor PATH
 - **Status:** pending
@@ -128,12 +141,12 @@
 - [ ] 10.3 Use `buildShellScript(code, os.Getenv("PATH"))` in `Execute` when `req.Language == Shell`, before writing to script file
 - [ ] 10.4 Add test: call `buildShellScript` with explicit PATH value, verify output contains the restore line; empty PATH returns code unchanged
 
-## Task 12: Final verification
+## Task 11: Final verification
 - **Status:** pending
-- **Depends on:** Task 1, Task 2, Task 3, Task 3b, Task 4, Task 5, Task 6, Task 7, Task 8, Task 9, Task 10
+- **Depends on:** Task 1, Task 2, Task 3, Task 3b, Task 4, Task 5, Task 6, Task 7, Task 8, Task 8b, Task 9, Task 10
 
 ### Subtasks
-- [ ] 12.1 Run `test` skill to verify all tasks — full test suite with `go test ./...`
-- [ ] 12.2 Run `document` skill to update any relevant docs (MCP schema changes, ADRs if needed)
-- [ ] 12.3 Run `review-code` skill with Go language input to review the implementation
-- [ ] 12.4 Run `review-spec` skill to verify implementation matches design and implementation docs
+- [ ] 11.1 Run `test` skill to verify all tasks — full test suite with `go test ./...`
+- [ ] 11.2 Run `document` skill to update any relevant docs (MCP schema changes, ADRs if needed)
+- [ ] 11.3 Run `review-code` skill with Go language input to review the implementation
+- [ ] 11.4 Run `review-spec` skill to verify implementation matches design and implementation docs
