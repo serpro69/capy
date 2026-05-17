@@ -82,7 +82,7 @@ Add a `countAdjacentPairs(positionLists [][]int, terms []string, gap int) int` h
 
 **Boost formula:** `phraseBoost = 0.5 * min(1.0, float64(adjacentPairs) / 4.0)` — saturates at 4 hits to prevent keyword-stuffed documents from dominating. Cap of 0.5 sits below max proximity (~1.0) and in the title-boost range (0.3-0.6).
 
-**Integration point:** Inside `rerank()` in the multi-term proximity block (after computing `minSpan`), compute `adjacentPairs` using the same `posLists` already built for span calculation. The total boost becomes `titleBoost + proximityBoost + phraseBoost`. Pure additive — no interaction with capy's synonym expansion, entity boosting, or diversification.
+**Integration point:** Inside `rerank()` in the multi-term proximity block (after computing `minSpan`), compute `adjacentPairs` using the same `posLists` already built for span calculation. `phraseBoost` is added to `proximityBoost` and applied as a single multiplicative factor: `r.FusedScore *= (1.0 + proximityBoost + phraseBoost)`. Title boost remains a separate multiplicative pass (`r.FusedScore *= (1.0 + titleBoost)`), matching capy's existing two-pass approach. This differs from the TS reference which combines all three additively — capy's multiplicative separation is a deliberate divergence preserved from ADR-014. No interaction with capy's synonym expansion, entity boosting, or diversification.
 
 ### 2.3 Files touched
 
@@ -117,7 +117,7 @@ O(1) in SQLite. No data migration needed — existing sources get `NULL` for `fi
 
 **`tool_index.go`:** When a file is read from disk (the `path != "" && content == ""` branch), pass the resolved absolute path to a new store method. The store records `file_path = resolvedAbsPath` in the source row.
 
-**`index.go`:** Add `IndexWithFilePath(content, label, contentType string, kind SourceKind, filePath string) (*IndexResult, error)` that wraps the existing `Index` method but also stores `filePath` on the source row. Modify `stmtInsertSource` to accept a `file_path` parameter using `sql.NullString`. The existing `Index` method passes `sql.NullString{Valid: false}` (NULL) for backward compatibility.
+**`index.go`:** Add `IndexWithFilePath(content, label, contentType string, kind SourceKind, filePath string) (*IndexResult, error)`. Both `Index` and `IndexWithFilePath` funnel through `indexPreparedChunks` — add a `filePath string` parameter to its signature. `Index` passes `""`, `IndexWithFilePath` passes the actual path. `indexPreparedChunks` converts to `sql.NullString{String: filePath, Valid: filePath != ""}` before the `stmtInsertSource.Exec` call. Modify `stmtInsertSource` (currently 6 columns in `store.go:175-177`) to include `file_path` as the 7th column.
 
 ### 3.5 Search path changes
 
@@ -132,6 +132,8 @@ O(1) in SQLite. No data migration needed — existing sources get `NULL` for `fi
 3. Graceful handling:
    - Deleted files: `os.Stat` returns error → skip, keep cached results
    - Read errors: log warning, skip (never break search for stale detection)
+
+**Cooldown:** Add a `lastRefreshTime time.Time` field on `ContentStore`. Skip `refreshStaleSources` entirely if called within the last 5 seconds. The TS reference has no throttling, but capy runs as a separate MCP server where each search is an IPC round-trip — the per-file `stat` syscalls add non-trivial latency when many file-backed sources are indexed. A 5-second cooldown is short enough that genuinely stale files are caught within a few searches, but avoids redundant stat storms on rapid query bursts (e.g., batch searches). This is a capy-specific addition matching the conservative approach from ADR-011.
 
 **Observability:** `LastRefreshCount int` field on `ContentStore` — tracks how many sources were refreshed in the last `SearchWithFallback` call.
 
@@ -193,6 +195,10 @@ Compose a key from `label + "|" + url` and use it as **both the cache lookup key
 Add a `composeFetchCacheKey(label, url string) string` helper. The pipe separator is safe because URLs don't contain raw `|` (it's percent-encoded) and labels are either user-chosen or default to the URL itself.
 
 `capy_search(source: "my-label")` still finds these sources because search uses `LIKE '%' || ? || '%'` matching — the user-chosen label substring is contained in the composite key. Document this in the tool's response message.
+
+**Design constraint:** The composite storage label relies on `execDynamicSearch`'s LIKE-based source filter (`s.label LIKE '%' || ? || '%'`). If source matching is ever changed to exact-match by default, composite-keyed sources would become unsearchable by short label. This coupling is acceptable — the LIKE filter is capy's established behavior and matches the TS reference.
+
+**One-time orphan effect:** Existing sources indexed under the old label-only key (`"my-docs"`) won't match a composite lookup (`"my-docs|https://..."`) — they'll be re-fetched once on the next call. This is benign: the old source remains searchable, the new one supersedes it for caching, and the old one eventually gets cleaned up by normal retention/TTL. No migration needed.
 
 ### 5.3 Files touched
 
@@ -295,6 +301,8 @@ Update `checkFilePathDenyPolicy` in `security_check.go` to pass `s.projectDir`. 
 - `internal/security/eval.go`: add `projectRoot` parameter to `EvaluateFilePath`
 - `internal/security/eval_test.go`: test relative-path bypass is caught when projectRoot provided
 - `internal/server/security_check.go`: pass `s.projectDir` to `EvaluateFilePath`
+- `internal/hook/pretooluse.go:157`: update `EvaluateFilePath` call to pass `projectDir` (already available in the hook context)
+- `internal/server/server.go`: update deny checker closure (§6b) to pass `s.projectDir` to `EvaluateFilePath`
 
 ### 6d. Executor Env Deny List: .NET/C# Profiler Hijack Vectors
 
@@ -403,7 +411,7 @@ Add an optional `concurrency` parameter (int, 1-8, default 1) to the MCP tool sc
 
 Add a `purge_all: true` boolean parameter to the cleanup tool. When set:
 
-1. Delete ALL rows from `sources`, `chunks`, `chunks_trigram`, and `vocabulary`
+1. Delete ALL rows from `sources`, `chunks`, `chunks_trigram`, and `vocabulary`. Note: vocabulary is normally preserved across cleanups (it benefits fuzzy correction — see `cleanup.go:134`), but `purge_all` is a full knowledge-base reset. Including vocabulary ensures the store is truly empty and the fuzzy cache is invalidated cleanly
 2. Reset stats via `s.stats.Reset()`
 3. Run `VACUUM` to reclaim disk space
 
@@ -427,15 +435,14 @@ The executor writes shell scripts to temp files (executor.go:85). User shell sta
 
 ### 9.2 Solution
 
-Add a `buildShellScript(code string) string` helper. When `req.Language == Shell`, prepend a PATH restoration line before the user's code:
+Add a `buildShellScript(code, inheritedPath string) string` pure helper — takes the PATH value as an explicit parameter (matching the TS reference's `buildShellScriptContent(code, inheritedPath, platform)` pattern) so it can be unit-tested without mutating the process environment. The caller passes `os.Getenv("PATH")`. When `req.Language == Shell`, prepend a PATH restoration line before the user's code:
 
 ```go
-func buildShellScript(code string) string {
-    parentPath := os.Getenv("PATH")
-    if parentPath == "" {
+func buildShellScript(code, inheritedPath string) string {
+    if inheritedPath == "" {
         return code
     }
-    return fmt.Sprintf("export PATH=%s\n%s", quotePosixSingle(parentPath), code)
+    return fmt.Sprintf("export PATH=%s\n%s", quotePosixSingle(inheritedPath), code)
 }
 ```
 
