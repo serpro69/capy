@@ -13,9 +13,10 @@
 ### Subtasks
 - [ ] 1.1 Create `internal/store/benchutil_test.go` with `BenchEntry` and `BenchCase` struct types matching the JSONL schema
 - [ ] 1.2 Implement `loadFixtures(t testing.TB, contentType string) []BenchEntry` using `runtime.Caller(0)` for path resolution
-- [ ] 1.3 Implement `hashFixtureFile(t testing.TB, contentType string) string` returning hex-encoded SHA-256
-- [ ] 1.4 Implement `newBenchStore(t testing.TB) *ContentStore` wrapping the existing `newTestStore` pattern with `t.Cleanup`
-- [ ] 1.5 Implement `seedStore(t testing.TB, store *ContentStore, entries []BenchEntry)` to index all haystacks
+- [ ] 1.3 Implement `hashFixtureManifest(t testing.TB) string` — SHA-256 over all fixture files concatenated in sorted order
+- [ ] 1.4 Implement `newBenchStore(t testing.TB) *ContentStore` — delegate directly to existing `newTestStore(t)` which handles encryption key and cleanup
+- [ ] 1.5 Implement `seedStore(t testing.TB, store *ContentStore, entries []BenchEntry)` — dispatch to correct `Index*` method per `content_type` (markdown→`Index`, json→`IndexJSON`, plaintext→`IndexPlainText`, transcript→`IndexChunked`, curated→`Index`)
+- [ ] 1.6a Implement `benchSearchOpts() SearchOptions` returning `IncludeKinds: {KindDurable, KindEphemeral, KindSession}` to ensure all fixture kinds are visible to search
 - [ ] 1.6 Add `TestBenchFixtureLoad` that validates each fixture file deserializes without error
 
 ## Task 2: Seed fixture datasets
@@ -37,10 +38,10 @@
 - **Docs:** [implementation.md#qualstat](./implementation.md#qualstat)
 
 ### Subtasks
-- [ ] 3.1 Create `cmd/qualstat/main.go` with `Report`, `Metadata`, `Metrics`, `Failure` structs matching the JSON report schema
+- [ ] 3.1 Create `cmd/qualstat/main.go` with `Report`, `Metadata`, `Metrics`, `Failure`, `PostProcessingDelta` structs matching the JSON report schema (see design.md input JSON report schema section)
 - [ ] 3.2 Implement single-file mode — parse one JSON report, print absolute metrics as ASCII table
 - [ ] 3.3 Implement two-file comparison mode — validate dataset hash match, compute deltas, print comparison table with regression markers
-- [ ] 3.4 Implement per-metric-category warning thresholds — strict (0.0) for Context Recall and Routing Accuracy, configurable (default -0.02) for R@K/MRR/NDCG/Compression
+- [ ] 3.4 Implement per-metric-category warning thresholds — strict (0.0) for Perfect Recall Rate and Match-Layer Accuracy, configurable (default -0.02) for R@K/MRR/NDCG/Compression/Context Recall
 - [ ] 3.5 Implement failures diff — NEW and RESOLVED only, capped at 10 entries
 - [ ] 3.6 Add `--color` flag, exit code logic (0 clean, 1 regressions), epsilon float comparison
 - [ ] 3.7 Create `cmd/qualstat/testdata/` with hand-crafted JSON reports and write table-driven tests covering all modes
@@ -51,13 +52,13 @@
 - **Docs:** [implementation.md#retrieval-quality](./implementation.md#retrieval-quality)
 
 ### Subtasks
-- [ ] 4.1 Create `internal/store/bench_test.go` with `TestBenchRetrievalQuality` function and `CAPY_BENCH_RESULTS` skip guard
-- [ ] 4.2 Implement per-content-type flow: load fixtures, create single store, seed all haystacks, run all cases
-- [ ] 4.3 Implement metric helpers: `computeRecallAtK`, `computeNDCG`, `computeMRR`, `containsAllNeedles`
-- [ ] 4.4 Implement routing accuracy validation — `MatchLayer` vs `ExpectedLayer` comparison
-- [ ] 4.5 Implement rank ceiling checks and negative case validation (zero results for empty needles)
-- [ ] 4.6 Build `Report` struct with metadata (git SHA, dataset hash, timestamp, Go version), per-content-type aggregates, overall aggregates, and failures array
-- [ ] 4.7 Write JSON report to `CAPY_BENCH_RESULTS` path
+- [ ] 4.1 Create `internal/store/bench_test.go` with `TestBench` parent function and `CAPY_BENCH_RESULTS` skip guard, with `t.Run("RetrievalQuality", ...)` subtest
+- [ ] 4.2 Implement per-content-type flow: load fixtures, create single store, seed all haystacks, run all cases with `benchSearchOpts()`
+- [ ] 4.3 Implement metric helpers: `isRelevant` (any needle match), `computeRecallAtK`, `computeNDCG`, `computeMRR`, `computeContextRecall` (fractional), `containsAllNeedles`
+- [ ] 4.4 Implement match-layer accuracy validation — `MatchLayer` vs `ExpectedLayer` using exact MatchLayer vocabulary from design.md
+- [ ] 4.5 Implement rank ceiling checks and negative case validation (zero results for empty needles — any non-zero is a failure)
+- [ ] 4.6 Build `Report` struct with metadata (git SHA, manifest hash, timestamp, Go version), per-content-type aggregates, overall aggregates, post-processing rank deltas, and failures array
+- [ ] 4.7 `TestBench` parent writes JSON report to `CAPY_BENCH_RESULTS` path once, after both subtests complete
 
 ## Task 5: Context reduction benchmarks (NIAH)
 - **Status:** pending
@@ -65,11 +66,11 @@
 - **Docs:** [implementation.md#context-reduction](./implementation.md#context-reduction)
 
 ### Subtasks
-- [ ] 5.1 Create `internal/store/bench_context_test.go` with `TestBenchContextReduction` and skip guard
-- [ ] 5.2 Implement NIAH metric computation: Compression Ratio, Context Recall, Effective Compression
-- [ ] 5.3 Handle negative cases — correctly returning nothing = perfect compression with perfect recall
-- [ ] 5.4 Aggregate per content type and overall, merge results into the quality JSON report
-- [ ] 5.5 Evaluate whether to share store setup with Task 4 (subtests of single `TestBench`) or keep independent — decide based on indexing cost during implementation
+- [ ] 5.1 Add `t.Run("ContextReduction", ...)` subtest inside the `TestBench` parent function from Task 4 (shared store setup — no separate file needed)
+- [ ] 5.2 Implement NIAH metrics: Compression Ratio (measure formatted summary size, not raw SearchResult.Content), fractional Context Recall, Perfect Recall, Effective Compression
+- [ ] 5.3 Format results using `intentSearch`-style summary (title + first-line preview per result) to measure the actual context-reduction surface
+- [ ] 5.4 Handle negative cases — zero results = perfect (CR=1, recall=1); non-zero results for negative query = failure (recall=0)
+- [ ] 5.5 Aggregate per content type and overall, results merged into same `Report` struct via parent `TestBench`
 
 ## Task 6: Performance and executor benchmarks
 - **Status:** pending
@@ -77,7 +78,7 @@
 - **Docs:** [implementation.md#performance](./implementation.md#performance)
 
 ### Subtasks
-- [ ] 6.1 Create `internal/store/bench_perf_test.go` with `BenchmarkIndex/{content_type}` — index one haystack per iteration, `b.ResetTimer` after setup
+- [ ] 6.1 Create `internal/store/bench_perf_test.go` with `BenchmarkIndex/{content_type}` — use unique labels per iteration (e.g., `bench-{type}-{i}`) to avoid hitting `AlreadyIndexed` dedup fast-path, `b.ResetTimer` after setup
 - [ ] 6.2 Add `BenchmarkSearch/{content_type}/{corpus_size}` — pre-seed at N=100/1000/10000, search one query per iteration
 - [ ] 6.3 Add `BenchmarkSearchByTier/{tier}` — queries designed to hit specific tiers, grouped by expected MatchLayer
 - [ ] 6.4 Create `internal/executor/bench_test.go` with `BenchmarkExecutorOverhead/{language}` and `BenchmarkExecutorOverheadParallel/{language}` with `exec.LookPath` skip guards
@@ -90,7 +91,7 @@
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6
 
 ### Subtasks
-- [ ] 7.1 Add `bench`, `bench-perf`, `bench-quality`, and `compare` targets to `Makefile`
+- [ ] 7.1 Add `bench`, `bench-perf`, `bench-quality`, and `compare` targets to `Makefile` — must include `CGO_ENABLED=1`, `$(BUILD_TAGS)`, and `-p 1` for bench-quality
 - [ ] 7.2 Add `bench-results/` to `.gitignore`
 - [ ] 7.3 End-to-end: `make bench` completes, produces `.txt` and `.json` in `bench-results/`
 - [ ] 7.4 End-to-end: `make compare BASE=main TARGET=main` shows zero deltas
