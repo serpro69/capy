@@ -31,8 +31,9 @@ The core insight: "bytes saved" is a vanity metric in isolation. A 98% reduction
 Context reduction is measured via **Needle-in-a-Haystack (NIAH)**: each test case provides a large raw output (haystack), a search query (intent), and specific information that must survive reduction (needles). Three metrics per case:
 
 - **Compression Ratio** = `1 - (size_of_returned_snippets / size_of_haystack)`
-- **Context Recall** = `1` if ALL needles found in returned snippets, `0` otherwise
-- **Effective Compression** = `Compression Ratio × Context Recall` — zero credit if any needle was dropped
+- **Context Recall** = `needles_found / total_needles` (fractional, 0.0–1.0). A case with 3 needles where 2 survive scores 0.67. Perfect recall = 1.0; total loss = 0.0. This gives gradient signal for regression tracking — a change that drops 1 needle out of 5 is distinguishable from one that drops all 5.
+- **Perfect Recall Pass Rate** = percentage of cases achieving Context Recall = 1.0. This is the strict binary metric for pass/fail thresholds.
+- **Effective Compression** = `Compression Ratio × Context Recall` — partial credit proportional to needle survival
 
 This captures the information-loss vs compression tradeoff without requiring an LLM judge.
 
@@ -49,23 +50,48 @@ Measures search accuracy across capy's FTS5 knowledge base. Capy indexes five co
 | Curated Knowledge | User-provided via `capy_index` | durable |
 
 Metrics per content type:
-- **R@K** (K=1,3,5,10) — is the needle in top-K results?
-- **NDCG@10** — normalized discounted cumulative gain (any chunk containing a needle substring is "relevant")
-- **MRR** — reciprocal rank of first result containing a needle
-- **Routing Accuracy** — does `SearchResult.MatchLayer` match `expected_layer` from the fixture?
+- **R@K** (K=1,3,5,10) — is at least one relevant result in top-K? A result is relevant if it contains ANY needle substring. This is standard IR recall-at-K — it does NOT require all needles in a single result (that's Context Recall in Track A).
+- **NDCG@10** — normalized discounted cumulative gain (any chunk containing any needle substring is "relevant")
+- **MRR** — reciprocal rank of first relevant result (first result containing any needle)
+- **Match-Layer Accuracy** — does `SearchResult.MatchLayer` match `expected_layer` from the fixture? Note: `MatchLayer` tracks which FTS layer produced the result, not the full pipeline route (e.g., synonym-AND vs flat-OR fallback both produce the same layer tags). See [MatchLayer vocabulary](#matchlayer-vocabulary) for the complete set of values.
 - **Rank Ceiling Pass Rate** — did the needle appear within `expected_rank_ceiling`?
+
+**Important:** Benchmarks must pass `SearchOptions{IncludeKinds: []SourceKind{KindDurable, KindEphemeral, KindSession}}` to `SearchWithFallback`. The default empty `IncludeKinds` excludes ephemeral sources (see `effectiveKindFilter` in `search.go:558`), which would make plaintext and some JSON fixtures invisible to search.
 
 ### Search Tier Testing
 
-The three-tier fallback pipeline (Porter+trigram RRF → flat OR → fuzzy Levenshtein) is tested as a full pipeline with **expected tier assertions**, not in isolation.
+The search pipeline has four passes, not three (`search.go:30-67`):
+
+1. **Synonym-AND RRF** — synonym-expanded query with implicit AND between groups, fused across porter + trigram
+2. **Flat-OR RRF** — if pass 1 returned zero results, retry with flat OR (no synonym expansion)
+3. **Fuzzy-corrected synonym-AND RRF** — if results < limit, correct typos via Levenshtein, re-enter synonym AND
+4. **Fuzzy-corrected flat-OR RRF** — if fuzzy synonym AND also returned zero, fall back to flat OR on corrected query
+
+The pipeline is tested as a full black box with **expected layer assertions**, not in isolation.
 
 Rationale:
-- Isolated tier testing ignores **pipeline shadowing** — noisy tier 1 returning low-quality matches prevents tier 2 from firing
-- Black-box testing hides **routing regressions** — correct result via wrong tier wastes CPU
+- Isolated tier testing ignores **pipeline shadowing** — noisy pass 1 returning low-quality matches prevents later passes from firing
+- Black-box testing hides **layer regressions** — correct result via wrong layer wastes CPU
 
-Each fixture case carries `expected_layer`. The benchmark validates that the pipeline routes queries through the intended tier. Routing regressions are caught even when overall R@K stays stable.
+Each fixture case carries `expected_layer`. The benchmark validates that results come from the expected FTS layer. Layer regressions are caught even when overall R@K stays stable.
 
-Post-processing (source diversification, entity boost, proximity reranking) is evaluated via pre- vs post-reranking position tracking. If a needle drops rank after post-processing, the report flags a negative rank delta.
+#### MatchLayer Vocabulary {#matchlayer-vocabulary}
+
+The complete set of `MatchLayer` string values emitted by `rrfSearch` and `SearchWithFallback`:
+
+| Value | Meaning |
+|---|---|
+| `porter` | Result found only in porter FTS5 table |
+| `trigram` | Result found only in trigram FTS5 table |
+| `rrf(porter+trigram)` | Result found in both tables, fused score > single-layer max |
+| `fuzzy+porter` | Fuzzy-corrected query, result from porter only |
+| `fuzzy+trigram` | Fuzzy-corrected query, result from trigram only |
+| `fuzzy+rrf(porter+trigram)` | Fuzzy-corrected query, result from both tables |
+| `none` | No results expected (negative test case — not a real MatchLayer value) |
+
+Fixture `expected_layer` values must use these exact strings. Note that `MatchLayer` does not distinguish synonym-AND from flat-OR fallback — both call `rrfSearch` and produce the same layer tags. The metric is therefore "match-layer accuracy," not full pipeline routing accuracy.
+
+Post-processing (source diversification, entity boost, proximity reranking) is evaluated via pre- vs post-reranking position tracking. If a needle drops rank after post-processing, the report flags a negative rank delta. Post-processing rank deltas are included in the `qualstat` report as a diagnostic section (resolving Open Question 3).
 
 ### Shared: Performance
 
@@ -86,6 +112,7 @@ Standard Go `testing.B` benchmarks measured via `benchstat`:
 **5000-byte threshold** (`internal/server/bench_integration_test.go`):
 - Latency cliff when ephemeral indexing kicks in (4999 vs 5001 bytes)
 - Cost/benefit: indexing overhead vs token savings at various output sizes
+- Measures the actual `intentSearch` output (formatted summary with titles, first-line previews, searchable terms) — not raw `SearchResult.Content`. This matches the real context-reduction surface as implemented in `intent_search.go`.
 
 ## Architecture
 
@@ -159,7 +186,7 @@ Per-content-type JSONL files. Each line is a self-contained test entry with one 
 
 Key schema decisions:
 - **`needles` as array** — all must be present for Context Recall = 1. Catches orphaned snippet problem (structural context stripped by chunker, e.g., parent JSON keys lost)
-- **Negative cases** — empty `needles` + `expected_layer: "none"`. Tests that search correctly returns nothing for irrelevant queries
+- **Negative cases** — empty `needles` + `expected_layer: "none"`. A negative case asserts "no results expected." If `SearchWithFallback` returns any results for a negative query, this is a failure in both tracks: Track B flags it as a match-layer accuracy failure (`expected: none, got: <layer>`), and Track A treats it as imperfect compression (bytes entered context that shouldn't have). Negative queries must be genuinely unrelated to the entire corpus for that content type, not just the individual haystack — since all haystacks are indexed into one store, a "negative" query that happens to match another entry is a fixture bug, not a system failure.
 - **`expected_rank_ceiling`** — hard pass/fail for catastrophic ranking regressions. Soft ranking drift tracked via aggregate MRR
 - **Multiple cases per haystack** — avoids re-indexing the same content for each query variant
 
@@ -181,7 +208,7 @@ No CI — developers run benchmarks locally and compare manually.
 - Output to `bench-results/{branch}.json`
 - Compare: `qualstat bench-results/main.json bench-results/feature.json`
 
-**Dataset hash guard**: benchmark tests compute SHA-256 of the fixture file and embed it in the JSON report. `qualstat` aborts if comparing reports from different dataset versions.
+**Dataset manifest hash**: benchmark tests compute a SHA-256 hash of ALL fixture files concatenated in sorted order (a manifest hash), not per-file hashes. This single hash is embedded in the JSON report metadata. `qualstat` aborts if comparing reports with different manifest hashes, which catches any fixture change across any content type.
 
 ## `qualstat` CLI Design
 
@@ -220,6 +247,59 @@ Failures diff: 2 new, 1 resolved
   RESOLVED: md_012_q3 -- was: ranking breach, now passes
 ```
 
+### Input JSON Report Schema
+
+The JSON report produced by benchmark tests and consumed by `qualstat`:
+
+```json
+{
+  "metadata": {
+    "timestamp": "2026-05-17T14:30:00Z",
+    "git_sha": "abc123def",
+    "git_branch": "main",
+    "dataset_hash": "sha256:e3b0c44298...",
+    "go_version": "go1.23.0"
+  },
+  "by_content_type": {
+    "markdown": {
+      "recall_at_1": 0.85,
+      "recall_at_3": 0.92,
+      "recall_at_5": 0.95,
+      "recall_at_10": 0.98,
+      "ndcg_at_10": 0.87,
+      "mrr": 0.89,
+      "match_layer_accuracy": 0.96,
+      "rank_ceiling_pass_rate": 0.98,
+      "avg_compression_ratio": 0.97,
+      "avg_context_recall": 0.97,
+      "perfect_recall_rate": 0.94,
+      "avg_effective_compression": 0.94,
+      "case_count": 50,
+      "negative_case_count": 5,
+      "negative_false_positive_count": 0
+    }
+  },
+  "overall": { },
+  "post_processing_deltas": [
+    {
+      "case_id": "md_001_q1",
+      "pre_rank": 1,
+      "post_rank": 3,
+      "delta": -2
+    }
+  ],
+  "failures": [
+    {
+      "case_id": "json_003_q2",
+      "type": "match_layer",
+      "expected": "trigram",
+      "actual": "fuzzy+porter",
+      "detail": "query matched via fuzzy correction instead of trigram"
+    }
+  ]
+}
+```
+
 ### Warning Thresholds
 
 Per-metric category (not global):
@@ -245,22 +325,24 @@ bench: bench-perf bench-quality
 
 bench-perf:
 	mkdir -p bench-results
-	go test -bench=. -benchmem -count=6 \
+	CGO_ENABLED=1 go test $(BUILD_TAGS) -bench=. -benchmem -count=6 \
 	  ./internal/store/ ./internal/executor/ \
 	  | tee bench-results/$$(git rev-parse --abbrev-ref HEAD).txt
 
 bench-quality:
 	mkdir -p bench-results
-	CAPY_BENCH_RESULTS=bench-results/$$(git rev-parse --abbrev-ref HEAD).json \
-	  go test -run='^TestBench' -v ./internal/store/ ./internal/server/
+	CGO_ENABLED=1 CAPY_BENCH_RESULTS=bench-results/$$(git rev-parse --abbrev-ref HEAD).json \
+	  go test $(BUILD_TAGS) -run='^TestBench' -v -p 1 ./internal/store/ ./internal/server/
 
 compare:
 	@echo "=== Performance (benchstat) ==="
 	benchstat bench-results/$(BASE).txt bench-results/$(TARGET).txt
 	@echo ""
 	@echo "=== Retrieval Quality (qualstat) ==="
-	go run ./cmd/qualstat bench-results/$(BASE).json bench-results/$(TARGET).json
+	go run $(BUILD_TAGS) ./cmd/qualstat bench-results/$(BASE).json bench-results/$(TARGET).json
 ```
+
+Note: `-p 1` in `bench-quality` forces serial package execution. Without it, `go test` runs packages in parallel, and both `internal/store/` and `internal/server/` would write to the same `CAPY_BENCH_RESULTS` JSON file concurrently, corrupting the report. The store tests write the base report; the server integration test appends the 5000-byte threshold results.
 
 Usage: `make bench` on main, switch to feature branch, `make bench` again, then `make compare BASE=main TARGET=feature`.
 
@@ -280,8 +362,11 @@ If fixtures stay small (< 10-20 MB total), commit them directly. If haystacks gr
 
 Executor benchmarks create temp directories per run, making them disk-I/O bound. Document that running with `TMPDIR=/dev/shm` (tmpfs) isolates executor CPU overhead from host disk latency for reproducible results.
 
+## Resolved Questions
+
+- **Q2 (minimum dataset size):** 10-20 haystacks per content type with 3-5 cases each. This provides enough corpus density for meaningful BM25 IDF calculations while keeping total fixture size under 10 MB. If retrieval metrics show high variance with this dataset size, increase to 50 entries during Task 2 implementation.
+- **Q3 (post-processing rank deltas):** Included in the `qualstat` report as a diagnostic section. See [Search Tier Testing](#search-tier-testing).
+
 ## Open Questions
 
 1. Should `qualstat` support exporting results to a format consumable by visualization tools (e.g., CSV for spreadsheet charting)?
-2. What is the minimum dataset size per content type needed for statistically meaningful retrieval metrics?
-3. Should post-processing rank deltas (pre vs post reranking) be part of the `qualstat` report or a separate diagnostic?

@@ -33,9 +33,18 @@ Define the Go types that deserialize the JSONL fixture format and shared helpers
 **Helpers:**
 
 - `loadFixtures(t testing.TB, contentType string) []BenchEntry` — reads `testdata/bench/{contentType}.jsonl`, unmarshals each line, returns slice. Uses `runtime.Caller(0)` to resolve path relative to the package directory.
-- `hashFixtureFile(t testing.TB, contentType string) string` — returns hex-encoded SHA-256 of the fixture file. Embedded in quality reports for dataset version validation.
-- `newBenchStore(t testing.TB) *ContentStore` — creates an in-memory SQLite store for benchmarks, using the same pattern as the existing `newTestStore` in `store_test.go`. Registers cleanup via `t.Cleanup`.
-- `seedStore(t testing.TB, store *ContentStore, entries []BenchEntry)` — indexes all haystacks from the entries into the store.
+- `hashFixtureManifest(t testing.TB) string` — computes a single SHA-256 over all fixture files concatenated in sorted filename order. Returns hex-encoded hash. This manifest hash is embedded in quality reports; `qualstat` aborts if comparing reports with different manifest hashes.
+- `newBenchStore(t testing.TB) *ContentStore` — delegates directly to `newTestStore(t)` (defined in `store_test.go:17`), which already handles the encryption key setup via `t.Setenv(encryptionKeyEnv, testEncryptionKey)` and cleanup via `t.Cleanup`. Do not reimplement — just wrap or alias.
+- `seedStore(t testing.TB, store *ContentStore, entries []BenchEntry)` — indexes all haystacks from the entries into the store. Dispatches to the correct `Index*` method based on `BenchEntry.ContentType`:
+
+  | `content_type` | Method | Rationale |
+  |---|---|---|
+  | `markdown` | `Index(content, label, "", kind)` | Auto-detects markdown via `DetectContentType` |
+  | `json` | `IndexJSON(content, label, kind)` | Uses JSON-specific recursive key-path chunker |
+  | `plaintext` | `IndexPlainText(content, label, kind)` | Uses plaintext paragraph-split chunker |
+  | `transcript` | `IndexChunked(content, label, "", kind, chunks)` | Pre-chunk by session boundary markers in the fixture; or use `Index` with auto-detect if fixtures don't need pre-chunking |
+  | `curated` | `Index(content, label, "", kind)` | Auto-detect (curated content is typically markdown) |
+- `benchSearchOpts() SearchOptions` — returns `SearchOptions{IncludeKinds: []SourceKind{KindDurable, KindEphemeral, KindSession}}`. All quality benchmarks must use this to ensure ephemeral and session fixtures are visible to search (default empty `IncludeKinds` excludes ephemeral).
 
 ### Verify
 
@@ -118,24 +127,26 @@ Implement the Track B quality benchmarks.
    a. Load fixtures via `loadFixtures`
    b. Create a single store via `newBenchStore`
    c. Seed all haystacks via `seedStore`
-   d. For each case in each entry, call `SearchWithFallback` with `query`, collect `[]SearchResult`
+   d. For each case in each entry, call `SearchWithFallback` with `query` and `benchSearchOpts()`, collect `[]SearchResult`
    e. Compute per-case metrics:
-      - **R@K** (K=1,3,5,10): does any result in top-K contain ALL needles?
-      - **NDCG@10**: any result containing a needle substring is "relevant"
-      - **MRR**: 1/rank of first result containing all needles
-      - **Routing Accuracy**: `result.MatchLayer == case.ExpectedLayer`
-      - **Rank Ceiling**: actual rank of needle-containing result <= `ExpectedRankCeiling`
-   f. For negative cases (empty needles): verify zero results returned
+      - **R@K** (K=1,3,5,10): is at least one relevant result in top-K? A result is relevant if it contains ANY needle substring. This is standard IR recall-at-K — do not require all needles in a single result.
+      - **NDCG@10**: any result containing any needle substring is "relevant"
+      - **MRR**: 1/rank of first relevant result (first result containing any needle)
+      - **Match-Layer Accuracy**: `result.MatchLayer == case.ExpectedLayer` (see MatchLayer vocabulary in design.md)
+      - **Rank Ceiling**: actual rank of first relevant result <= `ExpectedRankCeiling`
+   f. For negative cases (empty needles): verify zero results returned. Any non-zero result count is a failure.
 2. Aggregate metrics per content type and overall
 3. Collect individual case failures with actionable detail
-4. Build the `Report` struct, populate `Metadata` (git SHA via `exec.Command("git", ...)`, dataset hash, timestamp, Go version)
+4. Build the `Report` struct, populate `Metadata` (git SHA via `exec.Command("git", ...)`, manifest hash via `hashFixtureManifest`, timestamp, Go version)
 5. Write JSON to `CAPY_BENCH_RESULTS` path
 
 **Metric computation helpers** — implement as unexported functions in the same file:
-- `computeRecallAtK(results []SearchResult, needles []string, k int) float64`
+- `isRelevant(text string, needles []string) bool` — returns true if text contains ANY needle substring (for R@K, NDCG, MRR)
+- `computeRecallAtK(results []SearchResult, needles []string, k int) float64` — 1.0 if any result in top-K is relevant, 0.0 otherwise
 - `computeNDCG(results []SearchResult, needles []string, k int) float64`
-- `computeMRR(results []SearchResult, needles []string) float64`
-- `containsAllNeedles(text string, needles []string) bool`
+- `computeMRR(results []SearchResult, needles []string) float64` — 1/rank of first relevant result
+- `computeContextRecall(results []SearchResult, needles []string) float64` — fractional: count distinct needles found across ALL result texts / total needles. Used by Track A only.
+- `containsAllNeedles(text string, needles []string) bool` — retained for structural-needle assertions where a single chunk must preserve parent context
 
 ### Verify
 
@@ -159,17 +170,20 @@ Implement the Track A context reduction benchmarks.
 
 **Skip guard:** same `CAPY_BENCH_RESULTS` pattern.
 
+**Important — measurement surface:** Context reduction must measure what actually enters the LLM context, not raw `SearchResult.Content`. In production, `intentSearch` (`internal/server/intent_search.go:14`) formats results as a summary with section count, matched section titles, first-line previews (120 chars), and searchable terms. The benchmark should measure **the byte size of this formatted summary output**, not the raw search results. For the store-level benchmark, approximate by computing `len(formatted_summary)` where the summary follows the same format as `intentSearch` output.
+
 **Flow:**
 1. For each content type, load fixtures, create and seed a single store (same as Task 4)
-2. For each case, call `SearchWithFallback` and compute:
-   - **Compression Ratio** = `1 - (total_bytes_of_returned_snippets / len(haystack))`
-   - **Context Recall** = `1` if all needles found across returned snippet texts, `0` otherwise
+2. For each case, call `SearchWithFallback` with `benchSearchOpts()`, then format results using the same summary logic as `intentSearch` (title + first-line preview per result, plus metadata header)
+3. Compute:
+   - **Compression Ratio** = `1 - (len(formatted_summary) / len(haystack))`
+   - **Context Recall** = `needles_found / total_needles` (fractional, 0.0–1.0). Count distinct needles found across all result content texts.
+   - **Perfect Recall** = `1` if Context Recall == 1.0, `0` otherwise
    - **Effective Compression** = `Compression Ratio × Context Recall`
-3. For negative cases: Compression Ratio = 1.0, Context Recall = 1.0 (correctly returning nothing is perfect compression with perfect recall)
-4. Aggregate per content type and overall
-5. Merge into the same `Report` struct as Task 4 (or append to existing report if `CAPY_BENCH_RESULTS` file already exists)
+4. For negative cases (empty needles): if zero results returned, Compression Ratio = 1.0, Context Recall = 1.0 (correctly returning nothing is perfect). If results ARE returned, Compression Ratio is computed normally but Context Recall = 0.0 (false positive — nothing should have matched).
+5. Aggregate per content type and overall
 
-**Design note:** This shares the store setup with Task 4. Consider whether both `TestBenchRetrievalQuality` and `TestBenchContextReduction` should run as subtests of a single `TestBench` function to avoid double-indexing. The trade-off is simplicity (separate functions, independent runs) vs efficiency (shared store). If dataset is small, separate functions are fine. If indexing becomes expensive, refactor into a shared setup with `t.Run` subtests.
+**Report merge strategy:** Both `TestBenchRetrievalQuality` (Task 4) and `TestBenchContextReduction` are subtests of a single `TestBench(t *testing.T)` function using `t.Run`. This avoids double-indexing (shared store setup) and eliminates the file corruption risk from concurrent package-level writes to `CAPY_BENCH_RESULTS`. The single `TestBench` function writes the report once at the end, containing both retrieval quality and context reduction metrics.
 
 ### Verify
 
@@ -189,7 +203,7 @@ Implement the `testing.B` benchmarks for store performance, executor overhead, a
 
 **Store performance** (`bench_perf_test.go`):
 
-- `BenchmarkIndex/{content_type}` — load fixtures, `b.ResetTimer()`, index one haystack per iteration
+- `BenchmarkIndex/{content_type}` — load fixtures, create a fresh store per iteration (or use unique labels per iteration, e.g., `fmt.Sprintf("bench-%s-%d", contentType, i)`), `b.ResetTimer()`, index one haystack per iteration. **Dedup guard:** the same label+content hash hits `AlreadyIndexed` fast-path (`index.go:108`), measuring the no-op instead of actual indexing. Either use unique labels per `b.N` iteration or create a fresh store each iteration.
 - `BenchmarkSearch/{content_type}/{corpus_size}` — pre-seed store with N entries from fixtures (use `b.StopTimer`/`b.StartTimer` around setup), search one query per iteration
 - `BenchmarkSearchByTier/{tier}` — pre-seed store, use queries known to hit specific tiers, group sub-benchmarks by expected MatchLayer
 
@@ -227,8 +241,8 @@ Wire up orchestration and verify the full pipeline end-to-end.
 
 **Makefile targets** as specified in [design.md#orchestration](./design.md#orchestration):
 - `bench` — runs both `bench-perf` and `bench-quality`
-- `bench-perf` — `mkdir -p bench-results`, `go test -bench=. -benchmem -count=6 ... | tee bench-results/{branch}.txt`
-- `bench-quality` — `mkdir -p bench-results`, `CAPY_BENCH_RESULTS=... go test -run='^TestBench' -v ...`
+- `bench-perf` — `mkdir -p bench-results`, `CGO_ENABLED=1 go test $(BUILD_TAGS) -bench=. -benchmem -count=6 ... | tee bench-results/{branch}.txt`
+- `bench-quality` — `mkdir -p bench-results`, `CGO_ENABLED=1 ... go test $(BUILD_TAGS) -run='^TestBench' -v -p 1 ...` (note: `-p 1` forces serial package execution to prevent concurrent writes to `CAPY_BENCH_RESULTS`)
 - `compare` — `benchstat` + `qualstat` side by side, takes `BASE` and `TARGET` args
 
 **`.gitignore`** — add `bench-results/`
