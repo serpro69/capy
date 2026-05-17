@@ -25,7 +25,7 @@
 
 ### Subtasks
 - [ ] 2.1 Modify `EvaluateFilePath` in `internal/security/eval.go` to accept `projectRoot string` as third parameter — when non-empty and path is relative, resolve to absolute via `filepath.Clean(filepath.Join(projectRoot, filePath))`, match deny globs against both raw and resolved
-- [ ] 2.2 Update `checkFilePathDenyPolicy` in `internal/server/security_check.go` to pass `s.projectDir` as projectRoot
+- [ ] 2.2 Update all three callers to pass `projectRoot`: `internal/server/security_check.go:45` (pass `s.projectDir`), `internal/hook/pretooluse.go:157` (pass `projectDir`), and deny checker closure in `server.go` (pass `s.projectDir`)
 - [ ] 2.3 Add tests in `internal/security/eval_test.go` — relative `../../.ssh/id_rsa` from projectRoot `/home/user/project` caught by glob `/home/user/.ssh/**`; absolute paths still work; empty projectRoot preserves old behavior
 
 ## Task 3: Executor env deny list expansion
@@ -66,8 +66,8 @@
 ### Subtasks
 - [ ] 5.1 Add `file_path TEXT` to `CREATE TABLE sources` in `internal/store/schema.go`
 - [ ] 5.2 Add migration in `internal/store/migrate.go` for `ALTER TABLE sources ADD COLUMN file_path TEXT`
-- [ ] 5.3 Add `IndexWithFilePath(content, label, contentType string, kind SourceKind, filePath string) (*IndexResult, error)` in `internal/store/index.go` — modify `stmtInsertSource` to accept optional `file_path` via `sql.NullString`
-- [ ] 5.4 Add `denyChecker func(string) bool` field, `SetDenyChecker` method, `LastRefreshCount int` field, and `refreshStaleSources()` method to `internal/store/search.go` — query `SELECT label, file_path, content_hash, indexed_at, content_type, kind FROM sources WHERE file_path IS NOT NULL`, check deny before read, mtime gate → SHA-256 compare → re-index via `IndexWithFilePath(newContent, label, contentType, kind, filePath)` preserving all existing metadata
+- [ ] 5.3 Modify `stmtInsertSource` in `store.go:175-177` from 6 to 7 columns (add `file_path`). Add `filePath string` parameter to `indexPreparedChunks` signature — `Index` passes `""`, new `IndexWithFilePath` passes actual path. Convert to `sql.NullString` before `Exec`
+- [ ] 5.4 Add `denyChecker func(string) bool` field, `SetDenyChecker` method, `lastRefreshTime time.Time` (5-second cooldown), `LastRefreshCount int` field, and `refreshStaleSources()` method to `internal/store/search.go` — early-return if cooldown hasn't elapsed; query `SELECT label, file_path, content_hash, indexed_at, content_type, kind FROM sources WHERE file_path IS NOT NULL`, check deny before read, mtime gate → SHA-256 compare → re-index via `IndexWithFilePath(newContent, label, contentType, kind, filePath)` preserving all existing metadata
 - [ ] 5.5 Call `refreshStaleSources()` at the top of `SearchWithFallback` before the RRF pass
 - [ ] 5.6 Update `internal/server/tool_index.go` — when file is read from disk, call `st.IndexWithFilePath` instead of `st.Index`, passing resolved absolute path
 - [ ] 5.7 Wire deny checker in `internal/server/server.go` — after creating store, call `store.SetDenyChecker(...)` using `security.EvaluateFilePath` with `s.projectDir` and `s.readDenyGlobs`
@@ -98,7 +98,7 @@
 - **Docs:** [design.md#7-batch-concurrency](./design.md#7-batch-concurrency), [implementation.md#task-8-batch-concurrency](./implementation.md#task-8-batch-concurrency)
 
 ### Subtasks
-- [ ] 8.1 Add `golang.org/x/sync` dependency if not already in `go.mod`
+- [ ] 8.1 Add `golang.org/x/sync` dependency (not currently in `go.mod`)
 - [ ] 8.2 Parse `concurrency` parameter in `handleBatchExecute` — `int(req.GetFloat("concurrency", 1))`, clamp to [1, min(8, len(commands))]
 - [ ] 8.3 Extract existing serial loop into `executeBatchSerial(ctx context.Context, commands []CommandInput, timeout int, exec *executor.PolyglotExecutor) []string`
 - [ ] 8.4 Add `executeBatchParallel(ctx context.Context, commands []CommandInput, timeout, concurrency int, exec *executor.PolyglotExecutor) []string` — `errgroup.Group` with `SetLimit`, pre-allocated results slice, each command gets the **full** timeout (matching upstream — commands run concurrently so wall-clock bounded by timeout not timeout*N), per-command error handling, timed-out commands record `(timed out)` without affecting siblings
@@ -124,9 +124,9 @@
 
 ### Subtasks
 - [ ] 10.1 Add `quotePosixSingle(value string) string` to `internal/executor/executor.go` — single-quote with `'` → `'\''` escaping
-- [ ] 10.2 Add `buildShellScript(code string) string` — reads `os.Getenv("PATH")`, if non-empty prepends `export PATH=<quoted>\n`
-- [ ] 10.3 Use `buildShellScript(code)` in `Execute` when `req.Language == Shell`, before writing to script file
-- [ ] 10.4 Add test: shell script with PATH override in code still has original PATH available at the top
+- [ ] 10.2 Add `buildShellScript(code, inheritedPath string) string` — pure function (takes PATH as parameter, not `os.Getenv`), if `inheritedPath` non-empty prepends `export PATH=<quoted>\n`
+- [ ] 10.3 Use `buildShellScript(code, os.Getenv("PATH"))` in `Execute` when `req.Language == Shell`, before writing to script file
+- [ ] 10.4 Add test: call `buildShellScript` with explicit PATH value, verify output contains the restore line; empty PATH returns code unchanged
 
 ## Task 12: Final verification
 - **Status:** pending
