@@ -33,11 +33,10 @@ Modify `internal/security/eval.go`:
 - Match deny globs against both raw `filePath` AND resolved absolute path
 - Return denied=true if either matches
 
-Modify `internal/server/security_check.go`:
-- `checkFilePathDenyPolicy`: pass `s.projectDir` as projectRoot to `EvaluateFilePath`
-
-Modify `internal/store/search.go` (forward reference for §3 deny checker):
-- The `denyChecker` will also use `EvaluateFilePath` with projectRoot — wired in Task 5
+Update all three callers (grep for `EvaluateFilePath` before implementation to catch any additions):
+- `internal/server/security_check.go:45`: pass `s.projectDir` as projectRoot
+- `internal/hook/pretooluse.go:157`: pass `projectDir` (already available in the hook context)
+- `internal/server/server.go` (deny checker closure wired in Task 5): pass `s.projectDir`
 
 → verify: `go test ./internal/security/ -run TestEvaluateFilePath` including test case: relative `../../.ssh/id_rsa` from projectRoot `/home/user/project` is caught by glob `/home/user/.ssh/**`
 
@@ -82,11 +81,12 @@ Note on position lists: The existing code builds `posLists` from `termGroups` (s
 - `internal/store/migrate.go`: add migration (next version number) that runs `ALTER TABLE sources ADD COLUMN file_path TEXT`
 
 **5b. Index changes:**
-- `internal/store/index.go`: add `IndexWithFilePath(content, label, contentType string, kind SourceKind, filePath string) (*IndexResult, error)`. Internally, pass `filePath` to `indexPreparedChunks`. Modify `stmtInsertSource` to include `file_path` column. Use `sql.NullString{String: filePath, Valid: filePath != ""}`. The existing `Index` method passes `sql.NullString{Valid: false}`
+- `internal/store/store.go:175-177`: modify `stmtInsertSource` from 6 columns to 7 — add `file_path` after `kind`
+- `internal/store/index.go`: add `filePath string` parameter to `indexPreparedChunks` signature (currently has `content, label, contentType string, kind SourceKind, chunks []Chunk`). Convert to `sql.NullString{String: filePath, Valid: filePath != ""}` before `stmtInsertSource.Exec`. Update both callers: `Index` passes `""`, new `IndexWithFilePath` passes the actual path. Add `IndexWithFilePath(content, label, contentType string, kind SourceKind, filePath string) (*IndexResult, error)` as a public entry point
 - Update `stmtFindSourceByLabel` to also return `file_path` for completeness (not strictly needed for stale detection but keeps the query consistent)
 
 **5c. Stale detection:**
-- `internal/store/search.go`: add `denyChecker func(string) bool` field on `ContentStore`, add `SetDenyChecker(fn func(string) bool)` method, add `refreshStaleSources()` method. Call `refreshStaleSources()` at the top of `SearchWithFallback` before the RRF pass. Add `LastRefreshCount int` field for observability
+- `internal/store/search.go`: add `denyChecker func(string) bool` field, `SetDenyChecker` method, `lastRefreshTime time.Time` field (5-second cooldown — skip refresh if called within 5s), `LastRefreshCount int` field. Add `refreshStaleSources()` method. Call at top of `SearchWithFallback` before RRF pass — early-return if cooldown hasn't elapsed
 - `refreshStaleSources` queries `SELECT label, file_path, content_hash, indexed_at, content_type, kind FROM sources WHERE file_path IS NOT NULL`. Before reading, calls `s.denyChecker(filePath)` if set — skip if denied. After confirming content changed, re-indexes via `s.IndexWithFilePath(newContent, label, contentType, kind, filePath)` — preserving the existing `content_type`, `kind`, and `file_path`. Must NOT use generic `Index()` which writes `file_path = NULL`, permanently breaking stale detection for that source
 
 **5d. Tool + server wiring:**
@@ -115,7 +115,7 @@ Modify `internal/server/tool_fetch.go`:
 
 **Task 8: Batch Concurrency** (design §7)
 
-Check if `golang.org/x/sync` is already in `go.mod`. If not, `go get golang.org/x/sync`.
+Add `golang.org/x/sync` dependency (not currently in `go.mod`): `go get golang.org/x/sync`.
 
 Modify `internal/server/tool_batch.go`:
 - Parse `concurrency` parameter: `concurrency := int(req.GetFloat("concurrency", 1))`, clamp to [1, 8], then `min(concurrency, len(commands))`
@@ -156,10 +156,10 @@ Modify `internal/server/server.go`:
 
 Add to `internal/executor/executor.go`:
 - `quotePosixSingle(value string) string` — wraps in single quotes with `'` → `'\''` escaping
-- `buildShellScript(code string) string` — reads `os.Getenv("PATH")`, if non-empty prepends `export PATH=<quoted>\n` to code
+- `buildShellScript(code, inheritedPath string) string` — pure function taking PATH as explicit parameter (matching TS's `buildShellScriptContent(code, inheritedPath, platform)` pattern for testability). If `inheritedPath` non-empty, prepends `export PATH=<quoted>\n` to code
 
 Modify `Execute` method in the shell branch (line 83-86):
-- When `req.Language == Shell`, write `buildShellScript(code)` instead of raw `code` to the script file
+- When `req.Language == Shell`, write `buildShellScript(code, os.Getenv("PATH"))` instead of raw `code` to the script file
 
 → verify: `go test ./internal/executor/ -run TestShellPATH` — test that a shell script sourcing a profile that overrides PATH still has the original PATH available
 
