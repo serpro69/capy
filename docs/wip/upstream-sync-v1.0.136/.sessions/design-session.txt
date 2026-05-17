@@ -1,0 +1,549 @@
+ ▐▛███▜▌   Claude Code v2.1.143
+▝▜█████▛▘  Opus 4.6 · Claude Team
+  ▘▘ ▝▝    ~/Projects/personal/capy
+
+  Using Opus 4.6 (from .claude/settings.json) · /model to change
+
+❯ The context-mode TS reference accumulated many commits since the version capy 
+   was last synced from (ref @docs/done/upstream-sync-v1.0.89/design/md.).      
+  Filter out CI, bundle, platform-specific (Windows, Bun, KiloCode, Kiro, Zed,  
+  Pi, OpenClaw, OpenCode), and docs-only changes. Then figure out changes that  
+  remain relevant to capy's core. Then use kk:design to document the next       
+  upstream-sync feature.                                                        
+
+● I'll start by reading the previous sync design doc to find the last synced
+  commit, then explore the upstream repo for new commits.
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+● Good, the last sync was up to commit 2de4b58 (v1.0.89+19). Let me find the
+  upstream context-mode repo and get commits since then.
+
+  Searched for 1 pattern, ran 2 shell commands (ctrl+o to expand)
+
+● 703 commits. I need to get the full list and filter it. Let me index them into
+   capy for extraction since that's a large output, and also get the current
+  version tag.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Let me extract and categorize all 703 commits, filtering out the noise.
+
+  Called capy (ctrl+o to expand)
+
+● The filtered list is still large and was indexed. Let me get the full raw list
+   directly — I need to comprehend it to make classification decisions.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Still 314. Let me approach this differently — focus on changes to files that
+  map to capy's core: store, search, server, executor, indexing.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Good data. Let me also see a few more and check which files specifically
+  changed in each.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 95 commits touching core files. Now let me filter these further — remove
+  platform-specific, adapter, stats/analytics, and focus on
+  store/search/executor/server logic that maps to capy.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Good. Now let me look at the actual diffs for the most promising changes. Let
+  me categorize what I see and drill into the ones that look relevant to capy's
+  core.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now let me drill into the actual diffs for the most promising changes to
+  understand what they do.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● That's a clean, relevant search improvement. Let me now check the other key
+  changes.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Now let me check the remaining promising changes.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now let me check the remaining key changes — the concurrency feature, purge,
+  security, EXCLUSIVE locking, and a few others.
+
+  Ran 5 shell commands (ctrl+o to expand)
+
+● Now let me check the last few changes I haven't examined yet, then I'll have a
+   complete picture.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now I have a comprehensive picture. Let me check the last one — the ddd3b5b
+  (stats/case-fold) and the 6d00a00 to see if any store schema changes are there
+   beyond stats.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I now have a complete picture of all 703 commits. Let me check the current
+  state of capy's relevant Go files to understand what maps to what, then invoke
+   the design skill.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● I've got the full picture. Let me now classify all the changes and invoke the
+  design skill.
+
+  Here's my classification of the 703 commits (v1.0.89→v1.0.136):
+
+  Relevant to capy core (to port):
+  1. Phrase frequency reranker (2c63add) — countAdjacentPairs boosts multi-hit
+  chunks in proximity reranking
+  2. Hash-based stale detection (472634a) — SHA-256 content hash + mtime gate on
+   file-backed sources, auto-refresh on search
+  3. Empty content fallback (22939e6) — treat "" as missing so path reads the
+  file
+  4. Canonicalize index source label (e7a3eda) — resolve relative paths to
+  absolute before using as dedup key
+  5. Fetch cache key includes URL (1f1243e) — prevent cross-URL collision when
+  labels match
+  6. Batch concurrency (1d991a2, b392c2f) — opt-in concurrency: 1-8 param for
+  I/O-bound batches
+  7. PATH preservation (702dc75) — restore parent PATH at top of shell scripts
+  8. Batch env prefix by shell (358673d) — shell-aware NODE_OPTIONS quoting
+  (maps to Go's env injection)
+  9. SSRF guard (ef9eeaa, 65aa685) — DNS rebinding defense + scheme blocking for
+   fetch
+  10. TOCTOU in index (8b0f2d4) — deny-policy re-check on auto-refresh reads
+  11. Path traversal bypass (02f71f8) — match deny globs against resolved
+  absolute path
+  12. Env strip for .NET/C# (e0e79b7) — profiler/diagnostic env vars in executor
+   deny list
+  13. Purge tool (823fd36, d11c583) — scoped ctx_purge handler (session vs
+  project)
+
+  Not relevant / skip:
+  - EXCLUSIVE locking series — TS-specific multi-instance contention; Go uses
+  _busy_timeout
+  - Unified persistent memory & timeline search — major new subsystem, not a
+  sync
+  - Stats/analytics/insight/session features — capy has its own implementation
+  - Platform-specific (Windows, Bun, adapters, Pi, Codex, etc.)
+  - Prose-style retirement — Go never had this
+  - Case-fold migration — project-dir hashing, TS-specific path resolution
+  - C# runtime addition — separate feature, not a sync
+  - Suppress startup banner — TS MCP SDK-specific
+
+  Now I'll invoke the design skill.
+
+● Skill(kk:design)
+  ⎿  Successfully loaded skill
+● I'll follow the design skill workflow. First, let me load all required
+  instruction files before engaging with the content.
+
+  Read 3 files (ctrl+o to expand)
+
+● Good, all instruction files loaded. Now let me run profile detection — this is
+   a Go project, so I need to check for go profile design signals.
+
+  Read 1 file (ctrl+o to expand)
+
+● The idea prose mentions "Go" extensively (Go port, Go implementation, Go's
+  features, etc.). The go profile matches.
+
+  This is clearly a Go feature. The idea prose mentions "Go" repeatedly — "Go
+  port", "Go implementation", "Go's single-binary architecture", etc. Should I
+  activate the Go profile for this design?
+
+● User answered Claude's questions:
+  ⎿  · This appears to be a Go feature. Activate the Go profile? → Yes 
+     (Recommended)
+
+● Go profile activated. Let me load the Go design profile content.
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+● The Go design profile has conditional checklists for database, gRPC, and
+  observability. This feature involves database access (SQLite schema changes,
+  FTS5), so I should load the database checklist. No gRPC or observability
+  involvement.
+
+  Read 1 file (ctrl+o to expand)
+
+● Good, database profile loaded. Now let me proceed with Step 1 — understanding
+  the current state of the project by exploring the relevant Go code.
+
+  Read 9 files (ctrl+o to expand)
+
+● Now let me check the security module and tool_cleanup.go for the purge
+  context.
+
+  Read 2 files, listed 1 directory (ctrl+o to expand)
+
+● Now let me also check the EvaluateFilePath function and the executor.go for
+  PATH handling.
+
+  Searched for 1 pattern, read 2 files (ctrl+o to expand)
+
+● Good. I now have a thorough understanding of the current codebase. Let me also
+   check if there are any existing docs or contributing guidelines.
+
+  Listed 1 directory (ctrl+o to expand)
+
+● No existing WIP features, good. Now let me search capy knowledge base for
+  prior architecture decisions related to these areas.
+
+  Called capy (ctrl+o to expand)
+
+● Good, Steps 1-2 complete. I've explored the codebase and searched the
+  knowledge base. Now for Step 3 — refinement questions. I have observations
+  that affect the scope.
+
+  First observation: Two of the 13 changes don't apply to capy:
+
+  - Empty content fallback (#3): Already correct in Go. tool_index.go:19 checks
+  content == "" && path == "", then line 24 checks path != "" && content == "" —
+   Go's zero-value semantics handle the empty-string case that tripped up the
+  TS's content ?? readFileSync(path) (nullish coalescing doesn't catch ""). No
+  change needed.
+  - Batch env prefix (#13): The TS's buildBatchNodeOptionsPrefix injects
+  NODE_OPTIONS="--require ${CM_FS_PRELOAD}" for FS read tracking in spawned Node
+   processes. Capy doesn't have this FS tracking subsystem — there's no preload
+  script to inject. Not applicable.
+
+  Second observation: The canonicalize source label (#4) has a related bug.
+  Currently tool_index.go:52-53 uses filepath.Base(path) as the default label,
+  which drops the directory entirely. Two different files docs/api.md and
+  notes/api.md would both get label api.md and collide. The TS fix (use resolved
+   absolute path) would fix both the relative-path dedup bug AND this
+  directory-stripping collision.
+
+● User answered Claude's questions:
+  ⎿  · The purge tool (#7) overlaps significantly with capy's existing 
+     tool_cleanup.go, which already supports source-specific eviction, 
+     purge_ephemeral, and purge_session modes. The main gap is a 'nuke 
+     everything' project-scope purge (delete all FTS5 data + stats). Should we 
+     port the TS's scoped purge as a separate tool, extend the existing cleanup 
+     tool with a project-scope purge mode, or skip it entirely? → Extend cleanup
+      (Recommended)
+
+● User answered Claude's questions:
+  ⎿  · Capy's existing SSRF guard (tool_fetch.go:224-246) blocks loopback, 
+     private, and link-local IPs — which is MORE restrictive than the TS default
+      (which allows loopback+private for local dev servers). The upstream 
+     improvements add: (a) scheme validation (block file://, gopher://, 
+     javascript:, data:), and (b) DNS rebinding defense (Go's http.Client does 
+     its own DNS resolution after validateFetchURL, creating the same rebinding 
+     window the TS patched). Should we keep capy's stricter IP policy while 
+     adding the missing scheme+rebinding defenses, or align with the TS's more 
+     permissive default (allow loopback+private, strict mode via env var)? → 
+     Keep strict + add missing (Recommended)
+
+● User answered Claude's questions:
+  ⎿  · Batch concurrency (#6) is the largest single change — it adds a 
+     concurrency: 1-8 parameter to capy_batch_execute. Go makes this natural 
+     with goroutines + errgroup, but it touches serial timeout budgeting, output
+      ordering, error handling, and the tool's MCP schema. Given the scope, 
+     should it be ported in this sync or deferred as a separate feature? → 
+     Include in sync (Recommended)
+
+● Good — all three decisions locked in. No more ambiguities. The final scope is
+  11 changes across 4 categories:
+
+  Search Quality (2): phrase frequency reranker, hash-based stale detection
+  Server/Tool Fixes (4): canonicalize source label, fetch cache key, batch
+  concurrency, extend cleanup with project-scope purge
+  Security (4): SSRF scheme+rebinding defense, TOCTOU on auto-refresh, path
+  traversal bypass, executor env deny list
+  Executor (1): PATH preservation
+
+  Now for Step 4 — I'll describe the design section by section. Let me start
+  with the highest-priority items.
+
+  ---
+  Section 1: Phrase Frequency Reranker (P1, search quality)
+
+  The rerank function in search.go:240 already computes title-match boost and
+  proximity boost (minSpan). The upstream adds a third additive signal: phrase 
+  frequency boost — counting how many times consecutive query terms appear as
+  adjacent pairs within 30 characters of each other.
+
+  The implementation adds a countAdjacentPairs(positionLists [][]int, terms 
+  []string, gap int) int helper. For each consecutive pair of terms (terms[i], 
+  terms[i+1]), it sweeps left positions against right positions: for each left
+  position p, it looks for the nearest right position within [p + len(terms[i]),
+   p + len(terms[i]) + gap]. Each right position is consumed at most once
+  (greedy left-to-right matching), so "foo foo bar" counts 1 pair, not 2.
+
+  The boost formula is 0.5 * min(1.0, adjacentPairs/4) — saturating at 4 hits to
+   prevent keyword-stuffed documents from dominating. The cap of 0.5 sits below
+  max proximity (~1.0) and in the title-boost range (0.3-0.6), so it breaks ties
+   without overwhelming the other signals.
+
+  This integrates into the existing multi-term proximity block in rerank() (line
+   267-316). After computing minSpan, we compute adjacentPairs using the same
+  posLists already built for the span calculation, then add phraseBoost to the
+  total boost alongside titleBoost + proximityBoost. No interaction with
+  capy-specific features (synonym expansion, entity boosting, per-source
+  diversification) — those run at different stages of the pipeline.
+
+  Does this section look right?
+
+● User answered Claude's questions:
+  ⎿  · Does the phrase frequency reranker design look correct? → Looks good, 
+     continue
+
+● Section 2: Hash-Based Stale Detection with Auto-Refresh (P1, search quality)
+
+  When files are indexed via capy_index(path), we store the file's absolute path
+   and SHA-256 hash alongside the existing source metadata. On every
+  SearchWithFallback call, we check all file-backed sources for staleness and
+  auto re-index changed files before returning results.
+
+  Schema change: Add a nullable file_path TEXT column to sources. The existing
+  content_hash TEXT column already stores SHA-256 — no new hash column needed.
+  Add a migration in migrate.go that does ALTER TABLE sources ADD COLUMN 
+  file_path TEXT (O(1) in SQLite, same pattern as existing migrations).
+
+  Index path changes (tool_index.go): When a file is read from disk (the path !=
+   "" && content == "" branch), pass the resolved absolute path to a new
+  IndexWithFilePath method on ContentStore. This stores file_path in the sources
+   row. The existing Index method's behavior is unchanged — non-file content
+  gets NULL for file_path.
+
+  Store changes (index.go): Add IndexWithFilePath(content, label, contentType 
+  string, kind SourceKind, filePath string) that wraps Index but also stores
+  filePath in the source row. Modify stmtInsertSource to accept the optional
+  file_path parameter — use sql.NullString for the column.
+
+  Search path changes (search.go): At the top of SearchWithFallback, before the
+  RRF pass, call a new refreshStaleSources() method. This queries SELECT label, 
+  file_path, content_hash, indexed_at FROM sources WHERE file_path IS NOT NULL,
+  then for each:
+  1. mtime gate (fast path): os.Stat(filePath).ModTime() — skip if mtime <=
+  indexedAt
+  2. SHA-256 comparison: read file, hash — skip if hash matches stored
+  content_hash
+  3. Re-index: call Index(newContent, label, ...) which handles dedup via the
+  existing hash-compare logic
+
+  Graceful handling: deleted files are skipped (keep cached results), stat/read
+  errors are logged and skipped (never break search for stale detection). A
+  lastRefreshCount field on ContentStore tracks how many sources were refreshed
+  for observability.
+
+  Interaction with capy-specific features: Stale detection runs before the RRF
+  pass, so synonym expansion, entity boosting, and diversification all operate
+  on fresh data. The file_path column is orthogonal to kind — both durable and
+  ephemeral file-backed sources get stale detection.
+
+  Does this section look right?
+
+● User answered Claude's questions:
+  ⎿  · Does the hash-based stale detection design look correct? → Looks good, 
+     continue
+
+● Section 3: Server/Tool Fixes (4 changes)
+
+  3a. Canonicalize source label (tool_index.go): Currently line 52-53 uses
+  filepath.Base(path) as the default label when no explicit source is provided.
+  This drops the directory, causing collisions (docs/api.md and notes/api.md
+  both become api.md). Fix: change to use the resolved absolute path (which is
+  already computed at line 29-33). The line becomes source = path (the full
+  absolute path). Explicit source parameter still takes priority.
+
+  3b. Fetch cache key includes URL (tool_fetch.go): Currently line 76 does meta,
+   err := st.GetSourceMeta(label) — but label might be a user-chosen name that
+  maps to different URLs across calls. Fix: compose a cache key from label + "|"
+   + url (pipe separator since neither label nor URL can contain it in
+  practice). Use this composite key for the cache lookup only; the actual
+  storage label for indexing remains source (line 97). This prevents cross-URL
+  cache collisions while keeping search labels clean.
+
+  3c. Batch concurrency (tool_batch.go): Add an optional concurrency parameter
+  (int, 1-8, default 1). When 1, the existing serial path is preserved unchanged
+   (shared timeout budget, cascading skip on timeout). When >1, switch to a
+  goroutine pool using golang.org/x/sync/errgroup with SetLimit(concurrency):
+
+  - Each command gets its own timeout (total budget divided evenly, or
+  per-command if specified)
+  - Results are collected in order (pre-allocate a []string slice indexed by
+  command position)
+  - FTS5 indexing of combined output remains serial (after all commands
+  complete) to avoid SQLite write contention
+  - Error in one command doesn't abort others (each goroutine handles its own
+  errors)
+  - Output ordering preserved regardless of completion order
+
+  The MCP tool schema adds concurrency as an optional integer with description
+  guiding LLMs: I/O-bound batches (network, git) benefit from 4-8; CPU-bound
+  (build, test) and stateful (ports, locks) should stay at 1.
+
+  3d. Extend cleanup with project-scope purge (tool_cleanup.go): Add a
+  purge_all: true boolean parameter. When set, it deletes ALL sources, chunks,
+  trigram chunks, and vocabulary — effectively wiping the FTS5 knowledge base.
+  Stats are reset via s.stats.Reset(). The existing dry_run parameter applies:
+  when true, reports what would be purged without acting. Mutually exclusive
+  with source, purge_ephemeral, and purge_session.
+
+  Does this section look right?
+
+● User answered Claude's questions:
+  ⎿  · Do the server/tool fixes (canonicalize label, fetch cache key, batch 
+     concurrency, cleanup purge_all) look correct? → Looks good, continue
+● Section 4: Security Hardening (4 changes)
+
+  4a. SSRF guard improvements (tool_fetch.go + new internal/server/ssrf.go): Two
+   additions:
+
+  Scheme validation: Before DNS resolution, parse the URL and reject non-HTTP/S
+  schemes. Block file://, gopher://, javascript:, data:, and any scheme that
+  isn't http or https. This runs first since it's the cheapest check.
+
+  DNS rebinding defense via custom Transport: The current validateFetchURL
+  resolves DNS once, but Go's http.Client performs its own resolution for the
+  actual TCP connection — an attacker with a low-TTL DNS record can serve a
+  public IP for the pre-flight check and then 169.254.169.254 for the connect.
+  Fix: create a custom http.Transport with a DialContext that resolves DNS via
+  net.Resolver, classifies every returned IP using the existing isLocalOrPrivate
+   logic, and only dials if all IPs pass. This collapses the TOCTOU window to
+  zero — DNS resolution and IP classification happen at connect time, not in a
+  separate pre-flight step. Extract IP classification into classifyIP(ip net.IP)
+   error in a new ssrf.go file for testability. The existing validateFetchURL
+  becomes a scheme-only check; IP classification moves entirely to the
+  Transport.
+
+  4b. TOCTOU fix for stale auto-refresh: When refreshStaleSources() (from §2)
+  re-reads a file, it must re-check the deny policy before reading. The file's
+  deny status may have changed since original indexing. Implementation: accept
+  an optional DenyChecker func(path string) bool on ContentStore (set by the
+  server at init). In refreshStaleSources, before os.ReadFile(filePath), call
+  s.denyChecker(filePath) — skip the source if denied. Fail-closed: if the
+  checker returns an error, skip the re-read rather than proceeding.
+
+  4c. Path traversal bypass (security/eval.go): EvaluateFilePath currently
+  matches deny globs against only the raw input string. A relative path like
+  ../../.ssh/id_rsa bypasses an absolute glob like /home/user/.ssh/**. Fix:
+  accept an optional projectRoot string parameter. When provided, resolve the
+  input path to absolute (filepath.Join(projectRoot, filePath) then
+  filepath.Clean), then match deny globs against both the raw input AND the
+  resolved path. Either matching triggers denial. Update checkFilePathDenyPolicy
+   in security_check.go to pass s.projectDir as the project root.
+
+  4d. Executor env deny list expansion (executor/env.go): Add .NET/C# runtime
+  hijack environment variables to deniedEnvVars. These include CORECLR profiler
+  attach vectors (CORECLR_PROFILER, CORECLR_PROFILER_PATH and arch variants,
+  CORECLR_ENABLE_PROFILING), diagnostic IPC (DOTNET_DiagnosticPorts),
+  single-file extraction redirection (DOTNET_BUNDLE_EXTRACT_BASE_DIR), and the
+  COMPlus_* back-compat prefix. For COMPlus_*, use a prefix check in
+  BuildSafeEnv alongside the existing BASH_FUNC_ prefix check rather than
+  enumerating every variant.
+
+  Does this section look right?
+
+● User answered Claude's questions:
+  ⎿  · Do the security hardening changes (SSRF scheme+rebinding, TOCTOU fix, 
+     path traversal, env deny list) look correct? → Looks good, continue
+
+● Section 5: Executor — PATH Preservation (executor/executor.go)
+
+  When the executor writes a shell script to a temp file (line 85), user shell
+  startup files (.bashrc, .zshrc) can overwrite PATH, hiding tools that the MCP
+  process had available. Fix: before writing the user's code to the script file,
+   prepend a PATH restoration line.
+
+  Add a buildShellScript(code string) string helper in executor.go (or wrap.go).
+   It reads os.Getenv("PATH") at call time, quotes it for POSIX shell
+  (single-quote with ' escaping: '\''), and prepends export PATH='...' to the
+  script content. Only applies when req.Language == Shell — non-shell languages
+  don't source shell profiles.
+
+  The executor already sets PATH in BuildSafeEnv (env.go:80-82), but that's the
+  subprocess environment — the script itself may source .bashrc which clobbers
+  the env-inherited PATH. The prepended export overrides the clobber after the
+  profile loads.
+
+  ---
+  That's the complete design. All 11 changes are covered. Let me now write the
+  design and implementation docs.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Write(docs/wip/upstream-sync-v1.0.136/design.md)
+  ⎿  Wrote 419 lines to docs/wip/upstream-sync-v1.0.136/design.md
+      1 # Design: Upstream Sync — context-mode v1.0.89→v1.0.136
+      3 > **Scope:** Port search quality, security hardening, server/tool
+        , and executor improvements from the context-mode TypeScript refe
+        rence (commits 2de4b58..f8d4639, versions v1.0.89→v1.0.136) to th
+      4 >
+      5 > **Reference:** `context-mode/src/store.ts`, `context-mode/src/d
+        tor.ts`, `context-mode/src/security.ts`
+      6 >
+      7 > **Previous sync:** `/docs/done/upstream-sync-v1.0.89/`
+      9 ## 1. Overview
+     … +639 lines (ctrl+o to expand)
+
+● Now the implementation plan.
+
+● Write(docs/wip/upstream-sync-v1.0.136/implementation.md)
+  ⎿  Wrote 168 lines to docs/wip/upstream-sync-v1.0.136/implementation.md
+      1 # Implementation Plan: Upstream Sync v1.0.89→v1.0.136
+      3 > **Design doc:** `design.md` (same directory)
+      4 > **Language:** Go 1.23+
+      5 > **Key constraint:** All changes must preserve backward compatib
+        es (synonym expansion, entity boosting, diversification, source-k
+        ind separation) must work identically after the sync.
+      7 ## Implementation Order
+      8 
+      9 Changes are ordered by dependency chain and priority. Security fi
+        dations.
+     … +271 lines (ctrl+o to expand)
+
+● Now Step 6 — the task list.
+
+  Read 1 file (ctrl+o to expand)
+
+● Write(docs/wip/upstream-sync-v1.0.136/tasks.md)
+  ⎿  Wrote 130 lines to docs/wip/upstream-sync-v1.0.136/tasks.md
+       1 # Tasks: Upstream Sync — context-mode v1.0.89→v1.0.136
+       2 
+       3 > Design: [./design.md](./design.md)
+       4 > Implementation: [./implementation.md](./implementation.md)
+       5 > Status: pending
+       6 > Created: 2026-05-17
+       7 
+       8 ## Task 1: SSRF guard improvements
+       9 - **Status:** pending
+      10 - **Depends on:** —
+     … +237 lines (ctrl+o to expand)
+
+● All three documents are written. Let me verify the files are in place and do a
+   final check.
+
+  Listed 1 directory (ctrl+o to expand)
+
+● Design docs complete. Here's the summary:
+
+  Upstream Sync v1.0.89→v1.0.136 — 703 upstream commits filtered down to 11 
+  portworthy changes across 4 categories:
+
+  - Security (P0): SSRF scheme+DNS-rebinding defense, path traversal bypass fix,
+   .NET env deny list, TOCTOU on auto-refresh
+  - Search (P0-P1): Phrase frequency reranker, hash-based stale detection with
+  auto-refresh
+  - Server (P1-P2): Canonicalize source labels, fetch cache key collision fix,
+  batch concurrency (1-8 goroutines), project-scope purge
+  - Executor (P2): Shell PATH preservation
+
+  2 changes skipped as already handled: empty content fallback (Go zero-value
+  semantics), batch env prefix (TS-only FS tracking). 10+ categories filtered 
+  out with documented rationale.
+
+  All docs written to docs/wip/upstream-sync-v1.0.136/ — design.md (23KB, 9
+  sections), implementation.md (12KB, 5 phases), tasks.md (11KB, 11 tasks with
+  50 subtasks).
+
+✻ Worked for 14m 50s
