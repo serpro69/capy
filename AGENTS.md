@@ -16,11 +16,3 @@ It was initially designed as a port of `context-mode` project written in Go, aim
 ## Architecture Overview
 
 `capy` operates as a Claude Code plugin that intercepts data-heavy tool calls (Bash, Read, WebFetch, Grep) and redirects them through sandboxed execution. Raw data stays in subprocesses; only printed summaries enter the LLM context. A persistent FTS5 knowledge base indexes all sandboxed output for on-demand retrieval via BM25-ranked search with three-tier fallback (Porter stemming, trigram substring, fuzzy Levenshtein correction).
-
-# Extra Instructions
-
-@.claude/CLAUDE.extra.md
-
-# capy — context-window routing
-
-@.capy/AGENTS.md
