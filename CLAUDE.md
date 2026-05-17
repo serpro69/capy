@@ -4,18 +4,68 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`capy` is an MCP (Model Context Protocol) server and Claude Code plugin, and it aims to solve two main problems:
+`capy` is an MCP server and Claude Code plugin written in Go. It solves context window flooding by keeping raw tool outputs in sandboxed subprocesses and indexing them into SQLite FTS5 with BM25 ranking. It also provides persistent, queryable knowledge across sessions via an encrypted SQLite database.
 
-- context window flooding
-- persistent, queryable agent memory
+Originally a Go port of [context-mode](https://github.com/mksglu/context-mode) (TypeScript), capy has evolved independently with its own feature set: mandatory encryption at rest, three source kinds with distinct lifecycle policies, session transcript indexing, multi-platform hook routing, and a tiered retention system.
 
-Capy aims to achieve ~98% context reduction (315 KB to 5.4 KB) by keeping raw tool outputs in isolated subprocesses and indexing them into SQLite FTS5 with BM25 ranking. Large command outputs, log files, API responses, and documentation never enter the context window - only concise summaries and search results do.
+## Architecture
 
-It was initially designed as a port of `context-mode` project written in Go, aiming to utilize Go's features to achieve even better context-reduction performance. It has since evolved and stands on it's own, having implemented many of it's own improvements over context-mode, while preserving the core philosophy.
+See [docs/architecture.md](docs/architecture.md) for the full architecture document.
 
-## Architecture Overview
+### Key Packages
 
-`capy` operates as a Claude Code plugin that intercepts data-heavy tool calls (Bash, Read, WebFetch, Grep) and redirects them through sandboxed execution. Raw data stays in subprocesses; only printed summaries enter the LLM context. A persistent FTS5 knowledge base indexes all sandboxed output for on-demand retrieval via BM25-ranked search with three-tier fallback (Porter stemming, trigram substring, fuzzy Levenshtein correction).
+```
+cmd/capy/           CLI entry points (cobra commands)
+internal/
+  adapter/          Platform adapter interface (HookAdapter) + Claude Code implementation
+  config/           TOML config loading with 3-level precedence, project root detection, DB path resolution
+  executor/         Polyglot code executor (11 languages), process group isolation, output truncation
+  giturl/           Git platform URL detection (GitHub/GitLab/Bitbucket/Gitea)
+  hook/             Hook event dispatch: PreToolUse routing, guidance, security, subagent injection
+  platform/         Setup command (writes hooks/MCP config), doctor diagnostics, routing instructions
+  sanitize/         Secret stripping (regex-based redaction of API keys, tokens, credentials)
+  security/         Settings parsing, glob matching, command splitting, shell-escape detection
+  server/           MCP server, 9 tool handlers, stats tracking, lifecycle guard, intent search
+  session/          Claude Code JSONL parsing, transcript building, chunking, sweep indexing
+  store/            SQLite FTS5 knowledge base: schema, indexing, search, cleanup, encryption, migration
+  version/          Build-time version injection via ldflags
+```
+
+### Critical Invariants
+
+- **Encryption is mandatory.** `CAPY_DB_KEY` must be set. The store refuses to open without it. Tests require it too.
+- **FTS5 build tag required.** All builds and tests must use `-tags fts5`. The Makefile handles this.
+- **WAL checkpoint on close.** The connection pool must be closed before checkpointing (see `store.go:Close()` and ADR-016).
+- **WAL + PRAGMA rekey incompatible.** Encryption path must switch to DELETE journal mode before rekeying (ADR-020).
+- **Source kinds are schema-enforced.** `CHECK (kind IN ('ephemeral', 'durable', 'session'))` — no other values accepted.
+- **Hooks are short-lived processes.** Each hook invocation is a separate `capy hook <event>` process. State persists via `.capy/guidance-<sessionID>.json` files.
+
+### Build & Test
+
+```bash
+export CAPY_DB_KEY=test-key-for-development  # required for all tests
+make build                                    # CGO_ENABLED=1, -tags fts5
+make test                                     # all tests
+make test-race                                # with race detector
+go test -tags fts5 -count=1 ./internal/<pkg>/... # single package
+```
+
+## ADRs
+
+Architecture Decision Records are in [docs/adr/](docs/adr/). Key ones:
+- ADR-006: Persistent knowledge base
+- ADR-007: Tiered freshness and content dedup
+- ADR-011: Conservative cleanup policy
+- ADR-015/016: Knowledge DB not in git + WAL checkpoint strategy
+- ADR-017: Source kind separation (durable/ephemeral/session)
+- ADR-019/020: Encrypted knowledge DB + WAL/rekey incompatibility
+- ADR-022: Source size guard and DB bloat prevention
+- ADR-023: Fetch ephemeral default and routing rewrite
+- ADR-024: Server-side git URL enforcement
+
+## Completed Features
+
+Design docs for completed features are in [docs/done/](docs/done/). Each has design.md, implementation.md, and tasks.md.
 
 # Extra Instructions
 
