@@ -4,8 +4,8 @@
 
 ### Prerequisites
 
-- **Go 1.23+** ([install](https://go.dev/dl/))
-- **C compiler** — required for CGO (SQLite FTS5 + encryption):
+- **Go 1.25+** ([install](https://go.dev/dl/))
+- **C compiler** — required for CGO (SQLite FTS5 + sqlite3mc encryption):
   - macOS: `xcode-select --install`
   - Debian/Ubuntu: `sudo apt install build-essential`
   - Fedora: `sudo dnf install gcc`
@@ -39,20 +39,28 @@ make test-race  # tests with race detector
 ## Project Structure
 
 ```
-cmd/capy/           CLI entry points (serve, hook, setup, doctor, cleanup, checkpoint, encrypt)
+cmd/capy/           CLI entry points (serve, hook, setup, doctor, cleanup, checkpoint, encrypt, sweep, which, dbsize)
 internal/
   adapter/          Platform adapter interface + Claude Code implementation
   config/           TOML config loading, project root detection, path resolution
   executor/         Polyglot code executor (11 languages, process isolation)
   giturl/           Git platform URL detection (shared by hook and server)
-  hook/             Hook event routing (PreToolUse, PostToolUse, etc.)
+  hook/             Hook event routing (PreToolUse, PostToolUse, SessionStart, etc.)
   platform/         Setup command, doctor diagnostics, routing instructions
+  sanitize/         Secret stripping (regex-based redaction for indexed content)
   security/         Settings parsing, glob matching, command splitting, shell-escape detection
-  server/           MCP server, 9 tool handlers, stats, lifecycle, snippets
+  server/           MCP server, 9 tool handlers, stats, lifecycle, snippets, intent search
   session/          Claude Code session JSONL parsing, transcript building, chunking, sweep indexing
-  store/            SQLite FTS5 knowledge base (schema, indexing, chunking, search, cleanup, encryption)
+  store/            SQLite FTS5 knowledge base (schema, indexing, chunking, search, cleanup, encryption, migration)
   version/          Version variable (set at build via ldflags)
+docs/
+  adr/              Architecture Decision Records (numbered, append-only)
+  done/             Design docs for completed features (design.md, implementation.md, tasks.md)
+  wip/              Design docs for in-progress features
+  architecture.md   System architecture overview
 ```
+
+For the full architecture, see [docs/architecture.md](docs/architecture.md).
 
 ## Testing
 
@@ -96,7 +104,7 @@ Key integration test files:
 
 | File | What it covers |
 |------|----------------|
-| `server/integration_test.go` | MCP tool handler -> executor -> store -> search round-trips |
+| `server/integration_test.go` | MCP tool handler → executor → store → search round-trips |
 | `hook/integration_test.go` | Full hook JSON through Claude Code adapter with real routing |
 
 ## Local Verification Without Installation
@@ -142,11 +150,7 @@ echo '{"tool_name":"Bash","tool_input":{"command":"sudo rm -rf /"},"session_id":
 ./capy doctor --project-dir /path/to/some/project
 ```
 
-This shows diagnostics without modifying anything. Useful to verify runtimes, FTS5, and config loading.
-
 ### Testing With Claude Code (Full E2E)
-
-For a full end-to-end test, point `capy setup` at a scratch project using the local binary:
 
 ```bash
 # Create a scratch project
@@ -166,7 +170,7 @@ To iterate: rebuild with `make build`, then restart Claude Code (the MCP server 
 
 ### Testing the MCP Server Directly
 
-The MCP server uses stdio (JSON-RPC over stdin/stdout). You can test it by sending raw JSON-RPC messages, but this is complex. The integration tests in `internal/server/integration_test.go` cover this path — prefer running those:
+The MCP server uses stdio (JSON-RPC over stdin/stdout). The integration tests cover this path:
 
 ```bash
 go test -tags fts5 -count=1 -v -run TestIntegration ./internal/server/...
@@ -188,26 +192,30 @@ go test -tags fts5 -count=1 -v -run TestIntegration ./internal/server/...
 
 **Tool handlers** (`server/tool_*.go`): Each MCP tool has a handler function that:
 1. Parses arguments from the request (with input coercion for double-serialized JSON)
-2. Runs security checks
+2. Runs security checks (deny policies, file path checks, shell-escape detection)
 3. Does the work (execute, index, search, etc.)
 4. Tracks stats via `s.trackToolResponse()`
 5. Returns `*mcp.CallToolResult`
 
 **Store operations**: All database operations use prepared statements cached on the `ContentStore` struct. New queries need a prepared statement added to `store.go:prepareStatements()` and closed in `store.go:Close()`.
 
-**SQLite WAL checkpoint** (see ADR-015, ADR-016, ADR-019): The knowledge DB uses WAL mode with mandatory encryption (sqlite3mc, SQLCipher v4 compat). On `Close()`, the WAL must be flushed into the main `.db` file — otherwise git operations corrupt the database (WAL/SHM sidecar files aren't tracked). The checkpoint requires exclusive WAL access, which means the `database/sql` connection pool must be closed *before* checkpointing. `Close()` handles this by: (1) closing statements, (2) closing the pool, (3) opening a fresh single connection (with the encryption key via URI parameters) for `PRAGMA wal_checkpoint(TRUNCATE)`. Do not attempt to checkpoint while pool connections are open — it silently degrades to passive (incomplete). The `Checkpoint()` method does the same thing standalone for the `capy checkpoint` CLI command.
+**Write transactions**: Use `beginImmediate()` (no-op DELETE after BEGIN) to acquire SQLite's RESERVED write lock immediately, preventing interleaving between the dedup SELECT and subsequent INSERT/UPDATE.
 
-**Important nuance**: WAL/SHM files only exist when the DB has been written to during a session. `Close()` checkpoints whatever WAL frames the current session created. If the server starts but no writes happen (e.g., empty `capy serve` → Ctrl+C), there's nothing to checkpoint and any pre-existing WAL files from a *previous* session remain untouched. This means stale WAL files from an older binary version or unclean shutdown require a manual `capy checkpoint` to flush.
+**SQLite WAL checkpoint** (see ADR-015, ADR-016, ADR-019): The knowledge DB uses WAL mode with mandatory encryption (sqlite3mc, SQLCipher v4 compat). On `Close()`, the WAL must be flushed into the main `.db` file — otherwise git operations corrupt the database. The checkpoint requires exclusive WAL access, which means the `database/sql` connection pool must be closed *before* checkpointing. `Close()` handles this by: (1) closing statements, (2) closing the pool, (3) opening a fresh single connection for `PRAGMA wal_checkpoint(TRUNCATE)`.
 
-**WAL and PRAGMA rekey incompatibility** (see ADR-020): sqlite3mc does not support `PRAGMA rekey` in WAL journal mode. `capy encrypt`'s `encryptPlain` path (unencrypted → encrypted) must switch the temporary copy to `PRAGMA journal_mode = DELETE` before rekeying. The key-rotation path (`rekeyEncrypted`) uses the SQLite backup API and is unaffected. WAL mode is restored automatically when the store reopens the encrypted DB (the DSN includes `_journal_mode=WAL`).
+**WAL/rekey incompatibility** (see ADR-020): sqlite3mc does not support `PRAGMA rekey` in WAL journal mode. `capy encrypt`'s `encryptPlain` path must switch to DELETE journal mode before rekeying.
 
 **Security checks**: Bash deny patterns are loaded once at server startup. The `matchesAnyBashPattern` function uses cached regexes (`sync.Map`). Shell-escape patterns for non-shell languages are compiled once in `init()`.
 
-**Hook routing** (`hook/pretooluse.go`): The main routing function dispatches on canonical tool name. New tool interceptions go here. Guidance uses file-based persistence (`.capy/guidance-<sessionID>.json`) since hooks run as separate short-lived processes.
+**Hook routing** (`hook/pretooluse.go`): The main routing function dispatches on canonical tool name. New tool interceptions go here. Guidance uses file-based persistence since hooks run as separate short-lived processes.
+
+**Content indexing**: All content passes through `sanitize.StripSecrets()` before hashing and storage. SHA-256 content hashing enables dedup — same content with same label skips re-indexing.
+
+**Search pipeline**: RRF (Reciprocal Rank Fusion) across Porter + trigram layers, with fuzzy Levenshtein correction on sparse results. Post-processing: per-source diversification, title-match boost, proximity reranking, entity-aware boosting.
 
 ### Adding a New MCP Tool
 
-1. Define the tool schema in `server/tools.go` (follow existing patterns)
+1. Define the tool schema in `server/tools.go` (follow existing patterns for annotations)
 2. Create the handler in a new `server/tool_<name>.go` file
 3. Register it in `server/tools.go:registerTools()`
 4. Add the tool name to `platform/routing.go:CapyToolNames`
@@ -235,6 +243,43 @@ To add a new extractor:
 3. Add the tool name to `platform/setup.go:PreToolUseMatcherPattern` so the hook is registered
 4. Write tests in `hook/hook_test.go` (unit, with test adapter) and `hook/integration_test.go` (with Claude Code adapter)
 
+### Adding Platform Support
+
+1. Implement the `adapter.HookAdapter` interface for the new platform
+2. Add tool name aliases to `hook/helpers.go:toolAliases`
+3. Add a setup path in `platform/setup.go` (e.g., `SetupCodex` for Codex CLI)
+4. Add platform-specific routing instructions if needed
+
+## Configuration Reference
+
+capy uses TOML configuration with three-level precedence (lowest to highest):
+1. `~/.config/capy/config.toml` (global)
+2. `.capy/config.toml` (project)
+3. `.capy.toml` (project root)
+
+```toml
+[store]
+# path = ".capy/knowledge.db"       # optional override; default: ~/.local/share/capy/<project-hash>/knowledge.db
+# title_weight = 2.0                # BM25 title column weight
+# max_source_bytes = 2097152        # 2 MB hard cap on total content per source
+
+[store.cleanup]
+# cold_threshold_days = 30          # durable sources older than this may be evicted
+# ephemeral_ttl_hours = 24          # lifetime for ephemeral sources (minimum 1)
+# session_ttl_days = 60             # lifetime for session sources (minimum 1)
+# auto_prune = false                # automatic pruning (not yet implemented)
+
+[store.cache]
+# fetch_ttl_hours = 24              # skip re-fetch within this window
+
+[executor]
+# timeout = 30                      # seconds per execution
+# max_output_bytes = 102400         # 100 KB output cap
+
+[server]
+# log_level = "info"                # "debug", "info", "warn", "error"
+```
+
 ## Releases
 
 Releases are fully automated. Push a semver tag to trigger the pipeline:
@@ -258,3 +303,4 @@ Pre-release tags (e.g., `v1.0.0-rc.1`) create pre-release GitHub Releases and sk
 - **No `init()` side effects**: The only `init()` in the codebase compiles regex patterns (`security/shell_escape.go`). Keep it that way.
 - **Tests**: Use `testify/assert` and `testify/require`. `require` for preconditions (test stops on failure), `assert` for the actual check.
 - **Build tags**: Always pass `-tags fts5` for anything involving the store or server packages.
+- **Logging**: Use `slog` exclusively. `slog.Info` for operational events, `slog.Debug` for internal details, `slog.Warn` for recoverable issues.
