@@ -11,11 +11,11 @@
 - **Docs:** [design.md#6a-ssrf-guard-scheme-validation--dns-rebinding-defense](./design.md#6a-ssrf-guard-scheme-validation--dns-rebinding-defense), [implementation.md#task-1-ssrf-guard-improvements](./implementation.md#task-1-ssrf-guard-improvements)
 
 ### Subtasks
-- [ ] 1.1 Create `internal/server/ssrf.go` with `classifyIP(ip net.IP) error` — extract IP classification from existing `validateFetchURL`, return descriptive errors per IP category
+- [ ] 1.1 Create `internal/server/ssrf.go` with `classifyIP(rawIP string) error` — accepts raw IP string, strips zone-IDs (`%eth0`), handles IPv4-mapped IPv6 (`::ffff:A.B.C.D`) via recursion, classifies: IPv6 unspecified/link-local/multicast/loopback/ULA; IPv4 `0.0.0.0/8`/`169.254.0.0/16`/`224.0.0.0+`/loopback/RFC1918; malformed → block
 - [ ] 1.2 Add `validateFetchScheme(rawURL string) error` in `ssrf.go` — reject any scheme not in `{"http", "https"}`
 - [ ] 1.3 Add `newSSRFSafeTransport() *http.Transport` in `ssrf.go` — custom `DialContext` that resolves DNS via `net.DefaultResolver.LookupIPAddr`, classifies every IP via `classifyIP`, dials first passing IP via `net.Dialer`
 - [ ] 1.4 Update `tool_fetch.go`: replace `validateFetchURLFunc(url)` with `validateFetchScheme(url)`, replace default `http.Client{}` with one using `newSSRFSafeTransport()`, remove old `validateFetchURL` and `validateFetchURLFunc`
-- [ ] 1.5 Create `internal/server/ssrf_test.go` — test scheme blocking (file://, gopher://, data://), IP classification (loopback, private, link-local), Transport-level DNS rebinding defense
+- [ ] 1.5 Create `internal/server/ssrf_test.go` — test scheme blocking (file://, gopher://, data://), IP classification covering: `0.0.0.0` (current network), `::` (unspecified), `::ffff:127.0.0.1` (IPv4-mapped), `fe80::1%eth0` (zone-id), `224.0.0.1` (multicast), `169.254.169.254` (IMDS), `127.0.0.1` (loopback), `10.0.0.1`/`192.168.1.1` (private), malformed strings, valid public IPs; Transport-level DNS rebinding defense
 - [ ] 1.6 Update `tool_fetch_test.go` — replace `validateFetchURLFunc` override pattern with Transport-level test helper that allows localhost for `httptest.NewServer`
 
 ## Task 2: Path traversal bypass fix
@@ -38,6 +38,15 @@
 - [ ] 3.2 Add `COMPlus_` prefix check in `BuildSafeEnv` alongside existing `BASH_FUNC_` prefix check
 - [ ] 3.3 Add tests in `internal/executor/env_test.go` — verify CORECLR_PROFILER and COMPlus_EnableDiagnostics are stripped from env output
 
+## Task 3b: Apply Read deny-policy to capy_index(path)
+- **Status:** pending
+- **Depends on:** Task 2 (uses updated EvaluateFilePath with projectRoot)
+- **Docs:** [design.md#6e-apply-read-deny-policy-to-capy_indexpath](./design.md#6e-apply-read-deny-policy-to-capy_indexpath), [implementation.md#task-3b-apply-read-deny-policy-to-capy_indexpath](./implementation.md#task-3b-apply-read-deny-policy-to-capy_indexpath)
+
+### Subtasks
+- [ ] 3b.1 Add `s.checkFilePathDenyPolicy(path)` call in `handleIndex` (`internal/server/tool_index.go`) when `path != ""`, before any file I/O (before the `filepath.IsAbs` resolution at line 26)
+- [ ] 3b.2 Add tests: denied absolute path returns error and produces no FTS5 chunks; denied relative `../` traversal path returns error; inline `content` with a `source` label matching a deny pattern still indexes successfully
+
 ## Task 4: Phrase frequency reranker
 - **Status:** pending
 - **Depends on:** —
@@ -58,11 +67,11 @@
 - [ ] 5.1 Add `file_path TEXT` to `CREATE TABLE sources` in `internal/store/schema.go`
 - [ ] 5.2 Add migration in `internal/store/migrate.go` for `ALTER TABLE sources ADD COLUMN file_path TEXT`
 - [ ] 5.3 Add `IndexWithFilePath(content, label, contentType string, kind SourceKind, filePath string) (*IndexResult, error)` in `internal/store/index.go` — modify `stmtInsertSource` to accept optional `file_path` via `sql.NullString`
-- [ ] 5.4 Add `denyChecker func(string) bool` field, `SetDenyChecker` method, `LastRefreshCount int` field, and `refreshStaleSources()` method to `internal/store/search.go` — query file-backed sources, mtime gate → SHA-256 compare → re-index, check deny before read
+- [ ] 5.4 Add `denyChecker func(string) bool` field, `SetDenyChecker` method, `LastRefreshCount int` field, and `refreshStaleSources()` method to `internal/store/search.go` — query `SELECT label, file_path, content_hash, indexed_at, content_type, kind FROM sources WHERE file_path IS NOT NULL`, check deny before read, mtime gate → SHA-256 compare → re-index via `IndexWithFilePath(newContent, label, contentType, kind, filePath)` preserving all existing metadata
 - [ ] 5.5 Call `refreshStaleSources()` at the top of `SearchWithFallback` before the RRF pass
 - [ ] 5.6 Update `internal/server/tool_index.go` — when file is read from disk, call `st.IndexWithFilePath` instead of `st.Index`, passing resolved absolute path
 - [ ] 5.7 Wire deny checker in `internal/server/server.go` — after creating store, call `store.SetDenyChecker(...)` using `security.EvaluateFilePath` with `s.projectDir` and `s.readDenyGlobs`
-- [ ] 5.8 Add tests in `internal/store/search_test.go` (or new `stale_test.go`) — fresh file (no refresh), modified file (auto-refresh), content-only source (no stale check), deleted file (graceful skip), denied file (skip on refresh)
+- [ ] 5.8 Add tests in `internal/store/search_test.go` (or new `stale_test.go`) — fresh file (no refresh), modified file (auto-refresh), content-only source (no stale check), deleted file (graceful skip), denied file (skip on refresh), **second-update regression** (modify file twice — source remains file-backed after first refresh and detects second change)
 
 ## Task 6: Canonicalize index source label
 - **Status:** pending
@@ -80,8 +89,8 @@
 
 ### Subtasks
 - [ ] 7.1 Add `composeFetchCacheKey(label, url string) string` to `internal/server/tool_fetch.go` — returns `label + "|" + url`
-- [ ] 7.2 Use `composeFetchCacheKey` for cache lookup (`GetSourceMeta`) and as storage label when indexing fetched content
-- [ ] 7.3 Add test: two URLs with same explicit `source` label get separate cache entries
+- [ ] 7.2 Use `composeFetchCacheKey` for **both** cache lookup (`GetSourceMeta`) and as **storage label** when indexing fetched content — ensures cache hit on next call for same label+url
+- [ ] 7.3 Add tests: two URLs with same explicit `source` label get separate cache entries; `capy_search(source: "my-label")` partial match still finds composite-keyed sources via LIKE
 
 ## Task 8: Batch concurrency
 - **Status:** pending
@@ -92,7 +101,7 @@
 - [ ] 8.1 Add `golang.org/x/sync` dependency if not already in `go.mod`
 - [ ] 8.2 Parse `concurrency` parameter in `handleBatchExecute` — `int(req.GetFloat("concurrency", 1))`, clamp to [1, min(8, len(commands))]
 - [ ] 8.3 Extract existing serial loop into `executeBatchSerial(ctx context.Context, commands []CommandInput, timeout int, exec *executor.PolyglotExecutor) []string`
-- [ ] 8.4 Add `executeBatchParallel(ctx context.Context, commands []CommandInput, timeout, concurrency int, exec *executor.PolyglotExecutor) []string` — `errgroup.Group` with `SetLimit`, pre-allocated results slice, per-command timeout, per-command error handling
+- [ ] 8.4 Add `executeBatchParallel(ctx context.Context, commands []CommandInput, timeout, concurrency int, exec *executor.PolyglotExecutor) []string` — `errgroup.Group` with `SetLimit`, pre-allocated results slice, each command gets the **full** timeout (matching upstream — commands run concurrently so wall-clock bounded by timeout not timeout*N), per-command error handling, timed-out commands record `(timed out)` without affecting siblings
 - [ ] 8.5 Route: `concurrency <= 1` → serial, else → parallel. Rest of handler unchanged
 - [ ] 8.6 Add `concurrency` to `capy_batch_execute` MCP tool schema in `internal/server/server.go` — optional integer, min 1, max 8, with description guiding LLM usage
 - [ ] 8.7 Add tests: serial at concurrency=1 (identical behavior), parallel speedup with sleep commands, output ordering preserved, per-command error isolation
@@ -119,12 +128,12 @@
 - [ ] 10.3 Use `buildShellScript(code)` in `Execute` when `req.Language == Shell`, before writing to script file
 - [ ] 10.4 Add test: shell script with PATH override in code still has original PATH available at the top
 
-## Task 11: Final verification
+## Task 12: Final verification
 - **Status:** pending
-- **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6, Task 7, Task 8, Task 9, Task 10
+- **Depends on:** Task 1, Task 2, Task 3, Task 3b, Task 4, Task 5, Task 6, Task 7, Task 8, Task 9, Task 10
 
 ### Subtasks
-- [ ] 11.1 Run `test` skill to verify all tasks — full test suite with `go test ./...`
-- [ ] 11.2 Run `document` skill to update any relevant docs (MCP schema changes, ADRs if needed)
-- [ ] 11.3 Run `review-code` skill with Go language input to review the implementation
-- [ ] 11.4 Run `review-spec` skill to verify implementation matches design and implementation docs
+- [ ] 12.1 Run `test` skill to verify all tasks — full test suite with `go test ./...`
+- [ ] 12.2 Run `document` skill to update any relevant docs (MCP schema changes, ADRs if needed)
+- [ ] 12.3 Run `review-code` skill with Go language input to review the implementation
+- [ ] 12.4 Run `review-spec` skill to verify implementation matches design and implementation docs
