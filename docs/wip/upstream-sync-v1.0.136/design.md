@@ -110,7 +110,7 @@ Store the file's absolute path in the sources table. On every search, check file
 
 ### 3.3 Schema change
 
-Add a nullable `file_path TEXT` column to the `sources` table. The existing `content_hash TEXT` column already stores SHA-256 hashes and is reused for stale detection.
+Add a nullable `file_path TEXT` column to the `sources` table. The existing `content_hash TEXT` column already stores SHA-256 hashes (computed by `indexPreparedChunks` at `index.go:80` from post-`StripSecrets` content) and is reused for stale detection — no new hash column needed.
 
 **Migration:** Add to `migrate.go` using the existing migration pattern:
 
@@ -485,7 +485,7 @@ func buildShellScript(code, inheritedPath string) string {
 
 `quotePosixSingle` wraps the value in single quotes with `'` → `'\''` escaping — same approach as the TS reference.
 
-Modify the shell branch in `Execute` (line 83-86) to write `buildShellScript(code)` instead of raw `code`.
+Modify the shell branch in `Execute` (line 83-86) to write `buildShellScript(code, os.Getenv("PATH"))` instead of raw `code`.
 
 ### 9.3 Files touched
 
