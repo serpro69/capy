@@ -6,18 +6,18 @@
 > Created: 2026-05-17
 
 ## Task 1: Fixture types and test helpers
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#fixture-helpers](./implementation.md#fixture-helpers)
 
 ### Subtasks
-- [ ] 1.1 Create `internal/store/benchutil_test.go` with `BenchEntry` and `BenchCase` struct types matching the JSONL schema
-- [ ] 1.2 Implement `loadFixtures(t testing.TB, contentType string) []BenchEntry` using `runtime.Caller(0)` for path resolution
-- [ ] 1.3 Implement `hashFixtureManifest(t testing.TB) string` — SHA-256 over all fixture files concatenated in sorted order
-- [ ] 1.4 Implement `newBenchStore(t testing.TB) *ContentStore` — delegate directly to existing `newTestStore(t)` which handles encryption key and cleanup
-- [ ] 1.5 Implement `seedStore(t testing.TB, store *ContentStore, entries []BenchEntry)` — dispatch to correct `Index*` method per `content_type` (markdown→`Index`, json→`IndexJSON`, plaintext→`IndexPlainText`, transcript→`IndexChunked`, curated→`Index`)
-- [ ] 1.6a Implement `benchSearchOpts() SearchOptions` returning `IncludeKinds: {KindDurable, KindEphemeral, KindSession}` to ensure all fixture kinds are visible to search
-- [ ] 1.6 Add `TestBenchFixtureLoad` that validates each fixture file deserializes without error
+- [x] 1.1 Create `internal/store/benchutil_test.go` with `BenchEntry` and `BenchCase` struct types matching the JSONL schema
+- [x] 1.2 Implement `loadFixtures(t testing.TB, contentType string) []BenchEntry` using `runtime.Caller(0)` for path resolution
+- [x] 1.3 Implement `hashFixtureManifest(t testing.TB) string` — SHA-256 over all fixture files concatenated in sorted order
+- [x] 1.4 Implement `newBenchStore(t testing.TB) *ContentStore` — delegate directly to existing `newTestStore(t)` which handles encryption key and cleanup
+- [x] 1.5 Implement `seedStore(t testing.TB, store *ContentStore, entries []BenchEntry)` — dispatch to correct `Index*` method per `content_type` (markdown→`Index`, json→`IndexJSON`, plaintext→`IndexPlainText`, transcript→`IndexChunked`, curated→`Index`)
+- [x] 1.6a Implement `benchSearchOpts() SearchOptions` returning `IncludeKinds: {KindDurable, KindEphemeral, KindSession}` to ensure all fixture kinds are visible to search
+- [x] 1.6 Add `TestBenchFixtureLoad` that validates each fixture file deserializes without error
 
 ## Task 2: Seed fixture datasets
 - **Status:** pending
