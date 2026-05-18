@@ -47,18 +47,18 @@
 - [x] 3.7 Create `cmd/qualstat/testdata/` with hand-crafted JSON reports and write table-driven tests covering all modes
 
 ## Task 4: Retrieval quality benchmarks
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2
 - **Docs:** [implementation.md#retrieval-quality](./implementation.md#retrieval-quality)
 
 ### Subtasks
-- [ ] 4.1 Create `internal/store/bench_test.go` with `TestBench` parent function and `CAPY_BENCH_RESULTS` skip guard, with `t.Run("RetrievalQuality", ...)` subtest
-- [ ] 4.2 Implement per-content-type flow: load fixtures, create single store, seed all haystacks, run all cases with `benchSearchOpts()`
-- [ ] 4.3 Implement metric helpers: `isRelevant` (any needle match), `computeRecallAtK`, `computeNDCG`, `computeMRR`, `computeContextRecall` (fractional), `containsAllNeedles`
-- [ ] 4.4 Implement match-layer accuracy validation — `MatchLayer` vs `ExpectedLayer` using exact MatchLayer vocabulary from design.md
-- [ ] 4.5 Implement rank ceiling checks and negative case validation (zero results for empty needles — any non-zero is a failure)
-- [ ] 4.6 Build `Report` struct with metadata (git SHA, manifest hash, timestamp, Go version), per-content-type aggregates, overall aggregates, post-processing rank deltas, and failures array
-- [ ] 4.7 `TestBench` parent writes JSON report to `CAPY_BENCH_RESULTS` path once, after both subtests complete
+- [x] 4.1 Create `internal/store/bench_test.go` with `TestBench` parent function and `CAPY_BENCH_RESULTS` skip guard, with `t.Run("RetrievalQuality", ...)` subtest
+- [x] 4.2 Implement per-content-type flow: load fixtures, create single store, seed all haystacks, run all cases with `benchSearchOpts()`
+- [x] 4.3 Implement metric helpers: `isRelevant` (any needle match), `computeRecallAtK`, `computeNDCG`, `computeMRR`, `computeContextRecall` (fractional), `containsAllNeedles`
+- [x] 4.4 Implement match-layer accuracy validation — `MatchLayer` vs `ExpectedLayer` using exact MatchLayer vocabulary from design.md
+- [x] 4.5 Implement rank ceiling checks and negative case validation (zero results for empty needles — any non-zero is a failure)
+- [x] 4.6 Build `Report` struct with metadata (git SHA, manifest hash, timestamp, Go version), per-content-type aggregates, overall aggregates, post-processing rank deltas, and failures array
+- [x] 4.7 `TestBench` parent writes JSON report to `CAPY_BENCH_RESULTS` path once, after both subtests complete
 
 ## Task 5: Context reduction benchmarks (NIAH)
 - **Status:** pending
