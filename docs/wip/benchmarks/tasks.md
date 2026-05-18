@@ -33,18 +33,18 @@
 - [x] 2.6 Verify `TestBenchFixtureLoad` passes for all five files
 
 ## Task 3: `qualstat` CLI
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#qualstat](./implementation.md#qualstat)
 
 ### Subtasks
-- [ ] 3.1 Create `cmd/qualstat/main.go` with `Report`, `Metadata`, `Metrics`, `Failure`, `PostProcessingDelta` structs matching the JSON report schema (see design.md input JSON report schema section)
-- [ ] 3.2 Implement single-file mode — parse one JSON report, print absolute metrics as ASCII table
-- [ ] 3.3 Implement two-file comparison mode — validate dataset hash match, compute deltas, print comparison table with regression markers
-- [ ] 3.4 Implement per-metric-category warning thresholds — strict (0.0) for Perfect Recall Rate and Match-Layer Accuracy, configurable (default -0.02) for R@K/MRR/NDCG/Compression/Context Recall
-- [ ] 3.5 Implement failures diff — NEW and RESOLVED only, capped at 10 entries
-- [ ] 3.6 Add `--color` flag, exit code logic (0 clean, 1 regressions), epsilon float comparison
-- [ ] 3.7 Create `cmd/qualstat/testdata/` with hand-crafted JSON reports and write table-driven tests covering all modes
+- [x] 3.1 Create `cmd/qualstat/main.go` with `Report`, `Metadata`, `Metrics`, `Failure`, `PostProcessingDelta` structs matching the JSON report schema (see design.md input JSON report schema section)
+- [x] 3.2 Implement single-file mode — parse one JSON report, print absolute metrics as ASCII table
+- [x] 3.3 Implement two-file comparison mode — validate dataset hash match, compute deltas, print comparison table with regression markers
+- [x] 3.4 Implement per-metric-category warning thresholds — strict (0.0) for Perfect Recall Rate and Match-Layer Accuracy, configurable (default -0.02) for R@K/MRR/NDCG/Compression/Context Recall
+- [x] 3.5 Implement failures diff — NEW and RESOLVED only, capped at 10 entries
+- [x] 3.6 Add `--color` flag, exit code logic (0 clean, 1 regressions), epsilon float comparison
+- [x] 3.7 Create `cmd/qualstat/testdata/` with hand-crafted JSON reports and write table-driven tests covering all modes
 
 ## Task 4: Retrieval quality benchmarks
 - **Status:** pending
