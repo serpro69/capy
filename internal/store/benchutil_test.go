@@ -128,7 +128,6 @@ func benchSearchOpts() SearchOptions {
 }
 
 func TestBenchFixtureLoad(t *testing.T) {
-	contentTypes := []string{"markdown", "json", "plaintext", "transcript", "curated"}
 	for _, ct := range contentTypes {
 		t.Run(ct, func(t *testing.T) {
 			entries := loadFixtures(t, ct)
