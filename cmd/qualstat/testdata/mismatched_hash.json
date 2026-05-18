@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "timestamp": "2026-05-17T16:00:00Z",
+    "git_sha": "fff999aaa",
+    "git_branch": "other",
+    "dataset_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "go_version": "go1.25.2"
+  },
+  "by_content_type": {},
+  "overall": {
+    "recall_at_1": 0, "recall_at_3": 0, "recall_at_5": 0, "recall_at_10": 0,
+    "ndcg_at_10": 0, "mrr": 0, "match_layer_accuracy": 0, "rank_ceiling_pass_rate": 0,
+    "avg_compression_ratio": 0, "avg_context_recall": 0, "perfect_recall_rate": 0,
+    "avg_effective_compression": 0, "case_count": 0, "negative_case_count": 0,
+    "negative_false_positive_count": 0
+  },
+  "post_processing_deltas": [],
+  "failures": []
+}

@@ -1,0 +1,72 @@
+{
+  "metadata": {
+    "timestamp": "2026-05-17T14:30:00Z",
+    "git_sha": "abc123def",
+    "git_branch": "main",
+    "dataset_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "go_version": "go1.25.2"
+  },
+  "by_content_type": {
+    "markdown": {
+      "recall_at_1": 0.850,
+      "recall_at_3": 0.920,
+      "recall_at_5": 0.950,
+      "recall_at_10": 0.980,
+      "ndcg_at_10": 0.870,
+      "mrr": 0.890,
+      "match_layer_accuracy": 0.960,
+      "rank_ceiling_pass_rate": 0.980,
+      "avg_compression_ratio": 0.970,
+      "avg_context_recall": 0.970,
+      "perfect_recall_rate": 0.940,
+      "avg_effective_compression": 0.940,
+      "case_count": 36,
+      "negative_case_count": 12,
+      "negative_false_positive_count": 0
+    },
+    "json": {
+      "recall_at_1": 0.800,
+      "recall_at_3": 0.900,
+      "recall_at_5": 0.930,
+      "recall_at_10": 0.960,
+      "ndcg_at_10": 0.840,
+      "mrr": 0.860,
+      "match_layer_accuracy": 0.980,
+      "rank_ceiling_pass_rate": 0.960,
+      "avg_compression_ratio": 0.950,
+      "avg_context_recall": 1.000,
+      "perfect_recall_rate": 1.000,
+      "avg_effective_compression": 0.950,
+      "case_count": 30,
+      "negative_case_count": 10,
+      "negative_false_positive_count": 0
+    }
+  },
+  "overall": {
+    "recall_at_1": 0.825,
+    "recall_at_3": 0.910,
+    "recall_at_5": 0.940,
+    "recall_at_10": 0.970,
+    "ndcg_at_10": 0.855,
+    "mrr": 0.875,
+    "match_layer_accuracy": 0.970,
+    "rank_ceiling_pass_rate": 0.970,
+    "avg_compression_ratio": 0.960,
+    "avg_context_recall": 0.985,
+    "perfect_recall_rate": 0.970,
+    "avg_effective_compression": 0.945,
+    "case_count": 66,
+    "negative_case_count": 22,
+    "negative_false_positive_count": 0
+  },
+  "post_processing_deltas": [],
+  "failures": [
+    {
+      "case_id": "md_012_q3",
+      "type": "rank_ceiling",
+      "expected": "3",
+      "actual": "5",
+      "detail": "ranking breach: expected rank <= 3, got 5"
+    }
+  ]
+}
