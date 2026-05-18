@@ -39,10 +39,11 @@ type benchMetrics struct {
 	MRR                        float64 `json:"mrr"`
 	MatchLayerAccuracy         float64 `json:"match_layer_accuracy"`
 	RankCeilingPassRate        float64 `json:"rank_ceiling_pass_rate"`
-	AvgCompressionRatio        float64 `json:"avg_compression_ratio"`
-	AvgContextRecall           float64 `json:"avg_context_recall"`
-	PerfectRecallRate          float64 `json:"perfect_recall_rate"`
-	AvgEffectiveCompression    float64 `json:"avg_effective_compression"`
+	// TODO(task-5): populated by context-reduction pass (ContextReduction subtest)
+	AvgCompressionRatio     float64 `json:"avg_compression_ratio"`
+	AvgContextRecall        float64 `json:"avg_context_recall"`
+	PerfectRecallRate       float64 `json:"perfect_recall_rate"`
+	AvgEffectiveCompression float64 `json:"avg_effective_compression"`
 	CaseCount                  int     `json:"case_count"`
 	NegativeCaseCount          int     `json:"negative_case_count"`
 	NegativeFalsePositiveCount int     `json:"negative_false_positive_count"`
@@ -112,7 +113,7 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 	opts := benchSearchOpts()
 
 	allFailures := make([]benchFailure, 0)
-	var totalCases, totalNeg, totalNegFP int
+	var totalCases, totalNeg, totalNegFP, totalRankCeilCases int
 	var totalR1, totalR3, totalR5, totalR10 float64
 	var totalNDCG, totalMRR float64
 	var totalLayerMatch, totalRankCeilPass float64
@@ -123,7 +124,7 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 			store := newBenchStore(t)
 			seedStore(t, store, entries)
 
-			var ctCases, ctNeg, ctNegFP int
+			var ctCases, ctNeg, ctNegFP, ctRankCeilCases int
 			var ctR1, ctR3, ctR5, ctR10 float64
 			var ctNDCG, ctMRR float64
 			var ctLayerMatch, ctRankCeilPass float64
@@ -180,6 +181,9 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 					}
 
 					firstRelevantRank := findFirstRelevantRank(results, c.Needles)
+					if c.ExpectedRankCeiling > 0 {
+						ctRankCeilCases++
+					}
 					if firstRelevantRank > 0 && firstRelevantRank <= c.ExpectedRankCeiling {
 						ctRankCeilPass++
 					} else if c.ExpectedRankCeiling > 0 {
@@ -202,6 +206,10 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 
 			if ctCases > 0 {
 				n := float64(ctCases)
+				rankCeilRate := 0.0
+				if ctRankCeilCases > 0 {
+					rankCeilRate = ctRankCeilPass / float64(ctRankCeilCases)
+				}
 				report.ByContentType[ct] = benchMetrics{
 					RecallAt1:           ctR1 / n,
 					RecallAt3:           ctR3 / n,
@@ -210,7 +218,7 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 					NDCGAt10:            ctNDCG / n,
 					MRR:                 ctMRR / n,
 					MatchLayerAccuracy:  ctLayerMatch / n,
-					RankCeilingPassRate: ctRankCeilPass / n,
+					RankCeilingPassRate: rankCeilRate,
 					CaseCount:           ctCases,
 					NegativeCaseCount:          ctNeg,
 					NegativeFalsePositiveCount: ctNegFP,
@@ -220,6 +228,7 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 			totalCases += ctCases
 			totalNeg += ctNeg
 			totalNegFP += ctNegFP
+			totalRankCeilCases += ctRankCeilCases
 			totalR1 += ctR1
 			totalR3 += ctR3
 			totalR5 += ctR5
@@ -233,6 +242,10 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 
 	if totalCases > 0 {
 		n := float64(totalCases)
+		overallRankCeilRate := 0.0
+		if totalRankCeilCases > 0 {
+			overallRankCeilRate = totalRankCeilPass / float64(totalRankCeilCases)
+		}
 		report.Overall = benchMetrics{
 			RecallAt1:           totalR1 / n,
 			RecallAt3:           totalR3 / n,
@@ -241,7 +254,7 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 			NDCGAt10:            totalNDCG / n,
 			MRR:                 totalMRR / n,
 			MatchLayerAccuracy:  totalLayerMatch / n,
-			RankCeilingPassRate: totalRankCeilPass / n,
+			RankCeilingPassRate: overallRankCeilRate,
 			CaseCount:           totalCases,
 			NegativeCaseCount:          totalNeg,
 			NegativeFalsePositiveCount: totalNegFP,
