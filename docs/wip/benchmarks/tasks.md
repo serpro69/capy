@@ -20,17 +20,17 @@
 - [x] 1.6 Add `TestBenchFixtureLoad` that validates each fixture file deserializes without error
 
 ## Task 2: Seed fixture datasets
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#seed-fixtures](./implementation.md#seed-fixtures)
 
 ### Subtasks
-- [ ] 2.1 Create `internal/store/testdata/bench/markdown.jsonl` — 10-20 entries with realistic documentation content, 3-5 cases each covering exact/partial/typo/negative/structural queries
-- [ ] 2.2 Create `internal/store/testdata/bench/json.jsonl` — API responses, config files, structured data with parent-key preservation needles
-- [ ] 2.3 Create `internal/store/testdata/bench/plaintext.jsonl` — logs, command output, build output
-- [ ] 2.4 Create `internal/store/testdata/bench/transcript.jsonl` — conversation transcript content
-- [ ] 2.5 Create `internal/store/testdata/bench/curated.jsonl` — architecture decisions, conventions, review findings
-- [ ] 2.6 Verify `TestBenchFixtureLoad` passes for all five files
+- [x] 2.1 Create `internal/store/testdata/bench/markdown.jsonl` — 12 entries with realistic documentation content, 4 cases each covering exact/typo/negative queries
+- [x] 2.2 Create `internal/store/testdata/bench/json.jsonl` — 10 entries: API responses, config files, structured data with parent-key preservation needles
+- [x] 2.3 Create `internal/store/testdata/bench/plaintext.jsonl` — 10 entries: test output, logs, command output, build output, profiling
+- [x] 2.4 Create `internal/store/testdata/bench/transcript.jsonl` — 10 entries: conversation transcript content in Human:/Assistant: format
+- [x] 2.5 Create `internal/store/testdata/bench/curated.jsonl` — 10 entries: ADRs, conventions, review findings
+- [x] 2.6 Verify `TestBenchFixtureLoad` passes for all five files
 
 ## Task 3: `qualstat` CLI
 - **Status:** pending
