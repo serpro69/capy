@@ -1,0 +1,86 @@
+{
+  "metadata": {
+    "timestamp": "2026-05-17T15:00:00Z",
+    "git_sha": "def456abc",
+    "git_branch": "feature",
+    "dataset_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "go_version": "go1.25.2"
+  },
+  "by_content_type": {
+    "markdown": {
+      "recall_at_1": 0.880,
+      "recall_at_3": 0.930,
+      "recall_at_5": 0.960,
+      "recall_at_10": 0.990,
+      "ndcg_at_10": 0.890,
+      "mrr": 0.910,
+      "match_layer_accuracy": 0.920,
+      "rank_ceiling_pass_rate": 0.990,
+      "avg_compression_ratio": 0.970,
+      "avg_context_recall": 0.970,
+      "perfect_recall_rate": 0.940,
+      "avg_effective_compression": 0.940,
+      "case_count": 36,
+      "negative_case_count": 12,
+      "negative_false_positive_count": 0
+    },
+    "json": {
+      "recall_at_1": 0.810,
+      "recall_at_3": 0.900,
+      "recall_at_5": 0.930,
+      "recall_at_10": 0.960,
+      "ndcg_at_10": 0.850,
+      "mrr": 0.870,
+      "match_layer_accuracy": 0.980,
+      "rank_ceiling_pass_rate": 0.960,
+      "avg_compression_ratio": 0.940,
+      "avg_context_recall": 0.950,
+      "perfect_recall_rate": 0.920,
+      "avg_effective_compression": 0.893,
+      "case_count": 30,
+      "negative_case_count": 10,
+      "negative_false_positive_count": 1
+    }
+  },
+  "overall": {
+    "recall_at_1": 0.845,
+    "recall_at_3": 0.915,
+    "recall_at_5": 0.945,
+    "recall_at_10": 0.975,
+    "ndcg_at_10": 0.870,
+    "mrr": 0.890,
+    "match_layer_accuracy": 0.950,
+    "rank_ceiling_pass_rate": 0.975,
+    "avg_compression_ratio": 0.955,
+    "avg_context_recall": 0.960,
+    "perfect_recall_rate": 0.930,
+    "avg_effective_compression": 0.917,
+    "case_count": 66,
+    "negative_case_count": 22,
+    "negative_false_positive_count": 1
+  },
+  "post_processing_deltas": [
+    {
+      "case_id": "md_001_q1",
+      "pre_rank": 1,
+      "post_rank": 3,
+      "delta": -2
+    }
+  ],
+  "failures": [
+    {
+      "case_id": "json_003_q2",
+      "type": "match_layer",
+      "expected": "trigram",
+      "actual": "fuzzy+porter",
+      "detail": "query matched via fuzzy correction instead of trigram"
+    },
+    {
+      "case_id": "json_005_q1",
+      "type": "negative_false_positive",
+      "expected": "none",
+      "actual": "porter",
+      "detail": "negative case returned results"
+    }
+  ]
+}
