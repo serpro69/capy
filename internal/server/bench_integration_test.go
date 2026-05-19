@@ -14,11 +14,11 @@ import (
 )
 
 type thresholdResult struct {
-	SizeBytes          int     `json:"size_bytes"`
-	LatencyMs          float64 `json:"latency_ms"`
-	OutputLen          int     `json:"output_len"`
-	WasIndexed         bool    `json:"was_indexed"`
-	CompressionRatio   float64 `json:"compression_ratio,omitempty"`
+	SizeBytes        int     `json:"size_bytes"`
+	LatencyMs        float64 `json:"latency_ms"`
+	OutputLen        int     `json:"output_len"`
+	WasIndexed       bool    `json:"was_indexed"`
+	CompressionRatio float64 `json:"compression_ratio,omitempty"`
 }
 
 func TestBench5000ByteThreshold(t *testing.T) {

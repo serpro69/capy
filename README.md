@@ -49,12 +49,12 @@ capy ships with a benchmark suite that validates its claims with deterministic, 
 
 | Metric | Score |
 |--------|-------|
-| Compression Ratio | 44.3% |
-| Context Recall (fraction of specific facts preserved) | 0.786 |
-| Perfect Recall Rate (cases with all facts preserved) | 77.4% |
-| Effective Compression (compression x recall) | 35.9% |
+| Compression Ratio | 50.5% |
+| Context Recall (fraction of specific facts preserved) | 0.983 |
+| Perfect Recall Rate (cases with all facts preserved) | 97.1% |
+| Effective Compression (compression x recall) | 50.4% |
 
-On realistic content, capy achieves ~44% compression while preserving ~79% of the specific information needed. The "~98% reduction" claim in the problem statement above applies to raw byte savings on large uniform outputs — the NIAH numbers are the honest picture for information preservation on diverse content.
+On realistic content, capy achieves ~50% compression while preserving ~98% of the specific information needed. The "~98% reduction" claim in the problem statement above applies to raw byte savings on large uniform outputs — the NIAH numbers are the honest picture for information preservation on diverse content.
 
 Full results with per-content-type breakdowns, methodology, and known limitations: [`benchmark/RESULTS.md`](benchmark/RESULTS.md)
 Cross-tool comparison: [`benchmark/COMPARISON.md`](benchmark/COMPARISON.md)

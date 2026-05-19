@@ -16,11 +16,11 @@ import (
 )
 
 type benchReport struct {
-	Metadata             benchMetadata            `json:"metadata"`
-	ByContentType        map[string]benchMetrics  `json:"by_content_type"`
-	Overall              benchMetrics             `json:"overall"`
-	PostProcessingDeltas []benchPostProcDelta     `json:"post_processing_deltas"`
-	Failures             []benchFailure           `json:"failures"`
+	Metadata             benchMetadata           `json:"metadata"`
+	ByContentType        map[string]benchMetrics `json:"by_content_type"`
+	Overall              benchMetrics            `json:"overall"`
+	PostProcessingDeltas []benchPostProcDelta    `json:"post_processing_deltas"`
+	Failures             []benchFailure          `json:"failures"`
 }
 
 type benchMetadata struct {
@@ -40,10 +40,10 @@ type benchMetrics struct {
 	MRR                        float64 `json:"mrr"`
 	MatchLayerAccuracy         float64 `json:"match_layer_accuracy"`
 	RankCeilingPassRate        float64 `json:"rank_ceiling_pass_rate"`
-	AvgCompressionRatio     float64 `json:"avg_compression_ratio"`
-	AvgContextRecall        float64 `json:"avg_context_recall"`
-	PerfectRecallRate       float64 `json:"perfect_recall_rate"`
-	AvgEffectiveCompression float64 `json:"avg_effective_compression"`
+	AvgCompressionRatio        float64 `json:"avg_compression_ratio"`
+	AvgContextRecall           float64 `json:"avg_context_recall"`
+	PerfectRecallRate          float64 `json:"perfect_recall_rate"`
+	AvgEffectiveCompression    float64 `json:"avg_effective_compression"`
 	CaseCount                  int     `json:"case_count"`
 	NegativeCaseCount          int     `json:"negative_case_count"`
 	NegativeFalsePositiveCount int     `json:"negative_false_positive_count"`
@@ -226,15 +226,15 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 					rankCeilRate = ctRankCeilPass / float64(ctRankCeilCases)
 				}
 				report.ByContentType[ct] = benchMetrics{
-					RecallAt1:           ctR1 / n,
-					RecallAt3:           ctR3 / n,
-					RecallAt5:           ctR5 / n,
-					RecallAt10:          ctR10 / n,
-					NDCGAt10:            ctNDCG / n,
-					MRR:                 ctMRR / n,
-					MatchLayerAccuracy:  ctLayerMatch / n,
-					RankCeilingPassRate: rankCeilRate,
-					CaseCount:           ctCases,
+					RecallAt1:                  ctR1 / n,
+					RecallAt3:                  ctR3 / n,
+					RecallAt5:                  ctR5 / n,
+					RecallAt10:                 ctR10 / n,
+					NDCGAt10:                   ctNDCG / n,
+					MRR:                        ctMRR / n,
+					MatchLayerAccuracy:         ctLayerMatch / n,
+					RankCeilingPassRate:        rankCeilRate,
+					CaseCount:                  ctCases,
 					NegativeCaseCount:          ctNeg,
 					NegativeFalsePositiveCount: ctNegFP,
 				}
@@ -262,15 +262,15 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 			overallRankCeilRate = totalRankCeilPass / float64(totalRankCeilCases)
 		}
 		report.Overall = benchMetrics{
-			RecallAt1:           totalR1 / n,
-			RecallAt3:           totalR3 / n,
-			RecallAt5:           totalR5 / n,
-			RecallAt10:          totalR10 / n,
-			NDCGAt10:            totalNDCG / n,
-			MRR:                 totalMRR / n,
-			MatchLayerAccuracy:  totalLayerMatch / n,
-			RankCeilingPassRate: overallRankCeilRate,
-			CaseCount:           totalCases,
+			RecallAt1:                  totalR1 / n,
+			RecallAt3:                  totalR3 / n,
+			RecallAt5:                  totalR5 / n,
+			RecallAt10:                 totalR10 / n,
+			NDCGAt10:                   totalNDCG / n,
+			MRR:                        totalMRR / n,
+			MatchLayerAccuracy:         totalLayerMatch / n,
+			RankCeilingPassRate:        overallRankCeilRate,
+			CaseCount:                  totalCases,
 			NegativeCaseCount:          totalNeg,
 			NegativeFalsePositiveCount: totalNegFP,
 		}
@@ -362,19 +362,24 @@ func computeContextRecall(results []SearchResult, needles []string) float64 {
 	return float64(len(found)) / float64(len(needles))
 }
 
-func formatIntentSummary(results []SearchResult, query string, haystackLen int) string {
+// formatIntentSummary approximates production intentSearch output format
+// (internal/server/intent_search.go) for context-reduction measurement.
+func formatIntentSummary(results []SearchResult, query string, haystackLen int, chunkCount int) string {
+	totalLines := haystackLen/60 + 1 // approximate line count
 	totalKB := fmt.Sprintf("%.1f", float64(haystackLen)/1024)
+	source := "bench-source"
 
 	var b strings.Builder
-	b.WriteString("Indexed sections from source into knowledge base.\n")
+	fmt.Fprintf(&b, "Indexed %d sections from %q into knowledge base.\n", chunkCount, source)
 
 	if len(results) == 0 {
-		fmt.Fprintf(&b, "No sections matched intent %q (%sKB).\n", query, totalKB)
+		fmt.Fprintf(&b, "No sections matched intent %q in %d-line output (%sKB).\n", query, totalLines, totalKB)
+		b.WriteString("\nSearchable terms: benchmark, test, data, content, output\n")
 		b.WriteString("\nUse search() to explore the indexed content.")
 		return b.String()
 	}
 
-	fmt.Fprintf(&b, "%d sections matched %q (%sKB):\n\n", len(results), query, totalKB)
+	fmt.Fprintf(&b, "%d sections matched %q (%d lines, %sKB):\n\n", len(results), query, totalLines, totalKB)
 
 	for _, r := range results {
 		preview := r.Content
@@ -387,6 +392,7 @@ func formatIntentSummary(results []SearchResult, query string, haystackLen int) 
 		fmt.Fprintf(&b, "  - %s: %s\n", r.Title, preview)
 	}
 
+	b.WriteString("\nSearchable terms: benchmark, test, data, content, output\n")
 	b.WriteString("\nUse search(queries: [...]) to retrieve full content of any section.")
 	return b.String()
 }
@@ -422,7 +428,7 @@ func runContextReduction(t *testing.T, report *benchReport) {
 							ctEffComp += 1.0
 						} else {
 							ctNegFP++
-							summary := formatIntentSummary(results, c.Query, len(entry.Haystack))
+							summary := formatIntentSummary(results, c.Query, len(entry.Haystack), len(results))
 							cr := 1.0 - float64(len(summary))/float64(len(entry.Haystack))
 							if cr < 0 {
 								cr = 0
@@ -435,7 +441,7 @@ func runContextReduction(t *testing.T, report *benchReport) {
 
 					ctCases++
 
-					summary := formatIntentSummary(results, c.Query, len(entry.Haystack))
+					summary := formatIntentSummary(results, c.Query, len(entry.Haystack), len(results))
 					cr := 1.0 - float64(len(summary))/float64(len(entry.Haystack))
 					if cr < 0 {
 						cr = 0
