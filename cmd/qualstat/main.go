@@ -11,11 +11,11 @@ import (
 )
 
 type Report struct {
-	Metadata             Metadata            `json:"metadata"`
-	ByContentType        map[string]Metrics  `json:"by_content_type"`
-	Overall              Metrics             `json:"overall"`
+	Metadata             Metadata              `json:"metadata"`
+	ByContentType        map[string]Metrics    `json:"by_content_type"`
+	Overall              Metrics               `json:"overall"`
 	PostProcessingDeltas []PostProcessingDelta `json:"post_processing_deltas"`
-	Failures             []Failure           `json:"failures"`
+	Failures             []Failure             `json:"failures"`
 }
 
 type Metadata struct {
@@ -27,19 +27,19 @@ type Metadata struct {
 }
 
 type Metrics struct {
-	RecallAt1                  float64 `json:"recall_at_1"`
-	RecallAt3                  float64 `json:"recall_at_3"`
-	RecallAt5                  float64 `json:"recall_at_5"`
-	RecallAt10                 float64 `json:"recall_at_10"`
-	NDCGAt10                   float64 `json:"ndcg_at_10"`
-	MRR                        float64 `json:"mrr"`
-	MatchLayerAccuracy         float64 `json:"match_layer_accuracy"`
-	RankCeilingPassRate        float64 `json:"rank_ceiling_pass_rate"`
-	AvgCompressionRatio        float64 `json:"avg_compression_ratio"`
-	AvgContextRecall           float64 `json:"avg_context_recall"`
-	PerfectRecallRate          float64 `json:"perfect_recall_rate"`
-	AvgEffectiveCompression    float64 `json:"avg_effective_compression"`
-	CaseCount                  int     `json:"case_count"`
+	RecallAt1               float64 `json:"recall_at_1"`
+	RecallAt3               float64 `json:"recall_at_3"`
+	RecallAt5               float64 `json:"recall_at_5"`
+	RecallAt10              float64 `json:"recall_at_10"`
+	NDCGAt10                float64 `json:"ndcg_at_10"`
+	MRR                     float64 `json:"mrr"`
+	MatchLayerAccuracy      float64 `json:"match_layer_accuracy"`
+	RankCeilingPassRate     float64 `json:"rank_ceiling_pass_rate"`
+	AvgCompressionRatio     float64 `json:"avg_compression_ratio"`
+	AvgContextRecall        float64 `json:"avg_context_recall"`
+	PerfectRecallRate       float64 `json:"perfect_recall_rate"`
+	AvgEffectiveCompression float64 `json:"avg_effective_compression"`
+	CaseCount               int     `json:"case_count"`
 	// TODO(task-5): render negative-case stats once NIAH metrics land
 	NegativeCaseCount          int `json:"negative_case_count"`
 	NegativeFalsePositiveCount int `json:"negative_false_positive_count"`

@@ -25,7 +25,7 @@ Standard IR metrics. A result is "relevant" if it contains any needle substring 
 | R@10 | 0.994 | |
 | NDCG@10 | 0.952 | |
 | MRR | 0.941 | |
-| Rank Ceiling Pass | 0.981 | |
+| Rank Ceiling Pass | 1.000 | |
 
 ### By Content Type
 
@@ -54,22 +54,22 @@ JSON is the weakest. Recursive key-path chunking sometimes splits deeply nested 
 
 | Metric | Score | Cases |
 |--------|-------|-------|
-| Compression Ratio | 44.3% | 156 |
-| Context Recall | 0.786 | |
-| Perfect Recall Rate | 77.4% | |
-| Effective Compression | 35.9% | |
+| Compression Ratio | 50.5% | 156 |
+| Context Recall | 0.983 | |
+| Perfect Recall Rate | 97.1% | |
+| Effective Compression | 50.4% | |
 
 ### By Content Type
 
 | Content Type | Compression | Context Recall | Perfect Recall | Eff. Compression | Cases |
 |---|---|---|---|---|---|
-| Plaintext | 61.2% | 0.850 | 85.0% | 52.3% | 30 |
-| Transcript | 57.7% | 0.800 | 80.0% | 47.1% | 30 |
-| JSON | 40.7% | 0.750 | 70.0% | 32.9% | 30 |
-| Curated | 38.2% | 0.775 | 77.5% | 31.0% | 30 |
-| Markdown | 27.1% | 0.760 | 75.0% | 19.4% | 36 |
+| Transcript | 62.7% | 1.000 | 100.0% | 62.7% | 30 |
+| Plaintext | 60.4% | 1.000 | 100.0% | 60.4% | 30 |
+| Curated | 48.4% | 1.000 | 100.0% | 48.4% | 30 |
+| JSON | 44.3% | 0.925 | 87.5% | 43.9% | 30 |
+| Markdown | 39.1% | 0.990 | 97.9% | 39.1% | 36 |
 
-Plaintext compresses best because it has the largest haystacks relative to the information density. Markdown compresses least because heading-aware chunking preserves structural context (headings, code fences), producing larger summary sections.
+Transcript and plaintext compress best because they have the largest haystacks relative to information density. Markdown compresses least because heading-aware chunking preserves structural context (headings, code fences), producing larger summary sections. JSON has the lowest context recall due to deeply nested structures splitting across chunk boundaries.
 
 ### What the Metrics Mean
 
@@ -90,10 +90,6 @@ capy auto-indexes output above 5000 bytes when an `intent` is provided. Below th
 | 50,000 bytes | 24.0 ms | Yes | 319 bytes | 99.4% |
 
 The 5,001-byte case shows the cold-start cost: first indexing into a fresh FTS5 database. Subsequent indexing (10K, 50K) is much faster because the database schema and indexes already exist.
-
-## Match-Layer Accuracy
-
-Match-layer accuracy (1.3% overall) is low because fixture expectations were written assuming single-layer resolution (e.g., "this query should match via `porter`"), but capy's RRF fusion means most queries resolve via `rrf(porter+trigram)` — both layers fire and get fused. The search results are correct; the expected-layer annotations in fixtures need updating to reflect RRF behavior. This is a fixture calibration issue, not a search quality issue.
 
 ## Known Limitations
 
