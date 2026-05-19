@@ -31,43 +31,33 @@ Every MCP tool call dumps raw data into your context window. A single API respon
 
 ## Benchmarks
 
-capy ships with a benchmark suite that validates its claims with deterministic, reproducible metrics — no LLM-in-the-loop evaluation. Run `make bench` to reproduce these numbers on your machine.
+capy ships with a benchmark suite that validates its claims with deterministic, reproducible metrics — no LLM-in-the-loop evaluation. Run `make bench` to reproduce on your machine. Measured across 156 synthetic test cases spanning 5 content types (markdown, JSON, plaintext, transcripts, curated knowledge).
 
 ### Retrieval Quality
-
-Measured across 156 test cases spanning 5 content types (markdown, JSON, plaintext, transcripts, curated knowledge), using standard IR metrics:
 
 | Metric | Score |
 |--------|-------|
 | R@1 (at least one relevant result in top 1) | 0.904 |
 | R@5 | 0.987 |
 | R@10 | 0.994 |
-| NDCG@10 | 0.952 |
 | MRR (mean reciprocal rank) | 0.941 |
-| Rank Ceiling Pass Rate | 0.981 |
+| NDCG@10 | 0.952 |
 
-### Context Reduction (Needle-in-a-Haystack)
+### Context Reduction
 
-"Bytes saved" is a vanity metric if the reduced context drops information the LLM needed. NIAH measures whether the needles (specific facts) survive compression:
+"Bytes saved" is a vanity metric. NIAH measures whether specific facts survive compression — not just how many bytes were removed:
 
 | Metric | Score |
 |--------|-------|
 | Compression Ratio | 44.3% |
-| Context Recall (fraction of needles preserved) | 0.786 |
-| Perfect Recall Rate (cases with all needles preserved) | 77.4% |
+| Context Recall (fraction of specific facts preserved) | 0.786 |
+| Perfect Recall Rate (cases with all facts preserved) | 77.4% |
 | Effective Compression (compression x recall) | 35.9% |
 
-Context reduction is measured against `intentSearch`-style summaries (title + first-line preview per result) — the actual surface that enters the LLM context, not raw search result bytes.
+On realistic content, capy achieves ~44% compression while preserving ~79% of the specific information needed. The "~98% reduction" claim in the problem statement above applies to raw byte savings on large uniform outputs — the NIAH numbers are the honest picture for information preservation on diverse content.
 
-### Comparing Across Changes
-
-```bash
-git checkout main && make bench
-git checkout feature && make bench
-make compare BASE=main TARGET=feature
-```
-
-`qualstat` flags regressions with `!` markers and exits non-zero when thresholds are breached. `benchstat` provides standard Go performance comparison.
+Full results with per-content-type breakdowns, methodology, and known limitations: [`benchmark/RESULTS.md`](benchmark/RESULTS.md)
+Cross-tool comparison: [`benchmark/COMPARISON.md`](benchmark/COMPARISON.md)
 
 ## Quick Start
 

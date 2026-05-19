@@ -109,32 +109,64 @@ Key integration test files:
 
 ### Benchmarks
 
-Benchmarks are gated behind environment variables and **never run during `go test ./...`**. Three Makefile targets:
+Benchmarks are gated behind `CAPY_BENCH_RESULTS` and **never run during `go test ./...`**. They require the same `CAPY_DB_KEY` as regular tests (see [Running Tests](#running-tests) above).
+
+**Prerequisites:**
 
 ```bash
-make bench-perf      # testing.B benchmarks → bench-results/{branch}.txt
-make bench-quality   # quality benchmarks → bench-results/{branch}.json
-make bench           # both
+export CAPY_DB_KEY=test-key-for-development    # required — same as tests
+go install golang.org/x/perf/cmd/benchstat@latest  # optional — only for `make compare`
 ```
 
-**Comparing two branches:**
+**Running benchmarks after implementing a feature:**
 
 ```bash
-git checkout main && make bench
-git checkout feature && make bench
-make compare BASE=main TARGET=feature-branch
+# 1. Generate a baseline from main (skip if you already have one)
+git stash && git checkout main
+make bench
+git checkout - && git stash pop
+
+# 2. Run benchmarks on your feature branch
+make bench
+
+# 3. Compare
+#    Branch names with slashes are sanitized: feat/my-thing → feat-my-thing
+make compare BASE=main TARGET=feat-my-thing
 ```
 
-`make compare` requires [`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat) for performance comparison. Install it with `go install golang.org/x/perf/cmd/benchstat@latest`.
+`make bench` runs two targets:
 
-**Quality report viewer:**
+| Target | What it measures | Output |
+|---|---|---|
+| `make bench-perf` | Index throughput, search latency, executor overhead | `bench-results/{branch}.txt` |
+| `make bench-quality` | Retrieval quality (R@K, MRR, NDCG) and context reduction (NIAH) | `bench-results/{branch}.json` |
+
+Branch names with `/` are converted to `-` in filenames (e.g., `feat/bench` → `feat-bench`).
+
+**Reading results:**
 
 ```bash
-go run -tags fts5 ./cmd/qualstat bench-results/main.json                      # single report
-go run -tags fts5 ./cmd/qualstat bench-results/main.json bench-results/feature.json  # comparison
+# Single report — absolute metrics
+go run -tags fts5 ./cmd/qualstat bench-results/main.json
+
+# Two reports — comparison with regression markers
+go run -tags fts5 ./cmd/qualstat bench-results/main.json bench-results/feat-my-thing.json
 ```
 
-**Adding fixtures:** JSONL files live in `internal/store/testdata/bench/`. Each entry defines a haystack (content to index), queries, needles (facts that must survive search), expected match layers, and rank ceilings. See existing files for the schema.
+**Interpreting `qualstat` output:**
+
+- `~` means no change (within epsilon)
+- `+0.030` means improvement
+- `-0.060 !` means regression — the `!` marker appears when a metric drops below its warning threshold
+- Exit code 0 = clean, exit code 1 = regressions detected
+
+Warning thresholds:
+- **Zero tolerance:** Context Recall, Match-Layer Accuracy — any regression is flagged
+- **-0.02 tolerance:** R@K, MRR, NDCG, Compression — small trade-offs from tuning are acceptable
+
+**Adding or modifying fixtures:** JSONL files live in `internal/store/testdata/bench/`. Each entry defines a haystack (content to index), queries, needles (facts that must survive search), expected match layers, and rank ceilings. See existing files for the schema. Changing any fixture changes the dataset manifest hash — `qualstat` will refuse to compare reports with different hashes, which prevents accidental apples-to-oranges comparisons.
+
+Full benchmark methodology and current results: [`benchmark/RESULTS.md`](benchmark/RESULTS.md)
 
 ## Local Verification Without Installation
 
