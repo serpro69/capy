@@ -2,8 +2,10 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -78,8 +80,10 @@ func appendThresholdResults(t *testing.T, path string, results []thresholdResult
 	var report map[string]json.RawMessage
 
 	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		require.NoError(t, err, "reading existing report")
+	}
 	if err != nil {
-		// Store tests haven't run yet or file doesn't exist — create minimal report.
 		report = make(map[string]json.RawMessage)
 	} else {
 		require.NoError(t, json.Unmarshal(data, &report), "parsing existing report")
@@ -91,6 +95,7 @@ func appendThresholdResults(t *testing.T, path string, results []thresholdResult
 
 	out, err := json.MarshalIndent(report, "", "  ")
 	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, out, 0o644))
 	t.Logf("Threshold results appended to %s", path)
 }

@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -83,8 +84,21 @@ func TestBench(t *testing.T) {
 		runContextReduction(t, &report)
 	})
 
-	data, err := json.MarshalIndent(report, "", "  ")
+	reportJSON, err := json.Marshal(report)
 	require.NoError(t, err, "marshaling report")
+
+	var merged map[string]json.RawMessage
+	if existing, readErr := os.ReadFile(resultsPath); readErr == nil {
+		require.NoError(t, json.Unmarshal(existing, &merged), "parsing existing report")
+	}
+	if merged == nil {
+		merged = make(map[string]json.RawMessage)
+	}
+	require.NoError(t, json.Unmarshal(reportJSON, &merged), "merging report keys")
+
+	data, err := json.MarshalIndent(merged, "", "  ")
+	require.NoError(t, err, "marshaling merged report")
+	require.NoError(t, os.MkdirAll(filepath.Dir(resultsPath), 0o755))
 	require.NoError(t, os.WriteFile(resultsPath, data, 0o644), "writing report to %s", resultsPath)
 	t.Logf("Report written to %s", resultsPath)
 }

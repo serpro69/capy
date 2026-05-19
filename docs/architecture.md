@@ -229,6 +229,37 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full config reference.
 | `capy dbsize` | Show DB disk usage |
 | `capy hook <event>` | Handle hook event (called by AI tool) |
 
+## Benchmarks
+
+The benchmark suite validates capy's two core claims — context reduction effectiveness and retrieval quality — and tracks performance regressions.
+
+### Tracks
+
+| Track | What it measures | Tool | Output |
+|-------|-----------------|------|--------|
+| **Retrieval Quality** | R@K, NDCG, MRR, match-layer accuracy, rank ceiling | `testing.T` (quality) | JSON report |
+| **Context Reduction (NIAH)** | Compression ratio, context recall, perfect recall, effective compression | `testing.T` (quality) | JSON report |
+| **Performance** | Index throughput, search latency, executor overhead, 5000-byte threshold | `testing.B` (perf) | benchstat-compatible text |
+
+### Fixture-Driven Design
+
+Five content types (`markdown`, `json`, `plaintext`, `transcript`, `curated`) with JSONL fixtures in `internal/store/testdata/bench/`. Each fixture defines haystacks (content to index), queries, needles (information that must survive reduction), expected match layers, and rank ceilings.
+
+### Running
+
+```bash
+make bench           # runs both perf and quality
+make bench-perf      # testing.B benchmarks → bench-results/{branch}.txt
+make bench-quality   # quality benchmarks → bench-results/{branch}.json
+make compare BASE=main TARGET=feature  # benchstat + qualstat side by side
+```
+
+Quality benchmarks skip under `go test ./...` (gated by `CAPY_BENCH_RESULTS` env var).
+
+### qualstat
+
+`cmd/qualstat/` — stdlib-only CLI for viewing and comparing quality reports. Mirrors `benchstat` UX: single-file mode for absolute metrics, two-file mode for delta comparison with regression markers and configurable warning thresholds.
+
 ## ADRs
 
 All Architecture Decision Records are in [docs/adr/](docs/adr/). See the directory listing for the complete set.

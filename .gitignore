@@ -40,5 +40,8 @@ homebrew/
 !.capy/AGENTS.md
 !.capy/knowledge.db
 
+# benchmark results (local only)
+bench-results/
+
 # benchmark scaffold as a symlink for easier development
 capy-bench
