@@ -73,18 +73,18 @@
 - [x] 5.5 Aggregate per content type and overall, results merged into same `Report` struct via parent `TestBench`
 
 ## Task 6: Performance and executor benchmarks
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2
 - **Docs:** [implementation.md#performance](./implementation.md#performance)
 
 ### Subtasks
-- [ ] 6.1 Create `internal/store/bench_perf_test.go` with `BenchmarkIndex/{content_type}` — use unique labels per iteration (e.g., `bench-{type}-{i}`) to avoid hitting `AlreadyIndexed` dedup fast-path, `b.ResetTimer` after setup
-- [ ] 6.2 Add `BenchmarkSearch/{content_type}/{corpus_size}` — pre-seed at N=100/1000/10000, search one query per iteration
-- [ ] 6.3 Add `BenchmarkSearchByTier/{tier}` — queries designed to hit specific tiers, grouped by expected MatchLayer
-- [ ] 6.4 Create `internal/executor/bench_test.go` with `BenchmarkExecutorOverhead/{language}` and `BenchmarkExecutorOverheadParallel/{language}` with `exec.LookPath` skip guards
-- [ ] 6.5 Add `BenchmarkExecutorScaling/{output_size}` at 1KB/10KB/100KB/1MB
-- [ ] 6.6 Add `BenchmarkSafeEnv` and `BenchmarkProcessGroupKill`
-- [ ] 6.7 Create `internal/server/bench_integration_test.go` with `TestBench5000ByteThreshold` — measure latency cliff at 4999 vs 5001 bytes, append to quality JSON report
+- [x] 6.1 Create `internal/store/bench_perf_test.go` with `BenchmarkIndex/{content_type}` — use unique labels per iteration (e.g., `bench-{type}-{i}`) to avoid hitting `AlreadyIndexed` dedup fast-path, `b.ResetTimer` after setup
+- [x] 6.2 Add `BenchmarkSearch/{content_type}/{corpus_size}` — pre-seed at N=100/1000/10000, search one query per iteration
+- [x] 6.3 Add `BenchmarkSearchByTier/{tier}` — queries designed to hit specific tiers, grouped by expected MatchLayer
+- [x] 6.4 Create `internal/executor/bench_test.go` with `BenchmarkExecutorOverhead/{language}` and `BenchmarkExecutorOverheadParallel/{language}` with `exec.LookPath` skip guards
+- [x] 6.5 Add `BenchmarkExecutorScaling/{output_size}` at 1KB/10KB/100KB/1MB
+- [x] 6.6 Add `BenchmarkSafeEnv` and `BenchmarkProcessGroupKill`
+- [x] 6.7 Create `internal/server/bench_integration_test.go` with `TestBench5000ByteThreshold` — measure latency cliff at 4999 vs 5001 bytes, append to quality JSON report
 
 ## Task 7: Makefile and final verification
 - **Status:** pending
