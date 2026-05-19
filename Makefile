@@ -44,7 +44,12 @@ ifndef TARGET
 	$(error TARGET is required: make compare BASE=<branch> TARGET=<branch>)
 endif
 	@echo "=== Performance (benchstat) ==="
-	benchstat bench-results/$(BASE).txt bench-results/$(TARGET).txt
+	@if command -v benchstat >/dev/null 2>&1; then \
+	  benchstat bench-results/$(BASE).txt bench-results/$(TARGET).txt; \
+	else \
+	  echo "benchstat not found — install with: go install golang.org/x/perf/cmd/benchstat@latest"; \
+	  echo "Skipping performance comparison."; \
+	fi
 	@echo ""
 	@echo "=== Retrieval Quality (qualstat) ==="
 	go run $(BUILD_TAGS) ./cmd/qualstat bench-results/$(BASE).json bench-results/$(TARGET).json

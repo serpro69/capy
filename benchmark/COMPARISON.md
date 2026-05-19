@@ -62,12 +62,12 @@ These numbers look great but they're measured on uniform synthetic data (repeate
 
 | Metric | Overall |
 |---|---|
-| Compression Ratio | 44.3% |
-| Context Recall (needles preserved) | 0.786 |
-| Perfect Recall Rate | 77.4% |
-| Effective Compression | 35.9% |
+| Compression Ratio | 50.5% |
+| Context Recall (needles preserved) | 0.983 |
+| Perfect Recall Rate | 97.1% |
+| Effective Compression | 50.4% |
 
-This is the honest picture. On realistic content, capy achieves ~44% compression while preserving ~79% of the specific information the LLM needs. 77% of cases preserve all needles. That's useful but far from the "~98% reduction" headline — which applies to raw byte savings on large outputs, not to information preservation.
+On realistic content, capy achieves ~50% compression while preserving ~98% of specific facts. 97% of cases preserve all needles. The "~98% reduction" headline applies to raw byte savings on large uniform outputs — on diverse content with the information-preservation constraint, ~50% effective compression is the real number.
 
 Full methodology: [RESULTS.md](RESULTS.md)
 
