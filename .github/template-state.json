@@ -1,8 +1,8 @@
 {
   "schema_version": "1",
   "upstream_repo": "serpro69/claude-toolbox",
-  "template_version": "d670966d30e6806de9dbbe87d63d7cf30462f313",
-  "synced_at": "2026-05-16T10:39:57Z",
+  "template_version": "7bccaf765f05aba8559b917d3297c55b6d9afd59",
+  "synced_at": "2026-05-19T09:18:15Z",
   "variables": {
     "PROJECT_NAME": "capy",
     "LANGUAGES": "go",
