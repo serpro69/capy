@@ -107,6 +107,35 @@ Key integration test files:
 | `server/integration_test.go` | MCP tool handler → executor → store → search round-trips |
 | `hook/integration_test.go` | Full hook JSON through Claude Code adapter with real routing |
 
+### Benchmarks
+
+Benchmarks are gated behind environment variables and **never run during `go test ./...`**. Three Makefile targets:
+
+```bash
+make bench-perf      # testing.B benchmarks → bench-results/{branch}.txt
+make bench-quality   # quality benchmarks → bench-results/{branch}.json
+make bench           # both
+```
+
+**Comparing two branches:**
+
+```bash
+git checkout main && make bench
+git checkout feature && make bench
+make compare BASE=main TARGET=feature-branch
+```
+
+`make compare` requires [`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat) for performance comparison. Install it with `go install golang.org/x/perf/cmd/benchstat@latest`.
+
+**Quality report viewer:**
+
+```bash
+go run -tags fts5 ./cmd/qualstat bench-results/main.json                      # single report
+go run -tags fts5 ./cmd/qualstat bench-results/main.json bench-results/feature.json  # comparison
+```
+
+**Adding fixtures:** JSONL files live in `internal/store/testdata/bench/`. Each entry defines a haystack (content to index), queries, needles (facts that must survive search), expected match layers, and rank ceilings. See existing files for the schema.
+
 ## Local Verification Without Installation
 
 You don't need to install capy globally to test it. Build and run from the repo root.

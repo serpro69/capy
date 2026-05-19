@@ -323,18 +323,27 @@ Makefile targets at repo root:
 
 bench: bench-perf bench-quality
 
+BENCH_BRANCH := $(shell git rev-parse --abbrev-ref HEAD | tr '/' '-')
+
 bench-perf:
 	mkdir -p bench-results
 	CGO_ENABLED=1 go test $(BUILD_TAGS) -bench=. -benchmem -count=6 \
 	  ./internal/store/ ./internal/executor/ \
-	  | tee bench-results/$$(git rev-parse --abbrev-ref HEAD).txt
+	  | tee bench-results/$(BENCH_BRANCH).txt
 
 bench-quality:
 	mkdir -p bench-results
-	CGO_ENABLED=1 CAPY_BENCH_RESULTS=bench-results/$$(git rev-parse --abbrev-ref HEAD).json \
+	rm -f $(CURDIR)/bench-results/$(BENCH_BRANCH).json
+	CGO_ENABLED=1 CAPY_BENCH_RESULTS=$(CURDIR)/bench-results/$(BENCH_BRANCH).json \
 	  go test $(BUILD_TAGS) -run='^TestBench' -v -p 1 ./internal/store/ ./internal/server/
 
 compare:
+ifndef BASE
+	$(error BASE is required: make compare BASE=<branch> TARGET=<branch>)
+endif
+ifndef TARGET
+	$(error TARGET is required: make compare BASE=<branch> TARGET=<branch>)
+endif
 	@echo "=== Performance (benchstat) ==="
 	benchstat bench-results/$(BASE).txt bench-results/$(TARGET).txt
 	@echo ""
@@ -342,7 +351,13 @@ compare:
 	go run $(BUILD_TAGS) ./cmd/qualstat bench-results/$(BASE).json bench-results/$(TARGET).json
 ```
 
-Note: `-p 1` in `bench-quality` forces serial package execution. Without it, `go test` runs packages in parallel, and both `internal/store/` and `internal/server/` would write to the same `CAPY_BENCH_RESULTS` JSON file concurrently, corrupting the report. The store tests write the base report; the server integration test appends the 5000-byte threshold results.
+Implementation notes vs original design:
+
+- **Branch name sanitization**: `BENCH_BRANCH` uses `tr '/' '-'` to convert slashes in branch names (e.g., `feat/bench` → `feat-bench`), preventing accidental subdirectory creation.
+- **Absolute path**: `$(CURDIR)` prefix on `CAPY_BENCH_RESULTS` because `go test` changes the working directory to each package under test — relative paths resolve per-package, not from the repo root.
+- **Clean state**: `rm -f` before `bench-quality` prevents stale keys from accumulating when the store test merges into an existing report.
+- **Input validation**: `ifndef` guards on `compare` give clear error messages instead of confusing file-not-found errors from `benchstat`.
+- **`-p 1`** in `bench-quality` forces serial package execution. Without it, `go test` runs packages in parallel, and both `internal/store/` and `internal/server/` would write to the same `CAPY_BENCH_RESULTS` JSON file concurrently, corrupting the report. Both packages use merge-append logic so ordering is resilient, but `-p 1` avoids concurrent file access entirely.
 
 Usage: `make bench` on main, switch to feature branch, `make bench` again, then `make compare BASE=main TARGET=feature`.
 
