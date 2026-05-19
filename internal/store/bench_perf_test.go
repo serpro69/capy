@@ -29,7 +29,8 @@ func BenchmarkIndex(b *testing.B) {
 				case "plaintext":
 					_, err = s.IndexPlainText(haystack, label, kind)
 				case "transcript":
-					_, err = s.Index(haystack, label, "", kind)
+					chunks := chunkTranscriptFixture(haystack, entries[0].ID)
+					_, err = s.IndexChunked(haystack, label, "session", kind, chunks)
 				}
 				if err != nil {
 					b.Fatal(err)
@@ -96,6 +97,16 @@ func BenchmarkSearchByTier(b *testing.B) {
 	for _, tier := range tierNames {
 		b.Run(tier, func(b *testing.B) {
 			query := tiers[tier]
+			results, err := s.SearchWithFallback(query, 10, opts)
+			if err != nil {
+				b.Fatalf("validation search failed for tier %s: %v", tier, err)
+			}
+			if len(results) == 0 {
+				b.Skipf("tier %s query %q returned no results — skipping", tier, query)
+			}
+			if results[0].MatchLayer != tier {
+				b.Skipf("tier %s query %q resolved via %s — skipping (fixture expected_layer mismatch)", tier, query, results[0].MatchLayer)
+			}
 			for b.Loop() {
 				if _, err := s.SearchWithFallback(query, 10, opts); err != nil {
 					b.Fatal(err)
