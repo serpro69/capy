@@ -16,7 +16,7 @@ capy uses pure lexical search: SQLite FTS5 with BM25 ranking, two-layer RRF (Por
 
 | System | Search Approach | R@5 | NDCG@10 | MRR | Benchmark | Cases |
 |---|---|---|---|---|---|---|
-| capy (BM25 + trigram + fuzzy) | Lexical (FTS5/BM25) | 98.7% | 0.952 | 0.941 | Internal NIAH (synthetic) | 156 |
+| capy (BM25 + trigram + fuzzy) | Lexical (FTS5/BM25) | 98.7% | 0.950 | 0.938 | Internal NIAH (synthetic) | 156 |
 | agentmemory (BM25 + Vector) | Hybrid (BM25 + embeddings) | 95.2% | 87.9% | 88.2% | LongMemEval-S (academic) | 500 |
 | agentmemory (BM25-only) | Lexical (BM25) | 86.2% | 73.0% | 71.5% | LongMemEval-S (academic) | 500 |
 | MemPalace | Vector-only | ~96.6% | — | — | LongMemEval-S (academic) | 500 |
@@ -62,10 +62,10 @@ These numbers look great but they're measured on uniform synthetic data (repeate
 
 | Metric | Overall |
 |---|---|
-| Compression Ratio | 50.5% |
+| Compression Ratio | 49.8% |
 | Context Recall (needles preserved) | 0.983 |
 | Perfect Recall Rate | 97.1% |
-| Effective Compression | 50.4% |
+| Effective Compression | 49.7% |
 
 On realistic content, capy achieves ~50% compression while preserving ~98% of specific facts. 97% of cases preserve all needles. The "~98% reduction" headline applies to raw byte savings on large uniform outputs — on diverse content with the information-preservation constraint, ~50% effective compression is the real number.
 
