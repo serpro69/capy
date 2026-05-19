@@ -115,3 +115,13 @@ go run -tags fts5 ./cmd/qualstat bench-results/*.json
 ```
 
 All fixtures, test code, and the `qualstat` CLI are committed. Results land in `bench-results/` (gitignored). The dataset manifest hash in the JSON report ensures you're comparing results from identical fixtures.
+
+## Updating These Tables
+
+The tables in this document are generated from the JSON report:
+
+```bash
+go run -tags fts5 ./cmd/qualstat --markdown bench-results/{branch}.json
+```
+
+Copy the output, replacing the tables above. The prose sections (methodology, caveats, known limitations) need manual review when results change significantly.
