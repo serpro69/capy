@@ -91,6 +91,16 @@ capy auto-indexes output above 5000 bytes when an `intent` is provided. Below th
 
 The 5,001-byte case shows the cold-start cost: first indexing into a fresh FTS5 database. Subsequent indexing (10K, 50K) is much faster because the database schema and indexes already exist.
 
+## Writing Fixtures
+
+Lessons learned from calibrating the initial fixture set — follow these when adding or editing test cases.
+
+**Expected match layers.** capy's search uses two-layer RRF (Reciprocal Rank Fusion) — Porter stemming and trigram substring run in parallel and results are fused. Most queries resolve via `rrf(porter+trigram)`, not a single layer. Set `expected_layer` to `rrf(porter+trigram)` for exact-match queries. Use `fuzzy+rrf(porter+trigram)` for typo/misspelling queries. Single-layer values like `porter` or `trigram` are only correct when the other layer genuinely cannot match (rare).
+
+**Negative queries.** These must return zero results — any match is a failure. The fuzzy corrector and trigram index are aggressive: real English words like "pipeline", "simulation", or even 3-letter words like "tun" will fuzzy-match or trigram-match into a software corpus. Use fabricated or ultra-domain-specific terms (e.g., paleontology Latin nomenclature) that share no substrings with the corpus vocabulary.
+
+**JSON rank ceilings.** The JSON chunker splits content along key-path boundaries. Deeply nested structures (e.g., `metrics.http.p99_latency_ms`) may spread across multiple chunks, making rank predictions unreliable. Use generous rank ceilings (5-10) for JSON fixtures, or set `expected_rank_ceiling` to 0 to skip the check for cases where chunk boundaries are unpredictable.
+
 ## Known Limitations
 
 1. **Synthetic fixtures only.** The corpus is hand-crafted, not sampled from real production data. Results may not generalize to all real-world content patterns.
