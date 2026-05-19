@@ -121,16 +121,25 @@ go install golang.org/x/perf/cmd/benchstat@latest  # optional — only for `make
 **Running benchmarks after implementing a feature:**
 
 ```bash
-# 1. Generate a baseline from main (skip if you already have one)
-git stash && git checkout main
-make bench
-git checkout - && git stash pop
+# 1. Generate a baseline from main (skip if you already have bench-results/main.*)
+git worktree add /tmp/capy-bench-main main
+cd /tmp/capy-bench-main && make bench
+cp bench-results/main.* /path/to/capy/bench-results/
+cd /path/to/capy && git worktree remove /tmp/capy-bench-main
 
 # 2. Run benchmarks on your feature branch
 make bench
 
 # 3. Compare
 #    Branch names with slashes are sanitized: feat/my-thing → feat-my-thing
+make compare BASE=main TARGET=feat-my-thing
+```
+
+If you don't have uncommitted changes, a simpler alternative:
+
+```bash
+git checkout main && make bench && git checkout -
+make bench
 make compare BASE=main TARGET=feat-my-thing
 ```
 

@@ -58,6 +58,7 @@ On realistic content, capy achieves ~50% compression while preserving ~98% of th
 
 Full results with per-content-type breakdowns, methodology, and known limitations: [`benchmark/RESULTS.md`](benchmark/RESULTS.md)
 Cross-tool comparison: [`benchmark/COMPARISON.md`](benchmark/COMPARISON.md)
+Fixture authoring guide: [`benchmark/FIXTURES.md`](benchmark/FIXTURES.md)
 
 ## Quick Start
 

@@ -260,6 +260,12 @@ Quality benchmarks skip under `go test ./...` (gated by `CAPY_BENCH_RESULTS` env
 
 `cmd/qualstat/` — stdlib-only CLI for viewing and comparing quality reports. Mirrors `benchstat` UX: single-file mode for absolute metrics, two-file mode for delta comparison with regression markers and configurable warning thresholds.
 
+### Further Reading
+
+- [benchmark/RESULTS.md](../benchmark/RESULTS.md) — current numbers, methodology, known limitations
+- [benchmark/COMPARISON.md](../benchmark/COMPARISON.md) — cross-tool comparison
+- [benchmark/FIXTURES.md](../benchmark/FIXTURES.md) — fixture schema and authoring guide
+
 ## ADRs
 
 All Architecture Decision Records are in [docs/adr/](docs/adr/). See the directory listing for the complete set.
