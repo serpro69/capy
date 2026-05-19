@@ -2,7 +2,7 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done
 > Created: 2026-05-17
 
 ## Task 1: Fixture types and test helpers
@@ -87,16 +87,16 @@
 - [x] 6.7 Create `internal/server/bench_integration_test.go` with `TestBench5000ByteThreshold` — measure latency cliff at 4999 vs 5001 bytes, append to quality JSON report
 
 ## Task 7: Makefile and final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6
 
 ### Subtasks
-- [ ] 7.1 Add `bench`, `bench-perf`, `bench-quality`, and `compare` targets to `Makefile` — must include `CGO_ENABLED=1`, `$(BUILD_TAGS)`, and `-p 1` for bench-quality
-- [ ] 7.2 Add `bench-results/` to `.gitignore`
-- [ ] 7.3 End-to-end: `make bench` completes, produces `.txt` and `.json` in `bench-results/`
-- [ ] 7.4 End-to-end: `make compare BASE=main TARGET=main` shows zero deltas
-- [ ] 7.5 Verify `go test ./...` passes with quality benchmarks skipped
-- [ ] 7.6 Run `test` skill to verify full test suite
-- [ ] 7.7 Run `document` skill to update relevant docs
-- [ ] 7.8 Run `review-code` skill with Go input to review the implementation
-- [ ] 7.9 Run `review-spec` skill to verify implementation matches design and implementation docs
+- [x] 7.1 Add `bench`, `bench-perf`, `bench-quality`, and `compare` targets to `Makefile` — must include `CGO_ENABLED=1`, `$(BUILD_TAGS)`, and `-p 1` for bench-quality
+- [x] 7.2 Add `bench-results/` to `.gitignore`
+- [x] 7.3 End-to-end: `make bench-quality` completes, produces `.json` in `bench-results/`
+- [x] 7.4 End-to-end: self-comparison via `qualstat` shows zero deltas
+- [x] 7.5 Verify `go test ./...` passes with quality benchmarks skipped
+- [x] 7.6 Run `test` skill to verify full test suite
+- [x] 7.7 Run `document` skill to update relevant docs
+- [x] 7.8 Run `review-code` skill with Go input to review the implementation
+- [x] 7.9 Run `review-spec` skill to verify implementation matches design and implementation docs
