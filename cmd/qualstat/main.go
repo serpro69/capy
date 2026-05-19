@@ -68,6 +68,7 @@ const (
 
 func main() {
 	colorFlag := flag.Bool("color", false, "enable colored output")
+	markdownFlag := flag.Bool("markdown", false, "output as markdown tables (for docs)")
 	flexThresh := flag.Float64("threshold", defaultFlexThresh, "configurable regression threshold for R@K/MRR/NDCG/Compression metrics")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: qualstat [flags] <report.json> [baseline.json]\n\n")
@@ -92,7 +93,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %s\n", err)
 			os.Exit(2)
 		}
-		printSingle(p, report)
+		if *markdownFlag {
+			printMarkdown(report)
+		} else {
+			printSingle(p, report)
+		}
 		return
 	}
 
@@ -409,6 +414,85 @@ func sortedKeys(m map[string]Metrics) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func capitalize(s string) string {
+	if s == "json" {
+		return "JSON"
+	}
+	if len(s) == 0 {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func printMarkdown(r Report) {
+	contentTypes := sortedKeys(r.ByContentType)
+
+	fmt.Println("### Retrieval Quality — Overall")
+	fmt.Println()
+	fmt.Println("| Metric | Score | Cases |")
+	fmt.Println("|--------|-------|-------|")
+	printMarkdownRetrievalRow("R@1", r.Overall.RecallAt1, r.Overall.CaseCount)
+	printMarkdownRetrievalRow("R@3", r.Overall.RecallAt3, 0)
+	printMarkdownRetrievalRow("R@5", r.Overall.RecallAt5, 0)
+	printMarkdownRetrievalRow("R@10", r.Overall.RecallAt10, 0)
+	printMarkdownRetrievalRow("NDCG@10", r.Overall.NDCGAt10, 0)
+	printMarkdownRetrievalRow("MRR", r.Overall.MRR, 0)
+	printMarkdownRetrievalRow("Rank Ceiling Pass", r.Overall.RankCeilingPassRate, 0)
+	fmt.Println()
+
+	fmt.Println("### Retrieval Quality — By Content Type")
+	fmt.Println()
+	fmt.Println("| Content Type | R@1 | R@5 | R@10 | NDCG@10 | MRR | Cases |")
+	fmt.Println("|---|---|---|---|---|---|---|")
+	for _, ct := range contentTypes {
+		m := r.ByContentType[ct]
+		fmt.Printf("| %s | %.3f | %.3f | %.3f | %.3f | %.3f | %d |\n",
+			capitalize(ct), m.RecallAt1, m.RecallAt5, m.RecallAt10, m.NDCGAt10, m.MRR, m.CaseCount)
+	}
+	fmt.Println()
+
+	fmt.Println("### Context Reduction — Overall")
+	fmt.Println()
+	fmt.Println("| Metric | Score | Cases |")
+	fmt.Println("|--------|-------|-------|")
+	fmt.Printf("| Compression Ratio | %.1f%% | %d |\n", r.Overall.AvgCompressionRatio*100, r.Overall.CaseCount)
+	printMarkdownRetrievalRow("Context Recall", r.Overall.AvgContextRecall, 0)
+	fmt.Printf("| Perfect Recall Rate | %.1f%% | |\n", r.Overall.PerfectRecallRate*100)
+	fmt.Printf("| Effective Compression | %.1f%% | |\n", r.Overall.AvgEffectiveCompression*100)
+	fmt.Println()
+
+	fmt.Println("### Context Reduction — By Content Type")
+	fmt.Println()
+	fmt.Println("| Content Type | Compression | Context Recall | Perfect Recall | Eff. Compression | Cases |")
+	fmt.Println("|---|---|---|---|---|---|")
+	for _, ct := range contentTypes {
+		m := r.ByContentType[ct]
+		fmt.Printf("| %s | %.1f%% | %.3f | %.1f%% | %.1f%% | %d |\n",
+			capitalize(ct), m.AvgCompressionRatio*100, m.AvgContextRecall,
+			m.PerfectRecallRate*100, m.AvgEffectiveCompression*100, m.CaseCount)
+	}
+	fmt.Println()
+
+	if len(r.Failures) > 0 {
+		fmt.Printf("### Failures (%d total)\n\n", len(r.Failures))
+		n := min(len(r.Failures), maxFailuresToPrint)
+		for _, f := range r.Failures[:n] {
+			fmt.Printf("- `%s` — %s: expected %s, got %s\n", f.CaseID, f.Type, f.Expected, f.Actual)
+		}
+		if len(r.Failures) > maxFailuresToPrint {
+			fmt.Printf("- ... and %d more\n", len(r.Failures)-maxFailuresToPrint)
+		}
+	}
+}
+
+func printMarkdownRetrievalRow(name string, val float64, cases int) {
+	if cases > 0 {
+		fmt.Printf("| %s | %.3f | %d |\n", name, val, cases)
+	} else {
+		fmt.Printf("| %s | %.3f | |\n", name, val)
+	}
 }
 
 func mergeKeys(a, b map[string]Metrics) []string {
