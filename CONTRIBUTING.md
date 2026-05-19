@@ -166,6 +166,15 @@ Warning thresholds:
 
 **Adding or modifying fixtures:** JSONL files live in `internal/store/testdata/bench/`. Each entry defines a haystack (content to index), queries, needles (facts that must survive search), expected match layers, and rank ceilings. See existing files for the schema. Changing any fixture changes the dataset manifest hash — `qualstat` will refuse to compare reports with different hashes, which prevents accidental apples-to-oranges comparisons.
 
+**Updating benchmark docs after new results:**
+
+```bash
+# Generate markdown tables from a JSON report
+go run -tags fts5 ./cmd/qualstat --markdown bench-results/main.json
+```
+
+Copy the output into `benchmark/RESULTS.md`, replacing the existing tables. The prose sections (methodology, caveats, known limitations) stay as-is — only the tables change.
+
 Full benchmark methodology and current results: [`benchmark/RESULTS.md`](benchmark/RESULTS.md)
 
 ## Local Verification Without Installation
