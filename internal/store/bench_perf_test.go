@@ -62,29 +62,34 @@ func BenchmarkSearch(b *testing.B) {
 }
 
 func BenchmarkSearchByTier(b *testing.B) {
-	tiers := map[string]string{
-		"porter":       "",
-		"fuzzy+porter": "",
-	}
+	tiers := make(map[string]string)
 
-	entries := loadFixtures(b, "markdown")
-	for _, e := range entries {
-		for _, c := range e.Cases {
-			if _, ok := tiers[c.ExpectedLayer]; ok && tiers[c.ExpectedLayer] == "" {
-				tiers[c.ExpectedLayer] = c.Query
+	for _, ct := range contentTypes {
+		for _, e := range loadFixtures(b, ct) {
+			for _, c := range e.Cases {
+				if c.ExpectedLayer == "none" || c.ExpectedLayer == "" {
+					continue
+				}
+				if _, exists := tiers[c.ExpectedLayer]; !exists {
+					tiers[c.ExpectedLayer] = c.Query
+				}
 			}
 		}
 	}
 
+	if len(tiers) == 0 {
+		b.Fatal("no tiers found in fixtures — fixture expected_layer values may need updating")
+	}
+
 	opts := benchSearchOpts()
 	s := newBenchStore(b)
-	seedStore(b, s, entries)
+	for _, ct := range contentTypes {
+		seedStore(b, s, loadFixtures(b, ct))
+	}
 
 	tierNames := make([]string, 0, len(tiers))
-	for tier, query := range tiers {
-		if query != "" {
-			tierNames = append(tierNames, tier)
-		}
+	for tier := range tiers {
+		tierNames = append(tierNames, tier)
 	}
 	slices.Sort(tierNames)
 
