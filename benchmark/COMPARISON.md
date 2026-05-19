@@ -39,7 +39,7 @@ This is where most memory tools have a gap. Persistent memory helps the LLM reca
 | System | Context Reduction | How |
 |---|---|---|
 | **capy** | Yes — active | Sandboxed execution. Raw output never enters context. Intent-search returns ~300 bytes from 50 KB input. Auto-indexes above 5 KB threshold. |
-| context-mode | Yes — active | Same architecture (capy's predecessor). Sandboxed execution with FTS5 search. |
+| context-mode | Yes — active | Same architecture (capy's predecessor). Sandboxed execution with FTS5 search. No benchmark suite published. |
 | agentmemory | No | Memory retrieval only — injected memories add to context, they don't reduce tool output. |
 | Mem0 | No | Memory retrieval only. |
 | Letta / MemGPT | Partial | Virtual context management via memory editing, but not sandbox-based output reduction. |

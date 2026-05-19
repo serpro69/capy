@@ -9,7 +9,7 @@ capy's benchmark suite validates two core claims: that FTS5/BM25 search retrieve
 - **Search engine**: SQLite FTS5 with two-layer RRF (Porter stemming + trigram), fuzzy Levenshtein correction, post-processing (diversification, proximity reranking, entity boosting)
 - **No embeddings**: Pure lexical search. No vector DB, no embedding model, no API key
 - **Go version**: go1.25.2
-- **Dataset hash**: `sha256:6216880beef5...` (fixture manifest hash — `qualstat` aborts if comparing reports with different hashes)
+- **Dataset hash**: `sha256:7d45338724b0...` (fixture manifest hash — `qualstat` aborts if comparing reports with different hashes)
 
 ## Retrieval Quality
 

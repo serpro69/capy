@@ -50,6 +50,18 @@ make test-race                                # with race detector
 go test -tags fts5 -count=1 ./internal/<pkg>/... # single package
 ```
 
+### Benchmarks
+
+After changing search, indexing, chunking, or executor code, run benchmarks to check for regressions:
+
+```bash
+make bench-quality   # quality benchmarks → bench-results/{branch}.json
+```
+
+Compare against a baseline with `make compare BASE=main TARGET={branch}` or view a single report with `go run -tags fts5 ./cmd/qualstat bench-results/{branch}.json`. Quality benchmarks are skipped during `go test ./...` (gated by `CAPY_BENCH_RESULTS`).
+
+Key files: `internal/store/bench_test.go` (retrieval + NIAH), `internal/store/bench_perf_test.go` (performance), `internal/server/bench_integration_test.go` (5000-byte threshold), `internal/store/testdata/bench/*.jsonl` (fixtures). Fixture authoring guide: [benchmark/FIXTURES.md](benchmark/FIXTURES.md).
+
 ## ADRs
 
 Architecture Decision Records are in [docs/adr/](docs/adr/). Key ones:
