@@ -162,6 +162,8 @@ go run -tags fts5 ./cmd/qualstat bench-results/main.json
 go run -tags fts5 ./cmd/qualstat bench-results/main.json bench-results/feat-my-thing.json
 ```
 
+**FTS5 warnings during benchmarks:** `make bench-quality` prints many `WARN search row iteration failed` lines to stderr. These are expected — queries containing FTS5 special characters (quotes, parentheses, OR) fail at the first search layer and fall through to the next. The search fallback chain is working as designed. The benchmark report (`failures: 0`) is the source of truth, not stderr noise.
+
 **Interpreting `qualstat` output:**
 
 - `~` means no change (within epsilon)

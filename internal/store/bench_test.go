@@ -196,6 +196,22 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 					}
 
 					firstRelevantRank := findFirstRelevantRank(results, c.Needles)
+
+					preResults := store.rrfSearch(
+						sanitizePorterQuery(c.Query, "AND", true),
+						sanitizeTrigramQuery(c.Query, "AND", true),
+						c.Query, 10, opts,
+					)
+					preRank := findFirstRelevantRank(preResults, c.Needles)
+					if preRank > 0 && firstRelevantRank > 0 && preRank != firstRelevantRank {
+						report.PostProcessingDeltas = append(report.PostProcessingDeltas, benchPostProcDelta{
+							CaseID:   c.CaseID,
+							PreRank:  preRank,
+							PostRank: firstRelevantRank,
+							Delta:    firstRelevantRank - preRank,
+						})
+					}
+
 					if c.ExpectedRankCeiling > 0 {
 						ctRankCeilCases++
 					}

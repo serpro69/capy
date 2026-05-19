@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -113,12 +115,80 @@ func seedStore(t testing.TB, store *ContentStore, entries []benchEntry) {
 		case "plaintext":
 			_, err = store.IndexPlainText(e.Haystack, e.SourceLabel, e.SourceKind)
 		case "transcript":
-			_, err = store.Index(e.Haystack, e.SourceLabel, "", e.SourceKind)
+			chunks := chunkTranscriptFixture(e.Haystack, e.ID)
+			_, err = store.IndexChunked(e.Haystack, e.SourceLabel, "session", e.SourceKind, chunks)
 		default:
 			t.Fatalf("unknown content_type %q in entry %s", e.ContentType, e.ID)
 		}
 		require.NoError(t, err, "seeding entry %s (type=%s)", e.ID, e.ContentType)
 	}
+}
+
+// chunkTranscriptFixture splits a transcript haystack into chunks by turn
+// boundaries (Human:/Assistant: pairs), mimicking the sliding-window chunking
+// that session.ChunkSession does in production. This exercises IndexChunked
+// with structured titles without importing the session package (which would
+// create a circular dependency).
+func chunkTranscriptFixture(haystack, entryID string) []Chunk {
+	type turn struct{ start, end int }
+	var turns []turn
+	lines := strings.Split(haystack, "\n")
+	pos := 0
+	turnStart := -1
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Human:") && turnStart >= 0 {
+			turns = append(turns, turn{turnStart, pos})
+			turnStart = pos
+		} else if strings.HasPrefix(line, "Human:") {
+			turnStart = pos
+		}
+		pos += len(line) + 1
+	}
+	if turnStart >= 0 {
+		turns = append(turns, turn{turnStart, len(haystack)})
+	}
+
+	if len(turns) == 0 {
+		return []Chunk{{
+			Title:   fmt.Sprintf("Session %s | Turns 1-1", entryID),
+			Content: strings.TrimSpace(haystack),
+			HasCode: ChunkHasCode(haystack),
+		}}
+	}
+
+	const windowSize = 4
+	const overlap = 1
+	step := windowSize - overlap
+	if step < 1 {
+		step = 1
+	}
+
+	var chunks []Chunk
+	for start := 0; start < len(turns); start += step {
+		end := start + windowSize - 1
+		if end >= len(turns) {
+			end = len(turns) - 1
+		}
+		content := strings.TrimSpace(haystack[turns[start].start:turns[end].end])
+		if content == "" {
+			continue
+		}
+		title := fmt.Sprintf("Session %s | Turns %d-%d | Tools: benchmark", entryID, start+1, end+1)
+		if len(content) > MaxChunkBytes {
+			chunks = append(chunks, SplitOversized(content, title, MaxChunkBytes)...)
+		} else {
+			chunks = append(chunks, Chunk{
+				Title:   title,
+				Content: content,
+				HasCode: ChunkHasCode(content),
+			})
+		}
+		if end >= len(turns)-1 {
+			break
+		}
+	}
+
+	return chunks
 }
 
 func benchSearchOpts() SearchOptions {
