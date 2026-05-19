@@ -164,7 +164,7 @@ Warning thresholds:
 - **Zero tolerance:** Context Recall, Match-Layer Accuracy — any regression is flagged
 - **-0.02 tolerance:** R@K, MRR, NDCG, Compression — small trade-offs from tuning are acceptable
 
-**Adding or modifying fixtures:** JSONL files live in `internal/store/testdata/bench/`. Each entry defines a haystack (content to index), queries, needles (facts that must survive search), expected match layers, and rank ceilings. See existing files for the schema. Changing any fixture changes the dataset manifest hash — `qualstat` will refuse to compare reports with different hashes, which prevents accidental apples-to-oranges comparisons.
+**Adding or modifying fixtures:** See [`benchmark/FIXTURES.md`](benchmark/FIXTURES.md) for the full schema, content type reference, match layer guide, needle design rules, and gotchas (negative query authoring, JSON rank ceilings, corpus density). Changing any fixture invalidates existing reports — `qualstat` refuses to compare across different dataset hashes.
 
 **Updating benchmark docs after new results:**
 
