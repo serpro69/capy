@@ -150,3 +150,4 @@
 - [ ] 11.2 Run `document` skill to update any relevant docs (MCP schema changes, ADRs if needed)
 - [ ] 11.3 Run `review-code` skill with Go language input to review the implementation
 - [ ] 11.4 Run `review-spec` skill to verify implementation matches design and implementation docs
+- [ ] 11.5 Re-run full benchmarking suite, verify no regression over previous results, update benchmark docs if needed
