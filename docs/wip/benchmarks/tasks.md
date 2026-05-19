@@ -61,16 +61,16 @@
 - [x] 4.7 `TestBench` parent writes JSON report to `CAPY_BENCH_RESULTS` path once, after both subtests complete
 
 ## Task 5: Context reduction benchmarks (NIAH)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2
 - **Docs:** [implementation.md#context-reduction](./implementation.md#context-reduction)
 
 ### Subtasks
-- [ ] 5.1 Add `t.Run("ContextReduction", ...)` subtest inside the `TestBench` parent function from Task 4 (shared store setup — no separate file needed)
-- [ ] 5.2 Implement NIAH metrics: Compression Ratio (measure formatted summary size, not raw SearchResult.Content), fractional Context Recall, Perfect Recall, Effective Compression
-- [ ] 5.3 Format results using `intentSearch`-style summary (title + first-line preview per result) to measure the actual context-reduction surface
-- [ ] 5.4 Handle negative cases — zero results = perfect (CR=1, recall=1); non-zero results for negative query = failure (recall=0)
-- [ ] 5.5 Aggregate per content type and overall, results merged into same `Report` struct via parent `TestBench`
+- [x] 5.1 Add `t.Run("ContextReduction", ...)` subtest inside the `TestBench` parent function from Task 4 (shared store setup — no separate file needed)
+- [x] 5.2 Implement NIAH metrics: Compression Ratio (measure formatted summary size, not raw SearchResult.Content), fractional Context Recall, Perfect Recall, Effective Compression
+- [x] 5.3 Format results using `intentSearch`-style summary (title + first-line preview per result) to measure the actual context-reduction surface
+- [x] 5.4 Handle negative cases — zero results = perfect (CR=1, recall=1); non-zero results for negative query = failure (recall=0)
+- [x] 5.5 Aggregate per content type and overall, results merged into same `Report` struct via parent `TestBench`
 
 ## Task 6: Performance and executor benchmarks
 - **Status:** pending

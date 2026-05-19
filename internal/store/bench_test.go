@@ -39,7 +39,6 @@ type benchMetrics struct {
 	MRR                        float64 `json:"mrr"`
 	MatchLayerAccuracy         float64 `json:"match_layer_accuracy"`
 	RankCeilingPassRate        float64 `json:"rank_ceiling_pass_rate"`
-	// TODO(task-5): populated by context-reduction pass (ContextReduction subtest)
 	AvgCompressionRatio     float64 `json:"avg_compression_ratio"`
 	AvgContextRecall        float64 `json:"avg_context_recall"`
 	PerfectRecallRate       float64 `json:"perfect_recall_rate"`
@@ -80,7 +79,9 @@ func TestBench(t *testing.T) {
 		runRetrievalQuality(t, &report)
 	})
 
-	// Task 5 will add t.Run("ContextReduction", ...) here.
+	t.Run("ContextReduction", func(t *testing.T) {
+		runContextReduction(t, &report)
+	})
 
 	data, err := json.MarshalIndent(report, "", "  ")
 	require.NoError(t, err, "marshaling report")
@@ -345,4 +346,134 @@ func computeContextRecall(results []SearchResult, needles []string) float64 {
 		}
 	}
 	return float64(len(found)) / float64(len(needles))
+}
+
+func formatIntentSummary(results []SearchResult, query string, haystackLen int) string {
+	totalKB := fmt.Sprintf("%.1f", float64(haystackLen)/1024)
+
+	var b strings.Builder
+	b.WriteString("Indexed sections from source into knowledge base.\n")
+
+	if len(results) == 0 {
+		fmt.Fprintf(&b, "No sections matched intent %q (%sKB).\n", query, totalKB)
+		b.WriteString("\nUse search() to explore the indexed content.")
+		return b.String()
+	}
+
+	fmt.Fprintf(&b, "%d sections matched %q (%sKB):\n\n", len(results), query, totalKB)
+
+	for _, r := range results {
+		preview := r.Content
+		if nl := strings.IndexByte(preview, '\n'); nl != -1 {
+			preview = preview[:nl]
+		}
+		if len(preview) > 120 {
+			preview = preview[:120]
+		}
+		fmt.Fprintf(&b, "  - %s: %s\n", r.Title, preview)
+	}
+
+	b.WriteString("\nUse search(queries: [...]) to retrieve full content of any section.")
+	return b.String()
+}
+
+func runContextReduction(t *testing.T, report *benchReport) {
+	opts := benchSearchOpts()
+
+	var totalCases, totalNeg, totalNegFP int
+	var totalCR, totalCtxRecall, totalPerfectRecall, totalEffComp float64
+
+	for _, ct := range contentTypes {
+		t.Run(ct, func(t *testing.T) {
+			entries := loadFixtures(t, ct)
+			s := newBenchStore(t)
+			seedStore(t, s, entries)
+
+			var ctCases, ctNeg, ctNegFP int
+			var ctCR, ctCtxRecall, ctPerfectRecall, ctEffComp float64
+
+			for _, entry := range entries {
+				for _, c := range entry.Cases {
+					isNegative := len(c.Needles) == 0
+
+					results, err := s.SearchWithFallback(c.Query, 10, opts)
+					require.NoError(t, err, "search failed for case %s", c.CaseID)
+
+					if isNegative {
+						ctNeg++
+						if len(results) == 0 {
+							ctCR += 1.0
+							ctCtxRecall += 1.0
+							ctPerfectRecall += 1.0
+							ctEffComp += 1.0
+						} else {
+							ctNegFP++
+							summary := formatIntentSummary(results, c.Query, len(entry.Haystack))
+							cr := 1.0 - float64(len(summary))/float64(len(entry.Haystack))
+							if cr < 0 {
+								cr = 0
+							}
+							ctCR += cr
+						}
+						ctCases++
+						continue
+					}
+
+					ctCases++
+
+					summary := formatIntentSummary(results, c.Query, len(entry.Haystack))
+					cr := 1.0 - float64(len(summary))/float64(len(entry.Haystack))
+					if cr < 0 {
+						cr = 0
+					}
+					ctCR += cr
+
+					recall := computeContextRecall(results, c.Needles)
+					ctCtxRecall += recall
+
+					if recall == 1.0 {
+						ctPerfectRecall += 1.0
+					}
+
+					ctEffComp += cr * recall
+				}
+			}
+
+			if ctCases > 0 {
+				n := float64(ctCases)
+				m, ok := report.ByContentType[ct]
+				if !ok {
+					m = benchMetrics{}
+				}
+				m.AvgCompressionRatio = ctCR / n
+				m.AvgContextRecall = ctCtxRecall / n
+				m.PerfectRecallRate = ctPerfectRecall / n
+				m.AvgEffectiveCompression = ctEffComp / n
+				if m.CaseCount == 0 {
+					m.CaseCount = ctCases
+					m.NegativeCaseCount = ctNeg
+					m.NegativeFalsePositiveCount = ctNegFP
+				}
+				report.ByContentType[ct] = m
+			}
+
+			totalCases += ctCases
+			totalNeg += ctNeg
+			totalNegFP += ctNegFP
+			totalCR += ctCR
+			totalCtxRecall += ctCtxRecall
+			totalPerfectRecall += ctPerfectRecall
+			totalEffComp += ctEffComp
+		})
+	}
+
+	if totalCases > 0 {
+		n := float64(totalCases)
+		report.Overall.AvgCompressionRatio = totalCR / n
+		report.Overall.AvgContextRecall = totalCtxRecall / n
+		report.Overall.PerfectRecallRate = totalPerfectRecall / n
+		report.Overall.AvgEffectiveCompression = totalEffComp / n
+		report.Overall.NegativeCaseCount += totalNeg
+		report.Overall.NegativeFalsePositiveCount += totalNegFP
+	}
 }
