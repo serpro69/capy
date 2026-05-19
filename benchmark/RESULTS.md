@@ -19,19 +19,19 @@ Standard IR metrics. A result is "relevant" if it contains any needle substring 
 
 | Metric | Score | Cases |
 |--------|-------|-------|
-| R@1 | 0.904 | 156 |
+| R@1 | 0.897 | 156 |
 | R@3 | 0.974 | |
 | R@5 | 0.987 | |
 | R@10 | 0.994 | |
-| NDCG@10 | 0.952 | |
-| MRR | 0.941 | |
+| NDCG@10 | 0.950 | |
+| MRR | 0.938 | |
 | Rank Ceiling Pass | 1.000 | |
 
 ### By Content Type
 
 | Content Type | R@1 | R@5 | R@10 | NDCG@10 | MRR | Cases |
 |---|---|---|---|---|---|---|
-| Transcript | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 30 |
+| Transcript | 0.967 | 1.000 | 1.000 | 0.988 | 0.983 | 30 |
 | Curated | 0.933 | 1.000 | 1.000 | 0.975 | 0.967 | 30 |
 | Plaintext | 0.900 | 1.000 | 1.000 | 0.957 | 0.944 | 30 |
 | Markdown | 0.889 | 1.000 | 1.000 | 0.948 | 0.938 | 36 |
@@ -54,17 +54,17 @@ JSON is the weakest. Recursive key-path chunking sometimes splits deeply nested 
 
 | Metric | Score | Cases |
 |--------|-------|-------|
-| Compression Ratio | 50.5% | 156 |
+| Compression Ratio | 49.8% | 156 |
 | Context Recall | 0.983 | |
 | Perfect Recall Rate | 97.1% | |
-| Effective Compression | 50.4% | |
+| Effective Compression | 49.7% | |
 
 ### By Content Type
 
 | Content Type | Compression | Context Recall | Perfect Recall | Eff. Compression | Cases |
 |---|---|---|---|---|---|
-| Transcript | 62.7% | 1.000 | 100.0% | 62.7% | 30 |
 | Plaintext | 60.4% | 1.000 | 100.0% | 60.4% | 30 |
+| Transcript | 59.0% | 1.000 | 100.0% | 59.0% | 30 |
 | Curated | 48.4% | 1.000 | 100.0% | 48.4% | 30 |
 | JSON | 44.3% | 0.925 | 87.5% | 43.9% | 30 |
 | Markdown | 39.1% | 0.990 | 97.9% | 39.1% | 36 |

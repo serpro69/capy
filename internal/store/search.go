@@ -15,9 +15,9 @@ import (
 )
 
 var (
-	ftsSpecialRe    = regexp.MustCompile(`['"(){}[\]*:^~]`)
-	trigramCleanRe  = regexp.MustCompile(`[^a-zA-Z0-9 _-]`)
-	ftsKeywords     = map[string]bool{"AND": true, "OR": true, "NOT": true, "NEAR": true}
+	ftsSpecialRe   = regexp.MustCompile(`['"(){}[\]*:^~]`)
+	trigramCleanRe = regexp.MustCompile(`[^a-zA-Z0-9 _-]`)
+	ftsKeywords    = map[string]bool{"AND": true, "OR": true, "NOT": true, "NEAR": true}
 )
 
 // SearchWithFallback runs Reciprocal Rank Fusion across porter and trigram
@@ -153,7 +153,13 @@ func (s *ContentStore) rrfSearch(porterQuery, trigramQuery, rawQuery string, lim
 		fused = append(fused, entry.result)
 	}
 	sort.Slice(fused, func(i, j int) bool {
-		return fused[i].FusedScore > fused[j].FusedScore
+		if fused[i].FusedScore != fused[j].FusedScore {
+			return fused[i].FusedScore > fused[j].FusedScore
+		}
+		if fused[i].SourceID != fused[j].SourceID {
+			return fused[i].SourceID < fused[j].SourceID
+		}
+		return fused[i].Title < fused[j].Title
 	})
 
 	// Tag multi-layer hits. A result appearing in both layers scores above
@@ -315,7 +321,13 @@ func rerank(results []SearchResult, query string) []SearchResult {
 	}
 
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].FusedScore > results[j].FusedScore
+		if results[i].FusedScore != results[j].FusedScore {
+			return results[i].FusedScore > results[j].FusedScore
+		}
+		if results[i].SourceID != results[j].SourceID {
+			return results[i].SourceID < results[j].SourceID
+		}
+		return results[i].Title < results[j].Title
 	})
 	return results
 }
@@ -654,7 +666,6 @@ func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opt
 	return results
 }
 
-
 // trackAccess updates last_accessed_at and access_count for sources
 // that appeared in search results. Runs synchronously to avoid race
 // conditions with ContentStore.Close() finalizing prepared statements.
@@ -897,7 +908,10 @@ func (s *ContentStore) GetDistinctiveTerms(sourceID int64, maxTerms int) ([]stri
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].score > candidates[j].score
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+		return candidates[i].word < candidates[j].word
 	})
 
 	n := min(len(candidates), maxTerms)

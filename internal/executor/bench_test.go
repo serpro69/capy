@@ -21,7 +21,7 @@ var benchLanguages = []struct {
 
 func BenchmarkExecutorOverhead(b *testing.B) {
 	for _, bl := range benchLanguages {
-		b.Run(string(bl.lang), func(b *testing.B) {
+		b.Run(string(bl.lang)+"/executor", func(b *testing.B) {
 			if _, err := exec.LookPath(bl.bin); err != nil {
 				b.Skipf("%s not available", bl.bin)
 			}
@@ -34,6 +34,18 @@ func BenchmarkExecutorOverhead(b *testing.B) {
 					TimeoutSec: 10,
 				}); err != nil {
 					b.Fatal(err)
+				}
+			}
+		})
+		b.Run(string(bl.lang)+"/direct", func(b *testing.B) {
+			bin, err := exec.LookPath(bl.bin)
+			if err != nil {
+				b.Skipf("%s not available", bl.bin)
+			}
+			for b.Loop() {
+				cmd := exec.Command(bin, "-c", bl.code)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					b.Fatalf("direct exec failed: %v: %s", err, out)
 				}
 			}
 		})

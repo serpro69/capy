@@ -37,11 +37,11 @@ capy ships with a benchmark suite that validates its claims with deterministic, 
 
 | Metric | Score |
 |--------|-------|
-| R@1 (at least one relevant result in top 1) | 0.904 |
+| R@1 (at least one relevant result in top 1) | 0.897 |
 | R@5 | 0.987 |
 | R@10 | 0.994 |
-| MRR (mean reciprocal rank) | 0.941 |
-| NDCG@10 | 0.952 |
+| MRR (mean reciprocal rank) | 0.938 |
+| NDCG@10 | 0.950 |
 
 ### Context Reduction
 
@@ -49,10 +49,10 @@ capy ships with a benchmark suite that validates its claims with deterministic, 
 
 | Metric | Score |
 |--------|-------|
-| Compression Ratio | 50.5% |
+| Compression Ratio | 49.8% |
 | Context Recall (fraction of specific facts preserved) | 0.983 |
 | Perfect Recall Rate (cases with all facts preserved) | 97.1% |
-| Effective Compression (compression x recall) | 50.4% |
+| Effective Compression (compression x recall) | 49.7% |
 
 On realistic content, capy achieves ~50% compression while preserving ~98% of the specific information needed. The "~98% reduction" claim in the problem statement above applies to raw byte savings on large uniform outputs — the NIAH numbers are the honest picture for information preservation on diverse content.
 
