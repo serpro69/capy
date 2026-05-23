@@ -248,10 +248,10 @@ Five content types (`markdown`, `json`, `plaintext`, `transcript`, `curated`) wi
 ### Running
 
 ```bash
-make bench           # runs both perf and quality
-make bench-perf      # testing.B benchmarks → bench-results/{branch}.txt
-make bench-quality   # quality benchmarks → bench-results/{branch}.json
-make compare BASE=main TARGET=feature  # benchstat + qualstat side by side
+make bench                                   # runs both perf and quality
+make bench-perf                              # testing.B benchmarks → bench-results/{branch}.txt
+make bench-quality                           # quality benchmarks → bench-results/{branch}.json
+make bench-compare BASE=main TARGET=feature  # benchstat + qualstat side by side
 ```
 
 Quality benchmarks skip under `go test ./...` (gated by `CAPY_BENCH_RESULTS` env var).

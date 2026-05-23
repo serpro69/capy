@@ -243,7 +243,7 @@ Wire up orchestration and verify the full pipeline end-to-end.
 - `bench` — runs both `bench-perf` and `bench-quality`
 - `bench-perf` — `mkdir -p bench-results`, `CGO_ENABLED=1 go test $(BUILD_TAGS) -bench=. -benchmem -count=6 ... | tee bench-results/{branch}.txt`
 - `bench-quality` — `mkdir -p bench-results`, `CGO_ENABLED=1 ... go test $(BUILD_TAGS) -run='^TestBench' -v -p 1 ...` (note: `-p 1` forces serial package execution to prevent concurrent writes to `CAPY_BENCH_RESULTS`)
-- `compare` — `benchstat` + `qualstat` side by side, takes `BASE` and `TARGET` args
+- `bench-compare` — `benchstat` + `qualstat` side by side, takes `BASE` and `TARGET` args
 
 **`.gitignore`** — add `bench-results/`
 
@@ -251,7 +251,7 @@ Wire up orchestration and verify the full pipeline end-to-end.
 
 Full end-to-end:
 1. `make bench` — completes without error, produces `.txt` and `.json` in `bench-results/`
-2. `make compare BASE=main TARGET=main` — produces comparison table with zero deltas
+2. `make bench-compare BASE=main TARGET=main` — produces comparison table with zero deltas
 3. `go test ./...` — regular test suite still passes, quality benchmarks are skipped (no `CAPY_BENCH_RESULTS`)
 4. Run `review-code` skill with Go input to review the implementation
 5. Run `review-spec` skill to verify implementation matches this design doc
