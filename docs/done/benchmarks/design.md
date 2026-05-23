@@ -339,10 +339,10 @@ bench-quality:
 
 compare:
 ifndef BASE
-	$(error BASE is required: make compare BASE=<branch> TARGET=<branch>)
+	$(error BASE is required: make bench-compare BASE=<branch> TARGET=<branch>)
 endif
 ifndef TARGET
-	$(error TARGET is required: make compare BASE=<branch> TARGET=<branch>)
+	$(error TARGET is required: make bench-compare BASE=<branch> TARGET=<branch>)
 endif
 	@echo "=== Performance (benchstat) ==="
 	benchstat bench-results/$(BASE).txt bench-results/$(TARGET).txt
@@ -359,7 +359,7 @@ Implementation notes vs original design:
 - **Input validation**: `ifndef` guards on `compare` give clear error messages instead of confusing file-not-found errors from `benchstat`.
 - **`-p 1`** in `bench-quality` forces serial package execution. Without it, `go test` runs packages in parallel, and both `internal/store/` and `internal/server/` would write to the same `CAPY_BENCH_RESULTS` JSON file concurrently, corrupting the report. Both packages use merge-append logic so ordering is resilient, but `-p 1` avoids concurrent file access entirely.
 
-Usage: `make bench` on main, switch to feature branch, `make bench` again, then `make compare BASE=main TARGET=feature`.
+Usage: `make bench` on main, switch to feature branch, `make bench` again, then `make bench-compare BASE=main TARGET=feature`.
 
 Quality tests use a skip guard — they skip when `CAPY_BENCH_RESULTS` is unset, so `go test ./...` during normal development is not affected.
 

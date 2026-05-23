@@ -115,7 +115,7 @@ Benchmarks are gated behind `CAPY_BENCH_RESULTS` and **never run during `go test
 
 ```bash
 export CAPY_DB_KEY=test-key-for-development    # required — same as tests
-go install golang.org/x/perf/cmd/benchstat@latest  # optional — only for `make compare`
+go install golang.org/x/perf/cmd/benchstat@latest  # optional — only for `make bench-compare`
 ```
 
 **Running benchmarks after implementing a feature:**
@@ -132,7 +132,7 @@ make bench
 
 # 3. Compare
 #    Branch names with slashes are sanitized: feat/my-thing → feat-my-thing
-make compare BASE=main TARGET=feat-my-thing
+make bench-compare BASE=main TARGET=feat-my-thing
 ```
 
 If you don't have uncommitted changes, a simpler alternative:
@@ -140,7 +140,7 @@ If you don't have uncommitted changes, a simpler alternative:
 ```bash
 git checkout main && make bench && git checkout -
 make bench
-make compare BASE=main TARGET=feat-my-thing
+make bench-compare BASE=main TARGET=feat-my-thing
 ```
 
 `make bench` runs two targets:
