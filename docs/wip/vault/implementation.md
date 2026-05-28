@@ -63,14 +63,13 @@ On close: close prepared statements, close connection pool, run WAL checkpoint (
 Schema evolution follows the existing pattern from `internal/store/migrate.go`:
 
 1. `internal/vault/migrations.go` — numbered migration functions (e.g., `migrateVault002AddX` for a future column). Note: `title` and all v1 columns ship in the base `schemaSQL`, **not** via a migration — the framework is scaffolding for the first real schema change post-v1
-2. `vault_meta` stores `schema_version` — checked on `openDB()`
-3. Each migration is idempotent (safe to re-run on already-migrated DB)
+2. Applied migrations are tracked **by name** in a `vault_migrations` table — the single source of truth for migration state (same pattern as `store/migrate.go:ensureMigrationsTable`). There is **no** `schema_version` value in `vault_meta`
+3. Each migration is idempotent (safe to re-run on an already-migrated DB)
 4. Migrations use `beginImmediate` for write-lock acquisition under concurrency (same as `store/migrate.go`)
-5. A `vault_migrations` table tracks applied migrations by name (same pattern as `store/migrate.go:ensureMigrationsTable`)
 
 ### Schema DDL
 
-All tables from design.md are created in a single `schemaSQL` constant: `vault_sessions` (with `title TEXT` plus the 1:1 location columns `machine_id`/`claude_project_dir`/`project_path`/`git_branch`), `vault_files`, `vault_fts`, `vault_meta`, plus indexes (`idx_sessions_end_time`, `idx_sessions_project`). There is **no** `vault_session_locations` table — location is 1:1 on `vault_sessions` (see design.md). The FTS5 table uses `tokenize='porter unicode61'`. `ON DELETE CASCADE` applies to `vault_files` only. FTS5 virtual tables don't support foreign keys — FTS cleanup is explicit (`DELETE FROM vault_fts WHERE session_uuid = ?` in the same transaction). Session replacement uses `UPDATE` (not DELETE+INSERT) so it overwrites location/metadata/blob in place while preserving `archived_at`. The `vault_meta` table is seeded with a schema version on first creation.
+All tables from design.md are created in a single `schemaSQL` constant: `vault_sessions` (with `title TEXT` plus the 1:1 location columns `machine_id`/`claude_project_dir`/`project_path`/`git_branch`), `vault_files`, `vault_fts`, `vault_meta`, plus the `idx_sessions_end_time` index. There is **no** `vault_session_locations` table (location is 1:1 on `vault_sessions`, see design.md) and **no `project_path` index** (a substring `LIKE` can't use one). The FTS5 table uses `tokenize='porter unicode61'`. `ON DELETE CASCADE` applies to `vault_files` only. FTS5 virtual tables don't support foreign keys — FTS cleanup is explicit (`DELETE FROM vault_fts WHERE session_uuid = ?` in the same transaction). Session replacement uses `UPDATE` (not DELETE+INSERT) so it overwrites location/metadata/blob in place while preserving `archived_at`. `vault_meta` is created empty (reserved for future config); migration state lives in `vault_migrations`, which the **migration framework** creates — not `schemaSQL`.
 
 ## Machine Identity
 
@@ -165,7 +164,7 @@ The same change makes `internal/session/sweep.go:SessionDir()` honor `CLAUDE_CON
 SessionFile {
     Path           string            // full path to main .jsonl
     UUID           string            // extracted from filename
-    ProjectDir     string            // mangled directory name
+    ProjectDir     string            // mangled dir name (or, for loose --path imports, the containing dir basename — see design.md claude_project_dir)
     AssociatedFiles []AssociatedFile  // all files in <uuid>/ directory
 }
 
@@ -256,7 +255,7 @@ All vault commands share: `--tui` flag (bool, default false), vault DB path reso
 
 - Positional arg: search query — plain keyword mode by default (each whitespace-separated token is auto-quoted to prevent FTS5 operator interpretation, matching `claude-vault`'s approach). `--raw` flag passes the query as raw FTS5 MATCH syntax for advanced users
 - `--project`: substring filter on `vault_sessions.project_path` (direct `WHERE project_path LIKE ?` through the FTS→session join; location is 1:1, so no row multiplication)
-- `--after`, `--before`: timestamp filters on `vault_sessions`
+- `--after`, `--before`: filter on `vault_sessions.end_time` (a session's last-activity timestamp)
 - `--role <user|assistant|tool|system>`: filter FTS results by the `role` UNINDEXED column (`tool` = `tool_result` output, kept separate from human `user` text so `--role user` returns prompts, not tool output)
 - `--limit N`: max results (default 20)
 - `--json`: machine-readable output for scripting
