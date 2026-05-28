@@ -1,0 +1,1562 @@
+ ▐▛███▜▌   Claude Code v2.1.148
+▝▜█████▛▘  Opus 4.6 · Claude Team
+  ▘▘ ▝▝    ~/Projects/personal/capy
+
+  Using Opus 4.6 (from .claude/settings.json) · /model to change
+
+❯ /clear                                                                        
+  ⎿  (no content)
+
+❯ I want to build a 'vault' feature into capy, that would store all claude-code 
+   sessions (also codex, as a future improvement), verbatim, in a shared capy   
+  db.                                                                           
+                                                                                
+  Use-cases:                                                                    
+  - archiving all sessions, across all projects, full preservation              
+  - search sessions by keywords, explore past conversations                     
+  - sharing sessions                                                            
+  - `resume <session_id>` - wrapper that calls claude/codex resume <session_id> 
+  - cli/ui interfaces for session data                                          
+                                                                                
+  Here are some projects for inspiration:                                       
+  - https://gist.github.com/serpro69/957f9d19ace2d0cf7841b79613badfa8 - simple  
+  python script that searches local sessions                                    
+  - https://github.com/kuroko1t/claude-vault - archive claude code coversations 
+   into sqlite                                                                  
+  - https://github.com/raine/claude-history - similar to above but with TUI     
+  interface                                                                     
+  - https://github.com/badlogic/pi-share-hf - collect, review and share session 
+   files to Hugging Face dataset                                                
+                                                                                
+  Basically, I want to collect features from all of the above tools under the   
+  `capy vault` cmd.                                                             
+                                                                                
+  Do the exploration of the above projects, explore the capy code. Then the     
+  main question I have is - should this be part of capy, or should it be a      
+  completely new project.                                                       
+
+● I'll explore the external projects and the capy codebase in parallel to give
+  you a well-grounded recommendation.
+
+● 2 background agents launched (↓ to manage)
+   ├ Agent (Explore vault inspiration projects)
+   └ Explore (Explore capy session/store/CLI architecture)
+
+● Two research agents are running in parallel — one exploring the 4 inspiration
+  projects, the other mapping capy's session/store/CLI architecture. I'll
+  synthesize findings and give you a recommendation once both complete.
+
+● Good, tool loaded. Waiting for both research agents to finish their
+  exploration.
+
+✻ Baked for 27s
+
+● Agent "Explore capy session/store/CLI architecture" completed · 43s
+
+● The capy exploration agent returned a thin summary. Let me fill in the gaps
+  directly while waiting for the external projects agent.
+
+  Read 2 files, listed 1 directory (ctrl+o to expand)
+
+● Agent "Explore vault inspiration projects" completed · 46s
+
+● Both agents are done. Let me read a few more key capy files to complete the
+  picture.
+
+  Read 5 files (ctrl+o to expand)
+
+● Good, I have a complete picture now. Let me read one more thing — the
+  transcript builder — to understand how sessions are currently flattened.
+
+  Read 1 file (ctrl+o to expand)
+
+● Now I have a complete picture. Here's my analysis:
+
+  ---
+  Recommendation: Build it inside capy
+
+  The case is clear — vault belongs in capy, not a new project. Here's why:
+
+  What already exists in capy
+
+  Capy already has ~80% of the vault's core plumbing:
+
+  1. Session JSONL parser (internal/session/parse.go) — full Claude Code format
+  parsing, progressive snapshot merging, subagent discovery, noise stripping,
+  tool metadata extraction
+  2. FTS5 knowledge store (internal/store/) — encrypted SQLite, BM25 search,
+  source kinds, retention tiers, chunking
+  3. Sweep infrastructure (internal/session/sweep.go, cmd/capy/sweep.go) —
+  project-scoped session discovery, mtime-based incremental indexing, dry-run
+  diagnostics
+  4. Secret sanitization (internal/sanitize/) — regex-based redaction before
+  indexing
+  5. CLI scaffold (cmd/capy/main.go) — cobra commands, --project-dir flag,
+  config/DB resolution
+
+  What vault would add on top
+
+  The gap between "capy sweep" and "capy vault" is really about scope and 
+  interface:
+
+  ┌────────────┬───────────────┬────────────────────────────────────────────┐
+  │ Capability │  capy today   │                 vault adds                 │
+  ├────────────┼───────────────┼────────────────────────────────────────────┤
+  │ Discovery  │ Single        │ All ~/.claude/projects/*/ cross-project    │
+  │            │ project dir   │                                            │
+  ├────────────┼───────────────┼────────────────────────────────────────────┤
+  │ Storage    │ FTS5 chunks   │ Verbatim JSONL preservation + FTS index    │
+  │            │ (lossy)       │                                            │
+  ├────────────┼───────────────┼────────────────────────────────────────────┤
+  │ Schema     │ sources +     │ sessions table (metadata, project, branch, │
+  │            │ chunks        │  timestamps) + messages table              │
+  ├────────────┼───────────────┼────────────────────────────────────────────┤
+  │ Search     │ BM25 keyword  │ Keyword + project/date/branch filters      │
+  ├────────────┼───────────────┼────────────────────────────────────────────┤
+  │ CLI        │ capy sweep    │ vault import, vault search, vault list,    │
+  │            │               │ vault show, vault resume, vault export     │
+  ├────────────┼───────────────┼────────────────────────────────────────────┤
+  │ UI         │ None          │ TUI browser (future, like claude-history)  │
+  ├────────────┼───────────────┼────────────────────────────────────────────┤
+  │ Hooks      │ Not used for  │ PreCompact/SessionEnd auto-archive (like   │
+  │            │ sessions      │ claude-vault)                              │
+  ├────────────┼───────────────┼────────────────────────────────────────────┤
+  │ Sharing    │ None          │ Export/redact pipeline (like pi-share-hf)  │
+  └────────────┴───────────────┴────────────────────────────────────────────┘
+
+  Why not a separate project
+
+  1. Parser duplication. The JSONL parsing in internal/session/ is 470 lines of
+  battle-tested code handling progressive snapshots, subagent discovery, and
+  edge cases. A separate project would either duplicate this or import capy as a
+   library — both worse than just extending capy.
+  2. Store reuse. Capy's encrypted SQLite + FTS5 stack is exactly what vault
+  needs. claude-vault literally built the same thing from scratch in Rust.
+  3. Hook system. Capy already installs hooks into Claude Code. Adding
+  PreCompact and SessionEnd hooks for auto-archival is an incremental change,
+  not a new system.
+  4. Single DB key. Encryption is mandatory in capy. A separate project means a
+  separate key or sharing CAPY_DB_KEY — awkward either way.
+  5. Namespace fit. capy vault import, capy vault search etc. feel natural next
+  to capy sweep, capy cleanup, capy doctor.
+
+  Key design decision: separate DB vs. extending existing
+
+  The one thing I'd push back on is whether vault should share the same SQLite
+  DB as the FTS knowledge store. I'd argue separate DB file, same encryption 
+  infrastructure:
+
+  - The knowledge DB has retention/cleanup policies that would fight with
+  "archive everything forever"
+  - Verbatim JSONL storage bloats differently than FTS chunks
+  - Different backup/export needs
+  - But same CAPY_DB_KEY, same store package patterns, same config.ResolveDBPath
+   convention
+
+  This is analogous to how claude-vault puts its vault.db in
+  ~/.local/share/claude-vault/ — separate from the working knowledge.
+
+  What I'd borrow from each inspiration project
+
+  - claude-vault: Hook-driven auto-archive (PreCompact is critical — captures
+  data before /compact destroys it), FTS5 schema design
+  - claude-history: TUI with fuzzy search, fork/resume from viewer, filtering
+  out noise sessions
+  - cc-sessions (your gist): Incremental index via flat metadata, resume by
+  partial ID
+  - pi-share-hf: Multi-stage redaction pipeline for sharing, TruffleHog-style
+  secret scanning
+
+  Want me to run /kk:design to turn this into a proper design doc and task
+  breakdown?
+
+✻ Cogitated for 49s
+
+❯ Yes, also agree that it should be a separate db for two reasons - one that    
+  you mentioned, and another because the vault db should span across projects.  
+
+● Skill(kk:design)
+  ⎿  Successfully loaded skill
+
+● Starting the design skill. Let me load the required instruction files first.
+
+  Read 5 files (ctrl+o to expand)
+
+● Good, all instruction files loaded. Now let me run profile detection for the
+  design phase.
+
+  Read 1 file (ctrl+o to expand)
+
+● The idea prose mentions "Go" explicitly (capy is written in Go per CLAUDE.md).
+   The go profile matches. Let me quickly check if any other profiles have
+  design signals that could match.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Only the Go profile matches (capy is a Go project). No K8s, operator, or
+  skill-md tokens in the idea prose.
+
+  This is a Go feature. Activate the Go profile?
+
+  I'll also check if the Go profile has a design/ subdirectory.
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+● This design involves database access (SQLite), so I should load database.md.
+  No gRPC or observability involved.
+
+  Read 1 file (ctrl+o to expand)
+
+● Now let me search capy's knowledge base for prior arch decisions before
+  engaging.
+
+  Called capy (ctrl+o to expand)
+● No prior arch decisions specific to vault. Now I have everything needed to
+  begin Step 3.
+
+  Task Progress:
+  - [x] Step 1: Understand the current state of the project
+  - [x] Step 2: Check the documentation
+  - [ ] Step 3: Refine the idea
+  - [ ] Step 4: Describe the design
+  - [ ] Step 5: Document the design
+  - [ ] Step 6: Create the task list
+
+  ---
+  Step 3a — HMW framing:
+
+  Here's the problem framing:
+
+  ▎ How might we give Claude Code power users a single, durable archive of every
+  ▎  conversation they've ever had — across all projects — so they can search, 
+  ▎ revisit, and share past sessions, without losing data to compaction or 
+  ▎ project-scoping?
+
+  The core tension: Claude Code sessions are ephemeral, project-scoped, and
+  destructible (compaction deletes content). A vault inverts all three —
+  permanent, global, and preserving the raw JSONL verbatim.
+
+  Does this framing capture the problem, or would you adjust the emphasis?
+
+✻ Churned for 1m 12s
+
+❯ Almost correct. In addition to search, we want to give users possibility to   
+  fully load session contents (same as you would be able to view the entire     
+  session in a claude-code cli interface), and restore full sessions (e.g. if a 
+   session file was deleted)                                                    
+                                                                                
+  Sessions are destructible not only by compaction, but they're also            
+  auto-cleaned by claude-code (30 days default retention).                      
+
+● Good corrections. Updated framing:
+
+  ▎ How might we give Claude Code power users a single, durable archive of every
+  ▎  conversation they've ever had — across all projects — so they can search, 
+  ▎ fully view, and restore past sessions, without losing data to compaction, 
+  ▎ auto-cleanup (30-day default retention), or accidental deletion?
+
+  The vault is both a search index and a backup/restore system — verbatim
+  preservation is load-bearing, not just an implementation detail.
+
+  Step 3 Progress:
+  - [x] 3a HMW framing confirmed
+  - [ ] 3b who/persona confirmed
+  - [ ] 3b success metric confirmed
+  - [ ] 3b constraints confirmed
+  - [ ] 3c complexity classification confirmed
+  - [ ] 3c alternatives presented
+  - [ ] 3d direction chosen
+  - [ ] 3e assumptions and Not Doing presented
+
+  Step 3b — Who is this for?
+
+● User declined to answer questions
+  ⎿  · Who is the primary user of capy vault? (You (solo power user) / WW 
+     engineering team / OSS Claude Code users)
+
+❯ Wait, but you removed some important parts from the first framing.            
+                                                                                
+  Here's the full version:                                                      
+                                                                                
+  ▎ How might we give Claude Code power users a single, durable archive of      
+  every conversation they've ever had — across all projects — so they can       
+  search, fully view, revisit, restore and/or share past sessions, without      
+  losing data to compaction, project-scoping, auto-cleanup (30-day default      
+  retention), or accidental deletion?                                           
+                                                                                
+  The core tension: Claude Code sessions are ephemeral, project-scoped, and     
+  destructible (compaction deletes content, session files have a default 30-day 
+   retention). A vault inverts all three — permanent, global, and preserving    
+  the raw JSONL verbatim. The vault is both a search index and a backup/restore 
+   system — verbatim preservation is load-bearing, not just an implementation   
+  detail.                                                                       
+
+● You're right, I dropped several things. Your version is the correct one —
+  moving forward with that as the anchor.
+
+  Step 3 Progress:
+  - [x] 3a HMW framing confirmed
+  - [ ] 3b who/persona confirmed
+  - [ ] 3b success metric confirmed
+  - [ ] 3b constraints confirmed
+  - [ ] 3c complexity classification confirmed
+  - [ ] 3c alternatives presented
+  - [ ] 3d direction chosen
+  - [ ] 3e assumptions and Not Doing presented
+
+  Step 3b — Who is this for?
+
+  Who is the primary user of capy vault? Options I see:
+
+  1. You (solo power user) — building for your own workflow across personal and
+  WW projects. Others may adopt later but that's not the driving force.
+  2. WW engineering team — the team uses Claude Code daily; vault becomes a
+  shared tool/practice.
+  3. OSS Claude Code users — the broader community currently reaching for
+  claude-vault, claude-history, etc.
+
+✻ Worked for 6s
+
+❯ anyone who uses claude-code, even if they don't use other features of capy    
+
+● That's an important distinction — vault should be usable by anyone with Claude
+   Code, even if they never touch capy's MCP server or context-window features.
+  This implies vault needs a low-friction entry point that doesn't require the
+  full capy setup.
+
+  Step 3b — What does success look like?
+
+  Here's my take on a measurable success metric:
+
+  ▎ A user runs capy vault import, and every session they've ever had across all
+  ▎  projects is archived verbatim. After Claude Code auto-cleans a 31-day-old 
+  ▎ session, the user can capy vault show <id> to read it in full, capy vault 
+  ▎ restore <id> to put the JSONL back on disk, and capy vault search <query> to
+  ▎  find it by keyword. Zero data loss from compaction, cleanup, or project 
+  ▎ switching.
+
+  Does that capture what "working" looks like, or would you adjust?
+
+✻ Worked for 8s
+
+❯ It does. But I would add that the user can also do all of the above from a    
+  TUI (via --tui flag, maybe, off by default)                                   
+  I would also add cross-machine compatibility requirement. E.g. a single user  
+  having too machines should be able to copy the vault.db from machine A,       
+  re-run `capy vault import` on machine B, and get sessions from machine B      
+  without loosing already imported data from machine A.                         
+
+● Good additions. Updated success metric:
+
+  ▎ A user runs capy vault import, and every session across all projects is 
+  ▎ archived verbatim. After Claude Code auto-cleans a 31-day-old session, the 
+  ▎ user can show, restore, search, or browse via TUI (--tui). Zero data loss. 
+  ▎ Cross-machine: copy vault.db from machine A to machine B, run import again, 
+  ▎ and sessions from both machines coexist — no duplicates, no overwrites.
+
+  The cross-machine requirement means imports must be idempotent with UUID-based
+   dedup — same session imported twice is a no-op, different sessions merge
+  cleanly.
+
+  Step 3b — Technical/system constraints
+
+  Here's what I see as fixed constraints from the existing codebase and
+  decisions already made:
+
+  1. Go, CGO_ENABLED=1, -tags fts5 — must match capy's build chain
+  2. SQLite + sqlcipher via go-sqlite3 — same driver, same encryption approach
+  as existing store
+  3. CAPY_DB_KEY mandatory — vault DB encrypted at rest, same key infrastructure
+  4. Separate DB file from FTS knowledge store — already decided; different
+  retention (forever vs. tiered), different scope (global vs. per-project)
+  5. Claude Code JSONL format — the raw format capy already parses in
+  internal/session/parse.go
+  6. Cobra CLI — existing command scaffold, vault becomes a subcommand group
+  7. No external services — vault is local-only, no cloud sync, no accounts
+
+  Anything I'm missing, or anything here that's wrong?
+
+✻ Baked for 15s
+
+❯ 3. let's use a different variable for the vault db key, maybe CAPY_VAULT_KEY, 
+   so they can co-exist                                                         
+  5. not sure how much parsing we can re-use if we want to preserve all         
+  sessions in full                                                              
+
+● Good catches on both.
+
+  On 3: Makes sense — CAPY_VAULT_KEY keeps vault fully independent. A user can
+  run vault without ever touching capy's knowledge DB.
+
+  On 5: You're right to flag this. The existing parser is lossy by design — it
+  strips system-reminders, noise tags, filters tool results, merges progressive
+  snapshots, skips non-indexable sessions. That's fine for FTS indexing but
+  violates verbatim preservation.
+
+  Vault needs two layers:
+  - Raw storage: the JSONL bytes stored verbatim, byte-for-byte. This is the
+  backup/restore source of truth.
+  - Search index: parsed/extracted text for FTS. Some of the existing parser may
+   help here (JSONL line structure, timestamp extraction, session ID discovery),
+   but the filtering/stripping logic would need to be bypassed or reworked for
+  vault's search needs — you'd want to search tool outputs, system content, etc.
+   that the current parser deliberately discards.
+
+  So the reuse is partial at best: JSONL line-level parsing structure yes, the
+  filtering/turn-pair pipeline probably not.
+
+  Step 3 Progress:
+  - [x] 3a HMW framing confirmed
+  - [x] 3b who/persona confirmed
+  - [x] 3b success metric confirmed
+  - [x] 3b constraints confirmed
+  - [ ] 3c complexity classification confirmed
+  - [ ] 3c alternatives presented
+  - [ ] 3d direction chosen
+  - [ ] 3e assumptions and Not Doing presented
+
+  Step 3c — Complexity classification
+
+  This is non-trivial. It involves: a new DB with its own schema and encryption
+  lifecycle, a new storage layer (verbatim + FTS), cross-project discovery,
+  hook-driven auto-archive, a CLI subcommand group, a TUI, cross-machine merge
+  semantics, and a restore path that writes back to Claude Code's session
+  directories. Multiple valid approaches exist for storage format, search
+  indexing, and the boundary between vault and existing session code.
+
+  I'll explore 2-3 alternative directions using First Principles + Constraint
+  Mapping and summarize trade-offs. Sound right, or should I narrow the focus?
+
+✻ Crunched for 20s
+
+❯ Explore 2-3 alternative directions, yes, but consult with gemini via pal      
+  chat, discuss alternatives, trade-offs. Use multiple turns as needed until    
+  you reach a good agreement                                                    
+
+● Let me load the PAL tools and start a discussion with Gemini.
+
+● Starting the discussion with Gemini. I'll share the key context files so it
+  has full picture.
+
+  Called pal (ctrl+o to expand)
+
+● Good analysis from Gemini. I lean toward Direction 1 as well, but I have some
+  pushback on a few points. Let me continue the discussion.
+
+  Called pal (ctrl+o to expand)
+
+● Good convergence on the core architecture. Gemini's point about base64 hazards
+   in raw JSONL FTS is compelling — the lightweight extractor is worth the ~30
+  lines. Let me push the discussion further on hooks and a few remaining
+  questions.
+
+  Called pal (ctrl+o to expand)
+
+● Excellent catch on the compaction edge case. Let me push back on one point
+  though.
+
+  Called pal (ctrl+o to expand)
+
+● Good convergence. One more round to nail down the CLI/TUI structure and the
+  relationship between vault and the existing codebase.
+
+  Called pal (ctrl+o to expand)
+● Good discussion. I have a few points of disagreement with Gemini that I want
+  to settle before documenting. Let me verify one thing about the existing
+  store's DB setup.
+
+  Searched for 1 pattern, read 2 files (ctrl+o to expand)
+
+● Now I have the full picture on the encryption layer. On Gemini's suggestion to
+   extract a shared internal/db/ package — looking at the actual code, the
+  reusable parts are really just EncryptedDSN, URIEscapePassphrase,
+  URIEscapePath, and the corruption detection helpers. These are small, pure
+  functions. I disagree with creating a new internal/db/ package — vault can
+  just import these directly from store. Let me settle this and one more point.
+
+  Called pal (ctrl+o to expand)
+
+● Design discussion complete. Here's where we landed:
+
+  ---
+  Consensus from the Gemini discussion:
+
+  Architecture: Hybrid Blob + Lightweight FTS (Direction 1, refined)
+
+  ┌────────────────┬────────────────────────────────────────────────────────┐
+  │    Decision    │                       Resolution                       │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ Storage        │ Raw JSONL as uncompressed BLOB in SQLite (sqlcipher    │
+  │                │ page-level compression sufficient at 100KB-2MB scale)  │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ Primary key    │ uuid, one row per session                              │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ Merge          │ INSERT OR REPLACE resolved by end_time — latest        │
+  │ semantics      │ version wins                                           │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │                │ Lightweight single-pass scanner extracting text, tool  │
+  │ FTS approach   │ names, tool inputs; skipping base64/binary/noise.      │
+  │                │ Separate FTS5 table joined by uuid                     │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ Package        │ New internal/vault/ — decoupled, own DB lifecycle, own │
+  │                │  minimal JSON types (~20 lines)                        │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ Encryption     │ Import EncryptedDSN + helpers from store; own          │
+  │                │ RequireEncryptionKey reading CAPY_VAULT_KEY            │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ No shared      │ Premature — only 50 lines of reusable helpers, rule of │
+  │ internal/db/   │  three not met                                         │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ DB location    │ ~/.config/capy/vault.db, override via CAPY_VAULT_PATH  │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ Hook strategy  │ PreCompact (critical path) + Stop/SessionEnd; direct   │
+  │                │ call from hook router, no registry                     │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ Import         │ Explicit capy vault import, walks                      │
+  │                │ ~/.claude/projects/*/, supports custom path arg        │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ Metadata       │ project_path, git_branch (nullable), start/end time,   │
+  │                │ message_count, size_bytes, machine_id, content_hash    │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ CLI            │ import, search, list, show, restore, resume, stats,    │
+  │                │ export — all support --tui                             │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ TUI            │ bubbletea (Charm), three-panel layout, deferred to     │
+  │                │ later task                                             │
+  ├────────────────┼────────────────────────────────────────────────────────┤
+  │ Partial UUID   │ Yes, git-style short hash matching                     │
+  └────────────────┴────────────────────────────────────────────────────────┘
+
+  Step 3 Progress:
+  - [x] 3a HMW framing confirmed
+  - [x] 3b who/persona confirmed
+  - [x] 3b success metric confirmed
+  - [x] 3b constraints confirmed
+  - [x] 3c complexity classification confirmed
+  - [x] 3c alternatives presented
+  - [x] 3d direction chosen
+  - [ ] 3e assumptions and Not Doing presented
+
+  Step 3e — Assumptions and Not Doing
+
+  Assumptions:
+
+  1. Claude Code JSONL format is stable — the type/message/content structure
+  won't break in incompatible ways. If it does, the raw BLOB is still
+  restorable; only the FTS extractor needs updating.
+  2. PreCompact hook fires before file mutation — vault reads the file after
+  receiving the hook event but before Claude Code rewrites it. If the hook fires
+   after compaction, the critical use case breaks.
+  3. Session UUIDs are globally unique — cross-machine merge relies on UUID
+  collision being impossible at this scale.
+  4. ~/.claude/projects/ directory structure is stable — the mangled-path
+  convention won't change across Claude Code versions.
+  5. sqlcipher page-level compression is sufficient — no application-level zstd
+  needed for typical session sizes.
+
+  Not Doing:
+
+  - Cloud sync — vault is local-only; cross-machine is manual copy
+  - Multi-user access — single-user tool, no auth/sharing server
+  - Codex session support — mentioned as future; different format, different
+  discovery paths
+  - Session diffing — comparing versions of the same session across compaction
+  - Real-time watch mode — no filesystem watcher; hook-driven + explicit import
+  only
+  - Automatic cleanup/retention — vault archives forever; no TTL, no tiered
+  retention
+
+  Does this look right? Anything to add or adjust before I move to Step 4
+  (describing the design section by section)?
+
+✻ Crunched for 6m 56s
+
+※ recap: Designing the capy vault feature for archiving all Claude Code sessions in a global encrypted SQLite DB. We finished the design exploration with Gemini and are at Step 3e — waiting for your confirmation on assumptions and "Not Doing" list before I describe the full design. (disable recaps in /config)
+
+❯ looks correct                                                                 
+
+● Task Progress:
+  - [x] Step 1: Understand the current state of the project
+  - [x] Step 2: Check the documentation
+  - [x] Step 3: Refine the idea
+  - [ ] Step 4: Describe the design
+  - [ ] Step 5: Document the design
+  - [ ] Step 6: Create the task list
+
+  Step 4 — Design walkthrough, section by section.
+
+  ---
+  Section 1: Overview & Architecture
+
+  Vault is a new internal/vault/ package in capy that provides verbatim,
+  cross-project session archival with full-text search. It operates a separate
+  encrypted SQLite database (vault.db) at ~/.config/capy/vault.db (overridable
+  via CAPY_VAULT_PATH), independent of capy's per-project FTS knowledge store.
+
+  The architecture has four layers:
+
+  1. Storage layer (internal/vault/store.go) — owns the SQLite connection
+  lifecycle, schema, encryption (via CAPY_VAULT_KEY), and all CRUD operations.
+  Imports EncryptedDSN and corruption helpers from internal/store/ but manages
+  its own connection pool, WAL checkpointing, and prepared statements.
+  2. Scanner layer (internal/vault/scanner.go) — a single-pass JSONL reader that
+   extracts searchable text from session files. Defines its own minimal JSON
+  wire types (~20 lines). Extracts: message text, tool names, tool input
+  summaries (file paths, commands), subagent descriptions. Skips: base64,
+  binary, system-reminder noise, progressive snapshot duplicates (via message.id
+   dedup set).
+  3. Discovery layer (internal/vault/discovery.go) — walks ~/.claude/projects/*/
+   to find all session JSONL files across all projects. Handles metadata
+  extraction: project path (unmangled), timestamps, message count, file size.
+  Git branch and machine ID populated from execution context when available.
+  4. CLI/TUI layer (cmd/capy/vault.go) — cobra subcommand group (capy vault 
+  <cmd>). Each command supports a --tui flag that switches to an interactive
+  bubbletea interface. TUI is a later task; CLI comes first.
+
+  The hook system (internal/hook/) gains two new event handlers: PreCompact
+  (archive before compaction) and Stop (archive on session end). Both call
+  directly into the vault storage layer.
+
+  Does this section look right?
+
+✻ Crunched for 18s
+
+❯ 3. Discovery layer needs to take into account subagent jsonl file as well,    
+  which some sessions might have.                                               
+  4. TUI should be part of the design/implementation. It can be implemented     
+  last, but part of the same feature, since it's just a different interface,    
+  and will re-use everything built before it                                    
+
+● Good catches.
+
+  On 3: Right — sessions can have <uuid>/subagents/agent-*.jsonl files alongside
+   the main JSONL. Discovery needs to find those too. For verbatim storage, the
+  question is: do we store subagent files as part of the parent session's blob
+  (concatenated? zipped together?), or as separate rows linked to the parent
+  UUID? I'd lean toward storing the entire <uuid>/ directory contents as part of
+   the parent session — on restore, we recreate both the .jsonl and the
+  subagents/ directory. The scanner extracts text from subagent files too for
+  FTS.
+
+  On 4: Understood — TUI is the last task but part of this feature's design and
+  implementation plan.
+
+  Moving on.
+
+  ---
+  Section 2: Storage Model & Schema
+
+  The vault DB uses a single vault_sessions table for metadata + raw content,
+  and a separate FTS5 virtual table for search.
+
+  CREATE TABLE vault_sessions (
+      uuid          TEXT PRIMARY KEY,
+      project_path  TEXT NOT NULL,
+      git_branch    TEXT,
+      start_time    DATETIME,
+      end_time      DATETIME,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      size_bytes    INTEGER NOT NULL DEFAULT 0,
+      machine_id    TEXT NOT NULL,
+      content_hash  TEXT NOT NULL,
+      archived_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      raw_jsonl     BLOB NOT NULL
+  );
+
+  CREATE VIRTUAL TABLE vault_fts USING fts5(
+      content,
+      uuid UNINDEXED,
+      tokenize='porter unicode61'
+  );
+
+  Key decisions:
+
+  - raw_jsonl: the verbatim JSONL bytes of the main session file. No compression
+   — sqlcipher handles it at page level. For sessions with subagents, this
+  column stores a tar-like bundle (main JSONL + subagent files), with a simple
+  framing format so restore can reconstruct the directory structure.
+  - content_hash: SHA-256 of the raw bytes. Used for dedup on import — if hash
+  matches, skip.
+  - machine_id: stable host identifier (hostname or /etc/machine-id on Linux,
+  IOPlatformUUID on macOS). Populated at archive time for cross-machine
+  provenance.
+  - archived_at: when this version was stored, distinct from start_time/end_time
+   which come from session content.
+  - Merge semantics: on UUID conflict, compare end_time — latest wins.
+  Implemented as INSERT OR REPLACE with a pre-check, not blind replacement.
+  - FTS table: joined to vault_sessions by uuid. Content column holds the
+  scanner's extracted text. Updated whenever the session row is replaced.
+
+  Does this look right?
+
+✻ Baked for 19s
+
+❯ - we shouldn't merge blindly by end_time, since compacted sessions then might 
+   replace non-compacted ones                                                   
+  - does splitting sessions and messages into two tables give us any benefits?  
+                                                                                
+  how does the search work exactly? are we searching on raw jsonl, or is search 
+   indexed somehow into the virtual table?                                      
+
+● Three important points. Let me address each.
+
+  Merge semantics — you're right, end_time is wrong. Here's a better heuristic:
+  larger version wins.
+
+  - Session grows (more turns) → new version is larger → replace
+  - Session compacted → compacted version is smaller → skip, keep the fuller
+  archive
+  - Session compacted then continued → keep whichever is larger (most total
+  content preserved)
+
+  On conflict: if incoming.size_bytes >= existing.size_bytes → replace, else 
+  skip. Simple, predictable, maximizes preserved content. The only trade-off: a
+  compacted+continued session that's still smaller than the original won't
+  replace it — but that's the right call for an archival system.
+
+  Sessions + messages split — honest trade-off:
+
+  A vault_messages table would give us:
+  - Message-level search results — "show the exact exchange where X was
+  discussed" instead of just "this session mentions X". Much more useful for
+  long sessions.
+  - Direct TUI rendering — display messages without re-parsing the blob at view
+  time
+  - Structured queries — "show all messages where Bash tool was used", filter by
+   role
+
+  But costs:
+  - Import is heavier — must parse every JSONL into individual messages
+  - We still need the raw blob for verbatim restore (can't reconstruct exact
+  JSONL from parsed messages)
+  - Cross-machine merge is two tables instead of one
+
+  Search mechanics — how it actually works:
+
+  The FTS5 virtual table IS the search index. The scanner runs at import time,
+  extracts text from the JSONL, and inserts it into vault_fts. When you capy 
+  vault search "deployment pipeline", it queries:
+
+  SELECT s.uuid, s.project_path, s.start_time, ...
+  FROM vault_fts f
+  JOIN vault_sessions s ON f.uuid = s.uuid
+  WHERE vault_fts MATCH 'deployment pipeline'
+  ORDER BY rank
+
+  With a messages table, we could instead index per-message and return
+  message-level hits — which is meaningfully better UX. The search result would
+  show the specific exchange, not just "session X matched somewhere".
+
+  My revised take: the messages table is worth it. The search and TUI benefits
+  are significant, and the cost (heavier import, two-table merge) is manageable.
+   Schema would look like:
+
+  vault_sessions  — metadata + raw_jsonl blob (for restore)
+  vault_messages  — uuid, line_num, role, content_text, tool_name, timestamp
+  vault_fts       — FTS5 over vault_messages content
+
+  What's your instinct — single table or split?
+
+✻ Churned for 59s
+
+❯ split                                                                         
+  also, maybe we should have two columns for session file and subagent files?   
+  raw_session_jsonl blob, raw_subagents_jsonl array of blobs?                   
+
+● Good instinct. SQLite doesn't natively support array-of-blobs though, so I'd
+  go one step further — a separate vault_subagents table:
+
+  vault_sessions (
+      uuid, project_path, git_branch, start_time, end_time,
+      message_count, size_bytes, machine_id, content_hash,
+      archived_at, raw_jsonl BLOB
+  )
+
+  vault_subagents (
+      session_uuid TEXT REFERENCES vault_sessions(uuid),
+      agent_id     TEXT NOT NULL,       -- e.g. "agent-abc123"
+      agent_type   TEXT,                -- from .meta.json
+      description  TEXT,                -- from .meta.json
+      raw_jsonl    BLOB NOT NULL,
+      PRIMARY KEY (session_uuid, agent_id)
+  )
+
+  vault_messages (
+      session_uuid  TEXT,
+      subagent_id   TEXT,               -- NULL for main session messages
+      line_num      INTEGER,
+      role          TEXT,               -- user/assistant/system
+      content_text  TEXT,
+      tool_name     TEXT,
+      timestamp     DATETIME,
+      PRIMARY KEY (session_uuid, subagent_id, line_num)
+  )
+
+  -- FTS5 over messages
+  CREATE VIRTUAL TABLE vault_fts USING fts5(
+      content_text,
+      session_uuid UNINDEXED,
+      subagent_id  UNINDEXED,
+      line_num     UNINDEXED,
+      tokenize='porter unicode61'
+  );
+
+  Benefits:
+  - Restore reconstructs the exact directory structure: <uuid>.jsonl from
+  vault_sessions.raw_jsonl, <uuid>/subagents/<agent_id>.jsonl +
+  <agent_id>.meta.json from vault_subagents
+  - Search hits both main session and subagent content, with results pointing to
+   the specific message
+  - TUI can show subagent conversations nested under their parent session
+  - Cross-machine merge is clean — INSERT OR IGNORE on all three data tables
+
+  The vault_messages table has a nullable subagent_id — NULL means main session,
+   non-NULL links to vault_subagents.agent_id. This way search results can tell
+  you "this match was in a subagent task" vs the main conversation.
+
+  Does this schema direction look right before I move to the next section?
+
+✻ Churned for 18s
+
+❯ looks good, continue pal chat to get a second opinion from gemini             
+
+  Called pal (ctrl+o to expand)
+
+● Gemini raised several good points. The NULL composite PK issue and the
+  external content FTS5 optimization are solid. But I want to push back on the
+  merge concern — let me think through this carefully.
+
+  Called pal (ctrl+o to expand)
+
+● Gemini's Option C is the right call. The search index pollution argument
+  clinches it — multi-snapshot in a single table would return duplicate FTS hits
+   for every version of the same session.
+
+  Here's the refined schema after the full discussion:
+
+  Section 2 (revised): Storage Model & Schema
+
+  Five tables, clean separation of concerns:
+
+  -- Active state: 1 row per session, feeds messages + FTS
+  CREATE TABLE vault_sessions (
+      uuid          TEXT PRIMARY KEY,
+      project_path  TEXT NOT NULL,
+      git_branch    TEXT,
+      start_time    DATETIME,
+      end_time      DATETIME,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      size_bytes    INTEGER NOT NULL DEFAULT 0,
+      machine_id    TEXT NOT NULL,
+      content_hash  TEXT NOT NULL,
+      archived_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      raw_jsonl     BLOB NOT NULL
+  );
+
+  -- Subagent files, cascade-deleted when parent session is replaced
+  CREATE TABLE vault_subagents (
+      session_uuid TEXT NOT NULL REFERENCES vault_sessions(uuid) ON DELETE
+  CASCADE,
+      agent_id     TEXT NOT NULL,
+      agent_type   TEXT,
+      description  TEXT,
+      raw_jsonl    BLOB NOT NULL,
+      PRIMARY KEY (session_uuid, agent_id)
+  );
+
+  -- Parsed messages for search + TUI display
+  CREATE TABLE vault_messages (
+      session_uuid  TEXT NOT NULL REFERENCES vault_sessions(uuid) ON DELETE
+  CASCADE,
+      subagent_id   TEXT NOT NULL DEFAULT '',  -- empty string for main session
+      line_num      INTEGER NOT NULL,
+      role          TEXT,
+      content_text  TEXT,
+      tool_name     TEXT,
+      timestamp     DATETIME,
+      PRIMARY KEY (session_uuid, subagent_id, line_num)
+  );
+
+  -- FTS5 external content table — no duplicate storage
+  CREATE VIRTUAL TABLE vault_fts USING fts5(
+      content_text,
+      session_uuid UNINDEXED,
+      subagent_id  UNINDEXED,
+      line_num     UNINDEXED,
+      content='vault_messages',
+      content_rowid='rowid',
+      tokenize='porter unicode61'
+  );
+
+  -- Cold storage: append-only snapshots from PreCompact hook
+  CREATE TABLE vault_snapshots (
+      uuid           TEXT NOT NULL,
+      content_hash   TEXT NOT NULL,
+      created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+      trigger_reason TEXT NOT NULL,  -- 'pre_compact', 'manual', etc.
+      size_bytes     INTEGER NOT NULL DEFAULT 0,
+      raw_jsonl      BLOB NOT NULL,
+      PRIMARY KEY (uuid, content_hash)
+  );
+
+  Key design points:
+
+  - vault_sessions is the active, searchable state. One row per session. Merge:
+  larger size_bytes wins. ON DELETE CASCADE to messages and subagents ensures
+  clean replacement.
+  - vault_snapshots is cold storage. PreCompact hook writes here before
+  compaction destroys content. Append-only, no FTS, no cascade. Exists purely
+  for point-in-time recovery. (uuid, content_hash) PK prevents duplicate
+  snapshots.
+  - vault_messages uses empty string sentinel for subagent_id instead of NULL
+  (avoids SQLite composite PK gotcha).
+  - vault_fts uses FTS5 external content mode — indexes vault_messages without
+  duplicating text storage. Requires triggers to keep in sync.
+  - Restore reads from vault_sessions (current state). A future restore 
+  --snapshot flag could pull from vault_snapshots instead.
+
+  Does this final schema look right?
+
+✻ Cogitated for 2m 34s
+
+❯ What's your take, does this work well for all of our use-cases? Are there any 
+   downsides?                                                                   
+
+● Let me think through this honestly against every use case before we lock it
+  in.
+
+  What works well:
+
+  - Archive + restore: Raw blobs in vault_sessions + vault_subagents give
+  byte-perfect restore. The schema cleanly reconstructs the original directory
+  structure.
+  - Search: FTS5 external content over vault_messages gives message-level
+  results without triple-storing text. Metadata filtering (project, date,
+  branch) via JOIN to vault_sessions is straightforward.
+  - Cross-machine merge: vault_snapshots uses (uuid, content_hash) PK → INSERT 
+  OR IGNORE. vault_sessions uses size-based conflict resolution. Both tables
+  need to be merged, but the mechanics are clean.
+  - Hooks: PreCompact writes to vault_snapshots (cold) + vault_sessions
+  (active). SessionEnd updates vault_sessions. CASCADE keeps messages/FTS in
+  sync.
+  - Snapshot safety net: The whole "undermining PreCompact" concern is resolved
+  — pre-compaction content always survives in vault_snapshots.
+
+  Downsides and concerns I see:
+
+  1. vault_messages is a lossy view, not the session. For show and TUI viewing,
+  users expect to see the full conversation faithfully rendered — thinking
+  blocks, tool results, system messages, everything. But vault_messages only
+  stores what the scanner extracted (text, tool names). For accurate session
+  replay, we'd need to parse raw_jsonl on the fly at view time. So
+  vault_messages serves search and quick listing, but the viewer should work
+  from the blob. This means the messages table is purely a search optimization,
+  not the display source of truth.
+  2. Storage overhead. Every session's text content is stored twice: once in the
+   raw JSONL blob, once extracted in vault_messages.content_text. For a 1MB
+  session, that's roughly 500KB-1MB of additional extracted text. FTS5 external
+  content avoids a third copy, but the two-copy cost is real. Across hundreds of
+   sessions, this adds up.
+  3. Import performance. Bulk importing hundreds of sessions means: read file,
+  hash, insert blob, parse every JSONL line into messages, insert each message
+  row, fire FTS triggers. This will be slow without careful batching in
+  transactions.
+  4. FTS external content triggers add maintenance burden. Insert/update/delete
+  triggers must stay in sync. If anything bypasses the triggers, the FTS index
+  goes stale silently.
+  5. The "larger wins" merge has one remaining gap. Cross-machine scenario:
+  Machine A archived a session at 500KB. Machine B compacted the same session
+  (PreCompact snapshot saved on B), then continued to 600KB. When merging A's
+  vault into B: B's 600KB wins in vault_sessions (correct), and B's
+  vault_snapshots has the pre-compaction version (correct). But if we merge B
+  into A instead, A has 500KB in vault_sessions and B's 600KB would overwrite it
+   — fine. But B's snapshot needs to merge too, which it does via INSERT OR 
+  IGNORE. So this actually works, as long as the merge operation handles all
+  tables.
+
+  The biggest question mark is #1 — is vault_messages worth the storage and
+  complexity if the viewer needs to parse the blob anyway? The alternative: drop
+   vault_messages entirely, use a single FTS5 table populated by the scanner
+  (non-external-content), and parse the blob at view time. Simpler schema, less
+  storage, but coarser search (session-level, not message-level).
+
+  What's your take — is message-level search important enough to justify the
+  extra table?
+
+✻ Brewed for 1m 9s
+
+※ recap: Designing a vault feature for capy that archives all Claude Code sessions verbatim with search and restore. We're in Step 4 of the design skill, refining the schema — the open question is whether a vault_messages table is worth the overhead for message-level search. (disable recaps in /config)
+
+❯ Not sure, let's continue pal chat?                                            
+
+  Called pal (ctrl+o to expand)
+
+● That's a clean solution from Gemini. FTS5 with UNINDEXED columns for
+  turn_index and role gives us message-level search results without a separate
+  messages table. Let me verify one concern before presenting this.
+  Called pal (ctrl+o to expand)
+
+● Design discussion with Gemini is complete. We've converged on a solid
+  architecture. Here's the final Section 2:
+
+  ---
+  Section 2 (final): Storage Model & Schema
+
+  Four tables: 3 real + 1 FTS5 virtual.
+
+  vault_sessions — active state, one row per session. Holds metadata and the raw
+   JSONL blob for verbatim restore. Merge conflict: larger size_bytes wins.
+  Primary key is uuid.
+
+  vault_subagents — one row per subagent file, linked to parent session via ON 
+  DELETE CASCADE. Stores raw subagent JSONL + metadata from .meta.json. On
+  restore, reconstructs <uuid>/subagents/agent-*.jsonl.
+
+  vault_snapshots — append-only cold storage. The PreCompact hook writes here
+  before compaction destroys content. PK is (uuid, content_hash) — deduped,
+  never overwritten. No FTS index, no cascade. Exists purely for point-in-time
+  recovery.
+
+  vault_fts — FTS5 virtual table with one row per turn (not per session). Uses
+  UNINDEXED columns for session_uuid, subagent_id, turn_index, and role — these
+  are stored and returned in queries but not tokenized. Gives message-level
+  search resolution with snippet() support, without a separate messages table.
+
+  Key mechanics:
+  - Scanner inserts one FTS row per turn at import time (main + subagent turns)
+  - subagent_id uses empty string sentinel '' for main session turns (avoids
+  NULL PK issues)
+  - Session replacement is transactional: DELETE FROM vault_fts WHERE 
+  session_uuid = ? → insert new FTS rows → INSERT OR REPLACE INTO 
+  vault_sessions, all in one sql.Tx
+  - TUI search returns turn-level results via snippet() + turn_index, then
+  parses raw_jsonl on the fly for faithful rendering
+
+  Does this final version look right to you?
+
+✻ Worked for 2m 8s
+
+❯ yes                                                                           
+
+● Section 3: Session Discovery & Import
+
+  The capy vault import command discovers and archives all Claude Code sessions
+  across all projects on the machine.
+
+  Discovery walks ~/.claude/projects/*/ (all mangled project directories). For
+  each directory, it finds *.jsonl files (main sessions) and checks for
+  corresponding <uuid>/subagents/agent-*.jsonl directories. It also accepts a
+  --path <dir> argument for importing from custom locations (USB backup, another
+   machine's copied .claude/ directory).
+
+  Project path unmangling reverses the --delimited directory name back to a
+  filesystem path. This is lossy in theory (/ and . both become -), but good
+  enough for display. During hook-driven archival (PreCompact/Stop), we get the
+  accurate project path from os.Getwd() — unmangling is only the fallback for
+  bulk historical imports where we don't have execution context.
+
+  Metadata extraction at import time:
+  - uuid — from the filename
+  - project_path — unmangled from directory name (hooks provide accurate path)
+  - start_time / end_time — from first and last JSONL line timestamps
+  - message_count — count of user + assistant entries
+  - size_bytes — file size on disk
+  - content_hash — SHA-256 of raw bytes
+  - git_branch — NULL for bulk imports; hooks can provide via git rev-parse 
+  --abbrev-ref HEAD
+  - machine_id — stable host identifier at archive time
+
+  Idempotent import logic:
+  1. Compute content_hash of the file
+  2. If UUID exists in vault_sessions with same hash → skip (already archived)
+  3. If UUID exists with different hash and incoming size_bytes >= existing →
+  replace (session grew)
+  4. If UUID exists with different hash and incoming size_bytes < existing →
+  skip (compacted version, don't overwrite)
+  5. If UUID doesn't exist → insert
+
+  The entire import of a single session (blob + subagents + FTS rows) runs in
+  one transaction. Bulk imports batch multiple sessions but commit per-session
+  to avoid holding long locks.
+
+  Does this look right?
+
+✻ Worked for 15s
+
+❯ show this to gemini as well, let's get a second opinion                       
+
+  Called pal (ctrl+o to expand)
+
+● Good feedback. Here's my take on Gemini's answers:
+
+  1. Batch transactions for bulk import — Agreed. Batch ~50 sessions per tx for
+  bulk, per-session for hooks. The fallback-to-row-by-row on batch failure is a
+  nice touch.
+
+  2. Store mangled path, unmangle at display time — Agreed. This is cleaner than
+   lossy transformation at write time. Hook imports store the accurate
+  os.Getwd() result (which is unmangled naturally). Bulk imports store the raw
+  mangled directory name. The column becomes "however we got the path" and
+  display logic handles formatting.
+
+  3. Hash only the main session file — Agreed. The reasoning is sound: subagent
+  activity always produces a tool_result in the main session file, so the main
+  file's hash changes whenever subagents do work.
+
+  4. vault_meta table for machine ID — Agreed. OS-level identifiers are fragile.
+   A self-generated UUIDv4 stored in the DB is stable, portable, and avoids
+  platform-specific code. The vault_meta table also gives us a place for future
+  config (schema version, etc.).
+
+  One thing I'd push back on: the vault_meta key-value table doesn't need to
+  exist as a separate thing from initialization. We can check for the machine_id
+   row on first DB open and generate it if missing — no separate capy vault init
+   command needed.
+
+  Updated Section 3 with these refinements:
+
+  Section 3 (revised): Session Discovery & Import
+
+  - Discovery walks ~/.claude/projects/*/, finds *.jsonl + <uuid>/subagents/
+  directories. Supports --path <dir> for custom locations.
+  - Project path: hooks store accurate os.Getwd(), bulk imports store the raw
+  mangled directory name. Unmangling happens at display time only.
+  - content_hash: SHA-256 of the main session file only (subagent changes always
+   touch the main file).
+  - machine_id: UUIDv4 generated on first DB open, stored in vault_meta table,
+  reused thereafter.
+  - Idempotent logic: same hash → skip; larger incoming → replace; smaller
+  incoming → skip; new → insert.
+  - Transactions: bulk imports batch ~50 sessions per tx (with per-row fallback
+  on failure); hook imports commit per-session.
+
+  Does this look good?
+
+✻ Churned for 1m 18s
+
+※ recap: Designing a "capy vault" feature for verbatim session archival with search, restore, and TUI. We're walking through the design section by section — finished overview, schema, and import. Next up is describing the hook integration and FTS scanner sections. (disable recaps in /config)
+
+❯ yes                                                                           
+
+● Section 4: FTS Scanner
+
+  The scanner is a single-pass JSONL reader in internal/vault/scanner.go that
+  extracts searchable text for the FTS5 index. It defines its own minimal JSON
+  wire types (~20 lines) decoupled from internal/session/parse.go.
+
+  What it extracts per turn:
+  1. All "text" values from content blocks (user and assistant messages)
+  2. Tool use names (e.g. "Bash", "Read", "Edit") — so you can search "which
+  session used Bash heavily"
+  3. Tool input summaries — file paths from Read/Edit, commands from Bash,
+  queries from search tools
+  4. Subagent descriptions and types
+
+  What it skips:
+  - Base64 and binary content (images, compressed state)
+  - System-reminder tags and their contents
+  - Progressive snapshot duplicates — tracked via a seen map keyed by message.id
+   + block index. If a content block was already processed under the same
+  message ID, skip it.
+  - JSON structural noise (keys, braces, type markers)
+
+  Output: For each turn, the scanner produces a ScanResult struct:
+
+  type ScanResult struct {
+      TurnIndex   int
+      Role        string    // "user", "assistant", "system"
+      SubagentID  string    // "" for main session
+      ContentText string    // extracted searchable text
+      Timestamp   time.Time
+  }
+
+  The import pipeline calls the scanner once per session file (and once per
+  subagent file), then inserts one FTS row per ScanResult:
+
+  INSERT INTO vault_fts (content_text, session_uuid, subagent_id, turn_index,
+  role)
+  VALUES (?, ?, ?, ?, ?)
+
+  Performance characteristics: Single-pass, streaming, O(n) in file size. The
+  seen map for dedup is bounded by the number of unique message IDs in the
+  session (typically hundreds, not thousands). No full parse into turn pairs —
+  just line-by-line extraction.
+
+  Does this look right?
+
+✻ Cogitated for 15s
+
+❯ yes                                                                           
+
+● Section 5: Hook Integration
+
+  Capy's hook system currently handles PreToolUse events. Vault adds two new
+  event types: PreCompact and Stop (session end).
+
+  PreCompact is the critical path — it fires before /compact rewrites the
+  session file. The hook:
+  1. Receives session file path from the event payload (stdin JSON)
+  2. Reads the raw JSONL from disk (before compaction destroys it)
+  3. Writes to vault_snapshots (cold storage, append-only — preserves
+  pre-compaction content)
+  4. Writes/replaces vault_sessions + FTS rows (active state — subject to
+  size-based merge logic)
+  5. Discovers and archives subagent files if present
+
+  Stop (session end) fires when a session completes. Lower priority than
+  PreCompact but keeps the vault fresh without requiring explicit import runs.
+  Same archival logic as import: idempotent, size-based merge, transactional.
+
+  Hook wiring: Both events route through internal/hook/ with direct calls into
+  the vault package — no dynamic registry. The hook router switches on event
+  type:
+  - PreCompact, Stop → vault.ArchiveSession(payload)
+  - PreToolUse → existing logic
+
+  Environment: Hooks run as short-lived capy hook <event> subprocesses.
+  CAPY_VAULT_KEY must be available in the shell environment (exported in
+  .zshrc/.bashrc). The hook process opens vault.db, does its work, and exits.
+  Each invocation is independent — no long-lived connection pool.
+
+  Metadata from execution context: Because hooks execute inside the project
+  directory, they can capture accurate metadata that bulk import cannot:
+  - os.Getwd() → accurate project path (no unmangling needed)
+  - git rev-parse --abbrev-ref HEAD → current branch
+
+  Failure mode: If the hook fails (vault DB locked, missing key, disk full), it
+  logs a warning and exits non-zero. It must not block Claude Code's operation —
+   the session continues regardless. The session can be recovered later via capy
+   vault import.
+
+  Does this look right?
+
+✻ Churned for 16s
+
+❯ There was a reason why we didn't use session-end hooks with current capy      
+  session capture functionality. I think we should re-use the same logic for    
+  indexing decisions                                                            
+
+● Good point — let me check why session-end hooks weren't used for the existing
+  sweep functionality.
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Found it. The key decision is in docs/done/sessionflow-rag/design.md lines
+  29-33:
+
+  ▎ Session-end hook — rejected. The hook is a short-lived process; goroutines 
+  ▎ die when it exits. Also risks DB lock contention with the dying MCP server.
+
+  ▎ MCP server startup — chosen. The server is a long-lived process with safe DB
+  ▎  access. A background goroutine doesn't block Claude Code's UI.
+
+  The reasoning: hooks are short-lived processes, and there's a DB lock
+  contention risk with the MCP server shutting down at the same time. The
+  existing sweep runs at MCP server startup instead, indexing the previous
+  session (one-session delay).
+
+  For vault, the same logic applies — but with a twist. Vault has its own
+  separate DB (vault.db), so there's no lock contention with capy's knowledge
+  DB. However, the short-lived process concern remains: the Stop hook fires
+  during shutdown, and doing I/O-heavy work (read JSONL, hash, insert blob + FTS
+   rows) in a dying process is risky.
+
+  Revised Section 5: Hook Integration
+
+  Two archival triggers, matching the existing pattern:
+
+  PreCompact — remains a hook. This is the critical "last chance" path and
+  there's no alternative. The hook is a short-lived capy hook pre_compact
+  process that reads the file, writes to vault_snapshots + vault_sessions. It
+  operates on vault.db (separate from capy's knowledge DB), so no lock
+  contention with the MCP server.
+
+  MCP server startup — replaces the Stop/SessionEnd hook, same pattern as
+  existing session sweep. On server boot, a background goroutine runs vault
+  import for the current project's session directory. This captures sessions
+  that ended since last boot (including any that were auto-cleaned between
+  sessions). One-session delay is acceptable — same trade-off the existing sweep
+   makes.
+
+  capy vault import — the explicit bulk import remains for onboarding,
+  cross-machine scenarios, and catching anything the startup sweep missed.
+
+  This means vault archival happens at three points:
+  1. PreCompact hook (immediate, critical path)
+  2. MCP server startup (background, current project only)
+  3. Explicit capy vault import (manual, all projects)
+
+  Does this revised approach look right?
+
+✻ Brewed for 32s
+
+❯ yes                                                                           
+
+● Section 6: CLI Commands
+
+  Vault adds a capy vault subcommand group to the existing cobra CLI. All
+  commands require CAPY_VAULT_KEY to be set.
+
+  capy vault import [--path <dir>] [--project <filter>]
+  Scans ~/.claude/projects/*/ (or --path directory) and archives all sessions.
+  Dry-run by default (shows what would be imported), --force to actually import.
+   Progress output: per-session status (new, updated, skipped, error). Batches
+  ~50 sessions per transaction.
+
+  capy vault search <query> [--project <filter>] [--after <date>] [--before 
+  <date>] [--role <user|assistant>]
+  Full-text search via FTS5. Returns turn-level results with snippet() context.
+  Joins to vault_sessions for metadata filtering. Results show: session UUID
+  (short), project, date, matching snippet. Default: most relevant first (BM25
+  rank).
+
+  capy vault list [--project <filter>] [--limit N]
+  Lists archived sessions with metadata: UUID (short), project path, date range,
+   message count, size. Default: reverse chronological (most recent first).
+
+  capy vault show <session_id>
+  Displays full session content. Parses raw_jsonl on the fly for faithful
+  rendering (thinking blocks, tool results, formatting). Supports partial UUID
+  matching (git-style, 6-8 chars). Pipes through pager ($PAGER or less).
+
+  capy vault restore <session_id> [--output <path>]
+  Writes the raw JSONL back to disk. Default location: the original Claude Code
+  session path (~/.claude/projects/<mangled>/). Also restores subagent files
+  from vault_subagents into the <uuid>/subagents/ directory. If the file already
+   exists at the target, prompts before overwriting. --snapshot flag (future) to
+   restore from vault_snapshots instead.
+
+  capy vault resume <session_id>
+  Convenience wrapper: restores the session file to its original location, then
+  execs claude --resume <session_id>. Errors if the original project directory
+  doesn't exist on this machine.
+
+  capy vault stats
+  Reports: total sessions, total size, per-project breakdown, oldest/newest
+  session, snapshot count.
+
+  --tui flag
+  Available on all commands. Switches to an interactive bubbletea interface. On
+  list: browsable session list with preview. On search: interactive search with
+  live results. On show: scrollable viewer with turn navigation. Implemented as
+  the final task in the feature.
+
+  Does this look right?
+
+✻ Crunched for 18s
+
+❯ yes                                                                           
+
+● Section 7: TUI Interface
+
+  The TUI is a bubbletea (Charm) application activated by --tui on any vault
+  command. It provides an interactive alternative to the CLI output.
+
+  Layout: Three-panel design using bubbles components:
+  - Left panel (bubbles/list): session list, grouped by project. Shows short
+  UUID, date, message count, project name. Filterable by typing — fuzzy match on
+   project name and session content.
+  - Right panel (bubbles/viewport): session content viewer. Parses raw_jsonl on
+  the fly and renders with Human/Assistant formatting, markdown rendering via
+  glamour (Charm's markdown renderer), and syntax-highlighted code blocks.
+  - Bottom bar: mode indicator (browse/search/filter), keybindings help, current
+   filter state.
+
+  Modes:
+  - Browse (default on list --tui): navigate sessions, preview on selection,
+  Enter to open full viewer.
+  - Search (default on search --tui): live search input, results update as you
+  type (debounced FTS5 queries). Results show snippet context with highlighted
+  matches. Enter on a result opens the session viewer scrolled to turn_index.
+  - View (default on show --tui): full session viewer with vim-style navigation
+  (j/k scroll, g/G top/bottom, / for in-viewer search). --show-tools and
+  --show-thinking flags control whether tool results and thinking blocks are
+  rendered.
+
+  Key bindings:
+  - q / Esc: back/quit
+  - /: search within current view
+  - f: filter by project
+  - r: restore selected session
+  - c: copy selected message to clipboard
+  - R: resume selected session (restore + exec claude)
+
+  Dependencies: bubbletea, bubbles (list, viewport, textinput), lipgloss
+  (styling), glamour (markdown rendering). All from the Charm ecosystem —
+  well-maintained, widely used in Go TUI tools.
+
+  Package structure: internal/vault/tui/ with separate files for each model
+  (list model, viewer model, search model) and a root app.go that composes them.
+   The TUI imports from internal/vault/ for data access — same store and scanner
+   interfaces as the CLI.
+
+  Does this look right?
+
+✻ Worked for 16s
+
+❯ yes                                                                           
+
+● Section 8: Cross-Machine Merge
+
+  The cross-machine workflow: copy vault.db from machine A to machine B, run
+  capy vault import on B, and get sessions from both machines without duplicates
+   or data loss.
+
+  How it works in practice:
+
+  1. User copies vault.db from machine A → machine B (replaces B's existing
+  vault.db, or B has no vault yet)
+  2. On machine B, run capy vault import — this scans B's local
+  ~/.claude/projects/*/
+  3. B's local sessions get inserted into the vault that already contains A's
+  sessions
+  4. UUID-based dedup prevents duplicates. Size-based merge keeps the fuller
+  version.
+
+  Merge behavior per table:
+
+  - vault_sessions: If UUID doesn't exist → insert. If UUID exists with same
+  content_hash → skip. If UUID exists with different hash → keep larger
+  size_bytes version (replace entire row within a transaction: delete old FTS
+  rows, insert new session + FTS rows).
+  - vault_subagents: Cascades with parent session via ON DELETE CASCADE. When a
+  session is replaced, its subagents are replaced too.
+  - vault_snapshots: INSERT OR IGNORE on (uuid, content_hash). Snapshots from
+  both machines accumulate — append-only, never overwritten.
+  - vault_fts: Rebuilt as part of session insert/replace transactions. No
+  independent merge needed.
+
+  Machine provenance: Each session carries a machine_id (UUIDv4 stored in
+  vault_meta). After copying vault.db from A to B, B's vault_meta.machine_id
+  gets overwritten with A's value. On first import, B regenerates its own
+  machine_id (since the meta table already has one from A).
+
+  Actually — that's a problem. The vault_meta machine_id would be A's after the
+  copy. We should handle this: on import, if the current OS machine identity
+  differs from what's in vault_meta, generate a new machine_id and store it
+  alongside (or just let new sessions get tagged with the new ID). The simplest
+  approach: vault_meta stores the local machine_id, and it's regenerated if the
+  DB was clearly copied from elsewhere (e.g., a capy vault init flag, or just
+  always generate on first local import if no local sessions exist yet).
+
+  Simpler: don't store machine_id in vault_meta at all. Instead, compute it at
+  runtime from a local file ~/.config/capy/machine-id (generated once, persists
+  across DB copies). This way, copying vault.db doesn't carry the machine
+  identity — each machine has its own stable ID independent of the database.
+
+  Does this revised approach to machine_id look right?
+
+✻ Sautéed for 19s
+
+❯ continue pal chat to discuss this                                             
+  Called pal (ctrl+o to expand)
+
+● Gemini confirmed Option B and caught the Docker edge case. The fix is clean:
+  add a CAPY_MACHINE_ID env var override, falling back to
+  ~/.config/capy/machine-id file.
+
+  Section 8 (revised): Cross-Machine Merge
+
+  Merge behavior per table is unchanged from what you already confirmed. The
+  machine_id resolution is:
+
+  1. CAPY_MACHINE_ID env var → if set, use it (Docker/CI environments)
+  2. ~/.config/capy/machine-id file → if exists, use it
+  3. Neither exists → generate UUIDv4, write atomically to the file, use it
+
+  Machine identity lives outside the database — copying vault.db doesn't carry
+  the machine_id. Each machine tags its imports with its own stable ID.
+
+  Does this look right?
+
+✻ Worked for 52s
+
+❯ yes                                                                           
+
+● All 8 sections confirmed. Moving to Step 5 — writing the design and
+  implementation docs.
+
+  Task Progress:
+  - [x] Step 1: Understand the current state of the project
+  - [x] Step 2: Check the documentation
+  - [x] Step 3: Refine the idea
+  - [x] Step 4: Describe the design
+  - [ ] Step 5: Document the design
+  - [ ] Step 6: Create the task list
+
+  Let me check if the Go profile has required sections for design docs.
+
+  Read 1 file, listed 2 directories (ctrl+o to expand)
+
+● Now writing the design doc, implementation plan, and tasks. These are
+  substantial documents — let me write them to files.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Write(docs/wip/vault/design.md)
+  ⎿  Wrote 348 lines to docs/wip/vault/design.md
+       1 # Vault — Design Document
+       3 > **Status:** Draft
+       4 > **Created:** 2026-05-28
+       6 ## Problem
+       7 
+         ible. Content is lost to compaction (`/compact` rewrites the JSO
+         NL file), auto-cleanup (30-day default retention), and accidenta
+         past conversations globally, and no restore mechanism once a ses
+         sion file is gone.
+      10 ### How Might We
+     … +502 lines (ctrl+o to expand)
+
+● Write(docs/wip/vault/implementation.md)
+  ⎿  Wrote 303 lines to docs/wip/vault/implementation.md
+       1 # Vault — Implementation Plan
+       2 
+       3 > **Design:** [./design.md](./design.md)
+       4 > **Created:** 2026-05-28
+       5 
+       7 
+       8 ```
+       9 internal/vault/
+      10   store.go         — VaultStore: SQLite connection lifecycle, sc
+         hema, CRUD operations
+     … +389 lines (ctrl+o to expand)
+
+● Now the task list.
+
+● Write(docs/wip/vault/tasks.md)
+  ⎿  Wrote 124 lines to docs/wip/vault/tasks.md
+       1 # Tasks: Vault
+       2 
+       3 > Design: [./design.md](./design.md)
+       5 > Status: pending
+       6 > Created: 2026-05-28
+       7 > Not Doing: Cloud sync, multi-user access, Codex sessions, sess
+         ion diffing, real-time watch, automatic cleanup
+       8 
+         on lifecycle
+      10 - **Status:** pending
+     … +224 lines (ctrl+o to expand)
+
+● Now let me index the key architecture decisions to capy's knowledge base.
+
+  Called capy (ctrl+o to expand)
+
+● Task Progress:
+  - [x] Step 1: Understand the current state of the project
+  - [x] Step 2: Check the documentation
+  - [x] Step 3: Refine the idea
+  - [x] Step 4: Describe the design
+  - [x] Step 5: Document the design
+  - [x] Step 6: Create the task list
+
+  All done. Three files created:
+
+  - docs/wip/vault/design.md — full design document
+  - docs/wip/vault/implementation.md — detailed implementation plan
+  - docs/wip/vault/tasks.md — 7 tasks with subtasks, dependencies, and
+  verification steps
+
+  Recommended next step: Run /kk:review-design vault to get an independent
+  review of the design docs before implementation.
+
+✻ Worked for 5m 32s
