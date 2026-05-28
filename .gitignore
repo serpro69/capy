@@ -45,3 +45,6 @@ bench-results/
 
 # benchmark scaffold as a symlink for easier development
 capy-bench
+
+# external stuff
+/ext-*
