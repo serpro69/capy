@@ -19,7 +19,9 @@ Any Claude Code user, even if they don't use other capy features (MCP server, co
 
 ## Success Criteria
 
-A user runs `capy vault import`, and every session across all projects is archived verbatim. After Claude Code auto-cleans a 31-day-old session, the user can `show`, `restore`, `search`, or browse via TUI (`--tui`). Cross-machine: run `capy vault checkpoint` on machine A, copy `vault.db` to machine B (same `CAPY_VAULT_KEY` required), run `import` again, and sessions from both machines coexist — no duplicates, no overwrites.
+A user runs `capy vault import`, and every session across all projects is archived verbatim. After Claude Code auto-cleans a 31-day-old session, the user can `show`, `restore`, `search`, or browse via TUI (`--tui`). Cross-machine: run `capy vault checkpoint` on machine A, copy `vault.db` to machine B (same `CAPY_VAULT_KEY` required), run `import` again. Copying `vault.db` **replaces** B's vault entirely (a `merge --from` command is deferred — see [Future Improvements](#future-improvements)), so "sessions from both machines coexist" holds only when either (a) B had no prior vault, or (b) B's own sessions still exist on disk and are re-archived by the post-copy `import`. A machine-ID mismatch warning (see [Cross-Machine Merge](#cross-machine-merge)) guards against silent overwrite of unarchived local sessions.
+
+**Single-version archival:** The vault stores exactly one (latest-largest) version per session UUID. Re-importing a larger-but-divergent variant (a forked or independently-compacted copy that is not a strict superset) UPDATEs the row in place and discards the previous verbatim blob — this applies on the same machine too, not only cross-machine. Append-only history (`vault_snapshots`) is deferred — see [Future Improvements](#future-improvements).
 
 **Data-loss guarantees:** Vault protects against cleanup (30-day auto-delete), accidental deletion, and project-scoping (sessions archived globally). Compaction is a known gap in v1 — if `/compact` runs before the next server startup sweep or manual `import`, the pre-compaction content is lost. PreCompact hook archival (see [Future Improvements](#future-improvements)) will close this gap in v2.
 
@@ -29,7 +31,7 @@ Vault is a new `internal/vault/` package providing verbatim, cross-project sessi
 
 ### Four Layers
 
-1. **Storage layer** (`internal/vault/store.go`) — owns the SQLite connection lifecycle, schema, encryption (via `CAPY_VAULT_KEY`), and all CRUD operations. Imports `EncryptedDSN`, `URIEscapePassphrase`, and `URIEscapePath` from `internal/store/` (already exported). Corruption recovery helpers (`isSQLiteCorruption`, `backupCorruptDB`, `isWrongPassphrase`, `isGarbageFile`) are currently unexported in `internal/store/` — these must be exported (or extracted to a shared `internal/sqliteutil/` package) before vault can use them. Manages its own connection pool, WAL checkpointing, and prepared statements.
+1. **Storage layer** (`internal/vault/store.go`) — owns the SQLite connection lifecycle, schema, encryption (via `CAPY_VAULT_KEY`), and all CRUD operations. Imports `EncryptedDSN`, `URIEscapePassphrase`, and `URIEscapePath` from `internal/store/` (already exported). For corruption/passphrase recovery, the open + canary-classification logic is **extracted into a shared `internal/sqliteutil/` package** used by both `store` and `vault`. Exporting the four predicates alone (`IsSQLiteCorruption`, `BackupCorruptDB`, `IsWrongPassphrase`, `IsGarbageFile`) is **insufficient**: `IsWrongPassphrase` and the unencrypted-DB check only recognize the `*errWrongPassphrase`/`*errUnencryptedDB` types that are *constructed inside* `store.openDB()` (via the unexported `isUnencryptedDB` canary). A vault `openDB()` building its own errors would never be matched by an exported predicate, and it cannot construct `store`'s unexported error types. So the canary query, the corrupt / wrong-passphrase / unencrypted classification, **and** `backupCorruptDB` move to `sqliteutil` together (see [implementation prerequisite](./implementation.md#vault-key)). Manages its own connection pool, WAL checkpointing, and prepared statements.
 
 2. **Scanner layer** (`internal/vault/scanner.go`) — a single-pass JSONL reader that extracts searchable text from session files. Defines its own minimal JSON wire types (~20 lines), decoupled from `internal/session/parse.go`. Extracts: message text, tool names, tool input summaries (file paths, commands), subagent descriptions. Skips: base64, binary, system-reminder noise, progressive snapshot duplicates. Scanner output is sanitized via `sanitize.StripSecrets()` before FTS insertion to prevent secrets from appearing in search snippets.
 
@@ -82,7 +84,7 @@ CREATE TABLE vault_session_locations (
 );
 ```
 
-- `project_path` — best-known real project path: accurate `os.Getwd()` from hooks, `cwd` field from JSONL during bulk import, mangled dir name as last resort. Used for display and resume (cd target).
+- `project_path` — best-known real project path: accurate `os.Getwd()` from hooks, `cwd` field from JSONL during bulk import, `config.unmanglePath` filesystem-probe recovery from the mangled name, and the raw mangled name only as a last resort. Used for display and resume (cd target).
 - `claude_project_dir` — always the mangled directory name under `~/.claude/projects/`. Used for restore (writing files back to the correct Claude Code location). Always available regardless of import source.
 
 **`vault_files`** — stores all files from the session directory (subagent JSONLs, subagent meta.json, tool-results, and any other sidecars). Linked to parent session via `ON DELETE CASCADE`. This ensures full preservation of the entire session directory — not just the main JSONL.
@@ -110,10 +112,13 @@ CREATE VIRTUAL TABLE vault_fts USING fts5(
     subagent_id   UNINDEXED,
     turn_index    UNINDEXED,
     message_index UNINDEXED,
+    line_index    UNINDEXED,
     role          UNINDEXED,
     tokenize='porter unicode61'
 );
 ```
+
+`line_index` is the **0-based line number of the originating message in `raw_jsonl`** (or in the subagent file when `subagent_id` is set). It is the stable anchor that ties an FTS hit to a viewer scroll position: the viewer's lazy line-indexer already builds a `\n`-offset table over the raw bytes, so it can jump straight to `line_index` without reproducing the scanner's dedup/turn-pairing logic. `turn_index`/`message_index` remain for ordering and display but are **scanner-internal** — they must not be used to drive viewer scrolling, because the viewer is a separate parser that does not dedup progressive snapshots (see [Search→view anchoring](#design-rationale)). For deduplicated assistant snapshots that span multiple JSONL lines, `line_index` is the line of the first (canonical) snapshot.
 
 **Indexes:**
 
@@ -141,12 +146,12 @@ CREATE TABLE vault_meta (
 - **Separate DB from FTS knowledge store** — different retention policies (vault archives forever, FTS has tiered cleanup) and different scope (vault is global, knowledge store is per-project).
 - **Session content separated from locations** — Claude Code's `--fork-session` copies a session JSONL into a different project's directory, creating the same UUID in multiple project directories. `vault_sessions` stores content once (deduplicated by hash), while `vault_session_locations` tracks every (machine, project dir) where the session was seen. This avoids duplicate BLOBs and enables correct restore to any known location. `ON DELETE CASCADE` ensures locations are cleaned up with the parent session.
 - **Raw JSONL as uncompressed BLOB** — application-level compression (zstd) is deferred to a future version. The current design accepts the storage cost for implementation simplicity — every read path (restore, show, TUI) would need decompression. See [Future Improvements](#future-improvements) for the compression roadmap. **Read-path performance:** `show` and TUI viewer must load the full BLOB into Go memory. For typical sessions (100KB–1MB) this is fast. For large sessions (5–10MB), the concern is not the raw `[]byte` load (single allocation, fast) but AST inflation from fully parsing JSONL into Go structs — a 10MB JSONL routinely becomes 50–100MB of heap objects with hundreds of thousands of small allocations, causing GC pressure. The mitigation is **lazy line-indexing**: load the raw `[]byte`, scan for `\n` boundaries to build an offset index (`[]struct{Start, End int}` — microseconds, near-zero allocation), then `json.Unmarshal` only the lines in the visible viewport on demand. This keeps one large `[]byte` in memory with minimal heap objects regardless of session size. No full-parse-and-cache needed — lazy line-indexing is simpler and is the v1 approach, not a deferred optimization.
-- **`title` column on `vault_sessions`** — populated from `ai-title` JSONL entries (Claude's auto-generated session summaries), overridden by `custom-title` entries (user-set names), with first user message (truncated) as fallback. Essential for usable `list` output and TUI browsing — without it, sessions are indistinguishable walls of UUIDs. Both `claude-vault` and `claude-history` display session previews.
-- **No `vault_messages` table** — initially considered for message-level search and TUI display, but rejected. The TUI needs to parse `raw_jsonl` on the fly anyway for faithful rendering (thinking blocks, tool results, formatting). FTS5 `UNINDEXED` columns on the `vault_fts` table provide message-level search resolution (turn_index, role) without a separate table. This eliminates double-stored text, external content triggers, and cascade complexity.
+- **`title` column on `vault_sessions`** — populated from `ai-title` JSONL entries (Claude's auto-generated session summaries; emitted repeatedly as the title is refined, so the **last** `ai-title` wins). Measured: 136/223 sampled sessions carry at least one `ai-title`; the other 87 (39%) fall back to the first *significant* user message, truncated to 120 chars. "Significant" follows cc-sessions' guard — a `user` entry whose content is a plain string (not a `tool_result` array) and does not start with `<` (excludes `<system-reminder>`/`<command-name>` noise); without this guard a large fraction of fallback titles would be tool output or internal tags. A user-set custom title override is **not sourced from the JSONL**: no `custom-title` line type or `customTitle` field appears in sampled data (0/223), and Claude Code appears to persist renames outside the session file (e.g. under `~/.claude/sessions/`). The custom-title tier is therefore **deferred** until that store is verified (see [Assumptions](#assumptions)). Essential for usable `list` output and TUI browsing — without a title, sessions are indistinguishable walls of UUIDs.
+- **No `vault_messages` table** — initially considered for message-level search and TUI display, but rejected. The TUI needs to parse `raw_jsonl` on the fly anyway for faithful rendering (thinking blocks, tool results, formatting). FTS5 `UNINDEXED` columns on the `vault_fts` table provide message-level search resolution (`role`, `turn_index`, `message_index`) without a separate table. This eliminates double-stored text, external content triggers, and cascade complexity. **Search→view anchoring:** the FTS scanner and the TUI viewer are two independent parsers — the scanner dedups progressive assistant snapshots and assigns turn indices; the viewer does lazy line-indexing without dedup — so a scanner-only `turn_index` has no reliable mapping to a viewer scroll position. The `line_index` UNINDEXED column (the message's line number in `raw_jsonl`) is the shared anchor both sides agree on: "Enter scrolls to the match" resolves `line_index` directly against the viewer's `\n`-offset table, not `turn_index`.
 - **FTS5 one-row-per-message** — each user message and each assistant message is a separate FTS row, with the `role` UNINDEXED column distinguishing them. This enables `--role` filtering on search and produces focused `snippet()` results. Better granularity than one-row-per-session or one-row-per-turn-pair. FTS5 handles 100K+ small rows trivially.
 - **`subagent_id` uses empty string sentinel** — SQLite treats NULL as never equal to NULL in composite primary keys, which would break uniqueness constraints. Empty string `''` avoids this.
 - **`ON DELETE CASCADE`** on `vault_files` and `vault_session_locations` — when a session is deleted (e.g., `capy vault delete`), all associated files, locations, and FTS rows are cleaned up. Note: CASCADE applies only to regular tables; FTS5 virtual tables don't support foreign keys, so FTS rows require explicit `DELETE FROM vault_fts WHERE session_uuid = ?` in the same transaction. **Session replacement does not use CASCADE** — it uses `UPDATE` on the session row to preserve existing locations, and explicitly rebuilds `vault_files` and `vault_fts` only.
-- **`vault_files` instead of `vault_subagents`** — a generic files table preserves the entire session directory (subagent JSONLs, meta.json, tool-results, and any future sidecar types), not just known file types. This is consistent with vault's promise of full preservation. Subagent metadata (agent_type, description) is read from the stored `meta.json` files at display time.
+- **`vault_files` instead of `vault_subagents`** — a generic files table preserves the session directory (subagent JSONLs, meta.json, tool-results, and any future sidecar types), not just known file types. Preservation is **near-complete, not absolute**: the main `raw_jsonl` is always stored uncapped, subagent `*.jsonl` files (irreproducible conversation content) are always stored, and only large *reproducible* sidecars (non-subagent files > 5 MB — build logs, screenshots) are skipped with a warning (see [DB Size Projection](#db-size-projection)). Subagent metadata (agent_type, description) is read from the stored `meta.json` files at display time.
 - **FTS content is sanitized** — `sanitize.StripSecrets()` runs on scanner output before FTS insertion. This prevents secrets from appearing in search snippet results. The `raw_jsonl` blob and `vault_files` content remain unsanitized — verbatim preservation is the point.
 - **Snapshots deferred** — `vault_snapshots` (append-only cold storage for pre-compaction content) is deferred to a future version. The PreCompact hook payload format is unverified (see [Assumption #2](#assumptions)), and the vault works without snapshots — `import` and server-startup sweep are the primary archival paths. See [Future Improvements](#future-improvements).
 
@@ -154,9 +159,11 @@ CREATE TABLE vault_meta (
 
 ### Discovery
 
-`capy vault import` discovers sessions by walking the Claude Code projects directory. The base path is resolved via a shared `ClaudeProjectsDir()` helper (used by discovery, restore, and resume):
+`capy vault import` discovers sessions by walking the Claude Code projects directory. The base path is resolved via the **existing** `config.ClaudeProjectsDir()` helper (`internal/config/paths.go`), **extended to honor `CLAUDE_CONFIG_DIR`** (it currently hardcodes `~/.claude/projects/`):
 1. `CLAUDE_CONFIG_DIR` env var → use `$CLAUDE_CONFIG_DIR/projects/`
 2. Default: `~/.claude/projects/`
+
+Discovery, restore, and resume all call this one helper — do **not** add a second copy in `internal/vault/`. Extending the existing helper also corrects `internal/session/sweep.go:SessionDir()` (same code path) for free (see [Known Asymmetries](#known-asymmetries)).
 
 For each mangled project directory, it discovers:
 - `*.jsonl` files (main sessions)
@@ -169,30 +176,34 @@ For each mangled project directory, it discovers:
 Claude Code mangles project paths by replacing `/` and `.` with `-`. This is lossy (can't distinguish `/` from `.` in the original). Two columns on `vault_session_locations` track this:
 
 - **`claude_project_dir`** — always the mangled directory name (e.g., `-home-sergio-Projects-personal-capy`). Always available from any import source. Used for restore (writing back to `~/.claude/projects/<claude_project_dir>/<uuid>.jsonl`).
-- **`project_path`** — best-known real project path. From hooks: accurate `os.Getwd()`. From bulk import: the `cwd` field in the JSONL (first user message that has it), falling back to the mangled dir name. Used for display and resume.
+- **`project_path`** — best-known real project path. From hooks: accurate `os.Getwd()`. From bulk import: the `cwd` field in the JSONL (first user entry that has it); if absent, recover from the mangled dir name via the existing `config.unmanglePath`/`unmangledProbe` filesystem probe (`internal/config/paths.go`), storing the raw mangled name only as a last resort. Used for display and resume.
 
 ### Metadata Extraction
 
 | Field | Source |
 |-------|--------|
 | `uuid` | Filename (minus `.jsonl` extension) |
-| `title` | `aiTitle` from `ai-title` JSONL entry; `customTitle` from `custom-title` entry (takes precedence); first user message text (truncated to 120 chars) as fallback |
+| `title` | Last `aiTitle` from `ai-title` entries (emitted progressively — last wins). Fallback: first *significant* user message — string content, not a `tool_result` array, not `<…>`-prefixed — truncated to 120 chars. `customTitle`/`custom-title` override is deferred (absent from JSONL; see [title rationale](#design-rationale)) |
 | `project_path` | `os.Getwd()` from hooks; `cwd` field from first user JSONL line during bulk import; mangled dir name as last resort |
 | `claude_project_dir` | Mangled directory name (always available) |
 | `start_time` / `end_time` | First and last JSONL line timestamps |
-| `message_count` | Count of user + assistant entries |
-| `size_bytes` | File size on disk |
+| `message_count` | Count of human-text `user` turns + `assistant` turns. **Excludes `tool_result`-only `user` entries** — ≈86% of `user` lines (10,356 / 12,005 sampled) are tool output, not messages — so this reflects conversational length, not raw line count |
+| `size_bytes` | **Total** byte size of all hashed content (main JSONL + associated files), matching `content_hash`'s scope. Used for display/stats **and** as the replace tiebreaker (not main-JSONL-only — a shrinking main with an added sidecar must not read as "smaller") |
 | `content_hash` | SHA-256 composite with framing: for each file (main JSONL + associated files sorted by relative path), hash `len(relativePath) || relativePath || len(content) || content`. This prevents boundary-equivalent file sets from colliding |
 | `git_branch` | `gitBranch` field from the first user JSONL entry (always present on user-type lines). NULL if absent. Sessions may span branch switches — only the initial branch is recorded |
 | `machine_id` | From machine identity resolution (see Cross-Machine section) |
 
 ### Idempotent Import Logic
 
-1. Compute composite `content_hash` of the session using framed hashing (see Metadata Extraction)
+`size_bytes` below is the **total** hashed content size (main JSONL + all associated files), not the main file alone — the tiebreaker must cover the same byte set as `content_hash`, otherwise a shrinking main JSONL with an added/grown sidecar (different hash, smaller main) is wrongly skipped and the new sidecar content is lost.
+
+1. Compute composite `content_hash` of the session using framed hashing (see Metadata Extraction), and `size_bytes` = sum of byte lengths of the same file set
 2. If UUID exists with same hash → skip (already archived)
-3. If UUID exists with different hash and incoming `size_bytes >= existing` → replace (session grew)
-4. If UUID exists with different hash and incoming `size_bytes < existing` → skip (compacted, don't overwrite fuller archive)
+3. If UUID exists with different hash and incoming `size_bytes >= existing` → replace (total content grew)
+4. If UUID exists with different hash and incoming `size_bytes < existing` → skip (likely compacted; don't overwrite the fuller archive)
 5. If UUID doesn't exist → insert
+
+**Single-version semantics:** replacement UPDATEs the row in place (preserving locations) and discards the previous `raw_jsonl`. A larger-but-divergent variant (forked/edited, not a strict superset) overwrites the prior blob — same machine as well as cross-machine. Append-only history (`vault_snapshots`) is deferred; see [Future Improvements](#future-improvements).
 
 **Known limitation:** Cross-machine merge after independent compaction may lose content. If machine A has a 1MB pre-compaction version and machine B has a 0.6MB independently-compacted version, importing B's vault into A would skip B's version (smaller). If B's version had unique post-compaction content, it's lost. This is an accepted trade-off of the single-version-per-session model.
 
@@ -200,8 +211,8 @@ Claude Code mangles project paths by replacing `/` and `.` with `-`. This is los
 
 ### Transaction Batching
 
-- **Bulk imports**: batch ~50 sessions OR ~100MB total `raw_jsonl` per transaction (whichever limit hits first). On any batch tx error, log the error, then retry each session in the batch individually. On individual session failure, log and continue — don't abort the entire import.
-- **Hook imports**: per-session transactions (single session at a time).
+- **Bulk imports**: batch ~50 sessions OR ~100MB total `raw_jsonl` per transaction (whichever limit hits first). Acquire the write lock eagerly per batch via the store's `beginImmediate` idiom (RESERVED lock + `SQLITE_BUSY` exponential-backoff retry, mirroring `internal/store/migrate.go`) so a concurrent writer (e.g. the server startup sweep) doesn't fail the batch outright. On any batch tx error, log it, then retry each session in the batch individually. On individual session failure, log and continue — don't abort the entire import.
+- **Hook imports / server sweep**: per-session transactions (single session at a time), using the same `beginImmediate` acquisition.
 
 ## FTS Scanner
 
@@ -209,37 +220,43 @@ The scanner is a single-pass JSONL reader in `internal/vault/scanner.go` that ex
 
 ### JSONL Line Types
 
-Every line type in the session file gets an explicit handling decision:
+Each line type gets an explicit handling decision. **Default for any type not listed below (including new or unknown types): skip** — unknown types never block import, and `raw_jsonl` preserves them verbatim regardless. Counts are from a 223-session sample (~43k lines); indicative, not contractual.
 
 | Line type | Action | Notes |
 |-----------|--------|-------|
-| `user` | **Extract** | Text content, `cwd`, `gitBranch` |
-| `assistant` | **Extract** | Text + tool_use names/summaries; deduplicate progressive snapshots |
-| `ai-title` | **Extract** | `aiTitle` field → session title (high-value search signal) |
-| `custom-title` | **Extract** | `customTitle` field → session title (overrides ai-title) |
+| `user` | **Extract** | Human text from string/`text` blocks (also capture `cwd`, `gitBranch`) **and** bounded `tool_result` text. `tool_result` blocks live in `user` entries (not `assistant`); ≈86% of `user` lines are `tool_result`-only. Tag `tool_result`-derived rows `role="tool"`, human text `role="user"` — see [Output](#output) |
+| `assistant` | **Extract** | Text + `tool_use` names/input summaries; deduplicate progressive snapshots. Blocks are `text`/`tool_use`/`thinking` — **never `tool_result`** (0 in sample) |
+| `ai-title` | **Extract** | `aiTitle` field → session title. Emitted repeatedly (progressive); keep the **last**. Present in 136/223 sessions |
+| `pr-link` | **Extract** | `prUrl` / `prRepository` / `prNumber` → searchable ("which session opened PR #N"). 11 in sample |
 | `system` (subtype `away_summary`) | **Extract** | Summary text |
-| `system` (subtype `turn_duration`) | **Skip** | Timing metadata, not searchable |
 | `attachment` | **Extract** | Attachment filename for search (from content blocks) |
-| `permission-mode` | **Skip** | Session config, not searchable |
-| `file-history-snapshot` | **Skip** | Undo snapshots, not searchable |
+| `custom-title` | **Skip (deferred)** | `customTitle` override — **0 in sample**; not sourced from the JSONL (see [title rationale](#design-rationale)). Revisit if the rename store is verified |
+| `system` (subtype `turn_duration`) | **Skip** | Timing metadata |
+| `system` (subtype `local_command`) | **Skip** | Local-command meta (81 in sample) |
+| `system` (subtype `informational`) | **Skip** | Informational notice (1 in sample) |
+| `agent-name` | **Skip** | Subagent display name (47); subagent content is indexed from `subagents/*.jsonl` instead |
+| `permission-mode` | **Skip** | Session config |
+| `file-history-snapshot` | **Skip** | Undo snapshots |
 | `last-prompt` | **Skip** | Duplicate of user message |
 | `queue-operation` | **Skip** | Internal scheduling |
-| `progress` | **Skip** | Streaming progress, not final content |
+| `progress` | **Skip (unverified)** | Streaming progress — **0 in sample**; version-dependent |
 
 ### Extraction Scope
 
-**Extracted per message:**
-1. All `"text"` values from content blocks (user and assistant messages)
-2. Tool use names (Bash, Read, Edit, etc.)
+**Extracted:**
+1. All `"text"` values from content blocks (human `user` text and `assistant` text)
+2. Tool use names (Bash, Read, Edit, etc.) from `assistant` entries
 3. Tool input summaries — file paths from Read/Edit, commands from Bash
-4. Bounded tool_result text — first 16KB of text content from tool_result blocks (head+tail truncation matching `claude-history`'s approach). Tool results contain searchable content (error messages, grep output, build logs) that users commonly search for
+4. Bounded `tool_result` text — these blocks appear in **`user`** entries (the turn after a `tool_use`), **not** `assistant`. Cap at 16KB per result, keeping **75% head + 25% tail** on a char boundary (matching `claude-history`'s `truncate_for_search`, `claude.rs:147,222`). Emitted as a separate `role="tool"` FTS row so `--role user` stays human-only. Tool results carry searchable content (error messages, grep output, build logs) users commonly search for
 5. Subagent descriptions and types
-6. `aiTitle` / `customTitle` fields for session title
+6. `aiTitle` (last value) for the session title; significant-first-user-message fallback (see [title rationale](#design-rationale))
 7. Attachment filenames
+8. `pr-link` fields (`prUrl`, `prRepository`, `prNumber`)
 
 **Skipped:**
 - Base64 and binary content (including image blocks in tool_result)
 - System-reminder tags and their contents
+- `thinking` blocks (assistant reasoning — not a search signal)
 - Progressive snapshot duplicates — assistant messages sharing the same `message.id` are accumulated and deduplicated by `(Type, Text, Name, ID)` tuple, matching the proven approach in `internal/session/parse.go:161-174`
 - JSON structural noise
 - `tool_result` blocks with no text content (e.g., image-only results)
@@ -256,14 +273,15 @@ For each message, the scanner produces a `ScanResult`:
 ScanResult {
     TurnIndex    int
     MessageIndex int       // sequential within the turn (0 = first message)
-    Role         string    // "user", "assistant", "system"
+    LineIndex    int       // 0-based line number in the source JSONL (raw_jsonl, or the subagent file) — stable anchor for view jumping
+    Role         string    // "user" (human text) | "assistant" | "tool" (tool_result output) | "system" (away_summary)
     SubagentID   string    // "" for main session
     ContentText  string    // extracted, sanitized searchable text
     Timestamp    time.Time
 }
 ```
 
-One FTS row is inserted per `ScanResult`. Each user message and each assistant message produces a separate `ScanResult` with the appropriate `Role`. This enables `--role` filtering on search and produces focused `snippet()` results per message rather than per turn-pair.
+One FTS row is inserted per `ScanResult` (its `LineIndex` populates `vault_fts.line_index`). Each human `user` message, each `assistant` message, and each `tool_result` produces a separate `ScanResult` with the appropriate `Role` — `role="tool"` keeps tool output out of `--role user` results. This enables meaningful `--role` filtering and produces focused `snippet()` results per message rather than per turn-pair. For a deduplicated assistant snapshot spanning multiple JSONL lines, `LineIndex` is the first (canonical) line.
 
 ### Performance
 
@@ -287,7 +305,11 @@ Session-end hooks were rejected for the existing session sweep (see `docs/done/s
 
 ### Hook Wiring (for confirmed paths)
 
-The MCP server startup sweep is wired in `internal/server/server.go`, after the existing `session.Sweep()` call. Vault sweep is opt-in: silently skipped if `CAPY_VAULT_KEY` is not set.
+The MCP server startup sweep is wired in `internal/server/server.go`, after the existing `session.Sweep()` call, in the same `bgWg`-tracked goroutine pattern. Vault sweep is opt-in: silently skipped if `CAPY_VAULT_KEY` is not set.
+
+**VaultStore lifecycle:** the sweep goroutine **opens its own `VaultStore` and `Close()`s it when the sweep finishes** (inside the `bgWg`-tracked goroutine, so it completes before `shutdown()` proceeds). This is deliberate — `server.shutdown()` closes only the knowledge `ContentStore`, and `VaultStore.Close()` is what runs the WAL checkpoint (close pool → `wal_checkpoint(TRUNCATE)`). A bounded open/close keeps `vault.db-wal` flushed without making `Server` own a long-lived vault handle (the sweep is a one-shot at boot, not a per-request dependency).
+
+**Concurrency:** a manual `capy vault import` may run while the server holds a `VaultStore` open — both write the same `vault.db` and contend on the WAL. This is tolerable: `busy_timeout=5000` plus per-batch `beginImmediate` retry (see [Transaction Batching](#transaction-batching)) absorbs transient `SQLITE_BUSY`. There is no cross-process lock; the design assumes a single primary writer at a time and treats overlap as a rare, recoverable case.
 
 ### Execution Context
 
@@ -297,7 +319,7 @@ Hooks and server startup execute inside the project directory, providing accurat
 
 ### Scope Limitation
 
-The MCP server startup sweep is scoped to the current project's session directory only. Sessions from other projects are NOT archived by this path. If a user works exclusively on project A, sessions from project B will age past Claude Code's 30-day cleanup without being archived. The gap is closed by periodic `capy vault import` (e.g., via cron or manual habit). Users should be advised during `capy vault setup` or first import to run `capy vault import` periodically or set up a cron job.
+The MCP server startup sweep is scoped to the current project's session directory only. Sessions from other projects are NOT archived by this path. If a user works exclusively on project A, sessions from project B will age past Claude Code's 30-day cleanup without being archived. The gap is closed by periodic `capy vault import` (e.g., via cron or manual habit). The `import` command's help text and its first-run output should advise running `capy vault import` periodically or via a cron job. (There is no `capy vault setup` subcommand — vault has no separate setup step; the only prerequisite is `CAPY_VAULT_KEY`.)
 
 ### Failure Mode
 
@@ -332,7 +354,8 @@ Default target: `ClaudeProjectsDir()/<claude_project_dir>/` where `ClaudeProject
 **Path safety:** Before writing any `vault_files` entry, the restore path is validated:
 - Reject `relative_path` values that are absolute paths
 - Reject `relative_path` values containing `..` components
-- Verify `filepath.Join(restoreRoot, uuid, relativePath)` resolves to a path under the restore root (containment check via `filepath.Rel`)
+- Resolve the restore root with `filepath.EvalSymlinks` first, so a symlinked component of the root cannot redirect writes outside it
+- Verify `filepath.Join(restoreRoot, uuid, relativePath)` resolves to a path under the (resolved) restore root (containment check via `filepath.Rel`)
 - Skip entries that fail validation with a warning to stderr
 
 ### Resume Details
@@ -353,13 +376,13 @@ Activated by `--tui` on any vault command. Built with bubbletea (Charm ecosystem
 ### Layout
 
 - **Left panel** (`bubbles/list`): session list grouped by project. Shows short UUID, title, date, message count. Fuzzy-filterable.
-- **Right panel** (`bubbles/viewport`): session content viewer. Parses `raw_jsonl` on the fly with Human/Assistant formatting, markdown rendering (glamour), syntax-highlighted code.
+- **Right panel** (`bubbles/viewport`): session content viewer. Parses `raw_jsonl` on the fly with Human/Assistant formatting and lipgloss role-based styling. Rich markdown/syntax rendering (glamour) is deferred — see [Dependencies](#dependencies).
 - **Bottom bar**: mode indicator, keybindings, filter state.
 
 ### Modes
 
 - **Browse** (default on `list --tui`): navigate sessions, preview on selection, Enter for full viewer.
-- **Search** (default on `search --tui`): live search input, debounced FTS5 queries, snippet highlights. Enter scrolls to `turn_index` in viewer.
+- **Search** (default on `search --tui`): live search input, debounced FTS5 queries, snippet highlights. Enter scrolls the viewer to the match's `line_index` (resolved directly against the viewer's `\n`-offset table — not `turn_index`; see [No `vault_messages` table](#design-rationale)).
 - **View** (default on `show --tui`): vim-style navigation (j/k, g/G, / for in-viewer search). `--show-tools` and `--show-thinking` flags. The viewer uses lazy line-indexing: holds the raw `[]byte` plus a `\n`-offset index, and only unmarshals lines in the visible viewport. When subagent files exist in `vault_files`, the viewer fetches and parses them inline with visual distinction (dimmed, prefixed — matching `claude-history`'s approach). Non-JSONL vault_files (tool-results, meta.json, other sidecars) are archive-only — preserved for `restore` but not rendered in `show` or the TUI viewer.
 
 ### Key Bindings
@@ -368,7 +391,9 @@ Activated by `--tui` on any vault command. Built with bubbletea (Charm ecosystem
 
 ### Dependencies
 
-bubbletea, bubbles (list, viewport, textinput), lipgloss (styling), glamour (markdown rendering).
+bubbletea, bubbles (list, viewport, textinput), lipgloss (styling).
+
+**Glamour (markdown rendering) is excluded from v1.** capy's current dependency tree is intentionally small (5 direct modules: mcp-go, go-sqlite3, go-toml, cobra, testify). `glamour` transitively pulls in `chroma` + `goldmark` plus many syntax lexers, materially increasing binary size and supply-chain surface — at odds with the lean-binary identity the inspiration tools advertise. v1 renders with lipgloss styling only (role coloring, dimmed subagent prefixes); rich markdown/syntax highlighting via glamour is a [Future Improvement](#future-improvements). **(Reversible decision — flagged for confirmation.)**
 
 ### Package Structure
 
@@ -422,7 +447,7 @@ Based on measured data from a real Claude Code installation (219 sessions over ~
 
 **Growth rate:** ~50 MB/month for an active user (1-2 sessions/day). **12-month projection:** ~600 MB–1 GB uncompressed. SQLite handles this fine. Cross-machine copy becomes slower past 500 MB (the stated use case); `zstd` compression (v2) would reduce this by 5-8x.
 
-**Per-file size cap:** `vault_files` entries larger than 5 MB are skipped with a warning to stderr. Large tool-results (multi-MB build logs, screenshots) are reproducible — the conversation JSONL is the critical artifact. This cap prevents degenerate DB growth from outlier files.
+**Per-file size cap:** non-subagent `vault_files` entries larger than 5 MB are skipped with a warning to stderr. Large tool-results (multi-MB build logs, screenshots) are reproducible — the conversation JSONL is the critical artifact. **The cap never applies to the main `raw_jsonl` (always stored uncapped) nor to `subagents/*.jsonl` files (irreproducible conversation content) — only to reproducible sidecars.** This prevents degenerate DB growth from outlier files without ever dropping conversation content.
 
 **No automatic cleanup:** Vault archives forever by design. Users who need to shed space can use `capy vault delete` to remove individual sessions.
 
@@ -432,11 +457,17 @@ Based on measured data from a real Claude Code installation (219 sessions over ~
 2. **PreCompact hook fires before file mutation** — UNVERIFIED. The `handlePreCompact` handler already receives the full payload via `input []byte` but the payload format is undocumented. This assumption must be validated before implementing PreCompact archival. The vault's core functionality (import + server-startup sweep) does not depend on this assumption.
 3. **Session UUIDs are globally unique** — cross-machine merge relies on UUID collision being impossible at this scale. Cross-project forking creates the same UUID in multiple project directories — vault handles this via `vault_session_locations` (content stored once, locations tracked separately).
 4. **Claude Code session directory structure is stable** — the mangled-path convention and `~/.claude/projects/` location persist. Discovery also respects `CLAUDE_CONFIG_DIR` for non-default installations.
-5. **`cwd` and `gitBranch` field availability in JSONL** — Claude Code user entries include `cwd` (working directory) and `gitBranch` (current branch) fields. Verified present on every user-type line in sampled sessions. Used for project path resolution and branch metadata during import.
+5. **JSONL field / line-type shape — verified against a 223-session sample (~43k lines), May 2026.**
+   - `cwd` and `gitBranch` are present on `user`-type lines (used for project path + branch metadata).
+   - `tool_result` blocks appear **only in `user` entries** (10,361 user lines; **0** assistant lines). ≈86% of `user` lines are `tool_result`-only.
+   - `ai-title` is present in **136/223** sessions (the other 87 use the guarded first-user-message fallback); emitted progressively (2,348 lines, last wins) with shape `{aiTitle, sessionId, type}` (no timestamp).
+   - Also present: `attachment`, `agent-name`, `pr-link`, and system subtypes `away_summary` / `turn_duration` / `local_command` / `informational`.
+   - **Absent from the sample (treat as unverified / version-dependent):** `custom-title` and any structured `customTitle` field (**0** — the custom-title title tier is deferred; renamed titles appear to live outside the JSONL, likely under `~/.claude/sessions/`), and `progress` (**0**).
+   - Counts are indicative, not contractual. The scanner skips unknown types by default, so divergence from this sample is non-fatal; only the scanner needs updating if the format shifts (raw BLOBs remain restorable regardless).
 
 ### Known Asymmetries
 
-- **`CLAUDE_CONFIG_DIR` handling:** Vault's discovery respects `CLAUDE_CONFIG_DIR`, but capy's existing `internal/session/sweep.go:SessionDir()` hardcodes `~/.claude/projects/`. Vault will archive sessions from non-default Claude installations that the MCP server's session sweep never indexed. A shared `ClaudeProjectsDir()` helper should be extracted as a follow-up to align both code paths. Tracked as a non-blocking follow-up in tasks.md.
+- **`CLAUDE_CONFIG_DIR` handling:** Two existing helpers hardcode `~/.claude/projects/` and ignore `CLAUDE_CONFIG_DIR`: `config.ClaudeProjectsDir()` (`internal/config/paths.go:62`, used by `ResolveSourceProject`) and `internal/session/sweep.go:SessionDir()`. Vault must honor `CLAUDE_CONFIG_DIR`, so the fix is to **extend `config.ClaudeProjectsDir()` in place** (not add a third helper in `internal/vault/`) and route both vault and `SessionDir()` through it. Until that lands, vault would archive sessions from non-default Claude installations that the session sweep never indexed. Tracked as a follow-up in tasks.md.
 
 ## Not Doing
 
@@ -450,6 +481,17 @@ Based on measured data from a real Claude Code installation (219 sessions over ~
 - **Sharing/export with redaction** — the HMW statement mentions sharing aspirationally; the redaction pipeline (inspired by pi-share-hf) is a separate feature requiring its own design for secret scanning, deny patterns, and review workflow. Deferred to a future milestone.
 
 ## Future Improvements
+
+### Security & Key Lifecycle
+
+v1's security posture is **encryption-at-rest only** (`CAPY_VAULT_KEY` via sqlite3mc/SQLCipher, same stack as the knowledge store). Two items are explicitly deferred, not solved, in v1:
+
+- **Verbatim-secret concentration (accepted for v1).** `raw_jsonl` and `vault_files` are stored unsanitized — only FTS text passes through `sanitize.StripSecrets` — so `vault.db` concentrates every secret/credential/PII that appeared in any archived session, and `restore` writes them back as plaintext files. This is accepted because the same data already exists in plaintext on the same host under `~/.claude/projects/`: the vault mirrors that local data (encrypted), it does not widen the local attack surface. The erasure tool is `capy vault delete`; a redacted-export path is deferred (see [Sharing/Export Pipeline](#sharingexport-pipeline)).
+- **Key rotation (`capy vault rekey`).** No rekey path exists in v1. A forever-archive copied across machines should be able to rotate a compromised `CAPY_VAULT_KEY`. The implementation would reuse the knowledge store's rekey machinery (ADR-020: switch to DELETE journal mode before `PRAGMA rekey`, since WAL is incompatible with rekey), exposed as `capy vault rekey`. Until then, the only migration path for a compromised key is decrypt-and-reimport into a freshly-keyed vault.
+
+### TUI Markdown Rendering (glamour)
+
+v1 renders session content with lipgloss styling only (role coloring, dimmed subagent prefixes) and deliberately excludes `glamour` to keep the binary lean (see [TUI Dependencies](#dependencies)). A future version can add `glamour` for rich markdown + syntax-highlighted code in the viewer — ideally behind a build tag so the lean default is preserved — after benchmarking binary-size and startup-cost impact.
 
 ### BLOB Compression (zstd)
 
