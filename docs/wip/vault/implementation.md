@@ -11,7 +11,7 @@ internal/vault/
   encryption.go    — RequireVaultKey(), vault-specific key handling (reads CAPY_VAULT_KEY)
   scanner.go       — Single-pass JSONL scanner for FTS extraction
   scanner_types.go — Minimal JSON wire types for JSONL parsing (~20 lines)
-  discovery.go     — Session file discovery across ~/.claude/projects/*/
+  discovery.go     — Session file discovery across Claude Code projects directory
   import.go        — Import orchestration: discovery → metadata → idempotent upsert
   machine.go       — Machine identity resolution (env var → file → generate)
   metadata.go      — Metadata extraction from JSONL files (timestamps, counts)
@@ -53,7 +53,7 @@ On close: close prepared statements, close connection pool, run WAL checkpoint (
 
 ### Schema DDL
 
-All tables from design.md are created in a single `schemaSQL` constant. The FTS5 table uses `tokenize='porter unicode61'`. Foreign keys use `ON DELETE CASCADE`. The `vault_meta` table is seeded with a schema version on first creation.
+All tables from design.md are created in a single `schemaSQL` constant: `vault_sessions`, `vault_files`, `vault_fts`, `vault_meta`. The FTS5 table uses `tokenize='porter unicode61'`. Foreign keys use `ON DELETE CASCADE` (for `vault_files`). FTS5 virtual tables don't support foreign keys — FTS cleanup is explicit (`DELETE FROM vault_fts WHERE session_uuid = ?` in the same transaction). The `vault_meta` table is seeded with a schema version on first creation.
 
 ## Machine Identity
 
@@ -78,16 +78,16 @@ Required fields only: `type`, `subtype`, `uuid`, `timestamp`, `sessionId`, `mess
 `internal/vault/scanner.go` implements `ScanSession(path string) ([]ScanResult, error)`:
 
 1. Open file, create buffered scanner (16MB line buffer, matching `parse.go`)
-2. Initialize `seen := map[string]bool{}` for progressive snapshot dedup (keyed by `messageID:blockIndex`)
+2. Initialize assistant block accumulator: `assistantBlocks := map[string][]contentBlock{}` keyed by `message.id`
 3. Stream line-by-line:
    - Unmarshal top-level JSON to get `type`, `timestamp`, `message`
    - Skip non-user/assistant/system types
    - For user messages: extract text from content blocks, strip `<system-reminder>` tags
-   - For assistant messages: extract text blocks, tool_use names, tool input summaries (file paths from Read/Edit inputs, commands from Bash inputs). Skip thinking blocks, base64 content.
+   - For assistant messages: accumulate content blocks per `message.id`. Deduplicate by `(Type, Text, Name, ID)` tuple — matching the proven approach in `internal/session/parse.go:161-174`. This correctly handles Claude Code's non-cumulative progressive snapshots where each JSONL line carries one content block sharing the same `message.id`.
    - For system/away_summary: extract content text
-   - Dedup: if `messageID:blockIdx` in `seen`, skip. Otherwise add to seen.
 4. Group extracted content into turns (sequential user→assistant pairs)
-5. Return `[]ScanResult` with one entry per turn
+5. Sanitize: run `sanitize.StripSecrets()` on each `ScanResult.ContentText`
+6. Return `[]ScanResult` with one entry per turn
 
 ### Tool Input Extraction
 
@@ -101,24 +101,36 @@ This keeps the scanner simple while covering the most useful search scenarios.
 
 ## Discovery
 
+### Claude Config Directory Resolution
+
+`internal/vault/discovery.go` resolves the Claude Code base directory:
+
+1. Check `CLAUDE_CONFIG_DIR` env var — if set, use `$CLAUDE_CONFIG_DIR/projects/`
+2. Default: `~/.claude/projects/`
+
 ### Walking Session Directories
 
-`internal/vault/discovery.go` implements `DiscoverSessions(rootDir string) ([]SessionFile, error)`:
+`DiscoverSessions(rootDir string) ([]SessionFile, error)`:
 
-1. If `rootDir` is empty, default to `~/.claude/projects/`
+1. If `rootDir` is empty, resolve via Claude config directory logic above
 2. List all entries in root directory (each is a mangled project path)
 3. For each project directory, list `*.jsonl` files
-4. For each JSONL file, check for `<uuid>/subagents/` directory
-5. Return `[]SessionFile` with: path, UUID, project directory name (mangled), subagent paths
+4. For each JSONL file, check for `<uuid>/` directory and collect all files within it recursively (subagents, tool-results, any other sidecars)
+5. Return `[]SessionFile` with: path, UUID, project directory name (mangled), list of associated files
 
 ### SessionFile Type
 
 ```
 SessionFile {
-    Path        string   // full path to main .jsonl
-    UUID        string   // extracted from filename
-    ProjectDir  string   // mangled directory name (not unmangled)
-    SubagentDir string   // path to <uuid>/subagents/ if exists, empty otherwise
+    Path           string            // full path to main .jsonl
+    UUID           string            // extracted from filename
+    ProjectDir     string            // mangled directory name
+    AssociatedFiles []AssociatedFile  // all files in <uuid>/ directory
+}
+
+AssociatedFile {
+    AbsPath      string  // full path on disk
+    RelativePath string  // relative to <uuid>/ (e.g., "subagents/agent-abc.jsonl")
 }
 ```
 
@@ -131,18 +143,18 @@ SessionFile {
 1. Call `DiscoverSessions()` to find all session files
 2. Open `VaultStore`
 3. For each session file (or batch of ~50 for bulk):
-   a. Read raw bytes from disk
-   b. Compute SHA-256 content hash
-   c. Check idempotent import logic (skip/replace/insert decision)
-   d. If inserting/replacing:
+   a. Read raw bytes from main JSONL
+   b. Read all associated files from the session directory
+   c. Compute composite SHA-256 content hash (main file + all associated files, sorted by relative path)
+   d. Check idempotent import logic (skip/replace/insert decision)
+   e. If inserting/replacing:
       - Extract metadata (timestamps, message count) via lightweight JSONL scan
-      - Run scanner to produce `[]ScanResult` for FTS
-      - Read subagent files (raw bytes + meta.json)
+      - Run scanner to produce `[]ScanResult` for FTS (including subagent files identified by `subagents/agent-*.jsonl` path pattern)
       - Begin transaction
       - If replacing: delete old FTS rows (`DELETE FROM vault_fts WHERE session_uuid = ?`)
-      - Insert/replace `vault_sessions` row
-      - Insert `vault_subagents` rows
-      - Insert `vault_fts` rows (one per ScanResult)
+      - Insert/replace `vault_sessions` row (CASCADE auto-deletes old `vault_files`)
+      - Insert `vault_files` rows for all associated files
+      - Insert `vault_fts` rows (one per ScanResult, with sanitized content)
       - Commit transaction
 4. Report: imported N, skipped N, errors N
 
@@ -156,23 +168,14 @@ SessionFile {
 
 This is a fast first-pass that only reads timestamps and type fields — no content extraction.
 
-### PreCompact Hook Path
+### Git Branch Extraction
 
-When called from the PreCompact hook, the import pipeline additionally:
-1. Writes to `vault_snapshots` with `trigger_reason = 'pre_compact'`
-2. Uses `os.Getwd()` for project path and `git rev-parse --abbrev-ref HEAD` for branch
-3. Runs as a single-session transaction (no batching)
+When available (hooks, server startup):
+- Run `git rev-parse --abbrev-ref HEAD`
+- If result is literal `"HEAD"` (detached HEAD state), store NULL instead
+- If git is not available or not a git repo, store NULL
 
 ## Hook Integration
-
-### Hook Router Extension
-
-`internal/hook/` gains a new case in its event routing. When the event type is `PreCompact`:
-1. Extract session file path from the hook payload
-2. Call `vault.ArchiveFromHook(payload)` which handles both `vault_sessions` and `vault_snapshots` writes
-3. Exit with the result code
-
-The vault package provides the `ArchiveFromHook` entry point that handles DB open, import, and close within the hook's short lifecycle.
 
 ### MCP Server Startup Sweep
 
@@ -182,6 +185,17 @@ In `internal/server/server.go`, the existing session sweep goroutine pattern is 
 3. Uses the same cooperative cancellation (server context + timeout)
 
 This requires `CAPY_VAULT_KEY` to be set. If not set, the vault sweep is silently skipped (vault is opt-in).
+
+### PreCompact Hook (Deferred)
+
+Before implementing PreCompact archival:
+1. Capture the raw PreCompact hook payload by adding a debug log to `handlePreCompact`
+2. Trigger `/compact` in Claude Code and inspect the logged payload
+3. Document the JSON structure in this implementation plan
+4. Add `ParsePreCompact` to the adapter interface (or document how to extract session path from existing fields)
+5. Verify the hook fires synchronously before file mutation
+
+If the payload format is suitable, implement the archival path with prominent error logging to `~/.config/capy/vault-error.log` (since `capy.sh` swallows exit codes).
 
 ## CLI Commands
 
@@ -228,25 +242,26 @@ All vault commands share: `--tui` flag (bool, default false), vault DB path reso
 ### Restore Command
 
 - Positional arg: session UUID (partial match)
-- `--output <path>`: custom output directory (default: original Claude Code location)
+- `--output <path>`: custom output directory (default: `~/.claude/projects/<claude_project_dir>/`)
 - Writes `<uuid>.jsonl` from `vault_sessions.raw_jsonl`
-- Writes `<uuid>/subagents/agent-*.jsonl` from `vault_subagents.raw_jsonl`
-- Reconstructs `agent-*.meta.json` from `vault_subagents` metadata columns
+- Writes `<uuid>/<relative_path>` for each entry in `vault_files`
 - Prompts before overwriting existing files
-- Verify: restored file matches original → `diff` shows no difference (if original still exists)
+- Verify: restored files match originals → `diff` shows no difference (if originals still exist)
 
 ### Resume Command
 
 - Positional arg: session UUID (partial match)
-- Calls restore logic to put file back in original location
-- Execs `claude --resume <session_id>` (replaces the current process)
-- Errors if original project directory doesn't exist on this machine
+- Calls restore logic to put files back in original Claude Code location
+- Launches `claude --resume <session_id>` using `os/exec.Command` with inherited stdin/stdout/stderr, then `os.Exit(cmd.ProcessState.ExitCode())`
+- If `project_path` is an accurate real path (starts with `/`, not `-`), changes to that directory first
+- If `project_path` is a mangled dir name, warns user and prompts for project directory
+- Errors if Claude Code binary not found
 - Verify: `capy vault resume <id>` opens Claude Code with the session loaded
 
 ### Stats Command
 
 - No args
-- Output: total sessions, total size (DB file), per-project session counts, oldest/newest session dates, snapshot count
+- Output: total sessions, total size (DB file), per-project session counts, oldest/newest session dates
 - Verify: numbers match `capy vault list | wc -l` and actual DB file size
 
 ## TUI Implementation
@@ -287,10 +302,9 @@ Combines `bubbles/textinput` for query entry with a results list. Debounces inpu
 ## Assumptions
 
 1. **Claude Code JSONL format is stable** — wire types won't break incompatibly. Raw BLOBs remain restorable regardless.
-2. **PreCompact hook fires before file mutation** — vault reads the file before Claude Code rewrites it.
+2. **PreCompact hook fires before file mutation** — UNVERIFIED. Must be validated before implementing PreCompact archival. Core vault functionality does not depend on this.
 3. **Session UUIDs are globally unique** — cross-machine merge depends on this.
-4. **`~/.claude/projects/` directory structure is stable** — mangled-path convention persists.
-5. **sqlcipher page-level compression is sufficient** — no app-level compression needed.
+4. **Claude Code session directory structure is stable** — mangled-path convention persists. Discovery also respects `CLAUDE_CONFIG_DIR`.
 
 ## Not Doing
 
@@ -300,4 +314,5 @@ Combines `bubbles/textinput` for query entry with a results list. Debounces inpu
 - **Session diffing** — no cross-compaction comparison
 - **Real-time watch mode** — no filesystem watcher
 - **Automatic cleanup/retention** — vault archives forever
-- **Vault DB migration tooling** — inline migrations initially
+- **Sharing/export with redaction** — separate feature requiring own design
+- **PreCompact snapshot archival** — deferred until hook payload is verified (see Future Improvements in design.md)
