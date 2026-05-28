@@ -62,7 +62,7 @@ On close: close prepared statements, close connection pool, run WAL checkpoint (
 
 Schema evolution follows the existing pattern from `internal/store/migrate.go`:
 
-1. `internal/vault/migrations.go` — numbered migration functions (e.g., `migrateVault001AddTitle`)
+1. `internal/vault/migrations.go` — numbered migration functions (e.g., `migrateVault002AddX` for a future column). Note: `title` and all v1 columns ship in the base `schemaSQL`, **not** via a migration — the framework is scaffolding for the first real schema change post-v1
 2. `vault_meta` stores `schema_version` — checked on `openDB()`
 3. Each migration is idempotent (safe to re-run on already-migrated DB)
 4. Migrations use `beginImmediate` for write-lock acquisition under concurrency (same as `store/migrate.go`)

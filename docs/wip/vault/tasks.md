@@ -80,7 +80,7 @@
 - [ ] 3.6 Tests using **committed sanitized fixture directories** → verify: correct sessions in DB with title/gitBranch/project_path/machine_id populated (incl. cwd extraction for project_path); all associated files preserved in vault_files **except non-subagent files > 5 MB** (a > 5 MB subagent JSONL is still kept); idempotent re-import of an unchanged session skips; **larger total content replaces** (incl. shrinking main JSONL + grown sidecar — must replace, not skip) with location columns + raw_jsonl overwritten and files/FTS rebuilt (`archived_at` preserved); smaller total skipped; FTS rows created with sanitized content (one per message, with `tool_result` text as `Role="tool"` from user entries); composite hash + total `size_bytes` cover subagent changes; CLAUDE_CONFIG_DIR respected; auto-detect input types work
 - [ ] 3.7 Verify: `go test -tags fts5 ./internal/vault/...` passes; import a test fixture directory and query back sessions + files via store methods
 
-## Task 4: CLI commands — import, list, search, show, restore, resume, stats
+## Task 4: CLI commands — group + read/query (import, list, search, show, stats, checkpoint)
 - **Status:** pending
 - **Depends on:** Task 3
 - **Size:** M
@@ -93,18 +93,29 @@
 - [ ] 4.3 Implement `list` subcommand — `ListSessions()` store method with `--project` filter (`WHERE project_path LIKE ?`), `--limit`, `--json`, reverse chronological sort. Table output: short UUID, title, project, date range, messages, size. One row per session (location is 1:1 — no GROUP BY)
 - [ ] 4.4 Implement `search` subcommand — plain keyword mode by default (auto-quote tokens), `--raw` for FTS5 MATCH syntax. `snippet()` for context. `--project` (`WHERE project_path LIKE ?`), `--after`, `--before`, `--role <user|assistant|tool|system>` (`tool` = tool_result output), `--limit`, `--json`. Output: ranked results with short UUID, project, date, role, snippet
 - [ ] 4.5 Implement `show` subcommand — partial UUID resolution (8+ chars, `WHERE uuid LIKE ?%`, show candidates on ambiguous match with date/project/title), fetch `raw_jsonl` + subagent `vault_files`, render with `--format <text|markdown|json>`, pipe through `$PAGER` (text format only). Non-JSONL vault_files not rendered
-- [ ] 4.6 Implement `restore` subcommand — partial UUID (8+ chars). Write `raw_jsonl` to `ClaudeProjectsDir()/<claude_project_dir>/` (respects CLAUDE_CONFIG_DIR) or the `--output` path (location is single per session — no location prompt). Restore all `vault_files` entries. **Path safety:** validate each `relative_path`. Prompt before overwriting
-- [ ] 4.7 Implement `resume` subcommand — partial UUID (8+ chars), `--dir` override flag. Pre-check `exec.LookPath("claude")`, close vault store. Directory fallback chain: `--dir` → existing `project_path` → cwd → prompt. Launch via `os/exec.Command` with inherited stdio. Return exit code through cobra
-- [ ] 4.8 Implement `delete` subcommand — partial UUID (8+ chars), show session info, `--yes` to skip confirmation. Transactional: delete FTS rows then session (CASCADE handles `vault_files`)
-- [ ] 4.9 Implement `stats` subcommand — query session count, total size, per-project breakdown, oldest/newest dates, `--json`
-- [ ] 4.10 Implement `checkpoint` subcommand — flush WAL, report success
-- [ ] 4.11 Verify: run each command manually against a vault with imported test sessions. `import` → `list` shows sessions with titles → `search <term>` finds expected result (plain keyword mode, `--role` filtering) → `show <id>` displays content with `--format markdown` export → `restore <id>` recreates files (path safety validated, CLAUDE_CONFIG_DIR respected) → `delete <id>` removes session → `checkpoint` flushes WAL → `stats --json` shows correct counts
+- [ ] 4.6 Implement `stats` subcommand — query session count, total size, per-project breakdown, oldest/newest dates, `--json`
+- [ ] 4.7 Implement `checkpoint` subcommand — flush WAL, report success
+- [ ] 4.8 Verify: `import` → `list` shows sessions with titles → `search <term>` finds expected result (plain keyword mode, `--role` filtering) → `show <id>` displays content with `--format markdown` export → `checkpoint` flushes WAL → `stats --json` shows correct counts
+
+## Task 4b: CLI commands — destructive / filesystem / exec (restore, resume, delete)
+- **Status:** pending
+- **Depends on:** Task 4
+- **Size:** S
+- **Can run in parallel with:** Task 5
+- **Docs:** [implementation.md#cli-commands](./implementation.md#cli-commands)
+- **Why a separate task:** these three are the highest-risk surface — `restore` writes files to disk (path traversal), `resume` execs an external process, `delete` is irreversible data loss. Splitting them out gives that surface a **focused `/kk:review-code` checkpoint** distinct from the read/query commands. (Reuses the Task 4 command group from 4.1.)
+
+### Subtasks
+- [ ] 4b.1 Implement `restore` subcommand — partial UUID (8+ chars). Write `raw_jsonl` to `ClaudeProjectsDir()/<claude_project_dir>/` (respects CLAUDE_CONFIG_DIR) or the `--output` path (location is single per session — no location prompt). Restore all `vault_files` entries. **Path safety:** `filepath.EvalSymlinks` the restore root, then per entry reject absolute paths / `..` components and containment-check via `filepath.Rel` (see impl §Restore Command). Prompt before overwriting
+- [ ] 4b.2 Implement `resume` subcommand — partial UUID (8+ chars), `--dir` override flag. Pre-check `exec.LookPath("claude")`, close vault store. Directory fallback chain: `--dir` → existing `project_path` → cwd → prompt. Launch via `os/exec.Command` with inherited stdio. Return exit code through cobra
+- [ ] 4b.3 Implement `delete` subcommand — partial UUID (8+ chars), show session info, `--yes` to skip confirmation. Transactional: delete FTS rows then session (CASCADE handles `vault_files`)
+- [ ] 4b.4 Verify: `restore <id>` recreates files (path safety validated, CLAUDE_CONFIG_DIR respected, `diff` clean vs originals) → `resume <id>` launches `claude --resume` in the resolved dir → `delete <id>` removes the session from `list`/`search`
 
 ## Task 5: MCP server startup sweep
 - **Status:** pending
 - **Depends on:** Task 3
 - **Size:** S
-- **Can run in parallel with:** Task 4
+- **Can run in parallel with:** Task 4, Task 4b
 - **Docs:** [implementation.md#mcp-server-startup-sweep](./implementation.md#mcp-server-startup-sweep)
 
 ### Subtasks
@@ -114,10 +125,11 @@
 
 ## Task 6: TUI interface — interactive browsing, search, and viewing
 - **Status:** pending
-- **Depends on:** Task 4
-- **Size:** M
+- **Depends on:** Task 4, Task 4b
+- **Size:** L
 - **Can run in parallel with:** —
 - **Docs:** [implementation.md#tui-implementation](./implementation.md#tui-implementation)
+- **Risk focus:** 6.4 (viewer) is ~half this task's risk — lazy line-indexing + two render targets + subagent search-jump + inline rendering. It's the place to slow down (not a separate task, but where bugs will concentrate). The models are interdependent (`app.go` composes list+viewer+search), so this stays one task rather than splitting.
 
 ### Subtasks
 - [ ] 6.1 Add bubbletea ecosystem dependencies to `go.mod`: `bubbletea`, `bubbles`, `lipgloss`. **Exclude `glamour` from v1** (lean binary — it pulls chroma/goldmark + lexers); lipgloss-only rendering, glamour deferred to Future Improvements (reversible decision)
@@ -131,7 +143,7 @@
 
 ## Task 7: Final verification
 - **Status:** pending
-- **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6
+- **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 4b, Task 5, Task 6
 - **Size:** S
 - **Can run in parallel with:** —
 
@@ -151,8 +163,7 @@
 ```
 Task 0 (investigate) ─── optional, does not block shipping
 
-Task 1 (store) ──────┐
-                      ├──→ Task 3 (import) ──→ Task 4 (CLI) ──→ Task 6 (TUI) ──→ Task 7
-Task 2 (scanner) ────┘          │
-                                └──→ Task 5 (server sweep) ─────────────────────→ Task 7
+Task 1 (store) ──┐
+                 ├─→ Task 3 (import) ─┬─→ Task 4 (CLI read) ─→ Task 4b (CLI destructive) ─→ Task 6 (TUI) ─→ Task 7
+Task 2 (scanner)─┘                    └─→ Task 5 (server sweep) ───────────────────────────────────────────→ Task 7
 ```
