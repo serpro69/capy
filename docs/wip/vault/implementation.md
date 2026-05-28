@@ -31,6 +31,10 @@ cmd/capy/
 
 Vault uses `CAPY_VAULT_KEY` (not `CAPY_DB_KEY`) for encryption. `internal/vault/encryption.go` provides a `RequireVaultKey()` function that reads from this env var. It reuses `store.EncryptedDSN()`, `store.URIEscapePassphrase()`, and `store.URIEscapePath()` directly — these are already exported and take the key as a parameter.
 
+**Prerequisite:** Corruption recovery helpers (`isSQLiteCorruption`, `backupCorruptDB`, `isWrongPassphrase`, `isGarbageFile`) in `internal/store/` are currently unexported (lowercase). Before implementing vault store, either:
+- Export them with uppercase names and doc comments (simplest), or
+- Extract shared SQLite helpers into `internal/sqliteutil/` used by both `store` and `vault` (cleaner separation)
+
 ### DB Path Resolution
 
 1. `CAPY_VAULT_PATH` env var → if set, use it
@@ -53,7 +57,7 @@ On close: close prepared statements, close connection pool, run WAL checkpoint (
 
 ### Schema DDL
 
-All tables from design.md are created in a single `schemaSQL` constant: `vault_sessions`, `vault_files`, `vault_fts`, `vault_meta`. The FTS5 table uses `tokenize='porter unicode61'`. Foreign keys use `ON DELETE CASCADE` (for `vault_files`). FTS5 virtual tables don't support foreign keys — FTS cleanup is explicit (`DELETE FROM vault_fts WHERE session_uuid = ?` in the same transaction). The `vault_meta` table is seeded with a schema version on first creation.
+All tables from design.md are created in a single `schemaSQL` constant: `vault_sessions`, `vault_session_locations`, `vault_files`, `vault_fts`, `vault_meta`, plus indexes (`idx_sessions_end_time`, `idx_locations_project`, `idx_locations_session`). The FTS5 table uses `tokenize='porter unicode61'`. Foreign keys use `ON DELETE CASCADE` (for `vault_files` and `vault_session_locations`). FTS5 virtual tables don't support foreign keys — FTS cleanup is explicit (`DELETE FROM vault_fts WHERE session_uuid = ?` in the same transaction). The `vault_meta` table is seeded with a schema version on first creation.
 
 ## Machine Identity
 
@@ -85,9 +89,9 @@ Required fields only: `type`, `subtype`, `uuid`, `timestamp`, `sessionId`, `mess
    - For user messages: extract text from content blocks, strip `<system-reminder>` tags
    - For assistant messages: accumulate content blocks per `message.id`. Deduplicate by `(Type, Text, Name, ID)` tuple — matching the proven approach in `internal/session/parse.go:161-174`. This correctly handles Claude Code's non-cumulative progressive snapshots where each JSONL line carries one content block sharing the same `message.id`.
    - For system/away_summary: extract content text
-4. Group extracted content into turns (sequential user→assistant pairs)
+4. Produce one `ScanResult` per message (NOT per turn-pair): each user message → one `ScanResult` with `Role="user"`, each assistant message → one `ScanResult` with `Role="assistant"`. Track `TurnIndex` (increments on user→assistant boundary) and `MessageIndex` (sequential within a turn) for ordering.
 5. Sanitize: run `sanitize.StripSecrets()` on each `ScanResult.ContentText`
-6. Return `[]ScanResult` with one entry per turn
+6. Return `[]ScanResult` with one entry per message
 
 ### Tool Input Extraction
 
@@ -148,15 +152,17 @@ AssociatedFile {
    c. Compute composite SHA-256 content hash (main file + all associated files, sorted by relative path)
    d. Check idempotent import logic (skip/replace/insert decision)
    e. If inserting/replacing:
-      - Extract metadata (timestamps, message count) via lightweight JSONL scan
+      - Extract metadata (timestamps, message count, cwd) via lightweight JSONL scan
       - Run scanner to produce `[]ScanResult` for FTS (including subagent files identified by `subagents/agent-*.jsonl` path pattern)
       - Begin transaction
       - If replacing: delete old FTS rows (`DELETE FROM vault_fts WHERE session_uuid = ?`)
-      - Insert/replace `vault_sessions` row (CASCADE auto-deletes old `vault_files`)
+      - Insert/replace `vault_sessions` row (CASCADE auto-deletes old `vault_files` and `vault_session_locations`)
+      - Upsert `vault_session_locations` row for this (uuid, machine_id, claude_project_dir) combination, using `cwd` as `project_path` when available, mangled dir name as fallback
       - Insert `vault_files` rows for all associated files
       - Insert `vault_fts` rows (one per ScanResult, with sanitized content)
       - Commit transaction
-4. Report: imported N, skipped N, errors N
+   f. If skipping (same hash): still upsert `vault_session_locations` to record this location (outside the main transaction — location-only upsert is cheap and idempotent)
+4. Report: imported N, skipped N, errors N (per-session errors printed to stderr)
 
 ### Metadata Extraction
 
@@ -165,8 +171,9 @@ AssociatedFile {
 - `end_time`: timestamp of the last JSONL line
 - `message_count`: count of lines where type is "user" or "assistant" (or message.role is)
 - `size_bytes`: `os.Stat(path).Size()`
+- `cwd`: the `cwd` field from the first user JSONL line that has it (used as `project_path` during bulk import, preferred over the mangled directory name)
 
-This is a fast first-pass that only reads timestamps and type fields — no content extraction.
+This is a fast first-pass that only reads timestamps, type, and cwd fields — no content extraction.
 
 ### Git Branch Extraction
 
@@ -207,8 +214,8 @@ All vault commands share: `--tui` flag (bool, default false), vault DB path reso
 
 ### Import Command
 
-- Default: dry-run (list what would be imported with status)
-- `--force`: actually import
+- Default: mutating (actually imports)
+- `--dry-run`: preview what would be imported without writing
 - `--path <dir>`: custom source directory
 - `--project <filter>`: only import sessions matching project path substring
 - Output: table with UUID, project, size, status (new/updated/skipped/error)
@@ -217,45 +224,49 @@ All vault commands share: `--tui` flag (bool, default false), vault DB path reso
 ### Search Command
 
 - Positional arg: search query (FTS5 MATCH syntax)
-- `--project`, `--after`, `--before`: metadata filters (WHERE clauses on JOIN)
-- `--role <user|assistant>`: filter FTS results by role UNINDEXED column
+- `--project`: substring filter on `vault_session_locations.project_path` (JOIN)
+- `--after`, `--before`: timestamp filters on `vault_sessions` (WHERE clauses on JOIN)
+- `--role <user|assistant>`: filter FTS results by role UNINDEXED column (works because each FTS row is one message with a single role)
 - `--limit N`: max results (default 20)
 - Output: ranked results with short UUID, project, date, role, snippet
 - Verify: search for known content → correct session appears with relevant snippet
 
 ### List Command
 
-- `--project <filter>`: substring match on project_path
+- `--project <filter>`: substring match on `vault_session_locations.project_path` (JOIN)
 - `--limit N`: max results (default 50)
 - Output: table with short UUID, project, date range, messages, size
-- Default sort: `ORDER BY end_time DESC`
+- Default sort: `ORDER BY end_time DESC` (uses `idx_sessions_end_time` index)
 - Verify: `capy vault list` shows sessions in reverse chronological order
 
 ### Show Command
 
 - Positional arg: session UUID (partial match supported, 6+ chars)
 - Fetches `raw_jsonl` from `vault_sessions`, parses on the fly
+- Also fetches `vault_files` entries matching `subagents/*.jsonl` and parses them inline with visual distinction (dimmed, prefixed — matching `claude-history`'s subagent rendering approach)
 - Renders Human/Assistant format with tool usage indicators
 - Pipes through `$PAGER` (or `less` fallback) for long sessions
-- Verify: `capy vault show <id>` displays full conversation matching original session content
+- Verify: `capy vault show <id>` displays full conversation including subagent content matching original session
 
 ### Restore Command
 
 - Positional arg: session UUID (partial match)
-- `--output <path>`: custom output directory (default: `~/.claude/projects/<claude_project_dir>/`)
+- `--output <path>`: custom output directory. If omitted and session has multiple locations, prompts the user to choose. Default: `~/.claude/projects/<claude_project_dir>/` from the chosen location
 - Writes `<uuid>.jsonl` from `vault_sessions.raw_jsonl`
 - Writes `<uuid>/<relative_path>` for each entry in `vault_files`
+- **Path safety:** before writing each `vault_files` entry, validate `relative_path`: reject absolute paths, reject `..` components, verify resolved path is under the restore root via `filepath.Rel()` containment check. Skip invalid entries with a warning to stderr
 - Prompts before overwriting existing files
 - Verify: restored files match originals → `diff` shows no difference (if originals still exist)
 
 ### Resume Command
 
 - Positional arg: session UUID (partial match)
-- Calls restore logic to put files back in original Claude Code location
-- Launches `claude --resume <session_id>` using `os/exec.Command` with inherited stdin/stdout/stderr, then `os.Exit(cmd.ProcessState.ExitCode())`
+- Calls restore logic to put files back in original Claude Code location (if multiple locations, prompts or uses the one matching the current directory)
+- Pre-check: `exec.LookPath("claude")` — clear error message if not found
+- Close the vault store before launching to ensure WAL checkpoint and proper cleanup
+- Launches `claude --resume <session_id>` using `os/exec.Command` with inherited stdin/stdout/stderr. Returns the exit code through cobra's error handling (no `os.Exit` — allows deferred cleanup to run)
 - If `project_path` is an accurate real path (starts with `/`, not `-`), changes to that directory first
 - If `project_path` is a mangled dir name, warns user and prompts for project directory
-- Errors if Claude Code binary not found
 - Verify: `capy vault resume <id>` opens Claude Code with the session loaded
 
 ### Stats Command
@@ -289,7 +300,7 @@ Wraps `bubbles/list` with custom item rendering (short UUID, project, date, size
 
 ### Viewer Model
 
-Wraps `bubbles/viewport` for scrollable content. On activation, fetches `raw_jsonl` from store, parses with a display-oriented parser (not the FTS scanner — this needs faithful rendering including tool results and thinking blocks based on flags). Supports `--show-tools` and `--show-thinking` flags.
+Wraps `bubbles/viewport` for scrollable content. On activation, fetches `raw_jsonl` from store plus `vault_files` entries matching `subagents/*.jsonl`. Uses lazy line-indexing: holds the raw `[]byte` plus a `\n`-offset index, and only `json.Unmarshal`s lines in the visible viewport on demand (not the FTS scanner — this needs faithful rendering including tool results, thinking blocks, and subagent conversations based on flags). Subagent content is rendered inline with visual distinction (dimmed prefix). Supports `--show-tools` and `--show-thinking` flags.
 
 ### Search Model
 
