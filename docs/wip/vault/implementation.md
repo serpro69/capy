@@ -350,11 +350,18 @@ Wraps `bubbles/list` with custom item rendering (short UUID, project, date, size
 
 ### Viewer Model
 
-Wraps `bubbles/viewport` for scrollable content. On activation, fetches `raw_jsonl` from store plus `vault_files` entries matching `subagents/*.jsonl`. Uses lazy line-indexing: holds the raw `[]byte` plus a `\n`-offset index, and only `json.Unmarshal`s lines in the visible viewport on demand (not the FTS scanner — this needs faithful rendering including tool results, thinking blocks, and subagent conversations based on flags). When entered from a search result, it scrolls to the match by resolving the FTS `line_index` directly against the `\n`-offset table (**not** `turn_index`, which is scanner-internal and unreliable across the two parsers). Subagent content is rendered inline with visual distinction (dimmed prefix). Supports `--show-tools` and `--show-thinking` flags.
+Wraps `bubbles/viewport`, scrolling in **source-line units** over a lazy `\n`-offset index (holds the raw `[]byte` and only `json.Unmarshal`s lines in the visible viewport — not the FTS scanner; this needs faithful rendering of tool results, thinking blocks, and subagents per flags, and avoids eager-rendering a large session). It drives **two render targets** with the same machinery: the main `raw_jsonl`, and (on demand) a single `subagents/agent-<id>.jsonl` fetched from `vault_files`.
+
+- **Browse:** subagents render inline at the launching `Task`/`Agent` tool_use line, visually distinct (dimmed prefix).
+- **Jump from search:** a match with empty `subagent_id` scrolls the main target to `line_index`; a match with `subagent_id` set **loads that subagent's JSONL as the active target** and scrolls to `line_index` — exact, because a subagent file is just another JSONL on the identical lazy path (no inline-interleave coordinate math). `Esc`/`q` returns to the main session.
+
+Resolution uses `line_index`/`subagent_id`, never `turn_index`. Supports `--show-tools` and `--show-thinking` flags.
+
+> **Implementation note — inline rendering vs. markers (allowed fallback).** v1 renders subagents **inline** at their launch point for in-context browsing. This inline interleave (splice placement + dimmed rendering of a *second* source file within the main flow) is the only part of the viewer that mixes two JSONL files in one render, so it is the most likely place to get fiddly. It is **not required for correctness**: subagents are already fully viewable standalone (the search-jump path loads a subagent JSONL as its own target). If inline rendering proves heavy or buggy, fall back to **markers-only** without any redesign — at each launch point render a single selectable line (e.g. `▸ subagent <agent_type>: <description>`) that opens the subagent standalone via the exact same path search-jump uses. Both modes use the same data (`subagent_id` + `line_index`) and need **no schema change**; the choice is a browse-UX decision local to this file. Either is spec-conformant.
 
 ### Search Model
 
-Combines `bubbles/textinput` for query entry with a results list. Debounces input (200ms) before firing FTS5 queries. Results include `snippet()` context and turn metadata. Selecting a result transitions to the viewer scrolled to the match's `line_index` (resolved against the `\n`-offset table).
+Combines `bubbles/textinput` for query entry with a results list. Debounces input (200ms) before firing FTS5 queries. Results carry `snippet()` context plus `session_uuid`, `subagent_id`, and `line_index`. Selecting a result transitions to the viewer: a main-session match scrolls the main target to `line_index`; a subagent match loads the subagent's JSONL as the active target and scrolls to `line_index` (standalone view, `Esc`/`q` to return).
 
 ### Session Content Renderer
 
