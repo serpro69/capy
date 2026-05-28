@@ -4,39 +4,56 @@
 > Implementation: [./implementation.md](./implementation.md)
 > Status: pending
 > Created: 2026-05-28
-> Not Doing: Cloud sync, multi-user access, Codex sessions, session diffing, real-time watch, automatic cleanup
+> Not Doing: Cloud sync, multi-user access, Codex sessions, session diffing, real-time watch, automatic cleanup, sharing/export, PreCompact snapshots (deferred)
+
+## Task 0: Investigate PreCompact hook payload
+- **Status:** pending
+- **Depends on:** —
+- **Size:** S
+- **Can run in parallel with:** Task 1, Task 2
+- **Slicing strategy:** Risk-First (most uncertain piece first)
+- **Docs:** [implementation.md#precompact-hook-deferred](./implementation.md#precompact-hook-deferred)
+
+### Subtasks
+- [ ] 0.1 Add a debug handler in `internal/hook/precompact.go` that writes the raw stdin payload to `~/.config/capy/precompact-debug.json`
+- [ ] 0.2 Trigger `/compact` in a Claude Code session and capture the payload
+- [ ] 0.3 Document the JSON structure: which fields are present, whether it includes session file path, session ID, project directory
+- [ ] 0.4 Verify timing: does the hook fire before or after file mutation? (Check file mtime before and after hook execution)
+- [ ] 0.5 Write findings to `docs/wip/vault/precompact-investigation.md` — this unblocks future PreCompact archival implementation
+- [ ] 0.6 Verify: documented payload structure exists and is sufficient to locate the session file
 
 ## Task 1: Vault store foundation — schema, encryption, connection lifecycle
 - **Status:** pending
 - **Depends on:** —
 - **Size:** M
-- **Can run in parallel with:** Task 2
+- **Can run in parallel with:** Task 0, Task 2
 - **Docs:** [implementation.md#encryption--db-initialization](./implementation.md#encryption--db-initialization)
 
 ### Subtasks
 - [ ] 1.1 Create `internal/vault/encryption.go` — `RequireVaultKey()` reads `CAPY_VAULT_KEY`, `VaultDBPath()` resolves `CAPY_VAULT_PATH` with `~/.config/capy/vault.db` default
 - [ ] 1.2 Create `internal/vault/store.go` — `VaultStore` struct with lazy-init `getDB()`, `openDB()` using `store.EncryptedDSN()`, schema DDL execution, WAL+pragma setup, `Close()` with WAL checkpoint
-- [ ] 1.3 Define schema DDL constant — all 5 tables (`vault_sessions`, `vault_subagents`, `vault_snapshots`, `vault_fts`, `vault_meta`) with correct constraints, FKs, and UNINDEXED FTS5 columns
+- [ ] 1.3 Define schema DDL constant — 4 tables (`vault_sessions` with `claude_project_dir` column, `vault_files`, `vault_fts` with UNINDEXED columns, `vault_meta`) with correct constraints and FKs
 - [ ] 1.4 Create `internal/vault/machine.go` — machine identity resolution: `CAPY_MACHINE_ID` env → `~/.config/capy/machine-id` file → generate UUIDv4 with atomic write
-- [ ] 1.5 Implement prepared statements for core operations: insert/replace session, insert subagent, insert FTS row, delete FTS rows by session_uuid, insert snapshot, query session by UUID
-- [ ] 1.6 Tests: DB creation with encryption, schema validation, machine ID generation and persistence, prepared statement execution against empty DB
+- [ ] 1.5 Implement prepared statements for core operations: insert/replace session, insert file, insert FTS row, delete FTS rows by session_uuid, query session by UUID, query files by session_uuid, list sessions with filters
+- [ ] 1.6 Tests: DB creation with encryption, schema validation, machine ID generation and persistence, prepared statement execution against empty DB, ON DELETE CASCADE verification (insert session + files, delete session, verify files gone)
 - [ ] 1.7 Verify: `go test -tags fts5 ./internal/vault/...` passes with `CAPY_VAULT_KEY=test-key`
 
 ## Task 2: FTS scanner — JSONL text extraction for search indexing
 - **Status:** pending
 - **Depends on:** —
 - **Size:** M
-- **Can run in parallel with:** Task 1
+- **Can run in parallel with:** Task 0, Task 1
 - **Docs:** [implementation.md#scanner](./implementation.md#scanner)
 
 ### Subtasks
 - [ ] 2.1 Create `internal/vault/scanner_types.go` — minimal JSON wire types: `jsonlLine`, `jsonlMessage`, `contentBlock` (decoupled from `internal/session/parse.go`)
-- [ ] 2.2 Create `internal/vault/scanner.go` — `ScanSession(path string) ([]ScanResult, error)`: single-pass streaming JSONL reader with 16MB line buffer, progressive snapshot dedup via `seen` map, system-reminder stripping
+- [ ] 2.2 Create `internal/vault/scanner.go` — `ScanSession(path string) ([]ScanResult, error)`: single-pass streaming JSONL reader with 16MB line buffer, progressive snapshot dedup via `(Type, Text, Name, ID)` tuple matching (same approach as `internal/session/parse.go:161-174`), system-reminder stripping
 - [ ] 2.3 Implement text extraction per content block type: text blocks (keep), tool_use (extract name + input summary for Read/Edit/Bash/Agent), thinking (skip), tool_result (skip content but note tool name)
 - [ ] 2.4 Implement turn grouping: sequential user→assistant messages grouped into turns, each producing one `ScanResult` with `TurnIndex`, `Role`, `ContentText`
-- [ ] 2.5 Implement subagent scanning: `ScanSubagents(dir string) ([]ScanResult, error)` that discovers `agent-*.jsonl` files, reads `.meta.json`, and produces `ScanResult` entries with populated `SubagentID`
-- [ ] 2.6 Tests: scan a real session JSONL fixture → verify extracted text contains expected content, tool names present, base64/system-reminders absent, progressive snapshots deduplicated, subagent content extracted
-- [ ] 2.7 Verify: `go test -tags fts5 ./internal/vault/...` passes; scanner produces non-empty results for test fixtures
+- [ ] 2.5 Add sanitization: run `sanitize.StripSecrets()` on each `ScanResult.ContentText` before returning
+- [ ] 2.6 Implement subagent scanning: `ScanSubagents(dir string) ([]ScanResult, error)` that identifies `subagents/agent-*.jsonl` files by path pattern, reads `.meta.json` for context, and produces `ScanResult` entries with populated `SubagentID`
+- [ ] 2.7 Tests: scan a real session JSONL fixture → verify extracted text contains expected content, tool names present, base64/system-reminders absent, progressive snapshots deduplicated correctly (test with multiple blocks sharing same message.id), subagent content extracted, secrets stripped from ContentText
+- [ ] 2.8 Verify: `go test -tags fts5 ./internal/vault/...` passes; scanner produces non-empty results for test fixtures
 
 ## Task 3: Session discovery and import pipeline end-to-end
 - **Status:** pending
@@ -46,13 +63,13 @@
 - **Docs:** [implementation.md#discovery](./implementation.md#discovery), [implementation.md#import-pipeline](./implementation.md#import-pipeline)
 
 ### Subtasks
-- [ ] 3.1 Create `internal/vault/discovery.go` — `DiscoverSessions(rootDir string) ([]SessionFile, error)`: walk `~/.claude/projects/*/`, find `*.jsonl` + subagent directories, return `[]SessionFile` with paths, UUID, mangled project dir
-- [ ] 3.2 Create `internal/vault/metadata.go` — `ExtractMetadata(path string) (SessionMeta, error)`: fast first-pass reading only timestamps, type fields, and message count from JSONL without full content extraction
+- [ ] 3.1 Create `internal/vault/discovery.go` — `ClaudeConfigDir()` resolves `CLAUDE_CONFIG_DIR` env → `~/.claude/` default. `DiscoverSessions(rootDir string) ([]SessionFile, error)`: walk projects directory, find `*.jsonl` + collect all files in `<uuid>/` directories recursively (subagents, tool-results, any sidecars)
+- [ ] 3.2 Create `internal/vault/metadata.go` — `ExtractMetadata(path string) (SessionMeta, error)`: fast first-pass reading timestamps, type fields, message count. Git branch extraction with detached HEAD handling (literal `"HEAD"` → NULL)
 - [ ] 3.3 Create `internal/vault/import.go` — `Import(store *VaultStore, sessions []SessionFile, opts ImportOptions) ImportResult`: orchestrate discovery → metadata → idempotent upsert with batch transactions (~50 per tx for bulk, per-session fallback on failure)
-- [ ] 3.4 Implement idempotent import logic: compute SHA-256 hash, check existing by UUID, apply size-based merge (larger wins), transactional insert/replace (delete old FTS → insert session + subagents + FTS rows)
-- [ ] 3.5 Implement `ArchiveFromHook(payload HookPayload) error` entry point: single-session import with `os.Getwd()` for project path, `git rev-parse` for branch, writes to both `vault_snapshots` and `vault_sessions`
-- [ ] 3.6 Tests: import from a test directory with multiple session files → verify correct sessions in DB, idempotent re-import skips, larger file replaces smaller, smaller file skipped, subagents stored, FTS rows created, snapshots created for hook path
-- [ ] 3.7 Verify: `go test -tags fts5 ./internal/vault/...` passes; import a test fixture directory and query back sessions via store methods
+- [ ] 3.4 Implement composite content_hash: SHA-256 over main JSONL bytes concatenated with all associated file bytes (sorted by relative path)
+- [ ] 3.5 Implement idempotent import logic: compute composite hash, check existing by UUID, apply size-based merge (larger wins), transactional insert/replace (delete old FTS → insert session + files + FTS rows). Store both `project_path` (best-known real path) and `claude_project_dir` (mangled dir name)
+- [ ] 3.6 Tests: import from a test directory with multiple session files including subagents and tool-results → verify correct sessions in DB, all associated files preserved in vault_files, idempotent re-import skips, larger file replaces smaller, smaller file skipped, FTS rows created with sanitized content, composite hash covers subagent changes, CLAUDE_CONFIG_DIR respected
+- [ ] 3.7 Verify: `go test -tags fts5 ./internal/vault/...` passes; import a test fixture directory and query back sessions + files via store methods
 
 ## Task 4: CLI commands — import, list, search, show, restore, resume, stats
 - **Status:** pending
@@ -67,23 +84,22 @@
 - [ ] 4.3 Implement `list` subcommand — `ListSessions()` store method with `--project` filter, `--limit`, reverse chronological sort. Table output: short UUID, project, date range, messages, size
 - [ ] 4.4 Implement `search` subcommand — FTS5 MATCH query with `snippet()`, joined to `vault_sessions` for metadata. `--project`, `--after`, `--before`, `--role` filters, `--limit`. Output: ranked results with short UUID, project, date, role, snippet context
 - [ ] 4.5 Implement `show` subcommand — partial UUID resolution (query `WHERE uuid LIKE ?%`, error if ambiguous), fetch `raw_jsonl`, parse and render Human/Assistant format, pipe through `$PAGER`
-- [ ] 4.6 Implement `restore` subcommand — partial UUID, write `raw_jsonl` to original location (unmangle project dir for path) or `--output` path, restore subagent files from `vault_subagents`, prompt before overwriting existing files
-- [ ] 4.7 Implement `resume` subcommand — restore + `syscall.Exec("claude", ["claude", "--resume", sessionID], env)`. Error if project directory doesn't exist
-- [ ] 4.8 Implement `stats` subcommand — query session count, total size, per-project breakdown, oldest/newest dates, snapshot count
-- [ ] 4.9 Verify: run each command manually against a vault with imported test sessions. `import --force` → `list` shows sessions → `search <term>` finds expected result → `show <id>` displays content → `stats` shows correct counts
+- [ ] 4.6 Implement `restore` subcommand — partial UUID, write `raw_jsonl` to `~/.claude/projects/<claude_project_dir>/` (or `--output` path), restore all `vault_files` entries recreating directory structure, prompt before overwriting existing files
+- [ ] 4.7 Implement `resume` subcommand — restore + launch via `os/exec.Command("claude", "--resume", sessionID)` with inherited stdio. If `project_path` starts with `/` (real path from hook import), cd there first. If mangled (starts with `-`), warn and prompt for directory
+- [ ] 4.8 Implement `stats` subcommand — query session count, total size, per-project breakdown, oldest/newest dates
+- [ ] 4.9 Verify: run each command manually against a vault with imported test sessions. `import --force` → `list` shows sessions → `search <term>` finds expected result → `show <id>` displays content → `restore <id>` recreates files with subagents and tool-results → `stats` shows correct counts
 
-## Task 5: Hook integration — PreCompact archival and MCP server startup sweep
+## Task 5: MCP server startup sweep
 - **Status:** pending
 - **Depends on:** Task 3
 - **Size:** S
 - **Can run in parallel with:** Task 4
-- **Docs:** [implementation.md#hook-integration](./implementation.md#hook-integration)
+- **Docs:** [implementation.md#mcp-server-startup-sweep](./implementation.md#mcp-server-startup-sweep)
 
 ### Subtasks
-- [ ] 5.1 Extend hook router in `internal/hook/` — add `PreCompact` event case that calls `vault.ArchiveFromHook(payload)`. Graceful failure: log warning and exit non-zero, never block Claude Code
-- [ ] 5.2 Extend MCP server startup in `internal/server/server.go` — after existing `session.Sweep()`, add vault sweep goroutine for current project. Skip silently if `CAPY_VAULT_KEY` not set (vault is opt-in)
-- [ ] 5.3 Tests: hook handler receives mock PreCompact payload → session archived in vault_sessions and vault_snapshots. Server startup sweep indexes sessions from test project directory
-- [ ] 5.4 Verify: set up hooks in a test Claude Code config, trigger PreCompact → `capy vault list` shows the archived session
+- [ ] 5.1 Extend MCP server startup in `internal/server/server.go` — after existing `session.Sweep()`, add vault sweep goroutine for current project. Skip silently if `CAPY_VAULT_KEY` not set (vault is opt-in). Use cooperative cancellation (server context + timeout)
+- [ ] 5.2 Tests: server startup with `CAPY_VAULT_KEY` set imports sessions from test project directory. Server startup without key skips silently
+- [ ] 5.3 Verify: start MCP server with vault key set, check `capy vault list` shows sessions from the server's project
 
 ## Task 6: TUI interface — interactive browsing, search, and viewing
 - **Status:** pending
@@ -104,7 +120,7 @@
 
 ## Task 7: Final verification
 - **Status:** pending
-- **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6
+- **Depends on:** Task 0, Task 1, Task 2, Task 3, Task 4, Task 5, Task 6
 - **Size:** S
 - **Can run in parallel with:** —
 
@@ -117,8 +133,9 @@
 ## Dependency Graph
 
 ```
+Task 0 (investigate) ─────────────────────────────────────────────────→ Task 7
 Task 1 (store) ──────┐
                       ├──→ Task 3 (import) ──→ Task 4 (CLI) ──→ Task 6 (TUI) ──→ Task 7
 Task 2 (scanner) ────┘          │
-                                └──→ Task 5 (hooks) ────────────────────────────→ Task 7
+                                └──→ Task 5 (server sweep) ─────────────────────→ Task 7
 ```
