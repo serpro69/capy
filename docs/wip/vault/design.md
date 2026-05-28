@@ -35,7 +35,7 @@ Vault is a new `internal/vault/` package providing verbatim, cross-project sessi
 
 2. **Scanner layer** (`internal/vault/scanner.go`) — a single-pass JSONL reader that extracts searchable text from session files. Defines its own minimal JSON wire types (~20 lines), decoupled from `internal/session/parse.go`. Extracts: message text, tool names, tool input summaries (file paths, commands), subagent descriptions. Skips: base64, binary, system-reminder noise, progressive snapshot duplicates. Scanner output is sanitized via `sanitize.StripSecrets()` before FTS insertion to prevent secrets from appearing in search snippets.
 
-3. **Discovery layer** (`internal/vault/discovery.go`) — walks the Claude Code session directory to find all session JSONL files and their associated session directories (subagents, tool-results, and any other sidecars) across all projects. Respects `CLAUDE_CONFIG_DIR` environment variable, falling back to `~/.claude/`. Handles metadata extraction: project path, timestamps, message count, file size, content hash.
+3. **Discovery layer** (`internal/vault/discovery.go`) — walks the Claude Code session directory to find all session JSONL files and their associated session directories (subagents, tool-results, and any other sidecars) across all projects, via the shared `config.ClaudeProjectsDir()` (which honors `CLAUDE_CONFIG_DIR`, falling back to `~/.claude/`). Produces per-session discovery metadata only: file paths, UUID, mangled project dir, and the list of associated files. Message-level metadata (title, timestamps, message_count) is produced downstream by the scanner; `content_hash` and total `size_bytes` are computed in the import pipeline.
 
 4. **CLI/TUI layer** (`cmd/capy/vault.go` + `internal/vault/tui/`) — cobra subcommand group (`capy vault <cmd>`). Each command supports a `--tui` flag that switches to an interactive bubbletea interface.
 
@@ -49,43 +49,34 @@ Vault is a new `internal/vault/` package providing verbatim, cross-project sessi
 
 ### Schema
 
-Four tables + 1 FTS5 virtual table + 1 metadata table + 3 indexes.
+Two tables + 1 FTS5 virtual table + 1 metadata table + 2 indexes.
 
-**`vault_sessions`** — active state, one row per session. Holds metadata and the raw JSONL blob for verbatim restore.
+**`vault_sessions`** — active state, one row per session. Holds metadata, **1:1 location**, and the raw JSONL blob for verbatim restore.
 
 ```sql
 CREATE TABLE vault_sessions (
-    uuid              TEXT PRIMARY KEY,
-    title             TEXT,
-    start_time        DATETIME,
-    end_time          DATETIME,
-    message_count     INTEGER NOT NULL DEFAULT 0,
-    size_bytes        INTEGER NOT NULL DEFAULT 0,
-    content_hash      TEXT NOT NULL,
-    archived_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
-    raw_jsonl         BLOB NOT NULL
-);
-```
-
-Location-specific metadata (`project_path`, `claude_project_dir`, `git_branch`, `machine_id`) lives in `vault_session_locations` — see below.
-
-**`vault_session_locations`** — tracks where a session has been seen. A session may exist in multiple project directories due to cross-project forking (Claude Code's `--fork-session` copies the JSONL to a different project's Claude directory). One row per unique (uuid, machine, project dir) combination.
-
-```sql
-CREATE TABLE vault_session_locations (
-    session_uuid      TEXT NOT NULL REFERENCES vault_sessions(uuid) ON DELETE CASCADE,
-    machine_id        TEXT NOT NULL,
+    uuid               TEXT PRIMARY KEY,
+    title              TEXT,
+    start_time         DATETIME,
+    end_time           DATETIME,
+    message_count      INTEGER NOT NULL DEFAULT 0,
+    size_bytes         INTEGER NOT NULL DEFAULT 0,
+    content_hash       TEXT NOT NULL,
+    machine_id         TEXT NOT NULL,
     claude_project_dir TEXT NOT NULL,
-    project_path      TEXT NOT NULL,
-    git_branch        TEXT,
-    first_seen_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
-    last_seen_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (session_uuid, machine_id, claude_project_dir)
+    project_path       TEXT NOT NULL,
+    git_branch         TEXT,
+    archived_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+    raw_jsonl          BLOB NOT NULL
 );
 ```
 
-- `project_path` — best-known real project path: accurate `os.Getwd()` from hooks, `cwd` field from JSONL during bulk import, `config.unmanglePath` filesystem-probe recovery from the mangled name, and the raw mangled name only as a last resort. Used for display and resume (cd target).
+- `machine_id` — the machine that archived this session (see [Machine Identity](#machine-identity)); powers the cross-machine mismatch warning.
 - `claude_project_dir` — always the mangled directory name under `~/.claude/projects/`. Used for restore (writing files back to the correct Claude Code location). Always available regardless of import source.
+- `project_path` — best-known real project path: accurate `os.Getwd()` from hooks, `cwd` field from JSONL during bulk import, `config.unmanglePath` filesystem-probe recovery from the mangled name, and the raw mangled name only as a last resort. Used for display and resume (cd target).
+- `git_branch` — initial branch from the JSONL (NULL if absent).
+
+Location lives **on the session row** because it is 1:1: a session UUID is created on exactly one machine in exactly one project dir, and `--fork-session` mints a **new** UUID rather than copying one (verified — see [Assumptions](#assumptions)). There is no separate `vault_session_locations` table.
 
 **`vault_files`** — stores all files from the session directory (subagent JSONLs, subagent meta.json, tool-results, and any other sidecars). Linked to parent session via `ON DELETE CASCADE`. This ensures full preservation of the entire session directory — not just the main JSONL.
 
@@ -124,13 +115,10 @@ CREATE VIRTUAL TABLE vault_fts USING fts5(
 
 ```sql
 CREATE INDEX idx_sessions_end_time ON vault_sessions(end_time DESC);
-CREATE INDEX idx_locations_project ON vault_session_locations(project_path);
-CREATE INDEX idx_locations_session ON vault_session_locations(session_uuid);
+CREATE INDEX idx_sessions_project  ON vault_sessions(project_path);
 ```
 
-`idx_sessions_end_time` supports the `list` command's default `ORDER BY end_time DESC`. `idx_locations_project` supports `--project` substring filtering on `list` and `search`. `idx_locations_session` supports location lookups by UUID for restore/resume.
-
-**Multi-location deduplication:** Since `vault_session_locations` is one-to-many, queries that JOIN sessions to locations must avoid duplicate rows. `list` uses `GROUP BY vault_sessions.uuid` and picks the most recent location's `project_path` (by `last_seen_at`) for display. `search` returns FTS results per message (already session-scoped via `session_uuid`), joining to one representative location per session. `--project` filters with `EXISTS (SELECT 1 FROM vault_session_locations WHERE ... AND project_path LIKE ?)` rather than a direct JOIN to avoid row multiplication.
+`idx_sessions_end_time` supports the `list` command's default `ORDER BY end_time DESC`. `idx_sessions_project` supports `--project` substring filtering on `list` and `search`. Because location is 1:1 on `vault_sessions`, `list` is a plain `SELECT ... ORDER BY end_time DESC` (no `GROUP BY`), and `--project` on both `list` and `search` is a direct `WHERE project_path LIKE ?` (no `EXISTS` subquery, no row multiplication to guard against).
 
 **`vault_meta`** — key-value store for vault-level configuration (schema version, etc.).
 
@@ -144,13 +132,13 @@ CREATE TABLE vault_meta (
 ### Design Rationale
 
 - **Separate DB from FTS knowledge store** — different retention policies (vault archives forever, FTS has tiered cleanup) and different scope (vault is global, knowledge store is per-project).
-- **Session content separated from locations** — Claude Code's `--fork-session` copies a session JSONL into a different project's directory, creating the same UUID in multiple project directories. `vault_sessions` stores content once (deduplicated by hash), while `vault_session_locations` tracks every (machine, project dir) where the session was seen. This avoids duplicate BLOBs and enables correct restore to any known location. `ON DELETE CASCADE` ensures locations are cleaned up with the parent session.
+- **Location is 1:1 on the session row** — a session UUID is created on exactly one machine in exactly one project directory. `--fork-session` does **not** reuse a UUID (it mints a new one — verified against the `--fork-session` help text and a 223-session sample with 0 UUIDs shared across project dirs), so a single UUID never legitimately maps to multiple project dirs. Location columns (`machine_id`, `claude_project_dir`, `project_path`, `git_branch`) therefore live directly on `vault_sessions` — no separate `vault_session_locations` table and no 1:N dedup machinery. Cross-machine merge combines *distinct* UUIDs; the `machine_id` column drives the mismatch warning. (An earlier draft used a 1:N locations table to handle "cross-project forking"; that premise was false, so the table was removed.)
 - **Raw JSONL as uncompressed BLOB** — application-level compression (zstd) is deferred to a future version. The current design accepts the storage cost for implementation simplicity — every read path (restore, show, TUI) would need decompression. See [Future Improvements](#future-improvements) for the compression roadmap. **Read-path performance:** `show` and TUI viewer must load the full BLOB into Go memory. For typical sessions (100KB–1MB) this is fast. For large sessions (5–10MB), the concern is not the raw `[]byte` load (single allocation, fast) but AST inflation from fully parsing JSONL into Go structs — a 10MB JSONL routinely becomes 50–100MB of heap objects with hundreds of thousands of small allocations, causing GC pressure. The mitigation is **lazy line-indexing**: load the raw `[]byte`, scan for `\n` boundaries to build an offset index (`[]struct{Start, End int}` — microseconds, near-zero allocation), then `json.Unmarshal` only the lines in the visible viewport on demand. This keeps one large `[]byte` in memory with minimal heap objects regardless of session size. No full-parse-and-cache needed — lazy line-indexing is simpler and is the v1 approach, not a deferred optimization.
 - **`title` column on `vault_sessions`** — populated from `ai-title` JSONL entries (Claude's auto-generated session summaries; emitted repeatedly as the title is refined, so the **last** `ai-title` wins). Measured: 136/223 sampled sessions carry at least one `ai-title`; the other 87 (39%) fall back to the first *significant* user message, truncated to 120 chars. "Significant" follows cc-sessions' guard — a `user` entry whose content is a plain string (not a `tool_result` array) and does not start with `<` (excludes `<system-reminder>`/`<command-name>` noise); without this guard a large fraction of fallback titles would be tool output or internal tags. A user-set custom title override is **not sourced from the JSONL**: no `custom-title` line type or `customTitle` field appears in sampled data (0/223), and Claude Code appears to persist renames outside the session file (e.g. under `~/.claude/sessions/`). The custom-title tier is therefore **deferred** until that store is verified (see [Assumptions](#assumptions)). Essential for usable `list` output and TUI browsing — without a title, sessions are indistinguishable walls of UUIDs.
 - **No `vault_messages` table** — initially considered for message-level search and TUI display, but rejected. The TUI needs to parse `raw_jsonl` on the fly anyway for faithful rendering (thinking blocks, tool results, formatting). FTS5 `UNINDEXED` columns on the `vault_fts` table provide message-level search resolution (`role`, `turn_index`, `message_index`) without a separate table. This eliminates double-stored text, external content triggers, and cascade complexity. **Search→view anchoring:** the FTS scanner and the TUI viewer are two independent parsers — the scanner dedups progressive assistant snapshots and assigns turn indices; the viewer does lazy line-indexing without dedup — so a scanner-only `turn_index` has no reliable mapping to a viewer scroll position. The `line_index` UNINDEXED column (the message's line number in its source JSONL), paired with `subagent_id` to pick the file, is the shared anchor both sides agree on. A **main-session** match resolves `line_index` against the main viewport's `\n`-offset table over `raw_jsonl`. A **subagent** match opens that subagent's `agent-<id>.jsonl` in the same lazy viewer — a subagent file is just another JSONL, so the identical line-index→scroll path applies exactly, with no inline-interleave coordinate math — scrolled to `line_index`, `Esc`/`q` returning to the main session. Scrolling is in **source-line units** (windowed): the viewer never eagerly renders the whole session, so jump targets are source lines, not display rows. `turn_index` is never used for scrolling.
 - **FTS5 one-row-per-message** — each user message and each assistant message is a separate FTS row, with the `role` UNINDEXED column distinguishing them. This enables `--role` filtering on search and produces focused `snippet()` results. Better granularity than one-row-per-session or one-row-per-turn-pair. FTS5 handles 100K+ small rows trivially.
 - **`subagent_id` uses empty string sentinel** — SQLite treats NULL as never equal to NULL in composite primary keys, which would break uniqueness constraints. Empty string `''` avoids this.
-- **`ON DELETE CASCADE`** on `vault_files` and `vault_session_locations` — when a session is deleted (e.g., `capy vault delete`), all associated files, locations, and FTS rows are cleaned up. Note: CASCADE applies only to regular tables; FTS5 virtual tables don't support foreign keys, so FTS rows require explicit `DELETE FROM vault_fts WHERE session_uuid = ?` in the same transaction. **Session replacement does not use CASCADE** — it uses `UPDATE` on the session row to preserve existing locations, and explicitly rebuilds `vault_files` and `vault_fts` only.
+- **`ON DELETE CASCADE`** on `vault_files` — when a session is deleted (e.g., `capy vault delete`), its files cascade with it. Note: CASCADE applies only to regular tables; FTS5 virtual tables don't support foreign keys, so FTS rows require explicit `DELETE FROM vault_fts WHERE session_uuid = ?` in the same transaction. **Session replacement uses `UPDATE`** on the session row (not DELETE+INSERT) — it overwrites metadata, location, `raw_jsonl`, and `content_hash` in place (preserving `archived_at`), and explicitly rebuilds `vault_files` and `vault_fts`.
 - **`vault_files` instead of `vault_subagents`** — a generic files table preserves the session directory (subagent JSONLs, meta.json, tool-results, and any future sidecar types), not just known file types. Preservation is **near-complete, not absolute**: the main `raw_jsonl` is always stored uncapped, subagent `*.jsonl` files (irreproducible conversation content) are always stored, and only large *reproducible* sidecars (non-subagent files > 5 MB — build logs, screenshots) are skipped with a warning (see [DB Size Projection](#db-size-projection)). Subagent metadata (agent_type, description) is read from the stored `meta.json` files at display time.
 - **FTS content is sanitized** — `sanitize.StripSecrets()` runs on scanner output before FTS insertion. This prevents secrets from appearing in search snippet results. The `raw_jsonl` blob and `vault_files` content remain unsanitized — verbatim preservation is the point.
 - **Snapshots deferred** — `vault_snapshots` (append-only cold storage for pre-compaction content) is deferred to a future version. The PreCompact hook payload format is unverified (see [Assumption #2](#assumptions)), and the vault works without snapshots — `import` and server-startup sweep are the primary archival paths. See [Future Improvements](#future-improvements).
@@ -173,7 +161,7 @@ For each mangled project directory, it discovers:
 
 ### Project Path Handling
 
-Claude Code mangles project paths by replacing `/` and `.` with `-`. This is lossy (can't distinguish `/` from `.` in the original). Two columns on `vault_session_locations` track this:
+Claude Code mangles project paths by replacing `/` and `.` with `-`. This is lossy (can't distinguish `/` from `.` in the original). Two columns on `vault_sessions` track this:
 
 - **`claude_project_dir`** — always the mangled directory name (e.g., `-home-sergio-Projects-personal-capy`). Always available from any import source. Used for restore (writing back to `~/.claude/projects/<claude_project_dir>/<uuid>.jsonl`).
 - **`project_path`** — best-known real project path. From hooks: accurate `os.Getwd()`. From bulk import: the `cwd` field in the JSONL (first user entry that has it); if absent, recover from the mangled dir name via the existing `config.unmanglePath`/`unmangledProbe` filesystem probe (`internal/config/paths.go`), storing the raw mangled name only as a last resort. Used for display and resume.
@@ -203,11 +191,11 @@ Claude Code mangles project paths by replacing `/` and `.` with `-`. This is los
 4. If UUID exists with different hash and incoming `size_bytes < existing` → skip (likely compacted; don't overwrite the fuller archive)
 5. If UUID doesn't exist → insert
 
-**Single-version semantics:** replacement UPDATEs the row in place (preserving locations) and discards the previous `raw_jsonl`. A larger-but-divergent variant (forked/edited, not a strict superset) overwrites the prior blob — same machine as well as cross-machine. Append-only history (`vault_snapshots`) is deferred; see [Future Improvements](#future-improvements).
+**Single-version semantics:** replacement UPDATEs the row in place and discards the previous `raw_jsonl`. A larger-but-divergent variant (forked/edited, not a strict superset) overwrites the prior blob — same machine as well as cross-machine. Append-only history (`vault_snapshots`) is deferred; see [Future Improvements](#future-improvements).
 
 **Known limitation:** Cross-machine merge after independent compaction may lose content. If machine A has a 1MB pre-compaction version and machine B has a 0.6MB independently-compacted version, importing B's vault into A would skip B's version (smaller). If B's version had unique post-compaction content, it's lost. This is an accepted trade-off of the single-version-per-session model.
 
-**Session replacement preserves locations.** Replacement is transactional but avoids `ON DELETE CASCADE` for `vault_session_locations`: (1) `UPDATE vault_sessions SET ... WHERE uuid = ?` (updates metadata, raw_jsonl, content_hash — no DELETE trigger), (2) `DELETE FROM vault_files WHERE session_uuid = ?` + re-insert files, (3) `DELETE FROM vault_fts WHERE session_uuid = ?` + re-insert FTS rows. Locations are preserved across replacements because the session row is updated, not deleted and re-inserted. New locations are upserted separately.
+**Session replacement is transactional:** (1) `UPDATE vault_sessions SET ... WHERE uuid = ?` (updates metadata, location, raw_jsonl, content_hash), (2) `DELETE FROM vault_files WHERE session_uuid = ?` + re-insert files, (3) `DELETE FROM vault_fts WHERE session_uuid = ?` + re-insert FTS rows. Using `UPDATE` (not DELETE+INSERT) preserves the original `archived_at` and keeps the `vault_files`/`vault_fts` FK target stable.
 
 ### Transaction Batching
 
@@ -349,7 +337,7 @@ Restore writes back the complete session directory structure:
 - `<uuid>.jsonl` from `vault_sessions.raw_jsonl`
 - `<uuid>/<relative_path>` for each entry in `vault_files` (subagents, tool-results, etc.)
 
-Default target: `ClaudeProjectsDir()/<claude_project_dir>/` where `ClaudeProjectsDir()` respects `CLAUDE_CONFIG_DIR` (same helper used by discovery and import — see [Session Discovery](#session-discovery--import)). Override with `--output <path>`. Prompts before overwriting existing files. If a session has multiple locations, restore prompts the user to choose which location to restore to (or uses `--output`).
+Default target: `ClaudeProjectsDir()/<claude_project_dir>/` where `ClaudeProjectsDir()` respects `CLAUDE_CONFIG_DIR` (same helper used by discovery and import — see [Session Discovery](#session-discovery--import)). Override with `--output <path>`. Prompts before overwriting existing files. Location is single per session, so there is no location to choose.
 
 **Path safety:** Before writing any `vault_files` entry, the restore path is validated:
 - Reject `relative_path` values that are absolute paths
@@ -367,7 +355,7 @@ Resume restores the session files, then launches Claude Code using `os/exec.Comm
 3. Current working directory → use it (user is likely already in the right project)
 4. Prompt the user with `project_path` as a hint (may be from a different machine or a mangled dir name)
 
-For sessions with multiple locations, prefer the location matching the current machine's `machine_id`. All chosen paths are validated to exist before launching `claude`.
+All chosen paths are validated to exist before launching `claude`.
 
 ## TUI Interface
 
@@ -411,14 +399,13 @@ bubbletea, bubbles (list, viewport, textinput), lipgloss (styling).
 
 **Important:** Copying vault.db replaces B's existing vault entirely. If B already has a vault with local sessions, those are lost unless B first copies its own vault elsewhere. A merge-from-vault workflow (`capy vault merge --from <path>`) is planned for a future version — see [Future Improvements](#future-improvements).
 
-**Machine-ID mismatch detection:** When `capy vault import` opens a vault.db whose stored `machine_id` entries don't include the current machine, it prints a prominent warning: "This vault.db contains sessions from machine(s) X. Your local sessions are not yet archived — consider running `import` before replacing this file." This prevents accidental data loss from blind overwrite.
+**Machine-ID mismatch detection:** When `capy vault import` opens a vault.db where no `vault_sessions.machine_id` matches the current machine, it prints a prominent warning: "This vault.db contains sessions from machine(s) X. Your local sessions are not yet archived — consider running `import` before replacing this file." This prevents accidental data loss from blind overwrite.
 
 ### Merge Behavior Per Table
 
 | Table | Strategy |
 |-------|----------|
-| `vault_sessions` | UUID exists + same hash → skip. Different hash + incoming larger → UPDATE in place (preserves locations). Different hash + incoming smaller → skip. New UUID → insert. |
-| `vault_session_locations` | Upsert by composite PK `(uuid, machine_id, claude_project_dir)`. Updates `last_seen_at` on match. Preserved across session replacement (UPDATE, not DELETE+INSERT). |
+| `vault_sessions` | UUID exists + same hash → skip. Different hash + incoming larger → UPDATE in place (overwrites metadata + location + blob). Different hash + incoming smaller → skip. New UUID → insert. |
 | `vault_files` | On replacement: explicitly delete old files + insert new ones (within same tx). On session delete: CASCADE. |
 | `vault_fts` | Explicitly deleted and rebuilt as part of session insert/replace transactions. |
 | `vault_meta` | Local-only, not merged. |
@@ -455,7 +442,7 @@ Based on measured data from a real Claude Code installation (219 sessions over ~
 
 1. **Claude Code JSONL format is stable** — the `type`/`message`/`content` structure won't break in incompatible ways. If it does, raw BLOBs are still restorable; only the scanner needs updating.
 2. **PreCompact hook fires before file mutation** — UNVERIFIED. The `handlePreCompact` handler already receives the full payload via `input []byte` but the payload format is undocumented. This assumption must be validated before implementing PreCompact archival. The vault's core functionality (import + server-startup sweep) does not depend on this assumption.
-3. **Session UUIDs are globally unique** — cross-machine merge relies on UUID collision being impossible at this scale. Cross-project forking creates the same UUID in multiple project directories — vault handles this via `vault_session_locations` (content stored once, locations tracked separately).
+3. **Session UUIDs are globally unique, and a UUID maps to exactly one project dir** — cross-machine merge relies on UUID collisions being impossible at this scale. `--fork-session` mints a **new** UUID (per its help text: "create a new session ID instead of reusing the original"), not a copy of an existing one; verified empirically — a 223-session sample had 223 distinct UUIDs and **0** shared across project dirs. Location is therefore stored 1:1 on `vault_sessions`, not in a separate 1:N table.
 4. **Claude Code session directory structure is stable** — the mangled-path convention and `~/.claude/projects/` location persist. Discovery also respects `CLAUDE_CONFIG_DIR` for non-default installations.
 5. **JSONL field / line-type shape — verified against a 223-session sample (~43k lines), May 2026.**
    - `cwd` and `gitBranch` are present on `user`-type lines (used for project path + branch metadata).
@@ -518,7 +505,7 @@ The v1 cross-machine workflow requires copying vault.db and replacing the destin
 
 - `capy vault merge --from <path> [--key <key>]` — opens the source vault (optionally with a different encryption key), iterates sessions, and applies the same idempotent import logic (hash-based, larger wins) against the destination vault.
 - Handles the case where source and destination have different `CAPY_VAULT_KEY` values.
-- Merges `vault_session_locations` from both vaults, preserving all known locations.
+- Carries each session's `machine_id` / `claude_project_dir` / `project_path` / `git_branch` from the source vault.
 
 ### All-Projects Server Startup Sweep
 

@@ -70,7 +70,7 @@ Schema evolution follows the existing pattern from `internal/store/migrate.go`:
 
 ### Schema DDL
 
-All tables from design.md are created in a single `schemaSQL` constant: `vault_sessions` (including `title TEXT` column), `vault_session_locations`, `vault_files`, `vault_fts`, `vault_meta`, plus indexes (`idx_sessions_end_time`, `idx_locations_project`, `idx_locations_session`). The FTS5 table uses `tokenize='porter unicode61'`. Foreign keys use `ON DELETE CASCADE` (for `vault_files` and `vault_session_locations`). FTS5 virtual tables don't support foreign keys — FTS cleanup is explicit (`DELETE FROM vault_fts WHERE session_uuid = ?` in the same transaction). Session replacement uses `UPDATE` (not DELETE+INSERT) to preserve existing `vault_session_locations` — see design.md for details. The `vault_meta` table is seeded with a schema version on first creation.
+All tables from design.md are created in a single `schemaSQL` constant: `vault_sessions` (with `title TEXT` plus the 1:1 location columns `machine_id`/`claude_project_dir`/`project_path`/`git_branch`), `vault_files`, `vault_fts`, `vault_meta`, plus indexes (`idx_sessions_end_time`, `idx_sessions_project`). There is **no** `vault_session_locations` table — location is 1:1 on `vault_sessions` (see design.md). The FTS5 table uses `tokenize='porter unicode61'`. `ON DELETE CASCADE` applies to `vault_files` only. FTS5 virtual tables don't support foreign keys — FTS cleanup is explicit (`DELETE FROM vault_fts WHERE session_uuid = ?` in the same transaction). Session replacement uses `UPDATE` (not DELETE+INSERT) so it overwrites location/metadata/blob in place while preserving `archived_at`. The `vault_meta` table is seeded with a schema version on first creation.
 
 ## Machine Identity
 
@@ -190,14 +190,14 @@ AssociatedFile {
    d. Check idempotent import logic (skip/replace/insert decision), comparing the total `size_bytes` from step (c)
    e. If inserting/replacing:
       - Run scanner (`ScanSession(bytes.NewReader(rawJSONL))`) to produce `*ScanOutput` — extracts FTS results, title, cwd, gitBranch. Also scan subagent files identified by `subagents/agent-*.jsonl` path pattern
+      - Resolve location fields: `machine_id` (machine identity), `claude_project_dir` (mangled dir name), `project_path` (`cwd` when available → `config.unmanglePath` recovery → raw mangled name), `git_branch` (from scanner)
       - Begin transaction
-      - If replacing: `UPDATE vault_sessions SET ...` (preserves locations), `DELETE FROM vault_files WHERE session_uuid = ?`, `DELETE FROM vault_fts WHERE session_uuid = ?`
-      - If inserting: `INSERT INTO vault_sessions ...`
-      - Upsert `vault_session_locations` row for this (uuid, machine_id, claude_project_dir) combination, using `cwd` as `project_path` when available, then `config.unmanglePath` recovery, then the raw mangled dir name as last resort
+      - If replacing: `UPDATE vault_sessions SET ...` (metadata + location + raw_jsonl + content_hash), `DELETE FROM vault_files WHERE session_uuid = ?`, `DELETE FROM vault_fts WHERE session_uuid = ?`
+      - If inserting: `INSERT INTO vault_sessions ...` (including the location columns)
       - Insert `vault_files` rows for all associated files
       - Insert `vault_fts` rows (one per ScanResult, with sanitized content)
       - Commit transaction
-   f. If skipping (same hash): still upsert `vault_session_locations` to record this location (outside the main transaction — location-only upsert is cheap and idempotent)
+   f. If skipping (same hash): nothing to update — the single session row (with its location) already exists. Optionally refresh `project_path`/`git_branch` if the current source has better data, but this is not required.
 4. Each batch acquires the write lock via the store's `beginImmediate` idiom (RESERVED lock + `SQLITE_BUSY` exponential backoff, per `internal/store/migrate.go`) so a concurrent server-startup sweep doesn't fail the batch outright. On batch tx error: log, retry each session individually. On individual error: log and continue
 5. Report: imported N, updated N, skipped N, errors N (per-session errors printed to stderr)
 
@@ -255,7 +255,7 @@ All vault commands share: `--tui` flag (bool, default false), vault DB path reso
 ### Search Command
 
 - Positional arg: search query — plain keyword mode by default (each whitespace-separated token is auto-quoted to prevent FTS5 operator interpretation, matching `claude-vault`'s approach). `--raw` flag passes the query as raw FTS5 MATCH syntax for advanced users
-- `--project`: substring filter on `vault_session_locations.project_path` (via `EXISTS` subquery to avoid row multiplication from multi-location sessions)
+- `--project`: substring filter on `vault_sessions.project_path` (direct `WHERE project_path LIKE ?` through the FTS→session join; location is 1:1, so no row multiplication)
 - `--after`, `--before`: timestamp filters on `vault_sessions`
 - `--role <user|assistant|tool|system>`: filter FTS results by the `role` UNINDEXED column (`tool` = `tool_result` output, kept separate from human `user` text so `--role user` returns prompts, not tool output)
 - `--limit N`: max results (default 20)
@@ -265,12 +265,12 @@ All vault commands share: `--tui` flag (bool, default false), vault DB path reso
 
 ### List Command
 
-- `--project <filter>`: substring match on `vault_session_locations.project_path` (via `EXISTS` subquery)
+- `--project <filter>`: substring match on `vault_sessions.project_path` (direct `WHERE project_path LIKE ?`)
 - `--limit N`: max results (default 50)
 - `--json`: machine-readable output
 - Output: table with short UUID, title, project, date range, messages, size
 - Default sort: `ORDER BY end_time DESC` (uses `idx_sessions_end_time` index)
-- Multi-location dedup: `GROUP BY vault_sessions.uuid`, display most recent location's `project_path`
+- One row per session (location is 1:1) — plain `SELECT`, no `GROUP BY`
 - Verify: `capy vault list` shows sessions in reverse chronological order with titles
 
 ### Show Command
@@ -286,7 +286,7 @@ All vault commands share: `--tui` flag (bool, default false), vault DB path reso
 ### Restore Command
 
 - Positional arg: session UUID (partial match, 8+ chars)
-- `--output <path>`: custom output directory. If omitted and session has multiple locations, prompts the user to choose. Default: `ClaudeProjectsDir()/<claude_project_dir>/` from the chosen location (respects `CLAUDE_CONFIG_DIR`)
+- `--output <path>`: custom output directory. Default: `ClaudeProjectsDir()/<claude_project_dir>/` (respects `CLAUDE_CONFIG_DIR`). Location is single per session — no location prompt
 - Writes `<uuid>.jsonl` from `vault_sessions.raw_jsonl`
 - Writes `<uuid>/<relative_path>` for each entry in `vault_files`
 - **Path safety:** resolve the restore root with `filepath.EvalSymlinks` first (so a symlinked component can't redirect writes outside it); then for each `vault_files` entry validate `relative_path`: reject absolute paths, reject `..` components, verify the resolved path is under the resolved restore root via `filepath.Rel()` containment check. Skip invalid entries with a warning to stderr
@@ -300,7 +300,7 @@ All vault commands share: `--tui` flag (bool, default false), vault DB path reso
 - Calls restore logic to put files back in original Claude Code location
 - Pre-check: `exec.LookPath("claude")` — clear error message if not found
 - Close the vault store before launching to ensure WAL checkpoint and proper cleanup
-- Directory resolution fallback chain: (1) `--dir` flag if provided and valid, (2) `project_path` if it starts with `/` and exists as a directory on this machine, (3) current working directory, (4) prompt with `project_path` as hint. For multi-location sessions, prefer location matching current `machine_id`
+- Directory resolution fallback chain: (1) `--dir` flag if provided and valid, (2) `project_path` if it starts with `/` and exists as a directory on this machine, (3) current working directory, (4) prompt with `project_path` as hint
 - Launches `claude --resume <session_id>` using `os/exec.Command` with inherited stdin/stdout/stderr. Returns the exit code through cobra's error handling (no `os.Exit` — allows deferred cleanup to run)
 - Verify: `capy vault resume <id>` opens Claude Code with the session loaded
 
@@ -309,7 +309,7 @@ All vault commands share: `--tui` flag (bool, default false), vault DB path reso
 - Positional arg: session UUID (partial match, 8+ chars)
 - `--yes`: skip confirmation prompt
 - Shows session info (title, project, date, message count) and prompts for confirmation
-- Transactional: `DELETE FROM vault_fts WHERE session_uuid = ?` then `DELETE FROM vault_sessions WHERE uuid = ?` (CASCADE handles files + locations)
+- Transactional: `DELETE FROM vault_fts WHERE session_uuid = ?` then `DELETE FROM vault_sessions WHERE uuid = ?` (CASCADE handles `vault_files`)
 - Verify: deleted session no longer appears in `list` or `search`
 
 ### Stats Command
@@ -373,7 +373,7 @@ Combines `bubbles/textinput` for query entry with a results list. Debounces inpu
 
 1. **Claude Code JSONL format is stable** — wire types won't break incompatibly. Raw BLOBs remain restorable regardless.
 2. **PreCompact hook fires before file mutation** — UNVERIFIED. Must be validated before implementing PreCompact archival. Core vault functionality does not depend on this.
-3. **Session UUIDs are globally unique** — cross-machine merge depends on this.
+3. **Session UUIDs are globally unique and map 1:1 to a project dir** — `--fork-session` mints a *new* UUID (not a copy), so location is stored 1:1 on `vault_sessions` with no separate locations table. See [design.md Assumptions #3](./design.md#assumptions).
 4. **Claude Code session directory structure is stable** — mangled-path convention persists. Discovery also respects `CLAUDE_CONFIG_DIR`.
 5. **JSONL field/line-type shape verified against a 223-session sample** — see [design.md Assumptions #5](./design.md#assumptions). Facts the scanner relies on: `tool_result` lives in `user` entries (0 in assistant); `ai-title` present in 136/223 (progressive, last wins); `custom-title`/`customTitle` and `progress` absent (0); `cwd`/`gitBranch` on user lines. Unknown types are skipped by default, so format drift is non-fatal.
 
