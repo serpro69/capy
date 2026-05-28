@@ -184,12 +184,12 @@ Claude Code mangles project paths by replacing `/` and `.` with `-`. This is los
 |-------|--------|
 | `uuid` | Filename (minus `.jsonl` extension) |
 | `title` | Last `aiTitle` from `ai-title` entries (emitted progressively — last wins). Fallback: first *significant* user message — string content, not a `tool_result` array, not `<…>`-prefixed — truncated to 120 chars. `customTitle`/`custom-title` override is deferred (absent from JSONL; see [title rationale](#design-rationale)) |
-| `project_path` | `os.Getwd()` from hooks; `cwd` field from first user JSONL line during bulk import; mangled dir name as last resort |
+| `project_path` | `os.Getwd()` from hooks; `cwd` field from first user JSONL line during bulk import; `config.unmanglePath` filesystem-probe recovery from the mangled name; raw mangled name as last resort |
 | `claude_project_dir` | Mangled directory name (always available) |
 | `start_time` / `end_time` | First and last JSONL line timestamps |
 | `message_count` | Count of human-text `user` turns + `assistant` turns. **Excludes `tool_result`-only `user` entries** — ≈86% of `user` lines (10,356 / 12,005 sampled) are tool output, not messages — so this reflects conversational length, not raw line count |
 | `size_bytes` | **Total** byte size of all hashed content (main JSONL + associated files), matching `content_hash`'s scope. Used for display/stats **and** as the replace tiebreaker (not main-JSONL-only — a shrinking main with an added sidecar must not read as "smaller") |
-| `content_hash` | SHA-256 composite with framing: for each file (main JSONL + associated files sorted by relative path), hash `len(relativePath) || relativePath || len(content) || content`. This prevents boundary-equivalent file sets from colliding |
+| `content_hash` | SHA-256 composite with framing: for each file (main JSONL keyed as `<uuid>.jsonl`, associated files keyed by their relative path, all sorted by key), hash `len(key) || key || len(content) || content`. The length-prefix framing prevents boundary-equivalent file sets from colliding |
 | `git_branch` | `gitBranch` field from the first user JSONL entry (always present on user-type lines). NULL if absent. Sessions may span branch switches — only the initial branch is recorded |
 | `machine_id` | From machine identity resolution (see Cross-Machine section) |
 

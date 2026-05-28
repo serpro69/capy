@@ -6,12 +6,15 @@
 ## Package Structure
 
 ```
+internal/sqliteutil/ — shared SQLite open/recovery: canary query + corrupt/wrong-passphrase/
+                       unencrypted classification + backup (used by both store and vault)
 internal/vault/
   store.go         — VaultStore: SQLite connection lifecycle, schema, CRUD operations
-  encryption.go    — RequireVaultKey(), vault-specific key handling (reads CAPY_VAULT_KEY)
+  encryption.go    — RequireVaultKey(), VaultDBPath() (reads CAPY_VAULT_KEY / CAPY_VAULT_PATH)
+  migrations.go    — vault_migrations table + migrateVault() (see Migration Strategy)
   scanner.go       — Single-pass JSONL scanner for FTS extraction
   scanner_types.go — Minimal JSON wire types for JSONL parsing (~20 lines)
-  discovery.go     — Session file discovery across Claude Code projects directory, ClaudeProjectsDir() helper
+  discovery.go     — Session file discovery; resolves the projects dir via config.ClaudeProjectsDir() (no local helper)
   import.go        — Import orchestration: discovery → scan → idempotent upsert
   machine.go       — Machine identity resolution (env var → file → generate)
   tui/
@@ -19,6 +22,7 @@ internal/vault/
     list.go        — Session list model (left panel)
     viewer.go      — Session content viewer model (right panel)
     search.go      — Search input + results model
+    render.go      — Faithful raw_jsonl → display renderer (lipgloss; separate from the scanner)
     styles.go      — lipgloss style definitions
 cmd/capy/
   vault.go         — cobra subcommand group + individual commands
@@ -82,7 +86,7 @@ The machine ID is resolved once per process invocation and cached in memory.
 
 `internal/vault/scanner_types.go` defines minimal structs for JSONL deserialization. These are intentionally decoupled from `internal/session/parse.go` to avoid inheriting operational parsing logic (type normalization, filtering decisions).
 
-Required fields only: `type`, `subtype`, `uuid`, `timestamp`, `sessionId`, `cwd`, `gitBranch`, `aiTitle`, `customTitle`, `message` (raw JSON), and within messages: `id`, `role`, `content` (raw JSON), and within content blocks: `type`, `text`, `name`, `id`, `input` (raw JSON), `tool_use_id`, `content` (for tool_result).
+Required fields only: `type`, `subtype`, `uuid`, `timestamp`, `sessionId`, `cwd`, `gitBranch`, `aiTitle`, `message` (raw JSON), and within messages: `id`, `role`, `content` (raw JSON), and within content blocks: `type`, `text`, `name`, `id`, `input` (raw JSON), `tool_use_id`, `content` (for tool_result). No `customTitle` field — that title tier is deferred (absent from JSONL); add it only if the rename store is later found to live in the session file. Also parse `prUrl`/`prRepository`/`prNumber` for `pr-link` lines.
 
 ### Scan Algorithm
 
@@ -180,7 +184,7 @@ AssociatedFile {
 3. For each session file (or batch of ~50 sessions / ~100MB, whichever first):
    a. Read raw bytes from main JSONL
    b. Read all associated files from the session directory (skip **non-subagent** files > 5 MB; never skip `subagents/*.jsonl` or the main JSONL)
-   c. Compute composite SHA-256 content hash with framing: for each file (main + associated, sorted by relative path), hash `len(path) || path || len(content) || content`. Also compute `size_bytes` = sum of all hashed content lengths (the replace tiebreaker covers main + sidecars, not main alone)
+   c. Compute composite SHA-256 content hash with framing: for each file (main JSONL keyed `<uuid>.jsonl`, associated files keyed by relative path, all sorted by key), hash `len(key) || key || len(content) || content`. Also compute `size_bytes` = sum of all hashed content lengths (the replace tiebreaker covers main + sidecars, not main alone)
    d. Check idempotent import logic (skip/replace/insert decision), comparing the total `size_bytes` from step (c)
    e. If inserting/replacing:
       - Run scanner (`ScanSession(bytes.NewReader(rawJSONL))`) to produce `*ScanOutput` — extracts FTS results, title, cwd, gitBranch. Also scan subagent files identified by `subagents/agent-*.jsonl` path pattern
