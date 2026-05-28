@@ -6,7 +6,7 @@
   "variables": {
     "PROJECT_NAME": "capy",
     "LANGUAGES": "go",
-    "CC_MODEL": "claude-opus-4-6[1m]",
+    "CC_MODEL": "claude-opus-4-8[1m]",
     "CC_STATUSLINE": "enhanced",
     "CC_EFFORT_LEVEL": "high",
     "CC_PERMISSION_MODE": "default",
