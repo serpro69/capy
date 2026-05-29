@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 
 	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/serpro69/capy/internal/sqliteutil"
 )
 
 const fuzzyCacheMaxSize = 256
@@ -102,12 +104,12 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 	}
 
 	db, err := s.openDB()
-	if err != nil && isWrongPassphrase(err) && !isGarbageFile(s.dbPath) {
+	if err != nil && sqliteutil.IsWrongPassphrase(err) && !sqliteutil.IsGarbageFile(s.dbPath) {
 		return nil, err
 	}
-	if err != nil && isSQLiteCorruption(err) {
+	if err != nil && sqliteutil.IsSQLiteCorruption(err) {
 		slog.Warn("corrupt database detected, backing up and recreating", "path", s.dbPath, "error", err)
-		backupCorruptDB(s.dbPath)
+		sqliteutil.BackupCorruptDB(s.dbPath)
 		db, err = s.openDB()
 		if err != nil {
 			return nil, fmt.Errorf("opening database after recovery: %w", err)
@@ -129,20 +131,9 @@ func (s *ContentStore) openDB() (*sql.DB, error) {
 
 	dsn := EncryptedDSN(s.dbPath, key) +
 		"&_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sqliteutil.OpenWithCanary(s.ctx(), dsn, s.dbPath, encryptionKeyEnv)
 	if err != nil {
-		return nil, fmt.Errorf("opening database: %w", err)
-	}
-
-	if _, err := db.Exec("SELECT count(*) FROM sqlite_master"); err != nil {
-		db.Close()
-		if isSQLiteCorruption(err) {
-			if isUnencryptedDB(s.dbPath) {
-				return nil, &errUnencryptedDB{path: s.dbPath}
-			}
-			return nil, &errWrongPassphrase{wrapped: err}
-		}
-		return nil, fmt.Errorf("canary query failed: %w", err)
+		return nil, err
 	}
 
 	if _, err := db.Exec("PRAGMA mmap_size = 268435456"); err != nil {

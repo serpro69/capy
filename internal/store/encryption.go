@@ -1,64 +1,14 @@
 package store
 
 import (
-	"errors"
-	"bytes"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/serpro69/capy/internal/sqliteutil"
 )
-
-// errWrongPassphrase wraps the underlying SQLite error when the canary query
-// fails after opening an encrypted DB. Kept separate from corruption errors
-// so that getDB() doesn't trigger the backup-and-recreate recovery path.
-type errWrongPassphrase struct{ wrapped error }
-
-func (e *errWrongPassphrase) Error() string {
-	return fmt.Sprintf("wrong passphrase or corrupted database (check %s): %v", encryptionKeyEnv, e.wrapped)
-}
-func (e *errWrongPassphrase) Unwrap() error { return e.wrapped }
-
-func isWrongPassphrase(err error) bool {
-	var wp *errWrongPassphrase
-	return errors.As(err, &wp)
-}
-
-// isGarbageFile returns true if the file at path is clearly not a SQLite
-// database — too small to contain even one page. sqlite3mc with sqlcipher
-// uses a minimum page size of 512 bytes; any valid encrypted DB is at
-// least that large. Files smaller than 512 bytes are garbage.
-func isGarbageFile(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return info.Size() > 0 && info.Size() < 512
-}
-
-// sqliteHeaderMagic is the 15-byte plaintext header of an unencrypted SQLite DB.
-var sqliteHeaderMagic = []byte("SQLite format 3")
-
-type errUnencryptedDB struct{ path string }
-
-func (e *errUnencryptedDB) Error() string {
-	return fmt.Sprintf("database at %s is not encrypted — run 'capy encrypt' first", e.path)
-}
-
-func isUnencryptedDB(path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	header := make([]byte, 15)
-	if _, err := io.ReadFull(f, header); err != nil {
-		return false
-	}
-	return bytes.Equal(header, sqliteHeaderMagic)
-}
 
 // ValidateEncryptionReady checks that CAPY_DB_KEY is set and, if the DB file
 // already exists, that it is actually encrypted. Returns nil if the DB does
@@ -67,8 +17,8 @@ func ValidateEncryptionReady(dbPath string) error {
 	if _, err := RequireEncryptionKey(); err != nil {
 		return err
 	}
-	if isUnencryptedDB(dbPath) {
-		return &errUnencryptedDB{path: dbPath}
+	if sqliteutil.IsUnencryptedDB(dbPath) {
+		return &sqliteutil.UnencryptedDBError{Path: dbPath}
 	}
 	return nil
 }
