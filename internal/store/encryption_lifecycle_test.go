@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mattn/go-sqlite3"
+	"github.com/serpro69/capy/internal/sqliteutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +64,7 @@ func TestEncryptionLifecycle(t *testing.T) {
 	s3 := NewContentStore(dbPath, dir, 0, 0)
 	_, err = s3.SearchWithFallback("anything", 5, SearchOptions{})
 	require.Error(t, err, "wrong key should produce an error")
-	assert.True(t, isWrongPassphrase(err), "error should be errWrongPassphrase, got: %v", err)
+	assert.True(t, sqliteutil.IsWrongPassphrase(err), "error should be ErrWrongPassphrase, got: %v", err)
 	s3.Close()
 
 	// Phase 4: Re-key using backup API (same mechanism as capy encrypt re-key).
@@ -89,7 +90,7 @@ func TestEncryptionLifecycle(t *testing.T) {
 	s4 := NewContentStore(dbPath, dir, 0, 0)
 	_, err = s4.SearchWithFallback("anything", 5, SearchOptions{})
 	require.Error(t, err, "old key should fail after re-key")
-	assert.True(t, isWrongPassphrase(err), "error should be errWrongPassphrase, got: %v", err)
+	assert.True(t, sqliteutil.IsWrongPassphrase(err), "error should be ErrWrongPassphrase, got: %v", err)
 	s4.Close()
 
 	// Phase 6: New key works, content survived re-key.

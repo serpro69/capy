@@ -25,14 +25,14 @@
 - [ ] 0.7 Verify: documented payload structure exists and is sufficient to locate the session file
 
 ## Task 1: Vault store foundation — schema, encryption, connection lifecycle
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Task 0, Task 2
 - **Docs:** [implementation.md#encryption--db-initialization](./implementation.md#encryption--db-initialization)
 
 ### Subtasks
-- [ ] 1.1 **Extract** the shared SQLite open/recovery path into `internal/sqliteutil/` (primary plan — exporting predicates alone is insufficient). Move out of `internal/store/{retry,encryption,store}.go`: the canary query, the corrupt / wrong-passphrase / unencrypted-DB classification, the `errWrongPassphrase`/`errUnencryptedDB` types + `isUnencryptedDB`, and `backupCorruptDB`. Have both `store` and `vault` call `sqliteutil`. Rationale: `IsWrongPassphrase` only matches store's unexported `*errWrongPassphrase`, constructed inside `store.openDB()` — vault can't construct it, so a vault `openDB()` would never satisfy an exported predicate.
+- [x] 1.1 **Extract** the shared SQLite open/recovery path into `internal/sqliteutil/` (primary plan — exporting predicates alone is insufficient). Move out of `internal/store/{retry,encryption,store}.go`: the canary query, the corrupt / wrong-passphrase / unencrypted-DB classification, the `errWrongPassphrase`/`errUnencryptedDB` types + `isUnencryptedDB`, and `backupCorruptDB`. Have both `store` and `vault` call `sqliteutil`. Rationale: `IsWrongPassphrase` only matches store's unexported `*errWrongPassphrase`, constructed inside `store.openDB()` — vault can't construct it, so a vault `openDB()` would never satisfy an exported predicate.
   - **⚠ High blast radius — isolate this step.** It refactors working, **encryption-critical** code shared with the existing knowledge store; a regression can make installed users' `knowledge.db` fail to open or mis-handle recovery (data loss). Land it as its **own behavior-preserving commit that passes green BEFORE any vault code (1.2+) depends on it.** Do not bundle it with vault store work.
   - **Behavior-preserving contract** — these `store.getDB()`/`openDB()` semantics must be identical before and after the move: (1) wrong passphrase on a *real* encrypted DB → error with **no** backup-and-recreate (never destroy data on a key typo); (2) a too-small/garbage file (`0 < size < 512 B`) is **not** classified as wrong-passphrase (the `!IsGarbageFile` guard) so recovery proceeds; (3) genuine corruption → back up `.db`/`-wal`/`-shm` sidecars, then recreate; (4) an existing *unencrypted* DB → the distinct "run `capy encrypt`" error.
   - **Gate before proceeding:** `CAPY_DB_KEY=test-key-for-development go test -tags fts5 -count=1 -race ./internal/store/...` passes **unchanged**; move/keep the classification unit tests into `internal/sqliteutil/`. The full-suite run (Task 7.1) is the backstop, not the gate.
