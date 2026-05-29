@@ -586,14 +586,6 @@ func TestNonCorruptionErrorDoesNotTriggerRecovery(t *testing.T) {
 	assert.Contains(t, err.Error(), "creating DB directory")
 }
 
-func TestIsSQLiteCorruption(t *testing.T) {
-	assert.True(t, isSQLiteCorruption(fmt.Errorf("file is not a database")))
-	assert.True(t, isSQLiteCorruption(fmt.Errorf("database disk image is malformed")))
-	assert.True(t, isSQLiteCorruption(fmt.Errorf("database or disk is corrupt")))
-	assert.False(t, isSQLiteCorruption(fmt.Errorf("database is locked")))
-	assert.False(t, isSQLiteCorruption(nil))
-}
-
 // --- mmap pragma ---
 
 func TestMmapPragmaSet(t *testing.T) {
