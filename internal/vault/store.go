@@ -376,38 +376,29 @@ func (s *VaultStore) checkpoint() error {
 	return err
 }
 
+// SessionWrite pairs a record with whether it overwrites an existing row
+// (UPDATE) or inserts a new one (INSERT). WriteBatch applies a slice of these in
+// a single transaction.
+type SessionWrite struct {
+	Record  *SessionRecord
+	Replace bool
+}
+
 // InsertSession writes a new session, its files, and its FTS rows in one
 // transaction. Use ReplaceSession to overwrite an existing UUID.
 func (s *VaultStore) InsertSession(rec *SessionRecord) error {
-	db, err := s.getDB()
-	if err != nil {
-		return err
-	}
-	tx, err := beginImmediate(db)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	sess := &rec.Session
-	if _, err := tx.Stmt(s.stmtInsertSession).Exec(
-		sess.UUID, nullString(sess.Title), writeTime(sess.StartTime), writeTime(sess.EndTime),
-		sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
-		sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch), sess.RawJSONL,
-	); err != nil {
-		return fmt.Errorf("insert session: %w", err)
-	}
-
-	if err := s.writeChildren(tx, rec); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.writeOne(SessionWrite{Record: rec, Replace: false})
 }
 
 // ReplaceSession overwrites an existing session in place (UPDATE, not
 // DELETE+INSERT) so archived_at is preserved, then rebuilds its files and FTS
 // rows. All within one transaction.
 func (s *VaultStore) ReplaceSession(rec *SessionRecord) error {
+	return s.writeOne(SessionWrite{Record: rec, Replace: true})
+}
+
+// writeOne applies a single SessionWrite in its own transaction.
+func (s *VaultStore) writeOne(w SessionWrite) error {
 	db, err := s.getDB()
 	if err != nil {
 		return err
@@ -418,27 +409,70 @@ func (s *VaultStore) ReplaceSession(rec *SessionRecord) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	sess := &rec.Session
-	if _, err := tx.Stmt(s.stmtUpdateSession).Exec(
-		nullString(sess.Title), writeTime(sess.StartTime), writeTime(sess.EndTime),
-		sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
-		sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch), sess.RawJSONL,
-		sess.UUID,
-	); err != nil {
-		return fmt.Errorf("update session: %w", err)
-	}
-
-	if _, err := tx.Stmt(s.stmtDeleteFilesBySession).Exec(sess.UUID); err != nil {
-		return fmt.Errorf("delete files: %w", err)
-	}
-	if _, err := tx.Stmt(s.stmtDeleteFTSBySession).Exec(sess.UUID); err != nil {
-		return fmt.Errorf("delete fts: %w", err)
-	}
-
-	if err := s.writeChildren(tx, rec); err != nil {
+	if err := s.writeRecord(tx, w); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// WriteBatch applies multiple SessionWrites in a single transaction so a bulk
+// import amortizes one write-lock acquisition (beginImmediate) across the batch
+// instead of contending per session with a concurrent writer (e.g. the
+// server-startup sweep). On any error the whole batch rolls back; the caller is
+// expected to retry the batch's records individually via InsertSession/
+// ReplaceSession (see import.go). A nil/empty batch is a no-op.
+func (s *VaultStore) WriteBatch(writes []SessionWrite) error {
+	if len(writes) == 0 {
+		return nil
+	}
+	db, err := s.getDB()
+	if err != nil {
+		return err
+	}
+	tx, err := beginImmediate(db)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, w := range writes {
+		if err := s.writeRecord(tx, w); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// writeRecord writes one session record within tx. A replace UPDATEs the row in
+// place (preserving archived_at) and clears its files/FTS before rebuilding;
+// an insert adds a fresh row. Children (files + FTS) are written in both cases.
+func (s *VaultStore) writeRecord(tx *sql.Tx, w SessionWrite) error {
+	sess := &w.Record.Session
+	if w.Replace {
+		if _, err := tx.Stmt(s.stmtUpdateSession).Exec(
+			nullString(sess.Title), writeTime(sess.StartTime), writeTime(sess.EndTime),
+			sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
+			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch), sess.RawJSONL,
+			sess.UUID,
+		); err != nil {
+			return fmt.Errorf("update session: %w", err)
+		}
+		if _, err := tx.Stmt(s.stmtDeleteFilesBySession).Exec(sess.UUID); err != nil {
+			return fmt.Errorf("delete files: %w", err)
+		}
+		if _, err := tx.Stmt(s.stmtDeleteFTSBySession).Exec(sess.UUID); err != nil {
+			return fmt.Errorf("delete fts: %w", err)
+		}
+	} else {
+		if _, err := tx.Stmt(s.stmtInsertSession).Exec(
+			sess.UUID, nullString(sess.Title), writeTime(sess.StartTime), writeTime(sess.EndTime),
+			sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
+			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch), sess.RawJSONL,
+		); err != nil {
+			return fmt.Errorf("insert session: %w", err)
+		}
+	}
+	return s.writeChildren(tx, w.Record)
 }
 
 // writeChildren inserts the file and FTS rows for rec within tx.
@@ -599,6 +633,43 @@ func (s *VaultStore) ListSessions(opts ListOptions) ([]Session, error) {
 		return nil, fmt.Errorf("iterating sessions: %w", err)
 	}
 	return out, nil
+}
+
+// SessionDigest returns the stored content_hash and total size_bytes for an
+// exact UUID, used by the import pipeline's idempotency check. found is false
+// (with a nil error) when the session is not yet archived.
+func (s *VaultStore) SessionDigest(uuid string) (hash string, size int64, found bool, err error) {
+	db, err := s.getDB()
+	if err != nil {
+		return "", 0, false, err
+	}
+	err = db.QueryRow(`SELECT content_hash, size_bytes FROM vault_sessions WHERE uuid = ?`, uuid).
+		Scan(&hash, &size)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, fmt.Errorf("querying session digest: %w", err)
+	}
+	return hash, size, true, nil
+}
+
+// MachineSummary reports the total session count and how many were archived by
+// machineID. The import pipeline uses it to warn before overwriting a vault.db
+// that holds only other machines' sessions (total > 0 && matching == 0).
+func (s *VaultStore) MachineSummary(machineID string) (total, matching int, err error) {
+	db, err := s.getDB()
+	if err != nil {
+		return 0, 0, err
+	}
+	err = db.QueryRow(`
+		SELECT COUNT(*),
+		       COALESCE(SUM(CASE WHEN machine_id = ? THEN 1 ELSE 0 END), 0)
+		FROM vault_sessions`, machineID).Scan(&total, &matching)
+	if err != nil {
+		return 0, 0, fmt.Errorf("querying machine summary: %w", err)
+	}
+	return total, matching, nil
 }
 
 // Search runs a full-text query over vault_fts and joins back to session

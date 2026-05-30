@@ -58,13 +58,27 @@ func ProjectHash(dir string) string {
 	return hex.EncodeToString(h[:8])
 }
 
-// ClaudeProjectsDir returns the path to ~/.claude/projects/.
+// ClaudeProjectsDir returns the path to Claude Code's projects directory.
+// It honors CLAUDE_CONFIG_DIR (using $CLAUDE_CONFIG_DIR/projects/) for
+// non-default installations, falling back to ~/.claude/projects/.
 func ClaudeProjectsDir() (string, error) {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, "projects"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolving home directory: %w", err)
 	}
 	return filepath.Join(home, ".claude", "projects"), nil
+}
+
+// UnmanglePath recovers the original filesystem path from a Claude Code mangled
+// directory name (where "/" and "." are replaced with "-") by probing the
+// filesystem. Returns "" if the path cannot be determined (e.g. the project no
+// longer exists on disk, or the name has no leading dash). It is the exported
+// entry point for the internal unmangle/probe machinery.
+func UnmanglePath(mangled string) string {
+	return unmanglePath(mangled)
 }
 
 // ProjectDirResolution holds the result of resolving a --project-dir value.
