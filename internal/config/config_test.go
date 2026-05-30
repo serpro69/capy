@@ -257,6 +257,35 @@ func TestUnmanglePath_NoLeadingDash(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+func TestClaudeProjectsDir_Default(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+	got, err := ClaudeProjectsDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(tmpHome, ".claude", "projects"), got)
+}
+
+func TestClaudeProjectsDir_HonorsConfigDir(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+
+	got, err := ClaudeProjectsDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(cfgDir, "projects"), got)
+}
+
+func TestUnmanglePathExported(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "Projects", "capy")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+
+	mangled := strings.NewReplacer("/", "-", ".", "-").Replace(projectDir)
+	assert.Equal(t, projectDir, UnmanglePath(mangled))
+	assert.Empty(t, UnmanglePath("-nonexistent-path"))
+}
+
 func TestDetectProjectRoot(t *testing.T) {
 	// With CLAUDE_PROJECT_DIR set, it takes priority.
 	t.Setenv("CLAUDE_PROJECT_DIR", "/some/project")
