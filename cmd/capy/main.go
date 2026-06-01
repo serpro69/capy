@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -42,6 +43,12 @@ func main() {
 	)
 
 	if err := root.Execute(); err != nil {
+		// A command may request a specific exit code (e.g. `vault resume`
+		// propagating claude's own status); otherwise fall back to 1.
+		var ee *exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
 		os.Exit(1)
 	}
 }
