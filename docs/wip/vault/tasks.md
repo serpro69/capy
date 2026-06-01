@@ -98,7 +98,7 @@
 - [x] 4.8 Verify: `import` → `list` shows sessions with titles → `search <term>` finds expected result (plain keyword mode, `--role` filtering) → `show <id>` displays content with `--format markdown` export → `checkpoint` flushes WAL → `stats --json` shows correct counts (covered by `cmd/capy/vault_test.go:TestVaultCommands_EndToEnd`)
 
 ## Task 4b: CLI commands — destructive / filesystem / exec (restore, resume, delete)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 4
 - **Size:** S
 - **Can run in parallel with:** Task 5
@@ -106,10 +106,10 @@
 - **Why a separate task:** these three are the highest-risk surface — `restore` writes files to disk (path traversal), `resume` execs an external process, `delete` is irreversible data loss. Splitting them out gives that surface a **focused `/kk:review-code` checkpoint** distinct from the read/query commands. (Reuses the Task 4 command group from 4.1.)
 
 ### Subtasks
-- [ ] 4b.1 Implement `restore` subcommand — partial UUID (8+ chars). Write `raw_jsonl` to `ClaudeProjectsDir()/<claude_project_dir>/` (respects CLAUDE_CONFIG_DIR) or the `--output` path (location is single per session — no location prompt). Restore all `vault_files` entries. **Path safety:** `filepath.EvalSymlinks` the restore root, then per entry reject absolute paths / `..` components and containment-check via `filepath.Rel` (see impl §Restore Command). Prompt before overwriting
-- [ ] 4b.2 Implement `resume` subcommand — partial UUID (8+ chars), `--dir` override flag. Pre-check `exec.LookPath("claude")`, close vault store. Directory fallback chain: `--dir` → existing `project_path` → cwd → prompt. Launch via `os/exec.Command` with inherited stdio. Return exit code through cobra
-- [ ] 4b.3 Implement `delete` subcommand — partial UUID (8+ chars), show session info, `--yes` to skip confirmation. Transactional: delete FTS rows then session (CASCADE handles `vault_files`)
-- [ ] 4b.4 Verify: `restore <id>` recreates files (path safety validated, CLAUDE_CONFIG_DIR respected, `diff` clean vs originals) → `resume <id>` launches `claude --resume` in the resolved dir → `delete <id>` removes the session from `list`/`search`
+- [x] 4b.1 Implement `restore` subcommand — partial UUID (8+ chars). Write `raw_jsonl` to `ClaudeProjectsDir()/<claude_project_dir>/` (respects CLAUDE_CONFIG_DIR) or the `--output` path (location is single per session — no location prompt). Restore all `vault_files` entries. **Path safety:** `filepath.EvalSymlinks` the restore root, then per entry reject absolute paths / `..` components and containment-check via `filepath.Rel` (see impl §Restore Command). Prompt before overwriting
+- [x] 4b.2 Implement `resume` subcommand — partial UUID (8+ chars), `--dir` override flag. Pre-check `exec.LookPath("claude")`, close vault store. Directory fallback chain: `--dir` → existing `project_path` → cwd → prompt. Launch via `os/exec.Command` with inherited stdio. Return exit code through cobra
+- [x] 4b.3 Implement `delete` subcommand — partial UUID (8+ chars), show session info, `--yes` to skip confirmation. Transactional: delete FTS rows then session (CASCADE handles `vault_files`)
+- [x] 4b.4 Verify: `restore <id>` recreates files (path safety validated, CLAUDE_CONFIG_DIR respected, `diff` clean vs originals) → `resume <id>` launches `claude --resume` in the resolved dir → `delete <id>` removes the session from `list`/`search`
 
 ## Task 5: MCP server startup sweep
 - **Status:** pending
