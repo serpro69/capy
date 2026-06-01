@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -52,6 +55,9 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 		newVaultShowCmd(env),
 		newVaultStatsCmd(env),
 		newVaultCheckpointCmd(env),
+		newVaultRestoreCmd(env),
+		newVaultResumeCmd(env),
+		newVaultDeleteCmd(env),
 	)
 	return cmd
 }
@@ -449,6 +455,238 @@ No other capy process must hold the vault open during checkpoint.`,
 }
 
 // ---------------------------------------------------------------------------
+// restore
+// ---------------------------------------------------------------------------
+
+func newVaultRestoreCmd(env *vaultEnv) *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:   "restore <session-id>",
+		Short: "Restore an archived session's files to disk (partial UUID, 8+ chars)",
+		Long: `Write a session's main JSONL and every preserved sidecar back to disk.
+
+By default it restores into the session's Claude Code project directory
+(honoring CLAUDE_CONFIG_DIR) so Claude Code can find it again; use --output to
+write elsewhere. Existing files are kept unless you confirm overwriting them.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := guardTUI(cmd); err != nil {
+				return err
+			}
+			st := vault.NewVaultStore(env.dbPath)
+			defer st.Close()
+
+			sess, err := st.GetSession(args[0])
+			if err != nil {
+				return handleLookupError(args[0], err)
+			}
+			files, err := st.GetFiles(sess.UUID)
+			if err != nil {
+				return err
+			}
+
+			root := output
+			if root == "" {
+				if root, err = defaultRestoreRoot(sess); err != nil {
+					return err
+				}
+			}
+			res, err := vault.RestoreSession(sess.UUID, sess.RawJSONL, files, root, confirmOverwrite)
+			if err != nil {
+				return err
+			}
+			printRestoreResult(res)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&output, "output", "", "restore into this directory (default: the session's Claude projects dir)")
+	return cmd
+}
+
+func printRestoreResult(res *vault.RestoreResult) {
+	for _, p := range res.Written {
+		fmt.Printf("restored %s\n", p)
+	}
+	for _, p := range res.Skipped {
+		fmt.Fprintf(os.Stderr, "kept existing (not overwritten): %s\n", p)
+	}
+	for _, p := range res.Unsafe {
+		fmt.Fprintf(os.Stderr, "skipped unsafe path: %s\n", p)
+	}
+	fmt.Printf("\nrestored %d file(s) to %s\n", len(res.Written), res.Root)
+}
+
+// ---------------------------------------------------------------------------
+// resume
+// ---------------------------------------------------------------------------
+
+func newVaultResumeCmd(env *vaultEnv) *cobra.Command {
+	var dir string
+	cmd := &cobra.Command{
+		Use:   "resume <session-id>",
+		Short: "Restore a session and launch `claude --resume` (partial UUID, 8+ chars)",
+		Long: `Restore a session into its Claude Code project directory, then launch
+Claude Code to resume it. The working directory is chosen from --dir, the
+session's recorded project path, or the current directory (in that order).`,
+		Args: cobra.ExactArgs(1),
+		// claude prints its own output; a non-zero claude exit must not dump
+		// cobra's usage text on top of it.
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := guardTUI(cmd); err != nil {
+				return err
+			}
+			// Fail fast before touching the vault if Claude Code is not installed.
+			claudeBin, err := exec.LookPath("claude")
+			if err != nil {
+				return fmt.Errorf("`claude` not found on PATH — install Claude Code to resume sessions")
+			}
+
+			st := vault.NewVaultStore(env.dbPath)
+			defer st.Close() // idempotent; we Close explicitly before exec below
+
+			sess, err := st.GetSession(args[0])
+			if err != nil {
+				return handleLookupError(args[0], err)
+			}
+			files, err := st.GetFiles(sess.UUID)
+			if err != nil {
+				return err
+			}
+
+			// Restore to the Claude Code location so `claude --resume` finds it.
+			root, err := defaultRestoreRoot(sess)
+			if err != nil {
+				return err
+			}
+			if _, err := vault.RestoreSession(sess.UUID, sess.RawJSONL, files, root, confirmOverwrite); err != nil {
+				return err
+			}
+
+			launchDir, err := resolveResumeDir(dir, sess.ProjectPath)
+			if err != nil {
+				return err
+			}
+
+			// Release the vault (flushes the WAL) before handing the terminal to claude.
+			if err := st.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "capy vault resume: warning: closing vault: %v\n", err)
+			}
+			return runClaudeResume(claudeBin, sess.UUID, launchDir)
+		},
+	}
+	cmd.Flags().StringVar(&dir, "dir", "", "working directory to launch claude in (overrides the session's project path)")
+	return cmd
+}
+
+// resolveResumeDir picks the directory to launch claude in, following the
+// design's fallback chain: explicit --dir, then the session's project_path (if
+// absolute and present), then the current working directory, and finally an
+// interactive prompt as a last resort.
+func resolveResumeDir(flagDir, projectPath string) (string, error) {
+	if flagDir != "" {
+		if !isExistingDir(flagDir) {
+			return "", fmt.Errorf("--dir %q is not an existing directory", flagDir)
+		}
+		return flagDir, nil
+	}
+	if filepath.IsAbs(projectPath) && isExistingDir(projectPath) {
+		return projectPath, nil
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		return cwd, nil
+	} else {
+		// Surface why we're falling through to a prompt — a broken cwd otherwise
+		// shows up only as a confusing "not an existing directory" later.
+		fmt.Fprintf(os.Stderr, "capy vault resume: cannot determine current directory (%v); prompting\n", err)
+	}
+	answer := strings.TrimSpace(promptLine(fmt.Sprintf("launch directory [%s]: ", displayPath(projectPath))))
+	if answer == "" {
+		answer = projectPath
+	}
+	if !isExistingDir(answer) {
+		return "", fmt.Errorf("%q is not an existing directory", answer)
+	}
+	return answer, nil
+}
+
+// runClaudeResume launches `claude --resume <uuid>` in dir with inherited stdio
+// and propagates claude's own exit code (via exitError) instead of the generic
+// non-zero exit.
+func runClaudeResume(bin, uuid, dir string) error {
+	c := exec.Command(bin, "--resume", uuid) //nolint:gosec // bin is resolved via exec.LookPath; args are not shell-interpreted
+	c.Dir = dir
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	if err := c.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return &exitError{code: ee.ExitCode(), err: fmt.Errorf("claude exited with status %d", ee.ExitCode())}
+		}
+		return fmt.Errorf("launching claude: %w", err)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// delete
+// ---------------------------------------------------------------------------
+
+func newVaultDeleteCmd(env *vaultEnv) *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "delete <session-id>",
+		Short: "Delete an archived session from the vault (partial UUID, 8+ chars)",
+		Long: `Permanently remove a session (its transcript, sidecars, and search index)
+from the vault. This does not touch any copy still on disk under the Claude
+projects directory.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := guardTUI(cmd); err != nil {
+				return err
+			}
+			st := vault.NewVaultStore(env.dbPath)
+			defer st.Close()
+
+			sess, err := st.GetSession(args[0])
+			if err != nil {
+				return handleLookupError(args[0], err)
+			}
+
+			printDeletePreview(sess)
+			if !yes && !promptYesNo(fmt.Sprintf("delete session %s?", shortUUID(sess.UUID)), false) {
+				fmt.Println("aborted")
+				return nil
+			}
+
+			ok, err := st.DeleteSession(sess.UUID)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("session %s was not deleted (no longer in vault)", shortUUID(sess.UUID))
+			}
+			fmt.Printf("deleted %s\n", shortUUID(sess.UUID))
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	return cmd
+}
+
+// printDeletePreview writes to stderr (not stdout) so the "what you're about to
+// delete" context stays attached to the confirmation prompt even when stdout is
+// redirected.
+func printDeletePreview(sess *vault.Session) {
+	fmt.Fprintf(os.Stderr, "UUID:     %s\n", sess.UUID)
+	fmt.Fprintf(os.Stderr, "Title:    %s\n", orDash(sess.Title))
+	fmt.Fprintf(os.Stderr, "Project:  %s\n", displayPath(sess.ProjectPath))
+	fmt.Fprintf(os.Stderr, "Messages: %d\n", sess.MessageCount)
+	fmt.Fprintf(os.Stderr, "Dates:    %s – %s\n", fmtDate(sess.StartTime), fmtDate(sess.EndTime))
+}
+
+// ---------------------------------------------------------------------------
 // JSON output DTOs
 // ---------------------------------------------------------------------------
 
@@ -534,6 +772,75 @@ func guardTUI(cmd *cobra.Command) error {
 		return errors.New("--tui mode is not yet implemented")
 	}
 	return nil
+}
+
+// exitError carries a specific process exit code up to main, so a wrapped child
+// process (e.g. `claude` launched by `vault resume`) propagates its own exit
+// status instead of the generic 1. main.go honors it via errors.As.
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e *exitError) Error() string { return e.err.Error() }
+func (e *exitError) Unwrap() error { return e.err }
+
+// defaultRestoreRoot is the session's Claude Code project directory under the
+// (CLAUDE_CONFIG_DIR-aware) projects dir — where Claude Code expects to find the
+// JSONL for `claude --resume`.
+func defaultRestoreRoot(sess *vault.Session) (string, error) {
+	projects, err := config.ClaudeProjectsDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving claude projects dir: %w", err)
+	}
+	return filepath.Join(projects, sess.ClaudeProjectDir), nil
+}
+
+func isExistingDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// confirmOverwrite is the OverwriteFunc the CLI passes to vault.RestoreSession:
+// it prompts before clobbering an existing file, defaulting to "no".
+func confirmOverwrite(absPath string) bool {
+	return promptYesNo(fmt.Sprintf("overwrite existing %s?", absPath), false)
+}
+
+// stdinReader is a single shared buffered reader over os.Stdin. A fresh
+// bufio.Reader per prompt could over-read and drop input meant for the next
+// prompt, so all interactive prompts share this one.
+var stdinReader = bufio.NewReader(os.Stdin)
+
+// promptYesNo asks a yes/no question on stderr and reads a line from stdin.
+// A blank line or any read error (EOF / non-interactive stdin) yields def, so
+// piped and test runs never block and never take a destructive default.
+func promptYesNo(question string, def bool) bool {
+	suffix := " [y/N] "
+	if def {
+		suffix = " [Y/n] "
+	}
+	fmt.Fprint(os.Stderr, question+suffix)
+	line, err := stdinReader.ReadString('\n')
+	if err != nil && line == "" {
+		return def
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true
+	case "n", "no":
+		return false
+	default:
+		return def
+	}
+}
+
+// promptLine asks a free-text question on stderr and returns the raw line
+// (without the trailing newline); a read error yields "".
+func promptLine(question string) string {
+	fmt.Fprint(os.Stderr, question)
+	line, _ := stdinReader.ReadString('\n')
+	return strings.TrimRight(line, "\n")
 }
 
 // handleLookupError turns a GetSession error into a user-facing message, printing
