@@ -196,6 +196,16 @@ func NewVaultStore(dbPath string) *VaultStore {
 
 func (s *VaultStore) ctx() context.Context { return context.Background() }
 
+// Open eagerly opens (lazily creating) the vault DB so a wrong key or corrupt
+// file surfaces immediately. The CLI calls it before a bulk Import: without the
+// probe, Import would hit the same open error once per session and report N
+// identical failures instead of one clean abort (see import.go and the Task 3
+// follow-up in docs/wip/vault/tasks.md).
+func (s *VaultStore) Open() error {
+	_, err := s.getDB()
+	return err
+}
+
 // getDB returns the connection, opening it on first call. On corruption it backs
 // up the corrupt file and retries once — but a wrong passphrase on a real
 // encrypted DB is never treated as corruption (no destructive recovery on a key
@@ -352,15 +362,19 @@ func (s *VaultStore) Close() error {
 	err := s.db.Close()
 	s.db = nil
 
-	if cpErr := s.checkpoint(); cpErr != nil && err == nil {
+	if cpErr := s.Checkpoint(); cpErr != nil && err == nil {
 		err = cpErr
 	}
 	return err
 }
 
-// checkpoint flushes the WAL using a dedicated single connection. Must run after
-// the pool is closed so no other connection holds the WAL open.
-func (s *VaultStore) checkpoint() error {
+// Checkpoint flushes the WAL into the main DB file using a dedicated single
+// connection (not the pool), mirroring store.ContentStore.Checkpoint. It is the
+// correct way to checkpoint from outside the running server — e.g. `capy vault
+// checkpoint`, or Close after the pool is closed. Reports an error if another
+// process still holds the DB open (busy pages remain, so the WAL can't be fully
+// truncated).
+func (s *VaultStore) Checkpoint() error {
 	key, err := RequireVaultKey()
 	if err != nil {
 		return err
@@ -368,12 +382,19 @@ func (s *VaultStore) checkpoint() error {
 	dsn := store.EncryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening vault for checkpoint: %w", err)
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
-	return err
+
+	var busy, logFrames, checkpointed int
+	if err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
+		return fmt.Errorf("vault checkpoint pragma failed: %w", err)
+	}
+	if busy > 0 {
+		return fmt.Errorf("vault checkpoint incomplete: %d pages busy (another process has the DB open)", busy)
+	}
+	return nil
 }
 
 // SessionWrite pairs a record with whether it overwrites an existing row
@@ -746,6 +767,62 @@ func (s *VaultStore) Search(opts SearchOptions) ([]SearchResult, error) {
 		return nil, fmt.Errorf("iterating search results: %w", err)
 	}
 	return out, nil
+}
+
+// ProjectStat is the archived-session count for one project_path.
+type ProjectStat struct {
+	ProjectPath string
+	Count       int
+}
+
+// VaultStats aggregates vault-wide counts for `capy vault stats`. TotalBytes is
+// the summed content size (vault_sessions.size_bytes), distinct from the on-disk
+// DB file size, which the CLI adds separately via os.Stat. Oldest/Newest are the
+// min start_time / max end_time across all sessions (zero when the vault is empty).
+type VaultStats struct {
+	Sessions   int
+	TotalBytes int64
+	Oldest     time.Time
+	Newest     time.Time
+	ByProject  []ProjectStat
+}
+
+// Stats returns the session count, summed content size, oldest/newest activity,
+// and per-project breakdown. start_time/end_time are stored as fixed-width
+// RFC3339 UTC strings, so MIN/MAX over them is chronological.
+func (s *VaultStore) Stats() (*VaultStats, error) {
+	db, err := s.getDB()
+	if err != nil {
+		return nil, err
+	}
+
+	var st VaultStats
+	var oldest, newest sql.NullString
+	if err := db.QueryRow(
+		`SELECT COUNT(*), COALESCE(SUM(size_bytes), 0), MIN(start_time), MAX(end_time) FROM vault_sessions`,
+	).Scan(&st.Sessions, &st.TotalBytes, &oldest, &newest); err != nil {
+		return nil, fmt.Errorf("querying vault stats: %w", err)
+	}
+	st.Oldest = parseTime(oldest)
+	st.Newest = parseTime(newest)
+
+	rows, err := db.Query(
+		`SELECT project_path, COUNT(*) FROM vault_sessions GROUP BY project_path ORDER BY COUNT(*) DESC, project_path`)
+	if err != nil {
+		return nil, fmt.Errorf("querying project stats: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p ProjectStat
+		if err := rows.Scan(&p.ProjectPath, &p.Count); err != nil {
+			return nil, fmt.Errorf("scanning project stat: %w", err)
+		}
+		st.ByProject = append(st.ByProject, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating project stats: %w", err)
+	}
+	return &st, nil
 }
 
 // scanSessionMeta scans the sessionMetaColumns into sess. If raw is non-nil, an

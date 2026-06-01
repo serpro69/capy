@@ -38,6 +38,7 @@ func main() {
 		newWhichCmd(),
 		newSweepCmd(),
 		newDBSizeCmd(),
+		newVaultCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

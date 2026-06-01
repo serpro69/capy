@@ -81,21 +81,21 @@
 - [x] 3.7 Verify: `go test -tags fts5 ./internal/vault/...` passes; import a test fixture directory and query back sessions + files via store methods
 
 ## Task 4: CLI commands — group + read/query (import, list, search, show, stats, checkpoint)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** —
 - **Docs:** [implementation.md#cli-commands](./implementation.md#cli-commands)
 
 ### Subtasks
-- [ ] 4.1 Create `cmd/capy/vault.go` — `newVaultCmd()` cobra command group, register on root command in `main.go`. Shared flag: `--tui` (bool, default false). Shared pre-run: resolve vault DB path, verify `CAPY_VAULT_KEY`, **and probe `store.getDB()` once so a wrong key / corrupt DB fails fast with one clear error** before `import` (otherwise `vault.Import` reports it as N identical per-session `StatusError`s — see Task 3 follow-up below)
-- [ ] 4.2 Implement `import` subcommand — mutating by default with table output (UUID, title, project, size, status), `--dry-run` to preview without writing, `--path` for custom dir (auto-detects input type), `--project` filter. Calls `vault.Import()`
-- [ ] 4.3 Implement `list` subcommand — `ListSessions()` store method with `--project` filter (`WHERE project_path LIKE ?`), `--limit`, `--json`, reverse chronological sort. Table output: short UUID, title, project, date range, messages, size. One row per session (location is 1:1 — no GROUP BY)
-- [ ] 4.4 Implement `search` subcommand — plain keyword mode by default (auto-quote tokens), `--raw` for FTS5 MATCH syntax. `snippet()` for context. `--project` (`WHERE project_path LIKE ?`), `--after`, `--before`, `--role <user|assistant|tool|system>` (`tool` = tool_result output), `--limit`, `--json`. Output: ranked results with short UUID, project, date, role, snippet
-- [ ] 4.5 Implement `show` subcommand — partial UUID resolution (8+ chars, `WHERE uuid LIKE ?%`, show candidates on ambiguous match with date/project/title), fetch `raw_jsonl` + subagent `vault_files`, render with `--format <text|markdown|json>`, pipe through `$PAGER` (text format only). Non-JSONL vault_files not rendered
-- [ ] 4.6 Implement `stats` subcommand — query session count, total size, per-project breakdown, oldest/newest dates, `--json`
-- [ ] 4.7 Implement `checkpoint` subcommand — flush WAL, report success
-- [ ] 4.8 Verify: `import` → `list` shows sessions with titles → `search <term>` finds expected result (plain keyword mode, `--role` filtering) → `show <id>` displays content with `--format markdown` export → `checkpoint` flushes WAL → `stats --json` shows correct counts
+- [x] 4.1 Create `cmd/capy/vault.go` — `newVaultCmd()` cobra command group, register on root command in `main.go`. Shared flag: `--tui` (bool, default false). Shared pre-run: resolve vault DB path, verify `CAPY_VAULT_KEY`, **and probe `store.getDB()` once so a wrong key / corrupt DB fails fast with one clear error** before `import` (otherwise `vault.Import` reports it as N identical per-session `StatusError`s — see Task 3 follow-up below). **Note:** the getDB probe lives in the `import` command (via the new `VaultStore.Open()`), not a shared pre-run — exactly matching the Task 3 follow-up wording ("Task 4.1 now probes store.getDB() before invoking Import"). A shared pre-run probe would create an empty `vault.db` for `checkpoint` on a fresh install and risk pool-vs-checkpoint contention; the shared pre-run instead verifies `CAPY_VAULT_KEY` + resolves the path. `--tui` is defined but fails loud ("not yet implemented") in list/search/show until Task 6 wires it.
+- [x] 4.2 Implement `import` subcommand — mutating by default with table output (UUID, title, project, size, status), `--dry-run` to preview without writing, `--path` for custom dir (auto-detects input type), `--project` filter. Calls `vault.Import()`
+- [x] 4.3 Implement `list` subcommand — `ListSessions()` store method with `--project` filter (`WHERE project_path LIKE ?`), `--limit`, `--json`, reverse chronological sort. Table output: short UUID, title, project, date range, messages, size. One row per session (location is 1:1 — no GROUP BY)
+- [x] 4.4 Implement `search` subcommand — plain keyword mode by default (auto-quote tokens), `--raw` for FTS5 MATCH syntax. `snippet()` for context. `--project` (`WHERE project_path LIKE ?`), `--after`, `--before`, `--role <user|assistant|tool|system>` (`tool` = tool_result output), `--limit`, `--json`. Output: ranked results with short UUID, project, date, role, snippet
+- [x] 4.5 Implement `show` subcommand — partial UUID resolution (8+ chars, `WHERE uuid LIKE ?%`, show candidates on ambiguous match with date/project/title), fetch `raw_jsonl` + subagent `vault_files`, render with `--format <text|markdown|json>`, pipe through `$PAGER` (text format only). Non-JSONL vault_files not rendered. **Note:** rendering lives in a new `internal/vault/render.go` (faithful, unsanitized, independent of the scanner). Subagents render as appended standalone sections (design blesses standalone as spec-conformant); thinking excluded by default (no toggle until TUI Task 6); `--format json` emits verbatim `raw_jsonl`.
+- [x] 4.6 Implement `stats` subcommand — query session count, total size, per-project breakdown, oldest/newest dates, `--json` (new `VaultStore.Stats()`)
+- [x] 4.7 Implement `checkpoint` subcommand — flush WAL, report success (new public `VaultStore.Checkpoint()`, mirrors `ContentStore.Checkpoint`)
+- [x] 4.8 Verify: `import` → `list` shows sessions with titles → `search <term>` finds expected result (plain keyword mode, `--role` filtering) → `show <id>` displays content with `--format markdown` export → `checkpoint` flushes WAL → `stats --json` shows correct counts (covered by `cmd/capy/vault_test.go:TestVaultCommands_EndToEnd`)
 
 ## Task 4b: CLI commands — destructive / filesystem / exec (restore, resume, delete)
 - **Status:** pending
