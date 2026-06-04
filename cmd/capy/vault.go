@@ -98,7 +98,7 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 				return err
 			}
 
-			res := vault.Import(st, sessions, vault.ImportOptions{Project: project, DryRun: dryRun})
+			res := vault.Import(cmd.Context(), st, sessions, vault.ImportOptions{Project: project, DryRun: dryRun})
 			printImportResult(res, dryRun)
 			if res.Errors > 0 {
 				return fmt.Errorf("%d session(s) failed to import", res.Errors)
