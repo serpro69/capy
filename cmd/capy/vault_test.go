@@ -92,14 +92,20 @@ func TestVaultRequiresKey(t *testing.T) {
 	assert.Contains(t, stderr, "CAPY_VAULT_KEY")
 }
 
-func TestVaultShowTUINotImplemented(t *testing.T) {
+// TestVaultTUINotSupportedOnDestructive verifies the read/browse commands wire
+// the TUI (Task 6.7) while the destructive/exec commands keep rejecting --tui
+// (they have no interactive mode). The read commands' --tui launch is covered by
+// the internal/vault/tui package tests; it can't run here without a TTY.
+func TestVaultTUINotSupportedOnDestructive(t *testing.T) {
 	root, uuid := setupVaultEnv(t)
 	_, stderr, code := capy(t, "vault", "import", "--path", root)
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 
-	_, stderr, code = capy(t, "vault", "show", uuid[:8], "--tui")
-	assert.NotEqual(t, 0, code)
-	assert.Contains(t, stderr, "not yet implemented")
+	for _, sub := range []string{"restore", "resume", "delete"} {
+		_, stderr, code = capy(t, "vault", sub, uuid[:8], "--tui")
+		assert.NotEqual(t, 0, code, "%s --tui should fail", sub)
+		assert.Contains(t, stderr, "not supported", "%s --tui error", sub)
+	}
 }
 
 // setupVaultWithSidecar writes a fixture session that also has a subagent

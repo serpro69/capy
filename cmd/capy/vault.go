@@ -13,6 +13,7 @@ import (
 
 	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/vault"
+	"github.com/serpro69/capy/internal/vault/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -46,7 +47,7 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 		},
 	}
 
-	cmd.PersistentFlags().Bool("tui", false, "interactive terminal UI (not yet implemented)")
+	cmd.PersistentFlags().Bool("tui", false, "interactive terminal UI (list, search, show)")
 
 	cmd.AddCommand(
 		newVaultImportCmd(env),
@@ -147,8 +148,8 @@ func newVaultListCmd(env *vaultEnv) *cobra.Command {
 		Use:   "list",
 		Short: "List archived sessions, newest first",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := guardTUI(cmd); err != nil {
-				return err
+			if tuiRequested(cmd) {
+				return launchTUI(cmd, env, tui.Options{Mode: "list"})
 			}
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
@@ -202,8 +203,8 @@ func newVaultSearchCmd(env *vaultEnv) *cobra.Command {
 		Short: "Full-text search across archived sessions",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := guardTUI(cmd); err != nil {
-				return err
+			if tuiRequested(cmd) {
+				return launchTUI(cmd, env, tui.Options{Mode: "search", Query: strings.Join(args, " ")})
 			}
 			afterT, err := parseDateFlag(after, false)
 			if err != nil {
@@ -277,8 +278,8 @@ func newVaultShowCmd(env *vaultEnv) *cobra.Command {
 		Short: "Display a full archived session (partial UUID, 8+ chars)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := guardTUI(cmd); err != nil {
-				return err
+			if tuiRequested(cmd) {
+				return launchTUI(cmd, env, tui.Options{Mode: "view", SessionID: args[0]})
 			}
 			format = strings.ToLower(format)
 			if format != "text" && format != "markdown" && format != "json" {
@@ -764,12 +765,32 @@ func statsToJSON(s *vault.VaultStats, dbBytes int64) statsJSON {
 // shared helpers
 // ---------------------------------------------------------------------------
 
-// guardTUI returns an error when --tui is requested. The interactive UI is wired
-// in a later task; until then the read/browse commands fail loud rather than
-// silently ignoring the flag.
+// tuiRequested reports whether --tui was passed.
+func tuiRequested(cmd *cobra.Command) bool {
+	v, _ := cmd.Flags().GetBool("tui")
+	return v
+}
+
+// launchTUI opens the vault store and runs the interactive bubbletea UI for the
+// read/browse commands (list/search/show). The store is probed via Open() first
+// so a wrong key or corrupt DB surfaces as a normal error rather than after the
+// alt-screen has taken over the terminal. The TUI never closes the store — the
+// CLI owns that lifecycle (deferred Close here).
+func launchTUI(cmd *cobra.Command, env *vaultEnv, opts tui.Options) error {
+	st := vault.NewVaultStore(env.dbPath)
+	defer st.Close()
+	if err := st.Open(); err != nil {
+		return err
+	}
+	return tui.Run(cmd.Context(), st, opts)
+}
+
+// guardTUI rejects --tui for commands that have no interactive mode (the
+// destructive/exec surface: restore, resume, delete). The read/browse commands
+// launch the TUI via launchTUI instead.
 func guardTUI(cmd *cobra.Command) error {
-	if tui, _ := cmd.Flags().GetBool("tui"); tui {
-		return errors.New("--tui mode is not yet implemented")
+	if tuiRequested(cmd) {
+		return errors.New("--tui is not supported for this command")
 	}
 	return nil
 }
