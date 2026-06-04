@@ -16,6 +16,7 @@ import (
 	"github.com/serpro69/capy/internal/security"
 	"github.com/serpro69/capy/internal/session"
 	"github.com/serpro69/capy/internal/store"
+	"github.com/serpro69/capy/internal/vault"
 	"github.com/serpro69/capy/internal/version"
 )
 
@@ -139,6 +140,19 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 	}()
 
+	// Background vault sweep: archive the current project's sessions into the
+	// encrypted vault. Opt-in via CAPY_VAULT_KEY; runs alongside the session
+	// sweep. Like it, bgWg ensures the sweep — and VaultStore.Close, which runs
+	// the WAL checkpoint — completes before shutdown() returns. shutdown() closes
+	// only the knowledge ContentStore, so the sweep owns the vault handle itself.
+	s.bgWg.Add(1)
+	go func() {
+		defer s.bgWg.Done()
+		sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		s.vaultSweep(sweepCtx)
+	}()
+
 	// Ensure cleanup runs on all exit paths (normal return, signals, parent death).
 	defer s.shutdown()
 
@@ -163,6 +177,61 @@ func (s *Server) shutdown() {
 	s.bgWg.Wait()
 	if s.store != nil {
 		_ = s.store.Close()
+	}
+}
+
+// vaultSweep archives the current project's Claude Code sessions into the
+// encrypted vault. It is opt-in: with CAPY_VAULT_KEY unset the vault is disabled
+// and the sweep returns silently. The sweep owns its VaultStore for the call and
+// Close()s it on return — Close runs the WAL checkpoint, and shutdown() (which
+// closes only the knowledge ContentStore) never touches the vault, so closing
+// here is what flushes vault.db-wal. ctx provides cooperative cancellation, so a
+// shutdown mid-sweep stops at the next session boundary rather than blocking
+// bgWg.Wait(). Failures are logged, never fatal — sessions stay recoverable via
+// `capy vault import`.
+func (s *Server) vaultSweep(ctx context.Context) {
+	if _, err := vault.RequireVaultKey(); err != nil {
+		return // vault is opt-in; not configured
+	}
+
+	sessionDir, err := vault.ProjectSessionDir(s.projectDir)
+	if err != nil {
+		slog.Warn("vault sweep: cannot resolve session directory", "project", s.projectDir, "error", err)
+		return
+	}
+
+	sessions, err := vault.DiscoverSessions(sessionDir)
+	if err != nil {
+		// A project with no session directory yet is the common case at startup,
+		// not an error worth a warning.
+		slog.Debug("vault sweep: discovery skipped", "dir", sessionDir, "error", err)
+		return
+	}
+	if len(sessions) == 0 {
+		return
+	}
+
+	st := vault.NewVaultStore(vault.VaultDBPath())
+	defer func() {
+		if closeErr := st.Close(); closeErr != nil {
+			slog.Warn("vault sweep: closing vault store", "error", closeErr)
+		}
+	}()
+
+	// Fail fast on a wrong key / corrupt vault: getDB() opens lazily, so without
+	// this probe a bad key would surface only on the first batch flush — after
+	// Import has scanned and hashed up to a full batch of sessions — and then as
+	// N identical per-session errors instead of one clean abort.
+	if err := st.Open(); err != nil {
+		slog.Warn("vault sweep: cannot open vault store", "error", err)
+		return
+	}
+
+	res := vault.Import(ctx, st, sessions, vault.ImportOptions{})
+	if res.Imported > 0 || res.Updated > 0 || res.Errors > 0 {
+		slog.Info("vault sweep",
+			"imported", res.Imported, "updated", res.Updated,
+			"skipped", res.Skipped, "errors", res.Errors)
 	}
 }
 

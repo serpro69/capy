@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ func importFixture(t *testing.T, s *VaultStore, root string, opts ImportOptions)
 	t.Helper()
 	sessions, err := DiscoverSessions(root)
 	require.NoError(t, err)
-	return Import(s, sessions, opts)
+	return Import(context.Background(), s, sessions, opts)
 }
 
 func TestImport_InsertsSessionWithMetadataAndFTS(t *testing.T) {
@@ -234,11 +235,39 @@ func TestImport_ReadErrorRecorded(t *testing.T) {
 		UUID:       "deadbeef-1111-2222-3333-444444444444",
 		ProjectDir: "-home-user-proj",
 	}}
-	res := Import(s, bad, ImportOptions{})
+	res := Import(context.Background(), s, bad, ImportOptions{})
 	assert.Equal(t, 1, res.Errors)
 	require.Len(t, res.Sessions, 1)
 	assert.Equal(t, StatusError, res.Sessions[0].Status)
 	require.Error(t, res.Sessions[0].Err)
+}
+
+// A context cancelled before Import enters its loop stops at the first session
+// boundary: nothing is scanned, batched, or written. (A cancellation that fires
+// mid-batch instead still flushes the already-accumulated batch via the final
+// flush — this test covers the pre-cancelled case.) This is the cooperative
+// cancellation the server-startup sweep relies on so a shutdown mid-sweep does
+// not block bgWg.Wait().
+func TestImport_PreCancelledContextImportsNothing(t *testing.T) {
+	s := newTestVault(t)
+	root := t.TempDir()
+	uuid := "11111111-2222-3333-4444-555555555555"
+	writeSession(t, filepath.Join(root, "-home-user-proj"), uuid, sampleMainJSONL(t), nil)
+
+	sessions, err := DiscoverSessions(root)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled before Import runs
+
+	res := Import(ctx, s, sessions, ImportOptions{})
+	assert.Equal(t, 0, res.Imported)
+	assert.Equal(t, 0, res.Updated)
+	assert.Empty(t, res.Sessions, "a pre-cancelled import records no per-session outcomes")
+
+	_, err = s.GetSession(uuid[:8])
+	assert.ErrorIs(t, err, ErrSessionNotFound, "no session row should have been written")
 }
 
 func TestImport_CrossesBatchBoundary(t *testing.T) {
