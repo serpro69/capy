@@ -124,7 +124,7 @@
 - [x] 5.3 Verify: start MCP server with vault key set, check `capy vault list` shows sessions from the server's project
 
 ## Task 6: TUI interface — interactive browsing, search, and viewing
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 4, Task 4b
 - **Size:** L
 - **Can run in parallel with:** —
@@ -132,14 +132,14 @@
 - **Risk focus:** 6.4 (viewer) is ~half this task's risk — lazy line-indexing + two render targets + subagent search-jump + inline rendering. It's the place to slow down (not a separate task, but where bugs will concentrate). The models are interdependent (`app.go` composes list+viewer+search), so this stays one task rather than splitting.
 
 ### Subtasks
-- [ ] 6.1 Add bubbletea ecosystem dependencies to `go.mod`: `bubbletea`, `bubbles`, `lipgloss`. **Exclude `glamour` from v1** (lean binary — it pulls chroma/goldmark + lexers); lipgloss-only rendering, glamour deferred to Future Improvements (reversible decision)
-- [ ] 6.2 Create `internal/vault/tui/styles.go` — lipgloss style definitions for panels, roles, highlights, status bar
-- [ ] 6.3 Create `internal/vault/tui/list.go` — session list model wrapping `bubbles/list`, custom item rendering (short UUID, project, date, size), data from `VaultStore.ListSessions()`
-- [ ] 6.4 Create `internal/vault/tui/viewer.go` — session content viewer wrapping `bubbles/viewport`, scrolling in **source-line units** over a lazy `\n`-offset index (holds raw `[]byte`, unmarshals only visible lines; no eager whole-session render). Two render targets via the same machinery: main `raw_jsonl` (subagents inline at the launching tool_use, dimmed prefix) and, on demand, a single `subagents/agent-<id>.jsonl`. **Jump-to-match:** empty `subagent_id` → scroll main target to `line_index`; set `subagent_id` → load that subagent JSONL as active target and scroll to `line_index` (standalone; `Esc`/`q` returns). Never use `turn_index` for scrolling. lipgloss styling (no glamour in v1), vim-style keybindings (j/k/g/G). If inline subagent rendering proves heavy, the **markers-only** fallback is allowed and spec-conformant — see the implementation note in [implementation.md Viewer Model](./implementation.md#viewer-model)
-- [ ] 6.5 Create `internal/vault/tui/search.go` — search model combining `bubbles/textinput` with results list, debounced FTS5 queries (200ms), snippet display with highlights
-- [ ] 6.6 Create `internal/vault/tui/app.go` — root model composing list + viewer + search, three-panel layout, mode transitions (browse ↔ search ↔ view), key binding dispatch
-- [ ] 6.7 Wire `--tui` flag in CLI commands: `list --tui` starts in browse mode, `search --tui` starts in search mode, `show --tui` starts in view mode
-- [ ] 6.8 Verify: `capy vault list --tui` shows navigable session list → select session shows content in viewer (subagents inline) → `/` activates search → selecting a **main** result scrolls to the matched line → selecting a **subagent** result opens that subagent's transcript at the matched line, and `Esc`/`q` returns to the main session → `q` exits cleanly
+- [x] 6.1 Add bubbletea ecosystem dependencies to `go.mod`: `bubbletea` v1.3.10, `bubbles` v1.0.0, `lipgloss` v1.1.0 (v1 line — `@latest` resolves to v1; v2 is pre-release under `/v2` paths). **Excluded `glamour` from v1** (confirmed with user); lipgloss-only rendering. NOTE: context7 serves bubbles **v2** docs — v1 API verified via `go doc` against pinned versions (indexed as `kk:lang-idioms`)
+- [x] 6.2 Create `internal/vault/tui/styles.go` — lipgloss style definitions for roles, markers, status bar, results, errors
+- [x] 6.3 Create `internal/vault/tui/list.go` — session list model wrapping `bubbles/list`, custom `sessionItem` rendering (title + short UUID/date/msgs/size/project), data from `VaultStore.ListSessions()`. Built-in `/` filter disabled so `/` opens global FTS search (see Follow-up: in-list fuzzy filter)
+- [x] 6.4 Create `internal/vault/tui/viewer.go` (+ `internal/vault/transcript.go` for the shared `ParseTranscript` parser, and `tui/render.go` for lipgloss styling + the source-line→display-row map). **Markers-only subagents** (confirmed with user): launch points render as markers; a subagent transcript is viewed standalone via search-jump (exact, by `subagent_id`+`line_index`) or by selecting an openable marker (`]`/`[` focus, `Enter` open), `Esc`/`q` returns. Jump resolution uses `line_index`/`subagent_id`, never `turn_index`. vim keys (j/k/g/G, ctrl+d/u). **Deviation:** eager render-once instead of lazy windowing — see Follow-up below
+- [x] 6.5 Create `internal/vault/tui/search.go` — `bubbles/textinput` + results list, debounced FTS5 queries (200ms via `tea.Tick`, latest-wins by seq), snippet rows carrying `subagent_id`/`line_index` anchors
+- [x] 6.6 Create `internal/vault/tui/app.go` — root model composing list + viewer + search, **mode-based single-pane** transitions (browse ↔ search ↔ view) + key dispatch + `Run()` entry. (Deviation from the 3-panel split — see Follow-up below)
+- [x] 6.7 Wire `--tui` flag in CLI commands: `list --tui` browse, `search <query> --tui` search (prefilled), `show <id> --tui` view. `launchTUI` probes `store.Open()` before the alt-screen. `restore`/`resume`/`delete` still reject `--tui` (no interactive mode)
+- [x] 6.8 Verify: logic covered by `internal/vault/tui` unit tests (list/search/view transitions, subagent search-jump + return, marker focus/open + highlight, debounce gating, resize-stable scroll) + `transcript_test.go`; race-clean, ~86% tui coverage. **Interactive terminal walkthrough still recommended (needs a TTY — cannot run in CI).** Isolated `/kk:review-code` applied: fixed search-results scroll window, focused-marker highlight (color-independent glyph), value-receiver consistency (`setActive`/`openSession`), and resize-stable scroll (`savedMainLine` source-line anchor).
 
 ## Task 7: Final verification
 - **Status:** pending
@@ -167,6 +167,23 @@
 - **Status:** resolved (Task 4.1 CLI + Task 5 server sweep both probe `Open()`)
 - **Description:** `Import` never probes the connection up front. On a wrong `CAPY_VAULT_KEY` or corrupt vault, `warnOnMachineMismatch` swallows the open error and the loop then calls `SessionDigest`/`WriteBatch` per session — each hitting the same open error — so `Import` returns with `Errors == N` identical failures instead of one clean abort. This is mild friction (a table full of duplicate errors), not data loss.
 - **How resolved:** `Import` itself still returns `ImportResult` (no `error`) and does not probe — the fix lives in its callers. **Task 4.1** probes `store.Open()` before invoking `Import` for the CLI path; **Task 5** does the same in `server.vaultSweep` (the non-CLI caller this follow-up anticipated), logging `slog.Warn("vault sweep: cannot open vault store")` and returning early on failure. Both user-facing callers of `Import` now fail fast. (The corroborated Task 5 isolated review re-flagged the missing sweep probe; this fix closes it.) If a *third* `Import` caller is ever added, give it the same `st.Open()` pre-probe.
+
+## Follow-up: TUI viewer uses eager render, not lazy windowing
+- **Status:** pending (non-blocking, post-v1) — deliberate Task 6 deviation
+- **Description:** design.md §Read-path performance specifies a lazy `\n`-offset index that unmarshals only the visible viewport lines. Task 6 instead parses + styles the whole transcript once (`tui/render.go:renderTranscript`) and uses `bubbles/viewport`'s native scrolling, resolving search jumps via a source-line→display-row map (`msgRowStart`/`rowForLine`).
+- **Why deviated:** (1) the design's lazy+no-dedup combination would re-render every progressive assistant snapshot (3× growing copies of one message) — poor UX; deduping requires cross-line state that breaks per-line laziness; (2) eager cost (transient parse, retained display string ≈ blob size) equals what `capy vault show` already pays, and typical sessions are ≤1MB (design projection: 536KB avg); (3) the search→scroll **contract** (`line_index`/`subagent_id` anchors, never `turn_index`) is fully preserved. **Concrete next step:** if profiling shows lag on multi-MB sessions, implement a windowed renderer that re-renders only the visible source-line span around `viewport` offset and lazy-loads on scroll-to-edge.
+
+## Follow-up: TUI is mode-based single-pane, not the 3-panel split
+- **Status:** pending (non-blocking, post-v1) — deliberate Task 6 deviation
+- **Description:** design.md §Layout sketches a side-by-side list+viewer split with a bottom bar. Task 6 ships mode-based full-screen panes (browse ↔ view ↔ search) instead, which satisfies the Task 6.8 flow with far less layout/focus machinery. **Next step:** if a persistent split is wanted, compose list (left) + viewer (right) with lipgloss `JoinHorizontal` and route focus between panes.
+
+## Follow-up: TUI subagent markers use order-based launch mapping
+- **Status:** pending (non-blocking, post-v1)
+- **Description:** `ParseTranscript` maps Task/Agent launch points to archived subagent files **in order**, and only makes markers openable when the counts align (otherwise markers are visible-only). The JSONL carries no verified `tool_use_id`↔`agent-<id>` link, so a precise mapping isn't possible from the data alone; search-jump (which uses the stored `subagent_id`) is always exact. **Next step:** if Claude Code's JSONL gains a reliable launch→subagent correlation (or the `agent-<id>` is confirmed to equal the launching `tool_use` id), map markers precisely and drop the count-alignment guard.
+
+## Follow-up: TUI deferred keybindings (in-list filter, f/r/c/R)
+- **Status:** pending (non-blocking, post-v1)
+- **Description:** design.md §Key Bindings lists `f` (filter project), `r` (restore), `c` (copy message), `R` (resume), plus in-list fuzzy filtering. v1 ships the core browse/search/view flow (Task 6.8) only; the list's built-in `/` filter is disabled so `/` opens global FTS search. **Next step:** add project filtering to the list model, and wire `r`/`R` to `vault.RestoreSession` + `claude --resume` (note: these are the destructive/exec surface — they warrant the same care as Task 4b and should suspend/teardown the bubbletea program before exec).
 
 ## Dependency Graph
 
