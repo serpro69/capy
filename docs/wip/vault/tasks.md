@@ -112,16 +112,16 @@
 - [x] 4b.4 Verify: `restore <id>` recreates files (path safety validated, CLAUDE_CONFIG_DIR respected, `diff` clean vs originals) → `resume <id>` launches `claude --resume` in the resolved dir → `delete <id>` removes the session from `list`/`search`
 
 ## Task 5: MCP server startup sweep
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** S
 - **Can run in parallel with:** Task 4, Task 4b
 - **Docs:** [implementation.md#mcp-server-startup-sweep](./implementation.md#mcp-server-startup-sweep)
 
 ### Subtasks
-- [ ] 5.1 Extend MCP server startup in `internal/server/server.go` — after existing `session.Sweep()`, add vault sweep goroutine for current project. The goroutine **opens its own `VaultStore` and `Close()`s it when done** (Close runs the WAL checkpoint; `shutdown()` closes only the ContentStore; existing `bgWg.Wait()` ensures the sweep + Close finish before exit). Skip silently if `CAPY_VAULT_KEY` not set (vault is opt-in). Use cooperative cancellation (server context + timeout)
-- [ ] 5.2 Tests: server startup with `CAPY_VAULT_KEY` set imports sessions from test project directory. Server startup without key skips silently
-- [ ] 5.3 Verify: start MCP server with vault key set, check `capy vault list` shows sessions from the server's project
+- [x] 5.1 Extend MCP server startup in `internal/server/server.go` — after existing `session.Sweep()`, add vault sweep goroutine for current project. The goroutine **opens its own `VaultStore` and `Close()`s it when done** (Close runs the WAL checkpoint; `shutdown()` closes only the ContentStore; existing `bgWg.Wait()` ensures the sweep + Close finish before exit). Skip silently if `CAPY_VAULT_KEY` not set (vault is opt-in). Use cooperative cancellation (server context + timeout)
+- [x] 5.2 Tests: server startup with `CAPY_VAULT_KEY` set imports sessions from test project directory. Server startup without key skips silently
+- [x] 5.3 Verify: start MCP server with vault key set, check `capy vault list` shows sessions from the server's project
 
 ## Task 6: TUI interface — interactive browsing, search, and viewing
 - **Status:** pending
@@ -161,12 +161,12 @@
 ## Follow-up: `context.Context` propagation through VaultStore query/exec paths
 - **Status:** pending (non-blocking, post-v1) — declined during the Task 1 isolated review
 - **Description:** The Task 1 isolated review (code-reviewer + pal, corroborated) flagged that `VaultStore`'s read/write methods use plain `db.Query`/`db.Exec`/`db.Begin` rather than the `*Context` variants that `profiles/go/review-code/database.md` prefers.
-- **Why deferred (deliberate):** The sibling knowledge store (`internal/store`) uses plain calls almost everywhere (109 `Exec`, 13 `Query`, 69 `QueryRow`, plain `Begin`; only 3 `BeginTx`). Vault mirrors it. None of the public methods accept a `context.Context`, so threading `QueryContext(s.ctx())` today is inert ceremony (`s.ctx()` returns `context.Background()`) that would diverge vault from its sibling for zero functional benefit. Real cancellation needs the public methods to take a `context.Context`, which is speculative until a cancelling caller exists (Task 5's server-startup sweep). **Concrete next step:** when Task 5 wires the sweep, add `context.Context` params to the VaultStore methods (and the sweep), and convert both `internal/store` and `internal/vault` to `*Context` variants together so the two stores stay consistent. (`sqliteutil.OpenWithCanary` already takes a `ctx` — that part is done.)
+- **Why deferred (deliberate):** The sibling knowledge store (`internal/store`) uses plain calls almost everywhere (109 `Exec`, 13 `Query`, 69 `QueryRow`, plain `Begin`; only 3 `BeginTx`). Vault mirrors it. None of the public methods accept a `context.Context`, so threading `QueryContext(s.ctx())` today is inert ceremony (`s.ctx()` returns `context.Background()`) that would diverge vault from its sibling for zero functional benefit. Real cancellation needs the public methods to take a `context.Context`, which is speculative until a cancelling caller exists (Task 5's server-startup sweep). **Partially addressed in Task 5:** `vault.Import` now takes a leading `ctx` and checks `ctx.Err()` at each session boundary (loop-level cooperative cancellation), so the server sweep's 30s timeout / shutdown stops it promptly without blocking `bgWg.Wait()`. **Still deferred:** the `VaultStore` DB methods themselves remain plain (`db.Query`/`db.Exec`/`db.Begin`) — an in-flight transaction is not interruptible. **Concrete next step:** convert both `internal/store` and `internal/vault` to `*Context` variants together (and add `ctx` params to the remaining `VaultStore` methods) so the two stores stay consistent. (`sqliteutil.OpenWithCanary` already takes a `ctx` — that part is done.)
 
 ## Follow-up: `vault.Import` has no fail-fast on a DB-open failure
-- **Status:** pending (non-blocking, post-v1) — surfaced during the Task 3 isolated review
+- **Status:** resolved (Task 4.1 CLI + Task 5 server sweep both probe `Open()`)
 - **Description:** `Import` never probes the connection up front. On a wrong `CAPY_VAULT_KEY` or corrupt vault, `warnOnMachineMismatch` swallows the open error and the loop then calls `SessionDigest`/`WriteBatch` per session — each hitting the same open error — so `Import` returns with `Errors == N` identical failures instead of one clean abort. This is mild friction (a table full of duplicate errors), not data loss.
-- **Why deferred (deliberate):** `Import` returns `ImportResult` (no `error`), so surfacing a hard open-failure cleanly needs either an API change or per-session error records (no better than today). The right owner is the CLI pre-run: **Task 4.1** now probes `store.getDB()` before invoking `Import`, which covers the missing-key, wrong-key, and corrupt-DB cases for the primary user-facing path. **Concrete next step:** if a non-CLI caller of `Import` ever appears that needs fail-fast (e.g. an automated path without the 4.1 pre-run), add a single `if _, err := store.getDB(); err != nil { … }` probe at the top of `Import` and decide whether to change its signature to return an `error`.
+- **How resolved:** `Import` itself still returns `ImportResult` (no `error`) and does not probe — the fix lives in its callers. **Task 4.1** probes `store.Open()` before invoking `Import` for the CLI path; **Task 5** does the same in `server.vaultSweep` (the non-CLI caller this follow-up anticipated), logging `slog.Warn("vault sweep: cannot open vault store")` and returning early on failure. Both user-facing callers of `Import` now fail fast. (The corroborated Task 5 isolated review re-flagged the missing sweep probe; this fix closes it.) If a *third* `Import` caller is ever added, give it the same `st.Open()` pre-probe.
 
 ## Dependency Graph
 

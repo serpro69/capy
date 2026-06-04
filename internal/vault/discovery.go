@@ -74,6 +74,32 @@ func DiscoverSessions(rootDir string) ([]SessionFile, error) {
 	return sessions, nil
 }
 
+// ProjectSessionDir resolves the Claude Code session directory for a real
+// project path, scoping discovery to a single project (the server-startup
+// sweep's "current project only" path). It honors CLAUDE_CONFIG_DIR via
+// config.ClaudeProjectsDir() — unlike session.SessionDir, which still hardcodes
+// ~/.claude/projects/ (a deferred follow-up in docs/wip/vault/tasks.md). When
+// projectDir is already inside the projects root (i.e. it is itself a mangled
+// session dir) it is returned unchanged; otherwise the absolute path is mangled
+// (/ and . → -) to Claude Code's directory convention. The returned path is not
+// stat-checked — DiscoverSessions reports a missing directory, and callers (the
+// sweep) skip it gracefully.
+func ProjectSessionDir(projectDir string) (string, error) {
+	abs, err := filepath.Abs(projectDir)
+	if err != nil {
+		return "", fmt.Errorf("resolving absolute path: %w", err)
+	}
+	projects, err := config.ClaudeProjectsDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving claude projects dir: %w", err)
+	}
+	if strings.HasPrefix(abs, projects+string(filepath.Separator)) {
+		return abs, nil
+	}
+	mangled := strings.NewReplacer("/", "-", ".", "-").Replace(abs)
+	return filepath.Join(projects, mangled), nil
+}
+
 // detectProjectDirs classifies rootDir and returns the list of project
 // directories to walk. The checks are mutually exclusive in practice: a single
 // project dir holds *.jsonl files directly, while a projects root holds only

@@ -76,6 +76,28 @@ func TestDiscoverSessions_HonorsClaudeConfigDir(t *testing.T) {
 	assert.Equal(t, "eeeeeeee-1111-2222-3333-444444444444", sessions[0].UUID)
 }
 
+func TestProjectSessionDir_ManglesUnderConfigDir(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+
+	got, err := ProjectSessionDir("/home/user/My.Project")
+	require.NoError(t, err)
+	// "/" and "." both mangle to "-", under $CLAUDE_CONFIG_DIR/projects.
+	assert.Equal(t, filepath.Join(cfg, "projects", "-home-user-My-Project"), got)
+}
+
+// A path already inside the projects root is itself a session dir — returned
+// unchanged rather than mangled a second time.
+func TestProjectSessionDir_AlreadyUnderProjectsRoot(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+
+	sessionDir := filepath.Join(cfg, "projects", "-home-user-proj")
+	got, err := ProjectSessionDir(sessionDir)
+	require.NoError(t, err)
+	assert.Equal(t, sessionDir, got)
+}
+
 func TestDiscoverSessions_OversizeSidecarCap(t *testing.T) {
 	root := t.TempDir()
 	projDir := filepath.Join(root, "-home-user-proj")

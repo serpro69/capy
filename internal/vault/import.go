@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -79,7 +80,14 @@ func (r *ImportResult) record(s ImportedSession) {
 // the run, so Import returns no error — inspect ImportResult. The caller owns
 // store's lifecycle (open/Close) and supplies the session list (via
 // DiscoverSessions).
-func Import(store *VaultStore, sessions []SessionFile, opts ImportOptions) ImportResult {
+//
+// ctx provides cooperative cancellation: it is checked at each session boundary
+// so a cancelled or timed-out caller (e.g. the server-startup sweep, which must
+// not block shutdown) stops processing further sessions, flushes whatever is
+// already batched, and returns partial results. Cancellation does not interrupt
+// an in-flight transaction — the DB methods are not yet context-aware (a
+// deliberately deferred refactor; see docs/wip/vault/tasks.md).
+func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts ImportOptions) ImportResult {
 	var res ImportResult
 	if len(sessions) == 0 {
 		// Nothing to import — skip the machine-mismatch probe so an empty run
@@ -120,7 +128,16 @@ func Import(store *VaultStore, sessions []SessionFile, opts ImportOptions) Impor
 		batch, pending, batchBytes = nil, nil, 0
 	}
 
+	cancelled := false
 	for i := range sessions {
+		// Cooperative cancellation: stop at the next session boundary when the
+		// caller's context is done. The final flush below still persists the
+		// batch accumulated so far, so partial progress is not discarded.
+		if ctx.Err() != nil {
+			cancelled = true
+			break
+		}
+
 		sf := &sessions[i]
 
 		if opts.Project != "" && !strings.Contains(sf.ProjectDir, opts.Project) {
@@ -191,6 +208,13 @@ func Import(store *VaultStore, sessions []SessionFile, opts ImportOptions) Impor
 	}
 	flush()
 
+	if cancelled {
+		// Debug, not Info: a cooperative stop on server shutdown is the designed
+		// success path, not an operator-noteworthy event.
+		slog.Debug("vault import: cancelled before completion",
+			"imported", res.Imported, "updated", res.Updated,
+			"skipped", res.Skipped, "errors", res.Errors)
+	}
 	return res
 }
 
