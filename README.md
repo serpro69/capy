@@ -21,13 +21,14 @@ This is a deliberate architectural choice, not a missing feature. Context optimi
 
 ## The Problem
 
-Every MCP tool call dumps raw data into your context window. A single API response costs 56 KB. Twenty GitHub issues cost 59 KB. One access log — 45 KB. After 30 minutes, 40% of your context is gone. And when the agent compacts the conversation to free space, it forgets which files it was editing, what tasks are in progress, and what you last asked for.
+Every MCP tool call dumps raw data into your context window. A single API response costs 56 KB. Twenty GitHub issues cost 59 KB. One access log — 45 KB. After 30 minutes, 40% of your context is gone. And when the agent compacts the conversation to free space, it forgets which files it was editing, what tasks are in progress, and what you last asked for. The sessions themselves are disposable, too — Claude Code deletes them after 30 days, `/compact` rewrites them in place, and nothing survives across projects or an accidental delete.
 
-`capy` is an MCP server and Claude Code plugin that solves both halves of this problem:
+`capy` is an MCP server and Claude Code plugin that addresses every layer of this — from the live context window down to the permanence of the sessions themselves:
 
 1. **Context Saving** — Sandbox tools keep raw data out of the context window. 315 KB becomes 5.4 KB. ~98% reduction.
 2. **Searchable Knowledge Base** — All sandboxed output is indexed into SQLite FTS5 with BM25 ranking. Use `capy_search` to retrieve specific sections on demand. Multi-layer search: Porter stemming, trigram substring, fuzzy Levenshtein correction, with Reciprocal Rank Fusion and proximity reranking.
 3. **Session Memory** — Past conversation transcripts are automatically indexed on server start. When the conversation compacts, the LLM can search prior sessions for context via BM25 search.
+4. **Session Vault** — A durable, cross-project, encrypted archive of every Claude Code session. Search, view, restore, or resume past conversations long after Claude Code's 30-day cleanup, compaction, or accidental deletion would have lost them. See [Session Vault](#session-vault).
 
 ## Benchmarks
 
@@ -267,6 +268,105 @@ capy encrypt
 - **Generated, not memorized.** `openssl rand -base64 48` or a password manager.
 - **Never in config files.** Use environment variables, direnv, or a secrets manager.
 
+## Session Vault
+
+Claude Code sessions are ephemeral, project-scoped, and destructible — lost to compaction (`/compact` rewrites the JSONL), Claude Code's 30-day auto-cleanup, or accidental deletion. The **vault** inverts all three: a **permanent, global, verbatim** archive of every session across every project, in its own encrypted SQLite database. It is both a full-text search index *and* a backup/restore system — the raw JSONL is preserved byte-for-byte, so any archived session can be restored or resumed.
+
+The vault is independent of the rest of capy. You can use it even if you don't run the MCP server or use any context-window features — the only prerequisite is the `CAPY_VAULT_KEY` environment variable.
+
+### Setup
+
+The vault uses its own encryption key, **separate from `CAPY_DB_KEY`**:
+
+```bash
+export CAPY_VAULT_KEY=$(openssl rand -base64 48)
+echo "export CAPY_VAULT_KEY='$CAPY_VAULT_KEY'" >> ~/.zshrc  # or ~/.bashrc
+```
+
+Every `capy vault` command refuses to run without it. There is no separate `setup` step — set the key and run `import`.
+
+### Quick start
+
+```bash
+capy vault import              # archive every session across all projects
+capy vault list                # newest first
+capy vault search "rate limiter"   # full-text search across all sessions
+capy vault show 3f8a1c2b       # view a session (partial UUID, 8+ chars)
+```
+
+### Archiving sessions
+
+Two archival paths populate the vault:
+
+- **MCP server startup sweep** — when the capy MCP server boots, a background task archives the **current project's** sessions automatically (opt-in: silently skipped unless `CAPY_VAULT_KEY` is set). Captures sessions that ended since the last boot.
+- **`capy vault import`** — manual, scans **all projects**. This is the primary path. Because the startup sweep only covers the current project, sessions from projects you haven't reopened can age past Claude Code's 30-day cleanup. **Run `capy vault import` periodically — a cron job or shell habit** — to catch everything:
+
+  ```bash
+  # crontab -e — archive all sessions every morning at 9am
+  0 9 * * *  CAPY_VAULT_KEY='…' /usr/local/bin/capy vault import
+  ```
+
+Import is idempotent: unchanged sessions are skipped, grown sessions are updated in place, and a smaller (likely compacted) variant never overwrites a fuller archive. Use `--dry-run` to preview, `--project <substr>` to scope, `--path <dir>` to import from a non-default location.
+
+> **Compaction gap (v1):** if `/compact` runs *before* the next startup sweep or manual `import`, the pre-compaction content is already gone and cannot be recovered. Import often to minimize the window.
+
+### Commands
+
+All commands live under `capy vault` and require `CAPY_VAULT_KEY`. Lookups (`show`/`restore`/`resume`/`delete`) accept a **partial UUID of 8+ characters**, git-style; an ambiguous prefix prints candidates to disambiguate.
+
+| Command | Description |
+|---------|-------------|
+| `import [--path <dir>] [--project <substr>] [--dry-run]` | Scan and archive sessions. Mutating by default. |
+| `list [--project <substr>] [--limit N] [--json]` | List sessions, newest first (`--limit` default 50, `0` = no limit). |
+| `search <query> [--raw] [--project] [--role] [--after] [--before] [--limit] [--json]` | Full-text search with snippets. Plain keywords by default; `--raw` for FTS5 `MATCH` syntax. `--role user\|assistant\|tool\|system`; `--after`/`--before` take `YYYY-MM-DD`. |
+| `show <session-id> [--format text\|markdown\|json]` | Display a full session. Defaults to your `$PAGER`; `--format markdown\|json` for export. |
+| `restore <session-id> [--output <path>]` | Write the JSONL + all preserved sidecars back to disk (defaults to the session's Claude Code project dir). |
+| `resume <session-id> [--dir <path>]` | Restore, then launch `claude --resume`. Requires `claude` on `PATH`. |
+| `delete <session-id> [--yes]` | Remove a session from the vault (does not touch on-disk copies). Prompts unless `--yes`. |
+| `stats [--json]` | Session count, content size, DB file size, per-project breakdown. |
+| `checkpoint` | Flush the WAL into `vault.db` — run before copying it to another machine. |
+
+`list`, `search`, and `show` also accept **`--tui`** for an interactive terminal UI (browse, live search, vim-style viewer) built on bubbletea. `--tui` is not supported on the mutating/exec commands (`restore`, `resume`, `delete`).
+
+### Restore and resume
+
+`restore` writes a session's main JSONL and every preserved sidecar (subagent transcripts, tool-results) back under the Claude Code projects directory so Claude Code can find it again, or to `--output <dir>`. Existing files are never clobbered without confirmation, and unsafe paths (absolute or `..`-escaping sidecars) are skipped.
+
+`resume` does the same, then launches `claude --resume <uuid>`. The working directory is chosen from `--dir`, then the session's recorded project path, then the current directory.
+
+### Cross-machine sync
+
+The vault is local-only — there is no cloud sync. To move sessions between machines, copy the database file:
+
+```bash
+# On machine A
+capy vault checkpoint                 # flush the WAL into vault.db (required!)
+scp ~/.local/share/capy/vault.db  B:~/.local/share/capy/vault.db
+
+# On machine B — must export the SAME CAPY_VAULT_KEY
+capy vault import                     # re-archive B's own local sessions alongside A's
+```
+
+> **Copying `vault.db` replaces machine B's vault entirely.** If B already had archived sessions that no longer exist on disk, copy B's `vault.db` elsewhere first. When `import` opens a vault whose sessions all come from another machine, it prints a machine-ID mismatch warning to guard against silently overwriting unarchived local sessions. A proper `merge --from` command is planned for a future version.
+
+Machine identity is resolved from `CAPY_MACHINE_ID`, then `~/.config/capy/machine-id` (auto-generated), so it survives DB copies — each machine tags its own imports.
+
+### Storage and limits
+
+- **Location:** `$XDG_DATA_HOME/capy/vault.db` (default `~/.local/share/capy/vault.db`). Override with `CAPY_VAULT_PATH`.
+- **Encrypted at rest** with `CAPY_VAULT_KEY` (sqlite3mc / SQLCipher-compatible, same as the knowledge store). A different key cannot open the DB.
+- **Archives forever** — no TTL, no automatic cleanup. Reclaim space with `capy vault delete`. Expect ~50 MB/month for an active user; `stats` shows current size.
+- **Verbatim, not redacted.** `vault.db` concentrates every secret/credential/PII that appeared in any archived session, and `restore` writes them back as plaintext. This mirrors data that already lives unencrypted under `~/.claude/projects/` on the same host — but treat `vault.db` and its key accordingly. (Search snippets *are* secret-stripped; the stored blobs are not.) Key rotation (`vault rekey`) and a redacted-export pipeline are deferred to a future version.
+
+### Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `CAPY_VAULT_KEY` | **Required.** Encryption passphrase for `vault.db` (separate from `CAPY_DB_KEY`). |
+| `CAPY_VAULT_PATH` | Override the vault database path. |
+| `CAPY_MACHINE_ID` | Stable machine identity (useful in Docker/CI). |
+| `CLAUDE_CONFIG_DIR` | Non-default Claude Code config dir; vault discovery and restore honor it. |
+
 ## CLI Commands
 
 | Command | Description |
@@ -280,6 +380,7 @@ capy encrypt
 | `capy checkpoint` | Flush WAL into main DB file for safe git commits |
 | `capy encrypt` | Encrypt the knowledge DB or rotate its encryption key |
 | `capy dbsize` | Show knowledge DB disk usage |
+| `capy vault <cmd>` | Archive, search, restore, and resume past sessions — see [Session Vault](#session-vault) |
 | `capy hook <event>` | Handle a hook event (called by the AI tool, not you) |
 
 Global flags: `--project-dir`, `--version`
