@@ -1,3 +1,7 @@
+<div align="center">
+  <img width="340" height="340" alt="logo" src="docs/assets/capy_logo.svg" />
+</div>
+
 # capy
 
 **C**ontext-**A**ware **P**rompting ...or "**Y**et another solution to LLM context problem"
@@ -36,24 +40,24 @@ capy ships with a benchmark suite that validates its claims with deterministic, 
 
 ### Retrieval Quality
 
-| Metric | Score |
-|--------|-------|
+| Metric                                      | Score |
+| ------------------------------------------- | ----- |
 | R@1 (at least one relevant result in top 1) | 0.897 |
-| R@5 | 0.987 |
-| R@10 | 0.994 |
-| MRR (mean reciprocal rank) | 0.938 |
-| NDCG@10 | 0.950 |
+| R@5                                         | 0.987 |
+| R@10                                        | 0.994 |
+| MRR (mean reciprocal rank)                  | 0.938 |
+| NDCG@10                                     | 0.950 |
 
 ### Context Reduction
 
 "Bytes saved" is a vanity metric. NIAH measures whether specific facts survive compression — not just how many bytes were removed:
 
-| Metric | Score |
-|--------|-------|
-| Compression Ratio | 49.8% |
+| Metric                                                | Score |
+| ----------------------------------------------------- | ----- |
+| Compression Ratio                                     | 49.8% |
 | Context Recall (fraction of specific facts preserved) | 0.983 |
-| Perfect Recall Rate (cases with all facts preserved) | 97.1% |
-| Effective Compression (compression x recall) | 49.7% |
+| Perfect Recall Rate (cases with all facts preserved)  | 97.1% |
+| Effective Compression (compression x recall)          | 49.7% |
 
 On realistic content, capy achieves ~50% compression while preserving ~98% of the specific information needed. The "~98% reduction" claim in the problem statement above applies to raw byte savings on large uniform outputs — the NIAH numbers are the honest picture for information preservation on diverse content.
 
@@ -270,7 +274,7 @@ capy encrypt
 
 ## Session Vault
 
-Claude Code sessions are ephemeral, project-scoped, and destructible — lost to compaction (`/compact` rewrites the JSONL), Claude Code's 30-day auto-cleanup, or accidental deletion. The **vault** inverts all three: a **permanent, global, verbatim** archive of every session across every project, in its own encrypted SQLite database. It is both a full-text search index *and* a backup/restore system — the raw JSONL is preserved byte-for-byte, so any archived session can be restored or resumed.
+Claude Code sessions are ephemeral, project-scoped, and destructible — lost to compaction (`/compact` rewrites the JSONL), Claude Code's 30-day auto-cleanup, or accidental deletion. The **vault** inverts all three: a **permanent, global, verbatim** archive of every session across every project, in its own encrypted SQLite database. It is both a full-text search index _and_ a backup/restore system — the raw JSONL is preserved byte-for-byte, so any archived session can be restored or resumed.
 
 The vault is independent of the rest of capy. You can use it even if you don't run the MCP server or use any context-window features — the only prerequisite is the `CAPY_VAULT_KEY` environment variable.
 
@@ -308,23 +312,23 @@ Two archival paths populate the vault:
 
 Import is idempotent: unchanged sessions are skipped, grown sessions are updated in place, and a smaller (likely compacted) variant never overwrites a fuller archive. Use `--dry-run` to preview, `--project <substr>` to scope, `--path <dir>` to import from a non-default location.
 
-> **Compaction gap (v1):** if `/compact` runs *before* the next startup sweep or manual `import`, the pre-compaction content is already gone and cannot be recovered. Import often to minimize the window.
+> **Compaction gap (v1):** if `/compact` runs _before_ the next startup sweep or manual `import`, the pre-compaction content is already gone and cannot be recovered. Import often to minimize the window.
 
 ### Commands
 
 All commands live under `capy vault` and require `CAPY_VAULT_KEY`. Lookups (`show`/`restore`/`resume`/`delete`) accept a **partial UUID of 8+ characters**, git-style; an ambiguous prefix prints candidates to disambiguate.
 
-| Command | Description |
-|---------|-------------|
-| `import [--path <dir>] [--project <substr>] [--dry-run]` | Scan and archive sessions. Mutating by default. |
-| `list [--project <substr>] [--limit N] [--json]` | List sessions, newest first (`--limit` default 50, `0` = no limit). |
+| Command                                                                               | Description                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `import [--path <dir>] [--project <substr>] [--dry-run]`                              | Scan and archive sessions. Mutating by default.                                                                                                                             |
+| `list [--project <substr>] [--limit N] [--json]`                                      | List sessions, newest first (`--limit` default 50, `0` = no limit).                                                                                                         |
 | `search <query> [--raw] [--project] [--role] [--after] [--before] [--limit] [--json]` | Full-text search with snippets. Plain keywords by default; `--raw` for FTS5 `MATCH` syntax. `--role user\|assistant\|tool\|system`; `--after`/`--before` take `YYYY-MM-DD`. |
-| `show <session-id> [--format text\|markdown\|json]` | Display a full session. Defaults to your `$PAGER`; `--format markdown\|json` for export. |
-| `restore <session-id> [--output <path>]` | Write the JSONL + all preserved sidecars back to disk (defaults to the session's Claude Code project dir). |
-| `resume <session-id> [--dir <path>]` | Restore, then launch `claude --resume`. Requires `claude` on `PATH`. |
-| `delete <session-id> [--yes]` | Remove a session from the vault (does not touch on-disk copies). Prompts unless `--yes`. |
-| `stats [--json]` | Session count, content size, DB file size, per-project breakdown. |
-| `checkpoint` | Flush the WAL into `vault.db` — run before copying it to another machine. |
+| `show <session-id> [--format text\|markdown\|json]`                                   | Display a full session. Defaults to your `$PAGER`; `--format markdown\|json` for export.                                                                                    |
+| `restore <session-id> [--output <path>]`                                              | Write the JSONL + all preserved sidecars back to disk (defaults to the session's Claude Code project dir).                                                                  |
+| `resume <session-id> [--dir <path>]`                                                  | Restore, then launch `claude --resume`. Requires `claude` on `PATH`.                                                                                                        |
+| `delete <session-id> [--yes]`                                                         | Remove a session from the vault (does not touch on-disk copies). Prompts unless `--yes`.                                                                                    |
+| `stats [--json]`                                                                      | Session count, content size, DB file size, per-project breakdown.                                                                                                           |
+| `checkpoint`                                                                          | Flush the WAL into `vault.db` — run before copying it to another machine.                                                                                                   |
 
 `list`, `search`, and `show` also accept **`--tui`** for an interactive terminal UI (browse, live search, vim-style viewer) built on bubbletea. `--tui` is not supported on the mutating/exec commands (`restore`, `resume`, `delete`).
 
@@ -356,32 +360,32 @@ Machine identity is resolved from `CAPY_MACHINE_ID`, then `~/.config/capy/machin
 - **Location:** `$XDG_DATA_HOME/capy/vault.db` (default `~/.local/share/capy/vault.db`). Override with `CAPY_VAULT_PATH`.
 - **Encrypted at rest** with `CAPY_VAULT_KEY` (sqlite3mc / SQLCipher-compatible, same as the knowledge store). A different key cannot open the DB.
 - **Archives forever** — no TTL, no automatic cleanup. Reclaim space with `capy vault delete`. Expect ~50 MB/month for an active user; `stats` shows current size.
-- **Verbatim, not redacted.** `vault.db` concentrates every secret/credential/PII that appeared in any archived session, and `restore` writes them back as plaintext. This mirrors data that already lives unencrypted under `~/.claude/projects/` on the same host — but treat `vault.db` and its key accordingly. (Search snippets *are* secret-stripped; the stored blobs are not.) Key rotation (`vault rekey`) and a redacted-export pipeline are deferred to a future version.
+- **Verbatim, not redacted.** `vault.db` concentrates every secret/credential/PII that appeared in any archived session, and `restore` writes them back as plaintext. This mirrors data that already lives unencrypted under `~/.claude/projects/` on the same host — but treat `vault.db` and its key accordingly. (Search snippets _are_ secret-stripped; the stored blobs are not.) Key rotation (`vault rekey`) and a redacted-export pipeline are deferred to a future version.
 
 ### Environment variables
 
-| Variable | Purpose |
-|----------|---------|
-| `CAPY_VAULT_KEY` | **Required.** Encryption passphrase for `vault.db` (separate from `CAPY_DB_KEY`). |
-| `CAPY_VAULT_PATH` | Override the vault database path. |
-| `CAPY_MACHINE_ID` | Stable machine identity (useful in Docker/CI). |
-| `CLAUDE_CONFIG_DIR` | Non-default Claude Code config dir; vault discovery and restore honor it. |
+| Variable            | Purpose                                                                           |
+| ------------------- | --------------------------------------------------------------------------------- |
+| `CAPY_VAULT_KEY`    | **Required.** Encryption passphrase for `vault.db` (separate from `CAPY_DB_KEY`). |
+| `CAPY_VAULT_PATH`   | Override the vault database path.                                                 |
+| `CAPY_MACHINE_ID`   | Stable machine identity (useful in Docker/CI).                                    |
+| `CLAUDE_CONFIG_DIR` | Non-default Claude Code config dir; vault discovery and restore honor it.         |
 
 ## CLI Commands
 
-| Command | Description |
-|---------|-------------|
-| `capy` or `capy serve` | Start the MCP server (stdio transport) |
-| `capy setup` | Configure capy for the current project (`--platform codex` for Codex CLI) |
-| `capy doctor` | Run diagnostics on the installation |
-| `capy which` | Print the knowledge base path for the current project |
-| `capy cleanup` | Remove stale knowledge base entries |
-| `capy sweep` | Index past sessions (dry-run by default, `--force` to index, `--reindex` to re-parse all) |
-| `capy checkpoint` | Flush WAL into main DB file for safe git commits |
-| `capy encrypt` | Encrypt the knowledge DB or rotate its encryption key |
-| `capy dbsize` | Show knowledge DB disk usage |
-| `capy vault <cmd>` | Archive, search, restore, and resume past sessions — see [Session Vault](#session-vault) |
-| `capy hook <event>` | Handle a hook event (called by the AI tool, not you) |
+| Command                | Description                                                                               |
+| ---------------------- | ----------------------------------------------------------------------------------------- |
+| `capy` or `capy serve` | Start the MCP server (stdio transport)                                                    |
+| `capy setup`           | Configure capy for the current project (`--platform codex` for Codex CLI)                 |
+| `capy doctor`          | Run diagnostics on the installation                                                       |
+| `capy which`           | Print the knowledge base path for the current project                                     |
+| `capy cleanup`         | Remove stale knowledge base entries                                                       |
+| `capy sweep`           | Index past sessions (dry-run by default, `--force` to index, `--reindex` to re-parse all) |
+| `capy checkpoint`      | Flush WAL into main DB file for safe git commits                                          |
+| `capy encrypt`         | Encrypt the knowledge DB or rotate its encryption key                                     |
+| `capy dbsize`          | Show knowledge DB disk usage                                                              |
+| `capy vault <cmd>`     | Archive, search, restore, and resume past sessions — see [Session Vault](#session-vault)  |
+| `capy hook <event>`    | Handle a hook event (called by the AI tool, not you)                                      |
 
 Global flags: `--project-dir`, `--version`
 
@@ -407,26 +411,26 @@ capy completion fish | source
 
 ### Execution
 
-| Tool | What It Does |
-|------|-------------|
-| `capy_execute` | Run code in a sandboxed subprocess. Supports 11 languages: JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, Elixir. Only stdout enters context. Pass `intent` to auto-index large output. |
-| `capy_execute_file` | Inject a file into a sandbox variable (`FILE_CONTENT`) and process it with code you write. The raw file never enters context — only your printed summary does. |
-| `capy_batch_execute` | The primary research tool. Runs multiple shell commands, auto-indexes all output as markdown, and searches with multiple queries — all in ONE call. |
+| Tool                 | What It Does                                                                                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `capy_execute`       | Run code in a sandboxed subprocess. Supports 11 languages: JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, Elixir. Only stdout enters context. Pass `intent` to auto-index large output. |
+| `capy_execute_file`  | Inject a file into a sandbox variable (`FILE_CONTENT`) and process it with code you write. The raw file never enters context — only your printed summary does.                                                |
+| `capy_batch_execute` | The primary research tool. Runs multiple shell commands, auto-indexes all output as markdown, and searches with multiple queries — all in ONE call.                                                           |
 
 ### Knowledge
 
-| Tool | What It Does |
-|------|-------------|
-| `capy_index` | Index text, markdown, or a file path into the FTS5 knowledge base for later search. Stored as `durable` (persists across sessions). |
-| `capy_search` | Search indexed content. Multi-layer search: Porter stemming + trigram substring + fuzzy Levenshtein, fused with Reciprocal Rank Fusion. Defaults to durable + session sources; pass `include_kinds` to search ephemeral content. |
-| `capy_fetch_and_index` | Fetch a URL, convert HTML to markdown, index into the knowledge base, return a ~3 KB preview. Default ephemeral (24h TTL). Git platform issue/PR URLs are blocked with CLI redirect guidance. |
+| Tool                   | What It Does                                                                                                                                                                                                                     |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `capy_index`           | Index text, markdown, or a file path into the FTS5 knowledge base for later search. Stored as `durable` (persists across sessions).                                                                                              |
+| `capy_search`          | Search indexed content. Multi-layer search: Porter stemming + trigram substring + fuzzy Levenshtein, fused with Reciprocal Rank Fusion. Defaults to durable + session sources; pass `include_kinds` to search ephemeral content. |
+| `capy_fetch_and_index` | Fetch a URL, convert HTML to markdown, index into the knowledge base, return a ~3 KB preview. Default ephemeral (24h TTL). Git platform issue/PR URLs are blocked with CLI redirect guidance.                                    |
 
 ### Utility
 
-| Tool | What It Does |
-|------|-------------|
-| `capy_stats` | Session report: bytes saved, context reduction ratio, per-tool breakdown, knowledge base tier distribution. |
-| `capy_doctor` | Diagnostics: version, available runtimes, FTS5 status, config, knowledge base status, hook registration, MCP registration, security policies. |
+| Tool           | What It Does                                                                                                                                                                                                                       |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `capy_stats`   | Session report: bytes saved, context reduction ratio, per-tool breakdown, knowledge base tier distribution.                                                                                                                        |
+| `capy_doctor`  | Diagnostics: version, available runtimes, FTS5 status, config, knowledge base status, hook registration, MCP registration, security policies.                                                                                      |
 | `capy_cleanup` | Remove evictable knowledge base entries via four paths: oversized source eviction, retention-score eviction (durable), TTL eviction (ephemeral), TTL eviction (session). Pass `purge_ephemeral=true` for a one-shot scratch clear. |
 
 ## Security
@@ -464,16 +468,16 @@ capy uses Claude Code's hook system to intercept tool calls before they execute.
 
 ### What gets intercepted
 
-| Pattern | What happens |
-|---------|-------------|
-| `curl`/`wget` in Bash | Command replaced with message directing to `capy_fetch_and_index` (file-output flags like `-o` are allowed through) |
-| `fetch()`, `requests.get()`, `http.get()` in Bash | Command replaced with message directing to `capy_execute` |
-| `WebFetch` tool | Denied — use `capy_fetch_and_index` instead (git platform URLs get CLI-specific redirect guidance) |
-| `Read` tool | One-time advisory: prefer `capy_execute_file` for analysis |
-| `Grep` tool | One-time advisory: prefer `capy_execute` for large searches |
-| `Agent`/`Task` tools | Routing block injected into subagent prompt; Bash subagents upgraded to general-purpose |
-| `capy_fetch_and_index` | Git platform issue/PR/MR URLs blocked with platform CLI redirect; gist URLs get soft guidance |
-| `capy_*` tools (shell) | Security policy enforcement on shell code and batch commands |
+| Pattern                                           | What happens                                                                                                        |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `curl`/`wget` in Bash                             | Command replaced with message directing to `capy_fetch_and_index` (file-output flags like `-o` are allowed through) |
+| `fetch()`, `requests.get()`, `http.get()` in Bash | Command replaced with message directing to `capy_execute`                                                           |
+| `WebFetch` tool                                   | Denied — use `capy_fetch_and_index` instead (git platform URLs get CLI-specific redirect guidance)                  |
+| `Read` tool                                       | One-time advisory: prefer `capy_execute_file` for analysis                                                          |
+| `Grep` tool                                       | One-time advisory: prefer `capy_execute` for large searches                                                         |
+| `Agent`/`Task` tools                              | Routing block injected into subagent prompt; Bash subagents upgraded to general-purpose                             |
+| `capy_fetch_and_index`                            | Git platform issue/PR/MR URLs blocked with platform CLI redirect; gist URLs get soft guidance                       |
+| `capy_*` tools (shell)                            | Security policy enforcement on shell code and batch commands                                                        |
 
 ### Platform support
 
@@ -481,14 +485,14 @@ capy uses Claude Code's hook system to intercept tool calls before they execute.
 
 Hooks already recognize tool name aliases for these platforms, so the routing logic works once you wire up the MCP server and hook commands manually:
 
-| Platform | Recognized tool aliases |
-|----------|------------------------|
-| Gemini CLI | `run_shell_command`, `read_file`, `read_many_files`, `grep_search`, `search_file_content`, `web_fetch` |
-| OpenCode | `bash`, `view`, `grep`, `fetch`, `agent` |
-| Codex CLI | `shell`, `shell_command`, `exec_command`, `container.exec`, `local_shell`, `grep_files` |
-| Cursor | `mcp_web_fetch`, `mcp_fetch_tool`, `Shell` |
-| VS Code Copilot | `run_in_terminal` |
-| Kiro CLI | `fs_read`, `fs_write`, `execute_bash` |
+| Platform        | Recognized tool aliases                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------ |
+| Gemini CLI      | `run_shell_command`, `read_file`, `read_many_files`, `grep_search`, `search_file_content`, `web_fetch` |
+| OpenCode        | `bash`, `view`, `grep`, `fetch`, `agent`                                                               |
+| Codex CLI       | `shell`, `shell_command`, `exec_command`, `container.exec`, `local_shell`, `grep_files`                |
+| Cursor          | `mcp_web_fetch`, `mcp_fetch_tool`, `Shell`                                                             |
+| VS Code Copilot | `run_in_terminal`                                                                                      |
+| Kiro CLI        | `fs_read`, `fs_write`, `execute_bash`                                                                  |
 
 Manual setup: register `capy serve` as an MCP server (stdio transport) and `capy hook <event>` as the hook command in your platform's configuration.
 
@@ -496,14 +500,14 @@ Manual setup: register `capy serve` as an MCP server (stdio transport) and `capy
 
 Run `capy doctor` to diagnose issues. Common problems:
 
-| Check | Fix |
-|-------|-----|
-| **FTS5: unavailable** | The binary wasn't built with `-tags fts5`. Rebuild with `make build`. |
-| **Runtimes: 0/11** | No language runtimes found in PATH. Install at least `bash` and `python3`. |
-| **Hooks: not registered** | Run `capy setup` in your project directory. |
-| **MCP: not registered** | Run `capy setup`. Check `.mcp.json` exists in project root. |
+| Check                     | Fix                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------ |
+| **FTS5: unavailable**     | The binary wasn't built with `-tags fts5`. Rebuild with `make build`.                |
+| **Runtimes: 0/11**        | No language runtimes found in PATH. Install at least `bash` and `python3`.           |
+| **Hooks: not registered** | Run `capy setup` in your project directory.                                          |
+| **MCP: not registered**   | Run `capy setup`. Check `.mcp.json` exists in project root.                          |
 | **MCP: binary not found** | The `capy` binary isn't in PATH. Move it or run `capy setup --binary /path/to/capy`. |
-| **CAPY_DB_KEY not set** | Set `CAPY_DB_KEY` in your shell profile (see [Encryption](#encryption)). |
+| **CAPY_DB_KEY not set**   | Set `CAPY_DB_KEY` in your shell profile (see [Encryption](#encryption)).             |
 
 ## Acknowledgements
 
@@ -513,22 +517,22 @@ capy is a Go reimplementation of [context-mode](https://github.com/mksglu/contex
 
 ### capy vs context-mode
 
-|  | context-mode (TypeScript) | capy (Go) |
-|--|--------------------------|-----------|
-| **Install** | `npm install` — requires Node.js, native module compilation | Single static binary — `brew install` or `curl \| sh` |
-| **Startup** | Node.js VM boot + module resolution | Native binary, starts in milliseconds |
-| **Memory** | Node.js baseline (~50-80 MB typical) | Go baseline (~10-20 MB typical) |
-| **SQLite** | `better-sqlite3` native addon with Bun fallback | `mattn/go-sqlite3` via CGO — one driver |
-| **Encryption** | Not supported | Mandatory at rest (sqlite3mc, SQLCipher v4) |
-| **Knowledge base** | Originally ephemeral; persistence added later | Persistent per-project from day one |
-| **Content dedup** | Re-indexes on every call | SHA-256 content hashing — skips unchanged |
-| **Freshness** | Added via TTL cache | Tiered retention (hot/warm/cold) + TTL-based lifecycle by source kind |
-| **Source kinds** | Single type | Three kinds: durable, ephemeral, session — distinct lifecycle and search visibility |
-| **Session indexing** | Tracks events across compactions | Indexes past JSONL transcripts into searchable knowledge base |
-| **Process isolation** | `child_process.execFileSync` | Process group isolation (`Setpgid`) — kills entire tree |
-| **Secret sanitization** | Not supported | Regex-based redaction before indexing |
-| **Configuration** | Reads `.claude/settings.json` | Own config system (TOML, XDG dirs) plus reads `.claude/settings.json` for security |
-| **Platform support** | Claude Code, Cursor, Kiro, Zed, Pi, OpenClaw, OpenCode, Gemini CLI, Codex CLI | Claude Code, Codex CLI (more planned) |
+|                         | context-mode (TypeScript)                                                     | capy (Go)                                                                           |
+| ----------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Install**             | `npm install` — requires Node.js, native module compilation                   | Single static binary — `brew install` or `curl \| sh`                               |
+| **Startup**             | Node.js VM boot + module resolution                                           | Native binary, starts in milliseconds                                               |
+| **Memory**              | Node.js baseline (~50-80 MB typical)                                          | Go baseline (~10-20 MB typical)                                                     |
+| **SQLite**              | `better-sqlite3` native addon with Bun fallback                               | `mattn/go-sqlite3` via CGO — one driver                                             |
+| **Encryption**          | Not supported                                                                 | Mandatory at rest (sqlite3mc, SQLCipher v4)                                         |
+| **Knowledge base**      | Originally ephemeral; persistence added later                                 | Persistent per-project from day one                                                 |
+| **Content dedup**       | Re-indexes on every call                                                      | SHA-256 content hashing — skips unchanged                                           |
+| **Freshness**           | Added via TTL cache                                                           | Tiered retention (hot/warm/cold) + TTL-based lifecycle by source kind               |
+| **Source kinds**        | Single type                                                                   | Three kinds: durable, ephemeral, session — distinct lifecycle and search visibility |
+| **Session indexing**    | Tracks events across compactions                                              | Indexes past JSONL transcripts into searchable knowledge base                       |
+| **Process isolation**   | `child_process.execFileSync`                                                  | Process group isolation (`Setpgid`) — kills entire tree                             |
+| **Secret sanitization** | Not supported                                                                 | Regex-based redaction before indexing                                               |
+| **Configuration**       | Reads `.claude/settings.json`                                                 | Own config system (TOML, XDG dirs) plus reads `.claude/settings.json` for security  |
+| **Platform support**    | Claude Code, Cursor, Kiro, Zed, Pi, OpenClaw, OpenCode, Gemini CLI, Codex CLI | Claude Code, Codex CLI (more planned)                                               |
 
 ### What's shared
 
