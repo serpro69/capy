@@ -362,8 +362,10 @@ func writeShowHeader(sb *strings.Builder, sess *vault.Session, markdown bool) {
 	}
 }
 
-// subagentDisplayID returns the agent id for a "subagents/agent-<id>.jsonl"
-// relative path, or "" for any other (non-subagent or non-JSONL) sidecar.
+// subagentDisplayID returns a short display id for a subagent JSONL file.
+// For "subagents/agent-<id>.jsonl" it strips the "agent-" prefix; for other
+// JSONL files under subagents/ it returns the bare filename. Returns "" for
+// non-subagent or non-JSONL sidecars.
 func subagentDisplayID(rel string) string {
 	if !strings.HasPrefix(rel, "subagents/") || !strings.HasSuffix(rel, ".jsonl") {
 		return ""
@@ -916,6 +918,7 @@ func pageOrPrint(content string) error {
 	if pager == "" {
 		pager = "less"
 	}
+	// Split on whitespace like git/man; quoted pager paths (spaces in binary name) are not supported.
 	parts := strings.Fields(pager)
 	c := exec.Command(parts[0], parts[1:]...) //nolint:gosec // PAGER is the user's own config, args split (no shell)
 	c.Stdin = strings.NewReader(content)
