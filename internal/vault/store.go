@@ -171,6 +171,9 @@ type SearchResult struct {
 // VaultStore manages the encrypted vault SQLite database. The DB is opened
 // lazily on first use (getDB). It mirrors store.ContentStore's connection
 // lifecycle: WAL mode, a canary-verified open, and a WAL checkpoint on Close.
+//
+// VaultStore is not safe for concurrent use from multiple goroutines. All
+// current callers (CLI commands, server sweep) are single-goroutine.
 type VaultStore struct {
 	dbPath string
 
@@ -358,6 +361,15 @@ func (s *VaultStore) Close() error {
 			stmt.Close()
 		}
 	}
+	s.stmtInsertSession = nil
+	s.stmtUpdateSession = nil
+	s.stmtInsertFile = nil
+	s.stmtDeleteFilesBySession = nil
+	s.stmtInsertFTS = nil
+	s.stmtDeleteFTSBySession = nil
+	s.stmtDeleteSession = nil
+	s.stmtSessionsByPrefix = nil
+	s.stmtFilesBySession = nil
 
 	err := s.db.Close()
 	s.db = nil

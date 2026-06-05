@@ -64,6 +64,7 @@ func beginImmediate(db *sql.DB) (*sql.Tx, error) {
 			return nil, err
 		}
 
+		// no-op write: WHERE 0 deletes nothing but acquires the RESERVED lock
 		if _, err := tx.Exec("DELETE FROM vault_meta WHERE 0"); err != nil {
 			tx.Rollback() //nolint:errcheck
 			if isBusy(err) && i < maxRetries-1 {
@@ -80,7 +81,8 @@ func beginImmediate(db *sql.DB) (*sql.Tx, error) {
 
 // isBusy reports whether err is a SQLITE_BUSY / SQLITE_LOCKED condition. Mirrors
 // internal/store/retry.go:isBusy; consolidating both into sqliteutil is a
-// possible future cleanup (Task 1.1 deliberately left store's copy in place).
+// follow-up cleanup (Task 1.1 deliberately left store's copy in place).
+// TODO: move isBusy + beginImmediate into internal/sqliteutil
 func isBusy(err error) bool {
 	if err == nil {
 		return false
