@@ -27,13 +27,16 @@ internal/
   security/         Settings parsing, glob matching, command splitting, shell-escape detection
   server/           MCP server, 9 tool handlers, stats tracking, lifecycle guard, intent search
   session/          Claude Code JSONL parsing, transcript building, chunking, sweep indexing
+  sqliteutil/       Shared SQLite open/recovery: canary query, corruption classification, backup
   store/            SQLite FTS5 knowledge base: schema, indexing, search, cleanup, encryption, migration
+  vault/            Session vault: verbatim archival, FTS5 search, discovery, import, cross-machine merge
+  vault/tui/        Interactive TUI for vault browsing, search, and session viewing (bubbletea)
   version/          Build-time version injection via ldflags
 ```
 
 ### Critical Invariants
 
-- **Encryption is mandatory.** `CAPY_DB_KEY` must be set. The store refuses to open without it. Tests require it too.
+- **Encryption is mandatory.** `CAPY_DB_KEY` must be set for the knowledge store; `CAPY_VAULT_KEY` must be set for the vault. Tests require both.
 - **FTS5 build tag required.** All builds and tests must use `-tags fts5`. The Makefile handles this.
 - **WAL checkpoint on close.** The connection pool must be closed before checkpointing (see `store.go:Close()` and ADR-016).
 - **WAL + PRAGMA rekey incompatible.** Encryption path must switch to DELETE journal mode before rekeying (ADR-020).
@@ -43,7 +46,8 @@ internal/
 ### Build & Test
 
 ```bash
-export CAPY_DB_KEY=test-key-for-development  # required for all tests
+export CAPY_DB_KEY=test-key-for-development   # required for knowledge store tests
+export CAPY_VAULT_KEY=test-key                # required for vault tests
 make build                                    # CGO_ENABLED=1, -tags fts5
 make test                                     # all tests
 make test-race                                # with race detector

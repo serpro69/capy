@@ -2,7 +2,7 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done
 > Created: 2026-05-28
 > Not Doing: Cloud sync, multi-user access, Codex sessions, session diffing, real-time watch, automatic cleanup, sharing/export with redaction, PreCompact snapshots (deferred), file-history preservation, cross-machine vault merge command, shell completions (trivial via cobra, add during polish), custom-title/customTitle title override (deferred — absent from JSONL), `capy vault rekey` (deferred to Future Improvements), glamour markdown rendering (deferred — lean binary)
 
@@ -142,16 +142,16 @@
 - [x] 6.8 Verify: logic covered by `internal/vault/tui` unit tests (list/search/view transitions, subagent search-jump + return, marker focus/open + highlight, debounce gating, resize-stable scroll) + `transcript_test.go`; race-clean, ~86% tui coverage. **Interactive terminal walkthrough still recommended (needs a TTY — cannot run in CI).** Isolated `/kk:review-code` applied: fixed search-results scroll window, focused-marker highlight (color-independent glyph), value-receiver consistency (`setActive`/`openSession`), and resize-stable scroll (`savedMainLine` source-line anchor).
 
 ## Task 7: Final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 4b, Task 5, Task 6
 - **Size:** S
 - **Can run in parallel with:** —
 
 ### Subtasks
-- [ ] 7.1 Run `/kk:test` — full test suite including vault package, verify no regressions in existing tests
-- [ ] 7.2 Run `/kk:document` — update relevant docs (architecture.md, CLAUDE.md if needed)
-- [ ] 7.3 Run `/kk:review-code go` — review the full vault implementation
-- [ ] 7.4 Run `/kk:review-spec` — verify implementation matches design and implementation docs
+- [x] 7.1 Run `/kk:test` — full test suite including vault package, verify no regressions in existing tests
+- [x] 7.2 Run `/kk:document` — update relevant docs (architecture.md, CLAUDE.md if needed)
+- [x] 7.3 Run `/kk:review-code go` — review the full vault implementation
+- [x] 7.4 Run `/kk:review-spec` — verify implementation matches design and implementation docs
 
 ## Follow-up: Route `session.SessionDir()` through the shared `config.ClaudeProjectsDir()`
 - **Status:** pending (non-blocking, post-v1)
@@ -180,6 +180,10 @@
 ## Follow-up: TUI subagent markers use order-based launch mapping
 - **Status:** pending (non-blocking, post-v1)
 - **Description:** `ParseTranscript` maps Task/Agent launch points to archived subagent files **in order**, and only makes markers openable when the counts align (otherwise markers are visible-only). The JSONL carries no verified `tool_use_id`↔`agent-<id>` link, so a precise mapping isn't possible from the data alone; search-jump (which uses the stored `subagent_id`) is always exact. **Next step:** if Claude Code's JSONL gains a reliable launch→subagent correlation (or the `agent-<id>` is confirmed to equal the launching `tool_use` id), map markers precisely and drop the count-alignment guard.
+
+## Follow-up: Consolidate `beginImmediate`/`isBusy` into `internal/sqliteutil`
+- **Status:** pending (non-blocking, post-v1)
+- **Description:** `internal/vault/migrations.go` and `internal/store/retry.go` each have their own `beginImmediate` + `isBusy`. A bug fix in one requires manual sync to the other. **Next step:** move both into `internal/sqliteutil` (already the shared package for open/recovery) and have both stores import it.
 
 ## Follow-up: TUI deferred keybindings (in-list filter, f/r/c/R)
 - **Status:** pending (non-blocking, post-v1)

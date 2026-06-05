@@ -43,6 +43,15 @@ capy is an MCP (Model Context Protocol) server that reduces LLM context window c
 │  Parses Claude Code JSONL files → builds transcripts → chunks →         │
 │  indexes as `session` kind sources in the knowledge base                │
 └─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Vault  (internal/vault)                                                │
+│  Background goroutine on server start + CLI `capy vault`                │
+│                                                                         │
+│  Discovers session JSONL files → scans for FTS text → archives          │
+│  verbatim in encrypted vault.db (separate from knowledge store)         │
+│  Provides cross-project search, restore, resume, and TUI browsing       │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Data Flow
@@ -205,6 +214,50 @@ Sessions require ≥2 non-subagent turn pairs and ≥200 chars of assistant text
 
 Compares max(file.mtime, subagents_dir.mtime) against stored indexed_at to avoid re-indexing unchanged sessions.
 
+## Vault
+
+The vault (`internal/vault/`) provides verbatim, cross-project session archival with full-text search. It operates a separate encrypted SQLite database (`vault.db`) independent of the per-project FTS knowledge store.
+
+### Architecture
+
+Four layers:
+
+1. **Storage** (`store.go`) — SQLite connection lifecycle, schema, encryption via `CAPY_VAULT_KEY`, CRUD operations. Shares the open/recovery path with the knowledge store via `internal/sqliteutil/`
+2. **Scanner** (`scanner.go`) — single-pass JSONL reader that extracts searchable text, metadata (title, timestamps, branch), and tool summaries. Sanitizes output via `sanitize.StripSecrets()` before FTS insertion
+3. **Discovery** (`discovery.go`) — walks Claude Code session directories to find all JSONL files and associated sidecars (subagents, tool-results) via `config.ClaudeProjectsDir()`
+4. **CLI/TUI** (`cmd/capy/vault.go` + `internal/vault/tui/`) — cobra subcommand group with interactive bubbletea interface
+
+### Schema
+
+```sql
+vault_sessions   — one row per session: metadata, 1:1 location, raw JSONL blob
+vault_files      — associated files (subagents, tool-results), CASCADE on session delete
+vault_fts        — FTS5 virtual table, one row per message, Porter tokenizer
+vault_meta       — key-value store (reserved)
+vault_migrations — migration tracking (by-name)
+```
+
+### Archival Paths
+
+1. **MCP server startup** — background goroutine imports current project's sessions (opt-in via `CAPY_VAULT_KEY`)
+2. **`capy vault import`** — manual, all projects, idempotent (hash-based, larger-total-size wins)
+
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `capy vault import` | Scan and archive sessions (mutating; `--dry-run` to preview) |
+| `capy vault list` | List sessions, reverse chronological |
+| `capy vault search` | Full-text search with snippets |
+| `capy vault show` | Display full session (pager, `--format` for export) |
+| `capy vault restore` | Write JSONL + session files back to disk |
+| `capy vault resume` | Restore + launch `claude --resume` |
+| `capy vault delete` | Remove a session from the vault |
+| `capy vault stats` | DB size, session count, per-project breakdown |
+| `capy vault checkpoint` | Flush WAL (required before cross-machine copy) |
+
+All commands support `--tui` for interactive browsing/search/viewing.
+
 ## Configuration
 
 Three-level precedence (lowest to highest):
@@ -228,6 +281,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full config reference.
 | `capy encrypt` | Encrypt DB or rotate key |
 | `capy dbsize` | Show DB disk usage |
 | `capy hook <event>` | Handle hook event (called by AI tool) |
+| `capy vault <cmd>` | Session vault (import, list, search, show, restore, resume, delete, stats, checkpoint) |
 
 ## Benchmarks
 
