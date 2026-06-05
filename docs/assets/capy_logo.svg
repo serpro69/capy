@@ -25,14 +25,14 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:zoom="0.82714345"
-     inkscape:cx="555.52637"
-     inkscape:cy="588.77333"
+     inkscape:cx="434.62836"
+     inkscape:cy="575.47454"
      inkscape:window-width="1920"
      inkscape:window-height="1018"
      inkscape:window-x="1920"
      inkscape:window-y="0"
      inkscape:window-maximized="1"
-     inkscape:current-layer="g3" />
+     inkscape:current-layer="capy-logo" />
   <title
      id="title">capy logo</title>
   <desc
@@ -342,8 +342,25 @@
          id="path22-3" />
     </g>
     <text
-       x="768.12451"
-       y="474.79816"
+       x="297.04144"
+       y="955.80219"
+       text-anchor="middle"
+       font-family="Arial, Helvetica, sans-serif"
+       font-weight="700"
+       font-size="200px"
+       letter-spacing="3"
+       fill="#e7c58e"
+       id="text1"
+       inkscape:label="text3"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:52.3064px;font-family:'Fira Sans';-inkscape-font-specification:'Fira Sans, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;letter-spacing:0.784596;text-anchor:middle;fill:#e7c58e;stroke-width:0.814999;stroke-dasharray:none"
+       transform="rotate(-24.85823)"><tspan
+         sodipodi:role="line"
+         id="tspan1"
+         x="297.43375"
+         y="955.80219">f̡l͎͑̓o͛͜w⃛✧̇̈̊≈҉</tspan></text>
+    <text
+       x="643.62964"
+       y="452.07666"
        text-anchor="middle"
        font-family="Arial, Helvetica, sans-serif"
        font-weight="700"
@@ -355,9 +372,9 @@
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:52.3064px;font-family:'Fira Sans';-inkscape-font-specification:'Fira Sans, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;letter-spacing:0.784596;text-anchor:middle;fill:#e7c58e;stroke-width:0.814999;stroke-dasharray:none"
        transform="rotate(26.855904)"><tspan
          sodipodi:role="line"
-         id="tspan11"
-         x="768.51678"
-         y="474.79816">✧̇̈̊t̷̸h͛͡ḛ̃ c⃡o̷̸dḛ̃ ͡m̢͝us⃑͢t f̡l͎͑̓o͛͜w⃛✧̇̈̊≈҉</tspan></text>
+         id="tspan2"
+         x="644.02191"
+         y="452.07666">✧̇̈̊t̷̸h͛͡ḛ̃ c⃡o̷̸dḛ̃ ͡m̢͝us⃑͢t</tspan></text>
     <circle
        cx="546.56854"
        cy="657.38434"
