@@ -5,7 +5,7 @@
 > Parent (v1): [../tasks.md](../tasks.md)
 > Status: pending
 > Created: 2026-06-05
-> Not Doing: Cloud sync, multi-user access, Codex sessions, session diffing, real-time watch, automatic retention, redacted sharing/export, TUI lazy-windowing viewer, TUI 3-panel split, encryptPlain (unencrypted→encrypted) extraction, snapshot retention eviction policy
+> Not Doing: Cloud sync, multi-user access, Codex sessions, session diffing, real-time watch, automatic retention, redacted sharing/export, TUI lazy-windowing viewer, TUI 3-panel split, encryptPlain (unencrypted→encrypted) extraction, snapshot retention eviction policy, store-side context.Context propagation (Task 3 dropped — deferred until a store-side cancelling caller exists)
 
 Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONLY the PreCompact tasks (14–16); all other tasks proceed independently. Build/test with `-tags fts5`; `CAPY_DB_KEY` + `CAPY_VAULT_KEY` required.
 
@@ -50,26 +50,22 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [ ] 2.1 Replace the hardcoded `~/.claude/projects/` base in `internal/session/sweep.go:SessionDir()` with `config.ClaudeProjectsDir()` (already `CLAUDE_CONFIG_DIR`-aware)
 - [ ] 2.2 Verify: `go test -tags fts5 ./internal/session/... ./internal/config/...` green; a `CLAUDE_CONFIG_DIR`-set test resolves the overridden root
 
-## Task 3: `context.Context` propagation — `internal/store`
-- **Status:** pending — ⚠ **DEFERRAL CANDIDATE (confirm before implementing)**
-- **Depends on:** —
-- **Size:** M
-- **Can run in parallel with:** Task 0, 1, 2 (Task 4 prefers Task 3 first, but it's sequencing, not a code dependency)
-- **Slicing strategy:** isolated behavior-preserving commit — ⚠ encryption-critical knowledge store; do not bundle with feature work
-- **Docs:** [implementation.md#contextcontext-propagation-both-stores-v22a-v22b](./implementation.md)
-- **Review note:** this task has **no functional beneficiary** — the only cancellable caller (Task 10 sweep) is in `internal/vault` and already gets loop-level cancellation. Reviewers recommend deferring it (consistency-only refactor on encryption-critical code). Kept because the user chose full sibling consistency; revisit before starting. See design §7.
-
-### Subtasks
+## Task 3: `context.Context` propagation — `internal/store` — DROPPED
+- **Status:** dropped
+- **Size:** — (removed from v2 scope)
+- **Rationale:** Converting the encrypted knowledge store to `*Context` variants has **no functional beneficiary.** The store has no cancelling callers, and the only long-running cancellable operation — the Task 10 all-projects sweep — lives in `internal/vault` and already gets cooperative cancellation from `Import`'s per-session loop check (`import.go:136`). It would spend regression risk on encryption-critical code (CLAUDE.md's foremost invariant, "Encryption is mandatory") purely for sibling symmetry with the vault. "No diff is the safest diff" on encryption paths.
+- **Re-trigger:** revisit only when a store-side caller genuinely needs sub-transaction cancellation. Until then `internal/store` keeps its plain `db.Query`/`Exec`/`Begin` calls. Tracked here so the decision is durable, not a chat-only aside.
 - [ ] 3.1 Convert `internal/store` `db.Query`/`Exec`/`QueryRow`/`Begin` → `*Context` variants threading the store's context; add leading `ctx context.Context` to public methods lacking one (callers without a context pass `context.Background()`)
 - [ ] 3.2 Verify: `CAPY_DB_KEY=… go test -tags fts5 -count=1 -race ./internal/store/...` passes UNCHANGED; `make bench-quality` shows no regression vs. master
 
 ## Task 4: `context.Context` propagation — `internal/vault`
 - **Status:** pending
-- **Depends on:** Task 1, Task 3
+- **Depends on:** —
 - **Size:** M
-- **Can run in parallel with:** —
-- **Slicing strategy:** isolated behavior-preserving commit, adjacent to Task 3
-- **Docs:** [implementation.md#contextcontext-propagation-both-stores-v22a-v22b](./implementation.md)
+- **Can run in parallel with:** Task 0, 1, 2, 5, 7, 10–13
+- **Slicing strategy:** isolated behavior-preserving commit (the sole ctx task now that store-side Task 3 is dropped)
+- **Docs:** [implementation.md — context.Context propagation, vault only](./implementation.md)
+- **Note:** kept (unlike dropped Task 3) because the cancelling caller — the Task 10 all-projects sweep — lives in this package; threading `ctx` makes vault's public API cancellation-ready where it matters.
 
 ### Subtasks
 - [ ] 4.1 Convert `internal/vault` DB calls → `*Context` variants; replace `VaultStore.ctx()` (returns `context.Background()`) with a real threaded `ctx`; add leading `ctx` to public methods (`GetSession`, `ListSessions`, `Search`, `Stats`, `InsertSession`, `ReplaceSession`, `DeleteSession`, `WriteBatch`, …)
@@ -242,7 +238,7 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 
 ## Task 17: Final verification
 - **Status:** pending
-- **Depends on:** Task 1–16
+- **Depends on:** Task 1, 2, 4–16 (Task 3 dropped)
 - **Size:** S
 - **Can run in parallel with:** —
 
@@ -264,8 +260,8 @@ Task 5 ────────────────────────�
                                                                                                                     │
 Task 7 (rekey extract) ─→ Task 8 (vault rekey) ─────────────────────────────────────────────────────────────────────┤
                                                                                                                     │
-Task 1 (sqliteutil) ──→ Task 4 (vault ctx)                                                                          │
-Task 3 (store ctx) ───→ Task 4    [Task 3↔4 is sequencing only — Task 3 is a deferral candidate, see header note]   │
+Task 4 (vault ctx) ─────────────────────────────────────────────────────────────────────────────────────────────────┤
+                                  [Task 3 store-side ctx DROPPED — no functional beneficiary; see Task 3]            │
                                                                                                                     │
 Task 2 (SessionDir) ────────────────────────────────────────────────────────────────────────────────────────────→ │
 Task 10 (all-proj sweep) ───────────────────────────────────────────────────────────────────────────────────────────┤
