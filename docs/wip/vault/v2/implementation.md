@@ -30,13 +30,13 @@ The helpers are split across files (verified): in the **store**, `beginImmediate
 
 - Step: replace the hardcoded base in `SessionDir()` with `config.ClaudeProjectsDir()` → verify: `go test -tags fts5 ./internal/session/... ./internal/config/...` green; a `CLAUDE_CONFIG_DIR`-set test resolves the overridden root.
 
-### `context.Context` propagation, both stores (V2.2a, V2.2b)
+### `context.Context` propagation — vault only (V2.2 / Task 4); store-side dropped
 
-Two behavior-preserving commits. **High blast radius — isolate each; do not bundle with feature work.** **Before implementing, confirm scope (see design §7):** V2.2a (store) has **no functional beneficiary** — the only cancellable caller (the V2.10 sweep) is in `internal/vault` and already gets loop-level cancellation via `import.go:136`; `store.go:200` `ctx()` returns `context.Background()`. The reviewed recommendation is to **do V2.2b (vault) and defer V2.2a (store)** until a store-side cancelling caller exists ("no diff is the safest diff" on encryption-critical code). The `Task 4 → Task 3` ordering is sequencing preference, not a code dependency, so decoupling makes deferral free. Retained as planned only because the user chose full sibling consistency.
+**Store-side propagation is DROPPED (see design §7, tasks.md Task 3).** Converting `internal/store` to `*Context` has no functional beneficiary — the store has no cancelling callers, and the V2.10 sweep (the only cancellable op) lives in `internal/vault` and already gets loop-level cancellation via `import.go:136`. It is not done, not deferred-with-a-task; re-trigger only if a store-side cancelling caller appears. This keeps the encryption-critical knowledge store untouched.
 
-- **V2.2a `internal/store` (deferral candidate):** convert `db.Query`/`Exec`/`QueryRow`/`Begin` to `*Context` variants threading the store's context; add `ctx context.Context` as the leading param to public methods that don't already take one. Keep behavior identical (pass `context.Background()` from callers that have none yet).
-  - Step → verify: `CAPY_DB_KEY=… go test -tags fts5 -count=1 -race ./internal/store/...` passes **unchanged**; the bench gate (`make bench-quality`) shows no regression.
-- **V2.2b `internal/vault`:** same conversion; replace `s.ctx()` (returns `context.Background()`) usage with a real threaded `ctx`. The public methods (`GetSession`, `ListSessions`, `Search`, `Stats`, `InsertSession`, etc.) gain a leading `ctx`. Update CLI + server-sweep callers to pass their context (`cmd.Context()`, `sweepCtx`).
+One behavior-preserving commit, `internal/vault` only:
+- Convert `db.Query`/`Exec`/`QueryRow`/`Begin` to `*Context` variants; replace `s.ctx()` (returns `context.Background()`, `store.go:200`) with a real threaded `ctx`. Public methods (`GetSession`, `ListSessions`, `Search`, `Stats`, `InsertSession`, `ReplaceSession`, `DeleteSession`, `WriteBatch`, …) gain a leading `ctx`. Update CLI + server-sweep callers to pass their context (`cmd.Context()`, `sweepCtx`).
+- Honest scope note: vault's batched writes are short, so this mostly makes the public API cancellation-ready (where its caller lives) rather than enabling mid-transaction interruption — but it's low-risk and self-contained.
   - Step → verify: `CAPY_VAULT_KEY=… go test -tags fts5 -count=1 -race ./internal/vault/... ./cmd/capy/... ./internal/server/...` green.
 
 ---
