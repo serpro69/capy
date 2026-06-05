@@ -216,6 +216,45 @@
 - **Status:** pending (non-blocking, post-v1)
 - **Description:** design.md §Key Bindings lists `f` (filter project), `r` (restore), `c` (copy message), `R` (resume), plus in-list fuzzy filtering. v1 ships the core browse/search/view flow (Task 6.8) only; the list's built-in `/` filter is disabled so `/` opens global FTS search. **Next step:** add project filtering to the list model, and wire `r`/`R` to `vault.RestoreSession` + `claude --resume` (note: these are the destructive/exec surface — they warrant the same care as Task 4b and should suspend/teardown the bubbletea program before exec).
 
+## Follow-up: Exclude 0msg sessions from import
+
+```
+   Vault — 259 session(s)
+
+  259 items
+
+│ (untitled)
+│ 367a9918-14d · 2026-05-16 · 0msg · 2.3KB · ~/Projects/personal/cortex-vault
+
+  (untitled)
+  94dbd652-116 · 2026-05-16 · 0msg · 2.3KB · ~/Projects/personal/cortex-vault
+
+  (untitled)
+  9a749503-a71 · 2026-05-16 · 0msg · 2.3KB · ~/Projects/personal/cortex-vault
+
+  (untitled)
+  1a1b5996-313 · 2026-05-16 · 0msg · 2.3KB · ~/Projects/personal/cortex-vault
+
+  (untitled)
+  5b2fbaaf-9f1 · 2026-05-16 · 0msg · 2.3KB · ~/Projects/personal/cortex-vault
+
+  (untitled)
+  677eba92-6b5 · 2026-05-16 · 0msg · 2.0KB · ~/Projects/personal/cortex-vault
+
+  (untitled)
+  ae4376cc-8ec · 2026-05-16 · 0msg · 4.1KB · ~/Projects/personal/cortex-vault
+
+  Review goal-aware learning implementation and docs
+  2e7c6b3c-e21 · 2026-05-16 · 43msg · 669.8KB · ~/Projects/personal/cortex-ai
+
+  (untitled)
+  4a18557c-cdd · 2026-05-16 · 30msg · 1.2MB · ~/Projects/personal/cortex-vault
+
+  Audit documentation for missing details and inconsistencies
+  17bc65ee-258 · 2026-05-16 · 46msg · 492.6KB · ~/Projects/personal/claude-toolbox
+
+```
+
 ## Dependency Graph
 
 ```
@@ -225,3 +264,4 @@ Task 1 (store) ──┐
                  ├─→ Task 3 (import) ─┬─→ Task 4 (CLI read) ─→ Task 4b (CLI destructive) ─→ Task 6 (TUI) ─→ Task 7
 Task 2 (scanner)─┘                    └─→ Task 5 (server sweep) ───────────────────────────────────────────→ Task 7
 ```
+
