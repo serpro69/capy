@@ -28,7 +28,9 @@
       "Bash(sort:*)",
       "WebSearch",
       "Skill(kk:*)",
-      "Read(~/.claude/plugins/cache/claude-toolbox/*)"
+      "Read(~/.claude/plugins/cache/claude-toolbox/*)",
+      "Bash(echo \"${TOOLBOX_PLUGIN_ROOT}\")",
+      "Bash(echo \"${TOOLBOX_PLUGIN_ROOT:-NOT_SET}\")"
     ],
     "ask": [],
     "defaultMode": "default",
