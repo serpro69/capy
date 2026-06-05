@@ -59,7 +59,8 @@ Schema/prepared-statement changes (`store.go`): add `encoding` to the INSERT/UPD
 Wire write side:
 - `writeRecord`: `data, enc := encodeBlob(sess.RawJSONL)`; pass `data` to the blob param and `enc` to the new `encoding` param (both INSERT + UPDATE).
 - `writeChildren`: same per file (`f.RawContent`).
-- On the first `zstd` write, set the `vault_meta` `min_reader_version` row (e.g. `"2"`) if absent — a future binary checks it on open and refuses with a clear error (can't protect v1, documents intent; see design §1 Downgrade safety).
+- On the first `zstd` write, set the `vault_meta` `min_reader_version` row (e.g. `"2"`) if absent.
+- **Add the matching open-time check (corrected after review):** `openDB()` (after the canary, before statement prep) reads `vault_meta.min_reader_version` and refuses with a clear error when it exceeds a `supportedReaderVersion` constant (`2` in v2). Without the read step the marker is inert — writing it protects no one. It can't protect v1 (predates the marker), but a future v3 that bumps it to `3` is then refused by a v2 binary instead of mis-reading the DB (see design §1 Downgrade safety).
 
 Wire read side: thread the row's `encoding` into `decodeBlob` in `scanSessionMeta`/`GetSession` (raw_jsonl) and `GetFiles` (raw_content).
 
@@ -71,44 +72,48 @@ Add `github.com/klauspost/compress` to `go.mod` (apply `/kk:dependency-handling`
 
 New `VaultStore.Compact()` + `cmd/capy/vault.go` `compact` subcommand.
 - **Busy pre-check FIRST (corrected after review):** before any rewrite, run a `Checkpoint()`; if it reports busy pages, abort with "stop the server first" — fail fast rather than doing all the UPDATE work and only hitting contention at VACUUM.
-- Rewrite raw blobs: select rows `WHERE encoding IS NULL OR encoding = 'raw'` (the column is authoritative — no byte-peeking); for each, `UPDATE … SET raw_jsonl = ?, encoding = 'zstd'` with `encodeBlob(rawBytes)`. Same for `vault_files`. Batch in `BeginImmediate` transactions (~50/batch).
+- **Abort under `CAPY_VAULT_NO_COMPRESS`:** with it set, `encodeBlob` returns `'raw'` for everything, so compact would rewrite + VACUUM for zero gain — error out with a clear "unset CAPY_VAULT_NO_COMPRESS to compact" before doing any work.
+- Rewrite **legacy** blobs: select rows `WHERE encoding IS NULL` (legacy v1 / never-considered — **not** `OR encoding = 'raw'`; `'raw'` is the *terminal* "compression considered, declined" state, so reprocessing it would block a clean no-op). For each, `data, enc := encodeBlob(rawBytes)` then `UPDATE … SET raw_jsonl = ?, encoding = ?` with **the returned `enc`** — `'zstd'` when it shrank, `'raw'` when it didn't. **Never hard-code `encoding = 'zstd'`**: storing raw bytes under a `'zstd'` label makes `decodeBlob` fail on read (corruption). Same for `vault_files`. Batch in `BeginImmediate` transactions (~50/batch).
 - After rewrites, run `VACUUM` on a **dedicated single connection** opened after the pool closes (mirror `Checkpoint`'s standalone-connection pattern), with `PRAGMA temp_store = MEMORY` set on that connection so the transient copy never lands in an unencrypted on-disk temp file. SQLite's exclusive lock genuinely protects VACUUM (unlike rekey's file-swap).
 - Report `before`/`after` file size via `os.Stat`.
 
-- Step → verify: a test imports raw (`encoding IS NULL`) fixtures, runs `Compact`, asserts every row now has `encoding='zstd'` + the stored blob carries the zstd magic, `os.Stat` size dropped, and `search`/`show` still return identical content; a second `Compact` is a no-op (nothing left to rewrite).
+- Step → verify: a test imports legacy (`encoding IS NULL`) fixtures **including one incompressible blob**, runs `Compact`, asserts **no row is left `NULL`** and each is `'zstd'` (compressible — stored blob carries the zstd magic) or `'raw'` (the incompressible one — round-trips byte-identical), `os.Stat` size dropped, and `search`/`show` still return identical content; a **second `Compact` is a true no-op** (no `NULL` rows remain); and `Compact` with `CAPY_VAULT_NO_COMPRESS` set errors without modifying the DB.
 
 ### Shared `Rekey` extraction (V2.7)
 
 Move the already-encrypted rotation out of `cmd/capy/encrypt.go` into `internal/sqliteutil`:
-- New `sqliteutil.Rekey(dbPath, oldKey, newKey string) error` = open source with old key (`store.EncryptedDSN`) → `checkpointDB` → open temp with new key → backup-API copy → `swapAndVerify`. Bring `openEncrypted`/`backupDB`/`swapAndVerify`/`checkpointDB` along (unexported helpers in `sqliteutil`).
-- Rewire `cmd/capy/encrypt.go:rekeyEncrypted` to call `sqliteutil.Rekey`. Leave `encryptPlain` (unencrypted→encrypted, `PRAGMA rekey`) in `cmd/capy` — vault never needs it.
+- New `sqliteutil.Rekey(dbPath, oldKey, newKey string) (RekeyResult, error)` = open source with old key (`store.EncryptedDSN`) → `checkpointDB` → open temp with new key → backup-API copy → `swapAndVerify`. Bring `openEncrypted`/`backupDB`/`swapAndVerify`/`checkpointDB` along (unexported helpers in `sqliteutil`).
+- **Strip the user-facing I/O out of the moved helpers (corrected after review):** today `swapAndVerify` prints hard-coded `capy encrypt:`-prefixed messages to stdout/stderr (`encrypt.go:261,269,282,283`). A low-level util must not print, and reused by `capy vault rekey` it would emit the wrong command name ("capy encrypt: … Encrypted"). The extracted helpers **return** structured results/errors instead — `RekeyResult` carries the `.bak` path; the CRITICAL rollback-failure paths become wrapped errors carrying the recovery path. Each command layer (`cmd/capy/encrypt.go`, `cmd/capy/vault.go`) prints its own correctly-prefixed messages. So V2.7 is a **move + I/O-extraction**, not a pure behavior-preserving move — but `capy encrypt`'s observable output must stay equivalent.
+- Rewire `cmd/capy/encrypt.go:rekeyEncrypted` to call `sqliteutil.Rekey` and print its own messages from `RekeyResult`. Leave `encryptPlain` (unencrypted→encrypted, `PRAGMA rekey`) in `cmd/capy` — vault never needs it.
 - **Encryption-critical, shared with the knowledge store — own green commit; do not mix with vault code.**
 
-- Step → verify: `go test -tags fts5 ./internal/store/... ./cmd/capy/...` green; the existing `encryption_lifecycle_test.go` rekey round-trip passes unchanged.
+- Step → verify: `go test -tags fts5 ./internal/store/... ./cmd/capy/...` green; the existing `encryption_lifecycle_test.go` rekey round-trip passes unchanged; **`capy encrypt`'s stdout/stderr is unchanged** after moving the prints to the cmd layer.
 
 ### `capy vault rekey` (V2.8)
 
-`cmd/capy/vault.go` `rekey` subcommand: prompt current passphrase (`terminal.ReadPassphrase`), read new key from `CAPY_VAULT_KEY` (error if unset/empty — the new key must be exported, like `capy encrypt`), call `sqliteutil.Rekey(vault.VaultDBPath(), old, new)`.
+`cmd/capy/vault.go` `rekey` subcommand: prompt current passphrase (`terminal.ReadPassphrase`), read new key from `CAPY_VAULT_KEY` (error if unset/empty). **Note this is *not* identical to `capy encrypt` (corrected after review):** `encrypt` falls back to a "New passphrase:" prompt when its env key is unset (`encrypt.go:64-70`); `rekey` requires the env var and errors without it. Because a forgotten env-var update would silently rekey old→old (a no-op the operator believes rotated a compromised key), the command **confirms** ("rotating to the key currently in `CAPY_VAULT_KEY` — proceed?") and **rejects a new key equal to the old** before calling `sqliteutil.Rekey(vault.VaultDBPath(), old, new)`.
 - **Do NOT run a `VaultStore.Checkpoint()` pre-check (corrected after review):** `Checkpoint()` (`store.go:389`) opens the DB with `RequireVaultKey()` = `CAPY_VAULT_KEY`, which now holds the **new** key — it cannot open the still-old-key-encrypted DB and fails before rotation. The WAL flush happens inside `Rekey` via `checkpointDB(srcDB)` on the **old-key** source connection.
 - **Document a hard "stop the server first" requirement** in `--help` + README: `Rekey` ends with `swapAndVerify` (a filesystem `rename`), not protected by SQLite locking; the old-key checkpoint inside `Rekey` is best-effort, not a guard against an idle-but-attached process. (Contrast `compact`'s VACUUM, genuinely lock-protected.)
+- **The old-key `.bak` is a residual secret (corrected after review):** `swapAndVerify` leaves `<vault>.bak` encrypted with the **old** key. For a *compromised*-key rotation that is a liability — the compromised key still decrypts the `.bak`. `rekey` prints a prominent warning and accepts `--remove-backup` to unlink the `.bak` after the new file verifies open. Warn that this is *deletion*, not guaranteed erasure (SSD wear-levelling / CoW filesystems may retain recoverable copies); true erasure is disk/FS-dependent and the operator's responsibility. (The fix lands in the shared helper, so `capy encrypt` benefits too.)
 
-- Step → verify: end-to-end test: import → `rekey` (old→new) → reopen with new key lists the same sessions → reopen with old key fails → `.bak` exists. (Server-running case is a documented operator constraint, not an automated guard.)
+- Step → verify: end-to-end test: import → `rekey` (old→new) → reopen with new key lists the same sessions → reopen with old key fails → `.bak` exists by default and is removed with `--remove-backup` → `rekey` with `CAPY_VAULT_KEY` == old key is rejected. (Server-running case is a documented operator constraint, not an automated guard.)
 
 ### `capy vault merge --from` (V2.9)
 
-New `sqliteutil.OpenReadOnly(dbPath, key)` (Open Decision #2, resolved): opens the source **without** running `schemaSQL`/`migrateVault`, and **checkpoints any pending WAL first** so a copied-live source vault's `-wal` rows aren't missed (corrected after review — do NOT use `immutable=1`, which silently skips WAL-resident rows). A cleanly-closed source has no pending WAL (no-op).
+New `sqliteutil.OpenSourceForMerge(dbPath, key)` (Open Decision #2, resolved): opens the source **without** running `schemaSQL`/`migrateVault`, and **checkpoints any pending WAL first** so a copied-live source vault's `-wal` rows aren't missed (corrected after review — do NOT use `immutable=1`, which silently skips WAL-resident rows). A cleanly-closed source has no pending WAL (no-op). **Deliberately not named `OpenReadOnly`:** the checkpoint is a write, so it requires a **writable** source file + directory (WAL needs a writable `-shm`) and fails on read-only media — temp-copy a read-only source and open the copy. Document the writable-source requirement on `merge --help`.
 
 New `internal/vault/merge.go`:
-- `MergeFrom(ctx, dest *VaultStore, srcPath, srcKey string, opts MergeOptions) (ImportResult, error)`. Open the source via `OpenReadOnly` (`--key`/`CAPY_VAULT_MERGE_KEY`; default `CAPY_VAULT_KEY`).
-- Iterate source `vault_sessions` (stream with a cursor; `defer rows.Close()`). For each: load source `vault_files`, `decodeBlob(encoding, …)` the main + sidecars (source may be compressed).
+- `MergeFrom(ctx, dest *VaultStore, srcPath, srcKey string, opts MergeOptions) (ImportResult, error)`. Open the source via `OpenSourceForMerge` (`--key`/`CAPY_VAULT_MERGE_KEY`; default `CAPY_VAULT_KEY`).
+- **Feature-detect the source schema first (corrected after review):** the source isn't migrated, so a v1/older source may lack the `encoding` column and/or the `vault_snapshots` table. Probe `PRAGMA table_info(vault_sessions)`/`vault_files` for `encoding` (absent ⇒ every source blob is `raw`) and `sqlite_master` for `vault_snapshots` (absent ⇒ skip the snapshot step). A blind `SELECT encoding …` / `… FROM vault_snapshots` would raise "no such column/table" against a v1 source.
+- Iterate source `vault_sessions` (stream with a cursor; `defer rows.Close()`). For each: load source `vault_files`, `decodeBlob(encoding, …)` the main + sidecars (source may be compressed; treat as `raw` when the source has no `encoding` column).
 - Decision: `dest.SessionDigest(uuid)` → skip if same `content_hash` or smaller source `size_bytes`; else build a `SessionRecord` and Insert/Replace. Carry source `machine_id`/`claude_project_dir`/`project_path`/`git_branch` verbatim (do not recompute). Apply the 0-msg exclusion (Task 11's `StatusExcluded`) — hence the Task 11 dependency.
 - Extract `buildFTS(uuid, mainBytes, files) []FTSRow` from `import.go:buildRecord` (the scanner-wiring loop) so merge and disk-import share it.
-- **Carry `vault_snapshots` (added after review):** after the parent session row exists, iterate the source's `vault_snapshots` for that UUID and `InsertSnapshot` into the destination, deduped by `UNIQUE(session_uuid, content_hash)`. No-op when the source table is empty (PreCompact not shipped).
+- **Carry `vault_snapshots` (added after review; depends on Task 14):** after the parent session row exists, iterate the source's `vault_snapshots` for that UUID and `InsertSnapshot` into the destination, deduped by `UNIQUE(session_uuid, content_hash)`. **Skip the whole step when the source lacks the table** (per the feature-detect probe above) — a v1/older source — so it is a true runtime no-op, not a "no such table" error. The *destination* always has the table + `InsertSnapshot` (the snapshots task ships in this v2 unit), so only the source can lack it. On the shared branch this subtask must land after Task 14's commit — see tasks.md Task 9 deps.
 - Batch via `WriteBatch`; reuse `ImportResult`/status accounting.
 
 `cmd/capy/vault.go` `merge` subcommand: `--from <path>` (required), `--key`/`CAPY_VAULT_MERGE_KEY`, `--dry-run`, `--project`. Table output identical to `import`.
 
-- Step → verify: build two fixture vaults with overlapping + distinct UUIDs (one with snapshots); `merge --from B` into A → A gains B's distinct sessions, keeps the larger of overlaps, `search` finds B-only content, B's `machine_id`/`project_path` are preserved, and **B's snapshots appear in A** (deduped). `--dry-run` writes nothing.
+- Step → verify: build fixture vaults with overlapping + distinct UUIDs (one v2 source with snapshots; **one v1-shaped source with no `encoding` column and no `vault_snapshots` table**); `merge --from B` into A → A gains B's distinct sessions, keeps the larger of overlaps, `search` finds B-only content, B's `machine_id`/`project_path` are preserved, and **B's snapshots appear in A** (deduped). **The v1-shaped source merges cleanly** (blobs read as raw, snapshot step skipped — no "no such column/table"). `--dry-run` writes nothing.
 
 ---
 
@@ -142,12 +147,12 @@ The migration runner (`vaultMigrationApplied` + apply-loop) is already built in 
 ### PreCompact handler (V2.14)
 
 Replace the `handlePreCompact` stub: parse payload (per V2.0) → resolve session file + UUID + project dir. Then, **in this order (corrected after review — FK + clobber safety):**
-1. **Archive the active session first** via the existing single-session import path (`DiscoverSessions(dir)` → filter to this UUID → `Import`). This reads the pre-compaction **main + sidecars** from disk, applies the idempotent decision, and *creates the parent `vault_sessions` row if absent* — satisfying the snapshot FK and avoiding a main-only `ReplaceSession` that would `DELETE` then fail to re-insert sidecars.
-2. **Then** `InsertSnapshot` (main transcript; dedup via `UNIQUE(session_uuid, content_hash)`).
+1. **Archive the active session first** via the existing single-session import path. **Build the one target `SessionFile` directly from the known (dir, UUID)** — add a `DiscoverSession(dir, uuid)` helper (main `<dir>/<uuid>.jsonl` + `collectAssociatedFiles(<dir>/<uuid>)`) and `Import` just that one — **not** `DiscoverSessions(dir)`-then-filter, which walks every session's sidecar tree in the project on the `/compact` critical path (the hook blocks compaction). This reads the pre-compaction **main + sidecars** from disk, applies the idempotent decision, and *creates the parent `vault_sessions` row if absent* — satisfying the snapshot FK and avoiding a main-only `ReplaceSession` that would `DELETE` then fail to re-insert sidecars.
+2. **Guard the FK, then `InsertSnapshot`:** `Import` does not *always* create a row — the Task-11 0-msg exclusion and read/scan errors yield no row. Confirm the parent exists (Import status or `SessionDigest`) before `InsertSnapshot`; if absent, log and skip the snapshot rather than failing the FK. Then `InsertSnapshot` (main transcript; dedup via `UNIQUE(session_uuid, content_hash)`).
 
 Short-lived process discipline: open vault, import-one + insert-snapshot, `Close()` (checkpoints), return fast; log + swallow errors so `/compact` is never blocked. Confirm hook wiring in `internal/hook/` dispatch.
 
-- Step → verify: with a captured payload fixture, including **a brand-new session that has no pre-existing `vault_sessions` row** → the active row is created, then the snapshot inserts without an FK error; a second identical invocation dedups (no new snapshot); an existing session with sidecars is **not** stripped of them (no clobber).
+- Step → verify: with a captured payload fixture, including **a brand-new session that has no pre-existing `vault_sessions` row** → the active row is created, then the snapshot inserts without an FK error; **a session `Import` produces no row for (0-msg / read error)** → the snapshot step is skipped with a log, no FK crash; a second identical invocation dedups (no new snapshot); an existing session with sidecars is **not** stripped of them (no clobber).
 
 ### Snapshot CLI (V2.15)
 
@@ -194,7 +199,7 @@ Depends on all. Run `/kk:test` (full suite, `-tags fts5`, both keys set, race), 
 ## Assumptions (carried from design.md)
 
 1. **PreCompact fires before file mutation** (UNVERIFIED — V2.0 gate; dealbreaker for V2.13–15 only).
-2. zstd frame magic never collides with raw JSONL leading bytes (true by construction; round-trip + mixed-corpus test).
+2. Legacy (v1) blobs are losslessly readable when `encoding IS NULL`; the explicit `encoding` column (not magic-byte detection) discriminates raw from zstd, so arbitrary sidecar bytes — including ones beginning with the zstd magic `0x28B52FFD` or already-compressed files — are never mis-decoded (true by construction; round-trip + mixed-corpus + a raw-sidecar-starting-with-zstd-magic regression test).
 3. Backup-API rekey works for sqlite3mc vaults (validated by round-trip).
 4. Re-scan in merge reproduces equivalent FTS (validated by merge→search).
 5. VACUUM reclaims pages after compact (validated by before/after os.Stat).
