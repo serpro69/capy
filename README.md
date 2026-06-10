@@ -511,9 +511,9 @@ Run `capy doctor` to diagnose issues. Common problems:
 
 ## Acknowledgements
 
-capy is a Go reimplementation of [context-mode](https://github.com/mksglu/context-mode), originally written in TypeScript by [@mksglu](https://github.com/mksglu). The core algorithms — FTS5 search with BM25 ranking, three-tier fallback, smart chunking, sandbox architecture — originate from that project.
+Capy started is a Go reimplementation of [context-mode](https://github.com/mksglu/context-mode), but has since significantly evolved and stands on it's own feet. Capy has many features added beyond the initial port; the core algorithms — FTS5 search with BM25 ranking, three-tier fallback, smart chunking, sandbox architecture — originate from the ported project.
 
-**Why rewrite it?** context-mode works well, BUT! I wanted to experiment with ideas that are hard to retrofit into the existing context-mode architecture — persistent cross-session knowledge bases, tiered freshness metadata, content deduplication, mandatory encryption, and session transcript indexing. Go gives me a single static binary with no Node.js dependency, which removes an entire class of installation and compatibility issues. I also have a very acute allergy to anything in the JS/TS/Node ecosystem. This is primarily a personal tool, but it's open source in case others find it useful.
+**Why rewrite it?** context-mode (probably) works well, BUT! I wanted to experiment with ideas that are hard to retrofit into the existing context-mode architecture — persistent cross-session knowledge bases, tiered freshness metadata, content deduplication, mandatory encryption, session transcript indexing, and many other stuff. Go gives me a single static binary with no Node.js dependency, which removes an entire class of installation and compatibility issues. I also have a very acute allergy to anything in the JS/TS/Node ecosystem. This is primarily a personal tool, but it's open source in case others find it useful.
 
 ### capy vs context-mode
 
