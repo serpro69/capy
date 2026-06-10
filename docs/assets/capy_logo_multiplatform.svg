@@ -5,7 +5,7 @@
    aria-labelledby="title desc"
    version="1.1"
    id="svg25"
-   sodipodi:docname="capy_logo.svg"
+   sodipodi:docname="capy_logo_multiplatform.svg"
    inkscape:version="1.3.2 (091e20e, 2023-11-25)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
@@ -24,9 +24,9 @@
      inkscape:pageopacity="0.0"
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
-     inkscape:zoom="1.16"
-     inkscape:cx="514.22414"
-     inkscape:cy="758.62069"
+     inkscape:zoom="0.82024387"
+     inkscape:cx="344.40977"
+     inkscape:cy="692.47699"
      inkscape:window-width="1920"
      inkscape:window-height="1018"
      inkscape:window-x="1920"
@@ -230,7 +230,7 @@
        stroke-width="10"
        stroke-linecap="round"
        stroke-linejoin="round"
-       transform="rotate(84.191473,511.68531,850.65504)">
+       transform="rotate(84.191473,508.53813,851.23386)">
       <g
          transform="matrix(0.26153206,0,0,0.26153206,519.46733,572.31394)"
          id="g3">
@@ -248,9 +248,7 @@
            style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:200px;font-family:Arial, Helvetica, sans-serif;-inkscape-font-specification:'Arial, Helvetica, sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;letter-spacing:3;text-anchor:middle;fill:#e7c58e;stroke-width:3.11625;stroke-dasharray:none"
            transform="rotate(-111.2505)"><tspan
              sodipodi:role="line"
-             id="tspan12"
-             x="-4.3588257"
-             y="-140.31885">˚··˳∴≈҉✵҉≈∴˳··˚</tspan></text>
+             id="tspan5">˚··˳∴≈҉✵≈˳··˚</tspan></text>
         <circle
            cx="-35"
            cy="0"
@@ -347,8 +345,8 @@
          id="path22-3" />
     </g>
     <text
-       x="390.73071"
-       y="951.98932"
+       x="335.47949"
+       y="961.56787"
        text-anchor="middle"
        font-family="Arial, Helvetica, sans-serif"
        font-weight="700"
@@ -361,11 +359,11 @@
        transform="rotate(-24.85823)"><tspan
          sodipodi:role="line"
          id="tspan3"
-         x="391.12302"
-         y="951.98932">͡m̢͝us⃑͢t f̡l͎͑̓o͛͜w⃛✧̇̈̊≈҉</tspan></text>
+         x="335.8718"
+         y="961.56787">m̰̂̃ṳ̈̋̊s̥̈̃ṫ̰̋̂ f̤̃̊l̥̋̂ö̰̃̊ẅ̤̋✧</tspan></text>
     <text
-       x="653.8559"
-       y="439.28137"
+       x="643.62964"
+       y="452.07666"
        text-anchor="middle"
        font-family="Arial, Helvetica, sans-serif"
        font-weight="700"
@@ -377,7 +375,7 @@
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:52.3064px;font-family:'Fira Sans';-inkscape-font-specification:'Fira Sans, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;letter-spacing:0.784596;text-anchor:middle;fill:#e7c58e;stroke-width:0.814999;stroke-dasharray:none"
        transform="rotate(26.855904)"><tspan
          sodipodi:role="line"
-         id="tspan4">✧̇̈̊t̷̸h͛͡ḛ̃ ̴̵s̶̰̋̃p̶̤̂̊ï̶̥̈̃c̶̰̋̊ë̶̤̂̃ c⃡o̷̸dḛ̃ ͡</tspan></text>
+         id="tspan4">✧t̰̋̃ĥ̤̊ẹ̃̆ s̶̰̋̃p̶̤̂̊ï̶̥̈̃c̶̰̋̊ë̶̤̂̃ c̥̋̃ö̰̂̊ḋ̤̈̃ë̥̋̊</tspan></text>
     <circle
        cx="546.56854"
        cy="657.38434"

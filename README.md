@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="340" height="340" alt="logo" src="docs/assets/capy_logo.svg" />
+  <img width="340" height="340" alt="logo" src="docs/assets/capy_logo_no_text.svg" />
 </div>
 
 # capy
