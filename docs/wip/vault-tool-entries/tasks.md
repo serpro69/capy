@@ -6,7 +6,9 @@
 > Created: 2026-06-16
 
 **Not doing:** generic rendering of arbitrary tool inputs (only the common tools
-get input detail via the existing `toolUseSummary`; all tools get the name);
+get input detail via the existing `toolUseSummary`; all tools get the name) — see
+[design.md §Deferred](./design.md) for *why* (consistency + FTS noise/size) and the
+concrete next step (bounded default-case summary, bump `currentIndexVersion`, reindex);
 zstd compression / `encoding` column / `vault_snapshots` / PreCompact (all remain
 pending v2 work); background/automatic reindex (explicit `capy vault reindex` only).
 

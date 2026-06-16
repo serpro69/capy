@@ -3,6 +3,7 @@
 > Status: done
 > Created: 2026-06-16
 > Branch: vault_tool_cmd
+> ADR: [ADR-025](../../adr/025-vault-index-version-and-reindex.md) — the durable record of the `index_version`/reindex decision and the tool-input deferral.
 > Related: [v2 plan](../vault/v2/) — this feature implements **v2 Task 1** (the
 > `beginImmediate`/`isBusy` → `sqliteutil` consolidation) ahead of v2, and stands
 > up the vault migration apply-loop that v2 also depends on.
@@ -52,11 +53,30 @@ Each parser builds a `map[toolUseID]summary` from the assistant `tool_use` block
 When the id is unknown (older/malformed transcripts, or a result with no matching
 call) the prefix is omitted — graceful degradation, never an error.
 
-**Deferred:** `toolUseSummary` renders inputs only for the common tools
-(Bash/Read/Edit/Write/Agent/Task) and the bare name for everything else (MCP tools
-etc.). Generic rendering of arbitrary tool inputs is **out of scope** here — see
-tasks.md "Not doing". The tool *name* is always added, which satisfies the core
-"what tool was called" ask for every tool.
+**Deferred — generic input rendering for arbitrary/MCP tools.** `toolUseSummary`
+renders inputs only for the common tools (Bash → command, Read/Edit/Write →
+file_path, Agent/Task → prompt) and the **bare name** for everything else (MCP
+tools like `mcp__capy__capy_search`, `WebFetch`, custom tools). The tool *name* is
+always added, satisfying the core "what tool was called" ask for every tool.
+
+*Why deferred (not just "trivial"):*
+
+1. **Consistency.** Reusing `toolUseSummary` keeps the result-side label identical
+   to the call-side label — assistant `tool_use` rows already render through the
+   same function. A richer result-only format would diverge the two.
+2. **Noise / size.** Arbitrary tool inputs are free-form JSON objects. Indexing
+   them verbatim would bloat FTS rows (and the displayed transcript) with
+   low-signal tokens, degrading BM25 ranking for little search benefit — the
+   opposite of capy's context-economy goal. The *bounding* is the hard part, not
+   the extraction.
+3. **Scope.** The common tools carry the bulk of real input signal (commands,
+   paths, prompts); the long tail is mostly structured args best left unindexed.
+
+*Concrete next step (to add it):* extend `toolUseSummary`'s `default` case to emit
+a **bounded** summary of the input object (salient field(s) or truncated
+`key=value` pairs — NOT raw JSON), bump `currentIndexVersion` to 3, and let
+`capy vault reindex` upgrade existing vaults. Bounding is load-bearing: it is what
+addresses the noise/size concern above.
 
 ## Backwards compatibility
 
