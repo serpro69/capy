@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -52,8 +50,10 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 		kind = k
 	}
 
-	// SSRF protection: block requests to local/private networks
-	if err := validateFetchURLFunc(url); err != nil {
+	// SSRF protection (scheme gate): reject non-http(s) URLs cheaply before any
+	// cache or network work. IP-level classification happens at connect time in
+	// the SSRF-safe transport below, closing the DNS-rebinding TOCTOU window.
+	if err := validateFetchScheme(url); err != nil {
 		return errorResult(fmt.Sprintf("Blocked URL: %v", err)), nil
 	}
 
@@ -96,9 +96,12 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 		source = url
 	}
 
-	// Fetch with timeout and redirect limit
+	// Fetch with timeout, redirect limit, and SSRF-safe transport. The transport's
+	// DialContext resolves DNS and classifies every IP at connect time, so each
+	// redirect to a new host is re-validated (DNS-rebinding defense).
 	client := &http.Client{
-		Timeout: fetchTimeout,
+		Timeout:   fetchTimeout,
+		Transport: newFetchTransport(),
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			if len(via) >= fetchMaxRedirect {
 				return fmt.Errorf("too many redirects (%d)", fetchMaxRedirect)
@@ -216,34 +219,12 @@ func convertHTMLToMarkdown(html string) (string, error) {
 	return conv.ConvertString(html)
 }
 
-// validateFetchURLFunc is the URL validation function. Package-level var to
-// allow tests to bypass SSRF checks when using httptest.NewServer (localhost).
-var validateFetchURLFunc = validateFetchURL
-
-// validateFetchURL blocks requests to local/private networks to prevent SSRF.
-func validateFetchURL(rawURL string) error {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
-	}
-
-	hostname := parsed.Hostname()
-
-	// Resolve hostname to check the actual IP
-	ips, err := net.LookupIP(hostname)
-	if err != nil {
-		// If we can't resolve, allow — the HTTP client will fail with a better error
-		return nil
-	}
-
-	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-			return fmt.Errorf("access to local/private network address %s (%s) is forbidden", hostname, ip)
-		}
-	}
-
-	return nil
-}
+// newFetchTransport returns the HTTP transport used to fetch remote content.
+// It is a package-level var so tests can substitute a transport that permits
+// loopback connections (httptest.NewServer binds to 127.0.0.1, which the
+// SSRF-safe dialer blocks). Production resolves to getFetchTransport, which
+// shares one SSRF-safe transport process-wide so connections pool correctly.
+var newFetchTransport = getFetchTransport
 
 // isBinaryContent returns true if the content appears to be binary (images, PDFs, etc.)
 // based on Content-Type header and byte content inspection.
