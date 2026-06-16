@@ -197,11 +197,12 @@ func TestMigration018_AddsSessionKindOnFreshDB(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO sources (label, content_type, kind) VALUES ('test-session', 'session', 'session')`)
 	assert.NoError(t, err, "kind='session' should be accepted after migration")
 
-	// Migrations table should exist with both migrations recorded.
+	// Migrations table should exist with all migrations recorded
+	// (017 retroactively, 018 session kind, 019 file_path).
 	var count int
 	err = db.QueryRow(`SELECT COUNT(*) FROM migrations`).Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 2, count, "both migrations should be recorded")
+	assert.Equal(t, 3, count, "all migrations should be recorded")
 }
 
 func TestMigration018_NoOpOnMigratedDB(t *testing.T) {

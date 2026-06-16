@@ -44,8 +44,23 @@ type ContentStore struct {
 	stmtFindSourceByLabel     *sql.Stmt
 	stmtUpdateSourceAccess    *sql.Stmt
 	stmtUpdateSourceKind      *sql.Stmt
+	stmtUpdateSourceFilePath  *sql.Stmt
+	stmtUpdateSourceIndexedAt *sql.Stmt
+	stmtListFileBackedSources *sql.Stmt
 
 	insertCount atomic.Int64
+
+	// Stale detection: denyChecker re-validates a file's Read deny policy
+	// before re-reading it on auto-refresh (TOCTOU defense). Set exactly once
+	// by the server inside getStore's sync.Once, before any search is
+	// dispatched — that happens-before makes the plain field safe to read from
+	// concurrent SearchWithFallback goroutines; it is never mutated afterward.
+	// nil in standalone store usage (no deny filtering).
+	// lastRefreshTime holds the Unix-nanosecond timestamp of the last stale
+	// sweep — an atomic so concurrent SearchWithFallback callers don't race on
+	// the 5-second cooldown gate.
+	denyChecker     func(string) bool
+	lastRefreshTime atomic.Int64
 
 	// Fuzzy correction cache: nil value = "no correction"; key-missing = "not cached".
 	fuzzyCacheMu sync.RWMutex
@@ -164,8 +179,8 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	// --- Indexing ---
 
 	s.stmtInsertSource, err = db.Prepare(`
-		INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, kind)
-		VALUES (?, ?, ?, ?, ?, ?)`)
+		INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, kind, file_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -205,7 +220,7 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	}
 
 	s.stmtFindSourceByLabel, err = db.Prepare(`
-		SELECT id, content_hash, kind FROM sources WHERE label = ?`)
+		SELECT id, content_hash, kind, file_path FROM sources WHERE label = ?`)
 	if err != nil {
 		return err
 	}
@@ -218,6 +233,27 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 
 	s.stmtUpdateSourceKind, err = db.Prepare(`
 		UPDATE sources SET kind = ?, last_accessed_at = datetime('now') WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+
+	s.stmtUpdateSourceFilePath, err = db.Prepare(`
+		UPDATE sources SET file_path = ? WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+
+	// Advances indexed_at for a file-backed source confirmed current (touched
+	// on disk but content unchanged) so the mtime fast-path skips it next time.
+	s.stmtUpdateSourceIndexedAt, err = db.Prepare(`
+		UPDATE sources SET indexed_at = datetime('now') WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+
+	s.stmtListFileBackedSources, err = db.Prepare(`
+		SELECT id, label, file_path, content_hash, indexed_at, content_type, kind
+		FROM sources WHERE file_path IS NOT NULL`)
 	if err != nil {
 		return err
 	}
@@ -309,7 +345,9 @@ func (s *ContentStore) Close() error {
 		s.stmtInsertSource, s.stmtInsertChunk, s.stmtInsertTrigram,
 		s.stmtInsertVocab, s.stmtDeleteChunksBySource, s.stmtDeleteTrigramBySource,
 		s.stmtDeleteSource, s.stmtFindSourceByLabel, s.stmtUpdateSourceAccess,
-		s.stmtUpdateSourceKind, s.stmtFuzzyVocab, s.stmtGetSourceMeta,
+		s.stmtUpdateSourceKind, s.stmtUpdateSourceFilePath,
+		s.stmtUpdateSourceIndexedAt, s.stmtListFileBackedSources,
+		s.stmtFuzzyVocab, s.stmtGetSourceMeta,
 		s.stmtListSources, s.stmtChunksBySource,
 		s.stmtSourceChunkCount, s.stmtChunkContent, s.stmtTrackAccess,
 	}

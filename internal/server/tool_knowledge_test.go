@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/store"
@@ -198,6 +200,44 @@ func TestIndex_ContentDenyLabelStillIndexes(t *testing.T) {
 	text := resultText(r)
 	assert.Contains(t, text, "Indexed")
 	assert.Contains(t, text, ".env")
+}
+
+func TestIndex_PathAutoRefreshOnSearch(t *testing.T) {
+	tmp := t.TempDir()
+	srv := newTestServerWithProjectDir(t, nil, tmp)
+
+	p := filepath.Join(tmp, "doc.md")
+	require.NoError(t, os.WriteFile(p, []byte("alpha original content"), 0o644))
+	r := callIndex(t, srv, map[string]any{"path": p, "source": "auto-src"})
+	require.False(t, r.IsError)
+
+	// Modify the file on disk after indexing; bump mtime past the second-granular
+	// indexed_at so the stale sweep's mtime gate fires.
+	require.NoError(t, os.WriteFile(p, []byte("bravo replaced content"), 0o644))
+	future := time.Now().Add(10 * time.Second)
+	require.NoError(t, os.Chtimes(p, future, future))
+
+	// The next search auto-refreshes the source before returning results.
+	sr := callSearch(t, srv, map[string]any{
+		"queries": []any{"bravo replaced content"},
+		"source":  "auto-src",
+	})
+	assert.False(t, sr.IsError)
+	got := resultText(sr)
+	assert.Contains(t, got, "bravo")
+	assert.NotContains(t, got, "alpha")
+}
+
+func TestIndex_PathNonRegularRejected(t *testing.T) {
+	tmp := t.TempDir()
+	srv := newTestServerWithProjectDir(t, nil, tmp)
+
+	fifo := filepath.Join(tmp, "pipe")
+	require.NoError(t, syscall.Mkfifo(fifo, 0o644))
+
+	r := callIndex(t, srv, map[string]any{"path": fifo})
+	assert.True(t, r.IsError)
+	assert.Contains(t, resultText(r), "not a regular file")
 }
 
 // ─── Search tests ──────────────────────────────────────────────────────────────
