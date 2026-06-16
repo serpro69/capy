@@ -50,15 +50,15 @@
 - [x] 3b.2 Add tests: denied absolute path returns error and produces no FTS5 chunks; denied relative `../` traversal path returns error; inline `content` with a `source` label matching a deny pattern still indexes successfully
 
 ## Task 4: Phrase frequency reranker
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [design.md#2-phrase-frequency-reranker](./design.md#2-phrase-frequency-reranker), [implementation.md#task-4-phrase-frequency-reranker](./implementation.md#task-4-phrase-frequency-reranker)
 
 ### Subtasks
-- [ ] 4.1 Add `countAdjacentPairs(positionLists [][]int, terms []string, gap int) int` to `internal/store/search.go` — sweep-line algorithm, each right position consumed at most once
-- [ ] 4.2 Integrate into `rerank()`: `countAdjacentPairs` always builds its own position lists from raw `terms` against `r.Content` (cannot reuse existing `posLists` — they're synonym-expanded, and may be nil when minSpan came from highlights). Compute `phraseBoost = 0.5 * min(1.0, adjacentPairs/4.0)`, add to proximity boost: `r.FusedScore *= (1.0 + proximityBoost + phraseBoost)`
-- [ ] 4.3 Add unit tests for `countAdjacentPairs` in `internal/store/search_test.go` — 0 pairs when terms don't appear, 1 pair for single adjacent occurrence, saturation at 4+, greedy consumption (no double-counting)
-- [ ] 4.4 Add integration test: short doc with 4 adjacent pairs outranks long doc with 1 occurrence at same minSpan
+- [x] 4.1 Add `countAdjacentPairs(positionLists [][]int, terms []string, gap int) int` to `internal/store/search.go` — sweep-line algorithm, each right position consumed at most once
+- [x] 4.2 Integrate into `rerank()`: `countAdjacentPairs` always builds its own position lists from raw `terms` against `r.Content` (cannot reuse existing `posLists` — they're synonym-expanded, and may be nil when minSpan came from highlights). Compute `phraseBoost = 0.5 * min(1.0, adjacentPairs/4.0)`, add to proximity boost: `r.FusedScore *= (1.0 + proximityBoost + phraseBoost)`
+- [x] 4.3 Add unit tests for `countAdjacentPairs` in `internal/store/search_test.go` — 0 pairs when terms don't appear, 1 pair for single adjacent occurrence, saturation at 4+, greedy consumption (no double-counting)
+- [x] 4.4 Add integration test: short doc with 4 adjacent pairs outranks long doc with 1 occurrence at same minSpan
 
 ## Task 5: Hash-based stale detection with auto-refresh
 - **Status:** pending

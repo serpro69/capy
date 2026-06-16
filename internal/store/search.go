@@ -285,6 +285,7 @@ func rerank(results []SearchResult, query string) []SearchResult {
 
 		for i := range results {
 			r := &results[i]
+			content := strings.ToLower(r.Content)
 			minSpan := -1
 
 			if r.Highlighted != "" {
@@ -293,7 +294,6 @@ func rerank(results []SearchResult, query string) []SearchResult {
 
 			if minSpan < 0 {
 				posLists := make([][]int, len(termGroups))
-				content := strings.ToLower(r.Content)
 				allFound := true
 				for j, group := range termGroups {
 					var merged []int
@@ -312,10 +312,36 @@ func rerank(results []SearchResult, query string) []SearchResult {
 				}
 			}
 
+			// Proximity boost: tighter minSpan (relative to content length)
+			// scores higher. Normalized by content length so a tight span in a
+			// long document isn't penalized (ADR-014).
+			proximityBoost := 0.0
 			if minSpan >= 0 {
 				contentLen := max(len(r.Content), 1)
-				boost := 1.0 / (1.0 + float64(minSpan)/float64(contentLen))
-				r.FusedScore *= (1.0 + boost)
+				proximityBoost = 1.0 / (1.0 + float64(minSpan)/float64(contentLen))
+			}
+
+			// Phrase-frequency boost: count adjacent ordered occurrences of the
+			// raw (non-synonym-expanded) query terms in the content. Unlike the
+			// minSpan path above, this scan always rebuilds position lists from
+			// the raw terms — it can't reuse the synonym-expanded posLists (wrong
+			// term-length offsets) and those may be nil when minSpan came from the
+			// highlight fast path. Rewards documents that repeat the literal
+			// phrase, which a single-window minSpan can't distinguish.
+			// findAllPositions scans left-to-right, so each list is ascending —
+			// satisfying countAdjacentPairs' sorted-input precondition.
+			rawPosLists := make([][]int, len(terms))
+			for j, term := range terms {
+				rawPosLists[j] = findAllPositions(content, term)
+			}
+			adjacentPairs := countAdjacentPairs(rawPosLists, terms, phraseGapChars)
+			phraseBoost := 0.5 * math.Min(1.0, float64(adjacentPairs)/4.0)
+
+			// Combine proximity and phrase boosts in a single multiplicative
+			// pass. Title boost stays a separate pass (capy's two-pass approach,
+			// deliberate divergence from upstream's single additive pass — ADR-014).
+			if proximityBoost > 0 || phraseBoost > 0 {
+				r.FusedScore *= (1.0 + proximityBoost + phraseBoost)
 			}
 		}
 	}
@@ -394,6 +420,44 @@ func findAllPositions(text, term string) []int {
 		start += idx + 1
 	}
 	return positions
+}
+
+// phraseGapChars is the maximum byte gap between the end of one query term and
+// the start of the next for the two to count as an adjacent phrase occurrence.
+const phraseGapChars = 30
+
+// countAdjacentPairs counts ordered adjacent-pair occurrences of consecutive
+// query terms within a gap window. positionLists[i] holds the sorted start
+// positions of terms[i] in the content (the two slices are parallel). For each
+// consecutive pair (terms[i], terms[i+1]) it sweeps the left positions against
+// the right ones: a left position p matches the nearest unconsumed right
+// position in [p+len(terms[i]), p+len(terms[i])+gap]. Each right position is
+// consumed at most once (greedy left-to-right), so "foo foo bar" counts one
+// pair for query "foo bar", not two — matching IR phrase-occurrence intent.
+func countAdjacentPairs(positionLists [][]int, terms []string, gap int) int {
+	pairs := 0
+	for i := 0; i+1 < len(terms); i++ {
+		left := positionLists[i]
+		right := positionLists[i+1]
+		termLen := len(terms[i])
+
+		// Single right pointer: windowStart = p + termLen grows monotonically
+		// with p, so a right position already behind one window can never match
+		// a later (larger) one — advance past it permanently.
+		rj := 0
+		for _, p := range left {
+			windowStart := p + termLen
+			windowEnd := windowStart + gap
+			for rj < len(right) && right[rj] < windowStart {
+				rj++
+			}
+			if rj < len(right) && right[rj] <= windowEnd {
+				pairs++
+				rj++ // consume this right position
+			}
+		}
+	}
+	return pairs
 }
 
 // findMinSpan finds the minimum window containing at least one element from
