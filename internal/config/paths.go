@@ -51,6 +51,76 @@ func DetectProjectRoot() string {
 	return cwd
 }
 
+// MainWorktreeDir returns the main worktree of the git repository that
+// contains projectDir. For a normal checkout, the main worktree itself, or a
+// non-git directory, it returns projectDir unchanged. For a linked git
+// worktree — identified by a .git that is a regular FILE rather than a
+// directory — it follows the file's "gitdir:" pointer to the common git
+// directory and returns that directory's parent.
+//
+// It never invokes git: the worktree layout is read directly from disk, which
+// is more robust than relying on a committed marker file and works even when
+// git is unavailable. Any malformed or unexpected layout falls back to
+// returning projectDir, so a failure to resolve never breaks DB path
+// resolution — it only forgoes the worktree redirect.
+func MainWorktreeDir(projectDir string) string {
+	dotGit := filepath.Join(projectDir, ".git")
+	info, err := os.Stat(dotGit)
+	if err != nil || info.IsDir() {
+		// No .git, or a normal repo / main worktree (.git is a directory).
+		return projectDir
+	}
+
+	// A linked worktree's .git is a file: "gitdir: <worktree git dir>".
+	data, err := os.ReadFile(dotGit)
+	if err != nil {
+		return projectDir
+	}
+	content := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(content, "gitdir:") {
+		return projectDir
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(content, "gitdir:"))
+	if gitDir == "" {
+		return projectDir
+	}
+	if !filepath.IsAbs(gitDir) {
+		// A relative gitdir is relative to the dir holding .git — always projectDir.
+		gitDir = filepath.Join(projectDir, gitDir)
+	}
+
+	// A linked worktree's git dir always lives at "<common>/worktrees/<name>".
+	// Anything else — most notably a submodule's "<super>/.git/modules/<name>" —
+	// is not a worktree and must keep its own database.
+	if filepath.Base(filepath.Dir(gitDir)) != "worktrees" {
+		return projectDir
+	}
+
+	main := filepath.Dir(commonGitDir(gitDir)) // parent of "<main>/.git"
+	if mainInfo, err := os.Stat(main); err != nil || !mainInfo.IsDir() {
+		return projectDir
+	}
+	return main
+}
+
+// commonGitDir resolves the shared (main) .git directory for a linked
+// worktree's git directory. Git records the relative path to the common
+// directory in a "commondir" file; when that is missing or empty it falls back
+// to stripping the trailing "worktrees/<name>" segments.
+func commonGitDir(worktreeGitDir string) string {
+	if data, err := os.ReadFile(filepath.Join(worktreeGitDir, "commondir")); err == nil {
+		rel := strings.TrimSpace(string(data))
+		if rel != "" {
+			if filepath.IsAbs(rel) {
+				return filepath.Clean(rel)
+			}
+			return filepath.Clean(filepath.Join(worktreeGitDir, rel))
+		}
+	}
+	// Fallback: "<common>/worktrees/<name>" -> "<common>".
+	return filepath.Dir(filepath.Dir(worktreeGitDir))
+}
+
 // ProjectHash returns a deterministic 16-hex-char hash of the absolute project path.
 func ProjectHash(dir string) string {
 	abs, _ := filepath.Abs(dir)
@@ -183,15 +253,30 @@ func unmangledProbe(prefix string, parts []string) string {
 	return ""
 }
 
+// DBProjectDir returns the project directory whose knowledge database the
+// session at projectDir should use. When store.path is project-scoped (a
+// relative path stored inside the project tree) and projectDir is a linked git
+// worktree, it returns the repository's main worktree so that every worktree
+// of a repo shares a single database (see issue #69 — a per-worktree copy of a
+// committed DB strands its writes and conflicts unresolvably on merge).
+// Absolute store paths are already shared, and the XDG default is keyed per
+// project, so both are returned unchanged.
+func (c *Config) DBProjectDir(projectDir string) string {
+	if c.Store.Path != "" && !filepath.IsAbs(c.Store.Path) {
+		return MainWorktreeDir(projectDir)
+	}
+	return projectDir
+}
+
 // ResolveDBPath returns the path to the SQLite knowledge base.
-// If Config.Store.Path is set, it is resolved relative to projectDir.
+// If Config.Store.Path is set, it is resolved relative to DBProjectDir(projectDir).
 // Otherwise, the default XDG data location is used.
 func (c *Config) ResolveDBPath(projectDir string) string {
 	if c.Store.Path != "" {
 		if filepath.IsAbs(c.Store.Path) {
 			return c.Store.Path
 		}
-		return filepath.Join(projectDir, c.Store.Path)
+		return filepath.Join(c.DBProjectDir(projectDir), c.Store.Path)
 	}
 
 	dataHome := os.Getenv("XDG_DATA_HOME")

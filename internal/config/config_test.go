@@ -330,6 +330,103 @@ func TestResolveDBPathAbsolute(t *testing.T) {
 	assert.Equal(t, "/custom/path/knowledge.db", path)
 }
 
+// makeLinkedWorktree builds a fake git linked-worktree layout on disk and
+// returns the main worktree dir and the linked worktree dir. When withCommondir
+// is false, the worktree's git dir omits the "commondir" file to exercise the
+// segment-stripping fallback.
+func makeLinkedWorktree(t *testing.T, withCommondir bool) (mainDir, wtDir string) {
+	t.Helper()
+	root := t.TempDir()
+	mainDir = filepath.Join(root, "main")
+	wtDir = filepath.Join(root, "wt")
+	wtGitDir := filepath.Join(mainDir, ".git", "worktrees", "wt")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(mainDir, ".git"), 0o755))
+	require.NoError(t, os.MkdirAll(wtGitDir, 0o755))
+	require.NoError(t, os.MkdirAll(wtDir, 0o755))
+
+	// A linked worktree's .git is a file pointing at its git dir.
+	require.NoError(t, os.WriteFile(filepath.Join(wtDir, ".git"),
+		[]byte("gitdir: "+wtGitDir+"\n"), 0o644))
+
+	if withCommondir {
+		require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "commondir"),
+			[]byte("../..\n"), 0o644))
+	}
+	return mainDir, wtDir
+}
+
+func TestMainWorktreeDir_NotAWorktree(t *testing.T) {
+	// No .git at all → returned unchanged.
+	dir := t.TempDir()
+	assert.Equal(t, dir, MainWorktreeDir(dir))
+
+	// .git is a directory (normal repo / main worktree) → returned unchanged.
+	repo := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
+	assert.Equal(t, repo, MainWorktreeDir(repo))
+}
+
+func TestMainWorktreeDir_LinkedWorktree(t *testing.T) {
+	mainDir, wtDir := makeLinkedWorktree(t, true)
+	assert.Equal(t, mainDir, MainWorktreeDir(wtDir))
+}
+
+func TestMainWorktreeDir_LinkedWorktreeNoCommondir(t *testing.T) {
+	// Without a commondir file, resolution falls back to stripping the
+	// trailing "worktrees/<name>" segments from the git dir.
+	mainDir, wtDir := makeLinkedWorktree(t, false)
+	assert.Equal(t, mainDir, MainWorktreeDir(wtDir))
+}
+
+func TestMainWorktreeDir_GarbageGitFile(t *testing.T) {
+	// A .git file that is not a "gitdir:" pointer falls back to projectDir.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git"),
+		[]byte("not a gitdir pointer\n"), 0o644))
+	assert.Equal(t, dir, MainWorktreeDir(dir))
+}
+
+func TestMainWorktreeDir_SubmoduleNotRedirected(t *testing.T) {
+	// A git submodule's .git is also a file, but its git dir lives under
+	// "modules/<name>", not "worktrees/<name>" — it must keep its own DB.
+	root := t.TempDir()
+	superDir := filepath.Join(root, "super")
+	subDir := filepath.Join(superDir, "sub")
+	subGitDir := filepath.Join(superDir, ".git", "modules", "sub")
+
+	require.NoError(t, os.MkdirAll(subGitDir, 0o755))
+	require.NoError(t, os.MkdirAll(subDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(subDir, ".git"),
+		[]byte("gitdir: "+subGitDir+"\n"), 0o644))
+
+	assert.Equal(t, subDir, MainWorktreeDir(subDir))
+}
+
+func TestDBProjectDir_RelativePathRedirectsToMainWorktree(t *testing.T) {
+	mainDir, wtDir := makeLinkedWorktree(t, true)
+
+	cfg := DefaultConfig()
+	cfg.Store.Path = ".capy/knowledge.db"
+	// A worktree session resolves to the main worktree's DB...
+	assert.Equal(t, mainDir, cfg.DBProjectDir(wtDir))
+	// ...so the resolved DB path lives under the main worktree.
+	assert.Equal(t, filepath.Join(mainDir, ".capy/knowledge.db"), cfg.ResolveDBPath(wtDir))
+}
+
+func TestDBProjectDir_AbsoluteAndDefaultUnchanged(t *testing.T) {
+	_, wtDir := makeLinkedWorktree(t, true)
+
+	// Absolute store.path is already shared — no redirect.
+	abs := DefaultConfig()
+	abs.Store.Path = "/custom/knowledge.db"
+	assert.Equal(t, wtDir, abs.DBProjectDir(wtDir))
+
+	// XDG default (empty store.path) is keyed per project — no redirect.
+	def := DefaultConfig()
+	assert.Equal(t, wtDir, def.DBProjectDir(wtDir))
+}
+
 func TestEphemeralTTLHoursDefault(t *testing.T) {
 	cfg := DefaultConfig()
 	assert.Equal(t, 24, cfg.Store.Cleanup.EphemeralTTLHours)

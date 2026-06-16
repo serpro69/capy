@@ -24,7 +24,7 @@ func newDBSizeCmd() *cobra.Command {
 			}
 
 			dbPath := cfg.ResolveDBPath(projectDir)
-			st := store.NewContentStore(dbPath, projectDir, 0, 0)
+			st := store.NewContentStore(dbPath, cfg.DBProjectDir(projectDir), 0, 0)
 			defer st.Close()
 
 			breakdown, err := st.DiskUsage()

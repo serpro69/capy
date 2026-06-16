@@ -304,6 +304,15 @@ Three-level precedence (lowest to highest):
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full config reference.
 
+**DB path resolution** (`config.ResolveDBPath`): an absolute `store.path` is used
+verbatim; a relative `store.path` is resolved against the project directory; an
+empty `store.path` falls back to the XDG default
+`~/.local/share/capy/<project-hash>/knowledge.db`. For a relative (project-scoped)
+`store.path`, a session running inside a linked **git worktree** resolves the DB
+against the repository's **main worktree** so all worktrees share one committed DB
+(`config.MainWorktreeDir` / `config.DBProjectDir`; submodules excluded). See
+[ADR-026](adr/026-worktree-shared-knowledge-db.md).
+
 ## CLI Commands
 
 | Command | Description |
