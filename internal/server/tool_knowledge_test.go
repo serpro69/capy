@@ -110,6 +110,96 @@ func TestIndex_StatsTracking(t *testing.T) {
 	assert.Equal(t, 1, snap.Calls["capy_index"])
 }
 
+// newDenyIndexServer builds a server whose project dir carries a Read deny
+// policy for the given patterns, so handleIndex's deny check is exercised.
+func newDenyIndexServer(t *testing.T, projectDir string, denyPatterns ...string) *Server {
+	t.Helper()
+	claudeDir := filepath.Join(projectDir, ".claude")
+	require.NoError(t, os.MkdirAll(claudeDir, 0o755))
+	denyJSON, err := json.Marshal(denyPatterns)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(claudeDir, "settings.json"),
+		[]byte(fmt.Sprintf(`{"permissions":{"deny":%s}}`, denyJSON)),
+		0o644,
+	))
+	return newTestServerWithProjectDir(t, nil, projectDir)
+}
+
+func TestIndex_PathDenyAbsolute(t *testing.T) {
+	tmp := t.TempDir()
+	srv := newDenyIndexServer(t, tmp, "Read(.env)", "Read(**/.env*)")
+
+	// Secret-bearing file the deny policy must keep out of the index.
+	const token = "DENIEDSECRET_absolute_index_token"
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmp, ".env"),
+		[]byte("API_KEY="+token),
+		0o644,
+	))
+
+	r := callIndex(t, srv, map[string]any{
+		"path": filepath.Join(tmp, ".env"),
+	})
+	assert.True(t, r.IsError)
+	assert.Contains(t, resultText(r), "blocked by security policy")
+	assert.Contains(t, resultText(r), "Read deny pattern")
+
+	// The denied content must never reach FTS5 — searching for its token finds nothing.
+	sr := callSearch(t, srv, map[string]any{
+		"queries":       []any{token},
+		"include_kinds": []any{"durable", "ephemeral", "session"},
+	})
+	assert.NotContains(t, resultText(sr), token)
+}
+
+func TestIndex_PathDenyRelativeTraversal(t *testing.T) {
+	tmp := t.TempDir()
+
+	// A sensitive dir outside the project, guarded by an absolute deny glob that
+	// the raw relative input cannot match — only path resolution against the
+	// project root reaches it.
+	secretsDir := filepath.Join(tmp, "secrets")
+	require.NoError(t, os.MkdirAll(secretsDir, 0o755))
+	const token = "DENIEDSECRET_traversal_index_token"
+	require.NoError(t, os.WriteFile(filepath.Join(secretsDir, "id_rsa"), []byte(token), 0o600))
+
+	projectDir := filepath.Join(tmp, "project")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+	srv := newDenyIndexServer(t, projectDir, fmt.Sprintf("Read(%s/**)", secretsDir))
+
+	// Relative "../secrets/id_rsa" escapes the project root and resolves into
+	// the guarded dir; the deny check must catch it after resolution.
+	r := callIndex(t, srv, map[string]any{
+		"path": filepath.Join("..", "secrets", "id_rsa"),
+	})
+	assert.True(t, r.IsError)
+	assert.Contains(t, resultText(r), "blocked by security policy")
+
+	sr := callSearch(t, srv, map[string]any{
+		"queries":       []any{token},
+		"include_kinds": []any{"durable", "ephemeral", "session"},
+	})
+	assert.NotContains(t, resultText(sr), token)
+}
+
+func TestIndex_ContentDenyLabelStillIndexes(t *testing.T) {
+	// The deny policy applies to the `path` parameter, not to the `source`
+	// label. Inline content whose label happens to match a deny pattern must
+	// still index successfully — no file is read.
+	tmp := t.TempDir()
+	srv := newDenyIndexServer(t, tmp, "Read(.env)", "Read(**/.env*)")
+
+	r := callIndex(t, srv, map[string]any{
+		"content": "# Notes\n\nSome inline documentation content to index.",
+		"source":  ".env",
+	})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "Indexed")
+	assert.Contains(t, text, ".env")
+}
+
 // ─── Search tests ──────────────────────────────────────────────────────────────
 
 func callSearch(t *testing.T, srv *Server, args map[string]any) *mcp.CallToolResult {

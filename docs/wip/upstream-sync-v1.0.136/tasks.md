@@ -41,13 +41,13 @@
 - [x] 3.3 Add tests in `internal/executor/env_test.go` — verify CORECLR_PROFILER and COMPlus_EnableDiagnostics are stripped from env output
 
 ## Task 3b: Apply Read deny-policy to capy_index(path)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2 (uses updated EvaluateFilePath with projectRoot)
 - **Docs:** [design.md#6e-apply-read-deny-policy-to-capy_indexpath](./design.md#6e-apply-read-deny-policy-to-capy_indexpath), [implementation.md#task-3b-apply-read-deny-policy-to-capy_indexpath](./implementation.md#task-3b-apply-read-deny-policy-to-capy_indexpath)
 
 ### Subtasks
-- [ ] 3b.1 Add `s.checkFilePathDenyPolicy(path)` call in `handleIndex` (`internal/server/tool_index.go`) when `path != ""`, before any file I/O (before the `filepath.IsAbs` resolution at line 26)
-- [ ] 3b.2 Add tests: denied absolute path returns error and produces no FTS5 chunks; denied relative `../` traversal path returns error; inline `content` with a `source` label matching a deny pattern still indexes successfully
+- [x] 3b.1 Add `s.checkFilePathDenyPolicy(path)` call in `handleIndex` (`internal/server/tool_index.go`) when `path != ""`, before any file I/O (before the `filepath.IsAbs` resolution at line 26)
+- [x] 3b.2 Add tests: denied absolute path returns error and produces no FTS5 chunks; denied relative `../` traversal path returns error; inline `content` with a `source` label matching a deny pattern still indexes successfully
 
 ## Task 4: Phrase frequency reranker
 - **Status:** pending

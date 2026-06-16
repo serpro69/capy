@@ -20,6 +20,20 @@ func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 		return errorResult("Either content or path must be provided"), nil
 	}
 
+	// Security: when a path is supplied, check it against Read deny patterns
+	// before any file I/O. This closes a search-index exfiltration path — any
+	// file readable by the server process could otherwise be indexed into FTS5
+	// and surfaced by capy_search, bypassing the Read deny-pattern mitigation
+	// (e.g. .ssh/id_rsa, .env, ~/.aws/credentials). checkFilePathDenyPolicy
+	// resolves the raw path against the project root (see EvaluateFilePath), so
+	// relative "../" traversal and symlink escapes are caught too. Inline
+	// content-only indexing (path == "") is unaffected.
+	if path != "" {
+		if denied := s.checkFilePathDenyPolicy(path); denied != nil {
+			return denied, nil
+		}
+	}
+
 	// Read file content if path provided
 	if path != "" && content == "" {
 		// Resolve relative paths against project root with traversal protection
