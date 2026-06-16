@@ -6,17 +6,17 @@
 > Created: 2026-05-17
 
 ## Task 1: SSRF guard improvements
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [design.md#6a-ssrf-guard-scheme-validation--dns-rebinding-defense](./design.md#6a-ssrf-guard-scheme-validation--dns-rebinding-defense), [implementation.md#task-1-ssrf-guard-improvements](./implementation.md#task-1-ssrf-guard-improvements)
 
 ### Subtasks
-- [ ] 1.1 Create `internal/server/ssrf.go` with `classifyIP(rawIP string) error` — accepts raw IP string, strips zone-IDs (`%eth0`), handles IPv4-mapped IPv6 (`::ffff:A.B.C.D`) via recursion, classifies: IPv6 unspecified/link-local/multicast/loopback/ULA; IPv4 `0.0.0.0/8`/`169.254.0.0/16`/`224.0.0.0+`/loopback/RFC1918; malformed → block
-- [ ] 1.2 Add `validateFetchScheme(rawURL string) error` in `ssrf.go` — reject any scheme not in `{"http", "https"}`
-- [ ] 1.3 Add `newSSRFSafeTransport() *http.Transport` in `ssrf.go` — custom `DialContext` that resolves DNS via `net.DefaultResolver.LookupIPAddr`, classifies every IP via `classifyIP`, dials first passing IP via `net.Dialer`
-- [ ] 1.4 Update `tool_fetch.go`: replace `validateFetchURLFunc(url)` with `validateFetchScheme(url)`, replace default `http.Client{}` with one using `newSSRFSafeTransport()`, remove old `validateFetchURL` and `validateFetchURLFunc`
-- [ ] 1.5 Create `internal/server/ssrf_test.go` — test scheme blocking (file://, gopher://, data://), IP classification covering: `0.0.0.0` (current network), `::` (unspecified), `::ffff:127.0.0.1` (IPv4-mapped), `fe80::1%eth0` (zone-id), `224.0.0.1` (multicast), `169.254.169.254` (IMDS), `127.0.0.1` (loopback), `10.0.0.1`/`192.168.1.1` (private), malformed strings, valid public IPs; Transport-level DNS rebinding defense
-- [ ] 1.6 Update `tool_fetch_test.go` — replace `validateFetchURLFunc` override pattern with Transport-level test helper that allows localhost for `httptest.NewServer`
+- [x] 1.1 Create `internal/server/ssrf.go` with `classifyIP(rawIP string) error` — accepts raw IP string, strips zone-IDs (`%eth0`), handles IPv4-mapped IPv6 (`::ffff:A.B.C.D`) via recursion, classifies: IPv6 unspecified/link-local/multicast/loopback/ULA; IPv4 `0.0.0.0/8`/`169.254.0.0/16`/`224.0.0.0+`/loopback/RFC1918; malformed → block
+- [x] 1.2 Add `validateFetchScheme(rawURL string) error` in `ssrf.go` — reject any scheme not in `{"http", "https"}`
+- [x] 1.3 Add `newSSRFSafeTransport() *http.Transport` in `ssrf.go` — custom `DialContext` that resolves DNS via `net.DefaultResolver.LookupIPAddr`, classifies every IP via `classifyIP`, dials first passing IP via `net.Dialer`
+- [x] 1.4 Update `tool_fetch.go`: replace `validateFetchURLFunc(url)` with `validateFetchScheme(url)`, replace default `http.Client{}` with one using `newSSRFSafeTransport()`, remove old `validateFetchURL` and `validateFetchURLFunc`
+- [x] 1.5 Create `internal/server/ssrf_test.go` — test scheme blocking (file://, gopher://, data://), IP classification covering: `0.0.0.0` (current network), `::` (unspecified), `::ffff:127.0.0.1` (IPv4-mapped), `fe80::1%eth0` (zone-id), `224.0.0.1` (multicast), `169.254.169.254` (IMDS), `127.0.0.1` (loopback), `10.0.0.1`/`192.168.1.1` (private), malformed strings, valid public IPs; Transport-level DNS rebinding defense
+- [x] 1.6 Update `tool_fetch_test.go` — replace `validateFetchURLFunc` override pattern with Transport-level test helper that allows localhost for `httptest.NewServer` (helper `disableSSRFValidation` lives in `tool_knowledge_test.go`; now swaps `newFetchTransport`)
 
 ## Task 2: Path traversal bypass fix
 - **Status:** pending

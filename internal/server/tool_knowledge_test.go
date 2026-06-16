@@ -557,12 +557,15 @@ func TestSearch_NoResults_NoSourceLabelsLeaked(t *testing.T) {
 
 // ─── Fetch and Index tests ─────────────────────────────────────────────────────
 
-// disableSSRFValidation disables SSRF checks for tests using httptest.NewServer (localhost).
+// disableSSRFValidation swaps in a plain HTTP transport so tests using
+// httptest.NewServer (which binds to a loopback address blocked by the
+// SSRF-safe dialer) can fetch successfully. Scheme validation still runs —
+// httptest URLs are http://, which passes.
 func disableSSRFValidation(t *testing.T) {
 	t.Helper()
-	orig := validateFetchURLFunc
-	validateFetchURLFunc = func(string) error { return nil }
-	t.Cleanup(func() { validateFetchURLFunc = orig })
+	orig := newFetchTransport
+	newFetchTransport = func() *http.Transport { return &http.Transport{} }
+	t.Cleanup(func() { newFetchTransport = orig })
 }
 
 func callFetchAndIndex(t *testing.T, srv *Server, args map[string]any) *mcp.CallToolResult {
@@ -983,42 +986,8 @@ func TestFetchAndIndex_ExpiredCacheRefetches(t *testing.T) {
 	assert.NotContains(t, resultText(r), "Cache hit")
 }
 
-// ─── SSRF validation tests ────────────────────────────────────────────────────
-
-func TestValidateFetchURL(t *testing.T) {
-	t.Run("public URL allowed", func(t *testing.T) {
-		// Use a well-known public hostname
-		assert.NoError(t, validateFetchURL("https://example.com/page"))
-	})
-
-	t.Run("localhost blocked", func(t *testing.T) {
-		err := validateFetchURL("http://localhost:8080/admin")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "local/private")
-	})
-
-	t.Run("127.0.0.1 blocked", func(t *testing.T) {
-		err := validateFetchURL("http://127.0.0.1:9090/internal")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "local/private")
-	})
-
-	t.Run("metadata endpoint blocked", func(t *testing.T) {
-		err := validateFetchURL("http://169.254.169.254/latest/meta-data/")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "local/private")
-	})
-
-	t.Run("invalid URL returns error", func(t *testing.T) {
-		err := validateFetchURL("://not-a-url")
-		assert.Error(t, err)
-	})
-
-	t.Run("unresolvable hostname allowed through", func(t *testing.T) {
-		// Can't resolve → allow (HTTP client will fail with better error)
-		assert.NoError(t, validateFetchURL("http://this-host-does-not-exist-12345.invalid/path"))
-	})
-}
+// SSRF validation tests moved to ssrf_test.go (scheme + IP classification +
+// transport-level DNS-rebinding defense).
 
 func TestFetchAndIndex_BinaryBodyWithTextContentType(t *testing.T) {
 	disableSSRFValidation(t)
