@@ -121,6 +121,70 @@ func BackupCorruptDB(dbPath string) {
 	}
 }
 
+// BeginImmediate starts a transaction that holds SQLite's RESERVED write lock for
+// its entire lifetime, matching the guarantee of a literal `BEGIN IMMEDIATE`
+// without issuing that statement directly. database/sql's Begin() uses
+// BEGIN DEFERRED, so we upgrade to a write transaction with a no-op write against
+// lockTable — SQLite acquires the RESERVED lock on the first write of a DEFERRED
+// tx. A concurrent writer then blocks until commit instead of failing outright.
+//
+// lockTable names a table to issue the no-op `DELETE … WHERE 0` against; it MUST
+// be a trusted internal constant (e.g. "sources", "vault_meta"), never user input
+// — it is interpolated into the statement, not parameterized (a table name cannot
+// be a bind parameter). The table must already exist when this is called.
+//
+// Retries on SQLITE_BUSY with exponential backoff because database/sql's BeginTx
+// can surface "database is locked" before the connection-level busy_timeout
+// engages under goroutine contention.
+func BeginImmediate(db *sql.DB, lockTable string) (*sql.Tx, error) {
+	const maxRetries = 10
+	backoff := 10 * time.Millisecond
+
+	noop := fmt.Sprintf("DELETE FROM %s WHERE 0", lockTable) //nolint:gosec // lockTable is a trusted internal constant, never user input
+
+	for i := range maxRetries {
+		tx, err := db.Begin()
+		if err != nil {
+			if IsBusy(err) && i < maxRetries-1 {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return nil, err
+		}
+
+		// Force RESERVED-lock acquisition via a no-op write.
+		if _, err := tx.Exec(noop); err != nil {
+			tx.Rollback() //nolint:errcheck
+			if IsBusy(err) && i < maxRetries-1 {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return nil, err
+		}
+		return tx, nil
+	}
+	return nil, fmt.Errorf("could not acquire write lock after %d retries", maxRetries)
+}
+
+// IsBusy reports whether err is a SQLITE_BUSY / SQLITE_LOCKED condition.
+// Preferred path: typed sqlite3.Error code match. The string fallback catches
+// errors wrapped in ways that strip the typed error (e.g. some database/sql
+// paths return a bare error before reaching the driver error layer).
+func IsBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	var sqliteErr sqlite3.Error
+	if errors.As(err, &sqliteErr) {
+		return sqliteErr.Code == sqlite3.ErrBusy || sqliteErr.Code == sqlite3.ErrLocked
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked")
+}
+
 // OpenWithCanary opens the SQLite database described by dsn and verifies it can
 // be read with the configured key by running a canary query against
 // sqlite_master. dbPath is the on-disk path, used to tell an unencrypted DB

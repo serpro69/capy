@@ -101,7 +101,9 @@ func TestScanSession_ToolResultFromUserAsRoleTool(t *testing.T) {
 
 	byRole := resultsByRole(out.Results)
 	require.Len(t, byRole[roleTool], 1)
-	assert.Equal(t, "PASS: all tests green", byRole[roleTool][0].ContentText)
+	// The tool_result is tagged with its originating call (tool_use_id t1 →
+	// "Bash go test") so the output is searchable alongside the command.
+	assert.Equal(t, "Bash go test\nPASS: all tests green", byRole[roleTool][0].ContentText)
 
 	// The tool_result-only user entry must NOT produce a Role="user" row, and
 	// must NOT inflate MessageCount (it's tool output, not a turn).
@@ -112,6 +114,28 @@ func TestScanSession_ToolResultFromUserAsRoleTool(t *testing.T) {
 	for _, res := range byRole[roleUser] {
 		assert.NotContains(t, res.ContentText, "PASS")
 	}
+}
+
+func TestScanSession_ToolResultUnknownToolUseIDNoPrefix(t *testing.T) {
+	// A tool_result whose tool_use_id has no matching tool_use (older or partial
+	// transcript) is indexed verbatim — no prefix, never an error.
+	r := buildJSONL(t,
+		userLine("u1", "/p", "main", "do it"),
+		map[string]any{
+			"type": "user", "uuid": "u2", "timestamp": "2026-05-01T10:00:06Z",
+			"message": map[string]any{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "missing", "content": []map[string]any{
+					{"type": "text", "text": "orphan output"},
+				}},
+			}},
+		},
+	)
+	out, err := ScanSession(r)
+	require.NoError(t, err)
+
+	byRole := resultsByRole(out.Results)
+	require.Len(t, byRole[roleTool], 1)
+	assert.Equal(t, "orphan output", byRole[roleTool][0].ContentText)
 }
 
 func TestScanSession_UserEntryWithBothTextAndToolResult(t *testing.T) {

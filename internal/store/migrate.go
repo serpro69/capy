@@ -4,7 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"time"
+
+	"github.com/serpro69/capy/internal/sqliteutil"
 )
 
 // applyMigrations runs all pending one-shot migrations against db.
@@ -34,11 +35,11 @@ func applyMigrations(db *sql.DB) error {
 // second concurrent caller blocks until we commit, then its PRAGMA table_info
 // sees the column and returns early.
 func migrate017AddSourceKind(db *sql.DB) error {
-	// Acquire the write lock eagerly via beginImmediate (see its doc for the
-	// dummy-write mechanism). Retries on SQLITE_BUSY with exponential backoff
-	// because database/sql's BeginTx can surface "database is locked" before
-	// the connection-level busy_timeout kicks in under goroutine contention.
-	tx, err := beginImmediate(db)
+	// Acquire the write lock eagerly via sqliteutil.BeginImmediate (see its doc
+	// for the dummy-write mechanism). Retries on SQLITE_BUSY with exponential
+	// backoff because database/sql's BeginTx can surface "database is locked"
+	// before the connection-level busy_timeout kicks in under goroutine contention.
+	tx, err := sqliteutil.BeginImmediate(db, "sources")
 	if err != nil {
 		return fmt.Errorf("begin immediate: %w", err)
 	}
@@ -96,47 +97,6 @@ func migrate017AddSourceKind(db *sql.DB) error {
 	return tx.Commit()
 }
 
-// beginImmediate starts a transaction that holds SQLite's RESERVED write lock
-// for its entire lifetime, matching the guarantee of a literal `BEGIN IMMEDIATE`
-// without issuing that statement directly. database/sql's Begin() uses
-// BEGIN DEFERRED, so we upgrade to a write transaction by executing a no-op
-// DELETE immediately after — SQLite acquires the RESERVED lock on the first
-// write of a DEFERRED tx. This matches the idiom used by Index (index.go).
-//
-// Retries on SQLITE_BUSY with exponential backoff because database/sql's
-// BeginTx can surface "database is locked" before the connection-level
-// busy_timeout kicks in when goroutines contend for the write lock.
-func beginImmediate(db *sql.DB) (*sql.Tx, error) {
-	const maxRetries = 10
-	backoff := 10 * time.Millisecond
-
-	for i := range maxRetries {
-		tx, err := db.Begin()
-		if err != nil {
-			if isBusy(err) && i < maxRetries-1 {
-				time.Sleep(backoff)
-				backoff *= 2
-				continue
-			}
-			return nil, err
-		}
-
-		// Force RESERVED-lock acquisition via a no-op write.
-		_, err = tx.Exec("DELETE FROM sources WHERE 0")
-		if err != nil {
-			tx.Rollback() //nolint:errcheck
-			if isBusy(err) && i < maxRetries-1 {
-				time.Sleep(backoff)
-				backoff *= 2
-				continue
-			}
-			return nil, err
-		}
-		return tx, nil
-	}
-	return nil, fmt.Errorf("could not acquire write lock after %d retries", maxRetries)
-}
-
 // ensureMigrationsTable creates the migration-tracking table and retroactively
 // records migration 017 (which used PRAGMA-based idempotency checks). Future
 // migrations use this table for idempotency instead.
@@ -177,7 +137,7 @@ func migrationApplied(tx *sql.Tx, name string) (bool, error) {
 // contains 'session' in the CHECK, the schema is already current (fresh DB
 // created with updated schemaSQL). If not, a table rebuild is needed.
 func migrate018AddSessionKind(db *sql.DB) error {
-	tx, err := beginImmediate(db)
+	tx, err := sqliteutil.BeginImmediate(db, "sources")
 	if err != nil {
 		return fmt.Errorf("begin immediate: %w", err)
 	}

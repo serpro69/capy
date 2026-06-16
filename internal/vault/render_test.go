@@ -28,6 +28,9 @@ func TestRenderText_RolesToolsAndResults(t *testing.T) {
 	assert.Contains(t, out, "→ Read /proj/config.toml", "tool_use renders as an indicator line")
 	assert.Contains(t, out, "[Tool result]")
 	assert.Contains(t, out, "build log: timeout at line 5")
+	// The tool_result body is tagged with its originating call (tool_use_id t1).
+	assert.Contains(t, out, "Read /proj/config.toml\nbuild log: timeout at line 5",
+		"tool_result carries the call summary that produced it")
 	assert.NotContains(t, out, "internal reasoning", "thinking blocks are not rendered")
 }
 

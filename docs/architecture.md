@@ -247,6 +247,7 @@ vault_migrations — migration tracking (by-name)
 | Command | Description |
 |---------|-------------|
 | `capy vault import` | Scan and archive sessions (mutating; `--dry-run` to preview) |
+| `capy vault reindex` | Rebuild the FTS index for sessions on an older `index_version` (DB-driven; no disk dependency) |
 | `capy vault list` | List sessions, reverse chronological |
 | `capy vault search` | Full-text search with snippets |
 | `capy vault show` | Display full session (pager, `--format` for export) |

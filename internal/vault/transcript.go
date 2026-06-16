@@ -153,12 +153,21 @@ func ParseTranscript(raw []byte, subagentIDs []string) []TranscriptMessage {
 		}
 	})
 
+	// Correlate tool_use_id → call summary so each tool_result renders with the
+	// call that produced it.
+	toolUses := make(map[string]string)
+	for _, e := range entries {
+		if e.role == displayAssistant {
+			collectToolUseSummaries(e.blocks, toolUses)
+		}
+	}
+
 	var msgs []TranscriptMessage
 	var markerIdx []int // indices in msgs that are RoleSubagent (for ordered mapping)
 	for _, e := range entries {
 		switch e.role {
 		case displayUser:
-			human, tools := renderUserContent(e.content)
+			human, tools := renderUserContent(e.content, toolUses)
 			if human != "" {
 				msgs = append(msgs, TranscriptMessage{Role: RoleUser, Body: human, SourceLine: e.line})
 			}

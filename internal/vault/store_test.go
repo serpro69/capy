@@ -52,6 +52,24 @@ func sampleRecord(uuid string) *SessionRecord {
 	}
 }
 
+func TestVaultStore_SessionDigestReturnsIndexVersion(t *testing.T) {
+	s := newTestVault(t)
+	rec := sampleRecord("33333333-3333-3333-3333-333333333333")
+	rec.Session.IndexVersion = currentIndexVersion
+	require.NoError(t, s.InsertSession(rec))
+
+	hash, size, version, found, err := s.SessionDigest(rec.Session.UUID)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, rec.Session.ContentHash, hash)
+	assert.Equal(t, rec.Session.SizeBytes, size)
+	assert.Equal(t, currentIndexVersion, version)
+
+	_, _, _, found, err = s.SessionDigest("nonexistent-uuid")
+	require.NoError(t, err)
+	assert.False(t, found, "missing session reports found=false with no error")
+}
+
 func TestVaultStore_CreateAndSchema(t *testing.T) {
 	s := newTestVault(t)
 	db, err := s.getDB()
