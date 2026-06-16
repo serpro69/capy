@@ -154,21 +154,26 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		files, contents := readSidecars(sf, mainBytes)
 		hash, size := computeContentHash(contents)
 
-		existingHash, existingSize, found, err := store.SessionDigest(sf.UUID)
+		existingHash, existingSize, existingIndexVersion, found, err := store.SessionDigest(sf.UUID)
 		if err != nil {
 			slog.Warn("vault import: digest lookup failed", "uuid", sf.UUID, "error", err)
 			res.record(ImportedSession{UUID: sf.UUID, SizeBytes: size, Status: StatusError, Err: err})
 			continue
 		}
 
-		// Idempotency (design §Idempotent Import Logic): skip unchanged sessions
-		// (same hash) and smaller divergent variants (likely a compacted copy —
-		// never overwrite the fuller archive). A different-hash variant of
-		// equal-or-larger total size replaces in place (incoming size >= existing
-		// → replace; equal size + different content counts as larger-or-equal).
+		// Idempotency (design §Idempotent Import Logic) + reindex gate:
+		//   - Skip only when content is unchanged (same hash) AND the stored FTS
+		//     index is already current. A hash-identical but version-stale session
+		//     is re-scanned (mainBytes is already in memory) to upgrade its index.
+		//   - A smaller divergent variant (likely a compacted copy) never overwrites
+		//     the fuller archive, regardless of version — `capy vault reindex`
+		//     upgrades those from the stored blob instead.
+		//   - A different-hash variant of equal-or-larger total size replaces in place.
 		replace := false
 		if found {
-			if hash == existingHash || size < existingSize {
+			upToDate := hash == existingHash && existingIndexVersion >= currentIndexVersion
+			smallerDivergent := hash != existingHash && size < existingSize
+			if upToDate || smallerDivergent {
 				res.record(ImportedSession{UUID: sf.UUID, SizeBytes: size, Status: StatusSkipped})
 				continue
 			}
@@ -255,32 +260,9 @@ func readSidecars(sf *SessionFile, mainBytes []byte) (files []File, contents map
 // buildRecord scans the main JSONL and any subagent transcripts into FTS rows
 // and assembles the full SessionRecord for one insert/replace.
 func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, size int64, machineID string) (*SessionRecord, error) {
-	scanOut, err := ScanSession(bytes.NewReader(mainBytes))
+	scanOut, fts, err := scanSessionAndSubagents(sf.UUID, mainBytes, files)
 	if err != nil {
 		return nil, err
-	}
-
-	fts := make([]FTSRow, 0, len(scanOut.Results))
-	for _, r := range scanOut.Results {
-		fts = append(fts, ftsRow(sf.UUID, r))
-	}
-
-	// Subagent transcripts are scanned too, so their content is searchable and
-	// their results carry the subagent_id anchor the TUI uses to open them.
-	for _, f := range files {
-		id := subagentID(f.RelativePath)
-		if id == "" {
-			continue
-		}
-		results, serr := ScanSubagent(bytes.NewReader(f.RawContent), id)
-		if serr != nil {
-			slog.Warn("vault import: subagent scan failed, skipping",
-				"uuid", sf.UUID, "subagent", id, "error", serr)
-			continue
-		}
-		for _, r := range results {
-			fts = append(fts, ftsRow(sf.UUID, r))
-		}
 	}
 
 	sess := Session{
@@ -295,9 +277,45 @@ func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, s
 		ClaudeProjectDir: sf.ProjectDir,
 		ProjectPath:      resolveProjectPath(scanOut.CWD, sf.ProjectDir),
 		GitBranch:        scanOut.Branch,
+		IndexVersion:     currentIndexVersion,
 		RawJSONL:         mainBytes,
 	}
 	return &SessionRecord{Session: sess, Files: files, FTS: fts}, nil
+}
+
+// scanSessionAndSubagents scans a session's main transcript and its subagent
+// sidecars into FTS rows with the current indexer, returning the main ScanOutput
+// (for session metadata) alongside the combined rows. Subagent transcripts are
+// scanned too so their content is searchable and their results carry the
+// subagent_id anchor the TUI uses to open them. Shared by import (buildRecord,
+// which uses the metadata) and reindex (which uses only the rows).
+func scanSessionAndSubagents(uuid string, mainBytes []byte, files []File) (*ScanOutput, []FTSRow, error) {
+	scanOut, err := ScanSession(bytes.NewReader(mainBytes))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	fts := make([]FTSRow, 0, len(scanOut.Results))
+	for _, r := range scanOut.Results {
+		fts = append(fts, ftsRow(uuid, r))
+	}
+
+	for _, f := range files {
+		id := subagentID(f.RelativePath)
+		if id == "" {
+			continue
+		}
+		results, serr := ScanSubagent(bytes.NewReader(f.RawContent), id)
+		if serr != nil {
+			slog.Warn("vault: subagent scan failed, skipping",
+				"uuid", uuid, "subagent", id, "error", serr)
+			continue
+		}
+		for _, r := range results {
+			fts = append(fts, ftsRow(uuid, r))
+		}
+	}
+	return scanOut, fts, nil
 }
 
 // resolveProjectPath picks the best-known real project path: the JSONL cwd when

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -110,6 +111,51 @@ func TestWrongPassphraseError(t *testing.T) {
 	// garbage-file recovery in getDB() still proceeds.
 	assert.True(t, IsSQLiteCorruption(err))
 	assert.False(t, IsWrongPassphrase(fmt.Errorf("some other error")))
+}
+
+func TestIsBusy(t *testing.T) {
+	assert.False(t, IsBusy(nil))
+	assert.True(t, IsBusy(sqlite3.Error{Code: sqlite3.ErrBusy}))
+	assert.True(t, IsBusy(sqlite3.Error{Code: sqlite3.ErrLocked}))
+	// Wrapped typed error still classifies via errors.As.
+	assert.True(t, IsBusy(fmt.Errorf("wrap: %w", sqlite3.Error{Code: sqlite3.ErrBusy})))
+	// String fallback for errors that lost the typed wrapper.
+	assert.True(t, IsBusy(fmt.Errorf("database is locked")))
+	assert.True(t, IsBusy(fmt.Errorf("database table is locked")))
+	assert.False(t, IsBusy(fmt.Errorf("some other error")))
+	// A typed non-busy code is not busy.
+	assert.False(t, IsBusy(sqlite3.Error{Code: sqlite3.ErrConstraint}))
+}
+
+func TestBeginImmediate_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite3", filepath.Join(dir, "bi.db"))
+	require.NoError(t, err)
+	defer db.Close()
+	_, err = db.Exec("CREATE TABLE t (id INTEGER)")
+	require.NoError(t, err)
+
+	tx, err := BeginImmediate(db, "t")
+	require.NoError(t, err)
+	_, err = tx.Exec("INSERT INTO t (id) VALUES (1)")
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	var n int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM t").Scan(&n))
+	assert.Equal(t, 1, n)
+}
+
+func TestBeginImmediate_MissingTable(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite3", filepath.Join(dir, "bi.db"))
+	require.NoError(t, err)
+	defer db.Close()
+
+	// The no-op write against a nonexistent table fails with a non-busy error,
+	// so BeginImmediate returns it immediately (no retry stall).
+	_, err = BeginImmediate(db, "does_not_exist")
+	require.Error(t, err)
 }
 
 func TestOpenWithCanary_Encrypted_RoundTrip(t *testing.T) {

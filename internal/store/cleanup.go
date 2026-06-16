@@ -6,6 +6,8 @@ import (
 	"math"
 	"os"
 	"time"
+
+	"github.com/serpro69/capy/internal/sqliteutil"
 )
 
 const (
@@ -337,10 +339,10 @@ func (s *ContentStore) evict(candidates []SourceInfo, dryRun bool) error {
 		return err
 	}
 
-	// Use beginImmediate so the eviction sweep gets the same retry-on-BUSY
-	// backoff as the migration and Index paths; a plain db.Begin() surfaces
-	// SQLITE_BUSY mid-transaction under write contention.
-	tx, err := beginImmediate(db)
+	// Use sqliteutil.BeginImmediate so the eviction sweep gets the same
+	// retry-on-BUSY backoff as the migration and Index paths; a plain db.Begin()
+	// surfaces SQLITE_BUSY mid-transaction under write contention.
+	tx, err := sqliteutil.BeginImmediate(db, "sources")
 	if err != nil {
 		return fmt.Errorf("beginning cleanup transaction: %w", err)
 	}

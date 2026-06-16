@@ -126,11 +126,20 @@ func collectDisplay(raw []byte) []displayMsg {
 		}
 	})
 
+	// Correlate tool_use_id → call summary so each tool_result renders with the
+	// call that produced it.
+	toolUses := make(map[string]string)
+	for _, e := range entries {
+		if e.role == displayAssistant {
+			collectToolUseSummaries(e.blocks, toolUses)
+		}
+	}
+
 	var msgs []displayMsg
 	for _, e := range entries {
 		switch e.role {
 		case displayUser:
-			human, tools := renderUserContent(e.content)
+			human, tools := renderUserContent(e.content, toolUses)
 			if human != "" {
 				msgs = append(msgs, displayMsg{displayUser, human})
 			}
@@ -168,8 +177,11 @@ func dedupBlocks(dst, add []contentBlock) []contentBlock {
 
 // renderUserContent splits a user message into human text and a list of
 // (unbounded) tool_result texts. Content is either a plain string (human input)
-// or an array of text / tool_result blocks.
-func renderUserContent(raw json.RawMessage) (human string, tools []string) {
+// or an array of text / tool_result blocks. Each tool_result is prefixed with its
+// originating tool-call summary (from toolUses, keyed by tool_use_id) so display
+// shows which call produced the output; an unknown id leaves the text unprefixed.
+// Shared by render.go (`vault show`) and transcript.go (TUI viewer).
+func renderUserContent(raw json.RawMessage, toolUses map[string]string) (human string, tools []string) {
 	if len(raw) == 0 {
 		return "", nil
 	}
@@ -189,7 +201,7 @@ func renderUserContent(raw json.RawMessage) (human string, tools []string) {
 			}
 		case "tool_result":
 			if t := toolResultText(b.Content); t != "" {
-				tools = append(tools, t)
+				tools = append(tools, prefixToolResult(toolUses[b.ToolUseID], t))
 			}
 		}
 	}

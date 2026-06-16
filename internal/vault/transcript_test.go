@@ -45,6 +45,9 @@ func TestParseTranscript_RolesAndAnchors(t *testing.T) {
 	assert.Equal(t, RoleTool, msgs[2].Role)
 	assert.Equal(t, 2, msgs[2].SourceLine)
 	assert.Contains(t, msgs[2].Body, "build log")
+	// The tool_result is tagged with its originating call (tool_use_id t1).
+	assert.Equal(t, "Read /p/config.toml\nbuild log: error at line 5", msgs[2].Body,
+		"tool_result carries the call summary that produced it")
 }
 
 func TestParseTranscript_DeduplicatesProgressiveSnapshots(t *testing.T) {

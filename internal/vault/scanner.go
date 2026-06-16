@@ -259,10 +259,20 @@ func scan(r io.Reader) (*ScanOutput, error) {
 		emitted++
 	}
 
+	// Correlate tool_use_id → call summary across the whole transcript so each
+	// tool_result row can be tagged with the call that produced it. tool_use
+	// always precedes its result, but building the full map upfront is simplest.
+	toolUses := make(map[string]string)
+	for _, e := range entries {
+		if e.kind == entryAssistant {
+			collectToolUseSummaries(e.blocks, toolUses)
+		}
+	}
+
 	for _, e := range entries {
 		switch e.kind {
 		case entryUser:
-			humanText, toolResults := extractUserBlocks(e.content)
+			humanText, toolResults := extractUserBlocks(e.content, toolUses)
 			// Only human text starts a new turn; a tool_result-only user entry
 			// continues the calling assistant's turn.
 			if humanText != "" {
@@ -321,8 +331,11 @@ func mergeBlocks(entry *scanEntry, nb []contentBlock) {
 
 // extractUserBlocks splits a user message into human text (Role=user) and a
 // bounded list of tool_result texts (Role=tool). Content is either a plain
-// string (human input) or an array of blocks (text and/or tool_result).
-func extractUserBlocks(raw json.RawMessage) (humanText string, toolResults []string) {
+// string (human input) or an array of blocks (text and/or tool_result). Each
+// tool_result is prefixed with its originating tool-call summary (from toolUses,
+// keyed by tool_use_id) so the result is searchable alongside the call that
+// produced it; an unknown id leaves the text unprefixed.
+func extractUserBlocks(raw json.RawMessage, toolUses map[string]string) (humanText string, toolResults []string) {
 	if len(raw) == 0 {
 		return "", nil
 	}
@@ -342,11 +355,36 @@ func extractUserBlocks(raw json.RawMessage) (humanText string, toolResults []str
 			}
 		case "tool_result":
 			if t := toolResultText(b.Content); t != "" {
+				// Prefix the call summary BEFORE truncation so it survives in the
+				// 75%-head of a long result.
+				t = prefixToolResult(toolUses[b.ToolUseID], t)
 				toolResults = append(toolResults, truncateHeadTail(t, maxToolResultChars))
 			}
 		}
 	}
 	return strings.Join(texts, "\n"), toolResults
+}
+
+// collectToolUseSummaries records, for each tool_use block in blocks, a summary
+// of the call (tool name + key inputs, via toolUseSummary) keyed by the block's
+// id — the tool_use_id a later tool_result block references. Used by all three
+// JSONL parsers (scanner/render/transcript) to associate a result with its call.
+func collectToolUseSummaries(blocks []contentBlock, into map[string]string) {
+	for _, b := range blocks {
+		if b.Type == "tool_use" && b.ID != "" {
+			into[b.ID] = toolUseSummary(b.Name, b.Input)
+		}
+	}
+}
+
+// prefixToolResult prepends a tool-call label to a tool_result body, separated by
+// a newline, so the result carries the context of the call that produced it. An
+// empty label (unknown/missing tool_use_id) leaves the body unchanged.
+func prefixToolResult(label, body string) string {
+	if label == "" {
+		return body
+	}
+	return label + "\n" + body
 }
 
 // extractAssistantText keeps text blocks and tool_use summaries; thinking blocks

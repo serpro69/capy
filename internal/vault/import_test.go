@@ -51,6 +51,7 @@ func TestImport_InsertsSessionWithMetadataAndFTS(t *testing.T) {
 	assert.False(t, got.StartTime.IsZero())
 	assert.False(t, got.EndTime.IsZero())
 	assert.True(t, bytes.Equal(sampleMainJSONL(t), got.RawJSONL), "raw_jsonl preserved verbatim")
+	assert.Equal(t, currentIndexVersion, got.IndexVersion, "fresh import stamps the current indexer version")
 
 	files, err := s.GetFiles(uuid)
 	require.NoError(t, err)
@@ -85,6 +86,35 @@ func TestImport_IdempotentSkipsUnchanged(t *testing.T) {
 	assert.Equal(t, 1, second.Skipped)
 	require.Len(t, second.Sessions, 1)
 	assert.Equal(t, StatusSkipped, second.Sessions[0].Status)
+}
+
+func TestImport_ReindexesVersionStaleSession(t *testing.T) {
+	s := newTestVault(t)
+	root := t.TempDir()
+	projDir := filepath.Join(root, "-home-user-proj")
+	uuid := "11111111-2222-3333-4444-555555555555"
+	writeSession(t, projDir, uuid, sampleMainJSONL(t), nil)
+
+	require.Equal(t, 1, importFixture(t, s, root, ImportOptions{}).Imported)
+
+	// Simulate a session indexed by an older indexer (stale FTS).
+	db, err := s.getDB()
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE vault_sessions SET index_version=? WHERE uuid=?`, currentIndexVersion-1, uuid)
+	require.NoError(t, err)
+
+	// Re-import the unchanged files: content hash matches, but the stale index
+	// version forces a re-scan + replace (opportunistic on-disk upgrade) rather
+	// than a skip.
+	res := importFixture(t, s, root, ImportOptions{})
+	assert.Equal(t, 1, res.Updated)
+	assert.Equal(t, 0, res.Skipped)
+	require.Len(t, res.Sessions, 1)
+	assert.Equal(t, StatusUpdated, res.Sessions[0].Status)
+
+	got, err := s.GetSession(uuid[:8])
+	require.NoError(t, err)
+	assert.Equal(t, currentIndexVersion, got.IndexVersion, "re-import bumps the index to current")
 }
 
 func TestImport_LargerTotalReplaces_ShrinkingMainGrownSidecar(t *testing.T) {
