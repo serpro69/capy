@@ -1,0 +1,144 @@
+[Claude]
+Both `import` and `reindex` write (via `BeginImmediate`) **and** run the scanner; the read-only commands (`list`/`search`/`stats`) do neither — and the user says only `import`/`reindex` hang. That narrows it to the write path or the scanner. Let me build and run the vault tests with a hard timeout to see what actually hangs.
+→ Bash export CAPY_DB_KEY=test-key-for-development CAPY_VAULT_KEY=test-key && go build -tags fts5 ./... 2>&1 | head -40 && echo "BUILD_DONE=$?"
+
+[Tool result]
+Bash export CAPY_DB_KEY=test-key-for-development CAPY_VAULT_KEY=test-key && go build -tags fts5 ./... 2>&1 | head -40 && echo "BUILD_DONE=$?"
+BUILD_DONE=0
+
+[Claude]
+→ Bash export CAPY_DB_KEY=test-key-for-development CAPY_VAULT_KEY=test-key && timeout 90 go test -tags fts5 -count=1 -timeout 60s ./internal/vault/... 2>&1 | tail -40; echo "EXIT=$?"
+
+[Tool result]
+Bash export CAPY_DB_KEY=test-key-for-development CAPY_VAULT_KEY=test-key && timeout 90 go test -tags fts5 -count=1 -timeout 60s ./internal/vault/... 2>&1 | tail -40; echo "EXIT=$?"
+ok  	github.com/serpro69/capy/internal/vault	9.995s
+ok  	github.com/serpro69/capy/internal/vault/tui	0.011s
+EXIT=0
+
+[Claude]
+Tests pass in ~10s — the hang doesn't reproduce in unit tests, so it's data- or environment-dependent (a real `vault.db`). Let me gather facts about the real environment: is the MCP server holding the vault open, where's the DB, and let me diff the write/migration code against master.
+→ Bash cd /home/sergio/Projects/personal/capy
+echo "=== running capy processes ==="
+ps aux | grep -i '[c]apy' | head -20
+echo "=== vault db path candidates ==="
+ls -la ~/.local/share/capy/ 2>/dev/null; ls -la ~/.capy/ 2>/dev/null
+echo "=== git diff store.go beginImmediate-related (master..HEAD) ==="
+git diff master..HEAD -- internal/vault/store.go | grep -nE '^\+|^-' | grep -iE 'begin|maxopen|setmax|conn|wal|journal' | head -40
+
+[Tool result]
+Bash cd /home/sergio/Projects/personal/capy
+echo "=== running capy processes ==="
+ps aux | grep -i '[c]apy' | head -20
+echo "=== vault db path candidates ==="
+ls -la ~/.local/share/capy/ 2>/dev/null; ls -la ~/.capy/ 2>/dev/null
+echo "=== git diff store.go beginImmediate-related (master..HEAD) ==="
+git diff master..HEAD -- internal/vault/store.go | grep -nE '^\+|^-' | grep -iE 'begin|maxopen|setmax|conn|wal|journal' | head -40
+=== running capy processes ===
+sergio   1588891  0.0  0.0  19792  3672 pts/0    SN+  14:55   0:00 bash .claude/scripts/capy.sh serve
+sergio   1588893  0.2  0.0 2727912 18896 pts/0   SNl+ 14:55   0:00 /home/sergio/.local/bin/capy serve
+sergio   1631372  0.0  0.0  23168  6960 ?        SNs  14:59   0:00 /usr/bin/zsh -c source /home/sergio/.claude/shell-snapshots/snapshot-zsh-1781614518739-whjd20.sh 2>/dev/null || true && export TOOLBOX_PLUGIN_ROOT="/home/sergio/.claude/plugins/cache/claude-toolbox/kk/0.18.3" : && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && eval 'cd /home/sergio/Projects/personal/capy echo "=== running capy processes ===" ps aux | grep -i '"'"'[c]apy'"'"' | head -20 echo "=== vault db path candidates ===" ls -la ~/.local/share/capy/ 2>/dev/null; ls -la ~/.capy/ 2>/dev/null echo "=== git diff store.go beginImmediate-related (master..HEAD) ===" git diff master..HEAD -- internal/vault/store.go | grep -nE '"'"'^\+|^-'"'"' | grep -iE '"'"'begin|maxopen|setmax|conn|wal|journal'"'"' | head -40' < /dev/null && pwd -P >| /tmp/claude-211a-cwd
+sergio   1631743  0.0  0.0  19924  3800 ?        SN   14:59   0:00 bash /home/sergio/Projects/personal/capy/.claude/toolbox/scripts/statusline_enhanced.sh
+sergio   1631770  0.0  0.0  19924  1760 ?        SN   14:59   0:00 bash /home/sergio/Projects/personal/capy/.claude/toolbox/scripts/statusline_enhanced.sh
+sergio   1631781  0.0  0.0  23184  4272 ?        SN   14:59   0:00 /usr/bin/zsh -c source /home/sergio/.claude/shell-snapshots/snapshot-zsh-1781614518739-whjd20.sh 2>/dev/null || true && export TOOLBOX_PLUGIN_ROOT="/home/sergio/.claude/plugins/cache/claude-toolbox/kk/0.18.3" : && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && eval 'cd /home/sergio/Projects/personal/capy echo "=== running capy processes ===" ps aux | grep -i '"'"'[c]apy'"'"' | head -20 echo "=== vault db path candidates ===" ls -la ~/.local/share/capy/ 2>/dev/null; ls -la ~/.capy/ 2>/dev/null echo "=== git diff store.go beginImmediate-related (master..HEAD) ===" git diff master..HEAD -- internal/vault/store.go | grep -nE '"'"'^\+|^-'"'"' | grep -iE '"'"'begin|maxopen|setmax|conn|wal|journal'"'"' | head -40' < /dev/null && pwd -P >| /tmp/claude-211a-cwd
+=== vault db path candidates ===
+total 485476
+drwxr-xr-x  7 sergio sergio      4096 Jun 16 14:59 .
+drwx------ 55 sergio sergio      4096 Jun 16 14:12 ..
+drwxr-xr-x  2 sergio sergio      4096 May  6 21:40 4af8ee51c6179a87
+drwxr-xr-x  2 sergio sergio      4096 May  6 21:40 6533e803728f7181
+drwxr-xr-x  2 sergio sergio      4096 May  6 21:40 764efeeb226955ad
+drwxr-xr-x  2 sergio sergio      4096 May  6 21:40 9e33c5c992fd9146
+drwxr-xr-x  2 sergio sergio      4096 May  6 21:40 d6a77368c48e226b
+-rw-rw-r--  1 sergio sergio 497090560 Jun 16 14:58 vault.db
+=== git diff store.go beginImmediate-related (master..HEAD) ===
+108:-	tx, err := beginImmediate(db)
+109:+	tx, err := sqliteutil.BeginImmediate(db, "vault_meta")
+117:-	tx, err := beginImmediate(db)
+118:+	tx, err := sqliteutil.BeginImmediate(db, "vault_meta")
+149:+// full-vault reindex avoids massive WAL bloat / write amplification (the stored
+156:+	tx, err := sqliteutil.BeginImmediate(db, "vault_meta")
+158:+		return fmt.Errorf("begin: %w", err)
+190:+// maxVersion (indexed by an older indexer), newest first. Reindex walks these to
+226:-	tx, err := beginImmediate(db)
+227:+	tx, err := sqliteutil.BeginImmediate(db, "vault_meta")
+
+[Claude]
+Key findings: the **`capy serve` MCP server (PID 1588893) is running and holds the vault open**, and `vault.db` is **497 MB**. After migration, every existing session gets `index_version=1 < 2`, so both `reindex` and `import` re-scan/re-write *every* session — under write contention with the live server.
+
+Theory isn't enough. Let me reproduce decisively against a **copy** (no server contention) with a goroutine dump on timeout to see exactly where it blocks.
+→ Bash cd /home/sergio/Projects/personal/capy
+ls -la ~/.local/share/capy/vault.db* 2>/dev/null
+echo "=== copying vault to temp (isolate from live server) ==="
+mkdir -p /tmp/capy-repro
+cp ~/.local/share/capy/vault.db /tmp/capy-repro/vault.db
+cp ~/.local/share/capy/vault.db-wal /tmp/capy-repro/ 2>/dev/null || echo "(no -wal)"
+cp ~/.local/share/capy/vault.db-shm /tmp/capy-repro/ 2>/dev/null || echo "(no -shm)"
+ls -la /tmp/capy-repro/
+echo "=== build feature binary ==="
+go build -tags fts5 -o /tmp/capy-repro/capy ./cmd/capy && echo "built ok"
+
+[Tool result]
+Bash cd /home/sergio/Projects/personal/capy
+ls -la ~/.local/share/capy/vault.db* 2>/dev/null
+echo "=== copying vault to temp (isolate from live server) ==="
+mkdir -p /tmp/capy-repro
+cp ~/.local/share/capy/vault.db /tmp/capy-repro/vault.db
+cp ~/.local/share/capy/vault.db-wal /tmp/capy-repro/ 2>/dev/null || echo "(no -wal)"
+cp ~/.local/share/capy/vault.db-shm /tmp/capy-repro/ 2>/dev/null || echo "(no -shm)"
+ls -la /tmp/capy-repro/
+echo "=== build feature binary ==="
+go build -tags fts5 -o /tmp/capy-repro/capy ./cmd/capy && echo "built ok"
+-rw-rw-r-- 1 sergio sergio 497090560 Jun 16 14:58 /home/sergio/.local/share/capy/vault.db
+-rw-rw-r-- 1 sergio sergio     32768 Jun 16 14:59 /home/sergio/.local/share/capy/vault.db-shm
+-rw-rw-r-- 1 sergio sergio         0 Jun 16 14:59 /home/sergio/.local/share/capy/vault.db-wal
+=== copying vault to temp (isolate from live server) ===
+total 485692
+drwxrwxr-x  2 sergio sergio      4096 Jun 16 15:00 .
+drwxrwxrwt 40 root   root      212992 Jun 16 15:00 ..
+-rw-rw-r--  1 sergio sergio 497090560 Jun 16 15:00 vault.db
+-rw-rw-r--  1 sergio sergio     32768 Jun 16 15:00 vault.db-shm
+-rw-rw-r--  1 sergio sergio         0 Jun 16 15:00 vault.db-wal
+=== build feature binary ===
+built ok
+
+[Claude]
+I need the real `CAPY_VAULT_KEY` to open the copy. Let me find how the server gets it.
+→ Bash cd /home/sergio/Projects/personal/capy
+echo "=== capy.sh ==="; cat .claude/scripts/capy.sh 2>/dev/null | grep -iE 'vault|key|export' | head
+echo "=== env of running server (vault key) ==="; tr '\0' '\n' < /proc/1588893/environ 2>/dev/null | grep -iE 'CAPY_VAULT_KEY|CAPY_DB_KEY' | sed 's/=.*/=<redacted-present>/'
+echo "=== how to point binary at temp db ==="; /tmp/capy-repro/capy vault --help 2>&1 | grep -iE 'db|path|env' | head
+
+[Tool result]
+Bash cd /home/sergio/Projects/personal/capy
+echo "=== capy.sh ==="; cat .claude/scripts/capy.sh 2>/dev/null | grep -iE 'vault|key|export' | head
+echo "=== env of running server (vault key) ==="; tr '\0' '\n' < /proc/1588893/environ 2>/dev/null | grep -iE 'CAPY_VAULT_KEY|CAPY_DB_KEY' | sed 's/=.*/=<redacted-present>/'
+echo "=== how to point binary at temp db ==="; /tmp/capy-repro/capy vault --help 2>&1 | grep -iE 'db|path|env' | head
+=== capy.sh ===
+=== env of running server (vault key) ===
+CAPY_VAULT_KEY=<redacted-present>
+CAPY_DB_KEY=<redacted-present>
+=== how to point binary at temp db ===
+Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).
+  checkpoint  Flush the WAL into vault.db (run before copying it to another machine)
+
+[Claude]
+The user clarified the MCP server has **no access to the vault** — so server contention is ruled out. The hang is in capy's own CLI logic on the real 497 MB data. Let me find the DB-path resolution so I can point the binary at my copy, then reproduce with a goroutine dump.
+→ Bash cd /home/sergio/Projects/personal/capy
+grep -rn "func VaultDBPath\|XDG_DATA_HOME\|CAPY_DATA\|func.*DataDir\|local/share/capy" internal/vault/ internal/config/ | grep -v _test.go | head
+
+[Tool result]
+Bash cd /home/sergio/Projects/personal/capy
+grep -rn "func VaultDBPath\|XDG_DATA_HOME\|CAPY_DATA\|func.*DataDir\|local/share/capy" internal/vault/ internal/config/ | grep -v _test.go | head
+internal/vault/machine.go:69:// not data, so it lives under XDG_CONFIG_HOME rather than XDG_DATA_HOME.
+internal/config/paths.go:197:	dataHome := os.Getenv("XDG_DATA_HOME")
+internal/vault/encryption.go:27://  2. $XDG_DATA_HOME/capy/vault.db (default: ~/.local/share/capy/vault.db)
+internal/vault/encryption.go:29:// The vault DB is data, not config, so it lives under XDG_DATA_HOME — the same
+internal/vault/encryption.go:31:func VaultDBPath() string {
+internal/vault/encryption.go:35:	dataHome := os.Getenv("XDG_DATA_HOME")
+
+[Claude]
+→ Read /home/sergio/Projects/personal/capy/internal/vault/encryption.go
+
+[Tool result]
+Read /home/sergio/Projects/personal/capy/internal/vault/encryption.go
+⋯ [output omitted from index — 42 line(s)]

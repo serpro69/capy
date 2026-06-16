@@ -12,6 +12,7 @@
 !.capy.toml
 !.sessions/
 !.arc.yml
+!docs/**/.files
 
 # Logs
 logs
