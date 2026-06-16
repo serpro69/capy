@@ -48,7 +48,37 @@ func (s *ContentStore) Index(content, label, contentType string, kind SourceKind
 	// Chunk content before entering the transaction to minimize lock hold time.
 	chunks := chunkContent(content, contentType)
 
-	return s.indexPreparedChunks(content, label, contentType, kind, chunks)
+	return s.indexPreparedChunks(content, label, contentType, kind, "", chunks)
+}
+
+// IndexWithFilePath indexes content like Index but records filePath in the
+// source row, marking it file-backed. Stale detection (refreshStaleSources)
+// only inspects file-backed sources, so callers that index from disk must use
+// this entry point to enable auto-refresh. filePath should be the resolved
+// absolute path. content may be either the file's raw bytes (the handleIndex
+// path) or already-sanitized content (the refreshStaleSources path) — both are
+// accepted because StripSecrets is idempotent.
+func (s *ContentStore) IndexWithFilePath(content, label, contentType string, kind SourceKind, filePath string) (*IndexResult, error) {
+	if !kind.Valid() {
+		return nil, fmt.Errorf("invalid source kind %q", kind)
+	}
+
+	if len(content) > s.maxSourceBytes {
+		return nil, &SourceTooLargeError{Size: len(content), Limit: s.maxSourceBytes}
+	}
+
+	if contentType == "" {
+		contentType = DetectContentType(content)
+	}
+
+	// Strip secrets before hashing, identical to Index. StripSecrets is
+	// idempotent, so passing already-sanitized content (the auto-refresh path)
+	// is a safe no-op that still produces the post-StripSecrets hash.
+	content = sanitize.StripSecrets(content)
+
+	chunks := chunkContent(content, contentType)
+
+	return s.indexPreparedChunks(content, label, contentType, kind, filePath, chunks)
 }
 
 // IndexChunked indexes pre-chunked content into the knowledge base. The caller
@@ -65,13 +95,14 @@ func (s *ContentStore) IndexChunked(transcript, label, contentType string, kind 
 
 	transcript = sanitize.StripSecrets(transcript)
 
-	return s.indexPreparedChunks(transcript, label, contentType, kind, chunks)
+	return s.indexPreparedChunks(transcript, label, contentType, kind, "", chunks)
 }
 
 // indexPreparedChunks is the shared transaction body for Index and IndexChunked.
 // content is used for hashing and vocabulary extraction; chunks are the pre-built
-// pieces to store.
-func (s *ContentStore) indexPreparedChunks(content, label, contentType string, kind SourceKind, chunks []Chunk) (*IndexResult, error) {
+// pieces to store. filePath, when non-empty, marks the source file-backed for
+// stale detection; callers without a backing file pass "".
+func (s *ContentStore) indexPreparedChunks(content, label, contentType string, kind SourceKind, filePath string, chunks []Chunk) (*IndexResult, error) {
 	db, err := s.getDB()
 	if err != nil {
 		return nil, err
@@ -109,7 +140,8 @@ func (s *ContentStore) indexPreparedChunks(content, label, contentType string, k
 	var existingID int64
 	var existingHash sql.NullString
 	var existingKind SourceKind
-	err = tx.Stmt(s.stmtFindSourceByLabel).QueryRow(label).Scan(&existingID, &existingHash, &existingKind)
+	var existingFilePath sql.NullString
+	err = tx.Stmt(s.stmtFindSourceByLabel).QueryRow(label).Scan(&existingID, &existingHash, &existingKind, &existingFilePath)
 	if err == nil {
 		if existingHash.Valid && existingHash.String == hash {
 			// Same content — promote/demote kind if needed, update access time.
@@ -120,6 +152,14 @@ func (s *ContentStore) indexPreparedChunks(content, label, contentType string, k
 			} else {
 				if _, err := tx.Stmt(s.stmtUpdateSourceAccess).Exec(label, hash); err != nil {
 					return nil, fmt.Errorf("updating access time: %w", err)
+				}
+			}
+			// Attach file_path when a source first indexed inline (file_path
+			// NULL) is later re-indexed from a file with identical content.
+			// Without this, stale detection would never activate for it.
+			if filePath != "" && !existingFilePath.Valid {
+				if _, err := tx.Stmt(s.stmtUpdateSourceFilePath).Exec(filePath, existingID); err != nil {
+					return nil, fmt.Errorf("updating source file_path: %w", err)
 				}
 			}
 			if err := tx.Commit(); err != nil {
@@ -139,7 +179,8 @@ func (s *ContentStore) indexPreparedChunks(content, label, contentType string, k
 	}
 
 	// Insert source and chunks.
-	res, err := tx.Stmt(s.stmtInsertSource).Exec(label, contentType, len(chunks), codeChunks, hash, kind)
+	filePathArg := sql.NullString{String: filePath, Valid: filePath != ""}
+	res, err := tx.Stmt(s.stmtInsertSource).Exec(label, contentType, len(chunks), codeChunks, hash, kind, filePathArg)
 	if err != nil {
 		return nil, fmt.Errorf("inserting source: %w", err)
 	}

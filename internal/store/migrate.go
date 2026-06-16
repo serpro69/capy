@@ -16,6 +16,8 @@ import (
 //     retroactively tags ephemeral rows by label prefix.
 //   - 018_add_session_kind: adds a migration-tracking table and extends the
 //     CHECK constraint to accept 'session' as a valid kind value.
+//   - 019_add_file_path: adds the nullable `file_path` column to the sources
+//     table, used by hash-based stale detection to re-index changed files.
 func applyMigrations(db *sql.DB) error {
 	if err := migrate017AddSourceKind(db); err != nil {
 		return fmt.Errorf("migration 017_add_source_kind: %w", err)
@@ -25,6 +27,9 @@ func applyMigrations(db *sql.DB) error {
 	}
 	if err := migrate018AddSessionKind(db); err != nil {
 		return fmt.Errorf("migration 018_add_session_kind: %w", err)
+	}
+	if err := migrate019AddFilePath(db); err != nil {
+		return fmt.Errorf("migration 019_add_file_path: %w", err)
 	}
 	return nil
 }
@@ -221,5 +226,73 @@ func rebuildSourcesTable(tx *sql.Tx) error {
 	}
 
 	return nil
+}
+
+// migrate019AddFilePath adds the nullable `file_path` column to the sources
+// table. It backs hash-based stale detection: file-backed sources record the
+// resolved absolute path so search can re-index them when the file changes.
+//
+// Idempotency has two layers because two DB populations exist:
+//   - Fresh DBs (created with the current schemaSQL) already have the column,
+//     so a bare ALTER TABLE would fail with "duplicate column name". The
+//     table_info probe detects this and only records the migration.
+//   - Older DBs lack the column entirely; the ALTER adds it.
+//
+// The migrations-table row short-circuits both checks on subsequent opens.
+func migrate019AddFilePath(db *sql.DB) error {
+	tx, err := sqliteutil.BeginImmediate(db, "sources")
+	if err != nil {
+		return fmt.Errorf("begin immediate: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	applied, err := migrationApplied(tx, "019_add_file_path")
+	if err != nil {
+		return err
+	}
+	if applied {
+		return tx.Commit()
+	}
+
+	hasColumn, err := sourcesHasColumn(tx, "file_path")
+	if err != nil {
+		return err
+	}
+	if !hasColumn {
+		if _, err := tx.Exec(`ALTER TABLE sources ADD COLUMN file_path TEXT`); err != nil {
+			return fmt.Errorf("alter table: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(`INSERT INTO migrations (name) VALUES ('019_add_file_path')`); err != nil {
+		return fmt.Errorf("recording migration: %w", err)
+	}
+	return tx.Commit()
+}
+
+// sourcesHasColumn reports whether the sources table has a column named col.
+// The cursor is fully drained (or closed early on a hit) before the caller
+// commits, so it never blocks the transaction's commit.
+func sourcesHasColumn(tx *sql.Tx, col string) (bool, error) {
+	rows, err := tx.Query("PRAGMA table_info(sources)")
+	if err != nil {
+		return false, fmt.Errorf("pragma table_info: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var dfltValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dfltValue, &pk); err != nil {
+			return false, fmt.Errorf("scanning table_info: %w", err)
+		}
+		if name == col {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
