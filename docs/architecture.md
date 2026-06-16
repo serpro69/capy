@@ -233,9 +233,45 @@ Four layers:
 vault_sessions   — one row per session: metadata, 1:1 location, raw JSONL blob
 vault_files      — associated files (subagents, tool-results), CASCADE on session delete
 vault_fts        — FTS5 virtual table, one row per message, Porter tokenizer
+                   (tool_result rows tagged with their call summary; Read/NotebookRead
+                    result bodies excluded — see scanner.go excludedResultTools)
 vault_meta       — key-value store (reserved)
 vault_migrations — migration tracking (by-name)
 ```
+
+### Search index & `index_version`
+
+`vault_fts` holds one row per message — `user` (human turns), `assistant`, `tool`
+(tool_result output), and `system`. Tool-result rows are tagged with their
+originating call summary (e.g. `Bash <cmd>`), correlated by `tool_use_id`. Result
+bodies from tools listed in `scanner.go`'s `excludedResultTools` (currently `Read`,
+`NotebookRead`) are **excluded from the index** — they are file/cell-content dumps
+that are noise for conversation search and already live on disk/git. The call
+itself stays searchable on the assistant row, and `raw_jsonl` keeps the body for
+`show`/restore (it is collapsed to a one-line marker only in the rendered view).
+
+The extraction logic is **versioned**. `currentIndexVersion` (a constant in
+`store.go`) stamps the indexer; every session row records the `index_version` it
+was indexed at. Changing what `scanner.go` extracts (including the exclusion set)
+makes existing rows stale, so:
+
+- **Bump `currentIndexVersion`** when the change ships across a *released* boundary
+  — a vault written by an older release must be detected as stale.
+- **Redefine the version in place** (no bump) when the change is still unreleased
+  and no shipped/durable vault holds that version yet — a single reindex already
+  yields the complete result, so a bump would only force a redundant second pass.
+- To stop indexing a tool's result body, add its name to `excludedResultTools`
+  (the same bump rule applies).
+
+Stale sessions are upgraded two ways, both rewriting **only** the FTS rows (never
+the `raw_jsonl` blob): `capy vault reindex` rebuilds every session below
+`currentIndexVersion` from the stored blob (so it reaches sessions already deleted
+from disk), and a normal `capy vault import` opportunistically rebuilds an on-disk
+session whose content is unchanged but whose index is stale. `capy vault stats`
+prints the current version and how many sessions are still below it (the reindex
+backlog).
+
+Full rationale and the rejected alternatives: [ADR-025](adr/025-vault-index-version-and-reindex.md).
 
 ### Archival Paths
 
@@ -247,14 +283,14 @@ vault_migrations — migration tracking (by-name)
 | Command | Description |
 |---------|-------------|
 | `capy vault import` | Scan and archive sessions (mutating; `--dry-run` to preview) |
-| `capy vault reindex` | Rebuild the FTS index for sessions on an older `index_version` (DB-driven; no disk dependency) |
+| `capy vault reindex` | Rebuild the FTS index for sessions on an older `index_version` (DB-driven; no disk dependency; batched + WAL-checkpointed) |
 | `capy vault list` | List sessions, reverse chronological |
 | `capy vault search` | Full-text search with snippets |
 | `capy vault show` | Display full session (pager, `--format` for export) |
 | `capy vault restore` | Write JSONL + session files back to disk |
 | `capy vault resume` | Restore + launch `claude --resume` |
 | `capy vault delete` | Remove a session from the vault |
-| `capy vault stats` | DB size, session count, per-project breakdown |
+| `capy vault stats` | DB size, session count, per-project breakdown, index version + reindex backlog |
 | `capy vault checkpoint` | Flush WAL (required before cross-machine copy) |
 
 All commands support `--tui` for interactive browsing/search/viewing.
