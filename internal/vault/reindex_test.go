@@ -3,6 +3,7 @@ package vault
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -116,6 +117,34 @@ func TestReindex_RebuildsStaleSessionFTSAndBumpsVersion(t *testing.T) {
 	require.Len(t, post, 1, "rebuilt tool row carries the enriched call summary")
 
 	// A second run is a no-op: nothing is outdated anymore.
+	res2, err := Reindex(context.Background(), s)
+	require.NoError(t, err)
+	assert.Equal(t, 0, res2.Reindexed)
+}
+
+func TestReindex_CrossesBatchBoundary(t *testing.T) {
+	s := newTestVault(t)
+	// One more than a single batch so reindex flushes at least twice — proves the
+	// batch traversal upgrades every stale session, not just the first batch.
+	// (sampleRecord's blob scans to no FTS rows; this test verifies batch traversal
+	// and version bumping, not FTS content — that is covered above.)
+	const n = reindexBatchSessions + 1
+	for i := range n {
+		rec := sampleRecord(fmt.Sprintf("%08d-1111-2222-3333-444444444444", i))
+		rec.Session.IndexVersion = 1
+		require.NoError(t, s.InsertSession(rec))
+	}
+
+	res, err := Reindex(context.Background(), s)
+	require.NoError(t, err)
+	assert.Equal(t, n, res.Reindexed, "every stale session across batches is reindexed")
+	assert.Equal(t, 0, res.Errors)
+
+	// All sessions are now current: nothing remains outdated and a re-run is a no-op.
+	uuids, err := s.OutdatedSessionUUIDs(context.Background(), currentIndexVersion)
+	require.NoError(t, err)
+	assert.Empty(t, uuids, "no sessions remain below currentIndexVersion after a full reindex")
+
 	res2, err := Reindex(context.Background(), s)
 	require.NoError(t, err)
 	assert.Equal(t, 0, res2.Reindexed)

@@ -43,9 +43,19 @@ so a vault migrated with `DEFAULT 1` still records new inserts as current.
 
 The skip predicate skips a found session only when `hash == existing_hash AND
 existing_index_version >= currentIndexVersion`. A hash-identical but
-version-stale session is re-scanned and replaced (its `mainBytes` are already in
-memory), upgrading it for free during a normal import. The pre-existing
-"smaller divergent variant" skip is preserved unchanged.
+version-stale session is re-scanned and has its **FTS rebuilt only** (via the
+same path as reindex — see D4), not a full `ReplaceSession`: the blob is
+byte-identical, so rewriting `raw_jsonl` + every sidecar would be pure write
+amplification for zero benefit. The pre-existing "smaller divergent variant"
+skip is preserved unchanged.
+
+> **Amended 2026-06-16.** D2 originally specified `ReplaceSession` (full blob
+> rewrite) for the version-stale case. Combined with the migration flagging every
+> pre-existing row stale, that made the first post-upgrade `import`/`reindex`
+> rewrite the whole vault — and, worse, run a per-session `DELETE FROM vault_fts
+> WHERE session_uuid = ?` over an `UNINDEXED` column (a full FTS scan each time),
+> which turned a large vault's upgrade into an effective hang. The fix routes the
+> version-stale case through the FTS-only path and batches the rebuild (D4).
 
 ### D3: `capy vault reindex` is an explicit, DB-driven command
 
@@ -55,15 +65,28 @@ and bumps the version. It is a CLI command, **not** a background worker — off 
 server hot path, observable progress, no goroutine/lifecycle complexity. This is
 the only path that reaches sessions archived then deleted from disk.
 
-### D4: `UpdateSessionFTS` rewrites only the index, never blobs
+### D4: FTS rebuilds rewrite only the index (never blobs), in batches
 
-Reindex writes via `UpdateSessionFTS`, which deletes + reinserts the session's FTS
-rows and bumps `index_version` in one transaction — it does **not** rewrite
-`raw_jsonl` or any sidecar blob (unlike `ReplaceSession`). On a full-vault reindex
-this avoids massive WAL bloat / write amplification for zero benefit (the stored
-content is unchanged). It bumps the version first and uses `RowsAffected() == 0` as
-an existence check, bailing before inserting FTS rows that a concurrent
-`DeleteSession` would otherwise orphan (`vault_fts` has no foreign key).
+Reindex and import's version-stale upgrade write via `RebuildFTSBatch` (with
+`UpdateSessionFTS` as the single-session wrapper), which deletes + reinserts the
+sessions' FTS rows and bumps `index_version` in one transaction — it does **not**
+rewrite `raw_jsonl` or any sidecar blob (unlike `ReplaceSession`). On a full-vault
+reindex this avoids massive WAL bloat / write amplification for zero benefit (the
+stored content is unchanged). It bumps each version first and uses
+`RowsAffected() == 0` as a per-session existence check, dropping a session a
+concurrent `DeleteSession` removed before its FTS rows are touched (`vault_fts` has
+no foreign key, so this prevents orphans).
+
+Because `vault_fts.session_uuid` is `UNINDEXED` (a deliberate schema choice — no
+external-content table), a `WHERE session_uuid = ?` delete is a full scan of the
+entire FTS index. `RebuildFTSBatch` therefore collapses the per-session delete into
+**one** `WHERE session_uuid IN (...)` scan per batch; reindex (and import) drive it
+in bounded batches (`reindexBatchSessions` / `reindexBatchBytes`) and truncate the
+WAL between batches. This is what keeps a large-vault upgrade from degrading into a
+per-session-full-scan hang. The structural alternative — making the delete
+indexable via an external-content FTS table or a rowid↔uuid map — is intentionally
+NOT taken here (it is a schema change with cross-machine-copy compatibility
+implications); the batched bulk-delete fixes the hang within the existing schema.
 
 ### D5: A name-keyed migration runner; `0001`/`0002` reserved for v2
 

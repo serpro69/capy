@@ -280,6 +280,58 @@ func TestVaultStore_ReplaceSession(t *testing.T) {
 	assert.Equal(t, uuid, newHits[0].SessionUUID)
 }
 
+func TestRebuildFTSBatch_BulkReplacesBumpsAndSkipsMissing(t *testing.T) {
+	s := newTestVault(t)
+	a := "aaaaaaaa-0000-0000-0000-000000000001"
+	b := "bbbbbbbb-0000-0000-0000-000000000002"
+	for _, u := range []string{a, b} {
+		rec := sampleRecord(u)
+		rec.Session.IndexVersion = 1
+		require.NoError(t, s.InsertSession(rec))
+	}
+
+	missing := "cccccccc-0000-0000-0000-000000000003" // never inserted
+	n, err := s.RebuildFTSBatch([]FTSRebuild{
+		{UUID: a, NewVersion: currentIndexVersion, FTS: []FTSRow{
+			{SessionUUID: a, Role: "tool", LineIndex: 0, ContentText: "Bash ankylosaurus"}}},
+		{UUID: b, NewVersion: currentIndexVersion, FTS: []FTSRow{
+			{SessionUUID: b, Role: "tool", LineIndex: 0, ContentText: "Read megalodon"}}},
+		{UUID: missing, NewVersion: currentIndexVersion, FTS: []FTSRow{
+			{SessionUUID: missing, Role: "tool", LineIndex: 0, ContentText: "should-not-index"}}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, n, "two existing sessions rebuilt; the missing one skipped")
+
+	// Every batched session's prior FTS rows are replaced wholesale (the IN-scan
+	// delete covers all of them in one pass).
+	for _, term := range []string{"brontosaurus", "stegosaurus"} {
+		hits, err := s.Search(SearchOptions{Query: term})
+		require.NoError(t, err)
+		assert.Emptyf(t, hits, "previous FTS row %q replaced for all batched sessions", term)
+	}
+	// New rows searchable and scoped to the right session.
+	hitsA, err := s.Search(SearchOptions{Query: "ankylosaurus"})
+	require.NoError(t, err)
+	require.Len(t, hitsA, 1)
+	assert.Equal(t, a, hitsA[0].SessionUUID)
+	hitsB, err := s.Search(SearchOptions{Query: "megalodon"})
+	require.NoError(t, err)
+	require.Len(t, hitsB, 1)
+	assert.Equal(t, b, hitsB[0].SessionUUID)
+
+	// Versions bumped for survivors; blobs untouched (FTS-only).
+	for _, u := range []string{a, b} {
+		got, err := s.GetSession(u)
+		require.NoError(t, err)
+		assert.Equal(t, currentIndexVersion, got.IndexVersion)
+		assert.True(t, bytes.Equal(sampleRecord(u).Session.RawJSONL, got.RawJSONL), "blob untouched by a batched rebuild")
+	}
+	// No orphan rows for the session that does not exist (no FK on vault_fts).
+	orphan, err := s.Search(SearchOptions{Query: "should-not-index"})
+	require.NoError(t, err)
+	assert.Empty(t, orphan, "no FTS rows inserted for a nonexistent session")
+}
+
 func TestVaultStore_GetSessionPartialMatch(t *testing.T) {
 	s := newTestVault(t)
 	uuidA := "dddddddd-1111-aaaa-0000-000000000001"

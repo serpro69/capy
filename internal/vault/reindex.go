@@ -5,11 +5,24 @@ import (
 	"log/slog"
 )
 
-// ReindexResult aggregates a reindex run.
+// ReindexResult aggregates a reindex run. Reindexed + Errors can be fewer than the
+// outdated-session count: a session deleted between selection and rebuild is
+// silently skipped (neither reindexed nor an error).
 type ReindexResult struct {
 	Reindexed int // sessions whose FTS was rebuilt and version bumped
 	Errors    int // sessions that failed to re-scan or write (logged, not fatal)
 }
+
+const (
+	// reindexBatchSessions / reindexBatchBytes bound one rebuild transaction:
+	// whichever limit hits first flushes the batch. Batching collapses the
+	// per-session vault_fts delete (a full scan — session_uuid is UNINDEXED) into
+	// one IN-scan per batch and keeps a batch's FTS rows (held in memory until
+	// flush) and the WAL bounded. Sessions, not the IN-clause param count, is the
+	// real cap — kept well under SQLite's bind-parameter limit.
+	reindexBatchSessions = 50
+	reindexBatchBytes    = 32 * 1024 * 1024
+)
 
 // Reindex rebuilds the FTS index for every session whose index_version is below
 // currentIndexVersion, reading raw_jsonl + sidecars from the DB (NOT from disk —
@@ -37,6 +50,34 @@ func Reindex(ctx context.Context, store *VaultStore) (ReindexResult, error) {
 		return res, err
 	}
 
+	var (
+		batch      []FTSRebuild
+		batchBytes int64
+	)
+	// flush rebuilds the accumulated batch in one transaction, then truncates the
+	// WAL so a long run does not accrete it. A batch write failure is not fatal to
+	// the run: the batch's sessions are counted as errors and left at their old
+	// version for a later retry (each batch commits independently, so completed
+	// sessions stay upgraded). Sessions that vanished mid-batch (rebuilt < len)
+	// are silently skipped, not errors.
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		rebuilt, err := store.RebuildFTSBatch(batch)
+		if err != nil {
+			slog.Warn("vault reindex: batch write failed, skipping",
+				"count", len(batch), "error", err)
+			res.Errors += len(batch)
+		} else {
+			res.Reindexed += rebuilt
+			if err := store.checkpointWAL(); err != nil {
+				slog.Warn("vault reindex: wal checkpoint failed (continuing)", "error", err)
+			}
+		}
+		batch, batchBytes = nil, 0
+	}
+
 	for _, uuid := range uuids {
 		if ctx.Err() != nil {
 			slog.Debug("vault reindex: cancelled before completion",
@@ -50,14 +91,24 @@ func Reindex(ctx context.Context, store *VaultStore) (ReindexResult, error) {
 			res.Errors++
 			continue
 		}
-		if err := store.UpdateSessionFTS(uuid, currentIndexVersion, fts); err != nil {
-			slog.Warn("vault reindex: write failed, skipping", "uuid", uuid, "error", err)
-			res.Errors++
-			continue
+		batch = append(batch, FTSRebuild{UUID: uuid, NewVersion: currentIndexVersion, FTS: fts})
+		batchBytes += ftsContentBytes(fts)
+		if len(batch) >= reindexBatchSessions || batchBytes >= reindexBatchBytes {
+			flush()
 		}
-		res.Reindexed++
 	}
+	flush()
 	return res, nil
+}
+
+// ftsContentBytes sums the searchable text size of a session's FTS rows — the
+// memory/WAL cost that reindexBatchBytes / maxBatchBytes bound per batch.
+func ftsContentBytes(fts []FTSRow) int64 {
+	var n int64
+	for _, r := range fts {
+		n += int64(len(r.ContentText))
+	}
+	return n
 }
 
 // rebuildSessionFTS loads a session's stored transcript + subagent sidecars from
