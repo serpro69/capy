@@ -21,6 +21,17 @@ import (
 // minUUIDPrefix is the shortest partial UUID accepted for lookups (git-style).
 const minUUIDPrefix = 8
 
+// currentIndexVersion stamps the FTS indexer logic. Bump it whenever scanner.go's
+// extraction changes in a way that should re-index already-archived sessions.
+//   - v1: tool_result rows indexed as result text only.
+//   - v2: tool_result rows tagged with their originating call summary
+//     (see scanner.go collectToolUseSummaries).
+//
+// Sessions whose index_version is below this are upgraded by `capy vault reindex`
+// (DB-driven, covers archived-and-deleted-from-disk sessions) or opportunistically
+// by a re-`import` of a still-on-disk session (see import.go skip gate).
+const currentIndexVersion = 2
+
 // schemaSQL is the full v1 vault schema. Every table uses IF NOT EXISTS so the
 // DDL is safe to run on each open. vault_migrations is created by the migration
 // framework (migrations.go), not here.
@@ -43,6 +54,7 @@ CREATE TABLE IF NOT EXISTS vault_sessions (
   project_path       TEXT NOT NULL,
   git_branch         TEXT,
   archived_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+  index_version      INTEGER NOT NULL DEFAULT 1,
   raw_jsonl          BLOB NOT NULL
 );
 
@@ -75,7 +87,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_end_time ON vault_sessions(end_time DESC
 // sessionMetaColumns is the column list returned for list/lookup queries; it
 // omits the (potentially large) raw_jsonl blob.
 const sessionMetaColumns = `uuid, title, start_time, end_time, message_count, size_bytes, ` +
-	`content_hash, machine_id, claude_project_dir, project_path, git_branch, archived_at`
+	`content_hash, machine_id, claude_project_dir, project_path, git_branch, archived_at, index_version`
 
 // ErrSessionNotFound is returned when no session matches a lookup.
 var ErrSessionNotFound = errors.New("session not found")
@@ -107,6 +119,7 @@ type Session struct {
 	ProjectPath      string
 	GitBranch        string // empty == NULL
 	ArchivedAt       string // DB-managed timestamp; opaque string
+	IndexVersion     int    // FTS indexer version stamp (see currentIndexVersion)
 	RawJSONL         []byte
 }
 
@@ -189,6 +202,7 @@ type VaultStore struct {
 	stmtDeleteSession        *sql.Stmt
 	stmtSessionsByPrefix     *sql.Stmt
 	stmtFilesBySession       *sql.Stmt
+	stmtUpdateIndexVersion   *sql.Stmt
 }
 
 // NewVaultStore creates a VaultStore for the database at dbPath. The DB is not
@@ -282,8 +296,8 @@ func (s *VaultStore) prepareStatements(db *sql.DB) error {
 	if s.stmtInsertSession, err = db.Prepare(`
 		INSERT INTO vault_sessions
 			(uuid, title, start_time, end_time, message_count, size_bytes, content_hash,
-			 machine_id, claude_project_dir, project_path, git_branch, raw_jsonl)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
+			 machine_id, claude_project_dir, project_path, git_branch, index_version, raw_jsonl)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
 		return err
 	}
 
@@ -293,7 +307,7 @@ func (s *VaultStore) prepareStatements(db *sql.DB) error {
 		UPDATE vault_sessions SET
 			title = ?, start_time = ?, end_time = ?, message_count = ?, size_bytes = ?,
 			content_hash = ?, machine_id = ?, claude_project_dir = ?, project_path = ?,
-			git_branch = ?, raw_jsonl = ?
+			git_branch = ?, index_version = ?, raw_jsonl = ?
 		WHERE uuid = ?`); err != nil {
 		return err
 	}
@@ -334,6 +348,11 @@ func (s *VaultStore) prepareStatements(db *sql.DB) error {
 		return err
 	}
 
+	if s.stmtUpdateIndexVersion, err = db.Prepare(`
+		UPDATE vault_sessions SET index_version = ? WHERE uuid = ?`); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -342,6 +361,7 @@ func (s *VaultStore) statements() []*sql.Stmt {
 		s.stmtInsertSession, s.stmtUpdateSession, s.stmtInsertFile,
 		s.stmtDeleteFilesBySession, s.stmtInsertFTS, s.stmtDeleteFTSBySession,
 		s.stmtDeleteSession, s.stmtSessionsByPrefix, s.stmtFilesBySession,
+		s.stmtUpdateIndexVersion,
 	}
 }
 
@@ -370,6 +390,7 @@ func (s *VaultStore) Close() error {
 	s.stmtDeleteSession = nil
 	s.stmtSessionsByPrefix = nil
 	s.stmtFilesBySession = nil
+	s.stmtUpdateIndexVersion = nil
 
 	err := s.db.Close()
 	s.db = nil
@@ -436,7 +457,7 @@ func (s *VaultStore) writeOne(w SessionWrite) error {
 	if err != nil {
 		return err
 	}
-	tx, err := beginImmediate(db)
+	tx, err := sqliteutil.BeginImmediate(db, "vault_meta")
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
@@ -462,7 +483,7 @@ func (s *VaultStore) WriteBatch(writes []SessionWrite) error {
 	if err != nil {
 		return err
 	}
-	tx, err := beginImmediate(db)
+	tx, err := sqliteutil.BeginImmediate(db, "vault_meta")
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
@@ -485,7 +506,8 @@ func (s *VaultStore) writeRecord(tx *sql.Tx, w SessionWrite) error {
 		if _, err := tx.Stmt(s.stmtUpdateSession).Exec(
 			nullString(sess.Title), writeTime(sess.StartTime), writeTime(sess.EndTime),
 			sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
-			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch), sess.RawJSONL,
+			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch),
+			sess.IndexVersion, sess.RawJSONL,
 			sess.UUID,
 		); err != nil {
 			return fmt.Errorf("update session: %w", err)
@@ -500,7 +522,8 @@ func (s *VaultStore) writeRecord(tx *sql.Tx, w SessionWrite) error {
 		if _, err := tx.Stmt(s.stmtInsertSession).Exec(
 			sess.UUID, nullString(sess.Title), writeTime(sess.StartTime), writeTime(sess.EndTime),
 			sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
-			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch), sess.RawJSONL,
+			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch),
+			sess.IndexVersion, sess.RawJSONL,
 		); err != nil {
 			return fmt.Errorf("insert session: %w", err)
 		}
@@ -529,6 +552,79 @@ func (s *VaultStore) writeChildren(tx *sql.Tx, rec *SessionRecord) error {
 	return nil
 }
 
+// UpdateSessionFTS rebuilds a session's FTS rows and bumps its index_version in a
+// single transaction. Unlike ReplaceSession it touches ONLY the search index and
+// the version stamp — it does NOT rewrite raw_jsonl or any sidecar blob, so a
+// full-vault reindex avoids massive WAL bloat / write amplification (the stored
+// content is unchanged; only the derived index is rebuilt). Used by Reindex.
+func (s *VaultStore) UpdateSessionFTS(uuid string, newVersion int, fts []FTSRow) error {
+	db, err := s.getDB()
+	if err != nil {
+		return err
+	}
+	tx, err := sqliteutil.BeginImmediate(db, "vault_meta")
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Bump the version first and use RowsAffected as an existence check: vault_fts
+	// has no foreign key to vault_sessions, so if the session was deleted
+	// concurrently (e.g. `capy vault delete` racing a reindex) we must bail before
+	// inserting FTS rows that would otherwise be orphaned.
+	res, err := tx.Stmt(s.stmtUpdateIndexVersion).Exec(newVersion, uuid)
+	if err != nil {
+		return fmt.Errorf("update index_version: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil // session no longer exists — nothing to (re)index
+	}
+
+	if _, err := tx.Stmt(s.stmtDeleteFTSBySession).Exec(uuid); err != nil {
+		return fmt.Errorf("delete fts: %w", err)
+	}
+	insFTS := tx.Stmt(s.stmtInsertFTS)
+	for _, r := range fts {
+		if _, err := insFTS.Exec(
+			r.ContentText, uuid, r.SubagentID,
+			r.TurnIndex, r.MessageIndex, r.LineIndex, r.Role,
+		); err != nil {
+			return fmt.Errorf("insert fts row: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// OutdatedSessionUUIDs returns the UUIDs of sessions whose index_version is below
+// maxVersion (indexed by an older indexer), newest first. Reindex walks these to
+// rebuild their FTS from the stored raw_jsonl + sidecars. ctx cancels the query —
+// this is the one potentially heavy read in the reindex path.
+func (s *VaultStore) OutdatedSessionUUIDs(ctx context.Context, maxVersion int) ([]string, error) {
+	db, err := s.getDB()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT uuid FROM vault_sessions WHERE index_version < ? ORDER BY end_time DESC`, maxVersion)
+	if err != nil {
+		return nil, fmt.Errorf("querying outdated sessions: %w", err)
+	}
+	defer rows.Close()
+
+	uuids := make([]string, 0)
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, fmt.Errorf("scanning uuid: %w", err)
+		}
+		uuids = append(uuids, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating outdated sessions: %w", err)
+	}
+	return uuids, nil
+}
+
 // DeleteSession removes a session and its FTS rows transactionally; vault_files
 // cascade via the foreign key. Returns false if no session matched the exact UUID.
 func (s *VaultStore) DeleteSession(uuid string) (bool, error) {
@@ -536,7 +632,7 @@ func (s *VaultStore) DeleteSession(uuid string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	tx, err := beginImmediate(db)
+	tx, err := sqliteutil.BeginImmediate(db, "vault_meta")
 	if err != nil {
 		return false, fmt.Errorf("begin: %w", err)
 	}
@@ -668,23 +764,24 @@ func (s *VaultStore) ListSessions(opts ListOptions) ([]Session, error) {
 	return out, nil
 }
 
-// SessionDigest returns the stored content_hash and total size_bytes for an
-// exact UUID, used by the import pipeline's idempotency check. found is false
-// (with a nil error) when the session is not yet archived.
-func (s *VaultStore) SessionDigest(uuid string) (hash string, size int64, found bool, err error) {
+// SessionDigest returns the stored content_hash, total size_bytes, and
+// index_version for an exact UUID, used by the import pipeline's idempotency +
+// reindex-gate check. found is false (with a nil error) when the session is not
+// yet archived.
+func (s *VaultStore) SessionDigest(uuid string) (hash string, size int64, indexVersion int, found bool, err error) {
 	db, err := s.getDB()
 	if err != nil {
-		return "", 0, false, err
+		return "", 0, 0, false, err
 	}
-	err = db.QueryRow(`SELECT content_hash, size_bytes FROM vault_sessions WHERE uuid = ?`, uuid).
-		Scan(&hash, &size)
+	err = db.QueryRow(`SELECT content_hash, size_bytes, index_version FROM vault_sessions WHERE uuid = ?`, uuid).
+		Scan(&hash, &size, &indexVersion)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", 0, false, nil
+		return "", 0, 0, false, nil
 	}
 	if err != nil {
-		return "", 0, false, fmt.Errorf("querying session digest: %w", err)
+		return "", 0, 0, false, fmt.Errorf("querying session digest: %w", err)
 	}
-	return hash, size, true, nil
+	return hash, size, indexVersion, true, nil
 }
 
 // MachineSummary reports the total session count and how many were archived by
@@ -845,7 +942,7 @@ func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 	dest := []any{
 		&sess.UUID, &title, &startTime, &endTime, &sess.MessageCount, &sess.SizeBytes,
 		&sess.ContentHash, &sess.MachineID, &sess.ClaudeProjectDir, &sess.ProjectPath,
-		&gitBranch, &archivedAt,
+		&gitBranch, &archivedAt, &sess.IndexVersion,
 	}
 	if raw != nil {
 		dest = append(dest, raw)

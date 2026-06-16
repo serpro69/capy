@@ -51,6 +51,7 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 
 	cmd.AddCommand(
 		newVaultImportCmd(env),
+		newVaultReindexCmd(env),
 		newVaultListCmd(env),
 		newVaultSearchCmd(env),
 		newVaultShowCmd(env),
@@ -132,6 +133,42 @@ func printImportResult(res vault.ImportResult, dryRun bool) {
 	}
 	fmt.Printf("\nimported %d, updated %d, skipped %d, errors %d\n",
 		res.Imported, res.Updated, res.Skipped, res.Errors)
+}
+
+// ---------------------------------------------------------------------------
+// reindex
+// ---------------------------------------------------------------------------
+
+func newVaultReindexCmd(env *vaultEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:   "reindex",
+		Short: "Rebuild the search index for sessions indexed by an older version",
+		Long: `Re-scan archived sessions whose search index predates the current indexer
+and rebuild their FTS rows in place. Reads from the vault DB (not disk), so it
+upgrades even sessions that were archived and later deleted from your Claude
+projects directory. Only the search index is rewritten — transcripts and sidecars
+are left untouched.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := guardTUI(cmd); err != nil {
+				return err
+			}
+			st := vault.NewVaultStore(env.dbPath)
+			defer st.Close()
+			if err := st.Open(); err != nil {
+				return err
+			}
+
+			res, err := vault.Reindex(cmd.Context(), st)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("reindexed %d, errors %d\n", res.Reindexed, res.Errors)
+			if res.Errors > 0 {
+				return fmt.Errorf("%d session(s) failed to reindex", res.Errors)
+			}
+			return nil
+		},
+	}
 }
 
 // ---------------------------------------------------------------------------

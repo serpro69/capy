@@ -28,16 +28,16 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [ ] 0.6 **Decision gate:** if the hook-time content is already the compacted transcript (pre-compaction turns absent), STOP — file-based capture is impossible; re-scope Tasks 14–16 per design.md §PreCompact (SessionStart-cached copy, or drop). Record the decision in the investigation doc
 
 ## Task 1: Consolidate `beginImmediate`/`isBusy` into `sqliteutil`
-- **Status:** pending
+- **Status:** done — completed early on branch `vault_tool_cmd` (the [vault-tool-entries](../../vault-tool-entries/) feature needed the vault migration runner, which sits on this consolidation). Do NOT redo.
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Task 0, 2, 5–13
 - **Docs:** [implementation.md#beginimmediateisbusy-consolidation-v21](./implementation.md)
 
 ### Subtasks
-- [ ] 1.1 Add exported `BeginImmediate(db *sql.DB) (*sql.Tx, error)` and `IsBusy(error) bool` to `internal/sqliteutil/sqliteutil.go` (parameterize or keep a thin per-store wrapper for the meta-table no-op write)
-- [ ] 1.2 Delete the copies and update all call sites. Locations (verified): vault — both in `internal/vault/migrations.go` (incl. the `TODO`); store — `beginImmediate` in `internal/store/migrate.go:109`, `isBusy` in `internal/store/retry.go:14`
-- [ ] 1.3 Verify: `make test-race` green; `grep -rn "func beginImmediate\|func isBusy" internal/` returns only `sqliteutil`
+- [x] 1.1 Added exported `BeginImmediate(db *sql.DB, lockTable string) (*sql.Tx, error)` and `IsBusy(error) bool` to `internal/sqliteutil/sqliteutil.go`. **Signature note:** the no-op lock table is **parameterized** (`lockTable`) rather than a per-store wrapper — store passes `"sources"`, vault passes `"vault_meta"`.
+- [x] 1.2 Deleted the copies and updated all call sites. `internal/store/retry.go` removed; `beginImmediate`/`isBusy` gone from `internal/store/migrate.go` and `internal/vault/migrations.go`; call sites in `store/{migrate,cleanup}.go` and `vault/store.go` route through `sqliteutil`.
+- [x] 1.3 Verified: `make test-race` green; `grep -rn "func beginImmediate\|func isBusy" internal/` returns nothing (only `sqliteutil.BeginImmediate`/`IsBusy` exist).
 
 ## Task 2: Route `session.SessionDir()` through `config.ClaudeProjectsDir()`
 - **Status:** pending
@@ -81,7 +81,7 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 
 ### Subtasks
 - [ ] 5.1 `go get github.com/klauspost/compress` + `go mod tidy`; apply `/kk:dependency-handling` to confirm the resolved `EncodeAll`/`DecodeAll` API
-- [ ] 5.2 **Build the migration runner** (`vaultMigrationApplied` + apply-loop in `migrations.go`, mirroring `internal/store/migrate.go`) and migration `0001_blob_encoding`: `ALTER TABLE vault_sessions ADD COLUMN encoding TEXT` + same on `vault_files` (legacy rows → NULL = raw)
+- [ ] 5.2 ~~Build the migration runner~~ **(runner already built on branch `vault_tool_cmd`** — `vaultMigrationApplied` + apply-loop + `columnExists` are in `migrations.go`, with `0003_add_index_version` as the first migration). Just **add migration `0001_blob_encoding`** to the apply-loop: `ALTER TABLE vault_sessions ADD COLUMN encoding TEXT` + same on `vault_files` (legacy rows → NULL = raw), guarded by `vaultMigrationApplied`, idempotent, inside `sqliteutil.BeginImmediate`. NOTE: `0003` already exists (index_version), so apply order is `0001`→`0002`→`0003` by listing them in that order in `migrateVault`; they are independent + name-keyed, so order is cosmetic.
 - [ ] 5.3 Create `internal/vault/codec.go` — shared package-level `*zstd.Encoder`/`*zstd.Decoder`; `encodeBlob([]byte) (data []byte, encoding string)` (returns `"raw"` when `CAPY_VAULT_NO_COMPRESS` set or not smaller, else `"zstd"`); `decodeBlob(encoding string, b []byte) ([]byte, error)` switching on the column. **No magic-byte detection** (unsafe for arbitrary sidecars — the `encoding` column is authoritative)
 - [ ] 5.4 Wire write side: add `encoding` to `vault_sessions`/`vault_files` INSERT+UPDATE statements; `writeRecord` (raw_jsonl) and `writeChildren` (file content) call `encodeBlob` and store the returned encoding. On first `zstd` write, set `vault_meta` `min_reader_version` = `"2"`. **Add the matching open-time check in `openDB()`** (after the canary): read `min_reader_version` and refuse with a clear error if it exceeds a `supportedReaderVersion` constant (`2`) — without the read step the marker protects no one
 - [ ] 5.5 Wire read side: add `encoding` to `sessionMetaColumns` + `GetFiles` SELECT; thread it into `decodeBlob` in `scanSessionMeta`/`GetSession` and `GetFiles`

@@ -1,6 +1,6 @@
 # Design: Tool name + inputs in vault tool-result entries
 
-> Status: in-progress
+> Status: done
 > Created: 2026-06-16
 > Branch: vault_tool_cmd
 > Related: [v2 plan](../vault/v2/) — this feature implements **v2 Task 1** (the
