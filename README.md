@@ -274,6 +274,8 @@ capy encrypt
 
 ## Session Vault
 
+<img width="1690" height="896" alt="capy_vault" src="https://github.com/user-attachments/assets/c588e8a0-86d0-44bb-ab9d-c7cb1f7ab74e" />
+
 Claude Code sessions are ephemeral, project-scoped, and destructible — lost to compaction (`/compact` rewrites the JSONL), Claude Code's 30-day auto-cleanup, or accidental deletion. The **vault** inverts all three: a **permanent, global, verbatim** archive of every session across every project, in its own encrypted SQLite database. It is both a full-text search index _and_ a backup/restore system — the raw JSONL is preserved byte-for-byte, so any archived session can be restored or resumed.
 
 The vault is independent of the rest of capy. You can use it even if you don't run the MCP server or use any context-window features — the only prerequisite is the `CAPY_VAULT_KEY` environment variable.
