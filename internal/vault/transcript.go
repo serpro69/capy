@@ -153,9 +153,9 @@ func ParseTranscript(raw []byte, subagentIDs []string) []TranscriptMessage {
 		}
 	})
 
-	// Correlate tool_use_id → call summary so each tool_result renders with the
-	// call that produced it.
-	toolUses := make(map[string]string)
+	// Correlate tool_use_id → call so each tool_result renders with the call that
+	// produced it (and excluded-tool results collapse to a marker).
+	toolUses := make(map[string]toolCall)
 	for _, e := range entries {
 		if e.role == displayAssistant {
 			collectToolUseSummaries(e.blocks, toolUses)

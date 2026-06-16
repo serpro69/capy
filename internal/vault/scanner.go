@@ -262,7 +262,7 @@ func scan(r io.Reader) (*ScanOutput, error) {
 	// Correlate tool_use_id → call summary across the whole transcript so each
 	// tool_result row can be tagged with the call that produced it. tool_use
 	// always precedes its result, but building the full map upfront is simplest.
-	toolUses := make(map[string]string)
+	toolUses := make(map[string]toolCall)
 	for _, e := range entries {
 		if e.kind == entryAssistant {
 			collectToolUseSummaries(e.blocks, toolUses)
@@ -334,8 +334,10 @@ func mergeBlocks(entry *scanEntry, nb []contentBlock) {
 // string (human input) or an array of blocks (text and/or tool_result). Each
 // tool_result is prefixed with its originating tool-call summary (from toolUses,
 // keyed by tool_use_id) so the result is searchable alongside the call that
-// produced it; an unknown id leaves the text unprefixed.
-func extractUserBlocks(raw json.RawMessage, toolUses map[string]string) (humanText string, toolResults []string) {
+// produced it; an unknown id leaves the text unprefixed. A tool_result whose call
+// is in excludedResultTools (Read/NotebookRead) is skipped entirely — its body is
+// a file/cell dump, and the call itself stays searchable via the assistant row.
+func extractUserBlocks(raw json.RawMessage, toolUses map[string]toolCall) (humanText string, toolResults []string) {
 	if len(raw) == 0 {
 		return "", nil
 	}
@@ -354,10 +356,14 @@ func extractUserBlocks(raw json.RawMessage, toolUses map[string]string) (humanTe
 				texts = append(texts, c)
 			}
 		case "tool_result":
+			call := toolUses[b.ToolUseID]
+			if excludedResultTools[call.name] {
+				continue // file/cell dump — excluded from FTS (call stays searchable on the assistant row)
+			}
 			if t := toolResultText(b.Content); t != "" {
 				// Prefix the call summary BEFORE truncation so it survives in the
 				// 75%-head of a long result.
-				t = prefixToolResult(toolUses[b.ToolUseID], t)
+				t = prefixToolResult(call.summary, t)
 				toolResults = append(toolResults, truncateHeadTail(t, maxToolResultChars))
 			}
 		}
@@ -365,14 +371,42 @@ func extractUserBlocks(raw json.RawMessage, toolUses map[string]string) (humanTe
 	return strings.Join(texts, "\n"), toolResults
 }
 
-// collectToolUseSummaries records, for each tool_use block in blocks, a summary
-// of the call (tool name + key inputs, via toolUseSummary) keyed by the block's
+// toolCall is the correlated info for a tool_use, keyed by its id and matched to
+// the later tool_result that references it. name drives the result-exclusion
+// policy (excludedResultTools); summary is the searchable/display label
+// ("Read /path", "Bash <cmd>").
+type toolCall struct {
+	name    string
+	summary string
+}
+
+// excludedResultTools names the tools whose tool_result BODY is dropped from the
+// FTS index (scanner) and collapsed in the rendered transcript (render/transcript).
+// Their output is a file/cell content dump — Read returns file contents, the
+// legacy NotebookRead returns notebook cells+outputs — that is high-volume,
+// low-signal for conversation search and already lives on disk/git. The tool CALL
+// summary ("Read /path") is still indexed on the assistant tool_use row, so
+// finding a session by what it read still works; raw_jsonl keeps the body verbatim
+// for `vault show --format json` and restore.
+//
+// To exclude another tool, add its name here (within an unreleased version, no
+// index_version bump is needed — see currentIndexVersion). Bash, Grep, etc. are
+// deliberately NOT excluded — their output (errors, command results) is unique,
+// non-reproducible signal worth searching.
+var excludedResultTools = map[string]bool{
+	"Read":         true,
+	"NotebookRead": true,
+}
+
+// collectToolUseSummaries records, for each tool_use block in blocks, the call's
+// name + summary (tool name + key inputs, via toolUseSummary) keyed by the block's
 // id — the tool_use_id a later tool_result block references. Used by all three
-// JSONL parsers (scanner/render/transcript) to associate a result with its call.
-func collectToolUseSummaries(blocks []contentBlock, into map[string]string) {
+// JSONL parsers (scanner/render/transcript) to associate a result with its call
+// and to apply the excludedResultTools policy.
+func collectToolUseSummaries(blocks []contentBlock, into map[string]toolCall) {
 	for _, b := range blocks {
 		if b.Type == "tool_use" && b.ID != "" {
-			into[b.ID] = toolUseSummary(b.Name, b.Input)
+			into[b.ID] = toolCall{name: b.Name, summary: toolUseSummary(b.Name, b.Input)}
 		}
 	}
 }

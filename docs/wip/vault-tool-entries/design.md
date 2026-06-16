@@ -43,8 +43,9 @@ assistant-side `tool_use` rendering — reusing it keeps the result-side label
 
 ### Enrichment format
 
-Each parser builds a `map[toolUseID]summary` from the assistant `tool_use` blocks
-(tool_use always precedes its result), then prefixes each tool-result entry:
+Each parser builds a `map[toolUseID]toolCall` (the call's `name` + `summary`) from
+the assistant `tool_use` blocks (tool_use always precedes its result), via the
+shared `collectToolUseSummaries`. It then prefixes each tool-result entry:
 
 ```
 <summary>\n<result text>
@@ -52,6 +53,27 @@ Each parser builds a `map[toolUseID]summary` from the assistant `tool_use` block
 
 When the id is unknown (older/malformed transcripts, or a result with no matching
 call) the prefix is omitted — graceful degradation, never an error.
+
+### Excluded results (Read / NotebookRead)
+
+A correlated `tool_use` whose **name** is in `excludedResultTools` (`scanner.go` —
+currently `Read`, `NotebookRead`) has its result **body** dropped instead of
+indexed/displayed: that output is a file/cell-content dump — high-volume,
+low-signal for conversation search, and already on disk/git.
+
+- **FTS (`scanner.go` `extractUserBlocks`):** no `roleTool` row is emitted for the
+  result.
+- **Display (`render.go`/`transcript.go` `renderUserContent`):** the body collapses
+  to a one-line marker — `<summary>\n⋯ [output omitted from index — N line(s)]`
+  (`collapsedToolResult`).
+
+The tool **call** ("Read /path") still indexes on the assistant `tool_use` row, so
+a session stays findable by what it read; `raw_jsonl` is untouched, so
+`vault show --format json` and restore reproduce the body verbatim. Bash, Grep,
+etc. are deliberately NOT excluded — their output (errors, command results) is
+unique, non-reproducible signal. To exclude another tool, add its name to
+`excludedResultTools` (within an unreleased version, no `index_version` bump — see
+[Version semantics](#version-semantics)).
 
 **Deferred — generic input rendering for arbitrary/MCP tools.** `toolUseSummary`
 renders inputs only for the common tools (Bash → command, Read/Edit/Write →
@@ -74,9 +96,10 @@ always added, satisfying the core "what tool was called" ask for every tool.
 
 *Concrete next step (to add it):* extend `toolUseSummary`'s `default` case to emit
 a **bounded** summary of the input object (salient field(s) or truncated
-`key=value` pairs — NOT raw JSON), bump `currentIndexVersion` to 3, and let
-`capy vault reindex` upgrade existing vaults. Bounding is load-bearing: it is what
-addresses the noise/size concern above.
+`key=value` pairs — NOT raw JSON), bump `currentIndexVersion` (or, while still
+unreleased, redefine v2 in place — see [Version semantics](#version-semantics)),
+and `capy vault reindex` upgrades existing vaults. Bounding is load-bearing: it is
+what addresses the noise/size concern above.
 
 ## Backwards compatibility
 
@@ -122,12 +145,22 @@ see [ADR-025 D4](../../adr/025-vault-index-version-and-reindex.md).
 
 ### Version semantics
 
-- `currentIndexVersion = 2`. v1 = result-only indexer; v2 = tool-enriched indexer.
+- `currentIndexVersion = 2`. v1 = result-only indexer; v2 = tool-enriched indexer
+  **+ Read/NotebookRead result bodies excluded** (see
+  [Excluded results](#excluded-results-read--notebookread)).
+- **Bump only across a released boundary.** The version detects a vault whose
+  persisted FTS predates a *shipped* indexer. Within an unreleased version (nothing
+  shipped, no durable vault holds it yet) the indexer may be **redefined in place**
+  without a bump — a single `reindex` still yields the complete result, so a bump
+  would only force a redundant second pass. v2 was refined twice in place on this
+  branch (tool-call enrichment, then Read/Notebook exclusion). See ADR-025 D1.
 - Fresh DBs: `vault_sessions.index_version` is in `schemaSQL` (DEFAULT 1) and every
   INSERT/UPDATE stamps `currentIndexVersion` explicitly → fresh rows are current.
 - Migrated (existing) DBs: migration `0003_add_index_version` does
   `ALTER TABLE … ADD COLUMN index_version INTEGER NOT NULL DEFAULT 1` → all
   pre-existing rows become stale (1) and qualify for reindex.
+- **Visibility:** `capy vault stats` prints `Index version: N` plus a count of
+  sessions still below it, so a reindex backlog is observable.
 
 ## Migration runner (shared with v2)
 

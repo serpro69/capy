@@ -109,7 +109,7 @@ func TestImport_ReindexesVersionStaleSession(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`DELETE FROM vault_fts WHERE session_uuid=? AND role='tool'`, uuid)
 	require.NoError(t, err)
-	pre, err := s.Search(SearchOptions{Query: "config", Role: "tool"})
+	pre, err := s.Search(SearchOptions{Query: "vault", Role: "tool"})
 	require.NoError(t, err)
 	require.Empty(t, pre, "tool row removed to simulate a stale index")
 
@@ -129,8 +129,8 @@ func TestImport_ReindexesVersionStaleSession(t *testing.T) {
 	assert.True(t, bytes.Equal(sampleMainJSONL(t), got.RawJSONL), "FTS-only upgrade must not rewrite raw_jsonl")
 
 	// The index was genuinely rebuilt: the tool_result now carries its enriched
-	// "Read …/config.toml" call summary, so it is searchable by the file path again.
-	post, err := s.Search(SearchOptions{Query: "config", Role: "tool"})
+	// "Bash go test ./internal/vault" call summary, so it is searchable again.
+	post, err := s.Search(SearchOptions{Query: "vault", Role: "tool"})
 	require.NoError(t, err)
 	require.Len(t, post, 1, "FTS rebuilt with the enriched tool-call summary")
 }

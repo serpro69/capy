@@ -22,10 +22,15 @@ import (
 const minUUIDPrefix = 8
 
 // currentIndexVersion stamps the FTS indexer logic. Bump it whenever scanner.go's
-// extraction changes in a way that should re-index already-archived sessions.
+// extraction changes in a way that should re-index already-archived sessions —
+// but ONLY across a released boundary. Within an unreleased version (nothing
+// shipped, no durable vault holds the version yet) the indexer may be redefined in
+// place without a bump, since a single reindex still produces the complete result.
 //   - v1: tool_result rows indexed as result text only.
 //   - v2: tool_result rows tagged with their originating call summary
-//     (see scanner.go collectToolUseSummaries).
+//     (scanner.go collectToolUseSummaries), AND Read/NotebookRead result bodies
+//     excluded from the index — their file/cell dump is noise; the call itself
+//     stays searchable on the assistant row (see scanner.go excludedResultTools).
 //
 // Sessions whose index_version is below this are upgraded by `capy vault reindex`
 // (DB-driven, covers archived-and-deleted-from-disk sessions) or opportunistically
@@ -966,6 +971,12 @@ type VaultStats struct {
 	Oldest     time.Time
 	Newest     time.Time
 	ByProject  []ProjectStat
+	// IndexVersion is the indexer version this binary writes (currentIndexVersion);
+	// OutdatedSessions counts archived rows still below it — i.e. how many a
+	// `capy vault reindex` would rebuild. Surfaced so the version and any reindex
+	// backlog are visible in `capy vault stats`.
+	IndexVersion     int
+	OutdatedSessions int
 }
 
 // Stats returns the session count, summed content size, oldest/newest activity,
@@ -978,10 +989,13 @@ func (s *VaultStore) Stats() (*VaultStats, error) {
 	}
 
 	var st VaultStats
+	st.IndexVersion = currentIndexVersion
 	var oldest, newest sql.NullString
 	if err := db.QueryRow(
-		`SELECT COUNT(*), COALESCE(SUM(size_bytes), 0), MIN(start_time), MAX(end_time) FROM vault_sessions`,
-	).Scan(&st.Sessions, &st.TotalBytes, &oldest, &newest); err != nil {
+		`SELECT COUNT(*), COALESCE(SUM(size_bytes), 0), MIN(start_time), MAX(end_time),
+		        COALESCE(SUM(CASE WHEN index_version < ? THEN 1 ELSE 0 END), 0)
+		 FROM vault_sessions`, currentIndexVersion,
+	).Scan(&st.Sessions, &st.TotalBytes, &oldest, &newest, &st.OutdatedSessions); err != nil {
 		return nil, fmt.Errorf("querying vault stats: %w", err)
 	}
 	st.Oldest = parseTime(oldest)

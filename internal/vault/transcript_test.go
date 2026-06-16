@@ -44,10 +44,11 @@ func TestParseTranscript_RolesAndAnchors(t *testing.T) {
 
 	assert.Equal(t, RoleTool, msgs[2].Role)
 	assert.Equal(t, 2, msgs[2].SourceLine)
-	assert.Contains(t, msgs[2].Body, "build log")
-	// The tool_result is tagged with its originating call (tool_use_id t1).
-	assert.Equal(t, "Read /p/config.toml\nbuild log: error at line 5", msgs[2].Body,
-		"tool_result carries the call summary that produced it")
+	// The tool_result is a Read result: collapsed to a marker (call label + omitted
+	// notice), so the viewer shows what was read without the file dump.
+	assert.Contains(t, msgs[2].Body, "Read /p/config.toml", "collapsed marker keeps the call label")
+	assert.Contains(t, msgs[2].Body, "output omitted", "Read result body collapsed in the viewer")
+	assert.NotContains(t, msgs[2].Body, "build log: error at line 5", "Read file body is not shown")
 }
 
 func TestParseTranscript_DeduplicatesProgressiveSnapshots(t *testing.T) {

@@ -90,6 +90,27 @@ FTS5 over a real content table, or a rowid↔session_uuid map) so `ReplaceSessio
 cross-machine vault-copy compatibility implications. The batched bulk-delete fixes
 the hang within the existing `UNINDEXED` schema. See ADR-025 D4.
 
+## Task 6: Exclude Read/NotebookRead result bodies + surface index version in stats
+- **Status:** done
+- **Depends on:** Task 2 (the three-parser correlation), Task 3/4 (index_version + reindex)
+- **Size:** M
+- **Decision:** redefine the v2 indexer IN PLACE — no `currentIndexVersion` bump. The
+  version was introduced on this unreleased branch and no shipped/durable vault holds
+  v2 yet, so a single reindex yields the complete v2 result; a bump would force a
+  redundant second pass (ADR-025 D1). Condition: a vault must not have been reindexed
+  to v2 before this lands.
+
+### Subtasks
+- [x] 6.1 `scanner.go`: `toolCall{name,summary}` type + `excludedResultTools` ({Read, NotebookRead}); shared `collectToolUseSummaries` map → `map[string]toolCall` (all 3 parsers); `extractUserBlocks` skips excluded results (FTS)
+- [x] 6.2 `render.go`/`transcript.go`: `renderUserContent` collapses excluded results to a one-line marker via `collapsedToolResult` (display); `raw_jsonl`/JSON output unchanged
+- [x] 6.3 `store.go`: `VaultStats.IndexVersion` + `OutdatedSessions`; `Stats()` computes them; `currentIndexVersion` doc comment covers both v2 behaviors + the released-boundary bump rule. `cmd/capy/vault.go`: `printStats` + `statsJSON` surface them
+- [x] 6.4 Tests: scanner Read-excluded/Bash-indexed/call-searchable; render + transcript Read-collapse + Bash-full; canonical `sampleMainJSONL` switched Read→Bash (indexed path); reindex/import-stale tests reworked to a Bash token. Validated on real 497 MB vault — reindex 487 sessions in ~28 s, idempotent, stats shows the index-version line
+- [x] 6.5 Docs: ADR-025 D1 (in-place redefinition + stats visibility); design.md (Excluded results, Version semantics, Deferred reconciled); README/architecture vault tables; scanner.go doc comments
+
+**Invariant:** the tool CALL summary ("Read /path") stays indexed on the assistant
+row, so a session is still findable by what it read; only the result BODY is
+dropped from FTS / collapsed in display. Bash/Grep results stay indexed.
+
 ## Completion
 - [x] `/kk:test` full suite green with `-tags fts5` (`make test-race` green across all packages)
 - [x] Isolated code review (`/kk:review-code:isolated`) — 4 corroborated findings, all fixed (see Review fixes below); 2 systemic findings indexed as `kk:review-findings`
