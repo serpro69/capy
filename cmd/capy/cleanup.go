@@ -41,7 +41,7 @@ func newCleanupCmd() *cobra.Command {
 			vacuum, _ := cmd.Flags().GetBool("vacuum")
 
 			dbPath := cfg.ResolveDBPath(projectDir)
-			st := store.NewContentStore(dbPath, projectDir, 0, cfg.Store.MaxSourceBytes)
+			st := store.NewContentStore(dbPath, cfg.DBProjectDir(projectDir), 0, cfg.Store.MaxSourceBytes)
 			defer st.Close()
 
 			// Explicit vacuum without cleanup.

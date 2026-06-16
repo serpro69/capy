@@ -258,6 +258,13 @@ capy serve         # DB opens with your key
 
 The pre-commit hook rejects unencrypted databases automatically — run `capy encrypt` first if the commit is blocked.
 
+> **Git worktrees.** With a project-scoped `store.path`, sessions running in a [git
+> worktree](https://git-scm.com/docs/git-worktree) automatically use the **main**
+> worktree's DB instead of a per-worktree copy — so worktree knowledge persists to
+> the shared `.capy/knowledge.db` and never produces an unresolvable binary merge
+> conflict. Detection reads the worktree's `.git` file directly (no `git` required).
+> Absolute paths and the XDG default are unaffected. See [ADR-026](docs/adr/026-worktree-shared-knowledge-db.md).
+
 ### Key rotation
 
 ```bash

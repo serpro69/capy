@@ -361,6 +361,14 @@ capy uses TOML configuration with three-level precedence (lowest to highest):
 # log_level = "info"                # "debug", "info", "warn", "error"
 ```
 
+**Worktree DB resolution** (see ADR-026): with a relative (project-scoped)
+`store.path`, a session running in a linked git worktree resolves the DB against
+the repository's **main** worktree, so all worktrees share one committed
+`.capy/knowledge.db`. `config.MainWorktreeDir` detects this by parsing the
+worktree's `.git` file (no `git` subprocess; submodules excluded), falling back to
+the current directory on any unexpected layout. Absolute `store.path` and the XDG
+default are unaffected.
+
 ## Releases
 
 Releases are fully automated. Push a semver tag to trigger the pipeline:

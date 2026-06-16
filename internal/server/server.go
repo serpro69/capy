@@ -47,17 +47,17 @@ func (t *searchThrottle) advance(window time.Duration) (int, time.Duration) {
 
 // Server is the capy MCP server.
 type Server struct {
-	mcpServer      *mcpserver.MCPServer
-	store          *store.ContentStore
-	executor       *executor.PolyglotExecutor
-	security       []security.SecurityPolicy
-	readDenyGlobs  [][]string // cached Read deny patterns
-	config         *config.Config
-	stats          *SessionStats
-	throttle       *searchThrottle
-	storeMu        sync.Once
-	bgWg           sync.WaitGroup
-	projectDir     string
+	mcpServer     *mcpserver.MCPServer
+	store         *store.ContentStore
+	executor      *executor.PolyglotExecutor
+	security      []security.SecurityPolicy
+	readDenyGlobs [][]string // cached Read deny patterns
+	config        *config.Config
+	stats         *SessionStats
+	throttle      *searchThrottle
+	storeMu       sync.Once
+	bgWg          sync.WaitGroup
+	projectDir    string
 }
 
 // NewServer creates a new Server. The store is lazily initialized on first use.
@@ -82,7 +82,12 @@ func NewServer(
 func (s *Server) getStore() *store.ContentStore {
 	s.storeMu.Do(func() {
 		dbPath := s.config.ResolveDBPath(s.projectDir)
-		s.store = store.NewContentStore(dbPath, s.projectDir, s.config.Store.TitleWeight, s.config.Store.MaxSourceBytes)
+		s.store = store.NewContentStore(
+			dbPath,
+			s.config.DBProjectDir(s.projectDir),
+			s.config.Store.TitleWeight,
+			s.config.Store.MaxSourceBytes,
+		)
 	})
 	return s.store
 }
