@@ -19,14 +19,16 @@
 - [x] 1.6 Update `tool_fetch_test.go` — replace `validateFetchURLFunc` override pattern with Transport-level test helper that allows localhost for `httptest.NewServer` (helper `disableSSRFValidation` lives in `tool_knowledge_test.go`; now swaps `newFetchTransport`)
 
 ## Task 2: Path traversal bypass fix
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [design.md#6c-path-traversal-bypass-in-file-deny-evaluation](./design.md#6c-path-traversal-bypass-in-file-deny-evaluation), [implementation.md#task-2-path-traversal-bypass-fix](./implementation.md#task-2-path-traversal-bypass-fix)
 
 ### Subtasks
-- [ ] 2.1 Modify `EvaluateFilePath` in `internal/security/eval.go` to accept `projectRoot string` as third parameter — match deny globs against three candidates: raw input, lexical absolute (`filepath.Clean(filepath.Join(projectRoot, filePath))`), and canonical realpath (`filepath.EvalSymlinks`)
-- [ ] 2.2 Update all three callers to pass `projectRoot`: `internal/server/security_check.go:45` (pass `s.projectDir`), `internal/hook/pretooluse.go:157` (pass `projectDir`), and deny checker closure in `server.go` (pass `s.projectDir`)
-- [ ] 2.3 Add tests — relative `../../.ssh/id_rsa` caught by glob, absolute paths work, empty projectRoot preserves old behavior, **symlink escape** (symlink pointing to denied target is caught via realpath), **non-regular file** guard in fd-bound read callers
+- [x] 2.1 Modify `EvaluateFilePath` in `internal/security/eval.go` to accept `projectRoot string` as third parameter — match deny globs against three candidates: raw input, lexical absolute (`filepath.Clean(filepath.Join(projectRoot, filePath))`), and canonical realpath (`filepath.EvalSymlinks`)
+- [x] 2.2 Update all three callers to pass `projectRoot`: `internal/server/security_check.go:45` (pass `s.projectDir`), `internal/hook/pretooluse.go:157` (pass `projectDir`), and deny checker closure in `server.go` (pass `s.projectDir`) — NOTE: the `server.go` deny-checker closure does not exist yet; it is created in Task 5 (subtask 5.7), which already passes `s.projectDir`. Only the two existing callers were updated here.
+- [x] 2.3 Add tests — relative `../../.ssh/id_rsa` caught by glob, absolute paths work, empty projectRoot preserves old behavior, **symlink escape** (symlink pointing to denied target is caught via realpath), **physical traversal via symlinked dir** (`dir-link/../secrets/id_rsa` caught via realpath — regression test for the isolated-review P0 below); **non-regular file** guard in fd-bound read callers DEFERRED to Task 3b/Task 5 — `EvaluateFilePath` performs no file I/O, so the `IsRegular()` guard belongs to the fd-bound readers (`handleIndex` in tool_index.go, `refreshStaleSources` in search.go) introduced by those tasks, not to this glob-matching function.
+
+> **Isolated review (P0, fixed):** The initial implementation fed the lexically-`Clean`ed path to `filepath.EvalSymlinks`. `Clean` collapses `..` lexically, discarding a symlinked directory before symlink resolution (`dir-link/../secrets` cleans to `secrets`), so a symlink-then-`..` physical escape bypassed the realpath candidate. Fix: feed `EvalSymlinks` an **uncleaned** anchored path (`physicalInput`) while keeping the `Clean`ed candidate for non-existent-file lexical traversal. Indexed as `kk:review-findings`. Also corrected a stale doc comment (claimed `fileGlobToRegex` recompiles per call; it caches via `fileRegexCache sync.Map`) and de-duplicated candidates for already-clean absolute inputs.
 
 ## Task 3: Executor env deny list expansion
 - **Status:** pending

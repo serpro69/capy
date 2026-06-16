@@ -154,7 +154,7 @@ func routeCapyTool(toolName string, toolInput map[string]any, policies []securit
 			filePath, _ := toolInput["path"].(string)
 			if filePath != "" {
 				denyGlobs := security.ReadToolDenyPatterns("Read", projectDir, "")
-				denied, pattern := security.EvaluateFilePath(filePath, denyGlobs)
+				denied, pattern := security.EvaluateFilePath(filePath, denyGlobs, projectDir)
 				if denied {
 					return a.FormatBlock(fmt.Sprintf("Blocked by security policy: file path matches Read deny pattern %s", pattern))
 				}
