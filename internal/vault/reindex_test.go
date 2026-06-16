@@ -96,8 +96,8 @@ func TestReindex_RebuildsStaleSessionFTSAndBumpsVersion(t *testing.T) {
 		VALUES (?, ?, '', 0, 0, 2, 'tool')`, "build log: pterodactyl error at line 5", uuid)
 	require.NoError(t, err)
 
-	// Pre-reindex: the call path is not searchable from the un-enriched tool row.
-	pre, err := s.Search(SearchOptions{Query: "config", Role: "tool"})
+	// Pre-reindex: the Bash call path is not searchable from the un-enriched tool row.
+	pre, err := s.Search(SearchOptions{Query: "vault", Role: "tool"})
 	require.NoError(t, err)
 	assert.Empty(t, pre, "legacy tool row lacks the call summary")
 
@@ -110,9 +110,9 @@ func TestReindex_RebuildsStaleSessionFTSAndBumpsVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, currentIndexVersion, got.IndexVersion, "reindex bumps the version to current")
 
-	// Post-reindex: the tool result now carries its "Read /proj/config.toml" call
-	// summary, so it is searchable by the file path.
-	post, err := s.Search(SearchOptions{Query: "config", Role: "tool"})
+	// Post-reindex: the tool result now carries its "Bash go test ./internal/vault"
+	// call summary, so it is searchable by a token from the command.
+	post, err := s.Search(SearchOptions{Query: "vault", Role: "tool"})
 	require.NoError(t, err)
 	require.Len(t, post, 1, "rebuilt tool row carries the enriched call summary")
 

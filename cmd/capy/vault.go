@@ -446,6 +446,11 @@ func printStats(s *vault.VaultStats, dbBytes int64) {
 	fmt.Printf("DB file size:  %s\n", formatSize(dbBytes))
 	fmt.Printf("Oldest:        %s\n", fmtDate(s.Oldest))
 	fmt.Printf("Newest:        %s\n", fmtDate(s.Newest))
+	indexLine := fmt.Sprintf("Index version: %d", s.IndexVersion)
+	if s.OutdatedSessions > 0 {
+		indexLine += fmt.Sprintf("  (%d session(s) below current — run 'capy vault reindex')", s.OutdatedSessions)
+	}
+	fmt.Println(indexLine)
 	if len(s.ByProject) > 0 {
 		fmt.Println("\nPer project:")
 		for _, p := range s.ByProject {
@@ -786,6 +791,8 @@ type statsJSON struct {
 	DBFileBytes       int64         `json:"db_file_bytes"`
 	Oldest            string        `json:"oldest,omitempty"`
 	Newest            string        `json:"newest,omitempty"`
+	IndexVersion      int           `json:"index_version"`
+	OutdatedSessions  int           `json:"outdated_sessions"`
 	Projects          []projectJSON `json:"projects"`
 }
 
@@ -796,7 +803,8 @@ func statsToJSON(s *vault.VaultStats, dbBytes int64) statsJSON {
 	}
 	return statsJSON{
 		Sessions: s.Sessions, TotalContentBytes: s.TotalBytes, DBFileBytes: dbBytes,
-		Oldest: rfc3339(s.Oldest), Newest: rfc3339(s.Newest), Projects: projects,
+		Oldest: rfc3339(s.Oldest), Newest: rfc3339(s.Newest),
+		IndexVersion: s.IndexVersion, OutdatedSessions: s.OutdatedSessions, Projects: projects,
 	}
 }
 

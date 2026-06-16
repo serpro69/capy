@@ -55,15 +55,18 @@ func writeSession(t *testing.T, projectDir, uuid string, mainJSONL []byte, sidec
 	}
 }
 
-// sampleMainJSONL is a representative single-session transcript: a human turn,
-// an assistant turn with text + a tool_use, a tool_result, and an ai-title.
+// sampleMainJSONL is a representative single-session transcript: a human turn, an
+// assistant turn with text + a tool_use, the matching tool_result, and an ai-title.
+// The tool_use is Bash (its result is INDEXED) — NOT Read, whose result body is
+// excluded from FTS (excludedResultTools); Read/Notebook exclusion is covered by
+// dedicated scanner/render/transcript tests.
 func sampleMainJSONL(t *testing.T) []byte {
 	t.Helper()
 	return jsonlBytes(t,
 		userLine("u1", "/home/user/proj", "feature/x", "Please fix the timeout bug"),
 		assistantLine("a1", "msg1", []map[string]any{
-			{"type": "text", "text": "Reading the config first."},
-			{"type": "tool_use", "id": "t1", "name": "Read", "input": map[string]any{"file_path": "/proj/config.toml"}},
+			{"type": "text", "text": "Running the tests first."},
+			{"type": "tool_use", "id": "t1", "name": "Bash", "input": map[string]any{"command": "go test ./internal/vault"}},
 		}),
 		userToolResultLine("u2", "build log: pterodactyl error at line 5"),
 		aiTitleLine("Fix the timeout bug"),

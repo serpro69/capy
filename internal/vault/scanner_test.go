@@ -116,6 +116,43 @@ func TestScanSession_ToolResultFromUserAsRoleTool(t *testing.T) {
 	}
 }
 
+func TestScanSession_ReadResultExcludedFromFTS(t *testing.T) {
+	// A Read tool_result is a file-content dump: its BODY is excluded from the FTS
+	// index. The Read CALL stays searchable on the assistant row, and a non-excluded
+	// tool (Bash) in the same session is still indexed.
+	r := buildJSONL(t,
+		userLine("u1", "/p", "main", "read the config and run the tests"),
+		assistantLine("a1", "msg_1", []map[string]any{
+			{"type": "tool_use", "id": "t1", "name": "Read", "input": map[string]any{"file_path": "/proj/config.toml"}},
+			{"type": "tool_use", "id": "t2", "name": "Bash", "input": map[string]any{"command": "go test ./..."}},
+		}),
+		map[string]any{
+			"type": "user", "uuid": "u2", "timestamp": "2026-05-01T10:00:06Z",
+			"message": map[string]any{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "t1", "content": "package main\nfunc main() {}\n// file body"},
+				{"type": "tool_result", "tool_use_id": "t2", "content": "PASS ok internal/vault"},
+			}},
+		},
+	)
+
+	out, err := ScanSession(r)
+	require.NoError(t, err)
+	byRole := resultsByRole(out.Results)
+
+	// Exactly one tool row — the Bash result; the Read result body is excluded.
+	require.Len(t, byRole[roleTool], 1, "only the non-excluded (Bash) tool_result is indexed")
+	assert.Equal(t, "Bash go test ./...\nPASS ok internal/vault", byRole[roleTool][0].ContentText)
+
+	// The Read file body never enters the index.
+	for _, res := range out.Results {
+		assert.NotContains(t, res.ContentText, "func main() {}", "Read file contents excluded from FTS")
+	}
+	// But the Read CALL stays searchable via the assistant row.
+	require.Len(t, byRole[roleAssistant], 1)
+	assert.Contains(t, byRole[roleAssistant][0].ContentText, "Read /proj/config.toml",
+		"the Read call (path) remains searchable on the assistant row")
+}
+
 func TestScanSession_ToolResultUnknownToolUseIDNoPrefix(t *testing.T) {
 	// A tool_result whose tool_use_id has no matching tool_use (older or partial
 	// transcript) is indexed verbatim — no prefix, never an error.

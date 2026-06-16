@@ -15,8 +15,17 @@ func TestRenderText_RolesToolsAndResults(t *testing.T) {
 			{"type": "thinking", "thinking": "internal reasoning that must not render", "signature": "sig"},
 			{"type": "text", "text": "Reading the config first."},
 			{"type": "tool_use", "id": "t1", "name": "Read", "input": map[string]any{"file_path": "/proj/config.toml"}},
+			{"type": "tool_use", "id": "t2", "name": "Bash", "input": map[string]any{"command": "go test"}},
 		}),
-		userToolResultLine("u2", "build log: timeout at line 5"),
+		// Read result (t1): collapsed to a marker — file contents are display noise.
+		userToolResultLine("u2", "package main\nfunc main() {}\n// ...500 more lines..."),
+		// Bash result (t2): a non-excluded tool, shown in full.
+		map[string]any{
+			"type": "user", "uuid": "u3", "timestamp": "2026-05-01T10:00:11Z",
+			"message": map[string]any{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "t2", "content": "build log: timeout at line 5"},
+			}},
+		},
 	)
 
 	out := RenderText(raw)
@@ -27,10 +36,16 @@ func TestRenderText_RolesToolsAndResults(t *testing.T) {
 	assert.Contains(t, out, "Reading the config first.")
 	assert.Contains(t, out, "→ Read /proj/config.toml", "tool_use renders as an indicator line")
 	assert.Contains(t, out, "[Tool result]")
-	assert.Contains(t, out, "build log: timeout at line 5")
-	// The tool_result body is tagged with its originating call (tool_use_id t1).
-	assert.Contains(t, out, "Read /proj/config.toml\nbuild log: timeout at line 5",
-		"tool_result carries the call summary that produced it")
+
+	// The Read result body is collapsed to a marker (call label + omitted notice);
+	// its file contents do not flood the transcript.
+	assert.Contains(t, out, "output omitted", "Read result body collapsed in display")
+	assert.NotContains(t, out, "func main() {}", "Read file contents are not rendered")
+
+	// A non-excluded (Bash) tool_result is still shown in full, tagged with its call.
+	assert.Contains(t, out, "Bash go test\nbuild log: timeout at line 5",
+		"non-excluded tool_result carries the call summary and full body")
+
 	assert.NotContains(t, out, "internal reasoning", "thinking blocks are not rendered")
 }
 

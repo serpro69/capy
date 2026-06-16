@@ -126,9 +126,9 @@ func collectDisplay(raw []byte) []displayMsg {
 		}
 	})
 
-	// Correlate tool_use_id → call summary so each tool_result renders with the
-	// call that produced it.
-	toolUses := make(map[string]string)
+	// Correlate tool_use_id → call so each tool_result renders with the call that
+	// produced it (and excluded-tool results collapse to a marker).
+	toolUses := make(map[string]toolCall)
 	for _, e := range entries {
 		if e.role == displayAssistant {
 			collectToolUseSummaries(e.blocks, toolUses)
@@ -180,8 +180,11 @@ func dedupBlocks(dst, add []contentBlock) []contentBlock {
 // or an array of text / tool_result blocks. Each tool_result is prefixed with its
 // originating tool-call summary (from toolUses, keyed by tool_use_id) so display
 // shows which call produced the output; an unknown id leaves the text unprefixed.
-// Shared by render.go (`vault show`) and transcript.go (TUI viewer).
-func renderUserContent(raw json.RawMessage, toolUses map[string]string) (human string, tools []string) {
+// A tool_result whose call is in excludedResultTools (Read/NotebookRead) is
+// collapsed to a one-line marker instead of the full file/cell dump (the verbatim
+// body stays in raw_jsonl). Shared by render.go (`vault show`) and transcript.go
+// (TUI viewer).
+func renderUserContent(raw json.RawMessage, toolUses map[string]toolCall) (human string, tools []string) {
 	if len(raw) == 0 {
 		return "", nil
 	}
@@ -201,11 +204,29 @@ func renderUserContent(raw json.RawMessage, toolUses map[string]string) (human s
 			}
 		case "tool_result":
 			if t := toolResultText(b.Content); t != "" {
-				tools = append(tools, prefixToolResult(toolUses[b.ToolUseID], t))
+				call := toolUses[b.ToolUseID]
+				if excludedResultTools[call.name] {
+					tools = append(tools, collapsedToolResult(call, t))
+				} else {
+					tools = append(tools, prefixToolResult(call.summary, t))
+				}
 			}
 		}
 	}
 	return strings.Join(texts, "\n"), tools
+}
+
+// collapsedToolResult renders the one-line display placeholder for an excluded
+// tool_result (Read/NotebookRead): the call summary plus an omitted-body marker
+// with the line count, so the transcript shows the call and its target without the
+// full file/cell dump. The verbatim body stays in raw_jsonl (`vault show
+// --format json` / restore). Shared by render.go and transcript.go.
+func collapsedToolResult(call toolCall, body string) string {
+	label := call.summary
+	if label == "" {
+		label = "tool result"
+	}
+	return fmt.Sprintf("%s\n⋯ [output omitted from index — %d line(s)]", label, strings.Count(body, "\n")+1)
 }
 
 // renderAssistantBlocks keeps text and renders tool_use blocks as indicator

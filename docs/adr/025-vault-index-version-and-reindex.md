@@ -35,9 +35,23 @@ disk (which `import` can never see again).
 
 `vault_sessions` carries an `index_version INTEGER`. A code constant
 `currentIndexVersion` (now `2`) stamps the indexer logic; bump it whenever
-`scanner.go` extraction changes in a way that should re-index existing sessions.
+`scanner.go` extraction changes in a way that should re-index existing sessions —
+**but only across a released boundary.** The version exists to detect a vault whose
+persisted FTS predates a *shipped* indexer. Within an unreleased version (nothing
+shipped, and no durable vault holds that version's data yet) the indexer may be
+**redefined in place** without a bump: a single `reindex` still yields the complete
+result, so a bump would only force a redundant second pass. `currentIndexVersion`
+is currently `2`, defined entirely on the unreleased vault-tool-entries branch, so
+the v2 indexer was refined twice in place (tool-call enrichment, then
+Read/NotebookRead result exclusion — see [vault-tool-entries/design.md §Version
+semantics](../wip/vault-tool-entries/design.md)) without going to `3`.
+
 Fresh inserts stamp `currentIndexVersion` **explicitly** (not via column DEFAULT),
 so a vault migrated with `DEFAULT 1` still records new inserts as current.
+
+The current version and the count of sessions still below it are surfaced by
+`capy vault stats` (`Index version: N (M session(s) below current …)`), so a
+reindex backlog is visible without guesswork.
 
 ### D2: `import` opportunistically upgrades on-disk sessions
 
