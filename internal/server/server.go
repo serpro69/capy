@@ -88,6 +88,12 @@ func (s *Server) getStore() *store.ContentStore {
 			s.config.Store.TitleWeight,
 			s.config.Store.MaxSourceBytes,
 		)
+		// Wire the Read deny-policy into stale auto-refresh so a file whose
+		// deny status changed since indexing is not re-read (TOCTOU defense).
+		s.store.SetDenyChecker(func(filePath string) bool {
+			denied, _ := security.EvaluateFilePath(filePath, s.readDenyGlobs, s.projectDir)
+			return denied
+		})
 	})
 	return s.store
 }
