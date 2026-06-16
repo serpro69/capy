@@ -31,14 +31,14 @@
 > **Isolated review (P0, fixed):** The initial implementation fed the lexically-`Clean`ed path to `filepath.EvalSymlinks`. `Clean` collapses `..` lexically, discarding a symlinked directory before symlink resolution (`dir-link/../secrets` cleans to `secrets`), so a symlink-then-`..` physical escape bypassed the realpath candidate. Fix: feed `EvalSymlinks` an **uncleaned** anchored path (`physicalInput`) while keeping the `Clean`ed candidate for non-existent-file lexical traversal. Indexed as `kk:review-findings`. Also corrected a stale doc comment (claimed `fileGlobToRegex` recompiles per call; it caches via `fileRegexCache sync.Map`) and de-duplicated candidates for already-clean absolute inputs.
 
 ## Task 3: Executor env deny list expansion
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [design.md#6d-executor-env-deny-list-netc-profiler-hijack-vectors](./design.md#6d-executor-env-deny-list-netc-profiler-hijack-vectors), [implementation.md#task-3-executor-env-deny-list-expansion](./implementation.md#task-3-executor-env-deny-list-expansion)
 
 ### Subtasks
-- [ ] 3.1 Add 14 .NET/C# entries to `deniedEnvVars` in `internal/executor/env.go`: CORECLR_PROFILER, CORECLR_PROFILER_PATH (+ _32/_64/_ARM32/_ARM64), CORECLR_ENABLE_PROFILING, DOTNET_PROFILER_PATH (+ _32/_64/_ARM32/_ARM64), DOTNET_DiagnosticPorts, DOTNET_BUNDLE_EXTRACT_BASE_DIR
-- [ ] 3.2 Add `COMPlus_` prefix check in `BuildSafeEnv` alongside existing `BASH_FUNC_` prefix check
-- [ ] 3.3 Add tests in `internal/executor/env_test.go` — verify CORECLR_PROFILER and COMPlus_EnableDiagnostics are stripped from env output
+- [x] 3.1 Add 14 .NET/C# entries to `deniedEnvVars` in `internal/executor/env.go`: CORECLR_PROFILER, CORECLR_PROFILER_PATH (+ _32/_64/_ARM32/_ARM64), CORECLR_ENABLE_PROFILING, DOTNET_PROFILER_PATH (+ _32/_64/_ARM32/_ARM64), DOTNET_DiagnosticPorts, DOTNET_BUNDLE_EXTRACT_BASE_DIR
+- [x] 3.2 Add `COMPlus_` prefix check in `BuildSafeEnv` alongside existing `BASH_FUNC_` prefix check
+- [x] 3.3 Add tests in `internal/executor/env_test.go` — verify CORECLR_PROFILER and COMPlus_EnableDiagnostics are stripped from env output
 
 ## Task 3b: Apply Read deny-policy to capy_index(path)
 - **Status:** pending
