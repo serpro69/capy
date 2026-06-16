@@ -208,3 +208,36 @@ No change to `vault_fts`/`vault_meta` schema (a `vault_meta` `min_reader_version
 - ADR-016 (WAL checkpoint on close), ADR-019/020 (encrypted DB, WAL/rekey incompatibility), ADR-017 (source-kind separation)
 - Indexed `kk:arch-decisions`: "Hybrid active + cold storage", "Merge semantics: larger size_bytes wins", "Machine identity outside DB"
 - `klauspost/compress` zstd `EncodeAll`/`DecodeAll`; `charmbracelet/glamour` `NewTermRenderer` (both via context7)
+
+## Addenda
+
+Post-plan follow-ups appended after the initial v2 design. Each is self-contained
+and outside the Task 0–17 graph; tracked collectively by tasks.md Task 18.
+
+### A1 — TUI: collapse-then-open large tool results
+
+**Origin:** branch `vault_tool_cmd`, follow-up to the Read/NotebookRead FTS-exclusion
+feature ([../../vault-tool-entries/](../../vault-tool-entries/)).
+
+**Scope:** the **TUI viewer only** (`vault show --tui`). Plain `vault show`
+(non-interactive pager) is **unchanged** — excluded Read/NotebookRead results keep
+their one-line marker; other results render full inline. "Openable" has no meaning
+in a static dump.
+
+**Behavior:** in the viewer, collapse **any** large `tool_result` body (a size/line
+threshold) to a focusable marker that expands on demand — reusing the existing
+openable-marker mechanism (`viewer.go` `focusMarker`/`openFocusedMarker`) that
+subagent launch points already use. The FTS-excluded set (Read/NotebookRead) is a
+subset that is always collapsed regardless of size; large non-excluded results
+(e.g. a big `Bash` log) collapse too, purely for read-through clarity.
+
+**Implementation note (the non-trivial part):** the existing openable path opens a
+separate sidecar **file** by id (`openSubagent` → `GetFiles` → subagent JSONL). A
+`tool_result` body is **inline** in `raw_jsonl`, so this needs a *distinct* "open
+inline content" target: carry the full body on the `TranscriptMessage` (or
+re-extract it on open) and push it as a viewable target with esc/q to return —
+not a reuse of `openSubagent`. Threshold is a constant (configurable later).
+
+**Not affected:** the FTS index (search) — this is display-only; the search-index
+exclusion already shipped on `vault_tool_cmd`. `raw_jsonl` stays verbatim, so
+`vault show --format json` and restore are unaffected.

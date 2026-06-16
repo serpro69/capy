@@ -247,6 +247,24 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [ ] 17.3 Run `/kk:review-code go` — review the full v2 diff
 - [ ] 17.4 Run `/kk:review-spec` — verify implementation matches design.md + implementation.md
 
+## Task 18: Design addenda (post-plan follow-ups)
+- **Status:** pending
+- **Depends on:** —
+- **Size:** per-addendum (currently M)
+- **Docs:** [design.md § Addenda](./design.md#addenda)
+
+Tracks the items appended to design.md § Addenda after the initial v2 plan — each a
+self-contained follow-up outside the Task 0–17 graph (so Task 17 final verification
+does not gate them; each addendum carries its own verification). Numbered 18 to
+avoid renumbering the existing plan.
+
+### Addenda
+- [ ] A1 — TUI collapse-then-open for large `tool_result` bodies in the `--tui`
+  viewer (any tool past a size threshold; the FTS-excluded Read/NotebookRead set is
+  a subset). Plain `vault show` unchanged. Reuses the openable-marker mechanism but
+  needs a new "open inline content" target since the body is inline in `raw_jsonl`,
+  not a sidecar file. Display-only; FTS unaffected. See design.md § Addenda A1.
+
 ## Dependency Graph
 
 ```
