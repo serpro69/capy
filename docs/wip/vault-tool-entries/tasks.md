@@ -64,6 +64,32 @@ Build/test with `-tags fts5`; `CAPY_DB_KEY` + `CAPY_VAULT_KEY` required.
 - [x] 4.3 `cmd/capy/vault.go`: `newVaultReindexCmd` + register
 - [x] 4.4 Tests: `UpdateSessionFTS` (FTS replaced, version bumped, blob untouched), `OutdatedSessionUUIDs`, end-to-end `Reindex` (stale→enriched), cancellation
 
+## Task 5: Fix reindex/import hang on large vaults (post-merge regression)
+- **Status:** done
+- **Depends on:** Task 3, Task 4
+- **Size:** M
+- **Root cause:** `vault_fts.session_uuid` is `UNINDEXED`, so the per-session
+  `DELETE FROM vault_fts WHERE session_uuid = ?` in `UpdateSessionFTS` /
+  `ReplaceSession` is a full scan of the whole FTS index (~272 ms each over 51k
+  rows on a 497 MB vault). Migration `0003` flags every pre-existing row stale, so
+  `reindex` ran that delete for all sessions and `import` re-wrote every still-on-disk
+  version-stale session via full `ReplaceSession` (blob rewrite + per-session FTS
+  delete) — degrading both into an effective hang. Confirmed via SIGQUIT goroutine
+  dump (blocked in `UpdateSessionFTS` at the `DELETE`) + measurement on the real vault.
+
+### Subtasks
+- [x] 5.1 `store.go`: `RebuildFTSBatch` — bump versions, survivor-filter (existence check), ONE `WHERE session_uuid IN (...)` delete, bulk insert; `UpdateSessionFTS` now its single-session wrapper; unexported `checkpointWAL` (`PRAGMA wal_checkpoint(TRUNCATE)`)
+- [x] 5.2 `reindex.go`: batch `FTSRebuild` (`reindexBatchSessions`/`reindexBatchBytes`), flush via `RebuildFTSBatch`, checkpoint between batches; `ftsContentBytes` helper
+- [x] 5.3 `import.go`: route hash-identical + version-stale sessions to an FTS-only batch (no blob rewrite — ADR-025 D2 amended); `flush` writes both the replace-batch and the FTS-batch with per-session retry
+- [x] 5.4 Docs: ADR-025 D2 amendment + D4 rewrite (batched IN-delete, UNINDEXED rationale, structural fix deferred); design.md reindex/skip-gate prose
+- [x] 5.5 Tests: `RebuildFTSBatch` (bulk replace, version bump, missing-session skip, blob untouched), reindex batch-boundary, import FTS-only (no blob/metadata rewrite, FTS rebuilt); validated on real 497 MB vault — reindex 489 sessions in ~39 s (was an effective hang), idempotent on re-run
+
+**Deferred (structural):** make the delete-by-session indexable (external-content
+FTS5 over a real content table, or a rowid↔session_uuid map) so `ReplaceSession`/
+`DeleteSession` also avoid the full scan. Not done here: it is a schema change with
+cross-machine vault-copy compatibility implications. The batched bulk-delete fixes
+the hang within the existing `UNINDEXED` schema. See ADR-025 D4.
+
 ## Completion
 - [x] `/kk:test` full suite green with `-tags fts5` (`make test-race` green across all packages)
 - [x] Isolated code review (`/kk:review-code:isolated`) — 4 corroborated findings, all fixed (see Review fixes below); 2 systemic findings indexed as `kk:review-findings`
