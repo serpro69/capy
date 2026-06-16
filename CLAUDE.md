@@ -78,6 +78,7 @@ Architecture Decision Records are in [docs/adr/](docs/adr/). Key ones:
 - ADR-022: Source size guard and DB bloat prevention
 - ADR-023: Fetch ephemeral default and routing rewrite
 - ADR-024: Server-side git URL enforcement
+- ADR-025: Vault `index_version` and DB-driven reindex
 
 ## Completed Features
 

@@ -424,6 +424,11 @@ func toolUseSummary(name string, input json.RawMessage) string {
 			return "Agent " + truncateRunes(p, agentPromptMaxChars)
 		}
 	}
+	// All other tools (MCP, WebFetch, custom, …) summarize to the bare name —
+	// generic input rendering is deferred. To add it, emit a BOUNDED key=value /
+	// salient-field summary here (not raw JSON), then bump currentIndexVersion and
+	// `capy vault reindex`. Rationale (consistency + FTS noise/size): see ADR-025
+	// and docs/wip/vault-tool-entries/design.md §Deferred.
 	return name
 }
 
