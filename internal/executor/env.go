@@ -43,6 +43,16 @@ var deniedEnvVars = map[string]bool{
 	"GIT_TEMPLATE_DIR": true, "GIT_CONFIG_GLOBAL": true,
 	"GIT_CONFIG_SYSTEM": true, "GIT_EXEC_PATH": true,
 	"GIT_SSH": true, "GIT_SSH_COMMAND": true, "GIT_ASKPASS": true,
+	// .NET / C# — profiler attach (loads arbitrary DLL into dotnet host); upstream e0e79b7
+	"CORECLR_PROFILER": true, "CORECLR_PROFILER_PATH": true,
+	"CORECLR_PROFILER_PATH_32": true, "CORECLR_PROFILER_PATH_64": true,
+	"CORECLR_PROFILER_PATH_ARM32": true, "CORECLR_PROFILER_PATH_ARM64": true,
+	"CORECLR_ENABLE_PROFILING": true,
+	"DOTNET_PROFILER_PATH": true, "DOTNET_PROFILER_PATH_32": true,
+	"DOTNET_PROFILER_PATH_64": true, "DOTNET_PROFILER_PATH_ARM32": true,
+	"DOTNET_PROFILER_PATH_ARM64": true,
+	// .NET diagnostic + extraction hijack
+	"DOTNET_DiagnosticPorts": true, "DOTNET_BUNDLE_EXTRACT_BASE_DIR": true,
 }
 
 // sslCertPaths lists common CA bundle locations for SSL cert detection.
@@ -60,7 +70,7 @@ func BuildSafeEnv(tmpDir string) []string {
 	env := make(map[string]string)
 	for _, entry := range os.Environ() {
 		key, val, _ := strings.Cut(entry, "=")
-		if deniedEnvVars[key] || strings.HasPrefix(key, "BASH_FUNC_") {
+		if deniedEnvVars[key] || strings.HasPrefix(key, "BASH_FUNC_") || strings.HasPrefix(key, "COMPlus_") {
 			continue
 		}
 		env[key] = val
