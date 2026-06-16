@@ -99,8 +99,10 @@ by two decoupled paths:
 
 1. **`import` skip gate (opportunistic, on-disk).** Skip a found session only when
    `hash == existing_hash AND existing_index_version >= currentIndexVersion`.
-   A version-stale-but-content-identical on-disk session is re-scanned
-   (`ReplaceSession`, which already has `mainBytes` in memory) and bumped.
+   A version-stale-but-content-identical on-disk session is re-scanned and has its
+   **FTS rebuilt only** (via `RebuildFTSBatch`, same path as reindex) and bumped —
+   not a full `ReplaceSession`, since the blob is byte-identical (see ADR-025 D2
+   amendment).
 2. **`capy vault reindex` (explicit, DB-driven).** Re-scans `raw_jsonl` + sidecars
    **from the DB** (no disk dependency) for every session with
    `index_version < currentIndexVersion`, rebuilds its FTS rows, bumps the version.
@@ -108,11 +110,15 @@ by two decoupled paths:
    not a background worker — keeps it off the server hot path, observable, and
    free of goroutine/lifecycle/concurrency complexity.
 
-`UpdateSessionFTS(uuid, newVersion, fts)` performs the reindex write: delete FTS by
-session + insert new rows + bump `index_version` only. It deliberately does **not**
-reuse `ReplaceSession` — that rewrites `raw_jsonl` and every sidecar blob, causing
-massive WAL bloat / write amplification across a multi-thousand-session vault for
-zero benefit.
+`RebuildFTSBatch` performs the reindex write (`UpdateSessionFTS` is its
+single-session wrapper): delete FTS by session + insert new rows + bump
+`index_version` only. It deliberately does **not** reuse `ReplaceSession` — that
+rewrites `raw_jsonl` and every sidecar blob, causing massive WAL bloat / write
+amplification across a multi-thousand-session vault for zero benefit. Because
+`vault_fts.session_uuid` is `UNINDEXED`, the delete is collapsed into one
+`WHERE session_uuid IN (...)` scan per batch (not one full FTS scan per session),
+and reindex/import drive it in bounded batches with a WAL checkpoint between them —
+see [ADR-025 D4](../../adr/025-vault-index-version-and-reindex.md).
 
 ### Version semantics
 

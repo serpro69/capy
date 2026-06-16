@@ -552,47 +552,119 @@ func (s *VaultStore) writeChildren(tx *sql.Tx, rec *SessionRecord) error {
 	return nil
 }
 
-// UpdateSessionFTS rebuilds a session's FTS rows and bumps its index_version in a
-// single transaction. Unlike ReplaceSession it touches ONLY the search index and
-// the version stamp — it does NOT rewrite raw_jsonl or any sidecar blob, so a
-// full-vault reindex avoids massive WAL bloat / write amplification (the stored
-// content is unchanged; only the derived index is rebuilt). Used by Reindex.
+// FTSRebuild bundles one session's freshly-scanned FTS rows with the
+// index_version they were produced at, for a batched FTS-only rebuild
+// (RebuildFTSBatch). It carries no blob — a rebuild never rewrites raw_jsonl.
+type FTSRebuild struct {
+	UUID       string
+	NewVersion int
+	FTS        []FTSRow
+}
+
+// UpdateSessionFTS rebuilds a single session's FTS rows and bumps its
+// index_version. It is the single-session convenience wrapper over
+// RebuildFTSBatch (see there for the full semantics). A missing session is a safe
+// no-op (returns nil).
 func (s *VaultStore) UpdateSessionFTS(uuid string, newVersion int, fts []FTSRow) error {
+	_, err := s.RebuildFTSBatch([]FTSRebuild{{UUID: uuid, NewVersion: newVersion, FTS: fts}})
+	return err
+}
+
+// RebuildFTSBatch rebuilds the FTS rows for many sessions and bumps each one's
+// index_version, in a single transaction. Unlike ReplaceSession it touches ONLY
+// the search index and the version stamp — it does NOT rewrite raw_jsonl or any
+// sidecar blob, so a full-vault reindex avoids massive WAL bloat / write
+// amplification (the stored content is unchanged; only the derived index is
+// rebuilt). Used by Reindex and by import's version-stale upgrade path.
+//
+// The per-session delete is collapsed into ONE `WHERE session_uuid IN (...)` pass
+// over vault_fts instead of one delete per session. This matters because
+// vault_fts.session_uuid is UNINDEXED (a deliberate schema choice — no external
+// content table), so a `WHERE session_uuid = ?` delete is a full scan of the whole
+// FTS index. Doing that once per session across a large vault is what turned
+// reindex/import into an effective hang; one IN-scan per batch bounds it.
+//
+// Versions are bumped FIRST and RowsAffected is used as a per-session existence
+// check: vault_fts has no foreign key to vault_sessions, so a session deleted
+// concurrently (e.g. `capy vault delete` racing a reindex) is dropped from the
+// batch before its FTS rows are deleted/reinserted — avoiding orphaned rows.
+// Returns the number of sessions actually rebuilt (survivors); callers treat
+// items - survivors as silently-skipped (vanished), not errors.
+func (s *VaultStore) RebuildFTSBatch(items []FTSRebuild) (int, error) {
+	if len(items) == 0 {
+		return 0, nil
+	}
+	db, err := s.getDB()
+	if err != nil {
+		return 0, err
+	}
+	tx, err := sqliteutil.BeginImmediate(db, "vault_meta")
+	if err != nil {
+		return 0, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Bump every version; keep only sessions that still exist (RowsAffected > 0).
+	bump := tx.Stmt(s.stmtUpdateIndexVersion)
+	survivors := make([]FTSRebuild, 0, len(items))
+	for _, it := range items {
+		res, err := bump.Exec(it.NewVersion, it.UUID)
+		if err != nil {
+			return 0, fmt.Errorf("update index_version %s: %w", it.UUID, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			survivors = append(survivors, it)
+		}
+	}
+	if len(survivors) == 0 {
+		return 0, nil // every session vanished — the deferred Rollback discards the empty tx
+	}
+
+	// One scan over vault_fts deletes all survivors' existing rows. The query holds
+	// only `?` placeholders (len(survivors) >= 1 here); the UUIDs are bound, never
+	// interpolated, and the batch size (<= reindexBatchSessions) stays well under
+	// SQLite's bind-parameter limit.
+	uuids := make([]any, len(survivors))
+	for i, it := range survivors {
+		uuids[i] = it.UUID
+	}
+	delQ := `DELETE FROM vault_fts WHERE session_uuid IN (` + //nolint:gosec // placeholders only; UUIDs are bound params, never interpolated
+		strings.Repeat("?,", len(uuids)-1) + `?)`
+	if _, err := tx.Exec(delQ, uuids...); err != nil {
+		return 0, fmt.Errorf("delete fts: %w", err)
+	}
+
+	insFTS := tx.Stmt(s.stmtInsertFTS)
+	for _, it := range survivors {
+		for _, r := range it.FTS {
+			if _, err := insFTS.Exec(
+				r.ContentText, it.UUID, r.SubagentID,
+				r.TurnIndex, r.MessageIndex, r.LineIndex, r.Role,
+			); err != nil {
+				return 0, fmt.Errorf("insert fts row for %s: %w", it.UUID, err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(survivors), nil
+}
+
+// checkpointWAL truncates the WAL into the main DB file on the live connection
+// pool. Reindex calls it between batches so a long run does not let the WAL grow
+// to the high-water mark of the largest batch and stay there. Best-effort: a
+// partial checkpoint under reader contention is harmless, so only a hard error is
+// surfaced (the pragma's result row is discarded by Exec).
+func (s *VaultStore) checkpointWAL() error {
 	db, err := s.getDB()
 	if err != nil {
 		return err
 	}
-	tx, err := sqliteutil.BeginImmediate(db, "vault_meta")
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+	if _, err := db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		return fmt.Errorf("wal checkpoint: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
-
-	// Bump the version first and use RowsAffected as an existence check: vault_fts
-	// has no foreign key to vault_sessions, so if the session was deleted
-	// concurrently (e.g. `capy vault delete` racing a reindex) we must bail before
-	// inserting FTS rows that would otherwise be orphaned.
-	res, err := tx.Stmt(s.stmtUpdateIndexVersion).Exec(newVersion, uuid)
-	if err != nil {
-		return fmt.Errorf("update index_version: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return nil // session no longer exists — nothing to (re)index
-	}
-
-	if _, err := tx.Stmt(s.stmtDeleteFTSBySession).Exec(uuid); err != nil {
-		return fmt.Errorf("delete fts: %w", err)
-	}
-	insFTS := tx.Stmt(s.stmtInsertFTS)
-	for _, r := range fts {
-		if _, err := insFTS.Exec(
-			r.ContentText, uuid, r.SubagentID,
-			r.TurnIndex, r.MessageIndex, r.LineIndex, r.Role,
-		); err != nil {
-			return fmt.Errorf("insert fts row: %w", err)
-		}
-	}
-	return tx.Commit()
+	return nil
 }
 
 // OutdatedSessionUUIDs returns the UUIDs of sessions whose index_version is below

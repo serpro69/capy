@@ -102,30 +102,60 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		batch      []SessionWrite
 		pending    []ImportedSession // aligned with batch; finalized after flush
 		batchBytes int64
+
+		// A version-stale but hash-identical session needs only its FTS rebuilt,
+		// not a full blob rewrite (ADR-025 D4) — accumulated separately and written
+		// via RebuildFTSBatch, which also collapses the per-session vault_fts delete
+		// into one IN-scan per batch.
+		ftsBatch      []FTSRebuild
+		ftsPending    []ImportedSession // aligned with ftsBatch
+		ftsBatchBytes int64
 	)
 
 	flush := func() {
-		if len(batch) == 0 {
+		if len(batch) == 0 && len(ftsBatch) == 0 {
 			return
 		}
 		if !opts.DryRun {
-			if err := store.WriteBatch(batch); err != nil {
-				slog.Warn("vault import: batch write failed, retrying per-session",
-					"count", len(batch), "error", err)
-				for i := range batch {
-					if err := store.writeOne(batch[i]); err != nil {
-						slog.Warn("vault import: session write failed",
-							"uuid", batch[i].Record.Session.UUID, "error", err)
-						pending[i].Status = StatusError
-						pending[i].Err = err
+			if len(batch) > 0 {
+				if err := store.WriteBatch(batch); err != nil {
+					slog.Warn("vault import: batch write failed, retrying per-session",
+						"count", len(batch), "error", err)
+					for i := range batch {
+						if err := store.writeOne(batch[i]); err != nil {
+							slog.Warn("vault import: session write failed",
+								"uuid", batch[i].Record.Session.UUID, "error", err)
+							pending[i].Status = StatusError
+							pending[i].Err = err
+						}
+					}
+				}
+			}
+			if len(ftsBatch) > 0 {
+				if _, err := store.RebuildFTSBatch(ftsBatch); err != nil {
+					slog.Warn("vault import: fts upgrade batch failed, retrying per-session",
+						"count", len(ftsBatch), "error", err)
+					for i := range ftsBatch {
+						if _, err := store.RebuildFTSBatch(ftsBatch[i : i+1]); err != nil {
+							slog.Warn("vault import: session fts upgrade failed",
+								"uuid", ftsBatch[i].UUID, "error", err)
+							ftsPending[i].Status = StatusError
+							ftsPending[i].Err = err
+						}
 					}
 				}
 			}
 		}
+		// On success each session keeps its pre-assigned status (StatusNew/StatusUpdated);
+		// only a failed per-session retry above mutates it to StatusError.
 		for _, p := range pending {
 			res.record(p)
 		}
+		for _, p := range ftsPending {
+			res.record(p)
+		}
 		batch, pending, batchBytes = nil, nil, 0
+		ftsBatch, ftsPending, ftsBatchBytes = nil, nil, 0
 	}
 
 	cancelled := false
@@ -163,21 +193,30 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 
 		// Idempotency (design §Idempotent Import Logic) + reindex gate:
 		//   - Skip only when content is unchanged (same hash) AND the stored FTS
-		//     index is already current. A hash-identical but version-stale session
-		//     is re-scanned (mainBytes is already in memory) to upgrade its index.
+		//     index is already current.
+		//   - A hash-identical but version-stale session has its FTS rebuilt only
+		//     (ftsOnly) — the blob is byte-identical, so a full ReplaceSession would
+		//     rewrite raw_jsonl + every sidecar for zero benefit (the write
+		//     amplification ADR-025 D4 avoids).
 		//   - A smaller divergent variant (likely a compacted copy) never overwrites
 		//     the fuller archive, regardless of version — `capy vault reindex`
 		//     upgrades those from the stored blob instead.
 		//   - A different-hash variant of equal-or-larger total size replaces in place.
 		replace := false
+		ftsOnly := false
 		if found {
-			upToDate := hash == existingHash && existingIndexVersion >= currentIndexVersion
-			smallerDivergent := hash != existingHash && size < existingSize
-			if upToDate || smallerDivergent {
+			switch {
+			case hash == existingHash && existingIndexVersion >= currentIndexVersion:
 				res.record(ImportedSession{UUID: sf.UUID, SizeBytes: size, Status: StatusSkipped})
 				continue
+			case hash == existingHash:
+				ftsOnly = true // unchanged content, stale index → rebuild FTS only
+			case size < existingSize:
+				res.record(ImportedSession{UUID: sf.UUID, SizeBytes: size, Status: StatusSkipped})
+				continue
+			default:
+				replace = true
 			}
-			replace = true
 		}
 
 		rec, err := buildRecord(sf, mainBytes, files, hash, size, machineID)
@@ -188,7 +227,7 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		}
 
 		status := StatusNew
-		if replace {
+		if replace || ftsOnly {
 			status = StatusUpdated
 		}
 		entry := ImportedSession{
@@ -204,10 +243,17 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 			continue
 		}
 
-		batch = append(batch, SessionWrite{Record: rec, Replace: replace})
-		pending = append(pending, entry)
-		batchBytes += size
-		if len(batch) >= maxBatchSessions || batchBytes >= maxBatchBytes {
+		if ftsOnly {
+			ftsBatch = append(ftsBatch, FTSRebuild{UUID: sf.UUID, NewVersion: currentIndexVersion, FTS: rec.FTS})
+			ftsPending = append(ftsPending, entry)
+			ftsBatchBytes += ftsContentBytes(rec.FTS)
+		} else {
+			batch = append(batch, SessionWrite{Record: rec, Replace: replace})
+			pending = append(pending, entry)
+			batchBytes += size
+		}
+		if len(batch) >= maxBatchSessions || batchBytes >= maxBatchBytes ||
+			len(ftsBatch) >= maxBatchSessions || ftsBatchBytes >= maxBatchBytes {
 			flush()
 		}
 	}

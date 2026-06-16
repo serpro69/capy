@@ -97,15 +97,25 @@ func TestImport_ReindexesVersionStaleSession(t *testing.T) {
 
 	require.Equal(t, 1, importFixture(t, s, root, ImportOptions{}).Imported)
 
-	// Simulate a session indexed by an older indexer (stale FTS).
+	// Simulate a legacy index: stale version, an un-enriched tool row, and a pinned
+	// sentinel title. The sentinel lets us prove the upgrade rebuilds ONLY the FTS
+	// index — a full ReplaceSession would overwrite the title and rewrite raw_jsonl
+	// from the re-scanned content.
 	db, err := s.getDB()
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE vault_sessions SET index_version=? WHERE uuid=?`, currentIndexVersion-1, uuid)
+	const sentinel = "SENTINEL — not rescanned"
+	_, err = db.Exec(`UPDATE vault_sessions SET index_version=?, title=? WHERE uuid=?`,
+		currentIndexVersion-1, sentinel, uuid)
 	require.NoError(t, err)
+	_, err = db.Exec(`DELETE FROM vault_fts WHERE session_uuid=? AND role='tool'`, uuid)
+	require.NoError(t, err)
+	pre, err := s.Search(SearchOptions{Query: "config", Role: "tool"})
+	require.NoError(t, err)
+	require.Empty(t, pre, "tool row removed to simulate a stale index")
 
 	// Re-import the unchanged files: content hash matches, but the stale index
-	// version forces a re-scan + replace (opportunistic on-disk upgrade) rather
-	// than a skip.
+	// version triggers an FTS-only upgrade (rebuild the index, leave raw_jsonl and
+	// the metadata row untouched) rather than a skip or a full blob-rewriting replace.
 	res := importFixture(t, s, root, ImportOptions{})
 	assert.Equal(t, 1, res.Updated)
 	assert.Equal(t, 0, res.Skipped)
@@ -115,6 +125,14 @@ func TestImport_ReindexesVersionStaleSession(t *testing.T) {
 	got, err := s.GetSession(uuid[:8])
 	require.NoError(t, err)
 	assert.Equal(t, currentIndexVersion, got.IndexVersion, "re-import bumps the index to current")
+	assert.Equal(t, sentinel, got.Title, "FTS-only upgrade must not rewrite the session metadata row")
+	assert.True(t, bytes.Equal(sampleMainJSONL(t), got.RawJSONL), "FTS-only upgrade must not rewrite raw_jsonl")
+
+	// The index was genuinely rebuilt: the tool_result now carries its enriched
+	// "Read …/config.toml" call summary, so it is searchable by the file path again.
+	post, err := s.Search(SearchOptions{Query: "config", Role: "tool"})
+	require.NoError(t, err)
+	require.Len(t, post, 1, "FTS rebuilt with the enriched tool-call summary")
 }
 
 func TestImport_LargerTotalReplaces_ShrinkingMainGrownSidecar(t *testing.T) {
