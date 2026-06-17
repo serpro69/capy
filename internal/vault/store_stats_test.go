@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -16,21 +17,21 @@ func TestVaultStore_Stats(t *testing.T) {
 	r1.Session.SizeBytes = 1000
 	r1.Session.StartTime = time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
 	r1.Session.EndTime = time.Date(2026, 5, 1, 11, 0, 0, 0, time.UTC)
-	require.NoError(t, s.InsertSession(r1))
+	require.NoError(t, s.InsertSession(context.Background(), r1))
 
 	r2 := sampleRecord("bbbbbbbb-2222-0000-0000-000000000000")
 	r2.Session.ProjectPath = "/home/user/proj-b"
 	r2.Session.SizeBytes = 500
 	r2.Session.StartTime = time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
 	r2.Session.EndTime = time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
-	require.NoError(t, s.InsertSession(r2))
+	require.NoError(t, s.InsertSession(context.Background(), r2))
 
 	r3 := sampleRecord("cccccccc-3333-0000-0000-000000000000")
 	r3.Session.ProjectPath = "/home/user/proj-a" // same project as r1
 	r3.Session.SizeBytes = 300
-	require.NoError(t, s.InsertSession(r3))
+	require.NoError(t, s.InsertSession(context.Background(), r3))
 
-	st, err := s.Stats()
+	st, err := s.Stats(context.Background())
 	require.NoError(t, err)
 
 	assert.Equal(t, 3, st.Sessions)
@@ -47,7 +48,7 @@ func TestVaultStore_Stats(t *testing.T) {
 
 func TestVaultStore_StatsEmpty(t *testing.T) {
 	s := newTestVault(t)
-	st, err := s.Stats()
+	st, err := s.Stats(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 0, st.Sessions)
 	assert.Equal(t, int64(0), st.TotalBytes)

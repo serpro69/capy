@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -88,11 +89,11 @@ type stubStore struct {
 	lastQuery   string
 }
 
-func (s *stubStore) ListSessions(vault.ListOptions) ([]vault.Session, error) {
+func (s *stubStore) ListSessions(_ context.Context, _ vault.ListOptions) ([]vault.Session, error) {
 	return s.sessions, nil
 }
 
-func (s *stubStore) GetSession(prefix string) (*vault.Session, error) {
+func (s *stubStore) GetSession(_ context.Context, prefix string) (*vault.Session, error) {
 	for i := range s.sessions {
 		if strings.HasPrefix(s.sessions[i].UUID, prefix) {
 			cp := s.sessions[i]
@@ -102,11 +103,11 @@ func (s *stubStore) GetSession(prefix string) (*vault.Session, error) {
 	return nil, vault.ErrSessionNotFound
 }
 
-func (s *stubStore) GetFiles(uuid string) ([]vault.File, error) {
+func (s *stubStore) GetFiles(_ context.Context, uuid string) ([]vault.File, error) {
 	return s.files[uuid], nil
 }
 
-func (s *stubStore) Search(opts vault.SearchOptions) ([]vault.SearchResult, error) {
+func (s *stubStore) Search(_ context.Context, opts vault.SearchOptions) ([]vault.SearchResult, error) {
 	s.searchCalls++
 	s.lastQuery = opts.Query
 	return s.results, s.searchErr

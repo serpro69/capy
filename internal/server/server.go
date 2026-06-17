@@ -233,7 +233,7 @@ func (s *Server) vaultSweep(ctx context.Context) {
 	// this probe a bad key would surface only on the first batch flush — after
 	// Import has scanned and hashed up to a full batch of sessions — and then as
 	// N identical per-session errors instead of one clean abort.
-	if err := st.Open(); err != nil {
+	if err := st.Open(ctx); err != nil {
 		slog.Warn("vault sweep: cannot open vault store", "error", err)
 		return
 	}

@@ -53,7 +53,7 @@ func TestVaultSweep_ImportsCurrentProjectSessions(t *testing.T) {
 	st := vault.NewVaultStore(vault.VaultDBPath())
 	t.Cleanup(func() { _ = st.Close() })
 
-	sessions, err := st.ListSessions(vault.ListOptions{})
+	sessions, err := st.ListSessions(context.Background(), vault.ListOptions{})
 	require.NoError(t, err)
 	require.Len(t, sessions, 2)
 
