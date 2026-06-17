@@ -1,0 +1,2016 @@
+ ▐▛███▜▌   Claude Code v2.1.178
+▝▜█████▛▘  Opus 4.8 · Claude Team
+  ▘▘ ▝▝    /tmp/tmp.cDcE1tHtwO
+
+ ▎ Using Opus 4.8 (from .claude/settings.json) · /model
+
+❯ Use kk:implement to work on first task of @docs/wip/vault/v2/                 
+  ⎿  Listed directory docs/wip/vault/v2/
+
+● I'll invoke the kk:implement skill to work on the first task.
+
+● Skill(kk:implement)
+  ⎿  Successfully loaded skill
+
+● I'll resolve the plugin root override first, then load context.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Plugin root is /home/sergio/.claude/plugins/cache/claude-toolbox/kk/0.18.3.
+  The injected base directory (.claude/plugins/marketplaces/...) is stale — I'll
+  use ${TOOLBOX_PLUGIN_ROOT}/skills/implement instead. This is plan mode
+  (references a docs/wip feature). Let me load the mode file, conventions, and
+  the feature docs.
+
+  Read 3 files (ctrl+o to expand)
+
+● Now let me load the feature docs. Following plan-mode entry procedure: read
+  tasks.md, design.md, and implementation.md.
+
+  Read 3 files (ctrl+o to expand)
+
+● Context loaded. The next pending task (Task 1 is done) is Task 0: Investigate 
+  PreCompact hook payload. Per the entry procedure, let me search the knowledge
+  base for relevant context and read the target file. Let me also load the
+  capy_search tool and run profile detection (target is a .go file → go
+  profile).
+
+  Read 2 files (ctrl+o to expand)
+
+● go profile activates. Let me run the knowledge-base search and load the go
+  profile's implement/ gotchas.
+
+  Read 1 file, called capy (ctrl+o to expand)
+
+● Profile gotchas: always-load Go checklists (design-patterns,
+  structs-interfaces, error-handling) plus security.md (this task does file I/O
+  of sensitive session content with 0600 perms). Before writing, I need to
+  understand the existing hook plumbing — how input []byte is structured, how
+  the adapter works, and how sibling handlers resolve the session/transcript
+  path. Let me explore.
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+● Let me read the dispatch, the adapter, and a sibling handler to follow
+  conventions precisely.
+
+  Read 3 files (ctrl+o to expand)
+
+● Let me look at a sibling handler and the package's logging/helper conventions
+  before writing.
+
+  Read 3 files (ctrl+o to expand)
+
+● Let me check how stderr logging is done in this package (slog vs fmt.Fprintln)
+  and how session file paths get resolved elsewhere.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● No logging in internal/hook/ yet. Let me check the broader logging convention
+  and how the test file structures hook tests.
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● I now have full context. Let me check the hook command entry point to confirm
+  the logging convention (whether slog is configured for the short-lived hook
+  process).
+
+  Read 2 files (ctrl+o to expand)
+● Confirmed: the hook process does not configure slog, and the cmd-layer
+  convention is fmt.Fprintf(os.Stderr, "capy <cmd>: …\n"). For debug output the
+  user must reliably see, that's the right channel.
+
+  Before writing, let me state the key structural finding directly:
+
+  Task 0 is only partly autonomous. Subtasks 0.1 (debug instrumentation) and 0.5
+  (no-op when unset) are pure code — I'll implement them now with unit tests.
+  But 0.2 (trigger /compact in a real Claude Code session and capture the
+  payload), 0.3 (document the JSON shape), 0.4 (content-level timing diff), and
+  0.6 (decision gate) require you to run a live session with the built binary —
+  I cannot invoke /compact. I'll implement the instrumentation, then hand off
+  precise capture instructions.
+
+  Let me mark the task in-progress and write the code.
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      12  **Tx-helper note:** tasks that open a write transaction use the
+           vault tx helper — the local `beginImmediate` (`migrations.go`)
+           before Task 1 lands, or `sqliteutil.BeginImmediate` after. Eit
+          her works; this is **not** a hard ordering dependency on Task 1
+          .
+      13  
+      14  ## Task 0: Investigate PreCompact hook payload
+      15 -- **Status:** pending                                          
+      15 +- **Status:** in-progress                                      
+      16  - **Depends on:** —
+      17  - **Size:** S
+      18  - **Can run in parallel with:** Task 1–13
+
+● Now the instrumentation. Per implementation.md V2.0, the debug handler dumps
+  both the raw payload and a hook-time copy of the session transcript:
+
+● Write(internal/hook/precompact.go)
+  ⎿  Added 86 lines, removed 3 lines
+       1  package hook
+       2  
+       3 -import "github.com/serpro69/capy/internal/adapter"             
+       3 +import (                                                       
+       4 +  "encoding/json"                                              
+       5 +  "fmt"                                                        
+       6 +  "os"                                                         
+       7  
+       5 -func handlePreCompact(_ []byte, _ adapter.HookAdapter) ([]byte,
+         - error) {                                                      
+       6 -  return nil, nil // STUB: Future resume snapshot              
+       8 +  "github.com/serpro69/capy/internal/adapter"                  
+       9 +)                                                              
+      10 +                                                               
+      11 +// debugPreCompactEnv gates the V2.0 PreCompact payload investi
+         +gation. When it is                                             
+      12 +// not exactly "1", handlePreCompact is a pure no-op and ships 
+         +no behavior change                                             
+      13 +// (see design.md §5 — PreCompact archival is gated on this inv
+         +estigation).                                                   
+      14 +const debugPreCompactEnv = "CAPY_DEBUG_PRECOMPACT"             
+      15 +                                                               
+      16 +func handlePreCompact(input []byte, _ adapter.HookAdapter) ([]b
+         +yte, error) {                                                  
+      17 +  if os.Getenv(debugPreCompactEnv) == "1" {                    
+      18 +    dumpPreCompactDebug(input)                                 
+      19 +  }                                                            
+      20 +  return nil, nil // STUB: archival handler lands in V2.14, gat
+         +ed on this investigation                                       
+      21  }
+      22 +                                                               
+      23 +// dumpPreCompactDebug records the raw PreCompact hook payload 
+         +and a hook-time                                                
+      24 +// copy of the referenced session transcript so the payload sha
+         +pe and — crucially                                             
+      25 +// — the mutation timing can be verified empirically (design.md
+         + §5, Assumption #1).                                           
+      26 +//                                                             
+      27 +// The two artifacts answer the two open questions:            
+      28 +//   - the raw payload dump answers "what fields does PreCompac
+         +t send, and can we                                             
+      29 +//     locate the session file from them?"                     
+      30 +//   - the hook-time transcript copy answers "does the file the
+         + hook can read still                                           
+      31 +//     contain the turns /compact is about to remove?" — diff i
+         +t against the                                                  
+      32 +//     post-/compact file. mtime alone cannot distinguish pre- 
+         +from post-mutation.                                            
+      33 +//                                                             
+      34 +// It NEVER blocks /compact: every failure is logged to stderr 
+         +and swallowed, and                                             
+      35 +// the handler still returns (nil, nil). Both files are written
+         + 0600 because they                                             
+      36 +// hold verbatim session content.                              
+      37 +func dumpPreCompactDebug(input []byte) {                       
+      38 +  if path, err := writeDebugTemp("capy-precompact-payload-*.jso
+         +n", input); err != nil {                                       
+      39 +    fmt.Fprintf(os.Stderr, "capy precompact: debug: cannot writ
+         +e payload dump: %v\n", err)                                    
+      40 +  } else {                                                     
+      41 +    fmt.Fprintf(os.Stderr, "capy precompact: debug: raw payload
+         + (%d bytes) -> %s\n", len(input), path)                        
+      42 +  }                                                            
+      43 +                                                               
+      44 +  // transcript_path is the documented Claude Code field and is
+         + already consumed                                              
+      45 +  // for other events (adapter/claudecode.go). Parse it defensi
+         +vely — the raw                                                 
+      46 +  // dump above is the authoritative record of the actual shape
+         +, so a parse miss                                              
+      47 +  // here never loses the investigation data.                  
+      48 +  var raw struct {                                             
+      49 +    TranscriptPath string `json:"transcript_path"`             
+      50 +  }                                                            
+      51 +  if err := json.Unmarshal(input, &raw); err != nil {          
+      52 +    fmt.Fprintf(os.Stderr, "capy precompact: debug: cannot pars
+         +e payload JSON: %v\n", err)                                    
+      53 +    return                                                     
+      54 +  }                                                            
+      55 +  if raw.TranscriptPath == "" {                                
+      56 +    fmt.Fprintln(os.Stderr, "capy precompact: debug: no transcr
+         +ipt_path in payload; cannot snapshot session file")            
+      57 +    return                                                     
+      58 +  }                                                            
+      59 +                                                               
+      60 +  contents, err := os.ReadFile(raw.TranscriptPath)             
+      61 +  if err != nil {                                              
+      62 +    fmt.Fprintf(os.Stderr, "capy precompact: debug: cannot read
+         + session file %q: %v\n", raw.TranscriptPath, err)              
+      63 +    return                                                     
+      64 +  }                                                            
+      65 +  path, err := writeDebugTemp("capy-precompact-session-*.jsonl"
+         +, contents)                                                    
+      66 +  if err != nil {                                              
+      67 +    fmt.Fprintf(os.Stderr, "capy precompact: debug: cannot writ
+         +e session snapshot: %v\n", err)                                
+      68 +    return                                                     
+      69 +  }                                                            
+      70 +  fmt.Fprintf(os.Stderr, "capy precompact: debug: hook-time ses
+         +sion copy (%d bytes) -> %s\n", len(contents), path)            
+      71 +}                                                              
+      72 +                                                               
+      73 +// writeDebugTemp writes b to a new temp file matching pattern 
+         +and returns its                                                
+      74 +// path. os.CreateTemp opens the file with mode 0600 (owner-onl
+         +y) regardless of                                               
+      75 +// umask, which is the required permission for these dumps — th
+         +ey hold verbatim                                               
+      76 +// session content.                                            
+      77 +func writeDebugTemp(pattern string, b []byte) (string, error) {
+      78 +  f, err := os.CreateTemp("", pattern)                         
+      79 +  if err != nil {                                              
+      80 +    return "", err                                             
+      81 +  }                                                            
+      82 +  if _, err := f.Write(b); err != nil {                        
+      83 +    f.Close()                                                  
+      84 +    return f.Name(), err                                       
+      85 +  }                                                            
+      86 +  if err := f.Close(); err != nil {                            
+      87 +    return f.Name(), err                                       
+      88 +  }                                                            
+      89 +  return f.Name(), nil                                         
+      90 +}                                                              
+
+● Now the unit tests covering 0.1 (instrumentation writes dumps) and 0.5 (no-op
+  when unset):
+
+● Write(internal/hook/precompact_test.go)
+  ⎿  Wrote 143 lines to internal/hook/precompact_test.go
+       1 package hook
+       2 
+       3 import (
+       4 "encoding/json"
+       5 "os"
+       6 "path/filepath"
+       7 "testing"
+       8 
+       9 "github.com/stretchr/testify/assert"
+      10 "github.com/stretchr/testify/require"
+     … +158 lines (ctrl+o to expand)
+
+● Let me simplify the test — use strings.Contains instead of a hand-rolled
+  helper:
+
+● Update(internal/hook/precompact_test.go)
+  ⎿  Added 1 line
+       4    "encoding/json"
+       5    "os"
+       6    "path/filepath"
+       7 +  "strings"                                                    
+       8    "testing"
+       9  
+      10    "github.com/stretchr/testify/assert"
+
+● Update(internal/hook/precompact_test.go)
+  ⎿  Added 1 line, removed 10 lines
+      30    t.Helper()
+      31    var matches []string
+      32    for _, name := range readTempDir(t, dir) {
+      33 -    if filepath.Ext(name) != "" && contains(name, substr) {    
+      33 +    if strings.Contains(name, substr) {                        
+      34        matches = append(matches, filepath.Join(dir, name))
+      35      }
+      36    }
+     ...
+      38    return matches[0]
+      39  }
+      40  
+      41 -func contains(s, substr string) bool {                         
+      42 -  for i := 0; i+len(substr) <= len(s); i++ {                   
+      43 -    if s[i:i+len(substr)] == substr {                          
+      44 -      return true                                              
+      45 -    }                                                          
+      46 -  }                                                            
+      47 -  return false                                                 
+      48 -}                                                              
+      49 -                                                               
+      41  // TestPreCompact_NoOpWhenEnvUnset verifies subtask 0.5: with C
+          APY_DEBUG_PRECOMPACT
+      42  // unset, the handler ships no behavior change — it returns (ni
+          l, nil) and writes
+      43  // no debug artifacts.
+
+● Now let me run the tests (with -tags fts5, race detector, both keys set per
+  CLAUDE.md):
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Passing. Let me run the full internal/hook suite plus go vet to confirm no
+  regressions:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Full suite green, vet clean. Let me check off the completed subtasks (0.1,
+  0.5) in tasks.md and note the remaining manual ones:
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      20  - **Docs:** [implementation.md#v20--investigate-precompact-payl
+          oad-risk-first-gates-v213-15](./implementation.md)
+      21  
+      22  ### Subtasks
+      23 -- [ ] 0.1 In `internal/hook/precompact.go`, add a debug branch 
+         -gated behind `CAPY_DEBUG_PRECOMPACT=1` that writes the raw `inp
+         -ut []byte` to an `os.CreateTemp` file (0600) and logs the path 
+         -to stderr                                                      
+      23 +- [x] 0.1 In `internal/hook/precompact.go`, add a debug branch 
+         +gated behind `CAPY_DEBUG_PRECOMPACT=1` that writes the raw `inp
+         +ut []byte` to an `os.CreateTemp` file (0600) and logs the path 
+         +to stderr — also dumps a hook-time copy of the `transcript_path
+         +` session file (0600) for the 0.4 content-level timing diff (pe
+         +r implementation.md V2.0). Unit tests in `precompact_test.go`. 
+      24  - [ ] 0.2 Trigger `/compact` in a real Claude Code session; cap
+          ture the payload
+      25  - [ ] 0.3 Document the JSON shape in `docs/wip/vault/v2/precomp
+          act-investigation.md`: is the session file path present? sessio
+          n ID? project dir?
+      26  - [ ] 0.4 Verify timing at the **content level, not mtime**: ca
+          pture a copy of the session-file contents AT hook time, then di
+          ff against the post-`/compact` file — confirm the hook-time cop
+          y still contains pre-compaction turns the compacted file lost. 
+          (mtime alone can't distinguish pre- from post-mutation.)
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      24  - [ ] 0.2 Trigger `/compact` in a real Claude Code session; cap
+          ture the payload
+      25  - [ ] 0.3 Document the JSON shape in `docs/wip/vault/v2/precomp
+          act-investigation.md`: is the session file path present? sessio
+          n ID? project dir?
+      26  - [ ] 0.4 Verify timing at the **content level, not mtime**: ca
+          pture a copy of the session-file contents AT hook time, then di
+          ff against the post-`/compact` file — confirm the hook-time cop
+          y still contains pre-compaction turns the compacted file lost. 
+          (mtime alone can't distinguish pre- from post-mutation.)
+      27 -- [ ] 0.5 Ensure the debug branch is a no-op when the env var i
+         -s unset (no behavior change shipped)                           
+      27 +- [x] 0.5 Ensure the debug branch is a no-op when the env var i
+         +s unset (no behavior change shipped) — gated on `CAPY_DEBUG_PRE
+         +COMPACT == "1"` exactly; covered by `TestPreCompact_NoOpWhenEnv
+         +Unset` / `TestPreCompact_NoOpWhenEnvNotExactlyOne`             
+      28  - [ ] 0.6 **Decision gate:** if the hook-time content is alread
+          y the compacted transcript (pre-compaction turns absent), STOP 
+          — file-based capture is impossible; re-scope Tasks 14–16 per de
+          sign.md §PreCompact (SessionStart-cached copy, or drop). Record
+           the decision in the investigation doc
+      29  
+      30  ## Task 1: Consolidate `beginImmediate`/`isBusy` into `sqliteut
+          il`
+
+● Now the mandatory isolated code review of the diff. Let me load the review
+  skill (isolated mode).
+
+  Read 1 file (ctrl+o to expand)
+
+● Let me read the isolated-mode workflow.
+
+  Read 1 file (ctrl+o to expand)
+
+● Now the isolated review. Let me prepare artifacts: capture the diff, resolve
+  the go review-code checklists, and get the pal model list.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● go profile review checklists resolve to: solid-checklist, removal-plan,
+  security, code-style, error-handling (always) + security-injection-ref
+  (conditional — the diff parses an untrusted hook payload and reads a file at a
+  payload-supplied path). Let me get the pal model list, then spawn both
+  reviewers in parallel.
+
+  Called pal (ctrl+o to expand)
+
+● Model: gemini-3.1-pro-preview (frontier reasoning + thinking). Let me grab the
+  full diff text for the reviewer prompts and load the pal codereview tool.
+
+  Ran 1 shell command (ctrl+o to expand)
+● Both reviewers need to see the new (untracked) test file too. Let me include
+  it in the diff, then spawn both reviewers in parallel.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Now spawning both reviewers in parallel — the kk:code-reviewer sub-agent and
+  pal codereview (step 1):
+
+● kk:code-reviewer(Isolated code review)
+  ⎿  Done (12 tool uses · 36.3k tokens · 1m 2s)
+  (ctrl+o to expand)
+
+  Called pal (ctrl+o to expand)
+
+● Reviewer A (sub-agent) returned APPROVE with minor P2/P3 findings. Now the pal
+  step 2 continuation to get the external model's expert analysis:
+
+  Called pal (ctrl+o to expand)
+
+● Both reviewers returned APPROVE, no P0/P1. Two corroborated minor findings
+  worth applying, plus two cheap clarity/tracking touch-ups. Let me apply them.
+
+  Corroborated fix 1 — test env hygiene (os.Unsetenv → t.Setenv(…, "")):
+
+● Update(internal/hook/precompact_test.go)
+  ⎿  Added 1 line, removed 1 line
+      44  func TestPreCompact_NoOpWhenEnvUnset(t *testing.T) {
+      45    dir := t.TempDir()
+      46    t.Setenv("TMPDIR", dir)
+      47 -  os.Unsetenv(debugPreCompactEnv)                              
+      47 +  t.Setenv(debugPreCompactEnv, "") // empty != "1"; t.Setenv re
+         +stores prior value on cleanup                                  
+      48  
+      49    input := []byte(`{"transcript_path":"/does/not/matter.jsonl",
+          "trigger":"manual"}`)
+      50    output, err := handlePreCompact(input, &testAdapter{})
+
+● Corroborated fix 2 — clean up the partial temp file on write error (it holds
+  session content), plus the slog-rationale clarity note:
+
+● Update(internal/hook/precompact.go)
+  ⎿  Added 4 lines, removed 2 lines
+      73  // writeDebugTemp writes b to a new temp file matching pattern 
+          and returns its
+      74  // path. os.CreateTemp opens the file with mode 0600 (owner-onl
+          y) regardless of
+      75  // umask, which is the required permission for these dumps — th
+          ey hold verbatim
+      76 -// session content.                                            
+      76 +// session content. On a write failure the partial file is remo
+         +ved so a truncated                                             
+      77 +// dump of session content is not left behind.                 
+      78  func writeDebugTemp(pattern string, b []byte) (string, error) {
+      79    f, err := os.CreateTemp("", pattern)
+      80    if err != nil {
+     ...
+      82    }
+      83    if _, err := f.Write(b); err != nil {
+      84      f.Close()
+      84 -    return f.Name(), err                                       
+      85 +    os.Remove(f.Name())                                        
+      86 +    return "", err                                             
+      87    }
+      88    if err := f.Close(); err != nil {
+      89      return f.Name(), err
+
+● Update(internal/hook/precompact.go)
+  ⎿  Added 4 lines, removed 3 lines
+      31  //     contain the turns /compact is about to remove?" — diff i
+          t against the
+      32  //     post-/compact file. mtime alone cannot distinguish pre- 
+          from post-mutation.
+      33  //
+      34 -// It NEVER blocks /compact: every failure is logged to stderr 
+         -and swallowed, and                                             
+      35 -// the handler still returns (nil, nil). Both files are written
+         - 0600 because they                                             
+      36 -// hold verbatim session content.                              
+      34 +// It NEVER blocks /compact: every failure is logged to stderr 
+         +(the hook                                                      
+      35 +// subprocess configures no slog handler) and swallowed, and th
+         +e handler still                                                
+      36 +// returns (nil, nil). Both files are written 0600 because they
+         + hold verbatim                                                 
+      37 +// session content.                                            
+      38  func dumpPreCompactDebug(input []byte) {
+      39    if path, err := writeDebugTemp("capy-precompact-payload-*.jso
+          n", input); err != nil {
+      40      fmt.Fprintf(os.Stderr, "capy precompact: debug: cannot writ
+          e payload dump: %v\n", err)
+
+● Tracking note (finding 5) — record that the debug scaffolding must be
+  removed/replaced at the decision gate (per the Document-Deferred-Work rule):
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line
+      26  - [ ] 0.4 Verify timing at the **content level, not mtime**: ca
+          pture a copy of the session-file contents AT hook time, then di
+          ff against the post-`/compact` file — confirm the hook-time cop
+          y still contains pre-compaction turns the compacted file lost. 
+          (mtime alone can't distinguish pre- from post-mutation.)
+      27  - [x] 0.5 Ensure the debug branch is a no-op when the env var i
+          s unset (no behavior change shipped) — gated on `CAPY_DEBUG_PRE
+          COMPACT == "1"` exactly; covered by `TestPreCompact_NoOpWhenEnv
+          Unset` / `TestPreCompact_NoOpWhenEnvNotExactlyOne`
+      28  - [ ] 0.6 **Decision gate:** if the hook-time content is alread
+          y the compacted transcript (pre-compaction turns absent), STOP 
+          — file-based capture is impossible; re-scope Tasks 14–16 per de
+          sign.md §PreCompact (SessionStart-cached copy, or drop). Record
+           the decision in the investigation doc
+      29 +- [ ] 0.7 **Remove the debug scaffolding** once the investigati
+         +on concludes: the `CAPY_DEBUG_PRECOMPACT` branch + `dumpPreComp
+         +actDebug`/`writeDebugTemp` in `precompact.go` (and `precompact_
+         +test.go`) are temporary instrumentation. Favorable outcome → th
+         +ey are superseded by the Task 15 (V2.14) archival handler; unfa
+         +vorable → revert `handlePreCompact` to the pure no-op. Either w
+         +ay, delete them before Task 15 lands so they don't bit-rot.    
+      30  
+      31  ## Task 1: Consolidate `beginImmediate`/`isBusy` into `sqliteut
+          il`
+      32  - **Status:** done — completed early on branch `vault_tool_cmd`
+           (the [vault-tool-entries](../../vault-tool-entries/) feature n
+          eeded the vault migration runner, which sits on this consolidat
+          ion). Do NOT redo.
+
+● Now re-verify after the review fixes:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All green. Let me confirm the whole module still compiles (the change is
+  isolated, but a build catches any integration breakage):
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Module builds clean. Let me clean up the review temp artifacts (and the
+  intent-to-add marker so the working tree reads naturally):
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● rm is blocked by policy — the /tmp patches are harmless OS-temp files. Let me
+  just reset the intent-to-add marker:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Done with the autonomous portion of Task 0. Here's where things stand.
+
+  What I implemented (subtasks 0.1, 0.5)
+
+  internal/hook/precompact.go — replaced the stub with an env-gated debug
+  branch:
+  - Gated on CAPY_DEBUG_PRECOMPACT == "1" exactly; otherwise a pure no-op
+  returning (nil, nil) — no behavior change ships.
+  - When enabled, dumps the raw payload to a 0600 temp file and a hook-time copy
+  of the transcript_path session file to a second 0600 temp file (per
+  implementation.md V2.0 — the second file is what enables the content-level
+  timing check in 0.4), logging both paths to stderr. All failures are logged +
+  swallowed so /compact is never blocked.
+
+  internal/hook/precompact_test.go (new) — 4 tests: no-op when unset / when not
+  "1"; verbatim payload+session dump with 0600 asserted; graceful degradation
+  when transcript_path is absent.
+
+  Verification
+
+  go test -race, go vet, gofmt, and a full go build -tags fts5 ./... — all
+  green.
+
+  Code review (isolated mode)
+
+  kk:code-reviewer sub-agent + pal codereview (gemini-3.1-pro-preview) — both
+  APPROVE, no P0/P1. I applied the two corroborated findings: os.Unsetenv →
+  t.Setenv(…, "") (cleanup-safe), and removing the partial temp file on write
+  error. Added the slog-rationale note and tracked scaffolding removal (new
+  subtask 0.7) per the deferred-work rule. No systemic findings to index.
+
+  ⛔ Blocked — I can't finish Task 0 alone
+
+  Subtasks 0.2/0.3/0.4/0.6 require a live Claude Code session — I cannot invoke
+  /compact. Task 0 status stays in-progress. To complete it:
+
+  1. make build, ensure the PreCompact hook runs capy hook precompact (already
+  wired in dispatch).
+  2. Launch a session with CAPY_DEBUG_PRECOMPACT=1 exported, then run /compact.
+  3. Grab the two stderr paths (or ls -t /tmp/capy-precompact-*): the payload
+  dump + the hook-time session copy.
+  4. Capture the post-/compact live <uuid>.jsonl.
+  5. 0.4 gate: diff hook-time copy vs. post-compaction file — confirm the
+  hook-time copy still holds pre-compaction turns the post file lost.
+  6. 0.3/0.6: record the payload shape + decision in
+  docs/wip/vault/v2/precompact-investigation.md.
+
+  Want me to scaffold precompact-investigation.md with the questions to fill in,
+  or hand it back once you've captured the payloads? Note: nothing is committed
+  (you're on vault_v2).
+
+✻ Worked for 11m 56s
+
+❯ OK, so let's do the remainder of the tasks step by step. Guide me through it, 
+  one step at a time.                                                           
+
+● Before I hand you Step 1, let me verify the exact mechanics in this codebase
+  so the guidance is precise — how the PreCompact hook is wired and where the
+  binary builds.
+  Searched for 2 patterns (ctrl+o to expand)
+
+● Let me see exactly how the PreCompact hook command is written to
+  settings.json.
+
+  Read 1 file (ctrl+o to expand)
+
+● The PreCompact hook runs bash $CLAUDE_PROJECT_DIR/<wrapper> hook precompact
+  and reads the payload from stdin. Let me check the wrapper path and which capy
+  binary it invokes — that determines how to get the debug build + env var into
+  the real hook.
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+● I now have the full picture. The hook runs via .claude/scripts/capy.sh, which
+  resolves capy from your PATH first (command -v capy), then ~/.local/bin,
+  ~/go/bin, etc., and inherits the environment — so CAPY_DEBUG_PRECOMPACT=1 set
+  in Claude Code's env reaches the hook.
+
+  Here's the plan (4 steps), and I'll run the first one for you:
+
+  1. Build + smoke-test the instrumentation (I do this now — proves the real
+  binary dumps both files; no session risk)
+  2. Real /compact capture — subtask 0.2 (you do this; only you can trigger
+  /compact)
+  3. Content-level timing diff — subtask 0.4 (we do together once you have the
+  files)
+  4. Document shape + decision — subtasks 0.3 / 0.6 (I scaffold, you confirm)
+
+  ---
+  Step 1 — build + smoke-test (running now)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Binary built. Now the smoke test — feed a synthetic payload to the real binary
+  and confirm it dumps both files (payload + hook-time session copy) with 0600:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● ✅ Step 1 passed. Against the real binary: exit 0 (never blocks /compact),
+  both dumps written 0600 (-rw-------), payload byte-identical to input, and the
+  hook-time session copy byte-identical to the transcript. The runtime path for
+  subtask 0.1 is proven.
+
+  ---
+  Step 2 — real /compact capture (your turn — subtask 0.2)
+
+  Only a live /compact can answer the timing question, so this part is yours.
+  Two conditions must both hold: the debug build must be the capy the hook
+  resolves, and CAPY_DEBUG_PRECOMPACT=1 must be in that session's environment.
+
+  2a. Install the debug build over your current capy (Linux lets you overwrite a
+  running binary):
+  command -v capy            # note the path it prints
+  cp ./capy "$(command -v capy)"
+  capy --version             # must show ...-g68deec8-dirty (confirms the debug
+  build is live)
+
+  2b. Start a fresh throwaway Claude Code session with the env var exported
+  (this current session can't be used — it wasn't launched with the var, and
+  hook env is inherited at launch):
+  cd /tmp/tmp.cDcE1tHtwO      # this project already has the PreCompact hook
+  wired
+  export CAPY_DEBUG_PRECOMPACT=1
+  claude
+
+  2c. Inside that new session: have a few real back-and-forth turns (so there's
+  content for /compact to summarize away), then run:
+  /compact
+
+  2d. Immediately after it finishes, in another terminal, grab the artifacts (do
+  not move/delete anything):
+  ls -t /tmp/capy-precompact-* | head -4     # newest = this run's payload +
+  session dumps
+  - The payload dump (...-payload-*.json) → its transcript_path field is the
+  live session file, now post-compaction.
+  - The session dump (...-session-*.jsonl) → the hook-time snapshot.
+
+  Report back to me:
+  1. The full contents of the payload dump (so we nail the shape for 0.3 — is
+  transcript_path/session_id/cwd/trigger present?).
+  2. The two dump paths + the transcript_path value.
+
+  If the hook prints nothing / no dumps appear, tell me — that means the binary
+  or env var didn't take, and we debug before relying on it.
+
+  ⏸️ I'll wait here. Once you paste the payload dump and confirm the paths, we
+  move to Step 3 (the content-level diff that decides the gate).
+
+✻ Cogitated for 2m 58s
+
+※ recap: We're completing vault v2 Task 0 (verify the PreCompact hook fires before Claude mutates the session file). Step 1 instrumentation is built and proven; next, you run `/compact` in a fresh session with `CAPY_DEBUG_PRECOMPACT=1` and paste me the payload dump. (disable recaps in /config)
+
+❯ I don't see anything under /tmp/capy-precompact-*                             
+
+● No dumps means the hook either didn't run capy, ran an old capy, or wrote
+  elsewhere. Let me not guess — I'm on the same machine, so let me inspect
+  directly: is the PreCompact hook actually wired here, which capy does the hook
+  resolve, and are there dumps anywhere outside /tmp?
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Found the root cause. Two facts:
+
+  1. capy --version → v0.10.2, not …-dirty. The debug build was never installed
+  over /home/sergio/.local/bin/capy — the cp in step 2a didn't take. So the hook
+  ran the old release binary whose handlePreCompact is the original do-nothing
+  stub. That alone explains zero dumps.
+  2. The PreCompact hook is wired correctly (in .claude/settings.local.json).
+
+  Let me remove both failure points for you rather than rely on shell setup:
+  I'll install the debug build, and inline the env var directly into the hook
+  command (so it no longer depends on how you launched claude). Let me read the
+  exact hook block first, then install + edit.
+
+  Read 1 file (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ I'm running a local binary in that directory to start the mcp, confirmed by   
+  the capy doctor inside the session:                                           
+  ❯ Hi there                                                                    
+                                                                                
+  Hi! How can I help you today?                                                 
+                                                                                
+  ✻ Crunched for 2s                                                             
+                                                                                
+  ❯ Can you run capy doctor                                                     
+                                                                                
+  ●                                                                             
+                                                                                
+  ● capy - capy_doctor (MCP)                                                    
+  ## capy doctor                                                                
+                                                                                
+  - [x] Version: v0.10.2-2-g68deec8-dirty                                       
+  - [x] Runtimes: 6/11 (go, javascript, perl, python, rust, shell)              
+  - [x] FTS5: available                                                         
+  - [x] Config: loaded (db path: /tmp/tmp.cDcE1tHtwO/.capy/knowledge.db)        
+  - [x] Hooks: 6/6 hook events registered in settings.local.json                
+  - [x] MCP: registered                                                         
+  - [x] Knowledge base: 1 sources, 14 chunks                                    
+  - [x] Security: 3 policy files, 3 deny patterns                               
+  - [x] Project: /tmp/tmp.cDcE1tHtwO                                            
+
+● That's the key disconnect, thanks. So: your MCP server runs the local debug
+  build (-dirty, matches the ./capy I built at /tmp/tmp.cDcE1tHtwO/capy), but
+  the PreCompact hook goes through .claude/scripts/capy.sh, whose command -v 
+  capy resolves to the stale /home/sergio/.local/bin/capy (v0.10.2, the old
+  stub). Different binaries — the hook never had the instrumentation.
+
+  I won't touch your ~/.local/bin/capy. The surgical fix is to point the hook at
+  the same local binary the MCP uses + set the debug var inline, in the local
+  (non-committed) settings. Let me confirm the exact binary path your MCP is
+  configured with so the hook uses an identical one.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Confirmed. MCP runs ./capy = /tmp/tmp.cDcE1tHtwO/capy (-dirty); the hook
+  resolves the stale ~/.local/bin/capy (v0.10.2). I'll point the PreCompact hook
+  at the same local debug binary and set the debug var inline — in
+  .claude/settings.local.json (local, not committed), keeping the wrapper's
+  exit-0 safety net by prepending the project dir to PATH.
+
+● Update(.claude/settings.local.json)
+  ⎿  User rejected update to .claude/settings.local.json
+
+❯ Updated it already                                                            
+
+● Got it — I'll leave the file to you. Let me do a quick read-only check of that
+  one line so we don't burn another /compact cycle on a wrong setup:
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● That setup is correct: CAPY_DEBUG_PRECOMPACT=1 inline +
+  $CLAUDE_PROJECT_DIR/capy (= the -dirty debug build, same one the MCP uses). It
+  bypasses the wrapper, which is fine — capy hook precompact returns (nil,nil)
+  and exits 0 normally.
+
+  One catch: this current session already loaded the old hook command at 
+  startup, so the edit only takes effect in a new session.
+
+  Step 2 (corrected) — capture a real /compact
+
+  1. Start a fresh Claude Code session in this project (new terminal):
+  cd /tmp/tmp.cDcE1tHtwO && claude
+  1. (No need to export anything now — the env var is baked into the hook
+  command.)
+  2. Have a few real back-and-forth turns so there's content for /compact to
+  summarize away — the timing check in Step 3 needs turns that compaction
+  removes.
+  3. Run /compact.
+  4. Right after it finishes, grab the artifacts (don't move/delete anything):
+  ls -t /tmp/capy-precompact-* | head -4
+
+  Report back:
+  - The full contents of the newest …-payload-*.json (nails the shape for 0.3).
+  - The two dump paths, and the transcript_path value from inside the payload
+  (that's the live, now post-compaction session file we'll diff against in
+  Step 3).
+
+  If still nothing appears: confirm capy doctor in the new session shows
+  …-dirty, and that you ran /compact in that new session. Then tell me and we'll
+  dig further.
+
+  ⏸️ Waiting for the payload dump. (Reminder: we'll revert the inline
+  CAPY_DEBUG_PRECOMPACT=1 in settings.local.json once the investigation is done
+  — I'm tracking it.)
+
+✻ Cooked for 56s
+※ recap: Goal: complete Task 0 of vault v2, verifying the PreCompact hook fires before Claude Code mutates the session file. The instrumentation is built and wired. Next: in a new session, run /compact and paste me the newest capy-precompact payload dump. (disable recaps in /config)
+
+❯ Done, both files are avaiable now.                                            
+  I've also created a pre-compact jsonl session backup file in                  
+  @~/.claude/projects/-tmp-tmp-cDcE1tHtwO/ , and after compaction, I can see    
+  there are 2 session files now, apart from my backup. (I have removed all old  
+  sessions from that dir, so it must be somehow created from the compaction -   
+  seems like compact creates something alongside the session file? - might be   
+  worth checking and taking a note of this as well?)                            
+  ⎿  Listed directory ../../home/sergio/.claude/projects/-tmp-tmp-cDcE1tHtwO/
+
+● Both dumps captured — excellent. And your observation about extra files is
+  exactly the kind of thing Task 0 must pin down. Let me investigate at the
+  content level (subtask 0.4) before drawing conclusions. First, the raw
+  topology:
+
+  Listed 1 directory (ctrl+o to expand)
+
+● The payload is clean — it carries session_id, transcript_path (the exact
+  7abfb552 file), cwd, hook_event_name, and trigger: manual. So locating the 
+  session from the payload: solved.
+
+  Now the timing question (0.4), plus your file
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ ah, the second session file is from this session? because you switched cwd    
+
+❯ go back to original directory please                                          
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Confirmed — my cwd is /tmp/tmp.cDcE1tHtwO and I never changed it (the only cd
+  was in the Step-2 instructions for your separate test terminal).
+
+  And mystery solved: 90b10852-…jsonl is THIS implementation session, not a
+  compaction artifact — proven by .capy/guidance-90b10852-….json (the PreToolUse
+  hook's per-session file for this conversation). It co-mingled into the same
+  -tmp-tmp-cDcE1tHtwO/ dir only because I had you launch the throwaway test
+  session in this same project dir. So: /compact did not spawn a spurious 
+  session file — good, we won't record that as a finding (it'd be wrong). The
+  compacted session is unambiguously 7abfb552 per the payload's transcript_path.
+
+  Now the actual 0.4 question — did the hook fire before compaction mutated the
+  file? Let me compare at the content level:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● This is a significant finding. Let me verify the append-only behavior
+  rigorously and capture the compaction metadata for the doc:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Rigorous confirmation. The picture is now complete and it's an important one.
+  Let me record the investigation, then bring you the decision.
+
+  Key findings:
+  - Payload (0.3): carries session_id, transcript_path (absolute path to the
+  main <uuid>.jsonl), cwd, hook_event_name, trigger. Locating the session:
+  solved.
+  - Timing (0.4): hook-time copy is byte-identical to your pre-compact backup
+  and is an exact prefix of the post-compact file (first 50 of 80 lines). The
+  compaction summary (isCompactSummary:true + compactMetadata) is appended at
+  line 57. → /compact is append-only — it never truncates or rewrites; the 
+  pre-compaction turns stay in the file.
+
+  Let me write the investigation doc:
+
+● Write(docs/wip/vault/v2/precompact-investigation.md)
+  ⎿  Wrote 73 lines to docs/wip/vault/v2/precompact-investigation.md
+       1 # PreCompact Investigation (Task 0 / V2.0)
+       3 > Feature: [vault v2](./design.md) · gates Tasks 14–16 (PreCompa
+       4 > Date: 2026-06-17
+       5 > Binary: `capy v0.10.2-2-g68deec8-dirty` (debug build with the 
+       6 > Platform: Claude Code (manual `/compact`)
+       8 ## Method
+      10 `handlePreCompact` (`internal/hook/precompact.go`), gated on `CA
+         PY_DEBUG_PRECOMPACT=1`, dumps the raw hook payload and a **hook-
+          files. The PreCompact hook command in `.claude/settings.local.j
+         env var inline. A real Claude Code session (`7abfb55
+     … +123 lines (ctrl+o to expand)
+
+● Doc written: docs/wip/vault/v2/precompact-investigation.md.
+
+  This is the decision gate (0.6), and the finding genuinely changes the
+  calculus, so I want your call rather than deciding unilaterally. The blunt
+  version: the durability bucket's premise is weaker than the design assumed.
+  /compact doesn't delete anything from the JSONL — it appends a summary and
+  keeps the original turns. Since the vault archives the file verbatim and the
+  sweep reads the full append-only file, the pre-compaction content is already
+  preserved in the active row. The one real gap left is a session getting
+  compacted then deleted before a sweep runs.
+
+● User answered Claude's questions:
+  ⎿  · Given /compact is append-only (no file-level data loss, full transcript 
+     already swept), how should we scope the PreCompact archival work (Tasks 
+     14–16)? → I think we can drop it for now, and make note of why it's dropped
+     + document findings, so if we ever want to pick it up, either because of 
+     CC behavior changes, or other reasons - we can easily do that
+
+● Decision recorded: drop PreCompact archival for now, documented for easy
+  revival. That's the right call given the evidence — building cold-storage for
+  a loss that doesn't occur would be speculative.
+
+  Now I'll finalize: revert the instrumentation to a documented no-op (the
+  investigation is done; findings live in the doc + git history), record the
+  decision, and re-scope the plan. Starting with the code, the settings revert,
+  and the decision record:
+
+● Write(internal/hook/precompact.go)
+  ⎿  Added 10 lines, removed 89 lines
+       1  package hook
+       2  
+       3 -import (                                                       
+       4 -  "encoding/json"                                              
+       5 -  "fmt"                                                        
+       6 -  "os"                                                         
+       3 +import "github.com/serpro69/capy/internal/adapter"             
+       4  
+       8 -  "github.com/serpro69/capy/internal/adapter"                  
+       9 -)                                                              
+      10 -                                                               
+      11 -// debugPreCompactEnv gates the V2.0 PreCompact payload investi
+         -gation. When it is                                             
+      12 -// not exactly "1", handlePreCompact is a pure no-op and ships 
+         -no behavior change                                             
+      13 -// (see design.md §5 — PreCompact archival is gated on this inv
+         -estigation).                                                   
+      14 -const debugPreCompactEnv = "CAPY_DEBUG_PRECOMPACT"             
+      15 -                                                               
+      16 -func handlePreCompact(input []byte, _ adapter.HookAdapter) ([]b
+         -yte, error) {                                                  
+      17 -  if os.Getenv(debugPreCompactEnv) == "1" {                    
+      18 -    dumpPreCompactDebug(input)                                 
+      19 -  }                                                            
+      20 -  return nil, nil // STUB: archival handler lands in V2.14, gat
+         -ed on this investigation                                       
+       5 +// handlePreCompact is intentionally a no-op. PreCompact archiv
+         +al was investigated                                            
+       6 +// under Task 0 / V2.0 and dropped: /compact is append-only to 
+         +the session JSONL,                                             
+       7 +// so no file content is lost, and the existing server-startup 
+         +sweep already                                                  
+       8 +// archives the full verbatim transcript. The investigation — p
+         +ayload shape, the                                              
+       9 +// append-only finding, the decision, and the conditions to rev
+         +isit it — is in                                                
+      10 +// docs/wip/vault/v2/precompact-investigation.md. The debug ins
+         +trumentation that                                              
+      11 +// produced it is preserved in this branch's git history for ea
+         +sy revival.                                                    
+      12 +func handlePreCompact(_ []byte, _ adapter.HookAdapter) ([]byte,
+         + error) {                                                      
+      13 +  return nil, nil                                              
+      14  }
+      22 -                                                               
+      23 -// dumpPreCompactDebug records the raw PreCompact hook payload 
+         -and a hook-time                                                
+      24 -// copy of the referenced session transcript so the payload sha
+         -pe and — crucially                                             
+      25 -// — the mutation timing can be verified empirically (design.md
+         - §5, Assumption #1).                                           
+      26 -//                                                             
+      27 -// The two artifacts answer the two open questions:            
+      28 -//   - the raw payload dump answers "what fields does PreCompac
+         -t send, and can we                                             
+      29 -//     locate the session file from them?"                     
+      30 -//   - the hook-time transcript copy answers "does the file the
+         - hook can read still                                           
+      31 -//     contain the turns /compact is about to remove?" — diff i
+         -t against the                                                  
+      32 -//     post-/compact file. mtime alone cannot distinguish pre- 
+         -from post-mutation.                                            
+      33 -//                                                             
+      34 -// It NEVER blocks /compact: every failure is logged to stderr 
+         -(the hook                                                      
+      35 -// subprocess configures no slog handler) and swallowed, and th
+         -e handler still                                                
+      36 -// returns (nil, nil). Both files are written 0600 because they
+         - hold verbatim                                                 
+      37 -// session content.                                            
+      38 -func dumpPreCompactDebug(input []byte) {                       
+      39 -  if path, err := writeDebugTemp("capy-precompact-payload-*.jso
+         -n", input); err != nil {                                       
+      40 -    fmt.Fprintf(os.Stderr, "capy precompact: debug: cannot writ
+         -e payload dump: %v\n", err)                                    
+      41 -  } else {                                                     
+      42 -    fmt.Fprintf(os.Stderr, "capy precompact: debug: raw payload
+         - (%d bytes) -> %s\n", len(input), path)                        
+      43 -  }                                                            
+      44 -                                                               
+      45 -  // transcript_path is the documented Claude Code field and is
+         - already consumed                                              
+      46 -  // for other events (adapter/claudecode.go). Parse it defensi
+         -vely — the raw                                                 
+      47 -  // dump above is the authoritative record of the actual shape
+         -, so a parse miss                                              
+      48 -  // here never loses the investigation data.                  
+      49 -  var raw struct {                                             
+      50 -    TranscriptPath string `json:"transcript_path"`             
+      51 -  }                                                            
+      52 -  if err := json.Unmarshal(input, &raw); err != nil {          
+      53 -    fmt.Fprintf(os.Stderr, "capy precompact: debug: cannot pars
+         -e payload JSON: %v\n", err)                                    
+      54 -    return                                                     
+      55 -  }                                                            
+      56 -  if raw.TranscriptPath == "" {                                
+      57 -    fmt.Fprintln(os.Stderr, "capy precompact: debug: no transcr
+         -ipt_path in payload; cannot snapshot session file")            
+      58 -    return                                                     
+      59 -  }                                                            
+      60 -                                                               
+      61 -  contents, err := os.ReadFile(raw.TranscriptPath)             
+      62 -  if err != nil {                                              
+      63 -    fmt.Fprintf(os.Stderr, "capy precompact: debug: cannot read
+         - session file %q: %v\n", raw.TranscriptPath, err)              
+      64 -    return                                                     
+      65 -  }                                                            
+      66 -  path, err := writeDebugTemp("capy-precompact-session-*.jsonl"
+         -, contents)                                                    
+      67 -  if err != nil {                                              
+      68 -    fmt.Fprintf(os.Stderr, "capy precompact: debug: cannot writ
+         -e session snapshot: %v\n", err)                                
+      69 -    return                                                     
+      70 -  }                                                            
+      71 -  fmt.Fprintf(os.Stderr, "capy precompact: debug: hook-time ses
+         -sion copy (%d bytes) -> %s\n", len(contents), path)            
+      72 -}                                                              
+      73 -                                                               
+      74 -// writeDebugTemp writes b to a new temp file matching pattern 
+         -and returns its                                                
+      75 -// path. os.CreateTemp opens the file with mode 0600 (owner-onl
+         -y) regardless of                                               
+      76 -// umask, which is the required permission for these dumps — th
+         -ey hold verbatim                                               
+      77 -// session content. On a write failure the partial file is remo
+         -ved so a truncated                                             
+      78 -// dump of session content is not left behind.                 
+      79 -func writeDebugTemp(pattern string, b []byte) (string, error) {
+      80 -  f, err := os.CreateTemp("", pattern)                         
+      81 -  if err != nil {                                              
+      82 -    return "", err                                             
+      83 -  }                                                            
+      84 -  if _, err := f.Write(b); err != nil {                        
+      85 -    f.Close()                                                  
+      86 -    os.Remove(f.Name())                                        
+      87 -    return "", err                                             
+      88 -  }                                                            
+      89 -  if err := f.Close(); err != nil {                            
+      90 -    return f.Name(), err                                       
+      91 -  }                                                            
+      92 -  return f.Name(), nil                                         
+      93 -}                                                              
+
+● Write(internal/hook/precompact_test.go)
+  ⎿  Added 6 lines, removed 124 lines
+        1  package hook
+        2  
+        3  import (
+        4 -  "encoding/json"                                             
+        5 -  "os"                                                        
+        6 -  "path/filepath"                                             
+        7 -  "strings"                                                   
+        4    "testing"
+        5  
+        6    "github.com/stretchr/testify/assert"
+        7    "github.com/stretchr/testify/require"
+        8  )
+        9  
+       14 -// readTempDir returns the names of all entries in dir, used t
+          -o assert which                                                
+       15 -// debug dumps the handler created (os.CreateTemp writes into 
+          -$TMPDIR).                                                     
+       16 -func readTempDir(t *testing.T, dir string) []string {         
+       17 -  t.Helper()                                                  
+       18 -  entries, err := os.ReadDir(dir)                             
+       10 +// TestPreCompact_NoOp locks the contract that the PreCompact 
+          +handler ships no                                              
+       11 +// behavior: archival was investigated (Task 0 / V2.0) and dro
+          +pped — see                                                    
+       12 +// docs/wip/vault/v2/precompact-investigation.md.             
+       13 +func TestPreCompact_NoOp(t *testing.T) {                      
+       14 +  output, err := handlePreCompact([]byte(`{"trigger":"manual",
+          +"transcript_path":"/x.jsonl"}`), &testAdapter{})              
+       15    require.NoError(t, err)
+       20 -  names := make([]string, 0, len(entries))                    
+       21 -  for _, e := range entries {                                 
+       22 -    names = append(names, e.Name())                           
+       23 -  }                                                           
+       24 -  return names                                                
+       16 +  assert.Nil(t, output, "PreCompact must produce no output")  
+       17  }
+       26 -                                                              
+       27 -// findDump returns the absolute path of the single temp file 
+          -in dir whose name                                             
+       28 -// contains substr, failing if there is not exactly one.      
+       29 -func findDump(t *testing.T, dir, substr string) string {      
+       30 -  t.Helper()                                                  
+       31 -  var matches []string                                        
+       32 -  for _, name := range readTempDir(t, dir) {                  
+       33 -    if strings.Contains(name, substr) {                       
+       34 -      matches = append(matches, filepath.Join(dir, name))     
+       35 -    }                                                         
+       36 -  }                                                           
+       37 -  require.Len(t, matches, 1, "expected exactly one %q dump in 
+          -%s, got %v", substr, dir, matches)                            
+       38 -  return matches[0]                                           
+       39 -}                                                             
+       40 -                                                              
+       41 -// TestPreCompact_NoOpWhenEnvUnset verifies subtask 0.5: with 
+          -CAPY_DEBUG_PRECOMPACT                                         
+       42 -// unset, the handler ships no behavior change — it returns (n
+          -il, nil) and writes                                           
+       43 -// no debug artifacts.                                        
+       44 -func TestPreCompact_NoOpWhenEnvUnset(t *testing.T) {          
+       45 -  dir := t.TempDir()                                          
+       46 -  t.Setenv("TMPDIR", dir)                                     
+       47 -  t.Setenv(debugPreCompactEnv, "") // empty != "1"; t.Setenv r
+          -estores prior value on cleanup                                
+       48 -                                                              
+       49 -  input := []byte(`{"transcript_path":"/does/not/matter.jsonl"
+          -,"trigger":"manual"}`)                                        
+       50 -  output, err := handlePreCompact(input, &testAdapter{})      
+       51 -                                                              
+       52 -  require.NoError(t, err)                                     
+       53 -  assert.Nil(t, output, "PreCompact must produce no output in 
+          -the no-op path")                                              
+       54 -  assert.Empty(t, readTempDir(t, dir), "no debug artifacts mus
+          -t be written when the env var is unset")                      
+       55 -}                                                             
+       56 -                                                              
+       57 -// TestPreCompact_NoOpWhenEnvNotExactlyOne guards the gate: on
+          -ly "1" enables debug.                                         
+       58 -func TestPreCompact_NoOpWhenEnvNotExactlyOne(t *testing.T) {  
+       59 -  dir := t.TempDir()                                          
+       60 -  t.Setenv("TMPDIR", dir)                                     
+       61 -  t.Setenv(debugPreCompactEnv, "true") // not exactly "1"     
+       62 -                                                              
+       63 -  output, err := handlePreCompact([]byte(`{"trigger":"manual"}
+          -`), &testAdapter{})                                           
+       64 -                                                              
+       65 -  require.NoError(t, err)                                     
+       66 -  assert.Nil(t, output)                                       
+       67 -  assert.Empty(t, readTempDir(t, dir), "only CAPY_DEBUG_PRECOM
+          -PACT=1 enables debug dumps")                                  
+       68 -}                                                             
+       69 -                                                              
+       70 -// TestPreCompact_DebugDumpsPayloadAndSession verifies subtask
+          - 0.1: with the env                                            
+       71 -// var set, the raw payload is dumped verbatim and a hook-time
+          - copy of the                                                  
+       72 -// transcript referenced by transcript_path is captured.      
+       73 -func TestPreCompact_DebugDumpsPayloadAndSession(t *testing.T) 
+          -{                                                             
+       74 -  dir := t.TempDir()                                          
+       75 -  t.Setenv("TMPDIR", dir)                                     
+       76 -  t.Setenv(debugPreCompactEnv, "1")                           
+       77 -                                                              
+       78 -  // A stand-in session transcript on disk for the hook to cop
+          -y.                                                            
+       79 -  sessionContents := []byte("{\"type\":\"user\"}\n{\"type\":\"
+          -assistant\"}\n")                                              
+       80 -  sessionFile := filepath.Join(t.TempDir(), "session.jsonl")  
+       81 -  require.NoError(t, os.WriteFile(sessionFile, sessionContents
+          -, 0o600))                                                     
+       82 -                                                              
+       83 -  input, err := json.Marshal(map[string]any{                  
+       84 -    "session_id":      "abc-123",                             
+       85 -    "transcript_path": sessionFile,                           
+       86 -    "trigger":         "manual",                              
+       87 -  })                                                          
+       88 -  require.NoError(t, err)                                     
+       89 -                                                              
+       90 -  output, err := handlePreCompact(input, &testAdapter{})      
+       91 -  require.NoError(t, err)                                     
+       92 -  assert.Nil(t, output, "PreCompact debug branch must not bloc
+          -k /compact with output")                                      
+       93 -                                                              
+       94 -  // Raw payload dump is byte-identical to the hook input.    
+       95 -  payloadDump := findDump(t, dir, "payload")                  
+       96 -  gotPayload, err := os.ReadFile(payloadDump)                 
+       97 -  require.NoError(t, err)                                     
+       98 -  assert.Equal(t, input, gotPayload, "payload dump must be the
+          - verbatim hook input")                                        
+       99 -  assertOwnerOnly(t, payloadDump)                             
+      100 -                                                              
+      101 -  // Session copy is byte-identical to the on-disk transcript 
+          -at hook time.                                                 
+      102 -  sessionDump := findDump(t, dir, "session")                  
+      103 -  gotSession, err := os.ReadFile(sessionDump)                 
+      104 -  require.NoError(t, err)                                     
+      105 -  assert.Equal(t, sessionContents, gotSession, "session copy m
+          -ust match the transcript bytes at hook time")                 
+      106 -  assertOwnerOnly(t, sessionDump)                             
+      107 -}                                                             
+      108 -                                                              
+      109 -// TestPreCompact_DebugMissingTranscriptPath verifies the hand
+          -ler degrades                                                  
+      110 -// gracefully (no crash, still returns nil) when the payload h
+          -as no                                                         
+      111 -// transcript_path: the raw payload is still dumped, but no se
+          -ssion copy.                                                   
+      112 -func TestPreCompact_DebugMissingTranscriptPath(t *testing.T) {
+      113 -  dir := t.TempDir()                                          
+      114 -  t.Setenv("TMPDIR", dir)                                     
+      115 -  t.Setenv(debugPreCompactEnv, "1")                           
+      116 -                                                              
+      117 -  input := []byte(`{"session_id":"abc-123","trigger":"manual"}
+          -`)                                                            
+      118 -  output, err := handlePreCompact(input, &testAdapter{})      
+      119 -                                                              
+      120 -  require.NoError(t, err)                                     
+      121 -  assert.Nil(t, output)                                       
+      122 -                                                              
+      123 -  names := readTempDir(t, dir)                                
+      124 -  require.Len(t, names, 1, "only the payload dump should exist
+          - without a transcript_path")                                  
+      125 -  assert.Contains(t, names[0], "payload")                     
+      126 -}                                                             
+      127 -                                                              
+      128 -// assertOwnerOnly asserts the file at path is not group/other
+          - readable (0600),                                             
+      129 -// since the dumps hold verbatim session content.             
+      130 -func assertOwnerOnly(t *testing.T, path string) {             
+      131 -  t.Helper()                                                  
+      132 -  info, err := os.Stat(path)                                  
+      133 -  require.NoError(t, err)                                     
+      134 -  assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "deb
+          -ug dumps must be owner-only (0600)")                          
+      135 -}                                                             
+
+● Update(.claude/settings.local.json)
+  ⎿  Error editing file
+
+● Update(docs/wip/vault/v2/precompact-investigation.md)
+  ⎿  Added 23 lines, removed 2 lines
+      68  - **B — Re-scope (RECOMMENDED):** replace Tasks 14–16 with **on
+          e** task — *archive the active session on PreCompact* (run the 
+          existing single-session `Import` on the `(dir, uuid)` from the 
+          payload so the active `vault_sessions` row exists/updates befor
+          e the user moves on). **Drop** the `vault_snapshots` table + sn
+          apshot CLI. Delivers the durability guarantee (prompt archival 
+          before possible deletion) at a fraction of the complexity, and 
+          matches the evidence.
+      69  - **C — Drop PreCompact entirely:** rely on the existing server
+          -startup sweep (it already reads the full append-only file). *P
+          ro:* zero new code. *Con:* loses the "archive before deletion" 
+          guarantee.
+      70  
+      71 -**Recommendation: B.** If A or B is chosen, verify **auto-compa
+         -ction** timing before finalizing (the one untested path).      
+      71 +**Recommendation was B; decision is C (drop for now).**        
+      72  
+      73 -**Status:** awaiting design-owner decision (recorded above; tas
+         -ks.md updated per the chosen option).                          
+      73 +### Decision (2026-06-17): Option C — drop PreCompact archival 
+         +for now                                                        
+      74 +                                                               
+      75 +PreCompact archival (Tasks 14–16) is **dropped**, not deferred-
+         +with-a-task.                                                   
+      76 +Rationale: `/compact` is append-only — it loses no file content
+         + — and the existing                                            
+      77 +server-startup sweep already archives the full verbatim transcr
+         +ipt, so the                                                    
+      78 +durability gain does not justify the `vault_snapshots` cold-sto
+         +rage machinery (or                                             
+      79 +even the lighter archive-on-compact hook) at this time. `handle
+         +PreCompact` returns                                            
+      80 +to a pure no-op.                                               
+      81 +                                                               
+      82 +**Re-trigger (pick it up if any becomes true):**               
+      83 +                                                               
+      84 +- A Claude Code version changes `/compact` to **truncate or rew
+         +rite** the session                                             
+      85 +  JSONL (re-run this investigation against that version — set  
+      86 +  `CAPY_DEBUG_PRECOMPACT=1`; the instrumentation is in this bra
+         +nch's git history).                                            
+      87 +- **Auto-compaction** (`trigger:"auto"`) is found to differ fro
+         +m the manual                                                   
+      88 +  `/compact` tested here — untested; verify before relying on e
+         +ither path.                                                    
+      89 +- A need arises to guarantee archival **before** a session file
+         + can be pruned (the                                            
+      90 +  one real gap; met by the Option-B archive-on-compact hook).  
+      91 +                                                               
+      92 +**Revival pointer:** the debug instrumentation (`dumpPreCompact
+         +Debug` /                                                       
+      93 +`writeDebugTemp` + their tests) lived in `internal/hook/precomp
+         +act.go` and                                                    
+      94 +`internal/hook/precompact_test.go` on branch `vault_v2` — recov
+         +er from git history.                                           
+
+● The settings file was modified since I read it (you edited it). Let me re-read
+  the current PreCompact command before reverting:
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+● Update(.claude/settings.local.json)
+  ⎿  Added 1 line, removed 1 line
+      30        {
+      31          "hooks": [
+      32            {
+      33 -            "command": "CAPY_DEBUG_PRECOMPACT=1 $CLAUDE_PROJECT
+         -_DIR/capy hook precompact",                                    
+      33 +            "command": "bash $CLAUDE_PROJECT_DIR/.claude/script
+         +s/capy.sh hook precompact",                                    
+      34              "type": "command"
+      35            }
+      36          ],
+
+● Settings reverted, decision recorded, code back to a documented no-op. Now
+  I'll re-scope the plan in tasks.md so it matches the decision (leaving Tasks
+  14–16 as "pending" would contradict the drop). Marking Task 0 done, its
+  subtasks complete, and the dependent tasks dropped:
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      12  **Tx-helper note:** tasks that open a write transaction use the
+           vault tx helper — the local `beginImmediate` (`migrations.go`)
+           before Task 1 lands, or `sqliteutil.BeginImmediate` after. Eit
+          her works; this is **not** a hard ordering dependency on Task 1
+          .
+      13  
+      14  ## Task 0: Investigate PreCompact hook payload
+      15 -- **Status:** in-progress                                      
+      15 +- **Status:** done — investigation complete; PreCompact archiva
+         +l (Tasks 14–16) **dropped**. Findings + re-trigger conditions i
+         +n [precompact-investigation.md](./precompact-investigation.md).
+      16  - **Depends on:** —
+      17  - **Size:** S
+      18  - **Can run in parallel with:** Task 1–13
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      21  
+      22  ### Subtasks
+      23  - [x] 0.1 In `internal/hook/precompact.go`, add a debug branch 
+          gated behind `CAPY_DEBUG_PRECOMPACT=1` that writes the raw `inp
+          ut []byte` to an `os.CreateTemp` file (0600) and logs the path 
+          to stderr — also dumps a hook-time copy of the `transcript_path
+          ` session file (0600) for the 0.4 content-level timing diff (pe
+          r implementation.md V2.0). Unit tests in `precompact_test.go`.
+      24 -- [ ] 0.2 Trigger `/compact` in a real Claude Code session; cap
+         -ture the payload                                               
+      24 +- [x] 0.2 Trigger `/compact` in a real Claude Code session; cap
+         +ture the payload — captured for a manual `/compact` (session `7
+         +abfb552`); payload + hook-time session copy dumped to `0600` te
+         +mp files                                                       
+      25  - [ ] 0.3 Document the JSON shape in `docs/wip/vault/v2/precomp
+          act-investigation.md`: is the session file path present? sessio
+          n ID? project dir?
+      26  - [ ] 0.4 Verify timing at the **content level, not mtime**: ca
+          pture a copy of the session-file contents AT hook time, then di
+          ff against the post-`/compact` file — confirm the hook-time cop
+          y still contains pre-compaction turns the compacted file lost. 
+          (mtime alone can't distinguish pre- from post-mutation.)
+      27  - [x] 0.5 Ensure the debug branch is a no-op when the env var i
+          s unset (no behavior change shipped) — gated on `CAPY_DEBUG_PRE
+          COMPACT == "1"` exactly; covered by `TestPreCompact_NoOpWhenEnv
+          Unset` / `TestPreCompact_NoOpWhenEnvNotExactlyOne`
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      22  ### Subtasks
+      23  - [x] 0.1 In `internal/hook/precompact.go`, add a debug branch 
+          gated behind `CAPY_DEBUG_PRECOMPACT=1` that writes the raw `inp
+          ut []byte` to an `os.CreateTemp` file (0600) and logs the path 
+          to stderr — also dumps a hook-time copy of the `transcript_path
+          ` session file (0600) for the 0.4 content-level timing diff (pe
+          r implementation.md V2.0). Unit tests in `precompact_test.go`.
+      24  - [x] 0.2 Trigger `/compact` in a real Claude Code session; cap
+          ture the payload — captured for a manual `/compact` (session `7
+          abfb552`); payload + hook-time session copy dumped to `0600` te
+          mp files
+      25 -- [ ] 0.3 Document the JSON shape in `docs/wip/vault/v2/precomp
+         -act-investigation.md`: is the session file path present? sessio
+         -n ID? project dir?                                             
+      25 +- [x] 0.3 Document the JSON shape in `docs/wip/vault/v2/precomp
+         +act-investigation.md`: is the session file path present? sessio
+         +n ID? project dir? — yes to all (`transcript_path`, `session_id
+         +`, `cwd`, `hook_event_name`, `trigger`)                        
+      26  - [ ] 0.4 Verify timing at the **content level, not mtime**: ca
+          pture a copy of the session-file contents AT hook time, then di
+          ff against the post-`/compact` file — confirm the hook-time cop
+          y still contains pre-compaction turns the compacted file lost. 
+          (mtime alone can't distinguish pre- from post-mutation.)
+      27  - [x] 0.5 Ensure the debug branch is a no-op when the env var i
+          s unset (no behavior change shipped) — gated on `CAPY_DEBUG_PRE
+          COMPACT == "1"` exactly; covered by `TestPreCompact_NoOpWhenEnv
+          Unset` / `TestPreCompact_NoOpWhenEnvNotExactlyOne`
+      28  - [ ] 0.6 **Decision gate:** if the hook-time content is alread
+          y the compacted transcript (pre-compaction turns absent), STOP 
+          — file-based capture is impossible; re-scope Tasks 14–16 per de
+          sign.md §PreCompact (SessionStart-cached copy, or drop). Record
+           the decision in the investigation doc
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      23  - [x] 0.1 In `internal/hook/precompact.go`, add a debug branch 
+          gated behind `CAPY_DEBUG_PRECOMPACT=1` that writes the raw `inp
+          ut []byte` to an `os.CreateTemp` file (0600) and logs the path 
+          to stderr — also dumps a hook-time copy of the `transcript_path
+          ` session file (0600) for the 0.4 content-level timing diff (pe
+          r implementation.md V2.0). Unit tests in `precompact_test.go`.
+      24  - [x] 0.2 Trigger `/compact` in a real Claude Code session; cap
+          ture the payload — captured for a manual `/compact` (session `7
+          abfb552`); payload + hook-time session copy dumped to `0600` te
+          mp files
+      25  - [x] 0.3 Document the JSON shape in `docs/wip/vault/v2/precomp
+          act-investigation.md`: is the session file path present? sessio
+          n ID? project dir? — yes to all (`transcript_path`, `session_id
+          `, `cwd`, `hook_event_name`, `trigger`)
+      26 -- [ ] 0.4 Verify timing at the **content level, not mtime**: ca
+         -pture a copy of the session-file contents AT hook time, then di
+         -ff against the post-`/compact` file — confirm the hook-time cop
+         -y still contains pre-compaction turns the compacted file lost. 
+         -(mtime alone can't distinguish pre- from post-mutation.)       
+      26 +- [x] 0.4 Verify timing at the **content level, not mtime**: ca
+         +pture a copy of the session-file contents AT hook time, then di
+         +ff against the post-`/compact` file — confirm the hook-time cop
+         +y still contains pre-compaction turns the compacted file lost. 
+         +(mtime alone can't distinguish pre- from post-mutation.) — **Fi
+         +nding:** `/compact` is **append-only**; the hook-time copy is a
+         + byte-identical *prefix* of the post-compact file (nothing remo
+         +ved — a compaction-summary entry is appended). The hook reads t
+         +he full pre-compaction transcript.                             
+      27  - [x] 0.5 Ensure the debug branch is a no-op when the env var i
+          s unset (no behavior change shipped) — gated on `CAPY_DEBUG_PRE
+          COMPACT == "1"` exactly; covered by `TestPreCompact_NoOpWhenEnv
+          Unset` / `TestPreCompact_NoOpWhenEnvNotExactlyOne`
+      28  - [ ] 0.6 **Decision gate:** if the hook-time content is alread
+          y the compacted transcript (pre-compaction turns absent), STOP 
+          — file-based capture is impossible; re-scope Tasks 14–16 per de
+          sign.md §PreCompact (SessionStart-cached copy, or drop). Record
+           the decision in the investigation doc
+      29  - [ ] 0.7 **Remove the debug scaffolding** once the investigati
+          on concludes: the `CAPY_DEBUG_PRECOMPACT` branch + `dumpPreComp
+          actDebug`/`writeDebugTemp` in `precompact.go` (and `precompact_
+          test.go`) are temporary instrumentation. Favorable outcome → th
+          ey are superseded by the Task 15 (V2.14) archival handler; unfa
+          vorable → revert `handlePreCompact` to the pure no-op. Either w
+          ay, delete them before Task 15 lands so they don't bit-rot.
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      25  - [x] 0.3 Document the JSON shape in `docs/wip/vault/v2/precomp
+          act-investigation.md`: is the session file path present? sessio
+          n ID? project dir? — yes to all (`transcript_path`, `session_id
+          `, `cwd`, `hook_event_name`, `trigger`)
+      26  - [x] 0.4 Verify timing at the **content level, not mtime**: ca
+          pture a copy of the session-file contents AT hook time, then di
+          ff against the post-`/compact` file — confirm the hook-time cop
+          y still contains pre-compaction turns the compacted file lost. 
+          (mtime alone can't distinguish pre- from post-mutation.) — **Fi
+          nding:** `/compact` is **append-only**; the hook-time copy is a
+           byte-identical *prefix* of the post-compact file (nothing remo
+          ved — a compaction-summary entry is appended). The hook reads t
+          he full pre-compaction transcript.
+      27  - [x] 0.5 Ensure the debug branch is a no-op when the env var i
+          s unset (no behavior change shipped) — gated on `CAPY_DEBUG_PRE
+          COMPACT == "1"` exactly; covered by `TestPreCompact_NoOpWhenEnv
+          Unset` / `TestPreCompact_NoOpWhenEnvNotExactlyOne`
+      28 -- [ ] 0.6 **Decision gate:** if the hook-time content is alread
+         -y the compacted transcript (pre-compaction turns absent), STOP 
+         -— file-based capture is impossible; re-scope Tasks 14–16 per de
+         -sign.md §PreCompact (SessionStart-cached copy, or drop). Record
+         - the decision in the investigation doc                         
+      28 +- [x] 0.6 **Decision gate:** if the hook-time content is alread
+         +y the compacted transcript (pre-compaction turns absent), STOP 
+         +— file-based capture is impossible; re-scope Tasks 14–16 per de
+         +sign.md §PreCompact (SessionStart-cached copy, or drop). Record
+         + the decision in the investigation doc — gate criterion NOT tri
+         +ggered (hook-time content is the full pre-compaction transcript
+         +), but the append-only finding makes archival low-value → **Dec
+         +ision: drop Tasks 14–16** for now (re-trigger conditions in the
+         + investigation doc)                                            
+      29  - [ ] 0.7 **Remove the debug scaffolding** once the investigati
+          on concludes: the `CAPY_DEBUG_PRECOMPACT` branch + `dumpPreComp
+          actDebug`/`writeDebugTemp` in `precompact.go` (and `precompact_
+          test.go`) are temporary instrumentation. Favorable outcome → th
+          ey are superseded by the Task 15 (V2.14) archival handler; unfa
+          vorable → revert `handlePreCompact` to the pure no-op. Either w
+          ay, delete them before Task 15 lands so they don't bit-rot.
+      30  
+      31  ## Task 1: Consolidate `beginImmediate`/`isBusy` into `sqliteut
+          il`
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      26  - [x] 0.4 Verify timing at the **content level, not mtime**: ca
+          pture a copy of the session-file contents AT hook time, then di
+          ff against the post-`/compact` file — confirm the hook-time cop
+          y still contains pre-compaction turns the compacted file lost. 
+          (mtime alone can't distinguish pre- from post-mutation.) — **Fi
+          nding:** `/compact` is **append-only**; the hook-time copy is a
+           byte-identical *prefix* of the post-compact file (nothing remo
+          ved — a compaction-summary entry is appended). The hook reads t
+          he full pre-compaction transcript.
+      27  - [x] 0.5 Ensure the debug branch is a no-op when the env var i
+          s unset (no behavior change shipped) — gated on `CAPY_DEBUG_PRE
+          COMPACT == "1"` exactly; covered by `TestPreCompact_NoOpWhenEnv
+          Unset` / `TestPreCompact_NoOpWhenEnvNotExactlyOne`
+      28  - [x] 0.6 **Decision gate:** if the hook-time content is alread
+          y the compacted transcript (pre-compaction turns absent), STOP 
+          — file-based capture is impossible; re-scope Tasks 14–16 per de
+          sign.md §PreCompact (SessionStart-cached copy, or drop). Record
+           the decision in the investigation doc — gate criterion NOT tri
+          ggered (hook-time content is the full pre-compaction transcript
+          ), but the append-only finding makes archival low-value → **Dec
+          ision: drop Tasks 14–16** for now (re-trigger conditions in the
+           investigation doc)
+      29 -- [ ] 0.7 **Remove the debug scaffolding** once the investigati
+         -on concludes: the `CAPY_DEBUG_PRECOMPACT` branch + `dumpPreComp
+         -actDebug`/`writeDebugTemp` in `precompact.go` (and `precompact_
+         -test.go`) are temporary instrumentation. Favorable outcome → th
+         -ey are superseded by the Task 15 (V2.14) archival handler; unfa
+         -vorable → revert `handlePreCompact` to the pure no-op. Either w
+         -ay, delete them before Task 15 lands so they don't bit-rot.    
+      29 +- [x] 0.7 **Remove the debug scaffolding** once the investigati
+         +on concludes: the `CAPY_DEBUG_PRECOMPACT` branch + `dumpPreComp
+         +actDebug`/`writeDebugTemp` in `precompact.go` (and `precompact_
+         +test.go`) are temporary instrumentation. — **Done:** reverted `
+         +handlePreCompact` to a documented pure no-op; `precompact_test.
+         +go` reduced to a no-op contract test. Instrumentation preserved
+         + in this branch's git history for revival. Debug hook command i
+         +n `.claude/settings.local.json` reverted.                      
+      30  
+      31  ## Task 1: Consolidate `beginImmediate`/`isBusy` into `sqliteut
+          il`
+      32  - **Status:** done — completed early on branch `vault_tool_cmd`
+           (the [vault-tool-entries](../../vault-tool-entries/) feature n
+          eeded the vault migration runner, which sits on this consolidat
+          ion). Do NOT redo.
+
+● The PreCompact hook reverted cleanly. Now marking the dependent tasks (14–16)
+  dropped and fixing the references that point at them:
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      198  - [ ] 13.5 Verify: `make build` (default) succeeds and the bin
+           ary does NOT link glamour; `make build-glamour` succeeds and r
+           enders markdown; CI runs both; `go mod graph` confirms no `cha
+           rm.land/lipgloss/v2`
+      199  
+      200  ## Task 14: PreCompact — `vault_snapshots` schema (migration 0
+           002)
+      201 -- **Status:** pending                                         
+      201 +- **Status:** dropped — see [precompact-investigation.md](./pr
+          +ecompact-investigation.md) §0.6. `/compact` is append-only (no
+          + file-level data loss; the sweep already archives the full tra
+          +nscript), so `vault_snapshots` cold storage is unwarranted. Re
+          +-trigger conditions in the investigation doc. **Not actionable
+          + — retained as rationale only.**                              
+      202  - **Depends on:** Task 0 (favorable timing confirmed), Task 5 
+           (migration runner + codec)
+      203  - **Size:** M
+      204  - **Can run in parallel with:** Task 6, 8, 9 (after Task 5)
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      211  - [ ] 14.4 Verify: opening a v1 vault applies `0002` once (re-
+           open no-op); `vault_migrations` records the name; CASCADE remo
+           ves snapshots when the parent session is deleted
+      212  
+      213  ## Task 15: PreCompact hook handler
+      214 -- **Status:** pending                                         
+      214 +- **Status:** dropped — with Task 14 (see [precompact-investig
+          +ation.md](./precompact-investigation.md) §0.6). `handlePreComp
+          +act` stays a no-op. **Not actionable — retained as rationale o
+          +nly.**                                                        
+      215  - **Depends on:** Task 0, Task 14
+      216  - **Size:** M
+      217  - **Can run in parallel with:** —
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      225  - [ ] 15.5 Verify: a captured-payload fixture **for a brand-ne
+           w session with no pre-existing `vault_sessions` row** → parent
+            row created, then snapshot inserts without FK error; **a sess
+           ion `Import` produces no row for (0-msg/read error)** → snapsh
+           ot skipped with a log, no FK crash; a second identical invocat
+           ion dedups; an existing session with sidecars keeps them (no c
+           lobber)
+      226  
+      227  ## Task 16: Snapshot CLI — `snapshots` + `restore --snapshot`
+      228 -- **Status:** pending                                         
+      228 +- **Status:** dropped — with Tasks 14–15 (see [precompact-inve
+          +stigation.md](./precompact-investigation.md) §0.6). No `vault_
+          +snapshots` table ships, so there is nothing to list/restore. *
+          +*Not actionable — retained as rationale only.**               
+      229  - **Depends on:** Task 14, Task 15
+      230  - **Size:** S
+      231  - **Can run in parallel with:** —
+
+● Now the references to the dropped snapshot work — Task 9 (merge), Task 5.2,
+  Task 17, the "Not Doing" header, and the dependency graph:
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      131  
+      132  ## Task 9: `capy vault merge --from <path>`
+      133  - **Status:** pending
+      134 -- **Depends on:** Task 5, Task 11 (and **Task 14 for subtask 9
+          -.4 only** — it consumes `InsertSnapshot`/`vault_snapshots`; on
+          - the shared branch 9.4 must land after Task 14's commit)      
+      134 +- **Depends on:** Task 5, Task 11 (subtask 9.4 dropped along w
+          +ith Tasks 14–16 — see [precompact-investigation.md](./precompa
+          +ct-investigation.md))                                         
+      135  - **Size:** M
+      136  - **Can run in parallel with:** Task 6, 8 (after Task 5 + Task
+            11)
+      137  - **Slicing strategy:** Contract-First (source-vault read boun
+           dary), then idempotent upsert reuse
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line
+      137  - **Slicing strategy:** Contract-First (source-vault read boun
+           dary), then idempotent upsert reuse
+      138  - **Docs:** [implementation.md#capy-vault-merge---from-v29](./
+           implementation.md)
+      139  - **Why Task 11 dep:** 9.3 reuses Task 11's `StatusExcluded` f
+           or the 0-msg guard — a hard code dependency, not just sequenci
+           ng.
+      140 +- **v2 update:** snapshot carry (9.4) and all `vault_snapshots
+          +` handling referenced in 9.3/9.6 are **dropped** with Tasks 14
+          +–16 (see [precompact-investigation.md](./precompact-investigat
+          +ion.md)). Merge handles `vault_sessions` + `vault_files` only 
+          +— ignore the snapshot references in the subtasks below (source
+          + feature-detect of `vault_snapshots`, snapshot dedup, snapshot
+          + fixtures/assertions).                                        
+      141  
+      142  ### Subtasks
+      143  - [ ] 9.1 Add `sqliteutil.OpenSourceForMerge(dbPath, key)` (re
+           named from `OpenReadOnly` — it checkpoints the source, a **wri
+           te**, so it needs a writable source file + dir; temp-copy a re
+           ad-only source; document on `--help`) — does NOT run `schemaSQ
+           L`/`migrateVault` against the source, and **checkpoints any pe
+           nding WAL first** (a copied-live source vault may carry a `-wa
+           l`; do NOT use `immutable=1`, which silently skips WAL-residen
+           t rows)
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      143  - [ ] 9.1 Add `sqliteutil.OpenSourceForMerge(dbPath, key)` (re
+           named from `OpenReadOnly` — it checkpoints the source, a **wri
+           te**, so it needs a writable source file + dir; temp-copy a re
+           ad-only source; document on `--help`) — does NOT run `schemaSQ
+           L`/`migrateVault` against the source, and **checkpoints any pe
+           nding WAL first** (a copied-live source vault may carry a `-wa
+           l`; do NOT use `immutable=1`, which silently skips WAL-residen
+           t rows)
+      144  - [ ] 9.2 Extract `buildFTS(uuid, mainBytes, files) []FTSRow` 
+           from `import.go:buildRecord` so disk-import and merge share th
+           e scanner wiring
+      145  - [ ] 9.3 Create `internal/vault/merge.go` — `MergeFrom(ctx, d
+           est, srcPath, srcKey, opts)`: **feature-detect the source sche
+           ma first** (`PRAGMA table_info` for the `encoding` column — ab
+           sent ⇒ treat blobs as `raw`; `sqlite_master` for `vault_snapsh
+           ots` — absent ⇒ skip 9.4) so a v1 source doesn't raise "no suc
+           h column/table"; iterate source `vault_sessions`+`vault_files`
+           , `decodeBlob(encoding, …)`, apply `dest.SessionDigest` idempo
+           tent decision (skip same-hash/smaller, else insert/replace), c
+           arry source `machine_id`/`claude_project_dir`/`project_path`/`
+           git_branch` verbatim, apply the 0-msg guard (Task 11's `Status
+           Excluded`), batch via `WriteBatch`
+      146 -- [ ] 9.4 **Carry snapshots (depends on Task 14):** when the s
+          -ource has a `vault_snapshots` table (per the 9.3 probe), itera
+          -te it per UUID after the parent row exists and `InsertSnapshot
+          -` into the destination (dedup via `UNIQUE(session_uuid, conten
+          -t_hash)`); **skip the step entirely when the source lacks the 
+          -table** — a true runtime no-op, not a "no such table" error. T
+          -he destination always has the table + `InsertSnapshot` (Task 1
+          -4 ships in this v2 unit), so only the source can lack it      
+      146 +- [ ] ~~9.4 Carry snapshots~~ **DROPPED** with Tasks 14–16 — v
+          +2 ships no `vault_snapshots` table, so there is nothing to car
+          +ry. Merge copies sessions + files only. See [precompact-invest
+          +igation.md](./precompact-investigation.md).                   
+      147  - [ ] 9.5 Add the `merge` subcommand to `cmd/capy/vault.go`: `
+           --from` (required), `--key`/`CAPY_VAULT_MERGE_KEY`, `--dry-run
+           `, `--project`; `import`-style table output. Concurrency: writ
+           es only the destination via batched `beginImmediate`, so a con
+           current server sweep is absorbed by `busy_timeout`+retry (like
+            `import`) — no "stop the server" requirement (unlike `rekey`)
+            and no busy pre-check (unlike `compact`); note this in `--hel
+           p`
+      148  - [ ] 9.6 Verify: fixture vaults (overlapping + distinct UUIDs
+           ; one v2 source with snapshots; **one v1-shaped source with no
+            `encoding` column and no `vault_snapshots` table**) → `merge`
+            brings in distinct sessions, keeps larger overlaps, `search` 
+           finds source-only content, source `machine_id`/`project_path` 
+           preserved, **source snapshots appear in dest (deduped)**, and 
+           **the v1-shaped source merges cleanly** (blobs read as raw, sn
+           apshot step skipped — no "no such column/table"); `--dry-run` 
+           writes nothing
+      149  
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      82  
+      83  ### Subtasks
+      84  - [ ] 5.1 `go get github.com/klauspost/compress` + `go mod tidy
+          `; apply `/kk:dependency-handling` to confirm the resolved `Enc
+          odeAll`/`DecodeAll` API
+      85 -- [ ] 5.2 ~~Build the migration runner~~ **(runner already buil
+         -t on branch `vault_tool_cmd`** — `vaultMigrationApplied` + appl
+         -y-loop + `columnExists` are in `migrations.go`, with `0003_add_
+         -index_version` as the first migration). Just **add migration `0
+         -001_blob_encoding`** to the apply-loop: `ALTER TABLE vault_sess
+         -ions ADD COLUMN encoding TEXT` + same on `vault_files` (legacy 
+         -rows → NULL = raw), guarded by `vaultMigrationApplied`, idempot
+         -ent, inside `sqliteutil.BeginImmediate`. NOTE: `0003` already e
+         -xists (index_version), so apply order is `0001`→`0002`→`0003` b
+         -y listing them in that order in `migrateVault`; they are indepe
+         -ndent + name-keyed, so order is cosmetic.                      
+      85 +- [ ] 5.2 ~~Build the migration runner~~ **(runner already buil
+         +t on branch `vault_tool_cmd`** — `vaultMigrationApplied` + appl
+         +y-loop + `columnExists` are in `migrations.go`, with `0003_add_
+         +index_version` as the first migration). Just **add migration `0
+         +001_blob_encoding`** to the apply-loop: `ALTER TABLE vault_sess
+         +ions ADD COLUMN encoding TEXT` + same on `vault_files` (legacy 
+         +rows → NULL = raw), guarded by `vaultMigrationApplied`, idempot
+         +ent, inside `sqliteutil.BeginImmediate`. NOTE: `0003` already e
+         +xists (index_version), so apply order is `0001`→`0002`→`0003` b
+         +y listing them in that order in `migrateVault`; they are indepe
+         +ndent + name-keyed, so order is cosmetic. **Update:** `0002_vau
+         +lt_snapshots` is dropped (Tasks 14–16 dropped), so v2 adds only
+         + `0001` here alongside the existing `0003`.                    
+      86  - [ ] 5.3 Create `internal/vault/codec.go` — shared package-lev
+          el `*zstd.Encoder`/`*zstd.Decoder`; `encodeBlob([]byte) (data [
+          ]byte, encoding string)` (returns `"raw"` when `CAPY_VAULT_NO_C
+          OMPRESS` set or not smaller, else `"zstd"`); `decodeBlob(encodi
+          ng string, b []byte) ([]byte, error)` switching on the column. 
+          **No magic-byte detection** (unsafe for arbitrary sidecars — th
+          e `encoding` column is authoritative)
+      87  - [ ] 5.4 Wire write side: add `encoding` to `vault_sessions`/`
+          vault_files` INSERT+UPDATE statements; `writeRecord` (raw_jsonl
+          ) and `writeChildren` (file content) call `encodeBlob` and stor
+          e the returned encoding. On first `zstd` write, set `vault_meta
+          ` `min_reader_version` = `"2"`. **Add the matching open-time ch
+          eck in `openDB()`** (after the canary): read `min_reader_versio
+          n` and refuse with a clear error if it exceeds a `supportedRead
+          erVersion` constant (`2`) — without the read step the marker pr
+          otects no one
+      88  - [ ] 5.5 Wire read side: add `encoding` to `sessionMetaColumns
+          ` + `GetFiles` SELECT; thread it into `decodeBlob` in `scanSess
+          ionMeta`/`GetSession` and `GetFiles`
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      239  
+      240  ## Task 17: Final verification
+      241  - **Status:** pending
+      242 -- **Depends on:** Task 1, 2, 4–16 (Task 3 dropped)            
+      242 +- **Depends on:** Task 1, 2, 4–13 (Tasks 3, 14–16 dropped)    
+      243  - **Size:** S
+      244  - **Can run in parallel with:** —
+      245  
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+      245  
+      246  ### Subtasks
+      247  - [ ] 17.1 Run `/kk:test` — full suite (`-tags fts5`, both key
+           s, race); no regressions in existing tests
+      248 -- [ ] 17.2 Run `/kk:document` — update `docs/architecture.md`,
+          - `CLAUDE.md`, AND `README.md` (new subcommands `compact`/`merg
+          -e`/`rekey`/`snapshots`, `-tags glamour` build, `CAPY_VAULT_SWE
+          -EP_ALL`/`CAPY_VAULT_MERGE_KEY` env vars)                      
+      248 +- [ ] 17.2 Run `/kk:document` — update `docs/architecture.md`,
+          + `CLAUDE.md`, AND `README.md` (new subcommands `compact`/`merg
+          +e`/`rekey`, `-tags glamour` build, `CAPY_VAULT_SWEEP_ALL`/`CAP
+          +Y_VAULT_MERGE_KEY` env vars)                                  
+      249  - [ ] 17.3 Run `/kk:review-code go` — review the full v2 diff
+      250  - [ ] 17.4 Run `/kk:review-spec` — verify implementation match
+           es design.md + implementation.md
+      251  
+
+● Now the "Not Doing" header and the dependency graph:
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 1 line, removed 1 line
+       5  > Parent (v1): [../tasks.md](../tasks.md)
+       6  > Status: pending
+       7  > Created: 2026-06-05
+       8 -> Not Doing: Cloud sync, multi-user access, Codex sessions, ses
+         -sion diffing, real-time watch, automatic retention, redacted sh
+         -aring/export, TUI lazy-windowing viewer, TUI 3-panel split, enc
+         -ryptPlain (unencrypted→encrypted) extraction, snapshot retentio
+         -n eviction policy, store-side context.Context propagation (Task
+         - 3 dropped — deferred until a store-side cancelling caller exis
+         -ts)                                                            
+       8 +> Not Doing: Cloud sync, multi-user access, Codex sessions, ses
+         +sion diffing, real-time watch, automatic retention, redacted sh
+         +aring/export, TUI lazy-windowing viewer, TUI 3-panel split, enc
+         +ryptPlain (unencrypted→encrypted) extraction, snapshot retentio
+         +n eviction policy, store-side context.Context propagation (Task
+         + 3 dropped — deferred until a store-side cancelling caller exis
+         +ts), PreCompact archival / `vault_snapshots` (Tasks 14–16 dropp
+         +ed — `/compact` is append-only, no file-level data loss; see pr
+         +ecompact-investigation.md)                                     
+       9  
+      10  Single flat plan (no phase boundary). Task 0 is the only hard g
+          ate and gates ONLY the PreCompact tasks (14–16); all other task
+          s proceed independently. Build/test with `-tags fts5`; `CAPY_DB
+          _KEY` + `CAPY_VAULT_KEY` required.
+      11  
+
+● Update(docs/wip/vault/v2/tasks.md)
+  ⎿  Added 3 lines, removed 4 lines
+      270  ## Dependency Graph
+      271  
+      272  ```
+      273 -Task 0 (investigate) ──────────────────┬─→ Task 14 (snapshots 
+          -schema) ─→ Task 15 (hook) ─→ Task 16 (snapshot CLI) ─┐        
+      274 -                                        │                     
+          -                                                       │      
+      273 +Task 0 (investigate) ── DONE → Tasks 14→15→16 (PreCompact arch
+          +ival) DROPPED (append-only /compact; see precompact-investigat
+          +ion.md)                                                       
+      274 +                                                              
+          +                                                      │       
+      275  Task 5 (codec + migration runner) ──┬─→ Task 6 (compact) ─────
+           ─────────────────────────────────────────────────────┤
+      276                                       ├─→ Task 9 (merge) ──────
+           ─────────────────────────────────────────────────────┤
+      277 -Task 11 (0-msg) ─────────────────────┘   (Task 9 needs Task 5 
+          -+ Task 11; subtask 9.4 also needs Task 14)            │       
+      278 -Task 5 ──────────────────────────────────→ Task 14 ──→ Task 9.
+          -4 (snapshot carry consumes InsertSnapshot)            │       
+      277 +Task 11 (0-msg) ─────────────────────┘   (Task 9 needs Task 5 
+          ++ Task 11; subtask 9.4 dropped with Tasks 14–16)      │       
+      278                                                                
+                                                                 │
+      279  Task 7 (rekey extract) ─→ Task 8 (vault rekey) ───────────────
+           ──────────────────────────────────────────────────────┤
+      280                                                                
+                                                                 │
+
+● Finally, mark the drop in design.md (preserving the rationale for revival, per
+  your ask):
+
+● Update(docs/wip/vault/v2/design.md)
+  ⎿  Added 9 lines
+      121  
+      122  ## 5. PreCompact Archival
+      123  
+      124 +> **DROPPED (2026-06-17) — retained as rationale for possible 
+          +revival.** V2.0                                               
+      125 +> investigation ([precompact-investigation.md](./precompact-in
+          +vestigation.md))                                              
+      126 +> found `/compact` is **append-only**: it loses no file conten
+          +t, and the existing                                           
+      127 +> server-startup sweep already archives the full verbatim tran
+          +script. So the                                                
+      128 +> `vault_snapshots` cold storage below addresses a data loss t
+          +hat does not occur                                            
+      129 +> at the file level. Tasks 14–16 are dropped. The section is k
+          +ept intact — see the                                          
+      130 +> investigation doc for the re-trigger conditions (CC changing
+          + to truncate;                                                 
+      131 +> auto-compaction differing; a need to archive before file pru
+          +ning).                                                        
+      132 +                                                              
+      133  **Hard gate — V2.0 first.** `handlePreCompact` is a stub. Assu
+           mption #2 (the hook fires **before** Claude Code mutates the s
+           ession file) is **unverified**. V2.0 adds a debug handler (gat
+           ed behind `CAPY_DEBUG_PRECOMPACT=1`, 0600 temp file) that dump
+           s the raw payload and triggers `/compact`. **The gate is conte
+           nt-level, not mtime-level (corrected after review):** an mtime
+            delta cannot distinguish "hook fired pre-mutation" from "hook
+            fired post-mutation" — by the time the hook runs the file may
+            already be truncated, yet still show a fresh mtime. The real 
+           success criterion is: **does the file the hook can read still 
+           contain the messages that compaction is about to remove?** V2.
+           0 must capture the file contents _at hook time_ and confirm th
+           ey include pre-compaction turns that the post-`/compact` file 
+           no longer has. **If the hook fires _after_ mutation (the captu
+           red bytes are already the compacted transcript), file-based ca
+           pture is impossible and V2.13–V2.15 are re-scoped** (e.g. capt
+           ure from a SessionStart-cached copy, or dropped). Stated loud 
+           so the contingency is visible, not buried.
+      134  
+      135  **`vault_snapshots` (migration `0002`, V2.13):** append-only c
+           old storage, separate from the active `vault_sessions` row, so
+            multiple pre-compaction versions of one session don't pollute
+            FTS (per the indexed arch-decision "Hybrid active + cold stor
+           age"). Columns: `snapshot_id` (PK autoincrement), `session_uui
+           d` (FK → `vault_sessions`, ON DELETE CASCADE), `content_hash`,
+            `size_bytes`, `captured_at`, `trigger` (`'precompact'`), `enc
+           oding` (the blob discriminator — see §1), `raw_jsonl` (compres
+           sed BLOB). `UNIQUE(session_uuid, content_hash)` dedups identic
+           al re-captures. Index `(session_uuid, captured_at DESC)`. **No
+           t** in FTS. The migration runner (`vaultMigrationApplied` + ap
+           ply-loop, following `internal/store/migrate.go`) is built in V
+           2.5 for migration `0001`; this is migration `0002` and reuses 
+           it.
+
+● Update(docs/wip/vault/v2/design.md)
+  ⎿  Added 1 line, removed 1 line
+      23  
+      24  ## Success criteria
+      25  
+      26 -1. **No content lost to `/compact`** — a PreCompact-triggered s
+         -napshot captures the pre-compaction transcript, provably restor
+         -able (`restore --snapshot`). _Contingent on V2.0 confirming fav
+         -orable hook timing — see [PreCompact Archival](#5-precompact-ar
+         -chival)._                                                      
+      26 +1. ~~**No content lost to `/compact`**~~ — **DROPPED after V2.0
+         +.** The investigation found `/compact` is append-only, so no co
+         +ntent is lost to it and the normal sweep already archives the f
+         +ull transcript; the PreCompact snapshot criterion is moot. See 
+         +[precompact-investigation.md](./precompact-investigation.md).  
+      27  2. **`vault.db` measurably ~5× smaller** on a real corpus after
+           `capy vault compact`, with no change to search/restore correct
+          ness.
+      28  3. **`merge --from` unites two machines' vaults non-destructive
+          ly** — idempotent, larger-total-wins, source location/`machine_
+          id` carried.
+      29  4. **`rekey` round-trips a key change** — old key in, new `CAPY
+          _VAULT_KEY` out, verified open, and the old-key `.bak` is handl
+          ed deliberately: a prominent warning that it remains decryptabl
+          e by the (compromised) old key, plus a `--remove-backup` option
+           to delete it after a verified rotation (see §2).
+
+● Update(docs/wip/vault/v2/design.md)
+  ⎿  Added 1 line, removed 1 line
+      34  Four work buckets, all selected:
+      35  
+      36  - **Storage & cross-machine:** zstd BLOB compression, `vault co
+          mpact`, `vault merge --from`, `vault rekey`.
+      37 -- **Durability:** PreCompact hook archival (`vault_snapshots` c
+         -old storage + snapshot restore), gated on V2.0.                
+      37 +- **Durability:** PreCompact hook archival (`vault_snapshots` c
+         +old storage + snapshot restore), gated on V2.0. **— DROPPED aft
+         +er V2.0 (append-only `/compact`); see [precompact-investigation
+         +.md](./precompact-investigation.md).**                         
+      38  - **Reach & TUI polish:** opt-in all-projects server sweep; TUI
+           completion (`r`/`R`/`c`/`f` keybindings + in-list filter); gla
+          mour markdown rendering behind a build tag.
+      39  - **Correctness & tech debt:** exclude 0-message sessions from 
+          import; consolidate `beginImmediate`/`isBusy` into `sqliteutil`
+          ; `context.Context` propagation through `internal/vault` (store
+          -side dropped — see §7); route `session.SessionDir()` through t
+          he shared `config.ClaudeProjectsDir()`.
+      40  
+
+● Now verify the reverted code compiles and tests pass:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All green — reverted no-op compiles, tests pass, vet/gofmt clean, full build
+  OK. Final state check:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Everything's finalized and green. One thing worth persisting to capy's
+  knowledge base — the append-only /compact finding is non-obvious platform
+  behavior that future work (and any revival of these tasks) should find
+  quickly. Let me index it.
+
+  Called capy (ctrl+o to expand)
+
+● Task 0 is complete. Here's the wrap-up.
+
+  What the investigation established
+
+  - Payload shape (0.3): { session_id, transcript_path, cwd, hook_event_name, 
+  trigger } — locating the session file/UUID/project dir is fully solved.
+  - Timing (0.4): /compact is append-only — the hook-time copy is a
+  byte-identical prefix of the post-compact file; a compaction-summary entry
+  (isCompactSummary:true + compactMetadata) is appended, nothing is removed.
+  - Non-finding: the extra 90b10852 file was this session, not a /compact
+  artifact.
+
+  Decision (your call: drop for now)
+
+  Since /compact loses no file content and the sweep already archives the full
+  transcript, Tasks 14–16 (PreCompact archival / vault_snapshots) are dropped —
+  documented with re-trigger conditions for easy revival.
+
+  What changed
+
+  - docs/wip/vault/v2/precompact-investigation.md — new: method, payload,
+  append-only finding, decision, revival conditions.
+  - tasks.md — Task 0 → done (subtasks checked); Tasks 14/15/16 → dropped; Task
+  9.4 dropped; Task 5.2 / Task 17 / "Not Doing" / dep-graph updated.
+  - design.md — §5, success criterion #1, and Scope marked dropped (rationale
+  preserved).
+  - internal/hook/precompact.go — reverted to a documented no-op;
+  precompact_test.go reduced to a no-op contract test (instrumentation preserved
+  in git history).
+  - .claude/settings.local.json — PreCompact hook command reverted.
+  - Indexed the append-only finding as kk:arch-decisions.
+
+  Verification: go test -race, vet, gofmt, full go build -tags fts5 — all green.
+  Nothing committed (you're on vault_v2).
+
+  Optional cleanup (I'm blocked from rm by policy)
+
+  Leftover debug artifacts you may want to remove:
+  rm -f /tmp/capy-precompact-*.json /tmp/capy-precompact-*.jsonl
+  rm -rf /tmp/capy-smoke-*
+  rm -f ~/.claude/projects/-tmp-tmp-cDcE1tHtwO/7abfb552-*.jsonl*   # throwaway
+  test session + your .bak
+  The local ./capy binary still has the (dormant, no-op) instrumentation
+  compiled in — harmless, but make build will refresh it to the no-op version if
+  you want.
+
+  Next
+
+  Task 0 and Task 1 are done. The next pending tasks have no dependencies —
+  natural starting points are Task 2 (route SessionDir() through
+  config.ClaudeProjectsDir(), size S) or Task 5 (zstd codec + migration runner,
+  size M — it unblocks Tasks 6 and 9).
+
+  Want me to pick up the next task, and if so which?
+
+✻ Worked for 12m 3s

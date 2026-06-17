@@ -5,14 +5,14 @@
 > Parent (v1): [../tasks.md](../tasks.md)
 > Status: pending
 > Created: 2026-06-05
-> Not Doing: Cloud sync, multi-user access, Codex sessions, session diffing, real-time watch, automatic retention, redacted sharing/export, TUI lazy-windowing viewer, TUI 3-panel split, encryptPlain (unencrypted→encrypted) extraction, snapshot retention eviction policy, store-side context.Context propagation (Task 3 dropped — deferred until a store-side cancelling caller exists)
+> Not Doing: Cloud sync, multi-user access, Codex sessions, session diffing, real-time watch, automatic retention, redacted sharing/export, TUI lazy-windowing viewer, TUI 3-panel split, encryptPlain (unencrypted→encrypted) extraction, snapshot retention eviction policy, store-side context.Context propagation (Task 3 dropped — deferred until a store-side cancelling caller exists), PreCompact archival / `vault_snapshots` (Tasks 14–16 dropped — `/compact` is append-only, no file-level data loss; see precompact-investigation.md)
 
 Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONLY the PreCompact tasks (14–16); all other tasks proceed independently. Build/test with `-tags fts5`; `CAPY_DB_KEY` + `CAPY_VAULT_KEY` required.
 
 **Tx-helper note:** tasks that open a write transaction use the vault tx helper — the local `beginImmediate` (`migrations.go`) before Task 1 lands, or `sqliteutil.BeginImmediate` after. Either works; this is **not** a hard ordering dependency on Task 1.
 
 ## Task 0: Investigate PreCompact hook payload
-- **Status:** pending
+- **Status:** done — investigation complete; PreCompact archival (Tasks 14–16) **dropped**. Findings + re-trigger conditions in [precompact-investigation.md](./precompact-investigation.md).
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Task 1–13
@@ -20,12 +20,13 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - **Docs:** [implementation.md#v20--investigate-precompact-payload-risk-first-gates-v213-15](./implementation.md)
 
 ### Subtasks
-- [ ] 0.1 In `internal/hook/precompact.go`, add a debug branch gated behind `CAPY_DEBUG_PRECOMPACT=1` that writes the raw `input []byte` to an `os.CreateTemp` file (0600) and logs the path to stderr
-- [ ] 0.2 Trigger `/compact` in a real Claude Code session; capture the payload
-- [ ] 0.3 Document the JSON shape in `docs/wip/vault/v2/precompact-investigation.md`: is the session file path present? session ID? project dir?
-- [ ] 0.4 Verify timing at the **content level, not mtime**: capture a copy of the session-file contents AT hook time, then diff against the post-`/compact` file — confirm the hook-time copy still contains pre-compaction turns the compacted file lost. (mtime alone can't distinguish pre- from post-mutation.)
-- [ ] 0.5 Ensure the debug branch is a no-op when the env var is unset (no behavior change shipped)
-- [ ] 0.6 **Decision gate:** if the hook-time content is already the compacted transcript (pre-compaction turns absent), STOP — file-based capture is impossible; re-scope Tasks 14–16 per design.md §PreCompact (SessionStart-cached copy, or drop). Record the decision in the investigation doc
+- [x] 0.1 In `internal/hook/precompact.go`, add a debug branch gated behind `CAPY_DEBUG_PRECOMPACT=1` that writes the raw `input []byte` to an `os.CreateTemp` file (0600) and logs the path to stderr — also dumps a hook-time copy of the `transcript_path` session file (0600) for the 0.4 content-level timing diff (per implementation.md V2.0). Unit tests in `precompact_test.go`.
+- [x] 0.2 Trigger `/compact` in a real Claude Code session; capture the payload — captured for a manual `/compact` (session `7abfb552`); payload + hook-time session copy dumped to `0600` temp files
+- [x] 0.3 Document the JSON shape in `docs/wip/vault/v2/precompact-investigation.md`: is the session file path present? session ID? project dir? — yes to all (`transcript_path`, `session_id`, `cwd`, `hook_event_name`, `trigger`)
+- [x] 0.4 Verify timing at the **content level, not mtime**: capture a copy of the session-file contents AT hook time, then diff against the post-`/compact` file — confirm the hook-time copy still contains pre-compaction turns the compacted file lost. (mtime alone can't distinguish pre- from post-mutation.) — **Finding:** `/compact` is **append-only**; the hook-time copy is a byte-identical *prefix* of the post-compact file (nothing removed — a compaction-summary entry is appended). The hook reads the full pre-compaction transcript.
+- [x] 0.5 Ensure the debug branch is a no-op when the env var is unset (no behavior change shipped) — gated on `CAPY_DEBUG_PRECOMPACT == "1"` exactly; covered by `TestPreCompact_NoOpWhenEnvUnset` / `TestPreCompact_NoOpWhenEnvNotExactlyOne`
+- [x] 0.6 **Decision gate:** if the hook-time content is already the compacted transcript (pre-compaction turns absent), STOP — file-based capture is impossible; re-scope Tasks 14–16 per design.md §PreCompact (SessionStart-cached copy, or drop). Record the decision in the investigation doc — gate criterion NOT triggered (hook-time content is the full pre-compaction transcript), but the append-only finding makes archival low-value → **Decision: drop Tasks 14–16** for now (re-trigger conditions in the investigation doc)
+- [x] 0.7 **Remove the debug scaffolding** once the investigation concludes: the `CAPY_DEBUG_PRECOMPACT` branch + `dumpPreCompactDebug`/`writeDebugTemp` in `precompact.go` (and `precompact_test.go`) are temporary instrumentation. — **Done:** reverted `handlePreCompact` to a documented pure no-op; `precompact_test.go` reduced to a no-op contract test. Instrumentation preserved in this branch's git history for revival. Debug hook command in `.claude/settings.local.json` reverted.
 
 ## Task 1: Consolidate `beginImmediate`/`isBusy` into `sqliteutil`
 - **Status:** done — completed early on branch `vault_tool_cmd` (the [vault-tool-entries](../../vault-tool-entries/) feature needed the vault migration runner, which sits on this consolidation). Do NOT redo.
@@ -81,7 +82,7 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 
 ### Subtasks
 - [ ] 5.1 `go get github.com/klauspost/compress` + `go mod tidy`; apply `/kk:dependency-handling` to confirm the resolved `EncodeAll`/`DecodeAll` API
-- [ ] 5.2 ~~Build the migration runner~~ **(runner already built on branch `vault_tool_cmd`** — `vaultMigrationApplied` + apply-loop + `columnExists` are in `migrations.go`, with `0003_add_index_version` as the first migration). Just **add migration `0001_blob_encoding`** to the apply-loop: `ALTER TABLE vault_sessions ADD COLUMN encoding TEXT` + same on `vault_files` (legacy rows → NULL = raw), guarded by `vaultMigrationApplied`, idempotent, inside `sqliteutil.BeginImmediate`. NOTE: `0003` already exists (index_version), so apply order is `0001`→`0002`→`0003` by listing them in that order in `migrateVault`; they are independent + name-keyed, so order is cosmetic.
+- [ ] 5.2 ~~Build the migration runner~~ **(runner already built on branch `vault_tool_cmd`** — `vaultMigrationApplied` + apply-loop + `columnExists` are in `migrations.go`, with `0003_add_index_version` as the first migration). Just **add migration `0001_blob_encoding`** to the apply-loop: `ALTER TABLE vault_sessions ADD COLUMN encoding TEXT` + same on `vault_files` (legacy rows → NULL = raw), guarded by `vaultMigrationApplied`, idempotent, inside `sqliteutil.BeginImmediate`. NOTE: `0003` already exists (index_version), so apply order is `0001`→`0002`→`0003` by listing them in that order in `migrateVault`; they are independent + name-keyed, so order is cosmetic. **Update:** `0002_vault_snapshots` is dropped (Tasks 14–16 dropped), so v2 adds only `0001` here alongside the existing `0003`.
 - [ ] 5.3 Create `internal/vault/codec.go` — shared package-level `*zstd.Encoder`/`*zstd.Decoder`; `encodeBlob([]byte) (data []byte, encoding string)` (returns `"raw"` when `CAPY_VAULT_NO_COMPRESS` set or not smaller, else `"zstd"`); `decodeBlob(encoding string, b []byte) ([]byte, error)` switching on the column. **No magic-byte detection** (unsafe for arbitrary sidecars — the `encoding` column is authoritative)
 - [ ] 5.4 Wire write side: add `encoding` to `vault_sessions`/`vault_files` INSERT+UPDATE statements; `writeRecord` (raw_jsonl) and `writeChildren` (file content) call `encodeBlob` and store the returned encoding. On first `zstd` write, set `vault_meta` `min_reader_version` = `"2"`. **Add the matching open-time check in `openDB()`** (after the canary): read `min_reader_version` and refuse with a clear error if it exceeds a `supportedReaderVersion` constant (`2`) — without the read step the marker protects no one
 - [ ] 5.5 Wire read side: add `encoding` to `sessionMetaColumns` + `GetFiles` SELECT; thread it into `decodeBlob` in `scanSessionMeta`/`GetSession` and `GetFiles`
@@ -130,18 +131,19 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 
 ## Task 9: `capy vault merge --from <path>`
 - **Status:** pending
-- **Depends on:** Task 5, Task 11 (and **Task 14 for subtask 9.4 only** — it consumes `InsertSnapshot`/`vault_snapshots`; on the shared branch 9.4 must land after Task 14's commit)
+- **Depends on:** Task 5, Task 11 (subtask 9.4 dropped along with Tasks 14–16 — see [precompact-investigation.md](./precompact-investigation.md))
 - **Size:** M
 - **Can run in parallel with:** Task 6, 8 (after Task 5 + Task 11)
 - **Slicing strategy:** Contract-First (source-vault read boundary), then idempotent upsert reuse
 - **Docs:** [implementation.md#capy-vault-merge---from-v29](./implementation.md)
 - **Why Task 11 dep:** 9.3 reuses Task 11's `StatusExcluded` for the 0-msg guard — a hard code dependency, not just sequencing.
+- **v2 update:** snapshot carry (9.4) and all `vault_snapshots` handling referenced in 9.3/9.6 are **dropped** with Tasks 14–16 (see [precompact-investigation.md](./precompact-investigation.md)). Merge handles `vault_sessions` + `vault_files` only — ignore the snapshot references in the subtasks below (source feature-detect of `vault_snapshots`, snapshot dedup, snapshot fixtures/assertions).
 
 ### Subtasks
 - [ ] 9.1 Add `sqliteutil.OpenSourceForMerge(dbPath, key)` (renamed from `OpenReadOnly` — it checkpoints the source, a **write**, so it needs a writable source file + dir; temp-copy a read-only source; document on `--help`) — does NOT run `schemaSQL`/`migrateVault` against the source, and **checkpoints any pending WAL first** (a copied-live source vault may carry a `-wal`; do NOT use `immutable=1`, which silently skips WAL-resident rows)
 - [ ] 9.2 Extract `buildFTS(uuid, mainBytes, files) []FTSRow` from `import.go:buildRecord` so disk-import and merge share the scanner wiring
 - [ ] 9.3 Create `internal/vault/merge.go` — `MergeFrom(ctx, dest, srcPath, srcKey, opts)`: **feature-detect the source schema first** (`PRAGMA table_info` for the `encoding` column — absent ⇒ treat blobs as `raw`; `sqlite_master` for `vault_snapshots` — absent ⇒ skip 9.4) so a v1 source doesn't raise "no such column/table"; iterate source `vault_sessions`+`vault_files`, `decodeBlob(encoding, …)`, apply `dest.SessionDigest` idempotent decision (skip same-hash/smaller, else insert/replace), carry source `machine_id`/`claude_project_dir`/`project_path`/`git_branch` verbatim, apply the 0-msg guard (Task 11's `StatusExcluded`), batch via `WriteBatch`
-- [ ] 9.4 **Carry snapshots (depends on Task 14):** when the source has a `vault_snapshots` table (per the 9.3 probe), iterate it per UUID after the parent row exists and `InsertSnapshot` into the destination (dedup via `UNIQUE(session_uuid, content_hash)`); **skip the step entirely when the source lacks the table** — a true runtime no-op, not a "no such table" error. The destination always has the table + `InsertSnapshot` (Task 14 ships in this v2 unit), so only the source can lack it
+- [ ] ~~9.4 Carry snapshots~~ **DROPPED** with Tasks 14–16 — v2 ships no `vault_snapshots` table, so there is nothing to carry. Merge copies sessions + files only. See [precompact-investigation.md](./precompact-investigation.md).
 - [ ] 9.5 Add the `merge` subcommand to `cmd/capy/vault.go`: `--from` (required), `--key`/`CAPY_VAULT_MERGE_KEY`, `--dry-run`, `--project`; `import`-style table output. Concurrency: writes only the destination via batched `beginImmediate`, so a concurrent server sweep is absorbed by `busy_timeout`+retry (like `import`) — no "stop the server" requirement (unlike `rekey`) and no busy pre-check (unlike `compact`); note this in `--help`
 - [ ] 9.6 Verify: fixture vaults (overlapping + distinct UUIDs; one v2 source with snapshots; **one v1-shaped source with no `encoding` column and no `vault_snapshots` table**) → `merge` brings in distinct sessions, keeps larger overlaps, `search` finds source-only content, source `machine_id`/`project_path` preserved, **source snapshots appear in dest (deduped)**, and **the v1-shaped source merges cleanly** (blobs read as raw, snapshot step skipped — no "no such column/table"); `--dry-run` writes nothing
 
@@ -197,7 +199,7 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [ ] 13.5 Verify: `make build` (default) succeeds and the binary does NOT link glamour; `make build-glamour` succeeds and renders markdown; CI runs both; `go mod graph` confirms no `charm.land/lipgloss/v2`
 
 ## Task 14: PreCompact — `vault_snapshots` schema (migration 0002)
-- **Status:** pending
+- **Status:** dropped — see [precompact-investigation.md](./precompact-investigation.md) §0.6. `/compact` is append-only (no file-level data loss; the sweep already archives the full transcript), so `vault_snapshots` cold storage is unwarranted. Re-trigger conditions in the investigation doc. **Not actionable — retained as rationale only.**
 - **Depends on:** Task 0 (favorable timing confirmed), Task 5 (migration runner + codec)
 - **Size:** M
 - **Can run in parallel with:** Task 6, 8, 9 (after Task 5)
@@ -210,7 +212,7 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [ ] 14.4 Verify: opening a v1 vault applies `0002` once (re-open no-op); `vault_migrations` records the name; CASCADE removes snapshots when the parent session is deleted
 
 ## Task 15: PreCompact hook handler
-- **Status:** pending
+- **Status:** dropped — with Task 14 (see [precompact-investigation.md](./precompact-investigation.md) §0.6). `handlePreCompact` stays a no-op. **Not actionable — retained as rationale only.**
 - **Depends on:** Task 0, Task 14
 - **Size:** M
 - **Can run in parallel with:** —
@@ -224,7 +226,7 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [ ] 15.5 Verify: a captured-payload fixture **for a brand-new session with no pre-existing `vault_sessions` row** → parent row created, then snapshot inserts without FK error; **a session `Import` produces no row for (0-msg/read error)** → snapshot skipped with a log, no FK crash; a second identical invocation dedups; an existing session with sidecars keeps them (no clobber)
 
 ## Task 16: Snapshot CLI — `snapshots` + `restore --snapshot`
-- **Status:** pending
+- **Status:** dropped — with Tasks 14–15 (see [precompact-investigation.md](./precompact-investigation.md) §0.6). No `vault_snapshots` table ships, so there is nothing to list/restore. **Not actionable — retained as rationale only.**
 - **Depends on:** Task 14, Task 15
 - **Size:** S
 - **Can run in parallel with:** —
@@ -237,13 +239,13 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 
 ## Task 17: Final verification
 - **Status:** pending
-- **Depends on:** Task 1, 2, 4–16 (Task 3 dropped)
+- **Depends on:** Task 1, 2, 4–13 (Tasks 3, 14–16 dropped)
 - **Size:** S
 - **Can run in parallel with:** —
 
 ### Subtasks
 - [ ] 17.1 Run `/kk:test` — full suite (`-tags fts5`, both keys, race); no regressions in existing tests
-- [ ] 17.2 Run `/kk:document` — update `docs/architecture.md`, `CLAUDE.md`, AND `README.md` (new subcommands `compact`/`merge`/`rekey`/`snapshots`, `-tags glamour` build, `CAPY_VAULT_SWEEP_ALL`/`CAPY_VAULT_MERGE_KEY` env vars)
+- [ ] 17.2 Run `/kk:document` — update `docs/architecture.md`, `CLAUDE.md`, AND `README.md` (new subcommands `compact`/`merge`/`rekey`, `-tags glamour` build, `CAPY_VAULT_SWEEP_ALL`/`CAPY_VAULT_MERGE_KEY` env vars)
 - [ ] 17.3 Run `/kk:review-code go` — review the full v2 diff
 - [ ] 17.4 Run `/kk:review-spec` — verify implementation matches design.md + implementation.md
 
@@ -268,12 +270,11 @@ avoid renumbering the existing plan.
 ## Dependency Graph
 
 ```
-Task 0 (investigate) ──────────────────┬─→ Task 14 (snapshots schema) ─→ Task 15 (hook) ─→ Task 16 (snapshot CLI) ─┐
-                                        │                                                                            │
+Task 0 (investigate) ── DONE → Tasks 14→15→16 (PreCompact archival) DROPPED (append-only /compact; see precompact-investigation.md)
+                                                                                                                    │
 Task 5 (codec + migration runner) ──┬─→ Task 6 (compact) ──────────────────────────────────────────────────────────┤
                                      ├─→ Task 9 (merge) ───────────────────────────────────────────────────────────┤
-Task 11 (0-msg) ─────────────────────┘   (Task 9 needs Task 5 + Task 11; subtask 9.4 also needs Task 14)            │
-Task 5 ──────────────────────────────────→ Task 14 ──→ Task 9.4 (snapshot carry consumes InsertSnapshot)            │
+Task 11 (0-msg) ─────────────────────┘   (Task 9 needs Task 5 + Task 11; subtask 9.4 dropped with Tasks 14–16)      │
                                                                                                                     │
 Task 7 (rekey extract) ─→ Task 8 (vault rekey) ─────────────────────────────────────────────────────────────────────┤
                                                                                                                     │
