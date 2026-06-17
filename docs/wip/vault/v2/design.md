@@ -23,7 +23,7 @@ Solo developer running capy across multiple machines and projects. Same persona 
 
 ## Success criteria
 
-1. **No content lost to `/compact`** — a PreCompact-triggered snapshot captures the pre-compaction transcript, provably restorable (`restore --snapshot`). _Contingent on V2.0 confirming favorable hook timing — see [PreCompact Archival](#5-precompact-archival)._
+1. ~~**No content lost to `/compact`**~~ — **DROPPED after V2.0.** The investigation found `/compact` is append-only, so no content is lost to it and the normal sweep already archives the full transcript; the PreCompact snapshot criterion is moot. See [precompact-investigation.md](./precompact-investigation.md).
 2. **`vault.db` measurably ~5× smaller** on a real corpus after `capy vault compact`, with no change to search/restore correctness.
 3. **`merge --from` unites two machines' vaults non-destructively** — idempotent, larger-total-wins, source location/`machine_id` carried.
 4. **`rekey` round-trips a key change** — old key in, new `CAPY_VAULT_KEY` out, verified open, and the old-key `.bak` is handled deliberately: a prominent warning that it remains decryptable by the (compromised) old key, plus a `--remove-backup` option to delete it after a verified rotation (see §2).
@@ -34,7 +34,7 @@ Solo developer running capy across multiple machines and projects. Same persona 
 Four work buckets, all selected:
 
 - **Storage & cross-machine:** zstd BLOB compression, `vault compact`, `vault merge --from`, `vault rekey`.
-- **Durability:** PreCompact hook archival (`vault_snapshots` cold storage + snapshot restore), gated on V2.0.
+- **Durability:** PreCompact hook archival (`vault_snapshots` cold storage + snapshot restore), gated on V2.0. **— DROPPED after V2.0 (append-only `/compact`); see [precompact-investigation.md](./precompact-investigation.md).**
 - **Reach & TUI polish:** opt-in all-projects server sweep; TUI completion (`r`/`R`/`c`/`f` keybindings + in-list filter); glamour markdown rendering behind a build tag.
 - **Correctness & tech debt:** exclude 0-message sessions from import; consolidate `beginImmediate`/`isBusy` into `sqliteutil`; `context.Context` propagation through `internal/vault` (store-side dropped — see §7); route `session.SessionDir()` through the shared `config.ClaudeProjectsDir()`.
 
@@ -120,6 +120,15 @@ No change to the v1 invariants: mandatory encryption, FTS5 build tag, WAL-checkp
 **Design:** gate on `CAPY_VAULT_SWEEP_ALL` (env) — **off by default**. When set, `vaultSweep` discovers from `config.ClaudeProjectsDir()` (the projects root, which `DiscoverSessions` already auto-detects) instead of `ProjectSessionDir(s.projectDir)`. Everything downstream is unchanged: same background goroutine, same `bgWg`, same cooperative `ctx` cancellation, same batched import. design.md flags the trade-off — startup-walk latency + `vault.db` write contention across hundreds of projects — which is exactly why it's opt-in and not default. Log a one-line summary of how many projects were swept.
 
 ## 5. PreCompact Archival
+
+> **DROPPED (2026-06-17) — retained as rationale for possible revival.** V2.0
+> investigation ([precompact-investigation.md](./precompact-investigation.md))
+> found `/compact` is **append-only**: it loses no file content, and the existing
+> server-startup sweep already archives the full verbatim transcript. So the
+> `vault_snapshots` cold storage below addresses a data loss that does not occur
+> at the file level. Tasks 14–16 are dropped. The section is kept intact — see the
+> investigation doc for the re-trigger conditions (CC changing to truncate;
+> auto-compaction differing; a need to archive before file pruning).
 
 **Hard gate — V2.0 first.** `handlePreCompact` is a stub. Assumption #2 (the hook fires **before** Claude Code mutates the session file) is **unverified**. V2.0 adds a debug handler (gated behind `CAPY_DEBUG_PRECOMPACT=1`, 0600 temp file) that dumps the raw payload and triggers `/compact`. **The gate is content-level, not mtime-level (corrected after review):** an mtime delta cannot distinguish "hook fired pre-mutation" from "hook fired post-mutation" — by the time the hook runs the file may already be truncated, yet still show a fresh mtime. The real success criterion is: **does the file the hook can read still contain the messages that compaction is about to remove?** V2.0 must capture the file contents _at hook time_ and confirm they include pre-compaction turns that the post-`/compact` file no longer has. **If the hook fires _after_ mutation (the captured bytes are already the compacted transcript), file-based capture is impossible and V2.13–V2.15 are re-scoped** (e.g. capture from a SessionStart-cached copy, or dropped). Stated loud so the contingency is visible, not buried.
 
