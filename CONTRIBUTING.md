@@ -367,7 +367,20 @@ the repository's **main** worktree, so all worktrees share one committed
 `.capy/knowledge.db`. `config.MainWorktreeDir` detects this by parsing the
 worktree's `.git` file (no `git` subprocess; submodules excluded), falling back to
 the current directory on any unexpected layout. Absolute `store.path` and the XDG
-default are unaffected.
+default are unaffected. This redirect lives in `config.DBProjectDir`, which every
+store call site routes through, so the CLI commands (`capy sweep`, `cleanup`,
+`checkpoint`, `dbsize`, `which`) get it too — run from a worktree, they all operate
+on the main worktree's DB.
+
+**Project-root detection** (`config.DetectProjectRoot`): resolution precedence is
+`CLAUDE_PROJECT_DIR` env → `git rev-parse --show-toplevel` → walk up for `.git`/
+`.capy.toml`/`.capy` → cwd. Claude Code sets `CLAUDE_PROJECT_DIR` only in the **hook**
+execution environment (the session's launch dir); manual CLI runs don't have it and
+fall back to `git rev-parse`, which returns the current worktree. These usually
+agree. They diverge only if the launch dir differs from where the sessions being
+swept actually live (e.g. a hook fires with `CLAUDE_PROJECT_DIR` pointing at the main
+checkout while sessions are under the worktree's mangled path) — then `capy sweep`
+looks under the launch dir's session directory, not the worktree's.
 
 ## Releases
 
