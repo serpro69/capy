@@ -92,14 +92,21 @@
 > **Isolated review (P2, fixed) — absolute inputs bypassed `filepath.Clean`:** `handleIndex` only resolved+`Clean`ed paths inside the `if !filepath.IsAbs(path)` branch, so an absolute input with traversal segments (`/tmp/a/../b.md`) was stored uncleaned as BOTH the new label and the `file_path` column — two spellings of one absolute file would then dedup-fail into two sources, defeating Task 6's canonicalization goal. Added an `else { path = filepath.Clean(path) }` branch (safe: the earlier deny check runs `EvaluateFilePath`, which Cleans+EvalSymlinks independently, so post-deny cleaning doesn't alter the security decision). Added regression test `TestIndex_PathAbsoluteCanonical`, and strengthened the pre-existing `TestIndex_PathAutoLabel` to assert the full resolved path instead of an incidental basename substring. The design §4.2 claim "by this point `path` is already an absolute, clean path" held only for relative inputs. Indexed as `kk:review-findings`. (pal HIGH suggesting project-relative slash labels was rejected: the `file_path` column is already absolute by necessity, the knowledge DB is single-machine, and Windows is out of scope — kept absolute labels per spec + upstream parity.)
 
 ## Task 7: Fetch cache key includes URL
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1 (SSRF changes modify tool_fetch.go)
 - **Docs:** [design.md#5-fetch-cache-key-includes-url](./design.md#5-fetch-cache-key-includes-url), [implementation.md#task-7-fetch-cache-key-includes-url](./implementation.md#task-7-fetch-cache-key-includes-url)
 
 ### Subtasks
-- [ ] 7.1 Add `composeFetchCacheKey(label, url string) string` to `internal/server/tool_fetch.go` — returns `label + "|" + url`
-- [ ] 7.2 Use `composeFetchCacheKey` for **both** cache lookup (`GetSourceMeta`) and as **storage label** when indexing fetched content — ensures cache hit on next call for same label+url
-- [ ] 7.3 Add tests: two URLs with same explicit `source` label get separate cache entries; `capy_search(source: "my-label")` partial match still finds composite-keyed sources via LIKE
+- [x] 7.1 Add `composeFetchCacheKey(label, url string) string` to `internal/server/tool_fetch.go` — returns `label + "|" + url`
+- [x] 7.2 Use `composeFetchCacheKey` for **both** cache lookup (`GetSourceMeta`) and as **storage label** when indexing fetched content — ensures cache hit on next call for same label+url
+- [x] 7.3 Add tests: two URLs with same explicit `source` label get separate cache entries; `capy_search(source: "my-label")` partial match still finds composite-keyed sources via LIKE
+
+> **Implementation notes (deliberate decisions + isolated review):**
+> - **Single `cacheKey` for lookup + storage.** Introduced `cacheKey := composeFetchCacheKey(label, url)` once; both the `GetSourceMeta` cache lookup AND all four indexing calls (`IndexJSON`/`IndexPlainText`/`Index`) use it. The now-redundant `if source == "" { source = url }` block was removed — `source` is read only once (into `label`); indexing no longer references `source`.
+> - **`GetSourceMeta` is EXACT-match** (`store.go`: `WHERE label = ?`), so store-and-lookup by the same composite is consistent. This is why the existing `assertSourceKind` test helper had to gain a `url` param and query `composeFetchCacheKey(label, url)` — a bare-label exact lookup now misses. (Production search-by-label is unaffected: `search.go` uses LIKE.)
+> - **Response messages surface the friendly `label`, not the composite `indexed.Label`/`meta.Label`.** The composite is an internal cache key; users get clean `source: "<label>"` guidance that still works via the LIKE source filter. This preserves the pre-Task-7 user-visible "from:"/"source:" behavior exactly — the composite is invisible to callers.
+> - **No-source path yields `url|url`** (label defaults to url). Kept uniform (no `label == url` special-case) — pal review flagged the absence of a branch as a positive.
+> - **Isolated review (both reviewers APPROVE, no P0/P1).** code-reviewer P2: docstring on `composeFetchCacheKey` was imprecise about `|`-safety for user-chosen labels — reworded to state the key is opaque (never split), so a `|` in a user label is harmless. P3 (url|url doubling) and pal LOW (multi-arg `fmt.Sprintf` formatting) rejected: keeping uniform compose + matching the file's pre-existing grouped-arg style. No findings indexed (none systemic).
 
 ## Task 8: Batch concurrency
 - **Status:** pending
