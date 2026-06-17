@@ -125,16 +125,29 @@
 > **Isolated review (corroborated finding, fixed):** Both reviewers (kk:code-reviewer P2 @85%, pal/gemini HIGH) flagged that `executeBatchParallel`'s `timeoutSec := int((ms).Seconds())` truncates any sub-second `timeout` to `0`, which `executor.Execute` reads as "no timeout → 30s default" (the serial path is immune via its `remainingSec <= 0` skip guard). Fixed by clamping `if timeoutSec <= 0 && timeout > 0 { timeoutSec = 1 }`, added regression test `TestExecuteBatchParallel_SubSecondTimeout`, indexed as `kk:review-findings`. Also applied two pal LOW cleanups (preallocated the serial `outputs` slice; condensed the clamp to `max(1, min(concurrency, maxBatchConcurrency, len(commands)))`) and strengthened the `_ = g.Wait()` comment per code-reviewer P3. Rejected: code-reviewer P2 5-param signature (4 non-ctx params mirror `executeBatchSerial`; a config struct over-engineers two package-private twins) and P3 speedup-test flake (the 3s ceiling must stay below the ~4s serial time to actually prove concurrency; warmup mitigates).
 
 ## Task 8b: Fetch-and-index batch requests
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 7 (fetch cache key), Task 8 (concurrency primitives)
 - **Docs:** [design.md#7b-fetch-and-index-batch-requests-with-concurrency](./design.md#7b-fetch-and-index-batch-requests-with-concurrency), [implementation.md#task-8b-fetch-and-index-batch-requests](./implementation.md#task-8b-fetch-and-index-batch-requests)
 
 ### Subtasks
-- [ ] 8b.1 Add `requests` parameter parsing in `tool_fetch.go` — array of `{url, source?}` objects, alternative to `url`+`source`
-- [ ] 8b.2 Batch execution: fetch concurrently via `errgroup.Group`, serialize FTS5 writes after all fetches complete. Per-URL cache check via `composeFetchCacheKey`
-- [ ] 8b.3 Batch response: per-URL preview capped at 384 chars, aggregate summary
-- [ ] 8b.4 Add `requests` and `concurrency` to `capy_fetch_and_index` MCP schema in `server.go`
-- [ ] 8b.5 Add tests: single-URL backward compat, batch mode, partial cache hits, preview capping
+- [x] 8b.1 Add `requests` parameter parsing in `tool_fetch.go` — array of `{url, source?}` objects, alternative to `url`+`source`. Parser is `coerceFetchRequests` in `coerce.go` (mirrors `coerceCommandsArray`: tolerates double-serialized JSON string, skips entries without a `url`). New `fetchRequest{URL, Source}` struct.
+- [x] 8b.2 Batch execution (`handleFetchBatch`): fetch concurrently via `errgroup.Group` + `SetLimit`, serialize FTS5 writes after all fetches complete. Per-URL cache check via `composeFetchCacheKey`. Refactored the single-URL fetch+index core into two shared helpers — `fetchRemoteContent` (concurrent-safe network read) and `indexFetchedContent` (serial SQLite write) — used by BOTH single and batch paths to prevent drift.
+- [x] 8b.3 Batch response: per-URL preview capped at `fetchBatchPreviewLen` (384), aggregate summary line + per-URL status lines (`✓`/`✗`/`↪`)
+- [x] 8b.4 Add `requests` and `concurrency` to `capy_fetch_and_index` MCP schema — **NOTE: schema lives in `internal/server/tools.go` (`toolFetchAndIndex`), NOT `server.go` as the design/impl docs stated** (same discrepancy Task 8.6 found). Also dropped `mcp.Required()` from `url` so batch-only calls are valid; the handler enforces url-XOR-requests.
+- [x] 8b.5 Add tests: batch indexes all URLs + searchable, order preserved, partial cache hits, preview capping, per-URL error isolation, concurrency clamp, git-platform redirect, missing url+requests, `coerceFetchRequests` unit table. All pass under `-race`.
+
+> **Deliberate decisions:**
+> - **HTML→markdown conversion folded into the serial `indexFetchedContent` step** (design §7b prose said "each goroutine converts HTML→markdown"). Conversion is CPU-bound and negligible vs network latency; the hard invariant — *parallel fetches, serial FTS5 writes* — holds. Keeping one shared index helper for single+batch avoids two divergent content-type routers.
+> - **`fetchRemoteContent` returns `errMsg string` (empty = success), not `error`** — preserves the pre-existing capitalized user-facing messages ("Failed to fetch…", "Invalid URL…") without the lowercase-error-string idiom friction.
+> - **Git-platform issue/PR/MR URLs are flagged per-URL in batch** (`↪ … not fetched`), mirroring the single-URL redirect, instead of BM25-fragmenting them.
+> - **Batch-wide `kind`/`force`/`concurrency`**; per-request objects carry only `{url, source?}`.
+
+> **Isolated review (kk:code-reviewer + pal/gemini-3.1-pro; fixes applied):**
+> - **pal HIGH (fixed) — unbounded batch → OOM/DoS:** `SetLimit` bounds in-flight fetches, but every fetched body (≤`fetchMaxBody` 10MB) is retained in `items[]` until the serial phase, so peak memory grows with `len(requests)`, not concurrency. Added `maxFetchBatchRequests = 20` cap with a fail-loud error before the pool spawns. Indexed as `kk:review-findings` (generalizable: fan-out handlers must cap item COUNT, not just worker count). Regression test `TestFetchBatch_TooLargeRejected`.
+> - **pal MEDIUM (fixed) — UTF-8 truncation:** `s[:384]`/`s[:fetchPreviewLen]` byte-slicing can split a multibyte rune → garbled `�` in the JSON response. Added rune-safe `truncateRunes` helper (backtracks via `utf8.RuneStart`), applied to BOTH batch and single-URL previews (the single path was a pre-existing latent bug). Indexed as `kk:review-findings`. Tests `TestTruncateRunes` + `TestFetchBatch_PreviewRuneSafe`.
+> - **code-reviewer P2 (fixed):** mirrored `executeBatchParallel`'s fuller `g.Wait()` discard comment; resolve `st := s.getStore()` once and pass into `fetchOne` (no per-goroutine `sync.Once` re-entry); fail-loud "Invalid requests" error when `requests` is supplied but yields no usable entries (`TestFetchBatch_InvalidRequestsRejected`).
+> - **code-reviewer P3 (fixed):** renamed `indexedCount`→`okCount`/`totalBytes`→`freshBytes`, clarified the summary line ("Processed N/M URLs — X newly indexed, Y from cache"); anchored `TestFetchBatch_OrderPreserved` to `✓ <label> —` lines.
+> - **Rejected (keep as-is):** code-reviewer P1 http.Client-per-call (the pooling `Transport` is already a shared singleton via `getFetchTransport`; the Client struct + CheckRedirect closure are negligible for an I/O-bound path and pre-existing); P3 tagged-union compile-safety on `fetchItemResult` (idiomatic Go; early returns + doc comment enforce single-state); P3 schema-marshal test (the handler path is already exercised by the batch tests).
 
 ## Task 9: Extend cleanup with project-scope purge
 - **Status:** pending
