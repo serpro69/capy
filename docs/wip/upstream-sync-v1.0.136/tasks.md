@@ -81,13 +81,15 @@
 > - **Isolated review P2 (fixed) — `indexed_at` advance:** when a file is touched (mtime bumped) but its sanitized content is unchanged, `refreshStaleSources` now advances `indexed_at` (new `stmtUpdateSourceIndexedAt`, keyed by source id) so the mtime fast-path stops re-reading+re-hashing it on every search. Scoped to the file-backed refresh path only — NOT the shared dedup statements, which would reset ephemeral/session TTLs. Indexed as `kk:review-findings`.
 
 ## Task 6: Canonicalize index source label
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [design.md#4-canonicalize-index-source-label](./design.md#4-canonicalize-index-source-label), [implementation.md#task-6-canonicalize-index-source-label](./implementation.md#task-6-canonicalize-index-source-label)
 
 ### Subtasks
-- [ ] 6.1 Change `internal/server/tool_index.go` line 52-53: replace `source = filepath.Base(path)` with `source = path` (resolved absolute path)
-- [ ] 6.2 Add tests: two relative paths to same file produce one source; two files with same basename in different dirs produce two sources
+- [x] 6.1 Change `internal/server/tool_index.go` line 52-53: replace `source = filepath.Base(path)` with `source = path` (resolved absolute path)
+- [x] 6.2 Add tests: two relative paths to same file produce one source; two files with same basename in different dirs produce two sources
+
+> **Isolated review (P2, fixed) — absolute inputs bypassed `filepath.Clean`:** `handleIndex` only resolved+`Clean`ed paths inside the `if !filepath.IsAbs(path)` branch, so an absolute input with traversal segments (`/tmp/a/../b.md`) was stored uncleaned as BOTH the new label and the `file_path` column — two spellings of one absolute file would then dedup-fail into two sources, defeating Task 6's canonicalization goal. Added an `else { path = filepath.Clean(path) }` branch (safe: the earlier deny check runs `EvaluateFilePath`, which Cleans+EvalSymlinks independently, so post-deny cleaning doesn't alter the security decision). Added regression test `TestIndex_PathAbsoluteCanonical`, and strengthened the pre-existing `TestIndex_PathAutoLabel` to assert the full resolved path instead of an incidental basename substring. The design §4.2 claim "by this point `path` is already an absolute, clean path" held only for relative inputs. Indexed as `kk:review-findings`. (pal HIGH suggesting project-relative slash labels was rejected: the `file_path` column is already absolute by necessity, the knowledge DB is single-machine, and Windows is out of scope — kept absolute labels per spec + upstream parity.)
 
 ## Task 7: Fetch cache key includes URL
 - **Status:** pending
