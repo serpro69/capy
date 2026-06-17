@@ -41,15 +41,15 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [x] 1.3 Verified: `make test-race` green; `grep -rn "func beginImmediate\|func isBusy" internal/` returns nothing (only `sqliteutil.BeginImmediate`/`IsBusy` exist).
 
 ## Task 2: Route `session.SessionDir()` through `config.ClaudeProjectsDir()`
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Task 0, 1, 5–13
 - **Docs:** [implementation.md#sessiondir-routing-v23](./implementation.md)
 
 ### Subtasks
-- [ ] 2.1 Replace the hardcoded `~/.claude/projects/` base in `internal/session/sweep.go:SessionDir()` with `config.ClaudeProjectsDir()` (already `CLAUDE_CONFIG_DIR`-aware)
-- [ ] 2.2 Verify: `go test -tags fts5 ./internal/session/... ./internal/config/...` green; a `CLAUDE_CONFIG_DIR`-set test resolves the overridden root
+- [x] 2.1 Replace the hardcoded `~/.claude/projects/` base in `internal/session/sweep.go:SessionDir()` with `config.ClaudeProjectsDir()` (already `CLAUDE_CONFIG_DIR`-aware)
+- [x] 2.2 Verify: `go test -tags fts5 ./internal/session/... ./internal/config/...` green; a `CLAUDE_CONFIG_DIR`-set test resolves the overridden root — added `TestSessionDir_HonorsClaudeConfigDir`
 
 ## Task 3: `context.Context` propagation — `internal/store` — DROPPED
 - **Status:** dropped
