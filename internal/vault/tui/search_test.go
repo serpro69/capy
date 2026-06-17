@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ func sampleResults() []vault.SearchResult {
 
 func TestSearch_ResultsPopulateAndCursorNav(t *testing.T) {
 	st := &stubStore{results: sampleResults()}
-	m := newSearchModel(st, DefaultStyles(), 80, 24)
+	m := newSearchModel(context.Background(), st, DefaultStyles(), 80, 24)
 
 	m, _ = m.Update(searchResultsMsg{seq: m.seq, results: st.results})
 	require.Len(t, m.results, 2)
@@ -45,7 +46,7 @@ func TestSearch_ResultsPopulateAndCursorNav(t *testing.T) {
 
 func TestSearch_StaleResultsIgnored(t *testing.T) {
 	st := &stubStore{results: sampleResults()}
-	m := newSearchModel(st, DefaultStyles(), 80, 24)
+	m := newSearchModel(context.Background(), st, DefaultStyles(), 80, 24)
 	m.seq = 5
 
 	// A results message from an earlier sequence is dropped.
@@ -55,7 +56,7 @@ func TestSearch_StaleResultsIgnored(t *testing.T) {
 
 func TestSearch_DebounceFiresLatestOnly(t *testing.T) {
 	st := &stubStore{}
-	m := newSearchModel(st, DefaultStyles(), 80, 24)
+	m := newSearchModel(context.Background(), st, DefaultStyles(), 80, 24)
 	m.input.SetValue("query")
 	m.seq = 3
 
@@ -76,7 +77,7 @@ func TestSearch_DebounceFiresLatestOnly(t *testing.T) {
 
 func TestSearch_TypingReschedules(t *testing.T) {
 	st := &stubStore{}
-	m := newSearchModel(st, DefaultStyles(), 80, 24)
+	m := newSearchModel(context.Background(), st, DefaultStyles(), 80, 24)
 	before := m.seq
 	m, cmd := m.Update(key("a"))
 	assert.Equal(t, "a", m.input.Value())
@@ -86,7 +87,7 @@ func TestSearch_TypingReschedules(t *testing.T) {
 
 func TestSearch_ErrorSurfaced(t *testing.T) {
 	st := &stubStore{searchErr: errors.New("boom")}
-	m := newSearchModel(st, DefaultStyles(), 80, 24)
+	m := newSearchModel(context.Background(), st, DefaultStyles(), 80, 24)
 	m, _ = m.Update(searchResultsMsg{seq: m.seq, err: st.searchErr})
 	assert.Contains(t, m.status, "boom")
 	assert.Empty(t, m.results)
@@ -94,7 +95,7 @@ func TestSearch_ErrorSurfaced(t *testing.T) {
 
 func TestSearch_SetQueryReturnsCommand(t *testing.T) {
 	st := &stubStore{}
-	m := newSearchModel(st, DefaultStyles(), 80, 24)
+	m := newSearchModel(context.Background(), st, DefaultStyles(), 80, 24)
 	m, cmd := m.setQuery("hello")
 	assert.Equal(t, "hello", m.input.Value())
 	// A debounced tick is scheduled (not executed here — tea.Tick sleeps; the
@@ -104,7 +105,7 @@ func TestSearch_SetQueryReturnsCommand(t *testing.T) {
 
 func TestSearch_View(t *testing.T) {
 	st := &stubStore{results: sampleResults()}
-	m := newSearchModel(st, DefaultStyles(), 80, 24)
+	m := newSearchModel(context.Background(), st, DefaultStyles(), 80, 24)
 
 	// Empty input → prompt help.
 	assert.Contains(t, m.View(), "type to search")
@@ -120,7 +121,7 @@ func TestSearch_View(t *testing.T) {
 	assert.Contains(t, m.View(), "boom")
 
 	// Non-empty query, no results.
-	m2 := newSearchModel(st, DefaultStyles(), 80, 24)
+	m2 := newSearchModel(context.Background(), st, DefaultStyles(), 80, 24)
 	m2.input.SetValue("zzz")
 	assert.Contains(t, m2.View(), "no matches")
 }

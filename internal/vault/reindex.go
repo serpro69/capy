@@ -64,14 +64,14 @@ func Reindex(ctx context.Context, store *VaultStore) (ReindexResult, error) {
 		if len(batch) == 0 {
 			return
 		}
-		rebuilt, err := store.RebuildFTSBatch(batch)
+		rebuilt, err := store.RebuildFTSBatch(ctx, batch)
 		if err != nil {
 			slog.Warn("vault reindex: batch write failed, skipping",
 				"count", len(batch), "error", err)
 			res.Errors += len(batch)
 		} else {
 			res.Reindexed += rebuilt
-			if err := store.checkpointWAL(); err != nil {
+			if err := store.checkpointWAL(ctx); err != nil {
 				slog.Warn("vault reindex: wal checkpoint failed (continuing)", "error", err)
 			}
 		}
@@ -85,7 +85,7 @@ func Reindex(ctx context.Context, store *VaultStore) (ReindexResult, error) {
 			break
 		}
 
-		fts, err := rebuildSessionFTS(store, uuid)
+		fts, err := rebuildSessionFTS(ctx, store, uuid)
 		if err != nil {
 			slog.Warn("vault reindex: re-scan failed, skipping", "uuid", uuid, "error", err)
 			res.Errors++
@@ -113,12 +113,12 @@ func ftsContentBytes(fts []FTSRow) int64 {
 
 // rebuildSessionFTS loads a session's stored transcript + subagent sidecars from
 // the DB and re-scans them into FTS rows with the current indexer.
-func rebuildSessionFTS(store *VaultStore, uuid string) ([]FTSRow, error) {
-	sess, err := store.GetSession(uuid)
+func rebuildSessionFTS(ctx context.Context, store *VaultStore, uuid string) ([]FTSRow, error) {
+	sess, err := store.GetSession(ctx, uuid)
 	if err != nil {
 		return nil, err
 	}
-	files, err := store.GetFiles(uuid)
+	files, err := store.GetFiles(ctx, uuid)
 	if err != nil {
 		return nil, err
 	}

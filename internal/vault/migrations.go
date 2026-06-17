@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -19,11 +20,11 @@ import (
 // Naming note: 0001/0002 are reserved for pending vault v2 work (blob encoding,
 // vault_snapshots — see docs/wip/vault/v2/). This feature uses 0003 to avoid
 // claiming those slots.
-func migrateVault(db *sql.DB) error {
-	if err := ensureVaultMigrationsTable(db); err != nil {
+func migrateVault(ctx context.Context, db *sql.DB) error {
+	if err := ensureVaultMigrationsTable(ctx, db); err != nil {
 		return fmt.Errorf("creating vault_migrations table: %w", err)
 	}
-	if err := migrate0003AddIndexVersion(db); err != nil {
+	if err := migrate0003AddIndexVersion(ctx, db); err != nil {
 		return fmt.Errorf("migration 0003_add_index_version: %w", err)
 	}
 	return nil
@@ -31,8 +32,8 @@ func migrateVault(db *sql.DB) error {
 
 // ensureVaultMigrationsTable creates the by-name migration-tracking table. This
 // (not schemaSQL) owns vault_migrations.
-func ensureVaultMigrationsTable(db *sql.DB) error {
-	if _, err := db.Exec(`
+func ensureVaultMigrationsTable(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS vault_migrations (
 			name TEXT PRIMARY KEY,
 			applied_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -44,9 +45,9 @@ func ensureVaultMigrationsTable(db *sql.DB) error {
 
 // vaultMigrationApplied reports whether a named migration has already been
 // recorded in vault_migrations.
-func vaultMigrationApplied(tx *sql.Tx, name string) (bool, error) {
+func vaultMigrationApplied(ctx context.Context, tx *sql.Tx, name string) (bool, error) {
 	var count int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM vault_migrations WHERE name = ?`, name).Scan(&count); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM vault_migrations WHERE name = ?`, name).Scan(&count); err != nil {
 		return false, fmt.Errorf("checking migration %s: %w", name, err)
 	}
 	return count > 0, nil
@@ -59,18 +60,18 @@ func vaultMigrationApplied(tx *sql.Tx, name string) (bool, error) {
 //   - Fresh vaults: schemaSQL already creates the column, so the table_info guard
 //     skips the ALTER (avoiding a duplicate-column error); the migration is still
 //     recorded so it never re-runs.
-func migrate0003AddIndexVersion(db *sql.DB) error {
+func migrate0003AddIndexVersion(ctx context.Context, db *sql.DB) error {
 	// Fast path: when the migration is already recorded (the common case on every
 	// getDB() open), skip acquiring the RESERVED write lock entirely — a plain
 	// read avoids needless contention with concurrent readers/writers (e.g. the
 	// server sweep). A read error falls through to the locked path.
 	var count int
-	if err := db.QueryRow(
+	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM vault_migrations WHERE name = '0003_add_index_version'`).Scan(&count); err == nil && count > 0 {
 		return nil
 	}
 
-	tx, err := sqliteutil.BeginImmediate(db, "vault_meta")
+	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
 	if err != nil {
 		return fmt.Errorf("begin immediate: %w", err)
 	}
@@ -78,7 +79,7 @@ func migrate0003AddIndexVersion(db *sql.DB) error {
 
 	// Re-check inside the write tx: two opens may both pass the read fast-path,
 	// but only one wins the lock and applies; the loser sees it applied here.
-	applied, err := vaultMigrationApplied(tx, "0003_add_index_version")
+	applied, err := vaultMigrationApplied(ctx, tx, "0003_add_index_version")
 	if err != nil {
 		return err
 	}
@@ -86,17 +87,17 @@ func migrate0003AddIndexVersion(db *sql.DB) error {
 		return tx.Commit()
 	}
 
-	hasColumn, err := columnExists(tx, "vault_sessions", "index_version")
+	hasColumn, err := columnExists(ctx, tx, "vault_sessions", "index_version")
 	if err != nil {
 		return err
 	}
 	if !hasColumn {
-		if _, err := tx.Exec(`ALTER TABLE vault_sessions ADD COLUMN index_version INTEGER NOT NULL DEFAULT 1`); err != nil {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE vault_sessions ADD COLUMN index_version INTEGER NOT NULL DEFAULT 1`); err != nil {
 			return fmt.Errorf("alter table: %w", err)
 		}
 	}
 
-	if _, err := tx.Exec(`INSERT INTO vault_migrations (name) VALUES ('0003_add_index_version')`); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO vault_migrations (name) VALUES ('0003_add_index_version')`); err != nil {
 		return fmt.Errorf("recording migration: %w", err)
 	}
 	return tx.Commit()
@@ -104,8 +105,8 @@ func migrate0003AddIndexVersion(db *sql.DB) error {
 
 // columnExists reports whether table has a column named col, via PRAGMA
 // table_info. table is a trusted internal constant, never user input.
-func columnExists(tx *sql.Tx, table, col string) (bool, error) {
-	rows, err := tx.Query(fmt.Sprintf("PRAGMA table_info(%s)", table)) //nolint:gosec // table is a trusted internal constant
+func columnExists(ctx context.Context, tx *sql.Tx, table, col string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table)) //nolint:gosec // table is a trusted internal constant
 	if err != nil {
 		return false, fmt.Errorf("pragma table_info(%s): %w", table, err)
 	}

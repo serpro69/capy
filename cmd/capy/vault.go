@@ -96,7 +96,7 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 			defer st.Close()
 			// Fail fast on a wrong key / corrupt DB: Import has no error return and
 			// would otherwise report the same open failure once per session.
-			if err := st.Open(); err != nil {
+			if err := st.Open(cmd.Context()); err != nil {
 				return err
 			}
 
@@ -154,7 +154,7 @@ are left untouched.`,
 			}
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
-			if err := st.Open(); err != nil {
+			if err := st.Open(cmd.Context()); err != nil {
 				return err
 			}
 
@@ -191,7 +191,7 @@ func newVaultListCmd(env *vaultEnv) *cobra.Command {
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 
-			sessions, err := st.ListSessions(vault.ListOptions{Project: project, Limit: limit})
+			sessions, err := st.ListSessions(cmd.Context(), vault.ListOptions{Project: project, Limit: limit})
 			if err != nil {
 				return err
 			}
@@ -258,7 +258,7 @@ func newVaultSearchCmd(env *vaultEnv) *cobra.Command {
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 
-			results, err := st.Search(vault.SearchOptions{
+			results, err := st.Search(cmd.Context(), vault.SearchOptions{
 				Query:   strings.Join(args, " "),
 				Raw:     raw,
 				Project: project,
@@ -326,7 +326,7 @@ func newVaultShowCmd(env *vaultEnv) *cobra.Command {
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 
-			sess, err := st.GetSession(args[0])
+			sess, err := st.GetSession(cmd.Context(), args[0])
 			if err != nil {
 				return handleLookupError(args[0], err)
 			}
@@ -335,7 +335,7 @@ func newVaultShowCmd(env *vaultEnv) *cobra.Command {
 				return writeRaw(sess.RawJSONL)
 			}
 
-			files, err := st.GetFiles(sess.UUID)
+			files, err := st.GetFiles(cmd.Context(), sess.UUID)
 			if err != nil {
 				return err
 			}
@@ -424,7 +424,7 @@ func newVaultStatsCmd(env *vaultEnv) *cobra.Command {
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 
-			stats, err := st.Stats()
+			stats, err := st.Stats(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -521,11 +521,11 @@ write elsewhere. Existing files are kept unless you confirm overwriting them.`,
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 
-			sess, err := st.GetSession(args[0])
+			sess, err := st.GetSession(cmd.Context(), args[0])
 			if err != nil {
 				return handleLookupError(args[0], err)
 			}
-			files, err := st.GetFiles(sess.UUID)
+			files, err := st.GetFiles(cmd.Context(), sess.UUID)
 			if err != nil {
 				return err
 			}
@@ -590,11 +590,11 @@ session's recorded project path, or the current directory (in that order).`,
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close() // idempotent; we Close explicitly before exec below
 
-			sess, err := st.GetSession(args[0])
+			sess, err := st.GetSession(cmd.Context(), args[0])
 			if err != nil {
 				return handleLookupError(args[0], err)
 			}
-			files, err := st.GetFiles(sess.UUID)
+			files, err := st.GetFiles(cmd.Context(), sess.UUID)
 			if err != nil {
 				return err
 			}
@@ -694,7 +694,7 @@ projects directory.`,
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 
-			sess, err := st.GetSession(args[0])
+			sess, err := st.GetSession(cmd.Context(), args[0])
 			if err != nil {
 				return handleLookupError(args[0], err)
 			}
@@ -705,7 +705,7 @@ projects directory.`,
 				return nil
 			}
 
-			ok, err := st.DeleteSession(sess.UUID)
+			ok, err := st.DeleteSession(cmd.Context(), sess.UUID)
 			if err != nil {
 				return err
 			}
@@ -826,7 +826,7 @@ func tuiRequested(cmd *cobra.Command) bool {
 func launchTUI(cmd *cobra.Command, env *vaultEnv, opts tui.Options) error {
 	st := vault.NewVaultStore(env.dbPath)
 	defer st.Close()
-	if err := st.Open(); err != nil {
+	if err := st.Open(cmd.Context()); err != nil {
 		return err
 	}
 	return tui.Run(cmd.Context(), st, opts)

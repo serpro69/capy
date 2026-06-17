@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,7 +18,7 @@ func newTestApp(t *testing.T, opts Options) (Model, *stubStore) {
 		sessions: []vault.Session{sess},
 		files:    map[string][]vault.File{sess.UUID: files},
 	}
-	m, err := newModel(st, opts)
+	m, err := newModel(context.Background(), st, opts)
 	require.NoError(t, err)
 	// Give the models a real size, as the first WindowSizeMsg would.
 	tm, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
@@ -65,7 +66,7 @@ func TestApp_SearchEnterOpensViewAndJumps(t *testing.T) {
 			{SessionUUID: sess.UUID, SubagentID: "xyz", LineIndex: 1, Role: "assistant", Snippet: "sub [hit]"},
 		},
 	}
-	m, err := newModel(st, Options{Mode: "search", Query: "bug"})
+	m, err := newModel(context.Background(), st, Options{Mode: "search", Query: "bug"})
 	require.NoError(t, err)
 	tm, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	m = tm.(Model)

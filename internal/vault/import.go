@@ -84,9 +84,10 @@ func (r *ImportResult) record(s ImportedSession) {
 // ctx provides cooperative cancellation: it is checked at each session boundary
 // so a cancelled or timed-out caller (e.g. the server-startup sweep, which must
 // not block shutdown) stops processing further sessions, flushes whatever is
-// already batched, and returns partial results. Cancellation does not interrupt
-// an in-flight transaction — the DB methods are not yet context-aware (a
-// deliberately deferred refactor; see docs/wip/vault/tasks.md).
+// already batched, and returns partial results. ctx is also threaded into the
+// store's DB calls (Task 4), so a cancellation can additionally interrupt an
+// in-flight query/transaction rather than only being observed at the next
+// session boundary.
 func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts ImportOptions) ImportResult {
 	var res ImportResult
 	if len(sessions) == 0 {
@@ -96,7 +97,7 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 	}
 	machineID := MachineID()
 
-	warnOnMachineMismatch(store, machineID)
+	warnOnMachineMismatch(ctx, store, machineID)
 
 	var (
 		batch      []SessionWrite
@@ -118,11 +119,11 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		}
 		if !opts.DryRun {
 			if len(batch) > 0 {
-				if err := store.WriteBatch(batch); err != nil {
+				if err := store.WriteBatch(ctx, batch); err != nil {
 					slog.Warn("vault import: batch write failed, retrying per-session",
 						"count", len(batch), "error", err)
 					for i := range batch {
-						if err := store.writeOne(batch[i]); err != nil {
+						if err := store.writeOne(ctx, batch[i]); err != nil {
 							slog.Warn("vault import: session write failed",
 								"uuid", batch[i].Record.Session.UUID, "error", err)
 							pending[i].Status = StatusError
@@ -132,11 +133,11 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 				}
 			}
 			if len(ftsBatch) > 0 {
-				if _, err := store.RebuildFTSBatch(ftsBatch); err != nil {
+				if _, err := store.RebuildFTSBatch(ctx, ftsBatch); err != nil {
 					slog.Warn("vault import: fts upgrade batch failed, retrying per-session",
 						"count", len(ftsBatch), "error", err)
 					for i := range ftsBatch {
-						if _, err := store.RebuildFTSBatch(ftsBatch[i : i+1]); err != nil {
+						if _, err := store.RebuildFTSBatch(ctx, ftsBatch[i : i+1]); err != nil {
 							slog.Warn("vault import: session fts upgrade failed",
 								"uuid", ftsBatch[i].UUID, "error", err)
 							ftsPending[i].Status = StatusError
@@ -184,7 +185,7 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		files, contents := readSidecars(sf, mainBytes)
 		hash, size := computeContentHash(contents)
 
-		existingHash, existingSize, existingIndexVersion, found, err := store.SessionDigest(sf.UUID)
+		existingHash, existingSize, existingIndexVersion, found, err := store.SessionDigest(ctx, sf.UUID)
 		if err != nil {
 			slog.Warn("vault import: digest lookup failed", "uuid", sf.UUID, "error", err)
 			res.record(ImportedSession{UUID: sf.UUID, SizeBytes: size, Status: StatusError, Err: err})
@@ -272,8 +273,8 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 // warnOnMachineMismatch prints a prominent warning when the vault already holds
 // sessions but none were archived by this machine — the signal that copying a
 // vault.db here is about to bury unarchived local sessions.
-func warnOnMachineMismatch(store *VaultStore, machineID string) {
-	total, matching, err := store.MachineSummary(machineID)
+func warnOnMachineMismatch(ctx context.Context, store *VaultStore, machineID string) {
+	total, matching, err := store.MachineSummary(ctx, machineID)
 	if err != nil {
 		slog.Warn("vault import: machine summary query failed", "error", err)
 		return
