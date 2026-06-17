@@ -59,7 +59,7 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 **Not actionable — dropped, retained as rationale only (do NOT implement).** The original plan was to convert `internal/store` `db.Query`/`Exec`/`QueryRow`/`Begin` → `*Context` variants and add a leading `ctx context.Context` to public methods lacking one. This is **not** done in v2 (see Rationale above). `internal/store` keeps its plain `db.Query`/`Exec`/`Begin` calls. Re-open only when a store-side cancelling caller genuinely needs sub-transaction cancellation.
 
 ## Task 4: `context.Context` propagation — `internal/vault`
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Task 0, 1, 2, 5, 7, 10–13
@@ -68,9 +68,9 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - **Note:** kept (unlike dropped Task 3) because the cancelling caller — the Task 10 all-projects sweep — lives in this package; threading `ctx` makes vault's public API cancellation-ready where it matters.
 
 ### Subtasks
-- [ ] 4.1 Convert `internal/vault` DB calls → `*Context` variants; replace `VaultStore.ctx()` (returns `context.Background()`) with a real threaded `ctx`; add leading `ctx` to public methods (`GetSession`, `ListSessions`, `Search`, `Stats`, `InsertSession`, `ReplaceSession`, `DeleteSession`, `WriteBatch`, …)
-- [ ] 4.2 Update CLI callers (`cmd.Context()`) and `server.vaultSweep` (`sweepCtx`) to pass context
-- [ ] 4.3 Verify: `CAPY_VAULT_KEY=… go test -tags fts5 -count=1 -race ./internal/vault/... ./cmd/capy/... ./internal/server/...` green
+- [x] 4.1 Convert `internal/vault` DB calls → `*Context` variants; replace `VaultStore.ctx()` (returns `context.Background()`) with a real threaded `ctx`; add leading `ctx` to public methods (`GetSession`, `ListSessions`, `Search`, `Stats`, `InsertSession`, `ReplaceSession`, `DeleteSession`, `WriteBatch`, …). **Also:** threaded `ctx` through `migrations.go` (no contextless seam from `openDB`) and added `sqliteutil.BeginImmediateContext` (the contextless `BeginImmediate` now delegates to it, so the store's call sites stay untouched per dropped Task 3). `Close()`/`Checkpoint()` deliberately stay contextless (lifecycle: Close runs at shutdown when the request ctx is already cancelled, and its WAL flush must complete).
+- [x] 4.2 Update CLI callers (`cmd.Context()`) and `server.vaultSweep` (`sweepCtx`) to pass context. **Also:** TUI — `dataStore`/`searcher` interfaces gained `ctx` (to match `VaultStore`), and the program `ctx` is carried on the bubbletea `Model`/`searchModel` (documented framework-boundary exception to "don't store ctx in a struct", since bubbletea owns `Update`/`View` and the model's lifetime == the program-ctx lifetime).
+- [x] 4.3 Verify: `CAPY_VAULT_KEY=… go test -tags fts5 -count=1 -race ./internal/vault/... ./cmd/capy/... ./internal/server/...` green — PASS (+ `./internal/sqliteutil/...`; `go vet -tags fts5 ./...` clean)
 
 ## Task 5: zstd BLOB codec + compress-on-write / decompress-on-read
 - **Status:** pending

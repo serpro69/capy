@@ -38,7 +38,7 @@ func TestImport_InsertsSessionWithMetadataAndFTS(t *testing.T) {
 	assert.Equal(t, StatusNew, res.Sessions[0].Status)
 	assert.Equal(t, "Fix the timeout bug", res.Sessions[0].Title)
 
-	got, err := s.GetSession(uuid[:8])
+	got, err := s.GetSession(context.Background(), uuid[:8])
 	require.NoError(t, err)
 	assert.Equal(t, "Fix the timeout bug", got.Title)
 	assert.Equal(t, "feature/x", got.GitBranch)
@@ -53,20 +53,20 @@ func TestImport_InsertsSessionWithMetadataAndFTS(t *testing.T) {
 	assert.True(t, bytes.Equal(sampleMainJSONL(t), got.RawJSONL), "raw_jsonl preserved verbatim")
 	assert.Equal(t, currentIndexVersion, got.IndexVersion, "fresh import stamps the current indexer version")
 
-	files, err := s.GetFiles(uuid)
+	files, err := s.GetFiles(context.Background(), uuid)
 	require.NoError(t, err)
 	require.Len(t, files, 2, "subagent + tool-result preserved")
 
 	// tool_result text indexes as role="tool", kept out of --role user.
-	toolHits, err := s.Search(SearchOptions{Query: "pterodactyl", Role: "tool"})
+	toolHits, err := s.Search(context.Background(), SearchOptions{Query: "pterodactyl", Role: "tool"})
 	require.NoError(t, err)
 	require.Len(t, toolHits, 1)
-	userOnly, err := s.Search(SearchOptions{Query: "pterodactyl", Role: "user"})
+	userOnly, err := s.Search(context.Background(), SearchOptions{Query: "pterodactyl", Role: "user"})
 	require.NoError(t, err)
 	assert.Empty(t, userOnly, "tool output must not appear under --role user")
 
 	// Subagent content is searchable and carries the subagent_id anchor.
-	subHits, err := s.Search(SearchOptions{Query: "triceratops"})
+	subHits, err := s.Search(context.Background(), SearchOptions{Query: "triceratops"})
 	require.NoError(t, err)
 	require.Len(t, subHits, 1)
 	assert.Equal(t, "abc", subHits[0].SubagentID)
@@ -101,7 +101,7 @@ func TestImport_ReindexesVersionStaleSession(t *testing.T) {
 	// sentinel title. The sentinel lets us prove the upgrade rebuilds ONLY the FTS
 	// index — a full ReplaceSession would overwrite the title and rewrite raw_jsonl
 	// from the re-scanned content.
-	db, err := s.getDB()
+	db, err := s.getDB(context.Background())
 	require.NoError(t, err)
 	const sentinel = "SENTINEL — not rescanned"
 	_, err = db.Exec(`UPDATE vault_sessions SET index_version=?, title=? WHERE uuid=?`,
@@ -109,7 +109,7 @@ func TestImport_ReindexesVersionStaleSession(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`DELETE FROM vault_fts WHERE session_uuid=? AND role='tool'`, uuid)
 	require.NoError(t, err)
-	pre, err := s.Search(SearchOptions{Query: "vault", Role: "tool"})
+	pre, err := s.Search(context.Background(), SearchOptions{Query: "vault", Role: "tool"})
 	require.NoError(t, err)
 	require.Empty(t, pre, "tool row removed to simulate a stale index")
 
@@ -122,7 +122,7 @@ func TestImport_ReindexesVersionStaleSession(t *testing.T) {
 	require.Len(t, res.Sessions, 1)
 	assert.Equal(t, StatusUpdated, res.Sessions[0].Status)
 
-	got, err := s.GetSession(uuid[:8])
+	got, err := s.GetSession(context.Background(), uuid[:8])
 	require.NoError(t, err)
 	assert.Equal(t, currentIndexVersion, got.IndexVersion, "re-import bumps the index to current")
 	assert.Equal(t, sentinel, got.Title, "FTS-only upgrade must not rewrite the session metadata row")
@@ -130,7 +130,7 @@ func TestImport_ReindexesVersionStaleSession(t *testing.T) {
 
 	// The index was genuinely rebuilt: the tool_result now carries its enriched
 	// "Bash go test ./internal/vault" call summary, so it is searchable again.
-	post, err := s.Search(SearchOptions{Query: "vault", Role: "tool"})
+	post, err := s.Search(context.Background(), SearchOptions{Query: "vault", Role: "tool"})
 	require.NoError(t, err)
 	require.Len(t, post, 1, "FTS rebuilt with the enriched tool-call summary")
 }
@@ -147,7 +147,7 @@ func TestImport_LargerTotalReplaces_ShrinkingMainGrownSidecar(t *testing.T) {
 	require.Equal(t, 1, importFixture(t, s, root, ImportOptions{}).Imported)
 
 	// Pin archived_at so we can prove the replace UPDATE preserves it.
-	db, err := s.getDB()
+	db, err := s.getDB(context.Background())
 	require.NoError(t, err)
 	const sentinel = "2000-01-01T00:00:00Z"
 	_, err = db.Exec(`UPDATE vault_sessions SET archived_at=? WHERE uuid=?`, sentinel, uuid)
@@ -165,12 +165,12 @@ func TestImport_LargerTotalReplaces_ShrinkingMainGrownSidecar(t *testing.T) {
 	assert.Equal(t, 1, res.Updated)
 	assert.Equal(t, 0, res.Skipped)
 
-	got, err := s.GetSession(uuid[:8])
+	got, err := s.GetSession(context.Background(), uuid[:8])
 	require.NoError(t, err)
 	assert.True(t, bytes.Equal(smallerMain, got.RawJSONL), "raw_jsonl overwritten with the smaller main")
 	assert.Equal(t, sentinel, got.ArchivedAt, "archived_at survives replacement")
 
-	files, err := s.GetFiles(uuid)
+	files, err := s.GetFiles(context.Background(), uuid)
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 	assert.True(t, bytes.Equal(grownSidecar, files[0].RawContent), "sidecar rebuilt with grown content")
@@ -216,7 +216,7 @@ func TestImport_SubagentChangeDetectedByCompositeHash(t *testing.T) {
 	res := importFixture(t, s, root, ImportOptions{})
 	assert.Equal(t, 1, res.Updated)
 
-	hits, err := s.Search(SearchOptions{Query: "velociraptor"})
+	hits, err := s.Search(context.Background(), SearchOptions{Query: "velociraptor"})
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, "abc", hits[0].SubagentID)
@@ -233,7 +233,7 @@ func TestImport_DryRunWritesNothing(t *testing.T) {
 	require.Len(t, res.Sessions, 1)
 	assert.Equal(t, StatusNew, res.Sessions[0].Status)
 
-	listed, err := s.ListSessions(ListOptions{})
+	listed, err := s.ListSessions(context.Background(), ListOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, listed, "dry-run must not write any sessions")
 }
@@ -251,7 +251,7 @@ func TestImport_ProjectFilter(t *testing.T) {
 	require.Len(t, res.Sessions, 1)
 	assert.Equal(t, "aaaaaaaa-2222-3333-4444-555555555555", res.Sessions[0].UUID)
 
-	listed, err := s.ListSessions(ListOptions{})
+	listed, err := s.ListSessions(context.Background(), ListOptions{})
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 	assert.Equal(t, "-home-user-proja", listed[0].ClaudeProjectDir)
@@ -261,14 +261,14 @@ func TestMachineSummary_MismatchDetection(t *testing.T) {
 	s := newTestVault(t)
 	rec := sampleRecord("99999999-2222-3333-4444-555555555555")
 	rec.Session.MachineID = "machine-x"
-	require.NoError(t, s.InsertSession(rec))
+	require.NoError(t, s.InsertSession(context.Background(), rec))
 
-	total, matching, err := s.MachineSummary("machine-y")
+	total, matching, err := s.MachineSummary(context.Background(), "machine-y")
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Equal(t, 0, matching, "no row matches a foreign machine → warn-worthy")
 
-	total, matching, err = s.MachineSummary("machine-x")
+	total, matching, err = s.MachineSummary(context.Background(), "machine-x")
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Equal(t, 1, matching)
@@ -314,7 +314,7 @@ func TestImport_PreCancelledContextImportsNothing(t *testing.T) {
 	assert.Equal(t, 0, res.Updated)
 	assert.Empty(t, res.Sessions, "a pre-cancelled import records no per-session outcomes")
 
-	_, err = s.GetSession(uuid[:8])
+	_, err = s.GetSession(context.Background(), uuid[:8])
 	assert.ErrorIs(t, err, ErrSessionNotFound, "no session row should have been written")
 }
 
@@ -333,7 +333,7 @@ func TestImport_CrossesBatchBoundary(t *testing.T) {
 	assert.Equal(t, n, res.Imported)
 	assert.Equal(t, 0, res.Errors)
 
-	listed, err := s.ListSessions(ListOptions{})
+	listed, err := s.ListSessions(context.Background(), ListOptions{})
 	require.NoError(t, err)
 	assert.Len(t, listed, n, "every session across both batches is persisted")
 }
@@ -353,7 +353,7 @@ func TestImport_ProjectPathFallsBackToMangled(t *testing.T) {
 
 	require.Equal(t, 1, importFixture(t, s, root, ImportOptions{}).Imported)
 
-	got, err := s.GetSession(uuid[:8])
+	got, err := s.GetSession(context.Background(), uuid[:8])
 	require.NoError(t, err)
 	assert.Equal(t, mangled, got.ProjectPath, "no cwd + unresolvable mangle → raw mangled name")
 	assert.Empty(t, got.GitBranch, "absent gitBranch stays NULL/empty")

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -28,9 +29,10 @@ type searchResultsMsg struct {
 
 // searcher is the slice of VaultStore the search model needs. Defined here (the
 // consumer) per Go interface-placement convention, and so tests can inject a stub
-// without a real encrypted DB.
+// without a real encrypted DB. Search takes a context to mirror VaultStore's real
+// signature; the search model supplies the program context (see searchModel.ctx).
 type searcher interface {
-	Search(opts vault.SearchOptions) ([]vault.SearchResult, error)
+	Search(ctx context.Context, opts vault.SearchOptions) ([]vault.SearchResult, error)
 }
 
 // searchModel is the FTS search panel: a text input over a results list. Queries
@@ -38,6 +40,10 @@ type searcher interface {
 // anchors the viewer jumps to. Selecting a result is handled by the app (it loads
 // the target session, then tells the viewer to jump).
 type searchModel struct {
+	// ctx is the program context, carried so the debounced FTS query (runSearch,
+	// which runs off the Update goroutine in a tea.Cmd) honors program
+	// cancellation. See Model.ctx for why a context lives on a bubbletea model.
+	ctx    context.Context
 	store  searcher
 	styles Styles
 	width  int
@@ -50,13 +56,13 @@ type searchModel struct {
 	status  string // transient status / error line
 }
 
-func newSearchModel(store searcher, styles Styles, width, height int) searchModel {
+func newSearchModel(ctx context.Context, store searcher, styles Styles, width, height int) searchModel {
 	ti := textinput.New()
 	ti.Placeholder = "search archived sessions…"
 	ti.Prompt = "/ "
 	ti.CharLimit = 256
 	ti.Focus()
-	return searchModel{store: store, styles: styles, width: width, height: height, input: ti}
+	return searchModel{ctx: ctx, store: store, styles: styles, width: width, height: height, input: ti}
 }
 
 func (m searchModel) setSize(width, height int) searchModel {
@@ -84,11 +90,12 @@ func (m searchModel) scheduleSearch() (searchModel, tea.Cmd) {
 func (m searchModel) runSearch(seq int) tea.Cmd {
 	query := strings.TrimSpace(m.input.Value())
 	store := m.store
+	ctx := m.ctx
 	return func() tea.Msg {
 		if query == "" {
 			return searchResultsMsg{seq: seq}
 		}
-		res, err := store.Search(vault.SearchOptions{Query: query})
+		res, err := store.Search(ctx, vault.SearchOptions{Query: query})
 		return searchResultsMsg{seq: seq, results: res, err: err}
 	}
 }

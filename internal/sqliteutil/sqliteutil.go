@@ -136,17 +136,37 @@ func BackupCorruptDB(dbPath string) {
 // Retries on SQLITE_BUSY with exponential backoff because database/sql's BeginTx
 // can surface "database is locked" before the connection-level busy_timeout
 // engages under goroutine contention.
+//
+// BeginImmediate is the contextless entry point for callers without one (e.g.
+// the knowledge store, whose ctx propagation is deliberately not done — see
+// docs/wip/vault/v2 Task 3). It delegates to BeginImmediateContext with a
+// context.Background(). Callers that hold a context should use
+// BeginImmediateContext so cancellation reaches BeginTx/ExecContext.
 func BeginImmediate(db *sql.DB, lockTable string) (*sql.Tx, error) {
+	return BeginImmediateContext(context.Background(), db, lockTable)
+}
+
+// BeginImmediateContext is the context-aware variant of BeginImmediate: ctx
+// cancels the transaction start (BeginTx), the lock-acquiring no-op write
+// (ExecContext), AND the inter-retry backoff wait. Because the backoff doubles
+// each retry (10ms → ~5s on the last of 10 attempts), a cancelled caller that is
+// mid-backoff would otherwise wait out a multi-second sleep before the next
+// BeginTx noticed the cancellation; waitBackoff returns ctx.Err() promptly
+// instead. The contextless BeginImmediate is unaffected — context.Background()
+// never fires Done, so waitBackoff always waits the full interval there.
+func BeginImmediateContext(ctx context.Context, db *sql.DB, lockTable string) (*sql.Tx, error) {
 	const maxRetries = 10
 	backoff := 10 * time.Millisecond
 
 	noop := fmt.Sprintf("DELETE FROM %s WHERE 0", lockTable) //nolint:gosec // lockTable is a trusted internal constant, never user input
 
 	for i := range maxRetries {
-		tx, err := db.Begin()
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			if IsBusy(err) && i < maxRetries-1 {
-				time.Sleep(backoff)
+				if werr := waitBackoff(ctx, backoff); werr != nil {
+					return nil, werr
+				}
 				backoff *= 2
 				continue
 			}
@@ -154,10 +174,12 @@ func BeginImmediate(db *sql.DB, lockTable string) (*sql.Tx, error) {
 		}
 
 		// Force RESERVED-lock acquisition via a no-op write.
-		if _, err := tx.Exec(noop); err != nil {
+		if _, err := tx.ExecContext(ctx, noop); err != nil {
 			tx.Rollback() //nolint:errcheck
 			if IsBusy(err) && i < maxRetries-1 {
-				time.Sleep(backoff)
+				if werr := waitBackoff(ctx, backoff); werr != nil {
+					return nil, werr
+				}
 				backoff *= 2
 				continue
 			}
@@ -166,6 +188,20 @@ func BeginImmediate(db *sql.DB, lockTable string) (*sql.Tx, error) {
 		return tx, nil
 	}
 	return nil, fmt.Errorf("could not acquire write lock after %d retries", maxRetries)
+}
+
+// waitBackoff sleeps for d, returning early with ctx.Err() if ctx is cancelled
+// first. With a context that never cancels (context.Background) it is equivalent
+// to time.Sleep(d).
+func waitBackoff(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // IsBusy reports whether err is a SQLITE_BUSY / SQLITE_LOCKED condition.

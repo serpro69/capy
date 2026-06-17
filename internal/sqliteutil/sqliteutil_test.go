@@ -3,10 +3,12 @@ package sqliteutil
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
@@ -206,4 +208,32 @@ func TestOpenWithCanary_UnencryptedDB(t *testing.T) {
 	require.Error(t, err)
 	var unencErr *UnencryptedDBError
 	assert.ErrorAs(t, err, &unencErr, "expected UnencryptedDBError, got: %v", err)
+}
+
+func TestWaitBackoff(t *testing.T) {
+	t.Run("returns nil after the interval with an uncancelled context", func(t *testing.T) {
+		start := time.Now()
+		err := waitBackoff(context.Background(), 20*time.Millisecond)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, time.Since(start), 20*time.Millisecond)
+	})
+
+	t.Run("returns ctx.Err() promptly when cancelled mid-wait", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		// Cancel shortly after the wait begins; the backoff is far longer, so a
+		// non-cancellable sleep would block for the full hour.
+		time.AfterFunc(10*time.Millisecond, cancel)
+
+		start := time.Now()
+		err := waitBackoff(ctx, time.Hour)
+		assert.True(t, errors.Is(err, context.Canceled), "expected context.Canceled, got %v", err)
+		assert.Less(t, time.Since(start), time.Second, "must abort on cancel, not wait out the backoff")
+	})
+
+	t.Run("returns ctx.Err() immediately for an already-cancelled context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := waitBackoff(ctx, time.Hour)
+		assert.True(t, errors.Is(err, context.Canceled), "expected context.Canceled, got %v", err)
+	})
 }

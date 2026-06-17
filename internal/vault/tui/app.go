@@ -23,12 +23,13 @@ const (
 
 // dataStore is the slice of *vault.VaultStore the TUI reads through. Defined at
 // the consumer (Go convention) so tests can drive the app with an in-memory stub
-// instead of an encrypted DB.
+// instead of an encrypted DB. Each method takes a context to mirror VaultStore's
+// real signatures; the TUI supplies the program context (see Model.ctx).
 type dataStore interface {
-	ListSessions(opts vault.ListOptions) ([]vault.Session, error)
-	GetSession(prefix string) (*vault.Session, error)
-	GetFiles(sessionUUID string) ([]vault.File, error)
-	Search(opts vault.SearchOptions) ([]vault.SearchResult, error)
+	ListSessions(ctx context.Context, opts vault.ListOptions) ([]vault.Session, error)
+	GetSession(ctx context.Context, prefix string) (*vault.Session, error)
+	GetFiles(ctx context.Context, sessionUUID string) ([]vault.File, error)
+	Search(ctx context.Context, opts vault.SearchOptions) ([]vault.SearchResult, error)
 }
 
 // Options configures the initial screen, set from the launching CLI command.
@@ -41,6 +42,16 @@ type Options struct {
 // Model is the root bubbletea model composing the list, viewer, and search
 // sub-models and routing keys by mode.
 type Model struct {
+	// ctx is the program context from Run. Carrying it on the model is the
+	// deliberate exception to "don't store a context in a struct": bubbletea owns
+	// the Update/View signatures, so a context cannot be threaded as a parameter
+	// through the keystroke-driven DB reads (openSession, search). The model's
+	// lifetime is exactly the program context's lifetime — both are created in Run
+	// and discarded when Run returns — so there is no ambiguity about which context
+	// is active. It lets the async FTS query (searchModel.runSearch) and the
+	// per-keystroke reads honor program cancellation (ctrl+c / tea.WithContext).
+	ctx context.Context
+
 	store  dataStore
 	styles Styles
 
@@ -61,7 +72,7 @@ type Model struct {
 // caller owns st's lifecycle (the TUI never opens or closes it). ctx (the
 // command context) cancels the program on interrupt.
 func Run(ctx context.Context, st *vault.VaultStore, opts Options) error {
-	m, err := newModel(st, opts)
+	m, err := newModel(ctx, st, opts)
 	if err != nil {
 		return err
 	}
@@ -70,21 +81,22 @@ func Run(ctx context.Context, st *vault.VaultStore, opts Options) error {
 	return err
 }
 
-func newModel(st dataStore, opts Options) (Model, error) {
+func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 	styles := DefaultStyles()
 
-	sessions, err := st.ListSessions(vault.ListOptions{})
+	sessions, err := st.ListSessions(ctx, vault.ListOptions{})
 	if err != nil {
 		return Model{}, fmt.Errorf("loading sessions: %w", err)
 	}
 
 	m := Model{
+		ctx:    ctx,
 		store:  st,
 		styles: styles,
 		mode:   modeList,
 		list:   newListModel(sessions, styles, 0, 0),
 		viewer: newViewerModel(styles, 0, 0),
-		search: newSearchModel(st, styles, 0, 0),
+		search: newSearchModel(ctx, st, styles, 0, 0),
 	}
 
 	switch opts.Mode {
@@ -214,11 +226,11 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // convention — consistent with Update/View); on error the model is returned
 // unchanged (mutations happen only after both lookups succeed).
 func (m Model) openSession(sessionID string, returnTo mode, subagentID string, line int) (Model, error) {
-	sess, err := m.store.GetSession(sessionID)
+	sess, err := m.store.GetSession(m.ctx, sessionID)
 	if err != nil {
 		return m, fmt.Errorf("opening session %s: %w", sessionID, err)
 	}
-	files, err := m.store.GetFiles(sess.UUID)
+	files, err := m.store.GetFiles(m.ctx, sess.UUID)
 	if err != nil {
 		return m, fmt.Errorf("loading session files: %w", err)
 	}

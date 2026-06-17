@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -11,7 +12,7 @@ import (
 
 func TestMigrateVault_FreshDBHasIndexVersion(t *testing.T) {
 	s := newTestVault(t)
-	db, err := s.getDB() // runs schemaSQL + migrateVault
+	db, err := s.getDB(context.Background()) // runs schemaSQL + migrateVault
 	require.NoError(t, err)
 
 	// Fresh DBs get index_version from schemaSQL.
@@ -25,7 +26,7 @@ func TestMigrateVault_FreshDBHasIndexVersion(t *testing.T) {
 	assert.Equal(t, 1, cnt)
 
 	// Idempotent: re-running migrateVault is a no-op (no error, no duplicate).
-	require.NoError(t, migrateVault(db))
+	require.NoError(t, migrateVault(context.Background(), db))
 	require.NoError(t, db.QueryRow(
 		`SELECT COUNT(*) FROM vault_migrations WHERE name='0003_add_index_version'`).Scan(&cnt))
 	assert.Equal(t, 1, cnt)
@@ -47,7 +48,7 @@ func TestMigrate0003_AddsColumnToLegacyVault(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	require.NoError(t, migrate0003AddIndexVersion(db))
+	require.NoError(t, migrate0003AddIndexVersion(context.Background(), db))
 
 	var v int
 	require.NoError(t, db.QueryRow(`SELECT index_version FROM vault_sessions WHERE uuid='legacy'`).Scan(&v))
@@ -59,7 +60,7 @@ func TestMigrate0003_AddsColumnToLegacyVault(t *testing.T) {
 	assert.Equal(t, 1, cnt)
 
 	// Idempotent re-run: the guard short-circuits, no duplicate-column error.
-	require.NoError(t, migrate0003AddIndexVersion(db))
+	require.NoError(t, migrate0003AddIndexVersion(context.Background(), db))
 }
 
 func TestColumnExists(t *testing.T) {
@@ -73,11 +74,11 @@ func TestColumnExists(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback() //nolint:errcheck
 
-	has, err := columnExists(tx, "t", "b")
+	has, err := columnExists(context.Background(), tx, "t", "b")
 	require.NoError(t, err)
 	assert.True(t, has)
 
-	has, err = columnExists(tx, "t", "missing")
+	has, err = columnExists(context.Background(), tx, "t", "missing")
 	require.NoError(t, err)
 	assert.False(t, has)
 }
