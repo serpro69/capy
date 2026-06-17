@@ -253,6 +253,11 @@ func toolBatchExecute() mcp.Tool {
 		mcp.WithNumber("timeout",
 			mcp.Description("Max execution time in ms (default: 60000)"),
 		),
+		mcp.WithNumber("concurrency",
+			mcp.Description("Parallel workers (1-8). Default 1 = serial. Use 4-8 for I/O-bound batches (network, git). Use 1 for CPU-bound (build, test) or stateful commands (ports, locks)."),
+			mcp.Min(1),
+			mcp.Max(8),
+		),
 	)
 }
 
