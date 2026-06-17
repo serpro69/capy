@@ -82,7 +82,75 @@ func TestIndex_PathAutoLabel(t *testing.T) {
 		"path": tmpFile,
 	})
 	assert.False(t, r.IsError)
-	assert.Contains(t, resultText(r), "readme.md")
+	// The auto-generated label is the resolved absolute path, not the basename.
+	// Asserting the full path (not just "readme.md") avoids passing on an
+	// incidental substring match that would survive a regression to filepath.Base.
+	assert.Contains(t, resultText(r), tmpFile)
+}
+
+func TestIndex_PathAutoLabelCanonical(t *testing.T) {
+	// The auto-generated label is the resolved absolute path, so two relative
+	// spellings of the same file canonicalize to one label and dedup into a
+	// single source rather than producing duplicates.
+	tmp := t.TempDir()
+	srv := newTestServerWithProjectDir(t, nil, tmp)
+
+	abs := filepath.Join(tmp, "foo.md")
+	require.NoError(t, os.WriteFile(abs, []byte("# Foo\n\nShared file content."), 0o644))
+
+	require.False(t, callIndex(t, srv, map[string]any{"path": "foo.md"}).IsError)
+	require.False(t, callIndex(t, srv, map[string]any{"path": "./foo.md"}).IsError)
+
+	sources, err := srv.getStore().ListSources()
+	require.NoError(t, err)
+	require.Len(t, sources, 1, "two relative spellings of the same file must dedup to one source")
+	assert.Equal(t, abs, sources[0].Label, "label must be the resolved absolute path")
+}
+
+func TestIndex_PathAbsoluteCanonical(t *testing.T) {
+	// Absolute inputs are also lexically cleaned, so two absolute spellings of
+	// the same file (one with a ".." traversal segment) canonicalize to one
+	// label and dedup into a single source.
+	tmp := t.TempDir()
+	srv := newTestServerWithProjectDir(t, nil, tmp)
+
+	abs := filepath.Join(tmp, "x.md")
+	require.NoError(t, os.WriteFile(abs, []byte("# X\n\nAbsolute file content."), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "sub"), 0o755))
+
+	// Both absolute; the second resolves to the same file via "sub/..".
+	require.False(t, callIndex(t, srv, map[string]any{"path": abs}).IsError)
+	require.False(t, callIndex(t, srv, map[string]any{"path": filepath.Join(tmp, "sub", "..", "x.md")}).IsError)
+
+	sources, err := srv.getStore().ListSources()
+	require.NoError(t, err)
+	require.Len(t, sources, 1, "two absolute spellings of the same file must dedup to one source")
+	assert.Equal(t, abs, sources[0].Label, "label must be the cleaned absolute path")
+}
+
+func TestIndex_PathSameBasenameDistinctSources(t *testing.T) {
+	// Two different files that happen to share a basename must NOT collide.
+	// Under the old filepath.Base label both would be "api.md", and since dedup
+	// is keyed by label the second index would destroy the first. The absolute
+	// path keeps them distinct.
+	tmp := t.TempDir()
+	srv := newTestServerWithProjectDir(t, nil, tmp)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "docs"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "notes"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "docs", "api.md"), []byte("# Docs API\n\nThe documented API surface."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "notes", "api.md"), []byte("# Notes API\n\nScratch notes about the API."), 0o644))
+
+	require.False(t, callIndex(t, srv, map[string]any{"path": filepath.Join("docs", "api.md")}).IsError)
+	require.False(t, callIndex(t, srv, map[string]any{"path": filepath.Join("notes", "api.md")}).IsError)
+
+	sources, err := srv.getStore().ListSources()
+	require.NoError(t, err)
+	require.Len(t, sources, 2, "same-basename files in different dirs must produce two sources")
+
+	labels := map[string]bool{sources[0].Label: true, sources[1].Label: true}
+	assert.True(t, labels[filepath.Join(tmp, "docs", "api.md")], "docs/api.md source missing")
+	assert.True(t, labels[filepath.Join(tmp, "notes", "api.md")], "notes/api.md source missing")
 }
 
 func TestIndex_NoInput(t *testing.T) {
