@@ -258,3 +258,7 @@ exclusion already shipped on `vault_tool_cmd`. `raw_jsonl` stays verbatim, so
 Example session extract (sessionId: `9f153112-3bd6-4ba5-a5e6-06a7f316e1b9`): [9f153112.json](./.files/9f153112.json)
 
 Same range (start/end messages) extract of `capy vault show 9f153112`: [9f153112.txt](./.files/9f153112.txt)
+
+### A3 - Display Edit tool results
+
+Explore if we can display edit tool results. Use same logic as with `Read` tool (i.e. exclude from indexing, one-liner in plain `show`, collapse-then-open in tui)
