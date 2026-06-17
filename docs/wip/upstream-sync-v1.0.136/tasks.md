@@ -109,18 +109,20 @@
 > - **Isolated review (both reviewers APPROVE, no P0/P1).** code-reviewer P2: docstring on `composeFetchCacheKey` was imprecise about `|`-safety for user-chosen labels — reworded to state the key is opaque (never split), so a `|` in a user label is harmless. P3 (url|url doubling) and pal LOW (multi-arg `fmt.Sprintf` formatting) rejected: keeping uniform compose + matching the file's pre-existing grouped-arg style. No findings indexed (none systemic).
 
 ## Task 8: Batch concurrency
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [design.md#7-batch-concurrency](./design.md#7-batch-concurrency), [implementation.md#task-8-batch-concurrency](./implementation.md#task-8-batch-concurrency)
 
 ### Subtasks
-- [ ] 8.1 Add `golang.org/x/sync` dependency (not currently in `go.mod`)
-- [ ] 8.2 Parse `concurrency` parameter in `handleBatchExecute` — `int(req.GetFloat("concurrency", 1))`, clamp to [1, min(8, len(commands))]
-- [ ] 8.3 Extract existing serial loop into `executeBatchSerial(ctx context.Context, commands []CommandInput, timeout int, exec *executor.PolyglotExecutor) []string`
-- [ ] 8.4 Add `executeBatchParallel(ctx context.Context, commands []CommandInput, timeout, concurrency int, exec *executor.PolyglotExecutor) []string` — `errgroup.Group` with `SetLimit`, pre-allocated results slice, each command gets the **full** timeout (matching upstream — commands run concurrently so wall-clock bounded by timeout not timeout*N), per-command error handling, timed-out commands record `(timed out)` without affecting siblings
-- [ ] 8.5 Route: `concurrency <= 1` → serial, else → parallel. Rest of handler unchanged
-- [ ] 8.6 Add `concurrency` to `capy_batch_execute` MCP tool schema in `internal/server/server.go` — optional integer, min 1, max 8, with description guiding LLM usage
-- [ ] 8.7 Add tests: serial at concurrency=1 (identical behavior), parallel speedup with sleep commands, output ordering preserved, per-command error isolation
+- [x] 8.1 Add `golang.org/x/sync` dependency (not currently in `go.mod`) — was a transitive dep at v0.18.0; `go get` promoted it to a direct require at v0.21.0, then `go mod tidy` cleared the `// indirect` marker
+- [x] 8.2 Parse `concurrency` parameter in `handleBatchExecute` — `int(req.GetFloat("concurrency", 1))`, clamp to [1, min(8, len(commands))] via new `maxBatchConcurrency = 8` const
+- [x] 8.3 Extract existing serial loop into `executeBatchSerial(ctx context.Context, commands []CommandInput, timeout int, exec *executor.PolyglotExecutor) []string` (verbatim extraction — shared timeout budget + cascading skip preserved)
+- [x] 8.4 Add `executeBatchParallel(ctx context.Context, commands []CommandInput, timeout, concurrency int, exec *executor.PolyglotExecutor) []string` — `errgroup.Group` with `SetLimit`, pre-allocated index-keyed results slice, each command gets the **full** timeout, per-command error handling (each goroutine returns nil; errors land in-slot), timed-out commands append `(timed out)` to their partial output (mirrors serial's preserve-partial-output behavior) without affecting siblings
+- [x] 8.5 Route: `concurrency <= 1` → serial, else → parallel. Rest of handler unchanged
+- [x] 8.6 Add `concurrency` to `capy_batch_execute` MCP tool schema — **NOTE: schema lives in `internal/server/tools.go` (`toolBatchExecute`), not `server.go` as the design/impl docs stated.** Used `mcp.WithNumber` + `mcp.Min(1)`/`mcp.Max(8)` to match the existing `timeout` param (mcp-go has no `WithInteger`)
+- [x] 8.7 Add tests: serial at concurrency=1 (`TestBatchExecute_ConcurrencySerialDefault`), parallel via handler + clamp 4→3 (`TestBatchExecute_ConcurrencyParallel`), speedup (`TestExecuteBatchParallel_Speedup`), ordering preserved (`TestExecuteBatchParallel_OrderPreserved`), per-command error isolation (`TestExecuteBatchParallel_ErrorIsolation`), timeout isolation + marker (`TestExecuteBatchParallel_TimeoutIsolated`), sub-second timeout regression (`TestExecuteBatchParallel_SubSecondTimeout`); all pass under `-race`
+
+> **Isolated review (corroborated finding, fixed):** Both reviewers (kk:code-reviewer P2 @85%, pal/gemini HIGH) flagged that `executeBatchParallel`'s `timeoutSec := int((ms).Seconds())` truncates any sub-second `timeout` to `0`, which `executor.Execute` reads as "no timeout → 30s default" (the serial path is immune via its `remainingSec <= 0` skip guard). Fixed by clamping `if timeoutSec <= 0 && timeout > 0 { timeoutSec = 1 }`, added regression test `TestExecuteBatchParallel_SubSecondTimeout`, indexed as `kk:review-findings`. Also applied two pal LOW cleanups (preallocated the serial `outputs` slice; condensed the clamp to `max(1, min(concurrency, maxBatchConcurrency, len(commands)))`) and strengthened the `_ = g.Wait()` comment per code-reviewer P3. Rejected: code-reviewer P2 5-param signature (4 non-ctx params mirror `executeBatchSerial`; a config struct over-engineers two package-private twins) and P3 speedup-test flake (the 3s ceiling must stay below the ~4s serial time to actually prove concurrency; warmup mitigates).
 
 ## Task 8b: Fetch-and-index batch requests
 - **Status:** pending
