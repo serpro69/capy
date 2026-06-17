@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/base"
@@ -16,6 +17,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/giturl"
 	"github.com/serpro69/capy/internal/store"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -24,23 +26,32 @@ const (
 	fetchMaxBody     = 10 * 1024 * 1024 // 10MB
 	fetchPreviewLen  = 3072
 	fetchUserAgent   = "capy/1.0 (MCP knowledge indexer)"
+
+	// fetchBatchPreviewLen caps each per-URL preview in batch mode so the
+	// aggregate stays small (~3KB for a full 8-URL batch); the single-URL path
+	// keeps the larger fetchPreviewLen.
+	fetchBatchPreviewLen = 384
+
+	// maxFetchBatchRequests bounds how many URLs a single batch may fetch. The
+	// concurrency clamp limits in-flight fetches, but every body is buffered until
+	// the serial index phase, so the request COUNT — not the worker count — is what
+	// caps peak memory. Guards against an unbounded-batch OOM/DoS (see ADR-022).
+	maxFetchBatchRequests = 20
 )
 
 // handleFetchAndIndex fetches a URL and indexes the content.
 // Unlike the TS reference (which uses a Node subprocess to bypass executor stdout
 // truncation), Go uses native net/http directly — no truncation constraint applies.
 func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
 	url := req.GetString("url", "")
 	source := req.GetString("source", "")
-	force, _ := req.GetArguments()["force"].(bool)
+	force, _ := args["force"].(bool)
 	kindStr := req.GetString("kind", "")
+	requests := coerceFetchRequests(args["requests"])
 
-	if url == "" {
-		return errorResult("Missing required parameter: url"), nil
-	}
-
-	// Validate at the boundary before cache check and network fetch — gives a clean
-	// error cheaply. The store also validates at write time as defense-in-depth.
+	// Validate kind once at the boundary — it applies to both the single-URL and
+	// batch paths. The store also validates at write time as defense-in-depth.
 	kind := store.KindEphemeral
 	if kindStr != "" {
 		k := store.SourceKind(kindStr)
@@ -48,6 +59,23 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 			return errorResult(fmt.Sprintf("Invalid kind %q: accepted values are \"durable\" and \"ephemeral\"", kindStr)), nil
 		}
 		kind = k
+	}
+
+	// Batch mode takes precedence when `requests` is provided; `url`+`source`
+	// remain the single-URL path for backward compatibility.
+	if len(requests) > 0 {
+		concurrency := int(req.GetFloat("concurrency", 1))
+		return s.handleFetchBatch(requests, kind, force, concurrency)
+	}
+	// `requests` was supplied but yielded no usable entries (not an array, or every
+	// entry missing a url) — fail loud rather than emitting the confusing
+	// "missing url" error below, which hides that the batch param was the problem.
+	if args["requests"] != nil {
+		return errorResult("Invalid requests: provide an array of {url, source?} objects, each with a non-empty url"), nil
+	}
+
+	if url == "" {
+		return errorResult("Missing required parameter: url (or requests for batch mode)"), nil
 	}
 
 	// SSRF protection (scheme gate): reject non-http(s) URLs cheaply before any
@@ -99,89 +127,27 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 		}
 	}
 
-	// Fetch with timeout, redirect limit, and SSRF-safe transport. The transport's
-	// DialContext resolves DNS and classifies every IP at connect time, so each
-	// redirect to a new host is re-validated (DNS-rebinding defense).
-	client := &http.Client{
-		Timeout:   fetchTimeout,
-		Transport: newFetchTransport(),
-		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
-			if len(via) >= fetchMaxRedirect {
-				return fmt.Errorf("too many redirects (%d)", fetchMaxRedirect)
-			}
-			return nil
-		},
-	}
-
-	httpReq, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return errorResult(fmt.Sprintf("Invalid URL: %v", err)), nil
-	}
-	httpReq.Header.Set("User-Agent", fetchUserAgent)
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return errorResult(fmt.Sprintf("Failed to fetch %s: %v", url, err)), nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return errorResult(fmt.Sprintf("Failed to fetch %s: HTTP %d", url, resp.StatusCode)), nil
-	}
-
-	// Read body with size limit
-	limited := io.LimitReader(resp.Body, fetchMaxBody+1)
-	body, err := io.ReadAll(limited)
-	if err != nil {
-		return errorResult(fmt.Sprintf("Failed to read response from %s: %v", url, err)), nil
-	}
-	if len(body) > fetchMaxBody {
-		return errorResult(fmt.Sprintf("Response too large (>%dMB)", fetchMaxBody/(1024*1024))), nil
-	}
-	if len(body) == 0 {
-		return errorResult(fmt.Sprintf("Fetched %s but got empty content", url)), nil
-	}
-
-	content := string(body)
-	contentType := resp.Header.Get("Content-Type")
-
-	// Reject binary content
-	if isBinaryContent(contentType, body) {
-		return errorResult(fmt.Sprintf("Cannot index binary content from %s (Content-Type: %s)", url, contentType)), nil
+	// Fetch the remote content (SSRF-safe transport, redirect cap, size limit).
+	content, contentType, fetchErr := fetchRemoteContent(url)
+	if fetchErr != "" {
+		return errorResult(fetchErr), nil
 	}
 
 	// Track raw bytes
-	s.stats.AddBytesIndexed(int64(len(body)))
+	s.stats.AddBytesIndexed(int64(len(content)))
 
-	// Route to appropriate indexing strategy
+	// Index via the content-type-aware strategy. content becomes the (possibly
+	// HTML→markdown converted) text used for the preview below.
 	st := s.getStore()
-	var indexed *store.IndexResult
-
-	switch {
-	case strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json"):
-		indexed, err = st.IndexJSON(content, cacheKey, kind)
-
-	case strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/xhtml"):
-		md, convErr := convertHTMLToMarkdown(content)
-		if convErr != nil {
-			indexed, err = st.IndexPlainText(content, cacheKey, kind)
-		} else {
-			content = md
-			indexed, err = st.Index(md, cacheKey, "", kind)
-		}
-
-	default:
-		indexed, err = st.IndexPlainText(content, cacheKey, kind)
-	}
-
+	content, indexed, err := indexFetchedContent(st, content, contentType, cacheKey, kind)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Index error: %v", err)), nil
 	}
 
-	// Build preview
+	// Build preview (rune-safe — a raw byte cut can split a multibyte UTF-8 rune)
 	preview := content
 	if len(preview) > fetchPreviewLen {
-		preview = preview[:fetchPreviewLen] + "\n\n…[truncated — use search() for full content]"
+		preview = truncateRunes(preview, fetchPreviewLen) + "\n\n…[truncated — use search() for full content]"
 	}
 	totalKB := fmt.Sprintf("%.1f", float64(len(content))/1024)
 
@@ -218,6 +184,266 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 // source filter is LIKE-based — the friendly label is a substring of the key.
 func composeFetchCacheKey(label, url string) string {
 	return label + "|" + url
+}
+
+// truncateRunes returns s truncated to at most n bytes without splitting a
+// multibyte UTF-8 rune — it backtracks to the nearest rune boundary at or before
+// n. Slicing a Go string at a raw byte index can cut a rune in half and emit an
+// invalid UTF-8 sequence (a garbled U+FFFD once JSON-serialized into the MCP
+// response), so any byte-length cap on user/remote display text must go through
+// here.
+func truncateRunes(s string, n int) string {
+	if n >= len(s) {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// fetchRemoteContent performs the HTTP GET for a single URL using the SSRF-safe
+// transport, redirect cap, and body-size limit, returning the decoded text body
+// and its Content-Type. The third return is a non-empty, user-facing error
+// message on any failure (empty means success) — kept as a plain string rather
+// than an error so the pre-formatted messages reach the caller verbatim. Binary
+// and empty responses are rejected here. It performs no store I/O, so callers may
+// invoke it concurrently.
+func fetchRemoteContent(url string) (content, contentType, errMsg string) {
+	// Fetch with timeout, redirect limit, and SSRF-safe transport. The transport's
+	// DialContext resolves DNS and classifies every IP at connect time, so each
+	// redirect to a new host is re-validated (DNS-rebinding defense).
+	client := &http.Client{
+		Timeout:   fetchTimeout,
+		Transport: newFetchTransport(),
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+			if len(via) >= fetchMaxRedirect {
+				return fmt.Errorf("too many redirects (%d)", fetchMaxRedirect)
+			}
+			return nil
+		},
+	}
+
+	httpReq, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", "", fmt.Sprintf("Invalid URL: %v", err)
+	}
+	httpReq.Header.Set("User-Agent", fetchUserAgent)
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return "", "", fmt.Sprintf("Failed to fetch %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", "", fmt.Sprintf("Failed to fetch %s: HTTP %d", url, resp.StatusCode)
+	}
+
+	// Read body with size limit
+	limited := io.LimitReader(resp.Body, fetchMaxBody+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return "", "", fmt.Sprintf("Failed to read response from %s: %v", url, err)
+	}
+	if len(body) > fetchMaxBody {
+		return "", "", fmt.Sprintf("Response too large (>%dMB)", fetchMaxBody/(1024*1024))
+	}
+	if len(body) == 0 {
+		return "", "", fmt.Sprintf("Fetched %s but got empty content", url)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if isBinaryContent(ct, body) {
+		return "", "", fmt.Sprintf("Cannot index binary content from %s (Content-Type: %s)", url, ct)
+	}
+
+	return string(body), ct, ""
+}
+
+// indexFetchedContent routes fetched content to the correct index strategy based
+// on its Content-Type and returns the content used for the preview (HTML is
+// converted to markdown) alongside the index result. Callers MUST serialize these
+// calls — SQLite writes must not run concurrently.
+func indexFetchedContent(st *store.ContentStore, content, contentType, cacheKey string, kind store.SourceKind) (string, *store.IndexResult, error) {
+	switch {
+	case strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json"):
+		indexed, err := st.IndexJSON(content, cacheKey, kind)
+		return content, indexed, err
+
+	case strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/xhtml"):
+		md, convErr := convertHTMLToMarkdown(content)
+		if convErr != nil {
+			indexed, err := st.IndexPlainText(content, cacheKey, kind)
+			return content, indexed, err
+		}
+		indexed, err := st.Index(md, cacheKey, "", kind)
+		return md, indexed, err
+
+	default:
+		indexed, err := st.IndexPlainText(content, cacheKey, kind)
+		return content, indexed, err
+	}
+}
+
+// fetchItemResult is the per-URL outcome of the concurrent fetch phase in batch
+// mode. Exactly one terminal state is set: errMsg (validation/fetch failure),
+// redirect (git platform URL — not fetched), cacheMeta (TTL cache hit, already
+// indexed), or content (freshly fetched, to be indexed in the serial phase).
+type fetchItemResult struct {
+	url         string
+	label       string
+	cacheKey    string
+	errMsg      string
+	redirect    bool
+	cacheMeta   *store.SourceMeta
+	content     string
+	contentType string
+}
+
+// fetchOne validates, cache-checks, and fetches a single batch request. It only
+// READS from the shared store (the TTL cache lookup), so it is safe to run
+// concurrently; the SQLite write happens later in handleFetchBatch's serial
+// phase. The store is passed in (resolved once by the caller) rather than fetched
+// per goroutine.
+func (s *Server) fetchOne(st *store.ContentStore, rq fetchRequest, kind store.SourceKind, force bool) fetchItemResult {
+	label := rq.Source
+	if label == "" {
+		label = rq.URL
+	}
+	res := fetchItemResult{url: rq.URL, label: label, cacheKey: composeFetchCacheKey(label, rq.URL)}
+
+	// SSRF scheme gate (per URL — never skipped in batch mode).
+	if err := validateFetchScheme(rq.URL); err != nil {
+		res.errMsg = fmt.Sprintf("Blocked URL: %v", err)
+		return res
+	}
+
+	// Git platform issue/PR/MR URLs are not BM25-fragment-friendly; flag them for
+	// a redirect note instead of fetching, matching the single-URL behavior.
+	if _, ok := giturl.ParsePlatformURL(rq.URL); ok {
+		res.redirect = true
+		return res
+	}
+
+	// TTL cache check, keyed by the same composite as the single-URL path.
+	if !force {
+		ttl := time.Duration(s.config.Store.Cache.FetchTTLHours) * time.Hour
+		meta, err := st.GetSourceMeta(res.cacheKey)
+		if err != nil {
+			slog.Warn("cache check failed, proceeding with fetch", "label", label, "error", err)
+		}
+		if err == nil && meta != nil && time.Since(meta.IndexedAt) < ttl && meta.Kind == kind {
+			res.cacheMeta = meta
+			return res
+		}
+	}
+
+	content, contentType, errMsg := fetchRemoteContent(rq.URL)
+	if errMsg != "" {
+		res.errMsg = errMsg
+		return res
+	}
+	res.content = content
+	res.contentType = contentType
+	return res
+}
+
+// handleFetchBatch fetches multiple URLs concurrently (bounded by concurrency)
+// and indexes them serially. Per the design: parallel fetches, serial FTS5
+// writes. Stats are also accumulated in the serial phase so SessionStats is never
+// mutated concurrently.
+func (s *Server) handleFetchBatch(requests []fetchRequest, kind store.SourceKind, force bool, concurrency int) (*mcp.CallToolResult, error) {
+	// Cap the batch SIZE, not just the worker count. The concurrency clamp below
+	// bounds how many fetches are in-flight at once, but every fetched body (up to
+	// fetchMaxBody = 10MB) is retained in `items` until the serial phase — so peak
+	// memory grows with len(requests), not with concurrency. Fail loud before
+	// buffering an unbounded amount of remote content (OOM/DoS guard; see ADR-022).
+	if len(requests) > maxFetchBatchRequests {
+		return errorResult(fmt.Sprintf(
+			"Batch too large: %d URLs requested (max %d). Split into smaller batches.",
+			len(requests), maxFetchBatchRequests,
+		)), nil
+	}
+
+	// Clamp to [1, min(maxBatchConcurrency, len(requests))] — never more workers
+	// than there are URLs.
+	concurrency = max(1, min(concurrency, maxBatchConcurrency, len(requests)))
+
+	// Resolve the store once and share it across the fetch goroutines (cache reads)
+	// and the serial index phase, rather than re-entering getStore per goroutine.
+	st := s.getStore()
+
+	// Concurrent fetch phase — index-keyed slice preserves request order.
+	items := make([]fetchItemResult, len(requests))
+	var g errgroup.Group
+	g.SetLimit(concurrency)
+	for i, rq := range requests {
+		g.Go(func() error {
+			items[i] = s.fetchOne(st, rq, kind, force)
+			return nil
+		})
+	}
+	// Each closure handles its own outcome in-slot and returns nil, so Wait never
+	// reports an error — it only blocks until all fetches finish. If a future edit
+	// makes the closure return a non-nil error, this discard must be revisited (and
+	// sibling-cancellation semantics reconsidered).
+	_ = g.Wait()
+
+	// Serial phase: index fresh fetches (SQLite writes must not run concurrently),
+	// accumulate stats, and build the per-URL response.
+	var (
+		lines      []string
+		previews   []string
+		okCount    int // URLs whose content is in the index (freshly indexed or cache hit)
+		cachedHits int
+		freshBytes int
+	)
+	for _, it := range items {
+		switch {
+		case it.errMsg != "":
+			lines = append(lines, fmt.Sprintf("✗ %s — %s", it.url, it.errMsg))
+
+		case it.redirect:
+			lines = append(lines, fmt.Sprintf("↪ %s — not fetched (git platform issue/PR/MR; use platform CLI or WebSearch)", it.url))
+
+		case it.cacheMeta != nil:
+			s.stats.AddCacheHit(int64(it.cacheMeta.ChunkCount) * 1600) // ~1.6KB per chunk estimate
+			okCount++
+			cachedHits++
+			lines = append(lines, fmt.Sprintf("✓ %s — cache hit (%d chunks)", it.label, it.cacheMeta.ChunkCount))
+
+		default:
+			s.stats.AddBytesIndexed(int64(len(it.content)))
+			finalContent, indexed, err := indexFetchedContent(st, it.content, it.contentType, it.cacheKey, kind)
+			if err != nil {
+				lines = append(lines, fmt.Sprintf("✗ %s — index error: %v", it.url, err))
+				continue
+			}
+			okCount++
+			freshBytes += len(finalContent)
+			lines = append(lines, fmt.Sprintf("✓ %s — indexed %d sections", it.label, indexed.TotalChunks))
+
+			// Rune-safe truncation — a raw byte cut can split a multibyte UTF-8 rune.
+			preview := finalContent
+			if len(preview) > fetchBatchPreviewLen {
+				preview = truncateRunes(preview, fetchBatchPreviewLen) + "…"
+			}
+			previews = append(previews, fmt.Sprintf("## %s\n%s", it.label, preview))
+		}
+	}
+
+	var out strings.Builder
+	fmt.Fprintf(&out, "Processed %d/%d URLs — %d newly indexed (%.1fKB), %d from cache (kind=%s).\n\n",
+		okCount, len(requests), okCount-cachedHits, float64(freshBytes)/1024, cachedHits, kind)
+	out.WriteString(strings.Join(lines, "\n"))
+	if len(previews) > 0 {
+		out.WriteString("\n\n---\n\n")
+		out.WriteString(strings.Join(previews, "\n\n"))
+	}
+	out.WriteString("\n\nUse search(queries: [...], source: \"<label>\") for follow-up lookups.")
+
+	return s.trackToolResponse("capy_fetch_and_index", textResult(out.String())), nil
 }
 
 // convertHTMLToMarkdown converts HTML to markdown, stripping non-content elements.
