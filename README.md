@@ -263,7 +263,9 @@ The pre-commit hook rejects unencrypted databases automatically — run `capy en
 > worktree's DB instead of a per-worktree copy — so worktree knowledge persists to
 > the shared `.capy/knowledge.db` and never produces an unresolvable binary merge
 > conflict. Detection reads the worktree's `.git` file directly (no `git` required).
-> Absolute paths and the XDG default are unaffected. See [ADR-026](docs/adr/026-worktree-shared-knowledge-db.md).
+> CLI commands (`capy sweep`, `cleanup`, `checkpoint`, `dbsize`, `which`) run from a
+> worktree operate on the main worktree's DB too. Absolute paths and the XDG default
+> are unaffected. See [ADR-026](docs/adr/026-worktree-shared-knowledge-db.md).
 
 ### Key rotation
 
