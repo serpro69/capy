@@ -69,11 +69,16 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 		label = url
 	}
 
+	// Cache/storage key includes the URL so two distinct URLs sharing one label
+	// don't collide — without it, the first URL's cached response would mask the
+	// second's. Used as both the GetSourceMeta lookup key and the storage label.
+	cacheKey := composeFetchCacheKey(label, url)
+
 	// TTL cache check — skip re-fetch if content was recently indexed
 	if !force {
 		st := s.getStore()
 		ttl := time.Duration(s.config.Store.Cache.FetchTTLHours) * time.Hour
-		meta, err := st.GetSourceMeta(label)
+		meta, err := st.GetSourceMeta(cacheKey)
 		if err != nil {
 			slog.Warn("cache check failed, proceeding with fetch", "label", label, "error", err)
 		}
@@ -83,17 +88,15 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 			if meta.Kind == store.KindEphemeral {
 				kindInfo += ", excluded from default search"
 			}
+			// Surface the friendly label (not the composite key): a search source
+			// filter is LIKE-based, so the short label still matches the stored key.
 			text := fmt.Sprintf(
 				"**Cache hit** — source %q was indexed %s (%d chunks, %s).\nConfigured TTL: %dh. Use `force: true` to re-fetch.\nUse search(queries: [...], source: %q) for lookups.",
-				meta.Label, formatAge(time.Since(meta.IndexedAt)), meta.ChunkCount, kindInfo,
-				s.config.Store.Cache.FetchTTLHours, meta.Label,
+				label, formatAge(time.Since(meta.IndexedAt)), meta.ChunkCount, kindInfo,
+				s.config.Store.Cache.FetchTTLHours, label,
 			)
 			return s.trackToolResponse("capy_fetch_and_index", textResult(text)), nil
 		}
-	}
-
-	if source == "" {
-		source = url
 	}
 
 	// Fetch with timeout, redirect limit, and SSRF-safe transport. The transport's
@@ -156,19 +159,19 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 
 	switch {
 	case strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json"):
-		indexed, err = st.IndexJSON(content, source, kind)
+		indexed, err = st.IndexJSON(content, cacheKey, kind)
 
 	case strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/xhtml"):
 		md, convErr := convertHTMLToMarkdown(content)
 		if convErr != nil {
-			indexed, err = st.IndexPlainText(content, source, kind)
+			indexed, err = st.IndexPlainText(content, cacheKey, kind)
 		} else {
 			content = md
-			indexed, err = st.Index(md, source, "", kind)
+			indexed, err = st.Index(md, cacheKey, "", kind)
 		}
 
 	default:
-		indexed, err = st.IndexPlainText(content, source, kind)
+		indexed, err = st.IndexPlainText(content, cacheKey, kind)
 	}
 
 	if err != nil {
@@ -186,16 +189,35 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 	if kind == store.KindEphemeral {
 		kindNote += fmt.Sprintf(
 			" (24h TTL, excluded from default search — use `source: %q` or `include_kinds: [\"durable\",\"ephemeral\"]` for follow-up queries)",
-			indexed.Label,
+			label,
 		)
 	}
 
+	// Surface the friendly label rather than the composite cache key (label|url):
+	// the search source filter is LIKE-based, so the short label still matches.
 	text := fmt.Sprintf(
 		"Fetched and indexed **%d sections** (%sKB) from: %s\n%s\nUse search(queries: [...], source: %q) for specific lookups.\n\n---\n\n%s",
-		indexed.TotalChunks, totalKB, indexed.Label, kindNote, indexed.Label, preview,
+		indexed.TotalChunks, totalKB, label, kindNote, label, preview,
 	)
 
 	return s.trackToolResponse("capy_fetch_and_index", textResult(text)), nil
+}
+
+// composeFetchCacheKey derives the cache/storage key for a fetched URL by joining
+// the (user-chosen or URL-defaulted) label with the URL. Two distinct URLs sharing
+// the same label therefore get distinct keys, so one URL's cached response can no
+// longer mask another's.
+//
+// The composite is treated as an opaque key — nothing ever splits it back into its
+// (label, url) parts — so a '|' inside a user-chosen label is harmless: distinct
+// (label, url) pairs always yield distinct keys regardless of the separator.
+//
+// The composite is used as BOTH the GetSourceMeta cache-lookup key and the storage
+// label, so a later fetch of the same label+url hits the same entry. Callers can
+// still recover the source with capy_search(source: "<label>") because the search
+// source filter is LIKE-based — the friendly label is a substring of the key.
+func composeFetchCacheKey(label, url string) string {
+	return label + "|" + url
 }
 
 // convertHTMLToMarkdown converts HTML to markdown, stripping non-content elements.
