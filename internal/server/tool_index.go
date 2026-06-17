@@ -53,6 +53,15 @@ func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 				return errorResult("Path escapes project directory"), nil
 			}
 			path = cleanPath
+		} else {
+			// Absolute inputs skip the resolve-and-Clean above, so canonicalize
+			// them here too. Without this, an absolute path with traversal
+			// segments (/tmp/a/../b.md) would be stored uncleaned as both the
+			// source label and the file_path column, defeating dedup (two
+			// spellings of one file → two sources). The earlier deny check runs
+			// EvaluateFilePath, which Cleans+resolves symlinks independently, so
+			// cleaning here does not affect the security decision.
+			path = filepath.Clean(path)
 		}
 		maxFileSize := int64(s.config.Store.MaxSourceBytes)
 		if maxFileSize <= 0 {
@@ -88,7 +97,13 @@ func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 		content = string(data)
 		fileBacked = path
 		if source == "" {
-			source = filepath.Base(path)
+			// Default the label to the resolved absolute path, not its basename.
+			// filepath.Base drops the directory, so two distinct files sharing a
+			// basename (docs/api.md and notes/api.md) would collide on the label
+			// "api.md" — and since dedup is keyed by label, indexing the second
+			// destroys the first. The absolute path is unique per file and
+			// canonicalizes equivalent spellings (foo.md, ./foo.md) to one label.
+			source = path
 		}
 	}
 
