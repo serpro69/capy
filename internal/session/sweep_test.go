@@ -362,6 +362,10 @@ func TestSessionDir_WithRealHome(t *testing.T) {
 		t.Skip("skipping unix-specific path test on windows")
 	}
 
+	// Isolate from any ambient CLAUDE_CONFIG_DIR so this exercises the default
+	// ~/.claude/projects resolution — the case this test asserts.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Skip("cannot determine home directory")
@@ -376,11 +380,45 @@ func TestSessionDir_WithRealHome(t *testing.T) {
 		return
 	}
 
-	// Verify the error mentions the expected path pattern.
+	// Verify the error mentions the expected default-root path. (The former
+	// "|| contains 'not found'" clause was always true — SessionDir wraps stat
+	// failures with "session directory not found" — which made the path check a
+	// no-op; assert the path directly instead.)
 	expectedMangled := "-tmp-nonexistent-project-for-test"
 	expectedDir := filepath.Join(home, ".claude", "projects", expectedMangled)
-	if !strings.Contains(err.Error(), expectedDir) && !strings.Contains(err.Error(), "not found") {
-		t.Errorf("unexpected error: %v", err)
+	if !strings.Contains(err.Error(), expectedDir) {
+		t.Errorf("unexpected error: %v (wanted path %q)", err, expectedDir)
+	}
+}
+
+func TestSessionDir_HonorsClaudeConfigDir(t *testing.T) {
+	// CLAUDE_CONFIG_DIR overrides the projects root; SessionDir must resolve
+	// under $CLAUDE_CONFIG_DIR/projects, not ~/.claude/projects.
+	configDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+
+	projectDir := "/test/override/project"
+	want := filepath.Join(configDir, "projects", manglePath(projectDir))
+	if err := os.MkdirAll(want, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := SessionDir(projectDir)
+	if err != nil {
+		t.Fatalf("SessionDir(%q): %v", projectDir, err)
+	}
+	if got != want {
+		t.Errorf("SessionDir(%q) = %q, want %q", projectDir, got, want)
+	}
+
+	// A path already inside the overridden projects root is returned as-is,
+	// without re-mangling.
+	gotInside, err := SessionDir(want)
+	if err != nil {
+		t.Fatalf("SessionDir(inside root %q): %v", want, err)
+	}
+	if gotInside != want {
+		t.Errorf("SessionDir(%q) = %q, want %q (pass-through)", want, gotInside, want)
 	}
 }
 

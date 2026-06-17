@@ -159,12 +159,13 @@ type ProjectDirResolution struct {
 	// SessionDir is the Claude Code session directory, set only when the
 	// input was detected as a session directory path.
 	SessionDir string
-	// IsSessionDir is true when the input was under ~/.claude/projects/.
+	// IsSessionDir is true when the input was under the Claude projects root
+	// (see config.ClaudeProjectsDir, which honors CLAUDE_CONFIG_DIR).
 	IsSessionDir bool
 }
 
 // ResolveSourceProject normalizes a --project-dir value. If the given path is
-// a Claude Code session directory (under ~/.claude/projects/), it recovers the
+// a Claude Code session directory (under the Claude projects root), it recovers the
 // original project path by probing the filesystem. When the source project no
 // longer exists on disk, the session directory is still returned so that sweep
 // can operate on orphaned sessions.
