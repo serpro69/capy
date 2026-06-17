@@ -9,15 +9,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/sanitize"
 	"github.com/serpro69/capy/internal/store"
 )
 
 // SessionDir returns the Claude Code session directory for the given project.
 // Claude Code mangles the absolute project path by replacing "/" and "." with "-"
-// and stores sessions under ~/.claude/projects/<mangled>/.
+// and stores sessions under the Claude projects root/<mangled>/. The projects
+// root honors CLAUDE_CONFIG_DIR (via config.ClaudeProjectsDir), falling back to
+// ~/.claude/projects/.
 //
-// If the given path is already under ~/.claude/projects/ (i.e. it is itself a
+// If the given path is already under the projects root (i.e. it is itself a
 // session directory), it is validated and returned directly without mangling.
 func SessionDir(projectDir string) (string, error) {
 	abs, err := filepath.Abs(projectDir)
@@ -25,12 +28,11 @@ func SessionDir(projectDir string) (string, error) {
 		return "", fmt.Errorf("resolving absolute path: %w", err)
 	}
 
-	home, err := os.UserHomeDir()
+	claudeDir, err := config.ClaudeProjectsDir()
 	if err != nil {
-		return "", fmt.Errorf("resolving home directory: %w", err)
+		return "", fmt.Errorf("resolving claude projects dir: %w", err)
 	}
 
-	claudeDir := filepath.Join(home, ".claude", "projects")
 	prefix := claudeDir + string(filepath.Separator)
 
 	var dir string

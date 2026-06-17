@@ -77,8 +77,7 @@ func DiscoverSessions(rootDir string) ([]SessionFile, error) {
 // ProjectSessionDir resolves the Claude Code session directory for a real
 // project path, scoping discovery to a single project (the server-startup
 // sweep's "current project only" path). It honors CLAUDE_CONFIG_DIR via
-// config.ClaudeProjectsDir() — unlike session.SessionDir, which still hardcodes
-// ~/.claude/projects/ (a deferred follow-up in docs/wip/vault/tasks.md). When
+// config.ClaudeProjectsDir(), as does session.SessionDir. When
 // projectDir is already inside the projects root (i.e. it is itself a mangled
 // session dir) it is returned unchanged; otherwise the absolute path is mangled
 // (/ and . → -) to Claude Code's directory convention. The returned path is not
