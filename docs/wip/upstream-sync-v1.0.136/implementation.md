@@ -124,8 +124,8 @@ Modify `internal/server/tool_batch.go`:
 - Route: if `concurrency <= 1`, call `executeBatchSerial`; else `executeBatchParallel`
 - Rest of handler (indexing, search, output) remains unchanged — operates on `perCommandOutputs` regardless of execution path
 
-Modify `internal/server/server.go`:
-- Add `concurrency` to `capy_batch_execute` tool schema as optional integer, min 1, max 8
+Modify `internal/server/tools.go` (capy keeps MCP tool schemas in `tools.go`, not `server.go`):
+- Add `concurrency` to `capy_batch_execute` tool schema via `mcp.WithNumber` + `mcp.Min(1)`/`mcp.Max(8)` (mcp-go has no `WithInteger`)
 
 → verify: `go test ./internal/server/ -run TestBatchConcurrency` covering: serial at concurrency=1 (same behavior), parallel speedup at concurrency=4 with sleep commands, output ordering preserved, per-command error isolation. Note: executor is thread-safe (`sync.Once` for detection, `sync.Mutex` for background PIDs). Stats tracking happens after the parallel phase completes (serial).
 
@@ -137,8 +137,8 @@ Modify `internal/server/tool_fetch.go`:
 - Per-URL cache check via `composeFetchCacheKey`. Cached URLs skipped
 - Batch response: per-URL preview capped at 384 chars, aggregate summary
 
-Modify `internal/server/server.go`:
-- Add `requests` and `concurrency` to `capy_fetch_and_index` MCP schema
+Modify `internal/server/tools.go` (capy keeps MCP tool schemas in `tools.go`, not `server.go`):
+- Add `requests` and `concurrency` to `capy_fetch_and_index` MCP schema; drop `mcp.Required()` from `url` so batch-only calls are valid (handler enforces url XOR requests)
 
 → verify: `go test ./internal/server/ -run TestFetchBatch` covering: single-URL backward compat, batch mode, partial cache hits, output preview capping
 
@@ -156,7 +156,7 @@ Modify `internal/server/tool_cleanup.go`:
 - When set, call `st.PurgeAll(dryRun)` and also `s.stats.Reset()` if not dryRun
 - Format response from structured `PurgeCounts`: "Purged N sources, M chunks, K vocab entries. Knowledge base reset."
 
-Modify `internal/server/server.go`:
+Modify `internal/server/tools.go` (capy keeps MCP tool schemas in `tools.go`, not `server.go`):
 - Add `purge_all` to `capy_cleanup` tool schema as optional boolean
 
 → verify: `go test ./internal/server/ -run TestCleanupPurgeAll` covering: dry run reports counts, actual purge empties all tables + clears fuzzy cache, mutual exclusion enforced, post-purge fuzzy correction returns no stale results

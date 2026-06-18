@@ -197,7 +197,10 @@ func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout,
 	// Each command gets the full timeout. Guard the sub-second case: truncating
 	// ms→s would yield 0, which the executor reads as "no timeout → 30s default",
 	// silently extending a tight batch budget. The serial path avoids this via
-	// its remainingSec <= 0 skip guard.
+	// its remainingSec <= 0 skip guard. An explicit timeout == 0 is deliberately
+	// left as 0 here so it flows through to the executor's 30s default (callers
+	// who want no per-command ceiling rely on that); only positive sub-second
+	// values are clamped up to 1s.
 	timeoutSec := int((time.Duration(timeout) * time.Millisecond).Seconds())
 	if timeoutSec <= 0 && timeout > 0 {
 		timeoutSec = 1
@@ -239,6 +242,9 @@ func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout,
 }
 
 // truncateLabel builds a source label from command labels, truncated to 80 chars.
+// Command labels are user-supplied and may contain multibyte UTF-8, so the cap
+// goes through truncateRunes — a raw joined[:80] byte slice can split a rune and
+// emit an invalid sequence into the indexed source label.
 func truncateLabel(commands []CommandInput) string {
 	var labels []string
 	for _, c := range commands {
@@ -246,7 +252,7 @@ func truncateLabel(commands []CommandInput) string {
 	}
 	joined := strings.Join(labels, ",")
 	if len(joined) > 80 {
-		joined = joined[:80]
+		joined = truncateRunes(joined, 80)
 	}
 	return joined
 }
