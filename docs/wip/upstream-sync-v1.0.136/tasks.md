@@ -150,16 +150,23 @@
 > - **Rejected (keep as-is):** code-reviewer P1 http.Client-per-call (the pooling `Transport` is already a shared singleton via `getFetchTransport`; the Client struct + CheckRedirect closure are negligible for an I/O-bound path and pre-existing); P3 tagged-union compile-safety on `fetchItemResult` (idiomatic Go; early returns + doc comment enforce single-state); P3 schema-marshal test (the handler path is already exercised by the batch tests).
 
 ## Task 9: Extend cleanup with project-scope purge
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [design.md#8-extend-cleanup-with-project-scope-purge](./design.md#8-extend-cleanup-with-project-scope-purge), [implementation.md#task-9-extend-cleanup-with-purge_all](./implementation.md#task-9-extend-cleanup-with-purge_all)
 
 ### Subtasks
-- [ ] 9.1 Add `PurgeCounts` struct and `PurgeAll(dryRun bool) (PurgeCounts, error)` to `internal/store/cleanup.go` — if dryRun return counts; else DELETE FROM sources/chunks/chunks_trigram/vocabulary, clear fuzzy cache (`fuzzyCacheMu.Lock; fuzzyCache = make(...); Unlock`), then VACUUM
-- [ ] 9.2 Add `Reset()` method to `SessionStats` in `internal/server/stats.go` — zero all counters and re-initialize maps under mutex
-- [ ] 9.3 Add `purge_all` boolean parameter to `handleCleanup` in `internal/server/tool_cleanup.go` — mutual exclusion with source/purge_ephemeral/purge_session, call `st.PurgeAll`, call `s.stats.Reset()` if not dryRun
-- [ ] 9.4 Add `purge_all` to `capy_cleanup` MCP tool schema in `internal/server/server.go`
-- [ ] 9.5 Add tests: dry run reports counts, actual purge empties all tables + clears fuzzy cache, mutual exclusion enforced, post-purge fuzzy correction returns no stale results
+- [x] 9.1 Add `PurgeCounts` struct and `PurgeAll(dryRun bool) (PurgeCounts, error)` to `internal/store/cleanup.go` — if dryRun return counts; else DELETE FROM sources/chunks/chunks_trigram/vocabulary, clear fuzzy cache (`fuzzyCacheMu.Lock; fuzzyCache = make(...); Unlock`), then VACUUM. Deletes wrapped in `sqliteutil.BeginImmediate` tx (mirrors `evict`); fuzzy cache cleared after commit; `Vacuum()` runs on its own connection after.
+- [x] 9.2 Add `Reset()` method to `SessionStats` in `internal/server/stats.go` — zero all counters and re-initialize maps under mutex. `SessionStart` intentionally preserved (session hasn't restarted — uptime stays accurate).
+- [x] 9.3 Add `purge_all` boolean parameter to `handleCleanup` in `internal/server/tool_cleanup.go` — mutual exclusion with source/purge_ephemeral/purge_session, call `st.PurgeAll`, call `s.stats.Reset()` if not dryRun (Reset runs before the cleanup's own response-tracking, so prior counters zero out).
+- [x] 9.4 Add `purge_all` to `capy_cleanup` MCP tool schema — **NOTE: schema lives in `internal/server/tools.go` (`toolCleanup`), NOT `server.go` as the design/impl docs stated** (same discrepancy as Task 8.6 / 8b.4). Also updated the tool description.
+- [x] 9.5 Add tests — store: dry-run reports counts without deleting, full purge empties all four tables, fuzzy cache cleared (no stale correction after purge), empty-store no-op. Server/handler: 3 mutual-exclusion combos, dry-run preserves searchability, non-dry-run resets KB (search returns empty-KB guidance) + stats (`capy_index`/`BytesIndexed` zeroed, `SessionStart` survives). All pass under `-race`.
+
+> **Pre-existing issue flagged (NOT fixed — out of scope):** `internal/server/stats.go` is gofmt-unformatted at HEAD — the `CacheHits`/`CacheBytesSaved` struct-field block (and the matching `Snapshot()` literal) use wider tab alignment than the rows above. Confirmed pre-existing via `git show HEAD:...stats.go | gofmt -l`. The Task-9 `Reset()` addition did not introduce it; left untouched to keep this diff focused. Fix separately with `gofmt -w internal/server/stats.go`.
+
+> **Isolated review (kk:code-reviewer APPROVE + pal/gemini-3.1-pro; one HIGH fixed):**
+> - **pal HIGH (fixed) — VACUUM error masked a succeeded purge:** `PurgeAll` originally returned `fmt.Errorf("vacuuming after purge: %w", err)` if `Vacuum()` failed. But the purge had already committed (tables empty, cache cleared) — `Vacuum` only reclaims disk space. Propagating it made `handleCleanup` discard the counts and report a total failure to the MCP client (e.g. on `SQLITE_BUSY` under WAL contention), risking caller retry loops. Fixed to log-and-continue (`slog.Warn`, `return counts, nil`), mirroring the existing auto-vacuum path in `Cleanup`. Indexed as `kk:review-findings` (general rule: post-commit best-effort steps must not surface as operation failures).
+> - **code-reviewer P2 (fixed) — unchecked `Scan` in test:** `TestPurgeAllDryRunReportsCountsWithoutDeleting` dropped the `Scan` error (a silent failure would pass the assertion vacuously); wrapped in `require.NoError`, matching `TestPurgeAllEmptiesEveryTable`.
+> - **Rejected:** code-reviewer P2 (thread `ctx` into db calls) — pre-existing, file-wide pattern (`cleanupOversized`/`cleanupByTTL`/`evict` all non-context); a separate refactor, not Task 9. P3 (`BeginImmediate` lockTable `"sources"`) — cosmetic, matches `evict` precedent. P3 (lowercase "cleanup error") — user-facing MCP display string, not a Go `error` value; matches two pre-existing sites. P3 (`*s = SessionStats{...}` struct-reassignment in `Reset`) — **would introduce a bug**: `SessionStats` embeds a `sync.Mutex`, so reassigning the struct while holding the lock zeroes the mutex and the deferred `Unlock()` panics (`go vet`: "copies lock value"). Explicit field-by-field zeroing is the correct form; indexed alongside the HIGH.
 
 ## Task 10: Preserve shell executor PATH
 - **Status:** pending

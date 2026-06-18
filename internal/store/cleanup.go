@@ -182,6 +182,90 @@ func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL, sessionTTL time.Durati
 	return merged, nil
 }
 
+// PurgeCounts reports how many rows a PurgeAll removed (or, in dry-run mode,
+// would remove) from the knowledge base.
+type PurgeCounts struct {
+	Sources int64
+	Chunks  int64
+	Vocab   int64
+}
+
+// PurgeAll performs a full project-scope reset of the knowledge base: it
+// deletes ALL rows from sources, chunks, chunks_trigram, and vocabulary,
+// clears the in-memory fuzzy-correction cache, and VACUUMs to reclaim disk
+// space. Unlike Cleanup, this is unconditional — retention score, TTL, and
+// access count are all ignored.
+//
+// Vocabulary is normally preserved across cleanups (it aids fuzzy correction),
+// but a full reset must leave the store genuinely empty, so it is purged too.
+// The fuzzy cache is cleared after the delete commits because it holds
+// corrections pointing at vocabulary words that no longer exist; a plain DELETE
+// does not trigger the cache invalidation that vocabulary insertion does.
+//
+// When dryRun is true, PurgeAll reports the row counts that would be removed
+// without modifying the database.
+func (s *ContentStore) PurgeAll(dryRun bool) (PurgeCounts, error) {
+	db, err := s.getDB()
+	if err != nil {
+		return PurgeCounts{}, err
+	}
+
+	var counts PurgeCounts
+	if err := db.QueryRow("SELECT COUNT(*) FROM sources").Scan(&counts.Sources); err != nil {
+		return PurgeCounts{}, fmt.Errorf("counting sources: %w", err)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM chunks").Scan(&counts.Chunks); err != nil {
+		return PurgeCounts{}, fmt.Errorf("counting chunks: %w", err)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM vocabulary").Scan(&counts.Vocab); err != nil {
+		return PurgeCounts{}, fmt.Errorf("counting vocabulary: %w", err)
+	}
+
+	if dryRun {
+		return counts, nil
+	}
+
+	// Wrap the four deletes in a single immediate transaction so the reset is
+	// atomic and gets the same retry-on-BUSY backoff as the eviction sweep.
+	tx, err := sqliteutil.BeginImmediate(db, "sources")
+	if err != nil {
+		return PurgeCounts{}, fmt.Errorf("beginning purge transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	for _, stmt := range []string{
+		"DELETE FROM chunks",
+		"DELETE FROM chunks_trigram",
+		"DELETE FROM sources",
+		"DELETE FROM vocabulary",
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return PurgeCounts{}, fmt.Errorf("purge %q: %w", stmt, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return PurgeCounts{}, fmt.Errorf("committing purge: %w", err)
+	}
+
+	// Drop stale fuzzy corrections that now point at deleted vocabulary.
+	s.fuzzyCacheMu.Lock()
+	s.fuzzyCache = make(map[string]*string)
+	s.fuzzyCacheMu.Unlock()
+
+	// The reset has already committed — the tables are empty and the cache is
+	// cleared. VACUUM only reclaims disk space, so a failure here (e.g.
+	// SQLITE_BUSY under WAL contention) must NOT be propagated: doing so would
+	// make handleCleanup discard the counts and report a total failure to the
+	// caller even though the purge succeeded. Log and continue, mirroring the
+	// auto-vacuum path in Cleanup.
+	if err := s.Vacuum(); err != nil {
+		slog.Warn("vacuum after purge_all failed", "error", err)
+	}
+
+	return counts, nil
+}
+
 // PurgeEphemeral evicts ephemeral sources past the TTL window, skipping
 // durable retention entirely. Intended for a one-shot "clear scratch"
 // operation exposed via capy_cleanup's purge_ephemeral flag. Durable

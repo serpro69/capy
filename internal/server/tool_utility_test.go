@@ -328,3 +328,77 @@ func TestCleanup_StatsTracking(t *testing.T) {
 	snap := srv.stats.Snapshot()
 	assert.Equal(t, 1, snap.Calls["capy_cleanup"])
 }
+
+// ─── purge_all (Task 9 full project-scope reset) ─────────────────────────
+
+func TestCleanup_PurgeAllMutuallyExclusive(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	cases := []map[string]any{
+		{"purge_all": true, "source": "some-label"},
+		{"purge_all": true, "purge_ephemeral": true},
+		{"purge_all": true, "purge_session": true},
+	}
+	for _, args := range cases {
+		r := callCleanup(t, srv, args)
+		assert.True(t, r.IsError, "expected error for %v", args)
+		assert.Contains(t, resultText(r), "purge_all cannot be combined")
+	}
+}
+
+func TestCleanup_PurgeAllDryRun(t *testing.T) {
+	srv := newTestServer(t, nil)
+	callIndex(t, srv, map[string]any{
+		"content": "# Reset target\n\nauthentication middleware validates tokens.",
+		"source":  "purge-dry-src",
+	})
+
+	// dry_run defaults to true — should report counts but delete nothing.
+	r := callCleanup(t, srv, map[string]any{"purge_all": true})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "purge all) preview (dry run)")
+	assert.Contains(t, text, "Would purge 1 sources")
+
+	// Source must still be searchable after a dry run.
+	sr := callSearch(t, srv, map[string]any{"queries": []any{"authentication middleware"}})
+	assert.NotContains(t, resultText(sr), "No results found")
+}
+
+func TestCleanup_PurgeAllResetsKnowledgeBaseAndStats(t *testing.T) {
+	srv := newTestServer(t, nil)
+
+	callIndex(t, srv, map[string]any{
+		"content": "# Reset target\n\nauthentication middleware validates tokens.",
+		"source":  "purge-src",
+	})
+	callSearch(t, srv, map[string]any{"queries": []any{"authentication"}})
+
+	// Sanity: stats reflect the index + search before the purge.
+	pre := srv.stats.Snapshot()
+	require.Equal(t, 1, pre.Calls["capy_index"])
+	require.Equal(t, 1, pre.Calls["capy_search"])
+	require.Greater(t, pre.BytesIndexed, int64(0))
+
+	r := callCleanup(t, srv, map[string]any{"purge_all": true, "dry_run": false})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "Knowledge base reset")
+	assert.Contains(t, text, "Purged 1 sources")
+
+	// Knowledge base is fully empty — search returns the onboarding guidance
+	// rather than the indexed content.
+	sr := callSearch(t, srv, map[string]any{"queries": []any{"authentication"}})
+	srText := resultText(sr)
+	assert.Contains(t, srText, "knowledge base is empty")
+	assert.NotContains(t, srText, "validates tokens")
+
+	// Stats are reset: prior index/search counters are gone. SessionStart is
+	// preserved, and the cleanup call's own tracking (recorded after Reset)
+	// plus this post-purge search are the only surviving counts.
+	post := srv.stats.Snapshot()
+	assert.Equal(t, 0, post.Calls["capy_index"])
+	assert.Equal(t, int64(0), post.BytesIndexed)
+	assert.Equal(t, 1, post.Calls["capy_cleanup"], "cleanup tracks itself after Reset")
+	assert.False(t, post.SessionStart.IsZero(), "SessionStart must survive a reset")
+}

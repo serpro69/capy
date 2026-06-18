@@ -31,6 +31,12 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 			purgeSession = b
 		}
 	}
+	purgeAll := false
+	if v, ok := args["purge_all"]; ok {
+		if b, ok := v.(bool); ok {
+			purgeAll = b
+		}
+	}
 
 	if purgeEphemeral && purgeSession {
 		return errorResult("purge_ephemeral and purge_session are mutually exclusive"), nil
@@ -38,8 +44,33 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	if sourceLabel != "" && (purgeEphemeral || purgeSession) {
 		return errorResult("source cannot be combined with purge_ephemeral or purge_session"), nil
 	}
+	if purgeAll && (sourceLabel != "" || purgeEphemeral || purgeSession) {
+		return errorResult("purge_all cannot be combined with source, purge_ephemeral, or purge_session"), nil
+	}
 
 	st := s.getStore()
+
+	// Full project-scope reset: wipe every source/chunk/vocab row and reset
+	// session stats. Mutually exclusive with all other cleanup modes above.
+	if purgeAll {
+		counts, err := st.PurgeAll(dryRun)
+		if err != nil {
+			return errorResult(fmt.Sprintf("Cleanup error: %v", err)), nil
+		}
+		var text string
+		if dryRun {
+			text = fmt.Sprintf("## Cleanup (purge all) preview (dry run)\n\n"+
+				"Would purge %d sources, %d chunks, %d vocab entries. "+
+				"Run with `dry_run: false` to reset the knowledge base.",
+				counts.Sources, counts.Chunks, counts.Vocab)
+		} else {
+			s.stats.Reset()
+			text = fmt.Sprintf("## Cleanup (purge all)\n\n"+
+				"Purged %d sources, %d chunks, %d vocab entries. Knowledge base reset.",
+				counts.Sources, counts.Chunks, counts.Vocab)
+		}
+		return s.trackToolResponse("capy_cleanup", textResult(text)), nil
+	}
 
 	// Source-specific eviction: single source by exact label.
 	if sourceLabel != "" {
