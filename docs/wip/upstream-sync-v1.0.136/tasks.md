@@ -2,7 +2,7 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done (all tasks complete; final verification passed 2026-06-18)
 > Created: 2026-05-17
 
 ## Task 1: SSRF guard improvements
@@ -186,12 +186,24 @@
 > - **Isolated review (pal/gemini-3.1-pro APPROVE, 0 findings; kk:code-reviewer APPROVE).** No corroborated findings, no P0/P1/P2 accepted. Applied two P3 comment-only fixes (clarified the integration test verifies plumbing/visibility not the clobber mechanism; documented the gofmt constraint on `quotePosixSingle`). **Rejected** code-reviewer P2 (snapshot PATH in `NewExecutor`): the design mandates a call-site `os.Getenv("PATH")`, and `BuildSafeEnv` reads the live process env at exec time — snapshotting at construction would *introduce* divergence between the in-script export and the process env, not remove it. No findings indexed (none systemic).
 
 ## Task 11: Final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 3b, Task 4, Task 5, Task 6, Task 7, Task 8, Task 8b, Task 9, Task 10
 
 ### Subtasks
-- [ ] 11.1 Run `test` skill to verify all tasks — full test suite with `go test ./...`
-- [ ] 11.2 Run `document` skill to update any relevant docs (MCP schema changes, ADRs if needed)
-- [ ] 11.3 Run `review-code` skill with Go language input to review the implementation
-- [ ] 11.4 Run `review-spec` skill to verify implementation matches design and implementation docs
-- [ ] 11.5 Re-run full benchmarking suite, verify no regression over previous results, update benchmark docs if needed
+- [x] 11.1 Run `test` skill to verify all tasks — full suite green via `make test` AND `make test-race` (all 18 packages `ok`, no race reports). Go profile detected; go/test rubric (table-driven + named subtests + `-race`) already satisfied by the per-task tests.
+- [x] 11.2 Run `document` skill — reconciled design.md OUTDATED_DOC items (see notes below); README/AGENTS.md need no param-level edits (tools described at capability level; new params self-document via their MCP schema description strings in tools.go); go/document profile rubric is **N/A** (CLI/CI conditionals only — feature touches neither). No new ADR (see below).
+- [x] 11.3 Run `review-code` skill (isolated: kk:code-reviewer **APPROVE** + pal/gemini-3.1-pro) — no P0; fixes applied for the actionable findings (see notes below).
+- [x] 11.4 Run `review-spec` skill (isolated kk:spec-reviewer) — **CONFORMANT**, no P0/P1; all P2/P3 deviations documented/intentional. OUTDATED_DOC items reconciled.
+- [x] 11.5 Re-ran `make bench-quality` at HEAD (1fbdf6f) — **no regression**. vs pre-feature baseline (`feat-bench` @7880796, identical dataset_hash): overall R@1 0.897→0.910, NDCG@10 0.950→0.955, MRR 0.938→0.945; curated R@1 +0.033, plaintext R@1 +0.033; json/markdown/transcript unchanged; every delta ≥ 0 (no negatives). The phrase-frequency reranker (Task 4) is the net gain. Reproduces the prior `upstream_sync` result exactly.
+
+> **Final-verification fixes (option "Bug + context + docs"; all under `-race`, gofmt + vet clean):**
+> - **truncateLabel UTF-8 (code-reviewer + pal MEDIUM, fixed):** `truncateLabel` in `tool_batch.go` byte-sliced `joined[:80]`, which can split a multibyte rune and emit an invalid sequence into the `batch:<labels>` source label. This is the exact bug class Task 8b fixed for fetch previews via `truncateRunes`, but that sweep missed `truncateLabel`. Replaced with `truncateRunes(joined, 80)`; regression test `TestTruncateLabel_RuneSafe`. Indexed as `kk:review-findings` (general rule: when you introduce a rune-safe truncation helper, grep the whole package for sibling `[:N]` slices on user data in the same sweep).
+> - **Fetch context threading (pal HIGH, fixed):** `handleFetchAndIndex` ignored its `context.Context` (`_ context.Context`) and `fetchRemoteContent` used `http.NewRequest` (no ctx), so a client cancellation could not abort in-flight fetches — up to `maxFetchBatchRequests` goroutines would block on the network until `fetchTimeout`. Threaded `ctx` through `handleFetchAndIndex` → `handleFetchBatch` → `fetchOne` → `fetchRemoteContent` (now `http.NewRequestWithContext`). Aligns with the indexed project rule "thread ctx into long ops that have a live one in scope" (vault-compact finding). Regression test `TestFetchRemoteContent_ContextCanceled`. (Pre-existing single-URL behavior the batch path had inherited.)
+> - **Hygiene comments (code-reviewer P3, applied):** `eval.go` — explicit "DO NOT replace with filepath.Join (it Cleans)" guard at the uncleaned `physicalInput` construction; `ssrf.go` — `nat64Prefix`/`ipv4CompatPrefix` documented read-only-after-init (mutating would silently weaken the guard); `search.go` — documented why stale re-index reuses the stored `content_type`; `tool_batch.go` — documented the deliberate `timeout == 0` → executor-default pass-through.
+> - **Rejected (kept as-is):** http.Client-per-fetch-call (transport is the shared sync.Once singleton; pooling intact); `syscall.O_NONBLOCK` Windows portability (Windows is out of scope per design); content_type re-detect on refresh (now documented, behavior stable).
+
+> **Documentation reconciliation (11.2) — design.md was written against the TS reference layout; corrected to match the Go implementation:**
+> - §4.2: "by line 33 `path` is already absolute & clean" was true only for relative inputs; absolute inputs are now Cleaned in an `else` branch (Task 6 note). Corrected.
+> - §6a.2: `classifyIP` is implemented as cooperating helpers (`classifyIP`/`classifyParsedIP`/`classifyIPv4`/`classifyIPv6`/`embeddedIPv4`), not one function; the impl also adds NAT64 (`64:ff9b::/96`) coverage beyond the design list. Noted.
+> - §3.4 / §7b.3 / impl: "add schema param in server.go" is wrong for capy — schemas live in `internal/server/tools.go` (`toolXxx()` + `registerTools()`). Already captured in Task 8.6/8b.4/9.4 notes and indexed as `kk:project-conventions`; design Files-touched lists annotated.
+> - **No new ADR:** the ported changes are syncs of decisions already covered by existing ADRs (009/010/011/013/014) or bug fixes; the notable capy-specific divergences (sanitized-hash stale detection, multiplicative reranker passes, SSRF-strict default) are preserved in design.md's "Deliberate divergences" table + §3.5 — consistent with how prior syncs under `docs/done/` preserve decisions.

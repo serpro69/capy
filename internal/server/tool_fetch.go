@@ -42,7 +42,7 @@ const (
 // handleFetchAndIndex fetches a URL and indexes the content.
 // Unlike the TS reference (which uses a Node subprocess to bypass executor stdout
 // truncation), Go uses native net/http directly — no truncation constraint applies.
-func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 	url := req.GetString("url", "")
 	source := req.GetString("source", "")
@@ -65,7 +65,7 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 	// remain the single-URL path for backward compatibility.
 	if len(requests) > 0 {
 		concurrency := int(req.GetFloat("concurrency", 1))
-		return s.handleFetchBatch(requests, kind, force, concurrency)
+		return s.handleFetchBatch(ctx, requests, kind, force, concurrency)
 	}
 	// `requests` was supplied but yielded no usable entries (not an array, or every
 	// entry missing a url) — fail loud rather than emitting the confusing
@@ -128,7 +128,7 @@ func (s *Server) handleFetchAndIndex(_ context.Context, req mcp.CallToolRequest)
 	}
 
 	// Fetch the remote content (SSRF-safe transport, redirect cap, size limit).
-	content, contentType, fetchErr := fetchRemoteContent(url)
+	content, contentType, fetchErr := fetchRemoteContent(ctx, url)
 	if fetchErr != "" {
 		return errorResult(fetchErr), nil
 	}
@@ -208,8 +208,10 @@ func truncateRunes(s string, n int) string {
 // message on any failure (empty means success) — kept as a plain string rather
 // than an error so the pre-formatted messages reach the caller verbatim. Binary
 // and empty responses are rejected here. It performs no store I/O, so callers may
-// invoke it concurrently.
-func fetchRemoteContent(url string) (content, contentType, errMsg string) {
+// invoke it concurrently. The request honors ctx, so a client cancellation aborts
+// the in-flight fetch (in addition to the fetchTimeout ceiling) — important for
+// the batch path, where up to maxFetchBatchRequests fetches may be in flight.
+func fetchRemoteContent(ctx context.Context, url string) (content, contentType, errMsg string) {
 	// Fetch with timeout, redirect limit, and SSRF-safe transport. The transport's
 	// DialContext resolves DNS and classifies every IP at connect time, so each
 	// redirect to a new host is re-validated (DNS-rebinding defense).
@@ -224,7 +226,7 @@ func fetchRemoteContent(url string) (content, contentType, errMsg string) {
 		},
 	}
 
-	httpReq, err := http.NewRequest("GET", url, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", "", fmt.Sprintf("Invalid URL: %v", err)
 	}
@@ -305,8 +307,9 @@ type fetchItemResult struct {
 // READS from the shared store (the TTL cache lookup), so it is safe to run
 // concurrently; the SQLite write happens later in handleFetchBatch's serial
 // phase. The store is passed in (resolved once by the caller) rather than fetched
-// per goroutine.
-func (s *Server) fetchOne(st *store.ContentStore, rq fetchRequest, kind store.SourceKind, force bool) fetchItemResult {
+// per goroutine. ctx is the parent request context — a client cancellation aborts
+// every in-flight fetch.
+func (s *Server) fetchOne(ctx context.Context, st *store.ContentStore, rq fetchRequest, kind store.SourceKind, force bool) fetchItemResult {
 	label := rq.Source
 	if label == "" {
 		label = rq.URL
@@ -339,7 +342,7 @@ func (s *Server) fetchOne(st *store.ContentStore, rq fetchRequest, kind store.So
 		}
 	}
 
-	content, contentType, errMsg := fetchRemoteContent(rq.URL)
+	content, contentType, errMsg := fetchRemoteContent(ctx, rq.URL)
 	if errMsg != "" {
 		res.errMsg = errMsg
 		return res
@@ -352,8 +355,10 @@ func (s *Server) fetchOne(st *store.ContentStore, rq fetchRequest, kind store.So
 // handleFetchBatch fetches multiple URLs concurrently (bounded by concurrency)
 // and indexes them serially. Per the design: parallel fetches, serial FTS5
 // writes. Stats are also accumulated in the serial phase so SessionStats is never
-// mutated concurrently.
-func (s *Server) handleFetchBatch(requests []fetchRequest, kind store.SourceKind, force bool, concurrency int) (*mcp.CallToolResult, error) {
+// mutated concurrently. ctx is threaded into every fetch so a client cancellation
+// aborts in-flight requests instead of leaving up to concurrency goroutines
+// blocked on the network until fetchTimeout.
+func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, kind store.SourceKind, force bool, concurrency int) (*mcp.CallToolResult, error) {
 	// Cap the batch SIZE, not just the worker count. The concurrency clamp below
 	// bounds how many fetches are in-flight at once, but every fetched body (up to
 	// fetchMaxBody = 10MB) is retained in `items` until the serial phase — so peak
@@ -380,7 +385,7 @@ func (s *Server) handleFetchBatch(requests []fetchRequest, kind store.SourceKind
 	g.SetLimit(concurrency)
 	for i, rq := range requests {
 		g.Go(func() error {
-			items[i] = s.fetchOne(st, rq, kind, force)
+			items[i] = s.fetchOne(ctx, st, rq, kind, force)
 			return nil
 		})
 	}

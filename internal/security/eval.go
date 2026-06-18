@@ -96,6 +96,9 @@ func EvaluateFilePath(filePath string, denyGlobs [][]string, projectRoot string)
 			physicalInput = filePath
 		} else {
 			lexicalAbs = filepath.Clean(filepath.Join(projectRoot, filePath))
+			// DO NOT replace the manual join below with filepath.Join: Join calls
+			// Clean, which collapses ".." lexically and defeats the symlink-then-".."
+			// physical-traversal detection this candidate exists to catch.
 			physicalInput = strings.TrimRight(projectRoot, `/\`) + string(filepath.Separator) + filePath
 		}
 		// Skip the lexical candidate when it is identical to the raw input

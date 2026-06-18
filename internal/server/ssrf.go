@@ -125,6 +125,10 @@ func classifyIPv6(ip net.IP) error {
 // nat64Prefix is the 96-bit "Well-Known Prefix" 64:ff9b::/96 (RFC 6052).
 // ipv4CompatPrefix is the all-zero 96-bit prefix of deprecated IPv4-compatible
 // IPv6 addresses (::a.b.c.d, RFC 4291 §2.5.5.1).
+//
+// Both are read-only after init and MUST NOT be mutated — they are []byte (not
+// const) only because make()/composite literals cannot be const. embeddedIPv4
+// compares against them; a write would silently weaken the SSRF guard.
 var (
 	nat64Prefix      = []byte{0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0}
 	ipv4CompatPrefix = make([]byte, 12)
