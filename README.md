@@ -341,6 +341,7 @@ All commands live under `capy vault` and require `CAPY_VAULT_KEY`. Lookups (`sho
 | `delete <session-id> [--yes]`                                                         | Remove a session from the vault (does not touch on-disk copies). Prompts unless `--yes`.                                                                                    |
 | `stats [--json]`                                                                      | Session count, content size, DB file size, per-project breakdown, and the search-index version (with a count of sessions still below it — i.e. a `reindex` backlog).         |
 | `checkpoint`                                                                          | Flush the WAL into `vault.db` — run before copying it to another machine.                                                                                                   |
+| `rekey [--remove-backup]`                                                             | Rotate the vault's encryption key to the current `CAPY_VAULT_KEY`. **Stop the MCP server first.** Leaves `<vault>.bak` (still decryptable by the old key) unless `--remove-backup`.  |
 
 `list`, `search`, and `show` also accept **`--tui`** for an interactive terminal UI (browse, live search, vim-style viewer) built on bubbletea. `--tui` is not supported on the mutating/exec commands (`restore`, `resume`, `delete`).
 
@@ -367,12 +368,25 @@ capy vault import                     # re-archive B's own local sessions alongs
 
 Machine identity is resolved from `CAPY_MACHINE_ID`, then `~/.config/capy/machine-id` (auto-generated), so it survives DB copies — each machine tags its own imports.
 
+### Key rotation
+
+`capy vault rekey` re-encrypts `vault.db` under a new key without a decrypt-and-reimport cycle. Export the **new** passphrase as `CAPY_VAULT_KEY`, then run `rekey` and enter the **current (old)** passphrase when prompted. The vault is copied into a fresh database encrypted with the new key. (Unlike `capy encrypt`, `rekey` requires the new key in `CAPY_VAULT_KEY` and refuses a new key identical to the old.)
+
+```bash
+export CAPY_VAULT_KEY="<new passphrase>"
+capy vault rekey                     # enter the OLD passphrase when prompted
+```
+
+> **Stop the MCP server first.** Rotation finishes by renaming files into place, which SQLite's locking does not mediate — a still-attached server could keep writing to the old file and lose those writes. There is no reliable busy check for this (the old-key checkpoint inside `rekey` is best-effort only); stopping the server is your responsibility.
+
+> **The `<vault>.bak` left behind is still decryptable by the OLD key.** When rotating a *compromised* key, pass `--remove-backup` to delete it once the new vault verifies open. Deletion is **not** guaranteed erasure — on SSD and copy-on-write filesystems, recoverable copies may remain; true erasure depends on your disk and filesystem.
+
 ### Storage and limits
 
 - **Location:** `$XDG_DATA_HOME/capy/vault.db` (default `~/.local/share/capy/vault.db`). Override with `CAPY_VAULT_PATH`.
 - **Encrypted at rest** with `CAPY_VAULT_KEY` (sqlite3mc / SQLCipher-compatible, same as the knowledge store). A different key cannot open the DB.
 - **Archives forever** — no TTL, no automatic cleanup. Reclaim space with `capy vault delete`. Expect ~50 MB/month for an active user; `stats` shows current size.
-- **Verbatim, not redacted.** `vault.db` concentrates every secret/credential/PII that appeared in any archived session, and `restore` writes them back as plaintext. This mirrors data that already lives unencrypted under `~/.claude/projects/` on the same host — but treat `vault.db` and its key accordingly. (Search snippets _are_ secret-stripped; the stored blobs are not.) Key rotation (`vault rekey`) and a redacted-export pipeline are deferred to a future version.
+- **Verbatim, not redacted.** `vault.db` concentrates every secret/credential/PII that appeared in any archived session, and `restore` writes them back as plaintext. This mirrors data that already lives unencrypted under `~/.claude/projects/` on the same host — but treat `vault.db` and its key accordingly. (Search snippets _are_ secret-stripped; the stored blobs are not.) A redacted-export pipeline is deferred to a future version.
 
 ### Environment variables
 

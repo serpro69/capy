@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/serpro69/capy/internal/config"
+	"github.com/serpro69/capy/internal/sqliteutil"
+	"github.com/serpro69/capy/internal/terminal"
 	"github.com/serpro69/capy/internal/vault"
 	"github.com/serpro69/capy/internal/vault/tui"
 	"github.com/spf13/cobra"
@@ -58,6 +60,7 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 		newVaultStatsCmd(env),
 		newVaultCheckpointCmd(env),
 		newVaultCompactCmd(env),
+		newVaultRekeyCmd(env),
 		newVaultRestoreCmd(env),
 		newVaultResumeCmd(env),
 		newVaultDeleteCmd(env),
@@ -550,6 +553,120 @@ func printCompactResult(res vault.CompactResult, before, after int64) {
 		line += fmt.Sprintf(" (reclaimed %s)", formatSize(before-after))
 	}
 	fmt.Println(line)
+}
+
+// ---------------------------------------------------------------------------
+// rekey
+// ---------------------------------------------------------------------------
+
+func newVaultRekeyCmd(env *vaultEnv) *cobra.Command {
+	var removeBackup bool
+	cmd := &cobra.Command{
+		Use:   "rekey",
+		Short: "Rotate the vault's encryption key to the current CAPY_VAULT_KEY",
+		Long: `Re-encrypt vault.db under a new key without a decrypt-and-reimport cycle.
+
+Set CAPY_VAULT_KEY to the NEW passphrase first, then run this command and enter
+the CURRENT (old) passphrase when prompted. The vault is copied into a fresh
+database encrypted with the new key, and the pre-rotation database is preserved
+as <vault>.bak.
+
+Note this differs from 'capy encrypt': rekey requires the new key in
+CAPY_VAULT_KEY and refuses to run if it is unset, and it rejects a new key
+identical to the old (a forgotten env-var update would otherwise silently
+"rotate" a compromised key to itself).
+
+STOP THE MCP SERVER FIRST. Rotation finishes by renaming files into place, which
+SQLite's locking does not mediate — a still-attached server could keep writing to
+the old file descriptor and lose those writes. Unlike 'vault compact' (whose
+VACUUM is genuinely lock-protected), there is no reliable busy check here; the
+old-key checkpoint inside rekey is best-effort only. Stopping the server is the
+operator's responsibility.
+
+The <vault>.bak left behind is still decryptable by the OLD key. When you are
+rotating a COMPROMISED key, that backup is a liability — pass --remove-backup to
+delete it once the new vault verifies open. Deletion is NOT guaranteed erasure:
+on SSD and copy-on-write filesystems, wear-levelling and CoW can leave
+recoverable copies. True erasure depends on your disk and filesystem and is the
+operator's responsibility.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := guardTUI(cmd); err != nil {
+				return err
+			}
+			if _, err := os.Stat(env.dbPath); os.IsNotExist(err) {
+				fmt.Printf("capy vault rekey: no vault at %s\n", env.dbPath)
+				return nil
+			}
+
+			// The vault group's PersistentPreRunE already verified CAPY_VAULT_KEY is
+			// set; its value is the NEW key the vault rotates to.
+			newKey, err := vault.RequireVaultKey()
+			if err != nil {
+				return err
+			}
+
+			oldKey, err := terminal.ReadPassphrase("Current vault passphrase: ")
+			if err != nil {
+				return fmt.Errorf("reading current passphrase: %w", err)
+			}
+			if oldKey == "" {
+				return fmt.Errorf("current passphrase cannot be empty")
+			}
+			// Fail fast on a no-op rotation before prompting to confirm. The same
+			// guard inside runVaultRekey is the authoritative check (and keeps the
+			// core unit-testable); this one only spares the user a confirmation for a
+			// rotation that would be rejected anyway.
+			if oldKey == newKey {
+				return fmt.Errorf("the new key in CAPY_VAULT_KEY is identical to the current passphrase — nothing to rotate (did you forget to update CAPY_VAULT_KEY?)")
+			}
+
+			// Confirm: CAPY_VAULT_KEY is the rotation target, so a forgotten env
+			// update would otherwise rotate the vault to a key the operator did not
+			// intend. With no interactive stdin this returns the safe default (no).
+			if !promptYesNo("rotating the vault to the key currently in CAPY_VAULT_KEY — proceed?", false) {
+				fmt.Println("aborted")
+				return nil
+			}
+
+			return runVaultRekey(env.dbPath, oldKey, newKey, removeBackup)
+		},
+	}
+	cmd.Flags().BoolVar(&removeBackup, "remove-backup", false,
+		"delete the old-key <vault>.bak after the new vault verifies open (deletion, not guaranteed erasure on SSD/CoW)")
+	return cmd
+}
+
+// runVaultRekey is the prompt-free core of `vault rekey`, shared with its unit
+// test. It rejects a no-op rotation (new == old), rotates via the shared
+// backup-API helper, then either removes the old-key .bak or warns that it
+// remains decryptable by the old key.
+func runVaultRekey(dbPath, oldKey, newKey string, removeBackup bool) error {
+	// security: plain == is fine here — this is a local no-op guard comparing the
+	// operator's own two passphrases, not a trust-boundary authentication check, so
+	// crypto/subtle constant-time comparison buys nothing (no remote attacker can
+	// time it; reaching this point already requires local process access).
+	if oldKey == newKey {
+		return fmt.Errorf("the new key in CAPY_VAULT_KEY is identical to the current passphrase — nothing to rotate (did you forget to update CAPY_VAULT_KEY?)")
+	}
+
+	res, err := sqliteutil.Rekey(dbPath, oldKey, newKey)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("capy vault rekey: done. Vault re-encrypted with the new CAPY_VAULT_KEY: %s\n", dbPath)
+
+	if removeBackup {
+		if err := os.Remove(res.BackupPath); err != nil {
+			return fmt.Errorf("vault rekeyed, but removing the old-key backup %s failed: %w", res.BackupPath, err)
+		}
+		fmt.Printf("capy vault rekey: removed old-key backup %s\n", res.BackupPath)
+		fmt.Fprintln(os.Stderr, "capy vault rekey: note: deletion is not guaranteed erasure — on SSD/CoW filesystems recoverable copies may remain")
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "capy vault rekey: warning: %s is still decryptable by the OLD key.\n", res.BackupPath)
+	fmt.Fprintln(os.Stderr, "  When rotating a compromised key, delete it manually (or pass --remove-backup on the next rotation).")
+	return nil
 }
 
 // ---------------------------------------------------------------------------
