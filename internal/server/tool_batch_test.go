@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/executor"
@@ -12,6 +13,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestTruncateLabel_RuneSafe guards against multibyte UTF-8 corruption when the
+// joined command labels exceed the 80-char cap. A raw joined[:80] byte slice
+// could split a rune straddling byte 80; truncateRunes must keep the label valid.
+func TestTruncateLabel_RuneSafe(t *testing.T) {
+	// 27 × "世" = 81 bytes (each is 3 bytes), so the cut at byte 80 lands mid-rune.
+	commands := []CommandInput{{Label: strings.Repeat("世", 27)}}
+	got := truncateLabel(commands)
+
+	assert.True(t, utf8.ValidString(got), "truncated label must be valid UTF-8")
+	assert.LessOrEqual(t, len(got), 80, "label must not exceed the 80-byte cap")
+	// 80/3 = 26 whole runes fit (78 bytes); byte 79-80 would be a partial rune.
+	assert.Equal(t, strings.Repeat("世", 26), got)
+}
 
 func callBatch(t *testing.T, srv *Server, args map[string]any) *mcp.CallToolResult {
 	t.Helper()

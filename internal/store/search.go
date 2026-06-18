@@ -190,6 +190,10 @@ func (s *ContentStore) refreshStaleSources() int {
 		changed, sanitized, current := s.fileChangedSince(fs.filePath, fs.contentHash, indexedAt)
 		switch {
 		case changed:
+			// Reuse the stored content_type rather than re-detecting: file-backed
+			// sources are first indexed via handleIndex with contentType "", so the
+			// stored value is already whatever DetectContentType chose for this file
+			// at first index — preserving it keeps chunking stable across refreshes.
 			if _, err := s.IndexWithFilePath(sanitized, fs.label, fs.contentType, fs.kind, fs.filePath); err != nil {
 				slog.Warn("stale refresh: re-index failed", "path", fs.filePath, "error", err)
 				continue

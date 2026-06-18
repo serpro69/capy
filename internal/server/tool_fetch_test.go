@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -577,6 +578,27 @@ func TestFetchBatch_PreviewRuneSafe(t *testing.T) {
 	text := resultText(r)
 	assert.True(t, utf8.ValidString(text), "response must be valid UTF-8 (truncation must not split a rune)")
 	assert.NotContains(t, text, "�", "no replacement char from a split rune")
+}
+
+// TestFetchRemoteContent_ContextCanceled verifies the fetch honors its context:
+// a cancelled context aborts the in-flight request instead of running to the
+// fetchTimeout ceiling. Regression guard for the context-threading fix — before
+// it, fetchRemoteContent used http.NewRequest (no ctx) and ignored cancellation.
+func TestFetchRemoteContent_ContextCanceled(t *testing.T) {
+	disableSSRFValidation(t)
+	// Handler blocks until the client gives up, so the only way the call returns
+	// is via context cancellation (not a normal response).
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before the request starts
+
+	_, _, errMsg := fetchRemoteContent(ctx, ts.URL)
+	require.NotEmpty(t, errMsg, "cancelled context must produce a fetch error")
+	assert.Contains(t, errMsg, "context canceled")
 }
 
 // TestTruncateRunes unit-tests the rune-safe truncation helper directly.

@@ -174,7 +174,10 @@ O(1) in SQLite. No data migration needed — existing sources get `NULL` for `fi
 
 ### 4.2 Solution
 
-Change the default label from `filepath.Base(path)` to the resolved absolute `path`. By line 33, `path` is already resolved to an absolute, clean path. Change line 52-53 to:
+Change the default label from `filepath.Base(path)` to the resolved absolute `path`. Change line 52-53 to:
+
+> **Impl correction (Task 6):** this assumed `path` is already absolute and clean by the label-assignment point. That held only for *relative* inputs (which get `filepath.Join`+`Clean`ed during resolution); an *absolute* input with traversal segments (`/tmp/a/../b.md`) was stored uncleaned, defeating canonicalization. The implementation adds an `else { path = filepath.Clean(path) }` branch so both cases are canonical before use.
+
 
 ```go
 if source == "" {
@@ -241,6 +244,8 @@ The current `validateFetchURL` (tool_fetch.go:224-246) resolves DNS and checks I
 7. **Malformed/non-IP strings:** block (fail-closed)
 
 Since capy blocks both "hard-block" and "private" categories (stricter than upstream's default), the function returns a single error for any non-public IP.
+
+> **Impl note:** `classifyIP` is realized as cooperating helpers — `classifyIP` (zone-id strip + parse) → `classifyParsedIP` → `classifyIPv4`/`classifyIPv6`, with `embeddedIPv4` unwrapping the forms `net.IP.To4` does not (NAT64 `64:ff9b::/96` and deprecated IPv4-compatible `::a.b.c.d`). The NAT64 case is an addition beyond the categories listed above (blocks e.g. `64:ff9b::169.254.169.254` IMDS bypass).
 
 `validateFetchScheme(rawURL string) error` — parses URL, rejects any scheme not in `{"http", "https"}`. Explicitly blocks `file`, `gopher`, `javascript`, `data`, and empty scheme.
 
@@ -432,7 +437,7 @@ Add `requests` (array of `{url, source?}` objects) as an alternative to the exis
 ### 7b.3 Files touched
 
 - `internal/server/tool_fetch.go`: add `requests` parameter parsing, batch execution path
-- `internal/server/server.go`: update `capy_fetch_and_index` MCP schema with `requests` and `concurrency` params
+- `internal/server/tools.go` (NOT `server.go` — capy keeps tool schemas in `tools.go`'s `toolXxx()` funcs wired via `registerTools()`): add `requests` and `concurrency` to the `capy_fetch_and_index` schema, and drop `mcp.Required()` from `url` so batch-only calls are valid
 - `internal/server/tool_fetch_test.go`: test single-URL backward compat, batch mode, partial cache hits
 
 ---
@@ -460,7 +465,7 @@ Add a `PurgeAll(dryRun bool) (PurgeCounts, error)` method to `ContentStore` that
 
 - `internal/store/cleanup.go`: add `PurgeAll` method
 - `internal/server/tool_cleanup.go`: add `purge_all` parameter, call `PurgeAll`
-- `internal/server/server.go`: add `purge_all` to MCP tool schema
+- `internal/server/tools.go` (NOT `server.go` — capy keeps tool schemas in `tools.go`'s `toolXxx()` funcs wired via `registerTools()`): add `purge_all` to the `capy_cleanup` schema
 
 ---
 
