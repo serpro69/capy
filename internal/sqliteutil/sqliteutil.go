@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -253,4 +254,210 @@ func OpenWithCanary(ctx context.Context, dsn, dbPath, keyEnv string) (*sql.DB, e
 	}
 
 	return db, nil
+}
+
+// EncryptedDSN builds a DSN with sqlite3mc URI-parameter encryption. The file:
+// prefix ensures mattn/go-sqlite3 passes the full URI through to
+// sqlite3_open_v2 (including the cipher/key params).
+//
+// This is the canonical home for the shared encryption DSN: it lives here rather
+// than in internal/store because store imports sqliteutil, so sqliteutil cannot
+// import store. store.EncryptedDSN is a thin wrapper that delegates here.
+func EncryptedDSN(dbPath, passphrase string) string {
+	return fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=%s",
+		uriEscapePath(dbPath), uriEscapePassphrase(passphrase))
+}
+
+// uriEscapePassphrase percent-encodes a passphrase for use in a SQLite URI.
+// SQLite's URI parser follows RFC 3986, so spaces must be %20 (not +).
+func uriEscapePassphrase(s string) string {
+	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+}
+
+// uriEscapePath escapes a file path for use in a SQLite URI by percent-encoding
+// ? and # which have special meaning in URIs.
+func uriEscapePath(s string) string {
+	return strings.NewReplacer("?", "%3F", "#", "%23").Replace(s)
+}
+
+// RekeyResult reports the outcome of a successful Rekey. BackupPath is the
+// pre-rotation database, preserved as <dbPath>.bak. The caller decides whether
+// to keep it (a safety net) or remove it — when rotating a compromised key the
+// .bak remains decryptable by the OLD key and is therefore a liability.
+type RekeyResult struct {
+	BackupPath string
+}
+
+// Rekey rotates the encryption key of an already-encrypted SQLite database using
+// the SQLite backup API: open the source with oldKey, checkpoint it, backup-copy
+// into a fresh temp database opened with newKey, then swap the temp file into
+// place and verify it opens with newKey. Writing a brand-new file sidesteps the
+// WAL/PRAGMA-rekey incompatibility (ADR-020) — no journal-mode dance needed.
+//
+// Rekey performs NO user-facing I/O: it returns a RekeyResult (carrying the .bak
+// path) and wrapped errors so the calling command layer prints its own
+// correctly-prefixed messages. On a swap/verify failure the original is rolled
+// back from the .bak; if that rollback itself fails the returned error names the
+// recovery path.
+//
+// The final swap is a filesystem rename, NOT mediated by SQLite locking, so the
+// caller must ensure no other process is attached to the database. The
+// checkpoint here is a best-effort flush on the old-key source connection, not a
+// guard against an idle-but-attached process.
+func Rekey(dbPath, oldKey, newKey string) (RekeyResult, error) {
+	srcDB, err := openEncrypted(dbPath, oldKey)
+	if err != nil {
+		return RekeyResult{}, err
+	}
+
+	if err := Checkpoint(srcDB); err != nil {
+		srcDB.Close()
+		return RekeyResult{}, err
+	}
+
+	tmpPath := dbPath + ".enc.tmp"
+	// Guarantee the temp DB is cleaned up on every failure path. On success
+	// SwapAndVerify renames it into place, so this no-ops (ENOENT). tmpPath is
+	// always distinct from the live DB and the .bak, so this can never delete
+	// either.
+	defer os.Remove(tmpPath)
+
+	destDB, err := openEncrypted(tmpPath, newKey)
+	if err != nil {
+		srcDB.Close()
+		return RekeyResult{}, fmt.Errorf("creating target database: %w", err)
+	}
+
+	if err := backupDB(destDB, srcDB); err != nil {
+		destDB.Close()
+		srcDB.Close()
+		return RekeyResult{}, fmt.Errorf("backup API: %w", err)
+	}
+	destDB.Close()
+	if err := srcDB.Close(); err != nil {
+		return RekeyResult{}, fmt.Errorf("closing source database: %w", err)
+	}
+
+	bakPath, err := SwapAndVerify(dbPath, tmpPath, newKey)
+	if err != nil {
+		return RekeyResult{}, err
+	}
+	return RekeyResult{BackupPath: bakPath}, nil
+}
+
+// Checkpoint runs a TRUNCATE WAL checkpoint, failing if any pages are still busy
+// (which indicates another connection is attached). The caller must hold the
+// only connection for the checkpoint to fully flush.
+func Checkpoint(db *sql.DB) error {
+	// PRAGMA wal_checkpoint returns (busy, log, checkpointed). busy is a 0/1 flag
+	// meaning the checkpoint could not complete because another connection holds a
+	// lock — NOT a page count, so the message must not imply one.
+	var busy, logFrames, checkpointed int
+	if err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
+		return fmt.Errorf("checkpoint failed: %w", err)
+	}
+	if busy > 0 {
+		return errors.New("checkpoint incomplete: database is busy (is the server still running?)")
+	}
+	return nil
+}
+
+// SwapAndVerify removes the live database's WAL/SHM sidecars, renames the
+// original to <dbPath>.bak, moves the freshly-written tmpPath into place, and
+// verifies it opens with newKey. On any failure it rolls the original back from
+// the .bak. It performs NO user-facing I/O — on success it returns the .bak
+// path; on failure it returns a wrapped error, and when the rollback ALSO fails
+// the error names the .bak so the operator can recover manually.
+func SwapAndVerify(dbPath, tmpPath, newKey string) (string, error) {
+	// Clean up the temp DB on every failure path. On success tmpPath is renamed
+	// into place below, so this no-ops (ENOENT). tmpPath is always distinct from
+	// the live DB and the .bak, so it can never delete either. The dual-error
+	// rollback messages wrap BOTH errors with %w (Go 1.20+) so a caller can
+	// errors.Is/As either the operation failure or the rollback failure.
+	defer os.Remove(tmpPath)
+
+	for _, suffix := range []string{"-wal", "-shm"} {
+		os.Remove(dbPath + suffix)
+	}
+
+	bakPath := dbPath + ".bak"
+	if err := os.Rename(dbPath, bakPath); err != nil {
+		return "", fmt.Errorf("backing up original: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, dbPath); err != nil {
+		if rerr := os.Rename(bakPath, dbPath); rerr != nil {
+			return "", fmt.Errorf("moving new database into place failed (%w) and rollback failed (%w); manual recovery: original preserved at %s", err, rerr, bakPath)
+		}
+		return "", fmt.Errorf("moving new database into place: %w", err)
+	}
+
+	verifyDB, err := openEncrypted(dbPath, newKey)
+	if err != nil {
+		if rerr := os.Rename(dbPath, tmpPath); rerr != nil {
+			return "", fmt.Errorf("verifying new database failed (%w) and could not move it aside (%w); manual recovery: original preserved at %s", err, rerr, bakPath)
+		}
+		if rerr := os.Rename(bakPath, dbPath); rerr != nil {
+			return "", fmt.Errorf("verifying new database failed (%w) and rollback failed (%w); manual recovery: original preserved at %s", err, rerr, bakPath)
+		}
+		return "", fmt.Errorf("verifying new database failed, rolled back to original: %w", err)
+	}
+	verifyDB.Close()
+
+	return bakPath, nil
+}
+
+// openEncrypted opens an sqlite3mc-encrypted database with key and runs the
+// canary query so a wrong passphrase or corrupt file fails fast. The returned
+// pool is capped at a single connection (rekey operations are strictly serial).
+func openEncrypted(dbPath, key string) (*sql.DB, error) {
+	dsn := EncryptedDSN(dbPath, key) + "&_busy_timeout=5000"
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening encrypted database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("SELECT count(*) FROM sqlite_master"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("wrong passphrase or corrupted database: %w", err)
+	}
+	return db, nil
+}
+
+// backupDB copies the entire contents of srcDB into destDB via the SQLite online
+// backup API. Both handles must already be open with their respective keys;
+// destDB receives the data re-encrypted under its own key.
+func backupDB(destDB, srcDB *sql.DB) error {
+	destConn, err := destDB.Conn(context.Background())
+	if err != nil {
+		return fmt.Errorf("getting dest connection: %w", err)
+	}
+	defer destConn.Close()
+
+	srcConn, err := srcDB.Conn(context.Background())
+	if err != nil {
+		return fmt.Errorf("getting src connection: %w", err)
+	}
+	defer srcConn.Close()
+
+	return destConn.Raw(func(destRaw any) error {
+		return srcConn.Raw(func(srcRaw any) error {
+			destSC := destRaw.(*sqlite3.SQLiteConn)
+			srcSC := srcRaw.(*sqlite3.SQLiteConn)
+
+			backup, err := destSC.Backup("main", srcSC, "main")
+			if err != nil {
+				return fmt.Errorf("starting backup: %w", err)
+			}
+			_, err = backup.Step(-1)
+			finishErr := backup.Finish()
+			if err != nil {
+				return fmt.Errorf("backup step: %w", err)
+			}
+			if finishErr != nil {
+				return fmt.Errorf("backup finish: %w", finishErr)
+			}
+			return nil
+		})
+	})
 }
