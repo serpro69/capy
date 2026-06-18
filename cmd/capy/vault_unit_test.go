@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,4 +146,114 @@ func TestHandleLookupError(t *testing.T) {
 		err := handleLookupError("x", orig)
 		assert.Equal(t, orig, err)
 	})
+}
+
+// buildVaultWithSession creates an encrypted vault at vaultPath under key and
+// imports one fixture session, returning its UUID. It sets CAPY_VAULT_KEY (which
+// VaultStore.Open consumes) to key, so callers flip the env var afterward to
+// assert which key opens the rotated DB.
+func buildVaultWithSession(t *testing.T, vaultPath, key string) string {
+	t.Helper()
+	t.Setenv("CAPY_VAULT_KEY", key)
+	t.Setenv("CAPY_MACHINE_ID", "test-machine") // avoid touching ~/.config/capy
+
+	root := filepath.Join(t.TempDir(), "project")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	uuid := "abcd1234-aaaa-bbbb-cccc-1234567890ab"
+	lines := []string{
+		`{"type":"user","uuid":"u1","timestamp":"2026-05-01T10:00:00Z","cwd":"/home/user/proj","gitBranch":"main","message":{"role":"user","content":"Fix the brontosaurus timeout"}}`,
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-05-01T10:00:05Z","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"On it."}]}}`,
+		`{"type":"ai-title","aiTitle":"Fix the brontosaurus timeout","sessionId":"s1"}`,
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, uuid+".jsonl"),
+		[]byte(strings.Join(lines, "\n")+"\n"), 0o644))
+
+	ctx := context.Background()
+	sessions, err := vault.DiscoverSessions(root)
+	require.NoError(t, err)
+	st := vault.NewVaultStore(vaultPath)
+	require.NoError(t, st.Open(ctx))
+	res := vault.Import(ctx, st, sessions, vault.ImportOptions{})
+	require.NoError(t, st.Close())
+	require.Equal(t, 1, res.Imported, "fixture session should import")
+	return uuid
+}
+
+// listVaultWith opens the vault under key and returns its sessions. The returned
+// error is the open error, so callers can assert that a given key does/does not
+// open the rotated DB.
+func listVaultWith(t *testing.T, vaultPath, key string) ([]vault.Session, error) {
+	t.Helper()
+	t.Setenv("CAPY_VAULT_KEY", key)
+	ctx := context.Background()
+	st := vault.NewVaultStore(vaultPath)
+	defer st.Close()
+	if err := st.Open(ctx); err != nil {
+		return nil, err
+	}
+	return st.ListSessions(ctx, vault.ListOptions{})
+}
+
+func TestRunVaultRekey_RoundTrip(t *testing.T) {
+	const oldKey = "old-vault-key-at-least-32-characters-long!!"
+	const newKey = "new-vault-key-at-least-32-characters-long!!"
+
+	dir := t.TempDir()
+	vaultPath := filepath.Join(dir, "vault.db")
+	uuid := buildVaultWithSession(t, vaultPath, oldKey)
+
+	require.NoError(t, runVaultRekey(vaultPath, oldKey, newKey, false))
+	assert.FileExists(t, vaultPath+".bak", ".bak must be preserved by default")
+
+	// The new key opens the rotated vault and the session is intact.
+	list, err := listVaultWith(t, vaultPath, newKey)
+	require.NoError(t, err, "new key must open the rotated vault")
+	require.Len(t, list, 1)
+	assert.Equal(t, uuid, list[0].UUID)
+
+	// The old key no longer opens the rotated vault.
+	_, err = listVaultWith(t, vaultPath, oldKey)
+	require.Error(t, err, "old key must not open the rotated vault")
+}
+
+func TestRunVaultRekey_RemoveBackup(t *testing.T) {
+	const oldKey = "old-vault-key-at-least-32-characters-long!!"
+	const newKey = "new-vault-key-at-least-32-characters-long!!"
+
+	dir := t.TempDir()
+	vaultPath := filepath.Join(dir, "vault.db")
+	buildVaultWithSession(t, vaultPath, oldKey)
+
+	require.NoError(t, runVaultRekey(vaultPath, oldKey, newKey, true))
+	assert.NoFileExists(t, vaultPath+".bak", "--remove-backup must unlink the old-key .bak")
+
+	// The rotation still succeeded: the new key opens the vault.
+	list, err := listVaultWith(t, vaultPath, newKey)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+}
+
+func TestRunVaultRekey_RejectsNewEqualsOld(t *testing.T) {
+	const key = "same-vault-key-at-least-32-characters-long!!"
+
+	dir := t.TempDir()
+	vaultPath := filepath.Join(dir, "vault.db")
+	buildVaultWithSession(t, vaultPath, key)
+
+	before, err := os.ReadFile(vaultPath)
+	require.NoError(t, err)
+
+	err = runVaultRekey(vaultPath, key, key, false)
+	require.Error(t, err, "rekey must reject a new key identical to the old")
+	assert.Contains(t, err.Error(), "identical")
+	assert.NoFileExists(t, vaultPath+".bak", "a rejected rekey must not touch the vault")
+
+	after, err := os.ReadFile(vaultPath)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "a rejected rekey must leave the vault byte-identical")
+
+	// The vault still opens with its unchanged key.
+	list, err := listVaultWith(t, vaultPath, key)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
 }

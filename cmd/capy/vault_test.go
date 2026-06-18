@@ -108,6 +108,19 @@ func TestVaultTUINotSupportedOnDestructive(t *testing.T) {
 	}
 }
 
+// TestVaultRekeyNoVault verifies the rekey subcommand is wired into the group and
+// short-circuits (before prompting for a passphrase) when no vault file exists, so
+// the wiring is exercised without needing an interactive TTY for the prompt.
+func TestVaultRekeyNoVault(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CAPY_VAULT_KEY", testVaultKey)
+	t.Setenv("CAPY_VAULT_PATH", filepath.Join(dir, "vault.db")) // not yet created
+
+	stdout, stderr, code := capy(t, "vault", "rekey")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "no vault at")
+}
+
 // setupVaultWithSidecar writes a fixture session that also has a subagent
 // sidecar so restore exercises vault_files. Returns the project root (for
 // --path), the uuid, and the raw main + sidecar bytes for verbatim diffing.
