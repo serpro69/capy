@@ -169,15 +169,21 @@
 > - **Rejected:** code-reviewer P2 (thread `ctx` into db calls) — pre-existing, file-wide pattern (`cleanupOversized`/`cleanupByTTL`/`evict` all non-context); a separate refactor, not Task 9. P3 (`BeginImmediate` lockTable `"sources"`) — cosmetic, matches `evict` precedent. P3 (lowercase "cleanup error") — user-facing MCP display string, not a Go `error` value; matches two pre-existing sites. P3 (`*s = SessionStats{...}` struct-reassignment in `Reset`) — **would introduce a bug**: `SessionStats` embeds a `sync.Mutex`, so reassigning the struct while holding the lock zeroes the mutex and the deferred `Unlock()` panics (`go vet`: "copies lock value"). Explicit field-by-field zeroing is the correct form; indexed alongside the HIGH.
 
 ## Task 10: Preserve shell executor PATH
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [design.md#9-preserve-shell-executor-path](./design.md#9-preserve-shell-executor-path), [implementation.md#task-10-preserve-shell-executor-path](./implementation.md#task-10-preserve-shell-executor-path)
 
 ### Subtasks
-- [ ] 10.1 Add `quotePosixSingle(value string) string` to `internal/executor/executor.go` — single-quote with `'` → `'\''` escaping
-- [ ] 10.2 Add `buildShellScript(code, inheritedPath string) string` — pure function (takes PATH as parameter, not `os.Getenv`), if `inheritedPath` non-empty prepends `export PATH=<quoted>\n`
-- [ ] 10.3 Use `buildShellScript(code, os.Getenv("PATH"))` in `Execute` when `req.Language == Shell`, before writing to script file
-- [ ] 10.4 Add test: call `buildShellScript` with explicit PATH value, verify output contains the restore line; empty PATH returns code unchanged
+- [x] 10.1 Add `quotePosixSingle(value string) string` to `internal/executor/executor.go` — single-quote with `'` → `'\''` escaping
+- [x] 10.2 Add `buildShellScript(code, inheritedPath string) string` — pure function (takes PATH as parameter, not `os.Getenv`), if `inheritedPath` non-empty prepends `export PATH=<quoted>\n`
+- [x] 10.3 Use `buildShellScript(code, os.Getenv("PATH"))` in `Execute` when `req.Language == Shell`, before writing to script file (added in the existing `if req.Language == Shell` perm block, so `code` is transformed exactly once before `os.WriteFile`)
+- [x] 10.4 Add test: `TestBuildShellScript` (restore line present, empty PATH unchanged, single-quote escaping) + `TestQuotePosixSingle` table + integration `TestExecuteShellPreservesPATH`. Both new funcs at 100% coverage; all pass under `-race`.
+
+> **Deliberate refinements + isolated review:**
+> - **Reused `quotePosixSingle` in `wrap.go`:** `injectFileContent`'s Shell case (`wrap.go:44`) had an identical inline `'`→`'\''` escape. Replaced it with the new helper — behavior-preserving (verified by the pre-existing `TestInjectFileContentShell`), removes a drift-prone duplicate of security-relevant escaping. Not in the original plan; small, related, low-risk.
+> - **`bash <script>` invocation means no shebang on line 1** (`buildCommand` passes the script as an arg, not `./script.sh`), so prepending `export PATH=...` at the top is safe. `autoWrap` is a no-op for Shell. For `ExecuteFile`+Shell the order is `injectFileContent` → `autoWrap` (no-op) → `buildShellScript` prepend, which is correct (file-path quoting doesn't depend on PATH).
+> - **gofmt comment quirk:** gofmt's doc-comment formatter rewrites a literal pair of single quotes (`''`) into a typographic `”`, which mangled the `'\''` idiom in prose. The doc comment was reworded to avoid an adjacent single-quote pair; the raw-string literal in code is the source of truth (documented inline).
+> - **Isolated review (pal/gemini-3.1-pro APPROVE, 0 findings; kk:code-reviewer APPROVE).** No corroborated findings, no P0/P1/P2 accepted. Applied two P3 comment-only fixes (clarified the integration test verifies plumbing/visibility not the clobber mechanism; documented the gofmt constraint on `quotePosixSingle`). **Rejected** code-reviewer P2 (snapshot PATH in `NewExecutor`): the design mandates a call-site `os.Getenv("PATH")`, and `BuildSafeEnv` reads the live process env at exec time — snapshotting at construction would *introduce* divergence between the in-script export and the process env, not remove it. No findings indexed (none systemic).
 
 ## Task 11: Final verification
 - **Status:** pending

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -81,6 +82,10 @@ func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecR
 	perm := os.FileMode(0o644)
 	if req.Language == Shell {
 		perm = 0o700
+		// Shell startup files (.bashrc/.zshrc/.profile) sourced by the
+		// subprocess can clobber PATH and hide tools the MCP process had
+		// available. Restore the inherited PATH at the top of the script.
+		code = buildShellScript(code, os.Getenv("PATH"))
 	}
 	if err := os.WriteFile(scriptPath, []byte(code), perm); err != nil {
 		return nil, fmt.Errorf("writing script: %w", err)
@@ -280,4 +285,26 @@ func exitCode(err error) int {
 		return ee.ExitCode()
 	}
 	return -1
+}
+
+// quotePosixSingle wraps value in single quotes for safe interpolation into a
+// POSIX shell script. Each embedded single quote is replaced by the standard
+// four-character escape (close-quote, backslash, escaped-quote, reopen-quote)
+// so the resulting token stays a single shell word. The exact replacement lives
+// in the raw-string literal below rather than in this prose because gofmt
+// rewrites a literal pair of single quotes in comments into a typographic quote.
+func quotePosixSingle(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
+// buildShellScript prepends a PATH restoration line to a shell script so that
+// startup files sourced by the subprocess cannot hide tools the MCP process
+// had on its PATH. inheritedPath is passed explicitly (rather than read from
+// the environment) so the function stays pure and unit-testable. An empty
+// inheritedPath returns code unchanged.
+func buildShellScript(code, inheritedPath string) string {
+	if inheritedPath == "" {
+		return code
+	}
+	return fmt.Sprintf("export PATH=%s\n%s", quotePosixSingle(inheritedPath), code)
 }
