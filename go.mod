@@ -10,6 +10,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/google/uuid v1.6.0
+	github.com/klauspost/compress v1.18.6
 	github.com/mark3labs/mcp-go v0.46.0
 	github.com/mattn/go-sqlite3 v1.14.37
 	github.com/pelletier/go-toml/v2 v2.2.4
