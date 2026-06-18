@@ -57,6 +57,21 @@ func (s *SessionStats) AddCacheHit(estimatedBytes int64) {
 	s.CacheBytesSaved += estimatedBytes
 }
 
+// Reset zeroes all usage counters and re-initializes the maps under the mutex.
+// Used by capy_cleanup's purge_all to clear session metrics alongside the
+// knowledge-base wipe. SessionStart is intentionally preserved — the MCP
+// session has not restarted, so uptime stays accurate.
+func (s *SessionStats) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Calls = make(map[string]int)
+	s.BytesReturned = make(map[string]int64)
+	s.BytesIndexed = 0
+	s.BytesSandboxed = 0
+	s.CacheHits = 0
+	s.CacheBytesSaved = 0
+}
+
 // Snapshot returns a copy of the current stats, safe for concurrent reads.
 func (s *SessionStats) Snapshot() SessionStats {
 	s.mu.Lock()
