@@ -17,12 +17,15 @@ import (
 // idempotently, then record the name. Migrations are name-keyed and idempotent,
 // so application order does not matter.
 //
-// Naming note: 0001/0002 are reserved for pending vault v2 work (blob encoding,
-// vault_snapshots — see docs/wip/vault/v2/). This feature uses 0003 to avoid
-// claiming those slots.
+// Naming note: 0002 (vault_snapshots) was dropped along with the PreCompact
+// archival tasks (see docs/wip/vault/v2/precompact-investigation.md), so v2 adds
+// only 0001 (blob encoding) alongside the existing 0003 (index_version).
 func migrateVault(ctx context.Context, db *sql.DB) error {
 	if err := ensureVaultMigrationsTable(ctx, db); err != nil {
 		return fmt.Errorf("creating vault_migrations table: %w", err)
+	}
+	if err := migrate0001AddBlobEncoding(ctx, db); err != nil {
+		return fmt.Errorf("migration 0001_blob_encoding: %w", err)
 	}
 	if err := migrate0003AddIndexVersion(ctx, db); err != nil {
 		return fmt.Errorf("migration 0003_add_index_version: %w", err)
@@ -51,6 +54,62 @@ func vaultMigrationApplied(ctx context.Context, tx *sql.Tx, name string) (bool, 
 		return false, fmt.Errorf("checking migration %s: %w", name, err)
 	}
 	return count > 0, nil
+}
+
+// migrate0001AddBlobEncoding adds the `encoding` discriminator column to
+// vault_sessions and vault_files (design.md §1; see codec.go). It records how each
+// blob (raw_jsonl / raw_content) is stored: NULL/"raw" or "zstd". SQLite ADD
+// COLUMN does not rewrite existing rows, so every legacy v1 row reads back as
+// NULL = raw until rewritten by `capy vault compact` (Task 6).
+//   - Pre-existing vaults: the tables lack the columns, so the ALTERs add them.
+//   - Fresh vaults: schemaSQL already creates the columns, so the columnExists
+//     guard skips the ALTER (avoiding a duplicate-column error); the migration is
+//     still recorded so it never re-runs.
+func migrate0001AddBlobEncoding(ctx context.Context, db *sql.DB) error {
+	const name = "0001_blob_encoding"
+
+	// Fast path: when already recorded (the common case on every getDB() open),
+	// skip acquiring the RESERVED write lock — a plain read avoids needless
+	// contention with concurrent readers/writers. A read error falls through.
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM vault_migrations WHERE name = ?`, name).Scan(&count); err == nil && count > 0 {
+		return nil
+	}
+
+	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
+	if err != nil {
+		return fmt.Errorf("begin immediate: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Re-check inside the write tx: two opens may both pass the read fast-path,
+	// but only one wins the lock and applies; the loser sees it applied here.
+	applied, err := vaultMigrationApplied(ctx, tx, name)
+	if err != nil {
+		return err
+	}
+	if applied {
+		return tx.Commit()
+	}
+
+	for _, table := range []string{"vault_sessions", "vault_files"} {
+		hasColumn, err := columnExists(ctx, tx, table, "encoding")
+		if err != nil {
+			return err
+		}
+		if !hasColumn {
+			//nolint:gosec // table is a trusted internal constant, never user input
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN encoding TEXT", table)); err != nil {
+				return fmt.Errorf("alter %s: %w", table, err)
+			}
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `INSERT INTO vault_migrations (name) VALUES (?)`, name); err != nil {
+		return fmt.Errorf("recording migration: %w", err)
+	}
+	return tx.Commit()
 }
 
 // migrate0003AddIndexVersion adds the index_version column to vault_sessions.
