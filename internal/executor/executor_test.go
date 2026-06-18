@@ -222,6 +222,66 @@ func TestExecuteNonZeroExit(t *testing.T) {
 	assert.Equal(t, 42, result.ExitCode)
 }
 
+// --- Shell PATH restoration ---
+
+func TestQuotePosixSingle(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain", "/usr/bin:/bin", "'/usr/bin:/bin'"},
+		{"empty", "", "''"},
+		{"single quote", "a'b", `'a'\''b'`},
+		{"trailing quote", "x'", `'x'\'''`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, quotePosixSingle(tt.input))
+		})
+	}
+}
+
+func TestBuildShellScript(t *testing.T) {
+	t.Run("prepends restore line", func(t *testing.T) {
+		got := buildShellScript("echo hi", "/custom/bin:/usr/bin")
+		assert.Equal(t, "export PATH='/custom/bin:/usr/bin'\necho hi", got)
+	})
+	t.Run("empty PATH leaves code unchanged", func(t *testing.T) {
+		assert.Equal(t, "echo hi", buildShellScript("echo hi", ""))
+	})
+	t.Run("escapes single quotes in PATH", func(t *testing.T) {
+		got := buildShellScript("echo hi", "/weird'dir:/usr/bin")
+		assert.Equal(t, `export PATH='/weird'\''dir:/usr/bin'`+"\necho hi", got)
+	})
+}
+
+// TestExecuteShellPreservesPATH is an end-to-end check that the PATH inherited
+// by the MCP process is visible to the shell script and that the restore line
+// does not break normal execution. It verifies plumbing/visibility, not the
+// startup-file-clobber scenario specifically: BuildSafeEnv already passes the
+// inherited PATH through the process env, so this would pass even without the
+// export line. The export-line construction itself is covered by
+// TestBuildShellScript.
+func TestExecuteShellPreservesPATH(t *testing.T) {
+	e := newTestExecutor(t)
+	if e.Runtimes()[Shell] == "" {
+		t.Skip("no shell runtime")
+	}
+
+	// Prepend a sentinel dir; keep the original PATH so bash stays findable.
+	sentinel := t.TempDir()
+	t.Setenv("PATH", sentinel+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result, err := e.Execute(context.Background(), ExecRequest{
+		Language: Shell,
+		Code:     `echo "$PATH"`,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.ExitCode)
+	assert.Contains(t, result.Stdout, sentinel)
+}
+
 // --- File content injection ---
 
 func TestInjectFileContentPython(t *testing.T) {

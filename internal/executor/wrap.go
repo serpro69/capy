@@ -41,7 +41,7 @@ func injectFileContent(lang Language, code, absPath string) string {
 	case Python:
 		return fmt.Sprintf("FILE_CONTENT_PATH = %s\nfile_path = FILE_CONTENT_PATH\nwith open(FILE_CONTENT_PATH, \"r\", encoding=\"utf-8\") as _f:\n    FILE_CONTENT = _f.read()\n%s", escaped, code)
 	case Shell:
-		sq := "'" + strings.ReplaceAll(absPath, "'", "'\\''") + "'"
+		sq := quotePosixSingle(absPath)
 		return fmt.Sprintf("FILE_CONTENT_PATH=%s\nfile_path=%s\nFILE_CONTENT=$(cat %s)\n%s", sq, sq, sq, code)
 	case Ruby:
 		return fmt.Sprintf("FILE_CONTENT_PATH = %s\nfile_path = FILE_CONTENT_PATH\nFILE_CONTENT = File.read(FILE_CONTENT_PATH, encoding: \"utf-8\")\n%s", escaped, code)
