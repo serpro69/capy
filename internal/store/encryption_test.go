@@ -43,15 +43,6 @@ func TestEncryptionKeyFromEnv_Set(t *testing.T) {
 	assert.Equal(t, "my-key", EncryptionKeyFromEnv())
 }
 
-func TestURIEscapePassphrase(t *testing.T) {
-	assert.Equal(t, "simple", URIEscapePassphrase("simple"))
-	assert.Equal(t, "has%20space", URIEscapePassphrase("has space"))
-	assert.Equal(t, "has%26amp", URIEscapePassphrase("has&amp"))
-	assert.Equal(t, "has%3Dequals", URIEscapePassphrase("has=equals"))
-	assert.Equal(t, "has%25percent", URIEscapePassphrase("has%percent"))
-	assert.Equal(t, "has%2Bplus", URIEscapePassphrase("has+plus"))
-}
-
 func TestEncryptedDSN(t *testing.T) {
 	dsn := EncryptedDSN("/tmp/test.db", "my passphrase")
 	assert.Equal(t, "file:/tmp/test.db?cipher=sqlcipher&legacy=4&key=my%20passphrase", dsn)

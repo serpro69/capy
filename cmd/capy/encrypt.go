@@ -1,15 +1,14 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 
-	"github.com/mattn/go-sqlite3"
 	"github.com/serpro69/capy/internal/config"
+	"github.com/serpro69/capy/internal/sqliteutil"
 	"github.com/serpro69/capy/internal/store"
 	"github.com/serpro69/capy/internal/terminal"
 	"github.com/spf13/cobra"
@@ -89,7 +88,7 @@ func encryptPlain(dbPath, newKey string) error {
 		return err
 	}
 
-	if err := checkpointDB(srcDB); err != nil {
+	if err := sqliteutil.Checkpoint(srcDB); err != nil {
 		srcDB.Close()
 		return err
 	}
@@ -124,41 +123,33 @@ func encryptPlain(dbPath, newKey string) error {
 	}
 	tmpDB.Close()
 
-	return swapAndVerify(dbPath, tmpPath, newKey)
+	bakPath, err := sqliteutil.SwapAndVerify(dbPath, tmpPath, newKey)
+	if err != nil {
+		return err
+	}
+	printRekeyDone(dbPath, bakPath)
+	return nil
 }
 
-// rekeyEncrypted re-encrypts an already-encrypted database using the
-// SQLite backup API.
+// rekeyEncrypted re-encrypts an already-encrypted database by rotating its key
+// via sqliteutil.Rekey (the SQLite backup-API path), then prints the
+// capy-encrypt-prefixed result. The low-level rotation lives in sqliteutil so
+// `capy vault rekey` can reuse it; this layer owns the user-facing output.
 func rekeyEncrypted(dbPath, oldKey, newKey string) error {
-	srcDB, err := openEncrypted(dbPath, oldKey)
+	res, err := sqliteutil.Rekey(dbPath, oldKey, newKey)
 	if err != nil {
 		return err
 	}
+	printRekeyDone(dbPath, res.BackupPath)
+	return nil
+}
 
-	if err := checkpointDB(srcDB); err != nil {
-		srcDB.Close()
-		return err
-	}
-
-	tmpPath := dbPath + ".enc.tmp"
-	destDB, err := openEncrypted(tmpPath, newKey)
-	if err != nil {
-		srcDB.Close()
-		return fmt.Errorf("creating target database: %w", err)
-	}
-
-	if err := backupDB(destDB, srcDB); err != nil {
-		destDB.Close()
-		srcDB.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("backup API: %w", err)
-	}
-	destDB.Close()
-	if err := srcDB.Close(); err != nil {
-		return fmt.Errorf("closing source database: %w", err)
-	}
-
-	return swapAndVerify(dbPath, tmpPath, newKey)
+// printRekeyDone emits the success messages for `capy encrypt`. It mirrors the
+// output the moved swapAndVerify helper used to print, keeping capy encrypt's
+// observable stdout unchanged after the I/O moved out of sqliteutil.
+func printRekeyDone(dbPath, bakPath string) {
+	fmt.Printf("capy encrypt: done. Encrypted: %s\n", dbPath)
+	fmt.Printf("capy encrypt: backup at %s\n", bakPath)
 }
 
 func openUnencrypted(dbPath string) (*sql.DB, error) {
@@ -181,107 +172,6 @@ func openWithCipherCodec(dbPath, key string) (*sql.DB, error) {
 	}
 	db.SetMaxOpenConns(1)
 	return db, nil
-}
-
-func openEncrypted(dbPath, key string) (*sql.DB, error) {
-	dsn := store.EncryptedDSN(dbPath, key) + "&_busy_timeout=5000"
-	db, err := sql.Open("sqlite3", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("opening encrypted database: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("SELECT count(*) FROM sqlite_master"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("wrong passphrase or corrupted database: %w", err)
-	}
-	return db, nil
-}
-
-func checkpointDB(db *sql.DB) error {
-	var busy, log, checkpointed int
-	err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed)
-	if err != nil {
-		return fmt.Errorf("checkpoint failed: %w", err)
-	}
-	if busy > 0 {
-		return fmt.Errorf("checkpoint incomplete: %d pages busy (is the server still running?)", busy)
-	}
-	return nil
-}
-
-func backupDB(destDB, srcDB *sql.DB) error {
-	destConn, err := destDB.Conn(context.Background())
-	if err != nil {
-		return fmt.Errorf("getting dest connection: %w", err)
-	}
-	defer destConn.Close()
-
-	srcConn, err := srcDB.Conn(context.Background())
-	if err != nil {
-		return fmt.Errorf("getting src connection: %w", err)
-	}
-	defer srcConn.Close()
-
-	return destConn.Raw(func(destRaw any) error {
-		return srcConn.Raw(func(srcRaw any) error {
-			destSC := destRaw.(*sqlite3.SQLiteConn)
-			srcSC := srcRaw.(*sqlite3.SQLiteConn)
-
-			backup, err := destSC.Backup("main", srcSC, "main")
-			if err != nil {
-				return fmt.Errorf("starting backup: %w", err)
-			}
-			_, err = backup.Step(-1)
-			finishErr := backup.Finish()
-			if err != nil {
-				return fmt.Errorf("backup step: %w", err)
-			}
-			if finishErr != nil {
-				return fmt.Errorf("backup finish: %w", finishErr)
-			}
-			return nil
-		})
-	})
-}
-
-// swapAndVerify removes WAL/SHM sidecars, backs up the original, moves
-// the new file into place, and verifies the result.
-func swapAndVerify(dbPath, tmpPath, newKey string) error {
-	for _, suffix := range []string{"-wal", "-shm"} {
-		os.Remove(dbPath + suffix)
-	}
-
-	bakPath := dbPath + ".bak"
-	if err := os.Rename(dbPath, bakPath); err != nil {
-		return fmt.Errorf("backing up original: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, dbPath); err != nil {
-		if rerr := os.Rename(bakPath, dbPath); rerr != nil {
-			fmt.Fprintf(os.Stderr, "capy encrypt: CRITICAL: rollback failed: %v\n", rerr)
-			fmt.Fprintf(os.Stderr, "capy encrypt: manual recovery: backup at %s\n", bakPath)
-		}
-		return fmt.Errorf("moving encrypted database into place: %w", err)
-	}
-
-	verifyDB, err := openEncrypted(dbPath, newKey)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "capy encrypt: WARNING: verification failed (%v), restoring backup\n", err)
-		if rerr := os.Rename(dbPath, tmpPath); rerr != nil {
-			fmt.Fprintf(os.Stderr, "capy encrypt: CRITICAL: could not move failed db aside: %v\n", rerr)
-		}
-		if rerr := os.Rename(bakPath, dbPath); rerr != nil {
-			fmt.Fprintf(os.Stderr, "capy encrypt: CRITICAL: rollback failed: %v\n", rerr)
-			fmt.Fprintf(os.Stderr, "capy encrypt: manual recovery: backup at %s\n", bakPath)
-		}
-		os.Remove(tmpPath)
-		return fmt.Errorf("verification failed: %w", err)
-	}
-	verifyDB.Close()
-
-	fmt.Printf("capy encrypt: done. Encrypted: %s\n", dbPath)
-	fmt.Printf("capy encrypt: backup at %s\n", bakPath)
-	return nil
 }
 
 func copyFile(src, dst string) (err error) {
