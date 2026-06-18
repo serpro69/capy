@@ -210,6 +210,116 @@ func TestOpenWithCanary_UnencryptedDB(t *testing.T) {
 	assert.ErrorAs(t, err, &unencErr, "expected UnencryptedDBError, got: %v", err)
 }
 
+func Test_uriEscapePassphrase(t *testing.T) {
+	assert.Equal(t, "simple", uriEscapePassphrase("simple"))
+	assert.Equal(t, "has%20space", uriEscapePassphrase("has space"))
+	assert.Equal(t, "has%26amp", uriEscapePassphrase("has&amp"))
+	assert.Equal(t, "has%3Dequals", uriEscapePassphrase("has=equals"))
+	assert.Equal(t, "has%25percent", uriEscapePassphrase("has%percent"))
+	assert.Equal(t, "has%2Bplus", uriEscapePassphrase("has+plus"))
+}
+
+func TestEncryptedDSN(t *testing.T) {
+	assert.Equal(t,
+		"file:/tmp/test.db?cipher=sqlcipher&legacy=4&key=my%20passphrase",
+		EncryptedDSN("/tmp/test.db", "my passphrase"))
+
+	assert.Equal(t,
+		"file:/tmp/test.db?cipher=sqlcipher&legacy=4&key=pass%27phrase%26with%3Dspecial%2Bchars",
+		EncryptedDSN("/tmp/test.db", "pass'phrase&with=special+chars"))
+
+	assert.Equal(t,
+		"file:/tmp/path with spaces/test%231.db?cipher=sqlcipher&legacy=4&key=key",
+		EncryptedDSN("/tmp/path with spaces/test#1.db", "key"))
+
+	assert.Equal(t,
+		"file:/tmp/path%3Fquery/test.db?cipher=sqlcipher&legacy=4&key=key",
+		EncryptedDSN("/tmp/path?query/test.db", "key"))
+}
+
+func TestRekey_RoundTrip(t *testing.T) {
+	const oldKey = "old-passphrase-at-least-32-characters-long!!"
+	const newKey = "new-passphrase-at-least-32-characters-long!!"
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "rekey.db")
+
+	// Create an encrypted DB with the old key and some data.
+	db, err := sql.Open("sqlite3", EncryptedDSN(dbPath, oldKey))
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO t (id, val) VALUES (1, 'hello')")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	// Rotate the key.
+	res, err := Rekey(dbPath, oldKey, newKey)
+	require.NoError(t, err)
+	assert.Equal(t, dbPath+".bak", res.BackupPath)
+	assert.FileExists(t, res.BackupPath, "the pre-rotation .bak must be preserved")
+
+	// The new key opens the rotated DB and the data survived.
+	newDB, err := sql.Open("sqlite3", EncryptedDSN(dbPath, newKey))
+	require.NoError(t, err)
+	defer newDB.Close()
+	var val string
+	require.NoError(t, newDB.QueryRow("SELECT val FROM t WHERE id = 1").Scan(&val))
+	assert.Equal(t, "hello", val)
+
+	// The old key no longer opens the rotated DB.
+	oldDB, err := sql.Open("sqlite3", EncryptedDSN(dbPath, oldKey))
+	require.NoError(t, err)
+	defer oldDB.Close()
+	_, err = oldDB.Exec("SELECT count(*) FROM sqlite_master")
+	require.Error(t, err, "old key must not open the rotated DB")
+
+	// The .bak remains decryptable by the OLD key — the residual-secret property
+	// that `capy vault rekey --remove-backup` (Task 8) exists to address.
+	bakDB, err := sql.Open("sqlite3", EncryptedDSN(res.BackupPath, oldKey))
+	require.NoError(t, err)
+	defer bakDB.Close()
+	var n int
+	require.NoError(t, bakDB.QueryRow("SELECT count(*) FROM t").Scan(&n))
+	assert.Equal(t, 1, n)
+}
+
+func TestRekey_WALSource(t *testing.T) {
+	const oldKey = "old-passphrase-at-least-32-characters-long!!"
+	const newKey = "new-passphrase-at-least-32-characters-long!!"
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "rekey-wal.db")
+
+	// Create the encrypted source in WAL journal mode, so Rekey's Checkpoint step
+	// must flush a WAL before the backup-API copy (the backup path sidesteps the
+	// PRAGMA-rekey/WAL incompatibility, but Checkpoint still has to handle WAL).
+	db, err := sql.Open("sqlite3", EncryptedDSN(dbPath, oldKey)+"&_journal_mode=WAL")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	var journalMode string
+	require.NoError(t, db.QueryRow("PRAGMA journal_mode").Scan(&journalMode))
+	require.Equal(t, "wal", journalMode, "source must be in WAL mode for this test")
+	_, err = db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO t (id, val) VALUES (1, 'wal-source')")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	res, err := Rekey(dbPath, oldKey, newKey)
+	require.NoError(t, err)
+	assert.Equal(t, dbPath+".bak", res.BackupPath)
+
+	// New key opens the rotated DB and the data survived the WAL-source rotation.
+	newDB, err := sql.Open("sqlite3", EncryptedDSN(dbPath, newKey))
+	require.NoError(t, err)
+	defer newDB.Close()
+	var val string
+	require.NoError(t, newDB.QueryRow("SELECT val FROM t WHERE id = 1").Scan(&val))
+	assert.Equal(t, "wal-source", val)
+}
+
 func TestWaitBackoff(t *testing.T) {
 	t.Run("returns nil after the interval with an uncancelled context", func(t *testing.T) {
 		start := time.Now()

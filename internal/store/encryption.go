@@ -3,7 +3,6 @@ package store
 import (
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"strings"
 
@@ -49,24 +48,18 @@ func EncryptionKeyFromEnv() string {
 	return os.Getenv(encryptionKeyEnv)
 }
 
-// URIEscapePassphrase percent-encodes a passphrase for use in a SQLite URI.
-// SQLite's URI parser follows RFC 3986, so spaces must be %20 (not +).
-func URIEscapePassphrase(s string) string {
-	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
-}
-
-// URIEscapePath escapes a file path for use in a SQLite URI by
-// percent-encoding ? and # which have special meaning in URIs.
-func URIEscapePath(s string) string {
-	return strings.NewReplacer("?", "%3F", "#", "%23").Replace(s)
-}
-
 // EncryptedDSN builds a DSN with sqlite3mc URI-parameter encryption.
-// The file: prefix ensures mattn/go-sqlite3 passes the full URI through
-// to sqlite3_open_v2 (including cipher/key params).
+//
+// It delegates to sqliteutil.EncryptedDSN, the canonical home for the shared
+// SQLite encryption DSN; it is retained here so existing store/vault/cmd callers
+// need no change. (sqliteutil cannot live under store — store imports it — so
+// the builder had to move down to break the Rekey extraction's import cycle.)
+//
+// TODO(vault-v2 Task 7 follow-up, optional): migrate the remaining callers
+// (internal/store, internal/vault, cmd/capy) to sqliteutil.EncryptedDSN directly
+// and drop this wrapper.
 func EncryptedDSN(dbPath, passphrase string) string {
-	return fmt.Sprintf("file:%s?cipher=sqlcipher&legacy=4&key=%s",
-		URIEscapePath(dbPath), URIEscapePassphrase(passphrase))
+	return sqliteutil.EncryptedDSN(dbPath, passphrase)
 }
 
 // EscapeSQLString escapes a string for use in a SQL single-quoted literal
