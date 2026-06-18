@@ -543,6 +543,97 @@ func TestPurgeSessionLeavesDurableUntouched(t *testing.T) {
 	assert.Equal(t, 1, durableCount, "PurgeSession must not delete durable rows")
 }
 
+// ─── PurgeAll (Task 9 full project-scope reset) ──────────────────────────
+
+func TestPurgeAllDryRunReportsCountsWithoutDeleting(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.Index("authentication middleware validates tokens", "src-a", "plaintext", KindDurable)
+	require.NoError(t, err)
+	_, err = s.Index("retention scoring decays over time", "src-b", "plaintext", KindDurable)
+	require.NoError(t, err)
+
+	counts, err := s.PurgeAll(true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), counts.Sources)
+	assert.Greater(t, counts.Chunks, int64(0))
+	assert.Greater(t, counts.Vocab, int64(0))
+
+	// Dry run must not delete anything.
+	db, err := s.getDB()
+	require.NoError(t, err)
+	var srcCount int64
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM sources").Scan(&srcCount))
+	assert.Equal(t, int64(2), srcCount, "dry run must leave sources intact")
+}
+
+func TestPurgeAllEmptiesEveryTable(t *testing.T) {
+	s := newTestStore(t)
+	db, err := s.getDB()
+	require.NoError(t, err)
+
+	// Populate durable, ephemeral, and session rows — Index fills sources,
+	// chunks, chunks_trigram, and vocabulary in one pass.
+	_, err = s.Index("authentication middleware validates tokens", "durable-src", "plaintext", KindDurable)
+	require.NoError(t, err)
+	_, err = s.Index("ephemeral command output lines", "execute:shell", "plaintext", KindEphemeral)
+	require.NoError(t, err)
+	_, err = s.Index("session transcript about caching layers", "session:abc", "plaintext", KindSession)
+	require.NoError(t, err)
+
+	// Sanity-check the trigram index is non-empty before the purge so the
+	// post-purge assertion is meaningful.
+	var trigramBefore int64
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chunks_trigram").Scan(&trigramBefore))
+	require.Greater(t, trigramBefore, int64(0), "Index should populate chunks_trigram")
+
+	counts, err := s.PurgeAll(false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), counts.Sources)
+	assert.Greater(t, counts.Chunks, int64(0))
+	assert.Greater(t, counts.Vocab, int64(0))
+
+	for _, table := range []string{"sources", "chunks", "chunks_trigram", "vocabulary"} {
+		var n int64
+		require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&n))
+		assert.Equal(t, int64(0), n, "%s should be empty after purge_all", table)
+	}
+}
+
+func TestPurgeAllClearsFuzzyCache(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.Index("authentication middleware validates tokens", "src", "plaintext", KindDurable)
+	require.NoError(t, err)
+
+	// Prime the fuzzy cache with a correctable typo (edit distance 1).
+	fix := s.fuzzyCorrectWord("authentcation")
+	require.Equal(t, "authentication", fix, "typo should correct to indexed vocabulary word")
+	s.fuzzyCacheMu.RLock()
+	primed := len(s.fuzzyCache)
+	s.fuzzyCacheMu.RUnlock()
+	require.Greater(t, primed, 0, "fuzzy cache should be primed before purge")
+
+	_, err = s.PurgeAll(false)
+	require.NoError(t, err)
+
+	// The cache must be empty, and a fresh correction must not resurrect the
+	// now-deleted vocabulary word from a stale cache entry.
+	s.fuzzyCacheMu.RLock()
+	cleared := len(s.fuzzyCache)
+	s.fuzzyCacheMu.RUnlock()
+	assert.Equal(t, 0, cleared, "purge_all must clear the fuzzy cache")
+	assert.Empty(t, s.fuzzyCorrectWord("authentcation"), "no vocabulary remains, so no correction")
+}
+
+func TestPurgeAllEmptyStore(t *testing.T) {
+	s := newTestStore(t)
+
+	counts, err := s.PurgeAll(false)
+	require.NoError(t, err)
+	assert.Equal(t, PurgeCounts{}, counts, "purging an empty store reports zero counts and does not error")
+}
+
 func TestStatsIncludesSessionKind(t *testing.T) {
 	s := newTestStore(t)
 	db, err := s.getDB()
