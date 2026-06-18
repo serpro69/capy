@@ -57,6 +57,7 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 		newVaultShowCmd(env),
 		newVaultStatsCmd(env),
 		newVaultCheckpointCmd(env),
+		newVaultCompactCmd(env),
 		newVaultRestoreCmd(env),
 		newVaultResumeCmd(env),
 		newVaultDeleteCmd(env),
@@ -497,6 +498,58 @@ No other capy process must hold the vault open during checkpoint.`,
 			return nil
 		},
 	}
+}
+
+// ---------------------------------------------------------------------------
+// compact
+// ---------------------------------------------------------------------------
+
+func newVaultCompactCmd(env *vaultEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:   "compact",
+		Short: "Recompress legacy uncompressed blobs and reclaim disk space (VACUUM)",
+		Long: `Rewrite sessions archived before compression existed — their transcripts and
+sidecars are stored uncompressed — through the zstd codec, then VACUUM the
+database to reclaim the freed pages. Sessions already compressed (or whose blobs
+do not shrink) are left untouched, so re-running compact is a no-op.
+
+Stop the MCP server first: compact aborts up front if another process still
+holds the vault open. It also refuses to run while CAPY_VAULT_NO_COMPRESS is set
+(it would rewrite every blob without compressing it).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := guardTUI(cmd); err != nil {
+				return err
+			}
+			if _, err := os.Stat(env.dbPath); os.IsNotExist(err) {
+				fmt.Printf("capy vault compact: no vault at %s\n", env.dbPath)
+				return nil
+			}
+
+			before := dbFileSize(env.dbPath)
+			st := vault.NewVaultStore(env.dbPath)
+			defer st.Close()
+
+			res, err := st.Compact(cmd.Context())
+			if err != nil {
+				return err
+			}
+			printCompactResult(res, before, dbFileSize(env.dbPath))
+			return nil
+		},
+	}
+}
+
+func printCompactResult(res vault.CompactResult, before, after int64) {
+	if res.SessionsRewritten == 0 && res.FilesRewritten == 0 {
+		fmt.Println("capy vault compact: nothing to compact (no uncompressed sessions remain)")
+		return
+	}
+	fmt.Printf("recompressed %d session(s) and %d file(s)\n", res.SessionsRewritten, res.FilesRewritten)
+	line := fmt.Sprintf("vault size: %s → %s", formatSize(before), formatSize(after))
+	if after < before {
+		line += fmt.Sprintf(" (reclaimed %s)", formatSize(before-after))
+	}
+	fmt.Println(line)
 }
 
 // ---------------------------------------------------------------------------
