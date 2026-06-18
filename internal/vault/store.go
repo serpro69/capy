@@ -60,13 +60,15 @@ CREATE TABLE IF NOT EXISTS vault_sessions (
   git_branch         TEXT,
   archived_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
   index_version      INTEGER NOT NULL DEFAULT 1,
-  raw_jsonl          BLOB NOT NULL
+  raw_jsonl          BLOB NOT NULL,
+  encoding           TEXT
 );
 
 CREATE TABLE IF NOT EXISTS vault_files (
   session_uuid  TEXT NOT NULL REFERENCES vault_sessions(uuid) ON DELETE CASCADE,
   relative_path TEXT NOT NULL,
   raw_content   BLOB NOT NULL,
+  encoding      TEXT,
   PRIMARY KEY (session_uuid, relative_path)
 );
 
@@ -286,6 +288,14 @@ func (s *VaultStore) openDB(ctx context.Context) (*sql.DB, error) {
 		return nil, fmt.Errorf("applying vault migrations: %w", err)
 	}
 
+	// Refuse a vault whose on-disk format is newer than this binary understands
+	// (a future version's compressed blobs would otherwise be mis-read). Runs
+	// after migrations so vault_meta exists; an unmarked (v1) vault passes.
+	if err := checkReaderVersion(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	if err := s.prepareStatements(ctx, db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("preparing vault statements: %w", err)
@@ -300,8 +310,8 @@ func (s *VaultStore) prepareStatements(ctx context.Context, db *sql.DB) error {
 	if s.stmtInsertSession, err = db.PrepareContext(ctx, `
 		INSERT INTO vault_sessions
 			(uuid, title, start_time, end_time, message_count, size_bytes, content_hash,
-			 machine_id, claude_project_dir, project_path, git_branch, index_version, raw_jsonl)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
+			 machine_id, claude_project_dir, project_path, git_branch, index_version, raw_jsonl, encoding)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
 		return err
 	}
 
@@ -311,13 +321,13 @@ func (s *VaultStore) prepareStatements(ctx context.Context, db *sql.DB) error {
 		UPDATE vault_sessions SET
 			title = ?, start_time = ?, end_time = ?, message_count = ?, size_bytes = ?,
 			content_hash = ?, machine_id = ?, claude_project_dir = ?, project_path = ?,
-			git_branch = ?, index_version = ?, raw_jsonl = ?
+			git_branch = ?, index_version = ?, raw_jsonl = ?, encoding = ?
 		WHERE uuid = ?`); err != nil {
 		return err
 	}
 
 	if s.stmtInsertFile, err = db.PrepareContext(ctx, `
-		INSERT INTO vault_files (session_uuid, relative_path, raw_content) VALUES (?, ?, ?)`); err != nil {
+		INSERT INTO vault_files (session_uuid, relative_path, raw_content, encoding) VALUES (?, ?, ?, ?)`); err != nil {
 		return err
 	}
 
@@ -341,13 +351,13 @@ func (s *VaultStore) prepareStatements(ctx context.Context, db *sql.DB) error {
 	}
 
 	if s.stmtSessionsByPrefix, err = db.PrepareContext(ctx, `
-		SELECT ` + sessionMetaColumns + `, raw_jsonl
+		SELECT `+sessionMetaColumns+`, encoding, raw_jsonl
 		FROM vault_sessions WHERE uuid LIKE ? ORDER BY end_time DESC`); err != nil {
 		return err
 	}
 
 	if s.stmtFilesBySession, err = db.PrepareContext(ctx, `
-		SELECT relative_path, raw_content FROM vault_files
+		SELECT relative_path, encoding, raw_content FROM vault_files
 		WHERE session_uuid = ? ORDER BY relative_path`); err != nil {
 		return err
 	}
@@ -506,12 +516,16 @@ func (s *VaultStore) WriteBatch(ctx context.Context, writes []SessionWrite) erro
 // an insert adds a fresh row. Children (files + FTS) are written in both cases.
 func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite) error {
 	sess := &w.Record.Session
+	// Compress at the blob seam only — content_hash/size_bytes/FTS were already
+	// computed on the uncompressed bytes upstream (import.go), so encoding never
+	// affects idempotency, the larger-wins merge tiebreaker, or search.
+	rawData, rawEnc := encodeBlob(sess.RawJSONL)
 	if w.Replace {
 		if _, err := tx.StmtContext(ctx, s.stmtUpdateSession).ExecContext(ctx,
 			nullString(sess.Title), writeTime(sess.StartTime), writeTime(sess.EndTime),
 			sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
 			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch),
-			sess.IndexVersion, sess.RawJSONL,
+			sess.IndexVersion, rawData, rawEnc,
 			sess.UUID,
 		); err != nil {
 			return fmt.Errorf("update session: %w", err)
@@ -527,20 +541,38 @@ func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite
 			sess.UUID, nullString(sess.Title), writeTime(sess.StartTime), writeTime(sess.EndTime),
 			sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
 			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch),
-			sess.IndexVersion, sess.RawJSONL,
+			sess.IndexVersion, rawData, rawEnc,
 		); err != nil {
 			return fmt.Errorf("insert session: %w", err)
 		}
 	}
-	return s.writeChildren(ctx, tx, w.Record)
+	childCompressed, err := s.writeChildren(ctx, tx, w.Record)
+	if err != nil {
+		return err
+	}
+	// Stamp the forward-compat marker at most ONCE per write tx, when any blob
+	// (main or sidecar) was zstd-encoded. markMinReaderVersion is INSERT OR IGNORE,
+	// so doing it once here avoids a redundant ExecContext on the common path where
+	// both the transcript and its sidecars compress.
+	if rawEnc == encodingZstd || childCompressed {
+		return markMinReaderVersion(ctx, tx)
+	}
+	return nil
 }
 
-// writeChildren inserts the file and FTS rows for rec within tx.
-func (s *VaultStore) writeChildren(ctx context.Context, tx *sql.Tx, rec *SessionRecord) error {
+// writeChildren inserts the file and FTS rows for rec within tx. File blobs are
+// compressed at the same seam as the main transcript; it reports whether any file
+// blob was zstd-encoded so the caller can stamp min_reader_version once per tx.
+func (s *VaultStore) writeChildren(ctx context.Context, tx *sql.Tx, rec *SessionRecord) (bool, error) {
 	insFile := tx.StmtContext(ctx, s.stmtInsertFile)
+	anyCompressed := false
 	for _, f := range rec.Files {
-		if _, err := insFile.ExecContext(ctx, rec.Session.UUID, f.RelativePath, f.RawContent); err != nil {
-			return fmt.Errorf("insert file %q: %w", f.RelativePath, err)
+		data, enc := encodeBlob(f.RawContent)
+		if _, err := insFile.ExecContext(ctx, rec.Session.UUID, f.RelativePath, data, enc); err != nil {
+			return false, fmt.Errorf("insert file %q: %w", f.RelativePath, err)
+		}
+		if enc == encodingZstd {
+			anyCompressed = true
 		}
 	}
 
@@ -550,10 +582,10 @@ func (s *VaultStore) writeChildren(ctx context.Context, tx *sql.Tx, rec *Session
 			r.ContentText, rec.Session.UUID, r.SubagentID,
 			r.TurnIndex, r.MessageIndex, r.LineIndex, r.Role,
 		); err != nil {
-			return fmt.Errorf("insert fts row: %w", err)
+			return false, fmt.Errorf("insert fts row: %w", err)
 		}
 	}
-	return nil
+	return anyCompressed, nil
 }
 
 // FTSRebuild bundles one session's freshly-scanned FTS rows with the
@@ -787,9 +819,16 @@ func (s *VaultStore) GetFiles(ctx context.Context, sessionUUID string) ([]File, 
 	files := make([]File, 0)
 	for rows.Next() {
 		var f File
-		if err := rows.Scan(&f.RelativePath, &f.RawContent); err != nil {
+		var encoding sql.NullString
+		var raw []byte
+		if err := rows.Scan(&f.RelativePath, &encoding, &raw); err != nil {
 			return nil, fmt.Errorf("scanning file: %w", err)
 		}
+		decoded, err := decodeBlob(encoding.String, raw)
+		if err != nil {
+			return nil, fmt.Errorf("decoding file %q: %w", f.RelativePath, err)
+		}
+		f.RawContent = decoded
 		files = append(files, f)
 	}
 	if err := rows.Err(); err != nil {
@@ -1019,8 +1058,11 @@ func (s *VaultStore) Stats(ctx context.Context) (*VaultStats, error) {
 	return &st, nil
 }
 
-// scanSessionMeta scans the sessionMetaColumns into sess. If raw is non-nil, an
-// extra trailing raw_jsonl column is scanned into it.
+// scanSessionMeta scans the sessionMetaColumns into sess. If raw is non-nil, two
+// extra trailing columns — encoding, raw_jsonl — are scanned and the blob is
+// decoded into *raw (the metadata-only callers, e.g. ListSessions, select neither,
+// so they pay no decode cost). Callers that pass raw must SELECT
+// `sessionMetaColumns, encoding, raw_jsonl` in that order.
 func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 	var title, gitBranch, archivedAt sql.NullString
 	var startTime, endTime sql.NullString
@@ -1029,8 +1071,10 @@ func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 		&sess.ContentHash, &sess.MachineID, &sess.ClaudeProjectDir, &sess.ProjectPath,
 		&gitBranch, &archivedAt, &sess.IndexVersion,
 	}
+	var encoding sql.NullString
+	var rawBlob []byte
 	if raw != nil {
-		dest = append(dest, raw)
+		dest = append(dest, &encoding, &rawBlob)
 	}
 	if err := rows.Scan(dest...); err != nil {
 		return fmt.Errorf("scanning session: %w", err)
@@ -1040,6 +1084,13 @@ func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 	sess.ArchivedAt = archivedAt.String
 	sess.StartTime = parseTime(startTime)
 	sess.EndTime = parseTime(endTime)
+	if raw != nil {
+		decoded, err := decodeBlob(encoding.String, rawBlob)
+		if err != nil {
+			return fmt.Errorf("decoding raw_jsonl for %s: %w", sess.UUID, err)
+		}
+		*raw = decoded
+	}
 	return nil
 }
 
