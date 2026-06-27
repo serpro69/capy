@@ -257,3 +257,51 @@ func TestRunVaultRekey_RejectsNewEqualsOld(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 }
+
+func TestResolveMergeKey(t *testing.T) {
+	// --key flag wins over both env vars.
+	t.Setenv("CAPY_VAULT_MERGE_KEY", "mergeenv")
+	t.Setenv("CAPY_VAULT_KEY", "vaultenv")
+	key, src := resolveMergeKey("flagkey")
+	assert.Equal(t, "flagkey", key)
+	assert.Equal(t, "--key", src)
+
+	// No flag → CAPY_VAULT_MERGE_KEY.
+	key, src = resolveMergeKey("")
+	assert.Equal(t, "mergeenv", key)
+	assert.Equal(t, "CAPY_VAULT_MERGE_KEY", src)
+
+	// No flag, no merge env → fall back to CAPY_VAULT_KEY (shared-passphrase case).
+	t.Setenv("CAPY_VAULT_MERGE_KEY", "")
+	key, src = resolveMergeKey("")
+	assert.Equal(t, "vaultenv", key)
+	assert.Equal(t, "CAPY_VAULT_KEY", src)
+}
+
+func TestSamePath(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "vault.db")
+	b := filepath.Join(dir, "other.db")
+
+	same, err := samePath(a, a)
+	require.NoError(t, err)
+	assert.True(t, same, "identical paths are the same vault")
+
+	same, err = samePath(a, b)
+	require.NoError(t, err)
+	assert.False(t, same, "distinct paths are different vaults")
+
+	// A relative spelling of the same file resolves to the same absolute path.
+	rel, err := filepath.Rel(mustGetwd(t), a)
+	require.NoError(t, err)
+	same, err = samePath(rel, a)
+	require.NoError(t, err)
+	assert.True(t, same, "a relative path to the same file is the same vault")
+}
+
+func mustGetwd(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	return wd
+}

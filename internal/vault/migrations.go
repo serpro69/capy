@@ -162,10 +162,19 @@ func migrate0003AddIndexVersion(ctx context.Context, db *sql.DB) error {
 	return tx.Commit()
 }
 
+// ctxQueryer is the read surface columnExists needs, satisfied by both *sql.Tx
+// (the migration runner, which probes inside its write transaction) and *sql.DB
+// (merge, which feature-detects a source vault it must NOT migrate — see
+// merge.go). Keeping the parameter an interface lets one implementation serve
+// both without duplicating the PRAGMA scan.
+type ctxQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // columnExists reports whether table has a column named col, via PRAGMA
 // table_info. table is a trusted internal constant, never user input.
-func columnExists(ctx context.Context, tx *sql.Tx, table, col string) (bool, error) {
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table)) //nolint:gosec // table is a trusted internal constant
+func columnExists(ctx context.Context, q ctxQueryer, table, col string) (bool, error) {
+	rows, err := q.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table)) //nolint:gosec // table is a trusted internal constant
 	if err != nil {
 		return false, fmt.Errorf("pragma table_info(%s): %w", table, err)
 	}
