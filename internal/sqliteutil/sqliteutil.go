@@ -256,6 +256,42 @@ func OpenWithCanary(ctx context.Context, dsn, dbPath, keyEnv string) (*sql.DB, e
 	return db, nil
 }
 
+// OpenSourceForMerge opens a source vault for `capy vault merge`, to be READ
+// without migrating or otherwise mutating its schema (the caller feature-detects
+// the source's own columns/tables instead). It checkpoints any pending WAL first
+// — folding a copied-live vault's -wal frames into the main file so WAL-resident
+// rows are not missed by the subsequent read queries.
+//
+// That checkpoint is a WRITE, so the source file AND its directory must be
+// writable (WAL also needs a writable -shm). This is why it is deliberately NOT
+// named OpenReadOnly and NOT opened with immutable=1: immutable=1 would silently
+// skip WAL-resident rows, and a read-only WAL open can fail outright. A read-only
+// source (read-only mount, immutable file, backup media) must be copied to a
+// writable location first and the copy opened.
+//
+// keyEnv names the passphrase source for the wrong-passphrase error message
+// (e.g. "CAPY_VAULT_MERGE_KEY"). The caller owns Close.
+func OpenSourceForMerge(ctx context.Context, dbPath, key, keyEnv string) (*sql.DB, error) {
+	dsn := EncryptedDSN(dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
+	db, err := OpenWithCanary(ctx, dsn, dbPath, keyEnv)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fold any pending WAL into the main file. A cleanly-closed source has none
+	// (the WAL-checkpoint-on-close invariant), so this is a no-op in the common
+	// case; it matters only for a copied-live source still carrying a -wal. The
+	// pragma reports a busy result row rather than erroring under contention, and
+	// reads on this writable WAL connection see WAL-resident rows regardless — so
+	// only a hard failure (e.g. a read-only source that cannot be written) surfaces
+	// here, with a message pointing at the writable-source requirement.
+	if _, err := db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("checkpointing source WAL (the source vault must be writable; copy a read-only source first): %w", err)
+	}
+	return db, nil
+}
+
 // EncryptedDSN builds a DSN with sqlite3mc URI-parameter encryption. The file:
 // prefix ensures mattn/go-sqlite3 passes the full URI through to
 // sqlite3_open_v2 (including the cipher/key params).

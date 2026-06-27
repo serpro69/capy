@@ -61,6 +61,7 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 		newVaultCheckpointCmd(env),
 		newVaultCompactCmd(env),
 		newVaultRekeyCmd(env),
+		newVaultMergeCmd(env),
 		newVaultRestoreCmd(env),
 		newVaultResumeCmd(env),
 		newVaultDeleteCmd(env),
@@ -667,6 +668,122 @@ func runVaultRekey(dbPath, oldKey, newKey string, removeBackup bool) error {
 	fmt.Fprintf(os.Stderr, "capy vault rekey: warning: %s is still decryptable by the OLD key.\n", res.BackupPath)
 	fmt.Fprintln(os.Stderr, "  When rotating a compromised key, delete it manually (or pass --remove-backup on the next rotation).")
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// merge
+// ---------------------------------------------------------------------------
+
+func newVaultMergeCmd(env *vaultEnv) *cobra.Command {
+	var (
+		from    string
+		keyFlag string
+		project string
+		dryRun  bool
+	)
+	cmd := &cobra.Command{
+		Use:   "merge --from <vault.db>",
+		Short: "Merge sessions from another vault into this one (cross-machine union)",
+		Long: `Import the sessions of another machine's vault into this one, non-destructively.
+
+Unlike copying vault.db (which replaces the whole archive), merge unites the two:
+distinct sessions are added, and where both vaults hold the same session UUID the
+larger-total-content copy wins. Re-running is idempotent.
+
+Provide the source vault's key with --key or CAPY_VAULT_MERGE_KEY; when both
+machines share a passphrase it falls back to CAPY_VAULT_KEY. The source vault must
+be WRITABLE (merge checkpoints its WAL before reading) — copy a read-only source
+(backup media, read-only mount) to a writable location first and point --from at
+the copy.
+
+No "stop the server" requirement: merge writes only this (destination) vault and
+tolerates a concurrent server sweep via busy-timeout retry, the same as import.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := guardTUI(cmd); err != nil {
+				return err
+			}
+			if from == "" {
+				return fmt.Errorf("--from is required (path to the source vault.db)")
+			}
+			// A source path that does not exist would otherwise be CREATED as a fresh
+			// empty encrypted DB by sql.Open and merge silently as a no-op — fail loud.
+			if _, err := os.Stat(from); err != nil {
+				return fmt.Errorf("source vault %s: %w", from, err)
+			}
+			// Merging a vault into itself opens a second handle on the same file and
+			// is never intended — reject it.
+			if same, err := samePath(from, env.dbPath); err != nil {
+				return err
+			} else if same {
+				return fmt.Errorf("source and destination are the same vault (%s)", env.dbPath)
+			}
+
+			srcKey, srcKeyEnv := resolveMergeKey(keyFlag)
+
+			st := vault.NewVaultStore(env.dbPath)
+			defer st.Close()
+			// Fail fast on a wrong destination key / corrupt DB before reading the source.
+			if err := st.Open(cmd.Context()); err != nil {
+				return err
+			}
+
+			res, err := vault.MergeFrom(cmd.Context(), st, from, srcKey, srcKeyEnv,
+				vault.MergeOptions{Project: project, DryRun: dryRun})
+			if err != nil {
+				return err
+			}
+			printImportResult(res, dryRun)
+			if res.Errors > 0 {
+				return fmt.Errorf("%d session(s) failed to merge", res.Errors)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&from, "from", "", "path to the source vault.db to merge from (required)")
+	cmd.Flags().StringVar(&keyFlag, "key", "", "source vault passphrase (default: CAPY_VAULT_MERGE_KEY, then CAPY_VAULT_KEY)")
+	cmd.Flags().StringVar(&project, "project", "", "only merge sessions whose mangled project dir (e.g. -home-user-capy) contains this substring")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview what would be merged without writing")
+	return cmd
+}
+
+// resolveMergeKey picks the source-vault passphrase by precedence — the --key
+// flag, then CAPY_VAULT_MERGE_KEY, then CAPY_VAULT_KEY (the shared-passphrase
+// case; the vault group's PersistentPreRunE already verified it is set). It
+// returns the resolved key and a label naming its origin for error messages.
+func resolveMergeKey(keyFlag string) (key, keyEnv string) {
+	if keyFlag != "" {
+		return keyFlag, "--key"
+	}
+	if k := os.Getenv("CAPY_VAULT_MERGE_KEY"); k != "" {
+		return k, "CAPY_VAULT_MERGE_KEY"
+	}
+	// CAPY_VAULT_KEY is guaranteed set here (PersistentPreRunE). RequireVaultKey's
+	// error is therefore unreachable; ignore it rather than complicate the signature.
+	k, _ := vault.RequireVaultKey()
+	return k, "CAPY_VAULT_KEY"
+}
+
+// samePath reports whether two paths refer to the same file. It compares
+// cleaned absolute paths; when both exist it also compares os.SameFile so a
+// symlinked or differently-spelled source is still caught.
+func samePath(a, b string) (bool, error) {
+	absA, err := filepath.Abs(a)
+	if err != nil {
+		return false, fmt.Errorf("resolving %s: %w", a, err)
+	}
+	absB, err := filepath.Abs(b)
+	if err != nil {
+		return false, fmt.Errorf("resolving %s: %w", b, err)
+	}
+	if absA == absB {
+		return true, nil
+	}
+	infoA, errA := os.Stat(absA)
+	infoB, errB := os.Stat(absB)
+	if errA == nil && errB == nil {
+		return os.SameFile(infoA, infoB), nil
+	}
+	return false, nil
 }
 
 // ---------------------------------------------------------------------------
