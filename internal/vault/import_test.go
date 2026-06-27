@@ -88,6 +88,84 @@ func TestImport_IdempotentSkipsUnchanged(t *testing.T) {
 	assert.Equal(t, StatusSkipped, second.Sessions[0].Status)
 }
 
+func TestImport_ExcludesEmptySessions(t *testing.T) {
+	s := newTestVault(t)
+	root := t.TempDir()
+	projDir := filepath.Join(root, "-home-user-proj")
+	emptyUUID := "00000000-0000-0000-0000-000000000000"
+	normalUUID := "11111111-2222-3333-4444-555555555555"
+
+	// An "empty" session has no human-text or assistant turns — only tool_result
+	// noise and an ai-title — so MessageCount == 0 and it carries no archival value.
+	emptyJSONL := jsonlBytes(t,
+		userToolResultLine("u1", "build log only, no conversation"),
+		aiTitleLine("Empty session"),
+	)
+	writeSession(t, projDir, emptyUUID, emptyJSONL, nil)
+	writeSession(t, projDir, normalUUID, sampleMainJSONL(t), nil)
+
+	// Dry run reports the exclusion just like a real run (the 0-msg gate precedes
+	// the DryRun branch) and writes nothing.
+	dry := importFixture(t, s, root, ImportOptions{DryRun: true})
+	assert.Equal(t, 1, dry.Imported)
+	assert.Equal(t, 1, dry.Excluded)
+
+	res := importFixture(t, s, root, ImportOptions{})
+	assert.Equal(t, 1, res.Imported, "the normal session is archived")
+	assert.Equal(t, 1, res.Excluded, "the 0-msg session is excluded")
+	assert.Equal(t, 0, res.Errors)
+
+	// The excluded session is still reported (for transparency) with StatusExcluded.
+	var excluded *ImportedSession
+	for i := range res.Sessions {
+		if res.Sessions[i].UUID == emptyUUID {
+			excluded = &res.Sessions[i]
+		}
+	}
+	require.NotNil(t, excluded, "the excluded session is reported in the result")
+	assert.Equal(t, StatusExcluded, excluded.Status)
+
+	// ...but it never reaches the DB: absent from list, GetSession misses.
+	_, err := s.GetSession(context.Background(), emptyUUID[:8])
+	assert.ErrorIs(t, err, ErrSessionNotFound, "the empty session is not archived")
+
+	sessions, err := s.ListSessions(context.Background(), ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, sessions, 1, "only the normal session is listed")
+	assert.Equal(t, normalUUID, sessions[0].UUID)
+}
+
+func TestImport_ArchivesPreviouslyEmptySessionOnceItGainsMessages(t *testing.T) {
+	s := newTestVault(t)
+	root := t.TempDir()
+	projDir := filepath.Join(root, "-home-user-proj")
+	uuid := "11111111-2222-3333-4444-555555555555"
+
+	// First import: the session has no real turns yet → excluded, not written.
+	writeSession(t, projDir, uuid, jsonlBytes(t,
+		userToolResultLine("u1", "tool noise"),
+		aiTitleLine("Pending"),
+	), nil)
+	first := importFixture(t, s, root, ImportOptions{})
+	assert.Equal(t, 0, first.Imported)
+	assert.Equal(t, 1, first.Excluded)
+	_, err := s.GetSession(context.Background(), uuid[:8])
+	require.ErrorIs(t, err, ErrSessionNotFound)
+
+	// It gains real conversation, then is re-imported → archived. Because it was
+	// never written, it appears as StatusNew (not StatusUpdated).
+	writeSession(t, projDir, uuid, sampleMainJSONL(t), nil)
+	second := importFixture(t, s, root, ImportOptions{})
+	assert.Equal(t, 1, second.Imported)
+	assert.Equal(t, 0, second.Excluded)
+	require.Len(t, second.Sessions, 1)
+	assert.Equal(t, StatusNew, second.Sessions[0].Status)
+
+	got, err := s.GetSession(context.Background(), uuid[:8])
+	require.NoError(t, err)
+	assert.Equal(t, "Fix the timeout bug", got.Title)
+}
+
 func TestImport_ReindexesVersionStaleSession(t *testing.T) {
 	s := newTestVault(t)
 	root := t.TempDir()

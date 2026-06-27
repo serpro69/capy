@@ -15,11 +15,18 @@ import (
 )
 
 // Per-session import outcomes, surfaced in ImportResult.Sessions for table output.
+//
+// TODO(deferred, review P3): these are untyped strings, so ImportedSession.Status
+// and record()'s switch accept any string and silently fall through on a typo. A
+// `type ImportStatus string` would make the switch exhaustiveness-checkable. Left
+// out of the V2.4 0-msg-exclusion change because it touches every switch + caller
+// type annotation across the package — a cross-cutting refactor, not this task.
 const (
-	StatusNew     = "new"     // a UUID not previously archived → inserted
-	StatusUpdated = "updated" // an existing UUID whose total content grew → replaced
-	StatusSkipped = "skipped" // unchanged (same hash) or a smaller divergent variant
-	StatusError   = "error"   // read/scan/write failure; see ImportedSession.Err
+	StatusNew      = "new"      // a UUID not previously archived → inserted
+	StatusUpdated  = "updated"  // an existing UUID whose total content grew → replaced
+	StatusSkipped  = "skipped"  // unchanged (same hash) or a smaller divergent variant
+	StatusExcluded = "excluded" // empty session (0 messages) → not archived
+	StatusError    = "error"    // read/scan/write failure; see ImportedSession.Err
 )
 
 const (
@@ -47,7 +54,7 @@ type ImportedSession struct {
 	Title       string // populated for new/updated; empty for skipped (not scanned)
 	ProjectPath string // populated for new/updated; empty for skipped
 	SizeBytes   int64  // total content size (main JSONL + sidecars)
-	Status      string // StatusNew | StatusUpdated | StatusSkipped | StatusError
+	Status      string // StatusNew | StatusUpdated | StatusSkipped | StatusExcluded | StatusError
 	Err         error  // set only when Status == StatusError
 }
 
@@ -56,6 +63,7 @@ type ImportResult struct {
 	Imported int
 	Updated  int
 	Skipped  int
+	Excluded int
 	Errors   int
 	Sessions []ImportedSession
 }
@@ -68,6 +76,8 @@ func (r *ImportResult) record(s ImportedSession) {
 		r.Updated++
 	case StatusSkipped:
 		r.Skipped++
+	case StatusExcluded:
+		r.Excluded++
 	case StatusError:
 		r.Errors++
 	}
@@ -227,6 +237,25 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 			continue
 		}
 
+		// Exclude empty sessions: a transcript with no human-text or assistant
+		// turns (MessageCount == 0 — e.g. a freshly-created file carrying only
+		// tool_result noise and an ai-title) has no archival value and would only
+		// clutter `list`. Skip without batching. MessageCount is only known after
+		// buildRecord scans, so this gate must follow it. A later import, once the
+		// session gains messages, archives it normally (it was never written, so it
+		// reappears as StatusNew). This must precede the DryRun branch so a dry run
+		// reports the same exclusion a real run would.
+		if rec.Session.MessageCount == 0 {
+			res.record(ImportedSession{
+				UUID:        sf.UUID,
+				Title:       rec.Session.Title,
+				ProjectPath: rec.Session.ProjectPath,
+				SizeBytes:   size,
+				Status:      StatusExcluded,
+			})
+			continue
+		}
+
 		status := StatusNew
 		if replace || ftsOnly {
 			status = StatusUpdated
@@ -265,7 +294,7 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		// success path, not an operator-noteworthy event.
 		slog.Debug("vault import: cancelled before completion",
 			"imported", res.Imported, "updated", res.Updated,
-			"skipped", res.Skipped, "errors", res.Errors)
+			"skipped", res.Skipped, "excluded", res.Excluded, "errors", res.Errors)
 	}
 	return res
 }

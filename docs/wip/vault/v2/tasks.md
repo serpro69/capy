@@ -163,16 +163,16 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [ ] 10.2 Verify: server-startup test with `CAPY_VAULT_SWEEP_ALL=1` + multi-project fixture imports from >1 project; unset → current project only
 
 ## Task 11: Exclude 0-message sessions from import
-- **Status:** pending
+- **Status:** done — isolated review (code-reviewer + pal/gemini-3.1-pro) found no P0/P1/P2. Applied the one agreed P3 (added `excluded` to the cooperative-cancellation `slog.Debug` summary, which had omitted the new counter). Deferred the other P3 (untyped `Status*` string constants → a `type ImportStatus string`) as an inline `TODO` at the constants block — a cross-cutting refactor out of this task's scope.
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Task 0, 1, 2, 5, 7, 10, 12, 13
 - **Docs:** [implementation.md#exclude-0-msg-sessions-v24](./implementation.md)
 
 ### Subtasks
-- [ ] 11.1 Add `StatusExcluded = "excluded"` to `internal/vault/import.go` status constants + `ImportResult` accounting + CLI table output
-- [ ] 11.2 In the `Import` loop, after `buildRecord`, skip sessions with `rec.Session.MessageCount == 0` (record `StatusExcluded`, don't batch)
-- [ ] 11.3 Verify: a fixture dir with a 0-msg + a normal session → 0-msg excluded (absent from `list`), normal imported; re-import after it gains messages archives it
+- [x] 11.1 Add `StatusExcluded = "excluded"` to `internal/vault/import.go` status constants + `ImportResult` accounting + CLI table output
+- [x] 11.2 In the `Import` loop, after `buildRecord`, skip sessions with `rec.Session.MessageCount == 0` (record `StatusExcluded`, don't batch)
+- [x] 11.3 Verify: a fixture dir with a 0-msg + a normal session → 0-msg excluded (absent from `list`), normal imported; re-import after it gains messages archives it — `import_test.go`: `TestImport_ExcludesEmptySessions` (0-msg excluded + dry-run reports it + absent from `list`/`GetSession`), `TestImport_ArchivesPreviouslyEmptySessionOnceItGainsMessages` (re-import after gaining turns archives as `StatusNew`). Race + vet clean; `make build` green.
 
 ## Task 12: TUI completion — keybindings + in-list filter
 - **Status:** pending
