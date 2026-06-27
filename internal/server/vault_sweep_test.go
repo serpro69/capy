@@ -78,6 +78,92 @@ func TestVaultSweep_SkipsSilentlyWithoutKey(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "vault DB must not be created when CAPY_VAULT_KEY is unset")
 }
 
+// setupVaultSweepMultiProject lays out a fake HOME with Claude Code sessions for
+// two distinct projects under the Claude projects root, and points the vault at
+// a temp DB. It returns the two real project dirs and the session UUID written
+// into each. The all-projects sweep should reach both; the default sweep only
+// the one handed to the server.
+func setupVaultSweepMultiProject(t *testing.T) (projectA, uuidA, projectB, uuidB string) {
+	t.Helper()
+	tmpHome := t.TempDir()
+	projectA = t.TempDir()
+	projectB = t.TempDir()
+
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("CAPY_VAULT_PATH", filepath.Join(t.TempDir(), "vault.db"))
+	t.Setenv("CAPY_MACHINE_ID", "test-machine") // avoid touching ~/.config/capy
+
+	uuidA = "sweep-proj-a-aaaa"
+	uuidB = "sweep-proj-b-bbbb"
+	writeProjectSession(t, projectA, uuidA, "Project A: configure the database",
+		"Set DATABASE_URL in your environment to configure the database.")
+	writeProjectSession(t, projectB, uuidB, "Project B: explain goroutine scheduling",
+		"Go uses an M:N scheduler with work stealing across OS threads.")
+	return projectA, uuidA, projectB, uuidB
+}
+
+// writeProjectSession writes one session JSONL into the Claude session dir that
+// ProjectSessionDir resolves for projectDir, so the fixture layout tracks the
+// same resolver the sweep uses (setup and code under test cannot drift).
+func writeProjectSession(t *testing.T, projectDir, uuid, question, answer string) {
+	t.Helper()
+	sessionDir, err := vault.ProjectSessionDir(projectDir)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(sessionDir, 0o755))
+	writeSessionJSONL(t, sessionDir, uuid, question, answer)
+}
+
+// With CAPY_VAULT_SWEEP_ALL set, the sweep walks every project under the Claude
+// projects root — not just the current project handed to the server.
+func TestVaultSweep_AllProjects_ImportsAcrossProjects(t *testing.T) {
+	projectA, uuidA, _, uuidB := setupVaultSweepMultiProject(t)
+	t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)
+	t.Setenv("CAPY_VAULT_SWEEP_ALL", "1")
+
+	// Current project is A, but the all-projects sweep walks the whole root.
+	srv := newTestServerWithProjectDir(t, nil, projectA)
+	srv.vaultSweep(context.Background())
+
+	st := vault.NewVaultStore(vault.VaultDBPath())
+	t.Cleanup(func() { _ = st.Close() })
+
+	sessions, err := st.ListSessions(context.Background(), vault.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, sessions, 2, "expected exactly 2 sessions, one per project")
+
+	got := map[string]bool{}
+	for _, s := range sessions {
+		got[s.UUID] = true
+	}
+	assert.True(t, got[uuidA], "current-project session %s should be archived", uuidA)
+	assert.True(t, got[uuidB], "other-project session %s should be archived under CAPY_VAULT_SWEEP_ALL", uuidB)
+}
+
+// Without CAPY_VAULT_SWEEP_ALL, the sweep stays scoped to the current project —
+// sessions from sibling projects under the same root must NOT be imported.
+func TestVaultSweep_DefaultScopesToCurrentProject(t *testing.T) {
+	projectA, uuidA, _, uuidB := setupVaultSweepMultiProject(t)
+	t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)
+	t.Setenv("CAPY_VAULT_SWEEP_ALL", "") // explicit: default (current-project) sweep
+
+	srv := newTestServerWithProjectDir(t, nil, projectA)
+	srv.vaultSweep(context.Background())
+
+	st := vault.NewVaultStore(vault.VaultDBPath())
+	t.Cleanup(func() { _ = st.Close() })
+
+	sessions, err := st.ListSessions(context.Background(), vault.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, sessions, 1, "expected exactly 1 session (current project only)")
+
+	got := map[string]bool{}
+	for _, s := range sessions {
+		got[s.UUID] = true
+	}
+	assert.True(t, got[uuidA], "current-project session %s should be archived", uuidA)
+	assert.False(t, got[uuidB], "other-project session %s must NOT be archived without CAPY_VAULT_SWEEP_ALL", uuidB)
+}
+
 // A project whose Claude session directory does not exist yet (the common case
 // at first startup) is a no-op, not a failure — and it must not create a vault.
 func TestVaultSweep_NoSessionsIsNoOp(t *testing.T) {
