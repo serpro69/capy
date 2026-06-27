@@ -135,8 +135,8 @@ func printImportResult(res vault.ImportResult, dryRun bool) {
 			shortUUID(s.UUID), s.Status, truncate(displayPath(s.ProjectPath), 28),
 			formatSize(s.SizeBytes), truncate(s.Title, 50))
 	}
-	fmt.Printf("\nimported %d, updated %d, skipped %d, errors %d\n",
-		res.Imported, res.Updated, res.Skipped, res.Errors)
+	fmt.Printf("\nimported %d, updated %d, skipped %d, excluded %d, errors %d\n",
+		res.Imported, res.Updated, res.Skipped, res.Excluded, res.Errors)
 }
 
 // ---------------------------------------------------------------------------
