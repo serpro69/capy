@@ -296,3 +296,74 @@ func TestVaultResumePropagatesExitCode(t *testing.T) {
 	require.ErrorAs(t, err, &ee, "resume should exit non-zero when claude does")
 	assert.Equal(t, 3, ee.ExitCode(), "capy must propagate claude's own exit code")
 }
+
+// writeMergeSession writes a one-line session JSONL carrying a unique token, used
+// by the merge e2e to prove source-only content lands in the destination.
+func writeMergeSession(t *testing.T, projectDir, uuid, token string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+	line := `{"type":"user","uuid":"u1","timestamp":"2026-05-01T10:00:00Z","cwd":"/home/user/proj","gitBranch":"main","message":{"role":"user","content":"marker ` + token + `"}}` + "\n" +
+		`{"type":"ai-title","aiTitle":"session ` + token + `","sessionId":"s1"}` + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, uuid+".jsonl"), []byte(line), 0o644))
+}
+
+// TestVaultMerge_EndToEnd drives the merge subcommand through the CLI: it builds a
+// source and a destination vault (sharing CAPY_VAULT_KEY, so the source key falls
+// back to it), merges, and confirms the source-only session appears in the
+// destination. It also covers the --from-required and same-vault guards.
+func TestVaultMerge_EndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CAPY_VAULT_KEY", testVaultKey)
+	t.Setenv("CAPY_MACHINE_ID", "test-machine")
+
+	srcVault := filepath.Join(dir, "source.db")
+	destVault := filepath.Join(dir, "dest.db")
+	srcProj := filepath.Join(dir, "srcproj")
+	destProj := filepath.Join(dir, "destproj")
+	const srcUUID = "aaaa1111-aaaa-bbbb-cccc-1234567890ab"
+	const destUUID = "bbbb2222-aaaa-bbbb-cccc-1234567890ab"
+	writeMergeSession(t, srcProj, srcUUID, "ichthyosaur")
+	writeMergeSession(t, destProj, destUUID, "trilobite")
+
+	// Build the source vault.
+	t.Setenv("CAPY_VAULT_PATH", srcVault)
+	_, stderr, code := capy(t, "vault", "import", "--path", srcProj)
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+
+	// Build the destination vault.
+	t.Setenv("CAPY_VAULT_PATH", destVault)
+	_, stderr, code = capy(t, "vault", "import", "--path", destProj)
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+
+	// Dry run writes nothing.
+	stdout, stderr, code := capy(t, "vault", "merge", "--from", srcVault, "--dry-run")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "DRY RUN")
+	stdout, _, code = capy(t, "vault", "search", "ichthyosaur")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "no matches", "dry-run must not write the source session")
+
+	// Real merge: the source session lands in the destination.
+	stdout, stderr, code = capy(t, "vault", "merge", "--from", srcVault)
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "imported 1")
+
+	stdout, _, code = capy(t, "vault", "search", "ichthyosaur")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, srcUUID[:8], "source-only session must be searchable in the destination")
+
+	// The destination's own session is still present (non-destructive).
+	stdout, _, code = capy(t, "vault", "search", "trilobite")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, destUUID[:8])
+
+	// Guard: --from is required.
+	_, stderr, code = capy(t, "vault", "merge")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "--from is required")
+
+	// Guard: merging the destination into itself is rejected.
+	_, stderr, code = capy(t, "vault", "merge", "--from", destVault)
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "same vault")
+}
