@@ -191,24 +191,45 @@ func (s *Server) shutdown() {
 	}
 }
 
-// vaultSweep archives the current project's Claude Code sessions into the
-// encrypted vault. It is opt-in: with CAPY_VAULT_KEY unset the vault is disabled
-// and the sweep returns silently. The sweep owns its VaultStore for the call and
-// Close()s it on return — Close runs the WAL checkpoint, and shutdown() (which
-// closes only the knowledge ContentStore) never touches the vault, so closing
-// here is what flushes vault.db-wal. ctx provides cooperative cancellation, so a
-// shutdown mid-sweep stops at the next session boundary rather than blocking
-// bgWg.Wait(). Failures are logged, never fatal — sessions stay recoverable via
-// `capy vault import`.
+// vaultSweep archives Claude Code sessions into the encrypted vault. By default
+// it sweeps only the current project; with CAPY_VAULT_SWEEP_ALL set it walks
+// every project under the Claude projects root instead. The all-projects path is
+// opt-in because a startup walk across hundreds of projects adds latency and
+// vault.db write contention. It is opt-in on the vault itself too: with
+// CAPY_VAULT_KEY unset the vault is disabled and the sweep returns silently. The
+// sweep owns its VaultStore for the call and Close()s it on return — Close runs
+// the WAL checkpoint, and shutdown() (which closes only the knowledge
+// ContentStore) never touches the vault, so closing here is what flushes
+// vault.db-wal. ctx provides cooperative cancellation, so a shutdown mid-sweep
+// stops at the next session boundary rather than blocking bgWg.Wait(). Failures
+// are logged, never fatal — sessions stay recoverable via `capy vault import`.
 func (s *Server) vaultSweep(ctx context.Context) {
 	if _, err := vault.RequireVaultKey(); err != nil {
 		return // vault is opt-in; not configured
 	}
 
-	sessionDir, err := vault.ProjectSessionDir(s.projectDir)
-	if err != nil {
-		slog.Warn("vault sweep: cannot resolve session directory", "project", s.projectDir, "error", err)
-		return
+	allProjects := os.Getenv("CAPY_VAULT_SWEEP_ALL") != ""
+
+	var sessionDir string
+	if allProjects {
+		// Walk every project under the Claude projects root. ClaudeProjectsDir
+		// honors CLAUDE_CONFIG_DIR, and DiscoverSessions auto-detects a
+		// projects-root input and walks each project subdir. A failure to resolve
+		// the root is worth a warning here (unlike the common no-sessions-yet
+		// case below) — the user explicitly opted into the all-projects sweep.
+		root, err := config.ClaudeProjectsDir()
+		if err != nil {
+			slog.Warn("vault sweep (all projects): cannot resolve projects dir", "error", err)
+			return
+		}
+		sessionDir = root
+	} else {
+		dir, err := vault.ProjectSessionDir(s.projectDir)
+		if err != nil {
+			slog.Warn("vault sweep: cannot resolve session directory", "project", s.projectDir, "error", err)
+			return
+		}
+		sessionDir = dir
 	}
 
 	sessions, err := vault.DiscoverSessions(sessionDir)
@@ -238,12 +259,30 @@ func (s *Server) vaultSweep(ctx context.Context) {
 		return
 	}
 
+	if allProjects {
+		// Logged after the open probe (so it never precedes an open failure) but
+		// before Import, so it confirms the opt-in took effect even on a run where
+		// every session is already archived (Import would then log nothing).
+		slog.Info("vault sweep (all projects)",
+			"projects", countProjects(sessions), "sessions", len(sessions))
+	}
+
 	res := vault.Import(ctx, st, sessions, vault.ImportOptions{})
 	if res.Imported > 0 || res.Updated > 0 || res.Errors > 0 {
 		slog.Info("vault sweep",
 			"imported", res.Imported, "updated", res.Updated,
 			"skipped", res.Skipped, "errors", res.Errors)
 	}
+}
+
+// countProjects returns the number of distinct project directories represented
+// in the discovered sessions, for the all-projects sweep summary log.
+func countProjects(sessions []vault.SessionFile) int {
+	seen := make(map[string]struct{}, len(sessions))
+	for _, sf := range sessions {
+		seen[sf.ProjectDir] = struct{}{}
+	}
+	return len(seen)
 }
 
 // registerToolsForTest is a test helper that only creates the MCP server
