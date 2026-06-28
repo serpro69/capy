@@ -47,9 +47,7 @@ func renderTranscript(messages []vault.TranscriptMessage, st Styles, width int) 
 			continue
 		}
 		out.rows = append(out.rows, st.messageHeader(m.Role))
-		for _, line := range wrapBody(m.Body, st.Body, width) {
-			out.rows = append(out.rows, line)
-		}
+		out.rows = append(out.rows, renderBody(m.Role, m.Body, st, width)...)
 		out.rows = append(out.rows, "") // blank separator between messages
 	}
 	return out
