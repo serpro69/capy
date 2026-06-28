@@ -11,9 +11,11 @@ import "github.com/charmbracelet/lipgloss"
 // (DefaultStyles) and passed by value to the sub-models; lipgloss styles are
 // immutable value types, so sharing a Styles is safe and cheap.
 //
-// v1 is lipgloss-only by design — glamour (rich markdown / syntax highlighting)
-// is excluded to keep the binary lean (see docs/wip/vault/design.md §Dependencies).
-// Styling is limited to role coloring, a dimmed subagent marker, and panel chrome.
+// The default build is lipgloss-only — glamour (rich markdown / syntax
+// highlighting) is excluded to keep the binary lean (see docs/wip/vault/design.md
+// §Dependencies). The opt-in `-tags glamour` build renders user/assistant
+// markdown through glamour (render_glamour.go); these lipgloss styles still
+// apply to role headers, subagent markers, and panel chrome in both builds.
 type Styles struct {
 	// Role styles for the viewer headers and search-result rows.
 	RoleUser      lipgloss.Style

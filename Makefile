@@ -9,7 +9,7 @@ BUILD_TAGS      := -tags "fts5"
 BENCH_BRANCH    := $(shell git rev-parse --abbrev-ref HEAD | tr '/' '-')
 TOOLBOX_VERSION := latest # also accepts other refs like branch names ('master', 'feat/...'), or tags ('v1.2.3')
 
-.PHONY: help build test test-race fmt vet clean bench bench-perf bench-quality bench-compare sync
+.PHONY: help build build-glamour test test-race fmt vet clean bench bench-perf bench-quality bench-compare sync
 
 help: ## Print this help message
 	@grep -E "^[a-zA-Z_-]+:.*?## .*$$" $(MAKEFILE_LIST) |\
@@ -18,6 +18,9 @@ help: ## Print this help message
 
 build: ## Build capy binary
 	CGO_ENABLED=1 go build $(BUILD_TAGS) $(LDFLAGS) -o capy ./cmd/capy/
+
+build-glamour: ## Build capy with opt-in glamour markdown rendering in the vault TUI
+	CGO_ENABLED=1 go build -tags "fts5,glamour" $(LDFLAGS) -o capy ./cmd/capy/
 
 test: ## Run all tests
 	CGO_ENABLED=1 go test $(BUILD_TAGS) ./...
