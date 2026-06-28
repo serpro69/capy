@@ -807,32 +807,39 @@ write elsewhere. Existing files are kept unless you confirm overwriting them.`,
 			}
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
-
-			sess, err := st.GetSession(cmd.Context(), args[0])
-			if err != nil {
-				return handleLookupError(args[0], err)
-			}
-			files, err := st.GetFiles(cmd.Context(), sess.UUID)
-			if err != nil {
-				return err
-			}
-
-			root := output
-			if root == "" {
-				if root, err = defaultRestoreRoot(sess); err != nil {
-					return err
-				}
-			}
-			res, err := vault.RestoreSession(sess.UUID, sess.RawJSONL, files, root, confirmOverwrite)
-			if err != nil {
-				return err
-			}
-			printRestoreResult(res)
-			return nil
+			return restoreVaultSession(cmd, st, args[0], output)
 		},
 	}
 	cmd.Flags().StringVar(&output, "output", "", "restore into this directory (default: the session's Claude projects dir)")
 	return cmd
+}
+
+// restoreVaultSession writes an archived session's files back to disk. Shared by
+// the `restore` subcommand and the TUI's `r` action (which both resolve the
+// session, pick a root, and report the result identically). An empty output uses
+// the session's Claude projects dir.
+func restoreVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, output string) error {
+	sess, err := st.GetSession(cmd.Context(), sessionID)
+	if err != nil {
+		return handleLookupError(sessionID, err)
+	}
+	files, err := st.GetFiles(cmd.Context(), sess.UUID)
+	if err != nil {
+		return err
+	}
+
+	root := output
+	if root == "" {
+		if root, err = defaultRestoreRoot(sess); err != nil {
+			return err
+		}
+	}
+	res, err := vault.RestoreSession(sess.UUID, sess.RawJSONL, files, root, confirmOverwrite)
+	if err != nil {
+		return err
+	}
+	printRestoreResult(res)
+	return nil
 }
 
 func printRestoreResult(res *vault.RestoreResult) {
@@ -868,47 +875,56 @@ session's recorded project path, or the current directory (in that order).`,
 			if err := guardTUI(cmd); err != nil {
 				return err
 			}
-			// Fail fast before touching the vault if Claude Code is not installed.
-			claudeBin, err := exec.LookPath("claude")
-			if err != nil {
-				return fmt.Errorf("`claude` not found on PATH — install Claude Code to resume sessions")
-			}
-
 			st := vault.NewVaultStore(env.dbPath)
-			defer st.Close() // idempotent; we Close explicitly before exec below
-
-			sess, err := st.GetSession(cmd.Context(), args[0])
-			if err != nil {
-				return handleLookupError(args[0], err)
-			}
-			files, err := st.GetFiles(cmd.Context(), sess.UUID)
-			if err != nil {
-				return err
-			}
-
-			// Restore to the Claude Code location so `claude --resume` finds it.
-			root, err := defaultRestoreRoot(sess)
-			if err != nil {
-				return err
-			}
-			if _, err := vault.RestoreSession(sess.UUID, sess.RawJSONL, files, root, confirmOverwrite); err != nil {
-				return err
-			}
-
-			launchDir, err := resolveResumeDir(dir, sess.ProjectPath)
-			if err != nil {
-				return err
-			}
-
-			// Release the vault (flushes the WAL) before handing the terminal to claude.
-			if err := st.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "capy vault resume: warning: closing vault: %v\n", err)
-			}
-			return runClaudeResume(claudeBin, sess.UUID, launchDir)
+			defer st.Close() // idempotent; resumeVaultSession Closes explicitly before exec
+			return resumeVaultSession(cmd, st, args[0], dir)
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "working directory to launch claude in (overrides the session's project path)")
 	return cmd
+}
+
+// resumeVaultSession restores an archived session and launches `claude --resume`
+// on it. Shared by the `resume` subcommand and the TUI's `R` action. It closes
+// st (flushing the WAL) before handing the terminal to claude, so callers must
+// not use st afterwards (a deferred Close remains safe — Close is idempotent).
+// dir overrides the launch directory; "" falls back to the session's project path
+// then the cwd (see resolveResumeDir).
+func resumeVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, dir string) error {
+	// Fail fast before touching the vault if Claude Code is not installed.
+	claudeBin, err := exec.LookPath("claude")
+	if err != nil {
+		return fmt.Errorf("`claude` not found on PATH — install Claude Code to resume sessions")
+	}
+
+	sess, err := st.GetSession(cmd.Context(), sessionID)
+	if err != nil {
+		return handleLookupError(sessionID, err)
+	}
+	files, err := st.GetFiles(cmd.Context(), sess.UUID)
+	if err != nil {
+		return err
+	}
+
+	// Restore to the Claude Code location so `claude --resume` finds it.
+	root, err := defaultRestoreRoot(sess)
+	if err != nil {
+		return err
+	}
+	if _, err := vault.RestoreSession(sess.UUID, sess.RawJSONL, files, root, confirmOverwrite); err != nil {
+		return err
+	}
+
+	launchDir, err := resolveResumeDir(dir, sess.ProjectPath)
+	if err != nil {
+		return err
+	}
+
+	// Release the vault (flushes the WAL) before handing the terminal to claude.
+	if err := st.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "capy vault resume: warning: closing vault: %v\n", err)
+	}
+	return runClaudeResume(claudeBin, sess.UUID, launchDir)
 }
 
 // resolveResumeDir picks the directory to launch claude in, following the
@@ -1116,7 +1132,29 @@ func launchTUI(cmd *cobra.Command, env *vaultEnv, opts tui.Options) error {
 	if err := st.Open(cmd.Context()); err != nil {
 		return err
 	}
-	return tui.Run(cmd.Context(), st, opts)
+	action, err := tui.Run(cmd.Context(), st, opts)
+	if err != nil {
+		return err
+	}
+	// The TUI defers its destructive/exec keys (r/R) to here, after bubbletea has
+	// torn down the alt-screen and restored the raw TTY — restore writes files and
+	// resume hands the terminal to `claude --resume`, both of which need a normal
+	// terminal. The store is still open (deferred Close above; resume closes it
+	// explicitly before exec).
+	return performTUIAction(cmd, st, action)
+}
+
+// performTUIAction runs the deferred restore/resume the TUI requested. ActionNone
+// (the user just quit) is a no-op.
+func performTUIAction(cmd *cobra.Command, st *vault.VaultStore, a tui.Action) error {
+	switch a.Kind {
+	case tui.ActionRestore:
+		return restoreVaultSession(cmd, st, a.SessionUUID, "")
+	case tui.ActionResume:
+		return resumeVaultSession(cmd, st, a.SessionUUID, "")
+	default:
+		return nil
+	}
 }
 
 // guardTUI rejects --tui for commands that have no interactive mode (the

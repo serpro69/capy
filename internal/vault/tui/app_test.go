@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/serpro69/capy/internal/vault"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/serpro69/capy/internal/vault"
 )
 
 // newTestApp builds an app over a stubStore holding the sample session.
@@ -32,7 +32,7 @@ func TestApp_DefaultStartsInList(t *testing.T) {
 
 func TestApp_ListEnterOpensView(t *testing.T) {
 	m, _ := newTestApp(t, Options{})
-	next, _ := m.Update(key("enter"))
+	next, _ := m.Update(keyMsg("enter"))
 	m = next.(Model)
 	assert.Equal(t, modeView, m.mode)
 	assert.True(t, m.viewer.ready)
@@ -41,7 +41,7 @@ func TestApp_ListEnterOpensView(t *testing.T) {
 
 func TestApp_SlashOpensSearch(t *testing.T) {
 	m, _ := newTestApp(t, Options{})
-	next, _ := m.Update(key("/"))
+	next, _ := m.Update(keyMsg("/"))
 	m = next.(Model)
 	assert.Equal(t, modeSearch, m.mode)
 }
@@ -49,10 +49,10 @@ func TestApp_SlashOpensSearch(t *testing.T) {
 func TestApp_ViewBackReturnsToPrevMode(t *testing.T) {
 	m, _ := newTestApp(t, Options{})
 	// list → view → back to list
-	next, _ := m.Update(key("enter"))
+	next, _ := m.Update(keyMsg("enter"))
 	m = next.(Model)
 	require.Equal(t, modeView, m.mode)
-	next, _ = m.Update(key("q"))
+	next, _ = m.Update(keyMsg("q"))
 	m = next.(Model)
 	assert.Equal(t, modeList, m.mode)
 }
@@ -74,7 +74,7 @@ func TestApp_SearchEnterOpensViewAndJumps(t *testing.T) {
 
 	// Feed results as the debounced query would, then open the selected hit.
 	m.search, _ = m.search.Update(searchResultsMsg{seq: m.search.seq, results: st.results})
-	next, _ := m.Update(key("enter"))
+	next, _ := m.Update(keyMsg("enter"))
 	m = next.(Model)
 
 	assert.Equal(t, modeView, m.mode)
@@ -85,10 +85,10 @@ func TestApp_SearchEnterOpensViewAndJumps(t *testing.T) {
 
 func TestApp_SearchEscReturnsToList(t *testing.T) {
 	m, _ := newTestApp(t, Options{})
-	next, _ := m.Update(key("/"))
+	next, _ := m.Update(keyMsg("/"))
 	m = next.(Model)
 	require.Equal(t, modeSearch, m.mode)
-	next, _ = m.Update(key("esc"))
+	next, _ = m.Update(keyMsg("esc"))
 	m = next.(Model)
 	assert.Equal(t, modeList, m.mode)
 }
@@ -110,7 +110,7 @@ func TestApp_CtrlCQuits(t *testing.T) {
 func TestApp_QuitInListView(t *testing.T) {
 	m, _ := newTestApp(t, Options{})
 	m.quitting = false
-	_, cmd := m.Update(key("q"))
+	_, cmd := m.Update(keyMsg("q"))
 	require.NotNil(t, cmd)
 	assert.Equal(t, tea.Quit(), cmd())
 }
@@ -122,14 +122,14 @@ func TestApp_ViewRendersEachMode(t *testing.T) {
 	assert.Contains(t, m.View(), "Timeout investigation")
 
 	// View mode.
-	next, _ := m.Update(key("enter"))
+	next, _ := m.Update(keyMsg("enter"))
 	m = next.(Model)
 	assert.Contains(t, m.View(), "answer one")
 
 	// Back to list, then search mode.
-	next, _ = m.Update(key("q"))
+	next, _ = m.Update(keyMsg("q"))
 	m = next.(Model)
-	next, _ = m.Update(key("/"))
+	next, _ = m.Update(keyMsg("/"))
 	m = next.(Model)
 	assert.Contains(t, m.View(), "search")
 
@@ -140,6 +140,6 @@ func TestApp_ViewRendersEachMode(t *testing.T) {
 
 func TestApp_StatusLineSurfacesError(t *testing.T) {
 	m, _ := newTestApp(t, Options{})
-	m.status = "something went wrong"
+	m = m.withError("something went wrong")
 	assert.Contains(t, m.View(), "something went wrong")
 }

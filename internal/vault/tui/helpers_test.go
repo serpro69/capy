@@ -87,10 +87,23 @@ type stubStore struct {
 
 	searchCalls int
 	lastQuery   string
+	lastListOpts vault.ListOptions
 }
 
-func (s *stubStore) ListSessions(_ context.Context, _ vault.ListOptions) ([]vault.Session, error) {
-	return s.sessions, nil
+func (s *stubStore) ListSessions(_ context.Context, opts vault.ListOptions) ([]vault.Session, error) {
+	s.lastListOpts = opts
+	if opts.Project == "" {
+		return s.sessions, nil
+	}
+	// Mirror the real store's substring match on project_path so filter tests
+	// exercise the same narrowing the production query performs.
+	var out []vault.Session
+	for _, sess := range s.sessions {
+		if strings.Contains(sess.ProjectPath, opts.Project) {
+			out = append(out, sess)
+		}
+	}
+	return out, nil
 }
 
 func (s *stubStore) GetSession(_ context.Context, prefix string) (*vault.Session, error) {
