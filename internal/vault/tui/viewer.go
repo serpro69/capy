@@ -260,6 +260,25 @@ func (m viewerModel) View() string {
 	return strings.Join([]string{m.header(), m.vp.View(), m.helpLine()}, "\n")
 }
 
+// currentMessage returns the transcript message rendered at the top of the
+// viewport — what the `c` (copy) key acts on. It is the last message whose
+// rendered rows start at or before the current scroll offset (the message the
+// user is reading). Returns false for an unloaded or empty transcript.
+func (m viewerModel) currentMessage() (vault.TranscriptMessage, bool) {
+	if !m.ready || len(m.active.messages) == 0 {
+		return vault.TranscriptMessage{}, false
+	}
+	idx := 0
+	for i, start := range m.active.msgRowStart {
+		if start <= m.vp.YOffset {
+			idx = i
+		} else {
+			break
+		}
+	}
+	return m.active.messages[idx], true
+}
+
 func (m viewerModel) header() string {
 	title := strings.TrimSpace(m.sess.Title)
 	if title == "" {
@@ -274,19 +293,26 @@ func (m viewerModel) header() string {
 }
 
 func (m viewerModel) helpLine() string {
-	keys := "j/k scroll · g/G top/bottom · q back"
+	keys := "j/k scroll · g/G top/bottom · c copy · r/R restore/resume · q back"
 	if len(m.active.markers) > 0 {
-		keys = "j/k scroll · ]/[ subagent · enter open · q back"
+		keys = "j/k scroll · ]/[ subagent · enter open · c copy · r/R restore/resume · q back"
 	}
 	if m.inSub {
-		keys = "j/k scroll · esc/q return to session"
+		keys = "j/k scroll · c copy · esc/q return to session"
 	}
 	return m.styles.Help.Render(keys)
 }
 
 // contentWidth is the wrap width for body text (a small right margin avoids the
-// terminal's last column).
+// terminal's last column). It falls back to a sane default before the first
+// WindowSizeMsg arrives: launching straight into view mode (`vault show <id>
+// --tui`) renders the transcript in newModel while m.width is still 0, and
+// wrapping a whole transcript to 1 column would allocate enormously; the real
+// width re-wraps it on the first resize.
 func (m viewerModel) contentWidth() int {
+	if m.width <= 0 {
+		return 80
+	}
 	return max(1, m.width-1)
 }
 
