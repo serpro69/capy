@@ -21,3 +21,33 @@ jobs:
       - run: CGO_ENABLED=1 go test -tags fts5 -race ./...
         env:
           CAPY_DB_KEY: ci-test-key-at-least-32-characters-long!!
+
+  # The vault TUI's glamour markdown renderer is behind `-tags glamour`; the
+  # default build above never compiles it. Exercise the tagged path here so it
+  # can't bit-rot, and assert the build tag actually toggles linkage.
+  glamour:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - run: go vet -tags fts5,glamour ./internal/vault/tui/...
+
+      - run: CGO_ENABLED=1 go test -tags fts5,glamour -race ./internal/vault/tui/...
+        env:
+          CAPY_DB_KEY: ci-test-key-at-least-32-characters-long!!
+
+      - name: Assert build tag toggles glamour linkage
+        run: |
+          CGO_ENABLED=1 go build -tags fts5 -o capy-default ./cmd/capy/
+          CGO_ENABLED=1 go build -tags fts5,glamour -o capy-glamour ./cmd/capy/
+          if go tool nm capy-default | grep -qi glamour; then
+            echo "::error::default build unexpectedly links glamour"; exit 1
+          fi
+          if ! go tool nm capy-glamour | grep -qi glamour; then
+            echo "::error::glamour build does not link glamour"; exit 1
+          fi
+          echo "linkage OK: default excludes glamour, -tags glamour includes it"
