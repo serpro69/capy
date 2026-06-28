@@ -31,16 +31,16 @@ func TestSearch_ResultsPopulateAndCursorNav(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "aaaa1111", r.SessionUUID)
 
-	m, _ = m.Update(key("down"))
+	m, _ = m.Update(keyMsg("down"))
 	r, _ = m.selected()
 	assert.Equal(t, "bbbb2222", r.SessionUUID)
 	assert.Equal(t, "xyz", r.SubagentID)
 
 	// Cursor clamps at the ends.
-	m, _ = m.Update(key("down"))
+	m, _ = m.Update(keyMsg("down"))
 	assert.Equal(t, 1, m.cursor)
-	m, _ = m.Update(key("up"))
-	m, _ = m.Update(key("up"))
+	m, _ = m.Update(keyMsg("up"))
+	m, _ = m.Update(keyMsg("up"))
 	assert.Equal(t, 0, m.cursor)
 }
 
@@ -79,7 +79,7 @@ func TestSearch_TypingReschedules(t *testing.T) {
 	st := &stubStore{}
 	m := newSearchModel(context.Background(), st, DefaultStyles(), 80, 24)
 	before := m.seq
-	m, cmd := m.Update(key("a"))
+	m, cmd := m.Update(keyMsg("a"))
 	assert.Equal(t, "a", m.input.Value())
 	assert.Greater(t, m.seq, before, "a value change bumps the debounce sequence")
 	require.NotNil(t, cmd)

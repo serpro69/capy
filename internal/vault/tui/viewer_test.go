@@ -13,7 +13,7 @@ import (
 // key builds a tea.KeyMsg whose String() equals s — the form the models (and
 // the wrapped bubbles components) switch on. Special keys use their proper Type;
 // printable runes use KeyRunes.
-func key(s string) tea.KeyMsg {
+func keyMsg(s string) tea.KeyMsg {
 	switch s {
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
@@ -61,7 +61,7 @@ func TestViewer_JumpToSubagentAndReturn(t *testing.T) {
 	assert.Contains(t, v.active.content(), "subagent findings about the bug")
 
 	// esc returns to the main session, not out of the viewer.
-	v, _, action := v.Update(key("esc"))
+	v, _, action := v.Update(keyMsg("esc"))
 	assert.Equal(t, viewerNone, action)
 	assert.False(t, v.inSub)
 	assert.Empty(t, v.subID)
@@ -104,7 +104,7 @@ func TestViewer_FocusMarkerNoopWithoutMarkers(t *testing.T) {
 
 func TestViewer_BackActionAtMainLevel(t *testing.T) {
 	v := loadedViewer(t)
-	_, _, action := v.Update(key("q"))
+	_, _, action := v.Update(keyMsg("q"))
 	assert.Equal(t, viewerBack, action, "q at the main session asks the app to go back")
 }
 
@@ -202,9 +202,9 @@ func TestViewer_NavKeysDoNotPanic(t *testing.T) {
 
 	for _, k := range []string{"j", "j", "G", "k", "g", "ctrl+d", "ctrl+u", " ", "b"} {
 		var action viewerAction
-		v, _, action = v.Update(key(k))
+		v, _, action = v.Update(keyMsg(k))
 		assert.Equal(t, viewerNone, action)
 	}
-	v, _, _ = v.Update(key("G"))
+	v, _, _ = v.Update(keyMsg("G"))
 	assert.Greater(t, v.vp.YOffset, 0, "G scrolls to the bottom of a tall transcript")
 }
