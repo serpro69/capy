@@ -37,6 +37,7 @@ func stripHeredocs(cmd string) string {
 // strings from a shell command. Prevents false positives like:
 //
 //	gh issue edit --body "text with curl in it"
+//
 // Pre-compiled regexes for quote stripping (avoid compiling per call).
 var (
 	singleQuoteRe = regexp.MustCompile(`'[^']*'`)
@@ -215,12 +216,12 @@ func isCapyTool(toolName string) bool {
 // toolAliases maps platform-specific tool names to canonical Claude Code names.
 var toolAliases = map[string]string{
 	// Gemini CLI
-	"run_shell_command":  "Bash",
-	"read_file":          "Read",
-	"read_many_files":    "Read",
-	"grep_search":        "Grep",
+	"run_shell_command":   "Bash",
+	"read_file":           "Read",
+	"read_many_files":     "Read",
+	"grep_search":         "Grep",
 	"search_file_content": "Grep",
-	"web_fetch":          "WebFetch",
+	"web_fetch":           "WebFetch",
 	// OpenCode
 	"bash":  "Bash",
 	"view":  "Read",
@@ -228,7 +229,7 @@ var toolAliases = map[string]string{
 	"fetch": "WebFetch",
 	"agent": "Agent",
 	// Codex CLI
-	"shell":         "Bash",
+	"shell":          "Bash",
 	"shell_command":  "Bash",
 	"exec_command":   "Bash",
 	"container.exec": "Bash",
@@ -241,9 +242,9 @@ var toolAliases = map[string]string{
 	// VS Code Copilot
 	"run_in_terminal": "Bash",
 	// Kiro CLI
-	"fs_read":       "Read",
-	"fs_write":      "Write",
-	"execute_bash":  "Bash",
+	"fs_read":      "Read",
+	"fs_write":     "Write",
+	"execute_bash": "Bash",
 }
 
 // canonicalToolName normalizes platform-specific tool names to canonical names.

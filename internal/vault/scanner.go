@@ -53,12 +53,12 @@ var jsonNull = []byte("null")
 // ScanResult is one searchable message extracted from a session JSONL. One FTS
 // row is inserted per ScanResult (its LineIndex populates vault_fts.line_index).
 type ScanResult struct {
-	TurnIndex    int       // increments per human-user turn; ordering only
-	MessageIndex int       // sequential within a turn (0 = first); ordering only
-	LineIndex    int       // 0-based line in the source JSONL; the view-jump anchor
-	Role         string    // user | assistant | tool | system
-	SubagentID   string    // "" for main session
-	ContentText  string    // extracted, sanitized searchable text
+	TurnIndex    int    // increments per human-user turn; ordering only
+	MessageIndex int    // sequential within a turn (0 = first); ordering only
+	LineIndex    int    // 0-based line in the source JSONL; the view-jump anchor
+	Role         string // user | assistant | tool | system
+	SubagentID   string // "" for main session
+	ContentText  string // extracted, sanitized searchable text
 	Timestamp    time.Time
 }
 

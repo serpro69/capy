@@ -493,10 +493,10 @@ func TestSanitizeParsedSession_SubagentDesc(t *testing.T) {
 	s := &ParsedSession{
 		TurnPairs: []TurnPair{
 			{
-				HumanText:    "question",
+				HumanText:     "question",
 				AssistantText: "answer",
-				IsSubagent:   true,
-				SubagentDesc: "fetch data using token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+				IsSubagent:    true,
+				SubagentDesc:  "fetch data using token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
 			},
 		},
 	}
@@ -577,8 +577,8 @@ func TestSweep_SecretSanitization(t *testing.T) {
 			"timestamp": ts,
 			"sessionId": uuid,
 			"message": map[string]any{
-				"id":   "um" + string(rune('1'+i)),
-				"role": "user",
+				"id":      "um" + string(rune('1'+i)),
+				"role":    "user",
 				"content": "How do I configure the API key?",
 			},
 		})

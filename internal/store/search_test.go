@@ -61,9 +61,9 @@ func TestSanitizeTrigramQueryNoSynonyms(t *testing.T) {
 		query, mode, want string
 	}{
 		{"authentication", "AND", `"authentication"`},
-		{"ab", "AND", ""},                                 // too short
+		{"ab", "AND", ""}, // too short
 		{"hello world", "OR", `"hello" OR "world"`},
-		{"hi lo", "AND", ""},                              // all words < 3 chars
+		{"hi lo", "AND", ""}, // all words < 3 chars
 	}
 	for _, tt := range tests {
 		got := sanitizeTrigramQuery(tt.query, tt.mode, false)
@@ -1512,4 +1512,3 @@ func TestKindScopeIncludes(t *testing.T) {
 	assert.True(t, KindScopeIncludes(withSource, KindSession))
 	assert.True(t, KindScopeIncludes(withSource, KindEphemeral))
 }
-

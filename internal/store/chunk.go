@@ -12,11 +12,11 @@ import (
 const MaxChunkBytes = 4096
 
 var (
-	headingRe    = regexp.MustCompile(`^(#{1,4})\s+(.+)$`)
-	horizRuleRe  = regexp.MustCompile(`^[-_*]{3,}\s*$`)
-	codeFenceRe  = regexp.MustCompile("^`{3,}")
-	blankLineRe  = regexp.MustCompile(`\n\s*\n`)
-	codeBlockRe  = regexp.MustCompile("(?s)```\\w*\n[\\s\\S]*?```")
+	headingRe   = regexp.MustCompile(`^(#{1,4})\s+(.+)$`)
+	horizRuleRe = regexp.MustCompile(`^[-_*]{3,}\s*$`)
+	codeFenceRe = regexp.MustCompile("^`{3,}")
+	blankLineRe = regexp.MustCompile(`\n\s*\n`)
+	codeBlockRe = regexp.MustCompile("(?s)```\\w*\n[\\s\\S]*?```")
 )
 
 // chunkMarkdown splits markdown content by headings with code-block awareness.

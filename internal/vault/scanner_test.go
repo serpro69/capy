@@ -368,10 +368,10 @@ func TestScanSession_ProgressiveSnapshotsDeduped(t *testing.T) {
 
 func TestScanSession_LineIndexTracksSourceLine(t *testing.T) {
 	r := buildJSONL(t,
-		map[string]any{"type": "permission-mode", "sessionId": "s"}, // line 0 (skipped)
-		userLine("u1", "/p", "main", "first question"),              // line 1
+		map[string]any{"type": "permission-mode", "sessionId": "s"},                        // line 0 (skipped)
+		userLine("u1", "/p", "main", "first question"),                                     // line 1
 		assistantLine("a1", "msg_1", []map[string]any{{"type": "text", "text": "answer"}}), // line 2
-		userLine("u2", "/p", "main", "second question"),             // line 3
+		userLine("u2", "/p", "main", "second question"),                                    // line 3
 	)
 
 	out, err := ScanSession(r)

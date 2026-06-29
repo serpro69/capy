@@ -14,21 +14,21 @@ import (
 
 // ParsedSession holds the filtered, structured content of a Claude Code session.
 type ParsedSession struct {
-	SessionID          string
-	StartTime          time.Time
-	TurnPairs          []TurnPair
+	SessionID           string
+	StartTime           time.Time
+	TurnPairs           []TurnPair
 	TotalAssistantChars int
 }
 
 // TurnPair is one human→assistant exchange, optionally with tool usage metadata.
 type TurnPair struct {
-	HumanText    string
+	HumanText     string
 	AssistantText string
-	ToolNames    []string
-	ToolMeta     []string
-	IsSubagent   bool
-	SubagentType string
-	SubagentDesc string
+	ToolNames     []string
+	ToolMeta      []string
+	IsSubagent    bool
+	SubagentType  string
+	SubagentDesc  string
 }
 
 // IsIndexable returns true if the session has enough content to be worth indexing.
@@ -45,7 +45,7 @@ func (s *ParsedSession) IsIndexable() bool {
 
 var (
 	sysReminderRe = regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`)
-	noiseTagRe = regexp.MustCompile(`(?s)<local-command-caveat>.*?</local-command-caveat>|<local-command-stdout>.*?</local-command-stdout>|<command-name>.*?</command-name>|<command-message>.*?</command-message>|<command-args>.*?</command-args>`)
+	noiseTagRe    = regexp.MustCompile(`(?s)<local-command-caveat>.*?</local-command-caveat>|<local-command-stdout>.*?</local-command-stdout>|<command-name>.*?</command-name>|<command-message>.*?</command-message>|<command-args>.*?</command-args>`)
 )
 
 // jsonlLine is the top-level structure of each JSONL entry.
@@ -252,9 +252,9 @@ func ParseSession(path string) (*ParsedSession, error) {
 	turnPairs, totalChars := buildTurnPairs(messages)
 
 	return &ParsedSession{
-		SessionID:          foundSessionID,
-		StartTime:          startTime,
-		TurnPairs:          turnPairs,
+		SessionID:           foundSessionID,
+		StartTime:           startTime,
+		TurnPairs:           turnPairs,
 		TotalAssistantChars: totalChars,
 	}, nil
 }
@@ -366,10 +366,10 @@ func buildTurnPairs(messages []parsedMessage) ([]TurnPair, int) {
 		aText := strings.Join(currentAssistantText, "\n")
 		totalChars += len(aText)
 		pairs = append(pairs, TurnPair{
-			HumanText:    pendingHuman.text,
+			HumanText:     pendingHuman.text,
 			AssistantText: aText,
-			ToolNames:    currentToolNames,
-			ToolMeta:     currentToolMeta,
+			ToolNames:     currentToolNames,
+			ToolMeta:      currentToolMeta,
 		})
 		pendingHuman = nil
 		currentAssistantText = nil
@@ -395,7 +395,7 @@ func buildTurnPairs(messages []parsedMessage) ([]TurnPair, int) {
 			flushPair()
 			totalChars += len(msg.text)
 			pairs = append(pairs, TurnPair{
-				HumanText:    "",
+				HumanText:     "",
 				AssistantText: msg.text,
 			})
 		}
@@ -439,13 +439,13 @@ func ParseSubagents(sessionDir string) ([]TurnPair, error) {
 
 		for _, tp := range parsed.TurnPairs {
 			allPairs = append(allPairs, TurnPair{
-				HumanText:    tp.HumanText,
+				HumanText:     tp.HumanText,
 				AssistantText: tp.AssistantText,
-				ToolNames:    tp.ToolNames,
-				ToolMeta:     tp.ToolMeta,
-				IsSubagent:   true,
-				SubagentType: agentType,
-				SubagentDesc: agentDesc,
+				ToolNames:     tp.ToolNames,
+				ToolMeta:      tp.ToolMeta,
+				IsSubagent:    true,
+				SubagentType:  agentType,
+				SubagentDesc:  agentDesc,
 			})
 		}
 	}

@@ -164,7 +164,7 @@ func TestHookIntegration_Agent_RoutingBlockInjected(t *testing.T) {
 	ResetGuidanceThrottle()
 	a := ccAdapter()
 	input := ccInput("Agent", map[string]any{
-		"prompt":       "Investigate the build failure",
+		"prompt":        "Investigate the build failure",
 		"subagent_type": "general-purpose",
 	})
 	output, err := handlePreToolUse(input, a, nil, "")
@@ -187,7 +187,7 @@ func TestHookIntegration_BashSubagent_Upgraded(t *testing.T) {
 	ResetGuidanceThrottle()
 	a := ccAdapter()
 	input := ccInput("Agent", map[string]any{
-		"prompt":       "Run the test suite",
+		"prompt":        "Run the test suite",
 		"subagent_type": "Bash",
 	})
 	output, err := handlePreToolUse(input, a, nil, "")

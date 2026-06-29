@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	searchWindowDuration   = 60 * time.Second
-	searchMaxResultsAfter  = 3 // after 3 calls: 1 result per query
-	searchBlockAfter       = 8 // after 8 calls: refuse
-	searchMaxTotalBytes    = 40 * 1024
-	searchSnippetMaxLen    = 1500
+	searchWindowDuration  = 60 * time.Second
+	searchMaxResultsAfter = 3 // after 3 calls: 1 result per query
+	searchBlockAfter      = 8 // after 8 calls: refuse
+	searchMaxTotalBytes   = 40 * 1024
+	searchSnippetMaxLen   = 1500
 )
 
 func (s *Server) handleSearch(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -223,4 +223,3 @@ func parseIncludeKinds(raw any) ([]store.SourceKind, error) {
 	}
 	return out, nil
 }
-

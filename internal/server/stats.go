@@ -8,11 +8,11 @@ import (
 
 // SessionStats tracks per-session usage metrics for the MCP server.
 type SessionStats struct {
-	SessionStart   time.Time
-	Calls          map[string]int
-	BytesReturned  map[string]int64
-	BytesIndexed   int64
-	BytesSandboxed int64
+	SessionStart    time.Time
+	Calls           map[string]int
+	BytesReturned   map[string]int64
+	BytesIndexed    int64
+	BytesSandboxed  int64
 	CacheHits       int64
 	CacheBytesSaved int64
 	mu              sync.Mutex
@@ -83,11 +83,11 @@ func (s *SessionStats) Snapshot() SessionStats {
 	maps.Copy(bytesReturned, s.BytesReturned)
 
 	return SessionStats{
-		SessionStart:   s.SessionStart,
-		Calls:          calls,
-		BytesReturned:  bytesReturned,
-		BytesIndexed:   s.BytesIndexed,
-		BytesSandboxed: s.BytesSandboxed,
+		SessionStart:    s.SessionStart,
+		Calls:           calls,
+		BytesReturned:   bytesReturned,
+		BytesIndexed:    s.BytesIndexed,
+		BytesSandboxed:  s.BytesSandboxed,
 		CacheHits:       s.CacheHits,
 		CacheBytesSaved: s.CacheBytesSaved,
 	}

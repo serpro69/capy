@@ -36,8 +36,8 @@ type viewerModel struct {
 	styles        Styles
 	width, height int
 
-	sess  vault.Session
-	files []vault.File
+	sess   vault.Session
+	files  []vault.File
 	subIDs []string // sorted subagent ids, for ParseTranscript's launch mapping
 
 	main   renderedTranscript // the main session transcript
@@ -47,8 +47,8 @@ type viewerModel struct {
 	// inInline / inlineLabel mirror inSub for the A1 collapse-then-open detail view:
 	// a collapsed tool_result's full body shown standalone (esc/q returns to main).
 	// inSub and inInline are mutually exclusive — see inDetail.
-	inInline    bool
-	inlineLabel string
+	inInline      bool
+	inlineLabel   string
 	savedMainLine int // main source line at the top of the viewport when a detail was opened; restored (via rowForLine) on return so a resize re-wrap can't stale it
 	focusedMarker int // index into active.markers, or -1
 
