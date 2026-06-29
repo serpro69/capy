@@ -169,6 +169,58 @@ func TestViewer_FocusMarkerLastMarkerNearBottomWraps(t *testing.T) {
 	assert.Equal(t, last-1, stepped.focusedMarker, "[ from the clamped last marker steps to the previous")
 }
 
+// TestViewer_FocusMarkerKeepsViewportWhenVisible is the no-jump refinement: ]/[ to
+// a marker that is already on screen must NOT scroll, so walking through a
+// screenful of markers leaves the reading position put. (Off-screen targets still
+// scroll — covered by the resolve-from-viewport and wraparound tests.)
+func TestViewer_FocusMarkerKeepsViewportWhenVisible(t *testing.T) {
+	var lines []map[string]any
+	lines = append(lines, userLine("go"))
+	// Top filler so there's scrollable content above the markers (maxYOffset > 0) —
+	// otherwise the old unconditional SetYOffset would clamp to 0 and hide the bug.
+	for j := 0; j < 5; j++ {
+		lines = append(lines, assistantLine(fmt.Sprintf("top%d", j),
+			[]map[string]any{textBlock(fmt.Sprintf("top filler %d", j))}))
+	}
+	for i := 0; i < 2; i++ { // two markers one turn apart → both fit one screen
+		id := fmt.Sprintf("t%d", i)
+		lines = append(lines,
+			assistantLine(fmt.Sprintf("a%d", i),
+				[]map[string]any{textBlock(fmt.Sprintf("step %d", i)), bashUse(id, fmt.Sprintf("cmd-%d", i))}),
+			toolResultFor(id, bigBody()),
+		)
+	}
+	// Bottom filler so the markers aren't in the clamped last-screen region.
+	for j := 0; j < 6; j++ {
+		lines = append(lines, assistantLine(fmt.Sprintf("bot%d", j),
+			[]map[string]any{textBlock(fmt.Sprintf("bottom filler %d", j))}))
+	}
+	sess := vault.Session{UUID: "closemarks000000", RawJSONL: jsonlLines(t, lines...)}
+	v := newViewerModel(DefaultStyles(), 80, 12).loadSession(sess, nil)
+	require.Len(t, v.active.markers, 2)
+
+	r0, r1 := v.active.rowForMarker(0), v.active.rowForMarker(1)
+	// Scroll so BOTH markers are on screen but the first is NOT at the very top: the
+	// old unconditional SetYOffset(rowForMarker) would yank it up to the top here.
+	top := r0 - 2
+	require.GreaterOrEqual(t, top, 1, "first marker must sit below the viewport top")
+	v.vp.SetYOffset(top)
+	require.Equal(t, top, v.vp.YOffset, "viewport must not clamp this offset")
+	require.Less(t, r1, top+v.vp.Height, "both markers fit in the viewport window")
+
+	// ] resolves to the on-screen first marker — viewport must stay put.
+	v = v.focusMarker(1)
+	require.Equal(t, 0, v.focusedMarker)
+	assert.Equal(t, top, v.vp.YOffset, "focusing an on-screen marker does not scroll")
+	require.True(t, v.focusedMarkerVisible())
+
+	// ] again steps to the on-screen second marker — still no scroll.
+	v = v.focusMarker(1)
+	require.Equal(t, 1, v.focusedMarker)
+	assert.Equal(t, top, v.vp.YOffset, "stepping to an on-screen marker does not scroll")
+	require.True(t, v.focusedMarkerVisible())
+}
+
 // TestRenderTranscript_MarkerRowsAreSingleLine is the row↔line invariant guard: a
 // subagent marker label that carries newlines (the launch label falls back to a
 // multi-line prompt; truncateRunes keeps the newlines) must still render as exactly

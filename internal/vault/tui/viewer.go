@@ -258,8 +258,9 @@ func (m viewerModel) Update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
 	return m, nil, viewerNone
 }
 
-// focusMarker moves the focused openable marker by delta (±1) and scrolls to it.
-// No-op when the active transcript has no openable markers.
+// focusMarker moves the focused openable marker by delta (±1), scrolling to it
+// only when it isn't already on screen. No-op when the active transcript has no
+// openable markers.
 //
 // The reference point depends on whether the focused marker is still on screen
 // (A4). If it is visible, ]/[ step sequentially from it (the classic cycle, with
@@ -271,6 +272,11 @@ func (m viewerModel) Update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
 // height of the transcript can't sit at the top (the viewport clamps YOffset), so
 // a YOffset-only "next" would re-select it forever — stepping from the marker
 // index escapes that.
+//
+// Scrolling is conditional: when the newly-focused marker is already visible we
+// leave the viewport where it is and only repaint the highlight, so walking ]/[
+// through a screenful of markers doesn't jump the reading position. Only an
+// off-screen target scrolls (to the top, via SetYOffset).
 func (m viewerModel) focusMarker(delta int) viewerModel {
 	n := len(m.active.markers)
 	if n == 0 {
@@ -283,11 +289,14 @@ func (m viewerModel) focusMarker(delta int) viewerModel {
 		next = m.active.markerFromViewport(m.vp.YOffset, delta)
 	}
 	m.focusedMarker = next
-	// Re-render content so the newly-focused marker is visibly highlighted (not
-	// just scrolled into view), then scroll to it.
+	// Re-render so the newly-focused marker is highlighted (not just scrolled into
+	// view). Then scroll only if it's off-screen — focusedMarkerVisible now reports
+	// on `next`, since m.focusedMarker == next.
 	m.vp.SetContent(m.viewportContent())
-	if row := m.active.rowForMarker(next); row >= 0 {
-		m.vp.SetYOffset(row)
+	if !m.focusedMarkerVisible() {
+		if row := m.active.rowForMarker(next); row >= 0 {
+			m.vp.SetYOffset(row)
+		}
 	}
 	return m
 }
