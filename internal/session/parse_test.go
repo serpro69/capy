@@ -1062,7 +1062,7 @@ func TestIsIndexable(t *testing.T) {
 		{
 			name: "empty session",
 			session: ParsedSession{
-				TurnPairs:          nil,
+				TurnPairs:           nil,
 				TotalAssistantChars: 0,
 			},
 			want: false,
@@ -2005,9 +2005,9 @@ func TestParseSubagents_ToolMetaPropagated(t *testing.T) {
 
 	writeJSONL(t, subagentsDir, "agent-sub001.jsonl", []jsonlEntry{
 		{
-			"type":      "user",
-			"uuid":      "su1",
-			"timestamp": "2026-04-05T12:00:00Z",
+			"type":        "user",
+			"uuid":        "su1",
+			"timestamp":   "2026-04-05T12:00:00Z",
 			"isSidechain": true,
 			"message": map[string]any{
 				"role":    "user",
@@ -2015,9 +2015,9 @@ func TestParseSubagents_ToolMetaPropagated(t *testing.T) {
 			},
 		},
 		{
-			"type":      "assistant",
-			"uuid":      "sa1",
-			"timestamp": "2026-04-05T12:00:10Z",
+			"type":        "assistant",
+			"uuid":        "sa1",
+			"timestamp":   "2026-04-05T12:00:10Z",
 			"isSidechain": true,
 			"message": map[string]any{
 				"id":   "msg_sub_001",
@@ -2031,9 +2031,9 @@ func TestParseSubagents_ToolMetaPropagated(t *testing.T) {
 			},
 		},
 		{
-			"type":      "user",
-			"uuid":      "su2",
-			"timestamp": "2026-04-05T12:01:00Z",
+			"type":        "user",
+			"uuid":        "su2",
+			"timestamp":   "2026-04-05T12:01:00Z",
 			"isSidechain": true,
 			"message": map[string]any{
 				"role":    "user",
@@ -2041,9 +2041,9 @@ func TestParseSubagents_ToolMetaPropagated(t *testing.T) {
 			},
 		},
 		{
-			"type":      "assistant",
-			"uuid":      "sa2",
-			"timestamp": "2026-04-05T12:01:10Z",
+			"type":        "assistant",
+			"uuid":        "sa2",
+			"timestamp":   "2026-04-05T12:01:10Z",
 			"isSidechain": true,
 			"message": map[string]any{
 				"id":   "msg_sub_002",
@@ -2222,4 +2222,3 @@ func TestParseSession_PALEmptyInputNotInToolNames(t *testing.T) {
 		t.Error("empty PAL input should not produce a PAL delimiter block")
 	}
 }
-

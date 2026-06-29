@@ -29,7 +29,7 @@ func TestParseTranscript_RolesAndAnchors(t *testing.T) {
 			{"type": "tool_use", "id": "t1", "name": "Read", "input": map[string]any{"file_path": "/p/config.toml"}},
 		}),
 		userToolResultLine("u2", "build log: error at line 5"), // line 2
-		aiTitleLine("Timeout fix"),                              // line 3 (no message)
+		aiTitleLine("Timeout fix"),                             // line 3 (no message)
 	)
 
 	msgs := ParseTranscript(raw, nil)
@@ -220,7 +220,7 @@ func TestParseTranscript_QueuedCommandAttachment(t *testing.T) {
 	// A queued_command attachment (A2) parses to a RoleUser message flagged Queued,
 	// anchored to its source line so a search hit still scrolls to it.
 	raw := jsonlBytes(t,
-		userLine("u1", "/p", "main", "kick off"), // line 0
+		userLine("u1", "/p", "main", "kick off"),                                         // line 0
 		assistantLine("a1", "m1", []map[string]any{{"type": "text", "text": "working"}}), // line 1
 		map[string]any{ // line 2
 			"type": "attachment", "uuid": "at1", "timestamp": "2026-05-01T10:00:09Z",

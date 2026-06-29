@@ -54,13 +54,13 @@ func taskBlock(desc string) map[string]any {
 func sampleSession(t *testing.T) (vault.Session, []vault.File) {
 	t.Helper()
 	main := jsonlLines(t,
-		userLine("first question about timeouts"),       // line 0
+		userLine("first question about timeouts"),                                                 // line 0
 		assistantLine("m1", []map[string]any{textBlock("answer one"), taskBlock("explore code")}), // line 1
-		userLine("second question"),                     // line 2
-		assistantLine("m2", []map[string]any{textBlock("final answer")}), // line 3
+		userLine("second question"),                                                               // line 2
+		assistantLine("m2", []map[string]any{textBlock("final answer")}),                          // line 3
 	)
 	sub := jsonlLines(t,
-		userLine("subagent prompt"),                                  // line 0
+		userLine("subagent prompt"), // line 0
 		assistantLine("s1", []map[string]any{textBlock("subagent findings about the bug")}), // line 1
 	)
 	sess := vault.Session{
@@ -80,13 +80,13 @@ func sampleSession(t *testing.T) (vault.Session, []vault.File) {
 // stubStore is an in-memory dataStore (and searcher) for driving the models
 // without an encrypted DB.
 type stubStore struct {
-	sessions []vault.Session
-	files    map[string][]vault.File
-	results  []vault.SearchResult
+	sessions  []vault.Session
+	files     map[string][]vault.File
+	results   []vault.SearchResult
 	searchErr error
 
-	searchCalls int
-	lastQuery   string
+	searchCalls  int
+	lastQuery    string
 	lastListOpts vault.ListOptions
 }
 

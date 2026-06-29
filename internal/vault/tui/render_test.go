@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/serpro69/capy/internal/vault"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/serpro69/capy/internal/vault"
 )
 
 func TestRenderTranscript_RowMapAndMarkers(t *testing.T) {

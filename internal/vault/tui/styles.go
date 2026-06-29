@@ -29,11 +29,11 @@ type Styles struct {
 	MarkerFocused  lipgloss.Style
 
 	// Body text and structural chrome.
-	Body     lipgloss.Style
-	Title    lipgloss.Style
+	Body      lipgloss.Style
+	Title     lipgloss.Style
 	StatusBar lipgloss.Style
-	Help     lipgloss.Style
-	ErrorMsg lipgloss.Style
+	Help      lipgloss.Style
+	ErrorMsg  lipgloss.Style
 
 	// Diff lines for an expanded Edit/Write diff view (A3), colored by unified-diff
 	// prefix: added (+) green, removed (-) red, hunk header (@@) cyan.

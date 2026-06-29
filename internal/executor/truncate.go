@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	MaxOutputBytes = 102400             // 100 KB
+	MaxOutputBytes = 102400            // 100 KB
 	HardCapBytes   = 100 * 1024 * 1024 // 100 MB
 	headRatio      = 0.6
 )

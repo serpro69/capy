@@ -30,10 +30,10 @@ func TestFmtSize(t *testing.T) {
 
 func TestTruncate(t *testing.T) {
 	tests := []struct {
-		name   string
-		in     string
-		max    int
-		want   string
+		name string
+		in   string
+		max  int
+		want string
 	}{
 		{"shorter than max", "abc", 10, "abc"},
 		{"exactly max", "abcde", 5, "abcde"},
