@@ -400,6 +400,82 @@ func TestScanSession_AwaySummaryExtracted(t *testing.T) {
 	assert.Equal(t, "We configured the dependencies and set up CI.", byRole[roleSystem][0].ContentText)
 }
 
+func TestScanSession_QueuedCommandAttachmentIndexedAsUser(t *testing.T) {
+	// A message the user submits mid-assistant-turn is recorded as a top-level
+	// `attachment` object (type queued_command), NOT under `message`. It must be
+	// recovered and indexed as a human prompt (role=user) — design.md § Addenda A2.
+	r := buildJSONL(t,
+		userLine("u1", "/p", "main", "Start the work"), // line 0
+		assistantLine("a1", "msg_1", []map[string]any{ // line 1
+			{"type": "tool_use", "id": "t1", "name": "Bash", "input": map[string]any{"command": "ls"}},
+		}),
+		// The enqueue queue-operation carries the same text but is operational
+		// metadata — no parser handles its type, so it must NOT be indexed (no
+		// duplication of the recovered prompt).
+		map[string]any{"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-05-01T10:00:06Z", "content": "the mcp has no access to vault"}, // line 2
+		map[string]any{ // line 3 — tool_result for t1 (continues the assistant turn)
+			"type": "user", "uuid": "u2", "timestamp": "2026-05-01T10:00:07Z",
+			"message": map[string]any{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "t1", "content": "file1 file2"},
+			}},
+		},
+		map[string]any{"type": "queue-operation", "operation": "remove", "timestamp": "2026-05-01T10:00:08Z"}, // line 4
+		map[string]any{ // line 5 — the recovered queued prompt
+			"type": "attachment", "uuid": "at1", "timestamp": "2026-05-01T10:00:08Z",
+			"attachment": map[string]any{"type": "queued_command", "prompt": "the mcp has no access to vault", "commandMode": "prompt"},
+		},
+		map[string]any{ // line 6 — a task_reminder attachment carries no prompt → nothing
+			"type": "attachment", "uuid": "at2", "timestamp": "2026-05-01T10:00:09Z",
+			"attachment": map[string]any{"type": "task_reminder", "content": []any{}, "itemCount": 0},
+		},
+	)
+
+	out, err := ScanSession(r)
+	require.NoError(t, err)
+
+	byRole := resultsByRole(out.Results)
+	require.Len(t, byRole[roleUser], 2, "the initial prompt + the recovered queued prompt")
+	assert.Equal(t, "Start the work", byRole[roleUser][0].ContentText)
+
+	queued := byRole[roleUser][1]
+	assert.Equal(t, "the mcp has no access to vault", queued.ContentText)
+	assert.Equal(t, 5, queued.LineIndex, "anchored to the attachment line for search-jump")
+
+	// The queued prompt is indexed EXACTLY once — the enqueue line does not duplicate it.
+	count := 0
+	for _, res := range out.Results {
+		if strings.Contains(res.ContentText, "the mcp has no access to vault") {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "indexed once; the enqueue queue-operation line is not indexed")
+
+	// It counts as a real human turn (1 initial user + 1 assistant + 1 queued user).
+	assert.Equal(t, 3, out.MessageCount)
+}
+
+func TestQueuedCommandPrompt(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"queued_command", `{"type":"queued_command","prompt":"do X","commandMode":"prompt"}`, "do X"},
+		{"queued_command trims whitespace", `{"type":"queued_command","prompt":"  spaced  "}`, "spaced"},
+		{"task_reminder ignored", `{"type":"task_reminder","content":[],"itemCount":0}`, ""},
+		{"other attachment type ignored", `{"type":"file","path":"/p"}`, ""},
+		{"queued_command empty prompt", `{"type":"queued_command","prompt":"   "}`, ""},
+		{"missing prompt field", `{"type":"queued_command"}`, ""},
+		{"malformed json", `{not json`, ""},
+		{"empty", ``, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, queuedCommandPrompt(json.RawMessage(tt.raw)))
+		})
+	}
+}
+
 func TestScanSession_UnindexedTypesProduceNothing(t *testing.T) {
 	r := buildJSONL(t,
 		map[string]any{"type": "agent-name", "agentName": "Explore", "sessionId": "s"},

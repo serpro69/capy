@@ -217,6 +217,15 @@ func scan(r io.Reader) (*ScanOutput, error) {
 			}
 
 		case "attachment":
+			// A queued_command attachment is an in-flight user message (A2):
+			// normalize it to the equivalent user entry so it indexes as a human
+			// prompt (role=user), searchable like any other turn.
+			if prompt := queuedCommandPrompt(line.Attachment); prompt != "" {
+				entries = append(entries, scanEntry{
+					kind: entryUser, lineIndex: lineIndex, timestamp: ts, content: userTextContent(prompt),
+				})
+				return // handled; skip the message.content fallback below (a queued_command line carries no message)
+			}
 			if hasMsg {
 				if text := attachmentText(msg.Content); text != "" {
 					entries = append(entries, scanEntry{
@@ -506,16 +515,62 @@ func prLinkText(line jsonlLine) string {
 	return strings.Join(parts, " ")
 }
 
+// queuedCommandPrompt returns the user prompt carried by a `queued_command`
+// attachment (design.md § Addenda A2), or "" for any other attachment. When a
+// user submits a message while the assistant is mid-turn, Claude Code records the
+// text in a top-level `attachment` object — NOT under `message` — so it is
+// invisible to the message.content parsers and would be lost from both search and
+// display. Surfacing it here recovers the in-flight prompt as a normal user turn.
+//
+// The bracketing `queue-operation` enqueue/remove lines carry the same text but
+// are operational metadata (no parser handles their type), so the queued_command
+// attachment — positioned in conversation order at the point the message was
+// actually processed — is the single, non-duplicated representation. A message
+// that is enqueued but never dequeued (session ended while queued) has no
+// queued_command line; it was never sent to the model, so it is intentionally not
+// surfaced.
+func queuedCommandPrompt(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var a struct {
+		Type   string `json:"type"`
+		Prompt string `json:"prompt"`
+	}
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ""
+	}
+	if a.Type != "queued_command" {
+		return ""
+	}
+	return strings.TrimSpace(a.Prompt)
+}
+
+// userTextContent wraps plain text as the JSON message.content (a quoted string)
+// the user-entry parsers expect, normalizing a queued_command prompt (A2) into
+// its equivalent user message so the three JSONL readers (scanner/render/
+// transcript) handle it through their existing user path. json.Marshal of a
+// concrete string type is specified never to return an error, so the discard is
+// safe (matching the json.Marshal convention in internal/store/chunk.go).
+func userTextContent(s string) json.RawMessage {
+	b, _ := json.Marshal(s)
+	return b
+}
+
 // attachmentKeys lists content-block fields an attachment line might carry a
 // searchable filename/text under.
 //
-// FIXME(vault, Task 2): the `attachment` line schema is UNVERIFIED — it was
-// absent from the documented fields of the 223-session sample, so the keys below
-// are a best-effort guess. Extraction is deliberately broad and skip-on-miss (it
-// never produces bad data, only possibly nothing). Next step: capture a real
-// `attachment` line from live session data and tighten this to the actual
-// field(s). design.md JSONL Line Types lists attachment as Extract →
-// "Attachment filename for search".
+// NOTE(vault, A2): real `attachment` lines carry a top-level `attachment` object
+// (NOT a `message`). Known content-bearing subtypes (per a 223-session taxonomy):
+// `queued_command` (the in-flight user prompt — recovered as a user turn via
+// queuedCommandPrompt above), plus `task_reminder`, `file`, `directory`, and
+// `hook_additional_context`. Only `queued_command` is handled today (it is the
+// A2 target: a lost USER message); the others are out of A2 scope — a `directory`
+// or `file` attachment is context the model received, not a human turn, so
+// recovering them is a separate, deliberate follow-up (decide role + dedup vs the
+// tool call that triggered them before indexing). The message.content path below
+// is a best-effort fallback for any message-bearing variant (broad, skip-on-miss:
+// it never produces bad data, only possibly nothing).
 var attachmentKeys = []string{"text", "filename", "fileName", "name", "title", "source", "path"}
 
 // attachmentText pulls a best-effort searchable string from an attachment's

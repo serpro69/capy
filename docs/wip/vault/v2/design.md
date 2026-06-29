@@ -259,6 +259,27 @@ Example session extract (sessionId: `9f153112-3bd6-4ba5-a5e6-06a7f316e1b9`): [9f
 
 Same range (start/end messages) extract of `capy vault show 9f153112`: [9f153112.txt](./.files/9f153112.txt)
 
+**Root cause:** the queued message lands as a top-level `attachment` object
+(`{"type":"attachment","attachment":{"type":"queued_command","prompt":"…"}}`) with
+**no `message` field**. The scanner's `attachment` case only read `message.content`
+(so FTS skipped it); render.go (`vault show`) and transcript.go (TUI) had no
+`attachment` case at all (so display dropped it). The bracketing `queue-operation`
+enqueue/remove lines carry the same text but no parser handles their `type`.
+
+**Resolution (shipped):** add `jsonlLine.Attachment`; a shared
+`queuedCommandPrompt()` extracts the `queued_command` prompt (ignoring
+`task_reminder` and other variants), and `userTextContent()` normalizes it into the
+equivalent user `message.content` so all three readers recover it through their
+existing **user** path — indexed `role=user` and shown as a user turn.
+`queue-operation` lines stay unhandled (no duplication). A message enqueued but
+never dequeued (no `queued_command` line) is intentionally not surfaced — it was
+never sent to the model. **Display:** the recovered turn is annotated **"· queued"**
+(`[You · queued]` / `## 👤 You · queued` / TUI `▌ You · queued`) so a reader sees it
+arrived mid-assistant-turn; the role/style/`--role user` filter are unchanged (the
+annotation is a display-only flag, not a new role). FTS indexes the plain prompt
+(no annotation). Out of scope: the knowledge-base session sweep (`internal/session`)
+is a separate parser. Tracked as tasks.md Task 18 § Addenda A2.
+
 ### A3 - Display Edit tool results
 
 Explore if we can display edit tool results. Use same logic as with `Read` tool (i.e. exclude from indexing, one-liner in plain `show`, collapse-then-open in tui)

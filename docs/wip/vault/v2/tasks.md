@@ -254,7 +254,7 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [ ] 17.4 Run `/kk:review-spec` — verify implementation matches design.md + implementation.md
 
 ## Task 18: Design addenda (post-plan follow-ups)
-- **Status:** in-progress (A1)
+- **Status:** in-progress (A1, A2 done; A3 pending)
 - **Depends on:** —
 - **Size:** per-addendum (currently M)
 - **Docs:** [design.md § Addenda](./design.md#addenda)
@@ -283,6 +283,43 @@ avoid renumbering the existing plan.
   transcript.go" doc comments corrected) + clarity/test-coverage nits (threshold
   rationale, byte-threshold test, `markerRowFor`/guard comments). Declined pal's
   slice-init nit (mirrors the sibling `renderUserContent` nil-slice idiom; nil-safe).
+- [x] A2 — Recover in-flight (queued) user messages. A message the user submits
+  while the assistant is mid-turn is written as a top-level `attachment` object
+  (`{"type":"attachment","attachment":{"type":"queued_command","prompt":"…",
+  "commandMode":"prompt"}}`) with **no `message` field** — so all three vault
+  JSONL parsers dropped it: the scanner's `attachment` case only read
+  `message.content` (FTS), and render/transcript had no `attachment` case at all
+  (display). The message was lost from `vault show`, the TUI viewer, **and** FTS
+  search. See design.md § Addenda A2.
+  **Done.** `scanner_types.go`: added `jsonlLine.Attachment`. `scanner.go`: shared
+  `queuedCommandPrompt()` (type-discriminates `queued_command`, ignores
+  `task_reminder`/others) + `userTextContent()` (normalizes the prompt into the
+  equivalent user `message.content` so all three readers reuse their existing user
+  path). All three parsers gained an `attachment` case that recovers the prompt as
+  a **user turn** — indexed `role=user` (plain, no annotation, counts toward
+  MessageCount) and displayed as a user message. **Display decision (user-chosen):
+  annotate the turn "· queued"** — a display-only `queued`/`Queued` flag on
+  `displayMsg`/`renderEntry` (render.go) and `TranscriptMessage`/`transcriptEntry`
+  (transcript.go); the role stays `user` (so style, `--role user` filter, and
+  MessageCount are untouched), only the header label gets the suffix
+  (`[You · queued]` / `## 👤 You · queued` / TUI `▌ You · queued` via
+  `messageHeader(role, queued)`). The bracketing `queue-operation` enqueue/remove
+  lines carry the same text but are operational metadata (no parser handles their
+  type) → not indexed, so no duplication. **Deferred (documented):** a message
+  enqueued but never dequeued (session ended while queued) has no `queued_command`
+  line and is intentionally not surfaced — it was never sent to the model (rationale
+  in `queuedCommandPrompt`'s doc comment). The knowledge-base session sweep
+  (`internal/session`) is a separate parser out of A2's vault scope. Tests:
+  `scanner_test.go` (indexed once as user, anchored, MessageCount, task_reminder
+  ignored, enqueue not duplicated), `render_test.go` (text + markdown annotation,
+  task_reminder ignored), `transcript_test.go` (RoleUser + Queued + anchor),
+  `tui/render_test.go` (header annotation). Default + glamour builds, race + vet
+  clean. Isolated review (code-reviewer + pal/gemini-3.1-pro): APPROVE, no P0/P1;
+  applied both corroborated nits (clarifying comment on the scanner's early
+  `return`; strengthened `userTextContent` discard comment — kept the `_` to match
+  the `json.Marshal` convention in `internal/store/chunk.go`, since `return nil`
+  would silently drop the message). Dismissed the `"operation":"remove"` test nit
+  (verified `"remove"` is the real value in `.files/9f153112.json`).
 
 ## Dependency Graph
 

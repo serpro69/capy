@@ -55,7 +55,7 @@ func renderTranscript(messages []vault.TranscriptMessage, st Styles, width int) 
 			out.rows = append(out.rows, st.toolMarkerRow(m, false))
 			continue
 		}
-		out.rows = append(out.rows, st.messageHeader(m.Role))
+		out.rows = append(out.rows, st.messageHeader(m.Role, m.Queued))
 		out.rows = append(out.rows, renderBody(m.Role, m.Body, st, width)...)
 		out.rows = append(out.rows, "") // blank separator between messages
 	}
@@ -110,9 +110,14 @@ func (r renderedTranscript) rowForMarker(markerPos int) int {
 	return r.msgRowStart[r.markers[markerPos]]
 }
 
-// messageHeader renders a role label line, e.g. "▌ You" / "▌ Claude".
-func (s Styles) messageHeader(role string) string {
+// messageHeader renders a role label line, e.g. "▌ You" / "▌ Claude". A queued
+// user message (A2) is annotated "▌ You · queued"; the role (and thus its style)
+// is unchanged — it is a normal user turn that happened to arrive mid-assistant-turn.
+func (s Styles) messageHeader(role string, queued bool) string {
 	label := roleLabel(role)
+	if queued {
+		label += " · queued"
+	}
 	return s.roleStyle(role).Render("▌ " + label)
 }
 
