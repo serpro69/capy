@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -44,6 +45,14 @@ func renderTranscript(messages []vault.TranscriptMessage, st Styles, width int) 
 				out.markers = append(out.markers, i)
 			}
 			out.rows = append(out.rows, st.markerRow(m, false))
+			continue
+		}
+		// A collapsed tool_result (A1) renders as an openable marker, sharing the
+		// ]/[ + enter cycle with subagent markers; enter opens its full body inline
+		// (viewer.openInlineContent).
+		if m.Role == vault.RoleTool && m.Collapsed {
+			out.markers = append(out.markers, i)
+			out.rows = append(out.rows, st.toolMarkerRow(m, false))
 			continue
 		}
 		out.rows = append(out.rows, st.messageHeader(m.Role))
@@ -124,6 +133,35 @@ func (s Styles) markerRow(m vault.TranscriptMessage, focused bool) string {
 	default:
 		return s.Marker.Render("▸ " + label)
 	}
+}
+
+// markerRowFor renders an openable marker for either kind: a subagent launch
+// point or a collapsed tool_result (A1). The dispatch keeps viewportContent's
+// focus-overlay agnostic to which kind a focused marker is. renderTranscript
+// builds the initial (unfocused) rows by calling markerRow/toolMarkerRow directly
+// — it already branches on role there — so this helper only handles the focused
+// re-render (viewportContent passes focused=true).
+func (s Styles) markerRowFor(m vault.TranscriptMessage, focused bool) string {
+	if m.Role == vault.RoleTool {
+		return s.toolMarkerRow(m, focused)
+	}
+	return s.markerRow(m, focused)
+}
+
+// toolMarkerRow renders a collapsed tool_result as an openable marker: the call
+// summary plus the omitted line count, styled like an openable subagent marker so
+// the same focus/open affordances apply. The full body lives on the message
+// (TranscriptMessage.Body) for the open target (viewer.openInlineContent).
+func (s Styles) toolMarkerRow(m vault.TranscriptMessage, focused bool) string {
+	label := m.ToolSummary
+	if label == "" {
+		label = "tool result"
+	}
+	label = fmt.Sprintf("%s  ⋯ %d line(s)", label, strings.Count(m.Body, "\n")+1)
+	if focused {
+		return s.MarkerFocused.Render("▶ " + label + "  (enter to expand)")
+	}
+	return s.MarkerOpenable.Render("▸ " + label + "  (enter to expand)")
 }
 
 // roleLabel is the human label for a display/search role.

@@ -248,7 +248,8 @@ bodies from tools listed in `scanner.go`'s `excludedResultTools` (currently `Rea
 `NotebookRead`) are **excluded from the index** — they are file/cell-content dumps
 that are noise for conversation search and already live on disk/git. The call
 itself stays searchable on the assistant row, and `raw_jsonl` keeps the body for
-`show`/restore (it is collapsed to a one-line marker only in the rendered view).
+`show`/restore (it is collapsed only in the *rendered* view — see
+[Tool-result display](#tool-result-display-show-vs---tui)).
 
 The extraction logic is **versioned**. `currentIndexVersion` (a constant in
 `store.go`) stamps the indexer; every session row records the `index_version` it
@@ -272,6 +273,42 @@ prints the current version and how many sessions are still below it (the reindex
 backlog).
 
 Full rationale and the rejected alternatives: [ADR-025](adr/025-vault-index-version-and-reindex.md).
+
+### Tool-result display (`show` vs `--tui`)
+
+`raw_jsonl` is always stored verbatim, so `vault show --format json` and `restore`
+are byte-faithful. Three **display/index surfaces** decide how a `tool_result` body
+is *presented*, and one set — `scanner.go`'s `excludedResultTools` — drives all
+three at once (a non-obvious coupling, since the three readers live in different
+files):
+
+| Surface | Reader | Excluded tool (Read/NotebookRead) | Large non-excluded (e.g. a big `Bash` log) |
+|---------|--------|-----------------------------------|--------------------------------------------|
+| FTS index | `scanner.go` `extractUserBlocks` | body excluded from the index | indexed (head/tail truncated) |
+| `vault show` (pager) | `render.go` `renderUserContent` | one-line "output omitted" marker | full inline |
+| `vault show --tui` (viewer) | `transcript.go` `splitUserContentForViewer` | collapse-then-open marker | collapse-then-open marker if over threshold |
+
+So adding a tool name to `excludedResultTools` has three effects: it drops the body
+from search, collapses it to a one-liner in `show`, and makes it a collapsible
+marker in the TUI. (This is how the pending **Edit**-result follow-up lands: add
+`"Edit"` to the set and all three follow — no viewer wiring.) The FTS exclusion is
+versioned (above); the two display paths are not.
+
+The TUI adds one display-only behavior beyond the shared set (vault v2 § Addenda
+A1): **any** large result collapses, not just excluded ones —
+`overCollapseThreshold` (>20 lines or >2000 bytes; constants in `transcript.go`).
+`vault show` and the FTS index ignore size; only the viewer collapses by threshold.
+
+A collapsed result renders as a **focusable openable marker**, the same `]`/`[` +
+`enter` mechanism subagent launch points use. Markers are *role-dispatched* at the
+open seam: a subagent marker opens a sidecar transcript by id (`openSubagent` →
+`GetFiles`), whereas a collapsed `tool_result` body is inline in `raw_jsonl`, so it
+opens a distinct in-memory target (`openInlineContent`, rendering the body carried
+on `TranscriptMessage.Body`); both return with `esc`/`q`. To add a new openable
+kind, touch `renderTranscript`'s marker branch + `markerRowFor` (`render.go`) and
+`openFocusedMarker`'s role switch (`viewer.go`). `splitUserContentForViewer` is
+TUI-only and forked from `renderUserContent` precisely so a viewer-only change
+cannot perturb the static `show` output.
 
 ### Archival Paths
 

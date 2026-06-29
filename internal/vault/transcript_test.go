@@ -1,6 +1,8 @@
 package vault
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,11 +46,68 @@ func TestParseTranscript_RolesAndAnchors(t *testing.T) {
 
 	assert.Equal(t, RoleTool, msgs[2].Role)
 	assert.Equal(t, 2, msgs[2].SourceLine)
-	// The tool_result is a Read result: collapsed to a marker (call label + omitted
-	// notice), so the viewer shows what was read without the file dump.
-	assert.Contains(t, msgs[2].Body, "Read /p/config.toml", "collapsed marker keeps the call label")
-	assert.Contains(t, msgs[2].Body, "output omitted", "Read result body collapsed in the viewer")
-	assert.NotContains(t, msgs[2].Body, "build log: error at line 5", "Read file body is not shown")
+	// The tool_result is a Read result: an excluded tool, so the viewer marks it
+	// Collapsed (A1) — rendered as an openable marker labeled by the call summary,
+	// with the full body carried on Body for the expand-on-demand target.
+	assert.True(t, msgs[2].Collapsed, "an excluded-tool (Read) result collapses regardless of size")
+	assert.Equal(t, "Read /p/config.toml", msgs[2].ToolSummary, "collapsed marker is labeled by the call summary")
+	assert.Equal(t, "build log: error at line 5", msgs[2].Body, "the full body is carried for the open target")
+}
+
+// bashResultSession builds a transcript whose single tool_result is a Bash result
+// (a NON-excluded tool) with the given body, so the collapse decision turns purely
+// on the size/line threshold.
+func bashResultSession(t *testing.T, body string) []TranscriptMessage {
+	t.Helper()
+	raw := jsonlBytes(t,
+		userLine("u1", "/p", "main", "run it"),
+		assistantLine("a1", "m1", []map[string]any{
+			{"type": "tool_use", "id": "t1", "name": "Bash", "input": map[string]any{"command": "go test ./..."}},
+		}),
+		map[string]any{
+			"type": "user", "uuid": "u2", "timestamp": "2026-05-01T10:00:10Z",
+			"cwd": "/p", "gitBranch": "main",
+			"message": map[string]any{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "t1", "content": body},
+			}},
+		},
+	)
+	return ParseTranscript(raw, nil)
+}
+
+func TestParseTranscript_LargeToolResultCollapses(t *testing.T) {
+	// A many-line Bash result (over collapseToolResultLines) collapses even though
+	// Bash is NOT in excludedResultTools — large results collapse for read-through.
+	var b strings.Builder
+	for i := 0; i < collapseToolResultLines+5; i++ {
+		fmt.Fprintf(&b, "log line %d\n", i)
+	}
+	body := strings.TrimRight(b.String(), "\n")
+
+	tool := findMessage(t, bashResultSession(t, body), RoleTool)
+	assert.True(t, tool.Collapsed, "a result over the line threshold collapses")
+	assert.Equal(t, "Bash go test ./...", tool.ToolSummary)
+	assert.Equal(t, body, tool.Body, "the full body is carried for the open target")
+}
+
+func TestParseTranscript_ByteHeavyToolResultCollapses(t *testing.T) {
+	// A single-line body under the line threshold but over the byte threshold
+	// collapses too (overCollapseThreshold ORs lines and bytes).
+	body := strings.Repeat("x", collapseToolResultBytes+1)
+	require.NotContains(t, body, "\n", "one line — only the byte threshold can trigger collapse")
+
+	tool := findMessage(t, bashResultSession(t, body), RoleTool)
+	assert.True(t, tool.Collapsed, "a single huge line collapses on the byte threshold")
+	assert.Equal(t, body, tool.Body)
+}
+
+func TestParseTranscript_SmallToolResultStaysInline(t *testing.T) {
+	// A short Bash result stays inline (not a marker); Body is the summary-prefixed
+	// text, matching the pre-A1 rendering.
+	tool := findMessage(t, bashResultSession(t, "one short line of output"), RoleTool)
+	assert.False(t, tool.Collapsed, "a small non-excluded result renders inline")
+	assert.Equal(t, "Bash go test ./...\none short line of output", tool.Body,
+		"inline tool results keep the summary-prefixed body")
 }
 
 func TestParseTranscript_DeduplicatesProgressiveSnapshots(t *testing.T) {
