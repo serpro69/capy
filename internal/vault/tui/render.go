@@ -117,6 +117,42 @@ func (r renderedTranscript) rowForMarker(markerPos int) int {
 	return r.msgRowStart[r.markers[markerPos]]
 }
 
+// markerFromViewport resolves an openable marker relative to the viewport top row
+// (yOffset): for a forward delta the first marker at or below the top, otherwise
+// the last marker at or above it. Bounds are inclusive so a marker sitting exactly
+// at the top is selected (it then becomes the focused marker for sequential
+// stepping — see focusMarker). Marker rows are strictly increasing (msgRowStart
+// is), so the first/last match is unambiguous. Navigation wraps (first↔last) so it
+// never dead-ends. Returns -1 only when there are no openable markers.
+//
+// delta carries direction only — callers pass ±1 (next/prev). A non-positive delta
+// resolves as previous; delta == 0 is never passed and is treated as previous.
+//
+// This is the A4 "resolve from current viewport" half of ]/[ navigation: once the
+// user has scrolled the focused marker out of view, the next/prev marker is chosen
+// from where they are looking rather than by replaying from a stale focusedMarker.
+func (r renderedTranscript) markerFromViewport(yOffset, delta int) int {
+	n := len(r.markers)
+	if n == 0 {
+		return -1
+	}
+	if delta > 0 { // next: first marker at or below the top
+		for pos, mi := range r.markers {
+			if r.msgRowStart[mi] >= yOffset {
+				return pos
+			}
+		}
+		return 0 // every marker is above the top → wrap to the first
+	}
+	// prev: last marker at or above the top
+	for pos := n - 1; pos >= 0; pos-- {
+		if r.msgRowStart[r.markers[pos]] <= yOffset {
+			return pos
+		}
+	}
+	return n - 1 // every marker is below the top → wrap to the last
+}
+
 // messageHeader renders a role label line, e.g. "▌ You" / "▌ Claude". A queued
 // user message (A2) is annotated "▌ You · queued"; the role (and thus its style)
 // is unchanged — it is a normal user turn that happened to arrive mid-assistant-turn.
