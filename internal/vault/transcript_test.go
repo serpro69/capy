@@ -164,6 +164,30 @@ func TestParseTranscript_SubagentMarkerMappingMismatchNotOpenable(t *testing.T) 
 	assert.Equal(t, "go", marker.Body, "label falls back to the prompt when no description")
 }
 
+func TestParseTranscript_QueuedCommandAttachment(t *testing.T) {
+	// A queued_command attachment (A2) parses to a RoleUser message flagged Queued,
+	// anchored to its source line so a search hit still scrolls to it.
+	raw := jsonlBytes(t,
+		userLine("u1", "/p", "main", "kick off"), // line 0
+		assistantLine("a1", "m1", []map[string]any{{"type": "text", "text": "working"}}), // line 1
+		map[string]any{ // line 2
+			"type": "attachment", "uuid": "at1", "timestamp": "2026-05-01T10:00:09Z",
+			"attachment": map[string]any{"type": "queued_command", "prompt": "wait, also do X", "commandMode": "prompt"},
+		},
+	)
+
+	msgs := ParseTranscript(raw, nil)
+	require.Len(t, msgs, 3)
+
+	q := msgs[2]
+	assert.Equal(t, RoleUser, q.Role)
+	assert.True(t, q.Queued, "the queued_command is flagged for the · queued annotation")
+	assert.Equal(t, "wait, also do X", q.Body)
+	assert.Equal(t, 2, q.SourceLine, "anchored to the attachment line")
+
+	assert.False(t, msgs[0].Queued, "a normal user message is not flagged queued")
+}
+
 func TestParseTranscript_Empty(t *testing.T) {
 	assert.Nil(t, ParseTranscript(nil, nil))
 	assert.Nil(t, ParseTranscript([]byte{}, nil))

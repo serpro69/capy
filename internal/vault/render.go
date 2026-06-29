@@ -32,10 +32,13 @@ const (
 // explicit and independent of the scanner's FTS tuning.
 const renderMaxLineBytes = 16 * 1024 * 1024
 
-// displayMsg is one composed message ready for formatting.
+// displayMsg is one composed message ready for formatting. queued marks a user
+// message recovered from a queued_command attachment (A2) — submitted while the
+// assistant was mid-turn — so its label is annotated "· queued".
 type displayMsg struct {
-	role string
-	body string
+	role   string
+	body   string
+	queued bool
 }
 
 // RenderText renders a session JSONL blob as a plain-text transcript suitable
@@ -57,6 +60,7 @@ type renderEntry struct {
 	content json.RawMessage // user: message.content
 	blocks  []contentBlock  // assistant: merged, deduplicated blocks
 	text    string          // system: pre-composed text
+	queued  bool            // user: recovered from a queued_command attachment (A2)
 }
 
 // collectDisplay walks the JSONL once and returns ordered display messages.
@@ -111,6 +115,12 @@ func collectDisplay(raw []byte) []displayMsg {
 				assistantPos[id] = len(entries)
 				entries = append(entries, renderEntry{role: displayAssistant, blocks: blocks})
 			}
+		case "attachment":
+			// A queued_command attachment is an in-flight user message (A2):
+			// display it as a user turn, annotated "· queued".
+			if prompt := queuedCommandPrompt(line.Attachment); prompt != "" {
+				entries = append(entries, renderEntry{role: displayUser, content: userTextContent(prompt), queued: true})
+			}
 		case "pr-link":
 			if t := prLinkText(line); t != "" {
 				entries = append(entries, renderEntry{role: displaySystem, text: t})
@@ -141,17 +151,17 @@ func collectDisplay(raw []byte) []displayMsg {
 		case displayUser:
 			human, tools := renderUserContent(e.content, toolUses)
 			if human != "" {
-				msgs = append(msgs, displayMsg{displayUser, human})
+				msgs = append(msgs, displayMsg{role: displayUser, body: human, queued: e.queued})
 			}
 			for _, tr := range tools {
-				msgs = append(msgs, displayMsg{displayTool, tr})
+				msgs = append(msgs, displayMsg{role: displayTool, body: tr})
 			}
 		case displayAssistant:
 			if b := renderAssistantBlocks(e.blocks); b != "" {
-				msgs = append(msgs, displayMsg{displayAssistant, b})
+				msgs = append(msgs, displayMsg{role: displayAssistant, body: b})
 			}
 		case displaySystem:
-			msgs = append(msgs, displayMsg{displaySystem, e.text})
+			msgs = append(msgs, displayMsg{role: displaySystem, body: e.text})
 		}
 	}
 	return msgs
@@ -278,6 +288,9 @@ func formatDisplay(msgs []displayMsg, markdown bool) string {
 			if label == "" {
 				label = m.role
 			}
+			if m.queued {
+				label += " · queued"
+			}
 			fmt.Fprintf(&sb, "## %s\n\n", label)
 			if m.role == displayTool {
 				// Widen the fence past any backtick run in the body so a tool
@@ -292,6 +305,9 @@ func formatDisplay(msgs []displayMsg, markdown bool) string {
 			label := labels[0]
 			if label == "" {
 				label = m.role
+			}
+			if m.queued {
+				label += " · queued"
 			}
 			fmt.Fprintf(&sb, "[%s]\n%s\n", label, m.body)
 		}
