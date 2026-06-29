@@ -344,8 +344,9 @@ func mergeBlocks(entry *scanEntry, nb []contentBlock) {
 // tool_result is prefixed with its originating tool-call summary (from toolUses,
 // keyed by tool_use_id) so the result is searchable alongside the call that
 // produced it; an unknown id leaves the text unprefixed. A tool_result whose call
-// is in excludedResultTools (Read/NotebookRead) is skipped entirely — its body is
-// a file/cell dump, and the call itself stays searchable via the assistant row.
+// is FTS-excluded (ftsExcludedResult — Read/NotebookRead file dumps and Edit/Write
+// success boilerplate) is skipped entirely; the call itself stays searchable via
+// the assistant row.
 func extractUserBlocks(raw json.RawMessage, toolUses map[string]toolCall) (humanText string, toolResults []string) {
 	if len(raw) == 0 {
 		return "", nil
@@ -366,8 +367,8 @@ func extractUserBlocks(raw json.RawMessage, toolUses map[string]toolCall) (human
 			}
 		case "tool_result":
 			call := toolUses[b.ToolUseID]
-			if excludedResultTools[call.name] {
-				continue // file/cell dump — excluded from FTS (call stays searchable on the assistant row)
+			if ftsExcludedResult(call.name) {
+				continue // dump / boilerplate body — excluded from FTS (call stays searchable on the assistant row)
 			}
 			if t := toolResultText(b.Content); t != "" {
 				// Prefix the call summary BEFORE truncation so it survives in the
@@ -405,6 +406,30 @@ type toolCall struct {
 var excludedResultTools = map[string]bool{
 	"Read":         true,
 	"NotebookRead": true,
+}
+
+// diffResultTools names the tools whose tool_result BODY is a one-line success
+// string ("The file X has been updated successfully") while the meaningful change —
+// a unified-diff structuredPatch — lives in the sibling toolUseResult field
+// (design.md § Addenda A3). Their result bodies are FTS-excluded for the same reason
+// as excludedResultTools (the success string is identical boilerplate per edit, pure
+// search noise; the "Edit /path" call stays searchable on the assistant row), but
+// they are NOT in excludedResultTools because their DISPLAY differs: `vault show`
+// keeps the success body verbatim, and the TUI viewer collapses them to a marker
+// that expands to the rendered diff (not the raw body). To add another (e.g.
+// MultiEdit), put it here. Edit/Write are kept distinct from Read so the display
+// split stays explicit.
+var diffResultTools = map[string]bool{
+	"Edit":  true,
+	"Write": true,
+}
+
+// ftsExcludedResult reports whether a tool's tool_result BODY is dropped from the
+// FTS index: dump tools (Read/NotebookRead) and diff tools (Edit/Write). In both
+// cases the body is low-signal (a file/cell dump, or boilerplate success text) and
+// the call summary remains indexed on the assistant tool_use row.
+func ftsExcludedResult(name string) bool {
+	return excludedResultTools[name] || diffResultTools[name]
 }
 
 // collectToolUseSummaries records, for each tool_use block in blocks, the call's

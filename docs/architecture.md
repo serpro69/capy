@@ -234,7 +234,7 @@ vault_sessions   — one row per session: metadata, 1:1 location, raw JSONL blob
 vault_files      — associated files (subagents, tool-results), CASCADE on session delete
 vault_fts        — FTS5 virtual table, one row per message, Porter tokenizer
                    (tool_result rows tagged with their call summary; Read/NotebookRead
-                    result bodies excluded — see scanner.go excludedResultTools)
+                    and Edit/Write result bodies excluded — see scanner.go ftsExcludedResult)
 vault_meta       — key-value store (reserved)
 vault_migrations — migration tracking (by-name)
 ```
@@ -244,11 +244,14 @@ vault_migrations — migration tracking (by-name)
 `vault_fts` holds one row per message — `user` (human turns), `assistant`, `tool`
 (tool_result output), and `system`. Tool-result rows are tagged with their
 originating call summary (e.g. `Bash <cmd>`), correlated by `tool_use_id`. Result
-bodies from tools listed in `scanner.go`'s `excludedResultTools` (currently `Read`,
-`NotebookRead`) are **excluded from the index** — they are file/cell-content dumps
-that are noise for conversation search and already live on disk/git. The call
-itself stays searchable on the assistant row, and `raw_jsonl` keeps the body for
-`show`/restore (it is collapsed only in the *rendered* view — see
+bodies for tools matched by `scanner.go`'s `ftsExcludedResult` are **excluded from
+the index**. That predicate is the union of two sets: `excludedResultTools` (`Read`,
+`NotebookRead` — file/cell-content dumps) and `diffResultTools` (`Edit`, `Write` —
+whose body is just a one-line "updated successfully" string; the real change is the
+diff in the sibling `toolUseResult.structuredPatch`, never the indexable
+`message.content`). Both are noise for conversation search. The call itself stays
+searchable on the assistant row, and `raw_jsonl` keeps the body for `show`/restore
+(it is collapsed only in the *rendered* view — see
 [Tool-result display](#tool-result-display-show-vs---tui)).
 
 The extraction logic is **versioned**. `currentIndexVersion` (a constant in
@@ -262,7 +265,9 @@ makes existing rows stale, so:
   and no shipped/durable vault holds that version yet — a single reindex already
   yields the complete result, so a bump would only force a redundant second pass.
 - To stop indexing a tool's result body, add its name to `excludedResultTools`
-  (the same bump rule applies).
+  (also collapses it in every display) or `diffResultTools` (FTS-excluded but the
+  display stays special — see [Tool-result display](#tool-result-display-show-vs---tui)).
+  The same bump rule applies to either.
 
 Stale sessions are upgraded two ways, both rewriting **only** the FTS rows (never
 the `raw_jsonl` blob): `capy vault reindex` rebuilds every session below
@@ -278,21 +283,34 @@ Full rationale and the rejected alternatives: [ADR-025](adr/025-vault-index-vers
 
 `raw_jsonl` is always stored verbatim, so `vault show --format json` and `restore`
 are byte-faithful. Three **display/index surfaces** decide how a `tool_result` body
-is *presented*, and one set — `scanner.go`'s `excludedResultTools` — drives all
-three at once (a non-obvious coupling, since the three readers live in different
-files):
+is *presented*. Two tool sets steer them (the readers live in different files, so the
+coupling is non-obvious):
 
-| Surface | Reader | Excluded tool (Read/NotebookRead) | Large non-excluded (e.g. a big `Bash` log) |
-|---------|--------|-----------------------------------|--------------------------------------------|
-| FTS index | `scanner.go` `extractUserBlocks` | body excluded from the index | indexed (head/tail truncated) |
-| `vault show` (pager) | `render.go` `renderUserContent` | one-line "output omitted" marker | full inline |
-| `vault show --tui` (viewer) | `transcript.go` `splitUserContentForViewer` | collapse-then-open marker | collapse-then-open marker if over threshold |
+| Surface | Reader | Dump tool (`excludedResultTools`: Read/NotebookRead) | Diff tool (`diffResultTools`: Edit/Write) | Large other (e.g. a big `Bash` log) |
+|---------|--------|------------------------------------------------------|-------------------------------------------|-------------------------------------|
+| FTS index | `scanner.go` `extractUserBlocks` (via `ftsExcludedResult`) | body excluded | body excluded | indexed (head/tail truncated) |
+| `vault show` (pager) | `render.go` `renderUserContent` | one-line "output omitted" marker | **unchanged — verbatim success body** | full inline |
+| `vault show --tui` (viewer) | `transcript.go` `splitUserContentForViewer` | collapse-then-open marker (raw body) | collapse-then-open marker (**reconstructed diff**) | collapse-then-open marker if over threshold |
 
-So adding a tool name to `excludedResultTools` has three effects: it drops the body
-from search, collapses it to a one-liner in `show`, and makes it a collapsible
-marker in the TUI. (This is how the pending **Edit**-result follow-up lands: add
-`"Edit"` to the set and all three follow — no viewer wiring.) The FTS exclusion is
-versioned (above); the two display paths are not.
+`excludedResultTools` (Read/NotebookRead) drives all three surfaces identically —
+their body is a file/cell dump, so it is dropped from search, collapsed to a
+one-liner in `show`, and a collapsible marker in the TUI. `diffResultTools`
+(Edit/Write) shares only the **FTS** column (both sets feed `ftsExcludedResult`);
+its display is **deliberately decoupled** (vault v2 § Addenda A3): plain `show` keeps
+the verbatim one-line success body (collapsing it would hide nothing useful), while
+the TUI collapses to a marker that expands to a **colored unified diff**.
+
+The diff isn't in `message.content` (which is the success string) — it lives in the
+sibling top-level JSONL field `toolUseResult.structuredPatch`, threaded through
+`jsonlLine.ToolUseResult` → `transcriptEntry` → `splitUserContentForViewer`.
+`diff.go`'s `diffBodyFromToolResult` reconstructs unified-diff *text* (kept in
+package `vault`); the `tui` package owns the *color* (`render.go` `renderDiffBody`:
+`+` green / `-` red / `@@` cyan), which bypasses the build-tagged `renderBody`/glamour
+seam so a diff is never markdown-mangled. The marker shows a `(+a −b)` stat instead
+of a line count. A diff tool with no `structuredPatch` falls back to the plain
+success body. To extend the diff-view to another tool (e.g. `MultiEdit`), add it to
+`diffResultTools`. The FTS exclusion is versioned (above); the two display paths are
+not.
 
 The TUI adds one display-only behavior beyond the shared set (vault v2 § Addenda
 A1): **any** large result collapses, not just excluded ones —
@@ -304,9 +322,11 @@ A collapsed result renders as a **focusable openable marker**, the same `]`/`[` 
 open seam: a subagent marker opens a sidecar transcript by id (`openSubagent` →
 `GetFiles`), whereas a collapsed `tool_result` body is inline in `raw_jsonl`, so it
 opens a distinct in-memory target (`openInlineContent`, rendering the body carried
-on `TranscriptMessage.Body`); both return with `esc`/`q`. To add a new openable
-kind, touch `renderTranscript`'s marker branch + `markerRowFor` (`render.go`) and
-`openFocusedMarker`'s role switch (`viewer.go`). `splitUserContentForViewer` is
+on `TranscriptMessage.Body`); both return with `esc`/`q`. An Edit/Write diff uses
+that **same** inline target — only the render differs: `TranscriptMessage.Diff`
+routes it through `renderDiffBody` instead of the plain word-wrap. To add a new
+openable kind, touch `renderTranscript`'s marker branch + `markerRowFor` (`render.go`)
+and `openFocusedMarker`'s role switch (`viewer.go`). `splitUserContentForViewer` is
 TUI-only and forked from `renderUserContent` precisely so a viewer-only change
 cannot perturb the static `show` output.
 

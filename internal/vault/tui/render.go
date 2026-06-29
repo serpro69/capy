@@ -56,7 +56,14 @@ func renderTranscript(messages []vault.TranscriptMessage, st Styles, width int) 
 			continue
 		}
 		out.rows = append(out.rows, st.messageHeader(m.Role, m.Queued))
-		out.rows = append(out.rows, renderBody(m.Role, m.Body, st, width)...)
+		if m.Role == vault.RoleTool && m.Diff {
+			// An expanded Edit/Write diff (A3): color by unified-diff prefix instead
+			// of word-wrapping as plain text (and never route through glamour, which
+			// would mangle the diff — renderDiffBody bypasses the renderBody seam).
+			out.rows = append(out.rows, renderDiffBody(m.Body, st, width)...)
+		} else {
+			out.rows = append(out.rows, renderBody(m.Role, m.Body, st, width)...)
+		}
 		out.rows = append(out.rows, "") // blank separator between messages
 	}
 	return out
@@ -153,20 +160,46 @@ func (s Styles) markerRowFor(m vault.TranscriptMessage, focused bool) string {
 	return s.markerRow(m, focused)
 }
 
-// toolMarkerRow renders a collapsed tool_result as an openable marker: the call
-// summary plus the omitted line count, styled like an openable subagent marker so
-// the same focus/open affordances apply. The full body lives on the message
-// (TranscriptMessage.Body) for the open target (viewer.openInlineContent).
+// toolMarkerRow renders a collapsed tool_result as an openable marker, styled like
+// an openable subagent marker so the same focus/open affordances apply. The full
+// body lives on the message (TranscriptMessage.Body) for the open target
+// (viewer.openInlineContent). A diff marker (A3) shows the "(+a −b)" stat already
+// baked into ToolSummary; any other collapsed result shows the omitted line count.
 func (s Styles) toolMarkerRow(m vault.TranscriptMessage, focused bool) string {
 	label := m.ToolSummary
 	if label == "" {
 		label = "tool result"
 	}
-	label = fmt.Sprintf("%s  ⋯ %d line(s)", label, strings.Count(m.Body, "\n")+1)
+	if !m.Diff {
+		label = fmt.Sprintf("%s  ⋯ %d line(s)", label, strings.Count(m.Body, "\n")+1)
+	}
 	if focused {
 		return s.MarkerFocused.Render("▶ " + label + "  (enter to expand)")
 	}
 	return s.MarkerOpenable.Render("▸ " + label + "  (enter to expand)")
+}
+
+// renderDiffBody styles reconstructed unified-diff text (A3) line by line: added
+// (+) green, removed (-) red, hunk header (@@) cyan, context (leading space) the
+// default body style. Each line is wrapped to width with its own style so a long
+// diff line still fits the viewport (continuation rows lose prefix alignment — an
+// accepted tradeoff over horizontal truncation). width <= 0 leaves lines unwrapped.
+func renderDiffBody(body string, st Styles, width int) []string {
+	lines := strings.Split(body, "\n")
+	rows := make([]string, 0, len(lines))
+	for _, line := range lines {
+		style := st.Body
+		switch {
+		case strings.HasPrefix(line, "@@"):
+			style = st.DiffHunk
+		case strings.HasPrefix(line, "+"):
+			style = st.DiffAdd
+		case strings.HasPrefix(line, "-"):
+			style = st.DiffDel
+		}
+		rows = append(rows, wrapBody(line, style, width)...)
+	}
+	return rows
 }
 
 // roleLabel is the human label for a display/search role.

@@ -142,8 +142,9 @@ func (m viewerModel) openInlineContent(msg vault.TranscriptMessage) viewerModel 
 		label = "tool result"
 	}
 	// A non-collapsed RoleTool message so renderTranscript shows the body inline.
+	// Carry Diff so an Edit/Write body renders as a colored diff (A3 renderDiffBody).
 	detail := renderTranscript(
-		[]vault.TranscriptMessage{{Role: vault.RoleTool, Body: msg.Body}},
+		[]vault.TranscriptMessage{{Role: vault.RoleTool, Body: msg.Body, Diff: msg.Diff}},
 		m.styles, m.contentWidth(),
 	)
 	m.inSub = false

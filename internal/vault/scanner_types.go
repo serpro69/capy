@@ -33,6 +33,11 @@ type jsonlLine struct {
 	// — the message the user submitted while the assistant was mid-turn (design.md
 	// § Addenda A2). See queuedCommandPrompt.
 	Attachment json.RawMessage `json:"attachment"`
+	// ToolUseResult is the top-level sibling of `message` on a user tool_result
+	// line. For Edit/Write it carries the pre-computed `structuredPatch` the TUI
+	// renders as a diff (design.md § Addenda A3) — the data is NOT in message.content
+	// (which is only the "updated successfully" string). See diffBodyFromToolResult.
+	ToolUseResult json.RawMessage `json:"toolUseResult"`
 }
 
 // jsonlMessage is the nested message object within user/assistant entries.

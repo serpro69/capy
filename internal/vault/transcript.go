@@ -3,6 +3,7 @@ package vault
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -69,6 +70,13 @@ type TranscriptMessage struct {
 	Collapsed   bool
 	ToolSummary string
 
+	// Diff marks a RoleTool message whose Body is reconstructed unified-diff text
+	// from an Edit/Write structuredPatch (A3) rather than a raw tool_result body.
+	// The viewer colors it by line prefix on expand (tui render.go renderDiffBody)
+	// and the marker shows a "(+a −b)" stat (baked into ToolSummary) instead of a
+	// line count. Set only alongside Collapsed on a diff-tool result.
+	Diff bool
+
 	// Queued marks a RoleUser message recovered from a queued_command attachment
 	// (A2) — a prompt the user submitted while the assistant was mid-turn. The
 	// viewer annotates its header "· queued"; it is otherwise a normal user turn.
@@ -94,12 +102,13 @@ func SubagentIDFromPath(rel string) (string, bool) {
 // message id merge into one slot (blocks deduplicated) so its SourceLine is the
 // first snapshot's line — exactly the scanner's canonical line_index.
 type transcriptEntry struct {
-	role    string // displayUser | displayAssistant | displaySystem
-	line    int
-	content json.RawMessage // user: message.content
-	blocks  []contentBlock  // assistant: merged, deduplicated blocks
-	text    string          // system: pre-composed text (pr-link / away_summary)
-	queued  bool            // user: recovered from a queued_command attachment (A2)
+	role       string // displayUser | displayAssistant | displaySystem
+	line       int
+	content    json.RawMessage // user: message.content
+	toolResult json.RawMessage // user: top-level toolUseResult (Edit/Write structuredPatch — A3)
+	blocks     []contentBlock  // assistant: merged, deduplicated blocks
+	text       string          // system: pre-composed text (pr-link / away_summary)
+	queued     bool            // user: recovered from a queued_command attachment (A2)
 }
 
 // ParseTranscript parses a raw session (or subagent) JSONL blob into ordered
@@ -147,7 +156,7 @@ func ParseTranscript(raw []byte, subagentIDs []string) []TranscriptMessage {
 		switch line.Type {
 		case "user":
 			if hasMsg {
-				entries = append(entries, transcriptEntry{role: displayUser, line: lineIndex, content: msg.Content})
+				entries = append(entries, transcriptEntry{role: displayUser, line: lineIndex, content: msg.Content, toolResult: line.ToolUseResult})
 			}
 		case "assistant":
 			if !hasMsg {
@@ -202,17 +211,17 @@ func ParseTranscript(raw []byte, subagentIDs []string) []TranscriptMessage {
 	for _, e := range entries {
 		switch e.role {
 		case displayUser:
-			human, tools := splitUserContentForViewer(e.content, toolUses)
+			human, tools := splitUserContentForViewer(e.content, e.toolResult, toolUses)
 			if human != "" {
 				msgs = append(msgs, TranscriptMessage{Role: RoleUser, Body: human, SourceLine: e.line, Queued: e.queued})
 			}
 			for _, tr := range tools {
 				if tr.collapsed {
 					// Carry the full body for the open target; the marker shows the
-					// compact summary + line count (see tui toolMarkerRow).
+					// compact summary + line count, or a diff stat (see tui toolMarkerRow).
 					msgs = append(msgs, TranscriptMessage{
 						Role: RoleTool, Body: tr.body, SourceLine: e.line,
-						Collapsed: true, ToolSummary: tr.summary,
+						Collapsed: true, ToolSummary: tr.summary, Diff: tr.diff,
 					})
 					continue
 				}
@@ -282,6 +291,7 @@ type viewerToolResult struct {
 	summary   string
 	body      string
 	collapsed bool
+	diff      bool // body is reconstructed unified-diff text (Edit/Write structuredPatch — A3)
 }
 
 // splitUserContentForViewer mirrors renderUserContent's split but returns
@@ -291,7 +301,13 @@ type viewerToolResult struct {
 // `vault show` keeps using renderUserContent (unchanged). Shares the same
 // lower-level helpers (asJSONString, cleanText, toolResultText) so the two paths
 // extract identical text.
-func splitUserContentForViewer(raw json.RawMessage, toolUses map[string]toolCall) (human string, tools []viewerToolResult) {
+//
+// toolResult is the line's top-level `toolUseResult` (A3): for an Edit/Write
+// result it carries the structuredPatch this rebuilds into a collapsed diff view
+// instead of the one-line success body. One toolUseResult per line, mapped to the
+// (in practice single) diff-tool tool_result block on it — Claude Code writes one
+// tool_result per user line, so the common case is unambiguous.
+func splitUserContentForViewer(raw, toolResult json.RawMessage, toolUses map[string]toolCall) (human string, tools []viewerToolResult) {
 	if len(raw) == 0 {
 		return "", nil
 	}
@@ -303,6 +319,11 @@ func splitUserContentForViewer(raw json.RawMessage, toolUses map[string]toolCall
 		return "", nil
 	}
 	var texts []string
+	// One top-level toolUseResult per line, so at most one diff-tool result can claim
+	// it. The corpus has no line with >1 tool_result block, but guard anyway: a second
+	// diff-tool result would otherwise re-render the SAME patch. After the first claims
+	// it, later diff results fall through to their plain success body.
+	diffConsumed := false
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
@@ -310,11 +331,25 @@ func splitUserContentForViewer(raw json.RawMessage, toolUses map[string]toolCall
 				texts = append(texts, c)
 			}
 		case "tool_result":
+			call := toolUses[b.ToolUseID]
+			// Edit/Write: render the structuredPatch as a collapsed diff. Falls
+			// through to the plain success body if the line has no patch (rare).
+			if diffResultTools[call.name] && !diffConsumed {
+				if diffBody, added, removed, ok := diffBodyFromToolResult(toolResult); ok {
+					diffConsumed = true
+					tools = append(tools, viewerToolResult{
+						summary:   fmt.Sprintf("%s (+%d −%d)", call.summary, added, removed),
+						body:      diffBody,
+						collapsed: true,
+						diff:      true,
+					})
+					continue
+				}
+			}
 			body := toolResultText(b.Content)
 			if body == "" {
 				continue
 			}
-			call := toolUses[b.ToolUseID]
 			tools = append(tools, viewerToolResult{
 				summary:   call.summary,
 				body:      body,
