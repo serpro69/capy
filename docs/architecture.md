@@ -357,6 +357,19 @@ and `openFocusedMarker`'s role switch (`viewer.go`). `splitUserContentForViewer`
 TUI-only and forked from `renderUserContent` precisely so a viewer-only change
 cannot perturb the static `show` output.
 
+**Viewer invariant — one rendered row is exactly one viewport line.**
+`renderTranscript` builds a `[]rows` slice joined with `"\n"`, and the bubbletea
+viewport splits that string back on `"\n"`. The entire scroll/anchor layer
+(`msgRowStart`, `rowForMarker`, `rowForLine`/`lineForRow`, and `focusMarker`'s
+`SetYOffset`) treats the row index and the viewport line index as the same number,
+so it holds only while no row carries an embedded newline. Body rows are safe —
+`wrapBody`/`renderDiffBody` split per line — but a **marker** row `Render`s a label
+that can contain newlines (a subagent launch label falls back to the multi-line
+Task `prompt`), so marker rows are flattened through `singleLine` (`render.go`). A
+multi-line row silently shifts every later row's true line below its recorded
+`msgRowStart`; the symptom is `]`/`[` scrolling the focused marker off-screen
+(regressed once, June 2026). Any new `rows` producer must emit single-line rows.
+
 ### Archival Paths
 
 1. **MCP server startup** — background goroutine imports current project's sessions (opt-in via `CAPY_VAULT_KEY`). With `CAPY_VAULT_SWEEP_ALL` set, the sweep walks **all** projects under `config.ClaudeProjectsDir()` instead of just the current one (`server.go:vaultSweep`)

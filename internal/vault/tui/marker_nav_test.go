@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/serpro69/capy/internal/vault"
@@ -166,4 +167,45 @@ func TestViewer_FocusMarkerLastMarkerNearBottomWraps(t *testing.T) {
 
 	stepped := v.focusMarker(-1)
 	assert.Equal(t, last-1, stepped.focusedMarker, "[ from the clamped last marker steps to the previous")
+}
+
+// TestRenderTranscript_MarkerRowsAreSingleLine is the row↔line invariant guard: a
+// subagent marker label that carries newlines (the launch label falls back to a
+// multi-line prompt; truncateRunes keeps the newlines) must still render as exactly
+// one viewport line. Otherwise msgRowStart (a row-slice index) drifts above the
+// marker's true viewport line, and SetYOffset(rowForMarker) scrolls ]/[ to an
+// offset that leaves the focused marker off-screen below the viewport.
+func TestRenderTranscript_MarkerRowsAreSingleLine(t *testing.T) {
+	msgs := []vault.TranscriptMessage{
+		{Role: vault.RoleSubagent, Body: "explore the parser\nthen summarize\nthe findings",
+			AgentID: "agent-a1234567", Openable: true, SourceLine: 0},
+		{Role: vault.RoleAssistant, Body: "some follow-up", SourceLine: 1},
+		// A non-openable subagent never enters rt.markers, but its row still lands in
+		// msgRowStart. A multi-line Body here would desync every later marker's row, so
+		// singleLine must flatten this path too — and it sits BEFORE the second openable
+		// marker, so a regression would mis-place that marker's rowForMarker.
+		{Role: vault.RoleSubagent, Body: "visible only\nsecond line", Openable: false, SourceLine: 2},
+		{Role: vault.RoleSubagent, Body: "second launch", AgentID: "agent-b1234567", Openable: true, SourceLine: 3},
+	}
+	rt := renderTranscript(msgs, DefaultStyles(), 80)
+
+	// No rendered row may contain an embedded newline — the viewport splits content
+	// on "\n", so a multi-line row would desync the row index from the line index.
+	for i, row := range rt.rows {
+		assert.NotContains(t, row, "\n", "row %d must be a single line", i)
+	}
+	// Row count and viewport line count must agree (the SetYOffset invariant).
+	assert.Equal(t, len(rt.rows), strings.Count(rt.content(), "\n")+1,
+		"out.rows count must equal viewport line count")
+
+	// Each openable marker's rowForMarker must point at the line actually holding
+	// its rendered glyph — the second marker exercises the post-multi-line-label drift.
+	require.Len(t, rt.markers, 2)
+	lines := strings.Split(rt.content(), "\n")
+	for pos := 0; pos < len(rt.markers); pos++ {
+		row := rt.rowForMarker(pos)
+		require.GreaterOrEqual(t, row, 0)
+		require.Less(t, row, len(lines))
+		assert.Contains(t, lines[row], "subagent", "marker %d row points at its own line", pos)
+	}
 }
