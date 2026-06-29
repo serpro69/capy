@@ -313,7 +313,7 @@ capy vault show 3f8a1c2b       # view a session (partial UUID, 8+ chars)
 
 Two archival paths populate the vault:
 
-- **MCP server startup sweep** — when the capy MCP server boots, a background task archives the **current project's** sessions automatically (opt-in: silently skipped unless `CAPY_VAULT_KEY` is set). Captures sessions that ended since the last boot.
+- **MCP server startup sweep** — when the capy MCP server boots, a background task archives the **current project's** sessions automatically (opt-in: silently skipped unless `CAPY_VAULT_KEY` is set). Captures sessions that ended since the last boot. Set `CAPY_VAULT_SWEEP_ALL` (any non-empty value) to sweep **all** projects on every boot instead of just the current one — convenient if you don't run a periodic `import`, at the cost of a heavier startup scan.
 - **`capy vault import`** — manual, scans **all projects**. This is the primary path. Because the startup sweep only covers the current project, sessions from projects you haven't reopened can age past Claude Code's 30-day cleanup. **Run `capy vault import` periodically — a cron job or shell habit** — to catch everything:
 
   ```bash
@@ -323,7 +323,7 @@ Two archival paths populate the vault:
 
 Import is idempotent: unchanged sessions are skipped, grown sessions are updated in place, and a smaller (likely compacted) variant never overwrites a fuller archive. Use `--dry-run` to preview, `--project <substr>` to scope, `--path <dir>` to import from a non-default location.
 
-> **Compaction gap (v1):** if `/compact` runs _before_ the next startup sweep or manual `import`, the pre-compaction content is already gone and cannot be recovered. Import often to minimize the window.
+> **Compaction:** `/compact` is append-only — it appends a summary entry and never rewrites earlier turns — so the full pre-compaction transcript stays in the session file, and the next startup sweep or `import` still archives it verbatim. The only residual risk is *deleting* the session file before it's been swept/imported. Import often to minimize that window.
 
 ### Commands
 
@@ -342,8 +342,12 @@ All commands live under `capy vault` and require `CAPY_VAULT_KEY`. Lookups (`sho
 | `stats [--json]`                                                                      | Session count, content size, DB file size, per-project breakdown, and the search-index version (with a count of sessions still below it — i.e. a `reindex` backlog).         |
 | `checkpoint`                                                                          | Flush the WAL into `vault.db` — run before copying it to another machine.                                                                                                   |
 | `rekey [--remove-backup]`                                                             | Rotate the vault's encryption key to the current `CAPY_VAULT_KEY`. **Stop the MCP server first.** Leaves `<vault>.bak` (still decryptable by the old key) unless `--remove-backup`.  |
+| `compact`                                                                             | Recompress sessions archived before compression existed (zstd) and `VACUUM` to reclaim disk. No-op if nothing is left uncompressed. **Stop the MCP server first.**           |
+| `merge --from <vault.db> [--key] [--project] [--dry-run]`                             | Non-destructively unite another machine's vault into this one — distinct sessions added, larger copy wins on UUID overlap. Idempotent. Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`. |
 
-`list`, `search`, and `show` also accept **`--tui`** for an interactive terminal UI (browse, live search, vim-style viewer) built on bubbletea. `--tui` is not supported on the mutating/exec commands (`restore`, `resume`, `delete`). In the viewer, large tool results (and any `Read`/`NotebookRead` output) collapse to a marker — cycle markers with `]`/`[` and press `enter` to expand one inline, `esc`/`q` to return. `Edit`/`Write` results expand to a colored diff (the marker shows a `(+a −b)` stat). Plain `vault show` is unaffected.
+`list`, `search`, and `show` also accept **`--tui`** for an interactive terminal UI (browse, live search, vim-style viewer) built on bubbletea. `--tui` is not supported on the mutating/exec commands (`restore`, `resume`, `delete`). In the viewer, large tool results (and any `Read`/`NotebookRead` output) collapse to a marker — cycle markers with `]`/`[` and press `enter` to expand one inline, `esc`/`q` to return. `Edit`/`Write` results expand to a colored diff (the marker shows a `(+a −b)` stat). Plain `vault show` is unaffected. Other keys: `f` filter the list by project, `c` copy the current message to the clipboard (OSC-52), `r` restore and `R` resume the selected/open session.
+
+Markdown in user/assistant turns is word-wrapped by default. For styled rendering (headings, lists, code blocks via [glamour](https://github.com/charmbracelet/glamour)), build with the optional `glamour` tag — `make build-glamour`. It is off by default so the default binary stays small and adds no extra dependency to the release build.
 
 ### Restore and resume
 
@@ -353,7 +357,20 @@ All commands live under `capy vault` and require `CAPY_VAULT_KEY`. Lookups (`sho
 
 ### Cross-machine sync
 
-The vault is local-only — there is no cloud sync. To move sessions between machines, copy the database file:
+The vault is local-only — there is no cloud sync. Two ways to move sessions between machines:
+
+**Merge (non-destructive, preferred).** `capy vault merge --from <path>` unites another vault into this one without overwriting — distinct sessions are added, and where both hold the same UUID the larger-content copy wins. Re-running is idempotent.
+
+```bash
+# Copy machine A's vault somewhere on machine B, then:
+capy vault checkpoint                                  # on A first — flush its WAL
+# (the source must be WRITABLE: merge checkpoints the source's WAL before reading)
+CAPY_VAULT_MERGE_KEY='<A's key>' capy vault merge --from /path/to/A-vault.db
+# --dry-run to preview, --project <substr> to scope. Source key falls back to
+# CAPY_VAULT_KEY when both machines share a passphrase.
+```
+
+**Copy the file (destructive).** Replacing `vault.db` wholesale is simpler but overwrites the destination:
 
 ```bash
 # On machine A
@@ -364,7 +381,7 @@ scp ~/.local/share/capy/vault.db  B:~/.local/share/capy/vault.db
 capy vault import                     # re-archive B's own local sessions alongside A's
 ```
 
-> **Copying `vault.db` replaces machine B's vault entirely.** If B already had archived sessions that no longer exist on disk, copy B's `vault.db` elsewhere first. When `import` opens a vault whose sessions all come from another machine, it prints a machine-ID mismatch warning to guard against silently overwriting unarchived local sessions. A proper `merge --from` command is planned for a future version.
+> **Copying `vault.db` replaces machine B's vault entirely.** If B already had archived sessions that no longer exist on disk, copy B's `vault.db` elsewhere first (or use `merge`, which never overwrites). When `import` opens a vault whose sessions all come from another machine, it prints a machine-ID mismatch warning to guard against silently overwriting unarchived local sessions.
 
 Machine identity is resolved from `CAPY_MACHINE_ID`, then `~/.config/capy/machine-id` (auto-generated), so it survives DB copies — each machine tags its own imports.
 
@@ -392,10 +409,13 @@ capy vault rekey                     # enter the OLD passphrase when prompted
 
 | Variable            | Purpose                                                                           |
 | ------------------- | --------------------------------------------------------------------------------- |
-| `CAPY_VAULT_KEY`    | **Required.** Encryption passphrase for `vault.db` (separate from `CAPY_DB_KEY`). |
-| `CAPY_VAULT_PATH`   | Override the vault database path.                                                 |
-| `CAPY_MACHINE_ID`   | Stable machine identity (useful in Docker/CI).                                    |
-| `CLAUDE_CONFIG_DIR` | Non-default Claude Code config dir; vault discovery and restore honor it.         |
+| `CAPY_VAULT_KEY`       | **Required.** Encryption passphrase for `vault.db` (separate from `CAPY_DB_KEY`).                                       |
+| `CAPY_VAULT_PATH`      | Override the vault database path.                                                                                      |
+| `CAPY_VAULT_SWEEP_ALL` | When set (any non-empty value), the MCP server startup sweep archives **all** projects, not just the current one.       |
+| `CAPY_VAULT_MERGE_KEY` | Default source-vault passphrase for `capy vault merge` (overridden by `--key`, falls back to `CAPY_VAULT_KEY`).         |
+| `CAPY_VAULT_NO_COMPRESS` | When set, store new blobs uncompressed (`encoding='raw'`); `capy vault compact` refuses to run. For debugging/benchmarking. |
+| `CAPY_MACHINE_ID`      | Stable machine identity (useful in Docker/CI).                                                                         |
+| `CLAUDE_CONFIG_DIR`    | Non-default Claude Code config dir; vault discovery and restore honor it.                                              |
 
 ## CLI Commands
 
