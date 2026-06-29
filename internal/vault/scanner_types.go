@@ -28,6 +28,11 @@ type jsonlLine struct {
 	PRNumber     json.Number     `json:"prNumber"`
 	Content      string          `json:"content"` // top-level string (system away_summary)
 	Message      json.RawMessage `json:"message"`
+	// Attachment is the top-level object on an `attachment` line (NOT under
+	// message). A queued_command attachment carries an in-flight user prompt here
+	// — the message the user submitted while the assistant was mid-turn (design.md
+	// § Addenda A2). See queuedCommandPrompt.
+	Attachment json.RawMessage `json:"attachment"`
 }
 
 // jsonlMessage is the nested message object within user/assistant entries.

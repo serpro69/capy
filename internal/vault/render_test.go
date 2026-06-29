@@ -138,6 +138,40 @@ func TestRenderText_SystemAndPRLink(t *testing.T) {
 	assert.Contains(t, out, "o/r")
 }
 
+func TestRenderText_QueuedCommandAttachment(t *testing.T) {
+	// An in-flight (queued) user message is shown as a user turn annotated
+	// "· queued" (design.md § Addenda A2); a task_reminder attachment is ignored.
+	raw := jsonlBytes(t,
+		userLine("u1", "/p", "main", "do the thing"),
+		assistantLine("a1", "m1", []map[string]any{{"type": "text", "text": "on it"}}),
+		map[string]any{
+			"type": "attachment", "uuid": "at0", "timestamp": "2026-05-01T10:00:08Z",
+			"attachment": map[string]any{"type": "task_reminder", "content": []any{}, "itemCount": 0},
+		},
+		map[string]any{
+			"type": "attachment", "uuid": "at1", "timestamp": "2026-05-01T10:00:09Z",
+			"attachment": map[string]any{"type": "queued_command", "prompt": "actually, also check the logs", "commandMode": "prompt"},
+		},
+	)
+
+	out := RenderText(raw)
+	assert.Contains(t, out, "[You · queued]", "the queued user turn is annotated")
+	assert.Contains(t, out, "actually, also check the logs")
+	assert.Equal(t, 1, strings.Count(out, "queued"), "only the queued_command renders; task_reminder is ignored")
+}
+
+func TestRenderMarkdown_QueuedCommandAttachment(t *testing.T) {
+	raw := jsonlBytes(t,
+		map[string]any{
+			"type": "attachment", "uuid": "at1", "timestamp": "2026-05-01T10:00:09Z",
+			"attachment": map[string]any{"type": "queued_command", "prompt": "queued in markdown", "commandMode": "prompt"},
+		},
+	)
+	out := RenderMarkdown(raw)
+	assert.Contains(t, out, "## 👤 You · queued")
+	assert.Contains(t, out, "queued in markdown")
+}
+
 func TestRender_SubagentBlobRendersStandalone(t *testing.T) {
 	// A subagent JSONL is just another session JSONL — the same renderer applies.
 	sub := jsonlBytes(t,

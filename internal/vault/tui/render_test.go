@@ -52,6 +52,29 @@ func TestRenderTranscript_ContentJoinsRows(t *testing.T) {
 	assert.Equal(t, "a\nb\nc", rt.content())
 }
 
+func TestRenderTranscript_QueuedUserHeaderAnnotated(t *testing.T) {
+	// A queued user message (A2) renders with a "· queued" header annotation; a
+	// normal user message does not. The role/style is unchanged (both are users).
+	msgs := []vault.TranscriptMessage{
+		{Role: vault.RoleUser, Body: "normal turn"},
+		{Role: vault.RoleUser, Body: "in-flight turn", Queued: true},
+	}
+	rt := renderTranscript(msgs, DefaultStyles(), 0)
+
+	normalHdr := rt.rows[rt.msgRowStart[0]]
+	queuedHdr := rt.rows[rt.msgRowStart[1]]
+	assert.Contains(t, normalHdr, "You")
+	assert.NotContains(t, normalHdr, "queued", "a normal user turn is not annotated")
+	assert.Contains(t, queuedHdr, "You")
+	assert.Contains(t, queuedHdr, "queued", "the queued turn header is annotated")
+}
+
+func TestMessageHeader_Queued(t *testing.T) {
+	st := DefaultStyles()
+	assert.NotContains(t, st.messageHeader("user", false), "queued")
+	assert.Contains(t, st.messageHeader("user", true), "queued")
+}
+
 func TestRenderTranscript_LineForRowInvertsRowForLine(t *testing.T) {
 	sess, _ := sampleSession(t)
 	msgs := vault.ParseTranscript(sess.RawJSONL, nil)

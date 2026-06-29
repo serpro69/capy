@@ -68,6 +68,11 @@ type TranscriptMessage struct {
 	// ("Read /path", "Bash <cmd>") shown on the marker row.
 	Collapsed   bool
 	ToolSummary string
+
+	// Queued marks a RoleUser message recovered from a queued_command attachment
+	// (A2) — a prompt the user submitted while the assistant was mid-turn. The
+	// viewer annotates its header "· queued"; it is otherwise a normal user turn.
+	Queued bool
 }
 
 // SubagentRelPath returns the vault_files relative path that stores a subagent
@@ -94,6 +99,7 @@ type transcriptEntry struct {
 	content json.RawMessage // user: message.content
 	blocks  []contentBlock  // assistant: merged, deduplicated blocks
 	text    string          // system: pre-composed text (pr-link / away_summary)
+	queued  bool            // user: recovered from a queued_command attachment (A2)
 }
 
 // ParseTranscript parses a raw session (or subagent) JSONL blob into ordered
@@ -161,6 +167,12 @@ func ParseTranscript(raw []byte, subagentIDs []string) []TranscriptMessage {
 				assistantPos[id] = len(entries)
 				entries = append(entries, transcriptEntry{role: displayAssistant, line: lineIndex, blocks: blocks})
 			}
+		case "attachment":
+			// A queued_command attachment is an in-flight user message (A2):
+			// display it as a user turn, annotated "· queued" by the viewer.
+			if prompt := queuedCommandPrompt(line.Attachment); prompt != "" {
+				entries = append(entries, transcriptEntry{role: displayUser, line: lineIndex, content: userTextContent(prompt), queued: true})
+			}
 		case "pr-link":
 			if t := prLinkText(line); t != "" {
 				entries = append(entries, transcriptEntry{role: displaySystem, line: lineIndex, text: t})
@@ -192,7 +204,7 @@ func ParseTranscript(raw []byte, subagentIDs []string) []TranscriptMessage {
 		case displayUser:
 			human, tools := splitUserContentForViewer(e.content, toolUses)
 			if human != "" {
-				msgs = append(msgs, TranscriptMessage{Role: RoleUser, Body: human, SourceLine: e.line})
+				msgs = append(msgs, TranscriptMessage{Role: RoleUser, Body: human, SourceLine: e.line, Queued: e.queued})
 			}
 			for _, tr := range tools {
 				if tr.collapsed {
