@@ -182,8 +182,9 @@ func dedupBlocks(dst, add []contentBlock) []contentBlock {
 // shows which call produced the output; an unknown id leaves the text unprefixed.
 // A tool_result whose call is in excludedResultTools (Read/NotebookRead) is
 // collapsed to a one-line marker instead of the full file/cell dump (the verbatim
-// body stays in raw_jsonl). Shared by render.go (`vault show`) and transcript.go
-// (TUI viewer).
+// body stays in raw_jsonl). Used by render.go (`vault show`) only; the TUI viewer
+// uses splitUserContentForViewer (transcript.go), which keeps the full body so a
+// collapsed result can expand on demand (A1).
 func renderUserContent(raw json.RawMessage, toolUses map[string]toolCall) (human string, tools []string) {
 	if len(raw) == 0 {
 		return "", nil
@@ -220,7 +221,8 @@ func renderUserContent(raw json.RawMessage, toolUses map[string]toolCall) (human
 // tool_result (Read/NotebookRead): the call summary plus an omitted-body marker
 // with the line count, so the transcript shows the call and its target without the
 // full file/cell dump. The verbatim body stays in raw_jsonl (`vault show
-// --format json` / restore). Shared by render.go and transcript.go.
+// --format json` / restore). Used by render.go (`vault show`) only; the TUI viewer
+// collapses excluded results to an openable marker instead (A1, transcript.go).
 func collapsedToolResult(call toolCall, body string) string {
 	label := call.summary
 	if label == "" {
