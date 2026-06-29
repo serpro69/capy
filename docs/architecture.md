@@ -230,14 +230,41 @@ Four layers:
 ### Schema
 
 ```sql
-vault_sessions   — one row per session: metadata, 1:1 location, raw JSONL blob
-vault_files      — associated files (subagents, tool-results), CASCADE on session delete
+vault_sessions   — one row per session: metadata, 1:1 location, raw JSONL blob,
+                   encoding ('raw'|'zstd', NULL on legacy rows = raw)
+vault_files      — associated files (subagents, tool-results), CASCADE on session
+                   delete; same encoding column
 vault_fts        — FTS5 virtual table, one row per message, Porter tokenizer
                    (tool_result rows tagged with their call summary; Read/NotebookRead
                     and Edit/Write result bodies excluded — see scanner.go ftsExcludedResult)
-vault_meta       — key-value store (reserved)
-vault_migrations — migration tracking (by-name)
+vault_meta       — key-value store; holds min_reader_version (the compression
+                   forward-compat marker — see below)
+vault_migrations — migration tracking (by-name); migration runner lives in migrations.go
 ```
+
+### Blob compression & storage encoding
+
+Session transcripts and sidecar files are stored zstd-compressed at the blob seam
+(`codec.go`: one shared `*zstd.Encoder`/`*zstd.Decoder`, `EncodeAll`/`DecodeAll` —
+thread-safe and reentrant). The per-row `encoding` column is **authoritative**:
+`encodeBlob` returns `'zstd'` when compression shrinks the input, else `'raw'`;
+`decodeBlob` switches on the stored column. There is **no magic-byte auto-detection**
+— `vault_files.raw_content` holds arbitrary sidecar bytes (screenshots, build logs,
+already-compressed files) that could collide with the zstd frame magic, so the
+column, not the bytes, decides. Legacy rows (`encoding IS NULL`) read as raw.
+Set `CAPY_VAULT_NO_COMPRESS` to force `'raw'` writes.
+
+`content_hash`, `size_bytes`, and the FTS text are all computed on the
+**uncompressed** bytes, so dedup, the larger-wins merge rule, and search are
+byte-for-byte unchanged — compression is purely a storage encoding.
+
+The first `'zstd'` write stamps `vault_meta.min_reader_version = "2"`. `openDB`
+reads it after migration and refuses to open a vault whose marker exceeds the
+binary's `supportedReaderVersion` (2) — an old binary will not silently misread a
+compressed vault. `capy vault compact` rewrites legacy (`NULL`) rows through the
+codec and `VACUUM`s to reclaim the freed pages (SQLite never shrinks the file on
+its own). Full rationale: the vault v2 design doc and the `kk:arch-decisions`
+note (the explicit `encoding` column supersedes an earlier magic-byte design).
 
 ### Search index & `index_version`
 
@@ -332,8 +359,9 @@ cannot perturb the static `show` output.
 
 ### Archival Paths
 
-1. **MCP server startup** — background goroutine imports current project's sessions (opt-in via `CAPY_VAULT_KEY`)
+1. **MCP server startup** — background goroutine imports current project's sessions (opt-in via `CAPY_VAULT_KEY`). With `CAPY_VAULT_SWEEP_ALL` set, the sweep walks **all** projects under `config.ClaudeProjectsDir()` instead of just the current one (`server.go:vaultSweep`)
 2. **`capy vault import`** — manual, all projects, idempotent (hash-based, larger-total-size wins)
+3. **`capy vault merge --from <path>`** — non-destructive cross-machine union (`merge.go`): reads another vault's `vault_sessions`+`vault_files`, applies the same idempotent digest decision (distinct added, larger-wins on UUID overlap), carries source metadata verbatim, re-scans FTS. Feature-detects a v1 (no `encoding` column) source. Writes only the destination, so a concurrent server sweep is absorbed by busy-timeout retry
 
 ### CLI Commands
 
@@ -349,8 +377,19 @@ cannot perturb the static `show` output.
 | `capy vault delete` | Remove a session from the vault |
 | `capy vault stats` | DB size, session count, per-project breakdown, index version + reindex backlog |
 | `capy vault checkpoint` | Flush WAL (required before cross-machine copy) |
+| `capy vault compact` | Recompress legacy (`encoding IS NULL`) blobs through the zstd codec + `VACUUM` to reclaim disk. No-op if nothing is uncompressed; aborts under `CAPY_VAULT_NO_COMPRESS` or a busy DB (stop the server first) |
+| `capy vault merge --from <path>` | Non-destructive cross-machine union (see Archival Paths). Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`; `--project`, `--dry-run` |
+| `capy vault rekey` | Rotate the encryption key to the current `CAPY_VAULT_KEY` via `sqliteutil.Rekey` (SQLite backup-API: open old → checkpoint → copy into a new file under the new key → swap+verify). Sidesteps the WAL/PRAGMA-rekey incompatibility (ADR-020) by writing a fresh file. Stop the server first; `--remove-backup` unlinks the old-key `.bak` |
 
-All commands support `--tui` for interactive browsing/search/viewing.
+`list`, `search`, and `show` support `--tui` for interactive browsing/search/viewing
+(filter `f`, copy `c`, restore `r`, resume `R`); the mutating/exec commands do not.
+The viewer's markdown rendering upgrades from plain word-wrap to styled
+[glamour](https://github.com/charmbracelet/glamour) output when built with the
+optional `glamour` build tag (`make build-glamour` / `-tags fts5,glamour`) — a
+`//go:build glamour` vs `!glamour` `renderBody` seam (`render_glamour.go` /
+`render_default.go`), kept off the default build so it links no extra dependency. A
+CI linkage guard asserts the default binary excludes glamour symbols and the tagged
+binary includes them.
 
 ## Configuration
 
