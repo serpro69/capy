@@ -147,7 +147,7 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 					slog.Warn("vault import: fts upgrade batch failed, retrying per-session",
 						"count", len(ftsBatch), "error", err)
 					for i := range ftsBatch {
-						if _, err := store.RebuildFTSBatch(ctx, ftsBatch[i : i+1]); err != nil {
+						if _, err := store.RebuildFTSBatch(ctx, ftsBatch[i:i+1]); err != nil {
 							slog.Warn("vault import: session fts upgrade failed",
 								"uuid", ftsBatch[i].UUID, "error", err)
 							ftsPending[i].Status = StatusError

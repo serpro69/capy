@@ -41,6 +41,8 @@ internal/
 - **WAL checkpoint on close.** The connection pool must be closed before checkpointing (see `store.go:Close()` and ADR-016).
 - **WAL + PRAGMA rekey incompatible.** Encryption path must switch to DELETE journal mode before rekeying (ADR-020).
 - **Source kinds are schema-enforced.** `CHECK (kind IN ('ephemeral', 'durable', 'session'))` — no other values accepted.
+- **Vault blob `encoding` column is authoritative.** Compressed (`'zstd'`) vs raw (`'raw'`/`NULL`-legacy) blobs are distinguished by the per-row `encoding` column, never magic-byte detection (sidecars hold arbitrary bytes). The first compressed write stamps `vault_meta.min_reader_version`; `openDB` refuses a vault whose marker exceeds `supportedReaderVersion` (2). `content_hash`/`size_bytes`/FTS are always computed on **uncompressed** bytes.
+- **Vault rekey uses the backup-API, not PRAGMA rekey.** `sqliteutil.Rekey` writes a fresh new-key file (open old → checkpoint → backup-copy → swap+verify), sidestepping the WAL/PRAGMA-rekey incompatibility above. Shared by `capy vault rekey` and `capy encrypt`.
 - **Hooks are short-lived processes.** Each hook invocation is a separate `capy hook <event>` process. State persists via `.capy/guidance-<sessionID>.json` files.
 
 ### Build & Test
@@ -49,9 +51,11 @@ internal/
 export CAPY_DB_KEY=test-key-for-development   # required for knowledge store tests
 export CAPY_VAULT_KEY=test-key                # required for vault tests
 make build                                    # CGO_ENABLED=1, -tags fts5
+make build-glamour                            # + opt-in glamour TUI markdown (-tags fts5,glamour)
 make test                                     # all tests
 make test-race                                # with race detector
 go test -tags fts5 -count=1 ./internal/<pkg>/... # single package
+go test -tags fts5,glamour ./internal/vault/tui/... # glamour-tagged TUI subset
 ```
 
 ### Benchmarks

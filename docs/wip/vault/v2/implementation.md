@@ -108,12 +108,12 @@ New `internal/vault/merge.go`:
 - Iterate source `vault_sessions` (stream with a cursor; `defer rows.Close()`). For each: load source `vault_files`, `decodeBlob(encoding, …)` the main + sidecars (source may be compressed; treat as `raw` when the source has no `encoding` column).
 - Decision: `dest.SessionDigest(uuid)` → skip if same `content_hash` or smaller source `size_bytes`; else build a `SessionRecord` and Insert/Replace. Carry source `machine_id`/`claude_project_dir`/`project_path`/`git_branch` verbatim (do not recompute). Apply the 0-msg exclusion (Task 11's `StatusExcluded`) — hence the Task 11 dependency.
 - Extract `buildFTS(uuid, mainBytes, files) []FTSRow` from `import.go:buildRecord` (the scanner-wiring loop) so merge and disk-import share it.
-- **Carry `vault_snapshots` (added after review; depends on Task 14):** after the parent session row exists, iterate the source's `vault_snapshots` for that UUID and `InsertSnapshot` into the destination, deduped by `UNIQUE(session_uuid, content_hash)`. **Skip the whole step when the source lacks the table** (per the feature-detect probe above) — a v1/older source — so it is a true runtime no-op, not a "no such table" error. The *destination* always has the table + `InsertSnapshot` (the snapshots task ships in this v2 unit), so only the source can lack it. On the shared branch this subtask must land after Task 14's commit — see tasks.md Task 9 deps.
+- ~~**Carry `vault_snapshots` (added after review; depends on Task 14):** after the parent session row exists, iterate the source's `vault_snapshots`…~~ **DROPPED (2026-06-17)** with Tasks 14–16 — no `vault_snapshots` table ships, so `merge` copies `vault_sessions` + `vault_files` only; there is no snapshot step (and no source `vault_snapshots` feature-detect).
 - Batch via `WriteBatch`; reuse `ImportResult`/status accounting.
 
 `cmd/capy/vault.go` `merge` subcommand: `--from <path>` (required), `--key`/`CAPY_VAULT_MERGE_KEY`, `--dry-run`, `--project`. Table output identical to `import`.
 
-- Step → verify: build fixture vaults with overlapping + distinct UUIDs (one v2 source with snapshots; **one v1-shaped source with no `encoding` column and no `vault_snapshots` table**); `merge --from B` into A → A gains B's distinct sessions, keeps the larger of overlaps, `search` finds B-only content, B's `machine_id`/`project_path` are preserved, and **B's snapshots appear in A** (deduped). **The v1-shaped source merges cleanly** (blobs read as raw, snapshot step skipped — no "no such column/table"). `--dry-run` writes nothing.
+- Step → verify: build fixture vaults with overlapping + distinct UUIDs (**one v1-shaped source with no `encoding` column**); `merge --from B` into A → A gains B's distinct sessions, keeps the larger of overlaps, `search` finds B-only content, B's `machine_id`/`project_path` are preserved. **The v1-shaped source merges cleanly** (blobs read as raw — no "no such column"). `--dry-run` writes nothing. (Snapshot fixtures/assertions dropped with Tasks 14–16.)
 
 ---
 
@@ -128,6 +128,13 @@ New `internal/vault/merge.go`:
 ---
 
 ## Durability — PreCompact (gated on V2.0)
+
+> **V2.13–V2.15 DROPPED (2026-06-17).** V2.0 (below) ran and found `/compact` is
+> **append-only** — it loses no file content, and the server-startup sweep already
+> archives the full transcript. The `vault_snapshots` schema (V2.13), PreCompact
+> handler (V2.14), and snapshot CLI (V2.15) are **not implemented**; `handlePreCompact`
+> stays a no-op. The V2.0 subsection is retained (it was done); V2.13–V2.15 below are
+> retained as rationale only. Re-trigger conditions: [precompact-investigation.md](./precompact-investigation.md).
 
 ### V2.0 — Investigate PreCompact payload (Risk-First, gates V2.13–15)
 
