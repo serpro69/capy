@@ -258,23 +258,29 @@ func (m viewerModel) Update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
 	return m, nil, viewerNone
 }
 
-// focusMarker advances the focused openable marker by delta and scrolls to it.
+// focusMarker moves the focused openable marker by delta (±1) and scrolls to it.
 // No-op when the active transcript has no openable markers.
+//
+// The reference point depends on whether the focused marker is still on screen
+// (A4). If it is visible, ]/[ step sequentially from it (the classic cycle, with
+// wraparound) — so repeatedly tapping ] walks marker-by-marker. If it has been
+// scrolled out of view (or nothing is focused yet), the next/prev marker is
+// resolved from the current viewport top instead, so navigation tracks where the
+// user scrolled rather than replaying from a stale focusedMarker±1. The visible
+// branch also sidesteps a clamped-offset trap: a marker in the last viewport
+// height of the transcript can't sit at the top (the viewport clamps YOffset), so
+// a YOffset-only "next" would re-select it forever — stepping from the marker
+// index escapes that.
 func (m viewerModel) focusMarker(delta int) viewerModel {
 	n := len(m.active.markers)
 	if n == 0 {
 		return m
 	}
-	next := m.focusedMarker + delta
-	switch {
-	case m.focusedMarker == -1 && delta > 0:
-		next = 0
-	case m.focusedMarker == -1 && delta < 0:
-		next = n - 1
-	case next < 0:
-		next = n - 1
-	case next >= n:
-		next = 0
+	var next int
+	if m.focusedMarkerVisible() {
+		next = (m.focusedMarker + delta + n) % n
+	} else {
+		next = m.active.markerFromViewport(m.vp.YOffset, delta)
 	}
 	m.focusedMarker = next
 	// Re-render content so the newly-focused marker is visibly highlighted (not
@@ -284,6 +290,20 @@ func (m viewerModel) focusMarker(delta int) viewerModel {
 		m.vp.SetYOffset(row)
 	}
 	return m
+}
+
+// focusedMarkerVisible reports whether the focused marker's start row currently
+// falls within the viewport's visible rows. It decides which reference focusMarker
+// uses (see there): visible → sequential step from the marker index; not visible
+// (scrolled away, or nothing focused) → resolve from the viewport top.
+func (m viewerModel) focusedMarkerVisible() bool {
+	row := m.active.rowForMarker(m.focusedMarker)
+	if row < 0 {
+		return false
+	}
+	// Visible rows are the half-open interval [YOffset, YOffset+Height): a row equal
+	// to YOffset+Height is the first row scrolled off the bottom.
+	return row >= m.vp.YOffset && row < m.vp.YOffset+m.vp.Height
 }
 
 // openFocusedMarker opens the focused marker standalone, scrolled to its top:

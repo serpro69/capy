@@ -75,6 +75,32 @@ func TestMessageHeader_Queued(t *testing.T) {
 	assert.Contains(t, st.messageHeader("user", true), "queued")
 }
 
+func TestRenderedTranscript_MarkerFromViewport(t *testing.T) {
+	// Three openable markers at rows 5, 12, 20 (A4 viewport-relative resolution).
+	rt := renderedTranscript{
+		msgRowStart: []int{0, 5, 6, 12, 13, 20},
+		markers:     []int{1, 3, 5},
+	}
+
+	// next (delta>0): the first marker at or below the viewport top (inclusive).
+	assert.Equal(t, 0, rt.markerFromViewport(0, 1), "from the very top → first marker")
+	assert.Equal(t, 0, rt.markerFromViewport(5, 1), "exactly on the first marker (inclusive) → that marker")
+	assert.Equal(t, 1, rt.markerFromViewport(6, 1), "just past the first marker → second")
+	assert.Equal(t, 2, rt.markerFromViewport(13, 1), "between the second and third → third")
+	assert.Equal(t, 0, rt.markerFromViewport(21, 1), "below every marker → wrap to the first")
+
+	// prev (delta<0): the last marker at or above the viewport top (inclusive).
+	assert.Equal(t, 2, rt.markerFromViewport(20, -1), "exactly on the last marker (inclusive) → that marker")
+	assert.Equal(t, 1, rt.markerFromViewport(19, -1), "just above the last marker → second")
+	assert.Equal(t, 0, rt.markerFromViewport(5, -1), "exactly on the first marker → first")
+	assert.Equal(t, 2, rt.markerFromViewport(4, -1), "above every marker → wrap to the last")
+
+	// No markers → -1 in both directions.
+	empty := renderedTranscript{}
+	assert.Equal(t, -1, empty.markerFromViewport(0, 1))
+	assert.Equal(t, -1, empty.markerFromViewport(0, -1))
+}
+
 func TestRenderTranscript_LineForRowInvertsRowForLine(t *testing.T) {
 	sess, _ := sampleSession(t)
 	msgs := vault.ParseTranscript(sess.RawJSONL, nil)
