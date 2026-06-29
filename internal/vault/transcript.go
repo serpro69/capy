@@ -33,18 +33,41 @@ const (
 // subagentLabelMaxChars bounds the marker label (description/prompt summary).
 const subagentLabelMaxChars = 100
 
+// collapseToolResultLines / collapseToolResultBytes bound an inline tool_result in
+// the TUI viewer (design.md § Addenda A1): a RoleTool body exceeding either is
+// collapsed to a focusable, openable marker that expands on demand. Excluded-tool
+// results (excludedResultTools — Read/NotebookRead) collapse regardless of size.
+// Plain `vault show` is unaffected: it renders via render.go's renderUserContent,
+// not ParseTranscript.
+//
+// The values are rough "would a reader rather page past this?" heuristics — ~20
+// lines is about a viewport, ~2000 bytes catches a verbose single-line blob.
+// Constants for now; validate against real sessions before exposing as config.
+const (
+	collapseToolResultLines = 20
+	collapseToolResultBytes = 2000
+)
+
 // TranscriptMessage is one renderable unit for the viewer. Body is the composed,
 // unsanitized display text (may be multi-line). SourceLine is the 0-based line of
 // the originating entry in this transcript's source JSONL — the canonical/first
 // line for a deduplicated assistant snapshot, matching the FTS scanner's
 // line_index, so a search hit scrolls to the same place. AgentID/Openable are set
-// only on RoleSubagent markers.
+// only on RoleSubagent markers; Collapsed/ToolSummary only on RoleTool messages.
 type TranscriptMessage struct {
 	Role       string
 	Body       string
 	SourceLine int
 	AgentID    string // RoleSubagent only: the mapped subagent id ("" when unmatched)
 	Openable   bool   // RoleSubagent only: AgentID resolves to an archived transcript
+
+	// Collapsed marks a RoleTool message the viewer renders as a focusable,
+	// openable marker (expand-on-demand) rather than inline — an excluded-tool body
+	// or one over the collapseToolResult* thresholds (A1). Body still carries the
+	// full result text for the open target; ToolSummary is the compact call label
+	// ("Read /path", "Bash <cmd>") shown on the marker row.
+	Collapsed   bool
+	ToolSummary string
 }
 
 // SubagentRelPath returns the vault_files relative path that stores a subagent
@@ -167,12 +190,23 @@ func ParseTranscript(raw []byte, subagentIDs []string) []TranscriptMessage {
 	for _, e := range entries {
 		switch e.role {
 		case displayUser:
-			human, tools := renderUserContent(e.content, toolUses)
+			human, tools := splitUserContentForViewer(e.content, toolUses)
 			if human != "" {
 				msgs = append(msgs, TranscriptMessage{Role: RoleUser, Body: human, SourceLine: e.line})
 			}
 			for _, tr := range tools {
-				msgs = append(msgs, TranscriptMessage{Role: RoleTool, Body: tr, SourceLine: e.line})
+				if tr.collapsed {
+					// Carry the full body for the open target; the marker shows the
+					// compact summary + line count (see tui toolMarkerRow).
+					msgs = append(msgs, TranscriptMessage{
+						Role: RoleTool, Body: tr.body, SourceLine: e.line,
+						Collapsed: true, ToolSummary: tr.summary,
+					})
+					continue
+				}
+				msgs = append(msgs, TranscriptMessage{
+					Role: RoleTool, Body: prefixToolResult(tr.summary, tr.body), SourceLine: e.line,
+				})
 			}
 		case displayAssistant:
 			body, launches := assistantBodyAndLaunches(e.blocks)
@@ -225,6 +259,65 @@ func assistantBodyAndLaunches(blocks []contentBlock) (body string, launches []st
 		}
 	}
 	return strings.Join(parts, "\n"), launches
+}
+
+// viewerToolResult is a tool_result block prepared for the TUI viewer: the full
+// (untruncated) body, the originating call summary, and the collapse decision.
+// Unlike renderUserContent's []string — which bakes the excluded-tool one-liner
+// and is shared with `vault show` — the viewer keeps the whole body so a collapsed
+// marker can expand to it on demand (A1).
+type viewerToolResult struct {
+	summary   string
+	body      string
+	collapsed bool
+}
+
+// splitUserContentForViewer mirrors renderUserContent's split but returns
+// structured tool results for the viewer: the full body is preserved (for
+// collapse-then-open) and the collapse decision — excluded tool, or over the
+// size/line threshold — is made here rather than baked into a display string.
+// `vault show` keeps using renderUserContent (unchanged). Shares the same
+// lower-level helpers (asJSONString, cleanText, toolResultText) so the two paths
+// extract identical text.
+func splitUserContentForViewer(raw json.RawMessage, toolUses map[string]toolCall) (human string, tools []viewerToolResult) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	if s, ok := asJSONString(raw); ok {
+		return cleanText(s), nil
+	}
+	var blocks []contentBlock
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return "", nil
+	}
+	var texts []string
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			if c := cleanText(b.Text); c != "" {
+				texts = append(texts, c)
+			}
+		case "tool_result":
+			body := toolResultText(b.Content)
+			if body == "" {
+				continue
+			}
+			call := toolUses[b.ToolUseID]
+			tools = append(tools, viewerToolResult{
+				summary:   call.summary,
+				body:      body,
+				collapsed: excludedResultTools[call.name] || overCollapseThreshold(body),
+			})
+		}
+	}
+	return strings.Join(texts, "\n"), tools
+}
+
+// overCollapseThreshold reports whether a tool_result body is large enough to
+// collapse to a marker in the viewer (A1) — by line count or byte size, so both a
+// many-line log and a single huge line collapse.
+func overCollapseThreshold(body string) bool {
+	return strings.Count(body, "\n")+1 > collapseToolResultLines || len(body) > collapseToolResultBytes
 }
 
 // subagentLaunchLabel builds a short human label for a Task/Agent launch from its

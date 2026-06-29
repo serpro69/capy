@@ -254,7 +254,7 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [ ] 17.4 Run `/kk:review-spec` — verify implementation matches design.md + implementation.md
 
 ## Task 18: Design addenda (post-plan follow-ups)
-- **Status:** pending
+- **Status:** in-progress (A1)
 - **Depends on:** —
 - **Size:** per-addendum (currently M)
 - **Docs:** [design.md § Addenda](./design.md#addenda)
@@ -265,11 +265,24 @@ does not gate them; each addendum carries its own verification). Numbered 18 to
 avoid renumbering the existing plan.
 
 ### Addenda
-- [ ] A1 — TUI collapse-then-open for large `tool_result` bodies in the `--tui`
+- [x] A1 — TUI collapse-then-open for large `tool_result` bodies in the `--tui`
   viewer (any tool past a size threshold; the FTS-excluded Read/NotebookRead set is
   a subset). Plain `vault show` unchanged. Reuses the openable-marker mechanism but
   needs a new "open inline content" target since the body is inline in `raw_jsonl`,
   not a sidecar file. Display-only; FTS unaffected. See design.md § Addenda A1.
+  **Done.** `transcript.go`: viewer-specific `splitUserContentForViewer` keeps the
+  full body (vs the shared `renderUserContent`, untouched, that `vault show` keeps
+  using) + `overCollapseThreshold` (>20 lines OR >2000 bytes) + `TranscriptMessage.
+  Collapsed/ToolSummary`. `tui/render.go`: collapsed RoleTool → openable marker
+  (`toolMarkerRow`/`markerRowFor`). `tui/viewer.go`: `inInline`/`inlineLabel` detail
+  state + `inDetail()` generalization of the `inSub` paths + `openInlineContent`
+  (distinct from `openSubagent` — renders the carried body, esc/q returns). Tests in
+  `transcript_test.go` + new `tui/collapse_test.go`. Isolated review
+  (code-reviewer + pal/gemini-3.5-flash): no P0/P1 correctness bugs; applied the
+  agreed P1 (stale `renderUserContent`/`collapsedToolResult` "shared with
+  transcript.go" doc comments corrected) + clarity/test-coverage nits (threshold
+  rationale, byte-threshold test, `markerRowFor`/guard comments). Declined pal's
+  slice-init nit (mirrors the sibling `renderUserContent` nil-slice idiom; nil-safe).
 
 ## Dependency Graph
 
