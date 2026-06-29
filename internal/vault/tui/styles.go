@@ -35,6 +35,12 @@ type Styles struct {
 	Help     lipgloss.Style
 	ErrorMsg lipgloss.Style
 
+	// Diff lines for an expanded Edit/Write diff view (A3), colored by unified-diff
+	// prefix: added (+) green, removed (-) red, hunk header (@@) cyan.
+	DiffAdd  lipgloss.Style
+	DiffDel  lipgloss.Style
+	DiffHunk lipgloss.Style
+
 	// Search-result rows.
 	ResultSelected lipgloss.Style
 	ResultMeta     lipgloss.Style
@@ -71,6 +77,10 @@ func DefaultStyles() Styles {
 		StatusBar: lipgloss.NewStyle().Foreground(colGray),
 		Help:      lipgloss.NewStyle().Foreground(colGray).Faint(true),
 		ErrorMsg:  lipgloss.NewStyle().Foreground(colRed).Bold(true),
+
+		DiffAdd:  lipgloss.NewStyle().Foreground(colGreen),
+		DiffDel:  lipgloss.NewStyle().Foreground(colRed),
+		DiffHunk: lipgloss.NewStyle().Foreground(colCyan),
 
 		ResultSelected: lipgloss.NewStyle().Foreground(colWhite).Bold(true).Reverse(true),
 		ResultMeta:     lipgloss.NewStyle().Foreground(colGray),
