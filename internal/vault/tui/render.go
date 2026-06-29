@@ -25,9 +25,19 @@ import (
 // never turn_index) is fully preserved via msgRowStart. Lazy windowing is a
 // deferred performance optimization — see the tasks.md follow-up. Revisit if
 // profiling shows lag on multi-MB sessions.
+//
+// INVARIANT — one rows element == one viewport line. content() joins rows with
+// "\n" and the bubbletea viewport (SetContent) splits that string back on "\n", so
+// the whole scroll/anchor layer (msgRowStart, rowForMarker, rowForLine/lineForRow,
+// focusedMarkerVisible, and viewer.focusMarker's SetYOffset) is correct ONLY while
+// no rows element contains an embedded newline. A single multi-line row silently
+// shifts every later row's true line below its recorded msgRowStart — e.g. ]/[
+// navigation scrolls the focused marker off-screen. Body rows uphold this because
+// wrapBody/renderDiffBody split per-line; marker rows must be flattened with
+// singleLine (labels can carry newlines). Any new rows producer must do the same.
 type renderedTranscript struct {
 	messages    []vault.TranscriptMessage
-	rows        []string // display rows (no trailing newline); join with "\n" for the viewport
+	rows        []string // display rows; one line each (see INVARIANT) — join with "\n" for the viewport
 	msgRowStart []int    // msgRowStart[i] = first row index of messages[i]
 	markers     []int    // indices into messages that are openable RoleSubagent markers
 }
@@ -173,6 +183,7 @@ func (s Styles) markerRow(m vault.TranscriptMessage, focused bool) string {
 	if m.Openable && m.AgentID != "" {
 		label = "subagent " + shortID(m.AgentID) + ": " + m.Body
 	}
+	label = singleLine(label)
 	switch {
 	case focused:
 		return s.MarkerFocused.Render("▶ " + label + "  (enter to open)")
@@ -202,7 +213,7 @@ func (s Styles) markerRowFor(m vault.TranscriptMessage, focused bool) string {
 // (viewer.openInlineContent). A diff marker (A3) shows the "(+a −b)" stat already
 // baked into ToolSummary; any other collapsed result shows the omitted line count.
 func (s Styles) toolMarkerRow(m vault.TranscriptMessage, focused bool) string {
-	label := m.ToolSummary
+	label := singleLine(m.ToolSummary)
 	if label == "" {
 		label = "tool result"
 	}
@@ -264,6 +275,33 @@ func wrapBody(body string, style lipgloss.Style, width int) []string {
 		body = style.Render(body)
 	}
 	return strings.Split(body, "\n")
+}
+
+// singleLine collapses s to one display line when it carries a newline: runs of
+// whitespace (including the newlines) become single spaces. It exists to enforce
+// the viewer's core invariant that one rendered marker is exactly one out.rows
+// element AND one viewport line.
+//
+// Only "\n"/"\r" threaten that invariant — they are what the viewport splits on, so
+// the fast-path keys on them alone and leaves newline-free labels (tabs, repeated
+// spaces) untouched. When a line break *is* present, strings.Fields additionally
+// tidies those other whitespace runs as a side effect.
+//
+// renderTranscript appends each marker (markerRow/toolMarkerRow) as a single
+// out.rows entry, and the scroll math throughout the viewer — msgRowStart,
+// rowForMarker, rowForLine/lineForRow, and viewer.focusMarker's SetYOffset — treats
+// row index and viewport line as interchangeable. A subagent launch label falls
+// back to the (multi-line) prompt and is only rune-truncated (truncateRunes keeps
+// embedded newlines), so without flattening a marker row would split into several
+// viewport lines: every later row's true line would drift below its recorded
+// msgRowStart, and ]/[ would scroll to an offset that leaves the focused marker
+// off-screen. Body text rows don't need this — wrapBody/renderDiffBody already
+// split on "\n" so each row is one line by construction.
+func singleLine(s string) string {
+	if !strings.ContainsAny(s, "\n\r") {
+		return s
+	}
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // shortID trims a long agent id for compact display.
