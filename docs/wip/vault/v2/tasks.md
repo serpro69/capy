@@ -254,7 +254,7 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [ ] 17.4 Run `/kk:review-spec` — verify implementation matches design.md + implementation.md
 
 ## Task 18: Design addenda (post-plan follow-ups)
-- **Status:** in-progress (A1, A2 done; A3 pending)
+- **Status:** in-progress (A1, A2, A3 done; A4 pending)
 - **Depends on:** —
 - **Size:** per-addendum (currently M)
 - **Docs:** [design.md § Addenda](./design.md#addenda)
@@ -320,6 +320,36 @@ avoid renumbering the existing plan.
   the `json.Marshal` convention in `internal/store/chunk.go`, since `return nil`
   would silently drop the message). Dismissed the `"operation":"remove"` test nit
   (verified `"remove"` is the real value in `.files/9f153112.json`).
+
+- [x] A3 — Display Edit/Write tool results as a diff-view in the TUI viewer. See
+  design.md § Addenda A3. **Finding:** unlike Read (a file-dump body), an Edit/Write
+  `tool_result.content` is a one-line "updated successfully" string; the real change
+  lives in the sibling `toolUseResult.structuredPatch` (a pre-computed unified diff),
+  which the scanner never parsed. **Done.** New `diffResultTools = {Edit, Write}`
+  category (distinct from `excludedResultTools`): **FTS** excludes their success
+  bodies (`scanner.go ftsExcludedResult`; in-place, no `index_version` bump on the
+  unreleased branch); **plain `show` unchanged** (keeps the verbatim success string —
+  user decision); **TUI** collapses to a marker showing a `(+a −b)` stat that expands
+  to the reconstructed diff, colored by line prefix (`tui/render.go renderDiffBody`:
+  `+` green / `-` red / `@@` cyan, bypassing the glamour `renderBody` seam).
+  `internal/vault/diff.go` (`diffBodyFromToolResult`) keeps diff TEXT in package
+  `vault`, color in `tui`. `jsonlLine.ToolUseResult` threaded through
+  `transcriptEntry` → `splitUserContentForViewer`; `TranscriptMessage.Diff` carries
+  the flag. Fallback: an Edit with no patch renders its plain success body. MultiEdit
+  out of scope (absent from corpus; trivial to add). Tests: `scanner_test.go`
+  (Edit result FTS-excluded, call still indexed), `diff_test.go` (Edit/Write/multi-
+  hunk/no-patch parsing), `transcript_test.go` (diff marker + no-patch fallback),
+  `tui/collapse_test.go` (marker stat + expand shows diff). Default + glamour builds,
+  race + vet clean. Isolated review (code-reviewer + pal/gemini-3.1-pro): no P0/P1.
+  Applied: ① `diffConsumed` guard enforcing one-diff-per-line (reviewer's P1 was
+  empirically impossible — 0/15506 corpus lines have >1 tool_result — but the guard
+  converts the documented assumption into an invariant); ② skip empty-`lines` hunks in
+  `diffBodyFromToolResult` (→ `ok=false` fallback to the success body, no header-only
+  artifact); ③ dropped the unused `toolResultPatch.FilePath`; ④ pre-allocated
+  `renderDiffBody` rows; ⑤ gofmt-realigned the `transcriptEntry` struct my edit
+  dirtied. Declined: `diffResultTools` as a mutable `var` (mirrors the existing
+  `excludedResultTools` pattern). The other four files gofmt flags were pre-existing
+  (HEAD already dirty) — left untouched.
 
 ## Dependency Graph
 

@@ -153,6 +153,49 @@ func TestScanSession_ReadResultExcludedFromFTS(t *testing.T) {
 		"the Read call (path) remains searchable on the assistant row")
 }
 
+func TestScanSession_EditResultExcludedFromFTS(t *testing.T) {
+	// An Edit tool_result body is a one-line "updated successfully" boilerplate (the
+	// diff lives in toolUseResult, not the indexable message body): excluded from FTS
+	// like a Read dump (ftsExcludedResult). The Edit CALL stays searchable on the
+	// assistant row, and a non-excluded tool (Bash) is still indexed.
+	r := buildJSONL(t,
+		userLine("u1", "/p", "main", "fix the status and run the tests"),
+		assistantLine("a1", "msg_1", []map[string]any{
+			{"type": "tool_use", "id": "t1", "name": "Edit", "input": map[string]any{"file_path": "/proj/tasks.md"}},
+			{"type": "tool_use", "id": "t2", "name": "Bash", "input": map[string]any{"command": "go test ./..."}},
+		}),
+		map[string]any{
+			"type": "user", "uuid": "u2", "timestamp": "2026-05-01T10:00:06Z",
+			"message": map[string]any{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "t1", "content": "The file /proj/tasks.md has been updated successfully."},
+				{"type": "tool_result", "tool_use_id": "t2", "content": "PASS ok internal/vault"},
+			}},
+			// The diff data — never indexed (not in message.content).
+			"toolUseResult": map[string]any{"filePath": "/proj/tasks.md", "structuredPatch": []map[string]any{
+				{"oldStart": 1, "oldLines": 1, "newStart": 1, "newLines": 1, "lines": []string{"-pending", "+done"}},
+			}},
+		},
+	)
+
+	out, err := ScanSession(r)
+	require.NoError(t, err)
+	byRole := resultsByRole(out.Results)
+
+	// Exactly one tool row — the Bash result; the Edit success body is excluded.
+	require.Len(t, byRole[roleTool], 1, "only the non-excluded (Bash) tool_result is indexed")
+	assert.Equal(t, "Bash go test ./...\nPASS ok internal/vault", byRole[roleTool][0].ContentText)
+
+	// Neither the success boilerplate nor the diff content enters the index.
+	for _, res := range out.Results {
+		assert.NotContains(t, res.ContentText, "updated successfully", "Edit success body excluded from FTS")
+		assert.NotContains(t, res.ContentText, "+done", "Edit diff content never indexed")
+	}
+	// The Edit CALL (path) stays searchable via the assistant row.
+	require.Len(t, byRole[roleAssistant], 1)
+	assert.Contains(t, byRole[roleAssistant][0].ContentText, "Edit /proj/tasks.md",
+		"the Edit call (path) remains searchable on the assistant row")
+}
+
 func TestScanSession_ToolResultUnknownToolUseIDNoPrefix(t *testing.T) {
 	// A tool_result whose tool_use_id has no matching tool_use (older or partial
 	// transcript) is indexed verbatim — no prefix, never an error.

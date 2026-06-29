@@ -91,6 +91,55 @@ func TestViewer_SmallToolResultStaysInline(t *testing.T) {
 	assert.Contains(t, v.active.content(), "one short line", "the small result renders inline")
 }
 
+// editDiffLine is a user tool_result for tool_use_id "t1" with the structuredPatch
+// carried on the top-level toolUseResult (A3) — the shape an Edit/Write line takes.
+func editDiffLine(filePath string, patch []map[string]any) map[string]any {
+	return map[string]any{
+		"type": "user", "timestamp": "2026-05-01T10:00:10Z", "cwd": "/p", "gitBranch": "main",
+		"message": map[string]any{"role": "user", "content": []map[string]any{
+			{"type": "tool_result", "tool_use_id": "t1",
+				"content": "The file " + filePath + " has been updated successfully."},
+		}},
+		"toolUseResult": map[string]any{"filePath": filePath, "structuredPatch": patch},
+	}
+}
+
+func TestViewer_EditDiffMarkerAndExpand(t *testing.T) {
+	main := jsonlLines(t,
+		userLine("set the status to done"),
+		assistantLine("m1", []map[string]any{
+			{"type": "tool_use", "id": "t1", "name": "Edit",
+				"input": map[string]any{"file_path": "/p/tasks.md"}},
+		}),
+		editDiffLine("/p/tasks.md", []map[string]any{
+			{"oldStart": 244, "oldLines": 1, "newStart": 244, "newLines": 1,
+				"lines": []string{"-old status", "+new status"}},
+		}),
+	)
+	sess := vault.Session{UUID: "ed01234567", Title: "edit test", RawJSONL: main}
+	v := newViewerModel(DefaultStyles(), 80, 24).loadSession(sess, nil)
+
+	require.Len(t, v.active.markers, 1, "the Edit result is one openable diff marker")
+	row := v.active.rowForMarker(0)
+	require.GreaterOrEqual(t, row, 0)
+	assert.Contains(t, v.active.rows[row], "Edit /p/tasks.md (+1 −1)", "marker shows the diff stat")
+	assert.Contains(t, v.active.rows[row], "expand")
+	assert.NotContains(t, v.active.rows[row], "line(s)", "a diff marker shows the stat, not a line count")
+	// The diff lives behind the marker, not dumped inline.
+	assert.NotContains(t, v.active.content(), "new status")
+
+	// Expand: enter on the focused marker shows the diff body.
+	v = v.focusMarker(1)
+	require.Equal(t, 0, v.focusedMarker)
+	v = v.openFocusedMarker()
+	require.True(t, v.inInline, "enter opens the inline diff")
+
+	content := v.active.content()
+	assert.Contains(t, content, "@@ -244,1 +244,1 @@", "hunk header shown on expand")
+	assert.Contains(t, content, "-old status")
+	assert.Contains(t, content, "+new status")
+}
+
 func TestViewer_ExcludedToolResultCollapsesRegardlessOfSize(t *testing.T) {
 	// A tiny Read result still collapses (excludedResultTools), unlike the small
 	// Bash result above.

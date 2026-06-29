@@ -28,9 +28,13 @@ const minUUIDPrefix = 8
 // place without a bump, since a single reindex still produces the complete result.
 //   - v1: tool_result rows indexed as result text only.
 //   - v2: tool_result rows tagged with their originating call summary
-//     (scanner.go collectToolUseSummaries), AND Read/NotebookRead result bodies
-//     excluded from the index — their file/cell dump is noise; the call itself
-//     stays searchable on the assistant row (see scanner.go excludedResultTools).
+//     (scanner.go collectToolUseSummaries), AND FTS-excluded result bodies
+//     (scanner.go ftsExcludedResult): Read/NotebookRead file/cell dumps and
+//     Edit/Write success boilerplate (its real signal — the diff — lives in
+//     toolUseResult, not the indexable message body). Each excluded call stays
+//     searchable on the assistant row. Edit/Write exclusion (design.md § Addenda A3)
+//     was added in-place on the unreleased vault_v2 branch — no bump, since nothing
+//     shipped holds v2 yet and a single reindex still produces the complete result.
 //
 // Sessions whose index_version is below this are upgraded by `capy vault reindex`
 // (DB-driven, covers archived-and-deleted-from-disk sessions) or opportunistically

@@ -75,6 +75,58 @@ func bashResultSession(t *testing.T, body string) []TranscriptMessage {
 	return ParseTranscript(raw, nil)
 }
 
+// editDiffSession builds a transcript whose Edit tool_result (id t1) carries a
+// structuredPatch in its top-level toolUseResult. patch is the structuredPatch
+// value (nil/empty exercises the no-patch fallback).
+func editDiffSession(t *testing.T, filePath, successBody string, patch []map[string]any) []TranscriptMessage {
+	t.Helper()
+	toolResult := map[string]any{"filePath": filePath}
+	if patch != nil {
+		toolResult["structuredPatch"] = patch
+	}
+	raw := jsonlBytes(t,
+		userLine("u1", "/p", "main", "set the status to done"),
+		assistantLine("a1", "m1", []map[string]any{
+			{"type": "tool_use", "id": "t1", "name": "Edit", "input": map[string]any{"file_path": filePath}},
+		}),
+		map[string]any{
+			"type": "user", "uuid": "u2", "timestamp": "2026-05-01T10:00:10Z",
+			"cwd": "/p", "gitBranch": "main",
+			"message": map[string]any{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "t1", "content": successBody},
+			}},
+			"toolUseResult": toolResult,
+		},
+	)
+	return ParseTranscript(raw, nil)
+}
+
+func TestParseTranscript_EditDiffCollapsesToDiffMarker(t *testing.T) {
+	tool := findMessage(t, editDiffSession(t, "/p/tasks.md",
+		"The file /p/tasks.md has been updated successfully.",
+		[]map[string]any{
+			{"oldStart": 244, "oldLines": 1, "newStart": 244, "newLines": 1, "lines": []string{"-pending", "+done"}},
+		}), RoleTool)
+
+	assert.True(t, tool.Collapsed, "an Edit result collapses to a marker")
+	assert.True(t, tool.Diff, "the Edit body is reconstructed diff text, not the raw success string")
+	assert.Equal(t, "Edit /p/tasks.md (+1 −1)", tool.ToolSummary, "marker stat is baked into the summary")
+	assert.Contains(t, tool.Body, "@@ -244,1 +244,1 @@", "body is unified-diff text")
+	assert.Contains(t, tool.Body, "+done")
+	assert.NotContains(t, tool.Body, "updated successfully", "the diff replaces the success boilerplate")
+}
+
+func TestParseTranscript_EditWithoutPatchFallsBackToSuccessBody(t *testing.T) {
+	// An Edit with no structuredPatch (rare) falls back to the plain success body —
+	// short, so it stays inline (not collapsed), not a diff.
+	tool := findMessage(t, editDiffSession(t, "/p/tasks.md",
+		"The file /p/tasks.md has been updated successfully.", nil), RoleTool)
+
+	assert.False(t, tool.Diff, "no patch → not a diff message")
+	assert.False(t, tool.Collapsed, "the short success body stays inline")
+	assert.Contains(t, tool.Body, "updated successfully")
+}
+
 func TestParseTranscript_LargeToolResultCollapses(t *testing.T) {
 	// A many-line Bash result (over collapseToolResultLines) collapses even though
 	// Bash is NOT in excludedResultTools — large results collapse for read-through.

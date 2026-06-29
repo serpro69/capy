@@ -285,6 +285,46 @@ is a separate parser. Tracked as tasks.md Task 18 § Addenda A2.
 Explore if we can display edit tool results (with some sort of a diff-view for better readability).
 Use same logic as with `Read` tool (i.e. exclude from indexing, one-liner in plain `show`, collapse-then-open in tui)
 
+**Key finding (changed the premise).** Edit is **not** shaped like Read. Read's
+`tool_result.content` is a large `cat -n` file dump (worth collapsing). Edit's (and
+Write's) `tool_result.content` is a one-line success string — *"The file X has been
+updated successfully."* The actual change lives in a **sibling top-level field**,
+`toolUseResult.structuredPatch` (a pre-computed unified diff: `oldStart/newStart` +
+`lines` with `+`/`-`/` ` prefixes), which the vault scanner never read (`scanner_types.go`
+parsed only `message`). So literally adding `Edit` to `excludedResultTools` would
+collapse a 1-line success message behind a marker and show **no diff** — useless. The
+value of A3 is the diff-view, which requires parsing `structuredPatch`. Both **Edit**
+and **Write** emit it.
+
+**Resolution (shipped).** A new tool category `diffResultTools = {Edit, Write}`,
+kept distinct from `excludedResultTools` because their *display* differs:
+
+- **FTS:** excluded (`scanner.go ftsExcludedResult` = `excludedResultTools ∪
+  diffResultTools`). The success string is identical boilerplate per edit — pure
+  search noise; the `Edit /path` call stays searchable on the assistant row, and the
+  diff content was never indexed (it isn't in `message.content`). In-place change on
+  the unreleased branch — no `index_version` bump (a reindex drops the rows).
+- **Plain `show` (`render.go`): unchanged** — Edit/Write keep rendering the verbatim
+  success body (user decision: "keep the existing success string"). They are *not* in
+  `excludedResultTools`, so `render.go`'s collapse path doesn't touch them.
+- **TUI viewer:** collapse-then-open. The marker shows the call summary + a `(+a −b)`
+  stat; expanding renders the reconstructed unified diff, **colored by line prefix**
+  (`tui/render.go renderDiffBody`: `+` green / `-` red / `@@` cyan). `renderDiffBody`
+  deliberately bypasses the build-tagged `renderBody` seam so glamour never markdown-
+  mangles a diff.
+
+**Seam:** `internal/vault/diff.go` (`diffBodyFromToolResult` → unified-diff text +
+add/remove counts) keeps the diff *text* in package `vault`; the `tui` package owns
+the *color* (mirroring the transcript-text vs. lipgloss-style split elsewhere).
+`jsonlLine.ToolUseResult` is threaded through `transcriptEntry` →
+`splitUserContentForViewer`; `TranscriptMessage.Diff` carries the flag to the viewer.
+Assumption: one `toolUseResult` per line, mapped to the (in practice single) diff-tool
+tool_result block — Claude Code writes one tool_result per user line. Fallback: an
+Edit/Write with no `structuredPatch` renders its plain success body (collapsed only if
+over the A1 size threshold). MultiEdit is a trivial future addition (add to
+`diffResultTools`); not in scope (absent from the corpus). Tracked as tasks.md Task 18
+§ Addenda A3.
+
 ### A4 - Next/Prev markers in TUI should resolve from current viewport
 
 Currently tui collapse-then-open markers navigate sequentially via `]/[`. It's much better usability if next/prev would resolve from current viewport.
