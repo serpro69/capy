@@ -15,6 +15,56 @@
 >
 > That said, if you have any problems with code that is written by AI - you've been warned. But, then again, why would you be interested in AI-related configs and skills in the first place... `¯\_(ツ)_/¯`
 
+## ToC
+
+<!--toc:start-->
+- [Privacy & Architecture](#privacy--architecture)
+- [The Problem](#the-problem)
+- [Benchmarks](#benchmarks)
+  - [Retrieval Quality](#retrieval-quality)
+  - [Context Reduction](#context-reduction)
+- [Quick Start](#quick-start)
+  - [Install](#install)
+  - [Setup](#setup)
+  - [Setup (Codex CLI)](#setup-codex-cli)
+- [How It Works — By Example](#how-it-works--by-example)
+  - [Before capy](#before-capy)
+  - [After capy](#after-capy)
+  - [The `intent` parameter](#the-intent-parameter)
+- [Configuration](#configuration)
+- [Encryption](#encryption)
+  - [Setup](#setup-1)
+  - [Initial encryption](#initial-encryption)
+  - [Cross-machine sync](#cross-machine-sync)
+  - [Key rotation](#key-rotation)
+  - [Passphrase recommendations](#passphrase-recommendations)
+- [Session Vault](#session-vault)
+  - [Setup](#setup-2)
+  - [Quick start](#quick-start-1)
+  - [Archiving sessions](#archiving-sessions)
+  - [Commands](#commands)
+  - [Restore and resume](#restore-and-resume)
+  - [Cross-machine sync](#cross-machine-sync-1)
+  - [Key rotation](#key-rotation-1)
+  - [Storage and limits](#storage-and-limits)
+  - [Environment variables](#environment-variables)
+- [CLI Commands](#cli-commands)
+  - [Shell Completions](#shell-completions)
+- [MCP Tools](#mcp-tools)
+  - [Execution](#execution)
+  - [Knowledge](#knowledge)
+  - [Utility](#utility)
+- [Security](#security)
+  - [Sandbox protections](#sandbox-protections)
+- [Hook System](#hook-system)
+  - [What gets intercepted](#what-gets-intercepted)
+  - [Platform support](#platform-support)
+- [Troubleshooting](#troubleshooting)
+- [Acknowledgements](#acknowledgements)
+- [Contributing](#contributing)
+- [License](#license)
+<!--toc:end-->
+
 ## Privacy & Architecture
 
 `capy` is not a CLI output filter or a cloud analytics dashboard. It operates at the MCP protocol layer — raw data stays in a sandboxed subprocess and never enters your context window. Web pages, API responses, file analysis, log files — everything is processed in complete isolation.
