@@ -282,4 +282,9 @@ is a separate parser. Tracked as tasks.md Task 18 § Addenda A2.
 
 ### A3 - Display Edit tool results
 
-Explore if we can display edit tool results. Use same logic as with `Read` tool (i.e. exclude from indexing, one-liner in plain `show`, collapse-then-open in tui)
+Explore if we can display edit tool results (with some sort of a diff-view for better readability).
+Use same logic as with `Read` tool (i.e. exclude from indexing, one-liner in plain `show`, collapse-then-open in tui)
+
+### A4 - Next/Prev markers in TUI should resolve from current viewport
+
+Currently tui collapse-then-open markers navigate sequentially via `]/[`. It's much better usability if next/prev would resolve from current viewport.
