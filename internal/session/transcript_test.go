@@ -12,10 +12,10 @@ func TestBuildTranscript_ToolMetaRendered(t *testing.T) {
 		StartTime: time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC),
 		TurnPairs: []TurnPair{
 			{
-				HumanText:    "Check parse.go",
+				HumanText:     "Check parse.go",
 				AssistantText: "Here are the relevant files.",
-				ToolMeta:     []string{"[Read: internal/session/parse.go]", "[Edit: internal/session/types.go]"},
-				ToolNames:    []string{"Read", "Edit"},
+				ToolMeta:      []string{"[Read: internal/session/parse.go]", "[Edit: internal/session/types.go]"},
+				ToolNames:     []string{"Read", "Edit"},
 			},
 		},
 	}
@@ -40,10 +40,10 @@ func TestBuildTranscript_PALPassthrough(t *testing.T) {
 		StartTime: time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC),
 		TurnPairs: []TurnPair{
 			{
-				HumanText:    "Check the design",
+				HumanText:     "Check the design",
 				AssistantText: "Let me review.\n" + palBlock,
-				ToolMeta:     []string{"[Read: internal/session/parse.go]"},
-				ToolNames:    []string{"mcp__pal__chat", "Read"},
+				ToolMeta:      []string{"[Read: internal/session/parse.go]"},
+				ToolNames:     []string{"mcp__pal__chat", "Read"},
 			},
 		},
 	}
@@ -84,13 +84,13 @@ func TestBuildTranscript_SubagentWithToolMeta(t *testing.T) {
 		TurnPairs: []TurnPair{
 			{HumanText: "Main question", AssistantText: "Delegating."},
 			{
-				HumanText:    "Find the config",
+				HumanText:     "Find the config",
 				AssistantText: "Found it in config.go.",
-				ToolMeta:     []string{"[Read: config.go]", "[Grep: configPath]"},
-				ToolNames:    []string{"Read", "Grep"},
-				IsSubagent:   true,
-				SubagentType: "Explore",
-				SubagentDesc: "Find config",
+				ToolMeta:      []string{"[Read: config.go]", "[Grep: configPath]"},
+				ToolNames:     []string{"Read", "Grep"},
+				IsSubagent:    true,
+				SubagentType:  "Explore",
+				SubagentDesc:  "Find config",
 			},
 			{HumanText: "Follow up", AssistantText: "Here is the summary."},
 		},

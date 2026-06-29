@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/serpro69/capy/internal/vault"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/serpro69/capy/internal/vault"
 )
 
 // key builds a tea.KeyMsg whose String() equals s — the form the models (and

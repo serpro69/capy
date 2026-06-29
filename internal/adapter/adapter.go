@@ -21,11 +21,11 @@ type PreToolUseEvent struct {
 
 // PlatformCapabilities describes what a platform's hook system supports.
 type PlatformCapabilities struct {
-	PreToolUse             bool
-	PostToolUse            bool
-	PreCompact             bool
-	SessionStart           bool
-	CanModifyArgs          bool
-	CanModifyOutput        bool
+	PreToolUse              bool
+	PostToolUse             bool
+	PreCompact              bool
+	SessionStart            bool
+	CanModifyArgs           bool
+	CanModifyOutput         bool
 	CanInjectSessionContext bool
 }

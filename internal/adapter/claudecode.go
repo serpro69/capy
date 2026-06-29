@@ -101,12 +101,12 @@ func (a *ClaudeCodeAdapter) FormatSessionStart(context string) ([]byte, error) {
 
 func (a *ClaudeCodeAdapter) Capabilities() PlatformCapabilities {
 	return PlatformCapabilities{
-		PreToolUse:             true,
-		PostToolUse:            true,
-		PreCompact:             true,
-		SessionStart:           true,
-		CanModifyArgs:          true,
-		CanModifyOutput:        true,
+		PreToolUse:              true,
+		PostToolUse:             true,
+		PreCompact:              true,
+		SessionStart:            true,
+		CanModifyArgs:           true,
+		CanModifyOutput:         true,
 		CanInjectSessionContext: true,
 	}
 }

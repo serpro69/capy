@@ -28,8 +28,8 @@ import (
 type renderedTranscript struct {
 	messages    []vault.TranscriptMessage
 	rows        []string // display rows (no trailing newline); join with "\n" for the viewport
-	msgRowStart []int     // msgRowStart[i] = first row index of messages[i]
-	markers     []int     // indices into messages that are openable RoleSubagent markers
+	msgRowStart []int    // msgRowStart[i] = first row index of messages[i]
+	markers     []int    // indices into messages that are openable RoleSubagent markers
 }
 
 // renderTranscript styles parsed messages into wrapped display rows for a

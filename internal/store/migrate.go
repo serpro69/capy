@@ -295,4 +295,3 @@ func sourcesHasColumn(tx *sql.Tx, col string) (bool, error) {
 	}
 	return false, rows.Err()
 }
-

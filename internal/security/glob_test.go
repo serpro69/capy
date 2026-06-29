@@ -86,10 +86,10 @@ func TestGlobToRegexCaseInsensitive(t *testing.T) {
 
 func TestFileGlobToRegex(t *testing.T) {
 	tests := []struct {
-		name  string
-		glob  string
-		path  string
-		want  bool
+		name string
+		glob string
+		path string
+		want bool
 	}{
 		{"simple file", ".env", ".env", true},
 		{"simple no match", ".env", ".envrc", false},
