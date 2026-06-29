@@ -254,7 +254,7 @@ Single flat plan (no phase boundary). Task 0 is the only hard gate and gates ONL
 - [ ] 17.4 Run `/kk:review-spec` — verify implementation matches design.md + implementation.md
 
 ## Task 18: Design addenda (post-plan follow-ups)
-- **Status:** in-progress (A1, A2, A3 done; A4 pending)
+- **Status:** done (A1, A2, A3, A4 done)
 - **Depends on:** —
 - **Size:** per-addendum (currently M)
 - **Docs:** [design.md § Addenda](./design.md#addenda)
@@ -350,6 +350,32 @@ avoid renumbering the existing plan.
   dirtied. Declined: `diffResultTools` as a mutable `var` (mirrors the existing
   `excludedResultTools` pattern). The other four files gofmt flags were pre-existing
   (HEAD already dirty) — left untouched.
+
+- [x] A4 — TUI ]/[ marker navigation resolves from the current viewport. See
+  design.md § Addenda A4. **Problem:** the collapse-then-open markers cycled purely
+  by index (`focusedMarker ± 1`), ignoring scroll position — after scrolling far from
+  the focused marker, `]` jumped back near the stale index instead of to the marker
+  the user was looking at. **Done.** `render.go` adds
+  `renderedTranscript.markerFromViewport(yOffset, delta)` — next = first marker at/below
+  the viewport top, prev = last at/above it, inclusive bounds (a marker exactly at the
+  top is selectable), wraps first↔last. `viewer.go` rewrites `focusMarker` to branch on
+  the new `focusedMarkerVisible()`: when the focused marker is still on screen, `]/[`
+  step sequentially from its index (the classic cycle with wraparound, `(focused+delta+n)%n`);
+  when it has scrolled out of view (or nothing is focused — `rowForMarker(-1)` returns
+  -1), navigation resolves from the viewport top. The visible branch is also what
+  escapes a **viewport-clamp trap**: a marker in the last viewport-height rows can't sit
+  at the top because the viewport clamps `YOffset` below its row, so a pure
+  YOffset-relative "next" would re-select it forever — stepping from the index escapes
+  it. Display-only; no scanner/FTS/store change, no new exported symbols, no new
+  dependencies. Tests: `render_test.go` (`markerFromViewport` inclusive bounds + wrap +
+  empty), `marker_nav_test.go` (viewport-resolution between markers, sequential-when-visible
+  + wrap, clamped-last-marker wrap regression, and the never-focused `-1` viewport path).
+  Default + glamour builds, race + vet clean. Isolated review (code-reviewer +
+  pal/gemini-3.1-pro-preview): APPROVE, no P0/P1. Applied the agreed LOW fixes: explicit
+  `else // prev` branch + delta-semantics doc on `markerFromViewport`, half-open-interval
+  comment on `focusedMarkerVisible`, the corroborated `focusedMarker == -1` coverage test,
+  and 16-char test UUIDs. Declined pal's generalized safe-modulo (`((a+delta)%n+n)%n`) as
+  premature — `Update` only ever passes ±1 and the new doc states the contract.
 
 ## Dependency Graph
 
