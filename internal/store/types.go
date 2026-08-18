@@ -1,6 +1,10 @@
 package store
 
-import "time"
+import (
+	"time"
+
+	"github.com/serpro69/capy/internal/retrieval"
+)
 
 // SourceKind classifies a source's lifecycle for search filtering and cleanup.
 type SourceKind string
@@ -33,18 +37,10 @@ type SearchOptions struct {
 	IncludeKinds    []SourceKind // empty = default (durable + session); ignored when Source != ""
 }
 
-// SearchResult is a single result from a search query.
-type SearchResult struct {
-	Label       string
-	Title       string
-	Content     string
-	SourceID    int64
-	ContentType string
-	Highlighted string
-	Rank        float64
-	FusedScore  float64
-	MatchLayer  string
-}
+// SearchResult is a single result from a search query. It is an alias for the
+// shared retrieval type, which lives in internal/retrieval so the knowledge
+// store and the vault can share the search engine without an import cycle.
+type SearchResult = retrieval.SearchResult
 
 // SourceInfo describes an indexed source.
 type SourceInfo struct {

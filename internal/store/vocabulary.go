@@ -3,6 +3,8 @@ package store
 import (
 	"regexp"
 	"strings"
+
+	"github.com/serpro69/capy/internal/retrieval"
 )
 
 var wordSplitRe = regexp.MustCompile(`[^\p{L}\p{N}_-]+`)
@@ -16,7 +18,7 @@ func (s *ContentStore) extractAndStoreVocabulary(content string) error {
 	seen := make(map[string]struct{})
 	var unique []string
 	for _, w := range words {
-		if len(w) < 3 || IsStopword(w) {
+		if len(w) < 3 || retrieval.IsStopword(w) {
 			continue
 		}
 		if _, ok := seen[w]; ok {
