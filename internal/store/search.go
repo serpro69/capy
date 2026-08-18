@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -8,25 +9,20 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
+	"github.com/serpro69/capy/internal/retrieval"
 	"github.com/serpro69/capy/internal/sanitize"
 )
 
-var (
-	ftsSpecialRe   = regexp.MustCompile(`['"(){}[\]*:^~]`)
-	trigramCleanRe = regexp.MustCompile(`[^a-zA-Z0-9 _-]`)
-	ftsKeywords    = map[string]bool{"AND": true, "OR": true, "NOT": true, "NEAR": true}
-)
-
-// SearchWithFallback runs Reciprocal Rank Fusion across porter and trigram
-// layers, with fuzzy correction as a secondary pass when results are sparse.
+// SearchWithFallback runs the shared retrieval engine (Reciprocal Rank Fusion
+// across porter and trigram layers, with fuzzy correction as a secondary pass
+// when results are sparse) over the knowledge corpus, wrapped by the
+// knowledge-only steps: stale-source refresh before and access tracking after.
 func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOptions) ([]SearchResult, error) {
 	if _, err := s.getDB(); err != nil {
 		return nil, err
@@ -38,63 +34,31 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOp
 	// on rapid query bursts.
 	s.refreshStaleSources()
 
-	// RRF pass 1: synonym-expanded query (implicit AND between groups).
-	synPorter := sanitizePorterQuery(query, "AND", true)
-	synTrigram := sanitizeTrigramQuery(query, "AND", true)
-	results := s.rrfSearch(synPorter, synTrigram, query, limit, opts)
-
-	// Fallback: if synonym AND grouping returned zero results, retry with
-	// flat OR using the user's original terms as a precision anchor.
-	// Synonym expansion is intentionally dropped here to avoid relevance
-	// dilution (e.g., "latency" expanding to "slow" in OR mode would drown
-	// the user's intent with unrelated matches).
-	if len(results) == 0 {
-		flatPorter := sanitizePorterQuery(query, "OR", false)
-		flatTrigram := sanitizeTrigramQuery(query, "OR", false)
-		results = s.rrfSearch(flatPorter, flatTrigram, query, limit, opts)
+	corpus, err := s.searchCorpus(opts)
+	if err != nil {
+		return nil, err
 	}
-
-	// RRF pass 2: fuzzy correction (only if pass 1 returned fewer than limit).
-	// Corrected queries re-enter the synonym AND pass first — a typo like
-	// "authentcation" corrected to "authentication" should get full synonym
-	// expansion, not just flat OR.
-	if len(results) < limit {
-		corrected := s.fuzzyCorrectQuery(query)
-		if corrected != "" && corrected != query {
-			// Try synonym AND on corrected query first.
-			fzPorter := sanitizePorterQuery(corrected, "AND", true)
-			fzTrigram := sanitizeTrigramQuery(corrected, "AND", true)
-			fuzzyResults := s.rrfSearch(fzPorter, fzTrigram, corrected, limit, opts)
-			// If synonym AND on corrected query also returns nothing, fall back to flat OR.
-			if len(fuzzyResults) == 0 {
-				fzPorter = sanitizePorterQuery(corrected, "OR", false)
-				fzTrigram = sanitizeTrigramQuery(corrected, "OR", false)
-				fuzzyResults = s.rrfSearch(fzPorter, fzTrigram, corrected, limit, opts)
-			}
-			for i := range fuzzyResults {
-				fuzzyResults[i].MatchLayer = "fuzzy+" + fuzzyResults[i].MatchLayer
-			}
-			results = mergeRRFResults(results, fuzzyResults)
-		}
-	}
-
-	// Per-source diversification: cap results from any single source,
-	// then fill remaining slots with skipped results.
-	maxPerSource := opts.MaxPerSource
-	if maxPerSource <= 0 {
-		maxPerSource = 2
-	}
-	results = diversifyBySource(results, limit, maxPerSource)
-
-	// Entity-aware boosting: extract quoted phrases and capitalized
-	// identifiers from the original query, boost results that contain them.
-	entities := ExtractEntities(query)
-	results = BoostByEntities(results, entities)
+	results := retrieval.SearchWithFallback(s.ctx(), corpus, query, limit, opts.MaxPerSource)
 
 	if len(results) > 0 {
 		s.trackAccess(results)
 	}
 	return results, nil
+}
+
+// searchCorpus adapts the knowledge store to the shared retrieval engine.
+// The db handle, row mapping, and knowledge-only filters (source label,
+// content type, source kinds — including opts.IncludeKinds) stay on the store
+// side, closed over by the Exec callback via execDynamicSearch. The
+// vocabulary-backed fuzzy corrector is the optional corpus capability that
+// corpora without a vocabulary table leave nil.
+func (s *ContentStore) searchCorpus(opts SearchOptions) (retrieval.Corpus, error) {
+	return retrieval.NewCorpus("chunks", "chunks_trigram",
+		func(ctx context.Context, table, ftsQuery string, limit int) []retrieval.SearchResult {
+			return s.execDynamicSearch(ctx, table, ftsQuery, limit, opts)
+		},
+		s.fuzzyCorrectWord,
+	)
 }
 
 // staleRefreshCooldown throttles refreshStaleSources. Each search is an IPC
@@ -271,538 +235,6 @@ func (s *ContentStore) fileChangedSince(path, storedHash string, indexedAt time.
 	return true, sanitized, false
 }
 
-const rrfK = 60 // standard RRF constant
-
-// rrfSearch runs porter and trigram searches concurrently, fuses results
-// using Reciprocal Rank Fusion, applies proximity reranking, and returns
-// candidates. It accepts pre-sanitized FTS5 query strings for both
-// layers so the caller can control synonym expansion vs flat-OR fallback.
-// rawQuery is the original unsanitized query, used for proximity reranking.
-//
-// Note: rrfSearch intentionally does NOT truncate results to limit. It fetches
-// limit*5 candidates per layer to give the caller (SearchWithFallback) a large
-// enough pool for diversification and entity boosting. The caller is responsible
-// for applying the final limit after post-processing.
-func (s *ContentStore) rrfSearch(porterQuery, trigramQuery, rawQuery string, limit int, opts SearchOptions) []SearchResult {
-	fetchLimit := max(limit*5, 10)
-
-	// Run both layers concurrently — SQLite WAL supports concurrent readers.
-	var porterResults, trigramResults []SearchResult
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		if porterQuery != "" {
-			porterResults = s.execDynamicSearch("chunks", porterQuery, fetchLimit, opts)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if trigramQuery != "" {
-			trigramResults = s.execDynamicSearch("chunks_trigram", trigramQuery, fetchLimit, opts)
-		}
-	}()
-	wg.Wait()
-
-	// Build fusion map keyed by (sourceID, title).
-	type fusedEntry struct {
-		result     SearchResult
-		fusedScore float64
-	}
-	fusionMap := make(map[string]*fusedEntry)
-
-	addLayer := func(results []SearchResult, layerName string) {
-		for i, r := range results {
-			key := fmt.Sprintf("%d:%s", r.SourceID, r.Title)
-			score := 1.0 / (float64(rrfK) + float64(i))
-			if entry, ok := fusionMap[key]; ok {
-				entry.fusedScore += score
-				// Keep the version with the better individual rank.
-				if r.Rank < entry.result.Rank {
-					entry.result = r
-				}
-			} else {
-				r.MatchLayer = layerName
-				fusionMap[key] = &fusedEntry{result: r, fusedScore: score}
-			}
-		}
-	}
-
-	addLayer(porterResults, "porter")
-	addLayer(trigramResults, "trigram")
-
-	// Flatten and sort by fused score descending.
-	fused := make([]SearchResult, 0, len(fusionMap))
-	for _, entry := range fusionMap {
-		entry.result.FusedScore = entry.fusedScore
-		fused = append(fused, entry.result)
-	}
-	sort.Slice(fused, func(i, j int) bool {
-		if fused[i].FusedScore != fused[j].FusedScore {
-			return fused[i].FusedScore > fused[j].FusedScore
-		}
-		if fused[i].SourceID != fused[j].SourceID {
-			return fused[i].SourceID < fused[j].SourceID
-		}
-		return fused[i].Title < fused[j].Title
-	})
-
-	// Tag multi-layer hits. A result appearing in both layers scores above
-	// the single-layer max of 1/(60+0) ≈ 0.01667.
-	singleLayerMax := 1.0 / float64(rrfK)
-	for i := range fused {
-		if fused[i].FusedScore > singleLayerMax {
-			fused[i].MatchLayer = "rrf(porter+trigram)"
-		}
-	}
-
-	fused = rerank(fused, rawQuery)
-
-	return fused
-}
-
-// mergeRRFResults deduplicates primary and secondary results by (sourceID, title).
-// On conflict, the primary version is kept. Does not truncate — the caller
-// applies diversification and final limit.
-func mergeRRFResults(primary, secondary []SearchResult) []SearchResult {
-	seen := make(map[string]bool, len(primary))
-	for _, r := range primary {
-		key := fmt.Sprintf("%d:%s", r.SourceID, r.Title)
-		seen[key] = true
-	}
-
-	merged := make([]SearchResult, len(primary))
-	copy(merged, primary)
-
-	for _, r := range secondary {
-		key := fmt.Sprintf("%d:%s", r.SourceID, r.Title)
-		if !seen[key] {
-			seen[key] = true
-			merged = append(merged, r)
-		}
-	}
-
-	return merged
-}
-
-// --- Per-source diversification ---
-
-// diversifyBySource caps results from any single source to avoid a dominant
-// source drowning out others. Two-pass: first pass enforces the per-source cap,
-// second pass fills remaining slots with previously skipped results.
-func diversifyBySource(results []SearchResult, limit, maxPerSource int) []SearchResult {
-	if len(results) == 0 {
-		return results
-	}
-
-	selected := make([]SearchResult, 0, min(limit, len(results)))
-	var skipped []SearchResult
-	counts := make(map[int64]int)
-
-	// Pass 1: accept results in rank order, skip when source exceeds cap.
-	for _, r := range results {
-		if len(selected) >= limit {
-			return selected
-		}
-		if counts[r.SourceID] >= maxPerSource {
-			skipped = append(skipped, r)
-			continue
-		}
-		counts[r.SourceID]++
-		selected = append(selected, r)
-	}
-
-	// Pass 2: fill remaining slots with skipped results.
-	for _, r := range skipped {
-		if len(selected) >= limit {
-			break
-		}
-		selected = append(selected, r)
-	}
-
-	return selected
-}
-
-// --- Reranking (title-match + proximity) ---
-
-// rerank applies title-match boost and proximity reranking to fused results.
-// Title-match boost applies to all queries (including single-term).
-// Proximity boost only applies for multi-term queries (2+ terms).
-func rerank(results []SearchResult, query string) []SearchResult {
-	terms := filterQueryTerms(query)
-	if len(terms) == 0 {
-		return results
-	}
-
-	// Title-match boost: reward results whose title contains query terms.
-	for i := range results {
-		r := &results[i]
-		lowerTitle := strings.ToLower(r.Title)
-		titleHits := 0
-		for _, t := range terms {
-			if strings.Contains(lowerTitle, t) {
-				titleHits++
-			}
-		}
-		if titleHits > 0 {
-			weight := 0.3
-			if r.ContentType == "code" {
-				weight = 0.6
-			}
-			titleBoost := weight * (float64(titleHits) / float64(len(terms)))
-			r.FusedScore *= (1.0 + titleBoost)
-		}
-	}
-
-	// Proximity span boost (multi-term only).
-	if len(terms) >= 2 {
-		termGroups := make([][]string, len(terms))
-		for i, w := range terms {
-			if syns := ExpandSynonyms(w); len(syns) > 0 {
-				group := make([]string, 0, len(syns)+1)
-				group = append(group, w)
-				group = append(group, syns...)
-				termGroups[i] = group
-			} else {
-				termGroups[i] = []string{w}
-			}
-		}
-
-		for i := range results {
-			r := &results[i]
-			content := strings.ToLower(r.Content)
-			minSpan := -1
-
-			if r.Highlighted != "" {
-				minSpan = findMinSpanFromHighlights(r.Highlighted, termGroups)
-			}
-
-			if minSpan < 0 {
-				posLists := make([][]int, len(termGroups))
-				allFound := true
-				for j, group := range termGroups {
-					var merged []int
-					for _, term := range group {
-						merged = append(merged, findAllPositions(content, term)...)
-					}
-					if len(merged) == 0 {
-						allFound = false
-						break
-					}
-					sort.Ints(merged)
-					posLists[j] = merged
-				}
-				if allFound {
-					minSpan = findMinSpan(posLists)
-				}
-			}
-
-			// Proximity boost: tighter minSpan (relative to content length)
-			// scores higher. Normalized by content length so a tight span in a
-			// long document isn't penalized (ADR-014).
-			proximityBoost := 0.0
-			if minSpan >= 0 {
-				contentLen := max(len(r.Content), 1)
-				proximityBoost = 1.0 / (1.0 + float64(minSpan)/float64(contentLen))
-			}
-
-			// Phrase-frequency boost: count adjacent ordered occurrences of the
-			// raw (non-synonym-expanded) query terms in the content. Unlike the
-			// minSpan path above, this scan always rebuilds position lists from
-			// the raw terms — it can't reuse the synonym-expanded posLists (wrong
-			// term-length offsets) and those may be nil when minSpan came from the
-			// highlight fast path. Rewards documents that repeat the literal
-			// phrase, which a single-window minSpan can't distinguish.
-			// findAllPositions scans left-to-right, so each list is ascending —
-			// satisfying countAdjacentPairs' sorted-input precondition.
-			rawPosLists := make([][]int, len(terms))
-			for j, term := range terms {
-				rawPosLists[j] = findAllPositions(content, term)
-			}
-			adjacentPairs := countAdjacentPairs(rawPosLists, terms, phraseGapChars)
-			phraseBoost := 0.5 * math.Min(1.0, float64(adjacentPairs)/4.0)
-
-			// Combine proximity and phrase boosts in a single multiplicative
-			// pass. Title boost stays a separate pass (capy's two-pass approach,
-			// deliberate divergence from upstream's single additive pass — ADR-014).
-			if proximityBoost > 0 || phraseBoost > 0 {
-				r.FusedScore *= (1.0 + proximityBoost + phraseBoost)
-			}
-		}
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].FusedScore != results[j].FusedScore {
-			return results[i].FusedScore > results[j].FusedScore
-		}
-		if results[i].SourceID != results[j].SourceID {
-			return results[i].SourceID < results[j].SourceID
-		}
-		return results[i].Title < results[j].Title
-	})
-	return results
-}
-
-// findMinSpanFromHighlights extracts match positions from FTS5 highlight
-// markers (char(2) = start, char(3) = end) and finds the minimum window
-// containing all term groups. Each group is a synonym set — a match
-// against any term in the group counts. Single-pass: tracks stripped
-// byte offset incrementally to avoid repeated string allocations.
-func findMinSpanFromHighlights(highlighted string, termGroups [][]string) int {
-	posLists := make([][]int, len(termGroups))
-	pos := 0
-	strippedPos := 0
-
-	for {
-		startIdx := strings.IndexByte(highlighted[pos:], 2)
-		if startIdx < 0 {
-			break
-		}
-		startIdx += pos
-
-		endIdx := strings.IndexByte(highlighted[startIdx:], 3)
-		if endIdx < 0 {
-			break
-		}
-		endIdx += startIdx
-
-		// Advance stripped position by the unhighlighted text before this marker.
-		strippedPos += startIdx - pos
-
-		matched := strings.ToLower(highlighted[startIdx+1 : endIdx])
-		for i, group := range termGroups {
-			for _, term := range group {
-				if strings.Contains(matched, term) {
-					posLists[i] = append(posLists[i], strippedPos)
-					break // one match per group per highlight span
-				}
-			}
-		}
-
-		// Advance stripped position by the matched text length.
-		strippedPos += endIdx - (startIdx + 1)
-		pos = endIdx + 1
-	}
-
-	for _, list := range posLists {
-		if len(list) == 0 {
-			return -1
-		}
-	}
-	return findMinSpan(posLists)
-}
-
-// findAllPositions returns all start positions of term in text.
-func findAllPositions(text, term string) []int {
-	var positions []int
-	start := 0
-	for {
-		idx := strings.Index(text[start:], term)
-		if idx < 0 {
-			break
-		}
-		positions = append(positions, start+idx)
-		start += idx + 1
-	}
-	return positions
-}
-
-// phraseGapChars is the maximum byte gap between the end of one query term and
-// the start of the next for the two to count as an adjacent phrase occurrence.
-const phraseGapChars = 30
-
-// countAdjacentPairs counts ordered adjacent-pair occurrences of consecutive
-// query terms within a gap window. positionLists[i] holds the sorted start
-// positions of terms[i] in the content (the two slices are parallel). For each
-// consecutive pair (terms[i], terms[i+1]) it sweeps the left positions against
-// the right ones: a left position p matches the nearest unconsumed right
-// position in [p+len(terms[i]), p+len(terms[i])+gap]. Each right position is
-// consumed at most once (greedy left-to-right), so "foo foo bar" counts one
-// pair for query "foo bar", not two — matching IR phrase-occurrence intent.
-func countAdjacentPairs(positionLists [][]int, terms []string, gap int) int {
-	pairs := 0
-	for i := 0; i+1 < len(terms); i++ {
-		left := positionLists[i]
-		right := positionLists[i+1]
-		termLen := len(terms[i])
-
-		// Single right pointer: windowStart = p + termLen grows monotonically
-		// with p, so a right position already behind one window can never match
-		// a later (larger) one — advance past it permanently.
-		rj := 0
-		for _, p := range left {
-			windowStart := p + termLen
-			windowEnd := windowStart + gap
-			for rj < len(right) && right[rj] < windowStart {
-				rj++
-			}
-			if rj < len(right) && right[rj] <= windowEnd {
-				pairs++
-				rj++ // consume this right position
-			}
-		}
-	}
-	return pairs
-}
-
-// findMinSpan finds the minimum window containing at least one element from
-// each position list using a sweep-line algorithm.
-func findMinSpan(positionLists [][]int) int {
-	n := len(positionLists)
-	if n == 0 {
-		return 0
-	}
-
-	// Initialize pointers — one per list.
-	ptrs := make([]int, n)
-	best := math.MaxInt
-
-	for {
-		// Find current min and max positions across all pointers.
-		curMin, curMax := math.MaxInt, math.MinInt
-		minList := 0
-		for i, p := range ptrs {
-			val := positionLists[i][p]
-			if val < curMin {
-				curMin = val
-				minList = i
-			}
-			if val > curMax {
-				curMax = val
-			}
-		}
-
-		span := curMax - curMin
-		if span < best {
-			best = span
-		}
-
-		// Advance the pointer at the minimum position.
-		ptrs[minList]++
-		if ptrs[minList] >= len(positionLists[minList]) {
-			break
-		}
-	}
-
-	return best
-}
-
-// filterQueryTerms strips FTS5 special chars, splits, lowercases,
-// deduplicates case-insensitively, and filters stopwords. Falls back
-// to the deduplicated (unfiltered) list if all terms are stopwords.
-func filterQueryTerms(query string) []string {
-	cleaned := ftsSpecialRe.ReplaceAllString(query, " ")
-	words := strings.Fields(cleaned)
-	if len(words) == 0 {
-		return nil
-	}
-
-	seen := make(map[string]bool, len(words))
-	deduped := make([]string, 0, len(words))
-	for _, w := range words {
-		lower := strings.ToLower(strings.Trim(w, ".,!?;:"))
-		if lower == "" || seen[lower] {
-			continue
-		}
-		seen[lower] = true
-		deduped = append(deduped, lower)
-	}
-
-	filtered := make([]string, 0, len(deduped))
-	for _, w := range deduped {
-		if !IsStopword(w) {
-			filtered = append(filtered, w)
-		}
-	}
-
-	if len(filtered) == 0 {
-		return deduped
-	}
-	return filtered
-}
-
-// sanitizePorterQuery cleans a query for the Porter FTS5 table. When
-// expandSyns is true, each term is expanded via the synonym map into an OR
-// group. Mode controls how groups are joined: "AND" uses space (implicit AND
-// in FTS5), "OR" uses " OR ".
-// Note: quoted phrase preservation is not yet implemented — all FTS5 special
-// characters (including quotes) are stripped before tokenization.
-func sanitizePorterQuery(query, mode string, expandSyns bool) string {
-	terms := filterQueryTerms(query)
-	var groups []string
-	for _, w := range terms {
-		if ftsKeywords[strings.ToUpper(w)] {
-			continue
-		}
-		if expandSyns {
-			if syns := ExpandSynonyms(w); len(syns) > 0 {
-				parts := make([]string, 0, len(syns)+1)
-				parts = append(parts, `"`+w+`"`)
-				for _, s := range syns {
-					parts = append(parts, `"`+s+`"`)
-				}
-				groups = append(groups, "("+strings.Join(parts, " OR ")+")")
-				continue
-			}
-		}
-		groups = append(groups, `"`+w+`"`)
-	}
-	if len(groups) == 0 {
-		return ""
-	}
-	sep := " "
-	if mode == "OR" {
-		sep = " OR "
-	}
-	return strings.Join(groups, sep)
-}
-
-// sanitizeTrigramQuery cleans a query for the trigram FTS5 table (min 3 chars
-// per term). When expandSyns is true, each term is expanded via the synonym
-// map; short terms (<3 chars) are dropped but their longer synonyms are kept.
-func sanitizeTrigramQuery(query, mode string, expandSyns bool) string {
-	terms := filterQueryTerms(query)
-	var groups []string
-	for _, w := range terms {
-		subs := strings.Fields(trigramCleanRe.ReplaceAllString(w, " "))
-		for _, sub := range subs {
-			if expandSyns {
-				if syns := ExpandSynonyms(sub); len(syns) > 0 {
-					parts := make([]string, 0, len(syns)+1)
-					if len(sub) >= 3 {
-						parts = append(parts, `"`+sub+`"`)
-					}
-					for _, s := range syns {
-						sc := trigramCleanRe.ReplaceAllString(s, "")
-						if len(sc) >= 3 {
-							parts = append(parts, `"`+sc+`"`)
-						}
-					}
-					if len(parts) > 0 {
-						if len(parts) == 1 {
-							groups = append(groups, parts[0])
-						} else {
-							groups = append(groups, "("+strings.Join(parts, " OR ")+")")
-						}
-					}
-					continue
-				}
-			}
-			if len(sub) >= 3 {
-				groups = append(groups, `"`+sub+`"`)
-			}
-		}
-	}
-	if len(groups) == 0 {
-		return ""
-	}
-	sep := " "
-	if mode == "OR" {
-		sep = " OR "
-	}
-	return strings.Join(groups, sep)
-}
-
 // CountSourcesByKind returns the number of sources with the given kind.
 func (s *ContentStore) CountSourcesByKind(kind SourceKind) (int, error) {
 	db, err := s.getDB()
@@ -850,7 +282,7 @@ func KindScopeIncludesEphemeral(opts SearchOptions) bool {
 
 // execDynamicSearch builds and executes a search query with dynamic WHERE clauses.
 // table must be "chunks" or "chunks_trigram" (hardcoded by callers, never from user input).
-func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opts SearchOptions) []SearchResult {
+func (s *ContentStore) execDynamicSearch(ctx context.Context, table, sanitized string, limit int, opts SearchOptions) []SearchResult {
 	db, err := s.getDB()
 	if err != nil {
 		return nil
@@ -890,7 +322,7 @@ func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opt
 	query += " ORDER BY rank LIMIT ?"
 	params = append(params, limit)
 
-	rows, err := db.Query(query, params...)
+	rows, err := db.QueryContext(ctx, query, params...)
 	if err != nil {
 		// Warn, not Debug: a malformed query degrades silently to "no results"
 		// otherwise, hiding real SQL bugs from operators.
@@ -920,7 +352,7 @@ func (s *ContentStore) execDynamicSearch(table, sanitized string, limit int, opt
 // conditions with ContentStore.Close() finalizing prepared statements.
 //
 // Updates run inside a single transaction so the loop produces one fsync
-// instead of one per source — the 5× fetch multiplier in rrfSearch pushes
+// instead of one per source — the 5× fetch multiplier in RRFSearch pushes
 // more unique sources through here than the pre-RRF path.
 func (s *ContentStore) trackAccess(results []SearchResult) {
 	db, err := s.getDB()
@@ -992,44 +424,13 @@ func maxEditDistance(wordLen int) int {
 	}
 }
 
-// fuzzyCorrectQuery corrects each word in the query using vocabulary.
-// Returns the corrected query, or "" if no correction was made.
-func (s *ContentStore) fuzzyCorrectQuery(query string) string {
-	cleaned := ftsSpecialRe.ReplaceAllString(strings.ToLower(query), " ")
-	words := strings.Fields(cleaned)
-	corrected := false
-	var result []string
-
-	for _, word := range words {
-		word = strings.Trim(word, ".,!?;:")
-		if len(word) < 3 {
-			result = append(result, word)
-			continue
-		}
-		if IsStopword(word) {
-			result = append(result, word)
-			continue
-		}
-		fix := s.fuzzyCorrectWord(word)
-		if fix != "" {
-			result = append(result, fix)
-			corrected = true
-		} else {
-			result = append(result, word)
-		}
-	}
-
-	if !corrected {
-		return ""
-	}
-	return strings.Join(result, " ")
-}
-
 // fuzzyCorrectWord finds the closest vocabulary word within edit distance.
+// It is the knowledge store's retrieval.FuzzyCorrector — backed by the
+// per-corpus vocabulary table, which corpora like the vault don't have.
 // Returns "" if no correction needed (exact match, synonym-known, or no close candidate).
 func (s *ContentStore) fuzzyCorrectWord(word string) string {
 	// Synonym-known terms don't need fuzzy correction — they're expanded at query time.
-	if HasSynonym(word) {
+	if retrieval.HasSynonym(word) {
 		return ""
 	}
 
@@ -1177,7 +578,7 @@ func uniqueWords(content string) []string {
 	seen := make(map[string]bool)
 	var result []string
 	for _, w := range parts {
-		if len(w) < 3 || IsStopword(w) || seen[w] {
+		if len(w) < 3 || retrieval.IsStopword(w) || seen[w] {
 			continue
 		}
 		seen[w] = true

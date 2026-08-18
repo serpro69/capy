@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/serpro69/capy/internal/retrieval"
 )
 
 type benchReport struct {
@@ -197,10 +200,14 @@ func runRetrievalQuality(t *testing.T, report *benchReport) {
 
 					firstRelevantRank := findFirstRelevantRank(results, c.Needles)
 
-					preResults := store.rrfSearch(
-						sanitizePorterQuery(c.Query, "AND", true),
-						sanitizeTrigramQuery(c.Query, "AND", true),
-						c.Query, 10, opts,
+					corpus, corpusErr := store.searchCorpus(opts)
+					require.NoError(t, corpusErr, "building corpus for case %s", c.CaseID)
+					preResults := retrieval.RRFSearch(
+						context.Background(),
+						corpus,
+						retrieval.SanitizePorterQuery(c.Query, "AND", true),
+						retrieval.SanitizeTrigramQuery(c.Query, "AND", true),
+						c.Query, 10,
 					)
 					preRank := findFirstRelevantRank(preResults, c.Needles)
 					if preRank > 0 && firstRelevantRank > 0 && preRank != firstRelevantRank {
