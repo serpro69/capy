@@ -27,7 +27,7 @@ federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
 - [x] 1.4 Move unit tests; `go test -tags fts5 ./internal/retrieval/... ./internal/store/...` green
 
 ## Task 2: `ContentStore` as a `Corpus` + behavior gate
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Slicing:** Risk-first
@@ -35,9 +35,11 @@ federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
 - **Docs:** [implementation.md#task-2--contentstore-as-a-corpus--behavior-gate](./implementation.md#task-2--contentstore-as-a-corpus--behavior-gate)
 
 ### Subtasks
-- [ ] 2.1 Generalize `execDynamicSearch` so table name + row mapping are corpus-supplied; `ContentStore` implements `Corpus` over `chunks`/`chunks_trigram`
-- [ ] 2.2 Keep knowledge-only steps (`refreshStaleSources`, `trackAccess`, kind filtering) in `store`, wrapping the shared core
-- [ ] 2.3 **Gate (A4):** `go test -tags fts5 -count=1 ./internal/store/...` unchanged; `make bench-compare BASE=master TARGET=<branch>` zero delta
+- [x] 2.1 Generalize `execDynamicSearch` so table name + row mapping are corpus-supplied; `ContentStore` implements `Corpus` over `chunks`/`chunks_trigram`
+  - Note: the old `execDynamicSearch` moved into `retrieval` as the shared layer-query skeleton (`CorpusConfig.execSearch`); `NewCorpus` now takes a `CorpusConfig` (DB handle, tables, SELECT/JOIN shape, title weight, pre-bound filter clauses, `RowMapper`, optional fuzzy). The internal `exec` seam between RRF orchestration and SQL execution is preserved (engine tests stub it). Skeleton invariant: every corpus FTS table declares `title`/`content` as columns 0/1 — Task 3's vault tables must follow it.
+- [x] 2.2 Keep knowledge-only steps (`refreshStaleSources`, `trackAccess`, kind filtering) in `store`, wrapping the shared core
+  - Note: filter building lives in `store.knowledgeFilterClauses` (source label, content type, kind — review #R4), passed pre-bound to the corpus.
+- [x] 2.3 **Gate (A4):** `go test -tags fts5 -count=1 ./internal/store/...` unchanged; `make bench-compare BASE=master TARGET=<branch>` zero delta
 
 ## Task 3: Vault chunk-FTS schema + migration `0004`
 - **Status:** pending
