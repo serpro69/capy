@@ -115,6 +115,10 @@ vault_chunks_trigram USING fts5(title, content_text, … same UNINDEXED cols …
                                 tokenize='trigram')
 ```
 
+- **Column-order invariant (Task 2):** the shared retrieval skeleton hardcodes
+  `highlight(<table>, 1, …)` / `bm25(<table>, titleWeight, 1.0)`, so `title` and
+  `content_text` **must stay the first two declared columns** of both tables, in that
+  order (see ADR-028 D1 "as implemented" and the `retrieval.CorpusConfig` doc).
 - `first_line_index` (review #2 line anchor): the raw-JSONL `LineIndex` of the chunk's
   first constituent `ScanResult`. Because chunks are built from scanner output (D3),
   this is a **real, recorded anchor** — not a fragile mapping back from parsed-turn
