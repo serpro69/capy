@@ -44,6 +44,22 @@ engine is parameterized by a `Corpus`: a `*sql.DB`, the porter + trigram table n
 (fixed allowlist, never user input), a row→`SearchResult` mapper, and an **optional
 `FuzzyCorrector`**.
 
+As implemented (`retrieval.CorpusConfig`, Task 2), the corpus also supplies the
+SELECT/JOIN shape and pre-bound filter clauses of the layer query, and two invariants
+bind every current and future corpus:
+
+- **FTS column order.** The shared query skeleton hardcodes
+  `highlight(<table>, 1, …)` and `bm25(<table>, titleWeight, 1.0)`, so every corpus
+  FTS5 table **must declare `title` and `content` as its first two (indexed) columns**.
+  `chunks`/`chunks_trigram` already comply; `vault_chunks`/`vault_chunks_trigram` (D2)
+  must use the same order (`title, content_text, …UNINDEXED cols`). A table added to
+  the allowlist without this order silently highlights/weights the wrong column.
+- **Verbatim SQL fields are trusted literals.** `SelectColumns`, `Join`, and
+  `FilterSQL` are interpolated into SQL verbatim — only table names are
+  allowlist-validated. They must be hardcoded literals owned by the corpus
+  implementation, never derived from user input or external configuration;
+  user-controlled values belong in `FilterParams` placeholders.
+
 - **Fuzzy correction is a pluggable, per-corpus capability (not dropped silently).**
   `fuzzyCorrectQuery` is backed by the per-corpus `vocabulary` table, which the vault
   lacks. `ContentStore` supplies its vocabulary-backed corrector; the vault supplies

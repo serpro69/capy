@@ -2,36 +2,128 @@ package retrieval
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // --- Corpus construction ---
 
-func TestNewCorpusRejectsUnknownTables(t *testing.T) {
-	exec := func(ctx context.Context, table, ftsQuery string, limit int) []SearchResult { return nil }
+// validCorpusConfig returns a minimal CorpusConfig that passes NewCorpus
+// validation. sql.Open connects lazily, so no database is touched unless a
+// test actually runs a query.
+func validCorpusConfig(t *testing.T) CorpusConfig {
+	t.Helper()
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "corpus.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	return CorpusConfig{
+		DB:            db,
+		PorterTable:   "chunks",
+		TrigramTable:  "chunks_trigram",
+		SelectColumns: "c.title, c.content",
+		TitleWeight:   2.0,
+		MapRow: func(rows *sql.Rows) (SearchResult, error) {
+			var r SearchResult
+			err := rows.Scan(&r.Title, &r.Content, &r.Highlighted, &r.Rank)
+			return r, err
+		},
+	}
+}
 
-	_, err := NewCorpus("sources", "chunks_trigram", exec, nil)
+func TestNewCorpusRejectsUnknownTables(t *testing.T) {
+	cfg := validCorpusConfig(t)
+	cfg.PorterTable = "sources"
+	_, err := NewCorpus(cfg)
 	assert.Error(t, err, "porter table outside the allowlist must be rejected")
 
-	_, err = NewCorpus("chunks", "chunks_trigram; DROP TABLE sources", exec, nil)
+	cfg = validCorpusConfig(t)
+	cfg.TrigramTable = "chunks_trigram; DROP TABLE sources"
+	_, err = NewCorpus(cfg)
 	assert.Error(t, err, "trigram table outside the allowlist must be rejected")
 }
 
 func TestNewCorpusRejectsSameTableForBothLayers(t *testing.T) {
-	exec := func(ctx context.Context, table, ftsQuery string, limit int) []SearchResult { return nil }
-
-	_, err := NewCorpus("chunks", "chunks", exec, nil)
+	cfg := validCorpusConfig(t)
+	cfg.TrigramTable = cfg.PorterTable
+	_, err := NewCorpus(cfg)
 	assert.Error(t, err, "using one table for both layers would double-count every fusion hit")
 }
 
-func TestNewCorpusRequiresExec(t *testing.T) {
-	_, err := NewCorpus("chunks", "chunks_trigram", nil, nil)
-	assert.Error(t, err, "corpus without an Exec search function must be rejected")
+func TestNewCorpusRequiredFields(t *testing.T) {
+	tests := []struct {
+		name       string
+		invalidate func(*CorpusConfig)
+	}{
+		{"nil DB", func(cfg *CorpusConfig) { cfg.DB = nil }},
+		{"nil MapRow", func(cfg *CorpusConfig) { cfg.MapRow = nil }},
+		{"empty SelectColumns", func(cfg *CorpusConfig) { cfg.SelectColumns = "" }},
+		{"non-positive TitleWeight", func(cfg *CorpusConfig) { cfg.TitleWeight = 0 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validCorpusConfig(t)
+			tt.invalidate(&cfg)
+			_, err := NewCorpus(cfg)
+			assert.Error(t, err, "corpus with %s must be rejected", tt.name)
+		})
+	}
+}
+
+// TestCorpusExecSearchEndToEnd drives the shared layer-query skeleton against
+// a real FTS5 database: SELECT/JOIN shape, pre-bound filter clauses, row
+// mapping, and the skeleton-appended highlighted/rank columns.
+func TestCorpusExecSearchEndToEnd(t *testing.T) {
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "e2e.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+
+	_, err = db.Exec(`
+		CREATE TABLE src (id INTEGER PRIMARY KEY, label TEXT);
+		CREATE VIRTUAL TABLE chunks USING fts5(title, content, source_id UNINDEXED, tokenize='porter unicode61');
+		CREATE VIRTUAL TABLE chunks_trigram USING fts5(title, content, source_id UNINDEXED, tokenize='trigram');
+		INSERT INTO src (id, label) VALUES (1, 'keep'), (2, 'drop');
+		INSERT INTO chunks (title, content, source_id) VALUES
+			('Auth notes', 'authentication middleware setup', 1),
+			('Auth notes', 'authentication middleware setup', 2);
+		INSERT INTO chunks_trigram (title, content, source_id) VALUES
+			('Auth notes', 'authentication middleware setup', 1),
+			('Auth notes', 'authentication middleware setup', 2);
+	`)
+	require.NoError(t, err)
+
+	c, err := NewCorpus(CorpusConfig{
+		DB:            db,
+		PorterTable:   "chunks",
+		TrigramTable:  "chunks_trigram",
+		SelectColumns: "s.label, c.title, c.content, c.source_id",
+		Join:          "JOIN src s ON s.id = c.source_id",
+		TitleWeight:   2.0,
+		FilterSQL:     " AND s.label = ?",
+		FilterParams:  []any{"keep"},
+		MapRow: func(rows *sql.Rows) (SearchResult, error) {
+			var r SearchResult
+			err := rows.Scan(&r.Label, &r.Title, &r.Content, &r.SourceID, &r.Highlighted, &r.Rank)
+			return r, err
+		},
+	})
+	require.NoError(t, err)
+
+	results := SearchWithFallback(context.Background(), c, "authentication middleware", 5, 0)
+	require.NotEmpty(t, results, "indexed content must be reachable through the skeleton")
+	for _, r := range results {
+		assert.Equal(t, "keep", r.Label, "pre-bound filter clause must exclude the filtered source")
+		assert.Equal(t, int64(1), r.SourceID)
+		assert.Contains(t, r.Highlighted, "\x02", "highlight() markers must survive row mapping")
+	}
+	assert.Equal(t, "rrf(porter+trigram)", results[0].MatchLayer,
+		"a term present in both layers must fuse across them")
 }
 
 func TestRRFSearchZeroValueCorpusPanics(t *testing.T) {
@@ -43,14 +135,18 @@ func TestRRFSearchZeroValueCorpusPanics(t *testing.T) {
 // --- Engine orchestration over a stub corpus ---
 
 // stubCorpus returns a Corpus whose layers serve canned results and records
-// every executed (table, query) pair for pass-count assertions. The engine
-// runs the two layers concurrently, so the recorder must be mutex-guarded —
-// real corpora get this safety from database/sql.
+// every executed (table, query) pair for pass-count assertions. It sets the
+// internal exec seam directly (bypassing NewCorpus, which would compose the
+// SQL skeleton) so orchestration tests need no database. The engine runs the
+// two layers concurrently, so the recorder must be mutex-guarded — real
+// corpora get this safety from database/sql.
 func stubCorpus(t *testing.T, byTable map[string][]SearchResult, fuzzy FuzzyCorrector, calls *[][2]string) Corpus {
 	t.Helper()
 	var mu sync.Mutex
-	c, err := NewCorpus("chunks", "chunks_trigram",
-		func(ctx context.Context, table, ftsQuery string, limit int) []SearchResult {
+	return Corpus{
+		porterTable:  "chunks",
+		trigramTable: "chunks_trigram",
+		exec: func(ctx context.Context, table, ftsQuery string, limit int) []SearchResult {
 			if calls != nil {
 				mu.Lock()
 				*calls = append(*calls, [2]string{table, ftsQuery})
@@ -58,10 +154,8 @@ func stubCorpus(t *testing.T, byTable map[string][]SearchResult, fuzzy FuzzyCorr
 			}
 			return byTable[table]
 		},
-		fuzzy,
-	)
-	require.NoError(t, err)
-	return c
+		fuzzy: fuzzy,
+	}
 }
 
 func TestSearchWithFallbackNilFuzzySkipsFuzzyPass(t *testing.T) {
@@ -80,8 +174,10 @@ func TestSearchWithFallbackFuzzyPassUsesCorrector(t *testing.T) {
 	// and its results are tagged with the fuzzy+ layer prefix.
 	hit := SearchResult{SourceID: 1, Title: "Auth", Content: "authentication middleware"}
 	served := false
-	c, err := NewCorpus("chunks", "chunks_trigram",
-		func(ctx context.Context, table, ftsQuery string, limit int) []SearchResult {
+	c := Corpus{
+		porterTable:  "chunks",
+		trigramTable: "chunks_trigram",
+		exec: func(ctx context.Context, table, ftsQuery string, limit int) []SearchResult {
 			// Serve the hit only for the corrected term.
 			if table == "chunks" && strings.Contains(ftsQuery, "authentication") {
 				served = true
@@ -89,14 +185,13 @@ func TestSearchWithFallbackFuzzyPassUsesCorrector(t *testing.T) {
 			}
 			return nil
 		},
-		func(word string) string {
+		fuzzy: func(word string) string {
 			if word == "authentcation" {
 				return "authentication"
 			}
 			return ""
 		},
-	)
-	require.NoError(t, err)
+	}
 
 	results := SearchWithFallback(context.Background(), c, "authentcation", 5, 0)
 	require.True(t, served, "corrected query should reach the corpus")

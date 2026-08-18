@@ -5,16 +5,18 @@
 // reranking, per-source diversification, and entity boosting.
 //
 // The engine is parameterized by a Corpus, which supplies the corpus-specific
-// pieces: the two FTS5 layer table names (validated against a fixed
-// allowlist), an Exec callback that runs one layer's query (owning the DB
-// handle, corpus-specific WHERE filters, and row mapping), and an optional
-// FuzzyCorrector for corpora backed by a vocabulary table.
+// pieces: the database handle, the two FTS5 layer table names (validated
+// against a fixed allowlist), the SELECT/JOIN shape and pre-bound filter
+// clauses of the layer query, a RowMapper that scans one result row, and an
+// optional FuzzyCorrector for corpora backed by a vocabulary table.
 package retrieval
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -39,19 +41,73 @@ type SearchResult struct {
 // returning the corrected word or "" when no correction applies.
 type FuzzyCorrector func(word string) string
 
-// SearchFunc executes one sanitized FTS5 MATCH query against the given layer
-// table and returns BM25-ranked results. Implementations own the DB handle,
-// corpus-specific filtering, and row mapping, and should honor ctx
-// cancellation on their database calls.
-type SearchFunc func(ctx context.Context, table, ftsQuery string, limit int) []SearchResult
+// RowMapper scans the current row of a layer-query cursor into a
+// SearchResult. The cursor's columns are the corpus's SelectColumns followed
+// by the highlighted snippet and the BM25 rank appended by the shared query
+// skeleton (see CorpusConfig).
+type RowMapper func(rows *sql.Rows) (SearchResult, error)
+
+// searchFunc executes one sanitized FTS5 MATCH query against the given layer
+// table and returns BM25-ranked results. It is the internal seam between the
+// RRF orchestration and SQL execution: NewCorpus composes it from the
+// CorpusConfig pieces, and engine tests stub it to serve canned results.
+type searchFunc func(ctx context.Context, table, ftsQuery string, limit int) []SearchResult
 
 // tableAllowlist enumerates every FTS5 table name a Corpus may search.
-// Corpus Exec implementations interpolate the table name into SQL, so it must
-// never come from user input; NewCorpus enforces membership here so even a
-// miswired corpus cannot smuggle an arbitrary identifier.
+// The shared layer-query skeleton interpolates the table name into SQL, so it
+// must never come from user input; NewCorpus enforces membership here so even
+// a miswired corpus cannot smuggle an arbitrary identifier.
 var tableAllowlist = map[string]bool{
 	"chunks":         true,
 	"chunks_trigram": true,
+}
+
+// CorpusConfig supplies the corpus-specific pieces of a search, consumed by
+// NewCorpus. The layer query is built from them as:
+//
+//	SELECT <SelectColumns>,
+//	       highlight(<table>, 1, char(2), char(3)) AS highlighted,
+//	       bm25(<table>, <TitleWeight>, 1.0) AS rank
+//	FROM <table> c <Join>
+//	WHERE <table> MATCH ? <FilterSQL>
+//	ORDER BY rank LIMIT ?
+//
+// Every corpus FTS table must declare title and content as its first two
+// (indexed) columns — that invariant fixes the highlight() column index and
+// the bm25() weight positions above.
+type CorpusConfig struct {
+	// DB is the corpus database handle; layer queries run through it with
+	// QueryContext.
+	DB *sql.DB
+	// PorterTable and TrigramTable are the two FTS5 layer tables. Both must
+	// be members of the fixed allowlist — they are interpolated into SQL and
+	// must never come from user input.
+	PorterTable  string
+	TrigramTable string
+	// SelectColumns is the corpus-specific SELECT list. The FTS table is
+	// aliased "c"; tables added via Join use their own aliases.
+	//
+	// SelectColumns, Join, and FilterSQL are interpolated into SQL verbatim —
+	// the engine cannot validate them the way it validates table names. They
+	// must be hardcoded literals owned by the corpus implementation, never
+	// derived from user input or external configuration; user-controlled
+	// values belong in FilterParams placeholders.
+	SelectColumns string
+	// Join optionally joins metadata tables after "FROM <table> c".
+	Join string
+	// TitleWeight is the BM25 weight of the FTS title column (content weighs
+	// 1.0). It must be positive.
+	TitleWeight float64
+	// FilterSQL holds optional pre-bound WHERE additions, each clause
+	// starting with " AND "; FilterParams carry the values for its
+	// placeholders, in order.
+	FilterSQL    string
+	FilterParams []any
+	// MapRow scans one result row into a SearchResult.
+	MapRow RowMapper
+	// Fuzzy may be nil, which disables the fuzzy-correction pass for this
+	// corpus (corpora without a vocabulary table).
+	Fuzzy FuzzyCorrector
 }
 
 // Corpus supplies the corpus-specific parts of a search. The zero value is
@@ -59,29 +115,86 @@ var tableAllowlist = map[string]bool{
 type Corpus struct {
 	porterTable  string
 	trigramTable string
-	exec         SearchFunc
+	exec         searchFunc
 	fuzzy        FuzzyCorrector
 }
 
-// NewCorpus validates the layer table names against the fixed allowlist and
-// returns a Corpus. fuzzy may be nil, which disables the fuzzy-correction
-// pass for this corpus (corpora without a vocabulary table).
-func NewCorpus(porterTable, trigramTable string, exec SearchFunc, fuzzy FuzzyCorrector) (Corpus, error) {
-	if !tableAllowlist[porterTable] || !tableAllowlist[trigramTable] {
-		return Corpus{}, fmt.Errorf("retrieval: corpus tables %q/%q not in the fixed allowlist", porterTable, trigramTable)
+// NewCorpus validates the corpus-supplied pieces (layer table names against
+// the fixed allowlist, required handle/mapper/SELECT shape) and returns a
+// Corpus whose layer executor is the shared query skeleton over them.
+func NewCorpus(cfg CorpusConfig) (Corpus, error) {
+	if !tableAllowlist[cfg.PorterTable] || !tableAllowlist[cfg.TrigramTable] {
+		return Corpus{}, fmt.Errorf("retrieval: corpus tables %q/%q not in the fixed allowlist", cfg.PorterTable, cfg.TrigramTable)
 	}
-	if porterTable == trigramTable {
-		return Corpus{}, fmt.Errorf("retrieval: porter and trigram tables must be distinct, got %q for both", porterTable)
+	if cfg.PorterTable == cfg.TrigramTable {
+		return Corpus{}, fmt.Errorf("retrieval: porter and trigram tables must be distinct, got %q for both", cfg.PorterTable)
 	}
-	if exec == nil {
-		return Corpus{}, errors.New("retrieval: corpus requires an Exec search function")
+	if cfg.DB == nil {
+		return Corpus{}, errors.New("retrieval: corpus requires a database handle")
+	}
+	if cfg.MapRow == nil {
+		return Corpus{}, errors.New("retrieval: corpus requires a MapRow row mapper")
+	}
+	if cfg.SelectColumns == "" {
+		return Corpus{}, errors.New("retrieval: corpus requires a SelectColumns list")
+	}
+	if cfg.TitleWeight <= 0 {
+		return Corpus{}, fmt.Errorf("retrieval: corpus title weight must be positive, got %g", cfg.TitleWeight)
 	}
 	return Corpus{
-		porterTable:  porterTable,
-		trigramTable: trigramTable,
-		exec:         exec,
-		fuzzy:        fuzzy,
+		porterTable:  cfg.PorterTable,
+		trigramTable: cfg.TrigramTable,
+		exec:         cfg.execSearch,
+		fuzzy:        cfg.Fuzzy,
 	}, nil
+}
+
+// execSearch is the shared layer-query skeleton: it builds one FTS5 MATCH
+// query from the corpus-supplied pieces (see the CorpusConfig doc for the
+// query shape) and maps result rows through MapRow. Errors degrade to nil
+// results with a logged warning — one malformed layer query must not fail the
+// whole search.
+func (cfg CorpusConfig) execSearch(ctx context.Context, table, ftsQuery string, limit int) []SearchResult {
+	query := fmt.Sprintf(
+		`SELECT %s,
+			highlight(%s, 1, char(2), char(3)) AS highlighted,
+			bm25(%s, %.1f, 1.0) AS rank
+		FROM %s c
+		%s
+		WHERE %s MATCH ?`,
+		cfg.SelectColumns, table, table, cfg.TitleWeight, table, cfg.Join, table,
+	)
+	query += cfg.FilterSQL
+	query += " ORDER BY rank LIMIT ?"
+
+	params := make([]any, 0, len(cfg.FilterParams)+2)
+	params = append(params, ftsQuery)
+	params = append(params, cfg.FilterParams...)
+	params = append(params, limit)
+
+	rows, err := cfg.DB.QueryContext(ctx, query, params...)
+	if err != nil {
+		// Warn, not Debug: a malformed query degrades silently to "no results"
+		// otherwise, hiding real SQL bugs from operators.
+		slog.Warn("search query failed", "error", err, "query", ftsQuery)
+		return nil
+	}
+	defer rows.Close()
+
+	var results []SearchResult
+	for rows.Next() {
+		r, err := cfg.MapRow(rows)
+		if err != nil {
+			slog.Warn("search row scan failed, skipping", "error", err)
+			continue
+		}
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("search row iteration failed", "error", err)
+		return nil
+	}
+	return results
 }
 
 // SearchWithFallback runs Reciprocal Rank Fusion across the corpus's porter

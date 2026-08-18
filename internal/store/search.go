@@ -1,10 +1,8 @@
 package store
 
 import (
-	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -46,19 +44,70 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOp
 	return results, nil
 }
 
-// searchCorpus adapts the knowledge store to the shared retrieval engine.
-// The db handle, row mapping, and knowledge-only filters (source label,
-// content type, source kinds — including opts.IncludeKinds) stay on the store
-// side, closed over by the Exec callback via execDynamicSearch. The
+// searchCorpus adapts the knowledge store to the shared retrieval engine as a
+// Corpus over chunks/chunks_trigram, supplying the corpus pieces the engine's
+// query skeleton needs: the db handle, the knowledge SELECT/JOIN shape, the
+// pre-bound knowledge-only filters (source label, content type, source kinds
+// — including opts.IncludeKinds), and the knowledge row mapper. The
 // vocabulary-backed fuzzy corrector is the optional corpus capability that
 // corpora without a vocabulary table leave nil.
 func (s *ContentStore) searchCorpus(opts SearchOptions) (retrieval.Corpus, error) {
-	return retrieval.NewCorpus("chunks", "chunks_trigram",
-		func(ctx context.Context, table, ftsQuery string, limit int) []retrieval.SearchResult {
-			return s.execDynamicSearch(ctx, table, ftsQuery, limit, opts)
-		},
-		s.fuzzyCorrectWord,
-	)
+	db, err := s.getDB()
+	if err != nil {
+		return retrieval.Corpus{}, err
+	}
+	filterSQL, filterParams := knowledgeFilterClauses(opts)
+	return retrieval.NewCorpus(retrieval.CorpusConfig{
+		DB:            db,
+		PorterTable:   "chunks",
+		TrigramTable:  "chunks_trigram",
+		SelectColumns: "s.label, c.title, c.content, c.source_id, c.content_type",
+		Join:          "JOIN sources s ON s.id = c.source_id",
+		TitleWeight:   s.titleWeight,
+		FilterSQL:     filterSQL,
+		FilterParams:  filterParams,
+		MapRow:        scanSearchRow,
+		Fuzzy:         s.fuzzyCorrectWord,
+	})
+}
+
+// knowledgeFilterClauses builds the knowledge-only WHERE additions for one
+// search: source-label match (exact or substring), content type, and the
+// effective source-kind filter. Kind filtering is a knowledge concern and
+// deliberately does not move into the retrieval package (review #R4).
+func knowledgeFilterClauses(opts SearchOptions) (string, []any) {
+	var clauses strings.Builder
+	var params []any
+
+	if opts.Source != "" {
+		if opts.SourceMatchMode == "exact" {
+			clauses.WriteString(" AND s.label = ?")
+		} else {
+			clauses.WriteString(" AND s.label LIKE '%' || ? || '%'")
+		}
+		params = append(params, opts.Source)
+	}
+	if opts.ContentType != "" {
+		clauses.WriteString(" AND c.content_type = ?")
+		params = append(params, opts.ContentType)
+	}
+	if kinds := effectiveKindFilter(opts); kinds != nil {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(kinds)), ",")
+		clauses.WriteString(" AND s.kind IN (" + placeholders + ")")
+		for _, k := range kinds {
+			params = append(params, string(k))
+		}
+	}
+	return clauses.String(), params
+}
+
+// scanSearchRow is the knowledge corpus's retrieval.RowMapper: it scans the
+// SELECT list built by searchCorpus plus the skeleton's highlighted/rank
+// columns.
+func scanSearchRow(rows *sql.Rows) (retrieval.SearchResult, error) {
+	var r retrieval.SearchResult
+	err := rows.Scan(&r.Label, &r.Title, &r.Content, &r.SourceID, &r.ContentType, &r.Highlighted, &r.Rank)
+	return r, err
 }
 
 // staleRefreshCooldown throttles refreshStaleSources. Each search is an IPC
@@ -278,73 +327,6 @@ func KindScopeIncludes(opts SearchOptions, kind SourceKind) bool {
 // KindScopeIncludesEphemeral is a convenience wrapper for backward compatibility.
 func KindScopeIncludesEphemeral(opts SearchOptions) bool {
 	return KindScopeIncludes(opts, KindEphemeral)
-}
-
-// execDynamicSearch builds and executes a search query with dynamic WHERE clauses.
-// table must be "chunks" or "chunks_trigram" (hardcoded by callers, never from user input).
-func (s *ContentStore) execDynamicSearch(ctx context.Context, table, sanitized string, limit int, opts SearchOptions) []SearchResult {
-	db, err := s.getDB()
-	if err != nil {
-		return nil
-	}
-
-	query := fmt.Sprintf(
-		`SELECT s.label, c.title, c.content, c.source_id, c.content_type,
-			highlight(%s, 1, char(2), char(3)) AS highlighted,
-			bm25(%s, %.1f, 1.0) AS rank
-		FROM %s c
-		JOIN sources s ON s.id = c.source_id
-		WHERE %s MATCH ?`,
-		table, table, s.titleWeight, table, table,
-	)
-	params := []any{sanitized}
-
-	if opts.Source != "" {
-		if opts.SourceMatchMode == "exact" {
-			query += " AND s.label = ?"
-		} else {
-			query += " AND s.label LIKE '%' || ? || '%'"
-		}
-		params = append(params, opts.Source)
-	}
-	if opts.ContentType != "" {
-		query += " AND c.content_type = ?"
-		params = append(params, opts.ContentType)
-	}
-	if kinds := effectiveKindFilter(opts); kinds != nil {
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(kinds)), ",")
-		query += " AND s.kind IN (" + placeholders + ")"
-		for _, k := range kinds {
-			params = append(params, string(k))
-		}
-	}
-
-	query += " ORDER BY rank LIMIT ?"
-	params = append(params, limit)
-
-	rows, err := db.QueryContext(ctx, query, params...)
-	if err != nil {
-		// Warn, not Debug: a malformed query degrades silently to "no results"
-		// otherwise, hiding real SQL bugs from operators.
-		slog.Warn("search query failed", "error", err, "query", sanitized)
-		return nil
-	}
-	defer rows.Close()
-
-	var results []SearchResult
-	for rows.Next() {
-		var r SearchResult
-		if err := rows.Scan(&r.Label, &r.Title, &r.Content, &r.SourceID, &r.ContentType, &r.Highlighted, &r.Rank); err != nil {
-			slog.Warn("search row scan failed, skipping", "error", err)
-			continue
-		}
-		results = append(results, r)
-	}
-	if err := rows.Err(); err != nil {
-		slog.Warn("search row iteration failed", "error", err)
-		return nil
-	}
-	return results
 }
 
 // trackAccess updates last_accessed_at and access_count for sources
