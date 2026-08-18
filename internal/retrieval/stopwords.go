@@ -1,4 +1,4 @@
-package store
+package retrieval
 
 var stopwords = map[string]struct{}{
 	"the": {}, "and": {}, "for": {}, "are": {}, "but": {}, "not": {}, "you": {}, "all": {}, "can": {}, "had": {},

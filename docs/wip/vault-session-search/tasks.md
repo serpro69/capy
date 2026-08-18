@@ -11,7 +11,7 @@ federation (Task 8) lands — there is no "ship with the sweep removed" boundary
 federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
 
 ## Task 1: Extract `internal/retrieval` shared core
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Slicing:** Risk-first (hot search path; behavior-preserving)
@@ -19,10 +19,12 @@ federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
 - **Docs:** [implementation.md#task-1--extract-internalretrieval](./implementation.md#task-1--extract-internalretrieval)
 
 ### Subtasks
-- [ ] 1.1 Create `internal/retrieval/`; move `SearchWithFallback` orchestration, `rrfSearch`, `mergeRRFResults`, `rerank`, `diversifyBySource`, entity boosting, porter/trigram/synonym sanitizers + FTS5 escaping
-- [ ] 1.2 Define `Corpus` (db handle, porter+trigram table names from a fixed allowlist, `rowMapper`, optional `FuzzyCorrector`); place `SearchResult` to avoid an import cycle; `retrieval` must not import `store`; keep `SearchOptions.IncludeKinds` in `store` (review #R4)
-- [ ] 1.3 Make the fuzzy pass gated on a corpus-supplied `FuzzyCorrector` — `ContentStore` supplies the vocabulary-backed one, vault supplies `nil` (review #3)
-- [ ] 1.4 Move unit tests; `go test -tags fts5 ./internal/retrieval/... ./internal/store/...` green
+- [x] 1.1 Create `internal/retrieval/`; move `SearchWithFallback` orchestration, `rrfSearch`, `mergeRRFResults`, `rerank`, `diversifyBySource`, entity boosting, porter/trigram/synonym sanitizers + FTS5 escaping
+- [x] 1.2 Define `Corpus` (db handle, porter+trigram table names from a fixed allowlist, `rowMapper`, optional `FuzzyCorrector`); place `SearchResult` to avoid an import cycle; `retrieval` must not import `store`; keep `SearchOptions.IncludeKinds` in `store` (review #R4)
+  - Note: in this task the db handle, row mapping, and per-call knowledge filters live *inside* the corpus's `Exec` callback (closed over by `ContentStore.searchCorpus`); Task 2 generalizes `execDynamicSearch` so table name + row mapping become explicit corpus-supplied pieces. Table names are allowlist-validated in `retrieval.NewCorpus` (Task 3/5 must add the vault tables to the allowlist).
+  - Review-driven additions (isolated review): `NewCorpus` rejects `porterTable == trigramTable`; `RRFSearch` panics loudly on a zero-value `Corpus`; `context.Context` threaded through `SearchFunc`/`SearchWithFallback`/`RRFSearch` (store passes `s.ctx()`, `execDynamicSearch` now uses `QueryContext`) so Task 5's `SearchChunks(ctx, …)` needs no API churn.
+- [x] 1.3 Make the fuzzy pass gated on a corpus-supplied `FuzzyCorrector` — `ContentStore` supplies the vocabulary-backed one, vault supplies `nil` (review #3)
+- [x] 1.4 Move unit tests; `go test -tags fts5 ./internal/retrieval/... ./internal/store/...` green
 
 ## Task 2: `ContentStore` as a `Corpus` + behavior gate
 - **Status:** pending
