@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/vault"
 )
 
-func (s *Server) handleStats(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	snap := s.stats.Snapshot()
 
 	totalBytesReturned := int64(0)
@@ -127,6 +128,33 @@ func (s *Server) handleStats(_ context.Context, _ mcp.CallToolRequest) (*mcp.Cal
 					"|--------|------:|",
 					fmt.Sprintf("| fresh | %d |", kbStats.SessionFreshCount),
 					fmt.Sprintf("| stale | %d |", kbStats.SessionStaleCount),
+				)
+			}
+		}
+	}
+
+	// Vault section (opt-in): session-archive size and — loudly — any reindex
+	// backlog, since the chunk backfill is a manual `capy vault reindex` (design
+	// vault-session-search D4).
+	if _, err := vault.RequireVaultKey(); err == nil {
+		switch vs, err := s.vaultStats(ctx); {
+		case err != nil:
+			// An unreadable vault is a different state than an empty one — say so
+			// (mirrors capy_doctor's Warn) instead of silently omitting the section.
+			lines = append(lines, "", "### Vault", "",
+				fmt.Sprintf("Error reading vault stats: %v", err))
+		case vs.Sessions > 0:
+			lines = append(lines, "", "### Vault", "",
+				"| Metric | Value |",
+				"|--------|------:|",
+				fmt.Sprintf("| Archived sessions | %d |", vs.Sessions),
+				fmt.Sprintf("| Content size | %s |", formatBytes(vs.TotalBytes)),
+				fmt.Sprintf("| Index version | v%d |", vs.IndexVersion),
+			)
+			if vs.OutdatedSessions > 0 {
+				lines = append(lines,
+					fmt.Sprintf("| **Reindex backlog** | **%d session(s) below v%d — run `capy vault reindex`** |",
+						vs.OutdatedSessions, vs.IndexVersion),
 				)
 			}
 		}
