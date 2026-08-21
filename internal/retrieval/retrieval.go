@@ -58,8 +58,10 @@ type searchFunc func(ctx context.Context, table, ftsQuery string, limit int) []S
 // must never come from user input; NewCorpus enforces membership here so even
 // a miswired corpus cannot smuggle an arbitrary identifier.
 var tableAllowlist = map[string]bool{
-	"chunks":         true,
-	"chunks_trigram": true,
+	"chunks":               true,
+	"chunks_trigram":       true,
+	"vault_chunks":         true,
+	"vault_chunks_trigram": true,
 }
 
 // CorpusConfig supplies the corpus-specific pieces of a search, consumed by

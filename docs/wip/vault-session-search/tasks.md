@@ -42,16 +42,19 @@ federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
 - [x] 2.3 **Gate (A4):** `go test -tags fts5 -count=1 ./internal/store/...` unchanged; `make bench-compare BASE=master TARGET=<branch>` zero delta
 
 ## Task 3: Vault chunk-FTS schema + migration `0004`
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Task 1, Task 2, Task 6
 - **Docs:** [implementation.md#task-3--vault-chunk-fts-schema--migration-0004](./implementation.md#task-3--vault-chunk-fts-schema--migration-0004)
 
 ### Subtasks
-- [ ] 3.1 Add `vault_chunks` + `vault_chunks_trigram` to `schemaSQL` (`vault/store.go`) — **`title` and `content_text` both indexed** (review #2); `session_uuid`/`subagent_id`/`chunk_index`/`first_line_index` UNINDEXED
-- [ ] 3.2 Add `migrate0004_add_chunk_fts` to the existing runner; bump `currentIndexVersion`; comment the intentional `0002` gap (review #12)
-- [ ] 3.3 Tests: fresh + migrated fixture vaults expose both tables and a bumped version; idempotent on re-run
+- [x] 3.1 Add `vault_chunks` + `vault_chunks_trigram` to `schemaSQL` (`vault/store.go`) — **`title` and `content_text` both indexed** (review #2); `session_uuid`/`subagent_id`/`chunk_index`/`first_line_index` UNINDEXED
+  - Note: the DDL lives in a shared `chunkFTSTablesSQL` const used verbatim by both `schemaSQL` and migration `0004`, so the fresh and legacy paths can never diverge. The vault table names were also added to `retrieval.tableAllowlist` (the Task 1.2 note assigns this to Task 3/5; landing it with the schema keeps the names introduced in one change).
+- [x] 3.2 Add `migrate0004_add_chunk_fts` to the existing runner; bump `currentIndexVersion` (2 → 3); comment the intentional `0002` gap (review #12)
+  - Note: a `TODO(vault-session-search Task 4)` on `currentIndexVersion` documents that chunk *production* is not wired yet — a reindex at v3 stamps sessions without chunk rows until Task 4 lands (same branch, pre-release).
+- [x] 3.3 Tests: fresh + migrated fixture vaults expose both tables and a bumped version; idempotent on re-run
+  - Note: also added a tokenizer smoke test (porter stems, trigram substring-matches) so a `tokenize=` typo fails here instead of at Task 5 search time.
 
 ## Task 4: Scanner-derived chunker + indexing + reindex + backfill observability
 - **Status:** pending

@@ -19,7 +19,9 @@ import (
 //
 // Naming note: 0002 (vault_snapshots) was dropped along with the PreCompact
 // archival tasks (see docs/wip/vault/v2/precompact-investigation.md), so v2 adds
-// only 0001 (blob encoding) alongside the existing 0003 (index_version).
+// only 0001 (blob encoding) alongside the existing 0003 (index_version). The
+// 0002 gap is deliberate and must not be reused; 0004 (chunk FTS) is the next
+// slot after it.
 func migrateVault(ctx context.Context, db *sql.DB) error {
 	if err := ensureVaultMigrationsTable(ctx, db); err != nil {
 		return fmt.Errorf("creating vault_migrations table: %w", err)
@@ -29,6 +31,9 @@ func migrateVault(ctx context.Context, db *sql.DB) error {
 	}
 	if err := migrate0003AddIndexVersion(ctx, db); err != nil {
 		return fmt.Errorf("migration 0003_add_index_version: %w", err)
+	}
+	if err := migrate0004AddChunkFTS(ctx, db); err != nil {
+		return fmt.Errorf("migration 0004_add_chunk_fts: %w", err)
 	}
 	return nil
 }
@@ -157,6 +162,55 @@ func migrate0003AddIndexVersion(ctx context.Context, db *sql.DB) error {
 	}
 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO vault_migrations (name) VALUES ('0003_add_index_version')`); err != nil {
+		return fmt.Errorf("recording migration: %w", err)
+	}
+	return tx.Commit()
+}
+
+// migrate0004AddChunkFTS creates the chunk-granularity FTS5 layer tables
+// (vault_chunks + vault_chunks_trigram) for the shared retrieval engine
+// (design: docs/wip/vault-session-search §D2/§D4).
+//   - Pre-existing vaults: the tables are absent, so the CREATEs add them.
+//   - Fresh vaults: schemaSQL already creates them (same DDL constant), so the
+//     IF NOT EXISTS guard makes the CREATEs no-ops; the migration is still
+//     recorded so it never re-runs.
+//
+// The tables start empty for every already-archived session; the accompanying
+// currentIndexVersion bump (store.go) flags those sessions as below-current so
+// `capy vault reindex` backfills chunks from stored raw_jsonl blobs.
+func migrate0004AddChunkFTS(ctx context.Context, db *sql.DB) error {
+	const name = "0004_add_chunk_fts"
+
+	// Fast path: when already recorded (the common case on every getDB() open),
+	// skip acquiring the RESERVED write lock — a plain read avoids needless
+	// contention with concurrent readers/writers. A read error falls through.
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM vault_migrations WHERE name = ?`, name).Scan(&count); err == nil && count > 0 {
+		return nil
+	}
+
+	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
+	if err != nil {
+		return fmt.Errorf("begin immediate: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Re-check inside the write tx: two opens may both pass the read fast-path,
+	// but only one wins the lock and applies; the loser sees it applied here.
+	applied, err := vaultMigrationApplied(ctx, tx, name)
+	if err != nil {
+		return err
+	}
+	if applied {
+		return tx.Commit()
+	}
+
+	if _, err := tx.ExecContext(ctx, chunkFTSTablesSQL); err != nil {
+		return fmt.Errorf("creating chunk FTS tables: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `INSERT INTO vault_migrations (name) VALUES (?)`, name); err != nil {
 		return fmt.Errorf("recording migration: %w", err)
 	}
 	return tx.Commit()
