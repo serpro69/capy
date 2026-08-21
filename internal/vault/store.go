@@ -36,10 +36,18 @@ const minUUIDPrefix = 8
 //     was added in-place on the unreleased vault_v2 branch — no bump, since nothing
 //     shipped holds v2 yet and a single reindex still produces the complete result.
 //
+//   - v3: chunk-granularity FTS added (vault_chunks / vault_chunks_trigram,
+//     migration 0004). Sessions below v3 have empty chunk tables until
+//     `capy vault reindex` backfills them.
+//     TODO(vault-session-search Task 4): chunk production is not wired yet — a
+//     reindex at this version stamps v3 without writing chunk rows. Task 4
+//     (scanner-derived chunker + RebuildFTSBatch extension) completes the bump;
+//     both land on this branch before release.
+//
 // Sessions whose index_version is below this are upgraded by `capy vault reindex`
 // (DB-driven, covers archived-and-deleted-from-disk sessions) or opportunistically
 // by a re-`import` of a still-on-disk session (see import.go skip gate).
-const currentIndexVersion = 2
+const currentIndexVersion = 3
 
 // schemaSQL is the full v1 vault schema. Every table uses IF NOT EXISTS so the
 // DDL is safe to run on each open. vault_migrations is created by the migration
@@ -93,6 +101,43 @@ CREATE TABLE IF NOT EXISTS vault_meta (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_end_time ON vault_sessions(end_time DESC);
+` + chunkFTSTablesSQL
+
+// chunkFTSTablesSQL creates the two chunk-granularity FTS5 layer tables used by
+// the shared retrieval engine (internal/retrieval): a porter-stemmed layer and a
+// trigram layer, mirroring knowledge.db's chunks/chunks_trigram design. It is
+// shared verbatim between schemaSQL (fresh vaults) and migration 0004 (legacy
+// vaults) so the two paths can never diverge.
+//
+// Column-order invariant: title and content_text MUST stay the first two
+// declared columns, in that order — the shared layer-query skeleton hardcodes
+// highlight(<table>, 1, …) and bm25(<table>, titleWeight, 1.0) around those
+// positions (see retrieval.CorpusConfig).
+//
+// first_line_index anchors a chunk to the raw-JSONL line of its first
+// constituent scanner result, so a chunk hit can open at the right line in the
+// TUI / `capy vault show`. The per-line vault_fts table is unrelated and
+// untouched (display/navigation).
+const chunkFTSTablesSQL = `
+CREATE VIRTUAL TABLE IF NOT EXISTS vault_chunks USING fts5(
+  title,
+  content_text,
+  session_uuid     UNINDEXED,
+  subagent_id      UNINDEXED,
+  chunk_index      UNINDEXED,
+  first_line_index UNINDEXED,
+  tokenize='porter unicode61'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS vault_chunks_trigram USING fts5(
+  title,
+  content_text,
+  session_uuid     UNINDEXED,
+  subagent_id      UNINDEXED,
+  chunk_index      UNINDEXED,
+  first_line_index UNINDEXED,
+  tokenize='trigram'
+);
 `
 
 // sessionMetaColumns is the column list returned for list/lookup queries; it
