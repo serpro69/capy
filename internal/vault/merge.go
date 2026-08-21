@@ -174,10 +174,10 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			continue
 		}
 
-		// Rebuild FTS with the current indexer over the decoded source blobs (not
-		// the source's stored FTS rows) so the destination index is schema-current
-		// regardless of the source's indexer version.
-		_, fts, err := scanSessionAndSubagents(uuid, src.rawJSONL, files)
+		// Rebuild FTS + chunks with the current indexer over the decoded source
+		// blobs (not the source's stored index rows) so the destination index is
+		// schema-current regardless of the source's indexer version.
+		_, fts, chunks, err := scanSessionAndSubagents(uuid, src.rawJSONL, files)
 		if err != nil {
 			// Recorded as StatusError but NOT yet batched, so any existing
 			// destination row is left UNCHANGED (this scan happens before the write
@@ -188,7 +188,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			continue
 		}
 
-		rec := src.toRecord(files, fts)
+		rec := src.toRecord(files, fts, chunks)
 		status := StatusNew
 		if replace {
 			status = StatusUpdated
@@ -235,8 +235,9 @@ type sourceSession struct {
 
 // toRecord assembles the destination SessionRecord. The location/metadata columns
 // are carried verbatim; index_version is stamped to currentIndexVersion because
-// fts was rebuilt with the current indexer (matching reindex's version bump).
-func (s *sourceSession) toRecord(files []File, fts []FTSRow) *SessionRecord {
+// fts + chunks were rebuilt with the current indexer (matching reindex's version
+// bump).
+func (s *sourceSession) toRecord(files []File, fts []FTSRow, chunks []Chunk) *SessionRecord {
 	return &SessionRecord{
 		Session: Session{
 			UUID:             s.uuid,
@@ -253,8 +254,9 @@ func (s *sourceSession) toRecord(files []File, fts []FTSRow) *SessionRecord {
 			IndexVersion:     currentIndexVersion,
 			RawJSONL:         s.rawJSONL,
 		},
-		Files: files,
-		FTS:   fts,
+		Files:  files,
+		FTS:    fts,
+		Chunks: chunks,
 	}
 }
 

@@ -22,7 +22,7 @@ func TestUpdateSessionFTS_ReplacesIndexBumpsVersionKeepsBlob(t *testing.T) {
 	newFTS := []FTSRow{
 		{SessionUUID: rec.Session.UUID, Role: "tool", LineIndex: 0, ContentText: "Read /x.go\nankylosaurus output"},
 	}
-	require.NoError(t, s.UpdateSessionFTS(context.Background(), rec.Session.UUID, currentIndexVersion, newFTS))
+	require.NoError(t, s.UpdateSessionFTS(context.Background(), rec.Session.UUID, currentIndexVersion, newFTS, nil))
 
 	// Old rows gone (incl. the subagent row), new row searchable.
 	old, err := s.Search(context.Background(), SearchOptions{Query: "brontosaurus"})
@@ -67,7 +67,7 @@ func TestUpdateSessionFTS_MissingSessionIsNoOpNoOrphans(t *testing.T) {
 	s := newTestVault(t)
 	err := s.UpdateSessionFTS(context.Background(), "nonexistent-0000-0000-0000-000000000000", currentIndexVersion, []FTSRow{
 		{Role: "tool", LineIndex: 0, ContentText: "should-not-be-indexed"},
-	})
+	}, nil)
 	require.NoError(t, err, "missing session is a safe no-op, not an error")
 
 	hits, err := s.Search(context.Background(), SearchOptions{Query: "should-not-be-indexed", Role: "tool"})

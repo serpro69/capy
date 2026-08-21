@@ -37,12 +37,9 @@ const minUUIDPrefix = 8
 //     shipped holds v2 yet and a single reindex still produces the complete result.
 //
 //   - v3: chunk-granularity FTS added (vault_chunks / vault_chunks_trigram,
-//     migration 0004). Sessions below v3 have empty chunk tables until
+//     migration 0004; chunks built by chunker.go from the same scan that feeds
+//     vault_fts). Sessions below v3 have empty chunk tables until
 //     `capy vault reindex` backfills them.
-//     TODO(vault-session-search Task 4): chunk production is not wired yet — a
-//     reindex at this version stamps v3 without writing chunk rows. Task 4
-//     (scanner-derived chunker + RebuildFTSBatch extension) completes the bump;
-//     both land on this branch before release.
 //
 // Sessions whose index_version is below this are upgraded by `capy vault reindex`
 // (DB-driven, covers archived-and-deleted-from-disk sessions) or opportunistically
@@ -197,12 +194,13 @@ type FTSRow struct {
 	ContentText  string
 }
 
-// SessionRecord bundles a session row with its associated files and FTS rows
-// for one transactional write.
+// SessionRecord bundles a session row with its associated files, per-line FTS
+// rows, and semantic chunks for one transactional write.
 type SessionRecord struct {
 	Session Session
 	Files   []File
 	FTS     []FTSRow
+	Chunks  []Chunk
 }
 
 // ListOptions filters and bounds ListSessions.
@@ -255,6 +253,10 @@ type VaultStore struct {
 	stmtDeleteFilesBySession *sql.Stmt
 	stmtInsertFTS            *sql.Stmt
 	stmtDeleteFTSBySession   *sql.Stmt
+	stmtInsertChunk          *sql.Stmt // vault_chunks (porter layer)
+	stmtInsertChunkTrigram   *sql.Stmt // vault_chunks_trigram (trigram layer)
+	stmtDeleteChunksPorter   *sql.Stmt
+	stmtDeleteChunksTrigram  *sql.Stmt
 	stmtDeleteSession        *sql.Stmt
 	stmtSessionsByPrefix     *sql.Stmt
 	stmtFilesBySession       *sql.Stmt
@@ -395,6 +397,28 @@ func (s *VaultStore) prepareStatements(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 
+	if s.stmtInsertChunk, err = db.PrepareContext(ctx, `
+		INSERT INTO vault_chunks
+			(title, content_text, session_uuid, subagent_id, chunk_index, first_line_index)
+		VALUES (?, ?, ?, ?, ?, ?)`); err != nil {
+		return err
+	}
+
+	if s.stmtInsertChunkTrigram, err = db.PrepareContext(ctx, `
+		INSERT INTO vault_chunks_trigram
+			(title, content_text, session_uuid, subagent_id, chunk_index, first_line_index)
+		VALUES (?, ?, ?, ?, ?, ?)`); err != nil {
+		return err
+	}
+
+	if s.stmtDeleteChunksPorter, err = db.PrepareContext(ctx, `DELETE FROM vault_chunks WHERE session_uuid = ?`); err != nil {
+		return err
+	}
+
+	if s.stmtDeleteChunksTrigram, err = db.PrepareContext(ctx, `DELETE FROM vault_chunks_trigram WHERE session_uuid = ?`); err != nil {
+		return err
+	}
+
 	if s.stmtDeleteSession, err = db.PrepareContext(ctx, `DELETE FROM vault_sessions WHERE uuid = ?`); err != nil {
 		return err
 	}
@@ -423,6 +447,8 @@ func (s *VaultStore) statements() []*sql.Stmt {
 	return []*sql.Stmt{
 		s.stmtInsertSession, s.stmtUpdateSession, s.stmtInsertFile,
 		s.stmtDeleteFilesBySession, s.stmtInsertFTS, s.stmtDeleteFTSBySession,
+		s.stmtInsertChunk, s.stmtInsertChunkTrigram,
+		s.stmtDeleteChunksPorter, s.stmtDeleteChunksTrigram,
 		s.stmtDeleteSession, s.stmtSessionsByPrefix, s.stmtFilesBySession,
 		s.stmtUpdateIndexVersion,
 	}
@@ -450,6 +476,10 @@ func (s *VaultStore) Close() error {
 	s.stmtDeleteFilesBySession = nil
 	s.stmtInsertFTS = nil
 	s.stmtDeleteFTSBySession = nil
+	s.stmtInsertChunk = nil
+	s.stmtInsertChunkTrigram = nil
+	s.stmtDeleteChunksPorter = nil
+	s.stmtDeleteChunksTrigram = nil
 	s.stmtDeleteSession = nil
 	s.stmtSessionsByPrefix = nil
 	s.stmtFilesBySession = nil
@@ -585,6 +615,9 @@ func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite
 		if _, err := tx.StmtContext(ctx, s.stmtDeleteFTSBySession).ExecContext(ctx, sess.UUID); err != nil {
 			return fmt.Errorf("delete fts: %w", err)
 		}
+		if err := s.deleteChunks(ctx, tx, sess.UUID); err != nil {
+			return err
+		}
 	} else {
 		if _, err := tx.StmtContext(ctx, s.stmtInsertSession).ExecContext(ctx,
 			sess.UUID, nullString(sess.Title), writeTime(sess.StartTime), writeTime(sess.EndTime),
@@ -634,24 +667,60 @@ func (s *VaultStore) writeChildren(ctx context.Context, tx *sql.Tx, rec *Session
 			return false, fmt.Errorf("insert fts row: %w", err)
 		}
 	}
+	if err := s.insertChunks(ctx, tx, rec.Session.UUID, rec.Chunks); err != nil {
+		return false, err
+	}
 	return anyCompressed, nil
 }
 
-// FTSRebuild bundles one session's freshly-scanned FTS rows with the
-// index_version they were produced at, for a batched FTS-only rebuild
-// (RebuildFTSBatch). It carries no blob — a rebuild never rewrites raw_jsonl.
+// insertChunks writes a session's chunk rows into BOTH layer tables (porter +
+// trigram) within tx — the two-layer mirror of knowledge.db's chunks/
+// chunks_trigram that the shared retrieval engine fuses with RRF.
+func (s *VaultStore) insertChunks(ctx context.Context, tx *sql.Tx, uuid string, chunks []Chunk) error {
+	insPorter := tx.StmtContext(ctx, s.stmtInsertChunk)
+	insTrigram := tx.StmtContext(ctx, s.stmtInsertChunkTrigram)
+	for _, c := range chunks {
+		for _, ins := range []*sql.Stmt{insPorter, insTrigram} {
+			if _, err := ins.ExecContext(ctx,
+				c.Title, c.ContentText, uuid, c.SubagentID, c.ChunkIndex, c.FirstLineIndex,
+			); err != nil {
+				return fmt.Errorf("insert chunk row: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// deleteChunks clears a session's rows from both chunk tables within tx.
+// Like vault_fts, session_uuid is UNINDEXED so each delete is a full table
+// scan — batch paths (RebuildFTSBatch) use one IN-scan instead.
+func (s *VaultStore) deleteChunks(ctx context.Context, tx *sql.Tx, uuid string) error {
+	if _, err := tx.StmtContext(ctx, s.stmtDeleteChunksPorter).ExecContext(ctx, uuid); err != nil {
+		return fmt.Errorf("delete chunks: %w", err)
+	}
+	if _, err := tx.StmtContext(ctx, s.stmtDeleteChunksTrigram).ExecContext(ctx, uuid); err != nil {
+		return fmt.Errorf("delete trigram chunks: %w", err)
+	}
+	return nil
+}
+
+// FTSRebuild bundles one session's freshly-scanned FTS rows and semantic
+// chunks with the index_version they were produced at, for a batched
+// index-only rebuild (RebuildFTSBatch). It carries no blob — a rebuild never
+// rewrites raw_jsonl.
 type FTSRebuild struct {
 	UUID       string
 	NewVersion int
 	FTS        []FTSRow
+	Chunks     []Chunk
 }
 
-// UpdateSessionFTS rebuilds a single session's FTS rows and bumps its
+// UpdateSessionFTS rebuilds a single session's FTS rows + chunks and bumps its
 // index_version. It is the single-session convenience wrapper over
 // RebuildFTSBatch (see there for the full semantics). A missing session is a safe
 // no-op (returns nil).
-func (s *VaultStore) UpdateSessionFTS(ctx context.Context, uuid string, newVersion int, fts []FTSRow) error {
-	_, err := s.RebuildFTSBatch(ctx, []FTSRebuild{{UUID: uuid, NewVersion: newVersion, FTS: fts}})
+func (s *VaultStore) UpdateSessionFTS(ctx context.Context, uuid string, newVersion int, fts []FTSRow, chunks []Chunk) error {
+	_, err := s.RebuildFTSBatch(ctx, []FTSRebuild{{UUID: uuid, NewVersion: newVersion, FTS: fts, Chunks: chunks}})
 	return err
 }
 
@@ -705,18 +774,22 @@ func (s *VaultStore) RebuildFTSBatch(ctx context.Context, items []FTSRebuild) (i
 		return 0, nil // every session vanished — the deferred Rollback discards the empty tx
 	}
 
-	// One scan over vault_fts deletes all survivors' existing rows. The query holds
-	// only `?` placeholders (len(survivors) >= 1 here); the UUIDs are bound, never
-	// interpolated, and the batch size (<= reindexBatchSessions) stays well under
-	// SQLite's bind-parameter limit.
+	// One scan per index table deletes all survivors' existing rows (vault_fts +
+	// both chunk tables — all three keep session_uuid UNINDEXED, so a per-session
+	// delete would be a full scan each). The queries hold only `?` placeholders
+	// (len(survivors) >= 1 here); the UUIDs are bound, never interpolated, and the
+	// batch size (<= reindexBatchSessions) stays well under SQLite's
+	// bind-parameter limit.
 	uuids := make([]any, len(survivors))
 	for i, it := range survivors {
 		uuids[i] = it.UUID
 	}
-	delQ := `DELETE FROM vault_fts WHERE session_uuid IN (` + //nolint:gosec // placeholders only; UUIDs are bound params, never interpolated
-		strings.Repeat("?,", len(uuids)-1) + `?)`
-	if _, err := tx.ExecContext(ctx, delQ, uuids...); err != nil {
-		return 0, fmt.Errorf("delete fts: %w", err)
+	placeholders := strings.Repeat("?,", len(uuids)-1) + `?`
+	for _, table := range []string{"vault_fts", "vault_chunks", "vault_chunks_trigram"} {
+		delQ := `DELETE FROM ` + table + ` WHERE session_uuid IN (` + placeholders + `)` //nolint:gosec // table is a trusted internal constant; UUIDs are bound params, never interpolated
+		if _, err := tx.ExecContext(ctx, delQ, uuids...); err != nil {
+			return 0, fmt.Errorf("delete %s: %w", table, err)
+		}
 	}
 
 	insFTS := tx.StmtContext(ctx, s.stmtInsertFTS)
@@ -728,6 +801,9 @@ func (s *VaultStore) RebuildFTSBatch(ctx context.Context, items []FTSRebuild) (i
 			); err != nil {
 				return 0, fmt.Errorf("insert fts row for %s: %w", it.UUID, err)
 			}
+		}
+		if err := s.insertChunks(ctx, tx, it.UUID, it.Chunks); err != nil {
+			return 0, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -797,6 +873,9 @@ func (s *VaultStore) DeleteSession(ctx context.Context, uuid string) (bool, erro
 
 	if _, err := tx.StmtContext(ctx, s.stmtDeleteFTSBySession).ExecContext(ctx, uuid); err != nil {
 		return false, fmt.Errorf("delete fts: %w", err)
+	}
+	if err := s.deleteChunks(ctx, tx, uuid); err != nil {
+		return false, err
 	}
 	res, err := tx.StmtContext(ctx, s.stmtDeleteSession).ExecContext(ctx, uuid)
 	if err != nil {

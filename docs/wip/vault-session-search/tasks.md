@@ -57,17 +57,21 @@ federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
   - Note: also added a tokenizer smoke test (porter stems, trigram substring-matches) so a `tokenize=` typo fails here instead of at Task 5 search time.
 
 ## Task 4: Scanner-derived chunker + indexing + reindex + backfill observability
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** Task 1, Task 2, Task 6
 - **Docs:** [implementation.md#task-4--scanner-derived-chunker--chunk-indexing--reindex--backfill-observability](./implementation.md#task-4--scanner-derived-chunker--chunk-indexing--reindex--backfill-observability)
 
 ### Subtasks
-- [ ] 4.1 Add a vault chunker that groups the scanner's per-message `ScanResult`s into overlapping windows (reuse window/overlap sizing; `store.SplitOversized`/`MaxChunkBytes`/`ChunkHasCode`), recording `first_line_index` + a `buildChunkTitle`-style title — **no `internal/session` import** (review #1/#9/#11)
-- [ ] 4.2 Wire chunk production into the import path (off `scanSessionAndSubagents`'s DB-bytes `ScanResult`s); extend `RebuildFTSBatch`/`UpdateSessionFTS` to (re)populate chunk tables in the same batched, WAL-checkpointed pass
-- [ ] 4.3 Backfill observability (review #6): `capy_doctor`/`capy_stats` report vault sessions below `currentIndexVersion` (existing `OutdatedSessions`) with a "run `capy vault reindex`" hint
-- [ ] 4.4 Tests (A3): import fixture → chunks > 0; assert window sizing/overlap, sub-agent append order, `first_line_index` → expected raw-JSONL line; `capy vault reindex` backfills a below-version session from `raw_jsonl`; backlog shown before, zero after
+- [x] 4.1 Add a vault chunker that groups the scanner's per-message `ScanResult`s into overlapping windows (reuse window/overlap sizing; `store.SplitOversized`/`MaxChunkBytes`/`ChunkHasCode`), recording `first_line_index` + a `buildChunkTitle`-style title — **no `internal/session` import** (review #1/#9/#11)
+  - Note: `internal/vault/chunker.go`. Windows are over *turns* (contiguous `TurnIndex` runs), window=4/overlap=1 mirroring `internal/session/chunk.go` (Open Q2 default). `ScanResult` gained a non-persisted `ToolNames` field so titles carry tool names (incl. the PAL split) without re-parsing. `store.ChunkHasCode` is NOT used: the vault chunk schema (Task 3/D2) has no `has_code` column, and `SplitOversized` computes it internally for its own parts — persisting it would be a schema change out of scope; revisit in Task 5 only if `ContentType` ranking needs it.
+- [x] 4.2 Wire chunk production into the import path (off `scanSessionAndSubagents`'s DB-bytes `ScanResult`s); extend `RebuildFTSBatch`/`UpdateSessionFTS` to (re)populate chunk tables in the same batched, WAL-checkpointed pass
+  - Note: chunks flow through `scanSessionAndSubagents` (now returns them; ChunkIndex stamped session-wide: main first, then subagents in sidecar order), so import, reindex, **and merge** all produce them. `RebuildFTSBatch` deletes with one IN-scan per index table (vault_fts + both chunk tables). `DeleteSession` and the replace path clear chunk rows explicitly (no FK on FTS5 tables). Batch-size accounting counts chunk text ×2 (two layer tables).
+- [x] 4.3 Backfill observability (review #6): `capy_doctor`/`capy_stats` report vault sessions below `currentIndexVersion` (existing `OutdatedSessions`) with a "run `capy vault reindex`" hint
+  - Note: doctor gains a `Vault` check (disabled / stats-error / Pass / backlog-Warn naming `capy vault reindex`); stats gains a `### Vault` section with a Reindex-backlog row. Both open the vault transiently — a `TODO(vault-session-search Task 6)` in `tool_doctor.go` re-points them at the long-lived `s.vault` handle when it lands. `newTestServerWithProjectDir` now isolates `CAPY_VAULT_PATH` so server tests never touch a real vault.
+- [x] 4.4 Tests (A3): import fixture → chunks > 0; assert window sizing/overlap, sub-agent append order, `first_line_index` → expected raw-JSONL line; `capy vault reindex` backfills a below-version session from `raw_jsonl`; backlog shown before, zero after
+  - Note: `chunker_test.go` (unit: single-chunk fast path, window/overlap math, oversized split, subagent title + timestamp fallback, PAL split, empty; integration: import populates both layer tables, subagent append order, line-anchor resolution, reindex + import-ftsOnly backfill, DeleteSession cleanup) + doctor/stats backlog tests in `internal/server/tool_utility_test.go`. Benchmarks not re-run: Task 4 touches only vault-side indexing; knowledge.db search/chunking is unchanged (A2 parity gate runs in Task 5).
 
 ## Task 5: Vault chunk search via the shared core
 - **Status:** pending
