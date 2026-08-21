@@ -60,6 +60,10 @@ type ScanResult struct {
 	SubagentID   string // "" for main session
 	ContentText  string // extracted, sanitized searchable text
 	Timestamp    time.Time
+	// ToolNames lists the tool_use names on an assistant row, in block order
+	// (nil for other roles). Consumed by the vault chunker's title builder
+	// (chunker.go); it is NOT persisted to vault_fts.
+	ToolNames []string
 }
 
 // ScanOutput is the result of scanning a full session JSONL: the per-message FTS
@@ -295,7 +299,13 @@ func scan(r io.Reader) (*ScanOutput, error) {
 				emit(roleTool, tr, e.lineIndex, e.timestamp)
 			}
 		case entryAssistant:
+			before := len(out.Results)
 			emit(roleAssistant, extractAssistantText(e.blocks), e.lineIndex, e.timestamp)
+			// Attach tool names to the row just emitted (emit skips empty text,
+			// so guard on growth). Title-building metadata only — see ScanResult.
+			if len(out.Results) > before {
+				out.Results[len(out.Results)-1].ToolNames = toolUseNames(e.blocks)
+			}
 		case entrySystem:
 			emit(roleSystem, e.text, e.lineIndex, e.timestamp)
 		}
@@ -430,6 +440,19 @@ var diffResultTools = map[string]bool{
 // the call summary remains indexed on the assistant tool_use row.
 func ftsExcludedResult(name string) bool {
 	return excludedResultTools[name] || diffResultTools[name]
+}
+
+// toolUseNames returns the tool_use block names in block order (nil when the
+// entry has none). Feeds the vault chunker's BM25 title (buildVaultChunkTitle);
+// duplicates are kept — the title builder dedups.
+func toolUseNames(blocks []contentBlock) []string {
+	var names []string
+	for _, b := range blocks {
+		if b.Type == "tool_use" && b.Name != "" {
+			names = append(names, b.Name)
+		}
+	}
+	return names
 }
 
 // collectToolUseSummaries records, for each tool_use block in blocks, the call's

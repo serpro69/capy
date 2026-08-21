@@ -7,6 +7,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/store"
+	"github.com/serpro69/capy/internal/vault"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -183,6 +184,78 @@ func TestDoctor_BasicOutput(t *testing.T) {
 	assert.Contains(t, text, "FTS5:")
 	assert.Contains(t, text, "Config:")
 	assert.Contains(t, text, "Project:")
+}
+
+func TestDoctor_VaultDisabledWithoutKey(t *testing.T) {
+	t.Setenv("CAPY_VAULT_KEY", "")
+	srv := newTestServer(t, nil)
+	r := callDoctor(t, srv)
+	text := resultText(r)
+	assert.Contains(t, text, "Vault:")
+	assert.Contains(t, text, "disabled (CAPY_VAULT_KEY not set)")
+}
+
+func TestDoctor_VaultReindexBacklogHint(t *testing.T) {
+	// An archived session below currentIndexVersion must surface the backlog
+	// and name the command that clears it (design D4: backfill is not silent).
+	srv, uuid := newTestServerWithArchivedSession(t)
+
+	stampVaultIndexVersion(t, uuid, 1)
+
+	r := callDoctor(t, srv)
+	text := resultText(r)
+	assert.Contains(t, text, "Vault:")
+	assert.Contains(t, text, "capy vault reindex")
+
+	// Once nothing is below current, the hint disappears.
+	stampVaultIndexVersion(t, uuid, 999)
+	text = resultText(callDoctor(t, srv))
+	assert.Contains(t, text, "1 sessions archived")
+	assert.NotContains(t, text, "capy vault reindex")
+}
+
+func TestStats_VaultReindexBacklog(t *testing.T) {
+	srv, uuid := newTestServerWithArchivedSession(t)
+	stampVaultIndexVersion(t, uuid, 1)
+
+	text := resultText(callStats(t, srv))
+	assert.Contains(t, text, "### Vault")
+	assert.Contains(t, text, "Archived sessions")
+	assert.Contains(t, text, "Reindex backlog")
+	assert.Contains(t, text, "capy vault reindex")
+}
+
+// newTestServerWithArchivedSession builds a server whose (temp) vault holds one
+// archived session, returning the session UUID. The record carries no FTS/chunk
+// rows on purpose — these tests validate only the index_version backlog
+// reporting; full chunk production through import is covered in the vault
+// package (chunker_test.go).
+func newTestServerWithArchivedSession(t *testing.T) (*Server, string) {
+	t.Helper()
+	t.Setenv("CAPY_VAULT_KEY", "test-vault-doctor-key-at-least-32-chars!!")
+	srv := newTestServer(t, nil)
+
+	st := vault.NewVaultStore(vault.VaultDBPath())
+	defer func() { require.NoError(t, st.Close()) }()
+	uuid := "doctor00-1111-2222-3333-444444444444"
+	rec := &vault.SessionRecord{Session: vault.Session{
+		UUID: uuid, ContentHash: "h", MachineID: "m", ClaudeProjectDir: "-p",
+		ProjectPath: "/p", MessageCount: 1, IndexVersion: 1,
+		RawJSONL: []byte(`{"type":"user"}` + "\n"),
+	}}
+	require.NoError(t, st.InsertSession(context.Background(), rec))
+	return srv, uuid
+}
+
+// stampVaultIndexVersion sets a session's index_version (simulating an older or
+// newer indexer) through a short-lived store handle. Note: UpdateSessionFTS with
+// nil rows destructively replaces the session's FTS/chunk rows wholesale — fine
+// here, since the fixture session never had any.
+func stampVaultIndexVersion(t *testing.T, uuid string, version int) {
+	t.Helper()
+	st := vault.NewVaultStore(vault.VaultDBPath())
+	defer func() { require.NoError(t, st.Close()) }()
+	require.NoError(t, st.UpdateSessionFTS(context.Background(), uuid, version, nil, nil))
 }
 
 func TestDoctor_RuntimesDetected(t *testing.T) {

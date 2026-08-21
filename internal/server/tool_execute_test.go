@@ -22,6 +22,9 @@ func newTestServer(t *testing.T, policies []security.SecurityPolicy) *Server {
 func newTestServerWithProjectDir(t *testing.T, policies []security.SecurityPolicy, projectDir string) *Server {
 	t.Helper()
 	t.Setenv("CAPY_DB_KEY", "test-passphrase-at-least-32-characters-long!!")
+	// Isolate the vault: doctor/stats open it when CAPY_VAULT_KEY is set in the
+	// ambient environment, and must never touch the developer's real vault.db.
+	t.Setenv("CAPY_VAULT_PATH", filepath.Join(t.TempDir(), "vault.db"))
 	cfg := config.DefaultConfig()
 	if projectDir == "" {
 		projectDir = t.TempDir()

@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/serpro69/capy/internal/config"
 )
@@ -274,9 +275,11 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		}
 
 		if ftsOnly {
-			ftsBatch = append(ftsBatch, FTSRebuild{UUID: sf.UUID, NewVersion: currentIndexVersion, FTS: rec.FTS})
+			ftsBatch = append(ftsBatch, FTSRebuild{
+				UUID: sf.UUID, NewVersion: currentIndexVersion, FTS: rec.FTS, Chunks: rec.Chunks,
+			})
 			ftsPending = append(ftsPending, entry)
-			ftsBatchBytes += ftsContentBytes(rec.FTS)
+			ftsBatchBytes += ftsContentBytes(rec.FTS) + chunkContentBytes(rec.Chunks)
 		} else {
 			batch = append(batch, SessionWrite{Record: rec, Replace: replace})
 			pending = append(pending, entry)
@@ -334,9 +337,9 @@ func readSidecars(sf *SessionFile, mainBytes []byte) (files []File, contents map
 }
 
 // buildRecord scans the main JSONL and any subagent transcripts into FTS rows
-// and assembles the full SessionRecord for one insert/replace.
+// + chunks and assembles the full SessionRecord for one insert/replace.
 func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, size int64, machineID string) (*SessionRecord, error) {
-	scanOut, fts, err := scanSessionAndSubagents(sf.UUID, mainBytes, files)
+	scanOut, fts, chunks, err := scanSessionAndSubagents(sf.UUID, mainBytes, files)
 	if err != nil {
 		return nil, err
 	}
@@ -356,25 +359,30 @@ func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, s
 		IndexVersion:     currentIndexVersion,
 		RawJSONL:         mainBytes,
 	}
-	return &SessionRecord{Session: sess, Files: files, FTS: fts}, nil
+	return &SessionRecord{Session: sess, Files: files, FTS: fts, Chunks: chunks}, nil
 }
 
 // scanSessionAndSubagents scans a session's main transcript and its subagent
-// sidecars into FTS rows with the current indexer, returning the main ScanOutput
-// (for session metadata) alongside the combined rows. Subagent transcripts are
-// scanned too so their content is searchable and their results carry the
-// subagent_id anchor the TUI uses to open them. Shared by import (buildRecord,
-// which uses the metadata) and reindex (which uses only the rows).
-func scanSessionAndSubagents(uuid string, mainBytes []byte, files []File) (*ScanOutput, []FTSRow, error) {
+// sidecars into FTS rows AND semantic chunks with the current indexer,
+// returning the main ScanOutput (for session metadata) alongside the combined
+// rows. Subagent transcripts are scanned too so their content is searchable
+// and their results carry the subagent_id anchor the TUI uses to open them;
+// their chunks append after the main transcript's, in sidecar order. Chunks
+// derive from the SAME scan as the per-line rows (design §D3), so the two
+// indexes can never disagree about what exists; ChunkIndex is stamped
+// session-wide here. Shared by import (buildRecord, which uses the metadata),
+// reindex, and merge (which use only the rows + chunks).
+func scanSessionAndSubagents(uuid string, mainBytes []byte, files []File) (*ScanOutput, []FTSRow, []Chunk, error) {
 	scanOut, err := ScanSession(bytes.NewReader(mainBytes))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	fts := make([]FTSRow, 0, len(scanOut.Results))
 	for _, r := range scanOut.Results {
 		fts = append(fts, ftsRow(uuid, r))
 	}
+	chunks := chunkScanResults(scanOut.Results, scanOut.StartTime, "")
 
 	for _, f := range files {
 		id := subagentID(f.RelativePath)
@@ -390,8 +398,14 @@ func scanSessionAndSubagents(uuid string, mainBytes []byte, files []File) (*Scan
 		for _, r := range results {
 			fts = append(fts, ftsRow(uuid, r))
 		}
+		// Zero start time: a subagent scan's ScanOutput is discarded, so the
+		// chunker falls back to the first result's timestamp for the title.
+		chunks = append(chunks, chunkScanResults(results, time.Time{}, id)...)
 	}
-	return scanOut, fts, nil
+	for i := range chunks {
+		chunks[i].ChunkIndex = i
+	}
+	return scanOut, fts, chunks, nil
 }
 
 // resolveProjectPath picks the best-known real project path: the JSONL cwd when

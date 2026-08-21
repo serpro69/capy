@@ -85,14 +85,14 @@ func Reindex(ctx context.Context, store *VaultStore) (ReindexResult, error) {
 			break
 		}
 
-		fts, err := rebuildSessionFTS(ctx, store, uuid)
+		fts, chunks, err := rebuildSessionFTS(ctx, store, uuid)
 		if err != nil {
 			slog.Warn("vault reindex: re-scan failed, skipping", "uuid", uuid, "error", err)
 			res.Errors++
 			continue
 		}
-		batch = append(batch, FTSRebuild{UUID: uuid, NewVersion: currentIndexVersion, FTS: fts})
-		batchBytes += ftsContentBytes(fts)
+		batch = append(batch, FTSRebuild{UUID: uuid, NewVersion: currentIndexVersion, FTS: fts, Chunks: chunks})
+		batchBytes += ftsContentBytes(fts) + chunkContentBytes(chunks)
 		if len(batch) >= reindexBatchSessions || batchBytes >= reindexBatchBytes {
 			flush()
 		}
@@ -112,19 +112,20 @@ func ftsContentBytes(fts []FTSRow) int64 {
 }
 
 // rebuildSessionFTS loads a session's stored transcript + subagent sidecars from
-// the DB and re-scans them into FTS rows with the current indexer.
-func rebuildSessionFTS(ctx context.Context, store *VaultStore, uuid string) ([]FTSRow, error) {
+// the DB and re-scans them into FTS rows + semantic chunks with the current
+// indexer.
+func rebuildSessionFTS(ctx context.Context, store *VaultStore, uuid string) ([]FTSRow, []Chunk, error) {
 	sess, err := store.GetSession(ctx, uuid)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	files, err := store.GetFiles(ctx, uuid)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	_, fts, err := scanSessionAndSubagents(uuid, sess.RawJSONL, files)
+	_, fts, chunks, err := scanSessionAndSubagents(uuid, sess.RawJSONL, files)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return fts, nil
+	return fts, chunks, nil
 }
