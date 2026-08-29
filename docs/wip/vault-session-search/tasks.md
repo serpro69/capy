@@ -74,16 +74,19 @@ federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
   - Note: `chunker_test.go` (unit: single-chunk fast path, window/overlap math, oversized split, subagent title + timestamp fallback, PAL split, empty; integration: import populates both layer tables, subagent append order, line-anchor resolution, reindex + import-ftsOnly backfill, DeleteSession cleanup) + doctor/stats backlog tests in `internal/server/tool_utility_test.go`. Benchmarks not re-run: Task 4 touches only vault-side indexing; knowledge.db search/chunking is unchanged (A2 parity gate runs in Task 5).
 
 ## Task 5: Vault chunk search via the shared core
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2, Task 4
 - **Size:** M
 - **Can run in parallel with:** Task 6
 - **Docs:** [implementation.md#task-5--vault-chunk-search-via-the-shared-core](./implementation.md#task-5--vault-chunk-search-via-the-shared-core)
 
 ### Subtasks
-- [ ] 5.1 Add `VaultStore.SearchChunks(ctx, SearchOptions) ([]SearchResult, error)` building the vault `Corpus` (chunk tables, vault row mapper, `nil` fuzzy) and running the `retrieval` engine; honor `project` (default current), `before`/`after`; **no role filter** (Not Doing); `defer rows.Close()` + `rows.Err()` + `errors.Is(sql.ErrNoRows)`
-- [ ] 5.2 Return `first_line_index` anchor + chunk `snippet()` per hit
-- [ ] 5.3 Tests: porter-only and trigram-only terms each return hits; title-match ranks the matching session; parity gate (A2) — sessionflow-rag NIAH/retrieval against the vault corpus vs the knowledge.db session baseline
+- [x] 5.1 Add `VaultStore.SearchChunks(ctx, SearchOptions) ([]SearchResult, error)` building the vault `Corpus` (chunk tables, vault row mapper, `nil` fuzzy) and running the `retrieval` engine; honor `project` (default current), `before`/`after`; **no role filter** (Not Doing); `defer rows.Close()` + `rows.Err()` + `errors.Is(sql.ErrNoRows)`
+  - Note: `internal/vault/chunk_search.go`. The `rows.Close()`/`rows.Err()`/`sql.ErrNoRows` handling lives in the shared `retrieval` engine (Task 1's `execSearch` skeleton, `QueryContext`), which `SearchChunks` delegates to — it never touches raw `*sql.Rows`. `Role` and `Raw` are rejected loudly (semantic chunks span mixed roles; the engine owns sanitization). The **"default current" project scoping is the caller's job** (Tasks 7/8 MCP handlers): `SearchChunks` applies a `project_path LIKE %…%` filter only when `opts.Project != ""`, empty ⇒ all projects — the store method stays project-agnostic.
+- [x] 5.2 Return `first_line_index` anchor + chunk `snippet()` per hit
+  - Note: `first_line_index` rides `chunkMeta` through `retrieval.SearchResult.Meta` → `SearchResult.LineIndex`; `chunkSnippet` windows ±100 bytes around the first `highlight()` marker, re-marks matches as `[match]` (mirroring per-line Search), and snaps to UTF-8 rune boundaries.
+- [x] 5.3 Tests: porter-only and trigram-only terms each return hits; title-match ranks the matching session; parity gate (A2) — sessionflow-rag NIAH/retrieval against the vault corpus vs the knowledge.db session baseline
+  - Note: `chunk_search_test.go` (porter-only `zorbing`→`zorb`, trigram-only `terodact`, title-only `zebrafinch`, title-match ranking, anchor/metadata, project + time filters, limit, role/raw rejection, empty query, snippet edge cases). A2 parity gate in `bench_test.go` replays the store's transcript NIAH/retrieval fixtures through the **real import path** (scanner → chunker → chunk FTS) and writes `by_content_type.vault_session` beside knowledge.db's `transcript` baseline; wired into `make bench-quality` (Makefile now runs `./internal/vault/`). Run: recall@1 0.93, recall@3–10 0.97, nDCG@10 0.95, MRR 0.95, match-layer accuracy 0.97, 0 false positives across 30 cases (10 negative).
 
 ## Task 6: Long-lived vault read handle on the Server
 - **Status:** pending
