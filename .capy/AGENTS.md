@@ -24,7 +24,7 @@ Choose the tool based on what you need from the output:
 - **`capy_execute` / `capy_execute_file`:** Single command or file producing hundreds+ lines where you only need extracted facts. API calls, log analysis, data processing.
 - **`capy_fetch_and_index`:** Fetch and index large web content for extraction. Default ephemeral (24h TTL, excluded from default search). Best for large web artifacts (transcripts, logs, long docs) and content needing follow-up `source:` queries. Pass `kind: "durable"` for reference docs to persist across sessions. NOT for small authoritative pages you need to comprehend — use runtime web tools for those.
 - **`capy_index`:** Persist curated knowledge durably. Content you explicitly want searchable across sessions.
-- **`capy_search`:** Query indexed content. Batch all questions as array. Default excludes ephemeral — use `include_kinds` or `source:` to include.
+- **`capy_search`:** Query indexed knowledge **and** archived session transcripts (the vault), rank-merged. Batch all questions as array. Default excludes ephemeral — use `include_kinds` or `source:` to include. Session hits require `CAPY_VAULT_KEY` and are scoped to the current project — pass `all_projects: true` (or `project: "*"`) to widen.
 
 ## Blocked commands — enforced by hooks
 
@@ -53,7 +53,7 @@ Every indexed entry has a **kind** that controls its lifecycle and search visibi
 |------|-----------------|-----------|-------------------------------|
 | `durable` | `capy_index`, `capy_fetch_and_index(kind: "durable")` | Retention-score tiers (hot → warm → cold → evictable) | Yes |
 | `ephemeral` | `capy_execute`, `capy_execute_file`, `capy_batch_execute`, `capy_fetch_and_index` (default) | Strict TTL — swept after expiry | No |
-| `session` | `capy sweep` (indexes past conversation transcripts) | Strict TTL — swept after expiry | Yes |
+| `session` | the session vault (archived transcripts; requires `CAPY_VAULT_KEY`) | Archived forever (vault); chunk-searchable after `capy vault reindex` | Yes |
 
 **Querying non-default kinds:** pass `include_kinds` to `capy_search`:
 - `include_kinds: ["durable", "ephemeral"]` — recover output from earlier commands in this session
