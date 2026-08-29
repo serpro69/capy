@@ -194,7 +194,7 @@ func toolIndex() mcp.Tool {
 func toolSearch() mcp.Tool {
 	return mcp.NewTool("capy_search",
 		mcp.WithToolAnnotation(annotationReadOnly),
-		mcp.WithDescription("Search indexed content. Pass ALL search questions as queries array in ONE call. TIPS: 2-4 specific terms per query. Use 'source' to scope results. By default returns durable and session sources; ephemeral content (command output, fetched web pages) is excluded — pass include_kinds: [\"durable\",\"ephemeral\"] or an explicit source: filter to recover it."),
+		mcp.WithDescription("Search indexed knowledge AND archived session transcripts (the vault) in one call, rank-merged. Pass ALL search questions as queries array in ONE call. TIPS: 2-4 specific terms per query. Use 'source' to scope to a knowledge label. By default returns durable knowledge and past-session hits; ephemeral content (command output, fetched web pages) is excluded — pass include_kinds: [\"durable\",\"ephemeral\"] or an explicit source: filter to recover it. Session hits come from the vault (requires CAPY_VAULT_KEY) and are scoped to the current project — pass all_projects: true (or project: \"*\") to widen."),
 		mcp.WithArray("queries",
 			mcp.Description("Array of search queries. Batch ALL questions in one call."),
 			mcp.Items(map[string]any{"type": "string"}),
@@ -203,11 +203,17 @@ func toolSearch() mcp.Tool {
 			mcp.Description("Results per query (default: 3)"),
 		),
 		mcp.WithString("source",
-			mcp.Description("Filter to a specific indexed source (partial match). When set, kind filtering is bypassed — caller's named source wins."),
+			mcp.Description("Filter to a specific indexed knowledge source (partial match). When set, kind filtering is bypassed and the session (vault) pass is skipped — caller's named source wins."),
 		),
 		mcp.WithArray("include_kinds",
-			mcp.Description("Source kinds to include. Accepted values: \"durable\" (explicitly indexed reference content, retained by retention score), \"ephemeral\" (auto-indexed command output and fetched web pages, swept by TTL), and \"session\" (past conversation transcripts indexed by `capy sweep`, swept by TTL). Default: [\"durable\", \"session\"]. Use [\"durable\",\"ephemeral\"] to recover prior command output or fetched pages, or [\"durable\",\"ephemeral\",\"session\"] to search everything."),
+			mcp.Description("Source kinds to include. Accepted values: \"durable\" (explicitly indexed reference content, retained by retention score), \"ephemeral\" (auto-indexed command output and fetched web pages, swept by TTL), and \"session\" (past conversation transcripts from the archived vault; requires CAPY_VAULT_KEY). Default: [\"durable\", \"session\"]. Use [\"durable\",\"ephemeral\"] to recover prior command output or fetched pages, or [\"durable\",\"ephemeral\",\"session\"] to search everything."),
 			mcp.Items(map[string]any{"type": "string", "enum": []string{"durable", "ephemeral", "session"}}),
+		),
+		mcp.WithString("project",
+			mcp.Description("Restrict the session (vault) pass to sessions whose project path contains this substring. Defaults to the current project; pass \"*\" (or all_projects: true) to search all archived projects. No effect on the knowledge pass (already per-project)."),
+		),
+		mcp.WithBoolean("all_projects",
+			mcp.Description("Widen the session (vault) pass to every archived project instead of just the current one (default: false). When true, takes precedence over any `project` substring."),
 		),
 	)
 }
