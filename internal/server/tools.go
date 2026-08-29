@@ -10,7 +10,7 @@ import (
 	"github.com/serpro69/capy/internal/executor"
 )
 
-// registerTools registers all 9 capy MCP tools on the server.
+// registerTools registers all 10 capy MCP tools on the server.
 func (s *Server) registerTools() {
 	runtimes := s.executor.Runtimes()
 	langList := formatRuntimeList(runtimes)
@@ -31,6 +31,10 @@ func (s *Server) registerTools() {
 		mcpserver.ServerTool{
 			Tool:    toolSearch(),
 			Handler: s.handleSearch,
+		},
+		mcpserver.ServerTool{
+			Tool:    toolVaultSearch(),
+			Handler: s.handleVaultSearch,
 		},
 		mcpserver.ServerTool{
 			Tool:    toolFetchAndIndex(),
@@ -204,6 +208,32 @@ func toolSearch() mcp.Tool {
 		mcp.WithArray("include_kinds",
 			mcp.Description("Source kinds to include. Accepted values: \"durable\" (explicitly indexed reference content, retained by retention score), \"ephemeral\" (auto-indexed command output and fetched web pages, swept by TTL), and \"session\" (past conversation transcripts indexed by `capy sweep`, swept by TTL). Default: [\"durable\", \"session\"]. Use [\"durable\",\"ephemeral\"] to recover prior command output or fetched pages, or [\"durable\",\"ephemeral\",\"session\"] to search everything."),
 			mcp.Items(map[string]any{"type": "string", "enum": []string{"durable", "ephemeral", "session"}}),
+		),
+	)
+}
+
+func toolVaultSearch() mcp.Tool {
+	return mcp.NewTool("capy_vault_search",
+		mcp.WithToolAnnotation(annotationReadOnly),
+		mcp.WithDescription("Search archived Claude Code session transcripts (the vault) using the same two-layer BM25+RRF engine as capy_search. Returns chunk-level snippets from past conversations across sessions, ranked by relevance, each anchored to a session UUID and raw-JSONL line. Requires CAPY_VAULT_KEY (session archival is opt-in). Scoped to the current project by default — pass all_projects: true (or project: \"*\") to search every archived project. Best for recalling what was discussed, decided, or tried in earlier sessions."),
+		mcp.WithArray("queries",
+			mcp.Description("Array of search queries. Batch ALL questions in one call."),
+			mcp.Items(map[string]any{"type": "string"}),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Results per query (default: 3)"),
+		),
+		mcp.WithString("project",
+			mcp.Description("Restrict to sessions whose project path contains this substring. Defaults to the current project; pass \"*\" (or all_projects: true) to search all projects."),
+		),
+		mcp.WithBoolean("all_projects",
+			mcp.Description("Search across every archived project instead of just the current one (default: false)."),
+		),
+		mcp.WithString("after",
+			mcp.Description("Only sessions ending on or after this date (YYYY-MM-DD or RFC3339)."),
+		),
+		mcp.WithString("before",
+			mcp.Description("Only sessions ending on or before this date (YYYY-MM-DD or RFC3339)."),
 		),
 	)
 }
