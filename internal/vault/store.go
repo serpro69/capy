@@ -223,16 +223,31 @@ type SearchOptions struct {
 const defaultSearchLimit = 20
 
 // SearchResult is one FTS hit, carrying the navigation anchors (subagent_id +
-// line_index) plus enough session metadata for display.
+// line_index) plus enough session metadata for display. It is shared by the
+// per-line Search (vault_fts) and the chunk-granularity SearchChunks
+// (vault_chunks); fields that only one flavor can populate are documented
+// below.
 type SearchResult struct {
 	SessionUUID string
 	SubagentID  string
-	LineIndex   int
+	// LineIndex is the raw-JSONL anchor: the matched line for per-line hits,
+	// the chunk's first_line_index for chunk hits.
+	LineIndex int
+	// Role is set on per-line hits only; "" for chunk hits — a semantic chunk
+	// spans mixed user/assistant/tool lines, so role is undefined at chunk
+	// granularity (design vault-session-search, Not Doing).
 	Role        string
 	Snippet     string
 	Title       string
 	ProjectPath string
 	EndTime     time.Time
+	// Content and MatchLayer are populated by SearchChunks only: the full
+	// chunk text (so callers can run their own snippet extraction, and the
+	// retrieval benchmark can test needle recall) and the retrieval layer
+	// that matched ("porter", "trigram", "rrf(porter+trigram)", optionally
+	// "fuzzy+"-prefixed). Per-line Search leaves both empty.
+	Content    string
+	MatchLayer string
 }
 
 // VaultStore manages the encrypted vault SQLite database. The DB is opened

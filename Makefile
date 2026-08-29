@@ -50,7 +50,7 @@ bench-quality: ## Run quality benchmarks
 	mkdir -p bench-results
 	rm -f $(CURDIR)/bench-results/$(BENCH_BRANCH).json
 	CGO_ENABLED=1 CAPY_BENCH_RESULTS=$(CURDIR)/bench-results/$(BENCH_BRANCH).json \
-	  go test $(BUILD_TAGS) -run='^TestBench' -v -p 1 ./internal/store/ ./internal/server/
+	  go test $(BUILD_TAGS) -run='^TestBench' -v -p 1 ./internal/store/ ./internal/server/ ./internal/vault/
 
 bench-compare: ## Compare benchmarks in BASE and TARGET branches
 ifndef BASE

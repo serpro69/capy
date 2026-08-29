@@ -35,6 +35,11 @@ type SearchResult struct {
 	Rank        float64
 	FusedScore  float64
 	MatchLayer  string
+	// Meta carries an opaque corpus-specific payload attached by the corpus's
+	// RowMapper and passed through the pipeline untouched (e.g. the vault's
+	// chunk anchors: subagent id, first line index, session metadata). The
+	// engine never reads or writes it.
+	Meta any
 }
 
 // FuzzyCorrector corrects a single query word against a corpus vocabulary,
