@@ -405,6 +405,16 @@ func TestIntegration_SessionSweep_SearchAndCleanup(t *testing.T) {
 	require.NoError(t, os.MkdirAll(sessionDir, 0o755))
 	t.Setenv("HOME", tmpHome)
 
+	// Pin the vault OFF: this test exercises the LEGACY knowledge.db session
+	// sweep path (session.Sweep → kind='session' → default capy_search finds it),
+	// which is still valid while the vault is disabled. When the vault is enabled,
+	// Task 8 federation repoints the `session` scope to the vault corpus and the
+	// knowledge pass no longer serves session rows — a deliberate behavior change
+	// covered by tool_search_federation_test.go. Without this pin the test would
+	// inherit the developer's ambient CAPY_VAULT_KEY and become non-deterministic.
+	// Task 9 removes the sweep and rewrites this test around the vault.
+	t.Setenv("CAPY_VAULT_KEY", "")
+
 	uuid1 := "integ-sess-aaa"
 	uuid2 := "integ-sess-bbb"
 	writeSessionJSONL(t, sessionDir, uuid1, "How do I configure the database?",
