@@ -89,7 +89,7 @@ federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
   - Note: `chunk_search_test.go` (porter-only `zorbing`→`zorb`, trigram-only `terodact`, title-only `zebrafinch`, title-match ranking, anchor/metadata, project + time filters, limit, role/raw rejection, empty query, snippet edge cases). A2 parity gate in `bench_test.go` replays the store's transcript NIAH/retrieval fixtures through the **real import path** (scanner → chunker → chunk FTS) and writes `by_content_type.vault_session` beside knowledge.db's `transcript` baseline; wired into `make bench-quality` (Makefile now runs `./internal/vault/`). Run: recall@1 0.93, recall@3–10 0.97, nDCG@10 0.95, MRR 0.95, match-layer accuracy 0.97, 0 false positives across 30 cases (10 negative).
 
 ## Task 6: Long-lived vault read handle on the Server
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Slicing:** Risk-first (concurrency/lifecycle; review #7)
@@ -97,9 +97,13 @@ federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
 - **Docs:** [implementation.md#task-6--long-lived-vault-read-handle-on-the-server-review-7](./implementation.md#task-6--long-lived-vault-read-handle-on-the-server-review-7)
 
 ### Subtasks
-- [ ] 6.1 Add a lazily-initialized `s.vault` (`sync.Once`, opened only when `CAPY_VAULT_KEY` present); move vault ownership from `vaultSweep` to the server lifecycle; sweep reuses the handle
-- [ ] 6.2 `Close()` (checkpoint) the handle in `shutdown()` alongside the knowledge store
-- [ ] 6.3 Tests (A6): concurrent federated-read + startup-sweep; shutdown flushes `vault.db-wal`; assert no per-call open in the search path
+- [x] 6.1 Add a lazily-initialized `s.vault` (`sync.Once`, opened only when `CAPY_VAULT_KEY` present); move vault ownership from `vaultSweep` to the server lifecycle; sweep reuses the handle
+  - Note: `server.getVault()` (guarded by `vaultMu sync.Once`) reads `RequireVaultKey` once and returns nil when the key is unset, so callers can degrade loudly; the store is constructed but its connection opens lazily (getVault never creates `vault.db`). `vaultSweep` now reuses the handle and no longer creates/closes its own. Also re-pointed the doctor/stats reader (`vaultStats`) at `getVault` and removed its transient open/close (the `TODO(vault-session-search Task 6)` sites). Updated the `VaultStore` doc-comment: concurrent readers + the single sweep writer are safe on a shared handle; only `Close` must be quiesced (server does this via `bgWg.Wait`).
+- [x] 6.2 `Close()` (checkpoint) the handle in `shutdown()` alongside the knowledge store
+  - Note: `shutdown()` closes `s.vault` after `bgWg.Wait()` (so the sweep goroutine is done first) and after the knowledge store; `VaultStore.Close` is a no-op when never opened (key set but nothing swept) and idempotent under the test-cleanup double-shutdown.
+- [x] 6.3 Tests (A6): concurrent federated-read + startup-sweep; shutdown flushes `vault.db-wal`; assert no per-call open in the search path
+  - Note: `internal/server/vault_handle_test.go` — shared/stable handle + nil-without-key; concurrent sweep-writer × search-reader loop (green under `-race`); shutdown truncates `vault.db-wal` to 0 with data durable in the main file. No per-call open is asserted via `require.Same` handle identity across `getVault` calls.
+  - Isolated `/kk:review-code` (kk:code-reviewer + pal/gemini-3.1-pro, corroborated) drove two fixes: (1) the reader goroutine uses `assert` not `require` (`t.FailNow`/`Goexit` must run on the test goroutine); (2) `VaultStore.GetSession`/`GetFiles` snapshot their cached `*sql.Stmt` under `mu` via `stmtLocked` (nil ⇒ `ErrStoreClosed`) so a reader cannot race `Close` nil-ing those fields — the `db`-direct readers (Search/SearchChunks/Stats) were already safe; the doc-comment was tightened to say so. Systemic stmt-pointer-race pattern (shared with `ContentStore`) indexed as `kk:review-findings`. Declined (pre-existing/scope-creep): `atomic.Pointer` for `s.vault`/`s.store` reads in `shutdown` (pal, MEDIUM; ~nil impact as `os.Exit` follows).
 
 ## Task 7: `capy_vault_search` MCP tool + degrade-loudly
 - **Status:** pending

@@ -145,6 +145,12 @@ const sessionMetaColumns = `uuid, title, start_time, end_time, message_count, si
 // ErrSessionNotFound is returned when no session matches a lookup.
 var ErrSessionNotFound = errors.New("session not found")
 
+// ErrStoreClosed is returned by a cached-statement read method (GetSession,
+// GetFiles) when Close finalized the store's prepared statements concurrently,
+// between getDB and the statement snapshot. It is distinct from a real query
+// error and, in practice, only surfaces if a caller races the server's shutdown.
+var ErrStoreClosed = errors.New("vault store is closed")
+
 // AmbiguousUUIDError is returned when a partial UUID matches more than one
 // session. Candidates carries the matches so callers can help the user
 // disambiguate (date, project, title).
@@ -254,8 +260,17 @@ type SearchResult struct {
 // lazily on first use (getDB). It mirrors store.ContentStore's connection
 // lifecycle: WAL mode, a canary-verified open, and a WAL checkpoint on Close.
 //
-// VaultStore is not safe for concurrent use from multiple goroutines. All
-// current callers (CLI commands, server sweep) are single-goroutine.
+// Concurrency: getDB serializes the one-time open under mu; the cached *sql.DB
+// and *sql.Stmt objects it holds are themselves safe for concurrent use. Read
+// methods that query via the returned *sql.DB (Search, SearchChunks, Stats,
+// ListSessions, and the other db.QueryContext callers) run safely alongside the
+// single writer (the server startup sweep) — the shared-handle pattern the
+// server relies on (see server.getVault, Task 6). Methods that use a CACHED
+// statement pointer (GetSession, GetFiles) snapshot it under mu via stmtLocked
+// first, so they cannot race Close nil-ing those fields; a call that loses the
+// race to Close gets a clean error, not a nil-deref. Close itself must still be
+// quiesced against in-flight callers — the server does this via bgWg.Wait in
+// shutdown. CLI commands remain single-goroutine.
 type VaultStore struct {
 	dbPath string
 
@@ -292,6 +307,21 @@ func NewVaultStore(dbPath string) *VaultStore {
 func (s *VaultStore) Open(ctx context.Context) error {
 	_, err := s.getDB(ctx)
 	return err
+}
+
+// stmtLocked reads a cached prepared-statement pointer under mu, so a concurrent
+// Close (which nils every statement field under the same lock) cannot race the
+// pointer read. get is evaluated while mu is held. A nil return means Close won
+// the race — the caller surfaces ErrStoreClosed instead of dereferencing nil.
+// Using the returned (possibly already-closed) *sql.Stmt is safe: database/sql
+// guards the statement object internally and yields a clean "statement is
+// closed" error, never a crash. Query methods that go through the returned
+// *sql.DB (Search, SearchChunks, Stats, ListSessions) need no snapshot — *sql.DB
+// is concurrency-safe and is not nil'd by Close mid-call.
+func (s *VaultStore) stmtLocked(get func() *sql.Stmt) *sql.Stmt {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return get()
 }
 
 // getDB returns the connection, opening it on first call. On corruption it backs
@@ -914,7 +944,11 @@ func (s *VaultStore) GetSession(ctx context.Context, prefix string) (*Session, e
 		return nil, err
 	}
 
-	rows, err := s.stmtSessionsByPrefix.QueryContext(ctx, prefix+"%")
+	stmt := s.stmtLocked(func() *sql.Stmt { return s.stmtSessionsByPrefix })
+	if stmt == nil {
+		return nil, ErrStoreClosed
+	}
+	rows, err := stmt.QueryContext(ctx, prefix+"%")
 	if err != nil {
 		return nil, fmt.Errorf("querying sessions: %w", err)
 	}
@@ -953,7 +987,11 @@ func (s *VaultStore) GetFiles(ctx context.Context, sessionUUID string) ([]File, 
 	if _, err := s.getDB(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.stmtFilesBySession.QueryContext(ctx, sessionUUID)
+	stmt := s.stmtLocked(func() *sql.Stmt { return s.stmtFilesBySession })
+	if stmt == nil {
+		return nil, ErrStoreClosed
+	}
+	rows, err := stmt.QueryContext(ctx, sessionUUID)
 	if err != nil {
 		return nil, fmt.Errorf("querying files: %w", err)
 	}
