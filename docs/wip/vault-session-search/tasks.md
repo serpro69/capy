@@ -106,7 +106,7 @@ federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
   - Isolated `/kk:review-code` (kk:code-reviewer + pal/gemini-3.1-pro, corroborated) drove two fixes: (1) the reader goroutine uses `assert` not `require` (`t.FailNow`/`Goexit` must run on the test goroutine); (2) `VaultStore.GetSession`/`GetFiles` snapshot their cached `*sql.Stmt` under `mu` via `stmtLocked` (nil ⇒ `ErrStoreClosed`) so a reader cannot race `Close` nil-ing those fields — the `db`-direct readers (Search/SearchChunks/Stats) were already safe; the doc-comment was tightened to say so. Systemic stmt-pointer-race pattern (shared with `ContentStore`) indexed as `kk:review-findings`. Declined (pre-existing/scope-creep): `atomic.Pointer` for `s.vault`/`s.store` reads in `shutdown` (pal, MEDIUM; ~nil impact as `os.Exit` follows).
 
 ## Task 7: `capy_vault_search` MCP tool + degrade-loudly
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 5, Task 6
 - **Size:** M
 - **Slicing:** Contract-first (new MCP boundary)
@@ -114,10 +114,10 @@ federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
 - **Docs:** [implementation.md#task-7--capy_vault_search-mcp-tool--degrade-loudly](./implementation.md#task-7--capy_vault_search-mcp-tool--degrade-loudly)
 
 ### Subtasks
-- [ ] 7.1 `toolVaultSearch()` schema + register in `tools.go`; inputs `queries`, `limit`, `project`/`all_projects`, `before`/`after` (no `role`); reuse `coerce.go`
-- [ ] 7.2 `handleVaultSearch` uses `s.vault` + `SearchChunks`; format snippets with `session_uuid`/`title`/`project_path`/`end_time`/`first_line_index`
-- [ ] 7.3 Degrade-loudly: key unset → explicit disabled message; enabled but reindex backlog > 0 and zero hits → name `capy vault reindex`
-- [ ] 7.4 Integration test: archived sessions return ranked hits; key unset → disabled message + no vault file; backlog + zero hits → reindex hint
+- [x] 7.1 `toolVaultSearch()` schema + register in `tools.go`; inputs `queries`, `limit`, `project`/`all_projects`, `before`/`after` (no `role`); reuse `coerce.go`
+- [x] 7.2 `handleVaultSearch` uses `s.vault` + `SearchChunks`; format snippets with `session_uuid`/`title`/`project_path`/`end_time`/`first_line_index`
+- [x] 7.3 Degrade-loudly: key unset → explicit disabled message; enabled but reindex backlog > 0 and zero hits → name `capy vault reindex`
+- [x] 7.4 Integration test: archived sessions return ranked hits; key unset → disabled message + no vault file; backlog + zero hits → reindex hint
 
 ## Task 8: Federate the vault into `capy_search`
 - **Status:** pending
