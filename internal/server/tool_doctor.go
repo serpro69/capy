@@ -122,9 +122,6 @@ func (s *Server) vaultCheck(ctx context.Context) platform.CheckResult {
 		}
 	}
 
-	// TODO(vault-session-search Task 6): reuse the long-lived s.vault handle once
-	// the server owns one; until then doctor/stats open transiently (rare calls,
-	// not the search hot path).
 	vs, err := s.vaultStats(ctx)
 	if err != nil {
 		return platform.CheckResult{
@@ -146,15 +143,15 @@ func (s *Server) vaultCheck(ctx context.Context) platform.CheckResult {
 	return platform.CheckResult{Name: "Vault", Status: platform.Pass, Detail: detail}
 }
 
-// vaultStats opens the vault, reads its stats, and closes it (WAL checkpoint).
-// A close error is logged, not returned — the stats were already read, and a
-// busy checkpoint under a concurrent sweep is harmless.
+// vaultStats reads the vault's stats through the server-owned long-lived handle
+// (getVault); it neither opens nor closes a connection — shutdown() owns the
+// close/checkpoint. Both callers gate on RequireVaultKey first, so getVault is
+// expected non-nil; a nil handle (vault disabled) is reported loudly rather than
+// nil-panicking.
 func (s *Server) vaultStats(ctx context.Context) (*vault.VaultStats, error) {
-	vs := vault.NewVaultStore(vault.VaultDBPath())
-	defer func() {
-		if err := vs.Close(); err != nil {
-			slog.Debug("vault stats: close failed", "error", err)
-		}
-	}()
+	vs := s.getVault()
+	if vs == nil {
+		return nil, fmt.Errorf("vault is disabled (%s not set)", "CAPY_VAULT_KEY")
+	}
 	return vs.Stats(ctx)
 }

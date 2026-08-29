@@ -49,6 +49,7 @@ func (t *searchThrottle) advance(window time.Duration) (int, time.Duration) {
 type Server struct {
 	mcpServer     *mcpserver.MCPServer
 	store         *store.ContentStore
+	vault         *vault.VaultStore
 	executor      *executor.PolyglotExecutor
 	security      []security.SecurityPolicy
 	readDenyGlobs [][]string // cached Read deny patterns
@@ -56,6 +57,7 @@ type Server struct {
 	stats         *SessionStats
 	throttle      *searchThrottle
 	storeMu       sync.Once
+	vaultMu       sync.Once
 	bgWg          sync.WaitGroup
 	projectDir    string
 }
@@ -96,6 +98,28 @@ func (s *Server) getStore() *store.ContentStore {
 		})
 	})
 	return s.store
+}
+
+// getVault returns the server's long-lived VaultStore, or nil when the vault is
+// disabled (CAPY_VAULT_KEY unset). The store is constructed once (vaultMu); its
+// connection opens lazily on first use (VaultStore.getDB), so merely calling
+// getVault never creates vault.db. shutdown() Close()s the handle once, running
+// the WAL checkpoint. This single handle is shared by the startup sweep, the
+// doctor/stats readers, and — from Task 7/8 — capy_vault_search and capy_search
+// federation, so the search path never pays a per-call open.
+//
+// The enablement decision is made once, on the first call: the key is read
+// inside the sync.Once, so a later env change does not flip an already-created
+// handle. That matches production (the key is fixed at startup) and keeps each
+// test's fresh Server independent.
+func (s *Server) getVault() *vault.VaultStore {
+	s.vaultMu.Do(func() {
+		if _, err := vault.RequireVaultKey(); err != nil {
+			return // vault is opt-in; leave s.vault nil so callers can degrade loudly
+		}
+		s.vault = vault.NewVaultStore(vault.VaultDBPath())
+	})
+	return s.vault
 }
 
 // ephemeralTTL resolves the ephemeral-source TTL from config with a
@@ -153,9 +177,9 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	// Background vault sweep: archive the current project's sessions into the
 	// encrypted vault. Opt-in via CAPY_VAULT_KEY; runs alongside the session
-	// sweep. Like it, bgWg ensures the sweep — and VaultStore.Close, which runs
-	// the WAL checkpoint — completes before shutdown() returns. shutdown() closes
-	// only the knowledge ContentStore, so the sweep owns the vault handle itself.
+	// sweep. bgWg ensures the sweep finishes before shutdown() returns; shutdown()
+	// then Close()s the server-owned vault handle (WAL checkpoint) — the sweep no
+	// longer owns or closes the handle (Task 6).
 	s.bgWg.Add(1)
 	go func() {
 		defer s.bgWg.Done()
@@ -189,6 +213,14 @@ func (s *Server) shutdown() {
 	if s.store != nil {
 		_ = s.store.Close()
 	}
+	// Close the server-owned vault handle after the sweep goroutine has finished
+	// (bgWg.Wait). Close runs the WAL checkpoint that flushes vault.db-wal; it is
+	// a no-op when the handle was never opened (key set but nothing to sweep).
+	if s.vault != nil {
+		if err := s.vault.Close(); err != nil {
+			slog.Warn("closing vault store", "error", err)
+		}
+	}
 }
 
 // vaultSweep archives Claude Code sessions into the encrypted vault. By default
@@ -196,15 +228,15 @@ func (s *Server) shutdown() {
 // every project under the Claude projects root instead. The all-projects path is
 // opt-in because a startup walk across hundreds of projects adds latency and
 // vault.db write contention. It is opt-in on the vault itself too: with
-// CAPY_VAULT_KEY unset the vault is disabled and the sweep returns silently. The
-// sweep owns its VaultStore for the call and Close()s it on return — Close runs
-// the WAL checkpoint, and shutdown() (which closes only the knowledge
-// ContentStore) never touches the vault, so closing here is what flushes
-// vault.db-wal. ctx provides cooperative cancellation, so a shutdown mid-sweep
-// stops at the next session boundary rather than blocking bgWg.Wait(). Failures
-// are logged, never fatal — sessions stay recoverable via `capy vault import`.
+// CAPY_VAULT_KEY unset getVault returns nil and the sweep returns silently. The
+// sweep reuses the server-owned VaultStore (getVault) and does NOT close it —
+// shutdown() Close()s the handle (WAL checkpoint) after bgWg.Wait(). ctx provides
+// cooperative cancellation, so a shutdown mid-sweep stops at the next session
+// boundary rather than blocking bgWg.Wait(). Failures are logged, never fatal —
+// sessions stay recoverable via `capy vault import`.
 func (s *Server) vaultSweep(ctx context.Context) {
-	if _, err := vault.RequireVaultKey(); err != nil {
+	st := s.getVault()
+	if st == nil {
 		return // vault is opt-in; not configured
 	}
 
@@ -243,17 +275,11 @@ func (s *Server) vaultSweep(ctx context.Context) {
 		return
 	}
 
-	st := vault.NewVaultStore(vault.VaultDBPath())
-	defer func() {
-		if closeErr := st.Close(); closeErr != nil {
-			slog.Warn("vault sweep: closing vault store", "error", closeErr)
-		}
-	}()
-
 	// Fail fast on a wrong key / corrupt vault: getDB() opens lazily, so without
 	// this probe a bad key would surface only on the first batch flush — after
 	// Import has scanned and hashed up to a full batch of sessions — and then as
-	// N identical per-session errors instead of one clean abort.
+	// N identical per-session errors instead of one clean abort. The handle stays
+	// open for later readers; shutdown() closes it.
 	if err := st.Open(ctx); err != nil {
 		slog.Warn("vault sweep: cannot open vault store", "error", err)
 		return
