@@ -14,7 +14,6 @@ import (
 	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/security"
-	"github.com/serpro69/capy/internal/session"
 	"github.com/serpro69/capy/internal/store"
 	"github.com/serpro69/capy/internal/vault"
 	"github.com/serpro69/capy/internal/version"
@@ -161,24 +160,12 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	s.registerTools()
 
-	// Background session sweep: index past Claude Code conversations.
-	// Derives context from the server's ctx so it cancels on shutdown.
-	// WaitGroup ensures the goroutine completes before shutdown() closes the store.
-	s.bgWg.Add(1)
-	go func() {
-		defer s.bgWg.Done()
-		sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		indexed, skipped, errs := session.Sweep(sweepCtx, s.getStore(), s.projectDir)
-		if indexed > 0 || errs > 0 {
-			slog.Info("session sweep", "indexed", indexed, "skipped", skipped, "errors", errs)
-		}
-	}()
-
 	// Background vault sweep: archive the current project's sessions into the
-	// encrypted vault. Opt-in via CAPY_VAULT_KEY; runs alongside the session
-	// sweep. bgWg ensures the sweep finishes before shutdown() returns; shutdown()
-	// then Close()s the server-owned vault handle (WAL checkpoint) — the sweep no
+	// encrypted vault. Opt-in via CAPY_VAULT_KEY. This is the sole session
+	// ingestion path — the legacy knowledge.db session sweep was removed once
+	// the vault became the searchable session corpus (vault-session-search D8).
+	// bgWg ensures the sweep finishes before shutdown() returns; shutdown() then
+	// Close()s the server-owned vault handle (WAL checkpoint) — the sweep no
 	// longer owns or closes the handle (Task 6).
 	s.bgWg.Add(1)
 	go func() {

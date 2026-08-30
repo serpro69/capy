@@ -37,7 +37,6 @@ func main() {
 		newCheckpointCmd(),
 		newEncryptCmd(),
 		newWhichCmd(),
-		newSweepCmd(),
 		newDBSizeCmd(),
 		newVaultCmd(),
 	)

@@ -543,6 +543,18 @@ holds the vault open. It also refuses to run while CAPY_VAULT_NO_COMPRESS is set
 	}
 }
 
+// formatSize renders a byte count as a human-friendly B/KB/MB string.
+func formatSize(bytes int64) string {
+	switch {
+	case bytes >= 1024*1024:
+		return fmt.Sprintf("%.1fMB", float64(bytes)/(1024*1024))
+	case bytes >= 1024:
+		return fmt.Sprintf("%.0fKB", float64(bytes)/1024)
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
+}
+
 func printCompactResult(res vault.CompactResult, before, after int64) {
 	if res.SessionsRewritten == 0 && res.FilesRewritten == 0 {
 		fmt.Println("capy vault compact: nothing to compact (no uncompressed sessions remain)")
