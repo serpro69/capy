@@ -141,17 +141,22 @@ federation. Phase 1 = Tasks 1–2; Phase 2 = Tasks 3–7; Phase 3 = Tasks 8–9.
   - **Isolated `/kk:review-code` (kk:code-reviewer + pal/gemini-3.1-pro, corroborated) drove three fixes:** (1) per-pass search errors are captured and surfaced in-band (`Error:` when the merged block is empty, `⚠ partial results` when one corpus fails but the other returns hits) — federation otherwise masked a knowledge-DB failure behind vault hits (fail-loud); (2) the empty-KB preflight `vaultCanServe` is now project-scoped via `vaultStatsHaveSessions(stats, project)` (checks `VaultStats.ByProject` for the current project; global `Sessions` only when widened) — a global count wrongly suppressed the indexing guide on a fresh project whose cross-project vault held only other projects' sessions (new test `TestSearch_EmptyKBGuideFiresWhenVaultHasOnlyOtherProjects`); (3) `knowledgeKindsWithoutSession` now derives from `store.KindScopeIncludes` instead of re-hardcoding the store's default kind list (kills the DRY-drift risk). Plus nits: test-setenv ordering, schema precedence note, per-request-messaging + 0-based-RRF comments. Systemic finding (federated read paths must make BOTH error handling and empty-state preflight source-/scope-aware) indexed as `kk:review-findings`.
 
 ## Task 9: Remove the knowledge.db session sweep + reclaim wiring
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 8
 - **Size:** M
 - **Can run in parallel with:** —
 - **Docs:** [implementation.md#task-9--remove-the-knowledgedb-session-sweep--reclaim-wiring](./implementation.md#task-9--remove-the-knowledgedb-session-sweep--reclaim-wiring)
 
 ### Subtasks
-- [ ] 9.1 Delete the `session.Sweep` goroutine (`server.go`) and the `KindSession` write (`sweep.go:indexSession`); remove only orphaned helpers (`buildIndexedAtMap`, `shouldSkip`)
-- [ ] 9.2 `cmd/capy/sweep.go`: deprecating alias to `capy vault reindex` or remove (Open Q1) — confirm with maintainer
-- [ ] 9.3 `tool_doctor.go` reports **both** legacy knowledge.db session rows (→ `capy_cleanup purge_session`) and below-version vault sessions (→ `capy vault reindex`); `tool_stats.go`/`stats.go` mark the knowledge session tier draining/deprecated
-- [ ] 9.4 Tests: fresh server start creates no `kind='session'` knowledge rows; **default `capy_search` still returns session hits via the vault** (no regression vs pre-removal); doctor shows both hints; `go build`/`go vet` clean
+- [x] 9.1 Delete the `session.Sweep` goroutine (`server.go`) and the `KindSession` write (`sweep.go:indexSession`); remove only orphaned helpers (`buildIndexedAtMap`, `shouldSkip`)
+  - Note: Open Q1 resolution (remove `capy sweep`, below) orphaned the **entire** `internal/session/sweep.go` — deleted the whole file (`Sweep`/`SweepWithOptions`/`DryRunSweep`/`indexSession`/`buildIndexedAtMap`/`shouldSkip`/`SessionDir`/`manglePath`/`SessionDiagnostic`/`SweepOptions`/`buildLabel`/`sanitizeParsedSession`/`extractUUIDFromLabel`/`fileMtime`) + `sweep_test.go`. `formatSize` (used by `cmd/capy/vault.go`) moved from the deleted `cmd/capy/sweep.go` into `vault.go`.
+  - **Residual orphan (deferred, flagged to maintainer):** `internal/session`'s `parse.go`/`chunk.go`/`transcript.go`/`tools.go` (`ParseSession`, `ChunkSession`, `BuildTranscript`, `ParseSubagents`, …) now have **no non-test callers** — the sweep was their only production consumer, and the vault scanner is deliberately decoupled (D3). Kept, not deleted, matching the maintainer's sweep-scoped removal choice; the package still builds and its own tests pass. Future cleanup could delete the package wholesale — see design D8 note.
+- [x] 9.2 `cmd/capy/sweep.go`: deprecating alias to `capy vault reindex` or remove (Open Q1) — confirm with maintainer
+  - **Resolved (maintainer, 2026-08-30): remove `capy sweep` entirely.** Deleted `cmd/capy/sweep.go`, unregistered `newSweepCmd()` in `main.go`. No alias — users are directed to `capy vault reindex` via `capy_doctor`/`capy_stats`.
+- [x] 9.3 `tool_doctor.go` reports **both** legacy knowledge.db session rows (→ `capy_cleanup purge_session`) and below-version vault sessions (→ `capy vault reindex`); `tool_stats.go`/`stats.go` mark the knowledge session tier draining/deprecated
+  - Note: doctor gains a `Legacy sessions` Warn check when `kbStats.SessionSourceCount > 0` naming `capy_cleanup purge_session`, alongside the existing `Vault` reindex-backlog check. stats renames the tier "Session TTL buckets (legacy — draining)" + a reclaim footnote. `stats.go` (the in-memory tracker) needed no change — the session tier is rendered in `tool_stats.go`.
+- [x] 9.4 Tests: fresh server start creates no `kind='session'` knowledge rows; **default `capy_search` still returns session hits via the vault** (no regression vs pre-removal); doctor shows both hints; `go build`/`go vet` clean
+  - Note: rewrote `TestIntegration_SessionSweep_SearchAndCleanup` → `TestIntegration_VaultIsSoleSessionIngestion` (vaultSweep is the sole path; asserts `SessionSourceCount == 0` in knowledge.db + both sessions archived in the vault); removed the now-unused `backdateSessionSources` helper. Added `TestDoctor_LegacySessionReclaimHint` + `TestDoctor_NoLegacySessionHintWhenClean`; extended `TestStats_WithSessionSources` for the legacy/reclaim copy. Session *search* federation no-regression stays covered by `tool_search_federation_test.go`. Full `make test` green; `go build`/`go vet` clean.
 
 ## Task 10: Final verification
 - **Status:** pending

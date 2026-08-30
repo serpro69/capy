@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,8 +13,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/serpro69/capy/internal/session"
-	"github.com/serpro69/capy/internal/store"
+	"github.com/serpro69/capy/internal/vault"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -388,116 +386,42 @@ func TestIntegration_Performance_LargeDocumentIndexAndSearch(t *testing.T) {
 	assert.Contains(t, text, "config")
 }
 
-// ─── Session sweep integration tests ─────────────────────────────────────────
+// ─── Session ingestion integration tests ─────────────────────────────────────
 
-func TestIntegration_SessionSweep_SearchAndCleanup(t *testing.T) {
+// TestIntegration_VaultIsSoleSessionIngestion asserts the post-D8 invariant: the
+// knowledge.db session sweep is gone (vault-session-search Task 9), so ingesting
+// a project's sessions writes ZERO kind='session' rows into knowledge.db (the G1
+// bloat source) while the vault still archives every session (capture preserved,
+// no regression). Session *search* federation is covered end-to-end in
+// tool_search_federation_test.go.
+func TestIntegration_VaultIsSoleSessionIngestion(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	// Set up a fake HOME with session files in the expected Claude Code layout.
-	// Use a real temp dir as projectDir so the server can create its DB there.
-	tmpHome := t.TempDir()
-	projectDir := t.TempDir()
-	mangled := strings.NewReplacer("/", "-", ".", "-").Replace(projectDir)
-	sessionDir := filepath.Join(tmpHome, ".claude", "projects", mangled)
-
-	require.NoError(t, os.MkdirAll(sessionDir, 0o755))
-	t.Setenv("HOME", tmpHome)
-
-	// Pin the vault OFF: this test exercises the LEGACY knowledge.db session
-	// sweep path (session.Sweep → kind='session' → default capy_search finds it),
-	// which is still valid while the vault is disabled. When the vault is enabled,
-	// Task 8 federation repoints the `session` scope to the vault corpus and the
-	// knowledge pass no longer serves session rows — a deliberate behavior change
-	// covered by tool_search_federation_test.go. Without this pin the test would
-	// inherit the developer's ambient CAPY_VAULT_KEY and become non-deterministic.
-	// Task 9 removes the sweep and rewrites this test around the vault.
-	t.Setenv("CAPY_VAULT_KEY", "")
-
-	uuid1 := "integ-sess-aaa"
-	uuid2 := "integ-sess-bbb"
-	writeSessionJSONL(t, sessionDir, uuid1, "How do I configure the database?",
-		"You can configure the database by setting DATABASE_URL in your environment.")
-	writeSessionJSONL(t, sessionDir, uuid2, "Explain goroutine scheduling",
-		"Go uses an M:N scheduler with work stealing. Goroutines are multiplexed onto OS threads.")
+	projectDir, uuid1, uuid2 := setupVaultSweepProject(t)
+	t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)
 
 	srv := newTestServerWithProjectDir(t, nil, projectDir)
+	srv.vaultSweep(context.Background()) // the sole ingestion path now
 
-	// Trigger sweep by calling the indexer directly (same path as server startup).
-	st := srv.getStore()
-	indexed, _, errs := session.Sweep(context.Background(), st, projectDir)
-	require.Equal(t, 0, errs)
-	require.Equal(t, 2, indexed)
+	// knowledge.db must hold no session rows — nothing writes them anymore.
+	kbStats, err := srv.getStore().Stats(srv.ephemeralTTL(), srv.sessionTTL())
+	require.NoError(t, err)
+	assert.Equal(t, 0, kbStats.SessionSourceCount,
+		"the removed knowledge.db session sweep must write no kind='session' rows")
 
-	// Search for session content — sessions are included in default search.
-	r := callSearch(t, srv, map[string]any{
-		"queries": []any{"database configuration", "goroutine scheduler"},
-	})
-	require.False(t, r.IsError)
-	text := resultText(r)
-	assert.Contains(t, text, "database")
-	assert.Contains(t, text, "goroutine")
-
-	// Verify labels follow the session:<datetime>:<uuid> format.
-	for _, q := range []string{uuid1, uuid2} {
-		assert.Contains(t, text, q, "search results must contain the session UUID in label")
+	// The vault archived both sessions — capture is not regressed by the removal.
+	vst := vault.NewVaultStore(vault.VaultDBPath())
+	t.Cleanup(func() { _ = vst.Close() })
+	sessions, err := vst.ListSessions(context.Background(), vault.ListOptions{})
+	require.NoError(t, err)
+	got := map[string]bool{}
+	for _, s := range sessions {
+		got[s.UUID] = true
 	}
-
-	// Filter to session-only search.
-	r2 := callSearch(t, srv, map[string]any{
-		"queries":       []any{"database configuration"},
-		"include_kinds": []any{"session"},
-	})
-	require.False(t, r2.IsError)
-	assert.Contains(t, resultText(r2), "database")
-
-	// Exclude sessions — results should vanish.
-	r3 := callSearch(t, srv, map[string]any{
-		"queries":       []any{"database configuration"},
-		"include_kinds": []any{"durable"},
-	})
-	require.False(t, r3.IsError)
-	assert.Contains(t, resultText(r3), "No results found")
-
-	// Reset throttle window so subsequent searches aren't rate-limited.
-	srv.throttle.mu.Lock()
-	srv.throttle.count = 0
-	srv.throttle.windowStart = time.Now()
-	srv.throttle.mu.Unlock()
-
-	// Backdate session sources so TTL eviction sees them as stale.
-	// PurgeSession uses second-precision timestamps, so freshly indexed
-	// sources in the same second would survive even a 1ns TTL.
-	backdateSessionSources(t, srv)
-
-	evicted, err := st.PurgeSession(false, 60*24*time.Hour)
-	require.NoError(t, err)
-	assert.Len(t, evicted, 2, "both sessions should be evicted after backdating past TTL")
-
-	// Verify sessions are gone — KB is now empty since sessions were the only content.
-	r5 := callSearch(t, srv, map[string]any{
-		"queries":       []any{"database configuration"},
-		"include_kinds": []any{"durable", "session"},
-	})
-	assert.True(t, r5.IsError, "search on empty KB returns error")
-	assert.Contains(t, resultText(r5), "empty")
-}
-
-// backdateSessionSources opens the server's DB and sets session sources' indexed_at
-// to 90 days ago, making them eligible for TTL eviction with the default 60-day TTL.
-func backdateSessionSources(t *testing.T, srv *Server) {
-	t.Helper()
-	dbPath := srv.config.ResolveDBPath(srv.projectDir)
-	key, err := store.RequireEncryptionKey()
-	require.NoError(t, err)
-	dsn := store.EncryptedDSN(dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
-	db, err := sql.Open("sqlite3", dsn)
-	require.NoError(t, err)
-	defer db.Close()
-	past := time.Now().Add(-90 * 24 * time.Hour).UTC().Format("2006-01-02 15:04:05")
-	_, err = db.Exec("UPDATE sources SET indexed_at = ? WHERE kind = 'session'", past)
-	require.NoError(t, err)
+	assert.True(t, got[uuid1], "session %s should be archived in the vault", uuid1)
+	assert.True(t, got[uuid2], "session %s should be archived in the vault", uuid2)
 }
 
 // writeSessionJSONL creates a synthetic session JSONL file with 3 turn pairs.

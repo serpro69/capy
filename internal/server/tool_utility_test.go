@@ -140,6 +140,11 @@ func TestStats_WithSessionSources(t *testing.T) {
 	assert.Contains(t, text, "session: 1")
 	assert.Contains(t, text, "Session TTL buckets")
 	assert.Contains(t, text, "fresh")
+	// The knowledge.db session sweep is gone (vault-session-search D8); these
+	// rows are legacy leftovers, so the tier is marked draining and names the
+	// reclaim command.
+	assert.Contains(t, text, "legacy")
+	assert.Contains(t, text, "capy_cleanup purge_session")
 }
 
 func TestStats_SessionSectionOmittedWhenNoSessions(t *testing.T) {
@@ -193,6 +198,32 @@ func TestDoctor_VaultDisabledWithoutKey(t *testing.T) {
 	text := resultText(r)
 	assert.Contains(t, text, "Vault:")
 	assert.Contains(t, text, "disabled (CAPY_VAULT_KEY not set)")
+}
+
+func TestDoctor_LegacySessionReclaimHint(t *testing.T) {
+	// Legacy knowledge.db session rows (pre-D8 sweep leftovers) must surface a
+	// "Legacy sessions" check naming the reclaim command — the doctor reports
+	// both this and the vault reindex backlog (design D4).
+	// CAPY_VAULT_KEY intentionally left as-is: this exercises the knowledge-DB
+	// path (doctor reads kbStats, not the vault), so the vault state is irrelevant.
+	srv := newTestServer(t, nil)
+	st := srv.getStore()
+	_, err := st.Index("legacy session transcript content", "session:2026-05-01T10:00:00Z:legacy-1", "session", store.KindSession)
+	require.NoError(t, err)
+
+	text := resultText(callDoctor(t, srv))
+	assert.Contains(t, text, "Legacy sessions:")
+	assert.Contains(t, text, "capy_cleanup purge_session")
+}
+
+func TestDoctor_NoLegacySessionHintWhenClean(t *testing.T) {
+	srv := newTestServer(t, nil)
+	callIndex(t, srv, map[string]any{
+		"content": "# Durable only content, no session rows.",
+		"source":  "durable-only",
+	})
+	text := resultText(callDoctor(t, srv))
+	assert.NotContains(t, text, "Legacy sessions:")
 }
 
 func TestDoctor_VaultReindexBacklogHint(t *testing.T) {
