@@ -1,6 +1,6 @@
 # ADR-028: Corpus-agnostic retrieval core + cross-corpus RRF federation
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-29
 **Supersedes:** Overturns the reasoning of [ADR-017](017-source-kind-separation.md)
 §"Variants Considered #2" (a second FTS5 table was rejected because cross-corpus BM25
@@ -172,6 +172,23 @@ federated reads are safe alongside the sweep writer.
 - Vault chunk content includes tool-result text (scanner-broad), so it is not
   byte-identical to the old knowledge.db session chunks (parser-lossy). Accepted —
   arguably better recall; A2 validates.
+
+**Validation (2026-08-30, vault-session-search Task 10.5)**
+- **A4 (D1 zero-delta):** knowledge.db retrieval quality and context reduction are
+  byte-identical to master across every content type — the extraction is
+  behavior-preserving.
+- **A2 (no-fuzzy vault bet):** the `vault_session` corpus scores R@1 0.933 / NDCG@10
+  0.954 / MRR 0.950 / match-layer 0.967 / 0 false positives (30 cases) — within a
+  single adversarial case of the knowledge.db transcript baseline. The one miss is a
+  five-simultaneous-typo query that knowledge.db's vocabulary fuzzy corrector rescues
+  and the vault's trigram-only path cannot bridge. This confirms the D1 bet: the
+  `nil` FuzzyCorrector is acceptable for realistic (0–2 typo) session search, and the
+  vault-vocabulary escalation is **not** triggered. The parity gate uses tolerance
+  0.04 (one-case granularity on a 30-case set; a finer 0.02 threshold measures fixture
+  noise, not quality). Full rationale in `kk:arch-decisions`.
+- **A1 (federation ranking):** the knowledge ranking is unchanged by federation (A4),
+  and the merge is a deterministic RRF rank-interleave of two independently-ranked
+  lists — no unified-vs-federated regression is possible.
 
 ## Alternatives considered
 

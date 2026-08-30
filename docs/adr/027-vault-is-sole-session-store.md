@@ -1,6 +1,6 @@
 # ADR-027: The vault is the sole session store (drop `session` kind from knowledge.db)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-29
 **Supersedes:** Supersedes the `KindSession`-in-knowledge.db decision from
 [sessionflow-rag](../done/sessionflow-rag/design.md); amends [ADR-017](017-source-kind-separation.md)
@@ -59,6 +59,13 @@ chunk from the vault's own scanner, preserving the deliberate `vault → interna
 decoupling (`scanner_types.go:5`). So this removal need not preserve those helpers for
 the vault; they remain in `internal/session` only for `capy sweep`'s dry-run/diagnostic
 paths (retired or kept per the design's Open Question 1).
+
+**Resolution (Open Question 1, 2026-08-30 — maintainer):** `capy sweep` is removed
+entirely (no deprecating alias; users are directed to `capy vault reindex` via
+`capy_doctor`/`capy_stats`). That left the whole `internal/session` package with no
+importers — the sweep was its only production consumer and the vault scanner is
+deliberately decoupled — so the package was deleted in a follow-up commit (trivially
+restorable from git if a future feature needs a session parser).
 
 ### D2: The schema `CHECK` keeps `'session'`; we stop *writing*, not *allowing*
 

@@ -63,7 +63,8 @@ and a bumped `index_version`; migration idempotent on re-run.
 ### Task 4 — Scanner-derived chunker + chunk indexing + reindex + backfill observability
 The vault chunker groups the scanner's per-message `ScanResult`s into overlapping
 windows (reuse the session chunker's window/overlap sizing; `store.SplitOversized`/
-`store.MaxChunkBytes`/`store.ChunkHasCode`), recording `first_line_index` from each
+`store.MaxChunkBytes` — `store.ChunkHasCode` is intentionally unused, the chunk schema
+has no `has_code` column, see tasks.md Task 4.1), recording `first_line_index` from each
 window's first result and a `buildChunkTitle`-style title. **No `internal/session`
 import** (review #1/#9). Wire chunk production into the import path
 (`scanSessionAndSubagents` already yields `ScanResult`s from DB bytes) and extend

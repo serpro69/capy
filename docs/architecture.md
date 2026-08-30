@@ -15,7 +15,7 @@ capy is an MCP (Model Context Protocol) server that reduces LLM context window c
 │  capy MCP Server  (internal/server)                                     │
 │                                                                         │
 │  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
-│  │  9 Tool      │  │  Stats       │  │  Search      │  │  Lifecycle │  │
+│  │  10 Tool     │  │  Stats       │  │  Search      │  │  Lifecycle │  │
 │  │  Handlers    │  │  Tracker     │  │  Throttle    │  │  Guard     │  │
 │  └──────┬──────┘  └──────────────┘  └──────────────┘  └────────────┘  │
 │         │                                                               │
@@ -37,20 +37,14 @@ capy is an MCP (Model Context Protocol) server that reduces LLM context window c
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  Session Sweep  (internal/session)                                      │
-│  Background goroutine on server start + CLI `capy sweep`                │
-│                                                                         │
-│  Parses Claude Code JSONL files → builds transcripts → chunks →         │
-│  indexes as `session` kind sources in the knowledge base                │
-└─────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│  Vault  (internal/vault)                                                │
+│  Vault  (internal/vault)  — sole session store (ADR-027)                │
 │  Background goroutine on server start + CLI `capy vault`                │
 │                                                                         │
 │  Discovers session JSONL files → scans for FTS text → archives          │
-│  verbatim in encrypted vault.db (separate from knowledge store)         │
-│  Provides cross-project search, restore, resume, and TUI browsing       │
+│  verbatim in encrypted vault.db (separate from knowledge store) →       │
+│  chunks into vault_chunks FTS for semantic session search               │
+│  Federates into capy_search via cross-corpus RRF (ADR-028); also        │
+│  cross-project search, restore, resume, and TUI browsing                │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -66,15 +60,24 @@ capy is an MCP (Model Context Protocol) server that reduces LLM context window c
 6. Otherwise: return truncated stdout (configurable max_output_bytes, default 100KB)
 7. Stats tracked for the session
 
-### Search (capy_search)
+The retrieval engine is corpus-agnostic (`internal/retrieval`, ADR-028): the same
+two-layer RRF / rerank / entity-boost pipeline runs over any `Corpus` — the knowledge
+store's `chunks`/`chunks_trigram` tables and the vault's `vault_chunks`/`vault_chunks_trigram`
+tables both implement it. Fuzzy correction is corpus-supplied (knowledge has a
+vocabulary table; the vault passes `nil`).
 
 1. Query sanitized for FTS5 (strip special chars, expand synonyms)
 2. Two-layer RRF (Reciprocal Rank Fusion):
    - Porter stemming FTS5 search (AND, then fallback to OR)
    - Trigram substring FTS5 search (AND, then fallback to OR)
-3. Fuzzy correction pass if results < limit (Levenshtein against vocabulary table)
+3. Fuzzy correction pass if results < limit (Levenshtein against vocabulary table; knowledge corpus only)
 4. Post-processing: per-source diversification, title-match boost, proximity reranking, entity boosting
 5. Access tracking (last_accessed_at, access_count) for retention scoring
+6. **Cross-corpus federation:** when the vault is enabled and `session` is in scope,
+   the knowledge and vault result lists are each independently RRF-ranked, then
+   rank-merged on `1/(k+rank)` — never on raw BM25, which is incomparable across
+   tables (ADR-028). Vault hits are tagged `session:<uuid>`; ties keep knowledge
+   before vault. `include_kinds:["session"]` targets the vault alone.
 
 ### Fetch and Index (capy_fetch_and_index)
 
@@ -102,7 +105,7 @@ vocabulary       — unique words extracted from indexed content, used for fuzzy
 |------|-----------|--------------------------|-------------|
 | `durable` | Retention-score tiers (hot/warm/cold/evictable) | Included | `capy_index`, `capy_fetch_and_index(kind: "durable")` |
 | `ephemeral` | Strict TTL (default 24h) | Excluded | `capy_execute`, `capy_execute_file`, `capy_batch_execute`, `capy_fetch_and_index` |
-| `session` | Strict TTL (default 60 days) | Included | `capy sweep` (indexes past conversation transcripts) |
+| `session` | Legacy tier — draining; no new writes (ADR-027) | Served from the vault via federation | The session **vault** (`vault_chunks`); knowledge.db no longer writes `session` rows — pre-existing ones reclaimed via `capy_cleanup purge_session` |
 
 ### Retention Scoring (Durable Sources)
 
@@ -193,26 +196,22 @@ All indexed content passes through `sanitize.StripSecrets()` which redacts:
 
 ## Session Indexing
 
-The session subsystem parses Claude Code's JSONL conversation files and indexes them as searchable transcripts.
+Session transcripts are indexed **only by the vault** (ADR-027). The standalone
+`internal/session` sweep that formerly wrote `session`-kind rows into `knowledge.db`
+was removed once the vault became a searchable corpus — there is no longer a second
+subsystem parsing the same JSONL. The vault's single-pass scanner (`scanner.go`,
+operating on DB bytes, no disk dependency — see [Vault](#vault)) produces two index
+layers from each archived session:
 
-### Parse Pipeline
+1. **`vault_fts`** — one row per message, for per-line `capy vault search` snippets.
+2. **`vault_chunks`** / **`vault_chunks_trigram`** — overlapping turn windows
+   (window 4 / overlap 1, mirroring the retired `internal/session` chunk sizing) with
+   a `first_line_index` anchor back into the raw JSONL, for semantic session search
+   through the shared retrieval core. Produced by `chunker.go` off the scanner's
+   per-message `ScanResult`s during import, reindex, and merge.
 
-1. **JSONL parsing** — read session file, merge progressive assistant snapshots by message.id
-2. **Noise filtering** — strip `<system-reminder>` tags, local command output tags
-3. **Tool extraction** — registry-driven: ActionPromote (tool text becomes assistant text), ActionEnrich (metadata lines), ActionSkip
-4. **Sub-agent discovery** — parse `subagents/` directory alongside main session file
-5. **Turn pair building** — group user→assistant messages, emit away summaries as standalone entries
-6. **Secret sanitization** — strip secrets from all text before transcript building
-7. **Transcript building** — Human:/Assistant: format with metadata lines and subagent delimiters
-8. **Chunking** — split by turn pair boundaries using byte offsets
-
-### Indexability Threshold
-
-Sessions require ≥2 non-subagent turn pairs and ≥200 chars of assistant text.
-
-### Mtime-based Skip
-
-Compares max(file.mtime, subagents_dir.mtime) against stored indexed_at to avoid re-indexing unchanged sessions.
+Both layers are (re)built in the same batched, WAL-checkpointed pass and versioned by
+`currentIndexVersion` (see [Search index & `index_version`](#search-index--index_version)).
 
 ## Vault
 
@@ -237,6 +236,10 @@ vault_files      — associated files (subagents, tool-results), CASCADE on sess
 vault_fts        — FTS5 virtual table, one row per message, Porter tokenizer
                    (tool_result rows tagged with their call summary; Read/NotebookRead
                     and Edit/Write result bodies excluded — see scanner.go ftsExcludedResult)
+vault_chunks     — FTS5 virtual table (Porter), one row per overlapping turn window;
+                   title + content_text indexed, first_line_index UNINDEXED anchor
+vault_chunks_trigram — FTS5 virtual table (trigram), mirrors vault_chunks for substring
+                   search; both feed the shared retrieval core (migration 0004, ADR-028)
 vault_meta       — key-value store; holds min_reader_version (the compression
                    forward-compat marker — see below)
 vault_migrations — migration tracking (by-name); migration runner lives in migrations.go
@@ -431,7 +434,6 @@ against the repository's **main worktree** so all worktrees share one committed 
 | `capy doctor` | Run diagnostics |
 | `capy which` | Print knowledge base path |
 | `capy cleanup` | Remove stale entries |
-| `capy sweep` | Index past sessions (dry-run default) |
 | `capy checkpoint` | Flush WAL into main DB file |
 | `capy encrypt` | Encrypt DB or rotate key |
 | `capy dbsize` | Show DB disk usage |

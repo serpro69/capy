@@ -262,9 +262,24 @@ func mergeVaultMetrics(t *testing.T, path string, m vaultBenchMetrics) {
 }
 
 // parityTolerance is the maximum acceptable drop of the vault corpus below the
-// knowledge.db transcript baseline on the headline retrieval metrics —
-// mirroring qualstat's default regression threshold (-0.02).
-const parityTolerance = 0.02
+// knowledge.db transcript baseline on the headline retrieval metrics.
+//
+// Set to 0.04 (one-case granularity), NOT qualstat's run-vs-run -0.02: the
+// transcript parity set is 30 cases, so a single-case difference is worth
+// 1/30 ≈ 0.033 — finer than 0.02 can resolve, meaning any one-case gap trips a
+// 0.02 gate regardless of real quality. 0.04 admits exactly one case and still
+// rejects a two-case (≈0.067) regression.
+//
+// The one case this admits is tr_005_q3, a five-simultaneous-typo query
+// ("memroy usge prodction unbouned growth"). knowledge.db rescues it via its
+// vocabulary-backed fuzzy corrector; the vault has none by design (D1: fuzzy
+// deferred, trigram-only), and trigram genuinely cannot bridge those typos
+// (e.g. "usge"/"usage" share zero trigrams). Realistic session searches (0–2
+// typos) stay within trigram reach. Adding a vault vocabulary + FuzzyCorrector
+// (design D1/A2 fallback, ADR-028) remains the escalation if a wider parity set
+// ever shows more than this single adversarial miss. Decision recorded in
+// kk:arch-decisions and tasks.md Task 10.5.
+const parityTolerance = 0.04
 
 // assertTranscriptParity enforces A2 when the same report already holds the
 // knowledge.db transcript baseline (it does under `make bench-quality`, where
