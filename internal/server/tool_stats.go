@@ -122,12 +122,18 @@ func (s *Server) handleStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.C
 				)
 			}
 			if kbStats.SessionSourceCount > 0 {
+				// Deprecated tier: the knowledge.db session sweep was removed
+				// (vault-session-search D8) — the vault is the session store now.
+				// These rows are pre-removal leftovers draining by TTL; name the
+				// reclaim command so they don't linger silently.
 				lines = append(lines, "",
-					"#### Session TTL buckets",
+					"#### Session TTL buckets (legacy — draining)",
 					"| Bucket | Count |",
 					"|--------|------:|",
 					fmt.Sprintf("| fresh | %d |", kbStats.SessionFreshCount),
 					fmt.Sprintf("| stale | %d |", kbStats.SessionStaleCount),
+					"",
+					"_Legacy knowledge.db session rows. Reclaim now with `capy_cleanup purge_session`; new sessions live in the vault._",
 				)
 			}
 		}
