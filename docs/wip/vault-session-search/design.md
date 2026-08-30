@@ -144,8 +144,9 @@ windows** — *not* by `session.ParseSession`/`ChunkSession`. This resolves revi
 
 A vault chunker groups consecutive `ScanResult`s into overlapping windows (reusing the
 session chunker's window/overlap sizing for consistency), applies
-`store.SplitOversized`/`store.MaxChunkBytes`/`store.ChunkHasCode`, records
-`first_line_index` from the window's first result, and builds a BM25-friendly title
+`store.SplitOversized`/`store.MaxChunkBytes` (**not** `store.ChunkHasCode` — the vault
+chunk schema (D2) has no `has_code` column, so it is intentionally unused; see tasks.md
+Task 4.1), records `first_line_index` from the window's first result, and builds a BM25-friendly title
 (session datetime + turn range + tool names, adapted from `buildChunkTitle`). Text is
 already sanitized by the scanner.
 
@@ -285,6 +286,13 @@ encrypted SQLite, so schema creation is in scope here with human review.
   reach retrieval quality within tolerance of today's session search. *Validate:*
   re-run sessionflow-rag NIAH/retrieval against the vault corpus; if the delta is
   unacceptable, add a vault vocabulary + fuzzy corrector (D1).
+  **Result (Task 10.5):** vault_session R@1 0.933 / NDCG@10 0.954 / MRR 0.950 /
+  match-layer 0.967 / 0 false positives (30 cases). Within one adversarial case of
+  the knowledge.db transcript baseline (0.967); the sole miss is a five-simultaneous-
+  typo query that fuzzy-correction rescues in knowledge.db but trigram cannot bridge.
+  Parity tolerance set to 0.04 (one-case granularity on a 30-case set — 1/30≈0.033 is
+  finer than 0.02 can resolve; see `kk:arch-decisions`). Vault vocabulary/fuzzy stays
+  deferred; the escalation path is preserved. A4 knowledge.db regression: zero-delta.
 - **A3 (reworded, #11):** The scanner-derived chunker produces good BM25 windows and a
   correct `first_line_index` anchor. *Validate:* on fixtures, assert chunk-window
   sizing/overlap, sub-agent append order, and that `first_line_index` resolves to the

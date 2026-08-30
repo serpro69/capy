@@ -23,12 +23,13 @@ internal/
   giturl/           Git platform URL detection (GitHub/GitLab/Bitbucket/Gitea)
   hook/             Hook event dispatch: PreToolUse routing, guidance, security, subagent injection
   platform/         Setup command (writes hooks/MCP config), doctor diagnostics, routing instructions
+  retrieval/        Corpus-agnostic FTS5 retrieval core: RRF two-layer fusion, rerank, entity boosting, query sanitization — shared by store (knowledge) and vault (session chunks) via the Corpus interface (ADR-028)
   sanitize/         Secret stripping (regex-based redaction of API keys, tokens, credentials)
   security/         Settings parsing, glob matching, command splitting, shell-escape detection
-  server/           MCP server, 9 tool handlers, stats tracking, lifecycle guard, intent search
+  server/           MCP server, 10 tool handlers, stats tracking, lifecycle guard, intent search, cross-corpus vault federation
   sqliteutil/       Shared SQLite open/recovery: canary query, corruption classification, backup
   store/            SQLite FTS5 knowledge base: schema, indexing, search, cleanup, encryption, migration
-  vault/            Session vault: verbatim archival, FTS5 search, discovery, import, cross-machine merge
+  vault/            Session vault: verbatim archival, FTS5 search (per-line + chunk), discovery, import, cross-machine merge; sole session store (ADR-027)
   vault/tui/        Interactive TUI for vault browsing, search, and session viewing (bubbletea)
   version/          Build-time version injection via ldflags
 ```
@@ -83,6 +84,8 @@ Architecture Decision Records are in [docs/adr/](docs/adr/). Key ones:
 - ADR-024: Server-side git URL enforcement
 - ADR-025: Vault `index_version` and DB-driven reindex
 - ADR-026: Git worktrees share the main worktree's knowledge DB
+- ADR-027: The vault is the sole session store (drop `session` writes from knowledge.db)
+- ADR-028: Corpus-agnostic retrieval core + cross-corpus RRF federation
 
 ## Completed Features
 
