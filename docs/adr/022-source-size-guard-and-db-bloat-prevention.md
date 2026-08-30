@@ -64,6 +64,12 @@ After a non-dry-run cleanup that evicts at least one source, `Cleanup()` checks 
 
 An explicit `capy cleanup --vacuum` flag is also available for manual use.
 
+> **Note (ADR-029):** `VACUUM` only reclaims freelist pages. It cannot reclaim
+> FTS5 delete-tombstone segments, whose pages stay live in the FTS shadow
+> tables — a DB can sit at 50+ MB with a 0-page freelist. `capy cleanup
+> --optimize` rebuilds the FTS indexes (releasing those segments) and then
+> vacuums. See ADR-029.
+
 ### 6. `capy dbsize` diagnostic subcommand
 
 New CLI command showing table-level page counts, content-by-kind breakdown, top 15 sources by content size, freelist stats, and vocabulary size. Essential for diagnosing bloat and verifying cleanup results.

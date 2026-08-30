@@ -374,21 +374,34 @@ func (s *ContentStore) Close() error {
 	return err
 }
 
+// openSingleConn opens a dedicated single-connection *sql.DB to the encrypted
+// database, separate from the pool. Maintenance operations (Vacuum, RebuildFTS,
+// Checkpoint, checkpoint) that must run outside the pool share this setup:
+// encryption key, WAL journal mode, the given busy timeout, and a hard cap of
+// one connection. Callers own the returned handle and must defer Close.
+func (s *ContentStore) openSingleConn(busyTimeoutMs int) (*sql.DB, error) {
+	key, err := RequireEncryptionKey()
+	if err != nil {
+		return nil, err
+	}
+	dsn := fmt.Sprintf("%s&_journal_mode=WAL&_busy_timeout=%d", EncryptedDSN(s.dbPath, key), busyTimeoutMs)
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
+
 // checkpoint opens a dedicated single connection and runs
 // PRAGMA wal_checkpoint(TRUNCATE). Must be called after the
 // connection pool is closed so no other connections hold the WAL.
 func (s *ContentStore) checkpoint() error {
-	key, err := RequireEncryptionKey()
-	if err != nil {
-		return err
-	}
-	dsn := EncryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := s.openSingleConn(5000)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
 	_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	return err
 }
@@ -406,20 +419,53 @@ func (s *ContentStore) optimizeFTS(db *sql.DB) {
 // dedicated single connection (not the pool) since VACUUM rewrites the entire
 // file — with SQLCipher this also re-encrypts, so it's heavier than plain SQLite.
 func (s *ContentStore) Vacuum() error {
-	key, err := RequireEncryptionKey()
-	if err != nil {
-		return err
-	}
-	dsn := EncryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=10000"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := s.openSingleConn(10000)
 	if err != nil {
 		return fmt.Errorf("opening database for vacuum: %w", err)
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
 
 	if _, err := db.Exec("VACUUM"); err != nil {
 		return fmt.Errorf("vacuum failed: %w", err)
+	}
+	return nil
+}
+
+// RebuildFTS fully reconstructs the FTS5 indexes (chunks, chunks_trigram) from
+// their content tables. Unlike the incremental 'optimize' merge that optimizeFTS
+// runs every optimizeEvery inserts, 'rebuild' discards accumulated delete-
+// tombstone segments left behind when sources are evicted. Those segments pin
+// disk pages that VACUUM cannot reclaim on its own — the freelist stays at 0
+// because the pages belong to the FTS5 data tables, not the free list. After a
+// rebuild the freed pages land on the freelist, so callers should follow with
+// Vacuum to actually shrink the file. Opens a dedicated single connection (not
+// the pool), mirroring Vacuum.
+func (s *ContentStore) RebuildFTS() error {
+	db, err := s.openSingleConn(10000)
+	if err != nil {
+		return fmt.Errorf("opening database for FTS rebuild: %w", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec("INSERT INTO chunks(chunks) VALUES ('rebuild')"); err != nil {
+		return fmt.Errorf("rebuilding chunks FTS index: %w", err)
+	}
+	if _, err := db.Exec("INSERT INTO chunks_trigram(chunks_trigram) VALUES ('rebuild')"); err != nil {
+		return fmt.Errorf("rebuilding chunks_trigram FTS index: %w", err)
+	}
+	// Flush the rebuild out of the WAL so the freed pages are visible to the
+	// VACUUM that callers run next. Unlike Checkpoint, a busy result is
+	// tolerable rather than fatal here: when invoked after a cleanup pass the
+	// pool is still open, so TRUNCATE legitimately downgrades to PASSIVE. The
+	// subsequent VACUUM opens its own connection and rewrites the full logical
+	// DB (WAL frames included), so an incomplete checkpoint costs no
+	// reclamation — but it is worth surfacing.
+	var busy, logFrames, checkpointed int
+	if err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
+		return fmt.Errorf("checkpointing WAL after FTS rebuild: %w", err)
+	}
+	if busy > 0 {
+		slog.Warn("WAL checkpoint incomplete after FTS rebuild (pool connections busy); VACUUM will still reclaim", "busy_pages", busy)
 	}
 	return nil
 }
@@ -444,19 +490,11 @@ func (s *ContentStore) FreelistRatio() float64 {
 // single connection (not the connection pool). This is the correct way to
 // checkpoint from outside the running server — e.g., from `capy checkpoint`.
 func (s *ContentStore) Checkpoint() error {
-	key, err := RequireEncryptionKey()
-	if err != nil {
-		return err
-	}
-	dsn := EncryptedDSN(s.dbPath, key) + "&_journal_mode=WAL&_busy_timeout=5000"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := s.openSingleConn(5000)
 	if err != nil {
 		return fmt.Errorf("opening database for checkpoint: %w", err)
 	}
 	defer db.Close()
-
-	// Force a single connection — no pool interference.
-	db.SetMaxOpenConns(1)
 
 	var busy, log, checkpointed int
 	err = db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed)

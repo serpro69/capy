@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -55,6 +56,78 @@ func TestOptimizeFTSDoesNotBreakSearch(t *testing.T) {
 	results, err := s.SearchWithFallback("authentication", 5, SearchOptions{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, results)
+}
+
+func TestRebuildFTSRunsAndPreservesSearch(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.Index(
+		"# Authentication\n\nJWT token validation middleware handles auth via RS256.",
+		"auth-doc",
+		"markdown",
+		KindDurable,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, s.RebuildFTS())
+
+	// The full rebuild must not corrupt the index — search still returns hits.
+	results, err := s.SearchWithFallback("authentication", 5, SearchOptions{})
+	require.NoError(t, err)
+	assert.NotEmpty(t, results, "search should still work after FTS rebuild")
+}
+
+func TestRebuildFTSReclaimsBloatVacuumAloneCannot(t *testing.T) {
+	// Run identical index+evict churn against two stores. One reclaims with
+	// VACUUM only; the other with RebuildFTS+VACUUM. Eviction leaves FTS
+	// delete-tombstone segments whose pages are live (owned by the FTS data
+	// tables), so VACUUM alone cannot reclaim them — only a rebuild releases
+	// them. The rebuilt store must therefore end up with strictly fewer pages.
+	churn := func(s *ContentStore) {
+		for i := range 60 {
+			body := strings.Repeat(fmt.Sprintf("authentication middleware token %d ", i), 200)
+			_, err := s.Index(body, fmt.Sprintf("bloat-%d", i), "", KindDurable)
+			require.NoError(t, err)
+		}
+		for i := range 60 {
+			_, err := s.EvictByLabel(fmt.Sprintf("bloat-%d", i), false)
+			require.NoError(t, err)
+		}
+	}
+
+	vacuumOnly := newTestStore(t)
+	churn(vacuumOnly)
+	require.NoError(t, vacuumOnly.Vacuum())
+
+	rebuilt := newTestStore(t)
+	churn(rebuilt)
+	require.NoError(t, rebuilt.RebuildFTS())
+	require.NoError(t, rebuilt.Vacuum())
+
+	vacuumOnlyPages := pageCount(t, vacuumOnly)
+	rebuiltPages := pageCount(t, rebuilt)
+	t.Logf("vacuum-only pages=%d, rebuild+vacuum pages=%d", vacuumOnlyPages, rebuiltPages)
+
+	// Guard against a vacuous pass: if the churn stopped producing tombstone
+	// bloat (e.g. an FTS5 behavior change), both stores would be tiny and the
+	// comparison meaningless. The vacuum-only store must retain measurable bloat.
+	require.Greater(t, vacuumOnlyPages, int64(100),
+		"vacuum-only store should retain measurable FTS tombstone bloat")
+	assert.Less(t, rebuiltPages, vacuumOnlyPages,
+		"RebuildFTS+VACUUM should reclaim FTS tombstone pages that VACUUM alone leaves behind")
+}
+
+// pageCount returns the logical page count of the store's database. Reading via
+// the pool connection reflects VACUUM's result immediately; the on-disk file is
+// only truncated once the pool closes and checkpoints (ADR-016), which the
+// cleanup command does via its deferred Close.
+func pageCount(t *testing.T, s *ContentStore) int64 {
+	t.Helper()
+	db, err := s.getDB()
+	require.NoError(t, err)
+	var n int64
+	require.NoError(t, db.QueryRow("PRAGMA page_count").Scan(&n))
+	return n
 }
 
 func TestOptimizeFTSCounterResetsAfterTrigger(t *testing.T) {
