@@ -433,7 +433,7 @@ against the repository's **main worktree** so all worktrees share one committed 
 | `capy setup` | Configure capy for current project (Claude Code or Codex) |
 | `capy doctor` | Run diagnostics |
 | `capy which` | Print knowledge base path |
-| `capy cleanup` | Remove stale entries |
+| `capy cleanup` | Remove stale entries; `--vacuum` reclaims freelist pages, `--optimize` rebuilds FTS indexes + VACUUM to reclaim FTS tombstone bloat (ADR-029) |
 | `capy checkpoint` | Flush WAL into main DB file |
 | `capy encrypt` | Encrypt DB or rotate key |
 | `capy dbsize` | Show DB disk usage |

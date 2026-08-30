@@ -39,10 +39,26 @@ func newCleanupCmd() *cobra.Command {
 			}
 
 			vacuum, _ := cmd.Flags().GetBool("vacuum")
+			optimize, _ := cmd.Flags().GetBool("optimize")
 
 			dbPath := cfg.ResolveDBPath(projectDir)
 			st := store.NewContentStore(dbPath, cfg.DBProjectDir(projectDir), 0, cfg.Store.MaxSourceBytes)
 			defer st.Close()
+
+			// Explicit optimize without cleanup: rebuild the FTS indexes to
+			// release delete-tombstone segments, then VACUUM to reclaim the
+			// freed pages. A plain VACUUM cannot shrink these — the pages are
+			// held by the FTS5 data tables, not the freelist.
+			//
+			// The !force guard is deliberate: with --force the user asked to
+			// evict data too, so we skip this standalone path and let the run
+			// fall through to the cleanup + post-cleanup reclamation below.
+			if optimize && !force && sourceLabel == "" && kind == "" {
+				if err := reclaimFTS(st); err != nil {
+					return err
+				}
+				return nil
+			}
 
 			// Explicit vacuum without cleanup.
 			if vacuum && !force && sourceLabel == "" && kind == "" {
@@ -83,10 +99,16 @@ func newCleanupCmd() *cobra.Command {
 				return fmt.Errorf("cleanup failed: %w", err)
 			}
 
-			// Explicit --vacuum with --force: always vacuum after cleanup,
-			// regardless of freelist ratio (auto-vacuum may have already run
-			// inside Cleanup if ratio > 20%, but the user asked explicitly).
-			if vacuum && !dryRun {
+			// Explicit reclamation after cleanup. --optimize does the full
+			// FTS-rebuild + VACUUM (the only path that reclaims FTS bloat);
+			// --vacuum alone only compacts the freelist. --optimize supersedes
+			// --vacuum since it already vacuums.
+			switch {
+			case optimize && !dryRun:
+				if err := reclaimFTS(st); err != nil {
+					return err
+				}
+			case vacuum && !dryRun:
 				if err := st.Vacuum(); err != nil {
 					return fmt.Errorf("vacuum failed: %w", err)
 				}
@@ -122,7 +144,23 @@ func newCleanupCmd() *cobra.Command {
 	cmd.Flags().String("kind", "", "only clean up sources of this kind (\"ephemeral\" or \"session\")")
 	cmd.Flags().String("source", "", "evict a specific source by exact label")
 	cmd.Flags().Bool("vacuum", false, "run VACUUM to reclaim dead pages (auto-runs after cleanup when freelist > 20%%)")
+	cmd.Flags().Bool("optimize", false, "rebuild FTS indexes then VACUUM to reclaim FTS bloat that plain --vacuum cannot")
 	return cmd
+}
+
+// reclaimFTS rebuilds the FTS5 indexes and then VACUUMs, the only sequence that
+// reclaims disk pinned by accumulated FTS delete-tombstone segments (a plain
+// VACUUM leaves them because they belong to the FTS data tables, not the
+// freelist). Shared by the standalone --optimize path and the post-cleanup one.
+func reclaimFTS(st *store.ContentStore) error {
+	if err := st.RebuildFTS(); err != nil {
+		return fmt.Errorf("optimize failed: %w", err)
+	}
+	if err := st.Vacuum(); err != nil {
+		return fmt.Errorf("vacuum after optimize failed: %w", err)
+	}
+	fmt.Println("capy: optimize complete (FTS rebuilt, VACUUM reclaimed freed pages)")
+	return nil
 }
 
 // formatCleanupDetail renders per-source eviction detail, switching between

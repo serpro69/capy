@@ -485,7 +485,7 @@ capy vault rekey                     # enter the OLD passphrase when prompted
 
 Global flags: `--project-dir`, `--version`
 
-Cleanup flags: `--max-age-days` (default 30), `--dry-run` (default true), `--force`
+Cleanup flags: `--dry-run` (default true), `--force`, `--kind` (`ephemeral`/`session`), `--source <label>`, `--vacuum` (reclaim freelist pages), `--optimize` (rebuild FTS indexes + VACUUM to reclaim FTS bloat that `--vacuum` alone cannot — see [ADR-029](docs/adr/029-fts-tombstone-bloat-reclamation.md))
 
 ### Shell Completions
 

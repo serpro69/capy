@@ -86,6 +86,7 @@ Architecture Decision Records are in [docs/adr/](docs/adr/). Key ones:
 - ADR-026: Git worktrees share the main worktree's knowledge DB
 - ADR-027: The vault is the sole session store (drop `session` writes from knowledge.db)
 - ADR-028: Corpus-agnostic retrieval core + cross-corpus RRF federation
+- ADR-029: FTS5 tombstone-bloat reclamation (`cleanup --optimize`)
 
 ## Completed Features
 
