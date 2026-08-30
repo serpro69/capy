@@ -26,7 +26,6 @@ internal/
   sanitize/         Secret stripping (regex-based redaction of API keys, tokens, credentials)
   security/         Settings parsing, glob matching, command splitting, shell-escape detection
   server/           MCP server, 9 tool handlers, stats tracking, lifecycle guard, intent search
-  session/          Claude Code JSONL parsing, transcript building, chunking, sweep indexing
   sqliteutil/       Shared SQLite open/recovery: canary query, corruption classification, backup
   store/            SQLite FTS5 knowledge base: schema, indexing, search, cleanup, encryption, migration
   vault/            Session vault: verbatim archival, FTS5 search, discovery, import, cross-machine merge
