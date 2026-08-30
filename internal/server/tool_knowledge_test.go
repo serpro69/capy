@@ -446,7 +446,12 @@ func TestSearch_NoResults_HidesEphemeralFromCountSummary(t *testing.T) {
 	text := resultText(r)
 	assert.Contains(t, text, "1 durable", "count summary must include durable sources")
 	assert.NotContains(t, text, "1 ephemeral source(s) indexed", "ephemeral must NOT appear in count summary by default")
-	assert.NotContains(t, text, "session", "no session sources seeded — must not appear")
+	// No session source was seeded, so the count summary must not enumerate one.
+	// Check the count-summary token specifically ("N session") rather than the bare
+	// word "session": when the vault is disabled (no ambient CAPY_VAULT_KEY, as in
+	// CI) an empty session-scoped search legitimately appends a "Past sessions
+	// aren't searchable — set CAPY_VAULT_KEY..." hint that also contains "session".
+	assert.NotContains(t, text, "1 session", "no session sources seeded — must not appear in count summary")
 	assert.NotContains(t, text, "k8s-docs", "individual source labels must not appear")
 	assert.NotContains(t, text, "execute:shell", "individual source labels must not appear")
 
