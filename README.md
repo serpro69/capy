@@ -423,17 +423,17 @@ Two archival paths populate the vault:
   0 9 * * *  CAPY_VAULT_KEY='…' /usr/local/bin/capy vault import
   ```
 
-Import is idempotent: unchanged sessions are skipped, grown sessions are updated in place, and a smaller (likely compacted) variant never overwrites a fuller archive. Use `--dry-run` to preview, `--project <substr>` to scope, `--path <dir>` to import from a non-default location.
+Import is idempotent: unchanged sessions are skipped, grown sessions are updated in place, and a smaller (likely compacted) variant never overwrites a fuller archive. Use `--dry-run` to preview, `--project <substr>` to scope, `--source <dir>` to import from a non-default location.
 
 > **Compaction:** `/compact` is append-only — it appends a summary entry and never rewrites earlier turns — so the full pre-compaction transcript stays in the session file, and the next startup sweep or `import` still archives it verbatim. The only residual risk is *deleting* the session file before it's been swept/imported. Import often to minimize that window.
 
 ### Commands
 
-All commands live under `capy vault` and require `CAPY_VAULT_KEY`. Lookups (`show`/`restore`/`resume`/`delete`) accept a **partial UUID of 8+ characters**, git-style; an ambiguous prefix prints candidates to disambiguate.
+All commands live under `capy vault` and require `CAPY_VAULT_KEY`. A persistent `--path <vault.db>` flag targets a specific vault file, overriding `CAPY_VAULT_PATH` and the XDG default. Lookups (`show`/`restore`/`resume`/`delete`) accept a **partial UUID of 8+ characters**, git-style; an ambiguous prefix prints candidates to disambiguate.
 
 | Command                                                                               | Description                                                                                                                                                                 |
 | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `import [--path <dir>] [--project <substr>] [--dry-run]`                              | Scan and archive sessions. Mutating by default.                                                                                                                             |
+| `import [--source <dir>] [--project <substr>] [--dry-run]`                            | Scan and archive sessions. Mutating by default.                                                                                                                             |
 | `reindex`                                                                             | Rebuild the search index for sessions archived by an older indexer (reads stored blobs, not disk; rewrites only the FTS index). Run once after upgrading capy.              |
 | `list [--project <substr>] [--limit N] [--json]`                                      | List sessions, newest first (`--limit` default 50, `0` = no limit).                                                                                                         |
 | `search <query> [--raw] [--project] [--role] [--after] [--before] [--limit] [--json]` | Full-text search with snippets. Plain keywords by default; `--raw` for FTS5 `MATCH` syntax. `--role user\|assistant\|tool\|system`; `--after`/`--before` take `YYYY-MM-DD`. |
@@ -502,7 +502,7 @@ capy vault rekey                     # enter the OLD passphrase when prompted
 
 ### Storage and limits
 
-- **Location:** `$XDG_DATA_HOME/capy/vault.db` (default `~/.local/share/capy/vault.db`). Override with `CAPY_VAULT_PATH`.
+- **Location:** `$XDG_DATA_HOME/capy/vault.db` (default `~/.local/share/capy/vault.db`). Override per-invocation with `--path`, or environment-wide with `CAPY_VAULT_PATH`.
 - **Encrypted at rest** with `CAPY_VAULT_KEY` (sqlite3mc / SQLCipher-compatible, same as the knowledge store). A different key cannot open the DB.
 - **Archives forever** — no TTL, no automatic cleanup. Reclaim space with `capy vault delete`. Expect ~50 MB/month for an active user; `stats` shows current size.
 - **Verbatim, not redacted.** `vault.db` concentrates every secret/credential/PII that appeared in any archived session, and `restore` writes them back as plaintext. This mirrors data that already lives unencrypted under `~/.claude/projects/` on the same host — but treat `vault.db` and its key accordingly. (Search snippets _are_ secret-stripped; the stored blobs are not.) A redacted-export pipeline is deferred to a future version.
@@ -512,7 +512,7 @@ capy vault rekey                     # enter the OLD passphrase when prompted
 | Variable            | Purpose                                                                           |
 | ------------------- | --------------------------------------------------------------------------------- |
 | `CAPY_VAULT_KEY`       | **Required.** Encryption passphrase for `vault.db` (separate from `CAPY_DB_KEY`).                                       |
-| `CAPY_VAULT_PATH`      | Override the vault database path.                                                                                      |
+| `CAPY_VAULT_PATH`      | Override the vault database path (the `--path` flag takes precedence per-invocation).                                  |
 | `CAPY_VAULT_SWEEP_ALL` | When set (any non-empty value), the MCP server startup sweep archives **all** projects, not just the current one.       |
 | `CAPY_VAULT_MERGE_KEY` | Default source-vault passphrase for `capy vault merge` (overridden by `--key`, falls back to `CAPY_VAULT_KEY`).         |
 | `CAPY_VAULT_NO_COMPRESS` | When set, store new blobs uncompressed (`encoding='raw'`); `capy vault compact` refuses to run. For debugging/benchmarking. |

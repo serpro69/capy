@@ -44,11 +44,18 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 			if _, err := vault.RequireVaultKey(); err != nil {
 				return err
 			}
-			env.dbPath = vault.VaultDBPath()
+			// --path overrides the CAPY_VAULT_PATH env / XDG default resolved by
+			// vault.VaultDBPath(). The flag is inherited by every subcommand.
+			if p, _ := cmd.Flags().GetString("path"); p != "" {
+				env.dbPath = p
+			} else {
+				env.dbPath = vault.VaultDBPath()
+			}
 			return nil
 		},
 	}
 
+	cmd.PersistentFlags().String("path", "", "vault DB file (default: CAPY_VAULT_PATH, else XDG data dir)")
 	cmd.PersistentFlags().Bool("tui", false, "interactive terminal UI (list, search, show)")
 
 	cmd.AddCommand(
@@ -75,7 +82,7 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 
 func newVaultImportCmd(env *vaultEnv) *cobra.Command {
 	var (
-		path    string
+		source  string
 		project string
 		dryRun  bool
 	)
@@ -88,7 +95,7 @@ The MCP server's startup sweep only archives the current project. Run
 'capy vault import' periodically (e.g. via cron) to capture sessions across
 all projects before Claude Code's 30-day cleanup removes them.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sessions, err := vault.DiscoverSessions(path)
+			sessions, err := vault.DiscoverSessions(source)
 			if err != nil {
 				return fmt.Errorf("discovering sessions: %w", err)
 			}
@@ -113,7 +120,7 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&path, "path", "", "source directory (default: Claude projects dir)")
+	cmd.Flags().StringVar(&source, "source", "", "source directory (default: Claude projects dir)")
 	cmd.Flags().StringVar(&project, "project", "", "only import sessions whose project dir matches this substring")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview what would be imported without writing")
 	return cmd
