@@ -16,7 +16,7 @@ import (
 const testVaultKey = "test-vault-cli-key-at-least-32-characters!!"
 
 // setupVaultEnv points the vault at a temp DB and writes one fixture session
-// under a single project directory. It returns the project root (for --path) and
+// under a single project directory. It returns the project root (for --source) and
 // the session UUID. Env vars flow to the `go run` subprocess via os.Environ().
 func setupVaultEnv(t *testing.T) (root, uuid string) {
 	t.Helper()
@@ -42,7 +42,7 @@ func TestVaultCommands_EndToEnd(t *testing.T) {
 	root, uuid := setupVaultEnv(t)
 	short := uuid[:8]
 
-	stdout, stderr, code := capy(t, "vault", "import", "--path", root)
+	stdout, stderr, code := capy(t, "vault", "import", "--source", root)
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "imported 1")
 
@@ -78,9 +78,33 @@ func TestVaultCommands_EndToEnd(t *testing.T) {
 	assert.Contains(t, stdout, "WAL flushed")
 
 	// Re-import of an unchanged session is idempotent.
-	stdout, _, code = capy(t, "vault", "import", "--path", root)
+	stdout, _, code = capy(t, "vault", "import", "--source", root)
 	require.Equal(t, 0, code)
 	assert.Contains(t, stdout, "skipped 1")
+}
+
+// TestVaultPathFlag verifies the persistent --path flag overrides CAPY_VAULT_PATH:
+// the import lands in the --path DB, and a subsequent --path list finds it there
+// while the (untouched) env-path vault stays empty.
+func TestVaultPathFlag(t *testing.T) {
+	root, uuid := setupVaultEnv(t) // sets CAPY_VAULT_PATH to <dir>/vault.db
+	short := uuid[:8]
+
+	altDB := filepath.Join(t.TempDir(), "alt-vault.db")
+
+	stdout, stderr, code := capy(t, "vault", "import", "--source", root, "--path", altDB)
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "imported 1")
+
+	// The session is in the --path DB...
+	stdout, _, code = capy(t, "vault", "list", "--path", altDB)
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, short)
+
+	// ...and not in the default (CAPY_VAULT_PATH) vault, which was never written.
+	stdout, _, code = capy(t, "vault", "list")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "no sessions archived")
 }
 
 func TestVaultRequiresKey(t *testing.T) {
@@ -98,7 +122,7 @@ func TestVaultRequiresKey(t *testing.T) {
 // the internal/vault/tui package tests; it can't run here without a TTY.
 func TestVaultTUINotSupportedOnDestructive(t *testing.T) {
 	root, uuid := setupVaultEnv(t)
-	_, stderr, code := capy(t, "vault", "import", "--path", root)
+	_, stderr, code := capy(t, "vault", "import", "--source", root)
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 
 	for _, sub := range []string{"restore", "resume", "delete"} {
@@ -123,7 +147,7 @@ func TestVaultRekeyNoVault(t *testing.T) {
 
 // setupVaultWithSidecar writes a fixture session that also has a subagent
 // sidecar so restore exercises vault_files. Returns the project root (for
-// --path), the uuid, and the raw main + sidecar bytes for verbatim diffing.
+// --source), the uuid, and the raw main + sidecar bytes for verbatim diffing.
 func setupVaultWithSidecar(t *testing.T) (root, uuid string, mainBytes, sidecarBytes []byte) {
 	t.Helper()
 	dir := t.TempDir()
@@ -152,7 +176,7 @@ func TestVaultRestoreToOutputDir(t *testing.T) {
 	root, uuid, mainBytes, sidecarBytes := setupVaultWithSidecar(t)
 	short := uuid[:8]
 
-	_, stderr, code := capy(t, "vault", "import", "--path", root)
+	_, stderr, code := capy(t, "vault", "import", "--source", root)
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 
 	out := t.TempDir()
@@ -176,7 +200,7 @@ func TestVaultRestoreDefaultLocationHonorsConfigDir(t *testing.T) {
 	root, uuid, mainBytes, _ := setupVaultWithSidecar(t)
 	short := uuid[:8]
 
-	_, stderr, code := capy(t, "vault", "import", "--path", root)
+	_, stderr, code := capy(t, "vault", "import", "--source", root)
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 
 	cfg := t.TempDir()
@@ -193,7 +217,7 @@ func TestVaultDeleteWithYes(t *testing.T) {
 	root, uuid := setupVaultEnv(t)
 	short := uuid[:8]
 
-	_, stderr, code := capy(t, "vault", "import", "--path", root)
+	_, stderr, code := capy(t, "vault", "import", "--source", root)
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 
 	stdout, stderr, code := capy(t, "vault", "delete", short, "--yes")
@@ -216,7 +240,7 @@ func TestVaultDeleteAbortsWithoutConfirmation(t *testing.T) {
 	root, uuid := setupVaultEnv(t)
 	short := uuid[:8]
 
-	_, stderr, code := capy(t, "vault", "import", "--path", root)
+	_, stderr, code := capy(t, "vault", "import", "--source", root)
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 
 	stdout, _, code := capy(t, "vault", "delete", short)
@@ -245,7 +269,7 @@ func TestVaultResumeLaunchesClaude(t *testing.T) {
 	}
 	root, uuid := setupVaultEnv(t)
 	short := uuid[:8]
-	_, stderr, code := capy(t, "vault", "import", "--path", root)
+	_, stderr, code := capy(t, "vault", "import", "--source", root)
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // restore lands here, not real ~/.claude
@@ -281,7 +305,7 @@ func TestVaultResumePropagatesExitCode(t *testing.T) {
 		t.Fatalf("build capy: %v\n%s", err, out)
 	}
 
-	imp := exec.Command(bin, "vault", "import", "--path", root)
+	imp := exec.Command(bin, "vault", "import", "--source", root)
 	imp.Env = os.Environ()
 	require.NoError(t, imp.Run(), "import via built binary")
 
@@ -327,12 +351,12 @@ func TestVaultMerge_EndToEnd(t *testing.T) {
 
 	// Build the source vault.
 	t.Setenv("CAPY_VAULT_PATH", srcVault)
-	_, stderr, code := capy(t, "vault", "import", "--path", srcProj)
+	_, stderr, code := capy(t, "vault", "import", "--source", srcProj)
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 
 	// Build the destination vault.
 	t.Setenv("CAPY_VAULT_PATH", destVault)
-	_, stderr, code = capy(t, "vault", "import", "--path", destProj)
+	_, stderr, code = capy(t, "vault", "import", "--source", destProj)
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 
 	// Dry run writes nothing.
