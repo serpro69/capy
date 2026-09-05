@@ -76,7 +76,7 @@ func TestVaultStore_CreateAndSchema(t *testing.T) {
 	db, err := s.getDB(context.Background())
 	require.NoError(t, err)
 
-	for _, name := range []string{"vault_sessions", "vault_files", "vault_fts", "vault_meta", "vault_migrations"} {
+	for _, name := range []string{"vault_sessions", "vault_session_names", "vault_files", "vault_fts", "vault_meta", "vault_migrations"} {
 		var got string
 		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&got)
 		require.NoErrorf(t, err, "table %s should exist", name)
@@ -86,6 +86,18 @@ func TestVaultStore_CreateAndSchema(t *testing.T) {
 	var idx string
 	err = db.QueryRow(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, "idx_sessions_end_time").Scan(&idx)
 	require.NoError(t, err, "idx_sessions_end_time should exist")
+
+	rows, err := db.Query(`PRAGMA foreign_key_list(vault_session_names)`)
+	require.NoError(t, err)
+	defer rows.Close()
+	require.True(t, rows.Next(), "session names must declare a parent foreign key")
+	var id, seq int
+	var table, from, to, onUpdate, onDelete, match string
+	require.NoError(t, rows.Scan(&id, &seq, &table, &from, &to, &onUpdate, &onDelete, &match))
+	assert.Equal(t, "vault_sessions", table)
+	assert.Equal(t, "session_uuid", from)
+	assert.Equal(t, "uuid", to)
+	assert.Equal(t, "CASCADE", onDelete)
 }
 
 func TestVaultStore_EncryptedAtRest(t *testing.T) {
@@ -186,6 +198,9 @@ func TestVaultStore_CascadeDelete(t *testing.T) {
 	s := newTestVault(t)
 	uuid := "bbbbbbbb-1111-2222-3333-444444444444"
 	require.NoError(t, s.InsertSession(context.Background(), sampleRecord(uuid)))
+	_, err := s.renameSessionAt(context.Background(), uuid, RenameOptions{Name: "Custom name"},
+		time.Unix(0, 1), "machine-name")
+	require.NoError(t, err)
 
 	db, err := s.getDB(context.Background())
 	require.NoError(t, err)
@@ -203,6 +218,8 @@ func TestVaultStore_CascadeDelete(t *testing.T) {
 
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_files WHERE session_uuid=?`, uuid).Scan(&fileCount))
 	assert.Equal(t, 0, fileCount, "vault_files should cascade-delete with the session")
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_session_names WHERE session_uuid=?`, uuid).Scan(&fileCount))
+	assert.Equal(t, 0, fileCount, "vault_session_names should cascade-delete with the session")
 
 	results, err := s.Search(context.Background(), SearchOptions{Query: "brontosaurus"})
 	require.NoError(t, err)
@@ -359,6 +376,21 @@ func TestVaultStore_GetSessionPartialMatch(t *testing.T) {
 	// A non-matching 8+ char prefix is a clean not-found.
 	_, err = s.GetSession(context.Background(), "eeeeeeee")
 	assert.True(t, errors.Is(err, ErrSessionNotFound))
+
+	// LIKE metacharacters are literal session-ID bytes, not wildcards.
+	tests := []struct {
+		name   string
+		prefix string
+	}{
+		{name: "underscore", prefix: "________"},
+		{name: "percent", prefix: "%%%%%%%%"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.GetSession(context.Background(), tt.prefix)
+			assert.ErrorIs(t, err, ErrSessionNotFound)
+		})
+	}
 }
 
 // TestVaultStore_RespectsCanceledContext proves the Task-4 ctx threading actually
