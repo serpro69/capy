@@ -36,6 +36,7 @@
   - [Setup](#setup-1)
   - [Initial encryption](#initial-encryption)
   - [Cross-machine sync](#cross-machine-sync)
+  - [Keeping the DB out of your project repo (recommended)](#keeping-the-db-out-of-your-project-repo-recommended)
   - [Key rotation](#key-rotation)
   - [Passphrase recommendations](#passphrase-recommendations)
 - [Session Vault](#session-vault)
@@ -316,6 +317,57 @@ The pre-commit hook rejects unencrypted databases automatically — run `capy en
 > CLI commands (`capy sweep`, `cleanup`, `checkpoint`, `dbsize`, `which`) run from a
 > worktree operate on the main worktree's DB too. Absolute paths and the XDG default
 > are unaffected. See [ADR-026](docs/adr/026-worktree-shared-knowledge-db.md).
+
+### Keeping the DB out of your project repo (recommended)
+
+Committing `knowledge.db` directly into your project (as above) works, but every
+`capy checkpoint` + commit appends a **fresh full binary blob** to that repo's
+history — encrypted SQLite doesn't delta-compress, so the DB never diffs cleanly.
+Over time this bloats the repo and slows clones for everyone who pulls it, even
+teammates who don't use capy.
+
+A cleaner approach — field-tested in capy's own repo — keeps the DB in a
+**dedicated private repo** and symlinks it into your project. The project repo
+never grows; the DB's history lives (and can be pruned) in its own repo.
+
+```bash
+# 1. One-time: a private repo to hold your capy databases across projects.
+git init ~/capy-db && mkdir -p ~/capy-db/myproject
+
+# 2. In your project, point store.path at the usual project-local location.
+#    .capy.toml
+#    [store]
+#    path = ".capy/knowledge.db"
+
+# 3. Move the existing DB into the private repo and symlink it back.
+capy checkpoint                                        # flush WAL first
+mv .capy/knowledge.db ~/capy-db/myproject/knowledge.db
+ln -s ~/capy-db/myproject/knowledge.db .capy/knowledge.db
+```
+
+capy resolves the symlink transparently — `store.path` is joined, not
+symlink-expanded, so SQLite opens the real file and creates its WAL/SHM sidecars
+in `~/capy-db/`, **not** in your project. The project repo ignores the symlink
+automatically (`.capy/**` is gitignored), so `git status` there stays clean.
+
+Commit and sync from the private repo instead:
+
+```bash
+capy checkpoint                          # from anywhere in the project
+git -C ~/capy-db add myproject/knowledge.db
+git -C ~/capy-db commit -m "Update myproject knowledge base"
+git -C ~/capy-db push
+```
+
+On another machine, clone the private repo to the same path and re-create the
+symlink (the symlink itself isn't tracked by the project repo). The
+`store.path` config committed to your project ties it all together.
+
+> **Why a symlink and not just an absolute `store.path`?** An absolute path also
+> keeps the DB outside the repo, but a project-relative `.capy/knowledge.db` is
+> what enables the git-worktree sharing above and keeps the config portable across
+> machines and checkouts. The symlink gives you both: relative path in-repo, DB
+> body out-of-repo.
 
 ### Key rotation
 
