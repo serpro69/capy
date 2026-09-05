@@ -26,7 +26,7 @@
 
 ## Task 2: Expose rename, clear, and name lookup through the CLI
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Can run in parallel with:** Task 3
@@ -34,10 +34,10 @@
 
 ### Subtasks
 
-- [ ] 2.1 Add and register `capy vault rename <session-id> <name>` plus mutually exclusive `--clear` handling in `cmd/capy/vault.go`, reusing existing lookup errors and rejecting `--tui`
-- [ ] 2.2 Add literal `ListOptions` name filtering (Go-side Unicode case folding per impl §2.3) and expose it as `vault list --name`; combine it with project filtering, cover a non-ASCII fixture, and return effective titles in table/JSON output
-- [ ] 2.3 Update `Search` and `SearchChunks` to resolve effective result titles, then render those titles in ordinary CLI transcript-search rows without making name-only text an FTS match
-- [ ] 2.4 Extend `cmd/capy/vault_test.go` and `cmd/capy/vault_unit_test.go` for rename, replace, clear, validation, lookup errors, name filtering, and byte/hash preservation
+- [x] 2.1 Add and register `capy vault rename <session-id> <name>` plus mutually exclusive `--clear` handling in `cmd/capy/vault.go`, reusing existing lookup errors and rejecting `--tui`
+- [x] 2.2 Add literal `ListOptions` name filtering (Go-side Unicode case folding per impl §2.3) and expose it as `vault list --name`; combine it with project filtering, cover a non-ASCII fixture, and return effective titles in table/JSON output
+- [x] 2.3 Update `Search` and `SearchChunks` to resolve effective result titles, then render those titles in ordinary CLI transcript-search rows without making name-only text an FTS match
+- [x] 2.4 Extend `cmd/capy/vault_test.go` and `cmd/capy/vault_unit_test.go` for rename, replace, clear, validation, lookup errors, name filtering, and byte/hash preservation
 
 ## Task 3: Merge name state independently from transcript content
 
