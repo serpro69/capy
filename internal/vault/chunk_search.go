@@ -99,9 +99,12 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 		// diversification caps hits per SourceID, so per-source caps become
 		// per-session caps — the vault analogue of knowledge.db's per-source
 		// diversification.
+		// vault_session_names is joined for display-title resolution only — the
+		// name text is not in either chunk FTS table, so it never matches.
 		SelectColumns: "c.session_uuid, c.title, c.content_text, s.rowid, " +
-			"c.subagent_id, c.first_line_index, s.title, s.project_path, s.end_time",
-		Join:         "JOIN vault_sessions s ON s.uuid = c.session_uuid",
+			"c.subagent_id, c.first_line_index, s.title, n.custom_title, s.project_path, s.end_time",
+		Join: "JOIN vault_sessions s ON s.uuid = c.session_uuid " +
+			"LEFT JOIN vault_session_names n ON n.session_uuid = s.uuid",
 		TitleWeight:  chunkTitleWeight,
 		FilterSQL:    filter.String(),
 		FilterParams: params,
@@ -150,16 +153,16 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 func scanChunkSearchRow(rows *sql.Rows) (retrieval.SearchResult, error) {
 	var r retrieval.SearchResult
 	var meta chunkMeta
-	var sessionTitle, endTime sql.NullString
+	var sessionTitle, customTitle, endTime sql.NullString
 	if err := rows.Scan(
 		&r.Label, &r.Title, &r.Content, &r.SourceID,
 		&meta.subagentID, &meta.firstLineIndex,
-		&sessionTitle, &meta.projectPath, &endTime,
+		&sessionTitle, &customTitle, &meta.projectPath, &endTime,
 		&r.Highlighted, &r.Rank,
 	); err != nil {
 		return retrieval.SearchResult{}, err
 	}
-	meta.sessionTitle = sessionTitle.String
+	meta.sessionTitle = effectiveSearchTitle(sessionTitle, customTitle)
 	meta.endTime = parseTime(endTime)
 	r.ContentType = "session"
 	r.Meta = meta
