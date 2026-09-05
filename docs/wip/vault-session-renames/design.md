@@ -65,7 +65,7 @@ Migration `0005_session_names` creates `vault_session_names` for both fresh and 
 | Column | Contract |
 |---|---|
 | `session_uuid` | Primary key; foreign key to `vault_sessions(uuid)` with `ON DELETE CASCADE` |
-| `custom_title` | Nullable text; non-null is the active override, null is a clear tombstone |
+| `custom_title` | Nullable text; non-null is the active override, null is a clear tombstone. Never empty by construction: validation rejects an empty rename and merge normalizes an empty source value to a clear tombstone |
 | `renamed_at_ns` | UTC Unix-nanosecond timestamp used for latest-wins reconciliation |
 | `machine_id` | Stable writer identity and equal-timestamp tie-breaker |
 
@@ -79,14 +79,15 @@ Add `capy vault rename <session-id> <name>` and `capy vault rename <session-id> 
 
 The session ID follows existing lookup behavior: at least eight UUID characters, `ErrSessionNotFound` when absent, and `AmbiguousUUIDError` with effective-title candidates when non-unique.
 
-Name normalization and validation are shared by CLI and TUI:
+Name normalization and validation are shared by CLI and TUI and apply strictly in this order:
 
-- Trim surrounding whitespace.
-- Apply `sanitize.StripSecrets` before persistence because names are returned through CLI and MCP surfaces.
-- Reject an empty post-normalization value for rename; clear is the explicit empty-state operation.
-- Reject terminal control characters.
-- Reject names longer than 120 Unicode code points rather than truncating silently.
-- Permit duplicate names; UUID remains the mutation identity.
+1. Trim surrounding whitespace.
+2. Apply `sanitize.StripSecrets` because names are returned through CLI and MCP surfaces. A name that itself matches a recognized credential pattern is therefore stored redacted, not verbatim — deliberate; README must note this UX surprise.
+3. Reject an empty post-normalization value for rename; clear is the explicit empty-state operation.
+4. Reject terminal control characters.
+5. Reject names longer than 120 Unicode code points — measured after trimming and secret-stripping, since redaction changes length — rather than truncating silently.
+
+Duplicate names are permitted; UUID remains the mutation identity.
 
 A local operation writes `(custom_title, renamed_at_ns, machine_id)` atomically. Its timestamp is `max(current UTC UnixNano, stored renamed_at_ns + 1)`, failing loudly on impossible integer overflow. This makes an explicit local action newer than the state it edits even if the wall clock moved backward. The store owns resolution and mutation in one immediate transaction so concurrent delete/rename cannot leave orphaned state.
 
@@ -101,15 +102,17 @@ Every session-metadata read left-joins `vault_session_names` and resolves effect
 
 CLI and TUI search rows currently carry `SearchResult.Title` but do not consistently render it. They must render a width-bounded effective title as part of this feature; matching remains based on transcript/chunk FTS only.
 
-`ListOptions` gains a name filter, exposed as `capy vault list --name <substring>`. It performs a case-insensitive literal substring comparison over the effective title. `%`, `_`, quotes, and FTS operators are ordinary characters, not query syntax. Project and name predicates combine with AND, newest-first ordering is unchanged, and limit is applied after both predicates.
+`ListOptions` gains a name filter, exposed as `capy vault list --name <substring>`. It performs a case-insensitive literal substring comparison over the effective title. Case folding is Unicode-aware and happens in Go (`strings.ToLower` on both needle and title) over the resolved effective title — SQLite's built-in `lower()`/`NOCASE` folds ASCII only, which would silently mismatch the non-ASCII names the contract allows. The project predicate stays in SQL; the name predicate and the limit are applied in Go after title resolution, covered by the bounded table scan already accepted in Assumption 6. `%`, `_`, quotes, and FTS operators are ordinary characters, not query syntax. Project and name predicates combine with AND and newest-first ordering is unchanged.
 
-The TUI's `f` filter is broadened from project-only filtering to session filtering across effective title, project path, and UUID, preserving `/` for transcript FTS search. This makes custom names discoverable in the interactive browser without conflating them with message matches.
+The TUI's `f` filter is broadened from project-only filtering to session filtering across effective title, project path, and UUID, using the same Unicode-folding matcher as `--name` and preserving `/` for transcript FTS search. This makes custom names discoverable in the interactive browser without conflating them with message matches.
 
 ## TUI Interaction
 
-Use `e` for “edit name.” `r` and `R` remain the established restore/resume pair, while `n` is already next-marker navigation in the viewer.
+Use `e` for “edit name” where ordinary characters are not routed to a text input: the list in navigation state and the open viewer session. `r` and `R` remain the established restore/resume pair, while `n` is already next-marker navigation in the viewer.
 
-`e` is available for the selected list session, the session owning the selected search result, and the open viewer session. It opens a focused single-line input prefilled with the effective title and labeled `name (empty clears)`. `Enter` submits; `Esc` cancels. Submitting an empty input writes a clear tombstone.
+Search mode is different: its query input is always focused and every ordinary character edits the query, so binding bare `e` would make that letter untypeable. Search mode therefore binds `ctrl+e` for the session owning the selected result. Likewise, while the list's `f` filter input is active, `e` types into the filter; the rename binding applies only in navigation state.
+
+The editor opens a focused single-line input prefilled with the effective title and labeled `name (empty clears)`. `Enter` submits; `Esc` cancels. Submitting an empty input writes a clear tombstone.
 
 The write runs as a Bubble Tea command. While pending, duplicate submissions are ignored. On success, the current mode reloads authoritative state:
 
@@ -117,7 +120,7 @@ The write runs as a Bubble Tea command. While pending, duplicate submissions are
 - Search mode reruns the current FTS query so all hits for the session display the new title.
 - Viewer mode reloads session metadata without rewriting or reparsing the archived transcript.
 
-A successful operation closes the editor and shows a transient confirmation. Validation or DB failures leave the editor open with its text intact and show an error status. Help text in all three modes advertises `e rename`.
+A successful operation closes the editor and shows a transient confirmation. Validation or DB failures leave the editor open with its text intact and show an error status. Help text in all three modes advertises the rename binding (`e rename` in list/viewer, `ctrl+e rename` in search).
 
 ## Import, Reindex, and Maintenance
 
@@ -129,13 +132,17 @@ Deleting a session cascades its name row. Restoring or resuming remains byte-fai
 
 ## Cross-Machine Merge
 
-`MergeFrom` feature-detects the source table because source vaults are deliberately opened without migration. A legacy source contributes no name state.
+`MergeFrom` feature-detects the source table because source vaults are deliberately opened without migration. A legacy source contributes no name state. The reverse direction is an accepted, non-destructive limitation: an older capy binary merging from a current vault does not read `vault_session_names` and silently carries no name state — destination names are untouched, and re-running the merge with an upgraded binary carries them.
 
-For a current source, compare `(renamed_at_ns, machine_id)` lexicographically. The source state wins only when its tuple is greater. A winning null title clears the destination. The comparison is independent of content hash and size: a newer name can merge when transcripts match or when the source transcript loses the existing larger-wins comparison.
+For a current source, compare `(renamed_at_ns, machine_id)` lexicographically. The source state wins only when its tuple is greater; a destination without a name row compares lower than any source tuple, so a named or cleared source always wins there. A winning null title clears the destination. When two distinct states carry an equal tuple — possible because machine identity can be duplicated via `CAPY_MACHINE_ID` or a dotfile-synced `~/.config/capy/machine-id` — a deterministic value tie-break completes the total order: a non-null title beats a null tombstone, and two non-null titles compare bytewise with the greater winning. Convergence therefore never depends on machine IDs being unique.
+
+A winning source state is written **verbatim** — `(custom_title, renamed_at_ns, machine_id)` exactly as stored in the source. The monotonic `max(now, stored + 1)` bump applies to local rename/clear operations only; re-stamping during merge would break idempotence and cross-vault convergence. A source `custom_title` that is empty or whitespace-only (which no supported writer produces) is normalized to a clear tombstone, preserving the NULL-or-non-empty invariant.
+
+The comparison is independent of content hash and size, and name reconciliation runs for every source session whose UUID exists in the destination — including source sessions the zero-message exclusion guard drops and transcripts skipped as same-hash or smaller. An excluded or empty source session with no destination row contributes no name: there is no parent row for the foreign key.
 
 A new source session and its optional name are inserted in one transaction to satisfy the foreign key. Existing-session name reconciliation can proceed without rewriting the transcript. Name-only changes report `updated`; identical/older states report `skipped`. Dry-run performs the same comparison and reports the prospective effective title. Repeating the merge is idempotent.
 
-If timestamps match, machine ID produces a direction-independent winner for normal cross-machine divergence. “Latest” remains latest recorded wall-clock time, not a causal guarantee.
+“Latest” remains latest recorded wall-clock time, not a causal guarantee.
 
 ## Failure, Concurrency, and Security
 
@@ -147,18 +154,18 @@ A merge write failure follows current per-session failure handling: record an er
 
 ## Verification Strategy
 
-Verification covers schema migration and cascade behavior; store rename/replace/clear and effective-title resolution; name filtering; CLI end-to-end behavior; TUI interaction in list/search/view; and a merge matrix spanning newer, older, tie, tombstone, matching/smaller transcript, new session, legacy source, dry-run, and repeated merge cases.
+Verification covers schema migration and cascade behavior; store rename/replace/clear and effective-title resolution; name filtering (including non-ASCII case folding); CLI end-to-end behavior; TUI interaction in list/search/view (including that `e` remains typeable in the search query and list filter); name retention through transcript replacement, re-import, reindex, compact, and backup-API rekey; and a merge matrix spanning newer, older, tie, equal-tuple value tie-break, tombstone, matching/smaller transcript, zero-message source with populated destination, new session, legacy source, dry-run, and repeated merge cases. Idempotence assertions must check the stored tuple equals the source tuple after a winning merge, so accidental re-stamping cannot pass.
 
-Tests must assert archived transcript bytes and content hashes are unchanged after rename/clear. Race coverage exercises rename/delete and rename/merge. The complete suite runs with `CAPY_DB_KEY` and `CAPY_VAULT_KEY` plus `-tags fts5`. Retrieval-quality benchmarks are not required because the feature deliberately does not change indexed content or ranking.
+Tests must assert archived transcript bytes and content hashes are unchanged after rename/clear. Race coverage exercises rename/delete and rename/merge with deterministic winner assertions. The complete suite runs with `CAPY_DB_KEY` and `CAPY_VAULT_KEY` plus `-tags fts5`. Ranking and indexed content are expected unchanged, but `Search`/`SearchChunks` SQL changes, so repository benchmark policy applies: run `make bench-quality` and compare against the base branch with `make bench-compare` to prove no regression.
 
 ## Assumptions
 
 1. Session UUID remains the stable identity across copied and merged vaults.
-2. A developer's machine clocks are sufficiently aligned for wall-clock latest-wins semantics; machine ID resolves equal timestamps across machines.
-3. A same-machine, same-nanosecond divergent rename is not produced by normal operation.
+2. “Latest wins” means the latest recorded wall-clock timestamp: a machine with a forward-skewed clock wins conflicts until other machines' clocks pass its timestamps. This is the accepted semantic, not a clock-synchronization requirement.
+3. Machine IDs may collide (`CAPY_MACHINE_ID` override, dotfile-synced config); equal-tuple divergence is resolved by the deterministic value tie-break rather than assumed away.
 4. Duplicate human-readable names are acceptable because UUID remains the mutation key.
 5. The automatic schema migration is acceptable for existing encrypted vaults and will receive normal human review.
-6. A table scan over one effective-title value per session is acceptable at expected single-user vault sizes.
+6. A table scan resolving one effective-title value per candidate session is acceptable at expected single-user vault sizes: on the order of thousands of sessions, with interactive latency required to hold at 10k sessions. If vaults grow past that, name filtering becomes a benchmark-backed follow-up.
 
 ## Not Doing
 
