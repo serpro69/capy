@@ -36,6 +36,17 @@ func effectiveTitle(imported string, name *SessionName) string {
 	return imported
 }
 
+// ContainsFold reports whether s contains substr under Unicode simple
+// lowercasing (strings.ToLower on both sides — NOT full Unicode case folding:
+// e.g. Turkish dotless-i and Greek final sigma keep their simple mappings).
+// It is the shared session-name matcher behind `vault list --name` and the TUI
+// session filter — SQLite's lower()/NOCASE folds ASCII only, which would
+// silently mismatch the non-ASCII names the rename contract allows. Both
+// operands are literals: no wildcard or FTS syntax is interpreted.
+func ContainsFold(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
+
 // NormalizeSessionName applies the shared CLI/TUI storage contract in order:
 // trim, redact recognized secrets, reject empty/invalid/control-bearing values,
 // then enforce the Unicode code-point limit.

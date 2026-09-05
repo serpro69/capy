@@ -226,6 +226,155 @@ func TestVaultStore_RenameTimestampOverflow(t *testing.T) {
 	assert.Equal(t, "Old", got.EffectiveTitle(), "overflow must leave existing state unchanged")
 }
 
+func TestContainsFold(t *testing.T) {
+	tests := []struct {
+		name   string
+		s      string
+		substr string
+		want   bool
+	}{
+		{name: "ascii mixed case", s: "Release Notes", substr: "release", want: true},
+		{name: "non-ascii folding", s: "Café Deploy", substr: "CAFÉ", want: true},
+		{name: "needle folds too", s: "CAFÉ DEPLOY", substr: "café", want: true},
+		{name: "literal percent", s: "50% done", substr: "%", want: true},
+		{name: "no match", s: "Release Notes", substr: "deploy", want: false},
+		{name: "wildcards are literal", s: "abc", substr: "a%c", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ContainsFold(tt.s, tt.substr))
+		})
+	}
+}
+
+func TestVaultStore_ListSessionsNameFilter(t *testing.T) {
+	s := newTestVault(t)
+	ctx := context.Background()
+
+	// Newest → oldest: alpha keeps its imported title; beta and gamma get custom
+	// names sharing a foldable token so limit-after-filter is observable.
+	const (
+		alpha = "aaaa0001-1111-2222-3333-444444444444"
+		beta  = "bbbb0002-1111-2222-3333-444444444444"
+		gamma = "cccc0003-1111-2222-3333-444444444444"
+	)
+	for i, fixture := range []struct {
+		uuid    string
+		project string
+	}{
+		{alpha, "/home/user/alpha"},
+		{beta, "/home/user/beta"},
+		{gamma, "/home/user/gamma"},
+	} {
+		rec := sampleRecord(fixture.uuid)
+		rec.Session.ProjectPath = fixture.project
+		rec.Session.EndTime = time.Date(2026, 5, 1, 13-i, 0, 0, 0, time.UTC)
+		require.NoError(t, s.InsertSession(ctx, rec))
+	}
+	_, err := s.renameSessionAt(ctx, beta, RenameOptions{Name: `Shared CAFÉ deploy % _ "notes"`}, time.Unix(0, 1), "m")
+	require.NoError(t, err)
+	_, err = s.renameSessionAt(ctx, gamma, RenameOptions{Name: "shared café target"}, time.Unix(0, 2), "m")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name string
+		opts ListOptions
+		want []string // expected UUIDs, newest first
+	}{
+		{name: "folded non-ascii needle", opts: ListOptions{Name: "café"}, want: []string{beta, gamma}},
+		{name: "mixed case substring", opts: ListOptions{Name: "Café Target"}, want: []string{gamma}},
+		{name: "literal percent", opts: ListOptions{Name: "%"}, want: []string{beta}},
+		{name: "literal underscore", opts: ListOptions{Name: "_"}, want: []string{beta}},
+		{name: "literal quotes", opts: ListOptions{Name: `"notes"`}, want: []string{beta}},
+		{name: "imported title fallback", opts: ListOptions{Name: "sample"}, want: []string{alpha}},
+		{name: "project and name combine with AND", opts: ListOptions{Project: "beta", Name: "shared"}, want: []string{beta}},
+		{name: "no match", opts: ListOptions{Name: "zzz"}, want: nil},
+		// alpha is the newest session overall but does not match: a SQL-side
+		// LIMIT 1 would fetch only alpha and return nothing.
+		{name: "limit applies after the name predicate", opts: ListOptions{Name: "shared", Limit: 1}, want: []string{beta}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := s.ListSessions(ctx, tt.opts)
+			require.NoError(t, err)
+			uuids := make([]string, 0, len(got))
+			for _, sess := range got {
+				uuids = append(uuids, sess.UUID)
+			}
+			if tt.want == nil {
+				assert.Empty(t, uuids)
+				return
+			}
+			assert.Equal(t, tt.want, uuids)
+		})
+	}
+}
+
+func TestVaultStore_SearchResolvesEffectiveTitles(t *testing.T) {
+	s := newTestVault(t)
+	ctx := context.Background()
+	uuid := "abab0001-1111-2222-3333-444444444444"
+	require.NoError(t, s.InsertSession(ctx, sampleRecord(uuid)))
+
+	before, err := s.Search(ctx, SearchOptions{Query: "brontosaurus"})
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+	assert.Equal(t, "Sample session", before[0].Title)
+
+	_, err = s.renameSessionAt(ctx, uuid, RenameOptions{Name: "Custom search label"}, time.Unix(0, 1), "m")
+	require.NoError(t, err)
+
+	after, err := s.Search(ctx, SearchOptions{Query: "brontosaurus"})
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	assert.Equal(t, "Custom search label", after[0].Title)
+	// Only the display title changes; matching, anchors, and snippet are untouched.
+	got := after[0]
+	got.Title = before[0].Title
+	assert.Equal(t, before[0], got)
+
+	// The name itself never becomes an FTS match.
+	nameHits, err := s.Search(ctx, SearchOptions{Query: "custom search label"})
+	require.NoError(t, err)
+	assert.Empty(t, nameHits)
+
+	_, err = s.renameSessionAt(ctx, uuid, RenameOptions{Clear: true}, time.Unix(0, 2), "m")
+	require.NoError(t, err)
+	cleared, err := s.Search(ctx, SearchOptions{Query: "brontosaurus"})
+	require.NoError(t, err)
+	require.Len(t, cleared, 1)
+	assert.Equal(t, "Sample session", cleared[0].Title, "a clear tombstone falls back to the imported title")
+}
+
+func TestSearchChunks_ResolvesEffectiveTitles(t *testing.T) {
+	s := newChunkSearchVault(t)
+	ctx := context.Background()
+
+	before := searchChunks(t, s, SearchOptions{Query: "zorbed"})
+	require.NotEmpty(t, before)
+	require.Equal(t, chunkSearchUUIDB, before[0].SessionUUID)
+
+	_, err := s.renameSessionAt(ctx, chunkSearchUUIDB, RenameOptions{Name: "Quixotic telemetry hunt"}, time.Unix(0, 1), "m")
+	require.NoError(t, err)
+
+	after := searchChunks(t, s, SearchOptions{Query: "zorbed"})
+	require.NotEmpty(t, after)
+	assert.Equal(t, "Quixotic telemetry hunt", after[0].Title)
+	// Only the display title changes; matching and anchors are untouched.
+	got := after[0]
+	got.Title = before[0].Title
+	assert.Equal(t, before[0], got)
+
+	// The name text is not in either chunk FTS layer, so it never matches.
+	assert.Empty(t, searchChunks(t, s, SearchOptions{Query: "quixotic"}))
+
+	_, err = s.renameSessionAt(ctx, chunkSearchUUIDB, RenameOptions{Clear: true}, time.Unix(0, 2), "m")
+	require.NoError(t, err)
+	cleared := searchChunks(t, s, SearchOptions{Query: "zorbed"})
+	require.NotEmpty(t, cleared)
+	assert.Equal(t, before[0].Title, cleared[0].Title, "a clear tombstone falls back to the imported title")
+}
+
 type archivedDataSnapshot struct {
 	raw      []byte
 	encoding sql.NullString

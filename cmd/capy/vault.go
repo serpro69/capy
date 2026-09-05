@@ -72,6 +72,7 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 		newVaultRestoreCmd(env),
 		newVaultResumeCmd(env),
 		newVaultDeleteCmd(env),
+		newVaultRenameCmd(env),
 	)
 	return cmd
 }
@@ -190,6 +191,7 @@ are left untouched.`,
 func newVaultListCmd(env *vaultEnv) *cobra.Command {
 	var (
 		project string
+		name    string
 		limit   int
 		jsonOut bool
 	)
@@ -203,7 +205,7 @@ func newVaultListCmd(env *vaultEnv) *cobra.Command {
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 
-			sessions, err := st.ListSessions(cmd.Context(), vault.ListOptions{Project: project, Limit: limit})
+			sessions, err := st.ListSessions(cmd.Context(), vault.ListOptions{Project: project, Name: name, Limit: limit})
 			if err != nil {
 				return err
 			}
@@ -215,6 +217,7 @@ func newVaultListCmd(env *vaultEnv) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "filter by project path substring")
+	cmd.Flags().StringVar(&name, "name", "", "filter by title substring (case-insensitive, literal; matches the effective title)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max sessions to list (0 = no limit)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "output JSON")
 	return cmd
@@ -229,7 +232,7 @@ func printSessionTable(sessions []vault.Session) {
 	for _, s := range sessions {
 		fmt.Printf("%-8s  %-10s  %5d  %8s  %-28s  %s\n",
 			shortUUID(s.UUID), fmtDate(s.EndTime), s.MessageCount, formatSize(s.SizeBytes),
-			truncate(displayPath(s.ProjectPath), 28), truncate(s.Title, 60))
+			truncate(displayPath(s.ProjectPath), 28), truncate(s.EffectiveTitle(), 60))
 	}
 }
 
@@ -304,15 +307,15 @@ func printSearchResults(results []vault.SearchResult) {
 		fmt.Println("no matches")
 		return
 	}
-	fmt.Printf("%-8s  %-10s  %-10s  %-24s  %s\n", "UUID", "DATE", "ROLE", "PROJECT", "SNIPPET")
+	fmt.Printf("%-8s  %-10s  %-10s  %-24s  %-20s  %s\n", "UUID", "DATE", "ROLE", "PROJECT", "TITLE", "SNIPPET")
 	for _, r := range results {
 		role := r.Role
 		if r.SubagentID != "" {
 			role += "*" // subagent match
 		}
-		fmt.Printf("%-8s  %-10s  %-10s  %-24s  %s\n",
+		fmt.Printf("%-8s  %-10s  %-10s  %-24s  %-20s  %s\n",
 			shortUUID(r.SessionUUID), fmtDate(r.EndTime), truncate(role, 10),
-			truncate(displayPath(r.ProjectPath), 24), oneLine(r.Snippet))
+			truncate(displayPath(r.ProjectPath), 24), truncate(r.Title, 20), oneLine(r.Snippet))
 	}
 }
 
@@ -395,7 +398,7 @@ func renderShow(sess *vault.Session, files []vault.File, markdown bool) string {
 }
 
 func writeShowHeader(sb *strings.Builder, sess *vault.Session, markdown bool) {
-	title := sess.Title
+	title := sess.EffectiveTitle()
 	if title == "" {
 		title = "(untitled)"
 	}
@@ -1047,10 +1050,71 @@ projects directory.`,
 // redirected.
 func printDeletePreview(sess *vault.Session) {
 	fmt.Fprintf(os.Stderr, "UUID:     %s\n", sess.UUID)
-	fmt.Fprintf(os.Stderr, "Title:    %s\n", orDash(sess.Title))
+	fmt.Fprintf(os.Stderr, "Title:    %s\n", orDash(sess.EffectiveTitle()))
 	fmt.Fprintf(os.Stderr, "Project:  %s\n", displayPath(sess.ProjectPath))
 	fmt.Fprintf(os.Stderr, "Messages: %d\n", sess.MessageCount)
 	fmt.Fprintf(os.Stderr, "Dates:    %s – %s\n", fmtDate(sess.StartTime), fmtDate(sess.EndTime))
+}
+
+// ---------------------------------------------------------------------------
+// rename
+// ---------------------------------------------------------------------------
+
+func newVaultRenameCmd(env *vaultEnv) *cobra.Command {
+	var clear bool
+	cmd := &cobra.Command{
+		Use:   "rename <session-id> [<name>]",
+		Short: "Set or clear a custom name for an archived session (partial UUID, 8+ chars)",
+		Long: `Assign a capy-owned name to an archived session, replacing its imported title
+everywhere it is displayed (list, show, search, JSON, TUI). The archived
+transcript is never modified, and the name survives re-import, reindex,
+compact, rekey, and cross-machine merges.
+
+Pass --clear instead of a name to remove the custom name and fall back to the
+latest imported title. Quote names containing whitespace. Names matching a
+recognized credential pattern are stored redacted.`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := guardTUI(cmd); err != nil {
+				return err
+			}
+			opts, err := renameOptions(args, clear)
+			if err != nil {
+				return err
+			}
+
+			st := vault.NewVaultStore(env.dbPath)
+			defer st.Close()
+
+			sess, err := st.RenameSession(cmd.Context(), args[0], opts)
+			if err != nil {
+				return handleLookupError(args[0], err)
+			}
+			if opts.Clear {
+				fmt.Printf("cleared custom name for %s — title is now %q\n", shortUUID(sess.UUID), sess.EffectiveTitle())
+			} else {
+				fmt.Printf("renamed %s to %q\n", shortUUID(sess.UUID), sess.EffectiveTitle())
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&clear, "clear", false, "remove the custom name (restores the imported title)")
+	return cmd
+}
+
+// renameOptions maps the rename command's argument forms onto the store
+// contract: exactly one of a name argument or --clear must be present.
+func renameOptions(args []string, clear bool) (vault.RenameOptions, error) {
+	if clear {
+		if len(args) > 1 {
+			return vault.RenameOptions{}, fmt.Errorf("a name and --clear are mutually exclusive")
+		}
+		return vault.RenameOptions{Clear: true}, nil
+	}
+	if len(args) < 2 {
+		return vault.RenameOptions{}, fmt.Errorf("provide a name, or pass --clear to remove the custom name")
+	}
+	return vault.RenameOptions{Name: args[1]}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,7 +1136,7 @@ func sessionsToJSON(sessions []vault.Session) []sessionJSON {
 	out := make([]sessionJSON, 0, len(sessions))
 	for _, s := range sessions {
 		out = append(out, sessionJSON{
-			UUID: s.UUID, Title: s.Title, Project: s.ProjectPath, GitBranch: s.GitBranch,
+			UUID: s.UUID, Title: s.EffectiveTitle(), Project: s.ProjectPath, GitBranch: s.GitBranch,
 			StartTime: rfc3339(s.StartTime), EndTime: rfc3339(s.EndTime),
 			Messages: s.MessageCount, SizeBytes: s.SizeBytes,
 		})
@@ -1263,7 +1327,7 @@ func handleLookupError(id string, err error) error {
 		fmt.Fprintf(os.Stderr, "ambiguous session id %q matches %d sessions:\n", amb.Prefix, len(amb.Candidates))
 		for _, c := range amb.Candidates {
 			fmt.Fprintf(os.Stderr, "  %s  %s  %-28s  %s\n",
-				shortUUID(c.UUID), fmtDate(c.EndTime), truncate(displayPath(c.ProjectPath), 28), truncate(c.Title, 50))
+				shortUUID(c.UUID), fmtDate(c.EndTime), truncate(displayPath(c.ProjectPath), 28), truncate(c.EffectiveTitle(), 50))
 		}
 		return fmt.Errorf("ambiguous session id %q (%d matches) — use more characters", amb.Prefix, len(amb.Candidates))
 	}

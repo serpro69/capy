@@ -252,6 +252,123 @@ func TestVaultDeleteAbortsWithoutConfirmation(t *testing.T) {
 	assert.Contains(t, stdout, short, "session must survive an aborted delete")
 }
 
+// TestVaultRename_EndToEnd drives rename/clear/name-lookup through the CLI:
+// validation and lookup errors, effective titles in list/search/show, --name
+// filtering with Unicode folding, and byte-identical archived transcripts.
+func TestVaultRename_EndToEnd(t *testing.T) {
+	root, uuid := setupVaultEnv(t)
+	// A second session sharing the first 8 UUID characters, so the short prefix
+	// is ambiguous while a 10-char prefix stays unique.
+	uuid2 := "abcd1234-bbbb-cccc-dddd-1234567890ab"
+	lines := []string{
+		`{"type":"user","uuid":"u1","timestamp":"2026-05-02T10:00:00Z","cwd":"/home/user/proj","gitBranch":"main","message":{"role":"user","content":"Investigate the stegosaurus crash"}}`,
+		`{"type":"ai-title","aiTitle":"Second stegosaurus session","sessionId":"s2"}`,
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, uuid2+".jsonl"),
+		[]byte(strings.Join(lines, "\n")+"\n"), 0o644))
+
+	_, stderr, code := capy(t, "vault", "import", "--source", root)
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+
+	target := uuid[:10] // "abcd1234-a" — unique despite the shared 8-char prefix
+
+	// Snapshots for the immutability assertions at the end.
+	jsonBefore, _, code := capy(t, "vault", "show", target, "--format", "json")
+	require.Equal(t, 0, code)
+	listJSONBefore, _, code := capy(t, "vault", "list", "--json")
+	require.Equal(t, 0, code)
+
+	// Lookup and argument errors.
+	_, stderr, code = capy(t, "vault", "rename", "abcd1234", "New name")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "ambiguous")
+	_, stderr, code = capy(t, "vault", "rename", "eeeeeeee", "New name")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "no session matches")
+	_, stderr, code = capy(t, "vault", "rename", target)
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "provide a name")
+	_, stderr, code = capy(t, "vault", "rename", target, "New name", "--clear")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "mutually exclusive")
+	_, stderr, code = capy(t, "vault", "rename", target, "   ")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "must not be empty")
+	_, stderr, code = capy(t, "vault", "rename", target, "bad\nname")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "control characters")
+	_, stderr, code = capy(t, "vault", "rename", target, "New name", "--tui")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "not supported")
+
+	// Rename, and observe the effective title on every read surface.
+	stdout, stderr, code := capy(t, "vault", "rename", target, "Café Rescue Sprint")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.Contains(t, stdout, `renamed abcd1234 to "Café Rescue Sprint"`)
+
+	stdout, _, code = capy(t, "vault", "list")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "Café Rescue Sprint")
+	assert.NotContains(t, stdout, "Fix the brontosaurus timeout")
+	assert.Contains(t, stdout, "Second stegosaurus session", "the other session keeps its imported title")
+
+	// --name folds case Unicode-aware, matches effective titles, falls back to
+	// imported titles, combines with --project, and reports no matches loudly.
+	stdout, _, code = capy(t, "vault", "list", "--name", "café rescue")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "Café Rescue Sprint")
+	assert.NotContains(t, stdout, "Second stegosaurus session")
+	stdout, _, code = capy(t, "vault", "list", "--name", "second")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "Second stegosaurus session")
+	assert.NotContains(t, stdout, "Café Rescue Sprint")
+	stdout, _, code = capy(t, "vault", "list", "--project", "proj", "--name", "CAFÉ")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "Café Rescue Sprint")
+	stdout, _, code = capy(t, "vault", "list", "--name", "zzz")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "no sessions archived")
+
+	// A content match renders the custom title; the name itself is not an FTS match.
+	stdout, _, code = capy(t, "vault", "search", "brontosaurus")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "Café Rescue Sprint")
+	stdout, _, code = capy(t, "vault", "search", "café")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "no matches", "a custom name must not become FTS-searchable")
+
+	// show renders the effective title in its header.
+	stdout, _, code = capy(t, "vault", "show", target, "--format", "markdown")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "# Café Rescue Sprint")
+
+	// Renaming again replaces the name.
+	_, stderr, code = capy(t, "vault", "rename", target, "Renamed Again")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	stdout, _, code = capy(t, "vault", "list")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "Renamed Again")
+	assert.NotContains(t, stdout, "Café Rescue Sprint")
+
+	// Clear restores the imported title.
+	stdout, stderr, code = capy(t, "vault", "rename", target, "--clear")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.Contains(t, stdout, `cleared custom name for abcd1234 — title is now "Fix the brontosaurus timeout"`)
+	stdout, _, code = capy(t, "vault", "list")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "Fix the brontosaurus timeout")
+
+	// The archived transcript and session metadata are byte-identical after the
+	// whole rename/replace/clear cycle (title fell back, so the full JSON list —
+	// including size_bytes — must round-trip too).
+	jsonAfter, _, code := capy(t, "vault", "show", target, "--format", "json")
+	require.Equal(t, 0, code)
+	assert.Equal(t, jsonBefore, jsonAfter, "rename/clear must not change archived transcript bytes")
+	listJSONAfter, _, code := capy(t, "vault", "list", "--json")
+	require.Equal(t, 0, code)
+	assert.Equal(t, listJSONBefore, listJSONAfter, "metadata must be unchanged once the name is cleared")
+}
+
 // writeClaudeStub installs a fake `claude` first on PATH that records its args
 // and physical cwd to outFile and exits with exitCode.
 func writeClaudeStub(t *testing.T, outFile string, exitCode int) {

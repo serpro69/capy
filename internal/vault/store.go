@@ -265,7 +265,16 @@ type SessionRecord struct {
 // ListOptions filters and bounds ListSessions.
 type ListOptions struct {
 	Project string // substring match on project_path; "" == no filter
-	Limit   int    // <= 0 == no limit
+	// Name is a literal, case-insensitive substring over the resolved effective
+	// title ("" == no filter). Folding is Unicode simple lowercasing in Go
+	// (ContainsFold) — SQLite's lower()/NOCASE folds ASCII only — so %, _,
+	// quotes, and FTS operators are ordinary characters, never query syntax.
+	Name string
+	// Limit bounds the result count (<= 0 == no limit). With no Name filter it
+	// is pushed into SQL; with a Name filter it must be applied in Go AFTER the
+	// name predicate — a SQL LIMIT would pre-truncate the candidate rows before
+	// filtering. Any new Go-side predicate must keep the limit after it.
+	Limit int
 }
 
 // SearchOptions controls Search.
@@ -1075,7 +1084,10 @@ func (s *VaultStore) GetFiles(ctx context.Context, sessionUUID string) ([]File, 
 // ListSessions returns sessions in reverse-chronological order. Location is 1:1
 // on the row, so this is a plain SELECT (no GROUP BY). --project is a substring
 // match (LIKE %...%), which no index can accelerate; a full scan over a
-// single-user vault is cheap.
+// single-user vault is cheap. The name predicate runs in Go over the resolved
+// effective title (see ListOptions.Name), so with a name filter the SQL LIMIT
+// must not pre-truncate the candidate rows — the limit applies after both
+// predicates.
 func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Session, error) {
 	db, err := s.getDB(ctx)
 	if err != nil {
@@ -1089,7 +1101,7 @@ func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Sess
 		args = append(args, "%"+opts.Project+"%")
 	}
 	query += ` ORDER BY s.end_time DESC`
-	if opts.Limit > 0 {
+	if opts.Limit > 0 && opts.Name == "" {
 		query += ` LIMIT ?`
 		args = append(args, opts.Limit)
 	}
@@ -1106,7 +1118,13 @@ func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Sess
 		if err := scanSessionMeta(rows, &sess, nil); err != nil {
 			return nil, err
 		}
+		if opts.Name != "" && !ContainsFold(sess.EffectiveTitle(), opts.Name) {
+			continue
+		}
 		out = append(out, sess)
+		if opts.Limit > 0 && len(out) == opts.Limit {
+			break
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating sessions: %w", err)
@@ -1170,12 +1188,15 @@ func (s *VaultStore) Search(ctx context.Context, opts SearchOptions) ([]SearchRe
 		return nil, err
 	}
 
+	// vault_session_names is joined for display-title resolution only — the name
+	// text never participates in the MATCH, so a custom name is not FTS-searchable.
 	query := `
 		SELECT f.session_uuid, f.subagent_id, f.line_index, f.role,
 		       snippet(vault_fts, 0, '[', ']', '…', 16),
-		       s.title, s.project_path, s.end_time
+		       s.title, n.custom_title, s.project_path, s.end_time
 		FROM vault_fts f
 		JOIN vault_sessions s ON s.uuid = f.session_uuid
+		LEFT JOIN vault_session_names n ON n.session_uuid = f.session_uuid
 		WHERE vault_fts MATCH ?`
 	args := []any{match}
 
@@ -1212,13 +1233,13 @@ func (s *VaultStore) Search(ctx context.Context, opts SearchOptions) ([]SearchRe
 	out := make([]SearchResult, 0)
 	for rows.Next() {
 		var r SearchResult
-		var title sql.NullString
+		var title, customTitle sql.NullString
 		var endTime sql.NullString
 		if err := rows.Scan(&r.SessionUUID, &r.SubagentID, &r.LineIndex, &r.Role,
-			&r.Snippet, &title, &r.ProjectPath, &endTime); err != nil {
+			&r.Snippet, &title, &customTitle, &r.ProjectPath, &endTime); err != nil {
 			return nil, fmt.Errorf("scanning search result: %w", err)
 		}
-		r.Title = title.String
+		r.Title = effectiveSearchTitle(title, customTitle)
 		r.EndTime = parseTime(endTime)
 		out = append(out, r)
 	}
@@ -1392,4 +1413,13 @@ func nullStringPointer(value sql.NullString) *string {
 		return nil
 	}
 	return &value.String
+}
+
+// effectiveSearchTitle resolves a search row's display title from the imported
+// title and the left-joined custom_title, through the one vault-package
+// resolver so precedence cannot drift. A NULL custom_title covers both "no name
+// row" and a clear tombstone; either falls back to the imported title
+// (custom_title is never empty by construction).
+func effectiveSearchTitle(imported, custom sql.NullString) string {
+	return effectiveTitle(imported.String, &SessionName{CustomTitle: nullStringPointer(custom)})
 }

@@ -148,6 +148,33 @@ func TestHandleLookupError(t *testing.T) {
 	})
 }
 
+func TestRenameOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		clear   bool
+		want    vault.RenameOptions
+		wantErr string
+	}{
+		{name: "name argument", args: []string{"abcd1234", "New name"}, want: vault.RenameOptions{Name: "New name"}},
+		{name: "clear", args: []string{"abcd1234"}, clear: true, want: vault.RenameOptions{Clear: true}},
+		{name: "name and clear are exclusive", args: []string{"abcd1234", "New name"}, clear: true, wantErr: "mutually exclusive"},
+		{name: "missing name", args: []string{"abcd1234"}, wantErr: "provide a name"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := renameOptions(tt.args, tt.clear)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 // buildVaultWithSession creates an encrypted vault at vaultPath under key and
 // imports one fixture session, returning its UUID. It sets CAPY_VAULT_KEY (which
 // VaultStore.Open consumes) to key, so callers flip the env var afterward to
