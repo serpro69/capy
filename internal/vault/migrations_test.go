@@ -130,6 +130,62 @@ func TestMigrate0004_CreatesChunkTablesOnLegacyVault(t *testing.T) {
 	require.NoError(t, migrate0004AddChunkFTS(context.Background(), db))
 }
 
+func TestMigrateVault_FreshDBHasSessionNames(t *testing.T) {
+	s := newTestVault(t)
+	db, err := s.getDB(context.Background())
+	require.NoError(t, err)
+
+	_, err = db.Exec(`SELECT session_uuid, custom_title, renamed_at_ns, machine_id
+		FROM vault_session_names WHERE 0`)
+	require.NoError(t, err, "fresh vault must expose the complete session-name schema")
+
+	var count int
+	require.NoError(t, db.QueryRow(
+		`SELECT COUNT(*) FROM vault_migrations WHERE name = '0005_session_names'`).Scan(&count))
+	assert.Equal(t, 1, count)
+
+	require.NoError(t, migrateVault(context.Background(), db))
+	require.NoError(t, db.QueryRow(
+		`SELECT COUNT(*) FROM vault_migrations WHERE name = '0005_session_names'`).Scan(&count))
+	assert.Equal(t, 1, count, "migration rerun must not duplicate its record")
+}
+
+func TestMigrate0005_CreatesSessionNamesOnLegacyVault(t *testing.T) {
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "legacy.db"))
+	require.NoError(t, err)
+	defer db.Close()
+
+	_, err = db.Exec(`
+		PRAGMA foreign_keys = ON;
+		CREATE TABLE vault_sessions (uuid TEXT PRIMARY KEY, content_hash TEXT NOT NULL, raw_jsonl BLOB NOT NULL);
+		CREATE TABLE vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+		CREATE TABLE vault_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);
+		INSERT INTO vault_sessions (uuid, content_hash, raw_jsonl) VALUES ('legacy', 'h', x'7b7d');
+	`)
+	require.NoError(t, err)
+
+	require.NoError(t, migrate0005AddSessionNames(context.Background(), db))
+	_, err = db.Exec(`INSERT INTO vault_session_names
+		(session_uuid, custom_title, renamed_at_ns, machine_id)
+		VALUES ('legacy', 'Legacy name', 1, 'machine-a')`)
+	require.NoError(t, err)
+
+	var count int
+	require.NoError(t, db.QueryRow(
+		`SELECT COUNT(*) FROM vault_migrations WHERE name = '0005_session_names'`).Scan(&count))
+	assert.Equal(t, 1, count)
+
+	require.NoError(t, migrate0005AddSessionNames(context.Background(), db))
+	require.NoError(t, db.QueryRow(
+		`SELECT COUNT(*) FROM vault_migrations WHERE name = '0005_session_names'`).Scan(&count))
+	assert.Equal(t, 1, count, "migration rerun must be idempotent")
+
+	_, err = db.Exec(`DELETE FROM vault_sessions WHERE uuid = 'legacy'`)
+	require.NoError(t, err)
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_session_names`).Scan(&count))
+	assert.Equal(t, 0, count, "legacy-migrated table must cascade with its parent")
+}
+
 func TestChunkFTSTokenizers(t *testing.T) {
 	// Prove the two layers actually tokenize differently — a typo in the
 	// tokenize= argument would otherwise surface only at search time (Task 5).
@@ -139,7 +195,7 @@ func TestChunkFTSTokenizers(t *testing.T) {
 
 	for _, table := range []string{"vault_chunks", "vault_chunks_trigram"} {
 		//nolint:gosec // table is a test-controlled constant, never user input
-		_, err = db.Exec(`INSERT INTO `+table+
+		_, err = db.Exec(`INSERT INTO ` + table +
 			` (title, content_text, session_uuid, subagent_id, chunk_index, first_line_index)
 			VALUES ('t', 'authentication middleware', 'u1', '', 0, 0)`)
 		require.NoError(t, err)

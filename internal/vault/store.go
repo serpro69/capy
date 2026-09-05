@@ -21,12 +21,35 @@ import (
 // minUUIDPrefix is the shortest partial UUID accepted for lookups (git-style).
 const minUUIDPrefix = 8
 
+// sessionIDPrefixPattern returns a LIKE pattern that treats every byte in the
+// caller-provided prefix literally. In particular, SQLite's '%' and '_'
+// metacharacters must not broaden a session lookup that may lead to mutation.
+func sessionIDPrefixPattern(prefix string) (string, error) {
+	if len(prefix) < minUUIDPrefix {
+		return "", fmt.Errorf("session id must be at least %d characters", minUUIDPrefix)
+	}
+
+	var pattern strings.Builder
+	pattern.Grow(len(prefix) + 1)
+	for i := range len(prefix) {
+		switch prefix[i] {
+		case '%', '_', '\\':
+			pattern.WriteByte('\\')
+		}
+		pattern.WriteByte(prefix[i])
+	}
+	pattern.WriteByte('%')
+	return pattern.String(), nil
+}
+
 // currentIndexVersion stamps the FTS indexer logic. Bump it whenever scanner.go's
 // extraction changes in a way that should re-index already-archived sessions —
 // but ONLY across a released boundary. Within an unreleased version (nothing
 // shipped, no durable vault holds the version yet) the indexer may be redefined in
 // place without a bump, since a single reindex still produces the complete result.
+//
 //   - v1: tool_result rows indexed as result text only.
+//
 //   - v2: tool_result rows tagged with their originating call summary
 //     (scanner.go collectToolUseSummaries), AND FTS-excluded result bodies
 //     (scanner.go ftsExcludedResult): Read/NotebookRead file/cell dumps and
@@ -73,6 +96,8 @@ CREATE TABLE IF NOT EXISTS vault_sessions (
   encoding           TEXT
 );
 
+` + sessionNamesTableSQL + `
+
 CREATE TABLE IF NOT EXISTS vault_files (
   session_uuid  TEXT NOT NULL REFERENCES vault_sessions(uuid) ON DELETE CASCADE,
   relative_path TEXT NOT NULL,
@@ -99,6 +124,18 @@ CREATE TABLE IF NOT EXISTS vault_meta (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_end_time ON vault_sessions(end_time DESC);
 ` + chunkFTSTablesSQL
+
+// sessionNamesTableSQL is shared verbatim between schemaSQL (fresh vaults) and
+// migration 0005 (legacy vaults), so both paths enforce the same ownership and
+// tombstone contract.
+const sessionNamesTableSQL = `
+CREATE TABLE IF NOT EXISTS vault_session_names (
+  session_uuid  TEXT PRIMARY KEY REFERENCES vault_sessions(uuid) ON DELETE CASCADE,
+  custom_title  TEXT CHECK (custom_title IS NULL OR custom_title <> ''),
+  renamed_at_ns INTEGER NOT NULL,
+  machine_id    TEXT NOT NULL
+);
+`
 
 // chunkFTSTablesSQL creates the two chunk-granularity FTS5 layer tables used by
 // the shared retrieval engine (internal/retrieval): a porter-stemmed layer and a
@@ -137,10 +174,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vault_chunks_trigram USING fts5(
 );
 `
 
-// sessionMetaColumns is the column list returned for list/lookup queries; it
-// omits the (potentially large) raw_jsonl blob.
-const sessionMetaColumns = `uuid, title, start_time, end_time, message_count, size_bytes, ` +
-	`content_hash, machine_id, claude_project_dir, project_path, git_branch, archived_at, index_version`
+// sessionMetaColumns is the table-qualified column list returned for list and
+// lookup queries. Callers must alias vault_sessions as s and vault_session_names
+// as n, and append sessionMetaJoin. It omits the potentially large raw_jsonl
+// blob while retaining both imported-title and vault-owned name provenance.
+const sessionMetaColumns = `s.uuid, s.title, s.start_time, s.end_time, s.message_count, s.size_bytes, ` +
+	`s.content_hash, s.machine_id, s.claude_project_dir, s.project_path, s.git_branch, s.archived_at, ` +
+	`s.index_version, n.custom_title, n.renamed_at_ns, n.machine_id`
+
+const sessionMetaJoin = ` FROM vault_sessions s
+	LEFT JOIN vault_session_names n ON n.session_uuid = s.uuid`
 
 // ErrSessionNotFound is returned when no session matches a lookup.
 var ErrSessionNotFound = errors.New("session not found")
@@ -157,6 +200,15 @@ var ErrStoreClosed = errors.New("vault store is closed")
 type AmbiguousUUIDError struct {
 	Prefix     string
 	Candidates []Session
+}
+
+// SessionName is capy-owned name state for one archived session. A nil *SessionName
+// means the session has never been named. A non-nil state with CustomTitle == nil
+// is an explicit clear tombstone; a non-empty CustomTitle is the active override.
+type SessionName struct {
+	CustomTitle *string
+	RenamedAtNS int64
+	MachineID   string
 }
 
 func (e *AmbiguousUUIDError) Error() string {
@@ -180,6 +232,7 @@ type Session struct {
 	ArchivedAt       string // DB-managed timestamp; opaque string
 	IndexVersion     int    // FTS indexer version stamp (see currentIndexVersion)
 	RawJSONL         []byte
+	Name             *SessionName
 }
 
 // File is one preserved sidecar from a session directory (vault_files).
@@ -469,8 +522,8 @@ func (s *VaultStore) prepareStatements(ctx context.Context, db *sql.DB) error {
 	}
 
 	if s.stmtSessionsByPrefix, err = db.PrepareContext(ctx, `
-		SELECT `+sessionMetaColumns+`, encoding, raw_jsonl
-		FROM vault_sessions WHERE uuid LIKE ? ORDER BY end_time DESC`); err != nil {
+		SELECT `+sessionMetaColumns+`, s.encoding, s.raw_jsonl
+		`+sessionMetaJoin+` WHERE s.uuid LIKE ? ESCAPE '\' ORDER BY s.end_time DESC`); err != nil {
 		return err
 	}
 
@@ -937,8 +990,9 @@ func (s *VaultStore) DeleteSession(ctx context.Context, uuid string) (bool, erro
 // its raw_jsonl blob. Returns ErrSessionNotFound on no match and
 // *AmbiguousUUIDError when more than one session matches.
 func (s *VaultStore) GetSession(ctx context.Context, prefix string) (*Session, error) {
-	if len(prefix) < minUUIDPrefix {
-		return nil, fmt.Errorf("session id must be at least %d characters", minUUIDPrefix)
+	pattern, err := sessionIDPrefixPattern(prefix)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := s.getDB(ctx); err != nil {
 		return nil, err
@@ -948,7 +1002,7 @@ func (s *VaultStore) GetSession(ctx context.Context, prefix string) (*Session, e
 	if stmt == nil {
 		return nil, ErrStoreClosed
 	}
-	rows, err := stmt.QueryContext(ctx, prefix+"%")
+	rows, err := stmt.QueryContext(ctx, pattern)
 	if err != nil {
 		return nil, fmt.Errorf("querying sessions: %w", err)
 	}
@@ -1028,13 +1082,13 @@ func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Sess
 		return nil, err
 	}
 
-	query := `SELECT ` + sessionMetaColumns + ` FROM vault_sessions`
+	query := `SELECT ` + sessionMetaColumns + sessionMetaJoin
 	var args []any
 	if opts.Project != "" {
-		query += ` WHERE project_path LIKE ?`
+		query += ` WHERE s.project_path LIKE ?`
 		args = append(args, "%"+opts.Project+"%")
 	}
-	query += ` ORDER BY end_time DESC`
+	query += ` ORDER BY s.end_time DESC`
 	if opts.Limit > 0 {
 		query += ` LIMIT ?`
 		args = append(args, opts.Limit)
@@ -1247,10 +1301,13 @@ func (s *VaultStore) Stats(ctx context.Context) (*VaultStats, error) {
 func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 	var title, gitBranch, archivedAt sql.NullString
 	var startTime, endTime sql.NullString
+	var customTitle, nameMachineID sql.NullString
+	var renamedAtNS sql.NullInt64
 	dest := []any{
 		&sess.UUID, &title, &startTime, &endTime, &sess.MessageCount, &sess.SizeBytes,
 		&sess.ContentHash, &sess.MachineID, &sess.ClaudeProjectDir, &sess.ProjectPath,
 		&gitBranch, &archivedAt, &sess.IndexVersion,
+		&customTitle, &renamedAtNS, &nameMachineID,
 	}
 	var encoding sql.NullString
 	var rawBlob []byte
@@ -1265,6 +1322,15 @@ func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 	sess.ArchivedAt = archivedAt.String
 	sess.StartTime = parseTime(startTime)
 	sess.EndTime = parseTime(endTime)
+	if renamedAtNS.Valid {
+		sess.Name = &SessionName{
+			CustomTitle: nullStringPointer(customTitle),
+			RenamedAtNS: renamedAtNS.Int64,
+			MachineID:   nameMachineID.String,
+		}
+	} else {
+		sess.Name = nil
+	}
 	if raw != nil {
 		decoded, err := decodeBlob(encoding.String, rawBlob)
 		if err != nil {
@@ -1319,4 +1385,11 @@ func nullString(s string) any {
 		return nil
 	}
 	return s
+}
+
+func nullStringPointer(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	return &value.String
 }

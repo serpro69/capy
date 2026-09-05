@@ -8,7 +8,7 @@
 
 ## Task 1: Persist and resolve vault-owned session names
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** L — spans impl §1–§3 (migration, domain reads, rename op) as one deliberate contract-first slice; splitting would ship a schema without its owning operations, and Tasks 2/3/4 block on the full contract either way
 - **Slicing:** Contract-First — establishes the new persisted boundary used by independent CLI, merge, and TUI slices
@@ -17,12 +17,12 @@
 
 ### Subtasks
 
-- [ ] 1.1 Add shared `vault_session_names` DDL and idempotent `0005_session_names` migration in `internal/vault/store.go` and `internal/vault/migrations.go`; cover fresh/legacy schemas, reruns, and cascade deletion in `internal/vault/migrations_test.go` and `internal/vault/store_test.go`
-- [ ] 1.2 Add name state, shared normalization/validation, and one effective-title resolver in `internal/vault`; preserve imported `vault_sessions.title` ownership
-- [ ] 1.3 Update `GetSession`, `ListSessions`, and ambiguous-prefix candidates to resolve effective titles while retaining imported title provenance
-- [ ] 1.4 Implement transactional rename/clear by UUID prefix with monotonic local timestamps and immutable transcript/index assertions
-- [ ] 1.5 Add focused race coverage for rename/delete and repeated concurrent rename behavior (rename/merge race is Task 3.5)
-- [ ] 1.6 Add maintenance-retention tests: rename, then re-import/transcript replacement, reindex, compact, and backup-API rekey each preserve name and tombstone state
+- [x] 1.1 Add shared `vault_session_names` DDL and idempotent `0005_session_names` migration in `internal/vault/store.go` and `internal/vault/migrations.go`; cover fresh/legacy schemas, reruns, and cascade deletion in `internal/vault/migrations_test.go` and `internal/vault/store_test.go`
+- [x] 1.2 Add name state, shared normalization/validation, and one effective-title resolver in `internal/vault`; preserve imported `vault_sessions.title` ownership
+- [x] 1.3 Update `GetSession`, `ListSessions`, and ambiguous-prefix candidates to resolve effective titles while retaining imported title provenance
+- [x] 1.4 Implement transactional rename/clear by UUID prefix with monotonic local timestamps and immutable transcript/index assertions
+- [x] 1.5 Add focused race coverage for rename/delete and repeated concurrent rename behavior (rename/merge race is Task 3.5)
+- [x] 1.6 Add maintenance-retention tests: rename, then re-import/transcript replacement, reindex, compact, and backup-API rekey each preserve name and tombstone state
 
 ## Task 2: Expose rename, clear, and name lookup through the CLI
 

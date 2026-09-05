@@ -77,15 +77,16 @@ The table definition is shared between `schemaSQL` and the migration, following 
 
 Add `capy vault rename <session-id> <name>` and `capy vault rename <session-id> --clear`. A name and `--clear` are mutually exclusive. Quoting is required when a name contains shell-separated whitespace.
 
-The session ID follows existing lookup behavior: at least eight UUID characters, `ErrSessionNotFound` when absent, and `AmbiguousUUIDError` with effective-title candidates when non-unique.
+The session ID follows existing lookup behavior: at least eight UUID characters, `ErrSessionNotFound` when absent, and `AmbiguousUUIDError` with effective-title candidates when non-unique. Prefix bytes are matched literally; SQLite `LIKE` metacharacters (`%`, `_`, and the escape character) never broaden lookup or mutation scope.
 
 Name normalization and validation are shared by CLI and TUI and apply strictly in this order:
 
 1. Trim surrounding whitespace.
 2. Apply `sanitize.StripSecrets` because names are returned through CLI and MCP surfaces. A name that itself matches a recognized credential pattern is therefore stored redacted, not verbatim — deliberate; README must note this UX surprise.
 3. Reject an empty post-normalization value for rename; clear is the explicit empty-state operation.
-4. Reject terminal control characters.
-5. Reject names longer than 120 Unicode code points — measured after trimming and secret-stripping, since redaction changes length — rather than truncating silently.
+4. Reject malformed UTF-8 so storage, JSON rendering, and Unicode-aware filtering observe the same title.
+5. Reject terminal control characters.
+6. Reject names longer than 120 Unicode code points — measured after trimming and secret-stripping, since redaction changes length — rather than truncating silently.
 
 Duplicate names are permitted; UUID remains the mutation identity.
 

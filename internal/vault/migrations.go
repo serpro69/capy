@@ -21,7 +21,7 @@ import (
 // archival tasks (see docs/wip/vault/v2/precompact-investigation.md), so v2 adds
 // only 0001 (blob encoding) alongside the existing 0003 (index_version). The
 // 0002 gap is deliberate and must not be reused; 0004 (chunk FTS) is the next
-// slot after it.
+// slot after it; 0005 adds vault-owned session names.
 func migrateVault(ctx context.Context, db *sql.DB) error {
 	if err := ensureVaultMigrationsTable(ctx, db); err != nil {
 		return fmt.Errorf("creating vault_migrations table: %w", err)
@@ -34,6 +34,9 @@ func migrateVault(ctx context.Context, db *sql.DB) error {
 	}
 	if err := migrate0004AddChunkFTS(ctx, db); err != nil {
 		return fmt.Errorf("migration 0004_add_chunk_fts: %w", err)
+	}
+	if err := migrate0005AddSessionNames(ctx, db); err != nil {
+		return fmt.Errorf("migration 0005_session_names: %w", err)
 	}
 	return nil
 }
@@ -210,6 +213,42 @@ func migrate0004AddChunkFTS(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("creating chunk FTS tables: %w", err)
 	}
 
+	if _, err := tx.ExecContext(ctx, `INSERT INTO vault_migrations (name) VALUES (?)`, name); err != nil {
+		return fmt.Errorf("recording migration: %w", err)
+	}
+	return tx.Commit()
+}
+
+// migrate0005AddSessionNames creates the capy-owned session-name table. Fresh
+// vaults already have it through schemaSQL; IF NOT EXISTS keeps the legacy and
+// fresh paths identical while the name-keyed migration record makes reruns a
+// read-only fast path.
+func migrate0005AddSessionNames(ctx context.Context, db *sql.DB) error {
+	const name = "0005_session_names"
+
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM vault_migrations WHERE name = ?`, name).Scan(&count); err == nil && count > 0 {
+		return nil
+	}
+
+	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
+	if err != nil {
+		return fmt.Errorf("begin immediate: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	applied, err := vaultMigrationApplied(ctx, tx, name)
+	if err != nil {
+		return err
+	}
+	if applied {
+		return tx.Commit()
+	}
+
+	if _, err := tx.ExecContext(ctx, sessionNamesTableSQL); err != nil {
+		return fmt.Errorf("creating session names table: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO vault_migrations (name) VALUES (?)`, name); err != nil {
 		return fmt.Errorf("recording migration: %w", err)
 	}
