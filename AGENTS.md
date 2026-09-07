@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex (OpenAI's coding agent) when working with code in this repository.
+This file provides guidance to AI agents like claude-code, codex, and others, when working with this repository.
 
 ## Project
 
@@ -23,31 +23,39 @@ internal/
   giturl/           Git platform URL detection (GitHub/GitLab/Bitbucket/Gitea)
   hook/             Hook event dispatch: PreToolUse routing, guidance, security, subagent injection
   platform/         Setup command (writes hooks/MCP config), doctor diagnostics, routing instructions
+  retrieval/        Corpus-agnostic FTS5 retrieval core: RRF two-layer fusion, rerank, entity boosting, query sanitization — shared by store (knowledge) and vault (session chunks) via the Corpus interface (ADR-028)
   sanitize/         Secret stripping (regex-based redaction of API keys, tokens, credentials)
   security/         Settings parsing, glob matching, command splitting, shell-escape detection
-  server/           MCP server, 9 tool handlers, stats tracking, lifecycle guard, intent search
-  session/          Claude Code JSONL parsing, transcript building, chunking, sweep indexing
+  server/           MCP server, 10 tool handlers, stats tracking, lifecycle guard, intent search, cross-corpus vault federation
+  sqliteutil/       Shared SQLite open/recovery: canary query, corruption classification, backup
   store/            SQLite FTS5 knowledge base: schema, indexing, search, cleanup, encryption, migration
+  vault/            Session vault: verbatim archival, FTS5 search (per-line + chunk), discovery, import, cross-machine merge; sole session store (ADR-027)
+  vault/tui/        Interactive TUI for vault browsing, search, and session viewing (bubbletea)
   version/          Build-time version injection via ldflags
 ```
 
 ### Critical Invariants
 
-- **Encryption is mandatory.** `CAPY_DB_KEY` must be set. The store refuses to open without it. Tests require it too.
+- **Encryption is mandatory.** `CAPY_DB_KEY` must be set for the knowledge store; `CAPY_VAULT_KEY` must be set for the vault. Tests require both.
 - **FTS5 build tag required.** All builds and tests must use `-tags fts5`. The Makefile handles this.
 - **WAL checkpoint on close.** The connection pool must be closed before checkpointing (see `store.go:Close()` and ADR-016).
 - **WAL + PRAGMA rekey incompatible.** Encryption path must switch to DELETE journal mode before rekeying (ADR-020).
 - **Source kinds are schema-enforced.** `CHECK (kind IN ('ephemeral', 'durable', 'session'))` — no other values accepted.
+- **Vault blob `encoding` column is authoritative.** Compressed (`'zstd'`) vs raw (`'raw'`/`NULL`-legacy) blobs are distinguished by the per-row `encoding` column, never magic-byte detection (sidecars hold arbitrary bytes). The first compressed write stamps `vault_meta.min_reader_version`; `openDB` refuses a vault whose marker exceeds `supportedReaderVersion` (2). `content_hash`/`size_bytes`/FTS are always computed on **uncompressed** bytes.
+- **Vault rekey uses the backup-API, not PRAGMA rekey.** `sqliteutil.Rekey` writes a fresh new-key file (open old → checkpoint → backup-copy → swap+verify), sidestepping the WAL/PRAGMA-rekey incompatibility above. Shared by `capy vault rekey` and `capy encrypt`.
 - **Hooks are short-lived processes.** Each hook invocation is a separate `capy hook <event>` process. State persists via `.capy/guidance-<sessionID>.json` files.
 
 ### Build & Test
 
 ```bash
-export CAPY_DB_KEY=test-key-for-development  # required for all tests
+export CAPY_DB_KEY=test-key-for-development   # required for knowledge store tests
+export CAPY_VAULT_KEY=test-key                # required for vault tests
 make build                                    # CGO_ENABLED=1, -tags fts5
+make build-glamour                            # + opt-in glamour TUI markdown (-tags fts5,glamour)
 make test                                     # all tests
 make test-race                                # with race detector
 go test -tags fts5 -count=1 ./internal/<pkg>/... # single package
+go test -tags fts5,glamour ./internal/vault/tui/... # glamour-tagged TUI subset
 ```
 
 ### Benchmarks
@@ -64,16 +72,7 @@ Key files: `internal/store/bench_test.go` (retrieval + NIAH), `internal/store/be
 
 ## ADRs
 
-Architecture Decision Records are in [docs/adr/](docs/adr/). Key ones:
-- ADR-006: Persistent knowledge base
-- ADR-007: Tiered freshness and content dedup
-- ADR-011: Conservative cleanup policy
-- ADR-015/016: Knowledge DB not in git + WAL checkpoint strategy
-- ADR-017: Source kind separation (durable/ephemeral/session)
-- ADR-019/020: Encrypted knowledge DB + WAL/rekey incompatibility
-- ADR-022: Source size guard and DB bloat prevention
-- ADR-023: Fetch ephemeral default and routing rewrite
-- ADR-024: Server-side git URL enforcement
+Architecture Decision Records are in [docs/adr/](docs/adr/).
 
 ## Completed Features
 
