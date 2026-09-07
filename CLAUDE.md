@@ -92,9 +92,10 @@ Architecture Decision Records are in [docs/adr/](docs/adr/). Key ones:
 
 Design docs for completed features are in [docs/done/](docs/done/). Each has design.md, implementation.md, and tasks.md.
 
-# Extra Instructions
+
 
 @.claude/CLAUDE.extra.md
+@.claude/toolbox/CLAUDE.md
 
 # capy — context-window routing
 
