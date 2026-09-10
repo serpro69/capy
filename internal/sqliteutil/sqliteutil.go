@@ -140,7 +140,7 @@ func BackupCorruptDB(dbPath string) {
 //
 // BeginImmediate is the contextless entry point for callers without one (e.g.
 // the knowledge store, whose ctx propagation is deliberately not done — see
-// docs/wip/vault/v2 Task 3). It delegates to BeginImmediateContext with a
+// docs/feat/wip/vault/v2 Task 3). It delegates to BeginImmediateContext with a
 // context.Background(). Callers that hold a context should use
 // BeginImmediateContext so cancellation reaches BeginTx/ExecContext.
 func BeginImmediate(db *sql.DB, lockTable string) (*sql.Tx, error) {

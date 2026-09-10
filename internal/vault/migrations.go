@@ -18,7 +18,7 @@ import (
 // so application order does not matter.
 //
 // Naming note: 0002 (vault_snapshots) was dropped along with the PreCompact
-// archival tasks (see docs/wip/vault/v2/precompact-investigation.md), so v2 adds
+// archival tasks (see docs/feat/wip/vault/v2/precompact-investigation.md), so v2 adds
 // only 0001 (blob encoding) alongside the existing 0003 (index_version). The
 // 0002 gap is deliberate and must not be reused; 0004 (chunk FTS) is the next
 // slot after it.
@@ -169,7 +169,7 @@ func migrate0003AddIndexVersion(ctx context.Context, db *sql.DB) error {
 
 // migrate0004AddChunkFTS creates the chunk-granularity FTS5 layer tables
 // (vault_chunks + vault_chunks_trigram) for the shared retrieval engine
-// (design: docs/wip/vault-session-search §D2/§D4).
+// (design: docs/feat/wip/vault-session-search §D2/§D4).
 //   - Pre-existing vaults: the tables are absent, so the CREATEs add them.
 //   - Fresh vaults: schemaSQL already creates them (same DDL constant), so the
 //     IF NOT EXISTS guard makes the CREATEs no-ops; the migration is still

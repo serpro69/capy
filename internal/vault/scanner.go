@@ -519,7 +519,7 @@ func toolUseSummary(name string, input json.RawMessage) string {
 	// generic input rendering is deferred. To add it, emit a BOUNDED key=value /
 	// salient-field summary here (not raw JSON), then bump currentIndexVersion and
 	// `capy vault reindex`. Rationale (consistency + FTS noise/size): see ADR-025
-	// and docs/wip/vault-tool-entries/design.md §Deferred.
+	// and docs/feat/wip/vault-tool-entries/design.md §Deferred.
 	return name
 }
 

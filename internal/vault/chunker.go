@@ -10,7 +10,7 @@ import (
 
 // chunker.go builds the semantic-chunk corpus (vault_chunks /
 // vault_chunks_trigram) from the vault scanner's per-message ScanResults —
-// design docs/wip/vault-session-search §D3. It deliberately does NOT import
+// design docs/feat/wip/vault-session-search §D3. It deliberately does NOT import
 // internal/session: the session parser is path-based and lossy-by-design,
 // whereas these chunks must derive from the same broad, DB-bytes scan that
 // feeds per-line vault_fts, so a chunk search and a line search can never

@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// bench_test.go is the A2 parity gate (design docs/wip/vault-session-search):
+// bench_test.go is the A2 parity gate (design docs/feat/wip/vault-session-search):
 // it replays the knowledge store's transcript retrieval/NIAH fixtures against
 // the VAULT chunk corpus (SearchChunks) so the two session-search paths can be
 // compared. Each fixture haystack is synthesized into a Claude Code JSONL

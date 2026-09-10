@@ -7,7 +7,7 @@
 (which introduced the session kind alongside durable/ephemeral) and relates to
 [ADR-007](007-tiered-freshness-and-content-dedup.md) (retention) and
 [ADR-022](022-source-size-guard-and-db-bloat-prevention.md) (DB bloat).
-**Design:** [docs/wip/vault-session-search/design.md](../wip/vault-session-search/design.md)
+**Design:** [docs/feat/wip/vault-session-search/design.md](../wip/vault-session-search/design.md)
 **Pairs with:** [ADR-028](028-corpus-agnostic-retrieval-and-rrf-federation.md) (the
 search architecture that makes this storage change non-regressive).
 

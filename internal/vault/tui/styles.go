@@ -12,7 +12,7 @@ import "github.com/charmbracelet/lipgloss"
 // immutable value types, so sharing a Styles is safe and cheap.
 //
 // The default build is lipgloss-only — glamour (rich markdown / syntax
-// highlighting) is excluded to keep the binary lean (see docs/wip/vault/design.md
+// highlighting) is excluded to keep the binary lean (see docs/feat/wip/vault/design.md
 // §Dependencies). The opt-in `-tags glamour` build renders user/assistant
 // markdown through glamour (render_glamour.go); these lipgloss styles still
 // apply to role headers, subagent markers, and panel chrome in both builds.

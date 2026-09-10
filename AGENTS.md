@@ -76,4 +76,4 @@ Architecture Decision Records are in [docs/adr/](docs/adr/).
 
 ## Completed Features
 
-Design docs for completed features are in [docs/done/](docs/done/). Each has design.md, implementation.md, and tasks.md.
+Design docs for completed features are in [docs/feat/done/](docs/feat/done/). Each has design.md, implementation.md, and tasks.md.

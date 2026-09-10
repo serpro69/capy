@@ -303,7 +303,7 @@ func NewVaultStore(dbPath string) *VaultStore {
 // file surfaces immediately. The CLI calls it before a bulk Import: without the
 // probe, Import would hit the same open error once per session and report N
 // identical failures instead of one clean abort (see import.go and the Task 3
-// follow-up in docs/wip/vault/tasks.md). ctx cancels the open + canary probe.
+// follow-up in docs/feat/wip/vault/tasks.md). ctx cancels the open + canary probe.
 func (s *VaultStore) Open(ctx context.Context) error {
 	_, err := s.getDB(ctx)
 	return err

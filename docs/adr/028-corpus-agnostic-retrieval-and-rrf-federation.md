@@ -5,7 +5,7 @@
 **Supersedes:** Overturns the reasoning of [ADR-017](017-source-kind-separation.md)
 §"Variants Considered #2" (a second FTS5 table was rejected because cross-corpus BM25
 scores are incomparable) — that objection does not apply to rank fusion; see D3.
-**Design:** [docs/wip/vault-session-search/design.md](../wip/vault-session-search/design.md)
+**Design:** [docs/feat/wip/vault-session-search/design.md](../wip/vault-session-search/design.md)
 **Pairs with:** [ADR-027](027-vault-is-sole-session-store.md) (the storage change this
 search architecture makes non-regressive); builds on [ADR-025](025-vault-index-version-and-reindex.md)
 (vault `index_version`/reindex) and [ADR-010](010-rrf-two-layers-not-four.md) (RRF

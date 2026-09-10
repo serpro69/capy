@@ -14,7 +14,7 @@ import (
 
 // chunk_search.go runs the shared retrieval engine (internal/retrieval) over
 // the vault's chunk-granularity corpus (vault_chunks / vault_chunks_trigram,
-// built by chunker.go) — design docs/wip/vault-session-search §D5. The
+// built by chunker.go) — design docs/feat/wip/vault-session-search §D5. The
 // per-line Search over vault_fts (store.go) is unrelated and untouched: it
 // keeps the line_index/role anchors the TUI and `capy vault search --role`
 // depend on.
