@@ -3,8 +3,10 @@ package vault
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/serpro69/capy/internal/sqliteutil"
 )
@@ -38,6 +40,16 @@ type MergeOptions struct {
 // without aborting the run; MergeFrom returns an error only for setup failures
 // (opening or probing the source). The 0-message exclusion (Task 11) applies, so
 // a source's empty shells are not carried over.
+//
+// Capy-owned session names (vault_session_names) reconcile INDEPENDENTLY of the
+// transcript decision: for every source session whose UUID exists in the
+// destination — including excluded empty shells and same-hash/smaller skips —
+// the latest (renamed_at_ns, machine_id) state wins (value tie-break on equal
+// tuples) and is written verbatim, so repeated merges are idempotent and all
+// vaults converge. A source without the table is a supported legacy vault and
+// contributes no name state; the reverse (an older binary merging from a
+// current vault) silently carries none — accepted, non-destructive, and
+// recoverable by re-running the merge with an upgraded binary.
 //
 // Concurrency: MergeFrom writes only the destination (batched BeginImmediate), so
 // a concurrent server-startup sweep on the same vault.db is absorbed by
@@ -73,6 +85,12 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 	srcFileEnc, err := columnExists(ctx, srcDB, "vault_files", "encoding")
 	if err != nil {
 		return res, fmt.Errorf("probing source vault_files schema: %w", err)
+	}
+	// Feature-detect the capy-owned name table (migration 0005) the same way: a
+	// legacy source without it merges cleanly and contributes no name state.
+	srcHasNames, err := tableExists(ctx, srcDB, "vault_session_names")
+	if err != nil {
+		return res, fmt.Errorf("probing source vault_session_names schema: %w", err)
 	}
 
 	uuids, err := sourceSessionUUIDs(ctx, srcDB, opts.Project)
@@ -128,22 +146,44 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			continue
 		}
 
-		// Exclude empty sessions exactly as disk import does (Task 11). A v2 source
-		// already dropped these at its own import, but a v1 source predates the
-		// guard, so re-apply it here. message_count is the source's stored scan
-		// result (stable: a session with turns is never counted as 0).
-		if src.messageCount == 0 {
-			res.record(ImportedSession{
-				UUID: uuid, Title: src.title, ProjectPath: src.projectPath,
-				SizeBytes: src.sizeBytes, Status: StatusExcluded,
-			})
-			continue
+		var srcName *SessionName
+		if srcHasNames {
+			srcName, err = readSourceName(ctx, srcDB, uuid)
+			if err != nil {
+				slog.Warn("vault merge: reading source session name failed", "uuid", uuid, "error", err)
+				res.record(ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusError, Err: err})
+				continue
+			}
 		}
 
+		// The digest lookup precedes the zero-message exclusion because name state
+		// reconciles independently of transcript content (design §Cross-Machine
+		// Merge): the exclusion and skip branches below must still know whether a
+		// destination session exists to reconcile its name against.
 		existingHash, existingSize, _, found, err := dest.SessionDigest(ctx, uuid)
 		if err != nil {
 			slog.Warn("vault merge: digest lookup failed", "uuid", uuid, "error", err)
 			res.record(ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusError, Err: err})
+			continue
+		}
+
+		// Exclude empty sessions exactly as disk import does (Task 11). A v2 source
+		// already dropped these at its own import, but a v1 source predates the
+		// guard, so re-apply it here. message_count is the source's stored scan
+		// result (stable: a session with turns is never counted as 0). A populated
+		// destination with the same UUID still reconciles name state — a migrated
+		// legacy source can rename its zero-message shell, and dropping the shell
+		// must not drop the newer name. Without a destination row the name has no
+		// FK parent and is dropped with the shell.
+		if src.messageCount == 0 {
+			entry := ImportedSession{
+				UUID: uuid, Title: src.title, ProjectPath: src.projectPath,
+				SizeBytes: src.sizeBytes, Status: StatusExcluded,
+			}
+			if found && srcName != nil {
+				entry = reconcileMergeName(ctx, dest, entry, *srcName, opts.DryRun)
+			}
+			res.record(entry)
 			continue
 		}
 
@@ -152,15 +192,19 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		// different variant of equal-or-larger total size replaces in place. Unlike
 		// import there is no FTS-only upgrade branch — `capy vault reindex` owns
 		// version upgrades of already-present sessions; merge only brings in NEW or
-		// larger content.
+		// larger content. Both skip cases still reconcile name state: a name-only
+		// change reports the session as updated (the destination DID change).
 		replace := false
 		if found {
 			switch {
-			case src.contentHash == existingHash:
-				res.record(ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusSkipped})
-				continue
-			case src.sizeBytes < existingSize:
-				res.record(ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusSkipped})
+			// Same-hash (idempotent re-merge) and smaller-divergent-variant skips
+			// share one arm because their name handling is identical.
+			case src.contentHash == existingHash, src.sizeBytes < existingSize:
+				entry := ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusSkipped}
+				if srcName != nil {
+					entry = reconcileMergeName(ctx, dest, entry, *srcName, opts.DryRun)
+				}
+				res.record(entry)
 				continue
 			default:
 				replace = true
@@ -190,11 +234,24 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 
 		rec := src.toRecord(files, fts, chunks)
 		status := StatusNew
+		// New session: the source's state is all there is, so the reported title
+		// resolves from it directly (a source tombstone falls back to src.title).
+		title := effectiveTitle(src.title, srcName)
 		if replace {
 			status = StatusUpdated
+			// A replace rewrites the imported title to the source's, but the
+			// surviving name state is whichever side wins reconciliation. This
+			// snapshot is reporting-only — writeRecord re-checks the decision inside
+			// the write transaction — so a failed read degrades the reported title,
+			// not the merge itself.
+			if _, destName, nerr := dest.sessionNameState(ctx, uuid); nerr != nil {
+				slog.Warn("vault merge: name state lookup failed", "uuid", uuid, "error", nerr)
+			} else if srcName == nil || !sessionNameSupersedes(*srcName, destName) {
+				title = effectiveTitle(src.title, destName)
+			}
 		}
 		entry := ImportedSession{
-			UUID: uuid, Title: src.title, ProjectPath: src.projectPath,
+			UUID: uuid, Title: title, ProjectPath: src.projectPath,
 			SizeBytes: src.sizeBytes, Status: status,
 		}
 
@@ -203,7 +260,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			continue
 		}
 
-		batch = append(batch, SessionWrite{Record: rec, Replace: replace})
+		batch = append(batch, SessionWrite{Record: rec, Replace: replace, Name: srcName})
 		pending = append(pending, entry)
 		batchBytes += src.sizeBytes
 		if len(batch) >= maxBatchSessions || batchBytes >= maxBatchBytes {
@@ -329,6 +386,87 @@ func readSourceSession(ctx context.Context, srcDB *sql.DB, uuid string, hasEncod
 	}
 	s.rawJSONL = decoded
 	return &s, nil
+}
+
+// tableExists reports whether the DB has a table named table, via a
+// parameterized sqlite_master probe. Merge uses it to feature-detect
+// vault_session_names on a source that is deliberately opened WITHOUT running
+// migrations — a legacy source is supported and simply carries no name state.
+// table is bound as an ordinary WHERE value (sqlite_master.name), never spliced
+// into the statement as an identifier, so no injection surface exists here.
+func tableExists(ctx context.Context, db *sql.DB, table string) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("probing table %s: %w", table, err)
+	}
+	return n > 0, nil
+}
+
+// readSourceName loads the source's capy-owned name state for uuid, or nil when
+// the source has never named the session. An empty or whitespace-only
+// custom_title — which no supported writer produces — is normalized to a clear
+// tombstone, preserving the NULL-or-non-empty invariant before comparison and
+// destination write. Everything else is carried verbatim: merge does not
+// re-validate a foreign vault's names.
+func readSourceName(ctx context.Context, srcDB *sql.DB, uuid string) (*SessionName, error) {
+	var (
+		customTitle sql.NullString
+		renamedAtNS int64
+		machineID   string
+	)
+	err := srcDB.QueryRowContext(ctx,
+		`SELECT custom_title, renamed_at_ns, machine_id FROM vault_session_names WHERE session_uuid = ?`,
+		uuid).Scan(&customTitle, &renamedAtNS, &machineID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying source session name: %w", err)
+	}
+	name := &SessionName{RenamedAtNS: renamedAtNS, MachineID: machineID}
+	if customTitle.Valid && strings.TrimSpace(customTitle.String) != "" {
+		name.CustomTitle = &customTitle.String
+	}
+	return name, nil
+}
+
+// reconcileMergeName applies name reconciliation for a source session whose
+// transcript is NOT being written (the excluded and skipped branches): a
+// winning source state flips the entry to StatusUpdated — the destination DID
+// change — and reports the resulting effective title; an older or identical
+// source returns the entry unchanged. Dry-run computes the same decision from
+// the snapshot without writing. A real run re-checks the decision inside the
+// write transaction, so when a concurrent local rename supersedes the snapshot
+// between read and write, the entry falls back to its branch status rather
+// than claiming an update.
+func reconcileMergeName(ctx context.Context, dest *VaultStore, entry ImportedSession, srcName SessionName, dryRun bool) ImportedSession {
+	importedTitle, destName, err := dest.sessionNameState(ctx, entry.UUID)
+	if err != nil {
+		slog.Warn("vault merge: name state lookup failed", "uuid", entry.UUID, "error", err)
+		entry.Status = StatusError
+		entry.Err = err
+		return entry
+	}
+	if !sessionNameSupersedes(srcName, destName) {
+		return entry
+	}
+	if !dryRun {
+		changed, err := dest.reconcileSessionName(ctx, entry.UUID, srcName)
+		if err != nil {
+			slog.Warn("vault merge: name reconcile failed", "uuid", entry.UUID, "error", err)
+			entry.Status = StatusError
+			entry.Err = err
+			return entry
+		}
+		if !changed {
+			return entry
+		}
+	}
+	entry.Status = StatusUpdated
+	entry.Title = effectiveTitle(importedTitle, &srcName)
+	return entry
 }
 
 // readSourceFiles loads and decodes a source session's sidecar files. As with the

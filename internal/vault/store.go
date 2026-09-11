@@ -636,6 +636,14 @@ func (s *VaultStore) Checkpoint() error {
 type SessionWrite struct {
 	Record  *SessionRecord
 	Replace bool
+	// Name, when non-nil, is source name state merge carries alongside the
+	// session row, reconciled into vault_session_names within the SAME
+	// transaction: a new session and its name must commit atomically to satisfy
+	// the foreign key, and a replace must not race a concurrent local rename.
+	// The tuple is written verbatim iff it supersedes the stored state
+	// (reconcileSessionNameTx); nil never touches the table. Disk import leaves
+	// it nil — import never creates, changes, or removes a name row.
+	Name *SessionName
 }
 
 // InsertSession writes a new session, its files, and its FTS rows in one
@@ -733,6 +741,13 @@ func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite
 			sess.IndexVersion, rawData, rawEnc,
 		); err != nil {
 			return fmt.Errorf("insert session: %w", err)
+		}
+	}
+	// After the session row exists (FK parent) and before children: carried
+	// name state reconciles in the same tx so new-session+name is atomic.
+	if w.Name != nil {
+		if _, err := reconcileSessionNameTx(ctx, tx, sess.UUID, *w.Name); err != nil {
+			return err
 		}
 	}
 	childCompressed, err := s.writeChildren(ctx, tx, w.Record)
