@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -346,4 +347,646 @@ func assertSearchCount(t *testing.T, s *VaultStore, query string, want int) {
 	hits, err := s.Search(context.Background(), SearchOptions{Query: query})
 	require.NoError(t, err)
 	assert.Lenf(t, hits, want, "search %q expected %d hit(s), got %d", query, want, len(hits))
+}
+
+// ---------------------------------------------------------------------------
+// session-name reconciliation (vault_session_names merges independently of
+// transcript content)
+// ---------------------------------------------------------------------------
+
+func namePtr(s string) *string { return &s }
+
+// nameSpec pins one vault_session_names row to an exact tuple. A nil title is
+// a clear tombstone.
+type nameSpec struct {
+	uuid    string
+	title   *string
+	ns      int64
+	machine string
+}
+
+// buildNamedVault is buildVault plus exact name tuples, applied through the
+// renameSessionAt seam so renamed_at_ns and machine_id are pinned verbatim.
+func buildNamedVault(t *testing.T, path, key string, recs []*SessionRecord, names []nameSpec) {
+	t.Helper()
+	t.Setenv(vaultKeyEnv, key)
+	s := NewVaultStore(path)
+	for _, r := range recs {
+		require.NoError(t, s.InsertSession(context.Background(), r))
+	}
+	for _, n := range names {
+		opts := RenameOptions{Clear: n.title == nil}
+		if n.title != nil {
+			opts.Name = *n.title
+		}
+		_, err := s.renameSessionAt(context.Background(), n.uuid, opts, time.Unix(0, n.ns), n.machine)
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.Close())
+}
+
+// TestSessionNameSupersedes exercises the full total order the merge relies on:
+// (renamed_at_ns, machine_id) lexicographic, completed by the value tie-break.
+func TestSessionNameSupersedes(t *testing.T) {
+	name := func(title *string, ns int64, machine string) SessionName {
+		return SessionName{CustomTitle: title, RenamedAtNS: ns, MachineID: machine}
+	}
+	cases := []struct {
+		desc string
+		src  SessionName
+		dest *SessionName
+		want bool
+	}{
+		{"nil destination loses to any source", name(namePtr("a"), 1, "m"), nil, true},
+		{"nil destination loses even to a tombstone", name(nil, 1, "m"), nil, true},
+		{"newer timestamp wins", name(namePtr("a"), 2, "m"), &SessionName{CustomTitle: namePtr("b"), RenamedAtNS: 1, MachineID: "z"}, true},
+		{"older timestamp loses", name(namePtr("z"), 1, "z"), &SessionName{CustomTitle: namePtr("a"), RenamedAtNS: 2, MachineID: "a"}, false},
+		{"equal timestamp greater machine wins", name(namePtr("a"), 1, "mB"), &SessionName{CustomTitle: namePtr("z"), RenamedAtNS: 1, MachineID: "mA"}, true},
+		{"equal timestamp smaller machine loses", name(namePtr("z"), 1, "mA"), &SessionName{CustomTitle: namePtr("a"), RenamedAtNS: 1, MachineID: "mB"}, false},
+		{"equal tuple non-null beats tombstone", name(namePtr("a"), 1, "m"), &SessionName{CustomTitle: nil, RenamedAtNS: 1, MachineID: "m"}, true},
+		{"equal tuple tombstone loses to non-null", name(nil, 1, "m"), &SessionName{CustomTitle: namePtr("a"), RenamedAtNS: 1, MachineID: "m"}, false},
+		{"equal tuple bytewise greater title wins", name(namePtr("bbb"), 1, "m"), &SessionName{CustomTitle: namePtr("aaa"), RenamedAtNS: 1, MachineID: "m"}, true},
+		{"equal tuple bytewise smaller title loses", name(namePtr("aaa"), 1, "m"), &SessionName{CustomTitle: namePtr("bbb"), RenamedAtNS: 1, MachineID: "m"}, false},
+		{"identical non-null state is a no-op", name(namePtr("same"), 1, "m"), &SessionName{CustomTitle: namePtr("same"), RenamedAtNS: 1, MachineID: "m"}, false},
+		{"identical tombstone state is a no-op", name(nil, 1, "m"), &SessionName{CustomTitle: nil, RenamedAtNS: 1, MachineID: "m"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			assert.Equal(t, tc.want, sessionNameSupersedes(tc.src, tc.dest))
+		})
+	}
+}
+
+// TestMergeFrom_NameReconciliationMatrix drives the merge-level decision over
+// the same-hash skip branch (the most common cross-machine case): both vaults
+// hold identical content, so ONLY name state can change. Each case asserts the
+// reported status, that a winning source tuple is stored VERBATIM (an
+// accidental local re-stamp would change renamed_at_ns and fail), and the
+// resulting effective title.
+func TestMergeFrom_NameReconciliationMatrix(t *testing.T) {
+	const key = "shared-vault-key-at-least-32-characters!!"
+	const uuid = "aaaa1111-0000-0000-0000-00000000000a"
+	ctx := context.Background()
+
+	cases := []struct {
+		desc     string
+		srcName  *nameSpec
+		destName *nameSpec
+		// wantUpdated: the name reconciliation changed the destination (reported
+		// StatusUpdated); otherwise the same-hash session reports StatusSkipped.
+		wantUpdated bool
+		wantName    *SessionName // expected stored state after merge; nil == no row
+		wantTitle   string       // expected effective title after merge
+	}{
+		{
+			desc:        "newer source wins",
+			srcName:     &nameSpec{uuid: uuid, title: namePtr("SRC"), ns: 2000, machine: "m"},
+			destName:    &nameSpec{uuid: uuid, title: namePtr("DEST"), ns: 1000, machine: "m"},
+			wantUpdated: true,
+			wantName:    &SessionName{CustomTitle: namePtr("SRC"), RenamedAtNS: 2000, MachineID: "m"},
+			wantTitle:   "SRC",
+		},
+		{
+			desc:      "older source loses",
+			srcName:   &nameSpec{uuid: uuid, title: namePtr("SRC"), ns: 1000, machine: "m"},
+			destName:  &nameSpec{uuid: uuid, title: namePtr("DEST"), ns: 2000, machine: "m"},
+			wantName:  &SessionName{CustomTitle: namePtr("DEST"), RenamedAtNS: 2000, MachineID: "m"},
+			wantTitle: "DEST",
+		},
+		{
+			desc:        "equal timestamp greater machine wins",
+			srcName:     &nameSpec{uuid: uuid, title: namePtr("SRC"), ns: 1000, machine: "mB"},
+			destName:    &nameSpec{uuid: uuid, title: namePtr("DEST"), ns: 1000, machine: "mA"},
+			wantUpdated: true,
+			wantName:    &SessionName{CustomTitle: namePtr("SRC"), RenamedAtNS: 1000, MachineID: "mB"},
+			wantTitle:   "SRC",
+		},
+		{
+			desc:      "equal timestamp smaller machine loses",
+			srcName:   &nameSpec{uuid: uuid, title: namePtr("SRC"), ns: 1000, machine: "mA"},
+			destName:  &nameSpec{uuid: uuid, title: namePtr("DEST"), ns: 1000, machine: "mB"},
+			wantName:  &SessionName{CustomTitle: namePtr("DEST"), RenamedAtNS: 1000, MachineID: "mB"},
+			wantTitle: "DEST",
+		},
+		{
+			desc:        "equal tuple non-null beats tombstone",
+			srcName:     &nameSpec{uuid: uuid, title: namePtr("SRC"), ns: 1000, machine: "m"},
+			destName:    &nameSpec{uuid: uuid, title: nil, ns: 1000, machine: "m"},
+			wantUpdated: true,
+			wantName:    &SessionName{CustomTitle: namePtr("SRC"), RenamedAtNS: 1000, MachineID: "m"},
+			wantTitle:   "SRC",
+		},
+		{
+			desc:      "equal tuple source tombstone loses to non-null",
+			srcName:   &nameSpec{uuid: uuid, title: nil, ns: 1000, machine: "m"},
+			destName:  &nameSpec{uuid: uuid, title: namePtr("DEST"), ns: 1000, machine: "m"},
+			wantName:  &SessionName{CustomTitle: namePtr("DEST"), RenamedAtNS: 1000, MachineID: "m"},
+			wantTitle: "DEST",
+		},
+		{
+			desc:        "equal tuple bytewise greater title wins",
+			srcName:     &nameSpec{uuid: uuid, title: namePtr("bbb"), ns: 1000, machine: "m"},
+			destName:    &nameSpec{uuid: uuid, title: namePtr("aaa"), ns: 1000, machine: "m"},
+			wantUpdated: true,
+			wantName:    &SessionName{CustomTitle: namePtr("bbb"), RenamedAtNS: 1000, MachineID: "m"},
+			wantTitle:   "bbb",
+		},
+		{
+			desc:      "equal tuple bytewise smaller title loses",
+			srcName:   &nameSpec{uuid: uuid, title: namePtr("aaa"), ns: 1000, machine: "m"},
+			destName:  &nameSpec{uuid: uuid, title: namePtr("bbb"), ns: 1000, machine: "m"},
+			wantName:  &SessionName{CustomTitle: namePtr("bbb"), RenamedAtNS: 1000, MachineID: "m"},
+			wantTitle: "bbb",
+		},
+		{
+			desc:      "identical state is a skipped no-op",
+			srcName:   &nameSpec{uuid: uuid, title: namePtr("same"), ns: 1000, machine: "m"},
+			destName:  &nameSpec{uuid: uuid, title: namePtr("same"), ns: 1000, machine: "m"},
+			wantName:  &SessionName{CustomTitle: namePtr("same"), RenamedAtNS: 1000, MachineID: "m"},
+			wantTitle: "same",
+		},
+		{
+			desc:        "never-named destination adopts source name",
+			srcName:     &nameSpec{uuid: uuid, title: namePtr("SRC"), ns: 1000, machine: "m"},
+			wantUpdated: true,
+			wantName:    &SessionName{CustomTitle: namePtr("SRC"), RenamedAtNS: 1000, MachineID: "m"},
+			wantTitle:   "SRC",
+		},
+		{
+			desc:        "never-named destination adopts source tombstone",
+			srcName:     &nameSpec{uuid: uuid, title: nil, ns: 1000, machine: "m"},
+			wantUpdated: true,
+			wantName:    &SessionName{CustomTitle: nil, RenamedAtNS: 1000, MachineID: "m"},
+			wantTitle:   "title desttok", // tombstone: falls back to imported title
+		},
+		{
+			desc:        "newer source tombstone clears destination name",
+			srcName:     &nameSpec{uuid: uuid, title: nil, ns: 2000, machine: "m"},
+			destName:    &nameSpec{uuid: uuid, title: namePtr("DEST"), ns: 1000, machine: "m"},
+			wantUpdated: true,
+			wantName:    &SessionName{CustomTitle: nil, RenamedAtNS: 2000, MachineID: "m"},
+			wantTitle:   "title desttok",
+		},
+		{
+			desc:      "source without name row leaves destination untouched",
+			destName:  &nameSpec{uuid: uuid, title: namePtr("DEST"), ns: 1000, machine: "m"},
+			wantName:  &SessionName{CustomTitle: namePtr("DEST"), RenamedAtNS: 1000, MachineID: "m"},
+			wantTitle: "DEST",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			dir := t.TempDir()
+			srcPath := filepath.Join(dir, "source.db")
+			destPath := filepath.Join(dir, "dest.db")
+
+			var srcNames, destNames []nameSpec
+			if tc.srcName != nil {
+				srcNames = append(srcNames, *tc.srcName)
+			}
+			if tc.destName != nil {
+				destNames = append(destNames, *tc.destName)
+			}
+			// Identical content_hash on both sides drives the same-hash skip branch.
+			buildNamedVault(t, srcPath, key,
+				[]*SessionRecord{mergeRecord(t, uuid, "srctok", 3, 1000, "samehash", "machine-src", "/src/p")}, srcNames)
+			buildNamedVault(t, destPath, key,
+				[]*SessionRecord{mergeRecord(t, uuid, "desttok", 3, 1000, "samehash", "machine-dest", "/dest/p")}, destNames)
+
+			dest := openDest(t, destPath, key)
+			res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+			require.NoError(t, err)
+			require.Equal(t, 0, res.Errors)
+			require.Len(t, res.Sessions, 1)
+
+			if tc.wantUpdated {
+				assert.Equal(t, 1, res.Updated, "a name-only change must report updated")
+				assert.Equal(t, 0, res.Skipped)
+				assert.Equal(t, tc.wantTitle, res.Sessions[0].Title, "entry must surface the effective title")
+			} else {
+				assert.Equal(t, 0, res.Updated)
+				assert.Equal(t, 1, res.Skipped, "an older or identical source name must report skipped")
+				// Skipped rows keep the pre-existing convention: Title is empty
+				// ("not scanned" — see ImportedSession), not the effective title.
+				assert.Empty(t, res.Sessions[0].Title)
+			}
+
+			got, err := dest.GetSession(ctx, uuid)
+			require.NoError(t, err)
+			if tc.wantName == nil {
+				assert.Nil(t, got.Name)
+			} else {
+				require.NotNil(t, got.Name)
+				assert.Equal(t, *tc.wantName, *got.Name, "stored tuple must be the winning side's, verbatim")
+			}
+			assert.Equal(t, tc.wantTitle, got.EffectiveTitle())
+			// The same-hash branch never rewrites the transcript.
+			assert.Equal(t, "machine-dest", got.MachineID, "destination transcript metadata must be untouched")
+		})
+	}
+}
+
+// TestMergeFrom_NameOnTranscriptBranches proves name reconciliation runs on
+// every transcript decision: smaller-skip, replace (both winner directions),
+// brand-new session (name committed atomically with the session row), and the
+// zero-message exclusion with and without a populated destination.
+func TestMergeFrom_NameOnTranscriptBranches(t *testing.T) {
+	const key = "shared-vault-key-at-least-32-characters!!"
+	ctx := context.Background()
+
+	t.Run("smaller source updates name only", func(t *testing.T) {
+		const uuid = "bbbb2222-0000-0000-0000-00000000000b"
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "source.db")
+		destPath := filepath.Join(dir, "dest.db")
+		buildNamedVault(t, srcPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "smallsrc", 2, 100, "srchash", "machine-src", "/src/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("From the laptop"), ns: 2000, machine: "m"}})
+		buildNamedVault(t, destPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "bigdest", 5, 3000, "desthash", "machine-dest", "/dest/p")}, nil)
+
+		dest := openDest(t, destPath, key)
+		before := snapshotArchivedData(t, dest, uuid)
+		res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, 1, res.Updated, "the smaller transcript is skipped but the newer name lands")
+		assert.Equal(t, 0, res.Skipped)
+
+		after := snapshotArchivedData(t, dest, uuid)
+		assert.True(t, bytes.Equal(before.raw, after.raw), "archived bytes must be unchanged by a name-only merge")
+		assert.Equal(t, before.hash, after.hash)
+		assert.Equal(t, before.size, after.size)
+		assert.Equal(t, before.ftsCount, after.ftsCount)
+
+		got, err := dest.GetSession(ctx, uuid)
+		require.NoError(t, err)
+		require.NotNil(t, got.Name)
+		assert.Equal(t, SessionName{CustomTitle: namePtr("From the laptop"), RenamedAtNS: 2000, MachineID: "m"}, *got.Name)
+	})
+
+	t.Run("replace carries winning source name", func(t *testing.T) {
+		const uuid = "cccc3333-0000-0000-0000-00000000000c"
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "source.db")
+		destPath := filepath.Join(dir, "dest.db")
+		buildNamedVault(t, srcPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "bigsrc", 5, 3000, "srchash", "machine-src", "/src/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("SRC"), ns: 2000, machine: "m"}})
+		buildNamedVault(t, destPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "smalldest", 2, 500, "desthash", "machine-dest", "/dest/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("DEST"), ns: 1000, machine: "m"}})
+
+		dest := openDest(t, destPath, key)
+		res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, 1, res.Updated)
+		assert.Equal(t, "SRC", res.Sessions[0].Title, "entry title must reflect the winning name")
+
+		got, err := dest.GetSession(ctx, uuid)
+		require.NoError(t, err)
+		assert.Equal(t, "machine-src", got.MachineID, "larger source transcript replaces")
+		require.NotNil(t, got.Name)
+		assert.Equal(t, SessionName{CustomTitle: namePtr("SRC"), RenamedAtNS: 2000, MachineID: "m"}, *got.Name)
+		assertSearchCount(t, dest, "bigsrc", 1)
+	})
+
+	t.Run("replace keeps newer destination name", func(t *testing.T) {
+		const uuid = "dddd4444-0000-0000-0000-00000000000d"
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "source.db")
+		destPath := filepath.Join(dir, "dest.db")
+		buildNamedVault(t, srcPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "bigsrc", 5, 3000, "srchash", "machine-src", "/src/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("SRC"), ns: 1000, machine: "m"}})
+		buildNamedVault(t, destPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "smalldest", 2, 500, "desthash", "machine-dest", "/dest/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("DEST keeps"), ns: 2000, machine: "m"}})
+
+		dest := openDest(t, destPath, key)
+		res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, 1, res.Updated)
+		assert.Equal(t, "DEST keeps", res.Sessions[0].Title, "entry title must reflect the surviving destination name")
+
+		got, err := dest.GetSession(ctx, uuid)
+		require.NoError(t, err)
+		assert.Equal(t, "machine-src", got.MachineID, "transcript still replaced")
+		require.NotNil(t, got.Name)
+		assert.Equal(t, SessionName{CustomTitle: namePtr("DEST keeps"), RenamedAtNS: 2000, MachineID: "m"}, *got.Name,
+			"an older source name must not clobber the newer destination name during replace")
+	})
+
+	t.Run("new session inserts name atomically", func(t *testing.T) {
+		const uuid = "eeee5555-0000-0000-0000-00000000000e"
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "source.db")
+		destPath := filepath.Join(dir, "dest.db")
+		buildNamedVault(t, srcPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "freshsrc", 3, 1000, "srchash", "machine-src", "/src/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("Fresh name"), ns: 1000, machine: "m"}})
+
+		dest := openDest(t, destPath, key)
+		res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, 1, res.Imported)
+		assert.Equal(t, "Fresh name", res.Sessions[0].Title)
+
+		got, err := dest.GetSession(ctx, uuid)
+		require.NoError(t, err)
+		require.NotNil(t, got.Name)
+		assert.Equal(t, SessionName{CustomTitle: namePtr("Fresh name"), RenamedAtNS: 1000, MachineID: "m"}, *got.Name)
+	})
+
+	t.Run("zero-message source still names populated destination", func(t *testing.T) {
+		const uuid = "ffff6666-0000-0000-0000-00000000000f"
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "source.db")
+		destPath := filepath.Join(dir, "dest.db")
+		buildNamedVault(t, srcPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "emptysrc", 0, 200, "srchash", "machine-src", "/src/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("Renamed shell"), ns: 2000, machine: "m"}})
+		buildNamedVault(t, destPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "realdest", 4, 2000, "desthash", "machine-dest", "/dest/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("Old dest name"), ns: 1000, machine: "m"}})
+
+		dest := openDest(t, destPath, key)
+		before := snapshotArchivedData(t, dest, uuid)
+		res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, 1, res.Updated, "the excluded shell's newer name must still reconcile")
+		assert.Equal(t, 0, res.Excluded)
+
+		after := snapshotArchivedData(t, dest, uuid)
+		assert.True(t, bytes.Equal(before.raw, after.raw), "the excluded transcript must not touch the destination")
+
+		got, err := dest.GetSession(ctx, uuid)
+		require.NoError(t, err)
+		require.NotNil(t, got.Name)
+		assert.Equal(t, SessionName{CustomTitle: namePtr("Renamed shell"), RenamedAtNS: 2000, MachineID: "m"}, *got.Name)
+	})
+
+	t.Run("zero-message source with older name stays excluded", func(t *testing.T) {
+		const uuid = "abab7777-0000-0000-0000-00000000000a"
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "source.db")
+		destPath := filepath.Join(dir, "dest.db")
+		buildNamedVault(t, srcPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "emptysrc", 0, 200, "srchash", "machine-src", "/src/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("stale"), ns: 1000, machine: "m"}})
+		buildNamedVault(t, destPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "realdest", 4, 2000, "desthash", "machine-dest", "/dest/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("Current"), ns: 2000, machine: "m"}})
+
+		dest := openDest(t, destPath, key)
+		res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, 1, res.Excluded, "an older shell name changes nothing, so the shell stays excluded")
+		assert.Equal(t, 0, res.Updated)
+
+		got, err := dest.GetSession(ctx, uuid)
+		require.NoError(t, err)
+		require.NotNil(t, got.Name)
+		assert.Equal(t, "Current", *got.Name.CustomTitle)
+	})
+
+	t.Run("zero-message source without destination contributes nothing", func(t *testing.T) {
+		const uuid = "cdcd8888-0000-0000-0000-00000000000c"
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "source.db")
+		destPath := filepath.Join(dir, "dest.db")
+		buildNamedVault(t, srcPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "emptysrc", 0, 200, "srchash", "machine-src", "/src/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("orphan-to-be"), ns: 1000, machine: "m"}})
+
+		dest := openDest(t, destPath, key)
+		res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, 1, res.Excluded)
+		assert.Equal(t, 0, res.Errors, "an excluded shell with no destination parent is not an error")
+
+		_, err = dest.GetSession(ctx, uuid)
+		assert.ErrorIs(t, err, ErrSessionNotFound, "no session row means no name row (FK parent required)")
+	})
+}
+
+// TestMergeFrom_NameLegacySourceLeavesDestNames proves a source without
+// vault_session_names (legacy schema) merges cleanly and leaves destination
+// name state untouched.
+func TestMergeFrom_NameLegacySourceLeavesDestNames(t *testing.T) {
+	const key = "shared-vault-key-at-least-32-characters!!"
+	ctx := context.Background()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "v1source.db")
+	destPath := filepath.Join(dir, "dest.db")
+
+	const uuid = "efef9999-0000-0000-0000-00000000000e"
+	buildV1Source(t, srcPath, key, uuid, "v1token")
+	// Destination holds a LARGER named copy, so the v1 source hits the
+	// smaller-skip branch — the branch that now reads name state.
+	buildNamedVault(t, destPath, key,
+		[]*SessionRecord{mergeRecord(t, uuid, "bigdest", 5, 100000, "desthash", "machine-dest", "/dest/p")},
+		[]nameSpec{{uuid: uuid, title: namePtr("Kept name"), ns: 1000, machine: "m"}})
+
+	dest := openDest(t, destPath, key)
+	res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+	require.NoError(t, err, "a legacy source without vault_session_names must merge cleanly")
+	assert.Equal(t, 1, res.Skipped)
+	assert.Equal(t, 0, res.Errors)
+
+	got, err := dest.GetSession(ctx, uuid)
+	require.NoError(t, err)
+	require.NotNil(t, got.Name)
+	assert.Equal(t, SessionName{CustomTitle: namePtr("Kept name"), RenamedAtNS: 1000, MachineID: "m"}, *got.Name)
+}
+
+// TestMergeFrom_NameDryRun proves dry-run reports the prospective name decision
+// (status + effective title) without writing anything.
+func TestMergeFrom_NameDryRun(t *testing.T) {
+	const key = "shared-vault-key-at-least-32-characters!!"
+	ctx := context.Background()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "source.db")
+	destPath := filepath.Join(dir, "dest.db")
+
+	const uuid = "0101aaaa-0000-0000-0000-000000000001"
+	buildNamedVault(t, srcPath, key,
+		[]*SessionRecord{mergeRecord(t, uuid, "srctok", 3, 1000, "samehash", "machine-src", "/src/p")},
+		[]nameSpec{{uuid: uuid, title: namePtr("Prospective"), ns: 2000, machine: "m"}})
+	buildNamedVault(t, destPath, key,
+		[]*SessionRecord{mergeRecord(t, uuid, "desttok", 3, 1000, "samehash", "machine-dest", "/dest/p")},
+		[]nameSpec{{uuid: uuid, title: namePtr("Current"), ns: 1000, machine: "m"}})
+
+	dest := openDest(t, destPath, key)
+	res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{DryRun: true})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Updated, "dry-run reports the prospective name-only update")
+	require.Len(t, res.Sessions, 1)
+	assert.Equal(t, "Prospective", res.Sessions[0].Title)
+
+	got, err := dest.GetSession(ctx, uuid)
+	require.NoError(t, err)
+	require.NotNil(t, got.Name)
+	assert.Equal(t, SessionName{CustomTitle: namePtr("Current"), RenamedAtNS: 1000, MachineID: "m"}, *got.Name,
+		"dry-run must not write name state")
+}
+
+// TestMergeFrom_NameIdempotentAndConverges proves a winning merge stores the
+// source tuple verbatim (a re-stamp would break this), a repeated merge is a
+// skipped no-op, and both merge directions converge on the same effective name.
+func TestMergeFrom_NameIdempotentAndConverges(t *testing.T) {
+	const key = "shared-vault-key-at-least-32-characters!!"
+	ctx := context.Background()
+	const uuid = "0202bbbb-0000-0000-0000-000000000002"
+
+	winner := SessionName{CustomTitle: namePtr("Alpha wins"), RenamedAtNS: 2000, MachineID: "mA"}
+	buildPair := func(dir string) (aPath, bPath string) {
+		aPath = filepath.Join(dir, "a.db")
+		bPath = filepath.Join(dir, "b.db")
+		buildNamedVault(t, aPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "tok", 3, 1000, "samehash", "machine-a", "/a/p")},
+			[]nameSpec{{uuid: uuid, title: winner.CustomTitle, ns: winner.RenamedAtNS, machine: winner.MachineID}})
+		buildNamedVault(t, bPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "tok", 3, 1000, "samehash", "machine-b", "/b/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("beta"), ns: 1000, machine: "mB"}})
+		return aPath, bPath
+	}
+
+	// Direction 1: A (newer) into B — B adopts A's tuple verbatim.
+	aPath, bPath := buildPair(t.TempDir())
+	destB := openDest(t, bPath, key)
+	first, err := MergeFrom(ctx, destB, aPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, first.Updated)
+	gotB, err := destB.GetSession(ctx, uuid)
+	require.NoError(t, err)
+	require.NotNil(t, gotB.Name)
+	assert.Equal(t, winner, *gotB.Name, "the stored tuple must equal the source tuple exactly (no re-stamp)")
+
+	// Repeat: identical states now, so the merge is a skipped no-op and the
+	// tuple is byte-for-byte stable.
+	second, err := MergeFrom(ctx, destB, aPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, second.Updated)
+	assert.Equal(t, 1, second.Skipped)
+	gotB2, err := destB.GetSession(ctx, uuid)
+	require.NoError(t, err)
+	require.NotNil(t, gotB2.Name)
+	assert.Equal(t, winner, *gotB2.Name)
+	require.NoError(t, destB.Close())
+
+	// Direction 2 on fresh copies: B (older) into A — A keeps its own state.
+	// Both directions therefore converge on the same effective title.
+	aPath2, bPath2 := buildPair(t.TempDir())
+	destA := openDest(t, aPath2, key)
+	back, err := MergeFrom(ctx, destA, bPath2, key, "CAPY_VAULT_KEY", MergeOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, back.Updated)
+	assert.Equal(t, 1, back.Skipped)
+	gotA, err := destA.GetSession(ctx, uuid)
+	require.NoError(t, err)
+	require.NotNil(t, gotA.Name)
+	assert.Equal(t, winner, *gotA.Name)
+	assert.Equal(t, gotB2.EffectiveTitle(), gotA.EffectiveTitle(), "both merge directions must converge")
+}
+
+// TestMergeFrom_EmptySourceTitleNormalizesToTombstone proves a whitespace-only
+// source custom_title (producible only by a foreign or hand-edited vault) is
+// normalized to a clear tombstone rather than stored as a blank name.
+func TestMergeFrom_EmptySourceTitleNormalizesToTombstone(t *testing.T) {
+	const key = "shared-vault-key-at-least-32-characters!!"
+	ctx := context.Background()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "source.db")
+	destPath := filepath.Join(dir, "dest.db")
+
+	const uuid = "0303cccc-0000-0000-0000-000000000003"
+	buildNamedVault(t, srcPath, key,
+		[]*SessionRecord{mergeRecord(t, uuid, "srctok", 3, 1000, "samehash", "machine-src", "/src/p")}, nil)
+	// Insert the malformed row directly — every supported writer rejects it.
+	dsn := sqliteutil.EncryptedDSN(srcPath, key) + "&_busy_timeout=5000"
+	raw, err := sql.Open("sqlite3", dsn)
+	require.NoError(t, err)
+	_, err = raw.Exec(`INSERT INTO vault_session_names (session_uuid, custom_title, renamed_at_ns, machine_id)
+		VALUES (?, ?, ?, ?)`, uuid, "   ", int64(2000), "m")
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	buildNamedVault(t, destPath, key,
+		[]*SessionRecord{mergeRecord(t, uuid, "desttok", 3, 1000, "samehash", "machine-dest", "/dest/p")},
+		[]nameSpec{{uuid: uuid, title: namePtr("Old name"), ns: 1000, machine: "m"}})
+
+	dest := openDest(t, destPath, key)
+	res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Updated)
+
+	got, err := dest.GetSession(ctx, uuid)
+	require.NoError(t, err)
+	require.NotNil(t, got.Name)
+	assert.Nil(t, got.Name.CustomTitle, "a whitespace-only source title must land as a clear tombstone")
+	assert.Equal(t, int64(2000), got.Name.RenamedAtNS)
+	assert.Equal(t, "title desttok", got.EffectiveTitle(), "cleared name falls back to the imported title")
+}
+
+// TestVaultStore_ReconcileSessionNameMissingSessionFails proves the name-only
+// write path surfaces a concurrent delete as an actionable error (the FK has no
+// parent) instead of silently inserting orphan metadata.
+func TestVaultStore_ReconcileSessionNameMissingSessionFails(t *testing.T) {
+	s := newTestVault(t)
+	_, err := s.reconcileSessionName(context.Background(), "04040404-dead-beef-0000-000000000004",
+		SessionName{CustomTitle: namePtr("orphan"), RenamedAtNS: 1, MachineID: "m"})
+	require.Error(t, err, "a name row without a parent session must be rejected")
+}
+
+// TestMergeFrom_RenameMergeRaceDeterministicWinner races a concurrent local
+// rename against MergeFrom on the same destination session. The local rename's
+// tuple (ns 5000, via the deterministic clock seam) is greater than the source
+// tuple (ns 1000) in every interleaving: if the rename lands first, the merge's
+// in-transaction re-check sees the newer state and skips; if the merge lands
+// first, the rename's monotonic max(now, stored+1) stamps 5000 over it. Run
+// under -race this also exercises the snapshot-read/tx-write seam.
+func TestMergeFrom_RenameMergeRaceDeterministicWinner(t *testing.T) {
+	const key = "shared-vault-key-at-least-32-characters!!"
+	ctx := context.Background()
+	const uuid = "05050505-0000-0000-0000-000000000005"
+
+	for range 4 {
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "source.db")
+		destPath := filepath.Join(dir, "dest.db")
+		buildNamedVault(t, srcPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "srctok", 3, 1000, "samehash", "machine-src", "/src/p")},
+			[]nameSpec{{uuid: uuid, title: namePtr("merge name"), ns: 1000, machine: "machine-src"}})
+		buildNamedVault(t, destPath, key,
+			[]*SessionRecord{mergeRecord(t, uuid, "desttok", 3, 1000, "samehash", "machine-dest", "/dest/p")}, nil)
+
+		dest := openDest(t, destPath, key)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		var mergeErr, renameErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, mergeErr = MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, renameErr = dest.renameSessionAt(ctx, uuid, RenameOptions{Name: "local wins"},
+				time.Unix(0, 5000), "machine-local")
+		}()
+		close(start)
+		wg.Wait()
+		require.NoError(t, mergeErr)
+		require.NoError(t, renameErr)
+
+		got, err := dest.GetSession(ctx, uuid)
+		require.NoError(t, err)
+		require.NotNil(t, got.Name)
+		assert.Equal(t, SessionName{CustomTitle: namePtr("local wins"), RenamedAtNS: 5000, MachineID: "machine-local"},
+			*got.Name, "the local rename must win every interleaving")
+		require.NoError(t, dest.Close())
+	}
 }

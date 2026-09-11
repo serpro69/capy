@@ -41,7 +41,7 @@
 
 ## Task 3: Merge name state independently from transcript content
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Can run in parallel with:** Task 2
@@ -49,11 +49,11 @@
 
 ### Subtasks
 
-- [ ] 3.1 Feature-detect and read `vault_session_names` from an unmigrated source vault in `internal/vault/merge.go`, preserving legacy-source support
-- [ ] 3.2 Add latest-`(renamed_at_ns, machine_id)` conditional reconciliation with null clear tombstones, the equal-tuple value tie-break (total order), verbatim source-tuple writes (no local re-stamp), absent-destination wins, and empty-source-title normalization to tombstone
-- [ ] 3.3 Integrate atomic new-session+name writes (extend `SessionWrite`/`WriteBatch`) and name-only updates for the same-hash, smaller-transcript, and zero-message-excluded branches whenever the destination session exists; make dry-run/status output reflect effective results
-- [ ] 3.4 Extend `internal/vault/merge_test.go` with newer/older/tie/equal-tuple/tombstone, transcript-branch (including zero-message source → populated destination), legacy, failure, dry-run, convergence, and verbatim-tuple idempotence cases
-- [ ] 3.5 Add concurrent rename-vs-merge race coverage under `-race` with deterministic winner assertions
+- [x] 3.1 Feature-detect and read `vault_session_names` from an unmigrated source vault in `internal/vault/merge.go`, preserving legacy-source support
+- [x] 3.2 Add latest-`(renamed_at_ns, machine_id)` conditional reconciliation with null clear tombstones, the equal-tuple value tie-break (total order), verbatim source-tuple writes (no local re-stamp), absent-destination wins, and empty-source-title normalization to tombstone
+- [x] 3.3 Integrate atomic new-session+name writes (extend `SessionWrite`/`WriteBatch`) and name-only updates for the same-hash, smaller-transcript, and zero-message-excluded branches whenever the destination session exists; make dry-run/status output reflect effective results
+- [x] 3.4 Extend `internal/vault/merge_test.go` with newer/older/tie/equal-tuple/tombstone, transcript-branch (including zero-message source → populated destination), legacy, failure, dry-run, convergence, and verbatim-tuple idempotence cases
+- [x] 3.5 Add concurrent rename-vs-merge race coverage under `-race` with deterministic winner assertions
 
 ## Task 4: Rename sessions from every TUI browsing mode
 

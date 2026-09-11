@@ -2,6 +2,8 @@ package vault
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -181,4 +183,147 @@ func pointerValue(value *string) any {
 		return nil
 	}
 	return *value
+}
+
+// sessionNameSupersedes reports whether merged source name state src replaces
+// the destination's stored state dest, under cross-vault reconciliation's total
+// order: compare (renamed_at_ns, machine_id) lexicographically; equal tuples —
+// possible because machine identity can be duplicated via CAPY_MACHINE_ID or a
+// dotfile-synced machine-id file — fall to the deterministic value tie-break,
+// where a non-null title beats a null clear tombstone and two non-null titles
+// compare bytewise with the greater winning. A nil dest (the session was never
+// named there) loses to any source state. Identical states never supersede, so
+// re-merging is a no-op and every vault presented with the same states
+// converges on the same winner regardless of merge direction.
+func sessionNameSupersedes(src SessionName, dest *SessionName) bool {
+	if dest == nil {
+		return true
+	}
+	if src.RenamedAtNS != dest.RenamedAtNS {
+		return src.RenamedAtNS > dest.RenamedAtNS
+	}
+	if src.MachineID != dest.MachineID {
+		return src.MachineID > dest.MachineID
+	}
+	switch {
+	case src.CustomTitle == nil:
+		// Equal tuple: a source tombstone never beats a destination non-null
+		// title, and against a destination tombstone the states are identical.
+		return false
+	case dest.CustomTitle == nil:
+		return true
+	default:
+		return *src.CustomTitle > *dest.CustomTitle
+	}
+}
+
+// reconcileSessionNameTx upserts src for uuid iff it supersedes the currently
+// stored state, re-reading that state inside tx so the decision and the write
+// are atomic — a local rename committing between a caller's snapshot read and
+// this write cannot be clobbered by a stale decision. A winning tuple is
+// written VERBATIM: the monotonic max(now, stored+1) bump belongs to local
+// rename/clear operations only, and re-stamping here would break idempotence
+// and cross-vault convergence. Returns whether a write occurred.
+func reconcileSessionNameTx(ctx context.Context, tx *sql.Tx, uuid string, src SessionName) (bool, error) {
+	var (
+		customTitle sql.NullString
+		renamedAtNS int64
+		machineID   string
+		dest        *SessionName
+	)
+	err := tx.QueryRowContext(ctx,
+		`SELECT custom_title, renamed_at_ns, machine_id FROM vault_session_names WHERE session_uuid = ?`,
+		uuid).Scan(&customTitle, &renamedAtNS, &machineID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// No row: dest stays nil and any source state supersedes.
+	case err != nil:
+		return false, fmt.Errorf("reading session name state: %w", err)
+	default:
+		dest = &SessionName{
+			CustomTitle: nullStringPointer(customTitle),
+			RenamedAtNS: renamedAtNS,
+			MachineID:   machineID,
+		}
+	}
+	if !sessionNameSupersedes(src, dest) {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO vault_session_names (session_uuid, custom_title, renamed_at_ns, machine_id)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(session_uuid) DO UPDATE SET
+			custom_title = excluded.custom_title,
+			renamed_at_ns = excluded.renamed_at_ns,
+			machine_id = excluded.machine_id`,
+		uuid, pointerValue(src.CustomTitle), src.RenamedAtNS, src.MachineID,
+	); err != nil {
+		return false, fmt.Errorf("writing session name state: %w", err)
+	}
+	return true, nil
+}
+
+// reconcileSessionName runs reconcileSessionNameTx in its own immediate
+// transaction — the name-only merge path for a destination session whose
+// transcript is not being rewritten (same-hash, smaller, and zero-message
+// excluded source branches). The session must already exist: with no parent
+// vault_sessions row the foreign key rejects the insert, surfacing a
+// concurrent delete as an error rather than orphaned metadata.
+func (s *VaultStore) reconcileSessionName(ctx context.Context, uuid string, src SessionName) (bool, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return false, err
+	}
+	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
+	if err != nil {
+		return false, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	changed, err := reconcileSessionNameTx(ctx, tx, uuid, src)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("committing session name reconcile: %w", err)
+	}
+	return changed, nil
+}
+
+// sessionNameState returns the imported title and stored name state for an
+// exact UUID, outside any transaction. Merge uses this snapshot for dry-run
+// decisions and status/title reporting; the authoritative decision re-runs
+// inside the write transaction (reconcileSessionNameTx), and the stored tuple
+// only ever grows under the reconciliation order, so a snapshot that says
+// "source loses" can never become stale in the other direction.
+func (s *VaultStore) sessionNameState(ctx context.Context, uuid string) (string, *SessionName, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	var (
+		imported    sql.NullString
+		customTitle sql.NullString
+		renamedAtNS sql.NullInt64
+		machineID   sql.NullString
+	)
+	err = db.QueryRowContext(ctx, `
+		SELECT s.title, n.custom_title, n.renamed_at_ns, n.machine_id
+		FROM vault_sessions s
+		LEFT JOIN vault_session_names n ON n.session_uuid = s.uuid
+		WHERE s.uuid = ?`, uuid).Scan(&imported, &customTitle, &renamedAtNS, &machineID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, ErrSessionNotFound
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("querying session name state: %w", err)
+	}
+	if !renamedAtNS.Valid {
+		return imported.String, nil, nil
+	}
+	return imported.String, &SessionName{
+		CustomTitle: nullStringPointer(customTitle),
+		RenamedAtNS: renamedAtNS.Int64,
+		MachineID:   machineID.String,
+	}, nil
 }
