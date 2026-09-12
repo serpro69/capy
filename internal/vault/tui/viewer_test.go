@@ -22,13 +22,18 @@ func keyMsg(s string) tea.KeyMsg {
 	case "tab":
 		return tea.KeyMsg{Type: tea.KeyTab}
 	case " ":
-		return tea.KeyMsg{Type: tea.KeySpace}
+		// bubbletea reports a space press as KeySpace carrying the ' ' rune
+		// (key.go detectOneMsg); textinput inserts msg.Runes, so the rune must
+		// be present or typing a space into a filter/query/name drops it.
+		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
 	case "up":
 		return tea.KeyMsg{Type: tea.KeyUp}
 	case "down":
 		return tea.KeyMsg{Type: tea.KeyDown}
 	case "ctrl+d":
 		return tea.KeyMsg{Type: tea.KeyCtrlD}
+	case "ctrl+e":
+		return tea.KeyMsg{Type: tea.KeyCtrlE}
 	case "ctrl+u":
 		return tea.KeyMsg{Type: tea.KeyCtrlU}
 	default:

@@ -7,8 +7,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/serpro69/capy/internal/vault"
 )
+
+// displayWidth is the ANSI-aware terminal width of the widest line in s — what
+// the terminal actually consumes, as opposed to len() or a rune count.
+func displayWidth(s string) int { return lipgloss.Width(s) }
+
+// firstLine returns the first row of a rendered view.
+func firstLine(s string) string { return strings.SplitN(s, "\n", 2)[0] }
 
 // jsonlLines renders maps as newline-delimited compact JSON — the on-disk shape
 // of a session/subagent transcript.
@@ -84,14 +92,22 @@ type stubStore struct {
 	files     map[string][]vault.File
 	results   []vault.SearchResult
 	searchErr error
+	renameErr error
+	listErr   error // returned by ListSessions when set (post-rename refresh failure)
 
-	searchCalls  int
-	lastQuery    string
-	lastListOpts vault.ListOptions
+	searchCalls    int
+	lastQuery      string
+	lastListOpts   vault.ListOptions
+	renameCalls    int
+	lastRenameID   string
+	lastRenameOpts vault.RenameOptions
 }
 
 func (s *stubStore) ListSessions(_ context.Context, opts vault.ListOptions) ([]vault.Session, error) {
 	s.lastListOpts = opts
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
 	if opts.Project == "" {
 		return s.sessions, nil
 	}
@@ -124,4 +140,33 @@ func (s *stubStore) Search(_ context.Context, opts vault.SearchOptions) ([]vault
 	s.searchCalls++
 	s.lastQuery = opts.Query
 	return s.results, s.searchErr
+}
+
+// RenameSession mirrors the real store's contract: shared normalization for a
+// rename, a nil CustomTitle tombstone for a clear, and the updated metadata
+// returned — so app-level tests observe authoritative post-write state.
+func (s *stubStore) RenameSession(_ context.Context, prefix string, opts vault.RenameOptions) (*vault.Session, error) {
+	s.renameCalls++
+	s.lastRenameID = prefix
+	s.lastRenameOpts = opts
+	if s.renameErr != nil {
+		return nil, s.renameErr
+	}
+	for i := range s.sessions {
+		if !strings.HasPrefix(s.sessions[i].UUID, prefix) {
+			continue
+		}
+		var custom *string
+		if !opts.Clear {
+			normalized, err := vault.NormalizeSessionName(opts.Name)
+			if err != nil {
+				return nil, err
+			}
+			custom = &normalized
+		}
+		s.sessions[i].Name = &vault.SessionName{CustomTitle: custom, RenamedAtNS: int64(s.renameCalls), MachineID: "stub"}
+		cp := s.sessions[i]
+		return &cp, nil
+	}
+	return nil, vault.ErrSessionNotFound
 }

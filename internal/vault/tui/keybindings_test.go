@@ -44,15 +44,16 @@ func TestApp_FilterNarrowsByProject(t *testing.T) {
 	m, st := twoProjectApp(t)
 	require.Len(t, m.list.list.Items(), 2)
 
-	// f opens the project-filter input.
+	// f opens the session-filter input.
 	next, _ := m.Update(keyMsg("f"))
 	m = next.(Model)
 	require.True(t, m.list.filtering)
 
-	// Typing re-queries the store and narrows to the matching project.
+	// Typing re-queries the store and narrows in memory to the matching project.
 	m = typeRunes(t, m, "alph")
 	assert.Equal(t, "alph", m.list.filterValue())
-	assert.Equal(t, "alph", st.lastListOpts.Project, "the filter substring is passed to ListSessions(Project:)")
+	assert.Equal(t, vault.ListOptions{}, st.lastListOpts,
+		"filtering happens in the TUI (ContainsFold across title/project/uuid), not via ListOptions predicates")
 	require.Len(t, m.list.list.Items(), 1, "only the alpha session survives the filter")
 	sel, ok := m.list.selected()
 	require.True(t, ok)
@@ -63,7 +64,105 @@ func TestApp_FilterNarrowsByProject(t *testing.T) {
 	m = next.(Model)
 	assert.False(t, m.list.filtering)
 	assert.Len(t, m.list.list.Items(), 1)
-	assert.Equal(t, "alph", m.list.project)
+	assert.Equal(t, "alph", m.list.applied)
+}
+
+func TestApp_FilterMatchesTitleUUIDAndFoldsCase(t *testing.T) {
+	st := &stubStore{
+		sessions: []vault.Session{
+			{UUID: "aaaa1111", Title: "Café planning", ProjectPath: "/home/u/alpha"},
+			{UUID: "bbbb2222", Title: "beta work", ProjectPath: "/home/u/beta"},
+		},
+		files: map[string][]vault.File{},
+	}
+	custom := "Rename Review"
+	st.sessions[1].Name = &vault.SessionName{CustomTitle: &custom, RenamedAtNS: 1, MachineID: "stub"}
+
+	m, err := newModel(context.Background(), st, Options{})
+	require.NoError(t, err)
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = tm.(Model)
+
+	// Unicode case folding over the effective title (non-ASCII, mixed case).
+	next, _ := m.Update(keyMsg("f"))
+	m = next.(Model)
+	m = typeRunes(t, m, "café")
+	require.Len(t, m.list.list.Items(), 1)
+	sel, ok := m.list.selected()
+	require.True(t, ok)
+	assert.Equal(t, "aaaa1111", sel.UUID)
+
+	// The custom name (effective title), not the imported title, is matched.
+	next, _ = m.Update(keyMsg("esc"))
+	m = next.(Model)
+	next, _ = m.Update(keyMsg("f"))
+	m = next.(Model)
+	m = typeRunes(t, m, "rename rev")
+	require.Len(t, m.list.list.Items(), 1)
+	sel, ok = m.list.selected()
+	require.True(t, ok)
+	assert.Equal(t, "bbbb2222", sel.UUID)
+
+	// UUID substrings match too.
+	next, _ = m.Update(keyMsg("esc"))
+	m = next.(Model)
+	next, _ = m.Update(keyMsg("f"))
+	m = next.(Model)
+	m = typeRunes(t, m, "AAAA11")
+	require.Len(t, m.list.list.Items(), 1)
+	sel, ok = m.list.selected()
+	require.True(t, ok)
+	assert.Equal(t, "aaaa1111", sel.UUID)
+}
+
+func TestApp_FilterLineFitsTerminalWidth(t *testing.T) {
+	m, _ := twoProjectApp(t)
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = tm.(Model)
+	next, _ := m.Update(keyMsg("f"))
+	m = next.(Model)
+
+	// A needle wider than the terminal (custom names may be 120 runes) scrolls
+	// under the cursor instead of pushing the hint and cursor off-screen.
+	long := strings.Repeat("x", 120)
+	m = typeRunes(t, m, long)
+	require.Equal(t, long, m.list.filterValue())
+	assert.LessOrEqual(t, displayWidth(firstLine(m.View())), 80)
+	assert.Contains(t, m.View(), "esc clear", "the hint stays visible next to the scrolled input")
+
+	// Resizes while the input is open re-bound it, with the cursor at the end
+	// and parked mid-value.
+	tm, _ = m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	m = tm.(Model)
+	assert.LessOrEqual(t, displayWidth(firstLine(m.View())), 60)
+	tm, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = tm.(Model)
+	m.list.filter.SetCursor(70)
+	tm, _ = m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	m = tm.(Model)
+	assert.Equal(t, 70, m.list.filter.Position())
+	assert.LessOrEqual(t, displayWidth(firstLine(m.View())), 60)
+}
+
+func TestApp_SearchInputFitsTerminalWidth(t *testing.T) {
+	m, _ := newTestApp(t, Options{Mode: "search"})
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = tm.(Model)
+
+	long := strings.Repeat("q", 120)
+	m = typeRunes(t, m, long)
+	require.Equal(t, long, m.search.input.Value())
+	assert.LessOrEqual(t, displayWidth(firstLine(m.View())), 80,
+		"a long query scrolls under the cursor instead of running past the terminal edge")
+
+	tm, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = tm.(Model)
+	m.search.input.SetCursor(70)
+	tm, _ = m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	m = tm.(Model)
+	assert.Equal(t, 70, m.search.input.Position())
+	assert.LessOrEqual(t, displayWidth(firstLine(m.View())), 60,
+		"a mid-value cursor's window is re-bounded on resize")
 }
 
 func TestApp_FilterEscClearsAndRestoresAll(t *testing.T) {
@@ -78,7 +177,7 @@ func TestApp_FilterEscClearsAndRestoresAll(t *testing.T) {
 	next, _ = m.Update(keyMsg("esc"))
 	m = next.(Model)
 	assert.False(t, m.list.filtering)
-	assert.Equal(t, "", m.list.project)
+	assert.Equal(t, "", m.list.applied)
 	assert.Len(t, m.list.list.Items(), 2)
 }
 
@@ -87,7 +186,7 @@ func TestApp_FilterViewShowsInput(t *testing.T) {
 	next, _ := m.Update(keyMsg("f"))
 	m = next.(Model)
 	out := m.View()
-	assert.Contains(t, out, "filter project:", "the filter prompt is visible while filtering")
+	assert.Contains(t, out, "filter:", "the filter prompt is visible while filtering")
 	assert.Contains(t, out, "esc clear")
 }
 

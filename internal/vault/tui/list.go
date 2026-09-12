@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -20,7 +21,7 @@ type sessionItem struct {
 }
 
 func (i sessionItem) Title() string {
-	if t := strings.TrimSpace(i.sess.Title); t != "" {
+	if t := strings.TrimSpace(i.sess.EffectiveTitle()); t != "" {
 		return t
 	}
 	return "(untitled)"
@@ -34,25 +35,44 @@ func (i sessionItem) Description() string {
 }
 
 // FilterValue feeds the list's built-in filter (currently disabled — see
-// listModel) and any future fuzzy filter; title + project + uuid covers the
-// fields a user would search the list by.
+// listModel) and any future fuzzy filter; effective title + project + uuid
+// covers the fields a user would search the list by.
 func (i sessionItem) FilterValue() string {
-	return i.sess.Title + " " + i.sess.ProjectPath + " " + i.sess.UUID
+	return i.sess.EffectiveTitle() + " " + i.sess.ProjectPath + " " + i.sess.UUID
+}
+
+// filterSessions returns the sessions matching needle across effective title,
+// project path, and UUID, using the same Unicode-folding literal matcher as
+// `vault list --name` (vault.ContainsFold — design §Read Surfaces and Name
+// Lookup). An empty needle matches everything.
+func filterSessions(sessions []vault.Session, needle string) []vault.Session {
+	if needle == "" {
+		return sessions
+	}
+	var out []vault.Session
+	for _, s := range sessions {
+		if vault.ContainsFold(s.EffectiveTitle(), needle) ||
+			vault.ContainsFold(s.ProjectPath, needle) ||
+			vault.ContainsFold(s.UUID, needle) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // listModel is the session browser (left/primary panel). It wraps bubbles/list.
 // The built-in "/" fuzzy filter is disabled so "/" opens the global FTS search
-// instead (design key bindings + Task 6.8); "f" drives a project filter that
-// re-queries the store (ListSessions(Project:)) rather than filtering in memory —
-// the app owns the re-query (it holds the store + ctx), the listModel owns the
-// input widget and the filtering flag.
+// instead (design key bindings + Task 6.8); "f" drives a session filter across
+// effective title, project path, and UUID (filterSessions) that re-queries the
+// store — the app owns the re-query (it holds the store + ctx), the listModel
+// owns the input widget and the filtering flag.
 type listModel struct {
 	list   list.Model
 	styles Styles
 
-	filter    textinput.Model // project-filter input, shown only while filtering
+	filter    textinput.Model // session-filter input, shown only while filtering
 	filtering bool            // input focused; keystrokes edit the filter
-	project   string          // applied filter substring ("" == all)
+	applied   string          // applied filter substring ("" == all)
 
 	width, height int
 }
@@ -73,6 +93,7 @@ func newListModel(sessions []vault.Session, styles Styles, width, height int) li
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "filter")),
+			key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "rename")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 			key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restore")),
 			key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "resume")),
@@ -81,16 +102,21 @@ func newListModel(sessions []vault.Session, styles Styles, width, height int) li
 	}
 
 	fi := textinput.New()
-	fi.Prompt = "filter project: "
-	fi.Placeholder = "substring of the project path"
+	fi.Prompt = "filter: "
+	fi.Placeholder = "substring of title, project path, or uuid"
 	fi.CharLimit = 256
 
 	return listModel{list: l, styles: styles, filter: fi, width: width, height: height}
 }
 
+// listFilterHint sits to the right of the filter input on its row; setSize
+// reserves its width so a long needle scrolls instead of running off-screen.
+const listFilterHint = "enter apply · esc clear"
+
 func (m listModel) setSize(width, height int) listModel {
 	m.width, m.height = width, height
 	m.list.SetSize(width, m.listHeight())
+	boundInputWidth(&m.filter, width, utf8.RuneCountInString(listFilterHint))
 	return m
 }
 
@@ -103,11 +129,11 @@ func (m listModel) listHeight() int {
 	return m.height
 }
 
-// startFilter focuses the project-filter input, pre-filled with the active filter
+// startFilter focuses the session-filter input, pre-filled with the active filter
 // so the user edits rather than retypes it.
 func (m listModel) startFilter() listModel {
 	m.filtering = true
-	m.filter.SetValue(m.project)
+	m.filter.SetValue(m.applied)
 	m.filter.CursorEnd()
 	m.filter.Focus()
 	m.list.SetSize(m.width, m.listHeight())
@@ -115,7 +141,7 @@ func (m listModel) startFilter() listModel {
 }
 
 // stopFilter blurs the input and returns the list to navigation. The applied
-// filter (m.project) and the current item set are left untouched — the caller
+// filter (m.applied) and the current item set are left untouched — the caller
 // decides whether to clear them (esc) or keep them (enter).
 func (m listModel) stopFilter() listModel {
 	m.filtering = false
@@ -133,21 +159,36 @@ func (m listModel) updateFilterInput(msg tea.Msg) (listModel, tea.Cmd) {
 	return m, cmd
 }
 
-// setSessions swaps the displayed sessions (after a filter re-query) and records
-// the applied filter for the title and the next startFilter pre-fill.
-func (m listModel) setSessions(sessions []vault.Session, project string) (listModel, tea.Cmd) {
+// setSessions swaps the displayed sessions (after a filter re-query or a rename
+// refresh) and records the applied filter for the title and the next
+// startFilter pre-fill.
+func (m listModel) setSessions(sessions []vault.Session, applied string) (listModel, tea.Cmd) {
 	items := make([]list.Item, len(sessions))
 	for i, s := range sessions {
 		items[i] = sessionItem{sess: s}
 	}
 	cmd := m.list.SetItems(items)
-	m.project = project
+	m.applied = applied
 	title := fmt.Sprintf("Vault — %d session(s)", len(sessions))
-	if project != "" {
-		title += fmt.Sprintf(" · filter %q", project)
+	if applied != "" {
+		title += fmt.Sprintf(" · filter %q", applied)
 	}
 	m.list.Title = title
 	return m, cmd
+}
+
+// selectSession moves the highlight to the session with the given UUID when it
+// is present in the current (possibly filtered) item set. When it is not — a
+// rename made the item disappear from a non-matching active filter — the
+// selection is left where SetItems clamped it, a sensible neighbor.
+func (m listModel) selectSession(uuid string) listModel {
+	for i, it := range m.list.Items() {
+		if si, ok := it.(sessionItem); ok && si.sess.UUID == uuid {
+			m.list.Select(i)
+			break
+		}
+	}
+	return m
 }
 
 // Update delegates to the wrapped list (cursor movement, paging). The app
@@ -160,7 +201,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 
 func (m listModel) View() string {
 	if m.filtering {
-		hint := m.styles.Help.Render("enter apply · esc clear")
+		hint := m.styles.Help.Render(listFilterHint)
 		return m.filter.View() + "  " + hint + "\n" + m.list.View()
 	}
 	return m.list.View()
