@@ -288,6 +288,81 @@ func CheckKnowledgeBase(dbPath string) CheckResult {
 	}
 }
 
+// CheckKnowledgeBaseStats reports a readable knowledge base by its live row
+// counts. Shared by `capy doctor` and the capy_doctor MCP tool so both surfaces
+// describe the store the same way.
+func CheckKnowledgeBaseStats(sourceCount, chunkCount int) CheckResult {
+	return CheckResult{
+		Name:   "Knowledge base",
+		Status: Pass,
+		Detail: fmt.Sprintf("%d sources, %d chunks", sourceCount, chunkCount),
+	}
+}
+
+// CheckKnowledgeBaseError reports a knowledge base that exists on disk but
+// whose stats could not be read (missing CAPY_DB_KEY, wrong key, corruption).
+func CheckKnowledgeBaseError(err error) CheckResult {
+	return CheckResult{
+		Name:   "Knowledge base",
+		Status: Warn,
+		Detail: fmt.Sprintf("error reading stats (%v)", err),
+	}
+}
+
+// CheckLegacySessions warns about leftover `kind='session'` rows in the
+// knowledge base. The knowledge.db session sweep was retired (ADR-027) — the
+// vault is the session store — so any such rows are pre-removal leftovers
+// draining by TTL. reclaimCmd names the surface-appropriate reclaim command
+// (`capy cleanup --kind session --force` on the CLI, `capy_cleanup
+// purge_session` over MCP) so the hint is actionable where it is shown.
+//
+// TODO(legacy-sessions): "reclaim now" overstates what the session purge does —
+// PurgeSession honours the session TTL (60d default), so rows younger than that
+// survive it. Since nothing writes new session rows they drain on their own; to
+// make the hint literally true, PurgeSession would need an ignore-TTL mode.
+func CheckLegacySessions(rows int, reclaimCmd string) CheckResult {
+	return CheckResult{
+		Name:   "Legacy sessions",
+		Status: Warn,
+		Detail: fmt.Sprintf("%d legacy knowledge.db session row(s) — reclaim now with `%s` (the vault is the session store)",
+			rows, reclaimCmd),
+	}
+}
+
+// CheckVaultDisabled reports the opt-in vault as off (CAPY_VAULT_KEY unset).
+func CheckVaultDisabled() CheckResult {
+	return CheckResult{
+		Name:   "Vault",
+		Status: Warn,
+		Detail: "disabled (CAPY_VAULT_KEY not set) — sessions are not archived",
+	}
+}
+
+// CheckVault reports the vault's health from its stats: unreadable, or enabled
+// with its session count and — when any archived session predates the current
+// indexer — the reindex backlog and the command that clears it. The chunk
+// backfill is a manual `capy vault reindex`, so its pendency must be visible,
+// not silent (vault-session-search design D4).
+func CheckVault(sessions, outdatedSessions, indexVersion int, err error) CheckResult {
+	if err != nil {
+		return CheckResult{
+			Name:   "Vault",
+			Status: Warn,
+			Detail: fmt.Sprintf("error reading stats (%v)", err),
+		}
+	}
+	detail := fmt.Sprintf("%d sessions archived", sessions)
+	if outdatedSessions > 0 {
+		return CheckResult{
+			Name:   "Vault",
+			Status: Warn,
+			Detail: fmt.Sprintf("%s; %d below index v%d — run `capy vault reindex` to make them chunk-searchable",
+				detail, outdatedSessions, indexVersion),
+		}
+	}
+	return CheckResult{Name: "Vault", Status: Pass, Detail: detail}
+}
+
 // FormatDiagnostics formats a list of check results as a markdown report.
 func FormatDiagnostics(results []CheckResult) string {
 	var lines []string

@@ -40,33 +40,27 @@ func newCleanupCmd() *cobra.Command {
 
 			vacuum, _ := cmd.Flags().GetBool("vacuum")
 			optimize, _ := cmd.Flags().GetBool("optimize")
+			reclaim := optimize || vacuum
 
 			dbPath := cfg.ResolveDBPath(projectDir)
 			st := store.NewContentStore(dbPath, cfg.DBProjectDir(projectDir), 0, cfg.Store.MaxSourceBytes)
 			defer st.Close()
 
-			// Explicit optimize without cleanup: rebuild the FTS indexes to
-			// release delete-tombstone segments, then VACUUM to reclaim the
-			// freed pages. A plain VACUUM cannot shrink these — the pages are
-			// held by the FTS5 data tables, not the freelist.
+			// Standalone reclamation: --optimize / --vacuum with no eviction
+			// requested (dry-run still at its default and no --source/--kind).
+			// Reclamation is a maintenance operation, not data eviction, so it
+			// deliberately ignores the dry-run default (ADR-029 §4) — gating it
+			// would turn `capy cleanup --optimize` into a silent no-op.
 			//
-			// The !force guard is deliberate: with --force the user asked to
-			// evict data too, so we skip this standalone path and let the run
-			// fall through to the cleanup + post-cleanup reclamation below.
-			if optimize && !force && sourceLabel == "" && kind == "" {
-				if err := reclaimFTS(st); err != nil {
-					return err
-				}
-				return nil
-			}
-
-			// Explicit vacuum without cleanup.
-			if vacuum && !force && sourceLabel == "" && kind == "" {
-				if err := st.Vacuum(); err != nil {
-					return fmt.Errorf("vacuum failed: %w", err)
-				}
-				fmt.Println("capy: vacuum complete")
-				return nil
+			// Any real-eviction request — --force or an explicit
+			// --dry-run=false, or a --source/--kind selector — means the user
+			// asked to evict data too, so we fall through: evict first, then
+			// reclaim below. Keying on dryRun (not just --force) keeps
+			// `--dry-run=false --optimize` evicting exactly like plain
+			// `--dry-run=false` does, and mirrors the MCP tool's `dry_run`.
+			evictionRequested := !dryRun || sourceLabel != "" || kind != ""
+			if reclaim && !evictionRequested {
+				return runReclaim(st, optimize, vacuum)
 			}
 
 			// Source-specific eviction.
@@ -80,7 +74,7 @@ func newCleanupCmd() *cobra.Command {
 					action = "removed"
 				}
 				fmt.Printf("capy: %s source %q (%s, %d chunks)\n", action, evicted.Label, evicted.Kind, evicted.ChunkCount)
-				return nil
+				return finishReclaim(st, dryRun, optimize, vacuum)
 			}
 
 			ephemeralTTL := time.Duration(cfg.Store.Cleanup.EphemeralTTLHours) * time.Hour
@@ -97,22 +91,6 @@ func newCleanupCmd() *cobra.Command {
 			}
 			if err != nil {
 				return fmt.Errorf("cleanup failed: %w", err)
-			}
-
-			// Explicit reclamation after cleanup. --optimize does the full
-			// FTS-rebuild + VACUUM (the only path that reclaims FTS bloat);
-			// --vacuum alone only compacts the freelist. --optimize supersedes
-			// --vacuum since it already vacuums.
-			switch {
-			case optimize && !dryRun:
-				if err := reclaimFTS(st); err != nil {
-					return err
-				}
-			case vacuum && !dryRun:
-				if err := st.Vacuum(); err != nil {
-					return fmt.Errorf("vacuum failed: %w", err)
-				}
-				fmt.Println("capy: vacuum complete")
 			}
 
 			if dryRun {
@@ -136,7 +114,7 @@ func newCleanupCmd() *cobra.Command {
 				}
 			}
 
-			return nil
+			return finishReclaim(st, dryRun, optimize, vacuum)
 		},
 	}
 	cmd.Flags().Bool("dry-run", true, "show what would be removed without removing")
@@ -148,19 +126,45 @@ func newCleanupCmd() *cobra.Command {
 	return cmd
 }
 
-// reclaimFTS rebuilds the FTS5 indexes and then VACUUMs, the only sequence that
-// reclaims disk pinned by accumulated FTS delete-tombstone segments (a plain
-// VACUUM leaves them because they belong to the FTS data tables, not the
-// freelist). Shared by the standalone --optimize path and the post-cleanup one.
-func reclaimFTS(st *store.ContentStore) error {
-	if err := st.RebuildFTS(); err != nil {
-		return fmt.Errorf("optimize failed: %w", err)
+// runReclaim performs the requested post-eviction reclamation. --optimize does
+// the full FTS-rebuild + VACUUM (the only path that reclaims FTS tombstone
+// bloat, see store.Optimize / ADR-029); --vacuum alone only compacts the
+// freelist. --optimize supersedes --vacuum since it already vacuums.
+func runReclaim(st *store.ContentStore, optimize, vacuum bool) error {
+	switch {
+	case optimize:
+		if err := st.Optimize(); err != nil {
+			return err
+		}
+		fmt.Println("capy: optimize complete (FTS rebuilt, VACUUM reclaimed freed pages)")
+	case vacuum:
+		if err := st.Vacuum(); err != nil {
+			return fmt.Errorf("vacuum failed: %w", err)
+		}
+		fmt.Println("capy: vacuum complete")
 	}
-	if err := st.Vacuum(); err != nil {
-		return fmt.Errorf("vacuum after optimize failed: %w", err)
-	}
-	fmt.Println("capy: optimize complete (FTS rebuilt, VACUUM reclaimed freed pages)")
 	return nil
+}
+
+// finishReclaim runs reclamation after an eviction pass, or — when the pass was
+// a dry run — says loudly that it was skipped rather than silently no-op'ing.
+func finishReclaim(st *store.ContentStore, dryRun, optimize, vacuum bool) error {
+	if !optimize && !vacuum {
+		return nil
+	}
+	if dryRun {
+		fmt.Printf("capy: %s skipped (dry run) — add --force to evict and reclaim, or drop --source/--kind to reclaim only\n", reclaimName(optimize))
+		return nil
+	}
+	return runReclaim(st, optimize, vacuum)
+}
+
+// reclaimName labels the requested reclamation mode for user-facing messages.
+func reclaimName(optimize bool) string {
+	if optimize {
+		return "--optimize"
+	}
+	return "--vacuum"
 }
 
 // formatCleanupDetail renders per-source eviction detail, switching between

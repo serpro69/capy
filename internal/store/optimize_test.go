@@ -117,6 +117,49 @@ func TestRebuildFTSReclaimsBloatVacuumAloneCannot(t *testing.T) {
 		"RebuildFTS+VACUUM should reclaim FTS tombstone pages that VACUUM alone leaves behind")
 }
 
+func TestOptimizeOnNeverOpenedStore(t *testing.T) {
+	// Regression: RebuildFTS opens a dedicated connection that bypasses the
+	// pool's lazy schema creation. When Optimize is the very first operation
+	// on a store (fresh project + `cleanup --optimize`, or the MCP tool's
+	// standalone `optimize: true`), the FTS tables must still exist.
+	s := newTestStore(t)
+	require.NoError(t, s.Optimize())
+
+	_, err := s.Index("# After\n\nIndexing still works after an optimize-first store.", "after", "markdown", KindDurable)
+	require.NoError(t, err)
+	results, err := s.SearchWithFallback("indexing", 5, SearchOptions{})
+	require.NoError(t, err)
+	assert.NotEmpty(t, results)
+}
+
+func TestOptimizeReclaimsBloatAndPreservesSearch(t *testing.T) {
+	// Optimize is the shared RebuildFTS+Vacuum sequence behind both
+	// `capy cleanup --optimize` and `capy_cleanup optimize:true`. It must shrink
+	// a churned store and leave surviving content searchable.
+	s := newTestStore(t)
+	for i := range 60 {
+		body := strings.Repeat(fmt.Sprintf("authentication middleware token %d ", i), 200)
+		_, err := s.Index(body, fmt.Sprintf("bloat-%d", i), "", KindDurable)
+		require.NoError(t, err)
+	}
+	for i := range 60 {
+		_, err := s.EvictByLabel(fmt.Sprintf("bloat-%d", i), false)
+		require.NoError(t, err)
+	}
+	_, err := s.Index("# Survivor\n\nJWT token validation middleware handles auth via RS256.", "survivor", "markdown", KindDurable)
+	require.NoError(t, err)
+
+	before := pageCount(t, s)
+	require.NoError(t, s.Optimize())
+	after := pageCount(t, s)
+	t.Logf("pages before=%d after=%d", before, after)
+
+	assert.Less(t, after, before, "Optimize should reclaim FTS tombstone pages")
+	results, err := s.SearchWithFallback("authentication", 5, SearchOptions{})
+	require.NoError(t, err)
+	assert.NotEmpty(t, results, "surviving content must stay searchable after Optimize")
+}
+
 // pageCount returns the logical page count of the store's database. Reading via
 // the pool connection reflects VACUUM's result immediately; the on-disk file is
 // only truncated once the pool closes and checkpoints (ADR-016), which the

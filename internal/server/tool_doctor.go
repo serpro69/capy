@@ -72,30 +72,17 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 	if s.store != nil {
 		kbStats, err := s.store.Stats(ephemeralTTL, sessionTTL)
 		if err == nil {
-			results = append(results, platform.CheckResult{
-				Name:   "Knowledge base",
-				Status: platform.Pass,
-				Detail: fmt.Sprintf("%d sources, %d chunks", kbStats.SourceCount, kbStats.ChunkCount),
-			})
+			results = append(results, platform.CheckKnowledgeBaseStats(kbStats.SourceCount, kbStats.ChunkCount))
 			// Legacy session rows: the knowledge.db session sweep was removed
 			// (vault-session-search D8); the vault is now the session store. Any
 			// `kind='session'` rows are pre-removal leftovers draining by TTL —
 			// surface them loudly with the reclaim command (design D4: report
 			// both the knowledge.db reclaim and the vault reindex backlog).
 			if kbStats.SessionSourceCount > 0 {
-				results = append(results, platform.CheckResult{
-					Name:   "Legacy sessions",
-					Status: platform.Warn,
-					Detail: fmt.Sprintf("%d legacy knowledge.db session row(s) — reclaim now with `capy_cleanup purge_session` (the vault is the session store)",
-						kbStats.SessionSourceCount),
-				})
+				results = append(results, platform.CheckLegacySessions(kbStats.SessionSourceCount, "capy_cleanup purge_session"))
 			}
 		} else {
-			results = append(results, platform.CheckResult{
-				Name:   "Knowledge base",
-				Status: platform.Warn,
-				Detail: fmt.Sprintf("error reading stats (%v)", err),
-			})
+			results = append(results, platform.CheckKnowledgeBaseError(err))
 		}
 	} else {
 		results = append(results, platform.CheckResult{
@@ -128,32 +115,13 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 // that clears it.
 func (s *Server) vaultCheck(ctx context.Context) platform.CheckResult {
 	if _, err := vault.RequireVaultKey(); err != nil {
-		return platform.CheckResult{
-			Name:   "Vault",
-			Status: platform.Warn,
-			Detail: "disabled (CAPY_VAULT_KEY not set) — sessions are not archived",
-		}
+		return platform.CheckVaultDisabled()
 	}
-
 	vs, err := s.vaultStats(ctx)
 	if err != nil {
-		return platform.CheckResult{
-			Name:   "Vault",
-			Status: platform.Warn,
-			Detail: fmt.Sprintf("error reading stats (%v)", err),
-		}
+		return platform.CheckVault(0, 0, 0, err)
 	}
-
-	detail := fmt.Sprintf("%d sessions archived", vs.Sessions)
-	if vs.OutdatedSessions > 0 {
-		return platform.CheckResult{
-			Name:   "Vault",
-			Status: platform.Warn,
-			Detail: fmt.Sprintf("%s; %d below index v%d — run `capy vault reindex` to make them chunk-searchable",
-				detail, vs.OutdatedSessions, vs.IndexVersion),
-		}
-	}
-	return platform.CheckResult{Name: "Vault", Status: platform.Pass, Detail: detail}
+	return platform.CheckVault(vs.Sessions, vs.OutdatedSessions, vs.IndexVersion, nil)
 }
 
 // vaultStats reads the vault's stats through the server-owned long-lived handle

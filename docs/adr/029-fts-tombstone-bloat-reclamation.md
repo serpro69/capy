@@ -85,9 +85,25 @@ Add a `RebuildFTS()` store method and expose it as `capy cleanup --optimize`.
 - ADR-020 — the WAL/PRAGMA-rekey incompatibility applies only to rekey;
   `rebuild` and `VACUUM` run safely in WAL mode.
 
-## CLI changes
+## Interface changes
+
+Both surfaces share `store.Optimize()` (RebuildFTS + Vacuum) and the same
+semantics: reclamation requested **without** an eviction runs immediately,
+ignoring the dry-run default (§4); reclamation requested **with** an eviction
+(`--force` or an explicit `--dry-run=false`, `--source`, or `--kind` on the
+CLI; `dry_run: false`, `source`, or `purge_*` over MCP) runs after the eviction
+and is skipped — loudly, with a note in the output — when that eviction is a
+dry run.
 
 ```
-capy cleanup --optimize           # rebuild FTS indexes + VACUUM to reclaim FTS bloat
-capy cleanup --force --optimize   # evict stale sources first, then reclaim
+capy cleanup --optimize                     # rebuild FTS indexes + VACUUM to reclaim FTS bloat
+capy cleanup --force --optimize             # evict stale sources first, then reclaim
+capy cleanup --source <label> --force --optimize   # evict one source, then reclaim
+
+capy_cleanup { optimize: true }                     # MCP equivalent of --optimize
+capy_cleanup { optimize: true, dry_run: false }     # MCP equivalent of --force --optimize
 ```
+
+The MCP tool also accepts `vacuum: true` (the `--vacuum` equivalent); `optimize`
+supersedes it. Parity between the two surfaces was restored in issue #82 after
+the CLI-only `--optimize` shipped without an MCP counterpart.

@@ -329,7 +329,7 @@ func toolDoctor() mcp.Tool {
 func toolCleanup() mcp.Tool {
 	return mcp.NewTool("capy_cleanup",
 		mcp.WithToolAnnotation(annotationCleanup),
-		mcp.WithDescription("Clean up evictable knowledge base entries. By default runs four paths: oversized source eviction, retention-score eviction for durable sources, strict TTL eviction for ephemeral sources, and strict TTL eviction for session sources. Set purge_ephemeral=true or purge_session=true for kind-specific purges, source=<label> to evict a specific source, or purge_all=true for a full project-scope reset."),
+		mcp.WithDescription("Clean up evictable knowledge base entries. By default runs four paths: oversized source eviction, retention-score eviction for durable sources, strict TTL eviction for ephemeral sources, and strict TTL eviction for session sources. Set purge_ephemeral=true or purge_session=true for kind-specific purges, source=<label> to evict a specific source, or purge_all=true for a full project-scope reset. Set optimize=true to reclaim FTS5 tombstone bloat (rebuild FTS indexes + VACUUM) — alone it runs immediately regardless of dry_run; combined with an eviction it runs after the eviction (skipped on dry runs). Mirrors `capy cleanup --optimize`."),
 		mcp.WithBoolean("dry_run",
 			mcp.Description("Preview what would be removed without deleting (default: true)"),
 		),
@@ -344,6 +344,12 @@ func toolCleanup() mcp.Tool {
 		),
 		mcp.WithBoolean("purge_all",
 			mcp.Description("When true, remove ALL knowledge base entries (sources, chunks, vocabulary) and reset session stats — a full project-scope reset. Cannot be combined with source, purge_ephemeral, or purge_session (default: false)"),
+		),
+		mcp.WithBoolean("optimize",
+			mcp.Description("When true, rebuild the FTS5 indexes and VACUUM to reclaim tombstone bloat that vacuum alone cannot (ADR-029). Runs standalone when no eviction is requested (ignores dry_run), otherwise after a non-dry-run eviction. Supersedes vacuum (default: false)"),
+		),
+		mcp.WithBoolean("vacuum",
+			mcp.Description("When true, run VACUUM to reclaim freelist pages. Runs standalone when no eviction is requested (ignores dry_run), otherwise after a non-dry-run eviction. Use optimize instead for FTS bloat (default: false)"),
 		),
 	)
 }
