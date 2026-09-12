@@ -441,6 +441,14 @@ func (s *ContentStore) Vacuum() error {
 // Vacuum to actually shrink the file. Opens a dedicated single connection (not
 // the pool), mirroring Vacuum.
 func (s *ContentStore) RebuildFTS() error {
+	// openSingleConn bypasses the pool's lazy schema creation, so a store that
+	// was never opened (fresh project, or `cleanup --optimize` as the first
+	// operation) would have no FTS tables to rebuild — "no such table: chunks".
+	// Initialize through the pool first; the busy-tolerant checkpoint below
+	// already accounts for the pool being open.
+	if _, err := s.getDB(); err != nil {
+		return fmt.Errorf("initializing database for FTS rebuild: %w", err)
+	}
 	db, err := s.openSingleConn(10000)
 	if err != nil {
 		return fmt.Errorf("opening database for FTS rebuild: %w", err)
@@ -466,6 +474,22 @@ func (s *ContentStore) RebuildFTS() error {
 	}
 	if busy > 0 {
 		slog.Warn("WAL checkpoint incomplete after FTS rebuild (pool connections busy); VACUUM will still reclaim", "busy_pages", busy)
+	}
+	return nil
+}
+
+// Optimize reclaims FTS5 tombstone bloat: RebuildFTS releases the stale
+// segment pages to the freelist, then Vacuum compacts the file (ADR-029). This
+// is the only sequence that shrinks a DB bloated by index/evict churn — a plain
+// Vacuum leaves the tombstone pages because they belong to the FTS5 data
+// tables, not the freelist. Shared by `capy cleanup --optimize` and the
+// `capy_cleanup` MCP tool's `optimize` flag so both surfaces stay in lockstep.
+func (s *ContentStore) Optimize() error {
+	if err := s.RebuildFTS(); err != nil {
+		return fmt.Errorf("optimize failed: %w", err)
+	}
+	if err := s.Vacuum(); err != nil {
+		return fmt.Errorf("vacuum after optimize failed: %w", err)
 	}
 	return nil
 }
