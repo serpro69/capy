@@ -30,6 +30,22 @@ func TestSessionItem_UntitledFallback(t *testing.T) {
 	assert.Equal(t, "(untitled)", it.Title())
 }
 
+func TestSessionItem_EffectiveTitle(t *testing.T) {
+	custom := "Custom Name"
+	named := vault.Session{
+		UUID: "abcdef0123", Title: "Imported title", ProjectPath: "/home/u/proj",
+		Name: &vault.SessionName{CustomTitle: &custom, RenamedAtNS: 1, MachineID: "m"},
+	}
+	it := sessionItem{sess: named}
+	assert.Equal(t, "Custom Name", it.Title(), "an active custom name overrides the imported title")
+	assert.Contains(t, it.FilterValue(), "Custom Name", "filtering sees the effective title")
+
+	// A clear tombstone falls back to the imported title.
+	named.Name = &vault.SessionName{CustomTitle: nil, RenamedAtNS: 2, MachineID: "m"}
+	it = sessionItem{sess: named}
+	assert.Equal(t, "Imported title", it.Title())
+}
+
 func TestListModel_Selected(t *testing.T) {
 	sessions := []vault.Session{
 		{UUID: "1111aaaa", Title: "one"},

@@ -68,6 +68,8 @@ func newSearchModel(ctx context.Context, store searcher, styles Styles, width, h
 func (m searchModel) setSize(width, height int) searchModel {
 	m.width = width
 	m.height = height
+	// Nothing follows the query input on its row, so no hint width is reserved.
+	boundInputWidth(&m.input, width, 0)
 	return m
 }
 
@@ -84,6 +86,19 @@ func (m searchModel) scheduleSearch() (searchModel, tea.Cmd) {
 	m.seq++
 	seq := m.seq
 	return m, tea.Tick(searchDebounce, func(time.Time) tea.Msg { return debounceMsg{seq: seq} })
+}
+
+// refresh reruns the current query so every hit for a just-renamed session
+// displays its new effective title (the rename success path). No-op without a
+// query. The rerun skips the debounce — it is not a keystroke, there is
+// nothing to settle — but still goes through the seq guard so a slow rerun
+// cannot overwrite results of a newer query.
+func (m searchModel) refresh() (searchModel, tea.Cmd) {
+	if strings.TrimSpace(m.input.Value()) == "" {
+		return m, nil
+	}
+	m.seq++
+	return m, m.runSearch(m.seq)
 }
 
 // runSearch returns a command that executes the query off the Update goroutine.
@@ -183,19 +198,21 @@ func (m searchModel) View() string {
 		b.WriteString(m.resultRow(m.results[i], i == m.cursor))
 		b.WriteString("\n")
 	}
-	b.WriteString(m.styles.Help.Render("↑/↓ select · enter open · esc back"))
+	b.WriteString(m.styles.Help.Render("↑/↓ select · enter open · ctrl+e rename · esc back"))
 	return b.String()
 }
 
-// resultRow renders a single search result: a meta prefix (date, role, project)
-// plus the snippet, highlighted when selected. A subagent hit is flagged so the
-// user knows enter will open a subagent transcript.
+// resultRow renders a single search result: a meta prefix (date, role, project,
+// effective title — width-bounded, mirroring the CLI's search columns) plus the
+// snippet, highlighted when selected. A subagent hit is flagged so the user
+// knows enter will open a subagent transcript.
 func (m searchModel) resultRow(r vault.SearchResult, selected bool) string {
 	role := r.Role
 	if r.SubagentID != "" {
 		role += "/sub"
 	}
-	meta := fmt.Sprintf("%s  %-12s  %s", fmtDate(r.EndTime), truncate(role, 12), truncate(displayPath(r.ProjectPath), 24))
+	meta := fmt.Sprintf("%s  %-12s  %s  %s", fmtDate(r.EndTime), truncate(role, 12),
+		truncate(displayPath(r.ProjectPath), 24), truncate(r.Title, 20))
 	line := meta + "  " + oneLine(r.Snippet)
 	line = truncate(line, max(1, m.width-1))
 	if selected {

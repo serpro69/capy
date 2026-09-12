@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/serpro69/capy/internal/vault"
 )
@@ -32,6 +35,26 @@ type dataStore interface {
 	GetSession(ctx context.Context, prefix string) (*vault.Session, error)
 	GetFiles(ctx context.Context, sessionUUID string) ([]vault.File, error)
 	Search(ctx context.Context, opts vault.SearchOptions) ([]vault.SearchResult, error)
+	RenameSession(ctx context.Context, prefix string, opts vault.RenameOptions) (*vault.Session, error)
+}
+
+// The rename editor's fixed texts share one reserved row: prompt, value area,
+// two-space gap, hint. Every rune here is single-width, so rune counts are
+// display widths (the same measurement truncate uses), which is what
+// layoutSubmodels relies on to size the value area.
+const (
+	renamePrompt     = "name (empty clears): "
+	renameHint       = "enter save · esc cancel"
+	renameSavingHint = "saving…"
+)
+
+// renameResultMsg carries the outcome of an asynchronous RenameSession write
+// back into Update. sess is the store's post-write session metadata (imported
+// title plus name state), nil on error.
+type renameResultMsg struct {
+	sess    *vault.Session
+	cleared bool
+	err     error
 }
 
 // Options configures the initial screen, set from the launching CLI command.
@@ -73,6 +96,17 @@ type Model struct {
 	// exec with a restored terminal. ActionNone until requested.
 	action Action
 
+	// The rename editor is root-model state (not per-mode) because every mode —
+	// list navigation (e), viewer (e), and search (ctrl+e) — opens the same
+	// single-line input over the current body. While renaming, keys route to the
+	// editor before mode routing; while renamePending, all input is consumed so
+	// a duplicate submit cannot fire a second write and Esc cannot close the
+	// editor mid-flight (an error result must find the editor open, text intact).
+	renameInput   textinput.Model
+	renaming      bool
+	renamePending bool
+	renameUUID    string // full UUID of the rename target
+
 	width, height int
 	status        string // transient one-line status; reserves the bottom row when set
 	statusErr     bool   // render status with the error style (red) vs. neutral info
@@ -113,15 +147,20 @@ func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 		return Model{}, fmt.Errorf("loading sessions: %w", err)
 	}
 
+	ri := textinput.New()
+	ri.Prompt = renamePrompt
+	ri.CharLimit = 256
+
 	m := Model{
-		ctx:     ctx,
-		store:   st,
-		styles:  styles,
-		mode:    modeList,
-		list:    newListModel(sessions, styles, 0, 0),
-		viewer:  newViewerModel(styles, 0, 0),
-		search:  newSearchModel(ctx, st, styles, 0, 0),
-		clipOut: os.Stderr,
+		ctx:         ctx,
+		store:       st,
+		styles:      styles,
+		mode:        modeList,
+		list:        newListModel(sessions, styles, 0, 0),
+		viewer:      newViewerModel(styles, 0, 0),
+		search:      newSearchModel(ctx, st, styles, 0, 0),
+		renameInput: ri,
+		clipOut:     os.Stderr,
 	}
 
 	switch opts.Mode {
@@ -144,13 +183,18 @@ func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 func (m Model) Init() tea.Cmd { return m.initCmd }
 
 // bodyHeight is the height available to the active sub-model: one row is reserved
-// for the status line whenever a status is set, so the composed View never
-// exceeds m.height (which would scroll the alt-screen and flicker every frame).
+// for the status line whenever a status is set, and one for the rename editor
+// while it is open, so the composed View never exceeds m.height (which would
+// scroll the alt-screen and flicker every frame).
 func (m Model) bodyHeight() int {
+	h := m.height
 	if m.status != "" {
-		return max(1, m.height-1)
+		h--
 	}
-	return m.height
+	if m.renaming {
+		h--
+	}
+	return max(1, h)
 }
 
 // layoutSubmodels (re)sizes every sub-model to the current width and bodyHeight.
@@ -161,7 +205,37 @@ func (m Model) layoutSubmodels() Model {
 	m.list = m.list.setSize(m.width, h)
 	m.viewer = m.viewer.setSize(m.width, h)
 	m.search = m.search.setSize(m.width, h)
+	boundInputWidth(&m.renameInput, m.width, utf8.RuneCountInString(renameHint))
 	return m
+}
+
+// boundInputWidth sizes a single-line textinput's value area so the whole row
+// — prompt, value, cursor, and a trailing hint of hintWidth cells (0 when
+// nothing follows the input) — fits in rowWidth. Without a bound, a value wider
+// than the terminal runs past the edge, where the renderer truncates the row
+// and the cursor vanishes (the user types blind); with one, textinput scrolls
+// the value horizontally under the cursor. textinput renders up to Width value
+// cells plus one cursor cell, hence the extra cell reserved here. A rowWidth
+// of 0 (terminal size not yet known) leaves the input unbounded.
+//
+// textinput recomputes its scroll window only when the cursor moves outside it
+// (handleOverflow), never on a Width change — so after a resize a cursor
+// sitting inside the old, wider window would keep rendering that window.
+// Jumping to the end always re-bounds the window to the new Width; moving back
+// then either keeps that bounded window or re-bounds from the left.
+func boundInputWidth(in *textinput.Model, rowWidth, hintWidth int) {
+	if rowWidth <= 0 {
+		in.Width = 0
+		return
+	}
+	gap := 0
+	if hintWidth > 0 {
+		gap = 2 // the two-space separator before a hint
+	}
+	in.Width = max(1, rowWidth-utf8.RuneCountInString(in.Prompt)-1-gap-hintWidth)
+	pos := in.Position()
+	in.CursorEnd()
+	in.SetCursor(pos)
 }
 
 // withStatus shows a neutral (info) status; withError shows an error-styled one;
@@ -201,9 +275,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// A transient status (copy confirmation, error) clears on the next keystroke
 		// so it never lingers. The "c" copy key is exempt — it sets its own status
-		// this same update; clearing first would just relayout twice.
-		if msg.String() != "c" {
+		// this same update; clearing first would just relayout twice — but only in
+		// normal routing: while renaming, "c" just types into the editor.
+		if msg.String() != "c" || m.renaming {
 			m = m.clearStatus()
+		}
+		// The open rename editor consumes every key before mode routing, so a
+		// mode's own bindings (including a search input that would otherwise eat
+		// the keystroke) never fire while the user is editing a name.
+		if m.renaming {
+			return m.updateRename(msg)
 		}
 		switch m.mode {
 		case modeList:
@@ -213,6 +294,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modeSearch:
 			return m.updateSearch(msg)
 		}
+	case renameResultMsg:
+		return m.handleRenameResult(msg)
+	case debounceMsg, searchResultsMsg:
+		// Search-owned messages always reach the search model regardless of the
+		// active mode: the post-rename background rerun (handleRenameResult) and a
+		// debounce tick that outlives leaving search mode must not be dropped by
+		// mode routing.
+		var cmd tea.Cmd
+		m.search, cmd = m.search.Update(msg)
+		return m, cmd
 	}
 
 	// Non-key messages (debounce ticks, search results, viewport msgs) go to the
@@ -248,6 +339,12 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		m.list = m.list.startFilter()
 		return m, nil
+	case "e":
+		sess, ok := m.list.selected()
+		if !ok {
+			return m, nil
+		}
+		return m.startRename(sess.UUID, sess.EffectiveTitle())
 	case "r", "R":
 		sess, ok := m.list.selected()
 		if !ok {
@@ -270,15 +367,16 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// updateListFilter handles keys while the list's project-filter input is active.
+// updateListFilter handles keys while the list's session-filter input is active.
 // esc clears the filter (restoring all sessions); enter applies it and returns to
 // navigation; arrow keys move the (filtered) selection; any other key edits the
-// input and re-queries ListSessions(Project:) on a value change.
+// input (including "e" — the rename binding applies in navigation state only) and
+// re-filters on a value change.
 func (m Model) updateListFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.list = m.list.stopFilter()
-		return m.applyProjectFilter("")
+		return m.applySessionFilter("")
 	case "enter":
 		m.list = m.list.stopFilter()
 		return m, nil
@@ -293,24 +391,134 @@ func (m Model) updateListFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.list, cmd = m.list.updateFilterInput(msg)
 	if m.list.filterValue() != before {
-		next, applyCmd := m.applyProjectFilter(m.list.filterValue())
+		next, applyCmd := m.applySessionFilter(m.list.filterValue())
 		return next, tea.Batch(cmd, applyCmd)
 	}
 	return m, cmd
 }
 
-// applyProjectFilter re-queries the store with a project substring and swaps the
-// list's items. On error it surfaces the message in the status line and leaves the
-// current items in place (a failed re-query must not blank the browser).
-func (m Model) applyProjectFilter(project string) (tea.Model, tea.Cmd) {
-	sessions, err := m.store.ListSessions(m.ctx, vault.ListOptions{Project: project})
+// applySessionFilter re-queries the store and swaps the list's items to the
+// sessions matching needle across effective title, project path, and UUID
+// (filterSessions — the same Unicode-folding matcher as `vault list --name`).
+// On error it surfaces the message in the status line and leaves the current
+// items in place (a failed re-query must not blank the browser).
+func (m Model) applySessionFilter(needle string) (tea.Model, tea.Cmd) {
+	sessions, err := m.store.ListSessions(m.ctx, vault.ListOptions{})
 	if err != nil {
 		return m.withError(err.Error()), nil
 	}
 	m = m.clearStatus()
 	var cmd tea.Cmd
-	m.list, cmd = m.list.setSessions(sessions, project)
+	m.list, cmd = m.list.setSessions(filterSessions(sessions, needle), needle)
 	return m, cmd
+}
+
+// startRename opens the rename editor over the current body, prefilled with the
+// target session's effective title so the user edits rather than retypes it.
+// Submitting an emptied input writes a clear tombstone (see updateRename).
+func (m Model) startRename(uuid, effectiveTitle string) (tea.Model, tea.Cmd) {
+	m.renaming = true
+	m.renameUUID = uuid
+	m.renameInput.SetValue(effectiveTitle)
+	m.renameInput.CursorEnd()
+	m.renameInput.Focus()
+	return m.layoutSubmodels(), nil
+}
+
+// closeRename tears down the editor state (cancel and success paths; an error
+// keeps the editor open instead) and reclaims the reserved row.
+func (m Model) closeRename() Model {
+	m.renaming = false
+	m.renamePending = false
+	m.renameUUID = ""
+	m.renameInput.Blur()
+	return m.layoutSubmodels()
+}
+
+// updateRename handles keys while the rename editor is open. While a write is
+// pending every key is consumed and ignored: Enter must not double-submit, and
+// Esc must not close the editor mid-flight — an error result has to find the
+// editor open with its text intact. The write is a local SQLite upsert, so the
+// pending window is short; ctrl+c (handled before this routing) still quits.
+func (m Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.renamePending {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		return m.closeRename(), nil
+	case "enter":
+		var opts vault.RenameOptions
+		if v := m.renameInput.Value(); strings.TrimSpace(v) == "" {
+			opts.Clear = true
+		} else {
+			// The raw value is passed through: NormalizeSessionName (trim, secret
+			// redaction, validation) is owned by the store, shared with the CLI.
+			opts.Name = v
+		}
+		m.renamePending = true
+		return m, m.runRename(m.renameUUID, opts)
+	}
+	var cmd tea.Cmd
+	m.renameInput, cmd = m.renameInput.Update(msg)
+	return m, cmd
+}
+
+// runRename executes the store write off the Update goroutine (the same
+// bubbletea command convention as searchModel.runSearch). uuid is the full
+// session UUID, so the prefix lookup inside RenameSession is exact.
+func (m Model) runRename(uuid string, opts vault.RenameOptions) tea.Cmd {
+	store, ctx := m.store, m.ctx
+	return func() tea.Msg {
+		sess, err := store.RenameSession(ctx, uuid, opts)
+		return renameResultMsg{sess: sess, cleared: opts.Clear, err: err}
+	}
+}
+
+// handleRenameResult closes the editor and refreshes presentation state on
+// success, or keeps the editor open (text intact) with an error status on
+// failure. Refresh is authoritative, not a local mutation (design §TUI
+// Interaction), and covers every cached surface so a rename is immediately
+// reflected everywhere (Success Criterion 1): the list re-queries and reapplies
+// its active filter (the renamed item may legitimately disappear from a
+// non-matching filter), an active search query reruns in the background, and an
+// open viewer refreshes its session metadata without reparsing the transcript.
+func (m Model) handleRenameResult(msg renameResultMsg) (tea.Model, tea.Cmd) {
+	m.renamePending = false
+	if msg.err != nil {
+		return m.withError("rename error: " + msg.err.Error()), nil
+	}
+	if msg.sess == nil {
+		// The store contract is session-or-error; a nil session without an error
+		// is a store bug. Fail loud in the status line rather than panic inside
+		// Update, and keep the editor open so the user can retry or cancel.
+		return m.withError("rename error: store returned no session"), nil
+	}
+	m = m.closeRename()
+
+	title := msg.sess.EffectiveTitle()
+	status := fmt.Sprintf("renamed %s to %q", shortID(msg.sess.UUID), title)
+	if msg.cleared {
+		status = fmt.Sprintf("cleared custom name for %s — title is now %q", shortID(msg.sess.UUID), title)
+	}
+
+	// The viewer needs only the returned session, so refresh it before the list
+	// re-read: a failing re-read must not leave a committed rename stale in the
+	// header the user is looking at.
+	m.viewer = m.viewer.setSessionMeta(*msg.sess)
+
+	sessions, err := m.store.ListSessions(m.ctx, vault.ListOptions{})
+	if err != nil {
+		return m.withError("rename succeeded, but refreshing sessions failed: " + err.Error()), nil
+	}
+	var listCmd tea.Cmd
+	m.list, listCmd = m.list.setSessions(filterSessions(sessions, m.list.applied), m.list.applied)
+	m.list = m.list.selectSession(msg.sess.UUID)
+
+	var searchCmd tea.Cmd
+	m.search, searchCmd = m.search.refresh()
+
+	return m.withStatus(status), tea.Batch(listCmd, searchCmd)
 }
 
 // requestAction records a deferred restore/resume intent for the given session
@@ -340,6 +548,10 @@ func (m Model) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "r", "R":
 		return m.requestAction(actionFor(msg.String()), m.viewer.sess.UUID)
+	case "e":
+		// Renames the session owning the viewer, even from a subagent/inline
+		// detail view — a detail is still part of the same archived session.
+		return m.startRename(m.viewer.sess.UUID, m.viewer.sess.EffectiveTitle())
 	case "c":
 		tm, ok := m.viewer.currentMessage()
 		if !ok {
@@ -365,6 +577,16 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.mode = m.prevMode
 		return m, nil
+	case "ctrl+e":
+		// ctrl+e, not bare e: the search query input is always focused, so a
+		// printable rename key would make that letter untypeable in queries
+		// (design.md §TUI Interaction). This shadows textinput's default ctrl+e
+		// line-end binding; `end` still moves the cursor to the end.
+		r, ok := m.search.selected()
+		if !ok {
+			return m, nil
+		}
+		return m.startRename(r.SessionUUID, r.Title)
 	case "enter":
 		r, ok := m.search.selected()
 		if !ok {
@@ -418,14 +640,28 @@ func (m Model) View() string {
 	default:
 		body = m.list.View()
 	}
-	if m.status == "" {
-		return body
+	rows := []string{body}
+	if m.renaming {
+		rows = append(rows, m.renameLine())
 	}
-	// The status sits on the row bodyHeight reserved for it; oneLine + truncate
-	// guarantee exactly one row so the composed View never exceeds m.height.
-	style := m.styles.StatusBar
-	if m.statusErr {
-		style = m.styles.ErrorMsg
+	if m.status != "" {
+		// The status sits on a row bodyHeight reserved for it; oneLine + truncate
+		// guarantee exactly one row so the composed View never exceeds m.height.
+		style := m.styles.StatusBar
+		if m.statusErr {
+			style = m.styles.ErrorMsg
+		}
+		rows = append(rows, style.Render(truncate(oneLine(m.status), max(1, m.width))))
 	}
-	return body + "\n" + style.Render(truncate(oneLine(m.status), max(1, m.width)))
+	return strings.Join(rows, "\n")
+}
+
+// renameLine renders the open rename editor on its reserved row (above the
+// status row, which carries any validation error while the editor stays open).
+func (m Model) renameLine() string {
+	hint := renameHint
+	if m.renamePending {
+		hint = renameSavingHint
+	}
+	return m.renameInput.View() + "  " + m.styles.Help.Render(hint)
 }

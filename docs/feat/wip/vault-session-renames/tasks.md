@@ -57,7 +57,7 @@
 
 ## Task 4: Rename sessions from every TUI browsing mode
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2
 - **Size:** M
 - **Can run in parallel with:** Task 3
@@ -65,11 +65,16 @@
 
 ### Subtasks
 
-- [ ] 4.1 Extend `internal/vault/tui/app.go`'s consumer-owned store interface and root model with an asynchronous rename editor and result messages
-- [ ] 4.2 Bind `e` in list (navigation state) and viewer plus `ctrl+e` in search (bare `e` must keep editing the query/filter inputs), prefill the effective title, treat empty submit as clear, retain input on errors, and suppress duplicate pending writes
-- [ ] 4.3 Refresh authoritative list/search/view state after success while preserving selection and active filters where possible
-- [ ] 4.4 Broaden `f` filtering to effective title/project/UUID with the shared Unicode-folding matcher, render titles in search rows, and update help without changing `r`/`R` or viewer marker navigation
-- [ ] 4.5 Add TUI model/keybinding tests for all entry modes, typing `e` into the search query and list filter, success, clear, cancel, error, pending, filtered disappearance, refresh, and existing navigation regressions
+- [x] 4.1 Extend `internal/vault/tui/app.go`'s consumer-owned store interface and root model with an asynchronous rename editor and result messages
+- [x] 4.2 Bind `e` in list (navigation state) and viewer plus `ctrl+e` in search (bare `e` must keep editing the query/filter inputs), prefill the effective title, treat empty submit as clear, retain input on errors, and suppress duplicate pending writes
+- [x] 4.3 Refresh authoritative list/search/view state after success while preserving selection and active filters where possible
+- [x] 4.4 Broaden `f` filtering to effective title/project/UUID with the shared Unicode-folding matcher, render titles in search rows, and update help without changing `r`/`R` or viewer marker navigation
+- [x] 4.5 Add TUI model/keybinding tests for all entry modes, typing `e` into the search query and list filter, success, clear, cancel, error, pending, filtered disappearance, refresh, and existing navigation regressions
+
+### Notes (2026-09-12)
+
+- Isolated review (code-reviewer + pal/gemini-3.1-pro-preview) applied: single-line inputs are width-bounded via the shared `boundInputWidth` helper (`app.go`), called from `layoutSubmodels` for the rename editor and from `listModel.setSize` / `searchModel.setSize` for the pre-existing filter and query inputs, which had the same cursor-off-screen gap. The helper also re-bounds the scroll window on resize via `CursorEnd`+`SetCursor`, since bubbles `handleOverflow` only recomputes when the cursor leaves the window. Also applied: nil-session guard on the success path; viewer metadata refresh now runs before the list re-read so a failing re-read cannot leave a committed rename stale in the header. Declined: lowering the input `CharLimit` to 120 (validation ownership stays in the store — length is measured after trim and secret redaction) and pre-allocating the filter slice.
+- Test-fidelity fix: `keyMsg(" ")` in `viewer_test.go` now carries the `' '` rune, matching bubbletea's real `KeySpace` message; without it, typing a space into any textinput was a silent no-op in tests.
 
 ## Task 5: Final verification and documentation
 

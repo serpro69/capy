@@ -362,8 +362,22 @@ func (m viewerModel) currentMessage() (vault.TranscriptMessage, bool) {
 	return m.active.messages[idx], true
 }
 
+// setSessionMeta refreshes the loaded session's metadata (title/name state)
+// after a rename without touching the parsed transcript or sidecars: sess comes
+// from a metadata-only store read, so the archived raw bytes already held by
+// the viewer are retained. No-op when the viewer is empty or shows a different
+// session.
+func (m viewerModel) setSessionMeta(sess vault.Session) viewerModel {
+	if !m.ready || m.sess.UUID != sess.UUID {
+		return m
+	}
+	sess.RawJSONL = m.sess.RawJSONL
+	m.sess = sess
+	return m
+}
+
 func (m viewerModel) header() string {
-	title := strings.TrimSpace(m.sess.Title)
+	title := strings.TrimSpace(m.sess.EffectiveTitle())
 	if title == "" {
 		title = "(untitled)"
 	}
@@ -378,9 +392,9 @@ func (m viewerModel) header() string {
 }
 
 func (m viewerModel) helpLine() string {
-	keys := "j/k scroll · g/G top/bottom · c copy · r/R restore/resume · q back"
+	keys := "j/k scroll · g/G top/bottom · c copy · e rename · r/R restore/resume · q back"
 	if len(m.active.markers) > 0 {
-		keys = "j/k scroll · ]/[ marker · enter open · c copy · r/R restore/resume · q back"
+		keys = "j/k scroll · ]/[ marker · enter open · c copy · e rename · r/R restore/resume · q back"
 	}
 	if m.inDetail() {
 		keys = "j/k scroll · c copy · esc/q return to session"
