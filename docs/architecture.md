@@ -240,6 +240,10 @@ vault_chunks     — FTS5 virtual table (Porter), one row per overlapping turn w
                    title + content_text indexed, first_line_index UNINDEXED anchor
 vault_chunks_trigram — FTS5 virtual table (trigram), mirrors vault_chunks for substring
                    search; both feed the shared retrieval core (migration 0004, ADR-028)
+vault_session_names — capy-owned custom titles, one row per session ever renamed or
+                   cleared: session_uuid PK → vault_sessions (CASCADE), custom_title
+                   (NULL = clear tombstone, never empty), renamed_at_ns, machine_id
+                   (migration 0005; see Session names below)
 vault_meta       — key-value store; holds min_reader_version (the compression
                    forward-compat marker — see below)
 vault_migrations — migration tracking (by-name); migration runner lives in migrations.go
@@ -309,6 +313,55 @@ backlog).
 
 Full rationale and the rejected alternatives: [ADR-025](adr/025-vault-index-version-and-reindex.md).
 
+### Session names & the effective title
+
+`vault_sessions.title` is **imported** metadata — derived by `scanner.go` from the
+last `ai-title` record (else the first significant user prompt) and rewritten by the
+same insert/replace path whenever a larger transcript arrives. A user-chosen name has
+a different owner and lifecycle, so it lives in its own table, `vault_session_names`
+(`session_name.go`; migration `0005_session_names`, whose DDL is shared with
+`schemaSQL` so fresh and migrated vaults cannot drift). The rename feature never
+writes `vault_sessions.title`, and import, `reindex`, `compact`, and `rekey` never
+touch `vault_session_names` — a name row simply persists beside whatever the imported
+title becomes. Deleting a session cascades its name row.
+
+A row is *state*, not history: a non-NULL `custom_title` is the active override and
+NULL is an explicit **clear tombstone**, so merge can tell "never named here" from
+"deliberately cleared". The column is never the empty string — `NormalizeSessionName`
+rejects an empty rename and merge normalizes an empty source value to a tombstone.
+
+**Precedence lives in exactly one place**: `Session.EffectiveTitle()` (custom title
+when present, else imported). Reads select both columns through one `LEFT JOIN`
+fragment (`sessionMetaJoin`) and resolve in Go — deliberately no SQL-side `COALESCE`,
+so the two layers cannot drift. `GetSession`, `ListSessions`, ambiguous-prefix
+candidates, per-line `Search`, chunk `SearchChunks` (`SearchResult.Title`), the CLI,
+the MCP result mapping, and every TUI model consume that one resolver. `MATCH`,
+BM25/RRF, snippets, and the indexed columns are untouched, and `currentIndexVersion`
+is **not** bumped — extraction and indexed content did not change.
+
+**Normalization** (`NormalizeSessionName`, shared by CLI and TUI; strictly in this
+order): trim → `sanitize.StripSecrets` → reject empty → reject invalid UTF-8 →
+reject control characters → reject more than 120 code points (measured *after*
+redaction, since redaction changes length). A name matching a credential pattern is
+therefore stored redacted — the same invariant search snippets already keep.
+
+**Local writes** (`RenameSession` → `renameSessionAt`) resolve the UUID prefix
+(literally — `LIKE` metacharacters are escaped) and upsert inside one
+`BeginImmediateContext` transaction, so a concurrent delete cannot orphan a row. The
+stored timestamp is `max(now.UnixNano(), stored renamed_at_ns + 1)`: an explicit local
+action is always newer than the state it edits, even across a backward clock step.
+`machine_id` is `MachineID()`. This bump applies to local operations only — merge
+writes a winning source tuple verbatim (see Archival Paths).
+
+**Name lookup** (`ListOptions.Name` → `vault list --name`; the TUI `f` filter) is a
+literal, case-insensitive substring over the *effective* title, folded in Go with
+`ContainsFold` (`strings.ToLower` on both sides) because SQLite's `lower()`/`NOCASE`
+fold ASCII only. The project predicate stays in SQL; the name predicate and `Limit`
+are applied in Go **after** title resolution (a SQL `LIMIT` would pre-truncate the
+candidates). Name terms are deliberately not part of transcript or chunk FTS.
+
+Rationale and rejected alternatives: [ADR-030](adr/030-vault-session-names-and-latest-wins-merge.md).
+
 ### Tool-result display (`show` vs `--tui`)
 
 `raw_jsonl` is always stored verbatim, so `vault show --format json` and `restore`
@@ -377,7 +430,9 @@ multi-line row silently shifts every later row's true line below its recorded
 
 1. **MCP server startup** — background goroutine imports current project's sessions (opt-in via `CAPY_VAULT_KEY`). With `CAPY_VAULT_SWEEP_ALL` set, the sweep walks **all** projects under `config.ClaudeProjectsDir()` instead of just the current one (`server.go:vaultSweep`)
 2. **`capy vault import`** — manual, all projects, idempotent (hash-based, larger-total-size wins)
-3. **`capy vault merge --from <path>`** — non-destructive cross-machine union (`merge.go`): reads another vault's `vault_sessions`+`vault_files`, applies the same idempotent digest decision (distinct added, larger-wins on UUID overlap), carries source metadata verbatim, re-scans FTS. Feature-detects a v1 (no `encoding` column) source. Writes only the destination, so a concurrent server sweep is absorbed by busy-timeout retry
+3. **`capy vault merge --from <path>`** — non-destructive cross-machine union (`merge.go`): reads another vault's `vault_sessions`+`vault_files`, applies the same idempotent digest decision (distinct added, larger-wins on UUID overlap), carries source metadata verbatim, re-scans FTS. Feature-detects a v1 (no `encoding` column) source. Writes only the destination, so a concurrent server sweep is absorbed by busy-timeout retry.
+
+   **Custom names reconcile on an independent track.** The source `vault_session_names` table is feature-detected (a pre-0005 source contributes none). For every source session whose UUID exists in the destination — *including* sessions the zero-message exclusion drops and transcripts skipped as same-hash or smaller — the source name state wins when its `(renamed_at_ns, machine_id)` tuple is greater; an absent destination row loses to any tuple; an equal tuple (machine IDs can collide via `CAPY_MACHINE_ID` or a synced dotfile) is broken by value — a non-NULL title beats a tombstone, two titles compare bytewise and the greater wins — so convergence never depends on unique machine IDs. A winning state is written **verbatim** (never re-stamped with the local `max(now, stored+1)` bump, which would break idempotence), a NULL title clears, and a new session plus its name commit in one transaction to satisfy the foreign key. Name-only changes report `updated`, identical/older states `skipped`, and dry-run reports the prospective effective title. Known non-destructive gap: an older binary merging *from* a newer vault reads no `vault_session_names` and carries no names; re-running with an upgraded binary carries them.
 
 ### CLI Commands
 
@@ -385,12 +440,13 @@ multi-line row silently shifts every later row's true line below its recorded
 |---------|-------------|
 | `capy vault import` | Scan and archive sessions (mutating; `--dry-run` to preview) |
 | `capy vault reindex` | Rebuild the FTS index for sessions on an older `index_version` (DB-driven; no disk dependency; batched + WAL-checkpointed) |
-| `capy vault list` | List sessions, reverse chronological |
+| `capy vault list` | List sessions, reverse chronological (`--project` in SQL; `--name` — literal, Unicode case-folded substring over the effective title, applied in Go before `--limit`) |
 | `capy vault search` | Full-text search with snippets |
 | `capy vault show` | Display full session (pager, `--format` for export) |
 | `capy vault restore` | Write JSONL + session files back to disk |
 | `capy vault resume` | Restore + launch `claude --resume` |
-| `capy vault delete` | Remove a session from the vault |
+| `capy vault delete` | Remove a session from the vault (cascades its name row) |
+| `capy vault rename` | Set (`<name>`) or clear (`--clear`) the capy-owned name of a session; prints the resulting effective title. Writes only `vault_session_names` — never `raw_jsonl`, hashes, or FTS |
 | `capy vault stats` | DB size, session count, per-project breakdown, index version + reindex backlog |
 | `capy vault checkpoint` | Flush WAL (required before cross-machine copy) |
 | `capy vault compact` | Recompress legacy (`encoding IS NULL`) blobs through the zstd codec + `VACUUM` to reclaim disk. No-op if nothing is uncompressed; aborts under `CAPY_VAULT_NO_COMPRESS` or a busy DB (stop the server first) |
@@ -398,7 +454,13 @@ multi-line row silently shifts every later row's true line below its recorded
 | `capy vault rekey` | Rotate the encryption key to the current `CAPY_VAULT_KEY` via `sqliteutil.Rekey` (SQLite backup-API: open old → checkpoint → copy into a new file under the new key → swap+verify). Sidesteps the WAL/PRAGMA-rekey incompatibility (ADR-020) by writing a fresh file. Stop the server first; `--remove-backup` unlinks the old-key `.bak` |
 
 `list`, `search`, and `show` support `--tui` for interactive browsing/search/viewing
-(filter `f`, copy `c`, restore `r`, resume `R`); the mutating/exec commands do not.
+(filter `f` — effective title, project path, or UUID via the shared `ContainsFold`
+matcher; rename `e` in the list and viewer, `ctrl+e` in search because its query
+input is always focused and a printable key would be untypeable; copy `c`; restore
+`r`; resume `R`); the mutating/exec commands do not. A rename runs as a Bubble Tea
+command and, on success, reloads authoritative store state (list re-query with the
+active filter reapplied, search rerun, viewer metadata refresh) rather than patching
+the cached presentation.
 The viewer's markdown rendering upgrades from plain word-wrap to styled
 [glamour](https://github.com/charmbracelet/glamour) output when built with the
 optional `glamour` build tag (`make build-glamour` / `-tags fts5,glamour`) — a

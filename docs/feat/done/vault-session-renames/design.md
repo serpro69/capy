@@ -1,6 +1,6 @@
 # Vault Session Renames — Design
 
-**Status:** Draft
+**Status:** Implemented
 
 **Issue:** [#81 — vault: support session renames](https://github.com/serpro69/capy/issues/81)
 

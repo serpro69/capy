@@ -1107,12 +1107,12 @@ recognized credential pattern are stored redacted.`,
 func renameOptions(args []string, clear bool) (vault.RenameOptions, error) {
 	if clear {
 		if len(args) > 1 {
-			return vault.RenameOptions{}, fmt.Errorf("a name and --clear are mutually exclusive")
+			return vault.RenameOptions{}, errors.New("a name and --clear are mutually exclusive")
 		}
 		return vault.RenameOptions{Clear: true}, nil
 	}
 	if len(args) < 2 {
-		return vault.RenameOptions{}, fmt.Errorf("provide a name, or pass --clear to remove the custom name")
+		return vault.RenameOptions{}, errors.New("provide a name, or pass --clear to remove the custom name")
 	}
 	return vault.RenameOptions{Name: args[1]}, nil
 }

@@ -56,14 +56,14 @@ func NormalizeSessionName(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	name = sanitize.StripSecrets(name)
 	if name == "" {
-		return "", fmt.Errorf("session name must not be empty; use clear instead")
+		return "", errors.New("session name must not be empty; use clear instead")
 	}
 	if !utf8.ValidString(name) {
-		return "", fmt.Errorf("session name must be valid utf-8")
+		return "", errors.New("session name must be valid utf-8")
 	}
 	for _, r := range name {
 		if unicode.IsControl(r) {
-			return "", fmt.Errorf("session name must not contain control characters")
+			return "", errors.New("session name must not contain control characters")
 		}
 	}
 	if utf8.RuneCountInString(name) > maxSessionNameRunes {
@@ -96,7 +96,7 @@ func (s *VaultStore) renameSessionAt(
 	var customTitle *string
 	if opts.Clear {
 		if opts.Name != "" {
-			return nil, fmt.Errorf("session name and clear are mutually exclusive")
+			return nil, errors.New("session name and clear are mutually exclusive")
 		}
 	} else {
 		normalized, err := NormalizeSessionName(opts.Name)
@@ -124,6 +124,10 @@ func (s *VaultStore) renameSessionAt(
 		return nil, fmt.Errorf("querying sessions: %w", err)
 	}
 
+	// rows is closed explicitly, not deferred: the cursor must be released
+	// before the upsert below runs on the same transaction (an open *sql.Rows
+	// pins the tx's connection), and a deferred Close would only run after it.
+	// The read-only paths elsewhere in this package use `defer rows.Close()`.
 	var matches []Session
 	for rows.Next() {
 		var sess Session
@@ -154,7 +158,7 @@ func (s *VaultStore) renameSessionAt(
 	renamedAtNS := now.UnixNano()
 	if sess.Name != nil && renamedAtNS <= sess.Name.RenamedAtNS {
 		if sess.Name.RenamedAtNS == math.MaxInt64 {
-			return nil, fmt.Errorf("session rename timestamp overflow")
+			return nil, errors.New("session rename timestamp overflow")
 		}
 		renamedAtNS = sess.Name.RenamedAtNS + 1
 	}

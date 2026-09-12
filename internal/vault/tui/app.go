@@ -337,8 +337,16 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prevMode = modeList
 		return m, nil
 	case "f":
+		// Opening the filter refreshes the list's snapshot once; keystrokes then
+		// filter that snapshot in memory. A failed refresh keeps the current
+		// items (never blank the browser) and says so in the status line.
+		next, cmd, err := m.reloadSessions()
+		if err != nil {
+			next = m.withError("refreshing sessions failed: " + err.Error())
+		}
+		m = next
 		m.list = m.list.startFilter()
-		return m, nil
+		return m, cmd
 	case "e":
 		sess, ok := m.list.selected()
 		if !ok {
@@ -397,20 +405,31 @@ func (m Model) updateListFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// applySessionFilter re-queries the store and swaps the list's items to the
-// sessions matching needle across effective title, project path, and UUID
+// applySessionFilter narrows the list's cached snapshot to the sessions
+// matching needle across effective title, project path, and UUID
 // (filterSessions — the same Unicode-folding matcher as `vault list --name`).
-// On error it surfaces the message in the status line and leaves the current
-// items in place (a failed re-query must not blank the browser).
+// Purely in memory: the snapshot is refreshed by reloadSessions when the
+// filter opens and after a rename, not per keystroke.
 func (m Model) applySessionFilter(needle string) (tea.Model, tea.Cmd) {
-	sessions, err := m.store.ListSessions(m.ctx, vault.ListOptions{})
-	if err != nil {
-		return m.withError(err.Error()), nil
-	}
 	m = m.clearStatus()
 	var cmd tea.Cmd
-	m.list, cmd = m.list.setSessions(filterSessions(sessions, needle), needle)
+	m.list, cmd = m.list.setSessions(m.list.all, needle)
 	return m, cmd
+}
+
+// reloadSessions re-reads the session list from the store into the list's
+// snapshot and reapplies the active filter. It is the only path that refreshes
+// the snapshot, called at the two moments it must be authoritative: when the
+// filter opens and after a rename. On error the current items are left in
+// place and the error is returned for the caller to surface.
+func (m Model) reloadSessions() (Model, tea.Cmd, error) {
+	sessions, err := m.store.ListSessions(m.ctx, vault.ListOptions{})
+	if err != nil {
+		return m, nil, err
+	}
+	var cmd tea.Cmd
+	m.list, cmd = m.list.setSessions(sessions, m.list.applied)
+	return m, cmd, nil
 }
 
 // startRename opens the rename editor over the current body, prefilled with the
@@ -507,12 +526,10 @@ func (m Model) handleRenameResult(msg renameResultMsg) (tea.Model, tea.Cmd) {
 	// header the user is looking at.
 	m.viewer = m.viewer.setSessionMeta(*msg.sess)
 
-	sessions, err := m.store.ListSessions(m.ctx, vault.ListOptions{})
+	m, listCmd, err := m.reloadSessions()
 	if err != nil {
 		return m.withError("rename succeeded, but refreshing sessions failed: " + err.Error()), nil
 	}
-	var listCmd tea.Cmd
-	m.list, listCmd = m.list.setSessions(filterSessions(sessions, m.list.applied), m.list.applied)
 	m.list = m.list.selectSession(msg.sess.UUID)
 
 	var searchCmd tea.Cmd

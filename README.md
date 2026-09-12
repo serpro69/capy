@@ -429,25 +429,26 @@ Import is idempotent: unchanged sessions are skipped, grown sessions are updated
 
 ### Commands
 
-All commands live under `capy vault` and require `CAPY_VAULT_KEY`. A persistent `--path <vault.db>` flag targets a specific vault file, overriding `CAPY_VAULT_PATH` and the XDG default. Lookups (`show`/`restore`/`resume`/`delete`) accept a **partial UUID of 8+ characters**, git-style; an ambiguous prefix prints candidates to disambiguate.
+All commands live under `capy vault` and require `CAPY_VAULT_KEY`. A persistent `--path <vault.db>` flag targets a specific vault file, overriding `CAPY_VAULT_PATH` and the XDG default. Lookups (`show`/`restore`/`resume`/`delete`/`rename`) accept a **partial UUID of 8+ characters**, git-style; an ambiguous prefix prints candidates to disambiguate.
 
 | Command                                                                               | Description                                                                                                                                                                 |
 | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `import [--source <dir>] [--project <substr>] [--dry-run]`                            | Scan and archive sessions. Mutating by default.                                                                                                                             |
 | `reindex`                                                                             | Rebuild the search index for sessions archived by an older indexer (reads stored blobs, not disk; rewrites only the FTS index). Run once after upgrading capy.              |
-| `list [--project <substr>] [--limit N] [--json]`                                      | List sessions, newest first (`--limit` default 50, `0` = no limit).                                                                                                         |
+| `list [--project <substr>] [--name <substr>] [--limit N] [--json]`                    | List sessions, newest first (`--limit` default 50, `0` = no limit). `--name` is a case-insensitive literal substring over the displayed title (custom name if set, else imported); combines with `--project`. |
 | `search <query> [--raw] [--project] [--role] [--after] [--before] [--limit] [--json]` | Full-text search with snippets. Plain keywords by default; `--raw` for FTS5 `MATCH` syntax. `--role user\|assistant\|tool\|system`; `--after`/`--before` take `YYYY-MM-DD`. |
 | `show <session-id> [--format text\|markdown\|json]`                                   | Display a full session. Defaults to your `$PAGER`; `--format markdown\|json` for export.                                                                                    |
 | `restore <session-id> [--output <path>]`                                              | Write the JSONL + all preserved sidecars back to disk (defaults to the session's Claude Code project dir).                                                                  |
 | `resume <session-id> [--dir <path>]`                                                  | Restore, then launch `claude --resume`. Requires `claude` on `PATH`.                                                                                                        |
 | `delete <session-id> [--yes]`                                                         | Remove a session from the vault (does not touch on-disk copies). Prompts unless `--yes`.                                                                                    |
+| `rename <session-id> <name>` · `rename <session-id> --clear`                          | Give a session a name of your own, or clear it to fall back to the imported title. Shown everywhere (`list`, `show`, `search`, JSON, TUI); the archived transcript is untouched. See [Naming sessions](#naming-sessions). |
 | `stats [--json]`                                                                      | Session count, content size, DB file size, per-project breakdown, and the search-index version (with a count of sessions still below it — i.e. a `reindex` backlog).         |
 | `checkpoint`                                                                          | Flush the WAL into `vault.db` — run before copying it to another machine.                                                                                                   |
 | `rekey [--remove-backup]`                                                             | Rotate the vault's encryption key to the current `CAPY_VAULT_KEY`. **Stop the MCP server first.** Leaves `<vault>.bak` (still decryptable by the old key) unless `--remove-backup`.  |
 | `compact`                                                                             | Recompress sessions archived before compression existed (zstd) and `VACUUM` to reclaim disk. No-op if nothing is left uncompressed. **Stop the MCP server first.**           |
-| `merge --from <vault.db> [--key] [--project] [--dry-run]`                             | Non-destructively unite another machine's vault into this one — distinct sessions added, larger copy wins on UUID overlap. Idempotent. Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`. |
+| `merge --from <vault.db> [--key] [--project] [--dry-run]`                             | Non-destructively unite another machine's vault into this one — distinct sessions added, larger copy wins on UUID overlap; custom names reconcile separately, latest rename or clear wins. Idempotent. Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`. |
 
-`list`, `search`, and `show` also accept **`--tui`** for an interactive terminal UI (browse, live search, vim-style viewer) built on bubbletea. `--tui` is not supported on the mutating/exec commands (`restore`, `resume`, `delete`). In the viewer, large tool results (and any `Read`/`NotebookRead` output) collapse to a marker — cycle markers with `]`/`[` and press `enter` to expand one inline, `esc`/`q` to return. `Edit`/`Write` results expand to a colored diff (the marker shows a `(+a −b)` stat). Plain `vault show` is unaffected. Other keys: `f` filter the list by project, `c` copy the current message to the clipboard (OSC-52), `r` restore and `R` resume the selected/open session.
+`list`, `search`, and `show` also accept **`--tui`** for an interactive terminal UI (browse, live search, vim-style viewer) built on bubbletea. `--tui` is not supported on the mutating/exec commands (`restore`, `resume`, `delete`). In the viewer, large tool results (and any `Read`/`NotebookRead` output) collapse to a marker — cycle markers with `]`/`[` and press `enter` to expand one inline, `esc`/`q` to return. `Edit`/`Write` results expand to a colored diff (the marker shows a `(+a −b)` stat). Plain `vault show` is unaffected. Other keys: `f` filter the list by title, project path, or UUID, `e` rename the selected/open session (`ctrl+e` in search, where `e` types into the query), `c` copy the current message to the clipboard (OSC-52), `r` restore and `R` resume the selected/open session.
 
 Markdown in user/assistant turns is word-wrapped by default. For styled rendering (headings, lists, code blocks via [glamour](https://github.com/charmbracelet/glamour)), build with the optional `glamour` tag — `make build-glamour`. It is off by default so the default binary stays small and adds no extra dependency to the release build.
 
@@ -457,11 +458,32 @@ Markdown in user/assistant turns is word-wrapped by default. For styled renderin
 
 `resume` does the same, then launches `claude --resume <uuid>`. The working directory is chosen from `--dir`, then the session's recorded project path, then the current directory.
 
+### Naming sessions
+
+Every archived session carries an **imported title** — Claude Code's own `ai-title` when it recorded one, otherwise the first significant user prompt. It is often good enough, and often not. `capy vault rename` puts your own name on a session without touching the archive:
+
+```bash
+capy vault rename 3f8a1c2b "Rate limiter — token bucket rewrite"
+capy vault rename 3f8a1c2b --clear        # back to the imported title
+capy vault list --name "rate limiter"     # find it again (case-insensitive substring)
+```
+
+How names behave:
+
+- **Precedence.** A custom name wins over the imported title everywhere a title is shown — `list`, `show`, `search` rows, `--json` output (the `title` field), MCP session results, and the TUI. Clearing removes the override and reveals the *current* imported title: if the transcript grew and its title changed after you renamed it, that newer title is what comes back.
+- **Stored beside the archive, never in it.** Names live in their own table keyed by session UUID. `raw_jsonl`, sidecars, content hashes, and the search index are byte-for-byte unchanged by a rename, and a name survives re-import, `reindex`, `compact`, `rekey`, and `merge`. Deleting the session deletes its name.
+- **Not propagated to Claude Code.** Renaming in the vault does not rename the session inside Claude Code, and Claude Code's own `/rename` is not imported as a vault name. The two are independent.
+- **Validation.** Names are trimmed, must be non-empty valid UTF-8 with no control characters, and are capped at 120 characters. Duplicate names are allowed — the UUID stays the identity. Because names come back through CLI and MCP output, they pass through the same secret stripping as search snippets: a name that itself looks like a credential is stored **redacted**, not verbatim.
+- **Lookup, not search.** `list --name` matches the displayed title literally — `%`, `_`, quotes, and FTS operators are ordinary characters — with Unicode-aware case folding (`café` matches `Café`). `search` still matches transcript text only; a word that appears only in a name is not a search hit.
+- **TUI.** Press `e` in the list or the viewer (`ctrl+e` in search, where `e` types into the query) to edit the name in place; an emptied field clears it. The `f` filter matches names too.
+
 ### Cross-machine sync
 
 The vault is local-only — there is no cloud sync. Two ways to move sessions between machines:
 
 **Merge (non-destructive, preferred).** `capy vault merge --from <path>` unites another vault into this one without overwriting — distinct sessions are added, and where both hold the same UUID the larger-content copy wins. Re-running is idempotent.
+
+Custom names travel on their own track. For each session both vaults hold, the most recent rename or clear wins — by timestamp, then machine ID, then a deterministic value tie-break — regardless of which transcript copy won, so a name set on machine A reaches machine B even when both already hold identical transcripts. A vault written by a capy version without names contributes none. An older capy merging *from* a newer vault leaves the destination's names untouched and carries none across until it is upgraded and the merge is re-run.
 
 ```bash
 # Copy machine A's vault somewhere on machine B, then:
