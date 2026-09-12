@@ -397,7 +397,9 @@ func (m viewerModel) helpLine() string {
 		keys = "j/k scroll · ]/[ marker · enter open · c copy · e rename · r/R restore/resume · q back"
 	}
 	if m.inDetail() {
-		keys = "j/k scroll · c copy · esc/q return to session"
+		// e still renames the owning session from a detail view (app.updateView
+		// handles it before delegating), so the help must keep advertising it.
+		keys = "j/k scroll · c copy · e rename · esc/q return to session"
 	}
 	return m.styles.Help.Render(keys)
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -49,11 +50,14 @@ func TestApp_FilterNarrowsByProject(t *testing.T) {
 	m = next.(Model)
 	require.True(t, m.list.filtering)
 
-	// Typing re-queries the store and narrows in memory to the matching project.
+	// Opening the filter refreshed the snapshot once (an unfiltered read); typing
+	// narrows that snapshot in memory without another store round-trip.
+	calls := st.listCalls
 	m = typeRunes(t, m, "alph")
 	assert.Equal(t, "alph", m.list.filterValue())
+	assert.Equal(t, calls, st.listCalls, "keystrokes filter the cached snapshot, not the store")
 	assert.Equal(t, vault.ListOptions{}, st.lastListOpts,
-		"filtering happens in the TUI (ContainsFold across title/project/uuid), not via ListOptions predicates")
+		"the snapshot is an unfiltered read; matching happens in the TUI (ContainsFold across title/project/uuid)")
 	require.Len(t, m.list.list.Items(), 1, "only the alpha session survives the filter")
 	sel, ok := m.list.selected()
 	require.True(t, ok)
@@ -111,6 +115,56 @@ func TestApp_FilterMatchesTitleUUIDAndFoldsCase(t *testing.T) {
 	m = typeRunes(t, m, "AAAA11")
 	require.Len(t, m.list.list.Items(), 1)
 	sel, ok = m.list.selected()
+	require.True(t, ok)
+	assert.Equal(t, "aaaa1111", sel.UUID)
+}
+
+func TestApp_FilterOpenSnapshotsVault(t *testing.T) {
+	m, st := twoProjectApp(t)
+	calls := st.listCalls
+
+	// f refreshes the snapshot exactly once.
+	next, _ := m.Update(keyMsg("f"))
+	m = next.(Model)
+	require.Equal(t, calls+1, st.listCalls)
+
+	// A session archived after the filter opened is not in the snapshot, and
+	// typing does not go back to the store to find it.
+	st.sessions = append(st.sessions, vault.Session{UUID: "cccc3333", Title: "gamma work", ProjectPath: "/home/u/gamma"})
+	m = typeRunes(t, m, "gamma")
+	assert.Empty(t, m.list.list.Items(), "keystrokes filter the snapshot taken when the filter opened")
+	assert.Equal(t, calls+1, st.listCalls)
+
+	// Reopening the filter takes a fresh snapshot that includes it.
+	next, _ = m.Update(keyMsg("esc"))
+	m = next.(Model)
+	next, _ = m.Update(keyMsg("f"))
+	m = next.(Model)
+	require.Equal(t, calls+2, st.listCalls)
+	m = typeRunes(t, m, "gamma")
+	require.Len(t, m.list.list.Items(), 1)
+	sel, ok := m.list.selected()
+	require.True(t, ok)
+	assert.Equal(t, "cccc3333", sel.UUID)
+}
+
+func TestApp_FilterOpenReloadFailureKeepsItems(t *testing.T) {
+	m, st := twoProjectApp(t)
+	st.listErr = errors.New("db gone")
+
+	// A failed refresh must not blank the browser: the filter still opens over
+	// the existing snapshot and the failure is reported in the status line.
+	next, _ := m.Update(keyMsg("f"))
+	m = next.(Model)
+	assert.True(t, m.list.filtering)
+	assert.Len(t, m.list.list.Items(), 2)
+	assert.True(t, m.statusErr)
+	assert.Contains(t, m.status, "refreshing sessions failed: db gone")
+
+	// Filtering keeps working over that snapshot.
+	m = typeRunes(t, m, "alph")
+	require.Len(t, m.list.list.Items(), 1)
+	sel, ok := m.list.selected()
 	require.True(t, ok)
 	assert.Equal(t, "aaaa1111", sel.UUID)
 }

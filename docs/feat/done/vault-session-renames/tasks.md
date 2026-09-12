@@ -2,8 +2,9 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done
 > Created: 2026-09-05
+> Completed: 2026-09-12
 > Not Doing: Claude propagation, archived transcript mutation, Claude custom-title ingestion, name matching in FTS, rename history, interactive merge conflicts, team/shared-vault administration
 
 ## Task 1: Persist and resolve vault-owned session names
@@ -78,7 +79,7 @@
 
 ## Task 5: Final verification and documentation
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2, Task 3, Task 4
 - **Size:** S
 - **Can run in parallel with:** —
@@ -86,11 +87,11 @@
 
 ### Subtasks
 
-- [ ] 5.1 Run `$kk:test` to execute focused vault/CLI tests, formatting, vet, full tests, and race tests with `CAPY_DB_KEY`, `CAPY_VAULT_KEY`, and `-tags fts5`
-- [ ] 5.2 Run `$kk:document` to update `README.md`, `docs/architecture.md`, and command/TUI help for rename, clear, `list --name`, title precedence, and merge behavior
-- [ ] 5.3 Run `$kk:review-code` with Go input and address or durably record all findings
-- [ ] 5.4 Run `$kk:review-spec` against `docs/feat/wip/vault-session-renames/` and resolve implementation/documentation drift
-- [ ] 5.5 Run `make bench-quality` and `make bench-compare BASE=master TARGET=<branch>` (repository policy: `Search`/`SearchChunks` SQL changed) and record the comparison result
+- [x] 5.1 Run `$kk:test` to execute focused vault/CLI tests, formatting, vet, full tests, and race tests with `CAPY_DB_KEY`, `CAPY_VAULT_KEY`, and `-tags fts5` — 2026-09-12: `gofmt -l` clean over all tracked Go files, `make vet` clean, `make test` green (16 packages), `make test-race` green
+- [x] 5.2 Run `$kk:document` to update `README.md`, `docs/architecture.md`, and command/TUI help for rename, clear, `list --name`, title precedence, and merge behavior — README: `rename` row, `list --name`, lookup sentence, TUI keys, merge paragraph, new "Naming sessions" section (secret-stripping surprise, duplicates, clear semantics, no Claude propagation); architecture.md: schema entry, "Session names & the effective title" section, merge reconciliation, CLI table, TUI keys; new [ADR-030](../../../adr/030-vault-session-names-and-latest-wins-merge.md). Cobra help for `vault rename` and `vault list --name` verified from the built binary
+- [x] 5.3 Run `$kk:review-code` with Go input and address or durably record all findings — 2026-09-12, isolated mode over `master...HEAD` (code-reviewer: APPROVE, no P0–P2; pal/gemini-3.1-pro-preview). Applied: (corroborated) the TUI `f` filter now filters an in-memory snapshot refreshed only when the filter opens and after a rename (`Model.reloadSessions`, `listModel.all`) instead of re-querying the store per keystroke; static-message errors in this feature's code switched from `fmt.Errorf` to `errors.New`; a comment on `renameSessionAt`'s explicit `rows.Close()` explains why it is not deferred (the cursor must be released before the upsert on the same transaction — pal flagged it as non-idiomatic; it is deliberate). Declined: renaming `ContainsFold` (its doc comment already states the simple-lowercasing semantics; churn across store/CLI/TUI for a naming nuance). Observed, not touched: five pre-existing static `fmt.Errorf` calls elsewhere in `cmd/capy/vault.go` (rekey/merge/resume paths) predate this feature. No P0/P1 systemic findings to index
+- [x] 5.4 Run `$kk:review-spec` against `docs/feat/wip/vault-session-renames/` and resolve implementation/documentation drift — 2026-09-12, isolated mode: CONFORMANT across Tasks 1–4. Applied: the viewer's detail sub-view help now advertises `e rename` (the binding already worked there); `design.md` status → Implemented; this file's header status updated; feature directory moved to `docs/feat/done/` at completion so ADR-030's design link resolves. No intentional deviations to index
+- [x] 5.5 Run `make bench-quality` and `make bench-compare BASE=master TARGET=<branch>` (repository policy: `Search`/`SearchChunks` SQL changed) and record the comparison result — 2026-09-12: master baseline produced in a throwaway worktree (`bench-results/master.json`), branch run `bench-results/feat-vault_session_rename.json`; qualstat reports **no change on any metric** (retrieval quality across plaintext/transcript/vault_session/overall and every context-reduction metric identical, all deltas `~`). benchstat (perf) not installed and not required — ranking code is untouched; only the metadata LEFT JOIN changed
 
 ## Dependency Graph
 
@@ -98,3 +99,7 @@
 Task 1 ─┬─> Task 2 ──> Task 4 ─┐
         └─> Task 3 ────────────┴─> Task 5
 ```
+
+## Completion notes (2026-09-12)
+
+Where the implementation diverged from the plan: the TUI `f` filter was first built in the pre-existing shape (a store re-query per keystroke, now over an unfiltered read) and changed during the Task 5 review to an in-memory snapshot refreshed when the filter opens and after a rename — the plan only said "broaden `f` with the shared matcher". Width-bounding of every single-line input and ADR-030 were not in the plan; both came out of review and the documentation pass. Nothing turned out harder than expected in the store or merge layers; the one real cost was TUI test fidelity — a fake space keypress without its rune silently made every typed space a no-op, which looked like a matcher bug. Surprises worth knowing for future TUI work: bubbles `textinput` never re-bounds its horizontal scroll window on a `Width` change (only when the cursor leaves the window), bubbletea's standard renderer truncates rows wider than the terminal (so an over-wide input hides the cursor rather than breaking the layout, contrary to one external review claim), and `git check-ignore` on a directory pattern like `bench-results/` reports "not ignored" until the directory exists. The benchmark comparison against master was, as the design predicted, a zero delta on every metric.

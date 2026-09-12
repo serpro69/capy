@@ -63,12 +63,20 @@ func filterSessions(sessions []vault.Session, needle string) []vault.Session {
 // listModel is the session browser (left/primary panel). It wraps bubbles/list.
 // The built-in "/" fuzzy filter is disabled so "/" opens the global FTS search
 // instead (design key bindings + Task 6.8); "f" drives a session filter across
-// effective title, project path, and UUID (filterSessions) that re-queries the
-// store — the app owns the re-query (it holds the store + ctx), the listModel
-// owns the input widget and the filtering flag.
+// effective title, project path, and UUID (filterSessions) over a cached
+// snapshot of the vault (all) — the app owns the store reads that refresh the
+// snapshot (it holds the store + ctx; see Model.reloadSessions), the listModel
+// owns the snapshot, the input widget, and the filtering flag.
 type listModel struct {
 	list   list.Model
 	styles Styles
+
+	// all is the unfiltered session list the displayed items are derived from.
+	// Filtering runs in memory over it on every keystroke; it is refreshed from
+	// the store only when the filter opens and after a rename, so a keystroke
+	// never costs a database scan (design Assumption 6 accepts one bounded scan
+	// per lookup, not one per character).
+	all []vault.Session
 
 	filter    textinput.Model // session-filter input, shown only while filtering
 	filtering bool            // input focused; keystrokes edit the filter
@@ -106,7 +114,7 @@ func newListModel(sessions []vault.Session, styles Styles, width, height int) li
 	fi.Placeholder = "substring of title, project path, or uuid"
 	fi.CharLimit = 256
 
-	return listModel{list: l, styles: styles, filter: fi, width: width, height: height}
+	return listModel{list: l, styles: styles, all: sessions, filter: fi, width: width, height: height}
 }
 
 // listFilterHint sits to the right of the filter input on its row; setSize
@@ -159,17 +167,20 @@ func (m listModel) updateFilterInput(msg tea.Msg) (listModel, tea.Cmd) {
 	return m, cmd
 }
 
-// setSessions swaps the displayed sessions (after a filter re-query or a rename
-// refresh) and records the applied filter for the title and the next
-// startFilter pre-fill.
-func (m listModel) setSessions(sessions []vault.Session, applied string) (listModel, tea.Cmd) {
-	items := make([]list.Item, len(sessions))
-	for i, s := range sessions {
+// setSessions replaces the cached snapshot with all, displays the subset
+// matching applied (filterSessions), and records applied for the title and the
+// next startFilter pre-fill. Pass the current snapshot (m.all) to re-filter in
+// memory, or a fresh store read to refresh it.
+func (m listModel) setSessions(all []vault.Session, applied string) (listModel, tea.Cmd) {
+	shown := filterSessions(all, applied)
+	items := make([]list.Item, len(shown))
+	for i, s := range shown {
 		items[i] = sessionItem{sess: s}
 	}
 	cmd := m.list.SetItems(items)
+	m.all = all
 	m.applied = applied
-	title := fmt.Sprintf("Vault — %d session(s)", len(sessions))
+	title := fmt.Sprintf("Vault — %d session(s)", len(shown))
 	if applied != "" {
 		title += fmt.Sprintf(" · filter %q", applied)
 	}

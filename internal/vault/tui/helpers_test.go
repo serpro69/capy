@@ -97,6 +97,7 @@ type stubStore struct {
 
 	searchCalls    int
 	lastQuery      string
+	listCalls      int
 	lastListOpts   vault.ListOptions
 	renameCalls    int
 	lastRenameID   string
@@ -104,6 +105,7 @@ type stubStore struct {
 }
 
 func (s *stubStore) ListSessions(_ context.Context, opts vault.ListOptions) ([]vault.Session, error) {
+	s.listCalls++
 	s.lastListOpts = opts
 	if s.listErr != nil {
 		return nil, s.listErr

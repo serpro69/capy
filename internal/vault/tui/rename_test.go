@@ -69,11 +69,11 @@ func TestApp_RenamePrefillsCustomName(t *testing.T) {
 	m, st := twoProjectApp(t)
 	custom := "My Custom Name"
 	st.sessions[0].Name = &vault.SessionName{CustomTitle: &custom, RenamedAtNS: 1, MachineID: "stub"}
-	// Refresh the list items so they carry the name state.
-	next, _ := m.applySessionFilter("")
-	m = next.(Model)
+	// Refresh the list's snapshot so its items carry the name state.
+	m, _, err := m.reloadSessions()
+	require.NoError(t, err)
 
-	next, _ = m.Update(keyMsg("e"))
+	next, _ := m.Update(keyMsg("e"))
 	m = next.(Model)
 	require.True(t, m.renaming)
 	assert.Equal(t, "My Custom Name", m.renameInput.Value(),
@@ -572,6 +572,7 @@ func TestApp_RenameFromSubagentDetailTargetsOwningSession(t *testing.T) {
 	next, _ = m.Update(keyMsg("enter"))
 	m = next.(Model)
 	require.True(t, m.viewer.inDetail(), "the subagent detail is open")
+	assert.Contains(t, m.View(), "e rename", "the detail view's help advertises rename too")
 
 	next, _ = m.Update(keyMsg("e"))
 	m = next.(Model)
@@ -592,12 +593,12 @@ func TestApp_RenameLineFitsTerminalWidth(t *testing.T) {
 	m, st := twoProjectApp(t)
 	long := strings.Repeat("x", 120) // the store's maximum name length
 	st.sessions[0].Title = long
-	next, _ := m.applySessionFilter("")
-	m = next.(Model)
+	m, _, err := m.reloadSessions()
+	require.NoError(t, err)
 	tm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 	m = tm.(Model)
 
-	next, _ = m.Update(keyMsg("e"))
+	next, _ := m.Update(keyMsg("e"))
 	m = next.(Model)
 	require.True(t, m.renaming)
 	require.Equal(t, long, m.renameInput.Value(), "the full title is prefilled")
