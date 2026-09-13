@@ -588,7 +588,16 @@ func genericInputSummary(input json.RawMessage) string {
 		// Trailing +N marker so the output never looks complete when it isn't.
 		tokens = append(tokens, fmt.Sprintf("+%d", omitted))
 	}
-	return truncateRunes(strings.Join(tokens, " "), genericSummaryMaxChars)
+	// Sanitize the JOINED summary once more before the final cap. Per-token
+	// StripSecrets (renderGenericToken) cannot catch a secret that straddles two
+	// fields — notably a <private>…</private> span whose opening tag is in one
+	// field's token and closing tag in another's (privateTagRe needs both tags in
+	// one string). The FTS path is backstopped by the emit-boundary StripSecrets,
+	// but the display path (vault show / TUI) is not, so this in-function pass is
+	// what keeps generic inputs redacted on display too (design.md § Secret
+	// handling). Sanitize-before-truncate, as everywhere else — a cross-field span
+	// is redacted while whole, and the final cap only ever trims clean text.
+	return truncateRunes(sanitize.StripSecrets(strings.Join(tokens, " ")), genericSummaryMaxChars)
 }
 
 // selectGenericKeys picks the fields genericInputSummary renders, in order: present

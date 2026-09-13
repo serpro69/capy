@@ -53,6 +53,19 @@ The current version and the count of sessions still below it are surfaced by
 `capy vault stats` (`Index version: N (M session(s) below current …)`), so a
 reindex backlog is visible without guesswork.
 
+> **Version history (updated post-ADR).** The `now 2` above was the value when this
+> ADR was written. `currentIndexVersion` has since advanced across two *released*
+> boundaries, each per the D1 rule: **v3** — chunk-granularity FTS
+> (`vault_chunks`, vault-session-search); **v4** — generic/MCP tool-input summaries
+> in `toolUseSummary`
+> ([vault-tool-input-details](../feat/wip/vault-tool-input-details/design.md), issue
+> #89). A corollary surfaced at v4: `OutdatedSessions` counts
+> `index_version < currentIndexVersion` in general, so it is **not** synonymous with
+> "missing chunk FTS" — a v3 session is chunk-searchable yet still below v4. The
+> user-facing backlog messages (doctor, zero-hit search advice) were therefore
+> generalized off the v3-specific "chunk-searchable" wording to version-neutral text
+> that keeps the `capy vault reindex` action.
+
 ### D2: `import` opportunistically upgrades on-disk sessions
 
 The skip predicate skips a found session only when `hash == existing_hash AND
@@ -124,6 +137,13 @@ read-only fast-path so it does not acquire the write lock on every `getDB()` ope
   to the same apply-loop rather than building its own.
 
 ## Deferred (anchored here)
+
+> **Status: RESOLVED** at **v4** by
+> [vault-tool-input-details](../feat/wip/vault-tool-input-details/design.md) (issue
+> #89). The bounding concern below was the load-bearing part; it is handled by four
+> caps (max fields, per-key, per-token, total) plus sanitize-then-truncate secret
+> stripping, and verified by a feature-specific ranking/false-positive test. The
+> paragraph below is retained for the original rationale.
 
 **Generic input rendering for arbitrary/MCP tools.** Tool-result enrichment
 currently shows the tool *name* for every tool but *inputs* only for the common

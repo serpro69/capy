@@ -2,7 +2,7 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done
 > Created: 2026-09-13
 > Issue: [#89](https://github.com/serpro69/capy/issues/89)
 > Not Doing: per-tool field registry, recursive/nested-object JSON expansion, fixing the JSON-quoted-key gap in sanitize.go, new TUI expand-input markers, changing result-exclusion policy
@@ -39,17 +39,17 @@
 - [x] 2.6 Update message assertions in `internal/platform/doctor_checks_test.go` (server tests assert only the stable `capy vault reindex` substring, so no change needed); `grep -rn "chunk-searchable" internal/` returns no production-code hits (one legitimate test-only assertion about swept-content chunk search remains)
 
 ## Task 3: Feature-specific quality gate + final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2
 - **Size:** M
 - **Can run in parallel with:** —
 
 ### Subtasks
-- [ ] 3.1 Add a feature-specific retrieval-quality check for the generic-input change: either extend the vault bench harness (`internal/vault/bench_test.go`) with `tool_use`-bearing fixtures + competing sessions, or add a focused ranking/false-positive test measuring whether low-signal generic keys degrade retrieval of a salient needle. **Do NOT rely on `make bench-quality` alone — its fixtures are text-only and never call `toolUseSummary`** (implementation.md § Task 3)
-- [ ] 3.2 Run `/kk:test` — full suite with `-tags fts5` and `-race` (`CAPY_DB_KEY` + `CAPY_VAULT_KEY` set)
-- [ ] 3.3 Run `/kk:document` — mark the parent `docs/feat/done/vault-tool-entries/design.md` § Deferred as done + link here; note the v4 bump in ADR-025 version semantics
-- [ ] 3.4 Run `/kk:review-code` with `go` input to review the implementation
-- [ ] 3.5 Run `/kk:review-spec` to verify implementation matches design and implementation docs
+- [x] 3.1 Add a feature-specific retrieval-quality check for the generic-input change: added focused ranking/false-positive test `TestGenericInputSummary_NoRetrievalDegradation` (`internal/vault/generic_input_retrieval_test.go`) — drives the real scan+index path (import runs `ScanSession`/`genericInputSummary`) and asserts (a) 8 generic-key noise sessions produce no false-positive hits for a salient needle and (b) a needle embedded in a bounded generic summary stays retrievable alongside the same needle in a short Bash row. Chose the focused test over extending the text-only bench harness per implementation.md § Task 3
+- [x] 3.2 Run `/kk:test` — full suite with `-tags fts5` and `-race` (`CAPY_DB_KEY` + `CAPY_VAULT_KEY` set): all packages pass, no races
+- [x] 3.3 Run `/kk:document` — marked parent `docs/feat/done/vault-tool-entries/design.md` § Deferred **DONE** + link here; added ADR-025 "Version history (updated post-ADR)" note (v2→v3→v4, OutdatedSessions ≠ chunk-FTS corollary) and marked its "Deferred (anchored here)" section **RESOLVED at v4**
+- [x] 3.4 Run `/kk:review-code:isolated go` over the full feature diff — both reviewers APPROVE. pal (gemini-3.1-pro): no issues at any severity. code-reviewer sub-agent: 2×P3 — (1) cross-field `<private>` span leaked on the display path (per-token sanitize can't catch a tag-pair straddling two fields) → **FIXED** by a joined-summary `StripSecrets` in `genericInputSummary` + `cross-field private span` unit test + design.md note; indexed as `kk:review-findings`. (2) `sort.Strings`→`slices.Sort` — declined (codebase mixes both, `sort.*` is the majority convention, purely cosmetic)
+- [x] 3.5 Run `/kk:review-spec:isolated` — **CONFORMANT**, no P0/P1/P2. One P3 `OUTDATED_DOC`: design.md § genericInputSummary behaviour steps 4–5 omitted the key-level sanitize-before-truncate the code performs (code was *safer* than the written spec) → **FIXED** by updating steps 4–5 to document the per-key `StripSecrets`. No `SPEC_DEV`/`EXTRA_IMPL` → no deviations to index
 
 ## Dependency Graph
 
