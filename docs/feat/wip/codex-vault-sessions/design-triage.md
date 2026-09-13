@@ -164,3 +164,34 @@ Six links in `design.md` § References use `../../` and resolve to `docs/feat/ar
 1. Apply fixes A–M, N1–N3, Q–T, W to `design.md` / `implementation.md` / `tasks.md`; re-run `/kk:review-design`.
 2. Decide F (revert rollouts) explicitly; record the choice in design § Assumptions and Rejected Alternatives.
 3. Re-index the `kk:arch-decisions` notes if E changes the reader-version decision (they currently say "not bumped").
+
+---
+
+## Round 2 — 2026-09-13, two independent reviews (R5, R6) plus a code-level self-review
+
+**Status: applied 2026-09-13.** Every **Fix** below is reflected in the three docs. Method as above: each claim re-checked against the revised docs, the code at `master`, and the local corpora (now 467 Claude sessions, 168 Codex rollouts).
+
+| # | Claim | Verdict | Sev | Action |
+|---|---|---|---|---|
+| AA | `compact.go` `markCompressed` also stamps the reader marker; plan names only `codec.go`, so `compact` on a Claude-only vault would stamp 3 (R5, R6, self) | **Confirmed** (`compact.go:204`) | P1 | Fix: named `readerVersionZstd`/`readerVersionPlatform`; compact passes 2; compact test |
+| AB | Location policy is written platform-neutral; for Claude rows it compares an unused `RelativePath` against a mangled dir, and loose `--source` imports change `ProjectDir` (R6) | **Confirmed** (`discovery.go:27`, `vault.go:1267`) | P1 | Fix: gate on `PlatformCodex`; loose-source Claude test |
+| AC | Restore round-trip gate says `sha256(restored) == content_hash`; the hash is `computeContentHash`'s framed digest keyed `<uuid>.jsonl` (self) | **Confirmed** (`import.go:454-475`) | P1 | Fix: byte equality (or recomputed framed hash) everywhere the gate appears |
+| AD | Zero-human warning keyed on `task_started` fires on real files (self, corpus) | **Confirmed — 23/168 rollouts** are aborted-at-startup shells: 10 lines, `task_started` + `turn_aborted`, 0 assistant, 0 human, all `source=cli`. The canary's "never fires" assertion would fail on the real corpus | P1 | Fix: warn only for non-subagent files with ≥1 Assistant and 0 Human entries; shells are ordinary zero-message exclusions; success criterion 1 and Slice 7.5's "168 candidates" reworded (145 `new`, 23 `excluded`) |
+| AE | "Unrecognized platform → sniff" can mislabel a third platform's blob as Claude (R5) | **Partially valid.** True as stated, but the case is excluded once "a new platform constant is a reader-version bump" is a rule: an older binary refuses such a vault at open. Kept the sniff (exact for the two platforms that can exist; failing loud would make a session with one corrupted column unviewable) and made the rule explicit; reindex never rewrites the stored value, merge stores the resolved one | P2 | Fix wording + rule (design § Format Identification, § Reader version, ADR-031, Assumption 13) |
+| AF | Task 5 uses symbols Tasks 3 and 7 introduce; Task 6.5 needs Tasks 3 and 4 (R5, R6) | **Confirmed** | P2 | Fix: Task 5 depends on 3; `buildRecord` uses the constant until Task 7; consumer assertions moved to Task 7.6; graph redrawn |
+| AG | Sweep size pre-filter is specified *after* the discoverer's eager first-line reads; the bound is O(corpus) for other projects' rollouts, not O(changed); `.zst` first line via `DecodeAll` is a whole-file decompression (R5, R6) | **Confirmed** | P2 | Fix: `Skip` predicate passed into the Codex discoverer and evaluated from `DirEntry` metadata; streaming zstd reader; real bound stated and pinned by a test; negative cache recorded as Not Doing |
+| AH | Location policy needs the stored hint and no query returns it; dry-run and `ftsOnly`+moved unstated; runs outside the batch tx (R5, R6) | **Confirmed** (`store.go:1154` `SessionDigest`) | P2 | Fix: `SessionDigest` returns the hint; own tx at decision time; dry run reports without writing; `ftsOnly`+moved does both |
+| AI | TUI has its own 8-char `shortID` (R5) | **Wrong number, right location:** `tui/render.go:308` truncates at **12** already. The design's "12 in the TUI" was a no-op, not a gap | P3 | Fix wording: CLI `shortUUID` only |
+| AJ | Row identity (filename uuid vs `session_meta.id`) unstated (R5) | **Confirmed**; corpus: 168/168 agree | P3 | Fix: filename wins, `Meta.PlatformID` mismatch is a warning, canary asserts equality |
+| AK | "Every base rollout" vs the zero-message exclusion (R5) | **Confirmed** — see AD for the count | P3 | Fix wording |
+| AL | `custom_tool_call_output` second-decode failure unspecified (R5) | **Confirmed** | P3 | Fix: raw string body, no exit line, no `Diff` |
+| AM | `DiscoverSessions(root)` keeps its signature so `--source` loses the report (R6) | **Confirmed** | P3 | Fix: `DiscoverSessionsReport` primary, old name a wrapper |
+| AN | Restore beside an existing `.zst` twin / live file unspecified (R6) | **Confirmed** | P3 | Fix: twin untouched and noted in `RestoreResult.Notes`; Codex picker behavior recorded as Open Question 5 |
+| AO | No Read-analog FTS exclusion for Codex; record as a decision (R6) | **Confirmed** | P3 | Fix: recorded under Consumer contracts and Not Doing; `apply_patch` joins `diffResultTools` as the Edit/Write analog (new decision — see below) |
+| AP | No opt-out for the Codex sweep / irreversible marker bump (R6) | **Confirmed trade-off** | P3 | Fix: acknowledged under Constraints and Not Doing; the v2 precedent applies |
+| AQ | Task 7 is L, Task 1 is not S (R6) | **Confirmed** | P3 | Fix: retagged; Task 7 split into 7a/7b without renumbering |
+| AR | `CheckVaultPlatforms(map[Platform]int)` adds a `platform → vault` import edge (R6) | **Confirmed** (`internal/platform` imports `config`, `hook`, `version` only) | P3 | Fix: strings-only `VaultPlatformRoot`; `go list -deps` check |
+| AS | Codex `StartTime` from line 0's envelope timestamp trails `payload.timestamp` (self) | **Confirmed** — ≤ 1 s in 8 files, ≤ 60 s in 140, ≤ 10 min in 18, > 10 min in 2 | P3 | Fix: `StartTime = payload.timestamp`, envelope fallback |
+| AT | Claude corpus count drift (self) | 467 files now; tally 317/74/41/34/1; `file-history-snapshot` still 8.8 % | P3 | Fix numbers |
+
+**New decision introduced in this round (maintainer may veto):** `apply_patch` joins `diffResultTools`, giving it the Claude `Edit`/`Write` treatment (body FTS-excluded, summary indexed, `show` verbatim, TUI diff marker). Rationale in design § Consumer contracts. It is name-keyed consumer policy and cannot affect Claude output; dropping it costs one line.
