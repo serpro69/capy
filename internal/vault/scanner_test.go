@@ -562,8 +562,8 @@ func TestToolUseSummary(t *testing.T) {
 		{"bash command", "Bash", map[string]any{"command": "ls -la"}, "Bash ls -la"},
 		{"agent prompt", "Agent", map[string]any{"prompt": "explore the repo"}, "Agent explore the repo"},
 		{"task prompt", "Task", map[string]any{"prompt": "find bugs"}, "Agent find bugs"},
-		{"unknown tool → name only", "Glob", map[string]any{"pattern": "*.go"}, "Glob"},
-		{"read missing file_path → name only", "Read", map[string]any{}, "Read"},
+		{"unknown tool → generic key=value fall-through", "Glob", map[string]any{"pattern": "*.go"}, "Glob pattern=*.go"},
+		{"read missing file_path → name only (empty input)", "Read", map[string]any{}, "Read"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -581,6 +581,177 @@ func TestToolUseSummary(t *testing.T) {
 		assert.True(t, strings.HasSuffix(got, "…"))
 		assert.Len(t, []rune(strings.TrimSuffix(strings.TrimPrefix(got, "Agent "), "…")), agentPromptMaxChars)
 	})
+}
+
+func TestGenericInputSummary(t *testing.T) {
+	tests := []struct {
+		name  string
+		input any // marshalled to JSON; nil sentinels handled by the raw cases below
+		want  string
+	}{
+		{
+			// capy_search-shaped input: priority keys (queries, source) lead, then the
+			// alphabetical fill. All six fit at genericMaxFields=6, so no +N marker.
+			name: "priority keys before alphabetical fill",
+			input: map[string]any{
+				"queries":       []string{"tool input details"},
+				"source":        "kk:arch-decisions",
+				"all_projects":  true,
+				"include_kinds": []string{"durable"},
+				"limit":         3,
+				"project":       "capy",
+			},
+			want: `queries=["tool input details"] source=kk:arch-decisions all_projects=true include_kinds=["durable"] limit=3 project=capy`,
+		},
+		{
+			// No priority keys: pure alphabetical, capped at 6 → the last two counted
+			// in the +N marker.
+			name: "omitted-field marker for >genericMaxFields",
+			input: map[string]any{
+				"a": "1", "b": "1", "c": "1", "d": "1",
+				"e": "1", "f": "1", "g": "1", "h": "1",
+			},
+			want: `a=1 b=1 c=1 d=1 e=1 f=1 +2`,
+		},
+		{
+			name:  "array of strings → compact JSON",
+			input: map[string]any{"queries": []string{"a", "b"}},
+			want:  `queries=["a","b"]`,
+		},
+		{
+			name:  "nested object → placeholder, contents absent",
+			input: map[string]any{"config": map[string]any{"secret": "shhh"}},
+			want:  `config={…}`,
+		},
+		{
+			name:  "array with a non-scalar element → placeholder",
+			input: map[string]any{"items": []any{"x", map[string]any{"k": "v"}}},
+			want:  `items=["x",{…}]`,
+		},
+		{
+			name:  "embedded newline → single line",
+			input: map[string]any{"content": "line1\nline2"},
+			want:  `content=line1 line2`,
+		},
+		{
+			name:  "empty object → empty",
+			input: map[string]any{},
+			want:  "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, genericInputSummary(mustJSON(t, tt.input)))
+		})
+	}
+
+	t.Run("long key truncated to cap", func(t *testing.T) {
+		key := strings.Repeat("k", 50)
+		got := genericInputSummary(mustJSON(t, map[string]any{key: "v"}))
+		assert.Equal(t, strings.Repeat("k", genericKeyMaxChars)+"…=v", got)
+	})
+
+	t.Run("private span in an over-cap key is redacted before truncation", func(t *testing.T) {
+		// A >genericKeyMaxChars key whose closing </private> falls past the cap: the
+		// key must be sanitized BEFORE its cap, or truncation drops the closing tag and
+		// leaks the opening fragment on the display path.
+		key := "field_<private>" + strings.Repeat("x", 60) + "</private>"
+		got := genericInputSummary(mustJSON(t, map[string]any{key: "v"}))
+		assert.NotContains(t, got, "<private>", "the opening tag must not survive")
+		assert.Contains(t, got, "[REDACTED]", "the private span is redacted")
+	})
+
+	t.Run("case-colliding keys pick deterministically", func(t *testing.T) {
+		// "Query" and "query" collide case-insensitively; the smaller actual key
+		// ("Query", since 'Q' < 'q') must win on every run regardless of map order.
+		input := mustJSON(t, map[string]any{"Query": "up", "query": "low"})
+		first := genericInputSummary(input)
+		assert.True(t, strings.HasPrefix(first, "Query="),
+			"priority match resolves to the lexicographically smaller key")
+		for i := 0; i < 20; i++ {
+			assert.Equal(t, first, genericInputSummary(input), "output must be stable across runs")
+		}
+	})
+
+	t.Run("non-object and malformed inputs → empty", func(t *testing.T) {
+		for _, raw := range []json.RawMessage{
+			nil,
+			json.RawMessage(`["a","b"]`), // top-level array
+			json.RawMessage(`"a string"`),
+			json.RawMessage(`42`),
+			json.RawMessage(`{not json`),
+		} {
+			assert.Equal(t, "", genericInputSummary(raw), "input %q", string(raw))
+		}
+	})
+}
+
+func TestToolUseSummary_GenericFallThrough(t *testing.T) {
+	t.Run("MCP tool renders name + key=value", func(t *testing.T) {
+		input := mustJSON(t, map[string]any{"queries": []string{"needle"}, "source": "kk:x"})
+		got := toolUseSummary("mcp__capy__capy_search", input)
+		assert.Equal(t, `mcp__capy__capy_search queries=["needle"] source=kk:x`, got)
+	})
+
+	t.Run("non-object input degrades to bare name", func(t *testing.T) {
+		assert.Equal(t, "ToolSearch", toolUseSummary("ToolSearch", json.RawMessage(`"select:capy_search"`)))
+	})
+
+	t.Run("Bash regression: unchanged verbatim command, not generic", func(t *testing.T) {
+		got := toolUseSummary("Bash", mustJSON(t, map[string]any{"command": "ls -la"}))
+		assert.Equal(t, "Bash ls -la", got)
+	})
+}
+
+// TestScanSession_GenericInputSecretsStripped is the end-to-end gate for the
+// sanitize-then-truncate order in genericInputSummary (design.md § Secret handling).
+// It drives a real MCP tool_use through the full ScanSession pipeline and asserts a
+// secret never reaches the assistant FTS row, the tool_result prefix, OR a chunk.
+func TestScanSession_GenericInputSecretsStripped(t *testing.T) {
+	// The closing </private> tag falls well past genericTokenMaxChars=80, so a
+	// truncate-first order would drop it and leak the payload; sanitize-first does not.
+	overCapPrivate := "<private>" + strings.Repeat("x", 100) + "</private>"
+	prefixSecret := "sk-ant-" + strings.Repeat("a", 30) // 20+ char prefix secret
+
+	r := buildJSONL(t,
+		userLine("u1", "/p", "main", "run a search"),
+		assistantLine("a1", "m1", []map[string]any{
+			{"type": "tool_use", "id": "t1", "name": "mcp__capy__capy_search", "input": map[string]any{
+				"content": overCapPrivate,                          // over-cap private tag
+				"api_key": prefixSecret,                            // top-level key=value prefix secret
+				"config":  map[string]any{"api_key": prefixSecret}, // nested → {…}; credential must not surface
+			}},
+		}),
+		// tool_result referencing t1 → the call summary is prefixed onto the result.
+		map[string]any{
+			"type": "user", "uuid": "u2", "timestamp": "2026-05-01T10:00:11Z",
+			"message": map[string]any{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "t1", "content": "search returned 3 hits"},
+			}},
+		},
+	)
+	out, err := ScanSession(r)
+	require.NoError(t, err)
+
+	var fts strings.Builder
+	for _, res := range out.Results {
+		fts.WriteString(res.ContentText)
+		fts.WriteByte('\n')
+	}
+	var chunkText strings.Builder
+	for _, c := range chunkScanResults(out.Results, out.StartTime, "") {
+		chunkText.WriteString(c.ContentText)
+		chunkText.WriteByte('\n')
+	}
+
+	for _, surface := range []struct{ name, text string }{
+		{"FTS rows (assistant + tool_result prefix)", fts.String()},
+		{"chunks", chunkText.String()},
+	} {
+		assert.NotContains(t, surface.text, strings.Repeat("x", 100), "%s: over-cap private payload leaked", surface.name)
+		assert.NotContains(t, surface.text, prefixSecret, "%s: prefix secret leaked", surface.name)
+		assert.Contains(t, surface.text, "config={…}", "%s: nested object should render as placeholder", surface.name)
+	}
 }
 
 func TestScanSession_AttachmentBestEffort(t *testing.T) {
