@@ -49,6 +49,28 @@ func TestRenderText_RolesToolsAndResults(t *testing.T) {
 	assert.NotContains(t, out, "internal reasoning", "thinking blocks are not rendered")
 }
 
+func TestRenderText_MCPToolUseGenericInputRedacted(t *testing.T) {
+	// `vault show` re-parses raw_jsonl, so an MCP tool_use renders its generic
+	// key=value summary immediately (no reindex). Because genericInputSummary
+	// sanitizes in-function, a credential-shaped value is redacted on the display
+	// path too (design.md § "the display path is now redacted for generic inputs").
+	prefixSecret := "sk-ant-" + strings.Repeat("a", 30)
+	raw := jsonlBytes(t,
+		userLine("u1", "/p", "main", "search the knowledge base"),
+		assistantLine("a1", "m1", []map[string]any{
+			{"type": "tool_use", "id": "t1", "name": "mcp__capy__capy_search", "input": map[string]any{
+				"queries": []string{"tool input"},
+				"api_key": prefixSecret,
+			}},
+		}),
+	)
+	out := RenderText(raw)
+	assert.Contains(t, out, `→ mcp__capy__capy_search queries=["tool input"]`,
+		"MCP tool_use renders the generic key=value summary on vault show")
+	assert.NotContains(t, out, prefixSecret, "a credential-shaped value is redacted on the display path")
+	assert.Contains(t, out, "[REDACTED_SECRET]", "the redaction placeholder is shown in place of the secret")
+}
+
 func TestRenderMarkdown_HeadingsAndFences(t *testing.T) {
 	raw := jsonlBytes(t,
 		userLine("u1", "/home/user/proj", "main", "hello"),

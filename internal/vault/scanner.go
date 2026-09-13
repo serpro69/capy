@@ -8,8 +8,10 @@ import (
 	"io"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/serpro69/capy/internal/sanitize"
 )
@@ -36,7 +38,34 @@ const (
 	titleMaxChars = 120
 	// agentPromptMaxChars bounds the Agent/Task prompt summary.
 	agentPromptMaxChars = 200
+
+	// The four caps below bound genericInputSummary — the fall-through summary for
+	// arbitrary/MCP tools (design.md § Constants). Together they keep FTS rows small
+	// and BM25 ranking intact; no single long key, value, or field count can blow
+	// past genericSummaryMaxChars.
+
+	// genericMaxFields caps how many fields render before the omitted-field marker.
+	genericMaxFields = 6
+	// genericKeyMaxChars caps each rendered key (tool/attacker-controlled, otherwise
+	// unbounded).
+	genericKeyMaxChars = 40
+	// genericTokenMaxChars caps each key=value token, applied AFTER sanitization so a
+	// secret is never split below the sanitizer's length floor (design.md § Secret
+	// handling).
+	genericTokenMaxChars = 80
+	// genericSummaryMaxChars is the final hard cap on the whole generic portion
+	// (reuses the agentPromptMaxChars ceiling).
+	genericSummaryMaxChars = agentPromptMaxChars
 )
+
+// genericPriorityKeys is a fixed, tool-agnostic salient-key priority list (NOT a
+// per-tool registry — see design.md § Not Doing). Present priority keys are emitted
+// in THIS order, ahead of the alphabetical fill, so the meaningful fields lead and
+// survive the length cap. Matched case-insensitively.
+var genericPriorityKeys = []string{
+	"query", "queries", "command", "content", "source",
+	"url", "path", "pattern", "prompt", "code", "name",
+}
 
 var (
 	// sysReminderRe / noiseTagRe mirror internal/session/parse.go: strip
@@ -515,12 +544,183 @@ func toolUseSummary(name string, input json.RawMessage) string {
 			return "Agent " + truncateRunes(p, agentPromptMaxChars)
 		}
 	}
-	// All other tools (MCP, WebFetch, custom, …) summarize to the bare name —
-	// generic input rendering is deferred. To add it, emit a BOUNDED key=value /
-	// salient-field summary here (not raw JSON), then bump currentIndexVersion and
-	// `capy vault reindex`. Rationale (consistency + FTS noise/size): see ADR-025
-	// and docs/feat/wip/vault-tool-entries/design.md §Deferred.
+	// All other tools (MCP, WebFetch, ToolSearch, custom, …) fall through to a
+	// bounded, sanitized key=value summary of the input object (design.md § Chosen
+	// approach; the switch has no default: clause). genericInputSummary returns "" for
+	// a non-object/empty/malformed input, in which case we emit the bare name — the
+	// unchanged legacy behaviour.
+	if s := genericInputSummary(input); s != "" {
+		return name + " " + s
+	}
 	return name
+}
+
+// genericInputSummary renders a bounded, sanitized `key=value` summary of an
+// arbitrary tool_use input object — the fall-through for tools toolUseSummary does
+// not special-case (MCP, WebFetch, ToolSearch, custom). It returns "" for an empty,
+// non-object, or malformed input so the caller emits the bare tool name (graceful
+// degradation, never an error — matches the "unknown id → omit prefix" ethos).
+//
+// Bounding is load-bearing: arbitrary tool inputs are free-form JSON, and indexing
+// them verbatim would bloat FTS rows and degrade BM25 ranking. Four caps
+// (genericMaxFields, genericKeyMaxChars, genericTokenMaxChars, genericSummaryMaxChars)
+// keep the output small. Each token is sanitized BEFORE truncation so a secret is
+// never split below sanitize.StripSecrets' length floor / away from its closing
+// </private> tag (design.md § Secret handling); nested objects render as {…} (no
+// descent) so nested credential shapes never surface.
+func genericInputSummary(input json.RawMessage) string {
+	if len(input) == 0 {
+		return ""
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(input, &m); err != nil || len(m) == 0 {
+		return "" // non-object, empty, or malformed → bare name
+	}
+
+	selected := selectGenericKeys(m)
+	omitted := len(m) - len(selected)
+
+	tokens := make([]string, 0, len(selected)+1)
+	for _, k := range selected {
+		tokens = append(tokens, renderGenericToken(k, m[k]))
+	}
+	if omitted > 0 {
+		// Trailing +N marker so the output never looks complete when it isn't.
+		tokens = append(tokens, fmt.Sprintf("+%d", omitted))
+	}
+	return truncateRunes(strings.Join(tokens, " "), genericSummaryMaxChars)
+}
+
+// selectGenericKeys picks the fields genericInputSummary renders, in order: present
+// priority keys (case-insensitive, in genericPriorityKeys order), then the remaining
+// keys alphabetically, capped at genericMaxFields. Priority ordering ensures the
+// salient fields lead so they survive the length cap; a salient field absent from the
+// priority list still gets in via the alphabetical fill — it is only ordered later or
+// (past the cap) counted in the omitted marker, never dropped silently.
+func selectGenericKeys(m map[string]json.RawMessage) []string {
+	// Lower-cased key → actual key, for case-insensitive priority matching. On a
+	// case collision (e.g. "Query" and "query") keep the lexicographically smaller
+	// actual key so the pick is deterministic — map iteration order is randomized, and
+	// a non-deterministic pick would make the same input yield different FTS rows.
+	lower := make(map[string]string, len(m))
+	for k := range m {
+		lk := strings.ToLower(k)
+		if cur, ok := lower[lk]; !ok || k < cur {
+			lower[lk] = k
+		}
+	}
+	selected := make([]string, 0, genericMaxFields)
+	used := make(map[string]bool, len(m))
+	for _, pk := range genericPriorityKeys {
+		if len(selected) >= genericMaxFields {
+			break
+		}
+		if actual, ok := lower[pk]; ok && !used[actual] {
+			selected = append(selected, actual)
+			used[actual] = true
+		}
+	}
+	rest := make([]string, 0, len(m))
+	for k := range m {
+		if !used[k] {
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	for _, k := range rest {
+		if len(selected) >= genericMaxFields {
+			break
+		}
+		selected = append(selected, k)
+	}
+	return selected
+}
+
+// renderGenericToken builds one `key=value` token: key sanitized-then-truncated,
+// value type-directed (see renderGenericValue), then the FULL token sanitized, THEN
+// truncated (order is load-bearing — design.md § Secret handling), then control chars
+// normalized to spaces so the summary stays a single stable line.
+//
+// The key is sanitized BEFORE its own genericKeyMaxChars cap for the same reason the
+// value is: keys are attacker/tool-controlled, so a >40-char key carrying a
+// <private>…</private> span would otherwise lose its closing tag to the cap before
+// StripSecrets ran, leaking the opening fragment on the (unsanitized) display path.
+// The second StripSecrets over the whole token is a harmless backstop (placeholders
+// don't re-match) that also catches a secret straddling the key=value boundary.
+func renderGenericToken(key string, raw json.RawMessage) string {
+	token := truncateRunes(sanitize.StripSecrets(key), genericKeyMaxChars) + "=" + renderGenericValue(raw)
+	token = sanitize.StripSecrets(token)
+	token = truncateRunes(token, genericTokenMaxChars)
+	return normalizeControlChars(token)
+}
+
+// renderGenericValue renders a tool-input value by type: string → unquoted raw;
+// nested object → the placeholder "{…}" (no descent); array → compact JSON with every
+// non-scalar element replaced by a {…}/[…] placeholder first (all-scalar arrays stay
+// ordinary compact JSON); number/bool/null → literal via json.Compact. json.Compact on
+// every non-string value prevents source-JSONL whitespace from widening a token.
+func renderGenericValue(raw json.RawMessage) string {
+	if s, ok := asJSONString(raw); ok {
+		return s
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return ""
+	}
+	switch trimmed[0] {
+	case '{':
+		return "{…}" // nested object: no descent
+	case '[':
+		return renderGenericArray(trimmed)
+	default:
+		return compactJSON(trimmed) // number / bool / null
+	}
+}
+
+// renderGenericArray compacts a JSON array, replacing every non-scalar element
+// (object or nested array) with a {…}/[…] placeholder so nested contents never
+// surface. An all-scalar array therefore renders as ordinary compact JSON.
+func renderGenericArray(raw json.RawMessage) string {
+	var elems []json.RawMessage
+	if err := json.Unmarshal(raw, &elems); err != nil {
+		return "[…]"
+	}
+	parts := make([]string, len(elems))
+	for i, el := range elems {
+		t := bytes.TrimSpace(el)
+		switch {
+		case len(t) == 0:
+			parts[i] = "null"
+		case t[0] == '{':
+			parts[i] = "{…}"
+		case t[0] == '[':
+			parts[i] = "[…]"
+		default:
+			parts[i] = compactJSON(t) // scalar element
+		}
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+// compactJSON returns raw with insignificant whitespace removed, falling back to the
+// raw bytes if it is not valid JSON (should not happen for values unmarshalled above).
+func compactJSON(raw json.RawMessage) string {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err != nil {
+		return string(raw)
+	}
+	return buf.String()
+}
+
+// normalizeControlChars replaces every control rune (newline, tab, etc.) with a
+// single space so an unquoted value cannot inject a newline into the one-line summary.
+func normalizeControlChars(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // toolResultText extracts text from a tool_result's nested content, which is

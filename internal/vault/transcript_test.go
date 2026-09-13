@@ -54,6 +54,28 @@ func TestParseTranscript_RolesAndAnchors(t *testing.T) {
 	assert.Equal(t, "build log: error at line 5", msgs[2].Body, "the full body is carried for the open target")
 }
 
+func TestParseTranscript_MCPToolUseGenericInputRedacted(t *testing.T) {
+	// The TUI routes non-Agent/Task tool_use blocks through toolUseSummary via
+	// assistantBodyAndLaunches, so an MCP call renders its generic key=value summary
+	// inline — with credential-shaped values redacted (in-function sanitization).
+	prefixSecret := "sk-ant-" + strings.Repeat("a", 30)
+	raw := jsonlBytes(t,
+		userLine("u1", "/p", "main", "search the knowledge base"),
+		assistantLine("a1", "m1", []map[string]any{
+			{"type": "tool_use", "id": "t1", "name": "mcp__capy__capy_search", "input": map[string]any{
+				"queries": []string{"tool input"},
+				"api_key": prefixSecret,
+			}},
+		}),
+	)
+	msgs := ParseTranscript(raw, nil)
+	a := findMessage(t, msgs, RoleAssistant)
+	assert.Contains(t, a.Body, `→ mcp__capy__capy_search queries=["tool input"]`,
+		"MCP tool_use renders the generic summary through assistantBodyAndLaunches")
+	assert.NotContains(t, a.Body, prefixSecret, "credential redacted in the TUI transcript")
+	assert.Contains(t, a.Body, "[REDACTED_SECRET]", "the redaction placeholder is shown")
+}
+
 // bashResultSession builds a transcript whose single tool_result is a Bash result
 // (a NON-excluded tool) with the given body, so the collapse decision turns purely
 // on the size/line threshold.

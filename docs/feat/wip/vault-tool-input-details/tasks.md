@@ -8,20 +8,20 @@
 > Not Doing: per-tool field registry, recursive/nested-object JSON expansion, fixing the JSON-quoted-key gap in sanitize.go, new TUI expand-input markers, changing result-exclusion policy
 
 ## Task 1: Generic input summary (bounded, sanitized) in show + TUI
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** —
 - **Docs:** [implementation.md#task-1--genericinputsummary--wire-into-toolusesummary](./implementation.md)
 
 ### Subtasks
-- [ ] 1.1 Add the four caps near `agentPromptMaxChars` in `internal/vault/scanner.go`: `genericMaxFields=6`, `genericKeyMaxChars=40`, `genericTokenMaxChars=80`, `genericSummaryMaxChars=200`, each with a one-line rationale (design.md § Constants)
-- [ ] 1.2 Add a fixed, tool-agnostic salient-key priority slice (`query, queries, command, content, source, url, path, pattern, prompt, code, name`), matched case-insensitively — NOT a per-tool map
-- [ ] 1.3 Implement `genericInputSummary(input json.RawMessage) string` in `scanner.go`: unmarshal to `map[string]json.RawMessage` (empty/error/non-object → `""`); select priority keys (in list order) then remaining alphabetically up to `genericMaxFields`; record omitted count; render each field to a `key=value` token (key capped; string unquoted; array → `json.Compact` with non-scalar elements replaced by `{…}`/`[…]`; nested object → `{…}` no descent; number/bool/null → literal via `json.Compact`); **`sanitize.StripSecrets` the full token, THEN `truncateRunes` it**; normalize control chars to spaces; join with `+N` marker when omitted; apply final `genericSummaryMaxChars` cap
-- [ ] 1.4 Replace the trailing `return name` in `toolUseSummary` (no `default:` clause exists) with the `genericInputSummary` fall-through; rewrite the stale deferral comment to reference `design.md`
-- [ ] 1.5 Table-driven tests for `genericInputSummary` in `scanner_test.go`: priority ordering (a 6-field `capy_search`-shaped input emits `queries`/`source` before the alphabetical fill); `+N` marker for an input with >`genericMaxFields` (e.g. 8) fields; array-of-strings → compact JSON `[…]`; nested object → `{…}` (contents absent); long key truncated; embedded-newline value → single line; empty/non-object/malformed → bare name; `Bash` regression guard
-- [ ] 1.6 End-to-end secret tests through `ScanSession`: over-cap `<private>…</private>` value → absent from assistant row, tool_result prefix, and chunks; top-level `api_key` prefix secret → redacted in FTS; nested `{"api_key":…}` → `{…}` indexed, credential absent
-- [ ] 1.7 Display assertions on **both** wrappers (no code change): `render_test.go` (`vault show`) — MCP `tool_use` renders `→ <name> key=value…` and a credential-shaped value is **redacted**; `transcript_test.go` (TUI, via `assistantBodyAndLaunches`) — same MCP block renders. Assert each surface explicitly, not "and/or"
+- [x] 1.1 Add the four caps near `agentPromptMaxChars` in `internal/vault/scanner.go`: `genericMaxFields=6`, `genericKeyMaxChars=40`, `genericTokenMaxChars=80`, `genericSummaryMaxChars=200`, each with a one-line rationale (design.md § Constants)
+- [x] 1.2 Add a fixed, tool-agnostic salient-key priority slice (`query, queries, command, content, source, url, path, pattern, prompt, code, name`), matched case-insensitively — NOT a per-tool map
+- [x] 1.3 Implement `genericInputSummary(input json.RawMessage) string` in `scanner.go`: unmarshal to `map[string]json.RawMessage` (empty/error/non-object → `""`); select priority keys (in list order) then remaining alphabetically up to `genericMaxFields`; record omitted count; render each field to a `key=value` token (key capped; string unquoted; array → `json.Compact` with non-scalar elements replaced by `{…}`/`[…]`; nested object → `{…}` no descent; number/bool/null → literal via `json.Compact`); **`sanitize.StripSecrets` the full token, THEN `truncateRunes` it**; normalize control chars to spaces; join with `+N` marker when omitted; apply final `genericSummaryMaxChars` cap
+- [x] 1.4 Replace the trailing `return name` in `toolUseSummary` (no `default:` clause exists) with the `genericInputSummary` fall-through; rewrite the stale deferral comment to reference `design.md`
+- [x] 1.5 Table-driven tests for `genericInputSummary` in `scanner_test.go`: priority ordering (a 6-field `capy_search`-shaped input emits `queries`/`source` before the alphabetical fill); `+N` marker for an input with >`genericMaxFields` (e.g. 8) fields; array-of-strings → compact JSON `[…]`; nested object → `{…}` (contents absent); long key truncated; embedded-newline value → single line; empty/non-object/malformed → bare name; `Bash` regression guard
+- [x] 1.6 End-to-end secret tests through `ScanSession`: over-cap `<private>…</private>` value → absent from assistant row, tool_result prefix, and chunks; top-level `api_key` prefix secret → redacted in FTS; nested `{"api_key":…}` → `{…}` indexed, credential absent
+- [x] 1.7 Display assertions on **both** wrappers (no code change): `render_test.go` (`vault show`) — MCP `tool_use` renders `→ <name> key=value…` and a credential-shaped value is **redacted**; `transcript_test.go` (TUI, via `assistantBodyAndLaunches`) — same MCP block renders. Assert each surface explicitly, not "and/or"
 
 ## Task 2: FTS reindex + generalized backlog messaging
 - **Status:** pending
