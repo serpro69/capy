@@ -46,7 +46,7 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 	if vlt == nil {
 		return s.trackToolResponse("capy_vault_search", errorResult(
 			"Vault search is disabled — set CAPY_VAULT_KEY to archive and search past sessions.\n"+
-				"Once enabled, run `capy vault reindex` to make already-archived sessions chunk-searchable.")), nil
+				"Once enabled, run `capy vault reindex` to update already-archived sessions to the current index.")), nil
 	}
 
 	// Bound the limit so a hallucinated `limit: 100` (or a large queries array)
@@ -112,12 +112,12 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 	output := strings.Join(sections, "\n\n---\n\n")
 
 	// Degrade loudly on the enabled-but-empty state: a manual reindex backlog
-	// (chunk backfill is `capy vault reindex`, not automatic) can leave archived
-	// sessions unsearchable, so a zero-hit result names the command that fixes it.
+	// (`capy vault reindex` is not automatic) can leave archived sessions missing
+	// newer indexed content, so a zero-hit result names the command that fixes it.
 	if !hasResults {
 		if vs, sErr := vlt.Stats(ctx); sErr == nil && vs.OutdatedSessions > 0 {
 			output += fmt.Sprintf(
-				"\n\n%d archived session(s) are below index v%d and not yet chunk-searchable — run `capy vault reindex` to include them.",
+				"\n\n%d archived session(s) were indexed by an older version (v%d) and may omit newer indexed content — run `capy vault reindex` to update them.",
 				vs.OutdatedSessions, vs.IndexVersion)
 		}
 	}

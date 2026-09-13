@@ -64,10 +64,18 @@ func sessionIDPrefixPattern(prefix string) (string, error) {
 //     vault_fts). Sessions below v3 have empty chunk tables until
 //     `capy vault reindex` backfills them.
 //
+//   - v4: generic/MCP tool-input summaries in scanner.go toolUseSummary (issue
+//     #89). Previously only a hard-coded set of common tools (Read/Bash/Agent/…)
+//     rendered their inputs; every other tool (MCP tools, ToolSearch, WebFetch,
+//     custom tools) indexed as the bare name. v4 extracts a bounded, sanitized
+//     key=value summary for those calls, so a v3 session's assistant tool_use and
+//     tool_result rows are stale (its chunk tables are intact, but the rows lack
+//     the new input text) until `capy vault reindex` rebuilds them.
+//
 // Sessions whose index_version is below this are upgraded by `capy vault reindex`
 // (DB-driven, covers archived-and-deleted-from-disk sessions) or opportunistically
 // by a re-`import` of a still-on-disk session (see import.go skip gate).
-const currentIndexVersion = 3
+const currentIndexVersion = 4
 
 // schemaSQL is the full v1 vault schema. Every table uses IF NOT EXISTS so the
 // DDL is safe to run on each open. vault_migrations is created by the migration

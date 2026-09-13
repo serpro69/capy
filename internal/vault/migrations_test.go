@@ -90,11 +90,12 @@ func TestMigrateVault_FreshDBHasChunkFTS(t *testing.T) {
 		`SELECT COUNT(*) FROM vault_migrations WHERE name='0004_add_chunk_fts'`).Scan(&cnt))
 	assert.Equal(t, 1, cnt)
 
-	// The chunk-FTS feature ships with an index-version bump: every session
-	// archived before it must read as below-current so `capy vault reindex`
-	// backfills its chunk tables. Bump this assertion deliberately with the
-	// constant.
-	assert.Equal(t, 3, currentIndexVersion, "chunk FTS requires the v3 index-version bump")
+	// Each indexer-logic change that must re-index archived sessions ships with an
+	// index-version bump: every session archived before it reads as below-current so
+	// `capy vault reindex` rebuilds its FTS. v3 added chunk FTS (migration 0004);
+	// v4 added generic/MCP tool-input summaries (issue #89). Bump this assertion
+	// deliberately with the constant.
+	assert.Equal(t, 4, currentIndexVersion, "generic/MCP tool-input summaries require the v4 index-version bump")
 }
 
 func TestMigrate0004_CreatesChunkTablesOnLegacyVault(t *testing.T) {
