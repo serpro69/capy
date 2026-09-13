@@ -44,6 +44,12 @@ internal/
 - **Vault blob `encoding` column is authoritative.** Compressed (`'zstd'`) vs raw (`'raw'`/`NULL`-legacy) blobs are distinguished by the per-row `encoding` column, never magic-byte detection (sidecars hold arbitrary bytes). The first compressed write stamps `vault_meta.min_reader_version`; `openDB` refuses a vault whose marker exceeds `supportedReaderVersion` (2). `content_hash`/`size_bytes`/FTS are always computed on **uncompressed** bytes.
 - **Vault rekey uses the backup-API, not PRAGMA rekey.** `sqliteutil.Rekey` writes a fresh new-key file (open old → checkpoint → backup-copy → swap+verify), sidestepping the WAL/PRAGMA-rekey incompatibility above. Shared by `capy vault rekey` and `capy encrypt`.
 - **Hooks are short-lived processes.** Each hook invocation is a separate `capy hook <event>` process. State persists via `.capy/guidance-<sessionID>.json` files.
+- **`capy setup` generates artifacts in two places — keep the generator and this repo's committed copies in sync.** Everything `capy setup` writes (`internal/platform/setup.go` + `routing.go`) has a committed counterpart in this repo. A fix applied to the committed file but NOT the generator (or vice versa) works here but ships stale to every consumer that re-runs `capy setup`. This has already bitten us more than once (PR #93 wrapper fix; commit `8d5f2a2` routing wording). The generator is the source of truth; the committed files must be reproducible from it. Any fix MUST edit BOTH sides. The generated artifacts and their generators:
+  - `.claude/scripts/capy.sh`, `.codex/scripts/capy.sh` ← `capyWrapperScript` (whole file)
+  - `.capy/AGENTS.md` ← `GenerateRoutingInstructions()` (whole file)
+  - `.mcp.json` capy server ← `mergeMCPServer`; `.claude/settings*.json` capy hooks ← `mergeHooks`
+  - `.codex/config.toml` `[mcp_servers.capy]` ← `mergeCodexMCPServer`; root `CLAUDE.md` import ← `ensureClaudeMDImport`; `.gitignore` capy entries ← `ensureGitignoreEntry`
+  - `TestGeneratedWholeFileArtifacts` and `TestMergedArtifactsAreIdempotent` (`internal/platform/`) enforce this. Never "fix" a failure by editing just one side.
 
 ### Build & Test
 
