@@ -24,19 +24,19 @@
 - [x] 1.7 Display assertions on **both** wrappers (no code change): `render_test.go` (`vault show`) — MCP `tool_use` renders `→ <name> key=value…` and a credential-shaped value is **redacted**; `transcript_test.go` (TUI, via `assistantBodyAndLaunches`) — same MCP block renders. Assert each surface explicitly, not "and/or"
 
 ## Task 2: FTS reindex + generalized backlog messaging
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Can run in parallel with:** —
 - **Docs:** [implementation.md#task-2--bump-currentindexversion-to-4--verify-reindex](./implementation.md)
 
 ### Subtasks
-- [ ] 2.1 Bump `currentIndexVersion` `3 → 4` in `internal/vault/store.go`; extend the constant's doc comment (v4 = generic/MCP tool-input summaries, issue #89)
-- [ ] 2.2 Update the literal assertion in `internal/vault/migrations_test.go` from `3` to `4` and its message
-- [ ] 2.3 Confirm no other test hard-codes the index version as a literal: `grep -rn "currentIndexVersion" internal/vault/*_test.go`
-- [ ] 2.4 Extend `internal/vault/reindex_test.go`: write an assistant `tool_use` MCP session at `currentIndexVersion-1`, run reindex, assert the rebuilt FTS row contains the generic input summary and `IndexVersion == currentIndexVersion`
-- [ ] 2.5 Generalize the backlog wording (now false for chunk-searchable v3 sessions) at `internal/server/tool_search.go:261`, `internal/server/tool_vault_search.go:120`, and `internal/platform/doctor.go:359` (+ comment `:341-345`) to version-neutral text keeping the `capy vault reindex` action
-- [ ] 2.6 Update message assertions in `internal/server/*_test.go` and `internal/platform/doctor_test.go`; verify `grep -rn "chunk-searchable" internal/` returns no production-code hits
+- [x] 2.1 Bump `currentIndexVersion` `3 → 4` in `internal/vault/store.go`; extend the constant's doc comment (v4 = generic/MCP tool-input summaries, issue #89)
+- [x] 2.2 Update the literal assertion in `internal/vault/migrations_test.go` from `3` to `4` and its message
+- [x] 2.3 Confirm no other test hard-codes the index version as a literal: `grep -rn "currentIndexVersion" internal/vault/*_test.go` (only `migrations_test.go` used the literal `3`; now `4` — all others use the constant)
+- [x] 2.4 Extend `internal/vault/reindex_test.go`: write an assistant `tool_use` MCP session at `currentIndexVersion-1`, run reindex, assert the rebuilt FTS row contains the generic input summary and `IndexVersion == currentIndexVersion` (`TestReindex_RebuildsGenericToolInputSummary`)
+- [x] 2.5 Generalize the backlog wording to version-neutral text keeping the `capy vault reindex` action at `internal/server/tool_search.go`, `internal/server/tool_vault_search.go:120`, and `internal/platform/doctor.go` (+ comment). **Scope note:** per user decision, also generalized two non-backlog `chunk-searchable` sites the design did not name — `internal/server/tool_vault_search.go:49` (enablement message) and `internal/platform/routing.go:76` (docs table) — so 2.6's grep is truly clean
+- [x] 2.6 Update message assertions in `internal/platform/doctor_checks_test.go` (server tests assert only the stable `capy vault reindex` substring, so no change needed); `grep -rn "chunk-searchable" internal/` returns no production-code hits (one legitimate test-only assertion about swept-content chunk search remains)
 
 ## Task 3: Feature-specific quality gate + final verification
 - **Status:** pending

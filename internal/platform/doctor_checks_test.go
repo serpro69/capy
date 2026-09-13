@@ -56,7 +56,7 @@ func TestCheckVault(t *testing.T) {
 		r := CheckVault(7, 2, 3, nil)
 		assert.Equal(t, Warn, r.Status)
 		assert.Contains(t, r.Detail, "7 sessions archived")
-		assert.Contains(t, r.Detail, "2 below index v3")
+		assert.Contains(t, r.Detail, "2 indexed by an older version (v3)")
 		assert.Contains(t, r.Detail, "`capy vault reindex`")
 	})
 }

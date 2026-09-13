@@ -258,7 +258,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 			output += "\n\nPast sessions aren't searchable — set CAPY_VAULT_KEY to archive and search session transcripts."
 		case runVaultPass && vaultStats != nil && vaultStats.OutdatedSessions > 0:
 			output += fmt.Sprintf(
-				"\n\n%d archived session(s) are below index v%d and not yet chunk-searchable — run `capy vault reindex` to include them.",
+				"\n\n%d archived session(s) were indexed by an older version (v%d) and may omit newer indexed content — run `capy vault reindex` to update them.",
 				vaultStats.OutdatedSessions, vaultStats.IndexVersion)
 		}
 	}

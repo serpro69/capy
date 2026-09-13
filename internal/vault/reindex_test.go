@@ -122,6 +122,75 @@ func TestReindex_RebuildsStaleSessionFTSAndBumpsVersion(t *testing.T) {
 	assert.Equal(t, 0, res2.Reindexed)
 }
 
+func TestReindex_RebuildsGenericToolInputSummary(t *testing.T) {
+	// A session archived before v4 lacks the generic/MCP tool-input summary in its
+	// assistant tool_use row: v3's toolUseSummary rendered non-common tools (MCP,
+	// ToolSearch, …) as the bare name, so nothing from the input was searchable.
+	// Reindex must rebuild the assistant row from raw_jsonl with the current
+	// scanner (which emits the bounded key=value summary) and stamp the session to
+	// currentIndexVersion. Covers tasks.md Task 2.4 / design.md § Index version.
+	s := newTestVault(t)
+	root := t.TempDir()
+	uuid := "22222222-3333-4444-5555-666666666666"
+
+	main := jsonlBytes(t,
+		userLine("u1", "/home/user/proj", "feature/x", "search the vault"),
+		assistantLine("a1", "msg1", []map[string]any{
+			{"type": "text", "text": "Searching now."},
+			{"type": "tool_use", "id": "t1", "name": "mcp__capy__capy_search", "input": map[string]any{
+				"queries": []string{"pterodactyl needle"},
+				"source":  "kk:arch-decisions",
+			}},
+		}),
+		userToolResultLine("u2", "no results"),
+		aiTitleLine("Search the vault"),
+	)
+	writeSession(t, filepath.Join(root, "-home-user-proj"), uuid, main, nil)
+	require.Equal(t, 1, importFixture(t, s, root, ImportOptions{}).Imported)
+
+	db, err := s.getDB(context.Background())
+	require.NoError(t, err)
+
+	// Simulate a v3 index: stale version + the bare-name assistant row v3 produced
+	// (the text block, but the tool_use as a bare name with no input summary).
+	_, err = db.Exec(`UPDATE vault_sessions SET index_version=? WHERE uuid=?`, currentIndexVersion-1, uuid)
+	require.NoError(t, err)
+	_, err = db.Exec(`DELETE FROM vault_fts WHERE session_uuid=? AND role='assistant'`, uuid)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO vault_fts
+		(content_text, session_uuid, subagent_id, turn_index, message_index, line_index, role)
+		VALUES (?, ?, '', 0, 0, 1, 'assistant')`, "Searching now.\n→ mcp__capy__capy_search", uuid)
+	require.NoError(t, err)
+
+	// Pre-reindex: neither salient input field is searchable from the bare-name row.
+	for _, tok := range []string{"pterodactyl", "arch-decisions"} {
+		t.Run("pre-reindex "+tok, func(t *testing.T) {
+			pre, err := s.Search(context.Background(), SearchOptions{Query: tok, Role: "assistant"})
+			require.NoError(t, err)
+			assert.Empty(t, pre, "legacy assistant row lacks the generic input summary for %q", tok)
+		})
+	}
+
+	res, err := Reindex(context.Background(), s)
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Reindexed)
+	assert.Equal(t, 0, res.Errors)
+
+	got, err := s.GetSession(context.Background(), uuid[:8])
+	require.NoError(t, err)
+	assert.Equal(t, currentIndexVersion, got.IndexVersion, "reindex bumps the version to current")
+
+	// Post-reindex: the rebuilt assistant row carries the bounded key=value summary,
+	// so both the queries value and the source value are now searchable.
+	for _, tok := range []string{"pterodactyl", "arch-decisions"} {
+		t.Run("post-reindex "+tok, func(t *testing.T) {
+			post, err := s.Search(context.Background(), SearchOptions{Query: tok, Role: "assistant"})
+			require.NoError(t, err)
+			require.Len(t, post, 1, "rebuilt assistant row carries the generic tool-input summary for %q", tok)
+		})
+	}
+}
+
 func TestReindex_CrossesBatchBoundary(t *testing.T) {
 	s := newTestVault(t)
 	// One more than a single batch so reindex flushes at least twice — proves the

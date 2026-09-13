@@ -340,8 +340,8 @@ func CheckVaultDisabled() CheckResult {
 
 // CheckVault reports the vault's health from its stats: unreadable, or enabled
 // with its session count and — when any archived session predates the current
-// indexer — the reindex backlog and the command that clears it. The chunk
-// backfill is a manual `capy vault reindex`, so its pendency must be visible,
+// indexer — the reindex backlog and the command that clears it. Reindex is a
+// manual `capy vault reindex` (not automatic), so its pendency must be visible,
 // not silent (vault-session-search design D4).
 func CheckVault(sessions, outdatedSessions, indexVersion int, err error) CheckResult {
 	if err != nil {
@@ -356,7 +356,7 @@ func CheckVault(sessions, outdatedSessions, indexVersion int, err error) CheckRe
 		return CheckResult{
 			Name:   "Vault",
 			Status: Warn,
-			Detail: fmt.Sprintf("%s; %d below index v%d — run `capy vault reindex` to make them chunk-searchable",
+			Detail: fmt.Sprintf("%s; %d indexed by an older version (v%d) — run `capy vault reindex` to update them",
 				detail, outdatedSessions, indexVersion),
 		}
 	}
