@@ -5,8 +5,10 @@
 > Language: Go (build/test tag: `fts5`; `CAPY_DB_KEY` + `CAPY_VAULT_KEY` required)
 
 This plan assumes a skilled Go engineer with no prior context on capy's vault. Read
-[design.md](design.md) first — it explains why `toolUseSummary` is the single change
-point and why the change forces an `index_version` bump.
+[design.md](design.md) first — it explains why `toolUseSummary` is the single
+*summary* point (one function feeds FTS + `vault show` + TUI), why the change forces
+an `index_version` bump, and why that bump also drags in three user-facing backlog
+messages (Task 2).
 
 ## Orientation — files you will touch
 
@@ -75,19 +77,19 @@ Steps:
    - **Select fields:** take present priority keys in list order, then remaining keys
      `sort.Strings`-ordered, up to `genericMaxFields`. Record `omitted =
      len(keys) - rendered` for the marker.
-   - **Render each selected field to one token** `key=value`:
+   - **Render each selected field to one token** `key=value` (design.md § step 4):
      - key truncated to `genericKeyMaxChars`;
-     - value: string via `asJSONString` (unquoted); array → scalar elements
-       comma-joined, nested elements as `{…}`/`[…]`; nested **object** → `{…}` (no
-       descent); number/bool/null → literal; serialize non-strings with
-       `json.Compact` (required).
+     - value by type: **string** → raw, unquoted; **array** → `json.Compact` with any
+       non-scalar element replaced by a `{…}`/`[…]` placeholder first (all-scalar
+       arrays become plain compact JSON, e.g. `["a","b"]`); **nested object** → `{…}`
+       (no descent); **number/bool/null** → literal via `json.Compact`.
      - **Sanitize the full token** with `sanitize.StripSecrets`, **then**
        `truncateRunes(token, genericTokenMaxChars)` (order is load-bearing —
        design.md § Secret handling).
      - Replace any newline/tab/control rune in the token with a single space.
    - Join tokens (append `+N` when `omitted > 0`) with single spaces; apply
      `truncateRunes(joined, genericSummaryMaxChars)` as the final hard cap; return.
-   - → verify: unit tests in step 6 pass.
+   - → verify: the unit tests in step 5 pass.
 4. Replace the trailing `return name` in `toolUseSummary` (the switch has **no**
    `default:` clause) with: `if s := genericInputSummary(input); s != "" { return
    name + " " + s }; return name`. Rewrite the stale deferral comment to describe the
@@ -95,10 +97,11 @@ Steps:
    - → verify: the known-tool cases (`Read`/`Bash`/`Agent`) are untouched — their
      existing tests still pass.
 5. Add table-driven tests for `genericInputSummary` in `scanner_test.go`:
-   - priority + alphabetical selection (e.g. a `capy_search`-shaped input surfaces
-     `queries`/`source`, not just `all_projects`/`include_kinds`);
-   - `+N` marker when fields exceed `genericMaxFields`;
-   - array of strings → inline; nested object → `{…}` placeholder (contents absent);
+   - priority ordering (a `capy_search`-shaped 6-field input emits `queries`/`source`
+     **before** the alphabetical fill `all_projects`/`include_kinds`/…);
+   - `+N` marker for an input with **more than** `genericMaxFields` (e.g. 8) fields;
+   - array of strings → compact JSON `[…]`; nested object → `{…}` placeholder
+     (contents absent);
    - long key → truncated to `genericKeyMaxChars`;
    - value with an embedded newline → single-line token;
    - empty/non-object/malformed → bare name;

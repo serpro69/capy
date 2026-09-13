@@ -86,35 +86,54 @@ return name
    object, or a non-object top-level value (rare), return `""` → the caller emits
    the **bare name**. Graceful degradation, never an error (matches the parent
    feature's "unknown id → omit prefix" ethos).
-2. **Select fields (salience-aware, deterministic).** Alphabetical-first-N is
-   *salience-blind* — for a fully-populated `capy_search` input the keys sort
-   `all_projects, include_kinds, limit, project, queries, source`, so a cap of the
-   first few would drop `queries` and `source` — the exact fields #89 wants (verified
-   against the live `capy_search` schema: 6 input fields). Instead:
-   - **Priority tier first** — a small, tool-agnostic salient-key set, matched
+2. **Select and order fields (salience-aware, deterministic).** Plain alphabetical
+   order is *salience-blind* in two ways, both of which bite for real inputs
+   (verified against the live `capy_search` schema — 6 input fields sorting
+   `all_projects, include_kinds, limit, project, queries, source`):
+   - **Ordering.** Alphabetical front-loads low-signal fields: `all_projects,
+     include_kinds, limit, project` all sort *before* `queries, source`. Under the
+     total-length cap (`genericSummaryMaxChars`, step 7) the meaningful fields would
+     be the ones truncated away — even when the field *count* fits.
+   - **Dropping.** When a tool has more than `genericMaxFields` fields, the ones that
+     sort last are dropped — which may be the salient ones.
+
+   Both are fixed by selecting/ordering with a **priority tier first**:
+   - **Priority tier** — a small, tool-agnostic salient-key set, matched
      case-insensitively:
      `query, queries, command, content, source, url, path, pattern, prompt, code, name`.
-     Present priority keys are taken **in the fixed order listed** (deterministic,
-     not alphabetical — so the reader sees the meaningful fields first).
+     Present priority keys are emitted **in the fixed order listed** (deterministic,
+     not alphabetical) so the reader — and the length cap — sees the meaningful fields
+     first.
    - **Then remaining keys alphabetically**, to fill up to `genericMaxFields`.
-   - This stays tool-agnostic (no per-tool registry — the rejected alternative C) yet
-     surfaces the fields that carry signal. Trade-off: the priority list is a fixed
-     heuristic; a tool whose salient field isn't listed still gets it via the
-     alphabetical fill (bounded, never dropped silently — see the marker below).
+   - This stays tool-agnostic (no per-tool registry — the rejected alternative C).
+     A tool whose salient field isn't in the list still gets it via the alphabetical
+     fill; it is only ever *ordered later* or (past `genericMaxFields`) counted in the
+     omitted marker — never dropped silently.
 3. **Omitted-field marker.** When the input has more than `genericMaxFields` keys,
    append a trailing `+N` token (N = keys not rendered) so the output never looks
-   complete when it isn't. E.g. `… +3`.
-4. **Render each selected field as one `key=value` token:**
-   - Key: truncated to `genericKeyMaxChars`.
-   - String values: rendered **unquoted** (`source=kk:review-findings`).
-   - Arrays: render scalar elements inline, comma-joined; any **nested** object/array
-     element collapses to `{…}` / `[…]` (never surfaces nested contents).
-   - **Nested objects** (a field whose value is itself an object): render the
-     placeholder `{…}` — do **not** descend. This bounds output and avoids surfacing
-     nested credential shapes (see Secret handling).
-   - Numbers / booleans / null: literal.
-   - Non-string values are serialized with `json.Compact` (**required**, not "if in
-     doubt") so whitespace in the source JSONL can't widen a token.
+   complete when it isn't. E.g. a tool call with 9 fields renders 6 tokens then `+3`.
+   (Field-count omission is distinct from the `…` that `truncateRunes` appends when a
+   token or the whole summary hits a length cap — both are visible incompleteness
+   signals.)
+4. **Render each selected field as one `key=value` token.** The value rendering is
+   type-directed:
+   - **String** → the raw string, **unquoted** (`source=kk:review-findings`). Note:
+     unquoted string values may themselves contain spaces (`content=Indexed 1
+     sections`), so field boundaries are **best-effort**, not delimiter-escaped. This
+     is harmless for BM25 term indexing and stays human-readable; step 6 strips
+     control chars so a value cannot inject a newline.
+   - **Number / boolean / null** → literal via `json.Compact`.
+   - **Array** → `json.Compact` of the array, but with every **non-scalar element**
+     (object or nested array) replaced by a `{…}` / `[…]` placeholder first, so nested
+     contents never surface. An all-scalar array therefore renders as ordinary
+     compact JSON: `queries=["tool input details"]`, `max_results=[1,2]`.
+   - **Nested object** (a field whose value is itself an object) → the placeholder
+     `{…}` — do **not** descend. Bounds output and avoids surfacing nested credential
+     shapes (see Secret handling).
+
+   Key: truncated to `genericKeyMaxChars`. `json.Compact` on every non-string value is
+   **required** (not "if in doubt") so whitespace in the source JSONL can't widen a
+   token.
 5. **Sanitize, then truncate — in that order (load-bearing).** Build the full
    `key=value` token from the **untruncated** value, run `sanitize.StripSecrets` on
    the whole token, **then** `truncateRunes(token, genericTokenMaxChars)`. Sanitizing
@@ -132,13 +151,18 @@ The output is bounded by **all four** caps together — key length, per-token le
 field count, and a final total cap — so no single long key, value, or field count
 can blow past `genericSummaryMaxChars`.
 
-Example outputs (priority keys first, then alphabetical fill; `+N` when truncated):
+Example outputs (priority keys first, then alphabetical fill):
 
 ```
-→ mcp__capy__capy_search queries=["tool input…"] source=kk:arch-decisions +3
+→ mcp__capy__capy_search queries=["tool input details"] source=kk:arch-decisions
 → ToolSearch query=select:capy_search max_results=1
 → mcp__capy__capy_index content=Indexed 1 sections… source=kk:review-findings
 ```
+
+(The first two calls set ≤ `genericMaxFields` fields, so no `+N` marker; a call
+setting more than six fields would end with e.g. `… +2`. `capy_search` has six input
+fields total — at `genericMaxFields=6` all six can render, and priority ordering
+ensures `queries`/`source` lead so they survive the `genericSummaryMaxChars` cap.)
 
 ### Why bounded `key=value` (vs. the alternatives)
 
@@ -206,7 +230,7 @@ step.
 
 ## Index version & reindex
 
-Changing the `default` case changes the FTS content of:
+Changing the fall-through path changes the FTS content of:
 
 - assistant `tool_use` rows (via `extractAssistantText`), and
 - `tool_result` prefixes (via `collectToolUseSummaries`).
