@@ -1,17 +1,13 @@
 # Codex sessions in the vault — research notes (issue #77)
 
-> **Status:** Research only — **no design, implementation plan, or task list exists yet.**
-> This directory intentionally holds a single file. Do **not** enter `kk:design`'s
-> "Continue WIP Feature" flow (it expects `tasks.md` / `design.md` / `implementation.md` here and
-> will find none). Run the **fresh-idea flow** (`kk:design` → idea-process.md) with issue
-> [serpro69/capy#77](https://github.com/serpro69/capy/issues/77) "vault: support for codex sessions"
-> as the idea and this file as the Step 1/Step 2 input (current-state analysis + domain research).
-> §4 lists the decisions the refinement dialogue must settle; §5 is a *suggested* shape, not a
-> decision; §6 lists assumptions still to verify. Seeds for Step 3: the vault's own HMW and target
-> user in `docs/feat/done/vault/design.md` extend naturally to "…every conversation, on every
-> supported agent CLI". When the design lands, write `design.md`/`implementation.md`/`tasks.md`
-> beside this file and update this banner.
-> **Date:** 2026-09-12
+> **Status:** Research input — **the design has landed.** See [design.md](./design.md)
+> (decisions for every item in §4; §5's suggested shape was revised: a shared *transcript
+> model* with per-platform decoders replaces the per-format scanner trio),
+> [implementation.md](./implementation.md) (Risk-First slices with verification gates) and
+> [tasks.md](./tasks.md). This file remains the evidence base: format facts, verified counts,
+> redacted fixture seeds (Appendix A) and reproduction commands (Appendix B). §6's open questions
+> are carried forward in design.md § Open Questions and implementation.md § Deferred work.
+> **Date:** 2026-09-12 (research) · 2026-09-13 (design landed)
 > **Evidence base:** capy `master` @ `c68b855`; 164 real Codex rollouts under `~/.codex/sessions`
 > (cli_version 0.124.0 → 0.154.0, Apr–Sep 2026, 96 MB); Codex CLI 0.147.0 installed locally;
 > `openai/codex` `main` sources (`codex-rs/rollout/`, `codex-rs/history/`, `codex-rs/protocol/`);
