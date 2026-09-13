@@ -131,15 +131,23 @@ return name
      `{…}` — do **not** descend. Bounds output and avoids surfacing nested credential
      shapes (see Secret handling).
 
-   Key: truncated to `genericKeyMaxChars`. `json.Compact` on every non-string value is
-   **required** (not "if in doubt") so whitespace in the source JSONL can't widen a
-   token.
+   Key: **sanitized before its own `genericKeyMaxChars` cap** — keys are
+   attacker/tool-controlled and otherwise unbounded, so `truncateRunes(sanitize.StripSecrets(key), genericKeyMaxChars)`
+   applies the same sanitize-then-truncate rule as the value (step 5): a `<private>…`
+   span in a >40-char key would otherwise lose its closing tag to the cap before
+   `StripSecrets` ran, leaking the opening fragment on the display path. `json.Compact`
+   on every non-string value is **required** (not "if in doubt") so whitespace in the
+   source JSONL can't widen a token.
 5. **Sanitize, then truncate — in that order (load-bearing).** Build the full
-   `key=value` token from the **untruncated** value, run `sanitize.StripSecrets` on
-   the whole token, **then** `truncateRunes(token, genericTokenMaxChars)`. Sanitizing
-   the complete token before truncation is what makes secret redaction reliable (see
-   Secret handling) and lets the generic `key=…value` regex fire on the rendered
-   form.
+   `key=value` token from the sanitized-and-capped key (step 4) and the **untruncated**
+   value, run `sanitize.StripSecrets` on the whole token, **then**
+   `truncateRunes(token, genericTokenMaxChars)`. Sanitizing the complete token before
+   truncation is what makes secret redaction reliable (see Secret handling) and lets
+   the generic `key=…value` regex fire on the rendered form. (The per-key StripSecrets
+   in step 4 and this whole-token StripSecrets are both load-bearing: the first bounds
+   an over-cap key, the second catches a secret straddling the `key=value` boundary;
+   the joined-summary pass in Secret handling then catches a secret straddling two
+   fields.)
 6. **Normalize control chars.** Replace any newline/tab/control character in each
    token with a single space so the summary is one stable line (unquoted values can
    contain newlines).
@@ -202,6 +210,16 @@ So we adopt the codebase's proven **sanitize-then-truncate** order *inside*
 `genericInputSummary` (step 5 above). Because the value is sanitized while whole,
 no secret is split. The emit-boundary sanitizer remains as a backstop
 (double-sanitizing is harmless — placeholders don't re-match).
+
+**Cross-field spans (joined-summary sanitize).** Per-token sanitization redacts a
+secret contained *within* one field, but cannot catch one that **straddles two
+fields** — e.g. a `<private>` opening tag in field A's token and its `</private>`
+closing tag in field B's token, since `privateTagRe` requires both tags in one
+string. The FTS path is backstopped by the emit-boundary `StripSecrets`, but the
+display path is not. So `genericInputSummary` runs one final `StripSecrets` over
+the **joined** summary before the `genericSummaryMaxChars` cap (sanitize-then-
+truncate again): the cross-field span is redacted while whole, keeping the display
+path safe. (Verified by the `cross-field private span` unit test.)
 
 ### Consequence: the display path is now redacted for generic inputs
 

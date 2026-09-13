@@ -81,6 +81,14 @@ file_path, Agent/Task → prompt) and the **bare name** for everything else (MCP
 tools like `mcp__capy__capy_search`, `WebFetch`, custom tools). The tool *name* is
 always added, satisfying the core "what tool was called" ask for every tool.
 
+> **Status: DONE** (2026-09-13). Implemented in
+> [vault-tool-input-details](../../wip/vault-tool-input-details/design.md) (issue
+> #89): `genericInputSummary` emits a **bounded, sanitized** `key=value` summary for
+> arbitrary/MCP tools, wired into the `toolUseSummary` fall-through; the concern
+> below (FTS noise / BM25 degradation) is addressed by four caps and guarded by a
+> feature-specific ranking test. `currentIndexVersion` bumped to **4** so existing
+> vaults pick up the new input text on `capy vault reindex`.
+
 *Why deferred (not just "trivial"):*
 
 1. **Consistency.** Reusing `toolUseSummary` keeps the result-side label identical

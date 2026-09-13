@@ -634,6 +634,15 @@ func TestGenericInputSummary(t *testing.T) {
 			want:  `content=line1 line2`,
 		},
 		{
+			// A <private>…</private> span split across two fields matches neither
+			// per-field token (privateTagRe needs both tags in one string); the
+			// joined-summary StripSecrets catches it before the final cap, so the
+			// secret never reaches the display path. Keys sort a,b (alphabetical fill).
+			name:  "cross-field private span → redacted on the joined summary",
+			input: map[string]any{"a": "<private>secretstuff", "b": "more</private>"},
+			want:  `a=[REDACTED]`,
+		},
+		{
 			name:  "empty object → empty",
 			input: map[string]any{},
 			want:  "",
