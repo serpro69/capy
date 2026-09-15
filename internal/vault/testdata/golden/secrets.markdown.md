@@ -1,0 +1,15 @@
+## 👤 You
+
+my token is sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa please use it
+
+## 🤖 Claude
+
+Using sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa now.
+→ Bash export TOKEN=sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+## ⎿ Tool result
+
+```
+Bash export TOKEN=sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+exported sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```

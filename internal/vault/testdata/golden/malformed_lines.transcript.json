@@ -1,0 +1,48 @@
+{
+  "Main": [
+    {
+      "Role": "user",
+      "Body": "hello",
+      "SourceLine": 0,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "assistant",
+      "Body": "inferred assistant",
+      "SourceLine": 6,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "user",
+      "Body": "crlf line",
+      "SourceLine": 9,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "user",
+      "Body": "trailing line without newline",
+      "SourceLine": 10,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    }
+  ]
+}

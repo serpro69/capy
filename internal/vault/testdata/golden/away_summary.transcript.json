@@ -1,0 +1,26 @@
+{
+  "Main": [
+    {
+      "Role": "user",
+      "Body": "start",
+      "SourceLine": 0,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "system",
+      "Body": "We configured the dependencies and set up CI.",
+      "SourceLine": 1,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    }
+  ]
+}

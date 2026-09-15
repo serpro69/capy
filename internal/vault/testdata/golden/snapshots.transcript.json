@@ -1,0 +1,48 @@
+{
+  "Main": [
+    {
+      "Role": "user",
+      "Body": "look",
+      "SourceLine": 0,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "assistant",
+      "Body": "Let me look.\n→ Bash ls\nDone.",
+      "SourceLine": 1,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "assistant",
+      "Body": "no id, keyed by uuid\nsecond",
+      "SourceLine": 4,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "Bash ls\na.go\nb.go",
+      "SourceLine": 6,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    }
+  ]
+}

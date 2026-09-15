@@ -1,0 +1,26 @@
+{
+  "Main": [
+    {
+      "Role": "user",
+      "Body": "start",
+      "SourceLine": 0,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "assistant",
+      "Body": "after the oversize line",
+      "SourceLine": 2,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    }
+  ]
+}

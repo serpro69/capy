@@ -1,0 +1,42 @@
+{
+  "Main": {
+    "Results": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "open a PR",
+        "Timestamp": "2026-05-01T10:00:00Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 1,
+        "LineIndex": 1,
+        "Role": "system",
+        "SubagentID": "",
+        "ContentText": "PR #42 acme/widgets https://github.com/acme/widgets/pull/42",
+        "Timestamp": "2026-05-01T10:01:00Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 2,
+        "LineIndex": 2,
+        "Role": "system",
+        "SubagentID": "",
+        "ContentText": "https://github.com/acme/widgets/pull/43",
+        "Timestamp": "2026-05-01T10:01:01Z",
+        "ToolNames": null
+      }
+    ],
+    "Title": "open a PR",
+    "CWD": "/p",
+    "Branch": "main",
+    "StartTime": "2026-05-01T10:00:00Z",
+    "EndTime": "2026-05-01T10:01:02Z",
+    "MessageCount": 1
+  }
+}

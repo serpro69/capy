@@ -1,0 +1,32 @@
+{
+  "Main": {
+    "Results": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "real prompt  tail",
+        "Timestamp": "2026-05-01T10:00:00Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 1,
+        "MessageIndex": 0,
+        "LineIndex": 1,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "block prompt",
+        "Timestamp": "2026-05-01T10:00:01Z",
+        "ToolNames": null
+      }
+    ],
+    "Title": "",
+    "CWD": "/p",
+    "Branch": "main",
+    "StartTime": "2026-05-01T10:00:00Z",
+    "EndTime": "2026-05-01T10:00:02Z",
+    "MessageCount": 2
+  }
+}

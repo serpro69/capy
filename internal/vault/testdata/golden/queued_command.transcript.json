@@ -1,0 +1,59 @@
+{
+  "Main": [
+    {
+      "Role": "user",
+      "Body": "Start the work",
+      "SourceLine": 0,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "assistant",
+      "Body": "→ Bash ls",
+      "SourceLine": 1,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "Bash ls\nfile1 file2",
+      "SourceLine": 3,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "user",
+      "Body": "the mcp has no access to vault",
+      "SourceLine": 5,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": true
+    },
+    {
+      "Role": "assistant",
+      "Body": "noted",
+      "SourceLine": 7,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    }
+  ]
+}

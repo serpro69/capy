@@ -1,0 +1,81 @@
+{
+  "Main": [
+    {
+      "Role": "user",
+      "Body": "Read config, edit it, run tests",
+      "SourceLine": 0,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "assistant",
+      "Body": "→ Read /p/config.toml\n→ Edit /p/config.toml\n→ Bash go test ./...",
+      "SourceLine": 1,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "timeout = 30\nretries = 1\n[db]\npath = x",
+      "SourceLine": 2,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": true,
+      "ToolSummary": "Read /p/config.toml",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "@@ -3,2 +3,2 @@\n timeout = 30\n-retries = 1\n+retries = 3",
+      "SourceLine": 3,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": true,
+      "ToolSummary": "Edit /p/config.toml (+1 −1)",
+      "Diff": true,
+      "Queued": false
+    },
+    {
+      "Role": "user",
+      "Body": "also note:  keep going",
+      "SourceLine": 4,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "Bash go test ./...\nok  1 passed",
+      "SourceLine": 4,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "orphan output with no matching call",
+      "SourceLine": 5,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    }
+  ]
+}

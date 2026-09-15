@@ -1,0 +1,77 @@
+{
+  "Main": {
+    "Results": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "search the knowledge base",
+        "Timestamp": "2026-05-01T10:00:00Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 1,
+        "LineIndex": 1,
+        "Role": "assistant",
+        "SubagentID": "",
+        "ContentText": "mcp__capy__capy_search Query=case collision queries=[\"tool input\",\"second\"] source=kk: a_very_long_key_name_that_exceeds_forty_…=v api_key=[REDACTED_SECRET] arr=[{…},2,\"s\"] +3\nWebFetch url=https://example.com/doc prompt=summarise\nmcp__x__y\nToolSearch",
+        "Timestamp": "2026-05-01T10:00:05Z",
+        "ToolNames": [
+          "mcp__capy__capy_search",
+          "WebFetch",
+          "mcp__x__y",
+          "ToolSearch"
+        ]
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 2,
+        "LineIndex": 2,
+        "Role": "tool",
+        "SubagentID": "",
+        "ContentText": "mcp__capy__capy_search Query=case collision queries=[\"tool input\",\"second\"] source=kk: a_very_long_key_name_that_exceeds_forty_…=v api_key=[REDACTED_SECRET] arr=[{…},2,\"s\"] +3\n3 results",
+        "Timestamp": "2026-05-01T10:00:10Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 3,
+        "LineIndex": 2,
+        "Role": "tool",
+        "SubagentID": "",
+        "ContentText": "WebFetch url=https://example.com/doc prompt=summarise\nfetched 12 KB",
+        "Timestamp": "2026-05-01T10:00:10Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 4,
+        "LineIndex": 2,
+        "Role": "tool",
+        "SubagentID": "",
+        "ContentText": "mcp__x__y\nbare",
+        "Timestamp": "2026-05-01T10:00:10Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 5,
+        "LineIndex": 2,
+        "Role": "tool",
+        "SubagentID": "",
+        "ContentText": "ToolSearch\nno tools",
+        "Timestamp": "2026-05-01T10:00:10Z",
+        "ToolNames": null
+      }
+    ],
+    "Title": "search the knowledge base",
+    "CWD": "/p",
+    "Branch": "main",
+    "StartTime": "2026-05-01T10:00:00Z",
+    "EndTime": "2026-05-01T10:00:10Z",
+    "MessageCount": 2
+  }
+}

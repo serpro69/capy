@@ -1,0 +1,15 @@
+[You]
+Start the work
+
+[Claude]
+→ Bash ls
+
+[Tool result]
+Bash ls
+file1 file2
+
+[You · queued]
+the mcp has no access to vault
+
+[Claude]
+noted

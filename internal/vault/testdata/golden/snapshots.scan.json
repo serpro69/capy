@@ -1,0 +1,54 @@
+{
+  "Main": {
+    "Results": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "look",
+        "Timestamp": "2026-05-01T10:00:00Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 1,
+        "LineIndex": 1,
+        "Role": "assistant",
+        "SubagentID": "",
+        "ContentText": "Let me look.\nBash ls\nDone.",
+        "Timestamp": "2026-05-01T10:00:05Z",
+        "ToolNames": [
+          "Bash"
+        ]
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 2,
+        "LineIndex": 4,
+        "Role": "assistant",
+        "SubagentID": "",
+        "ContentText": "no id, keyed by uuid\nsecond",
+        "Timestamp": "2026-05-01T10:00:08Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 3,
+        "LineIndex": 6,
+        "Role": "tool",
+        "SubagentID": "",
+        "ContentText": "Bash ls\na.go\nb.go",
+        "Timestamp": "2026-05-01T10:00:10Z",
+        "ToolNames": null
+      }
+    ],
+    "Title": "look",
+    "CWD": "/p",
+    "Branch": "main",
+    "StartTime": "2026-05-01T10:00:00Z",
+    "EndTime": "2026-05-01T10:00:10Z",
+    "MessageCount": 3
+  }
+}

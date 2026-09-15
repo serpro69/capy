@@ -1,0 +1,34 @@
+{
+  "Main": {
+    "Results": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "check a.go",
+        "Timestamp": "2026-05-01T10:00:00Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 1,
+        "LineIndex": 1,
+        "Role": "assistant",
+        "SubagentID": "",
+        "ContentText": "Before the call.\nRead /p/a.go\nAfter the call.",
+        "Timestamp": "2026-05-01T10:00:05Z",
+        "ToolNames": [
+          "Read"
+        ]
+      }
+    ],
+    "Title": "check a.go",
+    "CWD": "/p",
+    "Branch": "main",
+    "StartTime": "2026-05-01T10:00:00Z",
+    "EndTime": "2026-05-01T10:00:10Z",
+    "MessageCount": 2
+  }
+}

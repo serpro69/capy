@@ -1,0 +1,42 @@
+{
+  "Main": {
+    "Results": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "Please fix the timeout bug",
+        "Timestamp": "2026-05-01T10:00:00Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 1,
+        "LineIndex": 1,
+        "Role": "assistant",
+        "SubagentID": "",
+        "ContentText": "Sure — looking now.",
+        "Timestamp": "2026-05-01T10:00:05Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 1,
+        "MessageIndex": 0,
+        "LineIndex": 2,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "thanks",
+        "Timestamp": "2026-05-01T10:00:09Z",
+        "ToolNames": null
+      }
+    ],
+    "Title": "Please fix the timeout bug",
+    "CWD": "/home/user/proj",
+    "Branch": "main",
+    "StartTime": "2026-05-01T10:00:00Z",
+    "EndTime": "2026-05-01T10:00:09Z",
+    "MessageCount": 3
+  }
+}

@@ -132,7 +132,7 @@ func ParseTranscript(raw []byte, subagentIDs []string) []TranscriptMessage {
 	assistantPos := make(map[string]int) // message.id → index in entries
 	lineIndex := -1
 
-	_ = scanLines(bytes.NewReader(raw), renderMaxLineBytes, func(data []byte, oversize bool) {
+	_ = scanLines(bytes.NewReader(raw), renderLineCap, func(data []byte, oversize bool) {
 		lineIndex++
 		if oversize || len(data) == 0 {
 			return
