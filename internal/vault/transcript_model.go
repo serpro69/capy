@@ -221,9 +221,14 @@ type Launch struct {
 
 // Diff is unified-diff text plus its add/remove counts for a marker stat.
 type Diff struct {
-	// Text is unified-diff text: one `@@ -a,b +c,d @@` header per hunk followed
-	// by the hunk's prefixed lines. The per-line prefix ('+', '-', ' ') is
-	// preserved verbatim so the TUI can colour by first byte.
+	// Text is unified-diff text. Claude (diff.go): one `@@ -a,b +c,d @@` header
+	// per hunk followed by the hunk's prefixed lines. Codex (codex_patch.go): the
+	// patch's own `*** Add/Update/Delete File:` section lines, an exact numbered
+	// header for file adds, and Codex's line-number-less `@@ [hint]` header for
+	// update hunks. Consumers must key only on the line prefixes — `@@` for a
+	// hunk header, '+', '-', ' ' for hunk lines, anything else plain — which is
+	// exactly what the TUI's renderDiffBody does; the prefixes are preserved
+	// verbatim so it can colour by first byte.
 	Text    string
 	Added   int
 	Removed int
@@ -247,15 +252,19 @@ var ErrDecoderUnavailable = errors.New("no decoder available for platform")
 // platform without an implementation yields one failing with
 // ErrDecoderUnavailable — so a caller that dispatches on a stored platform
 // value gets a per-session error, never a nil dereference or a silent Claude
-// default.
-//
-// TODO(codex-vault-sessions Slice 6): return the Codex decoder for PlatformCodex.
+// default. Both known platforms have decoders today; the ErrDecoderUnavailable
+// arm is the contract for a platform constant added ahead of its decoder.
 func DecoderFor(p Platform) Decoder {
 	switch p {
 	case PlatformClaudeCode:
 		return claudeDecoder{}
 	case PlatformCodex:
-		return unavailableDecoder{err: fmt.Errorf("%w: %s", ErrDecoderUnavailable, p)}
+		return codexDecoder{}
+	}
+	for _, k := range knownPlatforms {
+		if p == k {
+			return unavailableDecoder{err: fmt.Errorf("%w: %s", ErrDecoderUnavailable, p)}
+		}
 	}
 	return unavailableDecoder{err: fmt.Errorf("%w: %q", ErrUnknownPlatform, string(p))}
 }

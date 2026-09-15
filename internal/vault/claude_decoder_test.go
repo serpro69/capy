@@ -397,46 +397,54 @@ func TestClaudeDecoder_GoldenCases(t *testing.T) {
 // must never find stray payload on the wrong kind.
 func TestClaudeDecoder_PayloadIsolation(t *testing.T) {
 	for _, c := range goldenCases(t) {
-		tr := decodeGolden(t, c)
-		for i, e := range tr.Entries {
-			where := fmt.Sprintf("%s entry %d (%s)", c.name, i, describeEntry(e))
-			switch e.Kind {
-			case EntryHuman:
-				assert.NotEmpty(t, e.Text, where)
-				assert.Nil(t, e.Parts, where)
-				assert.Empty(t, e.CallID+e.CallName+e.CallSummary+e.Body, where)
-				assert.Nil(t, e.Diff, where)
-				assert.False(t, e.SearchOnly, where)
-			case EntryAssistant:
-				assert.NotEmpty(t, e.Parts, where)
-				assert.Empty(t, e.Text, where)
-				assert.False(t, e.Queued, where)
-				assert.Empty(t, e.CallID+e.CallName+e.CallSummary+e.Body, where)
-				assert.Nil(t, e.Diff, where)
-				for _, p := range e.Parts {
-					if p.Call == nil {
-						assert.NotEmpty(t, p.Text, where)
-					} else {
-						assert.Empty(t, p.Text, where)
-					}
+		assertPayloadIsolation(t, c.name, decodeGolden(t, c))
+	}
+}
+
+// assertPayloadIsolation is the per-transcript check shared by both decoders'
+// isolation sweeps (TestClaudeDecoder_PayloadIsolation,
+// TestCodexDecoder_PayloadIsolation): every entry populates only its Kind's
+// field group, and every Part has exactly one side set.
+func assertPayloadIsolation(t *testing.T, name string, tr *Transcript) {
+	t.Helper()
+	for i, e := range tr.Entries {
+		where := fmt.Sprintf("%s entry %d (%s)", name, i, describeEntry(e))
+		switch e.Kind {
+		case EntryHuman:
+			assert.NotEmpty(t, e.Text, where)
+			assert.Nil(t, e.Parts, where)
+			assert.Empty(t, e.CallID+e.CallName+e.CallSummary+e.Body, where)
+			assert.Nil(t, e.Diff, where)
+			assert.False(t, e.SearchOnly, where)
+		case EntryAssistant:
+			assert.NotEmpty(t, e.Parts, where)
+			assert.Empty(t, e.Text, where)
+			assert.False(t, e.Queued, where)
+			assert.Empty(t, e.CallID+e.CallName+e.CallSummary+e.Body, where)
+			assert.Nil(t, e.Diff, where)
+			for _, p := range e.Parts {
+				if p.Call == nil {
+					assert.NotEmpty(t, p.Text, where)
+				} else {
+					assert.Empty(t, p.Text, where)
 				}
-			case EntryToolResult:
-				assert.Empty(t, e.Text, where)
-				assert.Nil(t, e.Parts, where)
-				assert.False(t, e.Queued, where)
-				assert.False(t, e.SearchOnly, where)
-				if e.CallName == "" {
-					assert.Empty(t, e.CallSummary, where)
-				}
-			case EntrySystem:
-				assert.NotEmpty(t, e.Text, where)
-				assert.Nil(t, e.Parts, where)
-				assert.False(t, e.Queued, where)
-				assert.Empty(t, e.CallID+e.CallName+e.CallSummary+e.Body, where)
-				assert.Nil(t, e.Diff, where)
-			default:
-				t.Errorf("%s: invalid kind %v", where, e.Kind)
 			}
+		case EntryToolResult:
+			assert.Empty(t, e.Text, where)
+			assert.Nil(t, e.Parts, where)
+			assert.False(t, e.Queued, where)
+			assert.False(t, e.SearchOnly, where)
+			if e.CallName == "" {
+				assert.Empty(t, e.CallSummary, where)
+			}
+		case EntrySystem:
+			assert.NotEmpty(t, e.Text, where)
+			assert.Nil(t, e.Parts, where)
+			assert.False(t, e.Queued, where)
+			assert.Empty(t, e.CallID+e.CallName+e.CallSummary+e.Body, where)
+			assert.Nil(t, e.Diff, where)
+		default:
+			t.Errorf("%s: invalid kind %v", where, e.Kind)
 		}
 	}
 }
