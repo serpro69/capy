@@ -30,12 +30,35 @@ const (
 // min_reader_version marker, so it stays readable by an older v1 binary.
 const noCompressEnv = "CAPY_VAULT_NO_COMPRESS"
 
+// Reader-version milestones. Every on-disk capability an older binary cannot read
+// safely has a named version here, and the write that introduces such a record
+// stamps vault_meta.min_reader_version with it.
+//
+// RULE (design § Reader version, ADR-031): adding a Platform constant
+// (platform.go, knownPlatforms) is a reader-version bump. Every read path that
+// dispatches on platform is exhaustive over the constants it knows, so a binary
+// lacking a constant must refuse the vault at open rather than mis-read its rows
+// (an older binary's restore/resume/merge are platform-blind and would corrupt).
+// TestPlatform_ReaderVersionPairing pins each constant to its version.
+const (
+	// readerVersionZstd: zstd-encoded blobs (vault v2, `encoding` column).
+	readerVersionZstd = 2
+	// readerVersionPlatform: rows whose platform is not claude-code (Codex
+	// sessions). Nothing writes such a row yet — markMinReaderVersion still stamps
+	// supportedReaderVersion unconditionally; codex-vault-sessions Slice 5 makes
+	// it take the version per record and raises supportedReaderVersion to this.
+	readerVersionPlatform = 3
+)
+
 // supportedReaderVersion is the highest vault min_reader_version this binary can
 // read. v2 introduces zstd blobs, so a compressed vault is stamped
 // min_reader_version="2" (markMinReaderVersion) and this binary supports 2. A
 // vault whose marker exceeds this (a future on-disk format this binary predates)
 // is refused on open by checkReaderVersion rather than silently mis-read.
-const supportedReaderVersion = 2
+//
+// TODO(codex-vault-sessions Slice 5): raise to readerVersionPlatform together
+// with the per-record stamping in writeRecord/WriteBatch and compact.go.
+const supportedReaderVersion = readerVersionZstd
 
 // minReaderVersionKey is the vault_meta row key carrying the minimum reader
 // version required to safely read the vault. Absent ⇒ no constraint (a v1 vault,
