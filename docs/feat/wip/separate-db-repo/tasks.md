@@ -21,16 +21,16 @@
 - [x] 1.4 `preCommitHookBlock`: `while … done || exit 1` for the magic check, `checkpoint || exit 1`, remove dead `$? -ne 0`; extend `precommit_test.go`
 
 ## Task 2: `capy encrypt` resolves symlinks before the swap
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Task 1, Task 3
 - **Docs:** [implementation.md#task-2](./implementation.md#task-2--capy-encrypt-symlink-safe)
 
 ### Subtasks
-- [ ] 2.1 `runEncrypt`: `filepath.EvalSymlinks(dbPath)` after the existence check (warn and keep original on error)
-- [ ] 2.2 Test: symlinked encrypted DB → resolved path → `SwapAndVerify` leaves the symlink intact
-- [ ] 2.3 Add `TODO(#90)` at the `BackupCorruptDB` call in `store.getDB` noting the symlink-rename gap
+- [x] 2.1 `runEncrypt`: `filepath.EvalSymlinks(dbPath)` after the existence check (warn and keep original on error)
+- [x] 2.2 Test: symlinked encrypted DB → resolved path → `SwapAndVerify` leaves the symlink intact
+- [x] 2.3 Add `TODO(#90)` at the `BackupCorruptDB` call in `store.getDB` noting the symlink-rename gap
 
 ## Task 3: `capy setup --db-repo` end-to-end (generator, CLI, drift guard, hook behaviour)
 - **Status:** pending

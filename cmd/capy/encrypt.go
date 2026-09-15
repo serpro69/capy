@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/sqliteutil"
@@ -53,7 +54,10 @@ func runEncrypt(cmd *cobra.Command, args []string) error {
 	dbPath := cfg.ResolveDBPath(projectDir)
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return fmt.Errorf("no knowledge base at %s", dbPath)
+	} else if err != nil {
+		return fmt.Errorf("checking knowledge base at %s: %w", dbPath, err)
 	}
+	dbPath = resolveDBSymlink(dbPath)
 
 	oldKey, err := terminal.ReadPassphrase("Current DB passphrase (empty if unencrypted): ")
 	if err != nil {
@@ -79,6 +83,23 @@ func runEncrypt(cmd *cobra.Command, args []string) error {
 		return encryptPlain(dbPath, newKey)
 	}
 	return rekeyEncrypted(dbPath, oldKey, newKey)
+}
+
+// resolveDBSymlink resolves dbPath through any symlinks so the swap in
+// sqliteutil.SwapAndVerify renames the real file rather than replacing the
+// symlink with a regular file. Without this, encrypting a knowledge.db kept in a
+// separate DB repo and symlinked into the project's .capy/ would destroy the
+// link and strand the real file (issue #90). The caller must have already
+// confirmed the file exists, so an EvalSymlinks error here is unexpected; we
+// warn and keep the original path rather than abort the whole operation.
+func resolveDBSymlink(dbPath string) string {
+	resolved, err := filepath.EvalSymlinks(dbPath)
+	if err != nil {
+		slog.Warn("could not resolve DB path symlinks; using original path",
+			"path", dbPath, "error", err)
+		return dbPath
+	}
+	return resolved
 }
 
 // encryptPlain encrypts an unencrypted database via file copy + PRAGMA rekey.
