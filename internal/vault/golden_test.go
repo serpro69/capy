@@ -154,11 +154,11 @@ func readerOutputs(t *testing.T, raw []byte, sidecars map[string][]byte) map[str
 	scanOut, err := ScanSession(PlatformClaudeCode, bytes.NewReader(raw))
 	require.NoError(t, err)
 	scanFile := goldenScanFile{Main: goldenScan(scanOut)}
-	transcriptFile := goldenTranscriptFile{Main: ParseTranscript(raw, subagentIDs)}
+	transcriptFile := goldenTranscriptFile{Main: ParseTranscript(PlatformClaudeCode, raw, subagentIDs)}
 
 	var text, md strings.Builder
-	text.WriteString(RenderText(raw))
-	md.WriteString(RenderMarkdown(raw))
+	text.WriteString(RenderText(PlatformClaudeCode, raw))
+	md.WriteString(RenderMarkdown(PlatformClaudeCode, raw))
 
 	for _, id := range ids {
 		sc := sidecars[id]
@@ -169,9 +169,9 @@ func readerOutputs(t *testing.T, raw []byte, sidecars map[string][]byte) map[str
 			transcriptFile.Subagents = map[string][]TranscriptMessage{}
 		}
 		scanFile.Subagents[id] = goldenResults(results)
-		transcriptFile.Subagents[id] = ParseTranscript(sc, nil)
-		fmt.Fprintf(&text, "\n===== subagent %s =====\n%s", id, RenderText(sc))
-		fmt.Fprintf(&md, "\n===== subagent %s =====\n%s", id, RenderMarkdown(sc))
+		transcriptFile.Subagents[id] = ParseTranscript(PlatformClaudeCode, sc, nil)
+		fmt.Fprintf(&text, "\n===== subagent %s =====\n%s", id, RenderText(PlatformClaudeCode, sc))
+		fmt.Fprintf(&md, "\n===== subagent %s =====\n%s", id, RenderMarkdown(PlatformClaudeCode, sc))
 	}
 
 	return map[string][]byte{
@@ -182,16 +182,18 @@ func readerOutputs(t *testing.T, raw []byte, sidecars map[string][]byte) map[str
 	}
 }
 
-// setLineCaps lowers both per-line caps for the duration of a test (0 leaves
-// production values). Not safe under t.Parallel — TestGolden does not use it.
+// setLineCaps lowers the shared per-line cap (scanLineCap — the one cap every
+// consumer reads through the Claude decoder, D11) for the duration of a test (0
+// leaves the production value). Not safe under t.Parallel — TestGolden does not
+// use it.
 func setLineCaps(t *testing.T, limit int) {
 	t.Helper()
 	if limit <= 0 {
 		return
 	}
-	prevScan, prevRender := scanLineCap, renderLineCap
-	scanLineCap, renderLineCap = limit, limit
-	t.Cleanup(func() { scanLineCap, renderLineCap = prevScan, prevRender })
+	prev := scanLineCap
+	scanLineCap = limit
+	t.Cleanup(func() { scanLineCap = prev })
 }
 
 func TestGolden(t *testing.T) {

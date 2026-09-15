@@ -51,7 +51,7 @@ func sessionIDPrefixPattern(prefix string) (string, error) {
 //   - v1: tool_result rows indexed as result text only.
 //
 //   - v2: tool_result rows tagged with their originating call summary
-//     (scanner.go collectToolUseSummaries), AND FTS-excluded result bodies
+//     (ToolResult.CallSummary, correlated by the Claude decoder), AND FTS-excluded result bodies
 //     (scanner.go ftsExcludedResult): Read/NotebookRead file/cell dumps and
 //     Edit/Write success boilerplate (its real signal — the diff — lives in
 //     toolUseResult, not the indexable message body). Each excluded call stays

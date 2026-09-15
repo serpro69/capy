@@ -83,7 +83,9 @@ func (m viewerModel) loadSession(sess vault.Session, files []vault.File) viewerM
 	m.inInline = false
 	m.inlineLabel = ""
 	m.savedMainLine = 0
-	m.main = renderTranscript(vault.ParseTranscript(sess.RawJSONL, m.subIDs), m.styles, m.contentWidth())
+	// TODO(codex-vault-sessions Slice 5): pass sess.Platform once the store row
+	// carries it (migration 0006); every archived row is Claude until then.
+	m.main = renderTranscript(vault.ParseTranscript(vault.PlatformClaudeCode, sess.RawJSONL, m.subIDs), m.styles, m.contentWidth())
 	m.ready = true
 	return m.setActive(m.main, 0)
 }
@@ -116,7 +118,9 @@ func (m viewerModel) openSubagent(id string, line int) viewerModel {
 		m.savedMainLine = m.main.lineForRow(m.vp.YOffset)
 	}
 	// nil subIDs: a subagent transcript has no nested subagent markers to map.
-	sub := renderTranscript(vault.ParseTranscript(raw, nil), m.styles, m.contentWidth())
+	// Sidecars are always Claude JSONL (a Claude Code concept), whatever the
+	// session's platform.
+	sub := renderTranscript(vault.ParseTranscript(vault.PlatformClaudeCode, raw, nil), m.styles, m.contentWidth())
 	m.inSub = true
 	m.subID = id
 	m.inInline = false
