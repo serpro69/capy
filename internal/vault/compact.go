@@ -200,7 +200,12 @@ func collectLegacyKeys(ctx context.Context, db *sql.DB, listSQL string, nCols in
 
 // markCompressed records the min_reader_version marker in its own transaction,
 // used by Compact after it produced at least one zstd blob. It mirrors the
-// once-per-write-tx stamping in writeRecord; INSERT OR IGNORE makes it idempotent.
+// once-per-write-tx stamping in writeOne/WriteBatch and is idempotent (monotonic
+// upsert). It stamps exactly readerVersionZstd — the version a compressed blob
+// requires — and NOT supportedReaderVersion: compact knows nothing about
+// platforms, and stamping the binary's maximum would lock older binaries out of
+// a Claude-only vault the moment the user compacts it (codec.go readerVersion*).
+// A vault that already carries a higher marker (a Codex row) keeps it.
 func (s *VaultStore) markCompressed(ctx context.Context) error {
 	db, err := s.getDB(ctx)
 	if err != nil {
@@ -211,7 +216,7 @@ func (s *VaultStore) markCompressed(ctx context.Context) error {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := markMinReaderVersion(ctx, tx); err != nil {
+	if err := markMinReaderVersion(ctx, tx, readerVersionZstd); err != nil {
 		return err
 	}
 	return tx.Commit()

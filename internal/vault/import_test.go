@@ -52,6 +52,8 @@ func TestImport_InsertsSessionWithMetadataAndFTS(t *testing.T) {
 	assert.False(t, got.EndTime.IsZero())
 	assert.True(t, bytes.Equal(sampleMainJSONL(t), got.RawJSONL), "raw_jsonl preserved verbatim")
 	assert.Equal(t, currentIndexVersion, got.IndexVersion, "fresh import stamps the current indexer version")
+	assert.Equal(t, PlatformClaudeCode, got.Platform, "disk import stamps the decoder's platform (Claude until Slice 7)")
+	assert.Empty(t, got.ParentUUID, "a Claude session is never a child")
 
 	files, err := s.GetFiles(context.Background(), uuid)
 	require.NoError(t, err)

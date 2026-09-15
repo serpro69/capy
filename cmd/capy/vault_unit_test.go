@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -102,6 +103,28 @@ func TestValidRole(t *testing.T) {
 	}
 	assert.False(t, validRole("bogus"))
 	assert.False(t, validRole(""))
+}
+
+// TestSessionsToJSON_Platform pins the `capy vault list --json` contract from
+// codex-vault-sessions Slice 5: every row carries "platform" (never omitted),
+// and "parent_uuid" appears only for a child session.
+func TestSessionsToJSON_Platform(t *testing.T) {
+	out := sessionsToJSON([]vault.Session{
+		{UUID: "claude-1", Platform: vault.PlatformClaudeCode},
+		{UUID: "codex-child", Platform: vault.PlatformCodex, ParentUUID: "codex-parent"},
+	})
+	require.Len(t, out, 2)
+	assert.Equal(t, "claude-code", out[0].Platform)
+	assert.Empty(t, out[0].ParentUUID)
+	assert.Equal(t, "codex", out[1].Platform)
+	assert.Equal(t, "codex-parent", out[1].ParentUUID)
+
+	b, err := json.MarshalIndent(out, "", "  ") // same encoding printJSON uses
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"platform": "claude-code"`)
+	assert.NotContains(t, strings.SplitN(string(b), "codex-child", 2)[0], `"parent_uuid"`,
+		"a top-level session must omit parent_uuid entirely")
+	assert.Contains(t, string(b), `"parent_uuid": "codex-parent"`)
 }
 
 func TestShortUUID(t *testing.T) {

@@ -321,6 +321,165 @@ func TestMergeFrom_V1ShapedSourceMergesCleanly(t *testing.T) {
 	assertSearchCount(t, dest, "v1token", 1)
 }
 
+// buildPre0006Source writes an encrypted source vault in the 0005 shape — the
+// `encoding` column present, NO platform / parent_uuid columns — holding one
+// session whose FIRST LINE is a file-history-snapshot (41 of 467 real Claude
+// sessions open that way). A merge that sniffed the first line of an
+// absent-column source could misjudge such rows; the contract is "absent ⇒
+// Claude, no sniff".
+func buildPre0006Source(t *testing.T, path, key, uuid, token string) []byte {
+	t.Helper()
+	dsn := sqliteutil.EncryptedDSN(path, key) + "&_busy_timeout=5000"
+	db, err := sql.Open("sqlite3", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	_, err = db.Exec(pre0006SessionsDDL + `
+		CREATE TABLE vault_files (
+		  session_uuid TEXT NOT NULL, relative_path TEXT NOT NULL, raw_content BLOB NOT NULL, encoding TEXT,
+		  PRIMARY KEY (session_uuid, relative_path)
+		);
+		CREATE TABLE vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+		INSERT INTO vault_meta (key, value) VALUES ('min_reader_version', '2');
+	`)
+	require.NoError(t, err)
+
+	main := jsonlBytes(t,
+		map[string]any{"type": "file-history-snapshot", "messageId": "x", "snapshot": map[string]any{"messageId": "x", "trackedFileBackups": map[string]any{}}, "isSnapshotUpdate": false},
+		userLine("u1", "/pre/proj", "main", "marker "+token),
+		assistantLine("a1", "m1", []map[string]any{{"type": "text", "text": "ack"}}),
+		aiTitleLine("pre-0006 title"),
+	)
+	_, err = db.Exec(`INSERT INTO vault_sessions
+		(uuid, title, message_count, size_bytes, content_hash, machine_id, claude_project_dir,
+		 project_path, git_branch, index_version, raw_jsonl, encoding)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'raw')`,
+		uuid, "pre-0006 title", 3, int64(len(main)), "prehash", "machine-pre", "-pre-proj", "/pre/proj", "main", main)
+	require.NoError(t, err)
+	return main
+}
+
+// TestMergeFrom_Pre0006SourceMergesAsClaudeWithoutSniff: a source lacking the
+// platform / parent_uuid columns merges completely, every row lands as a
+// top-level claude-code session, and the file-history-snapshot first line is
+// never consulted (it would be undetectable as anything but Claude anyway, but
+// the point is the merge must not error or route on it).
+func TestMergeFrom_Pre0006SourceMergesAsClaudeWithoutSniff(t *testing.T) {
+	const key = "shared-vault-key-at-least-32-characters!!"
+	ctx := context.Background()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "pre0006.db")
+	destPath := filepath.Join(dir, "dest.db")
+
+	const uuid = "9e000600-0000-0000-0000-000000000006"
+	mainBytes := buildPre0006Source(t, srcPath, key, uuid, "pretoken")
+	firstLine, _, _ := bytes.Cut(mainBytes, []byte("\n"))
+	require.Contains(t, string(firstLine), `"type":"file-history-snapshot"`, "fixture: first line is a snapshot")
+	detected, err := DetectFormat(mainBytes)
+	require.NoError(t, err)
+	require.Equal(t, PlatformClaudeCode, detected, "fixture: the snapshot line is Claude-shaped for the sniff too")
+
+	dest := openDest(t, destPath, key)
+	res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+	require.NoError(t, err, "a pre-0006 source must merge cleanly (no 'no such column: platform')")
+	assert.Equal(t, 1, res.Imported)
+	assert.Equal(t, 0, res.Errors)
+
+	got, err := dest.GetSession(ctx, uuid)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformClaudeCode, got.Platform, "absent platform column ⇒ Claude, no sniff")
+	assert.Empty(t, got.ParentUUID, "absent parent_uuid column ⇒ top-level")
+	assert.Equal(t, "machine-pre", got.MachineID)
+	assert.True(t, bytes.Equal(mainBytes, got.RawJSONL))
+	assertSearchCount(t, dest, "pretoken", 1)
+
+	// Only Claude rows were written: the destination marker stays at the zstd
+	// milestone at most, never the platform one.
+	db, err := dest.getDB(ctx)
+	require.NoError(t, err)
+	var marker sql.NullString
+	err = db.QueryRow(`SELECT value FROM vault_meta WHERE key = ?`, minReaderVersionKey).Scan(&marker)
+	if err == nil {
+		assert.NotEqual(t, "3", marker.String, "a Claude-only merge must not stamp the platform reader version")
+	} else {
+		assert.ErrorIs(t, err, sql.ErrNoRows)
+	}
+}
+
+// TestMergeFrom_0006SourceCarriesPlatformAndParent: a source that already has
+// the 0006 columns has its platform and parent_uuid carried verbatim (a Codex
+// parent + child and a Claude row), the child stays a child in the destination,
+// and the first Codex row raises the destination marker to 3.
+func TestMergeFrom_0006SourceCarriesPlatformAndParent(t *testing.T) {
+	const key = "shared-vault-key-at-least-32-characters!!"
+	ctx := context.Background()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "source.db")
+	destPath := filepath.Join(dir, "dest.db")
+
+	const (
+		claude = "c1a0de06-0000-0000-0000-000000000001"
+		parent = "c0de0006-0000-0000-0000-000000000002"
+		child  = "c0de0006-0000-0000-0000-000000000003"
+	)
+	claudeRec := mergeRecord(t, claude, "claudetok", 3, 1000, "hC", "machine-src", "/src/claude")
+	parentRec := mergeRecord(t, parent, "parenttok", 3, 1000, "hP", "machine-src", "/src/codex")
+	parentRec.Session.Platform = PlatformCodex
+	parentRec.Session.ClaudeProjectDir = "sessions/2026/09/01/rollout-2026-09-01T10-00-00-" + parent + ".jsonl"
+	childRec := mergeRecord(t, child, "childtok", 3, 1000, "hK", "machine-src", "/src/codex")
+	childRec.Session.Platform = PlatformCodex
+	childRec.Session.ParentUUID = parent
+	childRec.Session.ClaudeProjectDir = "sessions/2026/09/01/rollout-2026-09-01T10-01-00-" + child + ".jsonl"
+	buildVault(t, srcPath, key, claudeRec, parentRec, childRec)
+
+	dest := openDest(t, destPath, key)
+	res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 3, res.Imported)
+	assert.Equal(t, 0, res.Errors)
+
+	gotClaude, err := dest.GetSession(ctx, claude)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformClaudeCode, gotClaude.Platform)
+	assert.Empty(t, gotClaude.ParentUUID)
+
+	gotParent, err := dest.GetSession(ctx, parent)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformCodex, gotParent.Platform)
+	assert.Empty(t, gotParent.ParentUUID)
+	assert.Equal(t, parentRec.Session.ClaudeProjectDir, gotParent.ClaudeProjectDir, "location hint carried verbatim")
+
+	gotChild, err := dest.GetSession(ctx, child)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformCodex, gotChild.Platform)
+	assert.Equal(t, parent, gotChild.ParentUUID)
+
+	children, err := dest.Children(ctx, parent)
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, child, children[0].UUID)
+
+	top, err := dest.ListSessions(ctx, ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, top, 2, "the merged child stays hidden from the default listing")
+
+	for _, tok := range []string{"claudetok", "parenttok", "childtok"} {
+		assertSearchCount(t, dest, tok, 1)
+	}
+
+	db, err := dest.getDB(ctx)
+	require.NoError(t, err)
+	var marker string
+	require.NoError(t, db.QueryRow(`SELECT value FROM vault_meta WHERE key = ?`, minReaderVersionKey).Scan(&marker))
+	assert.Equal(t, "3", marker, "the first Codex row written raises the destination's reader marker")
+
+	// Idempotent re-merge: nothing new, nothing changed.
+	res, err = MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Imported)
+	assert.Equal(t, 3, res.Skipped)
+}
+
 // TestMergeFrom_MissingSourceKeyFails proves an explicitly wrong source key is a
 // clear error, not a silent empty merge.
 func TestMergeFrom_WrongSourceKeyFails(t *testing.T) {

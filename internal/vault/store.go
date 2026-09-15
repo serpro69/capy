@@ -77,9 +77,16 @@ func sessionIDPrefixPattern(prefix string) (string, error) {
 // by a re-`import` of a still-on-disk session (see import.go skip gate).
 const currentIndexVersion = 4
 
-// schemaSQL is the full v1 vault schema. Every table uses IF NOT EXISTS so the
-// DDL is safe to run on each open. vault_migrations is created by the migration
-// framework (migrations.go), not here.
+// schemaSQL is the full vault schema for a FRESH vault. Every table uses IF NOT
+// EXISTS so the DDL is safe to run on each open. vault_migrations is created by
+// the migration framework (migrations.go), not here.
+//
+// Ordering invariant: openDB runs schemaSQL BEFORE migrateVault, so on a legacy
+// vault every CREATE TABLE IF NOT EXISTS here is a no-op against the OLD table
+// shape. schemaSQL may therefore only reference columns that exist in every
+// historical schema outside its own CREATE TABLE bodies — in particular an
+// index over a column a migration adds (idx_sessions_parent over parent_uuid,
+// migration 0006) belongs in that migration ONLY, never here.
 const schemaSQL = `
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
@@ -101,7 +108,9 @@ CREATE TABLE IF NOT EXISTS vault_sessions (
   archived_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
   index_version      INTEGER NOT NULL DEFAULT 1,
   raw_jsonl          BLOB NOT NULL,
-  encoding           TEXT
+  encoding           TEXT,
+  platform           TEXT NOT NULL DEFAULT 'claude-code',
+  parent_uuid        TEXT
 );
 
 ` + sessionNamesTableSQL + `
@@ -188,7 +197,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vault_chunks_trigram USING fts5(
 // blob while retaining both imported-title and vault-owned name provenance.
 const sessionMetaColumns = `s.uuid, s.title, s.start_time, s.end_time, s.message_count, s.size_bytes, ` +
 	`s.content_hash, s.machine_id, s.claude_project_dir, s.project_path, s.git_branch, s.archived_at, ` +
-	`s.index_version, n.custom_title, n.renamed_at_ns, n.machine_id`
+	`s.index_version, n.custom_title, n.renamed_at_ns, n.machine_id, s.platform, s.parent_uuid`
 
 const sessionMetaJoin = ` FROM vault_sessions s
 	LEFT JOIN vault_session_names n ON n.session_uuid = s.uuid`
@@ -226,21 +235,36 @@ func (e *AmbiguousUUIDError) Error() string {
 // Session is one archived session row (vault_sessions). RawJSONL is populated
 // only by lookups that request it (GetSession); list queries leave it nil.
 type Session struct {
-	UUID             string
-	Title            string
-	StartTime        time.Time
-	EndTime          time.Time
-	MessageCount     int
-	SizeBytes        int64
-	ContentHash      string
-	MachineID        string
+	UUID         string
+	Title        string
+	StartTime    time.Time
+	EndTime      time.Time
+	MessageCount int
+	SizeBytes    int64
+	ContentHash  string
+	MachineID    string
+	// ClaudeProjectDir is the platform's LOCATION HINT (the column keeps its
+	// historical name): the mangled ~/.claude/projects dir for Claude Code, the
+	// rollout path relative to $CODEX_HOME (slash-separated, .zst stripped) for
+	// Codex. Restore writes the session back under it.
 	ClaudeProjectDir string
 	ProjectPath      string
 	GitBranch        string // empty == NULL
 	ArchivedAt       string // DB-managed timestamp; opaque string
 	IndexVersion     int    // FTS indexer version stamp (see currentIndexVersion)
-	RawJSONL         []byte
-	Name             *SessionName
+	// Platform is the agent CLI that produced the session (vault_sessions.platform,
+	// migration 0006). Reads always return a stored value (the column defaults to
+	// claude-code, so pre-0006 rows read as Claude). On WRITE an empty value is
+	// normalized to PlatformClaudeCode — mirroring the column default, so callers
+	// that predate the field keep writing Claude rows — while any other value must
+	// pass ParsePlatform or the write fails (writeRecord): an unrecognized platform
+	// is never persisted.
+	Platform Platform
+	// ParentUUID is the parent session of a child rollout (Codex sub-agents are
+	// standalone rollouts linked by parent_uuid). Empty == NULL; no foreign key.
+	ParentUUID string
+	RawJSONL   []byte
+	Name       *SessionName
 }
 
 // File is one preserved sidecar from a session directory (vault_files).
@@ -283,6 +307,14 @@ type ListOptions struct {
 	// name predicate — a SQL LIMIT would pre-truncate the candidate rows before
 	// filtering. Any new Go-side predicate must keep the limit after it.
 	Limit int
+	// IncludeChildren lists child sessions (parent_uuid IS NOT NULL) alongside
+	// top-level ones. The default (false) hides them — mirroring Codex's own
+	// pickers, which reach sub-agent threads from their parent, not from the
+	// top-level list (design § Sub-agent Model). Claude sessions never carry a
+	// parent, so a Claude-only vault lists identically either way.
+	IncludeChildren bool
+	// Platform restricts the listing to one platform ("" == no filter).
+	Platform Platform
 }
 
 // SearchOptions controls Search.
@@ -317,6 +349,10 @@ type SearchResult struct {
 	Title       string
 	ProjectPath string
 	EndTime     time.Time
+	// Platform and ParentUUID are the session's stored platform and parent (see
+	// Session), so a hit can be labeled per platform and marked as a child.
+	Platform   Platform
+	ParentUUID string
 	// Content and MatchLayer are populated by SearchChunks only: the full
 	// chunk text (so callers can run their own snippet extraction, and the
 	// retrieval benchmark can test needle recall) and the retrieval layer
@@ -476,8 +512,9 @@ func (s *VaultStore) prepareStatements(ctx context.Context, db *sql.DB) error {
 	if s.stmtInsertSession, err = db.PrepareContext(ctx, `
 		INSERT INTO vault_sessions
 			(uuid, title, start_time, end_time, message_count, size_bytes, content_hash,
-			 machine_id, claude_project_dir, project_path, git_branch, index_version, raw_jsonl, encoding)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
+			 machine_id, claude_project_dir, project_path, git_branch, index_version, raw_jsonl, encoding,
+			 platform, parent_uuid)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
 		return err
 	}
 
@@ -487,7 +524,8 @@ func (s *VaultStore) prepareStatements(ctx context.Context, db *sql.DB) error {
 		UPDATE vault_sessions SET
 			title = ?, start_time = ?, end_time = ?, message_count = ?, size_bytes = ?,
 			content_hash = ?, machine_id = ?, claude_project_dir = ?, project_path = ?,
-			git_branch = ?, index_version = ?, raw_jsonl = ?, encoding = ?
+			git_branch = ?, index_version = ?, raw_jsonl = ?, encoding = ?,
+			platform = ?, parent_uuid = ?
 		WHERE uuid = ?`); err != nil {
 		return err
 	}
@@ -679,10 +717,25 @@ func (s *VaultStore) writeOne(ctx context.Context, w SessionWrite) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	if err := s.writeRecord(ctx, tx, w); err != nil {
+	required, err := s.writeRecord(ctx, tx, w)
+	if err != nil {
+		return err
+	}
+	if err := stampReaderVersion(ctx, tx, required); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// stampReaderVersion records the reader-version requirement of a write
+// transaction: the highest version any record it wrote requires, or nothing when
+// required == 0. Called exactly once per write tx (writeOne, WriteBatch) so the
+// upsert runs once, not once per record.
+func stampReaderVersion(ctx context.Context, tx *sql.Tx, required int) error {
+	if required == 0 {
+		return nil
+	}
+	return markMinReaderVersion(ctx, tx, required)
 }
 
 // WriteBatch applies multiple SessionWrites in a single transaction so a bulk
@@ -705,19 +758,65 @@ func (s *VaultStore) WriteBatch(ctx context.Context, writes []SessionWrite) erro
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	// Stamp the reader marker ONCE per tx with the highest version any record in
+	// the batch requires (design § Reader version), not once per record.
+	required := 0
 	for _, w := range writes {
-		if err := s.writeRecord(ctx, tx, w); err != nil {
+		v, err := s.writeRecord(ctx, tx, w)
+		if err != nil {
 			return err
 		}
+		required = max(required, v)
+	}
+	if err := stampReaderVersion(ctx, tx, required); err != nil {
+		return err
 	}
 	return tx.Commit()
+}
+
+// writePlatform resolves the platform value to persist for sess: an empty value
+// is the column default (PlatformClaudeCode — callers that predate the field, and
+// Claude rows generally, need not set it); any other value must be a known
+// constant. An unrecognized value is refused rather than stored, because every
+// read path dispatches on the stored value and the reader-version rule (codec.go)
+// treats an unknown stored value as corruption.
+func writePlatform(sess *Session) (Platform, error) {
+	if sess.Platform == "" {
+		return PlatformClaudeCode, nil
+	}
+	p, err := ParsePlatform(string(sess.Platform))
+	if err != nil {
+		return "", fmt.Errorf("session %s: %w", sess.UUID, err)
+	}
+	return p, nil
+}
+
+// requiredReaderVersion returns the vault_meta.min_reader_version a record needs
+// once written: readerVersionPlatform for a non-Claude row (an older,
+// platform-blind binary would restore/resume/merge it as Claude — design § Reader
+// version), else readerVersionZstd when any of its blobs was zstd-encoded, else
+// 0 (no requirement — readable by a v1 binary).
+func requiredReaderVersion(platform Platform, anyZstd bool) int {
+	if platform != PlatformClaudeCode {
+		return readerVersionPlatform
+	}
+	if anyZstd {
+		return readerVersionZstd
+	}
+	return 0
 }
 
 // writeRecord writes one session record within tx. A replace UPDATEs the row in
 // place (preserving archived_at) and clears its files/FTS before rebuilding;
 // an insert adds a fresh row. Children (files + FTS) are written in both cases.
-func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite) error {
+// It returns the reader version the written record requires
+// (requiredReaderVersion); the caller stamps the marker once per transaction.
+func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite) (int, error) {
 	sess := &w.Record.Session
+	platform, err := writePlatform(sess)
+	if err != nil {
+		return 0, err
+	}
 	// Compress at the blob seam only — content_hash/size_bytes/FTS were already
 	// computed on the uncompressed bytes upstream (import.go), so encoding never
 	// affects idempotency, the larger-wins merge tiebreaker, or search.
@@ -728,18 +827,19 @@ func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite
 			sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
 			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch),
 			sess.IndexVersion, rawData, rawEnc,
+			string(platform), nullString(sess.ParentUUID),
 			sess.UUID,
 		); err != nil {
-			return fmt.Errorf("update session: %w", err)
+			return 0, fmt.Errorf("update session: %w", err)
 		}
 		if _, err := tx.StmtContext(ctx, s.stmtDeleteFilesBySession).ExecContext(ctx, sess.UUID); err != nil {
-			return fmt.Errorf("delete files: %w", err)
+			return 0, fmt.Errorf("delete files: %w", err)
 		}
 		if _, err := tx.StmtContext(ctx, s.stmtDeleteFTSBySession).ExecContext(ctx, sess.UUID); err != nil {
-			return fmt.Errorf("delete fts: %w", err)
+			return 0, fmt.Errorf("delete fts: %w", err)
 		}
 		if err := s.deleteChunks(ctx, tx, sess.UUID); err != nil {
-			return err
+			return 0, err
 		}
 	} else {
 		if _, err := tx.StmtContext(ctx, s.stmtInsertSession).ExecContext(ctx,
@@ -747,29 +847,23 @@ func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite
 			sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
 			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch),
 			sess.IndexVersion, rawData, rawEnc,
+			string(platform), nullString(sess.ParentUUID),
 		); err != nil {
-			return fmt.Errorf("insert session: %w", err)
+			return 0, fmt.Errorf("insert session: %w", err)
 		}
 	}
 	// After the session row exists (FK parent) and before children: carried
 	// name state reconciles in the same tx so new-session+name is atomic.
 	if w.Name != nil {
 		if _, err := reconcileSessionNameTx(ctx, tx, sess.UUID, *w.Name); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	childCompressed, err := s.writeChildren(ctx, tx, w.Record)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	// Stamp the forward-compat marker at most ONCE per write tx, when any blob
-	// (main or sidecar) was zstd-encoded. markMinReaderVersion is INSERT OR IGNORE,
-	// so doing it once here avoids a redundant ExecContext on the common path where
-	// both the transcript and its sidecars compress.
-	if rawEnc == encodingZstd || childCompressed {
-		return markMinReaderVersion(ctx, tx)
-	}
-	return nil
+	return requiredReaderVersion(platform, rawEnc == encodingZstd || childCompressed), nil
 }
 
 // writeChildren inserts the file and FTS rows for rec within tx. File blobs are
@@ -1118,10 +1212,23 @@ func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Sess
 	}
 
 	query := `SELECT ` + sessionMetaColumns + sessionMetaJoin
-	var args []any
+	var (
+		where []string
+		args  []any
+	)
 	if opts.Project != "" {
-		query += ` WHERE s.project_path LIKE ?`
+		where = append(where, `s.project_path LIKE ?`)
 		args = append(args, "%"+opts.Project+"%")
+	}
+	if !opts.IncludeChildren {
+		where = append(where, `s.parent_uuid IS NULL`)
+	}
+	if opts.Platform != "" {
+		where = append(where, `s.platform = ?`)
+		args = append(args, string(opts.Platform))
+	}
+	if len(where) > 0 {
+		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
 	query += ` ORDER BY s.end_time DESC`
 	if opts.Limit > 0 && opts.Name == "" {
@@ -1155,24 +1262,121 @@ func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Sess
 	return out, nil
 }
 
-// SessionDigest returns the stored content_hash, total size_bytes, and
-// index_version for an exact UUID, used by the import pipeline's idempotency +
-// reindex-gate check. found is false (with a nil error) when the session is not
-// yet archived.
-func (s *VaultStore) SessionDigest(ctx context.Context, uuid string) (hash string, size int64, indexVersion int, found bool, err error) {
+// Children returns the sessions whose parent_uuid is parentUUID (Codex sub-agent
+// rollouts), in spawn order (start_time, then uuid as a stable tiebreaker).
+// Metadata only — no blob. A session with no children yields an empty slice.
+func (s *VaultStore) Children(ctx context.Context, parentUUID string) ([]Session, error) {
 	db, err := s.getDB(ctx)
 	if err != nil {
-		return "", 0, 0, false, err
+		return nil, err
 	}
-	err = db.QueryRowContext(ctx, `SELECT content_hash, size_bytes, index_version FROM vault_sessions WHERE uuid = ?`, uuid).
-		Scan(&hash, &size, &indexVersion)
+	rows, err := db.QueryContext(ctx,
+		`SELECT `+sessionMetaColumns+sessionMetaJoin+` WHERE s.parent_uuid = ? ORDER BY s.start_time, s.uuid`,
+		parentUUID)
+	if err != nil {
+		return nil, fmt.Errorf("listing child sessions: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]Session, 0)
+	for rows.Next() {
+		var sess Session
+		if err := scanSessionMeta(rows, &sess, nil); err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating child sessions: %w", err)
+	}
+	return out, nil
+}
+
+// SessionDigest returns the stored content_hash, total size_bytes, index_version
+// and location hint (claude_project_dir — see Session.ClaudeProjectDir) for an
+// exact UUID, used by the import pipeline's idempotency + reindex-gate check and
+// by its Codex location policy (a same-hash rollout seen at a different relative
+// path moves the hint). found is false (with a nil error) when the session is
+// not yet archived.
+func (s *VaultStore) SessionDigest(ctx context.Context, uuid string) (hash string, size int64, indexVersion int, claudeProjectDir string, found bool, err error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return "", 0, 0, "", false, err
+	}
+	err = db.QueryRowContext(ctx,
+		`SELECT content_hash, size_bytes, index_version, claude_project_dir FROM vault_sessions WHERE uuid = ?`, uuid).
+		Scan(&hash, &size, &indexVersion, &claudeProjectDir)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", 0, 0, false, nil
+		return "", 0, 0, "", false, nil
 	}
 	if err != nil {
-		return "", 0, 0, false, fmt.Errorf("querying session digest: %w", err)
+		return "", 0, 0, "", false, fmt.Errorf("querying session digest: %w", err)
 	}
-	return hash, size, indexVersion, true, nil
+	return hash, size, indexVersion, claudeProjectDir, true, nil
+}
+
+// UpdateLocationHint rewrites ONLY a session's location hint (claude_project_dir)
+// in its own immediate transaction. It is the metadata-only update import's Codex
+// location policy performs when a same-hash rollout reappears at a new relative
+// path (Codex archive/unarchive is a move): no blob, hash, FTS, index_version or
+// archived_at is touched, so it deliberately stays outside WriteBatch's two
+// write shapes. Returns ErrSessionNotFound when uuid matches no row.
+func (s *VaultStore) UpdateLocationHint(ctx context.Context, uuid, hint string) error {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	res, err := tx.ExecContext(ctx, `UPDATE vault_sessions SET claude_project_dir = ? WHERE uuid = ?`, hint, uuid)
+	if err != nil {
+		return fmt.Errorf("updating location hint: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		// Never conflate a driver error with "no such session".
+		return fmt.Errorf("updating location hint: rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrSessionNotFound
+	}
+	return tx.Commit()
+}
+
+// CodexLocationSizes returns claude_project_dir → size_bytes for every Codex row:
+// the relative rollout path and its UNCOMPRESSED content size. The server sweep
+// turns it into the discovery skip predicate (a plain rollout already archived at
+// the same path with the same on-disk size is never opened; rollouts are
+// append-only, so an unchanged size means unchanged content for sweep purposes).
+func (s *VaultStore) CodexLocationSizes(ctx context.Context) (map[string]int64, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT claude_project_dir, size_bytes FROM vault_sessions WHERE platform = ?`, string(PlatformCodex))
+	if err != nil {
+		return nil, fmt.Errorf("querying codex locations: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]int64)
+	for rows.Next() {
+		var rel string
+		var size int64
+		if err := rows.Scan(&rel, &size); err != nil {
+			return nil, fmt.Errorf("scanning codex location: %w", err)
+		}
+		out[rel] = size
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating codex locations: %w", err)
+	}
+	return out, nil
 }
 
 // MachineSummary reports the total session count and how many were archived by
@@ -1216,7 +1420,7 @@ func (s *VaultStore) Search(ctx context.Context, opts SearchOptions) ([]SearchRe
 	query := `
 		SELECT f.session_uuid, f.subagent_id, f.line_index, f.role,
 		       snippet(vault_fts, 0, '[', ']', '…', 16),
-		       s.title, n.custom_title, s.project_path, s.end_time
+		       s.title, n.custom_title, s.project_path, s.end_time, s.platform, s.parent_uuid
 		FROM vault_fts f
 		JOIN vault_sessions s ON s.uuid = f.session_uuid
 		LEFT JOIN vault_session_names n ON n.session_uuid = f.session_uuid
@@ -1257,13 +1461,16 @@ func (s *VaultStore) Search(ctx context.Context, opts SearchOptions) ([]SearchRe
 	for rows.Next() {
 		var r SearchResult
 		var title, customTitle sql.NullString
-		var endTime sql.NullString
+		var endTime, parentUUID sql.NullString
+		var platform string
 		if err := rows.Scan(&r.SessionUUID, &r.SubagentID, &r.LineIndex, &r.Role,
-			&r.Snippet, &title, &customTitle, &r.ProjectPath, &endTime); err != nil {
+			&r.Snippet, &title, &customTitle, &r.ProjectPath, &endTime, &platform, &parentUUID); err != nil {
 			return nil, fmt.Errorf("scanning search result: %w", err)
 		}
 		r.Title = effectiveSearchTitle(title, customTitle)
 		r.EndTime = parseTime(endTime)
+		r.Platform = Platform(platform)
+		r.ParentUUID = parentUUID.String
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -1294,11 +1501,25 @@ type VaultStats struct {
 	// backlog are visible in `capy vault stats`.
 	IndexVersion     int
 	OutdatedSessions int
+	// ByPlatform breaks the archive down per producing agent CLI (stored
+	// platform value, ascending); Children counts rows with a parent_uuid —
+	// the sub-agent sessions `list` hides by default.
+	ByPlatform []PlatformStat
+	Children   int
+}
+
+// PlatformStat is the archived-session count and summed content size for one
+// platform value.
+type PlatformStat struct {
+	Platform Platform
+	Sessions int
+	Bytes    int64
 }
 
 // Stats returns the session count, summed content size, oldest/newest activity,
-// and per-project breakdown. start_time/end_time are stored as fixed-width
-// RFC3339 UTC strings, so MIN/MAX over them is chronological.
+// per-project and per-platform breakdowns, and the child-session count.
+// start_time/end_time are stored as fixed-width RFC3339 UTC strings, so MIN/MAX
+// over them is chronological.
 func (s *VaultStore) Stats(ctx context.Context) (*VaultStats, error) {
 	db, err := s.getDB(ctx)
 	if err != nil {
@@ -1310,29 +1531,49 @@ func (s *VaultStore) Stats(ctx context.Context) (*VaultStats, error) {
 	var oldest, newest sql.NullString
 	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*), COALESCE(SUM(size_bytes), 0), MIN(start_time), MAX(end_time),
-		        COALESCE(SUM(CASE WHEN index_version < ? THEN 1 ELSE 0 END), 0)
+		        COALESCE(SUM(CASE WHEN index_version < ? THEN 1 ELSE 0 END), 0),
+		        COALESCE(SUM(CASE WHEN parent_uuid IS NOT NULL THEN 1 ELSE 0 END), 0)
 		 FROM vault_sessions`, currentIndexVersion,
-	).Scan(&st.Sessions, &st.TotalBytes, &oldest, &newest, &st.OutdatedSessions); err != nil {
+	).Scan(&st.Sessions, &st.TotalBytes, &oldest, &newest, &st.OutdatedSessions, &st.Children); err != nil {
 		return nil, fmt.Errorf("querying vault stats: %w", err)
 	}
 	st.Oldest = parseTime(oldest)
 	st.Newest = parseTime(newest)
 
-	rows, err := db.QueryContext(ctx,
+	projects, err := db.QueryContext(ctx,
 		`SELECT project_path, COUNT(*) FROM vault_sessions GROUP BY project_path ORDER BY COUNT(*) DESC, project_path`)
 	if err != nil {
 		return nil, fmt.Errorf("querying project stats: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
+	defer projects.Close()
+	for projects.Next() {
 		var p ProjectStat
-		if err := rows.Scan(&p.ProjectPath, &p.Count); err != nil {
+		if err := projects.Scan(&p.ProjectPath, &p.Count); err != nil {
 			return nil, fmt.Errorf("scanning project stat: %w", err)
 		}
 		st.ByProject = append(st.ByProject, p)
 	}
-	if err := rows.Err(); err != nil {
+	if err := projects.Err(); err != nil {
 		return nil, fmt.Errorf("iterating project stats: %w", err)
+	}
+
+	platforms, err := db.QueryContext(ctx,
+		`SELECT platform, COUNT(*), COALESCE(SUM(size_bytes), 0) FROM vault_sessions GROUP BY platform ORDER BY platform`)
+	if err != nil {
+		return nil, fmt.Errorf("querying platform stats: %w", err)
+	}
+	defer platforms.Close()
+	for platforms.Next() {
+		var p PlatformStat
+		var platform string
+		if err := platforms.Scan(&platform, &p.Sessions, &p.Bytes); err != nil {
+			return nil, fmt.Errorf("scanning platform stat: %w", err)
+		}
+		p.Platform = Platform(platform)
+		st.ByPlatform = append(st.ByPlatform, p)
+	}
+	if err := platforms.Err(); err != nil {
+		return nil, fmt.Errorf("iterating platform stats: %w", err)
 	}
 	return &st, nil
 }
@@ -1347,11 +1588,14 @@ func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 	var startTime, endTime sql.NullString
 	var customTitle, nameMachineID sql.NullString
 	var renamedAtNS sql.NullInt64
+	var platform string
+	var parentUUID sql.NullString
 	dest := []any{
 		&sess.UUID, &title, &startTime, &endTime, &sess.MessageCount, &sess.SizeBytes,
 		&sess.ContentHash, &sess.MachineID, &sess.ClaudeProjectDir, &sess.ProjectPath,
 		&gitBranch, &archivedAt, &sess.IndexVersion,
 		&customTitle, &renamedAtNS, &nameMachineID,
+		&platform, &parentUUID,
 	}
 	var encoding sql.NullString
 	var rawBlob []byte
@@ -1366,6 +1610,10 @@ func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 	sess.ArchivedAt = archivedAt.String
 	sess.StartTime = parseTime(startTime)
 	sess.EndTime = parseTime(endTime)
+	// Stored verbatim, not re-validated: a read must surface a corrupted value
+	// (so reindex/merge can warn on it) rather than fail the whole listing.
+	sess.Platform = Platform(platform)
+	sess.ParentUUID = parentUUID.String
 	if renamedAtNS.Valid {
 		sess.Name = &SessionName{
 			CustomTitle: nullStringPointer(customTitle),

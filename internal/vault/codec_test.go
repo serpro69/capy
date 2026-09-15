@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -217,7 +219,10 @@ func TestVaultStore_MinReaderVersionSetAfterCompressedWrite(t *testing.T) {
 		require.NoError(t, err)
 		var v string
 		require.NoError(t, db.QueryRow(`SELECT value FROM vault_meta WHERE key=?`, minReaderVersionKey).Scan(&v))
-		assert.Equal(t, fmt.Sprintf("%d", supportedReaderVersion), v)
+		// A compressed Claude row requires exactly the zstd milestone — NOT the
+		// binary's supportedReaderVersion — so older binaries keep opening a
+		// Claude-only vault (design § Reader version).
+		assert.Equal(t, strconv.Itoa(readerVersionZstd), v)
 	})
 
 	t.Run("no-compress write leaves the marker absent", func(t *testing.T) {
@@ -232,6 +237,103 @@ func TestVaultStore_MinReaderVersionSetAfterCompressedWrite(t *testing.T) {
 		var v string
 		err = db.QueryRow(`SELECT value FROM vault_meta WHERE key=?`, minReaderVersionKey).Scan(&v)
 		assert.ErrorIs(t, err, sql.ErrNoRows, "raw-only write must not stamp min_reader_version")
+	})
+}
+
+// TestVaultStore_MinReaderVersionMonotonic pins the platform milestone and the
+// monotonic marker (design § Reader version): the first Codex row raises an
+// absent or zstd-level marker to readerVersionPlatform, a later zstd-only write
+// never lowers it, and a Claude-only vault never reaches it — including through
+// a batch that mixes compressed Claude rows.
+func TestVaultStore_MinReaderVersionMonotonic(t *testing.T) {
+	ctx := context.Background()
+	marker := func(t *testing.T, s *VaultStore) string {
+		t.Helper()
+		db, err := s.getDB(ctx)
+		require.NoError(t, err)
+		var v string
+		err = db.QueryRow(`SELECT value FROM vault_meta WHERE key=?`, minReaderVersionKey).Scan(&v)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ""
+		}
+		require.NoError(t, err)
+		return v
+	}
+	codexRecord := func(uuid string) *SessionRecord {
+		rec := sampleRecord(uuid)
+		rec.Session.Platform = PlatformCodex
+		return rec
+	}
+
+	t.Run("absent marker → platform version on a codex write", func(t *testing.T) {
+		t.Setenv(noCompressEnv, "1") // no zstd anywhere: the platform alone must stamp
+		s := newTestVault(t)
+		require.Empty(t, marker(t, s))
+		require.NoError(t, s.InsertSession(ctx, codexRecord("c0dec0de-0000-0000-0000-000000000001")))
+		assert.Equal(t, strconv.Itoa(readerVersionPlatform), marker(t, s))
+	})
+
+	t.Run("zstd marker is raised to the platform version", func(t *testing.T) {
+		s := newTestVault(t)
+		claude := sampleRecord("c0dec0de-0000-0000-0000-000000000002")
+		claude.Session.RawJSONL = compressibleBytes()
+		require.NoError(t, s.InsertSession(ctx, claude))
+		require.Equal(t, strconv.Itoa(readerVersionZstd), marker(t, s), "precondition: compressed Claude row stamps 2")
+
+		require.NoError(t, s.InsertSession(ctx, codexRecord("c0dec0de-0000-0000-0000-000000000003")))
+		assert.Equal(t, strconv.Itoa(readerVersionPlatform), marker(t, s), "INSERT OR IGNORE could never raise 2 → 3; the upsert must")
+	})
+
+	t.Run("platform marker is never lowered by a zstd-only write", func(t *testing.T) {
+		s := newTestVault(t)
+		require.NoError(t, s.InsertSession(ctx, codexRecord("c0dec0de-0000-0000-0000-000000000004")))
+		require.Equal(t, strconv.Itoa(readerVersionPlatform), marker(t, s))
+
+		claude := sampleRecord("c0dec0de-0000-0000-0000-000000000005")
+		claude.Session.RawJSONL = compressibleBytes()
+		require.NoError(t, s.InsertSession(ctx, claude))
+		assert.Equal(t, strconv.Itoa(readerVersionPlatform), marker(t, s))
+	})
+
+	t.Run("claude-only vault stays at the zstd version, batch included", func(t *testing.T) {
+		s := newTestVault(t)
+		a := sampleRecord("c0dec0de-0000-0000-0000-000000000006")
+		a.Session.RawJSONL = compressibleBytes()
+		b := sampleRecord("c0dec0de-0000-0000-0000-000000000007") // tiny → raw
+		require.NoError(t, s.WriteBatch(ctx, []SessionWrite{{Record: a}, {Record: b}}))
+		assert.Equal(t, strconv.Itoa(readerVersionZstd), marker(t, s))
+		assert.NotEqual(t, strconv.Itoa(supportedReaderVersion), marker(t, s),
+			"a Claude-only vault must remain openable by a pre-platform binary")
+	})
+
+	t.Run("batch stamps the highest version any record requires, once", func(t *testing.T) {
+		s := newTestVault(t)
+		a := sampleRecord("c0dec0de-0000-0000-0000-000000000008")
+		a.Session.RawJSONL = compressibleBytes()
+		require.NoError(t, s.WriteBatch(ctx, []SessionWrite{
+			{Record: a},
+			{Record: codexRecord("c0dec0de-0000-0000-0000-000000000009")},
+			{Record: sampleRecord("c0dec0de-0000-0000-0000-00000000000a")},
+		}))
+		assert.Equal(t, strconv.Itoa(readerVersionPlatform), marker(t, s))
+	})
+
+	t.Run("marker text compares numerically, not lexically", func(t *testing.T) {
+		s := newTestVault(t)
+		db, err := s.getDB(ctx)
+		require.NoError(t, err)
+		_, err = db.Exec(`INSERT INTO vault_meta (key, value) VALUES (?, '10')`, minReaderVersionKey)
+		require.NoError(t, err)
+		tx, err := db.Begin()
+		require.NoError(t, err)
+		require.NoError(t, markMinReaderVersion(ctx, tx, 9))
+		require.NoError(t, tx.Commit())
+		assert.Equal(t, "10", marker(t, s), `"9" > "10" lexically — a text comparison would have lowered the marker`)
+
+		tx, err = db.Begin()
+		require.NoError(t, err)
+		require.Error(t, markMinReaderVersion(ctx, tx, 0), "a zero/negative version is a programmer error, not a no-op")
+		_ = tx.Rollback()
 	})
 }
 
@@ -254,11 +356,26 @@ func TestVaultStore_ReaderVersionGate(t *testing.T) {
 
 	t.Run("future version is refused", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "vault.db")
+		// supportedReaderVersion is 3 (platform milestone), so 4 is the first
+		// marker this binary must refuse.
+		require.Equal(t, 4, supportedReaderVersion+1)
 		setMarker(t, path, fmt.Sprintf("%d", supportedReaderVersion+1))
 
 		err := NewVaultStore(path).Open(ctx)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "requires reader version")
+		assert.Contains(t, err.Error(), "requires reader version 4")
+	})
+
+	t.Run("a codex-bearing vault opens on this binary", func(t *testing.T) {
+		// Marker 3 is exactly what the first Codex row stamps (see
+		// TestVaultStore_MinReaderVersionMonotonic); an older binary supporting only
+		// 2 refuses it through this same gate.
+		path := filepath.Join(t.TempDir(), "vault.db")
+		setMarker(t, path, fmt.Sprintf("%d", readerVersionPlatform))
+
+		s := NewVaultStore(path)
+		t.Cleanup(func() { _ = s.Close() })
+		require.NoError(t, s.Open(ctx))
 	})
 
 	t.Run("supported version opens", func(t *testing.T) {

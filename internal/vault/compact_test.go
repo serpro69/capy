@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -128,6 +129,50 @@ func TestVaultStore_Compact_RewritesLegacyBlobs(t *testing.T) {
 	assert.Equal(t, "2", metaValue(t, s, ctx, minReaderVersionKey))
 }
 
+// TestVaultStore_Compact_StampsZstdVersionOnly pins the compact-side reader
+// marker (codex-vault-sessions design § Reader version): compacting a Claude-only
+// vault leaves the marker at exactly readerVersionZstd (2) — never the binary's
+// supportedReaderVersion (3) — so older binaries keep opening it; and compacting a
+// vault that already holds a Codex row (marker 3) never lowers it.
+func TestVaultStore_Compact_StampsZstdVersionOnly(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("claude-only vault stays at 2", func(t *testing.T) {
+		s := newTestVault(t)
+		db, err := s.getDB(ctx)
+		require.NoError(t, err)
+		insertLegacyRow(t, db, "4eadc0de-0000-0000-0000-000000000004", largeCompressibleBytes(), nil, "")
+		require.Equal(t, 0, countMeta(t, s, ctx, minReaderVersionKey), "precondition: legacy vault carries no marker")
+
+		res, err := s.Compact(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 1, res.SessionsRewritten)
+
+		require.NoError(t, s.Open(ctx))
+		assert.Equal(t, strconv.Itoa(readerVersionZstd), metaValue(t, s, ctx, minReaderVersionKey))
+		assert.NotEqual(t, strconv.Itoa(supportedReaderVersion), metaValue(t, s, ctx, minReaderVersionKey),
+			"compact must never stamp the binary's maximum; only what a zstd blob requires")
+	})
+
+	t.Run("codex-bearing vault keeps 3", func(t *testing.T) {
+		s := newTestVault(t)
+		codex := sampleRecord("5eadc0de-0000-0000-0000-000000000005")
+		codex.Session.Platform = PlatformCodex
+		require.NoError(t, s.InsertSession(ctx, codex))
+		db, err := s.getDB(ctx)
+		require.NoError(t, err)
+		insertLegacyRow(t, db, "5eadc0de-0000-0000-0000-000000000006", largeCompressibleBytes(), nil, "")
+		require.Equal(t, strconv.Itoa(readerVersionPlatform), metaValue(t, s, ctx, minReaderVersionKey))
+
+		_, err = s.Compact(ctx)
+		require.NoError(t, err)
+
+		require.NoError(t, s.Open(ctx))
+		assert.Equal(t, strconv.Itoa(readerVersionPlatform), metaValue(t, s, ctx, minReaderVersionKey),
+			"the monotonic marker must not be lowered by compact's zstd stamp")
+	})
+}
+
 // TestVaultStore_Compact_SecondRunIsNoOp proves Compact is idempotent: once every
 // blob carries an encoding, a second run rewrites nothing and skips VACUUM.
 func TestVaultStore_Compact_SecondRunIsNoOp(t *testing.T) {
@@ -233,4 +278,13 @@ func metaValue(t *testing.T, s *VaultStore, ctx context.Context, key string) str
 	var v string
 	require.NoError(t, db.QueryRow(`SELECT value FROM vault_meta WHERE key = ?`, key).Scan(&v))
 	return v
+}
+
+func countMeta(t *testing.T, s *VaultStore, ctx context.Context, key string) int {
+	t.Helper()
+	db, err := s.getDB(ctx)
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_meta WHERE key = ?`, key).Scan(&n))
+	return n
 }

@@ -139,11 +139,10 @@ func TestPlatform_ReaderVersionPairing(t *testing.T) {
 	// The milestones themselves, pinned so a renumbering is deliberate.
 	assert.Equal(t, 2, readerVersionZstd)
 	assert.Equal(t, 3, readerVersionPlatform)
-	// Nothing writes a Codex row before codex-vault-sessions Slice 5, so this
-	// binary still supports exactly the zstd milestone. Slice 5 flips this to
-	// readerVersionPlatform together with the per-record stamping — update the
-	// assertion there, do not delete it.
-	assert.Equal(t, readerVersionZstd, supportedReaderVersion)
+	// This binary knows every platform constant, so it supports the platform
+	// milestone. A future milestone raises both together; never raise
+	// supportedReaderVersion without a readerVersion* constant that names why.
+	assert.Equal(t, readerVersionPlatform, supportedReaderVersion)
 }
 
 func TestDecoderFor(t *testing.T) {

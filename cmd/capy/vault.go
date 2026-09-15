@@ -1136,6 +1136,10 @@ type sessionJSON struct {
 	EndTime   string `json:"end_time,omitempty"`
 	Messages  int    `json:"message_count"`
 	SizeBytes int64  `json:"size_bytes"`
+	// Platform is always present (every row stores one); ParentUUID only for a
+	// child session (Codex sub-agent rollouts).
+	Platform   string `json:"platform"`
+	ParentUUID string `json:"parent_uuid,omitempty"`
 }
 
 func sessionsToJSON(sessions []vault.Session) []sessionJSON {
@@ -1145,6 +1149,7 @@ func sessionsToJSON(sessions []vault.Session) []sessionJSON {
 			UUID: s.UUID, Title: s.EffectiveTitle(), Project: s.ProjectPath, GitBranch: s.GitBranch,
 			StartTime: rfc3339(s.StartTime), EndTime: rfc3339(s.EndTime),
 			Messages: s.MessageCount, SizeBytes: s.SizeBytes,
+			Platform: s.Platform.String(), ParentUUID: s.ParentUUID,
 		})
 	}
 	return out

@@ -40,25 +40,30 @@ const noCompressEnv = "CAPY_VAULT_NO_COMPRESS"
 // lacking a constant must refuse the vault at open rather than mis-read its rows
 // (an older binary's restore/resume/merge are platform-blind and would corrupt).
 // TestPlatform_ReaderVersionPairing pins each constant to its version.
+//
+// Every stamping site passes the version ITS OWN write requires, never
+// supportedReaderVersion: the batch writer stamps the highest version any record
+// in the transaction needs (store.go requiredReaderVersion), and `capy vault
+// compact` (compact.go markCompressed), which only recompresses blobs, stamps
+// readerVersionZstd — so compacting a Claude-only vault leaves the marker at 2
+// and older binaries can still open it.
 const (
 	// readerVersionZstd: zstd-encoded blobs (vault v2, `encoding` column).
 	readerVersionZstd = 2
 	// readerVersionPlatform: rows whose platform is not claude-code (Codex
-	// sessions). Nothing writes such a row yet — markMinReaderVersion still stamps
-	// supportedReaderVersion unconditionally; codex-vault-sessions Slice 5 makes
-	// it take the version per record and raises supportedReaderVersion to this.
+	// sessions, migration 0006). Every older binary is platform-blind — its
+	// restore would write a Codex row under ~/.claude/projects, its resume would
+	// launch `claude --resume` on a Codex uuid, and its merge would rescan the
+	// blob with the Claude scanner and store it as claude-code with empty FTS, a
+	// permanent mislabel — so the first such row must lock older binaries out.
 	readerVersionPlatform = 3
 )
 
 // supportedReaderVersion is the highest vault min_reader_version this binary can
-// read. v2 introduces zstd blobs, so a compressed vault is stamped
-// min_reader_version="2" (markMinReaderVersion) and this binary supports 2. A
-// vault whose marker exceeds this (a future on-disk format this binary predates)
-// is refused on open by checkReaderVersion rather than silently mis-read.
-//
-// TODO(codex-vault-sessions Slice 5): raise to readerVersionPlatform together
-// with the per-record stamping in writeRecord/WriteBatch and compact.go.
-const supportedReaderVersion = readerVersionZstd
+// read: readerVersionPlatform, since it knows every platform constant. A vault
+// whose marker exceeds this (a future on-disk format this binary predates) is
+// refused on open by checkReaderVersion rather than silently mis-read.
+const supportedReaderVersion = readerVersionPlatform
 
 // minReaderVersionKey is the vault_meta row key carrying the minimum reader
 // version required to safely read the vault. Absent ⇒ no constraint (a v1 vault,
@@ -127,17 +132,28 @@ func decodeBlob(encoding string, b []byte) ([]byte, error) {
 	}
 }
 
-// markMinReaderVersion records, idempotently, that the vault now holds compressed
-// blobs and therefore requires a reader supporting supportedReaderVersion. It is
-// called within the write transaction whenever encodeBlob produced a zstd blob.
-// INSERT OR IGNORE keeps it a cheap index probe once the marker exists. It cannot
-// protect a v1 binary (which predates the marker and reads compressed bytes as
-// garbage — a documented cross-version constraint), but a future v3 that bumps the
-// marker is then refused by a v2 binary's checkReaderVersion instead of mis-reading.
-func markMinReaderVersion(ctx context.Context, tx *sql.Tx) error {
+// markMinReaderVersion records that the vault now holds a record requiring a
+// reader that supports version, within the caller's write transaction. It is a
+// MONOTONIC upsert: it creates an absent marker and raises a lower one, but
+// never lowers an existing marker — a later zstd-only write on a vault already
+// holding a Codex row must not roll 3 back to 2. Callers pass the version their
+// own write requires (readerVersionZstd / readerVersionPlatform), never
+// supportedReaderVersion (see the readerVersion* comment). It cannot protect a
+// v1 binary (which predates the marker and reads compressed bytes as garbage — a
+// documented cross-version constraint), but every binary since refuses a vault
+// whose marker it does not support (checkReaderVersion) instead of mis-reading.
+//
+// The marker is stored as TEXT (vault_meta.value); the comparison casts both
+// sides to INTEGER so "10" never sorts below "9".
+func markMinReaderVersion(ctx context.Context, tx *sql.Tx, version int) error {
+	if version <= 0 {
+		return fmt.Errorf("marking min_reader_version: invalid version %d", version)
+	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT OR IGNORE INTO vault_meta (key, value) VALUES (?, ?)`,
-		minReaderVersionKey, strconv.Itoa(supportedReaderVersion)); err != nil {
+		`INSERT INTO vault_meta (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value
+		 WHERE CAST(vault_meta.value AS INTEGER) < CAST(excluded.value AS INTEGER)`,
+		minReaderVersionKey, strconv.Itoa(version)); err != nil {
 		return fmt.Errorf("marking min_reader_version: %w", err)
 	}
 	return nil
