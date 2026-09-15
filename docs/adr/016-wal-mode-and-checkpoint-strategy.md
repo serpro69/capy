@@ -17,6 +17,8 @@ Use a two-layer checkpoint strategy:
 
 2. **Git pre-commit hook** — installed by `capy setup`. Runs `capy checkpoint` when the knowledge DB is staged. Re-stages the DB after checkpoint so git commits the flushed state. Covers both Claude-initiated and manual terminal commits. Works because the MCP server is typically not running during manual commits.
 
+3. **DB-repo guard hook** — installed by `capy setup --db-repo` for a repository that *holds* knowledge databases (one subdirectory per project) rather than a project. It is pure `sh` with no capy binary or key dependency: it never checkpoints or repairs, it only *refuses* an unsafe staged `*.db` — one that is plaintext, or has a non-empty `-wal`/present `-shm` sidecar. The "no sidecars ⇒ main file complete" invariant (layer 1 removes them on clean shutdown) is what lets a keyless hook decide safety. Repair happens in the owning project (`capy encrypt`, or `capy checkpoint --project-dir <project>` from anywhere) — the DB repo never sees per-project keys. See [issue #90](https://github.com/serpro69/capy/issues/90) / `docs/feat/wip/separate-db-repo/design.md`.
+
 ### Rejected approaches
 
 **SessionEnd hook** was implemented and then removed. The hook fires while the MCP server still holds the DB connection open. A second connection from the hook cannot get exclusive WAL access, so `wal_checkpoint(TRUNCATE)` degrades to a passive checkpoint — leaving data in WAL/SHM files. The MCP server's own shutdown checkpoint is the correct mechanism.
@@ -25,6 +27,8 @@ Use a two-layer checkpoint strategy:
 - Command parsing is unreliable (aliases, pipelines, chained commands)
 - Git commits from the index, not the working tree — checkpointing the DB on disk doesn't help unless it's also re-staged, making the hook intrusive
 - The git pre-commit hook already covers this at the correct layer
+
+**Checkpoint from the DB repo** (a `--db <file>` flag, a `.project` reverse-mapping symlink, and the hook sourcing the owning project's env to obtain its key) was rejected for the DB-repo guard hook above. It bought only the ability to repair a stale WAL from inside the DB repo — where a live session's checkpoint is usually *busy* anyway — at the cost of per-project key handling inside a repo that is meant to hold none. A keyless checkpoint was also proven impossible (the sqlite3mc driver cannot open an encrypted DB without the key). "Refuse, don't repair" is the right contract; repair belongs in the owning project. Full rationale in `docs/feat/wip/separate-db-repo/design.md`.
 
 ## Open Question: Is WAL mode necessary?
 
@@ -42,8 +46,10 @@ The tradeoff: WAL provides better read performance during concurrent writes (rea
 
 ## Consequences
 
-- `capy checkpoint` CLI command exists for manual use (when server is not running)
+- `capy checkpoint` CLI command exists for manual use (when server is not running); `--project-dir <project>` targets a specific project from anywhere (the remedy the DB-repo guard hook names)
 - MCP server checkpoints on shutdown via `ContentStore.Close()`
 - Git pre-commit hook installed by `capy setup` (non-fatal if hooks dir is inaccessible)
+- DB-repo guard hook installed by `capy setup --db-repo` — pure `sh`, refuses staged DBs with sidecars or plaintext; keeps a dedicated DB repo safe to commit from without a key
+- The `capy setup` wrapper (`capy.sh`) propagates real exit codes for every subcommand **except** `hook` events (which still always exit 0). Consequence: a busy or failed `capy checkpoint` now **fails the project pre-commit hook** instead of silently committing a stale main file — a deliberate, user-visible change
 - SessionEnd hook is a no-op placeholder for future cleanup tasks (not checkpoint)
 - Future: if WAL mode is dropped, all checkpoint mechanisms can be removed

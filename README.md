@@ -307,7 +307,7 @@ export CAPY_DB_KEY='same-passphrase'
 capy serve         # DB opens with your key
 ```
 
-The pre-commit hook rejects unencrypted databases automatically — run `capy encrypt` first if the commit is blocked.
+The pre-commit hook rejects unencrypted databases automatically — run `capy encrypt` first if the commit is blocked. It also **blocks the commit if the checkpoint fails** (e.g. the MCP server is still holding the DB): the `capy setup` wrapper propagates real exit codes for every subcommand except `hook` events, so a busy checkpoint now fails the commit instead of silently committing a stale file. Stop the session (or wait for the server to release the DB) and re-commit.
 
 > **Git worktrees.** With a project-scoped `store.path`, sessions running in a [git
 > worktree](https://git-scm.com/docs/git-worktree) automatically use the **main**
@@ -343,6 +343,9 @@ git init ~/capy-db && mkdir -p ~/capy-db/myproject
 capy checkpoint                                        # flush WAL first
 mv .capy/knowledge.db ~/capy-db/myproject/knowledge.db
 ln -s ~/capy-db/myproject/knowledge.db .capy/knowledge.db
+
+# 4. One-time: install the guard hook in the private repo.
+cd ~/capy-db && capy setup --db-repo
 ```
 
 capy resolves the symlink transparently — `store.path` is joined, not
@@ -350,14 +353,36 @@ symlink-expanded, so SQLite opens the real file and creates its WAL/SHM sidecars
 in `~/capy-db/`, **not** in your project. The project repo ignores the symlink
 automatically (`.capy/**` is gitignored), so `git status` there stays clean.
 
-Commit and sync from the private repo instead:
+Commit and sync from the private repo instead — commit **as usual**; the guard
+hook installed in step 4 makes it safe by construction:
 
 ```bash
-capy checkpoint                          # from anywhere in the project
 git -C ~/capy-db add myproject/knowledge.db
 git -C ~/capy-db commit -m "Update myproject knowledge base"
 git -C ~/capy-db push
 ```
+
+`capy setup --db-repo` installs a pure-`sh` pre-commit hook (no capy binary or
+key needed) plus `.gitignore` entries for the `*.db-wal`/`*.db-shm` sidecars. The
+hook does not *repair* a database — it only *refuses* an unsafe one, so committing
+either succeeds or is blocked with the remedy named:
+
+| Blocked when a staged `*.db` … | Remedy |
+|---|---|
+| starts with `SQLite format 3` (unencrypted) | run `capy encrypt` **in the project that owns it**, then re-stage |
+| has a non-empty `<db>-wal` (pending WAL) | stop active capy sessions for that project, or run `capy checkpoint --project-dir <project>` (works from anywhere), then re-stage |
+| has a `<db>-shm` (open connection) | same as above |
+
+No sidecars beside the file means the last connection closed cleanly and the main
+file is complete, so a quiet checkout with no running sessions commits with no
+extra steps. A zero-byte `-wal` (which `PRAGMA wal_checkpoint(TRUNCATE)` can leave
+behind) is tolerated.
+
+> **Pull only when no sessions are running.** Git has no pre-pull hook, so this
+> one rule is on you: a `git pull` that replaces the main DB file while a session
+> still holds the old inode is exactly the ADR-015 corruption vector. The hook's
+> "no sidecars" condition is the same precondition — check for `*.db-wal`/`*.db-shm`
+> beside the file (and stop sessions) before pulling.
 
 On another machine, clone the private repo to the same path and re-create the
 symlink (the symlink itself isn't tracked by the project repo). The
@@ -547,6 +572,7 @@ capy vault rekey                     # enter the OLD passphrase when prompted
 | ---------------------- | ----------------------------------------------------------------------------------------- |
 | `capy` or `capy serve` | Start the MCP server (stdio transport)                                                    |
 | `capy setup`           | Configure capy for the current project (`--platform codex` for Codex CLI)                 |
+| `capy setup --db-repo` | Configure a repo that *holds* knowledge DBs (installs a pure-`sh` commit guard hook only)  |
 | `capy doctor`          | Run diagnostics on the installation                                                       |
 | `capy which`           | Print the knowledge base path for the current project                                     |
 | `capy cleanup`         | Remove stale knowledge base entries                                                       |

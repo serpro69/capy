@@ -48,15 +48,15 @@
 - [x] 3.6 Shell-level hook test in a temp git repo: clean passes; `-shm` blocks; non-empty `-wal` blocks; zero-byte `-wal` passes; plaintext blocks
 
 ## Task 4: Documentation (README, ADR-016 amendment)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3
 - **Size:** S
 - **Can run in parallel with:** —
 - **Docs:** [implementation.md#task-4](./implementation.md#task-4--documentation)
 
 ### Subtasks
-- [ ] 4.1 README §"Keeping the DB out of your project repo": add `capy setup --db-repo` step, hook behaviour + remedies, the pull rule (no sidecars before `git pull`), `checkpoint --project-dir` from anywhere, commands table, wrapper behaviour change note
-- [ ] 4.2 ADR-016: third checkpoint layer (DB-repo guard hook), wrapper exit-code consequence, "Rejected: checkpoint from the DB repo" pointer to design.md
+- [x] 4.1 README §"Keeping the DB out of your project repo": add `capy setup --db-repo` step, hook behaviour + remedies, the pull rule (no sidecars before `git pull`), `checkpoint --project-dir` from anywhere, commands table, wrapper behaviour change note
+- [x] 4.2 ADR-016: third checkpoint layer (DB-repo guard hook), wrapper exit-code consequence, "Rejected: checkpoint from the DB repo" pointer to design.md
 
 ## Task 5: Final verification
 - **Status:** pending
