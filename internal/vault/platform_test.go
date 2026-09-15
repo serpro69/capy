@@ -154,14 +154,14 @@ func TestDecoderFor(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, PlatformClaudeCode, tr.Meta.Platform)
 	})
-	t.Run("codex is not implemented yet", func(t *testing.T) {
+	t.Run("codex", func(t *testing.T) {
 		d := DecoderFor(PlatformCodex)
 		require.NotNil(t, d)
+		assert.IsType(t, codexDecoder{}, d)
 		tr, err := d.Decode(strings.NewReader(codexLegacyMeta + "\n"))
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrDecoderUnavailable)
-		assert.Contains(t, err.Error(), "codex")
-		assert.Nil(t, tr)
+		require.NoError(t, err)
+		assert.Equal(t, PlatformCodex, tr.Meta.Platform)
+		assert.Equal(t, "019e22ba-4c15-7ae0-a903-255537a6a1b3", tr.Meta.PlatformID)
 	})
 	t.Run("unknown value fails per session, never defaults to claude", func(t *testing.T) {
 		d := DecoderFor(Platform("bogus"))

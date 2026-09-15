@@ -244,11 +244,14 @@ func TestScanSession_DispatchesOnPlatform(t *testing.T) {
 		assert.Equal(t, 1, out.MessageCount)
 	})
 
-	t.Run("codex is not decodable yet", func(t *testing.T) {
+	t.Run("codex dispatches to the codex decoder", func(t *testing.T) {
+		// Claude lines are unknown envelope types to the Codex decoder: skipped,
+		// never an error, and never scanned as Claude.
 		out, err := ScanSession(PlatformCodex, strings.NewReader(body))
-		require.Error(t, err)
-		assert.Nil(t, out)
-		assert.True(t, errors.Is(err, ErrDecoderUnavailable), "got %v", err)
+		require.NoError(t, err)
+		assert.Equal(t, PlatformCodex, out.Platform)
+		assert.Equal(t, 0, out.MessageCount)
+		assert.Empty(t, out.CWD)
 	})
 
 	t.Run("unknown platform fails loudly, never defaults to Claude", func(t *testing.T) {
