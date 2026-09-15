@@ -12,7 +12,7 @@ import (
 func TestRenderTranscript_RowMapAndMarkers(t *testing.T) {
 	sess, files := sampleSession(t)
 	ids := sortedSubagentIDs(files)
-	msgs := vault.ParseTranscript(sess.RawJSONL, ids)
+	msgs := vault.ParseTranscript(vault.PlatformClaudeCode, sess.RawJSONL, ids)
 	rt := renderTranscript(msgs, DefaultStyles(), 80)
 
 	require.Equal(t, len(msgs), len(rt.msgRowStart))
@@ -32,7 +32,7 @@ func TestRenderTranscript_RowMapAndMarkers(t *testing.T) {
 
 func TestRenderTranscript_RowForLine(t *testing.T) {
 	sess, _ := sampleSession(t)
-	msgs := vault.ParseTranscript(sess.RawJSONL, nil)
+	msgs := vault.ParseTranscript(vault.PlatformClaudeCode, sess.RawJSONL, nil)
 	rt := renderTranscript(msgs, DefaultStyles(), 80)
 
 	// Source line 3 is the final assistant message ("final answer"); its row must
@@ -103,7 +103,7 @@ func TestRenderedTranscript_MarkerFromViewport(t *testing.T) {
 
 func TestRenderTranscript_LineForRowInvertsRowForLine(t *testing.T) {
 	sess, _ := sampleSession(t)
-	msgs := vault.ParseTranscript(sess.RawJSONL, nil)
+	msgs := vault.ParseTranscript(vault.PlatformClaudeCode, sess.RawJSONL, nil)
 	rt := renderTranscript(msgs, DefaultStyles(), 80)
 
 	// For each message, the row it starts at maps back to its source line.

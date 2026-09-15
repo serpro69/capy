@@ -378,9 +378,13 @@ func renderShow(sess *vault.Session, files []vault.File, markdown bool) string {
 		render = vault.RenderMarkdown
 	}
 
+	// TODO(codex-vault-sessions Slice 5): pass sess.Platform once the store row
+	// carries it (migration 0006); every archived row is Claude until then.
+	platform := vault.PlatformClaudeCode
+
 	var sb strings.Builder
 	writeShowHeader(&sb, sess, markdown)
-	sb.WriteString(render(sess.RawJSONL))
+	sb.WriteString(render(platform, sess.RawJSONL))
 
 	for _, f := range files {
 		id := subagentDisplayID(f.RelativePath)
@@ -392,7 +396,9 @@ func renderShow(sess *vault.Session, files []vault.File, markdown bool) string {
 		} else {
 			fmt.Fprintf(&sb, "\n\n=== Subagent %s ===\n\n", id)
 		}
-		sb.WriteString(render(f.RawContent))
+		// Sidecars are a Claude Code concept: a subagent transcript is always
+		// Claude JSONL regardless of the platform column.
+		sb.WriteString(render(vault.PlatformClaudeCode, f.RawContent))
 	}
 	return sb.String()
 }
@@ -1130,6 +1136,10 @@ type sessionJSON struct {
 	EndTime   string `json:"end_time,omitempty"`
 	Messages  int    `json:"message_count"`
 	SizeBytes int64  `json:"size_bytes"`
+	// Platform is always present (every row stores one); ParentUUID only for a
+	// child session (Codex sub-agent rollouts).
+	Platform   string `json:"platform"`
+	ParentUUID string `json:"parent_uuid,omitempty"`
 }
 
 func sessionsToJSON(sessions []vault.Session) []sessionJSON {
@@ -1139,6 +1149,7 @@ func sessionsToJSON(sessions []vault.Session) []sessionJSON {
 			UUID: s.UUID, Title: s.EffectiveTitle(), Project: s.ProjectPath, GitBranch: s.GitBranch,
 			StartTime: rfc3339(s.StartTime), EndTime: rfc3339(s.EndTime),
 			Messages: s.MessageCount, SizeBytes: s.SizeBytes,
+			Platform: s.Platform.String(), ParentUUID: s.ParentUUID,
 		})
 	}
 	return out

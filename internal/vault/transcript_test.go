@@ -32,7 +32,7 @@ func TestParseTranscript_RolesAndAnchors(t *testing.T) {
 		aiTitleLine("Timeout fix"),                             // line 3 (no message)
 	)
 
-	msgs := ParseTranscript(raw, nil)
+	msgs := ParseTranscript(PlatformClaudeCode, raw, nil)
 	require.Len(t, msgs, 3)
 
 	assert.Equal(t, RoleUser, msgs[0].Role)
@@ -68,7 +68,7 @@ func TestParseTranscript_MCPToolUseGenericInputRedacted(t *testing.T) {
 			}},
 		}),
 	)
-	msgs := ParseTranscript(raw, nil)
+	msgs := ParseTranscript(PlatformClaudeCode, raw, nil)
 	a := findMessage(t, msgs, RoleAssistant)
 	assert.Contains(t, a.Body, `→ mcp__capy__capy_search queries=["tool input"]`,
 		"MCP tool_use renders the generic summary through assistantBodyAndLaunches")
@@ -94,7 +94,7 @@ func bashResultSession(t *testing.T, body string) []TranscriptMessage {
 			}},
 		},
 	)
-	return ParseTranscript(raw, nil)
+	return ParseTranscript(PlatformClaudeCode, raw, nil)
 }
 
 // editDiffSession builds a transcript whose Edit tool_result (id t1) carries a
@@ -120,7 +120,7 @@ func editDiffSession(t *testing.T, filePath, successBody string, patch []map[str
 			"toolUseResult": toolResult,
 		},
 	)
-	return ParseTranscript(raw, nil)
+	return ParseTranscript(PlatformClaudeCode, raw, nil)
 }
 
 func TestParseTranscript_EditDiffCollapsesToDiffMarker(t *testing.T) {
@@ -196,7 +196,7 @@ func TestParseTranscript_DeduplicatesProgressiveSnapshots(t *testing.T) {
 		}),
 	)
 
-	msgs := ParseTranscript(raw, nil)
+	msgs := ParseTranscript(PlatformClaudeCode, raw, nil)
 	require.Len(t, msgs, 2, "the two snapshots of m1 merge into one assistant message")
 	a := findMessage(t, msgs, RoleAssistant)
 	assert.Equal(t, 1, a.SourceLine, "anchor is the first/canonical snapshot line")
@@ -216,7 +216,7 @@ func TestParseTranscript_SubagentMarkerMappingAligned(t *testing.T) {
 	)
 
 	// One marker, one archived subagent → mapped + openable.
-	msgs := ParseTranscript(raw, []string{"abc"})
+	msgs := ParseTranscript(PlatformClaudeCode, raw, []string{"abc"})
 	marker := findMessage(t, msgs, RoleSubagent)
 	assert.Equal(t, "explore the code", marker.Body, "marker label prefers the description field")
 	assert.True(t, marker.Openable)
@@ -231,7 +231,7 @@ func TestParseTranscript_SubagentMarkerMappingMismatchNotOpenable(t *testing.T) 
 	)
 
 	// One marker, two archived subagents → ambiguous → visible but not openable.
-	msgs := ParseTranscript(raw, []string{"a", "b"})
+	msgs := ParseTranscript(PlatformClaudeCode, raw, []string{"a", "b"})
 	marker := findMessage(t, msgs, RoleSubagent)
 	assert.False(t, marker.Openable)
 	assert.Empty(t, marker.AgentID)
@@ -250,7 +250,7 @@ func TestParseTranscript_QueuedCommandAttachment(t *testing.T) {
 		},
 	)
 
-	msgs := ParseTranscript(raw, nil)
+	msgs := ParseTranscript(PlatformClaudeCode, raw, nil)
 	require.Len(t, msgs, 3)
 
 	q := msgs[2]
@@ -263,8 +263,8 @@ func TestParseTranscript_QueuedCommandAttachment(t *testing.T) {
 }
 
 func TestParseTranscript_Empty(t *testing.T) {
-	assert.Nil(t, ParseTranscript(nil, nil))
-	assert.Nil(t, ParseTranscript([]byte{}, nil))
+	assert.Nil(t, ParseTranscript(PlatformClaudeCode, nil, nil))
+	assert.Nil(t, ParseTranscript(PlatformClaudeCode, []byte{}, nil))
 }
 
 func TestSubagentPathRoundTrip(t *testing.T) {

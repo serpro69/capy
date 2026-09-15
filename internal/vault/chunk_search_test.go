@@ -153,6 +153,29 @@ func TestSearchChunks_AnchorAndMetadata(t *testing.T) {
 	assert.Equal(t, "", r.Role, "role is undefined at chunk granularity")
 	assert.Contains(t, r.Snippet, "[timeout]", "snippet marks the match")
 	assert.Contains(t, r.Content, "Please fix the timeout bug", "full chunk content carried")
+	assert.Equal(t, PlatformClaudeCode, r.Platform, "chunk hits carry the session's platform")
+	assert.Empty(t, r.ParentUUID)
+}
+
+// TestSearchChunks_PlatformAndParentCarried proves the chunk corpus threads the
+// 0006 columns through the retrieval engine's Meta: a Codex child session's
+// chunk hit reports its platform and parent.
+func TestSearchChunks_PlatformAndParentCarried(t *testing.T) {
+	s := newChunkSearchVault(t)
+	const parent = "c0dec0de-0000-0000-0000-0000000000aa"
+	db, err := s.getDB(context.Background())
+	require.NoError(t, err)
+	// Flip session B into a Codex child of an (unarchived) parent — a child may
+	// legitimately be archived before its parent, so no parent row is needed.
+	_, err = db.Exec(`UPDATE vault_sessions SET platform = ?, parent_uuid = ? WHERE uuid = ?`,
+		string(PlatformCodex), parent, chunkSearchUUIDB)
+	require.NoError(t, err)
+
+	results := searchChunks(t, s, SearchOptions{Query: "zorbing"})
+	require.NotEmpty(t, results)
+	assert.Equal(t, chunkSearchUUIDB, results[0].SessionUUID)
+	assert.Equal(t, PlatformCodex, results[0].Platform)
+	assert.Equal(t, parent, results[0].ParentUUID)
 }
 
 func TestSearchChunks_ProjectFilter(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/serpro69/capy/internal/sqliteutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -185,6 +186,173 @@ func TestMigrate0005_CreatesSessionNamesOnLegacyVault(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_session_names`).Scan(&count))
 	assert.Equal(t, 0, count, "legacy-migrated table must cascade with its parent")
+}
+
+// pre0006SessionsDDL is the vault_sessions shape a 0005-era binary wrote: every
+// column up to `encoding`, no platform / parent_uuid, no idx_sessions_parent.
+const pre0006SessionsDDL = `
+	CREATE TABLE vault_sessions (
+	  uuid TEXT PRIMARY KEY, title TEXT, start_time DATETIME, end_time DATETIME,
+	  message_count INTEGER NOT NULL DEFAULT 0, size_bytes INTEGER NOT NULL DEFAULT 0,
+	  content_hash TEXT NOT NULL, machine_id TEXT NOT NULL, claude_project_dir TEXT NOT NULL,
+	  project_path TEXT NOT NULL, git_branch TEXT, archived_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	  index_version INTEGER NOT NULL DEFAULT 1, raw_jsonl BLOB NOT NULL, encoding TEXT
+	);`
+
+// TestMigrate0006_AddsColumnsAndIndexToLegacyVault runs the migration directly
+// against a plaintext pre-0006 table: both columns are added with their defaults,
+// the index is created AFTER them, the record lands, and a rerun is a no-op.
+func TestMigrate0006_AddsColumnsAndIndexToLegacyVault(t *testing.T) {
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "legacy.db"))
+	require.NoError(t, err)
+	defer db.Close()
+
+	_, err = db.Exec(pre0006SessionsDDL + `
+		CREATE TABLE vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+		CREATE TABLE vault_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);
+		INSERT INTO vault_sessions (uuid, content_hash, machine_id, claude_project_dir, project_path, raw_jsonl)
+		VALUES ('legacy', 'h', 'm', '-d', '/p', x'7b7d');
+	`)
+	require.NoError(t, err)
+
+	require.NoError(t, migrate0006AddPlatform(context.Background(), db))
+
+	var platform string
+	var parent sql.NullString
+	require.NoError(t, db.QueryRow(`SELECT platform, parent_uuid FROM vault_sessions WHERE uuid='legacy'`).Scan(&platform, &parent))
+	assert.Equal(t, string(PlatformClaudeCode), platform, "pre-existing rows read as Claude through the column default")
+	assert.False(t, parent.Valid, "pre-existing rows have no parent (NULL)")
+
+	assertParentIndex(t, db)
+
+	var cnt int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_migrations WHERE name='0006_platform'`).Scan(&cnt))
+	assert.Equal(t, 1, cnt)
+
+	// Idempotent re-run: the guard short-circuits, no duplicate-column error.
+	require.NoError(t, migrate0006AddPlatform(context.Background(), db))
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_migrations WHERE name='0006_platform'`).Scan(&cnt))
+	assert.Equal(t, 1, cnt)
+}
+
+// TestMigrate0006_LegacyVaultOpensThroughStore is the end-to-end legacy path: an
+// encrypted pre-0006 vault (0005 shape, migrations recorded) is opened through
+// VaultStore — schemaSQL runs first and must NOT trip over the missing column
+// (the reason idx_sessions_parent lives only in the migration) — and afterwards
+// the row reads with the defaults, the index exists, and the store's own
+// statements (GetSession / ListSessions / Insert) work against the migrated shape.
+func TestMigrate0006_LegacyVaultOpensThroughStore(t *testing.T) {
+	const key = "legacy-vault-key-at-least-32-characters!!"
+	t.Setenv(vaultKeyEnv, key)
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	legacy, err := sql.Open("sqlite3", sqliteutil.EncryptedDSN(path, key)+"&_busy_timeout=5000")
+	require.NoError(t, err)
+	_, err = legacy.Exec(pre0006SessionsDDL + `
+		CREATE TABLE vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+		CREATE TABLE vault_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);
+		INSERT INTO vault_migrations (name) VALUES
+		  ('0001_blob_encoding'), ('0003_add_index_version'), ('0004_add_chunk_fts'), ('0005_session_names');
+		INSERT INTO vault_sessions (uuid, title, message_count, content_hash, machine_id, claude_project_dir, project_path, raw_jsonl)
+		VALUES ('1e9ac100-0000-0000-0000-000000000001', 'legacy row', 1, 'h', 'm', '-home-user-proj', '/home/user/proj', x'7b7d');
+	`)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	s := NewVaultStore(path)
+	t.Cleanup(func() { _ = s.Close() })
+	require.NoError(t, s.Open(context.Background()), "a pre-0006 vault must open (schemaSQL before migrateVault)")
+
+	db, err := s.getDB(context.Background())
+	require.NoError(t, err)
+	assertParentIndex(t, db)
+	var cnt int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_migrations WHERE name='0006_platform'`).Scan(&cnt))
+	assert.Equal(t, 1, cnt)
+
+	got, err := s.GetSession(context.Background(), "1e9ac100-0000-0000-0000-000000000001")
+	require.NoError(t, err)
+	assert.Equal(t, PlatformClaudeCode, got.Platform)
+	assert.Empty(t, got.ParentUUID)
+	assert.Equal(t, "legacy row", got.Title)
+
+	listed, err := s.ListSessions(context.Background(), ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, listed, 1, "the parent_uuid IS NULL default keeps a migrated legacy row listed")
+
+	// The prepared INSERT (which names platform/parent_uuid) works against the
+	// migrated table, and a Codex row is accepted.
+	rec := sampleRecord("1e9ac100-0000-0000-0000-000000000002")
+	rec.Session.Platform = PlatformCodex
+	require.NoError(t, s.InsertSession(context.Background(), rec))
+	st, err := s.Stats(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []PlatformStat{
+		{Platform: PlatformClaudeCode, Sessions: 1, Bytes: 0},
+		{Platform: PlatformCodex, Sessions: 1, Bytes: rec.Session.SizeBytes},
+	}, st.ByPlatform)
+}
+
+// TestMigrateVault_FreshDBHasPlatformColumns: a fresh vault gets the two columns
+// from schemaSQL (no ALTER), the index from the migration, and the record.
+func TestMigrateVault_FreshDBHasPlatformColumns(t *testing.T) {
+	s := newTestVault(t)
+	db, err := s.getDB(context.Background())
+	require.NoError(t, err)
+
+	_, err = db.Exec(`SELECT platform, parent_uuid FROM vault_sessions WHERE 0`)
+	require.NoError(t, err, "platform/parent_uuid must exist on a fresh vault")
+
+	// Column contract as declared: NOT NULL DEFAULT 'claude-code' / nullable.
+	rows, err := db.Query(`PRAGMA table_info(vault_sessions)`)
+	require.NoError(t, err)
+	defer rows.Close()
+	seen := map[string]struct {
+		notNull int
+		dflt    sql.NullString
+	}{}
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		require.NoError(t, rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk))
+		seen[name] = struct {
+			notNull int
+			dflt    sql.NullString
+		}{notNull, dflt}
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, 1, seen["platform"].notNull)
+	assert.Equal(t, `'claude-code'`, seen["platform"].dflt.String)
+	assert.Equal(t, 0, seen["parent_uuid"].notNull)
+	assert.False(t, seen["parent_uuid"].dflt.Valid)
+
+	assertParentIndex(t, db)
+
+	var cnt int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_migrations WHERE name='0006_platform'`).Scan(&cnt))
+	assert.Equal(t, 1, cnt)
+
+	require.NoError(t, migrateVault(context.Background(), db))
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_migrations WHERE name='0006_platform'`).Scan(&cnt))
+	assert.Equal(t, 1, cnt, "migration rerun must not duplicate its record")
+}
+
+// TestSchemaSQL_HasNoParentIndex pins the ordering hazard mechanically: openDB
+// runs schemaSQL BEFORE migrateVault, so an index over parent_uuid in schemaSQL
+// would fail every open of a legacy vault. The index belongs to migration 0006
+// only (the `grep idx_sessions_parent store.go` gate from the plan, in code).
+func TestSchemaSQL_HasNoParentIndex(t *testing.T) {
+	assert.NotContains(t, schemaSQL, "idx_sessions_parent")
+	assert.NotContains(t, schemaSQL, "parent_uuid)", "no index or constraint over parent_uuid may live in schemaSQL")
+}
+
+func assertParentIndex(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var tbl string
+	err := db.QueryRow(`SELECT tbl_name FROM sqlite_master WHERE type='index' AND name='idx_sessions_parent'`).Scan(&tbl)
+	require.NoError(t, err, "idx_sessions_parent must exist")
+	assert.Equal(t, "vault_sessions", tbl)
 }
 
 func TestChunkFTSTokenizers(t *testing.T) {

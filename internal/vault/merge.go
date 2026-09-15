@@ -92,6 +92,21 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 	if err != nil {
 		return res, fmt.Errorf("probing source vault_session_names schema: %w", err)
 	}
+	// Feature-detect the multi-platform columns (migration 0006, added together).
+	// An ABSENT column means a pre-0006 source: every row is Claude with no parent
+	// by construction and is NEVER sniffed — 41 of 467 real Claude sessions open
+	// with a file-history-snapshot line, so a first-line sniff would misjudge
+	// legacy rows (design § Format Identification). A present value is carried
+	// verbatim.
+	srcPlatform, err := columnExists(ctx, srcDB, "vault_sessions", "platform")
+	if err != nil {
+		return res, fmt.Errorf("probing source vault_sessions platform column: %w", err)
+	}
+	srcParent, err := columnExists(ctx, srcDB, "vault_sessions", "parent_uuid")
+	if err != nil {
+		return res, fmt.Errorf("probing source vault_sessions parent_uuid column: %w", err)
+	}
+	srcCols := sourceColumns{encoding: srcSessEnc, platform: srcPlatform, parentUUID: srcParent}
 
 	uuids, err := sourceSessionUUIDs(ctx, srcDB, opts.Project)
 	if err != nil {
@@ -139,7 +154,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			break
 		}
 
-		src, err := readSourceSession(ctx, srcDB, uuid, srcSessEnc)
+		src, err := readSourceSession(ctx, srcDB, uuid, srcCols)
 		if err != nil {
 			slog.Warn("vault merge: reading source session failed", "uuid", uuid, "error", err)
 			res.record(ImportedSession{UUID: uuid, Status: StatusError, Err: err})
@@ -160,7 +175,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		// reconciles independently of transcript content (design §Cross-Machine
 		// Merge): the exclusion and skip branches below must still know whether a
 		// destination session exists to reconcile its name against.
-		existingHash, existingSize, _, found, err := dest.SessionDigest(ctx, uuid)
+		existingHash, existingSize, _, _, found, err := dest.SessionDigest(ctx, uuid)
 		if err != nil {
 			slog.Warn("vault merge: digest lookup failed", "uuid", uuid, "error", err)
 			res.record(ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusError, Err: err})
@@ -221,7 +236,11 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		// Rebuild FTS + chunks with the current indexer over the decoded source
 		// blobs (not the source's stored index rows) so the destination index is
 		// schema-current regardless of the source's indexer version.
-		_, fts, chunks, err := scanSessionAndSubagents(uuid, src.rawJSONL, files)
+		// TODO(codex-vault-sessions Slice 8): dispatch on src.platform (carried
+		// verbatim since Slice 5) with the unrecognized-value DetectFormat fallback
+		// and warning; no source can hold a non-Claude row before Slice 7 writes
+		// one, so the constant is exact until then.
+		_, fts, chunks, err := scanSessionAndSubagents(uuid, PlatformClaudeCode, src.rawJSONL, files)
 		if err != nil {
 			// Recorded as StatusError but NOT yet batched, so any existing
 			// destination row is left UNCHANGED (this scan happens before the write
@@ -287,13 +306,25 @@ type sourceSession struct {
 	claudeProjectDir string
 	projectPath      string
 	gitBranch        string
+	platform         string // stored value verbatim; 'claude-code' for a pre-0006 source
+	parentUUID       string // "" == NULL / pre-0006 source
 	rawJSONL         []byte // decoded
 }
 
+// sourceColumns records which feature-detected vault_sessions columns the source
+// has. Merge sources are never migrated, so an absent column is substituted with
+// the literal a migrated vault would read for a legacy row.
+type sourceColumns struct {
+	encoding   bool // migration 0001; absent ⇒ every blob is raw
+	platform   bool // migration 0006; absent ⇒ 'claude-code'
+	parentUUID bool // migration 0006; absent ⇒ NULL
+}
+
 // toRecord assembles the destination SessionRecord. The location/metadata columns
-// are carried verbatim; index_version is stamped to currentIndexVersion because
-// fts + chunks were rebuilt with the current indexer (matching reindex's version
-// bump).
+// (platform and parent included) are carried verbatim; index_version is stamped
+// to currentIndexVersion because fts + chunks were rebuilt with the current
+// indexer (matching reindex's version bump). An unrecognized carried platform
+// is refused by the destination's writeRecord and surfaces as StatusError.
 func (s *sourceSession) toRecord(files []File, fts []FTSRow, chunks []Chunk) *SessionRecord {
 	return &SessionRecord{
 		Session: Session{
@@ -309,6 +340,8 @@ func (s *sourceSession) toRecord(files []File, fts []FTSRow, chunks []Chunk) *Se
 			ProjectPath:      s.projectPath,
 			GitBranch:        s.gitBranch,
 			IndexVersion:     currentIndexVersion,
+			Platform:         Platform(s.platform),
+			ParentUUID:       s.parentUUID,
 			RawJSONL:         s.rawJSONL,
 		},
 		Files:  files,
@@ -351,34 +384,48 @@ func sourceSessionUUIDs(ctx context.Context, srcDB *sql.DB, project string) ([]s
 }
 
 // readSourceSession loads one source session row and decodes its main transcript.
-// When the source predates the encoding column (hasEncoding == false), the SELECT
-// substitutes a NULL literal so the scan + decodeBlob path treats the blob as raw.
-func readSourceSession(ctx context.Context, srcDB *sql.DB, uuid string, hasEncoding bool) (*sourceSession, error) {
+// Each column the source may predate is substituted with a literal when absent
+// (cols): NULL for encoding (blob read as raw), 'claude-code' for platform and
+// NULL for parent_uuid (a pre-0006 row is a top-level Claude session — never
+// sniffed, see MergeFrom).
+func readSourceSession(ctx context.Context, srcDB *sql.DB, uuid string, cols sourceColumns) (*sourceSession, error) {
 	encCol := "NULL" // v1 source: no encoding column → read as raw
-	if hasEncoding {
+	if cols.encoding {
 		encCol = "encoding"
 	}
+	platformCol := `'` + string(PlatformClaudeCode) + `'`
+	if cols.platform {
+		platformCol = "platform"
+	}
+	parentCol := "NULL"
+	if cols.parentUUID {
+		parentCol = "parent_uuid"
+	}
 	query := `SELECT title, start_time, end_time, message_count, size_bytes, content_hash,
-		machine_id, claude_project_dir, project_path, git_branch, ` + encCol + `, raw_jsonl
-		FROM vault_sessions WHERE uuid = ?` //nolint:gosec // encCol is a trusted internal constant, never user input
+		machine_id, claude_project_dir, project_path, git_branch, ` + encCol + `, raw_jsonl, ` +
+		platformCol + `, ` + parentCol + `
+		FROM vault_sessions WHERE uuid = ?` //nolint:gosec // the substituted columns are trusted internal constants, never user input
 
 	var (
 		s        sourceSession
 		title    sql.NullString
 		branch   sql.NullString
 		encoding sql.NullString
+		parent   sql.NullString
 		raw      []byte
 	)
 	s.uuid = uuid
 	err := srcDB.QueryRowContext(ctx, query, uuid).Scan(
 		&title, &s.startTime, &s.endTime, &s.messageCount, &s.sizeBytes, &s.contentHash,
 		&s.machineID, &s.claudeProjectDir, &s.projectPath, &branch, &encoding, &raw,
+		&s.platform, &parent,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying source session: %w", err)
 	}
 	s.title = title.String
 	s.gitBranch = branch.String
+	s.parentUUID = parent.String
 
 	decoded, err := decodeBlob(encoding.String, raw)
 	if err != nil {

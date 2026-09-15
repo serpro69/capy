@@ -196,7 +196,10 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		files, contents := readSidecars(sf, mainBytes)
 		hash, size := computeContentHash(contents)
 
-		existingHash, existingSize, existingIndexVersion, found, err := store.SessionDigest(ctx, sf.UUID)
+		// TODO(codex-vault-sessions Slice 7): the returned location hint feeds the
+		// Codex-only location policy (a same-hash rollout at a new relative path →
+		// UpdateLocationHint, reported `updated`); Claude rows never enter it.
+		existingHash, existingSize, existingIndexVersion, _, found, err := store.SessionDigest(ctx, sf.UUID)
 		if err != nil {
 			slog.Warn("vault import: digest lookup failed", "uuid", sf.UUID, "error", err)
 			res.record(ImportedSession{UUID: sf.UUID, SizeBytes: size, Status: StatusError, Err: err})
@@ -339,11 +342,17 @@ func readSidecars(sf *SessionFile, mainBytes []byte) (files []File, contents map
 // buildRecord scans the main JSONL and any subagent transcripts into FTS rows
 // + chunks and assembles the full SessionRecord for one insert/replace.
 func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, size int64, machineID string) (*SessionRecord, error) {
-	scanOut, fts, chunks, err := scanSessionAndSubagents(sf.UUID, mainBytes, files)
+	// TODO(codex-vault-sessions Slice 7): dispatch on sf.Platform once the Codex
+	// discoverer stamps it; every discovered file is a Claude session until then.
+	scanOut, fts, chunks, err := scanSessionAndSubagents(sf.UUID, PlatformClaudeCode, mainBytes, files)
 	if err != nil {
 		return nil, err
 	}
 
+	// Platform and ParentUUID come from the single decode (ScanOutput copies them
+	// from Meta): Platform is the decoder that produced the output — the constant
+	// above until Slice 7 dispatches on sf.Platform — and ParentUUID is always
+	// empty for Claude (sidecar sub-agents are not sessions).
 	sess := Session{
 		UUID:             sf.UUID,
 		Title:            scanOut.Title,
@@ -357,6 +366,8 @@ func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, s
 		ProjectPath:      resolveProjectPath(scanOut.CWD, sf.ProjectDir),
 		GitBranch:        scanOut.Branch,
 		IndexVersion:     currentIndexVersion,
+		Platform:         scanOut.Platform,
+		ParentUUID:       scanOut.ParentUUID,
 		RawJSONL:         mainBytes,
 	}
 	return &SessionRecord{Session: sess, Files: files, FTS: fts, Chunks: chunks}, nil
@@ -371,9 +382,10 @@ func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, s
 // derive from the SAME scan as the per-line rows (design §D3), so the two
 // indexes can never disagree about what exists; ChunkIndex is stamped
 // session-wide here. Shared by import (buildRecord, which uses the metadata),
-// reindex, and merge (which use only the rows + chunks).
-func scanSessionAndSubagents(uuid string, mainBytes []byte, files []File) (*ScanOutput, []FTSRow, []Chunk, error) {
-	scanOut, err := ScanSession(bytes.NewReader(mainBytes))
+// reindex, and merge (which use only the rows + chunks). platform selects the
+// decoder for the main transcript (DecoderFor); sidecars are always Claude.
+func scanSessionAndSubagents(uuid string, platform Platform, mainBytes []byte, files []File) (*ScanOutput, []FTSRow, []Chunk, error) {
+	scanOut, err := ScanSession(platform, bytes.NewReader(mainBytes))
 	if err != nil {
 		return nil, nil, nil, err
 	}

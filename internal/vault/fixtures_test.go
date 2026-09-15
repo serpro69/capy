@@ -12,8 +12,9 @@ import (
 
 // jsonlBytes renders lines as newline-delimited compact JSON — the on-disk form
 // of a session file. Tests write these into t.TempDir() so they never depend on
-// a real ~/.claude (CI has none).
-func jsonlBytes(t *testing.T, lines ...map[string]any) []byte {
+// a real ~/.claude (CI has none). It takes testing.TB so fuzz targets (*testing.F)
+// can build seed corpora with it (see goldenCases).
+func jsonlBytes(t testing.TB, lines ...map[string]any) []byte {
 	t.Helper()
 	var sb strings.Builder
 	for _, l := range lines {
