@@ -1,0 +1,103 @@
+{
+  "Main": [
+    {
+      "Role": "user",
+      "Body": "make the edits",
+      "SourceLine": 0,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "assistant",
+      "Body": "→ Edit /p/config.toml\n→ Write /p/new.go\n→ Edit /p/other.go\n→ Edit /p/third.go",
+      "SourceLine": 1,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "@@ -3,2 +3,2 @@\n timeout = 30\n-retries = 1\n+retries = 3\n@@ -10,1 +10,2 @@\n [db]\n+path = y",
+      "SourceLine": 2,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": true,
+      "ToolSummary": "Edit /p/config.toml (+2 −1)",
+      "Diff": true,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "@@ -1,0 +1,1 @@\n+package p",
+      "SourceLine": 3,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": true,
+      "ToolSummary": "Write /p/new.go (+1 −0)",
+      "Diff": true,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "Edit /p/other.go\nThe file /p/other.go has been updated successfully.",
+      "SourceLine": 4,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "@@ -3,2 +3,2 @@\n timeout = 30\n-retries = 1\n+retries = 3",
+      "SourceLine": 5,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": true,
+      "ToolSummary": "Edit /p/third.go (+1 −1)",
+      "Diff": true,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "Edit /p/config.toml\nThe file /p/config.toml has been updated successfully.",
+      "SourceLine": 5,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "@@ -3,2 +3,2 @@\n timeout = 30\n-retries = 1\n+retries = 3",
+      "SourceLine": 6,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": true,
+      "ToolSummary": "Edit /p/third.go (+1 −1)",
+      "Diff": true,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "Edit /p/other.go\nupdated",
+      "SourceLine": 7,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    }
+  ]
+}

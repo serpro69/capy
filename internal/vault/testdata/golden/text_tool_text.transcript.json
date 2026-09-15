@@ -1,0 +1,37 @@
+{
+  "Main": [
+    {
+      "Role": "user",
+      "Body": "check a.go",
+      "SourceLine": 0,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "assistant",
+      "Body": "Before the call.\n→ Read /p/a.go\nAfter the call.",
+      "SourceLine": 1,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "package p",
+      "SourceLine": 2,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": true,
+      "ToolSummary": "Read /p/a.go",
+      "Diff": false,
+      "Queued": false
+    }
+  ]
+}

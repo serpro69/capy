@@ -1,0 +1,26 @@
+{
+  "Main": [
+    {
+      "Role": "assistant",
+      "Body": "hi",
+      "SourceLine": 2,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "user",
+      "Body": "real prompt",
+      "SourceLine": 3,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    }
+  ]
+}

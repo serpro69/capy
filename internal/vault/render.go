@@ -32,6 +32,12 @@ const (
 // explicit and independent of the scanner's FTS tuning.
 const renderMaxLineBytes = 16 * 1024 * 1024
 
+// renderLineCap is the per-line byte cap render.go and transcript.go pass to
+// scanLines. It is a variable (initialised to renderMaxLineBytes) purely so the
+// golden harness (golden_test.go) can lower it and exercise the oversize-line
+// path with a small fixture; production code never reassigns it.
+var renderLineCap = renderMaxLineBytes
+
 // displayMsg is one composed message ready for formatting. queued marks a user
 // message recovered from a queued_command attachment (A2) — submitted while the
 // assistant was mid-turn — so its label is annotated "· queued".
@@ -72,7 +78,7 @@ func collectDisplay(raw []byte) []displayMsg {
 	var entries []renderEntry
 	assistantPos := make(map[string]int) // message.id → index in entries
 
-	_ = scanLines(bytes.NewReader(raw), renderMaxLineBytes, func(data []byte, oversize bool) {
+	_ = scanLines(bytes.NewReader(raw), renderLineCap, func(data []byte, oversize bool) {
 		if oversize || len(data) == 0 {
 			return
 		}

@@ -1,0 +1,52 @@
+{
+  "Main": {
+    "Results": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "hello",
+        "Timestamp": "2026-05-01T10:00:00Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 1,
+        "LineIndex": 6,
+        "Role": "assistant",
+        "SubagentID": "",
+        "ContentText": "inferred assistant",
+        "Timestamp": "2026-05-01T10:00:04Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 1,
+        "MessageIndex": 0,
+        "LineIndex": 9,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "crlf line",
+        "Timestamp": "2026-05-01T10:00:07Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 2,
+        "MessageIndex": 0,
+        "LineIndex": 10,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "trailing line without newline",
+        "Timestamp": "2026-05-01T10:00:08Z",
+        "ToolNames": null
+      }
+    ],
+    "Title": "hello",
+    "CWD": "/p",
+    "Branch": "main",
+    "StartTime": "2026-05-01T10:00:00Z",
+    "EndTime": "2026-05-01T10:00:08Z",
+    "MessageCount": 4
+  }
+}

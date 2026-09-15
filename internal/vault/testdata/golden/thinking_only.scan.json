@@ -1,0 +1,32 @@
+{
+  "Main": {
+    "Results": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "think about it",
+        "Timestamp": "2026-05-01T10:00:00Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 1,
+        "LineIndex": 2,
+        "Role": "assistant",
+        "SubagentID": "",
+        "ContentText": "visible answer",
+        "Timestamp": "2026-05-01T10:00:06Z",
+        "ToolNames": null
+      }
+    ],
+    "Title": "think about it",
+    "CWD": "/p",
+    "Branch": "main",
+    "StartTime": "2026-05-01T10:00:00Z",
+    "EndTime": "2026-05-01T10:00:06Z",
+    "MessageCount": 2
+  }
+}

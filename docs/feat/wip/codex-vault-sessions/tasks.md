@@ -10,7 +10,7 @@
 > Deferred (see implementation.md § Deferred work): Codex `resume`, archiving revert rollouts, SearchOnly attachment unification, hiding non-interactive / non-thread_spawn sub-agent sources
 
 ## Task 1: Golden and parity harness
-- **Status:** pending
+- **Status:** done (2026-09-15; isolated review: no P0–P2, six P3 observations — five applied, the mutable line-cap test hook accepted as designed and documented at the vars)
 - **Depends on:** —
 - **Size:** M (a divergence inventory over three readers, a golden table with one case per switch arm, and a real-corpus baseline is not an afternoon)
 - **Can run in parallel with:** Task 2
@@ -18,12 +18,12 @@
 - **Docs:** [implementation.md#slice-1-golden-and-parity-harness](./implementation.md#slice-1-golden-and-parity-harness)
 
 ### Subtasks
-- [ ] 1.1 Write `internal/vault/testdata/golden/DIVERGENCES.md`: every behavioral divergence between `scanner.go`, `render.go`, `transcript.go` (plain-string-only title fallback, scanner-only `attachmentText`, scanner-only warn logs, collapse/diff policy differences, …), each mapped to a transcript-model field or marked "consumer policy / log-only"
-- [ ] 1.2 Introduce `var scanLineCap = maxScanLineBytes` / `var renderLineCap = renderMaxLineBytes` and pass them to `scanLines` from the public readers so tests can lower the oversize threshold
-- [ ] 1.3 Create `internal/vault/golden_test.go` with a named fixture table covering every `case` arm of the three `switch line.Type` blocks and every inventory row (plain-string user, block-array user with Read/Edit+structuredPatch/Bash/unknown tool results, progressive snapshots, text → tool_use → text in one assistant message, ai-title, pr-link, away_summary, queued_command attachment, attachment with message content, oversize line, malformed line, subagent sidecar), reusing `fixtures_test.go` builders
-- [ ] 1.4 Run `ScanSession`, `ScanSubagent`, `RenderText`, `RenderMarkdown`, `ParseTranscript` per case; serialize deterministically; compare against `internal/vault/testdata/golden/<case>.<reader>.*`; support `-update`; commit the golden files generated on `master`
-- [ ] 1.5 Create `internal/vault/parity_canary_test.go` gated on `CAPY_VAULT_PARITY_BASELINE`: walk `config.ClaudeProjectsDir()` sessions and subagent sidecars, one SHA-256 per file over the four readers' outputs; write the baseline when the file is missing, compare otherwise; `t.Skip` when unset or no sessions
-- [ ] 1.6 Produce the baseline on `master` and re-run unchanged: 0 mismatches
+- [x] 1.1 Write `internal/vault/testdata/golden/DIVERGENCES.md`: every behavioral divergence between `scanner.go`, `render.go`, `transcript.go` (plain-string-only title fallback, scanner-only `attachmentText`, scanner-only warn logs, collapse/diff policy differences, …), each mapped to a transcript-model field or marked "consumer policy / log-only"
+- [x] 1.2 Introduce `var scanLineCap = maxScanLineBytes` / `var renderLineCap = renderMaxLineBytes` and pass them to `scanLines` from the public readers so tests can lower the oversize threshold
+- [x] 1.3 Create `internal/vault/golden_test.go` with a named fixture table covering every `case` arm of the three `switch line.Type` blocks and every inventory row (plain-string user, block-array user with Read/Edit+structuredPatch/Bash/unknown tool results, progressive snapshots, text → tool_use → text in one assistant message, ai-title, pr-link, away_summary, queued_command attachment, attachment with message content, oversize line, malformed line, subagent sidecar), reusing `fixtures_test.go` builders
+- [x] 1.4 Run `ScanSession`, `ScanSubagent`, `RenderText`, `RenderMarkdown`, `ParseTranscript` per case; serialize deterministically; compare against `internal/vault/testdata/golden/<case>.<reader>.*`; support `-update`; commit the golden files generated on `master` (25 cases × 4 reader files generated on `master` HEAD `c189cf2`; `TestGolden_CoversEveryLineType` enforces the one-case-per-arm rule mechanically)
+- [x] 1.5 Create `internal/vault/parity_canary_test.go` gated on `CAPY_VAULT_PARITY_BASELINE`: walk `config.ClaudeProjectsDir()` sessions and subagent sidecars, one SHA-256 per file over the four readers' outputs; write the baseline when the file is missing, compare otherwise; `t.Skip` when unset or no sessions. **Deviation from plan:** each baseline row also records a digest of the reader *input* (raw bytes + sidecars) so a live session that grows between runs is reported as "input changed" and skipped, not failed — without it the compare run fails on the current session's own transcript every time. The env var must be an absolute path (`go test` runs with the package dir as cwd).
+- [x] 1.6 Produce the baseline on `master` and re-run unchanged: 0 mismatches (700 files baselined at `$REPO/bench-results/vault-parity-baseline.tsv`, gitignored; compare run: 699 compared, 0 mismatches, 1 skipped as a live session)
 
 ## Task 2: Transcript model and Claude decoder
 - **Status:** pending

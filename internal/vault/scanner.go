@@ -79,6 +79,12 @@ var (
 // a per-line string allocation in the scan hot loop.
 var jsonNull = []byte("null")
 
+// scanLineCap is the per-line byte cap the scanner passes to scanLines. It is a
+// variable (initialised to maxScanLineBytes) purely so the golden harness
+// (golden_test.go) can lower it and exercise the oversize-line path with a
+// small fixture instead of a 16 MB line; production code never reassigns it.
+var scanLineCap = maxScanLineBytes
+
 // ScanResult is one searchable message extracted from a session JSONL. One FTS
 // row is inserted per ScanResult (its LineIndex populates vault_fts.line_index).
 type ScanResult struct {
@@ -156,7 +162,7 @@ func scan(r io.Reader) (*ScanOutput, error) {
 
 	// Pass 1: read line-by-line, capturing session metadata and building the
 	// ordered entry list. Assistant progressive snapshots merge by message.id.
-	err := scanLines(r, maxScanLineBytes, func(data []byte, oversize bool) {
+	err := scanLines(r, scanLineCap, func(data []byte, oversize bool) {
 		lineIndex++
 		if oversize || len(data) == 0 {
 			return

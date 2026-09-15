@@ -1,0 +1,139 @@
+{
+  "Main": {
+    "Results": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "",
+        "ContentText": "Delegate the investigation",
+        "Timestamp": "2026-05-01T10:00:00Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 1,
+        "LineIndex": 1,
+        "Role": "assistant",
+        "SubagentID": "",
+        "ContentText": "Delegating.\nAgent investigate the flaky quokka test in the vault package investigate the flaky quokka test in the vault package investigate the flaky quokka test in the vault package investigate the flaky quokka test i…\nAgent look around\nAgent investigate the flaky quokka test in the vault package investigate the flaky quokka test in the vault package investigate the flaky quokka test in the vault package investigate the flaky quokka test i…\nAgent",
+        "Timestamp": "2026-05-01T10:00:05Z",
+        "ToolNames": [
+          "Task",
+          "Agent",
+          "Agent",
+          "Agent"
+        ]
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 2,
+        "LineIndex": 2,
+        "Role": "tool",
+        "SubagentID": "",
+        "ContentText": "Agent investigate the flaky quokka test in the vault package investigate the flaky quokka test in the vault package investigate the flaky quokka test in the vault package investigate the flaky quokka test i…\nagent done: the port is shared",
+        "Timestamp": "2026-05-01T10:00:30Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 3,
+        "LineIndex": 2,
+        "Role": "tool",
+        "SubagentID": "",
+        "ContentText": "Agent look around\nexplored",
+        "Timestamp": "2026-05-01T10:00:30Z",
+        "ToolNames": null
+      }
+    ],
+    "Title": "Delegate the investigation",
+    "CWD": "/p",
+    "Branch": "main",
+    "StartTime": "2026-05-01T10:00:00Z",
+    "EndTime": "2026-05-01T10:00:30Z",
+    "MessageCount": 2
+  },
+  "Subagents": {
+    "aaa": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "aaa",
+        "ContentText": "Investigate the flaky quokka test",
+        "Timestamp": "2026-05-01T10:00:20Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 1,
+        "LineIndex": 1,
+        "Role": "assistant",
+        "SubagentID": "aaa",
+        "ContentText": "The quokka test races on the shared port.",
+        "Timestamp": "2026-05-01T10:00:21Z",
+        "ToolNames": null
+      }
+    ],
+    "bbb": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "bbb",
+        "ContentText": "Explore the repo layout",
+        "Timestamp": "2026-05-01T10:00:22Z",
+        "ToolNames": null
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 1,
+        "LineIndex": 1,
+        "Role": "assistant",
+        "SubagentID": "bbb",
+        "ContentText": "Bash rg --files",
+        "Timestamp": "2026-05-01T10:00:23Z",
+        "ToolNames": [
+          "Bash"
+        ]
+      },
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 2,
+        "LineIndex": 2,
+        "Role": "tool",
+        "SubagentID": "bbb",
+        "ContentText": "Bash rg --files\na.go\nb.go",
+        "Timestamp": "2026-05-01T10:00:24Z",
+        "ToolNames": null
+      }
+    ],
+    "ccc": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "ccc",
+        "ContentText": "Summarise findings",
+        "Timestamp": "2026-05-01T10:00:25Z",
+        "ToolNames": null
+      }
+    ],
+    "ddd": [
+      {
+        "TurnIndex": 0,
+        "MessageIndex": 0,
+        "LineIndex": 0,
+        "Role": "user",
+        "SubagentID": "ddd",
+        "ContentText": "Summarise findings",
+        "Timestamp": "2026-05-01T10:00:25Z",
+        "ToolNames": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "Main": [
+    {
+      "Role": "user",
+      "Body": "Delegate the investigation",
+      "SourceLine": 0,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "assistant",
+      "Body": "Delegating.",
+      "SourceLine": 1,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "subagent",
+      "Body": "Investigate flaky test",
+      "SourceLine": 1,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "subagent",
+      "Body": "Explore",
+      "SourceLine": 1,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "subagent",
+      "Body": "investigate the flaky quokka test in the vault package investigate the flaky quokka test in the vaul…",
+      "SourceLine": 1,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "subagent",
+      "Body": "subagent",
+      "SourceLine": 1,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "Agent investigate the flaky quokka test in the vault package investigate the flaky quokka test in the vault package investigate the flaky quokka test in the vault package investigate the flaky quokka test i…\nagent done: the port is shared",
+      "SourceLine": 2,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    },
+    {
+      "Role": "tool",
+      "Body": "Agent look around\nexplored",
+      "SourceLine": 2,
+      "AgentID": "",
+      "Openable": false,
+      "Collapsed": false,
+      "ToolSummary": "",
+      "Diff": false,
+      "Queued": false
+    }
+  ],
+  "Subagents": {
+    "aaa": [
+      {
+        "Role": "user",
+        "Body": "Investigate the flaky quokka test",
+        "SourceLine": 0,
+        "AgentID": "",
+        "Openable": false,
+        "Collapsed": false,
+        "ToolSummary": "",
+        "Diff": false,
+        "Queued": false
+      },
+      {
+        "Role": "assistant",
+        "Body": "The quokka test races on the shared port.",
+        "SourceLine": 1,
+        "AgentID": "",
+        "Openable": false,
+        "Collapsed": false,
+        "ToolSummary": "",
+        "Diff": false,
+        "Queued": false
+      }
+    ]
+  }
+}
