@@ -51,6 +51,8 @@ internal/
   - `.codex/config.toml` `[mcp_servers.capy]` ← `mergeCodexMCPServer`; root `CLAUDE.md` import ← `ensureClaudeMDImport`; `.gitignore` capy entries ← `ensureGitignoreEntry`
   - `TestGeneratedWholeFileArtifacts` and `TestMergedArtifactsAreIdempotent` (`internal/platform/`) enforce this. Never "fix" a failure by editing just one side.
 
+  `capy setup --db-repo` (`SetupDBRepo`) is the exception: its two outputs have **no committed counterpart in this repo**, so the sync rule above does not apply to them. The guard hook is an uncommitted git hook (written into the target repo's `.git/hooks/`, never tracked anywhere), and the `*.db-wal`/`*.db-shm` `.gitignore` entries land in the *separate DB repo*, not here. It is drift-guarded by its own generator tests instead — `TestSetupDBRepo_WritesOnlyGitignoreAndHook`, `TestPreCommitHookBlockDBRepo_Content`, and the `TestDriftGuardCoversEverySetupArtifact` DB-repo case.
+
 ### Build & Test
 
 ```bash

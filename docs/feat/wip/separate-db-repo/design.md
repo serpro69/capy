@@ -108,6 +108,19 @@ loop's, not the inner command's.
 `installPreCommitHook` is generalized to accept a block so both modes share the
 marker-delimited replace-or-append logic.
 
+**Scope of the guard.** All three checks inspect the *working tree* (`head -c 15
+"$f"`, `-s "$f-wal"`, `-e "$f-shm"`) — not the staged blob. Unlike the project hook,
+the DB-repo hook deliberately does not re-stage after any repair (it repairs
+nothing). So a narrow path stays open: `git add <db>` while a WAL is pending →
+checkpoint happens in the owning project (sidecars vanish) → `git commit` without a
+fresh `git add`. The hook sees a clean working tree and passes, committing the
+add-time main-file snapshot. This is *not* corruption — a SQLite main file with a
+pending WAL is a valid older state (ADR-015's corruption vector is committing the
+*sidecars*, which stay `.gitignore`d); the worst case is committing slightly stale
+but internally consistent data. The remedy messages already tell the user to
+re-stage, which closes the gap. Treat the guard as a working-tree safety check, not
+a staged-content guarantee.
+
 ### 2. Wrapper exit codes + project-hook fix
 
 **Wrapper** (`capyWrapperScript`; committed copies `.claude/scripts/capy.sh`,

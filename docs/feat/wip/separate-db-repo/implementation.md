@@ -64,9 +64,11 @@ temp repo. It writes only `.gitignore` (already in the base `covered` map) and t
    → verify: removing `exec` makes the first assertion fail.
 4. `preCommitHookBlock`: magic check inside
    `printf '%s\n' "$staged_dbs" | while IFS= read -r f; do …; done || exit 1`;
-   `bash "<wrapper>" checkpoint || exit 1`; delete the dead `if [ $? -ne 0 ]` line.
-   → verify: existing assertions hold; add `Contains(block, "checkpoint || exit 1")`
-     and `NotContains(block, "$? -ne 0")`.
+   `bash "<wrapper>" checkpoint || { echo "capy: checkpoint failed; commit aborted" >&2; exit 1; }`
+   (a plain `|| exit 1` also satisfies the design, but the message is worth the extra
+   words); delete the dead `if [ $? -ne 0 ]` line.
+   → verify: existing assertions hold (the tests assert the `bash "<wrapper>" checkpoint`
+     substring, not the exact `|| …` tail) and `NotContains(block, "$? -ne 0")`.
 
 ## Task 2 — `capy encrypt` symlink-safe
 
@@ -103,14 +105,17 @@ temp repo. It writes only `.gitignore` (already in the base `covered` map) and t
    `done || exit 1`. No capy invocation anywhere in the block.
    → verify: text tests — contains `-wal`, `-shm`, `\.db$`, `done || exit 1`; does
      **not** contain `capy.sh`, `checkpoint --db`, or a binary path.
-3. Add `SetupDBRepo(repoDir string) error`: `ensureGitignoreEntry` × 2
+3. Add `SetupDBRepo(repoDir string) (hookInstalled bool, err error)`: `ensureGitignoreEntry` × 2
    (`*.db-wal`, `*.db-shm`), `installPreCommitHookBlock(repoDir, preCommitHookBlockDBRepo())`
-   (non-fatal stderr warning when `.git/hooks` is missing, as `SetupClaudeCode`).
+   (non-fatal stderr warning when `.git/hooks` is missing, as `SetupClaudeCode`). The
+   `hookInstalled` return is `false` in exactly that non-fatal skip case, so the CLI can
+   warn that commits are unguarded rather than reporting success unconditionally.
    → verify: `TestSetupDBRepo` asserts exactly `.gitignore` and `.git/hooks/pre-commit`
      are written and that `.claude/`, `.mcp.json`, `.capy/`, `CLAUDE.md` are **absent**;
      run twice → identical tree.
 4. CLI: `--db-repo` bool on `capy setup`; `MarkFlagsMutuallyExclusive("db-repo", "platform")`,
-   likewise with `local` and `project`. In that mode skip binary resolution (not
+   likewise with `local`, `project`, and `binary` (DB-repo mode shares nothing with the
+   platform/target/binary flags). In that mode skip binary resolution (not
    needed), call `SetupDBRepo(projectDir)`, print a two-line summary and the hint
    "commit as usual — the hook refuses unencrypted or un-checkpointed databases".
    → verify: `capy setup --db-repo` in a scratch `git init` dir writes the two files;
