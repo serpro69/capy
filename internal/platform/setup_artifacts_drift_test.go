@@ -202,6 +202,44 @@ func TestDriftGuardCoversEverySetupArtifact(t *testing.T) {
 			"Register each in wholeFileArtifacts / jsonMergeArtifacts / textMergeArtifacts "+
 			"(so its content is guarded), or add it to exemptSetupPaths with a reason. "+
 			"Otherwise a future edit to it can ship stale to consumers unnoticed.", uncovered)
+
+	// `capy setup --db-repo` is a separate entry point with its own artifact set.
+	// It writes only .gitignore (covered) and .git/hooks/pre-commit (exempt), so it
+	// needs no new registrations — this asserts that stays true.
+	dbRepoDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dbRepoDir, ".git", "hooks"), 0o755))
+	_, err = SetupDBRepo(dbRepoDir)
+	require.NoError(t, err)
+
+	var uncoveredDBRepo []string
+	err = filepath.WalkDir(dbRepoDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dbRepoDir, p)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(rel, ".git/") && rel != ".git/hooks/pre-commit" {
+			return nil
+		}
+		if covered[rel] {
+			return nil
+		}
+		if _, ok := exemptSetupPaths[rel]; ok {
+			return nil
+		}
+		uncoveredDBRepo = append(uncoveredDBRepo, rel)
+		return nil
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, uncoveredDBRepo,
+		"`capy setup --db-repo` writes these files but no drift-guard test covers them: %v.\n"+
+			"Register each or add it to exemptSetupPaths with a reason.", uncoveredDBRepo)
 }
 
 func copyToTemp(t *testing.T, src string) string {

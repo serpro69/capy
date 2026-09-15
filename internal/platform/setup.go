@@ -306,30 +306,36 @@ func preCommitHookScript(dbPattern string) string {
 	return "#!/bin/sh\n" + preCommitHookBlock(dbPattern)
 }
 
-// installPreCommitHook installs or updates the git pre-commit hook.
-// If a pre-commit hook already exists with a capy block, replaces it.
-// Otherwise appends the checkpoint logic.
+// installPreCommitHook installs or updates the project git pre-commit hook — the
+// checkpoint block whose DB pattern is resolved from the project's config.
 func installPreCommitHook(projectDir string) error {
-	hookDir := filepath.Join(projectDir, ".git", "hooks")
+	return installPreCommitHookBlock(projectDir, preCommitHookBlock(resolveDBPattern(projectDir)))
+}
+
+// installPreCommitHookBlock installs or updates a marker-delimited capy block in
+// repoDir's git pre-commit hook. If a capy block already exists (same
+// start/end markers), it is replaced in place — so re-runs migrate a stale block
+// and the project and DB-repo modes share the replace/append logic. Otherwise the
+// block is appended, or a new hook file is created with a shebang. Returns nil
+// (skips) when repoDir has no .git/hooks directory.
+func installPreCommitHookBlock(repoDir, block string) error {
+	hookDir := filepath.Join(repoDir, ".git", "hooks")
 	if _, err := os.Stat(hookDir); os.IsNotExist(err) {
 		return nil // not a git repo, skip
 	}
 
-	// Resolve the actual DB path from config so the hook matches custom paths.
-	dbPattern := resolveDBPattern(projectDir)
 	hookPath := filepath.Join(hookDir, "pre-commit")
 
 	existing, err := os.ReadFile(hookPath)
 	if os.IsNotExist(err) {
 		// No existing hook — create new with shebang
-		return os.WriteFile(hookPath, []byte(preCommitHookScript(dbPattern)), 0o755)
+		return os.WriteFile(hookPath, []byte("#!/bin/sh\n"+block), 0o755)
 	}
 	if err != nil {
 		return err
 	}
 
 	content := string(existing)
-	block := preCommitHookBlock(dbPattern)
 
 	// If capy block exists, replace it (handles binary path / DB path changes)
 	if startIdx := strings.Index(content, preCommitMarkerStart); startIdx >= 0 {
