@@ -15,12 +15,12 @@ import (
 // transcript model. It reproduces the UNION of what the three readers extract
 // (testdata/golden/DIVERGENCES.md); each reader keeps only its own policy.
 //
-// codex-vault-sessions Slice 2 adds this file WITHOUT touching the three reader
-// loops, so the tree keeps building and Slices 3–6 can proceed in parallel. The
-// reader loops (and the helpers only they use — mergeBlocks,
-// collectToolUseSummaries, extractUserBlocks, renderUserContent,
-// splitUserContentForViewer, assistantBodyAndLaunches, userTextContent …) are
-// replaced by consumers over Transcript in Slices 3 and 4 and deleted there.
+// codex-vault-sessions Slice 2 added this file WITHOUT touching the three reader
+// loops; Slice 3 replaced the scanner's loop with ScanTranscript (scanner.go).
+// The render.go / transcript.go loops (and the helpers only they still use —
+// collectToolUseSummaries, renderUserContent, splitUserContentForViewer,
+// assistantBodyAndLaunches, userTextContent, renderLineCap …) are replaced by
+// consumers over Transcript in Slice 4 and deleted there.
 
 // claudeDecoder decodes Claude Code session JSONL (main sessions and subagent
 // sidecars alike — a sidecar is just another JSONL). The zero value is ready to

@@ -221,7 +221,10 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		// Rebuild FTS + chunks with the current indexer over the decoded source
 		// blobs (not the source's stored index rows) so the destination index is
 		// schema-current regardless of the source's indexer version.
-		_, fts, chunks, err := scanSessionAndSubagents(uuid, src.rawJSONL, files)
+		// TODO(codex-vault-sessions Slice 8): pass the source row's carried
+		// platform once merge feature-detects the 0006 column (Slice 5); every
+		// source row is a Claude session until then.
+		_, fts, chunks, err := scanSessionAndSubagents(uuid, PlatformClaudeCode, src.rawJSONL, files)
 		if err != nil {
 			// Recorded as StatusError but NOT yet batched, so any existing
 			// destination row is left UNCHANGED (this scan happens before the write

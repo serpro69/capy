@@ -151,7 +151,7 @@ func readerOutputs(t *testing.T, raw []byte, sidecars map[string][]byte) map[str
 		subagentIDs = ids
 	}
 
-	scanOut, err := ScanSession(bytes.NewReader(raw))
+	scanOut, err := ScanSession(PlatformClaudeCode, bytes.NewReader(raw))
 	require.NoError(t, err)
 	scanFile := goldenScanFile{Main: goldenScan(scanOut)}
 	transcriptFile := goldenTranscriptFile{Main: ParseTranscript(raw, subagentIDs)}

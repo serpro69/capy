@@ -59,7 +59,7 @@ func TestScanSession_ExtractsTextAndToolNames(t *testing.T) {
 		}),
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 
 	assert.Equal(t, "/home/user/proj", out.CWD)
@@ -96,7 +96,7 @@ func TestScanSession_ToolResultFromUserAsRoleTool(t *testing.T) {
 		},
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 
 	byRole := resultsByRole(out.Results)
@@ -135,7 +135,7 @@ func TestScanSession_ReadResultExcludedFromFTS(t *testing.T) {
 		},
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	byRole := resultsByRole(out.Results)
 
@@ -177,7 +177,7 @@ func TestScanSession_EditResultExcludedFromFTS(t *testing.T) {
 		},
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	byRole := resultsByRole(out.Results)
 
@@ -210,7 +210,7 @@ func TestScanSession_ToolResultUnknownToolUseIDNoPrefix(t *testing.T) {
 			}},
 		},
 	)
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 
 	byRole := resultsByRole(out.Results)
@@ -232,7 +232,7 @@ func TestScanSession_UserEntryWithBothTextAndToolResult(t *testing.T) {
 		}},
 	})
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 
 	byRole := resultsByRole(out.Results)
@@ -259,7 +259,7 @@ func TestScanSession_ToolResultStringContentAndTruncation(t *testing.T) {
 		},
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 
 	byRole := resultsByRole(out.Results)
@@ -285,7 +285,7 @@ func TestScanSession_ImageToolResultSkipped(t *testing.T) {
 		},
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	assert.Empty(t, resultsByRole(out.Results)[roleTool], "image-only tool_result yields no row")
 }
@@ -297,7 +297,7 @@ func TestScanSession_AITitleLastWins(t *testing.T) {
 		map[string]any{"type": "ai-title", "aiTitle": "Refined final title", "sessionId": "s"},
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	assert.Equal(t, "Refined final title", out.Title)
 }
@@ -317,7 +317,7 @@ func TestScanSession_TitleFallbackSkipsToolResultAndTags(t *testing.T) {
 		assistantLine("a1", "msg_1", []map[string]any{{"type": "text", "text": "Use the retry option."}}),
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	assert.Equal(t, "How do I configure retries?", out.Title)
 }
@@ -326,7 +326,7 @@ func TestScanSession_TitleFallbackTruncatedTo120(t *testing.T) {
 	longMsg := strings.Repeat("x", 200)
 	r := buildJSONL(t, userLine("u1", "/p", "main", longMsg))
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	assert.Equal(t, []rune(longMsg)[:titleMaxChars], []rune(strings.TrimSuffix(out.Title, "…")))
 	assert.True(t, strings.HasSuffix(out.Title, "…"))
@@ -336,7 +336,7 @@ func TestScanSession_SystemReminderStripped(t *testing.T) {
 	r := buildJSONL(t,
 		userLine("u1", "/p", "main", "Fix the bug<system-reminder>hook noise here</system-reminder> in parser"),
 	)
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	require.Len(t, out.Results, 1)
 	assert.Equal(t, "Fix the bug in parser", out.Results[0].ContentText)
@@ -357,7 +357,7 @@ func TestScanSession_ProgressiveSnapshotsDeduped(t *testing.T) {
 		}),
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 
 	byRole := resultsByRole(out.Results)
@@ -374,7 +374,7 @@ func TestScanSession_LineIndexTracksSourceLine(t *testing.T) {
 		userLine("u2", "/p", "main", "second question"),                                    // line 3
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 
 	byRole := resultsByRole(out.Results)
@@ -393,7 +393,7 @@ func TestScanSession_TurnAndMessageIndex(t *testing.T) {
 		assistantLine("a2", "msg_2", []map[string]any{{"type": "text", "text": "a2"}}),
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	require.Len(t, out.Results, 4)
 
@@ -416,7 +416,7 @@ func TestScanSession_PRLinkExtracted(t *testing.T) {
 		},
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 
 	byRole := resultsByRole(out.Results)
@@ -436,7 +436,7 @@ func TestScanSession_AwaySummaryExtracted(t *testing.T) {
 		},
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	byRole := resultsByRole(out.Results)
 	require.Len(t, byRole[roleSystem], 1)
@@ -473,7 +473,7 @@ func TestScanSession_QueuedCommandAttachmentIndexedAsUser(t *testing.T) {
 		},
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 
 	byRole := resultsByRole(out.Results)
@@ -530,7 +530,7 @@ func TestScanSession_UnindexedTypesProduceNothing(t *testing.T) {
 		map[string]any{"type": "system", "subtype": "turn_duration", "durationMs": 1234},
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	assert.Empty(t, out.Results, "no indexable types present")
 	assert.Equal(t, 0, out.MessageCount)
@@ -541,7 +541,7 @@ func TestScanSession_SecretsStripped(t *testing.T) {
 	r := buildJSONL(t,
 		userLine("u1", "/p", "main", "my key is sk-ant-abcdefghijklmnopqrstuvwxyz0123 keep it safe"),
 	)
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	require.Len(t, out.Results, 1)
 	assert.NotContains(t, out.Results[0].ContentText, "sk-ant-abcdefghijklmnopqrstuvwxyz0123")
@@ -739,7 +739,7 @@ func TestScanSession_GenericInputSecretsStripped(t *testing.T) {
 			}},
 		},
 	)
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 
 	var fts strings.Builder
@@ -774,7 +774,7 @@ func TestScanSession_AttachmentBestEffort(t *testing.T) {
 				{"type": "image", "filename": "architecture-diagram.png"},
 			}},
 		})
-		out, err := ScanSession(r)
+		out, err := ScanSession(PlatformClaudeCode, r)
 		require.NoError(t, err)
 		require.Len(t, out.Results, 1)
 		assert.Equal(t, roleSystem, out.Results[0].Role)
@@ -786,7 +786,7 @@ func TestScanSession_AttachmentBestEffort(t *testing.T) {
 			"type": "attachment", "uuid": "at2", "timestamp": "2026-05-01T10:00:00Z",
 			"message": map[string]any{"role": "user", "content": "notes.txt"},
 		})
-		out, err := ScanSession(r)
+		out, err := ScanSession(PlatformClaudeCode, r)
 		require.NoError(t, err)
 		require.Len(t, out.Results, 1)
 		assert.Equal(t, "notes.txt", out.Results[0].ContentText)
@@ -799,7 +799,7 @@ func TestScanSession_AttachmentBestEffort(t *testing.T) {
 				{"type": "image", "mediaType": "image/png", "bytes": 1024},
 			}},
 		})
-		out, err := ScanSession(r)
+		out, err := ScanSession(PlatformClaudeCode, r)
 		require.NoError(t, err)
 		assert.Empty(t, out.Results, "attachment with no filename-ish field is skipped")
 	})
@@ -813,7 +813,7 @@ func TestScanSession_TitleSanitized(t *testing.T) {
 			map[string]any{"type": "ai-title", "aiTitle": "Deploy with sk-ant-abcdefghijklmnopqrstuvwxyz0123", "sessionId": "s"},
 			userLine("u1", "/p", "main", "go"),
 		)
-		out, err := ScanSession(r)
+		out, err := ScanSession(PlatformClaudeCode, r)
 		require.NoError(t, err)
 		assert.NotContains(t, out.Title, "sk-ant-abcdefghijklmnopqrstuvwxyz0123")
 		assert.Contains(t, out.Title, "[REDACTED_SECRET]")
@@ -821,7 +821,7 @@ func TestScanSession_TitleSanitized(t *testing.T) {
 
 	t.Run("first-message fallback", func(t *testing.T) {
 		r := buildJSONL(t, userLine("u1", "/p", "main", "use key sk-ant-abcdefghijklmnopqrstuvwxyz0123 to deploy"))
-		out, err := ScanSession(r)
+		out, err := ScanSession(PlatformClaudeCode, r)
 		require.NoError(t, err)
 		assert.NotContains(t, out.Title, "sk-ant-abcdefghijklmnopqrstuvwxyz0123")
 		assert.Contains(t, out.Title, "[REDACTED_SECRET]")
@@ -858,7 +858,7 @@ func TestScanSession_MalformedLinesSkipped(t *testing.T) {
 		`{"type":"assistant","uuid":"a1","timestamp":"2026-05-01T10:00:05Z","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"a reply"}]}}`,
 	}, "\n") + "\n"
 
-	out, err := ScanSession(strings.NewReader(body))
+	out, err := ScanSession(PlatformClaudeCode, strings.NewReader(body))
 	require.NoError(t, err)
 	byRole := resultsByRole(out.Results)
 	require.Len(t, byRole[roleUser], 1)
@@ -869,7 +869,7 @@ func TestScanSession_MalformedLinesSkipped(t *testing.T) {
 }
 
 func TestScanSession_EmptyInput(t *testing.T) {
-	out, err := ScanSession(strings.NewReader(""))
+	out, err := ScanSession(PlatformClaudeCode, strings.NewReader(""))
 	require.NoError(t, err)
 	assert.Empty(t, out.Results)
 	assert.Equal(t, 0, out.MessageCount)
@@ -891,7 +891,7 @@ func TestScanSession_TypeInferredFromMessageRole(t *testing.T) {
 		},
 	)
 
-	out, err := ScanSession(r)
+	out, err := ScanSession(PlatformClaudeCode, r)
 	require.NoError(t, err)
 	assert.Equal(t, 2, out.MessageCount)
 }

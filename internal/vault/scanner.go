@@ -76,11 +76,12 @@ var (
 )
 
 // jsonNull is the literal JSON null, compared per line via bytes.Equal to avoid
-// a per-line string allocation in the scan hot loop.
+// a per-line string allocation in the decode hot loop.
 var jsonNull = []byte("null")
 
-// scanLineCap is the per-line byte cap the scanner passes to scanLines. It is a
-// variable (initialised to maxScanLineBytes) purely so the golden harness
+// scanLineCap is the per-line byte cap the Claude decoder passes to scanLines
+// when its own lineCap is zero (claudeDecoder.Decode). It is a variable
+// (initialised to maxScanLineBytes) purely so the golden harness
 // (golden_test.go) can lower it and exercise the oversize-line path with a
 // small fixture instead of a 16 MB line; production code never reassigns it.
 var scanLineCap = maxScanLineBytes
@@ -101,198 +102,98 @@ type ScanResult struct {
 	ToolNames []string
 }
 
-// ScanOutput is the result of scanning a full session JSONL: the per-message FTS
-// results plus the session-level metadata the import pipeline needs.
+// ScanOutput is the result of scanning a full session: the per-message FTS
+// results plus the session-level metadata the import pipeline needs. The
+// Platform, PlatformID, ParentUUID and Source fields are copied verbatim from
+// the decoder's Meta so import can persist the platform and parent link from
+// the single decode and check PlatformID against the filename uuid; Source is
+// not persisted in v1 (design § Consumer contracts).
 type ScanOutput struct {
 	Results      []ScanResult
-	Title        string    // last ai-title, else guarded first-user-message fallback
-	CWD          string    // from the first user entry with a cwd field
-	Branch       string    // from the first user entry with a gitBranch field
-	StartTime    time.Time // first JSONL line with a timestamp
-	EndTime      time.Time // last JSONL line with a timestamp
-	MessageCount int       // human-text user turns + assistant turns (no tool_result-only users)
+	Title        string    // sanitized ExplicitTitle, else sanitized+truncated TitleFallback
+	CWD          string    // Meta.CWD
+	Branch       string    // Meta.Branch
+	StartTime    time.Time // Meta.StartTime
+	EndTime      time.Time // Meta.EndTime
+	MessageCount int       // user + assistant rows (tool_result-only user lines do not count)
+	Platform     Platform  // Meta.Platform — the decoder that produced this output
+	PlatformID   string    // Meta.PlatformID — the platform's own session id; "" for Claude
+	ParentUUID   string    // Meta.ParentUUID — parent session of a child rollout; "" for Claude
+	Source       string    // Meta.Source — platform session origin; "" for Claude
 }
 
-// ScanSession reads a Claude Code session JSONL from r and extracts searchable
-// text for the FTS index. It accepts an io.Reader so it works for both
-// import-from-disk (os.Open) and render-from-BLOB (bytes.NewReader). Malformed
-// lines are logged and skipped; the scan never fails on bad content.
-func ScanSession(r io.Reader) (*ScanOutput, error) {
-	return scan(r)
-}
-
-// ScanSubagent scans a subagent JSONL the same way as ScanSession and stamps
-// every result with subagentID — the anchor that lets the TUI open a subagent
-// transcript at a matched line. A subagent file is just another JSONL.
-func ScanSubagent(r io.Reader, subagentID string) ([]ScanResult, error) {
-	out, err := scan(r)
+// ScanSession decodes a session archived from platform p and extracts
+// searchable text for the FTS index: DecoderFor(p).Decode then ScanTranscript.
+// It accepts an io.Reader so it works for both import-from-disk (os.Open) and
+// render-from-BLOB (bytes.NewReader). The decoder never fails on bad content
+// (malformed lines are logged and skipped — ADR-021); the only errors are a
+// genuine read error, wrapped by the decoder, or an unusable platform value
+// (ErrUnknownPlatform / ErrDecoderUnavailable, see DecoderFor).
+func ScanSession(p Platform, r io.Reader) (*ScanOutput, error) {
+	t, err := DecoderFor(p).Decode(r)
 	if err != nil {
 		return nil, err
 	}
+	return ScanTranscript(t), nil
+}
+
+// ScanSubagent scans a Claude Code subagent sidecar the same way as ScanSession
+// and stamps every result with subagentID — the anchor that lets the TUI open a
+// subagent transcript at a matched line. Sidecars are a Claude concept (a
+// sidecar is just another Claude JSONL), so this always uses the Claude decoder.
+func ScanSubagent(r io.Reader, subagentID string) ([]ScanResult, error) {
+	t, err := claudeDecoder{}.Decode(r)
+	if err != nil {
+		return nil, err
+	}
+	out := ScanTranscript(t)
 	for i := range out.Results {
 		out.Results[i].SubagentID = subagentID
 	}
 	return out.Results, nil
 }
 
-// scanEntry is an in-order slot collected during pass 1. Assistant snapshots
-// sharing a message.id merge into a single slot (blocks deduplicated) so the
-// canonical LineIndex is the first snapshot's line.
-type scanEntry struct {
-	kind      string // entryUser | entryAssistant | entrySystem
-	lineIndex int
-	timestamp time.Time
-	content   json.RawMessage // user: message.content
-	blocks    []contentBlock  // assistant: merged, deduplicated blocks
-	text      string          // system: pre-composed text (away_summary / pr-link / attachment)
-}
-
-const (
-	entryUser      = "user"
-	entryAssistant = "assistant"
-	entrySystem    = "system"
-)
-
-func scan(r io.Reader) (*ScanOutput, error) {
-	out := &ScanOutput{}
-	var entries []scanEntry
-	assistantIdx := make(map[string]int) // message.id → index in entries
-	var lastAITitle, titleFallback string
-	lineIndex := -1
-
-	// Pass 1: read line-by-line, capturing session metadata and building the
-	// ordered entry list. Assistant progressive snapshots merge by message.id.
-	err := scanLines(r, scanLineCap, func(data []byte, oversize bool) {
-		lineIndex++
-		if oversize || len(data) == 0 {
-			return
-		}
-
-		var line jsonlLine
-		if err := json.Unmarshal(data, &line); err != nil {
-			slog.Warn("vault scanner: skipping malformed JSONL line", "line", lineIndex, "error", err)
-			return
-		}
-
-		// Infer type from message.role when the top-level type is absent.
-		var msg jsonlMessage
-		hasMsg := false
-		if len(line.Message) > 0 && !bytes.Equal(line.Message, jsonNull) {
-			if err := json.Unmarshal(line.Message, &msg); err == nil {
-				hasMsg = true
-				if line.Type == "" && msg.Role != "" {
-					line.Type = msg.Role
-				}
-			}
-		}
-
-		// Track first/last timestamps from lines that carry one (ai-title lines
-		// have none).
-		ts := parseJSONLTime(line.Timestamp)
-		if !ts.IsZero() {
-			if out.StartTime.IsZero() {
-				out.StartTime = ts
-			}
-			out.EndTime = ts
-		}
-
-		switch line.Type {
-		case "user":
-			if out.CWD == "" && line.CWD != "" {
-				out.CWD = line.CWD
-			}
-			if out.Branch == "" && line.GitBranch != "" {
-				out.Branch = line.GitBranch
-			}
-			if !hasMsg {
-				return
-			}
-			// Title fallback: the first user entry whose content is a plain
-			// string (not a tool_result array) and isn't a <…>-prefixed tag.
-			if titleFallback == "" {
-				if s, ok := asJSONString(msg.Content); ok {
-					if t := strings.TrimSpace(s); t != "" && !strings.HasPrefix(t, "<") {
-						titleFallback = t
-					}
-				}
-			}
-			entries = append(entries, scanEntry{
-				kind: entryUser, lineIndex: lineIndex, timestamp: ts, content: msg.Content,
-			})
-
-		case "assistant":
-			if !hasMsg {
-				return
-			}
-			msgID := msg.ID
-			if msgID == "" {
-				msgID = line.UUID
-			}
-			var blocks []contentBlock
-			if len(msg.Content) > 0 {
-				if err := json.Unmarshal(msg.Content, &blocks); err != nil {
-					slog.Warn("vault scanner: skipping malformed assistant content", "line", lineIndex, "error", err)
-				}
-			}
-			if idx, ok := assistantIdx[msgID]; ok {
-				mergeBlocks(&entries[idx], blocks)
-			} else {
-				assistantIdx[msgID] = len(entries)
-				entries = append(entries, scanEntry{
-					kind: entryAssistant, lineIndex: lineIndex, timestamp: ts, blocks: blocks,
-				})
-			}
-
-		case "ai-title":
-			if line.AITitle != "" {
-				lastAITitle = line.AITitle // last wins
-			}
-
-		case "pr-link":
-			if text := prLinkText(line); text != "" {
-				entries = append(entries, scanEntry{
-					kind: entrySystem, lineIndex: lineIndex, timestamp: ts, text: text,
-				})
-			}
-
-		case "attachment":
-			// A queued_command attachment is an in-flight user message (A2):
-			// normalize it to the equivalent user entry so it indexes as a human
-			// prompt (role=user), searchable like any other turn.
-			if prompt := queuedCommandPrompt(line.Attachment); prompt != "" {
-				entries = append(entries, scanEntry{
-					kind: entryUser, lineIndex: lineIndex, timestamp: ts, content: userTextContent(prompt),
-				})
-				return // handled; skip the message.content fallback below (a queued_command line carries no message)
-			}
-			if hasMsg {
-				if text := attachmentText(msg.Content); text != "" {
-					entries = append(entries, scanEntry{
-						kind: entrySystem, lineIndex: lineIndex, timestamp: ts, text: text,
-					})
-				}
-			}
-
-		case "system":
-			if line.Subtype == "away_summary" {
-				if text := strings.TrimSpace(line.Content); text != "" {
-					entries = append(entries, scanEntry{
-						kind: entrySystem, lineIndex: lineIndex, timestamp: ts, text: text,
-					})
-				}
-			}
-
-			// All other types (custom-title, agent-name, progress,
-			// permission-mode, file-history-snapshot, system:turn_duration, …,
-			// and anything unknown) are skipped by default — raw_jsonl preserves
-			// them regardless.
-		}
-	})
-	if err != nil {
-		return nil, fmt.Errorf("reading session: %w", err)
+// ScanTranscript is the FTS consumer over the transcript model: it walks the
+// decoded entries in order and emits one sanitized ScanResult per message. This
+// is where every SCANNER policy lives (the decoder is pre-policy — see
+// transcript_model.go):
+//
+//   - A Human entry starts a new turn; a ToolResult continues the calling
+//     assistant's turn (the shared turn heuristic — explicit platform turn ids
+//     are not used).
+//   - A ToolResult whose CallName is in ftsExcludedResult is dropped (the call
+//     stays searchable on the assistant row), as is one with an empty Body (the
+//     decoder emits those for their Diff — D18 — which the scanner does not
+//     index). Every other body is prefixed with its CallSummary and THEN
+//     head/tail-bounded to maxToolResultChars, so the label survives in the head.
+//   - An Assistant row's text is its text parts and its ToolCall.Summary values
+//     joined by "\n" in part order, so a tool-only assistant entry is still an
+//     assistant row and counts in MessageCount. ToolNames carries the call names
+//     in order for the chunker's title.
+//   - System entries are indexed, SearchOnly ones included (D7 — the scanner is
+//     the one consumer that sees them).
+//   - Every emitted text is TrimSpace'd then sanitize.StripSecrets'ed; the title
+//     is sanitized (and the fallback truncated AFTER sanitizing) the same way.
+//
+// Output for Claude sessions is byte-identical to the pre-model scanner
+// (golden_test.go, parity_canary_test.go).
+//
+// t must be non-nil: every Decoder returns a non-nil *Transcript on a nil error
+// (transcript_model.go), and ScanSession / ScanSubagent only call this after
+// that check. An entry of unknown Kind is skipped with a warning — it can only
+// come from a decoder bug, never from valid input.
+func ScanTranscript(t *Transcript) *ScanOutput {
+	out := &ScanOutput{
+		CWD:        t.Meta.CWD,
+		Branch:     t.Meta.Branch,
+		StartTime:  t.Meta.StartTime,
+		EndTime:    t.Meta.EndTime,
+		Platform:   t.Meta.Platform,
+		PlatformID: t.Meta.PlatformID,
+		ParentUUID: t.Meta.ParentUUID,
+		Source:     t.Meta.Source,
 	}
 
-	// Pass 2: walk entries in order, emit one sanitized ScanResult per message.
 	turnIndex, messageIndex, emitted := 0, 0, 0
 	emit := func(role, text string, lineIdx int, ts time.Time) {
 		text = sanitize.StripSecrets(strings.TrimSpace(text))
@@ -307,42 +208,56 @@ func scan(r io.Reader) (*ScanOutput, error) {
 		emitted++
 	}
 
-	// Correlate tool_use_id → call summary across the whole transcript so each
-	// tool_result row can be tagged with the call that produced it. tool_use
-	// always precedes its result, but building the full map upfront is simplest.
-	toolUses := make(map[string]toolCall)
-	for _, e := range entries {
-		if e.kind == entryAssistant {
-			collectToolUseSummaries(e.blocks, toolUses)
-		}
-	}
+	for _, e := range t.Entries {
+		switch e.Kind {
+		case EntryHuman:
+			// Only human text starts a new turn; a tool_result-only user line
+			// (no Human entry) continues the calling assistant's turn.
+			if emitted > 0 {
+				turnIndex++
+				messageIndex = 0
+			}
+			emit(roleUser, e.Text, e.LineIndex, e.Timestamp)
 
-	for _, e := range entries {
-		switch e.kind {
-		case entryUser:
-			humanText, toolResults := extractUserBlocks(e.content, toolUses)
-			// Only human text starts a new turn; a tool_result-only user entry
-			// continues the calling assistant's turn.
-			if humanText != "" {
-				if emitted > 0 {
-					turnIndex++
-					messageIndex = 0
-				}
-				emit(roleUser, humanText, e.lineIndex, e.timestamp)
+		case EntryToolResult:
+			if ftsExcludedResult(e.CallName) {
+				continue // dump / boilerplate body — excluded from FTS (call stays searchable on the assistant row)
 			}
-			for _, tr := range toolResults {
-				emit(roleTool, tr, e.lineIndex, e.timestamp)
+			if e.Body == "" {
+				continue // emitted by the decoder for its Diff (D18); nothing to index
 			}
-		case entryAssistant:
+			// Prefix the call summary BEFORE truncation so it survives in the
+			// 75%-head of a long result.
+			//
+			// TODO(codex-vault-sessions, after Slice 4): this truncates BEFORE emit's
+			// StripSecrets — the opposite of the title path below (sanitize, then
+			// truncate). A secret straddling the head/tail cut of a >16 KiB body is
+			// split into fragments the length-floored redaction regex may miss. It
+			// is pre-existing behaviour (the deleted extractUserBlocks did the same)
+			// and is kept for the byte-identical gate; fixing it changes FTS bytes
+			// and must land as its own golden-regenerating change. See
+			// implementation.md § Deferred work #7.
+			body := prefixToolResult(e.CallSummary, e.Body)
+			emit(roleTool, truncateHeadTail(body, maxToolResultChars), e.LineIndex, e.Timestamp)
+
+		case EntryAssistant:
 			before := len(out.Results)
-			emit(roleAssistant, extractAssistantText(e.blocks), e.lineIndex, e.timestamp)
+			emit(roleAssistant, assistantRowText(e.Parts), e.LineIndex, e.Timestamp)
 			// Attach tool names to the row just emitted (emit skips empty text,
 			// so guard on growth). Title-building metadata only — see ScanResult.
 			if len(out.Results) > before {
-				out.Results[len(out.Results)-1].ToolNames = toolUseNames(e.blocks)
+				out.Results[len(out.Results)-1].ToolNames = partToolNames(e.Parts)
 			}
-		case entrySystem:
-			emit(roleSystem, e.text, e.lineIndex, e.timestamp)
+
+		case EntrySystem:
+			emit(roleSystem, e.Text, e.LineIndex, e.Timestamp)
+
+		default:
+			// Fail loud, not silent: a Kind this consumer does not know (including
+			// the EntryUnknown zero value) is a decoder bug, and dropping the entry
+			// without a trace would hide it. Output is unaffected for valid input.
+			slog.Warn("vault scanner: skipping transcript entry of unknown kind",
+				"platform", t.Meta.Platform, "line", e.LineIndex, "kind", int(e.Kind))
 		}
 	}
 
@@ -356,74 +271,47 @@ func scan(r io.Reader) (*ScanOutput, error) {
 	// so a secret in an ai-title or the first user message must not leak there.
 	// Sanitize the fallback BEFORE truncation: truncating first could split a
 	// secret so StripSecrets' length-floored regex no longer matches the fragment.
-	if lastAITitle != "" {
-		out.Title = sanitize.StripSecrets(lastAITitle)
-	} else if titleFallback != "" {
-		out.Title = truncateRunes(sanitize.StripSecrets(titleFallback), titleMaxChars)
+	if t.Meta.ExplicitTitle != "" {
+		out.Title = sanitize.StripSecrets(t.Meta.ExplicitTitle)
+	} else if t.Meta.TitleFallback != "" {
+		out.Title = truncateRunes(sanitize.StripSecrets(t.Meta.TitleFallback), titleMaxChars)
 	}
 
-	return out, nil
+	return out
 }
 
-// mergeBlocks appends nb's blocks to the entry, skipping duplicates by the
-// (Type, Text, Name, ID) tuple — the progressive-snapshot dedup used by
-// internal/session/parse.go.
-func mergeBlocks(entry *scanEntry, nb []contentBlock) {
-	for _, b := range nb {
-		dup := false
-		for _, eb := range entry.blocks {
-			if eb.Type == b.Type && eb.Text == b.Text && eb.Name == b.Name && eb.ID == b.ID {
-				dup = true
-				break
-			}
-		}
-		if !dup {
-			entry.blocks = append(entry.blocks, b)
-		}
-	}
-}
-
-// extractUserBlocks splits a user message into human text (Role=user) and a
-// bounded list of tool_result texts (Role=tool). Content is either a plain
-// string (human input) or an array of blocks (text and/or tool_result). Each
-// tool_result is prefixed with its originating tool-call summary (from toolUses,
-// keyed by tool_use_id) so the result is searchable alongside the call that
-// produced it; an unknown id leaves the text unprefixed. A tool_result whose call
-// is FTS-excluded (ftsExcludedResult — Read/NotebookRead file dumps and Edit/Write
-// success boilerplate) is skipped entirely; the call itself stays searchable via
-// the assistant row.
-func extractUserBlocks(raw json.RawMessage, toolUses map[string]toolCall) (humanText string, toolResults []string) {
-	if len(raw) == 0 {
-		return "", nil
-	}
-	if s, ok := asJSONString(raw); ok {
-		return cleanText(s), nil
-	}
-	var blocks []contentBlock
-	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return "", nil
-	}
+// assistantRowText composes an assistant FTS row from its ordered parts: text
+// parts verbatim (already TrimSpace'd by the decoder) and each call's Summary,
+// joined by "\n" in part order. A call with an empty Summary contributes
+// nothing. Launches (Task/Agent) contribute their "Agent <prompt>" summary like
+// any other call — the scanner has no marker concept (D19).
+func assistantRowText(parts []Part) string {
 	var texts []string
-	for _, b := range blocks {
-		switch b.Type {
-		case "text":
-			if c := cleanText(b.Text); c != "" {
-				texts = append(texts, c)
+	for _, p := range parts {
+		switch {
+		case p.Call != nil:
+			if p.Call.Summary != "" {
+				texts = append(texts, p.Call.Summary)
 			}
-		case "tool_result":
-			call := toolUses[b.ToolUseID]
-			if ftsExcludedResult(call.name) {
-				continue // dump / boilerplate body — excluded from FTS (call stays searchable on the assistant row)
-			}
-			if t := toolResultText(b.Content); t != "" {
-				// Prefix the call summary BEFORE truncation so it survives in the
-				// 75%-head of a long result.
-				t = prefixToolResult(call.summary, t)
-				toolResults = append(toolResults, truncateHeadTail(t, maxToolResultChars))
-			}
+		case p.Text != "":
+			texts = append(texts, p.Text)
 		}
 	}
-	return strings.Join(texts, "\n"), toolResults
+	return strings.Join(texts, "\n")
+}
+
+// partToolNames returns the tool-call names of an assistant entry in part order
+// (nil when it has none). Feeds the vault chunker's BM25 title
+// (buildVaultChunkTitle); duplicates are kept — the title builder dedups. A
+// nameless call is skipped.
+func partToolNames(parts []Part) []string {
+	var names []string
+	for _, p := range parts {
+		if p.Call != nil && p.Call.Name != "" {
+			names = append(names, p.Call.Name)
+		}
+	}
+	return names
 }
 
 // toolCall is the correlated info for a tool_use, keyed by its id and matched to
@@ -477,24 +365,13 @@ func ftsExcludedResult(name string) bool {
 	return excludedResultTools[name] || diffResultTools[name]
 }
 
-// toolUseNames returns the tool_use block names in block order (nil when the
-// entry has none). Feeds the vault chunker's BM25 title (buildVaultChunkTitle);
-// duplicates are kept — the title builder dedups.
-func toolUseNames(blocks []contentBlock) []string {
-	var names []string
-	for _, b := range blocks {
-		if b.Type == "tool_use" && b.Name != "" {
-			names = append(names, b.Name)
-		}
-	}
-	return names
-}
-
 // collectToolUseSummaries records, for each tool_use block in blocks, the call's
 // name + summary (tool name + key inputs, via toolUseSummary) keyed by the block's
-// id — the tool_use_id a later tool_result block references. Used by all three
-// JSONL parsers (scanner/render/transcript) to associate a result with its call
-// and to apply the excludedResultTools policy.
+// id — the tool_use_id a later tool_result block references. Used by the render
+// and transcript readers' own pass 1 to associate a result with its call and to
+// apply the excludedResultTools policy; the scanner now receives the correlation
+// from the decoder (ToolResult.CallName / CallSummary). Deleted with those loops
+// in codex-vault-sessions Slice 4.
 func collectToolUseSummaries(blocks []contentBlock, into map[string]toolCall) {
 	for _, b := range blocks {
 		if b.Type == "tool_use" && b.ID != "" {
@@ -511,25 +388,6 @@ func prefixToolResult(label, body string) string {
 		return body
 	}
 	return label + "\n" + body
-}
-
-// extractAssistantText keeps text blocks and tool_use summaries; thinking blocks
-// are skipped (not a search signal). Assistant entries never carry tool_result.
-func extractAssistantText(blocks []contentBlock) string {
-	var parts []string
-	for _, b := range blocks {
-		switch b.Type {
-		case "text":
-			if t := strings.TrimSpace(b.Text); t != "" {
-				parts = append(parts, t)
-			}
-		case "tool_use":
-			if s := toolUseSummary(b.Name, b.Input); s != "" {
-				parts = append(parts, s)
-			}
-		}
-	}
-	return strings.Join(parts, "\n")
 }
 
 // toolUseSummary renders a searchable summary for a tool_use block: the file
@@ -811,8 +669,9 @@ func queuedCommandPrompt(raw json.RawMessage) string {
 
 // userTextContent wraps plain text as the JSON message.content (a quoted string)
 // the user-entry parsers expect, normalizing a queued_command prompt (A2) into
-// its equivalent user message so the three JSONL readers (scanner/render/
-// transcript) handle it through their existing user path. json.Marshal of a
+// its equivalent user message so the render/transcript readers handle it through
+// their existing user path (the decoder sets Entry.Queued directly; this helper
+// goes with the reader loops in Slice 4). json.Marshal of a
 // concrete string type is specified never to return an error, so the discard is
 // safe (matching the json.Marshal convention in internal/store/chunk.go).
 func userTextContent(s string) json.RawMessage {
