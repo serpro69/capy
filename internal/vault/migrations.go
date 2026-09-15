@@ -21,7 +21,8 @@ import (
 // archival tasks (see docs/feat/wip/vault/v2/precompact-investigation.md), so v2 adds
 // only 0001 (blob encoding) alongside the existing 0003 (index_version). The
 // 0002 gap is deliberate and must not be reused; 0004 (chunk FTS) is the next
-// slot after it; 0005 adds vault-owned session names.
+// slot after it; 0005 adds vault-owned session names; 0006 adds the platform /
+// parent_uuid columns and the parent index.
 func migrateVault(ctx context.Context, db *sql.DB) error {
 	if err := ensureVaultMigrationsTable(ctx, db); err != nil {
 		return fmt.Errorf("creating vault_migrations table: %w", err)
@@ -37,6 +38,9 @@ func migrateVault(ctx context.Context, db *sql.DB) error {
 	}
 	if err := migrate0005AddSessionNames(ctx, db); err != nil {
 		return fmt.Errorf("migration 0005_session_names: %w", err)
+	}
+	if err := migrate0006AddPlatform(ctx, db); err != nil {
+		return fmt.Errorf("migration 0006_platform: %w", err)
 	}
 	return nil
 }
@@ -249,6 +253,77 @@ func migrate0005AddSessionNames(ctx context.Context, db *sql.DB) error {
 	if _, err := tx.ExecContext(ctx, sessionNamesTableSQL); err != nil {
 		return fmt.Errorf("creating session names table: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO vault_migrations (name) VALUES (?)`, name); err != nil {
+		return fmt.Errorf("recording migration: %w", err)
+	}
+	return tx.Commit()
+}
+
+// migrate0006AddPlatform adds the multi-platform columns to vault_sessions
+// (codex-vault-sessions design § Storage Model):
+//
+//   - platform TEXT NOT NULL DEFAULT 'claude-code' — which agent CLI produced the
+//     session; validated in Go against the closed Platform set (platform.go),
+//     deliberately NOT by a SQL CHECK, so a third platform is a constant, not a
+//     migration. Every pre-existing row reads as Claude through the default.
+//   - parent_uuid TEXT — the parent session of a child rollout (Codex sub-agents
+//     are standalone rollouts). Nullable and WITHOUT a foreign key: a child may be
+//     archived before its parent, and deleting a parent must neither cascade nor
+//     fail. Empty string in Go == NULL.
+//   - idx_sessions_parent ON vault_sessions(parent_uuid) — serves Children() and
+//     the parent_uuid IS NULL default of ListSessions.
+//
+// Pre-existing vaults: the ALTERs add the columns, then the index is created.
+// Fresh vaults: schemaSQL already declares the two COLUMNS, so the columnExists
+// guards skip the ALTERs and only the index is created here. The index lives in
+// this migration ONLY and must never be added to schemaSQL: openDB runs
+// schemaSQL BEFORE migrateVault, so on a legacy vault an index over a column that
+// does not exist yet would fail every open (TestSchemaSQL_HasNoParentIndex pins
+// this).
+func migrate0006AddPlatform(ctx context.Context, db *sql.DB) error {
+	const name = "0006_platform"
+
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM vault_migrations WHERE name = ?`, name).Scan(&count); err == nil && count > 0 {
+		return nil
+	}
+
+	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
+	if err != nil {
+		return fmt.Errorf("begin immediate: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	applied, err := vaultMigrationApplied(ctx, tx, name)
+	if err != nil {
+		return err
+	}
+	if applied {
+		return tx.Commit()
+	}
+
+	for _, col := range []struct{ name, ddl string }{
+		{"platform", `ALTER TABLE vault_sessions ADD COLUMN platform TEXT NOT NULL DEFAULT 'claude-code'`},
+		{"parent_uuid", `ALTER TABLE vault_sessions ADD COLUMN parent_uuid TEXT`},
+	} {
+		hasColumn, err := columnExists(ctx, tx, "vault_sessions", col.name)
+		if err != nil {
+			return err
+		}
+		if !hasColumn {
+			if _, err := tx.ExecContext(ctx, col.ddl); err != nil {
+				return fmt.Errorf("adding column %s: %w", col.name, err)
+			}
+		}
+	}
+	// The index goes AFTER the columns exist — see the function comment for why
+	// it must not be part of schemaSQL.
+	if _, err := tx.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON vault_sessions(parent_uuid)`); err != nil {
+		return fmt.Errorf("creating idx_sessions_parent: %w", err)
+	}
+
 	if _, err := tx.ExecContext(ctx, `INSERT INTO vault_migrations (name) VALUES (?)`, name); err != nil {
 		return fmt.Errorf("recording migration: %w", err)
 	}

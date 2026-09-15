@@ -45,6 +45,8 @@ type chunkMeta struct {
 	sessionTitle   string
 	projectPath    string
 	endTime        time.Time
+	platform       Platform
+	parentUUID     string
 }
 
 // SearchChunks runs a query through the vault chunk corpus via the shared
@@ -102,7 +104,8 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 		// vault_session_names is joined for display-title resolution only — the
 		// name text is not in either chunk FTS table, so it never matches.
 		SelectColumns: "c.session_uuid, c.title, c.content_text, s.rowid, " +
-			"c.subagent_id, c.first_line_index, s.title, n.custom_title, s.project_path, s.end_time",
+			"c.subagent_id, c.first_line_index, s.title, n.custom_title, s.project_path, s.end_time, " +
+			"s.platform, s.parent_uuid",
 		Join: "JOIN vault_sessions s ON s.uuid = c.session_uuid " +
 			"LEFT JOIN vault_session_names n ON n.session_uuid = s.uuid",
 		TitleWeight:  chunkTitleWeight,
@@ -138,6 +141,8 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 			Title:       meta.sessionTitle,
 			ProjectPath: meta.projectPath,
 			EndTime:     meta.endTime,
+			Platform:    meta.platform,
+			ParentUUID:  meta.parentUUID,
 			Content:     r.Content,
 			MatchLayer:  r.MatchLayer,
 		})
@@ -153,17 +158,21 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 func scanChunkSearchRow(rows *sql.Rows) (retrieval.SearchResult, error) {
 	var r retrieval.SearchResult
 	var meta chunkMeta
-	var sessionTitle, customTitle, endTime sql.NullString
+	var sessionTitle, customTitle, endTime, parentUUID sql.NullString
+	var platform string
 	if err := rows.Scan(
 		&r.Label, &r.Title, &r.Content, &r.SourceID,
 		&meta.subagentID, &meta.firstLineIndex,
 		&sessionTitle, &customTitle, &meta.projectPath, &endTime,
+		&platform, &parentUUID,
 		&r.Highlighted, &r.Rank,
 	); err != nil {
 		return retrieval.SearchResult{}, err
 	}
 	meta.sessionTitle = effectiveSearchTitle(sessionTitle, customTitle)
 	meta.endTime = parseTime(endTime)
+	meta.platform = Platform(platform)
+	meta.parentUUID = parentUUID.String
 	r.ContentType = "session"
 	r.Meta = meta
 	return r, nil

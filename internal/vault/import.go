@@ -196,7 +196,10 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		files, contents := readSidecars(sf, mainBytes)
 		hash, size := computeContentHash(contents)
 
-		existingHash, existingSize, existingIndexVersion, found, err := store.SessionDigest(ctx, sf.UUID)
+		// TODO(codex-vault-sessions Slice 7): the returned location hint feeds the
+		// Codex-only location policy (a same-hash rollout at a new relative path →
+		// UpdateLocationHint, reported `updated`); Claude rows never enter it.
+		existingHash, existingSize, existingIndexVersion, _, found, err := store.SessionDigest(ctx, sf.UUID)
 		if err != nil {
 			slog.Warn("vault import: digest lookup failed", "uuid", sf.UUID, "error", err)
 			res.record(ImportedSession{UUID: sf.UUID, SizeBytes: size, Status: StatusError, Err: err})
@@ -346,6 +349,10 @@ func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, s
 		return nil, err
 	}
 
+	// Platform and ParentUUID come from the single decode (ScanOutput copies them
+	// from Meta): Platform is the decoder that produced the output — the constant
+	// above until Slice 7 dispatches on sf.Platform — and ParentUUID is always
+	// empty for Claude (sidecar sub-agents are not sessions).
 	sess := Session{
 		UUID:             sf.UUID,
 		Title:            scanOut.Title,
@@ -359,6 +366,8 @@ func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, s
 		ProjectPath:      resolveProjectPath(scanOut.CWD, sf.ProjectDir),
 		GitBranch:        scanOut.Branch,
 		IndexVersion:     currentIndexVersion,
+		Platform:         scanOut.Platform,
+		ParentUUID:       scanOut.ParentUUID,
 		RawJSONL:         mainBytes,
 	}
 	return &SessionRecord{Session: sess, Files: files, FTS: fts, Chunks: chunks}, nil
