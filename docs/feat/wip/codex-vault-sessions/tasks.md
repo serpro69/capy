@@ -41,7 +41,7 @@
 - [x] 2.4 `claude_decoder_test.go`: entries and `Meta` for each golden case (compact one-line-per-entry expectations for all 25 fixtures, table must cover every golden case and vice versa); merged snapshot `LineIndex` is the first snapshot's line; text → call → text keeps its order; plus payload-isolation over every fixture, diff text, launch labels, sidecar decode, zero-cap-follows-package-cap, D9 warnings (captured `slog` handler), read-error wrapping
 
 ## Task 3: Scanner onto the model
-- **Status:** pending
+- **Status:** done (2026-09-15; isolated review: no P0–P2. code-reviewer P3 ×2 — nil precondition documented on `ScanTranscript`; pre-existing truncate-before-sanitize on tool bodies recorded as implementation.md § Deferred #7 + inline TODO, unchanged for the byte-identical gate. pal LOW ×1 — slice pre-allocation declined: `partToolNames` must return nil, not `[]`, or the golden JSON changes. Author-sourced P3 — `default:` warn for an unknown `Kind` added with a test)
 - **Depends on:** Task 1, Task 2
 - **Size:** S
 - **Can run in parallel with:** Task 4, Task 6 (Task 5 waits for this task)
@@ -49,9 +49,9 @@
 - **Docs:** [implementation.md#slice-3-scanner-onto-the-model](./implementation.md#slice-3-scanner-onto-the-model)
 
 ### Subtasks
-- [ ] 3.1 Rewrite `scanner.go`: `ScanSession(p Platform, r)` = decode + `ScanTranscript(*Transcript)`; assistant row text = `Parts` in order (text, then `ToolCall.Summary`, newline-joined — today's `extractAssistantText`); `ScanOutput` gains `Platform`, `PlatformID`, `ParentUUID`, `Source` copied from `Meta`; `ScanSubagent` via the Claude decoder; keep all policy constants/helpers in `scanner.go`; delete the scanner's pass-1 loop and the orphans that deletion creates (render/transcript loops stay until Task 4)
-- [ ] 3.2 `import.go` `scanSessionAndSubagents(uuid, platform, main, files)`; callers pass `PlatformClaudeCode` for now
-- [ ] 3.3 Verify: `TestGolden` scanner outputs unchanged, parity canary 0 mismatches, vault suite green
+- [x] 3.1 Rewrite `scanner.go`: `ScanSession(p Platform, r)` = decode + `ScanTranscript(*Transcript)`; assistant row text = `Parts` in order (text, then `ToolCall.Summary`, newline-joined — today's `extractAssistantText`); `ScanOutput` gains `Platform`, `PlatformID`, `ParentUUID`, `Source` copied from `Meta`; `ScanSubagent` via the Claude decoder; keep all policy constants/helpers in `scanner.go`; delete the scanner's pass-1 loop and the orphans that deletion creates (render/transcript loops stay until Task 4). Deleted: `scan`, `scanEntry`, `entryUser/Assistant/System`, `mergeBlocks`, `extractUserBlocks`, `extractAssistantText`, `toolUseNames`; kept for render/transcript until Task 4: `jsonNull`, `userTextContent`, `collectToolUseSummaries`, `toolCall`. New `scan_transcript_test.go` pins the consumer policies over hand-built entries (decoder-independent) and the `ErrDecoderUnavailable` / `ErrUnknownPlatform` dispatch paths
+- [x] 3.2 `import.go` `scanSessionAndSubagents(uuid, platform, main, files)`; callers pass `PlatformClaudeCode` for now (inline TODOs at the three call sites name the slice that wires the real value: import → 7, reindex/merge → 8)
+- [x] 3.3 Verify: `TestGolden` scanner outputs unchanged, parity canary 0 mismatches, vault suite green (2026-09-15: goldens untouched with no `-update`; canary 698 compared / 0 mismatches / 2 skipped as live sessions / 5 new since baseline; `internal/vault`, `internal/vault/tui`, `cmd/capy`, `internal/server` green)
 - **Note from the Task 2 review (consumer boundary):** the model carries raw, unfiltered `ToolResult` entries — the scanner must re-apply `ftsExcludedResult` skipping, `sanitize.StripSecrets`, `prefixToolResult` and `truncateHeadTail` itself, and must skip a `ToolResult` whose `Body == ""` (today's `extractUserBlocks` drops empty bodies). `Meta`/`Entry` text is unsanitized by contract (D22): sanitize before persisting the title and every row
 
 ## Task 4: Render and transcript onto the model

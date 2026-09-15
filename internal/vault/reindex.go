@@ -123,7 +123,9 @@ func rebuildSessionFTS(ctx context.Context, store *VaultStore, uuid string) ([]F
 	if err != nil {
 		return nil, nil, err
 	}
-	_, fts, chunks, err := scanSessionAndSubagents(uuid, sess.RawJSONL, files)
+	// TODO(codex-vault-sessions Slice 8): pass sess.Platform once migration 0006
+	// (Slice 5) stores it; every archived row is a Claude session until then.
+	_, fts, chunks, err := scanSessionAndSubagents(uuid, PlatformClaudeCode, sess.RawJSONL, files)
 	if err != nil {
 		return nil, nil, err
 	}
