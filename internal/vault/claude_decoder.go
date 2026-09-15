@@ -11,16 +11,10 @@ import (
 )
 
 // claude_decoder.go is the Claude Code Decoder: the "pass 1" that scanner.go,
-// render.go and transcript.go each duplicated today, extracted once behind the
-// transcript model. It reproduces the UNION of what the three readers extract
-// (testdata/golden/DIVERGENCES.md); each reader keeps only its own policy.
-//
-// codex-vault-sessions Slice 2 added this file WITHOUT touching the three reader
-// loops; Slice 3 replaced the scanner's loop with ScanTranscript (scanner.go).
-// The render.go / transcript.go loops (and the helpers only they still use —
-// collectToolUseSummaries, renderUserContent, splitUserContentForViewer,
-// assistantBodyAndLaunches, userTextContent, renderLineCap …) are replaced by
-// consumers over Transcript in Slice 4 and deleted there.
+// render.go and transcript.go each duplicated before the transcript model,
+// extracted once behind it. It reproduces the UNION of what the three readers
+// extracted (testdata/golden/DIVERGENCES.md); each consumer — ScanTranscript,
+// displayMessages, transcriptMessages — keeps only its own policy.
 
 // claudeDecoder decodes Claude Code session JSONL (main sessions and subagent
 // sidecars alike — a sidecar is just another JSONL). The zero value is ready to
@@ -28,13 +22,38 @@ import (
 type claudeDecoder struct {
 	// lineCap bounds one physical JSONL line; a longer line is skipped for
 	// extraction but still advances LineIndex (scanLines). Zero selects the
-	// package cap scanLineCap, which the golden harness lowers for the oversize
-	// fixture. render.go/transcript.go carry an identically-valued renderLineCap
-	// today (D11); Slice 4 collapses the two onto this decoder.
+	// package cap scanLineCap — the single cap every consumer now shares (D11) —
+	// which the golden harness lowers for the oversize fixture.
 	lineCap int
 }
 
 var _ Decoder = claudeDecoder{}
+
+// toolCall is the correlated info for a tool_use, keyed by its id in the
+// decoder's whole-transcript call map and copied onto the later ToolResult that
+// references it (Entry.CallName / CallSummary). name drives the consumers'
+// result policies (excludedResultTools, ftsExcludedResult); summary is the
+// searchable/display label ("Read /path", "Bash <cmd>").
+type toolCall struct {
+	name    string
+	summary string
+}
+
+// subagentLabelMaxChars bounds a Claude launch marker label (Launch.Label).
+const subagentLabelMaxChars = 100
+
+// subagentLaunchLabel builds a short human label for a Claude Task/Agent launch
+// from its input: the description if present, else the subagent type, else the
+// prompt, truncated. Returns "subagent" when none is available. Fills
+// Launch.Label, which the TUI shows on the marker row (D19).
+func subagentLaunchLabel(input json.RawMessage) string {
+	for _, key := range []string{"description", "subagent_type", "prompt"} {
+		if v := strings.TrimSpace(jsonStringField(input, key)); v != "" {
+			return truncateRunes(v, subagentLabelMaxChars)
+		}
+	}
+	return "subagent"
+}
 
 // claudeSlot is one in-order record collected during pass 1, before call↔result
 // correlation is possible. Assistant snapshots sharing a message id merge into
@@ -258,6 +277,26 @@ func (d claudeDecoder) Decode(r io.Reader) (*Transcript, error) {
 	return t, nil
 }
 
+// dedupBlocks appends add to dst, skipping blocks already present by the
+// (Type, Text, Name, ID) tuple — the progressive-snapshot merge rule (D12): a
+// later snapshot of the same assistant message repeats the earlier blocks and
+// appends new ones, so only the unseen blocks are added.
+func dedupBlocks(dst, add []contentBlock) []contentBlock {
+	for _, b := range add {
+		dup := false
+		for _, eb := range dst {
+			if eb.Type == b.Type && eb.Text == b.Text && eb.Name == b.Name && eb.ID == b.ID {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			dst = append(dst, b)
+		}
+	}
+	return dst
+}
+
 // splitUserContent splits a user message.content into cleaned human text and
 // the line's tool_result blocks in block order. Content is a plain JSON string
 // (human input → cleanText) or a block array: each text block is cleanText'ed and
@@ -306,13 +345,15 @@ func appendToolResults(entries []Entry, s claudeSlot, calls map[string]toolCall)
 			CallID: b.ToolUseID, CallName: call.name, CallSummary: call.summary,
 			Body: toolResultText(b.Content),
 		}
-		// TODO(codex-vault-sessions, after Slice 4): gating on the consumer policy
-		// map diffResultTools is a deliberate coupling kept for the byte-identical
-		// gate — it is exactly what splitUserContentForViewer does today. The
+		// TODO(codex-vault-sessions): gating on the consumer policy map
+		// diffResultTools is a deliberate coupling kept for the byte-identical
+		// gate — it reproduces the pre-model TUI reader's rule, which
+		// viewerToolMessage (transcript.go) now consumes as `Diff != nil`. The
 		// format-pure rule is "a Diff whenever the line's structuredPatch renders",
 		// regardless of tool name; adopting it changes TUI output for any
 		// non-Edit/Write result that carries a patch (none observed) and must land
-		// as its own golden-regenerating change. See implementation.md § Deferred.
+		// as its own golden-regenerating change. Slice 4 has landed, so it is
+		// unblocked. See implementation.md § Deferred work #6.
 		if diffResultTools[call.name] && !diffConsumed {
 			if text, added, removed, ok := diffBodyFromToolResult(s.toolResult); ok {
 				diffConsumed = true

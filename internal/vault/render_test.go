@@ -28,7 +28,7 @@ func TestRenderText_RolesToolsAndResults(t *testing.T) {
 		},
 	)
 
-	out := RenderText(raw)
+	out := RenderText(PlatformClaudeCode, raw)
 
 	assert.Contains(t, out, "[You]")
 	assert.Contains(t, out, "Please fix the timeout")
@@ -64,7 +64,7 @@ func TestRenderText_MCPToolUseGenericInputRedacted(t *testing.T) {
 			}},
 		}),
 	)
-	out := RenderText(raw)
+	out := RenderText(PlatformClaudeCode, raw)
 	assert.Contains(t, out, `→ mcp__capy__capy_search queries=["tool input"]`,
 		"MCP tool_use renders the generic key=value summary on vault show")
 	assert.NotContains(t, out, prefixSecret, "a credential-shaped value is redacted on the display path")
@@ -78,7 +78,7 @@ func TestRenderMarkdown_HeadingsAndFences(t *testing.T) {
 		userToolResultLine("u2", "some tool output"),
 	)
 
-	out := RenderMarkdown(raw)
+	out := RenderMarkdown(PlatformClaudeCode, raw)
 
 	assert.Contains(t, out, "## 👤 You")
 	assert.Contains(t, out, "## 🤖 Claude")
@@ -94,7 +94,7 @@ func TestRenderMarkdown_WidensFenceForBacktickContent(t *testing.T) {
 		userToolResultLine("u2", "before\n```\ncode\n```\nafter"),
 	)
 
-	out := RenderMarkdown(raw)
+	out := RenderMarkdown(PlatformClaudeCode, raw)
 
 	assert.Contains(t, out, "````", "fence widened to 4 backticks")
 	assert.Contains(t, out, "```\ncode\n```", "inner triple-backtick content preserved")
@@ -120,7 +120,7 @@ func TestRenderText_DeduplicatesProgressiveSnapshots(t *testing.T) {
 		}),
 	)
 
-	out := RenderText(raw)
+	out := RenderText(PlatformClaudeCode, raw)
 
 	assert.Equal(t, 1, strings.Count(out, "partial answer"), "shared snapshot block rendered once")
 	assert.Contains(t, out, "final answer")
@@ -135,15 +135,15 @@ func TestRenderText_ToolResultNotTruncated(t *testing.T) {
 		userToolResultLine("u2", big),
 	)
 
-	out := RenderText(raw)
+	out := RenderText(PlatformClaudeCode, raw)
 
 	assert.Contains(t, out, big, "full tool result is rendered, not head/tail truncated")
 	assert.NotContains(t, out, "…")
 }
 
 func TestRenderText_EmptyBlob(t *testing.T) {
-	assert.Equal(t, "", RenderText(nil))
-	assert.Equal(t, "", RenderText([]byte("")))
+	assert.Equal(t, "", RenderText(PlatformClaudeCode, nil))
+	assert.Equal(t, "", RenderText(PlatformClaudeCode, []byte("")))
 }
 
 func TestRenderText_SystemAndPRLink(t *testing.T) {
@@ -152,7 +152,7 @@ func TestRenderText_SystemAndPRLink(t *testing.T) {
 		map[string]any{"type": "pr-link", "prUrl": "https://github.com/o/r/pull/7", "prRepository": "o/r", "prNumber": 7, "timestamp": "2026-05-01T10:01:00Z"},
 	)
 
-	out := RenderText(raw)
+	out := RenderText(PlatformClaudeCode, raw)
 
 	assert.Contains(t, out, "[System]")
 	assert.Contains(t, out, "You were away")
@@ -176,7 +176,7 @@ func TestRenderText_QueuedCommandAttachment(t *testing.T) {
 		},
 	)
 
-	out := RenderText(raw)
+	out := RenderText(PlatformClaudeCode, raw)
 	assert.Contains(t, out, "[You · queued]", "the queued user turn is annotated")
 	assert.Contains(t, out, "actually, also check the logs")
 	assert.Equal(t, 1, strings.Count(out, "queued"), "only the queued_command renders; task_reminder is ignored")
@@ -189,7 +189,7 @@ func TestRenderMarkdown_QueuedCommandAttachment(t *testing.T) {
 			"attachment": map[string]any{"type": "queued_command", "prompt": "queued in markdown", "commandMode": "prompt"},
 		},
 	)
-	out := RenderMarkdown(raw)
+	out := RenderMarkdown(PlatformClaudeCode, raw)
 	assert.Contains(t, out, "## 👤 You · queued")
 	assert.Contains(t, out, "queued in markdown")
 }
@@ -200,7 +200,7 @@ func TestRender_SubagentBlobRendersStandalone(t *testing.T) {
 		userLine("su1", "/p", "main", "subagent task prompt"),
 		assistantLine("sa1", "sm1", []map[string]any{{"type": "text", "text": "subagent reply"}}),
 	)
-	out := RenderText(sub)
+	out := RenderText(PlatformClaudeCode, sub)
 	require.NotEmpty(t, out)
 	assert.Contains(t, out, "subagent task prompt")
 	assert.Contains(t, out, "subagent reply")

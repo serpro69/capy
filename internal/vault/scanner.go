@@ -257,7 +257,7 @@ func ScanTranscript(t *Transcript) *ScanOutput {
 			// the EntryUnknown zero value) is a decoder bug, and dropping the entry
 			// without a trace would hide it. Output is unaffected for valid input.
 			slog.Warn("vault scanner: skipping transcript entry of unknown kind",
-				"platform", t.Meta.Platform, "line", e.LineIndex, "kind", int(e.Kind))
+				"platform", t.Meta.Platform, "line", e.LineIndex, "kind", e.Kind)
 		}
 	}
 
@@ -314,15 +314,6 @@ func partToolNames(parts []Part) []string {
 	return names
 }
 
-// toolCall is the correlated info for a tool_use, keyed by its id and matched to
-// the later tool_result that references it. name drives the result-exclusion
-// policy (excludedResultTools); summary is the searchable/display label
-// ("Read /path", "Bash <cmd>").
-type toolCall struct {
-	name    string
-	summary string
-}
-
 // excludedResultTools names the tools whose tool_result BODY is dropped from the
 // FTS index (scanner) and collapsed in the rendered transcript (render/transcript).
 // Their output is a file/cell content dump — Read returns file contents, the
@@ -363,21 +354,6 @@ var diffResultTools = map[string]bool{
 // the call summary remains indexed on the assistant tool_use row.
 func ftsExcludedResult(name string) bool {
 	return excludedResultTools[name] || diffResultTools[name]
-}
-
-// collectToolUseSummaries records, for each tool_use block in blocks, the call's
-// name + summary (tool name + key inputs, via toolUseSummary) keyed by the block's
-// id — the tool_use_id a later tool_result block references. Used by the render
-// and transcript readers' own pass 1 to associate a result with its call and to
-// apply the excludedResultTools policy; the scanner now receives the correlation
-// from the decoder (ToolResult.CallName / CallSummary). Deleted with those loops
-// in codex-vault-sessions Slice 4.
-func collectToolUseSummaries(blocks []contentBlock, into map[string]toolCall) {
-	for _, b := range blocks {
-		if b.Type == "tool_use" && b.ID != "" {
-			into[b.ID] = toolCall{name: b.Name, summary: toolUseSummary(b.Name, b.Input)}
-		}
-	}
 }
 
 // prefixToolResult prepends a tool-call label to a tool_result body, separated by
@@ -665,18 +641,6 @@ func queuedCommandPrompt(raw json.RawMessage) string {
 		return ""
 	}
 	return strings.TrimSpace(a.Prompt)
-}
-
-// userTextContent wraps plain text as the JSON message.content (a quoted string)
-// the user-entry parsers expect, normalizing a queued_command prompt (A2) into
-// its equivalent user message so the render/transcript readers handle it through
-// their existing user path (the decoder sets Entry.Queued directly; this helper
-// goes with the reader loops in Slice 4). json.Marshal of a
-// concrete string type is specified never to return an error, so the discard is
-// safe (matching the json.Marshal convention in internal/store/chunk.go).
-func userTextContent(s string) json.RawMessage {
-	b, _ := json.Marshal(s)
-	return b
 }
 
 // attachmentKeys lists content-block fields an attachment line might carry a
