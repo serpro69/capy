@@ -346,7 +346,11 @@ const fakeSecret = "sk-ant-" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 // goldenCases is the fixture table. Names are stable identifiers (they are file
 // name prefixes under testdata/golden); every DIVERGENCES.md row names the case
 // that pins it.
-func goldenCases(t *testing.T) []goldenCase {
+//
+// It takes testing.TB (not *testing.T) so fuzz targets can seed their corpus
+// from the same fixtures via a *testing.F (claude_decoder_test.go
+// FuzzClaudeDecoder_NeverPanics); jsonlBytes is widened for the same reason.
+func goldenCases(t testing.TB) []goldenCase {
 	t.Helper()
 	patch := hunk(3, 2, 3, 2, " timeout = 30", "-retries = 1", "+retries = 3")
 	longPrompt := strings.Repeat("investigate the flaky quokka test in the vault package ", 4) // 224 runes
@@ -366,7 +370,7 @@ func goldenCases(t *testing.T) []goldenCase {
 		userLineAt("sc-u1", "/p", at(25), "Summarise findings"),
 	)
 
-	launchMain := func(t *testing.T) []byte {
+	launchMain := func(t testing.TB) []byte {
 		return jsonlBytes(t,
 			userLine("u1", "/p", "main", "Delegate the investigation"),
 			assistantLine("a1", "m1", []map[string]any{
