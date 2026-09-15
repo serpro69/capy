@@ -124,6 +124,10 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 	}
 	if err != nil && sqliteutil.IsSQLiteCorruption(err) {
 		slog.Warn("corrupt database detected, backing up and recreating", "path", s.dbPath, "error", err)
+		// TODO(#90): BackupCorruptDB renames s.dbPath, so when the DB is a symlink
+		// (knowledge.db kept in a separate DB repo and linked into .capy/) it renames
+		// the link, not the target — stranding the real file. capy encrypt resolves
+		// symlinks before its swap; this path does not yet. Pre-existing, out of scope.
 		sqliteutil.BackupCorruptDB(s.dbPath)
 		db, err = s.openDB()
 		if err != nil {
