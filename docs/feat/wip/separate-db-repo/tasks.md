@@ -8,17 +8,17 @@
 > Not Doing: checkpointing from inside the DB repo (`--db`, key lookup, env sourcing, reverse mapping), wrapper in the DB repo, auto-discovery, capy-driven git commits, team/multi-machine DB repos, doctor check, pre-pull guard, WAL-mode revisit, symlink-aware BackupCorruptDB
 
 ## Task 1: Wrapper propagates exit codes; project hook blocks on failed checkpoint
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Task 2, Task 3
 - **Docs:** [implementation.md#task-1](./implementation.md#task-1--wrapper-exit-code-propagation--project-hook--exit-1)
 
 ### Subtasks
-- [ ] 1.1 Edit `capyWrapperScript` in `internal/platform/setup.go`: `hook` keeps `|| true; exit 0` + deny-JSON fallback; other subcommands `exec` the binary; not-found → stderr + `exit 127`; fix header comment
-- [ ] 1.2 Update `.claude/scripts/capy.sh` and `.codex/scripts/capy.sh` byte-for-byte in the same commit
-- [ ] 1.3 Shell-level wrapper test with fake `capy` on PATH: passthrough, hook always 0, not-found 127 vs 0
-- [ ] 1.4 `preCommitHookBlock`: `while … done || exit 1` for the magic check, `checkpoint || exit 1`, remove dead `$? -ne 0`; extend `precommit_test.go`
+- [x] 1.1 Edit `capyWrapperScript` in `internal/platform/setup.go`: `hook` keeps `|| true; exit 0` + deny-JSON fallback; other subcommands `exec` the binary; not-found → stderr + `exit 127`; fix header comment
+- [x] 1.2 Update `.claude/scripts/capy.sh` and `.codex/scripts/capy.sh` byte-for-byte in the same commit
+- [x] 1.3 Shell-level wrapper test with fake `capy` on PATH: passthrough, hook always 0, not-found 127 vs 0
+- [x] 1.4 `preCommitHookBlock`: `while … done || exit 1` for the magic check, `checkpoint || exit 1`, remove dead `$? -ne 0`; extend `precommit_test.go`
 
 ## Task 2: `capy encrypt` resolves symlinks before the swap
 - **Status:** pending

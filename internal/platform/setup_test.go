@@ -1087,8 +1087,14 @@ func TestPreCommitHookScriptContainsEncryptionCheck(t *testing.T) {
 		"should print rejection message")
 	assert.Contains(t, script, `capy encrypt`,
 		"should point user to capy encrypt")
-	assert.Contains(t, script, `if [ $? -ne 0 ]; then exit 1; fi`,
-		"should propagate subshell exit code")
+	assert.Contains(t, script, `done || exit 1`,
+		"pipeline must propagate the inner exit 1 (a subshell exit does not set the pipeline status)")
+	assert.Contains(t, script, `checkpoint || { echo`,
+		"a failed (busy) checkpoint must block the commit with an explanatory message")
+	assert.Contains(t, script, `git add -- "$f"`,
+		"re-stage must use -- so a DB path starting with - is not read as a flag")
+	assert.NotContains(t, script, `$? -ne 0`,
+		"the dead post-pipeline exit-code check is removed")
 }
 
 // initTestGitRepo creates a temp git repo with an initial commit and a
@@ -1117,6 +1123,14 @@ func initTestGitRepo(t *testing.T) (string, func(args ...string)) {
 	runGit("commit", "-m", "initial")
 
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".capy"), 0o755))
+
+	// The hook runs `bash .claude/scripts/capy.sh checkpoint || exit 1`; provide a
+	// stub wrapper that succeeds so the commit is gated only by the DB guard.
+	// TestPreCommitHookBlocksOnFailedCheckpoint overrides it with a failing stub.
+	scriptsDir := filepath.Join(dir, ".claude", "scripts")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(scriptsDir, "capy.sh"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
 
 	hookDir := filepath.Join(dir, ".git", "hooks")
 	script := preCommitHookScript(`\.capy/knowledge\.db$`)
@@ -1162,6 +1176,30 @@ func TestPreCommitHookAllowsEncryptedDB(t *testing.T) {
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	assert.NoError(t, err, "commit should succeed for encrypted DB: %s", output)
+}
+
+func TestPreCommitHookBlocksOnFailedCheckpoint(t *testing.T) {
+	dir, runGit := initTestGitRepo(t)
+
+	// Replace the stub wrapper with one that fails, simulating a busy checkpoint
+	// (the MCP server still holding the DB). The commit must now be blocked.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".claude", "scripts", "capy.sh"),
+		[]byte("#!/bin/sh\nexit 1\n"), 0o755))
+
+	// A valid (non-plaintext) DB so the block comes from the checkpoint, not the guard.
+	dbContent := make([]byte, 4096)
+	for i := range dbContent {
+		dbContent[i] = byte(i % 251)
+	}
+	dbPath := filepath.Join(dir, ".capy", "knowledge.db")
+	require.NoError(t, os.WriteFile(dbPath, dbContent, 0o644))
+	runGit("add", "-f", dbPath)
+
+	cmd := exec.Command("git", "commit", "-m", "should fail on busy checkpoint")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	assert.Error(t, err, "commit should fail when checkpoint fails: %s", output)
 }
 
 func TestPreCommitHookAllowsNoDBStaged(t *testing.T) {
@@ -1229,6 +1267,72 @@ func TestInstallPreCommitHook_AppendNoDoubleShebang(t *testing.T) {
 		"should append capy block")
 	assert.Contains(t, content, preCommitMarkerEnd,
 		"should append complete capy block")
+}
+
+// isExecutableFile reports whether p is a regular executable file.
+func isExecutableFile(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
+}
+
+// TestWrapperExitCodes runs the generated wrapper through bash to prove the
+// exit-code contract: hook events always exit 0, every other subcommand
+// propagates the real exit code, and a missing binary yields 127 (non-hook) or 0
+// with a deny JSON (hook). These pipeline/exec semantics can only be proven at the
+// shell level.
+func TestWrapperExitCodes(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	wrapper := filepath.Join(t.TempDir(), "capy.sh")
+	require.NoError(t, os.WriteFile(wrapper, []byte(capyWrapperScript), 0o755))
+
+	home := t.TempDir() // empty HOME → no capy under $HOME/.local/bin or $HOME/go/bin
+
+	// A fake capy that exits with $FAKE_EXIT, on PATH via foundBin.
+	foundBin := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(foundBin, "capy"),
+		[]byte("#!/bin/sh\nexit ${FAKE_EXIT:-0}\n"), 0o755))
+
+	run := func(path string, args ...string) (int, string) {
+		t.Helper()
+		cmd := exec.Command("bash", append([]string{wrapper}, args...)...)
+		cmd.Env = []string{"HOME=" + home, "PATH=" + path, "FAKE_EXIT=42"}
+		out, _ := cmd.CombinedOutput()
+		return cmd.ProcessState.ExitCode(), string(out)
+	}
+
+	// Binary found: non-hook subcommand propagates the fake's exit code.
+	code, out := run(foundBin, "checkpoint")
+	assert.Equal(t, 42, code, "non-hook subcommand should propagate the binary's exit code: %s", out)
+
+	// Binary found: hook events always exit 0 even when the binary fails.
+	code, out = run(foundBin, "hook", "pretooluse")
+	assert.Equal(t, 0, code, "hook events must always exit 0: %s", out)
+
+	// Not-found cases require that no capy sits at the hardcoded absolute fallbacks.
+	if isExecutableFile("/opt/homebrew/bin/capy") || isExecutableFile("/usr/local/bin/capy") {
+		t.Log("capy installed at a hardcoded fallback path; skipping not-found assertions")
+		return
+	}
+	emptyBin := t.TempDir()
+
+	// Not found + non-hook subcommand → exit 127 with a stderr message.
+	code, out = run(emptyBin, "checkpoint")
+	assert.Equal(t, 127, code, "missing binary + non-hook subcommand should exit 127: %s", out)
+	assert.Contains(t, out, "binary not found", "should print a not-found message: %s", out)
+
+	// Not found + hook → exit 0 and print the deny JSON (needs jq).
+	jqPath, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq not available for deny-JSON assertion")
+	}
+	require.NoError(t, os.Symlink(jqPath, filepath.Join(emptyBin, "jq")))
+	code, out = run(emptyBin, "hook", "pretooluse")
+	assert.Equal(t, 0, code, "missing binary + hook must still exit 0: %s", out)
+	assert.Contains(t, out, "permissionDecision", "hook should emit the deny JSON: %s", out)
 }
 
 // splitLines splits a string into lines, similar to strings.Split but handles edge cases.
