@@ -2,7 +2,7 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done
 > Created: 2026-09-13
 > Issue: [#90](https://github.com/serpro69/capy/issues/90)
 > Not Doing: checkpointing from inside the DB repo (`--db`, key lookup, env sourcing, reverse mapping), wrapper in the DB repo, auto-discovery, capy-driven git commits, team/multi-machine DB repos, doctor check, pre-pull guard, WAL-mode revisit, symlink-aware BackupCorruptDB
@@ -59,17 +59,17 @@
 - [x] 4.2 ADR-016: third checkpoint layer (DB-repo guard hook), wrapper exit-code consequence, "Rejected: checkpoint from the DB repo" pointer to design.md
 
 ## Task 5: Final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4
 - **Size:** S
 - **Can run in parallel with:** —
 
 ### Subtasks
-- [ ] 5.1 Run `/kk:test` — full suite with `-tags fts5`, race detector, shell-level tests not skipped locally
-- [ ] 5.2 Run `/kk:document` — AGENTS.md generator/committed-copy table mentions `SetupDBRepo` outputs (hook exempt, `.gitignore` entries)
-- [ ] 5.3 Run `/kk:review-code` with Go profile
-- [ ] 5.4 Run `/kk:review-spec` against `docs/feat/wip/separate-db-repo/`
-- [ ] 5.5 Manual acceptance in the real private DB repo: `capy setup --db-repo`, remove the hand-copied wrapper, commit with no sessions (passes), commit with a live session (blocked)
+- [x] 5.1 Run `/kk:test` — full suite with `-tags fts5`, race detector, shell-level tests not skipped locally
+- [x] 5.2 Run `/kk:document` — AGENTS.md generator/committed-copy table mentions `SetupDBRepo` outputs (hook exempt, `.gitignore` entries)
+- [x] 5.3 Run `/kk:review-code` with Go profile
+- [x] 5.4 Run `/kk:review-spec` against `docs/feat/wip/separate-db-repo/`
+- [x] 5.5 Manual acceptance in the real private DB repo: `capy setup --db-repo`, remove the hand-copied wrapper, commit with no sessions (passes), commit with a live session (blocked)
 
 ## Dependency Graph
 
