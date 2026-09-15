@@ -68,7 +68,7 @@
 - [x] 5.1 Run `/kk:test` — full suite with `-tags fts5`, race detector, shell-level tests not skipped locally
 - [x] 5.2 Run `/kk:document` — AGENTS.md generator/committed-copy table mentions `SetupDBRepo` outputs (hook exempt, `.gitignore` entries)
 - [x] 5.3 Run `/kk:review-code` with Go profile
-- [x] 5.4 Run `/kk:review-spec` against `docs/feat/wip/separate-db-repo/`
+- [x] 5.4 Run `/kk:review-spec` against `docs/feat/done/separate-db-repo/`
 - [x] 5.5 Manual acceptance in the real private DB repo: `capy setup --db-repo`, remove the hand-copied wrapper, commit with no sessions (passes), commit with a live session (blocked)
 
 ## Dependency Graph
