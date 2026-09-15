@@ -21,6 +21,27 @@ func newSetupCmd() *cobra.Command {
 				projectDir = config.DetectProjectRoot()
 			}
 
+			// DB-repo mode: this repository holds knowledge databases, not a
+			// project. Install the pure-sh guard hook and nothing else — no binary
+			// resolution, MCP config, wrapper, or routing file needed.
+			if dbRepo, _ := cmd.Flags().GetBool("db-repo"); dbRepo {
+				fmt.Printf("capy: setting up knowledge-DB repo %s\n", projectDir)
+				hookInstalled, err := platform.SetupDBRepo(projectDir)
+				if err != nil {
+					return fmt.Errorf("DB-repo setup failed: %w", err)
+				}
+				fmt.Println("capy: knowledge-DB repo setup complete")
+				fmt.Println("  - *.db-wal, *.db-shm added to .gitignore")
+				if hookInstalled {
+					fmt.Println("  - git pre-commit guard hook installed")
+					fmt.Println("\nCommit as usual — the hook refuses unencrypted or un-checkpointed databases.")
+				} else {
+					// The guard hook is the whole point; do not imply it is present.
+					fmt.Println("  - WARNING: pre-commit guard hook NOT installed (no .git/hooks) — commits are NOT guarded")
+				}
+				return nil
+			}
+
 			binaryPath, _ := cmd.Flags().GetString("binary")
 			p, _ := cmd.Flags().GetString("platform")
 
@@ -73,7 +94,14 @@ func newSetupCmd() *cobra.Command {
 	cmd.Flags().String("binary", "", "path to capy binary")
 	cmd.Flags().Bool("local", false, "write hooks to .claude/settings.local.json (personal, not committed)")
 	cmd.Flags().Bool("project", false, "write hooks to .claude/settings.json (shared, synced across repos)")
+	cmd.Flags().Bool("db-repo", false, "configure this repository as a knowledge-DB repo (installs a pure-sh guard hook; no MCP, wrapper, or routing)")
 	cmd.MarkFlagsMutuallyExclusive("local", "project")
+	// DB-repo mode installs only the guard hook; it shares nothing with the
+	// platform/target flags.
+	cmd.MarkFlagsMutuallyExclusive("db-repo", "platform")
+	cmd.MarkFlagsMutuallyExclusive("db-repo", "local")
+	cmd.MarkFlagsMutuallyExclusive("db-repo", "project")
+	cmd.MarkFlagsMutuallyExclusive("db-repo", "binary")
 	return cmd
 }
 

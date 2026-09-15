@@ -206,6 +206,31 @@ func TestSetupClaudeCode_InstallsPreCommitHook(t *testing.T) {
 	assert.Contains(t, string(data), preCommitMarkerStart)
 }
 
+func TestPreCommitHookBlockDBRepo_Content(t *testing.T) {
+	block := preCommitHookBlockDBRepo()
+
+	// Same markers as the project block so re-runs replace in place.
+	assert.Contains(t, block, preCommitMarkerStart)
+	assert.Contains(t, block, preCommitMarkerEnd)
+
+	// Guard checks: plaintext, pending WAL (non-empty), open connection (shm).
+	assert.Contains(t, block, `grep '\.db$'`)
+	assert.Contains(t, block, "SQLite format 3")
+	assert.Contains(t, block, `[ -s "$f-wal" ]`)
+	assert.Contains(t, block, `[ -e "$f-shm" ]`)
+	assert.Contains(t, block, "capy encrypt")
+	assert.Contains(t, block, "capy checkpoint --project-dir")
+
+	// The pipeline-status guard must be present (see block doc comment).
+	assert.Contains(t, block, "done || exit 1")
+
+	// The DB-repo hook is pure sh: no capy binary, no wrapper, no keys.
+	assert.NotContains(t, block, "capy.sh")
+	assert.NotContains(t, block, "checkpoint --db")
+	assert.NotContains(t, block, "/usr/local/bin/capy")
+	assert.NotContains(t, block, capyWrapperRelPath)
+}
+
 func TestShellEscapePath(t *testing.T) {
 	assert.Equal(t, "/normal/path", shellEscapePath("/normal/path"))
 	assert.Equal(t, `/path/with'\''quote`, shellEscapePath("/path/with'quote"))

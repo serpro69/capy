@@ -33,19 +33,19 @@
 - [x] 2.3 Add `TODO(#90)` at the `BackupCorruptDB` call in `store.getDB` noting the symlink-rename gap
 
 ## Task 3: `capy setup --db-repo` end-to-end (generator, CLI, drift guard, hook behaviour)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Task 1, Task 2
 - **Docs:** [implementation.md#task-3](./implementation.md#task-3--capy-setup---db-repo)
 
 ### Subtasks
-- [ ] 3.1 Generalize to `installPreCommitHookBlock(repoDir, block)`; keep `installPreCommitHook(projectDir)` as thin wrapper; existing tests unchanged
-- [ ] 3.2 Add `preCommitHookBlockDBRepo()` — staged `\.db$`, magic check, `-s "$f-wal"`, `-e "$f-shm"`, remedy message naming the dir and `capy checkpoint --project-dir`, `done || exit 1`, no capy invocation; text tests
-- [ ] 3.3 Add `SetupDBRepo(repoDir)`: `.gitignore` `*.db-wal`, `*.db-shm`; install hook; nothing else. Tests: exact file set, negative assertions, idempotency
-- [ ] 3.4 CLI: `--db-repo` on `capy setup`, mutually exclusive with `--platform/--local/--project`, summary output
-- [ ] 3.5 Extend `TestDriftGuardCoversEverySetupArtifact` with a `SetupDBRepo` temp repo
-- [ ] 3.6 Shell-level hook test in a temp git repo: clean passes; `-shm` blocks; non-empty `-wal` blocks; zero-byte `-wal` passes; plaintext blocks
+- [x] 3.1 Generalize to `installPreCommitHookBlock(repoDir, block)`; keep `installPreCommitHook(projectDir)` as thin wrapper; existing tests unchanged
+- [x] 3.2 Add `preCommitHookBlockDBRepo()` — staged `\.db$`, magic check, `-s "$f-wal"`, `-e "$f-shm"`, remedy message naming the dir and `capy checkpoint --project-dir`, `done || exit 1`, no capy invocation; text tests
+- [x] 3.3 Add `SetupDBRepo(repoDir)`: `.gitignore` `*.db-wal`, `*.db-shm`; install hook; nothing else. Tests: exact file set, negative assertions, idempotency
+- [x] 3.4 CLI: `--db-repo` on `capy setup`, mutually exclusive with `--platform/--local/--project`, summary output
+- [x] 3.5 Extend `TestDriftGuardCoversEverySetupArtifact` with a `SetupDBRepo` temp repo
+- [x] 3.6 Shell-level hook test in a temp git repo: clean passes; `-shm` blocks; non-empty `-wal` blocks; zero-byte `-wal` passes; plaintext blocks
 
 ## Task 4: Documentation (README, ADR-016 amendment)
 - **Status:** pending
