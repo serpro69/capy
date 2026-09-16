@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -210,43 +211,136 @@ func (s *Server) shutdown() {
 	}
 }
 
-// vaultSweep archives Claude Code sessions into the encrypted vault. By default
-// it sweeps only the current project; with CAPY_VAULT_SWEEP_ALL set it walks
-// every project under the Claude projects root instead. The all-projects path is
-// opt-in because a startup walk across hundreds of projects adds latency and
-// vault.db write contention. It is opt-in on the vault itself too: with
-// CAPY_VAULT_KEY unset getVault returns nil and the sweep returns silently. The
-// sweep reuses the server-owned VaultStore (getVault) and does NOT close it —
-// shutdown() Close()s the handle (WAL checkpoint) after bgWg.Wait(). ctx provides
-// cooperative cancellation, so a shutdown mid-sweep stops at the next session
-// boundary rather than blocking bgWg.Wait(). Failures are logged, never fatal —
-// sessions stay recoverable via `capy vault import`.
-func (s *Server) vaultSweep(ctx context.Context) {
+// sweepSummary reports what one vaultSweep run did, per platform. Production
+// only logs it; the sweep tests read it to pin the accepted per-startup bound
+// (design § Server startup sweep) — the vault package's rollout-open hook is
+// unexported, and DiscoveryReport.FirstLineReads counts exactly the opens the
+// Codex walker performs, so asserting on the report is the same observation.
+type sweepSummary struct {
+	claudeDiscovered int                // Claude sessions discovered for this run's scope
+	claude           vault.ImportResult // zero when no Claude session was discovered
+	codexReport      vault.DiscoveryReport
+	codexDiscovered  int                // rollouts that survived the skip predicate (first line read)
+	codexMatched     int                // …and the project filter (all of them under CAPY_VAULT_SWEEP_ALL)
+	codex            vault.ImportResult // zero when no rollout matched
+}
+
+// vaultSweep archives the current project's sessions from every platform root
+// present on this machine into the encrypted vault: Claude Code first (the
+// project's mangled session dir), then Codex rollouts whose recorded cwd is
+// this project (design § Server startup sweep). With CAPY_VAULT_SWEEP_ALL set
+// it sweeps every project of both platforms instead; that is opt-in because a
+// startup walk across hundreds of projects adds latency and vault.db write
+// contention. It is opt-in on the vault itself too: with CAPY_VAULT_KEY unset
+// getVault returns nil and the sweep returns silently.
+//
+// Each platform is discovered INDEPENDENTLY: a missing root, a discovery error
+// or an empty result for one platform is logged (debug for the common
+// nothing-here cases, warn for a real failure) and never returns early, so a
+// Codex-only project is swept even though it has no Claude session dir. The
+// vault is opened once, before Codex discovery, because the Codex walker is
+// handed a skip predicate built from the rows already archived; it is not
+// opened at all when neither platform has anything here, so an empty startup
+// never creates vault.db.
+//
+// Accepted per-startup bound (design § Server startup sweep, Assumption 12):
+// the predicate drops, from directory metadata alone, every plain rollout
+// already archived at its current (relative path, on-disk size) and every
+// archived .zst rollout at its path — rollouts are append-only and compressed
+// ones immutable, so those are unchanged and are never opened. Every OTHER
+// rollout costs one bounded first-line read on EVERY server start: rollouts
+// appended since the last sweep (desired), and rollouts this vault has not
+// archived at their current location — including every rollout whose cwd is
+// another project, which the default sweep never imports and therefore never
+// puts in the map. The cost is O(unarchived corpus) per start and O(changed)
+// once the corpus is archived (`capy vault import` or CAPY_VAULT_SWEEP_ALL);
+// the 30-second budget defers the remainder to the next start. A negative
+// cache for non-matching rollouts is deliberately not built (design § Not
+// Doing).
+//
+// The sweep reuses the server-owned VaultStore (getVault) and does NOT close it
+// — shutdown() Close()s the handle (WAL checkpoint) after bgWg.Wait(). ctx
+// provides cooperative cancellation, so a shutdown mid-sweep stops at the next
+// session boundary rather than blocking bgWg.Wait(). Failures are logged,
+// never fatal — sessions stay recoverable via `capy vault import`.
+func (s *Server) vaultSweep(ctx context.Context) sweepSummary {
+	var sum sweepSummary
 	st := s.getVault()
 	if st == nil {
-		return // vault is opt-in; not configured
+		return sum // vault is opt-in; not configured
 	}
 
 	allProjects := os.Getenv("CAPY_VAULT_SWEEP_ALL") != ""
 
+	claude := s.discoverClaudeForSweep(allProjects)
+	codexHome, codexPresent := codexHomeForSweep()
+	sum.claudeDiscovered = len(claude)
+	if len(claude) == 0 && !codexPresent {
+		return sum // nothing to sweep on this machine; never create vault.db for it
+	}
+
+	// Fail fast on a wrong key / corrupt vault: getDB() opens lazily, so without
+	// this probe a bad key would surface only on the first batch flush — after
+	// Import has scanned and hashed up to a full batch of sessions — and then as
+	// N identical per-session errors instead of one clean abort. The handle stays
+	// open for later readers; shutdown() closes it. The Codex skip predicate
+	// needs the open handle too (CodexLocationSizes).
+	if err := st.Open(ctx); err != nil {
+		slog.Warn("vault sweep: cannot open vault store", "error", err)
+		return sum
+	}
+
+	if len(claude) > 0 {
+		if allProjects {
+			// Logged after the open probe (so it never precedes an open failure) but
+			// before Import, so it confirms the opt-in took effect even on a run where
+			// every session is already archived (Import would then log nothing).
+			slog.Info("vault sweep (all projects)", "platform", vault.PlatformClaudeCode,
+				"projects", countProjects(claude), "sessions", len(claude))
+		}
+		sum.claude = vault.Import(ctx, st, claude, vault.ImportOptions{})
+		if r := sum.claude; r.Imported > 0 || r.Updated > 0 || r.Errors > 0 {
+			slog.Info("vault sweep", "platform", vault.PlatformClaudeCode,
+				"imported", r.Imported, "updated", r.Updated,
+				"skipped", r.Skipped, "errors", r.Errors)
+		}
+	}
+
+	if codexPresent {
+		if ctx.Err() != nil {
+			// The budget ran out during the Claude pass; the next start picks
+			// Codex up (Import itself stops at the session boundary the same way).
+			slog.Debug("vault sweep: cancelled before the codex pass")
+			return sum
+		}
+		s.sweepCodex(ctx, st, codexHome, allProjects, &sum)
+	}
+	return sum
+}
+
+// discoverClaudeForSweep discovers the Claude Code sessions in this run's scope:
+// the current project's mangled session dir, or every project under the Claude
+// projects root with allProjects. Any failure yields nil — logged, never fatal —
+// so the Codex pass still runs.
+func (s *Server) discoverClaudeForSweep(allProjects bool) []vault.SessionFile {
 	var sessionDir string
 	if allProjects {
-		// Walk every project under the Claude projects root. ClaudeProjectsDir
-		// honors CLAUDE_CONFIG_DIR, and DiscoverSessions auto-detects a
-		// projects-root input and walks each project subdir. A failure to resolve
-		// the root is worth a warning here (unlike the common no-sessions-yet
-		// case below) — the user explicitly opted into the all-projects sweep.
+		// ClaudeProjectsDir honors CLAUDE_CONFIG_DIR, and DiscoverSessions
+		// auto-detects a projects-root input and walks each project subdir. A
+		// failure to resolve the root is worth a warning here (unlike the common
+		// no-sessions-yet case below) — the user explicitly opted into the
+		// all-projects sweep.
 		root, err := config.ClaudeProjectsDir()
 		if err != nil {
 			slog.Warn("vault sweep (all projects): cannot resolve projects dir", "error", err)
-			return
+			return nil
 		}
 		sessionDir = root
 	} else {
 		dir, err := vault.ProjectSessionDir(s.projectDir)
 		if err != nil {
 			slog.Warn("vault sweep: cannot resolve session directory", "project", s.projectDir, "error", err)
-			return
+			return nil
 		}
 		sessionDir = dir
 	}
@@ -255,45 +349,144 @@ func (s *Server) vaultSweep(ctx context.Context) {
 	if err != nil {
 		// A project with no session directory yet is the common case at startup,
 		// not an error worth a warning.
-		slog.Debug("vault sweep: discovery skipped", "dir", sessionDir, "error", err)
-		return
+		slog.Debug("vault sweep: claude discovery skipped", "dir", sessionDir, "error", err)
+		return nil
 	}
-	if len(sessions) == 0 {
-		return
-	}
-
-	// Fail fast on a wrong key / corrupt vault: getDB() opens lazily, so without
-	// this probe a bad key would surface only on the first batch flush — after
-	// Import has scanned and hashed up to a full batch of sessions — and then as
-	// N identical per-session errors instead of one clean abort. The handle stays
-	// open for later readers; shutdown() closes it.
-	if err := st.Open(ctx); err != nil {
-		slog.Warn("vault sweep: cannot open vault store", "error", err)
-		return
-	}
-
-	if allProjects {
-		// Logged after the open probe (so it never precedes an open failure) but
-		// before Import, so it confirms the opt-in took effect even on a run where
-		// every session is already archived (Import would then log nothing).
-		slog.Info("vault sweep (all projects)",
-			"projects", countProjects(sessions), "sessions", len(sessions))
-	}
-
-	res := vault.Import(ctx, st, sessions, vault.ImportOptions{})
-	if res.Imported > 0 || res.Updated > 0 || res.Errors > 0 {
-		slog.Info("vault sweep",
-			"imported", res.Imported, "updated", res.Updated,
-			"skipped", res.Skipped, "errors", res.Errors)
-	}
+	return sessions
 }
 
-// countProjects returns the number of distinct project directories represented
-// in the discovered sessions, for the all-projects sweep summary log.
+// codexHomeForSweep resolves the Codex home (config.CodexHome, honoring
+// CODEX_HOME) and reports whether it holds a rollout root. A machine without
+// Codex is the common case and is a debug line, not a warning (design §
+// Observability).
+func codexHomeForSweep() (home string, present bool) {
+	home, err := config.CodexHome()
+	if err != nil {
+		slog.Debug("vault sweep: cannot resolve codex home", "error", err)
+		return "", false
+	}
+	if !vault.HasCodexRolloutRoot(home) {
+		slog.Debug("vault sweep: no codex rollout root, skipping", "home", home)
+		return "", false
+	}
+	return home, true
+}
+
+// sweepCodex runs the Codex half of vaultSweep against an already-open vault:
+// load the archived (relative path → uncompressed size) map once, hand the
+// walker a skip predicate built from it so unchanged rollouts are never opened,
+// filter the survivors to this project by canonical cwd (or keep all of them
+// with allProjects), import, and log. See vaultSweep for the accepted bound.
+func (s *Server) sweepCodex(ctx context.Context, st *vault.VaultStore, home string, allProjects bool, sum *sweepSummary) {
+	archived, err := st.CodexLocationSizes(ctx)
+	if err != nil {
+		slog.Warn("vault sweep: cannot load archived codex locations", "error", err)
+		return
+	}
+	skip := func(relPath string, onDiskSize int64, compressed bool) bool {
+		size, ok := archived[relPath]
+		if !ok {
+			return false
+		}
+		// A plain rollout is unchanged when its on-disk size equals the archived
+		// (uncompressed) size — rollouts are append-only, so a same-size file at
+		// the same path has the same content. A .zst rollout is immutable once
+		// written, so its path alone identifies it; its on-disk size is the
+		// compressed size and is not comparable.
+		return compressed || size == onDiskSize
+	}
+
+	sessions, report, err := vault.DiscoverCodexSessions(home, vault.CodexDiscoverOptions{Skip: skip})
+	sum.codexReport = report
+	if err != nil {
+		slog.Warn("vault sweep: codex discovery failed", "home", home, "error", err)
+		return
+	}
+	sum.codexDiscovered = len(sessions)
+
+	matched := sessions
+	if !allProjects {
+		matched = filterCodexByProject(sessions, s.projectDir)
+	} else if len(sessions) > 0 {
+		slog.Info("vault sweep (all projects)", "platform", vault.PlatformCodex,
+			"projects", countProjects(sessions), "sessions", len(sessions))
+	}
+	sum.codexMatched = len(matched)
+	if len(matched) > 0 {
+		sum.codex = vault.Import(ctx, st, matched, vault.ImportOptions{})
+	}
+
+	// One line per start carrying every count the design asks for (per-platform
+	// results, predicate skips, first-line reads, skipped revert variants). It is
+	// info when the run changed the vault or skipped revert variants the user
+	// should know about, debug otherwise — so a quiet startup stays quiet, like
+	// the Claude line.
+	level := slog.LevelDebug
+	if r := sum.codex; r.Imported > 0 || r.Updated > 0 || r.Errors > 0 || len(report.SkippedRevertVariants) > 0 {
+		level = slog.LevelInfo
+	}
+	slog.Log(ctx, level, "vault sweep", "platform", vault.PlatformCodex,
+		"discovered", len(sessions), "matched", len(matched),
+		"skipped_by_predicate", report.SkippedByPredicate,
+		"first_line_reads", report.FirstLineReads,
+		"skipped_revert_variants", len(report.SkippedRevertVariants),
+		"imported", sum.codex.Imported, "updated", sum.codex.Updated,
+		"skipped", sum.codex.Skipped, "errors", sum.codex.Errors)
+}
+
+// filterCodexByProject keeps the rollouts whose recorded cwd (the discovery
+// first-line hint) is projectDir, comparing both sides in canonical form
+// (canonicalDir). A rollout with no cwd hint cannot be attributed to any project
+// and is dropped; CAPY_VAULT_SWEEP_ALL or `capy vault import` reaches it.
+// Canonicalization stats the filesystem (EvalSymlinks), so it is memoized per
+// distinct cwd: a corpus of many rollouts spans only a handful of projects, and
+// the per-start cost is then O(projects) syscalls, not O(rollouts).
+func filterCodexByProject(sessions []vault.SessionFile, projectDir string) []vault.SessionFile {
+	want := canonicalDir(projectDir)
+	canonical := make(map[string]string)
+	var out []vault.SessionFile
+	for _, sf := range sessions {
+		if sf.ProjectPath == "" {
+			continue
+		}
+		got, ok := canonical[sf.ProjectPath]
+		if !ok {
+			got = canonicalDir(sf.ProjectPath)
+			canonical[sf.ProjectPath] = got
+		}
+		if got == want {
+			out = append(out, sf)
+		}
+	}
+	return out
+}
+
+// canonicalDir returns dir as a cleaned, absolute, symlink-resolved path for
+// equality comparison (design Assumption 10). A path that cannot be resolved —
+// a cwd whose directory no longer exists — falls back to its cleaned absolute
+// form, so two such stale paths still compare consistently with each other.
+func canonicalDir(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	return filepath.Clean(abs)
+}
+
+// countProjects returns the number of distinct projects represented in the
+// discovered sessions, for the all-projects sweep summary log: a Claude session
+// is keyed by its mangled project dir, a Codex rollout by its cwd hint.
 func countProjects(sessions []vault.SessionFile) int {
 	seen := make(map[string]struct{}, len(sessions))
 	for _, sf := range sessions {
-		seen[sf.ProjectDir] = struct{}{}
+		key := sf.ProjectDir
+		if sf.Platform.OrClaude() == vault.PlatformCodex {
+			key = sf.ProjectPath
+		}
+		seen[key] = struct{}{}
 	}
 	return len(seen)
 }

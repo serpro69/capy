@@ -2,6 +2,7 @@ package vault
 
 import (
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -143,6 +144,61 @@ func TestPlatform_ReaderVersionPairing(t *testing.T) {
 	// milestone. A future milestone raises both together; never raise
 	// supportedReaderVersion without a readerVersion* constant that names why.
 	assert.Equal(t, readerVersionPlatform, supportedReaderVersion)
+}
+
+// resolveStoredPlatform is the shared merge/reindex rule for a row's stored
+// platform: a recognized value passes through untouched and unsniffed; anything
+// else — including the empty string, which no stored row legitimately carries —
+// is corruption resolved from the blob with one warning, or an error naming the
+// bad value when the blob is undetectable too. Never a silent Claude default.
+func TestResolveStoredPlatform(t *testing.T) {
+	claudeBlob := []byte(`{"type":"file-history-snapshot","messageId":"x"}` + "\n" + `{"type":"user"}` + "\n")
+	codexBlob := []byte(`{"timestamp":"t","type":"session_meta","payload":{"id":"abc"}}` + "\n")
+	garbage := []byte("not a json object\n")
+
+	const warning = "vault test: unrecognized stored platform, using the format detected from the transcript"
+	tests := []struct {
+		name     string
+		stored   string
+		raw      []byte
+		want     Platform
+		warns    bool
+		wantErr  error
+		errNames string
+	}{
+		{name: "claude-code passes through", stored: "claude-code", raw: codexBlob, want: PlatformClaudeCode},
+		{name: "codex passes through", stored: "codex", raw: claudeBlob, want: PlatformCodex},
+		{name: "bogus over a Claude blob is Claude", stored: "bogus", raw: claudeBlob, want: PlatformClaudeCode, warns: true},
+		{name: "bogus over a rollout is Codex", stored: "bogus", raw: codexBlob, want: PlatformCodex, warns: true},
+		{name: "empty is sniffed, not defaulted", stored: "", raw: codexBlob, want: PlatformCodex, warns: true},
+		{name: "bogus over garbage is an error naming the value", stored: "bogus", raw: garbage, wantErr: ErrUndetectableFormat, errNames: `"bogus"`},
+		{name: "bogus over an empty blob is an error", stored: "bogus", raw: nil, wantErr: ErrUndetectableFormat, errNames: `"bogus"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := captureSlog(t)
+			got, err := resolveStoredPlatform("vault test", "uuid-1", tt.stored, tt.raw)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				assert.Contains(t, err.Error(), tt.errNames)
+				assert.Empty(t, h.recordsWithMessage(warning), "an unresolved value warns nothing — the caller records the error")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+			recs := h.recordsWithMessage(warning)
+			if !tt.warns {
+				assert.Empty(t, recs, "a recognized value is never sniffed")
+				return
+			}
+			require.Len(t, recs, 1)
+			assert.Equal(t, slog.LevelWarn, recs[0].Level)
+			attrs := recordAttrs(recs[0])
+			assert.Equal(t, "uuid-1", attrs["uuid"])
+			assert.Equal(t, tt.stored, attrs["platform"])
+			assert.Equal(t, tt.want, attrs["detected"])
+		})
+	}
 }
 
 func TestDecoderFor(t *testing.T) {

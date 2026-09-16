@@ -24,7 +24,8 @@ func setupVaultSweepProject(t *testing.T) (projectDir, uuid1, uuid2 string) {
 
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("CAPY_VAULT_PATH", filepath.Join(t.TempDir(), "vault.db"))
-	t.Setenv("CAPY_MACHINE_ID", "test-machine") // avoid touching ~/.config/capy
+	t.Setenv("CAPY_MACHINE_ID", "test-machine")              // avoid touching ~/.config/capy
+	t.Setenv("CODEX_HOME", filepath.Join(tmpHome, ".codex")) // absent: the Codex pass must not walk the developer's real home
 
 	// Create the sessions where ProjectSessionDir (the resolver the sweep uses)
 	// says they live, so setup and the code under test cannot drift. The exact
@@ -91,7 +92,8 @@ func setupVaultSweepMultiProject(t *testing.T) (projectA, uuidA, projectB, uuidB
 
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("CAPY_VAULT_PATH", filepath.Join(t.TempDir(), "vault.db"))
-	t.Setenv("CAPY_MACHINE_ID", "test-machine") // avoid touching ~/.config/capy
+	t.Setenv("CAPY_MACHINE_ID", "test-machine")              // avoid touching ~/.config/capy
+	t.Setenv("CODEX_HOME", filepath.Join(tmpHome, ".codex")) // absent: see setupVaultSweepProject
 
 	uuidA = "sweep-proj-a-aaaa"
 	uuidB = "sweep-proj-b-bbbb"
@@ -165,13 +167,15 @@ func TestVaultSweep_DefaultScopesToCurrentProject(t *testing.T) {
 }
 
 // A project whose Claude session directory does not exist yet (the common case
-// at first startup) is a no-op, not a failure — and it must not create a vault.
+// at first startup) and a machine without a Codex home is a no-op, not a
+// failure — and it must not create a vault.
 func TestVaultSweep_NoSessionsIsNoOp(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)
 	t.Setenv("CAPY_VAULT_PATH", filepath.Join(t.TempDir(), "vault.db"))
 	t.Setenv("CAPY_MACHINE_ID", "test-machine")
+	t.Setenv("CODEX_HOME", filepath.Join(tmpHome, ".codex")) // absent
 
 	srv := newTestServerWithProjectDir(t, nil, t.TempDir())
 	require.NotPanics(t, func() { srv.vaultSweep(context.Background()) })

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -74,6 +75,59 @@ func openDest(t *testing.T, path, key string) *VaultStore {
 	require.NoError(t, s.Open(context.Background()))
 	return s
 }
+
+// mergeCodexRecord is mergeRecord's Codex twin: a real, decodable Codex rollout
+// (session_meta with cwd "/src/codex", one human turn carrying `token`, one
+// assistant reply) stored as a codex row at the active rollout path, and a
+// child of parent when parent is non-empty. Merge dispatches the FTS rebuild on
+// the carried platform, so a Codex row MUST hold Codex bytes for its token to
+// be searchable after the merge — the Claude decoder yields nothing for them.
+func mergeCodexRecord(t *testing.T, uuid, token, parent string) *SessionRecord {
+	t.Helper()
+	meta := codexMetaOpts{id: uuid, cwd: "/src/codex", payloadTS: codexPayloadTS}
+	if parent != "" {
+		meta.parent, meta.nickname, meta.role = parent, "worker", "explorer"
+	}
+	main := codexRollout(t, codexLegacy,
+		codexSessionMetaLine(at(0), codexLegacy, meta),
+		codexUserEvent(at(1), "marker "+token),
+		codexAssistant(at(2), "acknowledged"),
+	)
+	return &SessionRecord{
+		Session: Session{
+			UUID:             uuid,
+			Title:            "marker " + token,
+			StartTime:        time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC),
+			EndTime:          time.Date(2026, 5, 1, 10, 0, 2, 0, time.UTC),
+			MessageCount:     2,
+			SizeBytes:        int64(len(main)),
+			ContentHash:      "h-" + token,
+			MachineID:        "machine-src",
+			ClaudeProjectDir: codexActiveRel(uuid),
+			ProjectPath:      "/src/codex",
+			GitBranch:        "master",
+			IndexVersion:     currentIndexVersion,
+			Platform:         PlatformCodex,
+			ParentUUID:       parent,
+			RawJSONL:         main,
+		},
+		FTS: []FTSRow{{SessionUUID: uuid, Role: "user", ContentText: "marker " + token}},
+	}
+}
+
+// mutateSource opens the closed source vault at path directly (the way
+// buildV1Source does) and runs fn against it, so a test can hand-corrupt rows
+// the store's write contract would refuse (an unrecognized platform, a non-JSON
+// blob, a future reader marker).
+func mutateSource(t *testing.T, path, key string, fn func(t *testing.T, db *sql.DB)) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", sqliteutil.EncryptedDSN(path, key)+"&_busy_timeout=5000")
+	require.NoError(t, err)
+	defer db.Close()
+	fn(t, db)
+}
+
+const mergeSniffWarning = "vault merge: unrecognized stored platform, using the format detected from the transcript"
 
 // TestMergeFrom_DistinctAndLargerWins is the headline path: distinct source
 // sessions are added, a larger source variant of an overlapping UUID replaces the
@@ -216,7 +270,10 @@ func TestMergeFrom_ExcludesEmptySource(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSessionNotFound, "the empty session must be absent")
 }
 
-// TestMergeFrom_ProjectFilter restricts the merge to one mangled project dir.
+// TestMergeFrom_ProjectFilter restricts the merge by location hint OR project
+// path (MergeOptions.Project): the mangled Claude project dir matches the Claude
+// rows, while a Codex row — whose hint is a rollout path that never contains a
+// project name — is reached through its project_path, like `import --project`.
 func TestMergeFrom_ProjectFilter(t *testing.T) {
 	const key = "shared-vault-key-at-least-32-characters!!"
 	ctx := context.Background()
@@ -224,21 +281,40 @@ func TestMergeFrom_ProjectFilter(t *testing.T) {
 	srcPath := filepath.Join(dir, "source.db")
 	destPath := filepath.Join(dir, "dest.db")
 
-	// Both records share ClaudeProjectDir "-src-proj" (set by mergeRecord), so a
-	// filter that matches it brings in both; a non-matching filter brings none.
+	// The Claude records share ClaudeProjectDir "-src-proj" (set by mergeRecord)
+	// and have project paths /src/p6 and /src/p7; the Codex record's hint is its
+	// rollout path and its project path is /src/codex.
+	const codex = "c0dec0de-0000-0000-0000-000000000008"
 	buildVault(t, srcPath, key,
 		mergeRecord(t, "66666666-0000-0000-0000-000000000006", "filt1", 3, 1000, "h6", "machine-src", "/src/p6"),
 		mergeRecord(t, "77777777-0000-0000-0000-000000000007", "filt2", 3, 1000, "h7", "machine-src", "/src/p7"),
+		mergeCodexRecord(t, codex, "filtcodex", ""),
 	)
 
 	dest := openDest(t, destPath, key)
-	none, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{Project: "nonexistent"})
+	none, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{Project: "nonexistent", DryRun: true})
 	require.NoError(t, err)
 	assert.Equal(t, 0, none.Imported, "a non-matching project filter merges nothing")
 
-	some, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{Project: "src-proj"})
+	claude, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{Project: "src-proj", DryRun: true})
 	require.NoError(t, err)
-	assert.Equal(t, 2, some.Imported, "a matching project filter merges the project's sessions")
+	assert.Equal(t, 2, claude.Imported, "the mangled dir matches the two Claude rows and not the Codex row")
+
+	// The filter is a literal substring match like import's: LIKE's `_` must not
+	// act as a single-character wildcard (unescaped, "src_p6" would match the
+	// "/src/p6" project path), and a `%` must not match everything.
+	for _, wildcard := range []string{"src_p6", "%"} {
+		none, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{Project: wildcard, DryRun: true})
+		require.NoError(t, err)
+		assert.Equal(t, 0, none.Imported, "LIKE metacharacter %q in the filter is literal, not a wildcard", wildcard)
+	}
+
+	byPath, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{Project: "src/codex"})
+	require.NoError(t, err)
+	require.Equal(t, 1, byPath.Imported, "the project path reaches the Codex row its rollout-path hint cannot")
+	got, err := dest.GetSession(ctx, codex)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformCodex, got.Platform)
 }
 
 // buildV1Source writes a v1-shaped encrypted source vault: vault_sessions and
@@ -409,7 +485,9 @@ func TestMergeFrom_Pre0006SourceMergesAsClaudeWithoutSniff(t *testing.T) {
 // TestMergeFrom_0006SourceCarriesPlatformAndParent: a source that already has
 // the 0006 columns has its platform and parent_uuid carried verbatim (a Codex
 // parent + child and a Claude row), the child stays a child in the destination,
-// and the first Codex row raises the destination marker to 3.
+// each row's FTS is rebuilt with ITS platform's decoder (the Codex tokens are
+// searchable only if the Codex decoder ran), and the first Codex row raises the
+// destination marker to 3.
 func TestMergeFrom_0006SourceCarriesPlatformAndParent(t *testing.T) {
 	const key = "shared-vault-key-at-least-32-characters!!"
 	ctx := context.Background()
@@ -423,20 +501,23 @@ func TestMergeFrom_0006SourceCarriesPlatformAndParent(t *testing.T) {
 		child  = "c0de0006-0000-0000-0000-000000000003"
 	)
 	claudeRec := mergeRecord(t, claude, "claudetok", 3, 1000, "hC", "machine-src", "/src/claude")
-	parentRec := mergeRecord(t, parent, "parenttok", 3, 1000, "hP", "machine-src", "/src/codex")
-	parentRec.Session.Platform = PlatformCodex
-	parentRec.Session.ClaudeProjectDir = "sessions/2026/09/01/rollout-2026-09-01T10-00-00-" + parent + ".jsonl"
-	childRec := mergeRecord(t, child, "childtok", 3, 1000, "hK", "machine-src", "/src/codex")
-	childRec.Session.Platform = PlatformCodex
-	childRec.Session.ParentUUID = parent
-	childRec.Session.ClaudeProjectDir = "sessions/2026/09/01/rollout-2026-09-01T10-01-00-" + child + ".jsonl"
+	parentRec := mergeCodexRecord(t, parent, "parenttok", "")
+	childRec := mergeCodexRecord(t, child, "childtok", parent)
 	buildVault(t, srcPath, key, claudeRec, parentRec, childRec)
 
+	h := captureSlog(t)
 	dest := openDest(t, destPath, key)
 	res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 3, res.Imported)
 	assert.Equal(t, 0, res.Errors)
+	assert.Empty(t, h.recordsWithMessage(mergeSniffWarning), "recognized platforms are carried, never sniffed")
+	platforms := map[string]Platform{}
+	for _, s := range res.Sessions {
+		platforms[s.UUID] = s.Platform
+	}
+	assert.Equal(t, map[string]Platform{claude: PlatformClaudeCode, parent: PlatformCodex, child: PlatformCodex}, platforms,
+		"the reported platform is the carried one (the CLI groups its summary by it)")
 
 	gotClaude, err := dest.GetSession(ctx, claude)
 	require.NoError(t, err)
@@ -466,6 +547,12 @@ func TestMergeFrom_0006SourceCarriesPlatformAndParent(t *testing.T) {
 	for _, tok := range []string{"claudetok", "parenttok", "childtok"} {
 		assertSearchCount(t, dest, tok, 1)
 	}
+	// The Codex human turns are role=user rows: proof the Codex decoder rebuilt
+	// them (the Claude decoder yields no entries at all for Codex bytes).
+	hits, err := dest.Search(ctx, SearchOptions{Query: "parenttok", Role: "user"})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, PlatformCodex, hits[0].Platform)
 
 	db, err := dest.getDB(ctx)
 	require.NoError(t, err)
@@ -478,6 +565,135 @@ func TestMergeFrom_0006SourceCarriesPlatformAndParent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, res.Imported)
 	assert.Equal(t, 3, res.Skipped)
+}
+
+// TestMergeFrom_UnrecognizedPlatformIsSniffed covers the corruption path of
+// design § Format Identification: a source row whose platform value is PRESENT
+// but unrecognized is resolved by sniffing its blob with a warning, and the
+// destination stores the RESOLVED value — Claude for a Claude-shaped blob, Codex
+// for a rollout — while a blob that is not JSON is a per-session error and is
+// never written as Claude by default. Dry run reports the same decisions
+// without writing.
+func TestMergeFrom_UnrecognizedPlatformIsSniffed(t *testing.T) {
+	const key = "shared-vault-key-at-least-32-characters!!"
+	ctx := context.Background()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "source.db")
+	destPath := filepath.Join(dir, "dest.db")
+
+	const (
+		claudeBlob = "b0905000-0000-0000-0000-000000000001" // Claude bytes labelled 'bogus'
+		codexBlob  = "b0905000-0000-0000-0000-000000000002" // Codex bytes labelled 'bogus'
+		garbage    = "b0905000-0000-0000-0000-000000000003" // non-JSON bytes labelled 'bogus'
+	)
+	buildVault(t, srcPath, key,
+		mergeRecord(t, claudeBlob, "sniffclaude", 3, 1000, "hsc", "machine-src", "/src/a"),
+		mergeCodexRecord(t, codexBlob, "sniffcodex", ""),
+		mergeRecord(t, garbage, "sniffgarbage", 3, 1000, "hsg", "machine-src", "/src/c"),
+	)
+	mutateSource(t, srcPath, key, func(t *testing.T, db *sql.DB) {
+		_, err := db.Exec(`UPDATE vault_sessions SET platform = 'bogus' WHERE uuid IN (?, ?, ?)`, claudeBlob, codexBlob, garbage)
+		require.NoError(t, err)
+		_, err = db.Exec(`UPDATE vault_sessions SET raw_jsonl = ?, encoding = 'raw' WHERE uuid = ?`,
+			[]byte("this is not a json object\n"), garbage)
+		require.NoError(t, err)
+	})
+
+	check := func(t *testing.T, res ImportResult) {
+		t.Helper()
+		assert.Equal(t, 2, res.Imported, "both sniffable rows merge")
+		assert.Equal(t, 1, res.Errors, "the undetectable row is an error, not a Claude default")
+		platforms := map[string]Platform{}
+		var garbageErr error
+		for _, s := range res.Sessions {
+			platforms[s.UUID] = s.Platform
+			if s.UUID == garbage {
+				assert.Equal(t, StatusError, s.Status)
+				garbageErr = s.Err
+			}
+		}
+		assert.Equal(t, PlatformClaudeCode, platforms[claudeBlob], "reported as the resolved platform")
+		assert.Equal(t, PlatformCodex, platforms[codexBlob])
+		require.ErrorIs(t, garbageErr, ErrUndetectableFormat)
+		assert.Contains(t, garbageErr.Error(), `"bogus"`, "the error names the bad stored value")
+	}
+
+	dest := openDest(t, destPath, key)
+
+	t.Run("dry run reports the resolved decisions and writes nothing", func(t *testing.T) {
+		h := captureSlog(t)
+		res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{DryRun: true})
+		require.NoError(t, err)
+		check(t, res)
+		assert.Len(t, h.recordsWithMessage(mergeSniffWarning), 2, "one warning per resolved row; the undetectable row errors instead")
+		sessions, err := dest.ListSessions(ctx, ListOptions{IncludeChildren: true})
+		require.NoError(t, err)
+		assert.Empty(t, sessions)
+	})
+
+	t.Run("real run stores the resolved platform", func(t *testing.T) {
+		h := captureSlog(t)
+		res, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+		require.NoError(t, err)
+		check(t, res)
+
+		warnings := h.recordsWithMessage(mergeSniffWarning)
+		require.Len(t, warnings, 2)
+		detected := map[string]any{}
+		for _, r := range warnings {
+			assert.Equal(t, slog.LevelWarn, r.Level)
+			attrs := recordAttrs(r)
+			assert.Equal(t, "bogus", attrs["platform"], "the warning names the bad value")
+			detected[attrs["uuid"].(string)] = attrs["detected"]
+		}
+		assert.Equal(t, map[string]any{claudeBlob: PlatformClaudeCode, codexBlob: PlatformCodex}, detected)
+
+		gotClaude, err := dest.GetSession(ctx, claudeBlob)
+		require.NoError(t, err)
+		assert.Equal(t, PlatformClaudeCode, gotClaude.Platform, "a Claude-shaped blob under a bogus label is stored as claude-code")
+		assertSearchCount(t, dest, "sniffclaude", 1)
+
+		gotCodex, err := dest.GetSession(ctx, codexBlob)
+		require.NoError(t, err)
+		assert.Equal(t, PlatformCodex, gotCodex.Platform, "a rollout under a bogus label is stored as codex")
+		hits, err := dest.Search(ctx, SearchOptions{Query: "sniffcodex", Role: "user"})
+		require.NoError(t, err)
+		assert.Len(t, hits, 1, "the Codex decoder rebuilt the human turn")
+
+		_, err = dest.GetSession(ctx, garbage)
+		assert.ErrorIs(t, err, ErrSessionNotFound, "the undetectable row is never written")
+	})
+}
+
+// TestMergeFrom_SourceNewerThanSupportedIsRefused: a source stamped with a
+// reader version this binary does not support is refused before any row is
+// read — the gate an older binary hits on a Codex-bearing source (design §
+// Reader version), exercised here with the first marker above supportedReaderVersion.
+func TestMergeFrom_SourceNewerThanSupportedIsRefused(t *testing.T) {
+	const key = "shared-vault-key-at-least-32-characters!!"
+	ctx := context.Background()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "source.db")
+	destPath := filepath.Join(dir, "dest.db")
+
+	buildVault(t, srcPath, key,
+		mergeRecord(t, "f0000004-0000-0000-0000-000000000004", "future", 3, 1000, "hf", "machine-src", "/src/f"),
+	)
+	mutateSource(t, srcPath, key, func(t *testing.T, db *sql.DB) {
+		_, err := db.Exec(`INSERT OR REPLACE INTO vault_meta (key, value) VALUES (?, ?)`,
+			minReaderVersionKey, "4")
+		require.NoError(t, err)
+	})
+	require.Equal(t, 3, supportedReaderVersion, "fixture: 4 is the first marker this binary refuses")
+
+	dest := openDest(t, destPath, key)
+	_, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires reader version 4")
+
+	sessions, err := dest.ListSessions(ctx, ListOptions{IncludeChildren: true})
+	require.NoError(t, err)
+	assert.Empty(t, sessions, "a refused source contributes nothing")
 }
 
 // TestMergeFrom_MissingSourceKeyFails proves an explicitly wrong source key is a

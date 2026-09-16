@@ -113,7 +113,13 @@ func ftsContentBytes(fts []FTSRow) int64 {
 
 // rebuildSessionFTS loads a session's stored transcript + subagent sidecars from
 // the DB and re-scans them into FTS rows + semantic chunks with the current
-// indexer.
+// indexer, dispatching the decoder on the row's stored platform. An
+// unrecognized stored value (corruption — design § Format Identification) is
+// resolved by sniffing the blob with a warning; the stored column is NOT
+// rewritten, because this path is FTS-only (ADR-025 D4) and a repair of the
+// metadata is the user's call. A row whose value and blob are both
+// undetectable is an error for the caller to count, never scanned as Claude
+// by default.
 func rebuildSessionFTS(ctx context.Context, store *VaultStore, uuid string) ([]FTSRow, []Chunk, error) {
 	sess, err := store.GetSession(ctx, uuid)
 	if err != nil {
@@ -123,9 +129,11 @@ func rebuildSessionFTS(ctx context.Context, store *VaultStore, uuid string) ([]F
 	if err != nil {
 		return nil, nil, err
 	}
-	// TODO(codex-vault-sessions Slice 8): pass sess.Platform once migration 0006
-	// (Slice 5) stores it; every archived row is a Claude session until then.
-	_, fts, chunks, err := scanSessionAndSubagents(uuid, PlatformClaudeCode, sess.RawJSONL, files)
+	platform, err := resolveStoredPlatform("vault reindex", uuid, string(sess.Platform), sess.RawJSONL)
+	if err != nil {
+		return nil, nil, err
+	}
+	_, fts, chunks, err := scanSessionAndSubagents(uuid, platform, sess.RawJSONL, files)
 	if err != nil {
 		return nil, nil, err
 	}

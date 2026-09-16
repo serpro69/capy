@@ -168,7 +168,7 @@ func DiscoverAll(codexOpts *CodexDiscoverOptions, only ...Platform) ([]SessionFi
 		d        Discoverer
 	}{
 		{PlatformClaudeCode, claudeRoot, isDir(claudeRoot), claudeDiscoverer{}},
-		{PlatformCodex, codexRoot, hasCodexRolloutRoot(codexRoot), codexDiscoverer{opts: opts}},
+		{PlatformCodex, codexRoot, HasCodexRolloutRoot(codexRoot), codexDiscoverer{opts: opts}},
 	}
 
 	var (
@@ -634,11 +634,15 @@ func isCodexHome(rootDir string) bool {
 	return false
 }
 
-// hasCodexRolloutRoot reports whether home has at least one rollout root
-// directory, regardless of contents — DiscoverAll's "does the platform exist
-// here" probe, cheaper and looser than isCodexHome (an installed-but-unused
-// Codex is then reported as "holds no sessions" rather than "absent").
-func hasCodexRolloutRoot(home string) bool {
+// HasCodexRolloutRoot reports whether home has at least one rollout root
+// directory (codexRolloutRoots), regardless of contents — the "does the
+// platform exist here" probe DiscoverAll and the server sweep run before
+// touching anything else. It is cheaper and looser than isCodexHome: an
+// installed-but-unused Codex is then reported as "holds no sessions" rather
+// than "absent". The sweep needs it exported because it must decide whether
+// to open the vault (for its skip predicate) BEFORE running Codex discovery,
+// and must not create vault.db on a machine that has no Codex at all.
+func HasCodexRolloutRoot(home string) bool {
 	for _, sub := range codexRolloutRoots {
 		if isDir(filepath.Join(home, sub)) {
 			return true
