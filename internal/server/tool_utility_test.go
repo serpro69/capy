@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -529,4 +531,62 @@ func TestCleanup_PurgeAllResetsKnowledgeBaseAndStats(t *testing.T) {
 	assert.Equal(t, int64(0), post.BytesIndexed)
 	assert.Equal(t, 1, post.Calls["capy_cleanup"], "cleanup tracks itself after Reset")
 	assert.False(t, post.SessionStart.IsZero(), "SessionStart must survive a reset")
+}
+
+// ─── Doctor: vault platform roots (codex-vault-sessions Task 12) ──────────────
+
+// pinDoctorPlatformRoots points both platform roots at temp dirs so the doctor
+// never stats the developer's real ~/.claude / ~/.codex, and returns them.
+func pinDoctorPlatformRoots(t *testing.T) (claudeProjects, codexHome string) {
+	t.Helper()
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	codexHome = filepath.Join(t.TempDir(), ".codex")
+	t.Setenv("CODEX_HOME", codexHome)
+	return filepath.Join(cfg, "projects"), codexHome
+}
+
+func TestDoctor_VaultPlatformsBothRoots(t *testing.T) {
+	claude, codex := pinDoctorPlatformRoots(t)
+	require.NoError(t, os.MkdirAll(claude, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(codex, "sessions"), 0o755))
+	srv, _ := newTestServerWithArchivedSession(t) // one Claude row
+
+	text := resultText(callDoctor(t, srv))
+	assert.Contains(t, text, "Vault: 1 sessions archived") // the fixture row carries index_version 1, so this line is a reindex Warn
+	assert.Contains(t, text, "[x] Vault platforms: claude-code: 1 archived ("+claude+"); codex: 0 archived ("+codex+")")
+}
+
+func TestDoctor_VaultPlatformsCodexRootAbsent(t *testing.T) {
+	claude, codex := pinDoctorPlatformRoots(t)
+	require.NoError(t, os.MkdirAll(claude, 0o755))
+	srv, _ := newTestServerWithArchivedSession(t)
+
+	text := resultText(callDoctor(t, srv))
+	assert.Contains(t, text, "[x] Vault platforms: claude-code: 1 archived ("+claude+"); codex: 0 archived ("+codex+" absent — not swept)")
+}
+
+func TestDoctor_VaultPlatformsOmittedWhenDisabled(t *testing.T) {
+	claude, _ := pinDoctorPlatformRoots(t)
+	require.NoError(t, os.MkdirAll(claude, 0o755))
+	t.Setenv("CAPY_VAULT_KEY", "")
+	srv := newTestServer(t, nil)
+
+	text := resultText(callDoctor(t, srv))
+	assert.Contains(t, text, "[-] Vault: disabled (CAPY_VAULT_KEY not set)")
+	assert.NotContains(t, text, "Vault platforms", "a disabled vault sweeps nothing — no roots to report")
+}
+
+func TestDoctor_VaultPlatformsResolutionError(t *testing.T) {
+	// CLAUDE_CONFIG_DIR resolves the Claude root without $HOME; an unset
+	// CODEX_HOME then needs $HOME, which is empty — the adapter must surface
+	// that as a Warn row, not drop the check.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "") // os.UserHomeDir reads this on Windows
+	srv, _ := newTestServerWithArchivedSession(t)
+
+	text := resultText(callDoctor(t, srv))
+	assert.Contains(t, text, "[-] Vault platforms: error resolving platform roots (resolving codex home:")
 }

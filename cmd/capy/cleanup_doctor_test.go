@@ -2,7 +2,9 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/serpro69/capy/internal/store"
@@ -161,4 +163,66 @@ func TestDoctorSubcommand_VaultEnabledButNotCreated(t *testing.T) {
 	assert.Contains(t, stdout, "[x] Vault: enabled — no sessions archived yet")
 	_, err := os.Stat(vaultPath)
 	assert.True(t, os.IsNotExist(err), "doctor must not create the vault DB")
+}
+
+// ─── doctor: vault platform roots (codex-vault-sessions Task 12) ───────────────
+
+// pinGoEnvForEmptyHome fixes the Go cache/module paths in the environment so a
+// test may blank $HOME (to make os.UserHomeDir fail inside the binary) without
+// also breaking the `go run` that capy() uses to build it — `go` derives
+// GOCACHE, GOMODCACHE and GOPATH from $HOME when they are unset.
+func pinGoEnvForEmptyHome(t *testing.T) {
+	t.Helper()
+	out, err := exec.Command("go", "env", "GOCACHE", "GOMODCACHE", "GOPATH").Output()
+	require.NoError(t, err)
+	vals := strings.Split(strings.TrimSpace(string(out)), "\n")
+	require.Len(t, vals, 3)
+	for i, k := range []string{"GOCACHE", "GOMODCACHE", "GOPATH"} {
+		t.Setenv(k, strings.TrimSpace(vals[i])) // `go env` prints \r\n on Windows
+	}
+}
+
+func TestDoctorSubcommand_VaultPlatformsWithoutDB(t *testing.T) {
+	dir, _ := newCLIProject(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault.db")
+	t.Setenv("CAPY_VAULT_KEY", "test-key")
+	t.Setenv("CAPY_VAULT_PATH", vaultPath)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	claude := filepath.Join(cfg, "projects")
+	require.NoError(t, os.MkdirAll(claude, 0o755))
+	codex := filepath.Join(t.TempDir(), ".codex")
+	t.Setenv("CODEX_HOME", codex)
+
+	// No vault DB yet: the roots are still reported (0 archived) so the user
+	// can see what the first sweep will walk — and the diagnostic still must
+	// not create the DB.
+	stdout, stderr, code := capy(t, "doctor", "--project-dir", dir)
+	assert.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "[x] Vault: enabled — no sessions archived yet")
+	assert.Contains(t, stdout, "[x] Vault platforms: claude-code: 0 archived ("+claude+"); codex: 0 archived ("+codex+" absent — not swept)")
+	_, err := os.Stat(vaultPath)
+	assert.True(t, os.IsNotExist(err), "doctor must not create the vault DB")
+
+	// Disabled vault: no platforms line at all (parity with capy_doctor).
+	t.Setenv("CAPY_VAULT_KEY", "")
+	stdout, stderr, code = capy(t, "doctor", "--project-dir", dir)
+	assert.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "[-] Vault: disabled (CAPY_VAULT_KEY not set)")
+	assert.NotContains(t, stdout, "Vault platforms")
+}
+
+func TestDoctorSubcommand_VaultPlatformsResolutionError(t *testing.T) {
+	dir, _ := newCLIProject(t)
+	t.Setenv("CAPY_VAULT_KEY", "test-key")
+	t.Setenv("CAPY_VAULT_PATH", filepath.Join(t.TempDir(), "vault.db"))
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	t.Setenv("CODEX_HOME", "")
+	pinGoEnvForEmptyHome(t)
+	t.Setenv("HOME", "")        // CodexHome falls back to $HOME, which is now unresolvable
+	t.Setenv("USERPROFILE", "") // os.UserHomeDir reads this on Windows
+
+	stdout, stderr, code := capy(t, "doctor", "--project-dir", dir)
+	assert.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "[-] Vault platforms: error resolving platform roots (resolving codex home:")
 }

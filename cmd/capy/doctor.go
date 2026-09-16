@@ -57,8 +57,8 @@ func newDoctorCmd() *cobra.Command {
 				platform.CheckSecurity(totalDeny, len(policies)),
 			}
 			results = append(results, knowledgeBaseChecks(cfg, projectDir, dbPath)...)
+			results = append(results, vaultChecks(cmd.Context())...)
 			results = append(results,
-				vaultCheck(cmd.Context()),
 				platform.CheckResult{Name: "Project", Status: platform.Pass, Detail: projectDir},
 			)
 
@@ -95,20 +95,25 @@ func knowledgeBaseChecks(cfg *config.Config, projectDir, dbPath string) []platfo
 	return results
 }
 
-// vaultCheck mirrors the capy_doctor MCP tool's vault reporting: disabled
+// vaultChecks mirrors the capy_doctor MCP tool's vault reporting: disabled
 // (opt-in key unset), unreadable, or enabled with the session count and any
-// reindex backlog. A vault DB that does not exist yet is reported as empty
-// rather than created by the diagnostic.
-func vaultCheck(ctx context.Context) platform.CheckResult {
+// reindex backlog, followed by the per-platform roots check. A vault DB that
+// does not exist yet is reported as empty rather than created by the
+// diagnostic — its platforms check then shows the roots with 0 archived, so a
+// user can already see which roots the first sweep will walk.
+func vaultChecks(ctx context.Context) []platform.CheckResult {
 	if _, err := vault.RequireVaultKey(); err != nil {
-		return platform.CheckVaultDisabled()
+		return []platform.CheckResult{platform.CheckVaultDisabled()}
 	}
 	path := vault.VaultDBPath()
 	if _, err := os.Stat(path); err != nil {
-		return platform.CheckResult{
-			Name:   "Vault",
-			Status: platform.Pass,
-			Detail: fmt.Sprintf("enabled — no sessions archived yet (%s not created)", path),
+		return []platform.CheckResult{
+			{
+				Name:   "Vault",
+				Status: platform.Pass,
+				Detail: fmt.Sprintf("enabled — no sessions archived yet (%s not created)", path),
+			},
+			vaultPlatformsCheck(nil),
 		}
 	}
 
@@ -116,7 +121,28 @@ func vaultCheck(ctx context.Context) platform.CheckResult {
 	defer vs.Close()
 	stats, err := vs.Stats(ctx)
 	if err != nil {
-		return platform.CheckVault(0, 0, 0, err)
+		return []platform.CheckResult{platform.CheckVault(0, 0, 0, err)}
 	}
-	return platform.CheckVault(stats.Sessions, stats.OutdatedSessions, stats.IndexVersion, nil)
+	return []platform.CheckResult{
+		platform.CheckVault(stats.Sessions, stats.OutdatedSessions, stats.IndexVersion, nil),
+		vaultPlatformsCheck(stats),
+	}
+}
+
+// vaultPlatformsCheck adapts vault.PlatformRoots to the strings-only input of
+// platform.CheckVaultPlatforms. The capy_doctor MCP tool carries the same
+// adapter (internal/server/tool_doctor.go) — the two surfaces must describe
+// the roots identically (issue #82).
+func vaultPlatformsCheck(stats *vault.VaultStats) platform.CheckResult {
+	roots, err := vault.PlatformRoots(stats)
+	if err != nil {
+		return platform.CheckVaultPlatforms(nil, err)
+	}
+	out := make([]platform.VaultPlatformRoot, 0, len(roots))
+	for _, r := range roots {
+		out = append(out, platform.VaultPlatformRoot{
+			Name: string(r.Platform), Root: r.Root, RootExists: r.RootExists, Archived: r.Archived,
+		})
+	}
+	return platform.CheckVaultPlatforms(out, nil)
 }

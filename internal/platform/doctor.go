@@ -363,6 +363,53 @@ func CheckVault(sessions, outdatedSessions, indexVersion int, err error) CheckRe
 	return CheckResult{Name: "Vault", Status: Pass, Detail: detail}
 }
 
+// VaultPlatformRoot is one agent CLI's session root as CheckVaultPlatforms
+// reports it. Strings only, on purpose: internal/platform does not import
+// internal/vault and must not start to (the vault is a heavy, key-gated store;
+// the doctor is a leaf), so callers copy the fields out of vault.PlatformRoot.
+type VaultPlatformRoot struct {
+	Name       string // the stored platform token (`claude-code`, `codex`) — the value `--platform` accepts
+	Root       string // the session root on disk (Claude: the projects dir; Codex: the Codex home)
+	RootExists bool   // whether the startup sweep would walk it
+	Archived   int    // sessions of this platform the vault holds
+}
+
+// CheckVaultPlatforms reports, per known platform, whether its session root
+// exists on disk and how many of its sessions are archived, so a dual-tool
+// user can see that Codex (or Claude Code) is being swept. err is a root
+// resolution failure (an unresolvable home directory) and is reported like
+// CheckVault's. An absent root is normal — a Claude-only machine has no Codex
+// home — and stays Pass; the check warns only when NO root exists, since the
+// sweep then has nothing to archive.
+func CheckVaultPlatforms(roots []VaultPlatformRoot, err error) CheckResult {
+	const name = "Vault platforms"
+	if err != nil {
+		return CheckResult{
+			Name:   name,
+			Status: Warn,
+			Detail: fmt.Sprintf("error resolving platform roots (%v)", err),
+		}
+	}
+	parts := make([]string, 0, len(roots))
+	var anyRoot bool
+	for _, r := range roots {
+		if r.RootExists {
+			anyRoot = true
+			parts = append(parts, fmt.Sprintf("%s: %d archived (%s)", r.Name, r.Archived, r.Root))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s: %d archived (%s absent — not swept)", r.Name, r.Archived, r.Root))
+	}
+	if !anyRoot {
+		detail := "no platform session root found on disk — the startup sweep has nothing to archive"
+		if len(parts) > 0 {
+			detail += "; " + strings.Join(parts, "; ")
+		}
+		return CheckResult{Name: name, Status: Warn, Detail: detail}
+	}
+	return CheckResult{Name: name, Status: Pass, Detail: strings.Join(parts, "; ")}
+}
+
 // FormatDiagnostics formats a list of check results as a markdown report.
 func FormatDiagnostics(results []CheckResult) string {
 	var lines []string
