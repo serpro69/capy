@@ -381,6 +381,31 @@ func TestDiscoverAll(t *testing.T) {
 		assert.Equal(t, 4, report.FirstLineReads)
 	})
 
+	t.Run("only one platform walks only that root", func(t *testing.T) {
+		cfg := t.TempDir()
+		t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+		// An oversize Claude sidecar would WARN if the Claude root were walked.
+		writeSession(t, filepath.Join(cfg, "projects", "-home-user-proj"), "eeeeeeee-1111-2222-3333-444444444444",
+			sampleMainJSONL(t), map[string][]byte{"tool-results/big.bin": bytes.Repeat([]byte{0}, maxSidecarBytes+1)})
+		home := writeCodexDiscoveryHome(t)
+		t.Setenv("CODEX_HOME", home)
+		h := captureSlog(t)
+
+		sessions, report, err := DiscoverAll(nil, PlatformCodex)
+		require.NoError(t, err)
+		assert.Equal(t, []string{codexDiscRelA, codexDiscRelB, codexDiscRelC, codexDiscRelD}, relPaths(sessions))
+		for _, sf := range sessions {
+			assert.Equal(t, PlatformCodex, sf.Platform)
+		}
+		assert.Equal(t, 4, report.FirstLineReads)
+		assert.Empty(t, h.recordsWithMessage("vault discovery: skipping oversize sidecar file"), "the Claude root must not be walked")
+
+		claudeOnly, _, err := DiscoverAll(nil, PlatformClaudeCode)
+		require.NoError(t, err)
+		require.Len(t, claudeOnly, 1)
+		assert.Equal(t, PlatformClaudeCode, claudeOnly[0].Platform)
+	})
+
 	t.Run("codex options reach the walker", func(t *testing.T) {
 		t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // no projects/ → Claude root absent
 		home := writeCodexDiscoveryHome(t)

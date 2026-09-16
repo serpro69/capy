@@ -192,7 +192,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		// FK parent and is dropped with the shell.
 		if src.messageCount == 0 {
 			entry := ImportedSession{
-				UUID: uuid, Title: src.title, ProjectPath: src.projectPath,
+				UUID: uuid, Platform: Platform(src.platform), Title: src.title, ProjectPath: src.projectPath,
 				SizeBytes: src.sizeBytes, Status: StatusExcluded,
 			}
 			if found && srcName != nil {
@@ -215,7 +215,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			// Same-hash (idempotent re-merge) and smaller-divergent-variant skips
 			// share one arm because their name handling is identical.
 			case src.contentHash == existingHash, src.sizeBytes < existingSize:
-				entry := ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusSkipped}
+				entry := ImportedSession{UUID: uuid, Platform: Platform(src.platform), SizeBytes: src.sizeBytes, Status: StatusSkipped}
 				if srcName != nil {
 					entry = reconcileMergeName(ctx, dest, entry, *srcName, opts.DryRun)
 				}
@@ -269,8 +269,10 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 				title = effectiveTitle(src.title, destName)
 			}
 		}
+		// Platform is the carried source value (reporting only — the CLI groups
+		// its summary by it); the write itself validates it in writeRecord.
 		entry := ImportedSession{
-			UUID: uuid, Title: title, ProjectPath: src.projectPath,
+			UUID: uuid, Platform: Platform(src.platform), Title: title, ProjectPath: src.projectPath,
 			SizeBytes: src.sizeBytes, Status: status,
 		}
 

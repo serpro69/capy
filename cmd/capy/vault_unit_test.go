@@ -132,6 +132,20 @@ func TestShortUUID(t *testing.T) {
 	assert.Equal(t, "short", shortUUID("short"))
 }
 
+// Codex ids are UUIDv7: two threads minted minutes apart share their first 8 hex
+// digits, so the Codex display prefix is 12 characters (design § Identity and
+// display). Claude keeps 8.
+func TestShortUUIDFor(t *testing.T) {
+	a := "019e22ba-4c15-7ae0-a903-255537a6a1b3"
+	b := "019e22ba-9f01-7c2d-8e44-0b1c2d3e4f50"
+	assert.Equal(t, shortUUIDFor(a, vault.PlatformClaudeCode), shortUUIDFor(b, vault.PlatformClaudeCode), "8 chars collide")
+	assert.NotEqual(t, shortUUIDFor(a, vault.PlatformCodex), shortUUIDFor(b, vault.PlatformCodex), "12 chars distinguish them")
+	assert.Equal(t, "019e22ba-4c1", shortUUIDFor(a, vault.PlatformCodex))
+	assert.Equal(t, "019e22ba", shortUUIDFor(a, vault.PlatformClaudeCode))
+	assert.Equal(t, "019e22ba", shortUUIDFor(a, ""), "an unset platform is Claude")
+	assert.Equal(t, "short", shortUUIDFor("short", vault.PlatformCodex))
+}
+
 func TestDisplayPath(t *testing.T) {
 	t.Setenv("HOME", "/home/tester")
 	assert.Equal(t, "-", displayPath(""))

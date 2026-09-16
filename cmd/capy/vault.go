@@ -34,10 +34,10 @@ func newVaultCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "vault",
-		Short: "Archive, search, and restore Claude Code sessions",
+		Short: "Archive, search, and restore Claude Code and Codex sessions",
 		Long: `Vault keeps a durable, cross-project, encrypted archive of every Claude
-Code session — searchable and restorable after compaction, auto-cleanup, or
-accidental deletion.
+Code session and Codex rollout — searchable and restorable after compaction,
+auto-cleanup, or accidental deletion.
 
 Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -83,25 +83,56 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 
 func newVaultImportCmd(env *vaultEnv) *cobra.Command {
 	var (
-		source  string
-		project string
-		dryRun  bool
+		source       string
+		project      string
+		platformFlag string
+		dryRun       bool
 	)
 	cmd := &cobra.Command{
 		Use:   "import",
-		Short: "Scan and archive Claude Code sessions into the vault",
-		Long: `Discover Claude Code sessions and archive them into the vault.
+		Short: "Scan and archive Claude Code and Codex sessions into the vault",
+		Long: `Discover agent-CLI sessions and archive them into the vault.
+
+By default every platform root that exists on disk is scanned: Claude Code's
+projects directory (honoring CLAUDE_CONFIG_DIR) and the Codex home (CODEX_HOME,
+default ~/.codex — both sessions/ and archived_sessions/). Pass --platform to
+restrict the run to one of them, or --source to import from one directory
+(its layout is autodetected, see the flag).
 
 The MCP server's startup sweep only archives the current project. Run
 'capy vault import' periodically (e.g. via cron) to capture sessions across
 all projects before Claude Code's 30-day cleanup removes them.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sessions, err := vault.DiscoverSessions(source)
+			var platform vault.Platform
+			if platformFlag != "" {
+				p, err := vault.ParsePlatform(platformFlag)
+				if err != nil {
+					return fmt.Errorf("invalid --platform %q (want %s|%s)", platformFlag, vault.PlatformClaudeCode, vault.PlatformCodex)
+				}
+				platform = p
+			}
+
+			var (
+				sessions []vault.SessionFile
+				report   vault.DiscoveryReport
+				err      error
+			)
+			switch {
+			case source != "":
+				sessions, report, err = vault.DiscoverSessionsReport(source)
+			case platform != "":
+				// Scope discovery, not just the import: the other platform's tree
+				// is never walked (and never warns) on a single-platform run.
+				sessions, report, err = vault.DiscoverAll(nil, platform)
+			default:
+				sessions, report, err = vault.DiscoverAll(nil)
+			}
 			if err != nil {
 				return fmt.Errorf("discovering sessions: %w", err)
 			}
 			if len(sessions) == 0 {
 				fmt.Println("capy vault import: no sessions found")
+				printSkippedVariants(report)
 				return nil
 			}
 
@@ -113,39 +144,105 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 				return err
 			}
 
-			res := vault.Import(cmd.Context(), st, sessions, vault.ImportOptions{Project: project, DryRun: dryRun})
-			printImportResult(res, dryRun)
+			res := vault.Import(cmd.Context(), st, sessions, vault.ImportOptions{Project: project, DryRun: dryRun, Platform: platform})
+			printImportResult(res, &report, dryRun)
 			if res.Errors > 0 {
 				return fmt.Errorf("%d session(s) failed to import", res.Errors)
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&source, "source", "", "source directory (default: Claude projects dir)")
-	cmd.Flags().StringVar(&project, "project", "", "only import sessions whose project dir matches this substring")
+	cmd.Flags().StringVar(&source, "source", "", "import from this directory only — a Claude config dir, projects dir or single project dir, or a Codex home holding sessions/ or archived_sessions/ (default: every platform root that exists)")
+	cmd.Flags().StringVar(&project, "project", "", "only import sessions whose Claude project dir or Codex project path matches this substring")
+	cmd.Flags().StringVar(&platformFlag, "platform", "", "only import sessions of this platform: claude-code|codex (default: all)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview what would be imported without writing")
 	return cmd
 }
 
-func printImportResult(res vault.ImportResult, dryRun bool) {
+// importPlatformOrder fixes the order the per-platform summary lines print in.
+var importPlatformOrder = []vault.Platform{vault.PlatformClaudeCode, vault.PlatformCodex}
+
+// printImportResult prints the per-session table and the summary of an import or
+// merge run. report is the discovery report of an import run (nil for merge,
+// which discovers nothing); its skipped revert-variant count is printed after
+// the summary. When the run touched more than one platform, a per-platform
+// summary line follows the total.
+func printImportResult(res vault.ImportResult, report *vault.DiscoveryReport, dryRun bool) {
 	if dryRun {
 		fmt.Println("DRY RUN — no changes written")
 	}
 	if len(res.Sessions) == 0 {
 		fmt.Println("no sessions matched")
+		if report != nil {
+			printSkippedVariants(*report)
+		}
 		return
 	}
-	fmt.Printf("%-8s  %-8s  %-28s  %8s  %s\n", "UUID", "STATUS", "PROJECT", "SIZE", "TITLE")
+	fmt.Printf("%-12s  %-8s  %-28s  %8s  %s\n", "UUID", "STATUS", "PROJECT", "SIZE", "TITLE")
 	for _, s := range res.Sessions {
 		if s.Status == vault.StatusError && s.Err != nil {
-			fmt.Fprintf(os.Stderr, "  error %s: %v\n", shortUUID(s.UUID), s.Err)
+			fmt.Fprintf(os.Stderr, "  error %s: %v\n", shortUUIDFor(s.UUID, s.Platform), s.Err)
 		}
-		fmt.Printf("%-8s  %-8s  %-28s  %8s  %s\n",
-			shortUUID(s.UUID), s.Status, truncate(displayPath(s.ProjectPath), 28),
+		fmt.Printf("%-12s  %-8s  %-28s  %8s  %s\n",
+			shortUUIDFor(s.UUID, s.Platform), s.Status, truncate(displayPath(s.ProjectPath), 28),
 			formatSize(s.SizeBytes), truncate(s.Title, 50))
 	}
-	fmt.Printf("\nimported %d, updated %d, skipped %d, excluded %d, errors %d\n",
-		res.Imported, res.Updated, res.Skipped, res.Excluded, res.Errors)
+	fmt.Printf("\n%s\n", importCounts{
+		imported: res.Imported, updated: res.Updated, skipped: res.Skipped, excluded: res.Excluded, errs: res.Errors,
+	})
+
+	byPlatform := map[vault.Platform]*importCounts{}
+	for _, s := range res.Sessions {
+		if s.Platform == "" {
+			continue // a row that predates the field (never from Import or MergeFrom today)
+		}
+		if byPlatform[s.Platform] == nil {
+			byPlatform[s.Platform] = &importCounts{}
+		}
+		byPlatform[s.Platform].add(s.Status)
+	}
+	if len(byPlatform) > 1 {
+		for _, p := range importPlatformOrder {
+			if c := byPlatform[p]; c != nil {
+				fmt.Printf("  %s: %s\n", p, c)
+			}
+		}
+	}
+	if report != nil {
+		printSkippedVariants(*report)
+	}
+}
+
+// importCounts tallies per-status outcomes for one summary line (the whole run,
+// or one platform of it).
+type importCounts struct{ imported, updated, skipped, excluded, errs int }
+
+func (c *importCounts) add(status string) {
+	switch status {
+	case vault.StatusNew:
+		c.imported++
+	case vault.StatusUpdated:
+		c.updated++
+	case vault.StatusSkipped:
+		c.skipped++
+	case vault.StatusExcluded:
+		c.excluded++
+	case vault.StatusError:
+		c.errs++
+	}
+}
+
+func (c importCounts) String() string {
+	return fmt.Sprintf("imported %d, updated %d, skipped %d, excluded %d, errors %d",
+		c.imported, c.updated, c.skipped, c.excluded, c.errs)
+}
+
+// printSkippedVariants reports the Codex `_<rollout_id>` revert rollouts
+// discovery skipped (the paths were already logged as warnings by discovery).
+func printSkippedVariants(report vault.DiscoveryReport) {
+	if n := len(report.SkippedRevertVariants); n > 0 {
+		fmt.Printf("skipped %d codex revert rollout variant(s) — not archived in this version (see the discovery warnings for paths)\n", n)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -378,13 +475,11 @@ func renderShow(sess *vault.Session, files []vault.File, markdown bool) string {
 		render = vault.RenderMarkdown
 	}
 
-	// TODO(codex-vault-sessions Slice 5): pass sess.Platform once the store row
-	// carries it (migration 0006); every archived row is Claude until then.
-	platform := vault.PlatformClaudeCode
-
+	// The stored platform (migration 0006) selects the decoder for the main
+	// transcript; the assistant heading follows it ("Claude" / "Codex").
 	var sb strings.Builder
 	writeShowHeader(&sb, sess, markdown)
-	sb.WriteString(render(platform, sess.RawJSONL))
+	sb.WriteString(render(sess.Platform.OrClaude(), sess.RawJSONL))
 
 	for _, f := range files {
 		id := subagentDisplayID(f.RelativePath)
@@ -760,7 +855,7 @@ tolerates a concurrent server sweep via busy-timeout retry, the same as import.`
 			if err != nil {
 				return err
 			}
-			printImportResult(res, dryRun)
+			printImportResult(res, nil, dryRun)
 			if res.Errors > 0 {
 				return fmt.Errorf("%d session(s) failed to merge", res.Errors)
 			}
@@ -825,9 +920,13 @@ func newVaultRestoreCmd(env *vaultEnv) *cobra.Command {
 		Short: "Restore an archived session's files to disk (partial UUID, 8+ chars)",
 		Long: `Write a session's main JSONL and every preserved sidecar back to disk.
 
-By default it restores into the session's Claude Code project directory
-(honoring CLAUDE_CONFIG_DIR) so Claude Code can find it again; use --output to
-write elsewhere. Existing files are kept unless you confirm overwriting them.`,
+By default a Claude Code session restores into its Claude Code project
+directory (honoring CLAUDE_CONFIG_DIR) so Claude Code can find it again, and a
+Codex session restores into the Codex home (CODEX_HOME, default ~/.codex) at the
+relative rollout path it was discovered under, always as a plain .jsonl. Use
+--output to write elsewhere (the same layout under that directory). Existing
+files are kept unless you confirm overwriting them; a compressed .jsonl.zst twin
+of a Codex rollout is never touched.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := guardTUI(cmd); err != nil {
@@ -838,14 +937,14 @@ write elsewhere. Existing files are kept unless you confirm overwriting them.`,
 			return restoreVaultSession(cmd, st, args[0], output)
 		},
 	}
-	cmd.Flags().StringVar(&output, "output", "", "restore into this directory (default: the session's Claude projects dir)")
+	cmd.Flags().StringVar(&output, "output", "", "restore under this directory (default: the session's Claude projects dir, or the Codex home)")
 	return cmd
 }
 
 // restoreVaultSession writes an archived session's files back to disk. Shared by
 // the `restore` subcommand and the TUI's `r` action (which both resolve the
 // session, pick a root, and report the result identically). An empty output uses
-// the session's Claude projects dir.
+// the platform's default root (defaultRestoreRoot).
 func restoreVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, output string) error {
 	sess, err := st.GetSession(cmd.Context(), sessionID)
 	if err != nil {
@@ -862,12 +961,22 @@ func restoreVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, ou
 			return err
 		}
 	}
-	res, err := vault.RestoreSession(sess.UUID, sess.RawJSONL, files, root, confirmOverwrite)
+	res, err := vault.RestoreSessionAt(sess.UUID, restoreMainRel(sess), sess.RawJSONL, files, root, confirmOverwrite)
 	if err != nil {
 		return err
 	}
 	printRestoreResult(res)
 	return nil
+}
+
+// restoreMainRel is the root-relative path the session's main file restores to:
+// the stored location hint (the relative rollout path) for Codex, <uuid>.jsonl
+// for Claude — see vault.RestoreSessionAt.
+func restoreMainRel(sess *vault.Session) string {
+	if sess.Platform.OrClaude() == vault.PlatformCodex {
+		return sess.ClaudeProjectDir
+	}
+	return sess.UUID + ".jsonl"
 }
 
 func printRestoreResult(res *vault.RestoreResult) {
@@ -881,6 +990,9 @@ func printRestoreResult(res *vault.RestoreResult) {
 		fmt.Fprintf(os.Stderr, "skipped unsafe path: %s\n", p)
 	}
 	fmt.Printf("\nrestored %d file(s) to %s\n", len(res.Written), res.Root)
+	for _, n := range res.Notes {
+		fmt.Fprintf(os.Stderr, "note: %s\n", n)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -934,12 +1046,18 @@ func resumeVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, dir
 		return err
 	}
 
-	// Restore to the Claude Code location so `claude --resume` finds it.
+	// Restore to the platform's own location so `claude --resume` finds it.
+	//
+	// TODO(codex-vault-sessions Slice 9.5): a Codex session must fail loudly here
+	// (naming `capy vault restore` and `codex resume <uuid>`) BEFORE the
+	// exec.LookPath("claude") above — `claude --resume` cannot resume a Codex
+	// rollout. Until that lands the rollout is restored to its Codex path (harmless)
+	// and claude then reports an unknown session.
 	root, err := defaultRestoreRoot(sess)
 	if err != nil {
 		return err
 	}
-	if _, err := vault.RestoreSession(sess.UUID, sess.RawJSONL, files, root, confirmOverwrite); err != nil {
+	if _, err := vault.RestoreSessionAt(sess.UUID, restoreMainRel(sess), sess.RawJSONL, files, root, confirmOverwrite); err != nil {
 		return err
 	}
 
@@ -1272,10 +1390,19 @@ type exitError struct {
 func (e *exitError) Error() string { return e.err.Error() }
 func (e *exitError) Unwrap() error { return e.err }
 
-// defaultRestoreRoot is the session's Claude Code project directory under the
-// (CLAUDE_CONFIG_DIR-aware) projects dir — where Claude Code expects to find the
-// JSONL for `claude --resume`.
+// defaultRestoreRoot is the directory a session restores under when no --output
+// is given: for Codex the Codex home (CODEX_HOME-aware — the stored relative
+// rollout path is joined beneath it by RestoreSessionAt), for Claude the
+// session's project directory under the (CLAUDE_CONFIG_DIR-aware) projects dir —
+// where each CLI expects to find the file to resume it.
 func defaultRestoreRoot(sess *vault.Session) (string, error) {
+	if sess.Platform.OrClaude() == vault.PlatformCodex {
+		home, err := config.CodexHome()
+		if err != nil {
+			return "", fmt.Errorf("resolving codex home: %w", err)
+		}
+		return home, nil
+	}
 	projects, err := config.ClaudeProjectsDir()
 	if err != nil {
 		return "", fmt.Errorf("resolving claude projects dir: %w", err)
@@ -1440,9 +1567,28 @@ func parseDateFlag(s string, endOfDay bool) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("invalid date %q (want YYYY-MM-DD or RFC3339)", s)
 }
 
+// shortUUID is the 8-character display prefix of a session id.
+//
+// TODO(codex-vault-sessions Slice 9.7): every remaining caller (list, search,
+// show header, delete/rename messages, handleLookupError candidates) should move
+// to shortUUIDFor with the row's platform; only the import table does today.
 func shortUUID(u string) string {
-	if len(u) >= 8 {
-		return u[:8]
+	return shortUUIDFor(u, vault.PlatformClaudeCode)
+}
+
+// shortUUIDFor is the platform-aware display prefix: 12 characters for a Codex
+// row, 8 otherwise. Codex ids are UUIDv7 — time-ordered, so ids minted close
+// together share their first 8 hex digits (22 collisions among 164 local
+// rollouts at research time) — while 12 characters were collision-free.
+// minUUIDPrefix for LOOKUP stays 8: an ambiguous prefix is already an error path
+// that lists candidates (design § Identity and display).
+func shortUUIDFor(u string, p vault.Platform) string {
+	n := 8
+	if p.OrClaude() == vault.PlatformCodex {
+		n = 12
+	}
+	if len(u) >= n {
+		return u[:n]
 	}
 	return u
 }
