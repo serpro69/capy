@@ -204,6 +204,7 @@ func TestCodexCanary(t *testing.T) {
 		knownIDs                                                   = map[string]bool{}
 		childLinks                                                 = map[string]string{} // child uuid → parent path
 		mismatches                                                 []string
+		scanned, ftsRows, openableMarkers, diffMarkers             int // consumer pass
 	)
 	for _, f := range files {
 		if f.revert {
@@ -304,6 +305,33 @@ func TestCodexCanary(t *testing.T) {
 		case humans == 0 && tr.Meta.Source != "subagent":
 			zeroHumanNonShell = append(zeroHumanNonShell, f.path)
 		}
+
+		// Consumer pass (Slice 7.6): the platform-blind consumers over Codex bytes.
+		// Success criterion 2 — no rollout with a human turn scans to zero
+		// messages, and every human turn indexes as role=user; every non-shell
+		// rollout is archivable (MessageCount ≥ 1); show names the platform; the
+		// TUI transcript never panics and every resolved spawn is openable.
+		out := ScanTranscript(tr)
+		if humans > 0 || assistants > 0 {
+			assert.GreaterOrEqual(t, out.MessageCount, 1, "non-shell rollout scans to zero messages: %s", f.path)
+			scanned++
+		}
+		if humans > 0 {
+			assert.NotEmpty(t, rowsWithRole(out.Results, roleUser), "rollout with a human turn has no role=user row: %s", f.path)
+		}
+		ftsRows += len(out.Results)
+		if assistants > 0 {
+			assert.Contains(t, RenderText(PlatformCodex, raw), "[Codex]", "show heading: %s", f.path)
+		}
+		for _, m := range ParseTranscript(PlatformCodex, raw, nil) {
+			if m.Role == RoleSubagent && m.ChildUUID != "" {
+				assert.True(t, m.Openable, "a marker with a ChildUUID must be openable: %s", f.path)
+				openableMarkers++
+			}
+			if m.Diff {
+				diffMarkers++
+			}
+		}
 	}
 
 	// Assumption 11: every parent-resolved child id names a discovered rollout.
@@ -334,6 +362,9 @@ func TestCodexCanary(t *testing.T) {
 	t.Logf("codex canary: %d human, %d assistant, %d tool-result entries; %d parent→child links resolved", humansTotal, assistantsTotal, resultsTotal, len(childLinks))
 	t.Logf("codex canary: %d aborted-at-startup shells (0 human, 0 assistant; %d logged at debug); %d files fingerprinted unknown record types: %v",
 		len(shells), shellLevel, len(drift), driftTypes)
+	t.Logf("codex canary consumers: %d non-shell rollouts scan to ≥ 1 message (%d FTS rows); %d openable child markers, %d apply_patch diff markers",
+		scanned, ftsRows, openableMarkers, diffMarkers)
+	assert.Equal(t, len(childLinks), openableMarkers, "every resolved launch is exactly one openable marker")
 	if len(driftTypes) > 0 {
 		t.Logf("codex canary: unknown record types are skipped (ADR-021); add them to codex_types.go's known-type sets once inspected")
 	}

@@ -343,9 +343,17 @@ var excludedResultTools = map[string]bool{
 // that expands to the rendered diff (not the raw body). To add another (e.g.
 // MultiEdit), put it here. Edit/Write are kept distinct from Read so the display
 // split stays explicit.
+//
+// apply_patch is the Codex analogue (design § Consumer contracts): its body is
+// boilerplate (`Success. Updated the following files:` plus the paths the
+// `apply_patch <files>` summary already carries) and the signal is the Diff the
+// Codex decoder builds from the call's patch text. Name-keyed policy here, not a
+// decoder change, so it cannot affect Claude output (no Claude tool is named
+// apply_patch).
 var diffResultTools = map[string]bool{
-	"Edit":  true,
-	"Write": true,
+	"Edit":        true,
+	"Write":       true,
+	"apply_patch": true,
 }
 
 // ftsExcludedResult reports whether a tool's tool_result BODY is dropped from the

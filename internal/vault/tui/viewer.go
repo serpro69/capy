@@ -83,9 +83,10 @@ func (m viewerModel) loadSession(sess vault.Session, files []vault.File) viewerM
 	m.inInline = false
 	m.inlineLabel = ""
 	m.savedMainLine = 0
-	// TODO(codex-vault-sessions Slice 5): pass sess.Platform once the store row
-	// carries it (migration 0006); every archived row is Claude until then.
-	m.main = renderTranscript(vault.ParseTranscript(vault.PlatformClaudeCode, sess.RawJSONL, m.subIDs), m.styles, m.contentWidth())
+	// The stored platform (migration 0006) selects the decoder for the main
+	// transcript; sidecars stay Claude (openSubagent). OrClaude: a Session built
+	// in memory without the field (tests) is a Claude session.
+	m.main = renderTranscript(vault.ParseTranscript(sess.Platform.OrClaude(), sess.RawJSONL, m.subIDs), m.styles, m.contentWidth())
 	m.ready = true
 	return m.setActive(m.main, 0)
 }

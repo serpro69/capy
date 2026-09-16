@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -142,9 +143,11 @@ func DiscoverSessionsReport(rootDir string) ([]SessionFile, DiscoveryReport, err
 // walk is logged at warn and skipped, so one platform never hides the other.
 // codexOpts (nil ⇒ defaults) is handed to the Codex walker — the server sweep
 // uses it for its skip predicate; `capy vault import` passes nil and reads every
-// first line. The returned error covers only root resolution (an unresolvable
-// home directory), never a per-platform walk.
-func DiscoverAll(codexOpts *CodexDiscoverOptions) ([]SessionFile, DiscoveryReport, error) {
+// first line. only, when given, restricts discovery to those platforms (`capy
+// vault import --platform`), so the other platform's root is not walked at all
+// — not merely filtered afterwards. The returned error covers only root
+// resolution (an unresolvable home directory), never a per-platform walk.
+func DiscoverAll(codexOpts *CodexDiscoverOptions, only ...Platform) ([]SessionFile, DiscoveryReport, error) {
 	claudeRoot, err := config.ClaudeProjectsDir()
 	if err != nil {
 		return nil, DiscoveryReport{}, fmt.Errorf("resolving claude projects dir: %w", err)
@@ -173,6 +176,9 @@ func DiscoverAll(codexOpts *CodexDiscoverOptions) ([]SessionFile, DiscoveryRepor
 		report DiscoveryReport
 	)
 	for _, r := range roots {
+		if len(only) > 0 && !slices.Contains(only, r.platform) {
+			continue
+		}
 		if !r.exists {
 			slog.Debug("vault discovery: platform root absent, skipping", "platform", r.platform, "root", r.root)
 			continue

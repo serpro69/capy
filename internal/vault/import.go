@@ -40,23 +40,47 @@ const (
 
 // ImportOptions tunes an import run.
 type ImportOptions struct {
-	// Project, when non-empty, restricts the import to sessions whose mangled
-	// project directory name contains this substring. The match is against the
-	// Claude project dir name (e.g. "-home-user-capy"), not the resolved
-	// project_path, so it needs no scan and works pre-filter.
+	// Project, when non-empty, restricts the import to sessions whose location
+	// matches this substring: the mangled Claude project dir name (e.g.
+	// "-home-user-capy", SessionFile.ProjectDir) OR the Codex project hint
+	// (session_meta.cwd from discovery's first-line read, SessionFile.ProjectPath).
+	// Both are known before any scan, so the filter works pre-read.
 	Project string
-	// DryRun computes every skip/insert/replace decision without writing.
+	// DryRun computes every skip/insert/replace/updated decision without writing.
 	DryRun bool
+	// Platform, when non-empty, restricts the run to sessions discovered for that
+	// platform ("" == every platform in the list).
+	Platform Platform
 }
 
 // ImportedSession is the per-session outcome of an import run.
 type ImportedSession struct {
 	UUID        string
-	Title       string // populated for new/updated; empty for skipped (not scanned)
-	ProjectPath string // populated for new/updated; empty for skipped
-	SizeBytes   int64  // total content size (main JSONL + sidecars)
-	Status      string // StatusNew | StatusUpdated | StatusSkipped | StatusExcluded | StatusError
-	Err         error  // set only when Status == StatusError
+	Platform    Platform // the platform the session was discovered (or, for merge, stored) as
+	Title       string   // populated for new/updated; empty for skipped (not scanned)
+	ProjectPath string   // populated for new/updated; empty for skipped
+	SizeBytes   int64    // total content size (main JSONL + sidecars)
+	Status      string   // StatusNew | StatusUpdated | StatusSkipped | StatusExcluded | StatusError
+	Err         error    // set only when Status == StatusError
+}
+
+// seenSession is import's in-run record of one uuid — every uuid the run has
+// decided on, whatever the decision (design § Import — same-run reconciliation).
+// Import decides against COMMITTED state (SessionDigest) and queues writes into
+// batched transactions, so without this map two files for one uuid in the same
+// run (a Codex thread present under both sessions/ and archived_sessions/)
+// would both queue as inserts and the second would fail on the primary key.
+type seenSession struct {
+	hash string
+	size int64
+	// gen is the batch generation the uuid was queued in; it is pending (not yet
+	// committed) while gen == the importer's current generation. A flushed write
+	// is committed, so a later copy reconciles against the DB like any other.
+	gen int
+	// wouldWrite is set when a dry run reported the copy as new/updated — the
+	// dry-run stand-in for "pending", so a later larger copy reports `updated`
+	// exactly as the real run (which replaces the committed row) would.
+	wouldWrite bool
 }
 
 // ImportResult aggregates an import run.
@@ -122,6 +146,10 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		ftsBatch      []FTSRebuild
 		ftsPending    []ImportedSession // aligned with ftsBatch
 		ftsBatchBytes int64
+
+		// batchGen counts flushes; a seenSession whose gen equals it is still
+		// pending in batch/ftsBatch (see the same-run reconciliation below).
+		batchGen int
 	)
 
 	flush := func() {
@@ -168,7 +196,14 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		}
 		batch, pending, batchBytes = nil, nil, 0
 		ftsBatch, ftsPending, ftsBatchBytes = nil, nil, 0
+		// Everything queued so far is committed: a later copy of any of those uuids
+		// must reconcile against the DB, not against a pending write (seenSession).
+		batchGen++
 	}
+
+	// seen is the in-run reconciliation map (seenSession). It records EVERY uuid
+	// the loop decides on — skips included — and is consulted before SessionDigest.
+	seen := make(map[string]seenSession, len(sessions))
 
 	cancelled := false
 	for i := range sessions {
@@ -181,38 +216,104 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		}
 
 		sf := &sessions[i]
+		platform := importPlatform(sf)
 
-		if opts.Project != "" && !strings.Contains(sf.ProjectDir, opts.Project) {
+		if opts.Platform != "" && platform != opts.Platform {
+			continue // another platform — not part of this run
+		}
+		if opts.Project != "" && !strings.Contains(sf.ProjectDir, opts.Project) && !strings.Contains(sf.ProjectPath, opts.Project) {
 			continue // filtered out — not part of this run
+		}
+		// Every outcome below carries the platform, so the CLI can group its
+		// summary per platform without a second lookup.
+		outcome := func(status string, size int64) ImportedSession {
+			return ImportedSession{UUID: sf.UUID, Platform: platform, SizeBytes: size, Status: status}
+		}
+		fail := func(size int64, err error) {
+			e := outcome(StatusError, size)
+			e.Err = err
+			res.record(e)
 		}
 
 		mainBytes, err := os.ReadFile(sf.Path)
 		if err != nil {
-			slog.Warn("vault import: cannot read session file", "path", sf.Path, "error", err)
-			res.record(ImportedSession{UUID: sf.UUID, Status: StatusError, Err: err})
+			slog.Warn("vault import: cannot read session file", "platform", platform, "path", sf.Path, "error", err)
+			fail(0, err)
 			continue
+		}
+		if sf.Compressed {
+			// A .jsonl.zst rollout is decompressed FIRST: raw_jsonl, content_hash,
+			// size_bytes and every FTS row are always the plain JSONL bytes (vault v2
+			// invariant), so an archived copy hashes equal to its compressed twin.
+			mainBytes, err = decodeBlob(encodingZstd, mainBytes)
+			if err != nil {
+				slog.Warn("vault import: cannot decompress session file", "platform", platform, "path", sf.Path, "error", err)
+				fail(0, err)
+				continue
+			}
 		}
 
 		files, contents := readSidecars(sf, mainBytes)
 		hash, size := computeContentHash(contents)
 
-		// TODO(codex-vault-sessions Slice 7): the returned location hint feeds the
-		// Codex-only location policy (a same-hash rollout at a new relative path →
-		// UpdateLocationHint, reported `updated`); Claude rows never enter it.
-		existingHash, existingSize, existingIndexVersion, _, found, err := store.SessionDigest(ctx, sf.UUID)
+		// Same-run reconciliation (design § Import): a uuid this run has already
+		// decided on is a duplicate copy of the same thread (Codex archive is a
+		// move — sessions/ is walked first, so the active copy wins). A same-hash
+		// or smaller later copy is skipped without touching anything — in
+		// particular it never reaches the location policy below, which is therefore
+		// first-sighting-only by construction. A LARGER, divergent later copy must
+		// replace the earlier one: when that earlier copy is still pending in the
+		// current batch it is flushed first, so the ordinary DB path below sees the
+		// committed row and replaces it (one extra transaction on a rare path beats
+		// surgery inside the batch slices). A dry run has no batch; wouldWrite
+		// stands in for "pending" so it reports the same `updated`.
+		prev, dup := seen[sf.UUID]
+		if dup {
+			if hash == prev.hash || size < prev.size {
+				res.record(outcome(StatusSkipped, size))
+				continue
+			}
+			if prev.gen == batchGen && !opts.DryRun {
+				flush()
+			}
+		}
+		// Record this sighting now (whatever the decision turns out to be) so a
+		// third copy reconciles against it; gen/wouldWrite are refined below.
+		seen[sf.UUID] = seenSession{hash: hash, size: size, gen: -1}
+
+		existingHash, existingSize, existingIndexVersion, existingHint, found, err := store.SessionDigest(ctx, sf.UUID)
 		if err != nil {
-			slog.Warn("vault import: digest lookup failed", "uuid", sf.UUID, "error", err)
-			res.record(ImportedSession{UUID: sf.UUID, SizeBytes: size, Status: StatusError, Err: err})
+			slog.Warn("vault import: digest lookup failed", "platform", platform, "uuid", sf.UUID, "error", err)
+			fail(size, err)
 			continue
+		}
+
+		// Location policy (design § Import — Codex only): Codex archive/unarchive
+		// MOVES a rollout, so the same bytes can reappear at a new relative path.
+		// A same-hash Codex file whose relative path differs from the stored hint
+		// moves the hint (metadata-only, its own tx, at decision time) and reports
+		// `updated`, so restore follows where Codex last kept the file. Claude
+		// rows never enter the branch: their hint is the mangled project dir and
+		// Claude Code never moves a session file.
+		hint := locationHint(sf)
+		moved := found && hash == existingHash && platform == PlatformCodex && hint != existingHint
+		if moved && !opts.DryRun {
+			if err := store.UpdateLocationHint(ctx, sf.UUID, hint); err != nil {
+				slog.Warn("vault import: location hint update failed", "platform", platform, "uuid", sf.UUID, "error", err)
+				fail(size, err)
+				continue
+			}
 		}
 
 		// Idempotency (design §Idempotent Import Logic) + reindex gate:
 		//   - Skip only when content is unchanged (same hash) AND the stored FTS
-		//     index is already current.
+		//     index is already current — unless the file moved (above), which is
+		//     an `updated` with nothing to scan.
 		//   - A hash-identical but version-stale session has its FTS rebuilt only
 		//     (ftsOnly) — the blob is byte-identical, so a full ReplaceSession would
 		//     rewrite raw_jsonl + every sidecar for zero benefit (the write
-		//     amplification ADR-025 D4 avoids).
+		//     amplification ADR-025 D4 avoids). A moved ftsOnly file has already
+		//     had its hint updated above and reports `updated` once.
 		//   - A smaller divergent variant (likely a compacted copy) never overwrites
 		//     the fuller archive, regardless of version — `capy vault reindex`
 		//     upgrades those from the stored blob instead.
@@ -222,12 +323,18 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		if found {
 			switch {
 			case hash == existingHash && existingIndexVersion >= currentIndexVersion:
-				res.record(ImportedSession{UUID: sf.UUID, SizeBytes: size, Status: StatusSkipped})
+				if !moved {
+					res.record(outcome(StatusSkipped, size))
+					continue
+				}
+				e := outcome(StatusUpdated, size)
+				e.ProjectPath = sf.ProjectPath // the discovery hint; the row is not rescanned
+				res.record(e)
 				continue
 			case hash == existingHash:
 				ftsOnly = true // unchanged content, stale index → rebuild FTS only
 			case size < existingSize:
-				res.record(ImportedSession{UUID: sf.UUID, SizeBytes: size, Status: StatusSkipped})
+				res.record(outcome(StatusSkipped, size))
 				continue
 			default:
 				replace = true
@@ -236,27 +343,24 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 
 		rec, err := buildRecord(sf, mainBytes, files, hash, size, machineID)
 		if err != nil {
-			slog.Warn("vault import: scan failed", "uuid", sf.UUID, "error", err)
-			res.record(ImportedSession{UUID: sf.UUID, SizeBytes: size, Status: StatusError, Err: err})
+			slog.Warn("vault import: scan failed", "platform", platform, "uuid", sf.UUID, "error", err)
+			fail(size, err)
 			continue
 		}
 
 		// Exclude empty sessions: a transcript with no human-text or assistant
 		// turns (MessageCount == 0 — e.g. a freshly-created file carrying only
-		// tool_result noise and an ai-title) has no archival value and would only
-		// clutter `list`. Skip without batching. MessageCount is only known after
-		// buildRecord scans, so this gate must follow it. A later import, once the
-		// session gains messages, archives it normally (it was never written, so it
-		// reappears as StatusNew). This must precede the DryRun branch so a dry run
-		// reports the same exclusion a real run would.
+		// tool_result noise and an ai-title, or a Codex rollout aborted at startup)
+		// has no archival value and would only clutter `list`. Skip without
+		// batching. MessageCount is only known after buildRecord scans, so this
+		// gate must follow it. A later import, once the session gains messages,
+		// archives it normally (it was never written, so it reappears as
+		// StatusNew). This must precede the DryRun branch so a dry run reports the
+		// same exclusion a real run would.
 		if rec.Session.MessageCount == 0 {
-			res.record(ImportedSession{
-				UUID:        sf.UUID,
-				Title:       rec.Session.Title,
-				ProjectPath: rec.Session.ProjectPath,
-				SizeBytes:   size,
-				Status:      StatusExcluded,
-			})
+			e := outcome(StatusExcluded, size)
+			e.Title, e.ProjectPath = rec.Session.Title, rec.Session.ProjectPath
+			res.record(e)
 			continue
 		}
 
@@ -264,18 +368,19 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		if replace || ftsOnly {
 			status = StatusUpdated
 		}
-		entry := ImportedSession{
-			UUID:        sf.UUID,
-			Title:       rec.Session.Title,
-			ProjectPath: rec.Session.ProjectPath,
-			SizeBytes:   size,
-			Status:      status,
-		}
+		entry := outcome(status, size)
+		entry.Title, entry.ProjectPath = rec.Session.Title, rec.Session.ProjectPath
 
 		if opts.DryRun {
+			if dup && prev.wouldWrite && !found {
+				// The real run would have committed the earlier copy and replaced it.
+				entry.Status = StatusUpdated
+			}
+			seen[sf.UUID] = seenSession{hash: hash, size: size, gen: -1, wouldWrite: true}
 			res.record(entry)
 			continue
 		}
+		seen[sf.UUID] = seenSession{hash: hash, size: size, gen: batchGen}
 
 		if ftsOnly {
 			ftsBatch = append(ftsBatch, FTSRebuild{
@@ -339,20 +444,54 @@ func readSidecars(sf *SessionFile, mainBytes []byte) (files []File, contents map
 	return files, contents
 }
 
-// buildRecord scans the main JSONL and any subagent transcripts into FTS rows
-// + chunks and assembles the full SessionRecord for one insert/replace.
+// importPlatform is the platform import treats sf as: SessionFile.Platform, which
+// every discoverer stamps, or PlatformClaudeCode for an empty value — a
+// hand-built SessionFile (tests, callers that predate the field) is a Claude
+// session (Platform.OrClaude, mirroring the store's write contract).
+func importPlatform(sf *SessionFile) Platform {
+	return sf.Platform.OrClaude()
+}
+
+// locationHint is the value import stores in claude_project_dir (see
+// Session.ClaudeProjectDir): the relative rollout path for Codex, the mangled
+// project dir for everything else.
+func locationHint(sf *SessionFile) string {
+	if importPlatform(sf) == PlatformCodex {
+		return sf.RelativePath
+	}
+	return sf.ProjectDir
+}
+
+// buildRecord scans the main JSONL (with the platform's decoder) and any
+// subagent transcripts into FTS rows + chunks and assembles the full
+// SessionRecord for one insert/replace.
+//
+// Row identity is the filename uuid (design § Import): the platform's own id
+// recorded INSIDE the file (ScanOutput.PlatformID — Codex session_meta.id) is
+// informational. When it is present and differs, that is logged as a warning
+// naming both and the filename uuid stays the row key — it is what Codex's own
+// DB-less resume scans for, and it was known before any byte was read.
 func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, size int64, machineID string) (*SessionRecord, error) {
-	// TODO(codex-vault-sessions Slice 7): dispatch on sf.Platform once the Codex
-	// discoverer stamps it; every discovered file is a Claude session until then.
-	scanOut, fts, chunks, err := scanSessionAndSubagents(sf.UUID, PlatformClaudeCode, mainBytes, files)
+	platform := importPlatform(sf)
+	scanOut, fts, chunks, err := scanSessionAndSubagents(sf.UUID, platform, mainBytes, files)
 	if err != nil {
 		return nil, err
 	}
+	if scanOut.PlatformID != "" && scanOut.PlatformID != sf.UUID {
+		slog.Warn("vault import: session id recorded inside the file differs from its filename; the filename uuid is the row key",
+			"platform", platform, "uuid", sf.UUID, "platform_id", scanOut.PlatformID, "path", sf.Path)
+	}
 
 	// Platform and ParentUUID come from the single decode (ScanOutput copies them
-	// from Meta): Platform is the decoder that produced the output — the constant
-	// above until Slice 7 dispatches on sf.Platform — and ParentUUID is always
-	// empty for Claude (sidecar sub-agents are not sessions).
+	// from Meta): Platform is the decoder that ran — DecoderFor(platform) — and
+	// ParentUUID is the parent of a Codex child rollout (empty for Claude, whose
+	// sidecar sub-agents are not sessions). ProjectPath prefers the transcript's
+	// own cwd, then discovery's first-line hint (Codex), then the Claude unmangle
+	// fallback chain.
+	cwd := scanOut.CWD
+	if cwd == "" {
+		cwd = sf.ProjectPath
+	}
 	sess := Session{
 		UUID:             sf.UUID,
 		Title:            scanOut.Title,
@@ -362,8 +501,8 @@ func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, s
 		SizeBytes:        size,
 		ContentHash:      hash,
 		MachineID:        machineID,
-		ClaudeProjectDir: sf.ProjectDir,
-		ProjectPath:      resolveProjectPath(scanOut.CWD, sf.ProjectDir),
+		ClaudeProjectDir: locationHint(sf),
+		ProjectPath:      resolveProjectPath(cwd, sf.ProjectDir),
 		GitBranch:        scanOut.Branch,
 		IndexVersion:     currentIndexVersion,
 		Platform:         scanOut.Platform,

@@ -56,6 +56,20 @@ func ParsePlatform(s string) (Platform, error) {
 // String returns the stored/wire form ("claude-code", "codex").
 func (p Platform) String() string { return string(p) }
 
+// OrClaude returns p, or PlatformClaudeCode for the zero value. It is the read
+// side of the convention the store's write contract already applies
+// (writeRecord normalizes an empty Session.Platform to Claude): a Session or
+// SessionFile built in memory without the field — tests, callers that predate
+// it — is a Claude session. A STORED value is never empty (the column is NOT
+// NULL DEFAULT 'claude-code'), so this never masks a corrupted row; DecoderFor
+// itself stays strict and fails on "" like any other unknown value.
+func (p Platform) OrClaude() Platform {
+	if p == "" {
+		return PlatformClaudeCode
+	}
+	return p
+}
+
 // DisplayName returns the human label used for the assistant heading in `vault
 // show` and the TUI ("Claude", "Codex"). An unrecognized value falls back to the
 // raw string so a corrupted row is still legible rather than blank.

@@ -258,7 +258,9 @@ type Session struct {
 	// normalized to PlatformClaudeCode — mirroring the column default, so callers
 	// that predate the field keep writing Claude rows — while any other value must
 	// pass ParsePlatform or the write fails (writeRecord): an unrecognized platform
-	// is never persisted.
+	// is never persisted. The read-side twin is Platform.OrClaude: a Session built
+	// in memory without the field (tests, older callers) is dispatched as Claude by
+	// the display and restore paths, while DecoderFor itself stays strict.
 	Platform Platform
 	// ParentUUID is the parent session of a child rollout (Codex sub-agents are
 	// standalone rollouts linked by parent_uuid). Empty == NULL; no foreign key.
