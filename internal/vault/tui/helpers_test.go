@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +86,90 @@ func sampleSession(t *testing.T) (vault.Session, []vault.File) {
 	return sess, files
 }
 
+// --- Codex fixtures -----------------------------------------------------------
+//
+// Minimal legacy-mode (CLI < 0.147) rollout lines, the subset of
+// internal/vault's codex_fixtures_test.go builders the TUI needs: a parent that
+// spawns a child (an openable marker carrying ChildUUID) and the child itself
+// (a standalone session with parent_uuid). Real UUIDv7 shapes, so shortID's
+// 12-character cut is meaningful.
+
+const (
+	codexParentID     = "019dc606-f552-7f93-b9a1-c5620b23b8dd"
+	codexChildID      = "019dc608-0061-7d90-a4e9-fca142504625"
+	codexGrandchildID = "01a0714f-f6ea-7bb1-bdeb-dc80fab2f1bf"
+	codexTS           = "2026-05-01T10:00:00.000Z"
+)
+
+func codexEnv(typ string, payload map[string]any) map[string]any {
+	return map[string]any{"timestamp": codexTS, "type": typ, "payload": payload}
+}
+
+// codexSessionMeta is line 0 of a rollout; a non-empty parent makes it a
+// sub-agent rollout (source.subagent.thread_spawn.parent_thread_id).
+func codexSessionMeta(id, parent string) map[string]any {
+	p := map[string]any{"id": id, "cwd": "/home/u/codexproj", "cli_version": "0.130.0", "timestamp": codexTS}
+	if parent == "" {
+		p["source"] = "cli"
+	} else {
+		p["source"] = map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{"parent_thread_id": parent, "depth": 1}}}
+		p["agent_nickname"] = "Boole"
+		p["agent_role"] = "code-reviewer"
+	}
+	return codexEnv("session_meta", p)
+}
+
+func codexHumanLine(text string) map[string]any {
+	return codexEnv("event_msg", map[string]any{"type": "user_message", "message": text})
+}
+
+func codexAssistantLine(text string) map[string]any {
+	return codexEnv("response_item", map[string]any{"type": "message", "role": "assistant",
+		"content": []map[string]any{{"type": "output_text", "text": text}}})
+}
+
+// codexSpawnLines is a resolved spawn_agent launch: the call, the parent-side
+// collab_agent_spawn_end naming the child thread, and the call's output.
+func codexSpawnLines(callID, childID string) []map[string]any {
+	return []map[string]any{
+		codexEnv("response_item", map[string]any{"type": "function_call", "name": "spawn_agent", "call_id": callID,
+			"arguments": `{"task_name":"review","agent_type":"code-reviewer"}`}),
+		codexEnv("event_msg", map[string]any{"type": "collab_agent_spawn_end", "call_id": callID, "new_thread_id": childID}),
+		codexEnv("response_item", map[string]any{"type": "function_call_output", "call_id": callID, "output": `{"agent_id":"` + childID + `"}`}),
+	}
+}
+
+// codexSession builds a Codex vault.Session from rollout lines.
+func codexSession(t *testing.T, id, parent, title string, lines ...map[string]any) vault.Session {
+	t.Helper()
+	all := append([]map[string]any{codexSessionMeta(id, parent)}, lines...)
+	return vault.Session{
+		UUID: id, Title: title, ParentUUID: parent, Platform: vault.PlatformCodex,
+		ProjectPath: "/home/u/codexproj", RawJSONL: jsonlLines(t, all...),
+	}
+}
+
+// codexParentSession is a parent rollout with filler assistant turns (so the
+// transcript is taller than a short viewport and the marker sits off-screen)
+// followed by one resolved spawn of childID.
+func codexParentSession(t *testing.T, id, childID string, filler int) vault.Session {
+	t.Helper()
+	lines := []map[string]any{codexHumanLine("please review the latest commit")}
+	for i := range filler {
+		lines = append(lines, codexAssistantLine(fmt.Sprintf("parent body line %d", i)))
+	}
+	lines = append(lines, codexAssistantLine("spawning a reviewer"))
+	lines = append(lines, codexSpawnLines("call_"+childID[:8], childID)...)
+	return codexSession(t, id, "", "Parent review", lines...)
+}
+
+// codexChildSession is a leaf sub-agent rollout: no human turn (CLI ≥ 0.147
+// shape), one assistant entry.
+func codexChildSession(t *testing.T, id, parent string) vault.Session {
+	t.Helper()
+	return codexSession(t, id, parent, "Boole · code-reviewer", codexAssistantLine("child findings about the commit"))
+}
+
 // stubStore is an in-memory dataStore (and searcher) for driving the models
 // without an encrypted DB.
 type stubStore struct {
@@ -94,6 +179,8 @@ type stubStore struct {
 	searchErr error
 	renameErr error
 	listErr   error // returned by ListSessions when set (post-rename refresh failure)
+	getErr    error // returned by GetSession when set (child-open store failure)
+	filesErr  error // returned by GetFiles when set
 
 	searchCalls    int
 	lastQuery      string
@@ -110,21 +197,27 @@ func (s *stubStore) ListSessions(_ context.Context, opts vault.ListOptions) ([]v
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
-	if opts.Project == "" {
-		return s.sessions, nil
-	}
-	// Mirror the real store's substring match on project_path so filter tests
-	// exercise the same narrowing the production query performs.
+	// Mirror the real store's predicates so list tests exercise the same
+	// narrowing the production query performs: the substring match on
+	// project_path, and the default `parent_uuid IS NULL` that hides child
+	// sessions unless IncludeChildren is set.
 	var out []vault.Session
 	for _, sess := range s.sessions {
-		if strings.Contains(sess.ProjectPath, opts.Project) {
-			out = append(out, sess)
+		if opts.Project != "" && !strings.Contains(sess.ProjectPath, opts.Project) {
+			continue
 		}
+		if !opts.IncludeChildren && sess.ParentUUID != "" {
+			continue
+		}
+		out = append(out, sess)
 	}
 	return out, nil
 }
 
 func (s *stubStore) GetSession(_ context.Context, prefix string) (*vault.Session, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
 	for i := range s.sessions {
 		if strings.HasPrefix(s.sessions[i].UUID, prefix) {
 			cp := s.sessions[i]
@@ -135,6 +228,9 @@ func (s *stubStore) GetSession(_ context.Context, prefix string) (*vault.Session
 }
 
 func (s *stubStore) GetFiles(_ context.Context, uuid string) ([]vault.File, error) {
+	if s.filesErr != nil {
+		return nil, s.filesErr
+	}
 	return s.files[uuid], nil
 }
 

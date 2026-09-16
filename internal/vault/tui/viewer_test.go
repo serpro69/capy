@@ -92,7 +92,7 @@ func TestViewer_FocusAndOpenMarker(t *testing.T) {
 	v = v.focusMarker(1)
 	assert.Equal(t, 0, v.focusedMarker)
 
-	v = v.openFocusedMarker()
+	v, _ = v.openFocusedMarker()
 	assert.True(t, v.inSub)
 	assert.Equal(t, "xyz", v.subID)
 }
@@ -103,8 +103,107 @@ func TestViewer_FocusMarkerNoopWithoutMarkers(t *testing.T) {
 	v := newViewerModel(DefaultStyles(), 80, 24).loadSession(sess, nil)
 	v = v.focusMarker(1)
 	assert.Equal(t, -1, v.focusedMarker)
-	v = v.openFocusedMarker()
+	v, _ = v.openFocusedMarker()
 	assert.False(t, v.inSub)
+}
+
+// loadedCodexParent is a viewer over a Codex parent rollout whose one openable
+// marker carries the child's uuid.
+func loadedCodexParent(t *testing.T, height int) viewerModel {
+	t.Helper()
+	sess := codexParentSession(t, codexParentID, codexChildID, 0)
+	return newViewerModel(DefaultStyles(), 80, height).loadSession(sess, nil)
+}
+
+// TestViewer_OpenChildMarkerReturnsActionWithoutMutation pins the root-routed
+// contract: a focused marker with a ChildUUID makes openFocusedMarker return
+// openChildAction(uuid) and leave the viewer exactly as it was — the viewer
+// owns no store, so it must not try to load (or pretend to open) the child.
+func TestViewer_OpenChildMarkerReturnsActionWithoutMutation(t *testing.T) {
+	v := loadedCodexParent(t, 24)
+	require.Len(t, v.active.markers, 1, "the resolved spawn is one openable marker")
+	require.Equal(t, codexChildID, v.active.messages[v.active.markers[0]].ChildUUID)
+
+	v = v.focusMarker(1)
+	require.Equal(t, 0, v.focusedMarker)
+	before := v
+
+	after, action := v.openFocusedMarker()
+	assert.Equal(t, openChildAction(codexChildID), action)
+	assert.Equal(t, viewerActionOpenChild, action.kind)
+	assert.Equal(t, before.sess.UUID, after.sess.UUID)
+	assert.False(t, after.inDetail(), "no detail view is opened for a child session")
+	assert.Equal(t, before.focusedMarker, after.focusedMarker)
+	assert.Equal(t, before.vp.YOffset, after.vp.YOffset)
+	assert.Equal(t, before.active.content(), after.active.content())
+
+	// The keystroke path surfaces the same action.
+	_, _, viaKey := v.Update(keyMsg("enter"))
+	assert.Equal(t, openChildAction(codexChildID), viaKey)
+}
+
+// TestViewer_OpenMarkerActionsForOtherKinds pins that only a ChildUUID marker
+// yields the open-child action: a Claude sidecar marker opens in place, an
+// unfocused viewer and a non-openable marker are viewerNone.
+func TestViewer_OpenMarkerActionsForOtherKinds(t *testing.T) {
+	v := loadedViewer(t) // Claude sample: one sidecar-backed marker
+	_, action := v.openFocusedMarker()
+	assert.Equal(t, viewerNone, action, "nothing focused")
+
+	v = v.focusMarker(1)
+	opened, action := v.openFocusedMarker()
+	assert.Equal(t, viewerNone, action, "a sidecar marker is viewer-local")
+	assert.True(t, opened.inSub)
+
+	// An unresolved Codex launch (no ChildUUID, no sidecar ids) is visible only.
+	sess := codexSession(t, codexParentID, "", "unresolved",
+		codexHumanLine("go"), codexAssistantLine("spawning"),
+		codexEnv("response_item", map[string]any{"type": "function_call", "name": "spawn_agent", "call_id": "c1",
+			"arguments": `{"task_name":"review"}`}))
+	u := newViewerModel(DefaultStyles(), 80, 24).loadSession(sess, nil)
+	assert.Empty(t, u.active.markers, "an unresolved launch is not openable")
+	_, action = u.openFocusedMarker()
+	assert.Equal(t, viewerNone, action)
+}
+
+// TestViewer_ResizeInDetailRendersUnderRightPlatform pins activePlatform on the
+// re-wrap path: a sidecar detail re-renders under Claude whatever the session
+// is, an inline tool-body detail under the session's platform; both stay open
+// across the resize.
+func TestViewer_ResizeInDetailRendersUnderRightPlatform(t *testing.T) {
+	// Inline detail on a Codex session: a collapsed tool result opened standalone.
+	sess := codexSession(t, codexParentID, "", "inline", codexHumanLine("go"), codexAssistantLine("ok"))
+	v := newViewerModel(DefaultStyles(), 80, 24).loadSession(sess, nil)
+	v = v.openInlineContent(vault.TranscriptMessage{Role: vault.RoleTool, Body: "tool body", ToolSummary: "exec_command ls"})
+	require.True(t, v.inInline)
+	assert.Equal(t, vault.PlatformCodex, v.activePlatform())
+	v = v.setSize(60, 24)
+	assert.True(t, v.inInline, "the inline detail survives the re-wrap")
+	assert.Contains(t, v.active.content(), "tool body")
+
+	// Sidecar detail: always Claude.
+	c := loadedViewer(t).openSubagent("xyz", 0)
+	require.True(t, c.inSub)
+	assert.Equal(t, vault.PlatformClaudeCode, c.activePlatform())
+	c = c.setSize(60, 24)
+	assert.True(t, c.inSub)
+	assert.Contains(t, c.active.content(), "Claude", "sidecar assistant header stays Claude")
+}
+
+// TestViewer_HeaderIsPlatformAware pins the location segment: the platform name
+// for every session, and "child of <parent short id>" for a child.
+func TestViewer_HeaderIsPlatformAware(t *testing.T) {
+	claude := loadedViewer(t)
+	assert.Contains(t, claude.header(), shortID("abcdef0123456789")+" · Claude · ")
+	assert.NotContains(t, claude.header(), "child of")
+
+	parent := loadedCodexParent(t, 24)
+	assert.Contains(t, parent.header(), shortID(codexParentID)+" · Codex · ")
+	assert.NotContains(t, parent.header(), "child of")
+
+	child := newViewerModel(DefaultStyles(), 100, 24).loadSession(codexChildSession(t, codexChildID, codexParentID), nil)
+	assert.Contains(t, child.header(), "Codex · child of "+shortID(codexParentID))
+	assert.Contains(t, child.View(), "Codex", "the assistant header names the platform too")
 }
 
 func TestViewer_BackActionAtMainLevel(t *testing.T) {

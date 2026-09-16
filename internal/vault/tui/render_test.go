@@ -13,7 +13,7 @@ func TestRenderTranscript_RowMapAndMarkers(t *testing.T) {
 	sess, files := sampleSession(t)
 	ids := sortedSubagentIDs(files)
 	msgs := vault.ParseTranscript(vault.PlatformClaudeCode, sess.RawJSONL, ids)
-	rt := renderTranscript(msgs, DefaultStyles(), 80)
+	rt := renderTranscript(vault.PlatformClaudeCode, msgs, DefaultStyles(), 80)
 
 	require.Equal(t, len(msgs), len(rt.msgRowStart))
 	// Row starts are monotonically non-decreasing and the content has as many
@@ -33,7 +33,7 @@ func TestRenderTranscript_RowMapAndMarkers(t *testing.T) {
 func TestRenderTranscript_RowForLine(t *testing.T) {
 	sess, _ := sampleSession(t)
 	msgs := vault.ParseTranscript(vault.PlatformClaudeCode, sess.RawJSONL, nil)
-	rt := renderTranscript(msgs, DefaultStyles(), 80)
+	rt := renderTranscript(vault.PlatformClaudeCode, msgs, DefaultStyles(), 80)
 
 	// Source line 3 is the final assistant message ("final answer"); its row must
 	// contain that body once we scroll there.
@@ -59,7 +59,7 @@ func TestRenderTranscript_QueuedUserHeaderAnnotated(t *testing.T) {
 		{Role: vault.RoleUser, Body: "normal turn"},
 		{Role: vault.RoleUser, Body: "in-flight turn", Queued: true},
 	}
-	rt := renderTranscript(msgs, DefaultStyles(), 0)
+	rt := renderTranscript(vault.PlatformClaudeCode, msgs, DefaultStyles(), 0)
 
 	normalHdr := rt.rows[rt.msgRowStart[0]]
 	queuedHdr := rt.rows[rt.msgRowStart[1]]
@@ -69,10 +69,54 @@ func TestRenderTranscript_QueuedUserHeaderAnnotated(t *testing.T) {
 	assert.Contains(t, queuedHdr, "queued", "the queued turn header is annotated")
 }
 
+// TestRenderTranscript_AssistantHeaderIsPlatformAware pins that the platform
+// reaches the assistant header and nothing else: the same messages render the
+// same rows under both platforms except for that one label.
+func TestRenderTranscript_AssistantHeaderIsPlatformAware(t *testing.T) {
+	msgs := []vault.TranscriptMessage{
+		{Role: vault.RoleUser, Body: "hi"},
+		{Role: vault.RoleAssistant, Body: "hello"},
+		{Role: vault.RoleTool, Body: "out", ToolSummary: "exec_command ls"},
+	}
+	claude := renderTranscript(vault.PlatformClaudeCode, msgs, DefaultStyles(), 0)
+	codex := renderTranscript(vault.PlatformCodex, msgs, DefaultStyles(), 0)
+	require.Equal(t, len(claude.rows), len(codex.rows))
+
+	assert.Contains(t, claude.rows[claude.msgRowStart[1]], "Claude")
+	assert.Contains(t, codex.rows[codex.msgRowStart[1]], "Codex")
+	for i := range claude.rows {
+		if i == claude.msgRowStart[1] {
+			continue
+		}
+		assert.Equal(t, claude.rows[i], codex.rows[i], "row %d must not depend on the platform", i)
+	}
+}
+
+// TestMarkerRow_ChildUUIDLabel pins the Codex child marker: the label carries
+// the child SESSION's short id (ChildUUID), reads "subagent" like a Claude
+// sidecar marker, and is styled openable. A ChildUUID wins over a stray AgentID.
+func TestMarkerRow_ChildUUIDLabel(t *testing.T) {
+	st := DefaultStyles()
+	child := vault.TranscriptMessage{Role: vault.RoleSubagent, Body: "review", ChildUUID: codexChildID, Openable: true}
+	row := st.markerRow(child, false)
+	assert.Contains(t, row, "subagent "+shortID(codexChildID)+": review")
+	assert.Contains(t, row, "(enter to open)")
+	assert.Equal(t, row, st.markerRowFor(child, false), "the focus-overlay dispatch renders the same label")
+
+	claude := vault.TranscriptMessage{Role: vault.RoleSubagent, Body: "explore", AgentID: "agent-xyz", Openable: true}
+	assert.Contains(t, st.markerRow(claude, false), "subagent "+shortID("agent-xyz")+": explore",
+		"Claude markers are unchanged")
+
+	both := child
+	both.AgentID = "agent-xyz"
+	assert.Contains(t, st.markerRow(both, false), shortID(codexChildID))
+	assert.NotContains(t, st.markerRow(both, false), "agent-xyz", "ChildUUID names the open target")
+}
+
 func TestMessageHeader_Queued(t *testing.T) {
 	st := DefaultStyles()
-	assert.NotContains(t, st.messageHeader("user", false), "queued")
-	assert.Contains(t, st.messageHeader("user", true), "queued")
+	assert.NotContains(t, st.messageHeader("user", false, vault.PlatformClaudeCode), "queued")
+	assert.Contains(t, st.messageHeader("user", true, vault.PlatformClaudeCode), "queued")
 }
 
 func TestRenderedTranscript_MarkerFromViewport(t *testing.T) {
@@ -104,7 +148,7 @@ func TestRenderedTranscript_MarkerFromViewport(t *testing.T) {
 func TestRenderTranscript_LineForRowInvertsRowForLine(t *testing.T) {
 	sess, _ := sampleSession(t)
 	msgs := vault.ParseTranscript(vault.PlatformClaudeCode, sess.RawJSONL, nil)
-	rt := renderTranscript(msgs, DefaultStyles(), 80)
+	rt := renderTranscript(vault.PlatformClaudeCode, msgs, DefaultStyles(), 80)
 
 	// For each message, the row it starts at maps back to its source line.
 	for i, m := range msgs {

@@ -7,16 +7,42 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/serpro69/capy/internal/vault"
 )
 
-// viewerAction signals the app what to do after a viewer Update.
-type viewerAction int
+// viewerActionKind enumerates what the viewer asks the app to do after an
+// Update. The zero value is "nothing", so a viewerAction{} is a no-op.
+type viewerActionKind int
 
 const (
-	viewerNone viewerAction = iota
-	viewerBack              // leave the viewer (return to the previous mode)
+	viewerActionNone      viewerActionKind = iota
+	viewerActionBack                       // leave the viewer (return to the previous mode)
+	viewerActionOpenChild                  // open the child SESSION named by childUUID (root-routed)
 )
+
+// viewerAction signals the app what to do after a viewer Update. It is a struct
+// rather than a bare enum because opening a child session must carry the uuid:
+// the viewer owns no store handle (see viewerModel), so it cannot load the child
+// itself and instead hands the root Model (app.go) the identity to resolve
+// through dataStore (design § TUI — root-routed child open). viewerNone and
+// viewerBack are the two payload-free values; openChildAction builds the third.
+type viewerAction struct {
+	kind      viewerActionKind
+	childUUID string // viewerActionOpenChild only
+}
+
+// Logically constants (a struct cannot be a Go const) — never reassign them; the
+// app dispatches on action.kind and the tests compare against these values.
+var (
+	viewerNone = viewerAction{}
+	viewerBack = viewerAction{kind: viewerActionBack}
+)
+
+// openChildAction is the viewer's request to open the child session uuid.
+func openChildAction(uuid string) viewerAction {
+	return viewerAction{kind: viewerActionOpenChild, childUUID: uuid}
+}
 
 // viewerChromeRows is the number of rows the viewer reserves outside the
 // scrolling viewport: one header line + one help line.
@@ -86,9 +112,27 @@ func (m viewerModel) loadSession(sess vault.Session, files []vault.File) viewerM
 	// The stored platform (migration 0006) selects the decoder for the main
 	// transcript; sidecars stay Claude (openSubagent). OrClaude: a Session built
 	// in memory without the field (tests) is a Claude session.
-	m.main = renderTranscript(vault.ParseTranscript(sess.Platform.OrClaude(), sess.RawJSONL, m.subIDs), m.styles, m.contentWidth())
+	p := m.platform()
+	m.main = renderTranscript(p, vault.ParseTranscript(p, sess.RawJSONL, m.subIDs), m.styles, m.contentWidth())
 	m.ready = true
 	return m.setActive(m.main, 0)
+}
+
+// platform is the loaded session's platform with the in-memory zero value
+// resolved to Claude (Platform.OrClaude) — the value every decode and render of
+// the MAIN transcript dispatches on. Sidecar detail views use PlatformClaudeCode
+// directly (see activePlatform).
+func (m viewerModel) platform() vault.Platform { return m.sess.Platform.OrClaude() }
+
+// activePlatform is the platform the ACTIVE transcript renders under: Claude
+// for a subagent sidecar (a Claude Code concept, whatever the session's
+// platform), the session's platform otherwise (main, or an inline tool body
+// lifted from main). It only affects the assistant header label.
+func (m viewerModel) activePlatform() vault.Platform {
+	if m.inSub {
+		return vault.PlatformClaudeCode
+	}
+	return m.platform()
 }
 
 // jumpTo scrolls to a search hit. An empty subagentID targets the main
@@ -121,7 +165,7 @@ func (m viewerModel) openSubagent(id string, line int) viewerModel {
 	// nil subIDs: a subagent transcript has no nested subagent markers to map.
 	// Sidecars are always Claude JSONL (a Claude Code concept), whatever the
 	// session's platform.
-	sub := renderTranscript(vault.ParseTranscript(vault.PlatformClaudeCode, raw, nil), m.styles, m.contentWidth())
+	sub := renderTranscript(vault.PlatformClaudeCode, vault.ParseTranscript(vault.PlatformClaudeCode, raw, nil), m.styles, m.contentWidth())
 	m.inSub = true
 	m.subID = id
 	m.inInline = false
@@ -148,7 +192,7 @@ func (m viewerModel) openInlineContent(msg vault.TranscriptMessage) viewerModel 
 	}
 	// A non-collapsed RoleTool message so renderTranscript shows the body inline.
 	// Carry Diff so an Edit/Write body renders as a colored diff (A3 renderDiffBody).
-	detail := renderTranscript(
+	detail := renderTranscript(m.platform(),
 		[]vault.TranscriptMessage{{Role: vault.RoleTool, Body: msg.Body, Diff: msg.Diff}},
 		m.styles, m.contentWidth(),
 	)
@@ -216,9 +260,9 @@ func (m viewerModel) setSize(width, height int) viewerModel {
 	// (the offset is in old-render row space), then restore it via rowForLine in
 	// the new render so the scroll position survives the re-wrap.
 	topLine := m.active.lineForRow(m.vp.YOffset)
-	m.main = renderTranscript(m.main.messages, m.styles, m.contentWidth())
+	m.main = renderTranscript(m.platform(), m.main.messages, m.styles, m.contentWidth())
 	if m.inDetail() {
-		m.active = renderTranscript(m.active.messages, m.styles, m.contentWidth())
+		m.active = renderTranscript(m.activePlatform(), m.active.messages, m.styles, m.contentWidth())
 	} else {
 		m.active = m.main
 	}
@@ -258,7 +302,9 @@ func (m viewerModel) Update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
 	case "[", "shift+tab", "N":
 		m = m.focusMarker(-1)
 	case "enter":
-		m = m.openFocusedMarker()
+		var action viewerAction
+		m, action = m.openFocusedMarker()
+		return m, nil, action
 	}
 	return m, nil, viewerNone
 }
@@ -320,25 +366,35 @@ func (m viewerModel) focusedMarkerVisible() bool {
 	return row >= m.vp.YOffset && row < m.vp.YOffset+m.vp.Height
 }
 
-// openFocusedMarker opens the focused marker standalone, scrolled to its top:
-// a subagent transcript, or a collapsed tool_result's inline body (A1). No-op when
-// no marker is focused.
-func (m viewerModel) openFocusedMarker() viewerModel {
+// openFocusedMarker opens the focused marker. Two targets are viewer-local and
+// open standalone, scrolled to their top: a Claude subagent sidecar (AgentID —
+// its bytes are already in m.files) and a collapsed tool_result's inline body
+// (A1). The third — a marker carrying a ChildUUID, i.e. a Codex sub-agent that
+// is its own archived SESSION — needs a store read the viewer cannot perform,
+// so it returns an openChildAction for the root Model to resolve (design § TUI)
+// and leaves the viewer untouched. No-op (viewerNone) when no marker is focused.
+func (m viewerModel) openFocusedMarker() (viewerModel, viewerAction) {
 	if m.focusedMarker < 0 || m.focusedMarker >= len(m.active.markers) {
-		return m
+		return m, viewerNone
 	}
 	mi := m.active.markers[m.focusedMarker]
 	msg := m.active.messages[mi]
 	switch {
 	case msg.Role == vault.RoleSubagent:
-		if !msg.Openable || msg.AgentID == "" {
-			return m
+		if !msg.Openable {
+			return m, viewerNone
 		}
-		return m.openSubagent(msg.AgentID, 0)
+		if msg.ChildUUID != "" {
+			return m, openChildAction(msg.ChildUUID)
+		}
+		if msg.AgentID == "" {
+			return m, viewerNone
+		}
+		return m.openSubagent(msg.AgentID, 0), viewerNone
 	case msg.Role == vault.RoleTool && msg.Collapsed:
-		return m.openInlineContent(msg)
+		return m.openInlineContent(msg), viewerNone
 	}
-	return m
+	return m, viewerNone
 }
 
 func (m viewerModel) View() string {
@@ -391,8 +447,19 @@ func (m viewerModel) header() string {
 	} else if m.inInline {
 		title = fmt.Sprintf("%s › %s", title, m.inlineLabel)
 	}
-	loc := fmt.Sprintf("%s · %s", shortID(m.sess.UUID), displayPath(m.sess.ProjectPath))
-	return m.styles.Title.Render(truncate(title, max(1, m.width-len(loc)-3))) +
+	// The location segment names the platform, and for a child session (a Codex
+	// sub-agent rollout with parent_uuid set) its parent — "Codex · child of
+	// 019dc606f552" (design § TUI) — so the user always knows which level of a
+	// parent → child chain the viewer is showing.
+	loc := fmt.Sprintf("%s · %s", shortID(m.sess.UUID), m.platform().DisplayName())
+	if m.sess.ParentUUID != "" {
+		loc += " · child of " + shortID(m.sess.ParentUUID)
+	}
+	loc += " · " + displayPath(m.sess.ProjectPath)
+	// The title budget is measured in display cells (lipgloss.Width), not bytes:
+	// loc carries several multibyte "·" separators, and a byte count would
+	// truncate the title more aggressively than the terminal requires.
+	return m.styles.Title.Render(truncate(title, max(1, m.width-lipgloss.Width(loc)-3))) +
 		"  " + m.styles.StatusBar.Render(loc)
 }
 

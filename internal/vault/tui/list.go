@@ -20,17 +20,27 @@ type sessionItem struct {
 	sess vault.Session
 }
 
+// Title is the primary line. A child session (a Codex sub-agent rollout with
+// parent_uuid set, listed only while includeChildren is on) is indented under
+// its parent's short id — "  ↳ 019dc606f552  <title>" — mirroring the CLI's
+// sessionTitleCell so the two list surfaces read alike.
 func (i sessionItem) Title() string {
-	if t := strings.TrimSpace(i.sess.EffectiveTitle()); t != "" {
+	t := strings.TrimSpace(i.sess.EffectiveTitle())
+	if t == "" {
+		t = "(untitled)"
+	}
+	if i.sess.ParentUUID == "" {
 		return t
 	}
-	return "(untitled)"
+	return "  ↳ " + shortID(i.sess.ParentUUID) + "  " + t
 }
 
-// Description is the secondary line: short uuid · date · messages · size · project.
+// Description is the secondary line: short uuid · platform · date · messages ·
+// size · project. The platform is the stored token ("claude-code" / "codex"),
+// the same value the CLI's PLATFORM column prints and `--platform` accepts.
 func (i sessionItem) Description() string {
-	return fmt.Sprintf("%s · %s · %dmsg · %s · %s",
-		shortID(i.sess.UUID), fmtDate(i.sess.EndTime), i.sess.MessageCount,
+	return fmt.Sprintf("%s · %s · %s · %dmsg · %s · %s",
+		shortID(i.sess.UUID), i.sess.Platform.OrClaude(), fmtDate(i.sess.EndTime), i.sess.MessageCount,
 		fmtSize(i.sess.SizeBytes), displayPath(i.sess.ProjectPath))
 }
 
@@ -73,17 +83,31 @@ type listModel struct {
 
 	// all is the unfiltered session list the displayed items are derived from.
 	// Filtering runs in memory over it on every keystroke; it is refreshed from
-	// the store only when the filter opens and after a rename, so a keystroke
-	// never costs a database scan (design Assumption 6 accepts one bounded scan
-	// per lookup, not one per character).
+	// the store only when the filter opens, after a rename, and when the
+	// children toggle flips, so a keystroke never costs a database scan (design
+	// Assumption 6 accepts one bounded scan per lookup, not one per character).
 	all []vault.Session
 
 	filter    textinput.Model // session-filter input, shown only while filtering
 	filtering bool            // input focused; keystrokes edit the filter
 	applied   string          // applied filter substring ("" == all)
 
+	// includeChildren mirrors vault.ListOptions.IncludeChildren for the store
+	// reads that refresh the snapshot (listOptions): child sessions (Codex
+	// sub-agent rollouts, parent_uuid set) are hidden by default like Codex's own
+	// pickers and toggled in with listChildrenKey. It is a store-side predicate,
+	// not an in-memory filter — the default snapshot never contains the children,
+	// so every flip re-reads (Model.toggleChildren).
+	includeChildren bool
+
 	width, height int
 }
+
+// listChildrenKey toggles includeChildren in list navigation. Chosen against
+// both key maps the list mode answers to: the app's own bindings (q / f e r R
+// enter) and bubbles/list's default navigation (h j k l, b u f d for paging,
+// g G, ?, esc) — TestListKeys_ChildrenToggleIsUnbound pins the latter.
+const listChildrenKey = "s"
 
 func newListModel(sessions []vault.Session, styles Styles, width, height int) listModel {
 	items := make([]list.Item, len(sessions))
@@ -102,6 +126,7 @@ func newListModel(sessions []vault.Session, styles Styles, width, height int) li
 			key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "filter")),
 			key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "rename")),
+			key.NewBinding(key.WithKeys(listChildrenKey), key.WithHelp(listChildrenKey, "children")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 			key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restore")),
 			key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "resume")),
@@ -181,11 +206,30 @@ func (m listModel) setSessions(all []vault.Session, applied string) (listModel, 
 	m.all = all
 	m.applied = applied
 	title := fmt.Sprintf("Vault — %d session(s)", len(shown))
+	if m.includeChildren {
+		title += " · incl. children"
+	}
 	if applied != "" {
 		title += fmt.Sprintf(" · filter %q", applied)
 	}
 	m.list.Title = title
 	return m, cmd
+}
+
+// setIncludeChildren records the children setting for the next snapshot read.
+// It does not touch the items: the caller (Model.toggleChildren) follows it
+// with reloadSessions, whose setSessions call re-derives the title.
+func (m listModel) setIncludeChildren(on bool) listModel {
+	m.includeChildren = on
+	return m
+}
+
+// listOptions is the store query the snapshot is refreshed with: unfiltered
+// (matching happens in the TUI — filterSessions) apart from the children
+// setting, which only the store can apply since hidden children are never in
+// the snapshot.
+func (m listModel) listOptions() vault.ListOptions {
+	return vault.ListOptions{IncludeChildren: m.includeChildren}
 }
 
 // selectSession moves the highlight to the session with the given UUID when it

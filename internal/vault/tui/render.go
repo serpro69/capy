@@ -43,8 +43,10 @@ type renderedTranscript struct {
 }
 
 // renderTranscript styles parsed messages into wrapped display rows for a
-// viewport of the given content width. width <= 0 disables wrapping.
-func renderTranscript(messages []vault.TranscriptMessage, st Styles, width int) renderedTranscript {
+// viewport of the given content width. width <= 0 disables wrapping. p is the
+// session's platform: it selects the assistant header label (roleLabel) and
+// nothing else — rows, markers and anchors are platform-blind.
+func renderTranscript(p vault.Platform, messages []vault.TranscriptMessage, st Styles, width int) renderedTranscript {
 	out := renderedTranscript{messages: messages}
 	out.msgRowStart = make([]int, len(messages))
 
@@ -65,7 +67,7 @@ func renderTranscript(messages []vault.TranscriptMessage, st Styles, width int) 
 			out.rows = append(out.rows, st.toolMarkerRow(m, false))
 			continue
 		}
-		out.rows = append(out.rows, st.messageHeader(m.Role, m.Queued))
+		out.rows = append(out.rows, st.messageHeader(m.Role, m.Queued, p))
 		if m.Role == vault.RoleTool && m.Diff {
 			// An expanded Edit/Write diff (A3): color by unified-diff prefix instead
 			// of word-wrapping as plain text (and never route through glamour, which
@@ -163,11 +165,12 @@ func (r renderedTranscript) markerFromViewport(yOffset, delta int) int {
 	return n - 1 // every marker is below the top → wrap to the last
 }
 
-// messageHeader renders a role label line, e.g. "▌ You" / "▌ Claude". A queued
-// user message (A2) is annotated "▌ You · queued"; the role (and thus its style)
-// is unchanged — it is a normal user turn that happened to arrive mid-assistant-turn.
-func (s Styles) messageHeader(role string, queued bool) string {
-	label := roleLabel(role)
+// messageHeader renders a role label line, e.g. "▌ You" / "▌ Claude" / "▌ Codex".
+// A queued user message (A2) is annotated "▌ You · queued"; the role (and thus
+// its style) is unchanged — it is a normal user turn that happened to arrive
+// mid-assistant-turn. p names the assistant (see roleLabel).
+func (s Styles) messageHeader(role string, queued bool, p vault.Platform) string {
+	label := roleLabel(role, p)
 	if queued {
 		label += " · queued"
 	}
@@ -178,9 +181,15 @@ func (s Styles) messageHeader(role string, queued bool) string {
 // (focused "▶" vs unfocused "▸") so focus is visible even without color (NO_COLOR
 // / dumb terminals, where lipgloss strips the highlight style). Focused markers
 // are highlighted; openable markers are accented; visible-only markers are dimmed.
+//
+// The id shown is whichever target the marker opens: a Claude sidecar id
+// (AgentID) or a Codex child SESSION uuid (ChildUUID — design § TUI). Both are
+// rendered through shortID, so the label reads the same for either platform.
 func (s Styles) markerRow(m vault.TranscriptMessage, focused bool) string {
 	label := "subagent: " + m.Body
-	if m.Openable && m.AgentID != "" {
+	if m.Openable && m.ChildUUID != "" {
+		label = "subagent " + shortID(m.ChildUUID) + ": " + m.Body
+	} else if m.Openable && m.AgentID != "" {
 		label = "subagent " + shortID(m.AgentID) + ": " + m.Body
 	}
 	label = singleLine(label)
@@ -249,13 +258,17 @@ func renderDiffBody(body string, st Styles, width int) []string {
 	return rows
 }
 
-// roleLabel is the human label for a display/search role.
-func roleLabel(role string) string {
+// roleLabel is the human label for a display/search role. The assistant label is
+// the platform's display name ("Claude" / "Codex" — vault.Platform.DisplayName);
+// every other role is platform-independent. An empty platform is Claude
+// (Platform.OrClaude: a Session built in memory without the field is a Claude
+// session, the same rule the viewer's loadSession applies).
+func roleLabel(role string, p vault.Platform) string {
 	switch role {
 	case "user":
 		return "You"
 	case "assistant":
-		return "Claude"
+		return p.OrClaude().DisplayName()
 	case "tool":
 		return "Tool result"
 	case "subagent":

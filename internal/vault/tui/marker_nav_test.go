@@ -238,8 +238,11 @@ func TestRenderTranscript_MarkerRowsAreSingleLine(t *testing.T) {
 		// marker, so a regression would mis-place that marker's rowForMarker.
 		{Role: vault.RoleSubagent, Body: "visible only\nsecond line", Openable: false, SourceLine: 2},
 		{Role: vault.RoleSubagent, Body: "second launch", AgentID: "agent-b1234567", Openable: true, SourceLine: 3},
+		// A Codex child marker (ChildUUID, no AgentID) takes the same row path; its
+		// label is the spawn's task name / prompt and may carry newlines too.
+		{Role: vault.RoleSubagent, Body: "review the commit\nand report back", ChildUUID: codexChildID, Openable: true, SourceLine: 4},
 	}
-	rt := renderTranscript(msgs, DefaultStyles(), 80)
+	rt := renderTranscript(vault.PlatformCodex, msgs, DefaultStyles(), 80)
 
 	// No rendered row may contain an embedded newline — the viewport splits content
 	// on "\n", so a multi-line row would desync the row index from the line index.
@@ -252,7 +255,7 @@ func TestRenderTranscript_MarkerRowsAreSingleLine(t *testing.T) {
 
 	// Each openable marker's rowForMarker must point at the line actually holding
 	// its rendered glyph — the second marker exercises the post-multi-line-label drift.
-	require.Len(t, rt.markers, 2)
+	require.Len(t, rt.markers, 3)
 	lines := strings.Split(rt.content(), "\n")
 	for pos := 0; pos < len(rt.markers); pos++ {
 		row := rt.rowForMarker(pos)
