@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,19 +104,14 @@ The MCP server's startup sweep only archives the current project. Run
 'capy vault import' periodically (e.g. via cron) to capture sessions across
 all projects before Claude Code's 30-day cleanup removes them.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var platform vault.Platform
-			if platformFlag != "" {
-				p, err := vault.ParsePlatform(platformFlag)
-				if err != nil {
-					return fmt.Errorf("invalid --platform %q (want %s|%s)", platformFlag, vault.PlatformClaudeCode, vault.PlatformCodex)
-				}
-				platform = p
+			platform, err := parsePlatformFlag(platformFlag)
+			if err != nil {
+				return err
 			}
 
 			var (
 				sessions []vault.SessionFile
 				report   vault.DiscoveryReport
-				err      error
 			)
 			switch {
 			case source != "":
@@ -181,10 +177,10 @@ func printImportResult(res vault.ImportResult, report *vault.DiscoveryReport, dr
 	fmt.Printf("%-12s  %-8s  %-28s  %8s  %s\n", "UUID", "STATUS", "PROJECT", "SIZE", "TITLE")
 	for _, s := range res.Sessions {
 		if s.Status == vault.StatusError && s.Err != nil {
-			fmt.Fprintf(os.Stderr, "  error %s: %v\n", shortUUIDFor(s.UUID, s.Platform), s.Err)
+			fmt.Fprintf(os.Stderr, "  error %s: %v\n", shortUUID(s.UUID, s.Platform), s.Err)
 		}
 		fmt.Printf("%-12s  %-8s  %-28s  %8s  %s\n",
-			shortUUIDFor(s.UUID, s.Platform), s.Status, truncate(displayPath(s.ProjectPath), 28),
+			shortUUID(s.UUID, s.Platform), s.Status, truncate(displayPath(s.ProjectPath), 28),
 			formatSize(s.SizeBytes), truncate(s.Title, 50))
 	}
 	fmt.Printf("\n%s\n", importCounts{
@@ -287,22 +283,37 @@ are left untouched.`,
 
 func newVaultListCmd(env *vaultEnv) *cobra.Command {
 	var (
-		project string
-		name    string
-		limit   int
-		jsonOut bool
+		project         string
+		name            string
+		platformFlag    string
+		includeChildren bool
+		limit           int
+		jsonOut         bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List archived sessions, newest first",
+		Long: `List archived sessions, newest first.
+
+Sub-agent sessions (Codex child rollouts, which carry a parent session) are
+hidden by default — mirroring Codex's own pickers, which reach them from the
+parent. Pass --include-children to list them; a child row shows "↳ <parent id>"
+before its title.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if tuiRequested(cmd) {
 				return launchTUI(cmd, env, tui.Options{Mode: "list"})
 			}
+			platform, err := parsePlatformFlag(platformFlag)
+			if err != nil {
+				return err
+			}
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 
-			sessions, err := st.ListSessions(cmd.Context(), vault.ListOptions{Project: project, Name: name, Limit: limit})
+			sessions, err := st.ListSessions(cmd.Context(), vault.ListOptions{
+				Project: project, Name: name, Limit: limit,
+				Platform: platform, IncludeChildren: includeChildren,
+			})
 			if err != nil {
 				return err
 			}
@@ -315,22 +326,57 @@ func newVaultListCmd(env *vaultEnv) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&project, "project", "", "filter by project path substring")
 	cmd.Flags().StringVar(&name, "name", "", "filter by title substring (case-insensitive, literal; matches the effective title)")
+	cmd.Flags().StringVar(&platformFlag, "platform", "", "only sessions from this platform: claude-code|codex")
+	cmd.Flags().BoolVar(&includeChildren, "include-children", false, "also list sub-agent (child) sessions, hidden by default")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max sessions to list (0 = no limit)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "output JSON")
 	return cmd
 }
+
+// parsePlatformFlag validates a --platform value; "" means no restriction.
+func parsePlatformFlag(s string) (vault.Platform, error) {
+	if s == "" {
+		return "", nil
+	}
+	p, err := vault.ParsePlatform(s)
+	if err != nil {
+		return "", fmt.Errorf("invalid --platform %q (want %s|%s)", s, vault.PlatformClaudeCode, vault.PlatformCodex)
+	}
+	return p, nil
+}
+
+// platformColumnWidth fits the longest stored platform value ("claude-code").
+const platformColumnWidth = 11
+
+// uuidColumnWidth fits the 12-character Codex short id (shortUUID); Claude's
+// 8-character id is padded to it.
+const uuidColumnWidth = 12
 
 func printSessionTable(sessions []vault.Session) {
 	if len(sessions) == 0 {
 		fmt.Println("no sessions archived")
 		return
 	}
-	fmt.Printf("%-8s  %-10s  %5s  %8s  %-28s  %s\n", "UUID", "DATE", "MSGS", "SIZE", "PROJECT", "TITLE")
+	fmt.Printf("%-*s  %-*s  %-10s  %5s  %8s  %-28s  %s\n",
+		uuidColumnWidth, "UUID", platformColumnWidth, "PLATFORM", "DATE", "MSGS", "SIZE", "PROJECT", "TITLE")
 	for _, s := range sessions {
-		fmt.Printf("%-8s  %-10s  %5d  %8s  %-28s  %s\n",
-			shortUUID(s.UUID), fmtDate(s.EndTime), s.MessageCount, formatSize(s.SizeBytes),
-			truncate(displayPath(s.ProjectPath), 28), truncate(s.EffectiveTitle(), 60))
+		fmt.Printf("%-*s  %-*s  %-10s  %5d  %8s  %-28s  %s\n",
+			uuidColumnWidth, shortUUID(s.UUID, s.Platform), platformColumnWidth, s.Platform.OrClaude(),
+			fmtDate(s.EndTime), s.MessageCount, formatSize(s.SizeBytes),
+			truncate(displayPath(s.ProjectPath), 28), truncate(sessionTitleCell(s), 60))
 	}
+}
+
+// sessionTitleCell is a list row's title, prefixed with "↳ <parent id>" for a
+// child session so its parent is visible without a second lookup. The parent
+// id is rendered with the child's platform: parent and child always share one
+// (a Codex child is spawned by a Codex parent).
+func sessionTitleCell(s vault.Session) string {
+	title := s.EffectiveTitle()
+	if s.ParentUUID == "" {
+		return title
+	}
+	return "↳ " + shortUUID(s.ParentUUID, s.Platform) + "  " + title
 }
 
 // ---------------------------------------------------------------------------
@@ -404,16 +450,34 @@ func printSearchResults(results []vault.SearchResult) {
 		fmt.Println("no matches")
 		return
 	}
-	fmt.Printf("%-8s  %-10s  %-10s  %-24s  %-20s  %s\n", "UUID", "DATE", "ROLE", "PROJECT", "TITLE", "SNIPPET")
+	fmt.Printf("%-*s  %-*s  %-10s  %-10s  %-24s  %-20s  %s\n",
+		uuidColumnWidth, "UUID", searchPlatformColumnWidth, "PLATFORM", "DATE", "ROLE", "PROJECT", "TITLE", "SNIPPET")
 	for _, r := range results {
 		role := r.Role
 		if r.SubagentID != "" {
 			role += "*" // subagent match
 		}
-		fmt.Printf("%-8s  %-10s  %-10s  %-24s  %-20s  %s\n",
-			shortUUID(r.SessionUUID), fmtDate(r.EndTime), truncate(role, 10),
+		fmt.Printf("%-*s  %-*s  %-10s  %-10s  %-24s  %-20s  %s\n",
+			uuidColumnWidth, shortUUID(r.SessionUUID, r.Platform), searchPlatformColumnWidth, searchPlatformCell(r),
+			fmtDate(r.EndTime), truncate(role, 10),
 			truncate(displayPath(r.ProjectPath), 24), truncate(r.Title, 20), oneLine(r.Snippet))
 	}
+}
+
+// childMarker tags a search hit from a child (sub-agent) session.
+const childMarker = "(child)"
+
+// searchPlatformColumnWidth fits "claude-code (child)".
+const searchPlatformColumnWidth = platformColumnWidth + 1 + len(childMarker)
+
+// searchPlatformCell is a hit's platform, followed by childMarker when the hit's
+// session is a child of another session.
+func searchPlatformCell(r vault.SearchResult) string {
+	cell := r.Platform.OrClaude().String()
+	if r.ParentUUID != "" {
+		cell += " " + childMarker
+	}
+	return cell
 }
 
 // ---------------------------------------------------------------------------
@@ -451,8 +515,12 @@ func newVaultShowCmd(env *vaultEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			children, err := st.Children(cmd.Context(), sess.UUID)
+			if err != nil {
+				return err
+			}
 			markdown := format == "markdown"
-			content := renderShow(sess, files, markdown)
+			content := renderShow(sess, files, children, markdown)
 			if markdown {
 				fmt.Print(content)
 				return nil
@@ -468,8 +536,10 @@ func newVaultShowCmd(env *vaultEnv) *cobra.Command {
 // appended as its own clearly-marked section. Non-JSONL sidecars (tool-results,
 // meta.json) are archive-only and not rendered. Inline interleaving of subagents
 // at their launch point is a TUI concern (Task 6); the design blesses standalone
-// subagent rendering as spec-conformant.
-func renderShow(sess *vault.Session, files []vault.File, markdown bool) string {
+// subagent rendering as spec-conformant. children are the session's child
+// sessions (Codex sub-agent rollouts, metadata only); they are named in the
+// header, not rendered — each is its own archived session.
+func renderShow(sess *vault.Session, files []vault.File, children []vault.Session, markdown bool) string {
 	render := vault.RenderText
 	if markdown {
 		render = vault.RenderMarkdown
@@ -478,7 +548,7 @@ func renderShow(sess *vault.Session, files []vault.File, markdown bool) string {
 	// The stored platform (migration 0006) selects the decoder for the main
 	// transcript; the assistant heading follows it ("Claude" / "Codex").
 	var sb strings.Builder
-	writeShowHeader(&sb, sess, markdown)
+	writeShowHeader(&sb, sess, children, markdown)
 	sb.WriteString(render(sess.Platform.OrClaude(), sess.RawJSONL))
 
 	for _, f := range files {
@@ -498,20 +568,45 @@ func renderShow(sess *vault.Session, files []vault.File, markdown bool) string {
 	return sb.String()
 }
 
-func writeShowHeader(sb *strings.Builder, sess *vault.Session, markdown bool) {
+// writeShowHeader writes the session header: title, uuid, platform, project,
+// branch, dates; for a child session its parent; for a parent its children (in
+// spawn order, as Children returns them). Parent and child ids use the
+// session's platform for their short form — a child always shares its parent's
+// platform.
+func writeShowHeader(sb *strings.Builder, sess *vault.Session, children []vault.Session, markdown bool) {
 	title := sess.EffectiveTitle()
 	if title == "" {
 		title = "(untitled)"
 	}
+	platform := sess.Platform.OrClaude()
+	childIDs := make([]string, 0, len(children))
+	for _, c := range children {
+		childIDs = append(childIDs, shortUUID(c.UUID, platform))
+	}
 	if markdown {
 		fmt.Fprintf(sb, "# %s\n\n", title)
-		fmt.Fprintf(sb, "- **UUID:** %s\n- **Project:** %s\n- **Branch:** %s\n- **Dates:** %s – %s\n\n",
-			sess.UUID, displayPath(sess.ProjectPath), orDash(sess.GitBranch),
+		fmt.Fprintf(sb, "- **UUID:** %s\n- **Platform:** %s\n- **Project:** %s\n- **Branch:** %s\n- **Dates:** %s – %s\n",
+			sess.UUID, platform, displayPath(sess.ProjectPath), orDash(sess.GitBranch),
 			fmtDateTime(sess.StartTime), fmtDateTime(sess.EndTime))
+		if sess.ParentUUID != "" {
+			fmt.Fprintf(sb, "- **Parent:** %s\n", shortUUID(sess.ParentUUID, platform))
+		}
+		if len(childIDs) > 0 {
+			fmt.Fprintf(sb, "- **Children:** %s\n", strings.Join(childIDs, ", "))
+		}
+		sb.WriteString("\n")
 	} else {
 		fmt.Fprintf(sb, "%s\n", title)
-		fmt.Fprintf(sb, "uuid: %s  project: %s  branch: %s\n", sess.UUID, displayPath(sess.ProjectPath), orDash(sess.GitBranch))
-		fmt.Fprintf(sb, "dates: %s – %s\n\n", fmtDateTime(sess.StartTime), fmtDateTime(sess.EndTime))
+		fmt.Fprintf(sb, "uuid: %s  platform: %s  project: %s  branch: %s\n",
+			sess.UUID, platform, displayPath(sess.ProjectPath), orDash(sess.GitBranch))
+		fmt.Fprintf(sb, "dates: %s – %s\n", fmtDateTime(sess.StartTime), fmtDateTime(sess.EndTime))
+		if sess.ParentUUID != "" {
+			fmt.Fprintf(sb, "parent: %s\n", shortUUID(sess.ParentUUID, platform))
+		}
+		if len(childIDs) > 0 {
+			fmt.Fprintf(sb, "children: %s\n", strings.Join(childIDs, ", "))
+		}
+		sb.WriteString("\n")
 	}
 }
 
@@ -558,6 +653,7 @@ func newVaultStatsCmd(env *vaultEnv) *cobra.Command {
 
 func printStats(s *vault.VaultStats, dbBytes int64) {
 	fmt.Printf("Sessions:      %d\n", s.Sessions)
+	fmt.Printf("Children:      %d  (sub-agent sessions; hidden from 'list' by default)\n", s.Children)
 	fmt.Printf("Content size:  %s\n", formatSize(s.TotalBytes))
 	fmt.Printf("DB file size:  %s\n", formatSize(dbBytes))
 	fmt.Printf("Oldest:        %s\n", fmtDate(s.Oldest))
@@ -567,6 +663,12 @@ func printStats(s *vault.VaultStats, dbBytes int64) {
 		indexLine += fmt.Sprintf("  (%d session(s) below current — run 'capy vault reindex')", s.OutdatedSessions)
 	}
 	fmt.Println(indexLine)
+	if len(s.ByPlatform) > 0 {
+		fmt.Println("\nPer platform:")
+		for _, p := range s.ByPlatform {
+			fmt.Printf("  %5d  %8s  %s\n", p.Sessions, formatSize(p.Bytes), p.Platform.OrClaude())
+		}
+	}
 	if len(s.ByProject) > 0 {
 		fmt.Println("\nPer project:")
 		for _, p := range s.ByProject {
@@ -1006,7 +1108,10 @@ func newVaultResumeCmd(env *vaultEnv) *cobra.Command {
 		Short: "Restore a session and launch `claude --resume` (partial UUID, 8+ chars)",
 		Long: `Restore a session into its Claude Code project directory, then launch
 Claude Code to resume it. The working directory is chosen from --dir, the
-session's recorded project path, or the current directory (in that order).`,
+session's recorded project path, or the current directory (in that order).
+
+Only Claude Code sessions can be resumed this way. For a Codex session the
+command fails and points at 'capy vault restore' followed by 'codex resume'.`,
 		Args: cobra.ExactArgs(1),
 		// claude prints its own output; a non-zero claude exit must not dump
 		// cobra's usage text on top of it.
@@ -1025,34 +1130,38 @@ session's recorded project path, or the current directory (in that order).`,
 }
 
 // resumeVaultSession restores an archived session and launches `claude --resume`
-// on it. Shared by the `resume` subcommand and the TUI's `R` action. It closes
-// st (flushing the WAL) before handing the terminal to claude, so callers must
-// not use st afterwards (a deferred Close remains safe — Close is idempotent).
-// dir overrides the launch directory; "" falls back to the session's project path
+// on it. Shared by the `resume` subcommand and the TUI's `R` action
+// (performTUIAction), so both surfaces share one guard set. It closes st
+// (flushing the WAL) before handing the terminal to claude, so callers must not
+// use st afterwards (a deferred Close remains safe — Close is idempotent). dir
+// overrides the launch directory; "" falls back to the session's project path
 // then the cwd (see resolveResumeDir).
+//
+// The session is loaded BEFORE the `claude` lookup: a Codex session must fail
+// with its own actionable error (resume is Claude-only for now — see
+// implementation.md § Deferred #1) rather than "claude not found", and nothing
+// is restored to disk for it.
 func resumeVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, dir string) error {
-	// Fail fast before touching the vault if Claude Code is not installed.
+	sess, err := st.GetSession(cmd.Context(), sessionID)
+	if err != nil {
+		return handleLookupError(sessionID, err)
+	}
+	if err := checkResumable(sess); err != nil {
+		return err
+	}
+
+	// Fail fast before writing anything if Claude Code is not installed.
 	claudeBin, err := exec.LookPath("claude")
 	if err != nil {
 		return fmt.Errorf("`claude` not found on PATH — install Claude Code to resume sessions")
 	}
 
-	sess, err := st.GetSession(cmd.Context(), sessionID)
-	if err != nil {
-		return handleLookupError(sessionID, err)
-	}
 	files, err := st.GetFiles(cmd.Context(), sess.UUID)
 	if err != nil {
 		return err
 	}
 
 	// Restore to the platform's own location so `claude --resume` finds it.
-	//
-	// TODO(codex-vault-sessions Slice 9.5): a Codex session must fail loudly here
-	// (naming `capy vault restore` and `codex resume <uuid>`) BEFORE the
-	// exec.LookPath("claude") above — `claude --resume` cannot resume a Codex
-	// rollout. Until that lands the rollout is restored to its Codex path (harmless)
-	// and claude then reports an unknown session.
 	root, err := defaultRestoreRoot(sess)
 	if err != nil {
 		return err
@@ -1071,6 +1180,21 @@ func resumeVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, dir
 		fmt.Fprintf(os.Stderr, "capy vault resume: warning: closing vault: %v\n", err)
 	}
 	return runClaudeResume(claudeBin, sess.UUID, launchDir)
+}
+
+// checkResumable rejects a session `claude --resume` cannot resume: any
+// non-Claude platform. `claude --resume <uuid>` would not find a Codex rollout
+// (it is not a Claude session file), so the error names the two commands that
+// do the job today. Launching `codex resume` from here is deferred
+// (implementation.md § Deferred #1).
+func checkResumable(sess *vault.Session) error {
+	p := sess.Platform.OrClaude()
+	if p == vault.PlatformClaudeCode {
+		return nil
+	}
+	return fmt.Errorf("session %s is a %s session — 'capy vault resume' can only launch Claude Code; "+
+		"run 'capy vault restore %s' to put the rollout back, then 'codex resume %s' to continue it",
+		shortUUID(sess.UUID, p), p.DisplayName(), shortUUID(sess.UUID, p), sess.UUID)
 }
 
 // resolveResumeDir picks the directory to launch claude in, following the
@@ -1134,7 +1258,10 @@ func newVaultDeleteCmd(env *vaultEnv) *cobra.Command {
 		Short: "Delete an archived session from the vault (partial UUID, 8+ chars)",
 		Long: `Permanently remove a session (its transcript, sidecars, and search index)
 from the vault. This does not touch any copy still on disk under the Claude
-projects directory.`,
+projects directory or the Codex home.
+
+Only the addressed session is deleted. Its child sessions (Codex sub-agent
+rollouts) are separate archived sessions and are kept — a warning lists them.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := guardTUI(cmd); err != nil {
@@ -1147,9 +1274,14 @@ projects directory.`,
 			if err != nil {
 				return handleLookupError(args[0], err)
 			}
+			children, err := st.Children(cmd.Context(), sess.UUID)
+			if err != nil {
+				return err
+			}
 
-			printDeletePreview(sess)
-			if !yes && !promptYesNo(fmt.Sprintf("delete session %s?", shortUUID(sess.UUID)), false) {
+			short := shortUUID(sess.UUID, sess.Platform)
+			printDeletePreview(os.Stderr, sess, children)
+			if !yes && !promptYesNo(fmt.Sprintf("delete session %s?", short), false) {
 				fmt.Println("aborted")
 				return nil
 			}
@@ -1159,9 +1291,9 @@ projects directory.`,
 				return err
 			}
 			if !ok {
-				return fmt.Errorf("session %s was not deleted (no longer in vault)", shortUUID(sess.UUID))
+				return fmt.Errorf("session %s was not deleted (no longer in vault)", short)
 			}
-			fmt.Printf("deleted %s\n", shortUUID(sess.UUID))
+			fmt.Printf("deleted %s\n", short)
 			return nil
 		},
 	}
@@ -1169,15 +1301,30 @@ projects directory.`,
 	return cmd
 }
 
-// printDeletePreview writes to stderr (not stdout) so the "what you're about to
-// delete" context stays attached to the confirmation prompt even when stdout is
-// redirected.
-func printDeletePreview(sess *vault.Session) {
-	fmt.Fprintf(os.Stderr, "UUID:     %s\n", sess.UUID)
-	fmt.Fprintf(os.Stderr, "Title:    %s\n", orDash(sess.EffectiveTitle()))
-	fmt.Fprintf(os.Stderr, "Project:  %s\n", displayPath(sess.ProjectPath))
-	fmt.Fprintf(os.Stderr, "Messages: %d\n", sess.MessageCount)
-	fmt.Fprintf(os.Stderr, "Dates:    %s – %s\n", fmtDate(sess.StartTime), fmtDate(sess.EndTime))
+// printDeletePreview writes to w — stderr in production, so the "what you're
+// about to delete" context stays attached to the confirmation prompt even when
+// stdout is redirected. A non-empty children list ends the preview with a
+// warning: capy deletes only the addressed row and never cascades (design §
+// Sub-agent Model — Codex's own /delete does; the divergence is deliberate), so
+// the children stay archived and, having a parent id, hidden from the default
+// `list` — reachable via --include-children.
+func printDeletePreview(w io.Writer, sess *vault.Session, children []vault.Session) {
+	fmt.Fprintf(w, "UUID:     %s\n", sess.UUID)
+	fmt.Fprintf(w, "Platform: %s\n", sess.Platform.OrClaude())
+	fmt.Fprintf(w, "Title:    %s\n", orDash(sess.EffectiveTitle()))
+	fmt.Fprintf(w, "Project:  %s\n", displayPath(sess.ProjectPath))
+	fmt.Fprintf(w, "Messages: %d\n", sess.MessageCount)
+	fmt.Fprintf(w, "Dates:    %s – %s\n", fmtDate(sess.StartTime), fmtDate(sess.EndTime))
+	if len(children) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(children))
+	for _, c := range children {
+		ids = append(ids, shortUUID(c.UUID, c.Platform))
+	}
+	fmt.Fprintf(w, "warning: %d child session(s) name this session as parent and will NOT be deleted (no cascade): %s\n"+
+		"         they stay archived; see them with 'capy vault list --include-children'\n",
+		len(children), strings.Join(ids, ", "))
 }
 
 // ---------------------------------------------------------------------------
@@ -1215,9 +1362,9 @@ recognized credential pattern are stored redacted.`,
 				return handleLookupError(args[0], err)
 			}
 			if opts.Clear {
-				fmt.Printf("cleared custom name for %s — title is now %q\n", shortUUID(sess.UUID), sess.EffectiveTitle())
+				fmt.Printf("cleared custom name for %s — title is now %q\n", shortUUID(sess.UUID, sess.Platform), sess.EffectiveTitle())
 			} else {
-				fmt.Printf("renamed %s to %q\n", shortUUID(sess.UUID), sess.EffectiveTitle())
+				fmt.Printf("renamed %s to %q\n", shortUUID(sess.UUID, sess.Platform), sess.EffectiveTitle())
 			}
 			return nil
 		},
@@ -1282,6 +1429,10 @@ type searchJSON struct {
 	EndTime    string `json:"end_time,omitempty"`
 	Title      string `json:"title,omitempty"`
 	Snippet    string `json:"snippet"`
+	// Platform is always present; ParentUUID only for a hit from a child session
+	// — the same contract as sessionJSON.
+	Platform   string `json:"platform"`
+	ParentUUID string `json:"parent_uuid,omitempty"`
 }
 
 func resultsToJSON(results []vault.SearchResult) []searchJSON {
@@ -1290,6 +1441,7 @@ func resultsToJSON(results []vault.SearchResult) []searchJSON {
 		out = append(out, searchJSON{
 			UUID: r.SessionUUID, SubagentID: r.SubagentID, LineIndex: r.LineIndex, Role: r.Role,
 			Project: r.ProjectPath, EndTime: rfc3339(r.EndTime), Title: r.Title, Snippet: r.Snippet,
+			Platform: r.Platform.OrClaude().String(), ParentUUID: r.ParentUUID,
 		})
 	}
 	return out
@@ -1300,15 +1452,23 @@ type projectJSON struct {
 	Count       int    `json:"count"`
 }
 
+type platformJSON struct {
+	Platform string `json:"platform"`
+	Sessions int    `json:"sessions"`
+	Bytes    int64  `json:"bytes"`
+}
+
 type statsJSON struct {
-	Sessions          int           `json:"sessions"`
-	TotalContentBytes int64         `json:"total_content_bytes"`
-	DBFileBytes       int64         `json:"db_file_bytes"`
-	Oldest            string        `json:"oldest,omitempty"`
-	Newest            string        `json:"newest,omitempty"`
-	IndexVersion      int           `json:"index_version"`
-	OutdatedSessions  int           `json:"outdated_sessions"`
-	Projects          []projectJSON `json:"projects"`
+	Sessions          int            `json:"sessions"`
+	Children          int            `json:"children"`
+	TotalContentBytes int64          `json:"total_content_bytes"`
+	DBFileBytes       int64          `json:"db_file_bytes"`
+	Oldest            string         `json:"oldest,omitempty"`
+	Newest            string         `json:"newest,omitempty"`
+	IndexVersion      int            `json:"index_version"`
+	OutdatedSessions  int            `json:"outdated_sessions"`
+	Platforms         []platformJSON `json:"platforms"`
+	Projects          []projectJSON  `json:"projects"`
 }
 
 func statsToJSON(s *vault.VaultStats, dbBytes int64) statsJSON {
@@ -1316,10 +1476,15 @@ func statsToJSON(s *vault.VaultStats, dbBytes int64) statsJSON {
 	for _, p := range s.ByProject {
 		projects = append(projects, projectJSON{ProjectPath: p.ProjectPath, Count: p.Count})
 	}
+	platforms := make([]platformJSON, 0, len(s.ByPlatform))
+	for _, p := range s.ByPlatform {
+		platforms = append(platforms, platformJSON{Platform: p.Platform.String(), Sessions: p.Sessions, Bytes: p.Bytes})
+	}
 	return statsJSON{
-		Sessions: s.Sessions, TotalContentBytes: s.TotalBytes, DBFileBytes: dbBytes,
+		Sessions: s.Sessions, Children: s.Children, TotalContentBytes: s.TotalBytes, DBFileBytes: dbBytes,
 		Oldest: rfc3339(s.Oldest), Newest: rfc3339(s.Newest),
-		IndexVersion: s.IndexVersion, OutdatedSessions: s.OutdatedSessions, Projects: projects,
+		IndexVersion: s.IndexVersion, OutdatedSessions: s.OutdatedSessions,
+		Platforms: platforms, Projects: projects,
 	}
 }
 
@@ -1462,17 +1627,25 @@ func promptLine(question string) string {
 func handleLookupError(id string, err error) error {
 	var amb *vault.AmbiguousUUIDError
 	if errors.As(err, &amb) {
-		fmt.Fprintf(os.Stderr, "ambiguous session id %q matches %d sessions:\n", amb.Prefix, len(amb.Candidates))
-		for _, c := range amb.Candidates {
-			fmt.Fprintf(os.Stderr, "  %s  %s  %-28s  %s\n",
-				shortUUID(c.UUID), fmtDate(c.EndTime), truncate(displayPath(c.ProjectPath), 28), truncate(c.EffectiveTitle(), 50))
-		}
+		writeLookupCandidates(os.Stderr, amb)
 		return fmt.Errorf("ambiguous session id %q (%d matches) — use more characters", amb.Prefix, len(amb.Candidates))
 	}
 	if errors.Is(err, vault.ErrSessionNotFound) {
 		return fmt.Errorf("no session matches %q", id)
 	}
 	return err
+}
+
+// writeLookupCandidates lists the sessions an ambiguous prefix matched, each
+// with its platform-aware short id — so two Codex UUIDv7 ids sharing 8 leading
+// hex digits (the very reason the prefix was ambiguous) are still told apart.
+func writeLookupCandidates(w io.Writer, amb *vault.AmbiguousUUIDError) {
+	fmt.Fprintf(w, "ambiguous session id %q matches %d sessions:\n", amb.Prefix, len(amb.Candidates))
+	for _, c := range amb.Candidates {
+		fmt.Fprintf(w, "  %-*s  %s  %-28s  %s\n",
+			uuidColumnWidth, shortUUID(c.UUID, c.Platform), fmtDate(c.EndTime),
+			truncate(displayPath(c.ProjectPath), 28), truncate(c.EffectiveTitle(), 50))
+	}
 }
 
 func printJSON(v any) error {
@@ -1567,22 +1740,14 @@ func parseDateFlag(s string, endOfDay bool) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("invalid date %q (want YYYY-MM-DD or RFC3339)", s)
 }
 
-// shortUUID is the 8-character display prefix of a session id.
-//
-// TODO(codex-vault-sessions Slice 9.7): every remaining caller (list, search,
-// show header, delete/rename messages, handleLookupError candidates) should move
-// to shortUUIDFor with the row's platform; only the import table does today.
-func shortUUID(u string) string {
-	return shortUUIDFor(u, vault.PlatformClaudeCode)
-}
-
-// shortUUIDFor is the platform-aware display prefix: 12 characters for a Codex
-// row, 8 otherwise. Codex ids are UUIDv7 — time-ordered, so ids minted close
-// together share their first 8 hex digits (22 collisions among 164 local
-// rollouts at research time) — while 12 characters were collision-free.
+// shortUUID is the platform-aware display prefix of a session id: 12 characters
+// for a Codex row, 8 otherwise. Codex ids are UUIDv7 — time-ordered, so ids
+// minted close together share their first 8 hex digits (22 collisions among 164
+// local rollouts at research time) — while 12 characters were collision-free.
 // minUUIDPrefix for LOOKUP stays 8: an ambiguous prefix is already an error path
-// that lists candidates (design § Identity and display).
-func shortUUIDFor(u string, p vault.Platform) string {
+// that lists candidates (design § Identity and display). Every CLI surface that
+// prints a session id goes through this function with the row's platform.
+func shortUUID(u string, p vault.Platform) string {
 	n := 8
 	if p.OrClaude() == vault.PlatformCodex {
 		n = 12
