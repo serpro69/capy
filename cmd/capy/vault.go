@@ -864,7 +864,7 @@ tolerates a concurrent server sweep via busy-timeout retry, the same as import.`
 	}
 	cmd.Flags().StringVar(&from, "from", "", "path to the source vault.db to merge from (required)")
 	cmd.Flags().StringVar(&keyFlag, "key", "", "source vault passphrase (default: CAPY_VAULT_MERGE_KEY, then CAPY_VAULT_KEY)")
-	cmd.Flags().StringVar(&project, "project", "", "only merge sessions whose mangled project dir (e.g. -home-user-capy) contains this substring")
+	cmd.Flags().StringVar(&project, "project", "", "only merge sessions whose location hint (mangled Claude project dir, e.g. -home-user-capy, or Codex rollout path) or project path contains this substring")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview what would be merged without writing")
 	return cmd
 }

@@ -14,9 +14,11 @@ import (
 // MergeOptions tunes a merge run.
 type MergeOptions struct {
 	// Project, when non-empty, restricts the merge to source sessions whose
-	// mangled Claude project dir (claude_project_dir, e.g. "-home-user-capy")
-	// contains this substring — matching ImportOptions.Project's semantics so the
-	// two commands filter alike.
+	// location hint (claude_project_dir — the mangled Claude project dir, e.g.
+	// "-home-user-capy", or a Codex rollout's relative path) OR whose project
+	// path (project_path, the real cwd) contains this substring — matching
+	// ImportOptions.Project, which matches the mangled dir or the cwd hint, so
+	// the two commands filter alike for both platforms.
 	Project string
 	// DryRun computes every skip/insert/replace decision without writing.
 	DryRun bool
@@ -161,6 +163,23 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			continue
 		}
 
+		// Resolve the carried platform once, up front, so every decision below
+		// (reporting, exclusion, skip, scan and the written row) sees the same
+		// valid value. A pre-0006 source arrives here as the 'claude-code' literal
+		// and is never sniffed; a present but unrecognized value is corruption and
+		// is resolved from the blob with a warning (design § Format Identification)
+		// — the RESOLVED platform is what the destination row stores, because merge
+		// writes a full row (unlike reindex, which leaves the stored column alone).
+		// A value the sniff cannot resolve either is a per-session error: the row
+		// is never scanned as Claude by default.
+		platform, err := resolveStoredPlatform("vault merge", uuid, src.platform, src.rawJSONL)
+		if err != nil {
+			slog.Warn("vault merge: cannot resolve source platform", "uuid", uuid, "error", err)
+			res.record(ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusError, Err: err})
+			continue
+		}
+		src.platform = string(platform)
+
 		var srcName *SessionName
 		if srcHasNames {
 			srcName, err = readSourceName(ctx, srcDB, uuid)
@@ -235,12 +254,10 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 
 		// Rebuild FTS + chunks with the current indexer over the decoded source
 		// blobs (not the source's stored index rows) so the destination index is
-		// schema-current regardless of the source's indexer version.
-		// TODO(codex-vault-sessions Slice 8): dispatch on src.platform (carried
-		// verbatim since Slice 5) with the unrecognized-value DetectFormat fallback
-		// and warning; no source can hold a non-Claude row before Slice 7 writes
-		// one, so the constant is exact until then.
-		_, fts, chunks, err := scanSessionAndSubagents(uuid, PlatformClaudeCode, src.rawJSONL, files)
+		// schema-current regardless of the source's indexer version. The decoder
+		// is the destination's own for the resolved platform: a Codex row is
+		// re-scanned with the Codex decoder even when the source binary was older.
+		_, fts, chunks, err := scanSessionAndSubagents(uuid, platform, src.rawJSONL, files)
 		if err != nil {
 			// Recorded as StatusError but NOT yet batched, so any existing
 			// destination row is left UNCHANGED (this scan happens before the write
@@ -269,8 +286,8 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 				title = effectiveTitle(src.title, destName)
 			}
 		}
-		// Platform is the carried source value (reporting only — the CLI groups
-		// its summary by it); the write itself validates it in writeRecord.
+		// Platform is the resolved source value (reporting only — the CLI groups
+		// its summary by it); the write itself re-validates it in writeRecord.
 		entry := ImportedSession{
 			UUID: uuid, Platform: Platform(src.platform), Title: title, ProjectPath: src.projectPath,
 			SizeBytes: src.sizeBytes, Status: status,
@@ -308,7 +325,7 @@ type sourceSession struct {
 	claudeProjectDir string
 	projectPath      string
 	gitBranch        string
-	platform         string // stored value verbatim; 'claude-code' for a pre-0006 source
+	platform         string // stored value as read ('claude-code' for a pre-0006 source); MergeFrom replaces it with the resolved value before use
 	parentUUID       string // "" == NULL / pre-0006 source
 	rawJSONL         []byte // decoded
 }
@@ -323,10 +340,11 @@ type sourceColumns struct {
 }
 
 // toRecord assembles the destination SessionRecord. The location/metadata columns
-// (platform and parent included) are carried verbatim; index_version is stamped
-// to currentIndexVersion because fts + chunks were rebuilt with the current
-// indexer (matching reindex's version bump). An unrecognized carried platform
-// is refused by the destination's writeRecord and surfaces as StatusError.
+// (parent included) are carried verbatim and platform is the value MergeFrom
+// resolved (verbatim when recognized, sniffed otherwise); index_version is
+// stamped to currentIndexVersion because fts + chunks were rebuilt with the
+// current indexer (matching reindex's version bump). writeRecord re-validates
+// the platform as a backstop.
 func (s *sourceSession) toRecord(files []File, fts []FTSRow, chunks []Chunk) *SessionRecord {
 	return &SessionRecord{
 		Session: Session{
@@ -353,15 +371,20 @@ func (s *sourceSession) toRecord(files []File, fts []FTSRow, chunks []Chunk) *Se
 }
 
 // sourceSessionUUIDs lists the source vault's session UUIDs (optionally filtered
-// by mangled project dir), collected up front so no read cursor is held open
-// across the per-session reads and destination writes that follow (mirrors
-// compact's collect-keys-then-rewrite discipline).
+// by location hint OR project path — see MergeOptions.Project), collected up
+// front so no read cursor is held open across the per-session reads and
+// destination writes that follow (mirrors compact's collect-keys-then-rewrite
+// discipline). Both filter columns exist in every historical schema, so the
+// query needs no feature detection. The filter is a LITERAL substring match
+// (likeContains escapes LIKE's metacharacters), the same semantics as import's
+// strings.Contains — a `_` in a project name must not match any character.
 func sourceSessionUUIDs(ctx context.Context, srcDB *sql.DB, project string) ([]string, error) {
 	query := `SELECT uuid FROM vault_sessions`
 	var args []any
 	if project != "" {
-		query += ` WHERE claude_project_dir LIKE ?`
-		args = append(args, "%"+project+"%")
+		query += ` WHERE claude_project_dir LIKE ? ESCAPE '\' OR project_path LIKE ? ESCAPE '\'`
+		pattern := likeContains(project)
+		args = append(args, pattern, pattern)
 	}
 	query += ` ORDER BY uuid`
 
@@ -383,6 +406,16 @@ func sourceSessionUUIDs(ctx context.Context, srcDB *sql.DB, project string) ([]s
 		return nil, fmt.Errorf("iterating uuids: %w", err)
 	}
 	return uuids, nil
+}
+
+// likeContains builds the `LIKE ? ESCAPE '\'` pattern that matches s as a
+// literal substring: LIKE's own metacharacters (`%`, `_`) and the escape
+// character are escaped, then the result is wrapped in `%`. Without this a
+// user's `--project a_b` would also match "axb" — LIKE semantics leaking into
+// what the flag documents as a plain substring filter.
+func likeContains(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return "%" + r.Replace(s) + "%"
 }
 
 // readSourceSession loads one source session row and decodes its main transcript.

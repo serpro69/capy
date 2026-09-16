@@ -219,6 +219,140 @@ func TestReindex_CrossesBatchBoundary(t *testing.T) {
 	assert.Equal(t, 0, res2.Reindexed)
 }
 
+const reindexSniffWarning = "vault reindex: unrecognized stored platform, using the format detected from the transcript"
+
+// stripIndex simulates a stale row: index_version 1 and no FTS rows at all, so
+// a rebuild has to reproduce every searchable row from raw_jsonl.
+func stripIndex(t *testing.T, s *VaultStore, uuid string) {
+	t.Helper()
+	db, err := s.getDB(context.Background())
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE vault_sessions SET index_version = 1 WHERE uuid = ?`, uuid)
+	require.NoError(t, err)
+	_, err = db.Exec(`DELETE FROM vault_fts WHERE session_uuid = ?`, uuid)
+	require.NoError(t, err)
+}
+
+// importCodexForReindex archives one Codex rollout whose human turn carries
+// `prompt` and returns its uuid.
+func importCodexForReindex(t *testing.T, s *VaultStore, prompt string) string {
+	t.Helper()
+	home := t.TempDir()
+	writeCodexRollout(t, home, codexActiveRel(codexFixtureID),
+		codexImportRollout(t, codexPaginated, codexFixtureID, "/home/user/proj", prompt), false)
+	require.Equal(t, 1, importCodexHome(t, s, home, ImportOptions{}).Imported)
+	return codexFixtureID
+}
+
+// TestReindex_DispatchesOnStoredPlatform: a mixed vault rebuilds every stale row
+// with its OWN platform's decoder — the Codex row's human turn is a role=user
+// row again after the rebuild, which the Claude decoder (yielding no entries for
+// Codex bytes) could not have produced.
+func TestReindex_DispatchesOnStoredPlatform(t *testing.T) {
+	s := newTestVault(t)
+	ctx := context.Background()
+
+	root := t.TempDir()
+	const claude = "11111111-2222-3333-4444-555555555555"
+	writeSession(t, filepath.Join(root, "-home-user-proj"), claude, sampleMainJSONL(t), nil)
+	require.Equal(t, 1, importFixture(t, s, root, ImportOptions{}).Imported)
+	codex := importCodexForReindex(t, s, "reindex the velociraptor rollout")
+
+	stripIndex(t, s, claude)
+	stripIndex(t, s, codex)
+	pre, err := s.Search(ctx, SearchOptions{Query: "velociraptor"})
+	require.NoError(t, err)
+	require.Empty(t, pre, "fixture: the Codex row has no index left")
+
+	h := captureSlog(t)
+	res, err := Reindex(ctx, s)
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.Reindexed)
+	assert.Equal(t, 0, res.Errors)
+	assert.Empty(t, h.recordsWithMessage(reindexSniffWarning), "recognized platforms are never sniffed")
+
+	hits, err := s.Search(ctx, SearchOptions{Query: "velociraptor", Role: "user"})
+	require.NoError(t, err)
+	require.Len(t, hits, 1, "the Codex human turn is a role=user row again")
+	assert.Equal(t, PlatformCodex, hits[0].Platform)
+	claudeHits, err := s.Search(ctx, SearchOptions{Query: "vault", Role: "tool"})
+	require.NoError(t, err)
+	assert.Len(t, claudeHits, 1, "the Claude row is rebuilt with the Claude decoder")
+
+	for _, uuid := range []string{claude, codex} {
+		got, err := s.GetSession(ctx, uuid)
+		require.NoError(t, err)
+		assert.Equal(t, currentIndexVersion, got.IndexVersion, "%s is stamped current", uuid)
+	}
+}
+
+// TestReindex_UnrecognizedPlatformIsSniffedNotRewritten: a row whose stored
+// platform is corrupted is rebuilt with the decoder DetectFormat picks from its
+// blob, with one warning naming the uuid and the bad value, and the stored
+// column is left as it was — the rebuild path is FTS-only (ADR-025 D4) and the
+// repair is the user's call.
+func TestReindex_UnrecognizedPlatformIsSniffedNotRewritten(t *testing.T) {
+	s := newTestVault(t)
+	ctx := context.Background()
+	codex := importCodexForReindex(t, s, "sniff the pterodactyl rollout")
+
+	stripIndex(t, s, codex)
+	db, err := s.getDB(ctx)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE vault_sessions SET platform = 'bogus' WHERE uuid = ?`, codex)
+	require.NoError(t, err)
+
+	h := captureSlog(t)
+	res, err := Reindex(ctx, s)
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Reindexed)
+	assert.Equal(t, 0, res.Errors)
+
+	warnings := h.recordsWithMessage(reindexSniffWarning)
+	require.Len(t, warnings, 1)
+	attrs := recordAttrs(warnings[0])
+	assert.Equal(t, codex, attrs["uuid"])
+	assert.Equal(t, "bogus", attrs["platform"])
+	assert.Equal(t, PlatformCodex, attrs["detected"])
+
+	hits, err := s.Search(ctx, SearchOptions{Query: "pterodactyl", Role: "user"})
+	require.NoError(t, err)
+	assert.Len(t, hits, 1, "rebuilt with the Codex decoder the sniff selected")
+
+	got, err := s.GetSession(ctx, codex)
+	require.NoError(t, err)
+	assert.Equal(t, Platform("bogus"), got.Platform, "the stored value is NOT rewritten by a reindex")
+	assert.Equal(t, currentIndexVersion, got.IndexVersion)
+}
+
+// TestReindex_UndetectableRowIsAnErrorNotClaude: when the stored platform is
+// corrupted AND the blob's first line is not a JSON object, the row is counted
+// as an error and left at its old version — never scanned as Claude by default.
+func TestReindex_UndetectableRowIsAnErrorNotClaude(t *testing.T) {
+	s := newTestVault(t)
+	ctx := context.Background()
+	rec := sampleRecord("66666666-6666-6666-6666-666666666666")
+	rec.Session.IndexVersion = 1
+	require.NoError(t, s.InsertSession(ctx, rec))
+	db, err := s.getDB(ctx)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE vault_sessions SET platform = 'bogus', raw_jsonl = ?, encoding = 'raw' WHERE uuid = ?`,
+		[]byte("not a json object\n"), rec.Session.UUID)
+	require.NoError(t, err)
+
+	h := captureSlog(t)
+	res, err := Reindex(ctx, s)
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Reindexed)
+	assert.Equal(t, 1, res.Errors)
+	assert.Empty(t, h.recordsWithMessage(reindexSniffWarning), "nothing was resolved, so no resolution warning")
+
+	got, err := s.GetSession(ctx, rec.Session.UUID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, got.IndexVersion, "left stale for a later repair")
+	assert.Equal(t, Platform("bogus"), got.Platform)
+}
+
 func TestReindex_CancelledContextDoesNothing(t *testing.T) {
 	s := newTestVault(t)
 	rec := sampleRecord("55555555-5555-5555-5555-555555555555")

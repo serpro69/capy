@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 )
 
 // Platform identifies the agent CLI that produced an archived session. It is
@@ -132,6 +133,34 @@ func DetectFormat(firstLine []byte) (Platform, error) {
 		return PlatformCodex, nil
 	}
 	return PlatformClaudeCode, nil
+}
+
+// resolveStoredPlatform turns a vault_sessions.platform value read from a row
+// into the Platform whose decoder should re-scan that row's blob. A recognized
+// value is returned as is. An unrecognized value — which, under the "new
+// platform constant ⇒ reader-version bump" rule, can only be a corrupted or
+// hand-edited column (see DetectFormat) — is resolved by sniffing the blob's
+// first line, with one warning naming the uuid, the bad value and the outcome
+// so the user can repair the row. When the sniff fails too, the error names the
+// bad value and wraps ErrUndetectableFormat; the caller records the session as
+// an error rather than scanning it as Claude by default.
+//
+// op is the log prefix of the calling operation ("vault merge", "vault
+// reindex"). Callers decide what happens to the STORED value: reindex is
+// FTS-only and leaves it (ADR-025 D4); merge writes a fresh destination row and
+// stores the resolved platform. An absent column is never passed here — a
+// pre-0006 row is Claude by construction (merge substitutes the literal).
+func resolveStoredPlatform(op, uuid, stored string, raw []byte) (Platform, error) {
+	if p, err := ParsePlatform(stored); err == nil {
+		return p, nil
+	}
+	detected, err := DetectFormat(raw)
+	if err != nil {
+		return "", fmt.Errorf("unrecognized platform %q: %w", stored, err)
+	}
+	slog.Warn(op+": unrecognized stored platform, using the format detected from the transcript",
+		"uuid", uuid, "platform", stored, "detected", detected)
+	return detected, nil
 }
 
 // isJSONObject reports whether raw is a (non-empty) JSON object literal.
