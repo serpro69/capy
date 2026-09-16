@@ -70,7 +70,7 @@ func TestViewer_OpenAndReturnInlineToolResult(t *testing.T) {
 	v = v.focusMarker(1)
 	require.Equal(t, 0, v.focusedMarker)
 
-	v = v.openFocusedMarker()
+	v, _ = v.openFocusedMarker()
 	require.True(t, v.inInline, "enter on a collapsed tool marker opens the inline body")
 	assert.False(t, v.inSub, "inline detail is not a subagent view")
 	assert.Contains(t, v.active.content(), "log line 17", "the full body is shown on open")
@@ -131,7 +131,7 @@ func TestViewer_EditDiffMarkerAndExpand(t *testing.T) {
 	// Expand: enter on the focused marker shows the diff body.
 	v = v.focusMarker(1)
 	require.Equal(t, 0, v.focusedMarker)
-	v = v.openFocusedMarker()
+	v, _ = v.openFocusedMarker()
 	require.True(t, v.inInline, "enter opens the inline diff")
 
 	content := v.active.content()

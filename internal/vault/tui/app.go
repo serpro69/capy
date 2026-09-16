@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -57,6 +58,21 @@ type renameResultMsg struct {
 	err     error
 }
 
+// viewerFrame is one suspended level of a parent → child session chain: the
+// parent's viewer as it was the moment its child marker was opened. It wraps the
+// whole viewerModel rather than the (session, files, offset, focused marker)
+// tuple the plan sketched: the value model already carries exactly that state
+// plus the parent's rendered transcript and any open detail view, so a pop is a
+// plain reassignment — no re-parse, no re-derived offset, no lost detail state.
+// The cost is holding each suspended level's render in memory for the depth of
+// the chain, which is bounded by how many children the user drills into (Codex
+// nests one or two levels). A pop re-runs setSize so a terminal resize while
+// in the child re-wraps the parent at the current width (setSize preserves the
+// top source line across the re-wrap).
+type viewerFrame struct {
+	viewer viewerModel
+}
+
 // Options configures the initial screen, set from the launching CLI command.
 type Options struct {
 	Mode      string // "list" (default) | "search" | "view"
@@ -86,6 +102,19 @@ type Model struct {
 	list   listModel
 	viewer viewerModel
 	search searchModel
+
+	// viewerStack holds the viewers a child-session open (viewerActionOpenChild)
+	// stepped away from, innermost last: opening a child pushes the current
+	// viewer and loads the child into m.viewer; esc/q pops back to the parent
+	// exactly as it was (scroll offset, focused marker, detail state) instead of
+	// returning to prevMode. Empty whenever the viewer was opened from list or
+	// search, so those flows are unchanged (design § TUI — root-routed child
+	// open). See viewerFrame for why a frame is the whole viewer.
+	//
+	// Suspended frames are not refreshed by handleRenameResult: a rename only
+	// ever targets the session currently shown, and a chain cannot loop, so no
+	// suspended frame can hold the renamed session.
+	viewerStack []viewerFrame
 
 	// clipOut is where the OSC-52 clipboard escape is written for the `c` key —
 	// os.Stderr in production (the same TTY as the renderer, but out-of-band), a
@@ -142,6 +171,8 @@ func Run(ctx context.Context, st *vault.VaultStore, opts Options) (Action, error
 func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 	styles := DefaultStyles()
 
+	// The initial read hides children, the listModel's default (children reach
+	// the list through the toggle key — see listModel.includeChildren).
 	sessions, err := st.ListSessions(ctx, vault.ListOptions{})
 	if err != nil {
 		return Model{}, fmt.Errorf("loading sessions: %w", err)
@@ -359,6 +390,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.requestAction(actionFor(msg.String()), sess.UUID)
+	case listChildrenKey:
+		return m.toggleChildren()
 	case "enter":
 		sess, ok := m.list.selected()
 		if !ok {
@@ -373,6 +406,22 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	return m, cmd
+}
+
+// toggleChildren flips the list between hiding and showing child sessions
+// (Codex sub-agent rollouts, parent_uuid set — hidden by default like Codex's
+// own pickers, design § Sub-agent Model) and re-reads the snapshot with the new
+// ListOptions.IncludeChildren, since the default read never fetched the
+// children. A failed re-read reverts the toggle and keeps the current items
+// (never blank the browser), reporting the failure in the status line.
+func (m Model) toggleChildren() (tea.Model, tea.Cmd) {
+	m.list = m.list.setIncludeChildren(!m.list.includeChildren)
+	next, cmd, err := m.reloadSessions()
+	if err != nil {
+		m.list = m.list.setIncludeChildren(!m.list.includeChildren)
+		return m.withError("refreshing sessions failed: " + err.Error()), nil
+	}
+	return next, cmd
 }
 
 // updateListFilter handles keys while the list's session-filter input is active.
@@ -419,11 +468,13 @@ func (m Model) applySessionFilter(needle string) (tea.Model, tea.Cmd) {
 
 // reloadSessions re-reads the session list from the store into the list's
 // snapshot and reapplies the active filter. It is the only path that refreshes
-// the snapshot, called at the two moments it must be authoritative: when the
-// filter opens and after a rename. On error the current items are left in
-// place and the error is returned for the caller to surface.
+// the snapshot, called at the three moments it must be authoritative: when the
+// filter opens, after a rename, and when the children toggle flips. The read
+// honors the list's current children setting (listModel.listOptions). On error
+// the current items are left in place and the error is returned for the caller
+// to surface.
 func (m Model) reloadSessions() (Model, tea.Cmd, error) {
-	sessions, err := m.store.ListSessions(m.ctx, vault.ListOptions{})
+	sessions, err := m.store.ListSessions(m.ctx, m.list.listOptions())
 	if err != nil {
 		return m, nil, err
 	}
@@ -583,10 +634,69 @@ func (m Model) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		action viewerAction
 	)
 	m.viewer, cmd, action = m.viewer.Update(msg)
-	if action == viewerBack {
-		m.mode = m.prevMode
+	switch action.kind {
+	case viewerActionBack:
+		return m.popViewer(), cmd
+	case viewerActionOpenChild:
+		return m.openChild(action.childUUID), cmd
 	}
 	return m, cmd
+}
+
+// openChild is the root-routed half of opening a Codex child session from its
+// parent's launch marker (design § TUI): the viewer emitted the child's uuid
+// (viewerModel.openFocusedMarker), and the root Model — the only holder of the
+// store and the context — loads it. The current viewer is pushed onto
+// viewerStack so esc/q returns to the parent exactly where it was (popViewer),
+// and the mode stays modeView with prevMode untouched, so the eventual exit
+// from the whole chain still lands where the parent was opened from.
+//
+// A child that is not archived (the parent was imported but the child rollout
+// was not — it may never have been written to disk, or was imported on another
+// machine) is a transient status line, not an error dialog: the viewer stays
+// on the parent and nothing is pushed. Any other store failure is reported in
+// the error style, likewise without mutating the viewer.
+func (m Model) openChild(uuid string) Model {
+	sess, err := m.store.GetSession(m.ctx, uuid)
+	if errors.Is(err, vault.ErrSessionNotFound) {
+		return m.withStatus(fmt.Sprintf("child session %s not archived", shortID(uuid)))
+	}
+	if err != nil {
+		return m.withError(fmt.Sprintf("opening child session %s: %v", shortID(uuid), err))
+	}
+	files, err := m.store.GetFiles(m.ctx, sess.UUID)
+	if err != nil {
+		return m.withError(fmt.Sprintf("loading child session files: %v", err))
+	}
+	m.viewerStack = append(m.viewerStack, viewerFrame{viewer: m.viewer})
+	m.viewer = m.viewer.loadSession(*sess, files)
+	return m
+}
+
+// popViewer handles the viewer's back action: with a suspended parent on
+// viewerStack it restores that frame; with an empty stack it leaves the viewer
+// for prevMode exactly as before child sessions existed, so opens from list and
+// search are unchanged.
+//
+// The frame is restored verbatim — same scroll offset, same focused marker —
+// unless the terminal was resized while the child was open, in which case it
+// is re-wrapped through setSize. setSize is deliberately NOT run when the size
+// is unchanged: it re-derives the offset from the top message's source line, so
+// an offset the viewport had clamped mid-message (a focused marker in the last
+// page) would drift up to that message's first row. A real resize accepts that
+// message-level fidelity, exactly as any resize of an open viewer does today.
+func (m Model) popViewer() Model {
+	if n := len(m.viewerStack); n > 0 {
+		frame := m.viewerStack[n-1]
+		m.viewerStack = m.viewerStack[:n-1]
+		m.viewer = frame.viewer
+		if h := m.bodyHeight(); m.viewer.width != m.width || m.viewer.height != h {
+			m.viewer = m.viewer.setSize(m.width, h)
+		}
+		return m
+	}
+	m.mode = m.prevMode
+	return m
 }
 
 func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -639,6 +749,9 @@ func (m Model) openSession(sessionID string, returnTo mode, subagentID string, l
 	if subagentID != "" || line > 0 {
 		m.viewer = m.viewer.jumpTo(subagentID, line)
 	}
+	// A fresh open from list or search starts a new chain: any parents suspended
+	// by a previous child drill-down must not resurface behind this session.
+	m.viewerStack = nil
 	m.prevMode = returnTo
 	m.mode = modeView
 	return m, nil

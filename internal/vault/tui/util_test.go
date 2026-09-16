@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/serpro69/capy/internal/vault"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -76,7 +77,21 @@ func TestRoleLabel(t *testing.T) {
 	}
 	for role, want := range tests {
 		t.Run(role, func(t *testing.T) {
-			assert.Equal(t, want, roleLabel(role))
+			assert.Equal(t, want, roleLabel(role, vault.PlatformClaudeCode))
 		})
+	}
+}
+
+// TestRoleLabel_Platform pins that only the assistant label is platform-aware:
+// it is the platform's display name, an empty platform is Claude (the
+// in-memory zero value, Platform.OrClaude), and every other role reads the same
+// under Codex as under Claude.
+func TestRoleLabel_Platform(t *testing.T) {
+	assert.Equal(t, "Codex", roleLabel("assistant", vault.PlatformCodex))
+	assert.Equal(t, "Claude", roleLabel("assistant", vault.PlatformClaudeCode))
+	assert.Equal(t, "Claude", roleLabel("assistant", ""), "an empty platform is Claude, never an empty label")
+	for _, role := range []string{"user", "tool", "subagent", "system"} {
+		assert.Equal(t, roleLabel(role, vault.PlatformClaudeCode), roleLabel(role, vault.PlatformCodex),
+			"role %q is platform-independent", role)
 	}
 }
