@@ -115,13 +115,15 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 			)
 			switch {
 			case source != "":
-				sessions, report, err = vault.DiscoverSessionsReport(source)
+				sessions, report, err = vault.DiscoverSessionsReport(cmd.Context(), source)
 			case platform != "":
 				// Scope discovery, not just the import: the other platform's tree
-				// is never walked (and never warns) on a single-platform run.
-				sessions, report, err = vault.DiscoverAll(nil, platform)
+				// is never walked (and never warns) on a single-platform run, and
+				// its root is not even resolved — so --platform codex works with
+				// CODEX_HOME set on a machine whose $HOME cannot be resolved.
+				sessions, report, err = vault.DiscoverAll(cmd.Context(), nil, platform)
 			default:
-				sessions, report, err = vault.DiscoverAll(nil)
+				sessions, report, err = vault.DiscoverAll(cmd.Context(), nil)
 			}
 			if err != nil {
 				return fmt.Errorf("discovering sessions: %w", err)
@@ -1057,13 +1059,11 @@ func restoreVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, ou
 		return err
 	}
 
-	root := output
-	if root == "" {
-		if root, err = defaultRestoreRoot(sess); err != nil {
-			return err
-		}
+	root, mainRel, err := restoreTarget(sess, output)
+	if err != nil {
+		return err
 	}
-	res, err := vault.RestoreSessionAt(sess.UUID, restoreMainRel(sess), sess.RawJSONL, files, root, confirmOverwrite)
+	res, err := vault.RestoreSessionAt(sess.UUID, mainRel, sess.RawJSONL, files, root, confirmOverwrite)
 	if err != nil {
 		return err
 	}
@@ -1071,11 +1071,34 @@ func restoreVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, ou
 	return nil
 }
 
+// restoreTarget decides where a session's main file lands: the root (output when
+// given, else the platform's default — defaultRestoreRoot) and the root-relative
+// path of the main file (restoreMainRel). The platform is resolved ONCE through
+// vault.ResolveSessionPlatform, never read off the row: GetSession copies the
+// platform column verbatim, and defaulting a corrupted Codex row to Claude would
+// write its rollout under the Claude projects tree — precisely the pollution
+// ADR-031's reader-version rule exists to prevent. An undetectable value is an
+// error here, before anything is written.
+func restoreTarget(sess *vault.Session, output string) (root, mainRel string, err error) {
+	p, err := vault.ResolveSessionPlatform("vault restore", sess)
+	if err != nil {
+		return "", "", fmt.Errorf("session %s: %w (fix the stored platform before restoring)", sess.UUID, err)
+	}
+	root = output
+	if root == "" {
+		if root, err = defaultRestoreRoot(sess, p); err != nil {
+			return "", "", err
+		}
+	}
+	return root, restoreMainRel(sess, p), nil
+}
+
 // restoreMainRel is the root-relative path the session's main file restores to:
 // the stored location hint (the relative rollout path) for Codex, <uuid>.jsonl
-// for Claude — see vault.RestoreSessionAt.
-func restoreMainRel(sess *vault.Session) string {
-	if sess.Platform.OrClaude() == vault.PlatformCodex {
+// for Claude — see vault.RestoreSessionAt. p is the resolved platform
+// (restoreTarget), not the raw row value.
+func restoreMainRel(sess *vault.Session, p vault.Platform) string {
+	if p == vault.PlatformCodex {
 		return sess.ClaudeProjectDir
 	}
 	return sess.UUID + ".jsonl"
@@ -1162,11 +1185,13 @@ func resumeVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, dir
 	}
 
 	// Restore to the platform's own location so `claude --resume` finds it.
-	root, err := defaultRestoreRoot(sess)
+	// checkResumable has already refused every non-Claude value, so the resolved
+	// platform is Claude; going through restoreTarget keeps one dispatch site.
+	root, mainRel, err := restoreTarget(sess, "")
 	if err != nil {
 		return err
 	}
-	if _, err := vault.RestoreSessionAt(sess.UUID, restoreMainRel(sess), sess.RawJSONL, files, root, confirmOverwrite); err != nil {
+	if _, err := vault.RestoreSessionAt(sess.UUID, mainRel, sess.RawJSONL, files, root, confirmOverwrite); err != nil {
 		return err
 	}
 
@@ -1559,9 +1584,10 @@ func (e *exitError) Unwrap() error { return e.err }
 // is given: for Codex the Codex home (CODEX_HOME-aware — the stored relative
 // rollout path is joined beneath it by RestoreSessionAt), for Claude the
 // session's project directory under the (CLAUDE_CONFIG_DIR-aware) projects dir —
-// where each CLI expects to find the file to resume it.
-func defaultRestoreRoot(sess *vault.Session) (string, error) {
-	if sess.Platform.OrClaude() == vault.PlatformCodex {
+// where each CLI expects to find the file to resume it. p is the resolved
+// platform (restoreTarget), not the raw row value.
+func defaultRestoreRoot(sess *vault.Session, p vault.Platform) (string, error) {
+	if p == vault.PlatformCodex {
 		home, err := config.CodexHome()
 		if err != nil {
 			return "", fmt.Errorf("resolving codex home: %w", err)

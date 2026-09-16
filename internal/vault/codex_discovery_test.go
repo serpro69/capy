@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -103,7 +104,7 @@ func TestDiscoverCodex_Layouts(t *testing.T) {
 	home := writeCodexDiscoveryHome(t)
 	h := captureSlog(t)
 
-	sessions, report, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+	sessions, report, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{})
 	require.NoError(t, err)
 
 	// sessions/ (sorted by path) strictly before archived_sessions/.
@@ -163,7 +164,7 @@ func TestDiscoverCodex_ActiveBeforeArchived(t *testing.T) {
 	writeCodexRollout(t, home, archived, raw, false)
 	writeCodexRollout(t, home, codexDiscRelA, raw, false)
 
-	sessions, _, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+	sessions, _, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{})
 	require.NoError(t, err)
 	require.Len(t, sessions, 2)
 	assert.Equal(t, []string{codexDiscRelA, archived}, relPaths(sessions))
@@ -187,7 +188,7 @@ func TestDiscoverCodex_SkipPredicateLeavesFileUnopened(t *testing.T) {
 		return rel == codexDiscRelC // the .zst one — its rel must already be .zst-stripped
 	}
 
-	sessions, report, err := DiscoverCodexSessions(home, CodexDiscoverOptions{Skip: skip})
+	sessions, report, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{Skip: skip})
 	require.NoError(t, err)
 	assert.Equal(t, []string{codexDiscRelA, codexDiscRelB, codexDiscRelD}, relPaths(sessions))
 	assert.Equal(t, 1, report.SkippedByPredicate)
@@ -233,7 +234,7 @@ func TestDiscoverCodex_ZstFirstLineReadIsBounded(t *testing.T) {
 	require.Greater(t, info.Size(), int64(2<<20), "fixture must stay multi-MB after compression")
 
 	opened := hookRolloutOpens(t)
-	sessions, _, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+	sessions, _, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{})
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, "/p/big", sessions[0].ProjectPath)
@@ -255,7 +256,7 @@ func TestDiscoverCodex_UnreadableFirstLineSkipped(t *testing.T) {
 	writeCodexRollout(t, home, noMeta, codexRollout(t, codexLegacy, codexTaskStartedLine(at(0))), false)
 	h := captureSlog(t)
 
-	sessions, report, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+	sessions, report, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{codexDiscRelA, noMeta}, relPaths(sessions))
 	assert.Equal(t, "", sessions[1].ProjectPath)
@@ -275,7 +276,7 @@ func TestDiscoverCodex_HiddenFilesSkippedSilently(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(home, "sessions", "2026", "05", "01", ".directory"), []byte("[x]"), 0o644))
 	h := captureSlog(t)
 
-	sessions, _, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+	sessions, _, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{codexDiscRelA}, relPaths(sessions))
 	for _, r := range allRecords(h) {
@@ -312,14 +313,14 @@ func TestIsCodexHome_DepthBounded(t *testing.T) {
 
 func TestDiscoverCodex_RootsMissingOrEmpty(t *testing.T) {
 	t.Run("no rollout roots is an error", func(t *testing.T) {
-		_, _, err := DiscoverCodexSessions(t.TempDir(), CodexDiscoverOptions{})
+		_, _, err := DiscoverCodexSessions(context.Background(), t.TempDir(), CodexDiscoverOptions{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no codex rollout roots")
 	})
 	t.Run("an empty root is an empty result, not an error", func(t *testing.T) {
 		home := t.TempDir()
 		require.NoError(t, os.MkdirAll(filepath.Join(home, "sessions"), 0o755))
-		sessions, report, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+		sessions, report, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{})
 		require.NoError(t, err)
 		assert.Empty(t, sessions)
 		assert.Equal(t, DiscoveryReport{}, report)
@@ -331,9 +332,9 @@ func TestDiscoverCodex_RootsMissingOrEmpty(t *testing.T) {
 func TestDiscoverSessionsReport_AutodetectsCodexHome(t *testing.T) {
 	home := writeCodexDiscoveryHome(t)
 
-	direct, directReport, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+	direct, directReport, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{})
 	require.NoError(t, err)
-	viaSource, sourceReport, err := DiscoverSessionsReport(home)
+	viaSource, sourceReport, err := DiscoverSessionsReport(context.Background(), home)
 	require.NoError(t, err)
 
 	assert.Equal(t, direct, viaSource)
@@ -348,7 +349,7 @@ func TestDiscoverSessionsReport_ClaudeLayoutUnchanged(t *testing.T) {
 	main := sampleMainJSONL(t)
 	writeSession(t, filepath.Join(root, "-home-user-proj"), "aaaaaaaa-1111-2222-3333-444444444444", main, nil)
 
-	sessions, report, err := DiscoverSessionsReport(root)
+	sessions, report, err := DiscoverSessionsReport(context.Background(), root)
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, DiscoveryReport{}, report, "the Claude walker never skips anything the report counts")
@@ -368,7 +369,7 @@ func TestDiscoverAll(t *testing.T) {
 		home := writeCodexDiscoveryHome(t)
 		t.Setenv("CODEX_HOME", home)
 
-		sessions, report, err := DiscoverAll(nil)
+		sessions, report, err := DiscoverAll(context.Background(), nil)
 		require.NoError(t, err)
 		require.Len(t, sessions, 5)
 		assert.Equal(t, PlatformClaudeCode, sessions[0].Platform)
@@ -391,7 +392,7 @@ func TestDiscoverAll(t *testing.T) {
 		t.Setenv("CODEX_HOME", home)
 		h := captureSlog(t)
 
-		sessions, report, err := DiscoverAll(nil, PlatformCodex)
+		sessions, report, err := DiscoverAll(context.Background(), nil, PlatformCodex)
 		require.NoError(t, err)
 		assert.Equal(t, []string{codexDiscRelA, codexDiscRelB, codexDiscRelC, codexDiscRelD}, relPaths(sessions))
 		for _, sf := range sessions {
@@ -400,7 +401,7 @@ func TestDiscoverAll(t *testing.T) {
 		assert.Equal(t, 4, report.FirstLineReads)
 		assert.Empty(t, h.recordsWithMessage("vault discovery: skipping oversize sidecar file"), "the Claude root must not be walked")
 
-		claudeOnly, _, err := DiscoverAll(nil, PlatformClaudeCode)
+		claudeOnly, _, err := DiscoverAll(context.Background(), nil, PlatformClaudeCode)
 		require.NoError(t, err)
 		require.Len(t, claudeOnly, 1)
 		assert.Equal(t, PlatformClaudeCode, claudeOnly[0].Platform)
@@ -411,7 +412,7 @@ func TestDiscoverAll(t *testing.T) {
 		home := writeCodexDiscoveryHome(t)
 		t.Setenv("CODEX_HOME", home)
 
-		sessions, report, err := DiscoverAll(&CodexDiscoverOptions{
+		sessions, report, err := DiscoverAll(context.Background(), &CodexDiscoverOptions{
 			Skip: func(rel string, _ int64, _ bool) bool { return rel != codexDiscRelD },
 		})
 		require.NoError(t, err)
@@ -425,7 +426,7 @@ func TestDiscoverAll(t *testing.T) {
 		t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "absent"))
 		h := captureSlog(t)
 
-		sessions, report, err := DiscoverAll(nil)
+		sessions, report, err := DiscoverAll(context.Background(), nil)
 		require.NoError(t, err)
 		assert.Empty(t, sessions)
 		assert.Equal(t, DiscoveryReport{}, report)
@@ -441,7 +442,7 @@ func TestDiscoverAll(t *testing.T) {
 		t.Setenv("CODEX_HOME", home)
 		h := captureSlog(t)
 
-		sessions, _, err := DiscoverAll(nil)
+		sessions, _, err := DiscoverAll(context.Background(), nil)
 		require.NoError(t, err)
 		assert.Empty(t, sessions)
 		recs := h.recordsWithMessage("vault discovery: platform root holds no sessions")
@@ -459,7 +460,7 @@ func TestDiscoverAll(t *testing.T) {
 		writeCodexRollout(t, home, codexDiscRelA, codexMinimalRollout(t, codexLegacy, codexDiscUUIDA, "/p/a"), false)
 		h := captureSlog(t)
 
-		sessions, _, err := DiscoverAll(nil)
+		sessions, _, err := DiscoverAll(context.Background(), nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{codexDiscRelA}, relPaths(sessions), "an empty Claude root never hides Codex")
 		for _, r := range allRecords(h) {

@@ -22,33 +22,56 @@ type PlatformRoot struct {
 	Archived int
 }
 
-// resolvePlatformRoots pairs every known platform with its session root (each
-// honoring its env override — CLAUDE_CONFIG_DIR, CODEX_HOME) and the existence
-// probe discovery acts on: a Claude root exists when the projects dir is a
-// directory; a Codex root exists when its home has at least one rollout root
+// resolvePlatformRoot pairs one platform with its session root (honoring its
+// env override — CLAUDE_CONFIG_DIR, CODEX_HOME) and the existence probe
+// discovery acts on: a Claude root exists when the projects dir is a directory;
+// a Codex root exists when its home has at least one rollout root
 // (HasCodexRolloutRoot), so an installed-but-unused Codex still counts as
 // present. It is the single resolution site shared by DiscoverAll and
 // PlatformRoots, so the doctor reports exactly what the sweep walks. The error
-// covers only root resolution (an unresolvable home directory).
+// covers only root resolution (an unresolvable home directory) — and only THIS
+// platform's: `capy vault import --platform codex` with CODEX_HOME set must not
+// fail because $HOME, which only the Claude root needs, is unresolvable.
 //
-// The list is an explicit literal, not derived from knownPlatforms: each
-// platform has its own root and probe, so a new constant needs a new entry
-// here (and a Discoverer in DiscoverAll) — the same multi-site change the
-// reader-version rule already makes it. TestResolvePlatformRoots_CoversKnownPlatforms
-// fails when the two lists drift, in knownPlatforms order.
+// The switch is an explicit per-platform literal, not derived from
+// knownPlatforms: each platform has its own root and probe, so a new constant
+// needs a new arm here (and a Discoverer in DiscoverAll) — the same multi-site
+// change the reader-version rule already makes it.
+// TestResolvePlatformRoots_CoversKnownPlatforms fails when the two drift.
+func resolvePlatformRoot(p Platform) (PlatformRoot, error) {
+	switch p {
+	case PlatformClaudeCode:
+		root, err := config.ClaudeProjectsDir()
+		if err != nil {
+			return PlatformRoot{}, fmt.Errorf("resolving claude projects dir: %w", err)
+		}
+		return PlatformRoot{Platform: p, Root: root, RootExists: isDir(root)}, nil
+	case PlatformCodex:
+		home, err := config.CodexHome()
+		if err != nil {
+			return PlatformRoot{}, fmt.Errorf("resolving codex home: %w", err)
+		}
+		return PlatformRoot{Platform: p, Root: home, RootExists: HasCodexRolloutRoot(home)}, nil
+	default:
+		return PlatformRoot{}, fmt.Errorf("%w: %q has no session root", ErrUnknownPlatform, string(p))
+	}
+}
+
+// resolvePlatformRoots resolves every known platform's root, in knownPlatforms
+// order (see resolvePlatformRoot). Any platform failing to resolve fails the
+// whole call: the doctor (PlatformRoots) reports that as its Warn row, and
+// DiscoverAll — which must isolate one platform's failure from the other —
+// resolves per platform itself.
 func resolvePlatformRoots() ([]PlatformRoot, error) {
-	claudeRoot, err := config.ClaudeProjectsDir()
-	if err != nil {
-		return nil, fmt.Errorf("resolving claude projects dir: %w", err)
+	roots := make([]PlatformRoot, 0, len(knownPlatforms))
+	for _, p := range knownPlatforms {
+		r, err := resolvePlatformRoot(p)
+		if err != nil {
+			return nil, err
+		}
+		roots = append(roots, r)
 	}
-	codexRoot, err := config.CodexHome()
-	if err != nil {
-		return nil, fmt.Errorf("resolving codex home: %w", err)
-	}
-	return []PlatformRoot{
-		{Platform: PlatformClaudeCode, Root: claudeRoot, RootExists: isDir(claudeRoot)},
-		{Platform: PlatformCodex, Root: codexRoot, RootExists: HasCodexRolloutRoot(codexRoot)},
-	}, nil
+	return roots, nil
 }
 
 // PlatformRoots returns every known platform's root (see resolvePlatformRoots)

@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +18,7 @@ func TestDiscoverSessions_ProjectsRoot(t *testing.T) {
 	writeSession(t, filepath.Join(root, "-home-user-projb"), "bbbbbbbb-1111-2222-3333-444444444444",
 		sampleMainJSONL(t), nil)
 
-	sessions, err := DiscoverSessions(root)
+	sessions, err := DiscoverSessions(context.Background(), root)
 	require.NoError(t, err)
 	require.Len(t, sessions, 2)
 
@@ -37,7 +38,7 @@ func TestDiscoverSessions_SingleProjectDir(t *testing.T) {
 	writeSession(t, projDir, "cccccccc-1111-2222-3333-444444444444", sampleMainJSONL(t),
 		map[string][]byte{"subagents/agent-x.jsonl": []byte(`{"type":"user"}` + "\n")})
 
-	sessions, err := DiscoverSessions(projDir)
+	sessions, err := DiscoverSessions(context.Background(), projDir)
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, "-home-user-proj", sessions[0].ProjectDir)
@@ -51,14 +52,14 @@ func TestDiscoverSessions_ConfigDir(t *testing.T) {
 	writeSession(t, filepath.Join(projects, "-home-user-proj"), "dddddddd-1111-2222-3333-444444444444",
 		sampleMainJSONL(t), nil)
 
-	sessions, err := DiscoverSessions(root)
+	sessions, err := DiscoverSessions(context.Background(), root)
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, "dddddddd-1111-2222-3333-444444444444", sessions[0].UUID)
 }
 
 func TestDiscoverSessions_EmptyDirErrors(t *testing.T) {
-	_, err := DiscoverSessions(t.TempDir())
+	_, err := DiscoverSessions(context.Background(), t.TempDir())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no session files found")
 }
@@ -70,7 +71,7 @@ func TestDiscoverSessions_HonorsClaudeConfigDir(t *testing.T) {
 		sampleMainJSONL(t), nil)
 
 	// Empty rootDir resolves via config.ClaudeProjectsDir() → $CLAUDE_CONFIG_DIR/projects.
-	sessions, err := DiscoverSessions("")
+	sessions, err := DiscoverSessions(context.Background(), "")
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, "eeeeeeee-1111-2222-3333-444444444444", sessions[0].UUID)
@@ -110,7 +111,7 @@ func TestDiscoverSessions_OversizeSidecarCap(t *testing.T) {
 		"subagents/agent-small.jsonl": []byte(`{"type":"user"}` + "\n"),
 	})
 
-	sessions, err := DiscoverSessions(projDir)
+	sessions, err := DiscoverSessions(context.Background(), projDir)
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 
@@ -150,7 +151,7 @@ func TestDiscoverSessions_SkipsSymlinks(t *testing.T) {
 	mainLink := filepath.Join(projDir, "bbbbbbbb-1111-2222-3333-444444444444.jsonl")
 	require.NoError(t, os.Symlink(outside, mainLink))
 
-	sessions, err := DiscoverSessions(projDir)
+	sessions, err := DiscoverSessions(context.Background(), projDir)
 	require.NoError(t, err)
 	require.Len(t, sessions, 1, "symlinked main .jsonl must not be discovered")
 	assert.Equal(t, uuid, sessions[0].UUID)

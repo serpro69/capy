@@ -25,7 +25,7 @@ import (
 // which is part of how a tool-call Summary is built and is shared by every
 // consumer today (DIVERGENCES.md D22).
 //
-// See docs/feat/wip/codex-vault-sessions/design.md § The Transcript Model and
+// See docs/feat/done/codex-vault-sessions/design.md § The Transcript Model and
 // internal/vault/testdata/golden/DIVERGENCES.md for the field-by-field mapping
 // from today's three Claude readers.
 

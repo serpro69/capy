@@ -16,7 +16,7 @@ import (
 // result and the session UUID.
 func importFixture(t *testing.T, s *VaultStore, root string, opts ImportOptions) ImportResult {
 	t.Helper()
-	sessions, err := DiscoverSessions(root)
+	sessions, err := DiscoverSessions(context.Background(), root)
 	require.NoError(t, err)
 	return Import(context.Background(), s, sessions, opts)
 }
@@ -382,7 +382,7 @@ func TestImport_PreCancelledContextImportsNothing(t *testing.T) {
 	uuid := "11111111-2222-3333-4444-555555555555"
 	writeSession(t, filepath.Join(root, "-home-user-proj"), uuid, sampleMainJSONL(t), nil)
 
-	sessions, err := DiscoverSessions(root)
+	sessions, err := DiscoverSessions(context.Background(), root)
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 

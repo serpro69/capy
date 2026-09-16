@@ -10,7 +10,7 @@ import (
 // (codex_decoder.go) unmarshals into. Shapes follow openai/codex `main`
 // (codex-rs/history/src/lib.rs RolloutLine, codex-rs/protocol/src/{protocol,
 // models,items}.rs) as observed over the local corpus — see
-// docs/feat/wip/codex-vault-sessions/research.md § 3 and Appendix A (one
+// docs/feat/done/codex-vault-sessions/research.md § 3 and Appendix A (one
 // redacted sample line per record type; codex_types_test.go unmarshals each).
 //
 // Only the fields the decoder reads are declared. Every struct tolerates

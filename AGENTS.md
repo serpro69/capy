@@ -74,7 +74,7 @@ After changing search, indexing, chunking, or executor code, run benchmarks to c
 make bench-quality   # quality benchmarks → bench-results/{branch}.json
 ```
 
-Compare against a baseline with `make bench-compare BASE=main TARGET={branch}` or view a single report with `go run -tags fts5 ./cmd/qualstat bench-results/{branch}.json`. Quality benchmarks are skipped during `go test ./...` (gated by `CAPY_BENCH_RESULTS`).
+Compare against a baseline with `make bench-compare BASE=master TARGET={branch}` or view a single report with `go run -tags fts5 ./cmd/qualstat bench-results/{branch}.json`. Quality benchmarks are skipped during `go test ./...` (gated by `CAPY_BENCH_RESULTS`). The result file is named after `git rev-parse --abbrev-ref HEAD` with `/` → `-`, so `feat/x` writes `feat-x.json` and a **detached** checkout (e.g. a `git worktree add --detach … master` used to produce the baseline without leaving the branch) writes `HEAD.json` — rename it to `master.json` before comparing. `bench-compare` also runs `benchstat` over `bench-results/{branch}.txt` from `make bench` when `benchstat` is installed, and skips that half otherwise.
 
 Key files: `internal/store/bench_test.go` (retrieval + NIAH), `internal/store/bench_perf_test.go` (performance), `internal/server/bench_integration_test.go` (5000-byte threshold), `internal/store/testdata/bench/*.jsonl` (fixtures). Fixture authoring guide: [benchmark/FIXTURES.md](benchmark/FIXTURES.md).
 

@@ -47,7 +47,7 @@ func codexImportRollout(t testing.TB, mode codexMode, id, cwd, prompt string, ex
 // importCodexHome discovers home with the Codex walker and imports the result.
 func importCodexHome(t *testing.T, s *VaultStore, home string, opts ImportOptions) ImportResult {
 	t.Helper()
-	sessions, _, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+	sessions, _, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{})
 	require.NoError(t, err)
 	return Import(context.Background(), s, sessions, opts)
 }
@@ -170,6 +170,65 @@ func TestImportCodex_ActiveAndArchivedPairInOneRun(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, codexActiveRel(codexDiscUUIDA), got.ClaudeProjectDir, "a same-hash later copy never touches the hint")
 	})
+}
+
+// A lingering duplicate must not move the hint. The server sweep's skip
+// predicate drops the copy at the stored hint UNOPENED, so import sees only the
+// OTHER copy as the run's first sighting — simulated here with a Skip predicate
+// that hides the active path. While the file at the stored hint still exists the
+// archived copy is `skipped`, real and dry run alike; once it is gone the very
+// same discovery reports `updated` and moves the hint (the genuine move the
+// next test covers in full). Without this guard the hint flipped on every
+// server start (Task 14 review P2).
+func TestImportCodex_DuplicateCopyDoesNotMoveHintWhileOriginalPresent(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		compressed bool
+	}{
+		{"plain active copy", false},
+		{"compressed active copy (.zst twin)", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestVault(t)
+			home := t.TempDir()
+			raw := codexImportRollout(t, codexLegacy, codexDiscUUIDA, "/p/a", "a thread under both roots")
+			activeRel := codexActiveRel(codexDiscUUIDA)
+			if tc.compressed {
+				activeRel += ".zst"
+			}
+			active := writeCodexRollout(t, home, activeRel, raw, tc.compressed)
+			writeCodexRollout(t, home, codexArchivedRel(codexDiscUUIDA), raw, false)
+			require.Equal(t, 1, importCodexHome(t, s, home, ImportOptions{}).Imported)
+
+			hideActive := CodexDiscoverOptions{Skip: func(rel string, _ int64, _ bool) bool {
+				return rel == codexActiveRel(codexDiscUUIDA) // the predicate sees the .zst-stripped path
+			}}
+			onlyArchived, _, err := DiscoverCodexSessions(context.Background(), home, hideActive)
+			require.NoError(t, err)
+			require.Len(t, onlyArchived, 1)
+			require.Equal(t, codexArchivedRel(codexDiscUUIDA), onlyArchived[0].RelativePath)
+			require.Equal(t, home, onlyArchived[0].Root, "the walker records the home the hint is relative to")
+
+			for _, dry := range []bool{true, false} {
+				res := Import(context.Background(), s, onlyArchived, ImportOptions{DryRun: dry})
+				assert.Equal(t, 1, res.Skipped, "dry=%v: the duplicate is skipped", dry)
+				assert.Equal(t, 0, res.Updated, "dry=%v: never reported as a move", dry)
+				assert.Equal(t, 0, res.Errors, "dry=%v", dry)
+				got, err := s.GetSession(context.Background(), codexDiscUUIDA)
+				require.NoError(t, err)
+				assert.Equal(t, codexActiveRel(codexDiscUUIDA), got.ClaudeProjectDir, "dry=%v: the hint stays on the active copy", dry)
+			}
+
+			// The active copy disappears: the same discovery now IS a move.
+			require.NoError(t, os.Remove(active))
+			res := Import(context.Background(), s, onlyArchived, ImportOptions{})
+			assert.Equal(t, 1, res.Updated)
+			assert.Equal(t, 0, res.Skipped)
+			got, err := s.GetSession(context.Background(), codexDiscUUIDA)
+			require.NoError(t, err)
+			assert.Equal(t, codexArchivedRel(codexDiscUUIDA), got.ClaudeProjectDir, "the hint follows the file once the old location is empty")
+		})
+	}
 }
 
 // Only the archived copy is left on disk (a genuine move): the same bytes at a
@@ -394,13 +453,13 @@ func TestImportOptions_PlatformAndProjectFilters(t *testing.T) {
 	root := t.TempDir()
 	claudeUUID := "aaaaaaaa-1111-2222-3333-444444444444"
 	writeSession(t, filepath.Join(root, "-home-user-proj"), claudeUUID, sampleMainJSONL(t), nil)
-	claude, err := DiscoverSessions(root)
+	claude, err := DiscoverSessions(context.Background(), root)
 	require.NoError(t, err)
 
 	home := t.TempDir()
 	writeCodexRollout(t, home, codexActiveRel(codexDiscUUIDA), codexImportRollout(t, codexLegacy, codexDiscUUIDA, "/p/alpha", "alpha"), false)
 	writeCodexRollout(t, home, codexActiveRel(codexDiscUUIDB), codexImportRollout(t, codexLegacy, codexDiscUUIDB, "/p/beta", "beta"), false)
-	codex, _, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+	codex, _, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{})
 	require.NoError(t, err)
 	all := append(claude, codex...)
 
@@ -451,7 +510,7 @@ func TestImportCodex_CorruptZstRecordedAsError(t *testing.T) {
 	// import sees when a rollout is truncated between discovery and read.
 	bad := filepath.Join(home, "sessions", "2026", "05", "01", "rollout-2026-05-01T10-30-00-"+codexDiscUUIDB+".jsonl.zst")
 	require.NoError(t, os.WriteFile(bad, []byte("not a zstd frame"), 0o644))
-	sessions, _, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+	sessions, _, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{})
 	require.NoError(t, err)
 	require.Len(t, sessions, 1, "the garbage .zst is already skipped by discovery")
 	sessions = append(sessions, SessionFile{

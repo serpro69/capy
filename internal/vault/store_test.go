@@ -201,6 +201,21 @@ func TestVaultStore_ListChildrenAndPlatform(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, limited, 2)
 
+	// --project is a literal substring on every read path, like merge's
+	// (likeContains + ESCAPE): LIKE's `_` must not match the `/` in
+	// "/home/user/proj" and a bare `%` must not match everything.
+	byPath, err := s.Search(ctx, SearchOptions{Query: "brontosaurus", Project: "user/proj", Limit: 10})
+	require.NoError(t, err)
+	assert.Len(t, byPath, 4, "positive control: the literal path filter keeps every hit")
+	for _, wildcard := range []string{"user_proj", "%"} {
+		none, err := s.ListSessions(ctx, ListOptions{Project: wildcard, IncludeChildren: true})
+		require.NoError(t, err)
+		assert.Empty(t, none, "ListSessions --project %q must not act as a LIKE wildcard", wildcard)
+		noHits, err := s.Search(ctx, SearchOptions{Query: "brontosaurus", Project: wildcard, Limit: 10})
+		require.NoError(t, err)
+		assert.Empty(t, noHits, "Search --project %q must not act as a LIKE wildcard", wildcard)
+	}
+
 	children, err := s.Children(ctx, parent)
 	require.NoError(t, err)
 	assert.Equal(t, []string{childB, childA}, uuids(children), "children in spawn (start_time) order")

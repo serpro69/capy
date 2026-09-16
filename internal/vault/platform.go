@@ -182,6 +182,27 @@ func resolveStoredPlatform(op, uuid, stored string, raw []byte) (Platform, error
 	return detected, nil
 }
 
+// ResolveSessionPlatform is the platform a loaded session row must be handled
+// as by a surface that acts on it — restore, resume — where defaulting a
+// corrupted value to Claude would be destructive (a Codex rollout restored under
+// the Claude projects tree). GetSession copies the platform column verbatim, so
+// the value may be anything: empty is Claude (the zero-value convention,
+// Platform.OrClaude — every pre-0006 row and in-memory caller), a recognized
+// constant is itself, and a present-but-unrecognized value is corruption
+// (ADR-031: a new platform constant bumps the reader version, so this binary
+// never sees a legitimately newer value) resolved through the same
+// DetectFormat sniff merge and reindex use (resolveStoredPlatform), with one
+// warning naming the row. An undetectable blob is an error wrapping
+// ErrUndetectableFormat so the caller fails before writing anything. op labels
+// the warning ("vault restore"). Display-only surfaces keep OrClaude: `show`
+// already fails loudly on dispatch, and a list row is harmless to mislabel.
+func ResolveSessionPlatform(op string, sess *Session) (Platform, error) {
+	if sess.Platform == "" {
+		return PlatformClaudeCode, nil
+	}
+	return resolveStoredPlatform(op, sess.UUID, string(sess.Platform), sess.RawJSONL)
+}
+
 // isJSONObject reports whether raw is a (non-empty) JSON object literal.
 func isJSONObject(raw json.RawMessage) bool {
 	t := bytes.TrimSpace(raw)

@@ -31,7 +31,7 @@ FTS — permanently, because a later same-hash re-import is skipped and reindex 
 the stored platform.
 
 Full design, corpus evidence and review triage:
-[docs/feat/wip/codex-vault-sessions/](../feat/wip/codex-vault-sessions/design.md).
+[docs/feat/done/codex-vault-sessions/](../feat/done/codex-vault-sessions/design.md).
 
 ## Decision
 
@@ -66,9 +66,13 @@ Full design, corpus evidence and review triage:
    historical schema has). `Platform` is a closed constant set checked by
    `ParsePlatform`; there is deliberately **no SQL `CHECK`**, so a third platform is
    a constant, not a migration. An empty in-memory `Platform` is Claude on both
-   sides (`writePlatform` on write, `Platform.OrClaude()` at display and restore
-   dispatch) while `DecoderFor` stays strict — the decoder seam is never loosened to
-   absorb a zero value.
+   sides (`writePlatform` on write, `Platform.OrClaude()` at display dispatch) while
+   `DecoderFor` stays strict — the decoder seam is never loosened to absorb a zero
+   value. A surface that **acts** on a row — restore, and resume through the same
+   site — resolves the stored value with `ResolveSessionPlatform` instead: empty is
+   Claude, a recognized token is itself, a corrupted token is sniffed as in D4, and
+   an undetectable blob is an error before anything is written, so a corrupted Codex
+   row can never be restored under the Claude projects tree.
 
 4. **Dispatch from the column; sniff only corrupted values.** Import stamps the
    platform the discoverer walked and never sniffs. Reindex, merge, show, the TUI,

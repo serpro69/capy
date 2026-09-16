@@ -272,7 +272,7 @@ func (s *Server) vaultSweep(ctx context.Context) sweepSummary {
 
 	allProjects := os.Getenv("CAPY_VAULT_SWEEP_ALL") != ""
 
-	claude := s.discoverClaudeForSweep(allProjects)
+	claude := s.discoverClaudeForSweep(ctx, allProjects)
 	codexHome, codexPresent := codexHomeForSweep()
 	sum.claudeDiscovered = len(claude)
 	if len(claude) == 0 && !codexPresent {
@@ -322,7 +322,7 @@ func (s *Server) vaultSweep(ctx context.Context) sweepSummary {
 // the current project's mangled session dir, or every project under the Claude
 // projects root with allProjects. Any failure yields nil — logged, never fatal —
 // so the Codex pass still runs.
-func (s *Server) discoverClaudeForSweep(allProjects bool) []vault.SessionFile {
+func (s *Server) discoverClaudeForSweep(ctx context.Context, allProjects bool) []vault.SessionFile {
 	var sessionDir string
 	if allProjects {
 		// ClaudeProjectsDir honors CLAUDE_CONFIG_DIR, and DiscoverSessions
@@ -345,10 +345,11 @@ func (s *Server) discoverClaudeForSweep(allProjects bool) []vault.SessionFile {
 		sessionDir = dir
 	}
 
-	sessions, err := vault.DiscoverSessions(sessionDir)
+	sessions, err := vault.DiscoverSessions(ctx, sessionDir)
 	if err != nil {
 		// A project with no session directory yet is the common case at startup,
-		// not an error worth a warning.
+		// not an error worth a warning. A cancelled walk (budget spent) is a
+		// partial list that Import would refuse anyway — drop it like a failure.
 		slog.Debug("vault sweep: claude discovery skipped", "dir", sessionDir, "error", err)
 		return nil
 	}
@@ -396,9 +397,18 @@ func (s *Server) sweepCodex(ctx context.Context, st *vault.VaultStore, home stri
 		return compressed || size == onDiskSize
 	}
 
-	sessions, report, err := vault.DiscoverCodexSessions(home, vault.CodexDiscoverOptions{Skip: skip})
+	sessions, report, err := vault.DiscoverCodexSessions(ctx, home, vault.CodexDiscoverOptions{Skip: skip})
 	sum.codexReport = report
 	if err != nil {
+		if ctx.Err() != nil {
+			// The 30 s budget ran out mid-walk: the partial list is dropped
+			// (Import would refuse it at its first session boundary anyway) and
+			// the next start resumes from what is already archived — the same
+			// "defer to the next start" the Claude pass applies.
+			slog.Debug("vault sweep: codex discovery cancelled", "home", home,
+				"first_line_reads", report.FirstLineReads, "error", err)
+			return
+		}
 		slog.Warn("vault sweep: codex discovery failed", "home", home, "error", err)
 		return
 	}
