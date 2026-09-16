@@ -148,27 +148,18 @@ func DiscoverSessionsReport(rootDir string) ([]SessionFile, DiscoveryReport, err
 // — not merely filtered afterwards. The returned error covers only root
 // resolution (an unresolvable home directory), never a per-platform walk.
 func DiscoverAll(codexOpts *CodexDiscoverOptions, only ...Platform) ([]SessionFile, DiscoveryReport, error) {
-	claudeRoot, err := config.ClaudeProjectsDir()
+	roots, err := resolvePlatformRoots()
 	if err != nil {
-		return nil, DiscoveryReport{}, fmt.Errorf("resolving claude projects dir: %w", err)
-	}
-	codexRoot, err := config.CodexHome()
-	if err != nil {
-		return nil, DiscoveryReport{}, fmt.Errorf("resolving codex home: %w", err)
+		return nil, DiscoveryReport{}, err
 	}
 
 	var opts CodexDiscoverOptions
 	if codexOpts != nil {
 		opts = *codexOpts
 	}
-	roots := []struct {
-		platform Platform
-		root     string
-		exists   bool
-		d        Discoverer
-	}{
-		{PlatformClaudeCode, claudeRoot, isDir(claudeRoot), claudeDiscoverer{}},
-		{PlatformCodex, codexRoot, HasCodexRolloutRoot(codexRoot), codexDiscoverer{opts: opts}},
+	discoverers := map[Platform]Discoverer{
+		PlatformClaudeCode: claudeDiscoverer{},
+		PlatformCodex:      codexDiscoverer{opts: opts},
 	}
 
 	var (
@@ -176,23 +167,32 @@ func DiscoverAll(codexOpts *CodexDiscoverOptions, only ...Platform) ([]SessionFi
 		report DiscoveryReport
 	)
 	for _, r := range roots {
-		if len(only) > 0 && !slices.Contains(only, r.platform) {
+		if len(only) > 0 && !slices.Contains(only, r.Platform) {
 			continue
 		}
-		if !r.exists {
-			slog.Debug("vault discovery: platform root absent, skipping", "platform", r.platform, "root", r.root)
+		if !r.RootExists {
+			slog.Debug("vault discovery: platform root absent, skipping", "platform", r.Platform, "root", r.Root)
 			continue
 		}
-		sessions, rep, err := r.d.Discover(r.root)
+		d, ok := discoverers[r.Platform]
+		if !ok {
+			// resolvePlatformRoots and this map are maintained side by side
+			// (TestResolvePlatformRoots_CoversKnownPlatforms pins the root
+			// list); a platform in one but not the other is a programming
+			// error — skip it loudly instead of calling a nil Discoverer.
+			slog.Warn("vault discovery: no discoverer for platform root, skipping", "platform", r.Platform, "root", r.Root)
+			continue
+		}
+		sessions, rep, err := d.Discover(r.Root)
 		switch {
 		case errors.Is(err, errNoSessions):
 			// A root that exists but holds no sessions yet is the common state
 			// for a platform the user has installed but not used from here.
-			slog.Debug("vault discovery: platform root holds no sessions", "platform", r.platform, "root", r.root)
+			slog.Debug("vault discovery: platform root holds no sessions", "platform", r.Platform, "root", r.Root)
 			continue
 		case err != nil:
 			// The partial report of a failed walk is dropped with its sessions.
-			slog.Warn("vault discovery: skipping platform root", "platform", r.platform, "root", r.root, "error", err)
+			slog.Warn("vault discovery: skipping platform root", "platform", r.Platform, "root", r.Root, "error", err)
 			continue
 		}
 		report.merge(rep)
@@ -200,7 +200,7 @@ func DiscoverAll(codexOpts *CodexDiscoverOptions, only ...Platform) ([]SessionFi
 			// The Codex walker reports an existing-but-empty root as an empty
 			// result (its report must still reach us); log it like the Claude
 			// sentinel so both platforms are equally visible at debug.
-			slog.Debug("vault discovery: platform root holds no sessions", "platform", r.platform, "root", r.root)
+			slog.Debug("vault discovery: platform root holds no sessions", "platform", r.Platform, "root", r.Root)
 			continue
 		}
 		all = append(all, sessions...)

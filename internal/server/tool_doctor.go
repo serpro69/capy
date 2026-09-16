@@ -95,7 +95,7 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 	// Vault — opt-in session archive. When enabled, surface the reindex backlog
 	// loudly (design vault-session-search D4: the chunk backfill is manual via
 	// `capy vault reindex`, so its pendency must be visible, not silent).
-	results = append(results, s.vaultCheck(ctx))
+	results = append(results, s.vaultChecks(ctx)...)
 
 	// Security
 	results = append(results, platform.CheckSecurity(totalDeny, len(s.security)))
@@ -109,19 +109,43 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 	return s.trackToolResponse("capy_doctor", textResult(text)), nil
 }
 
-// vaultCheck reports the vault's health for capy_doctor: disabled (opt-in key
+// vaultChecks reports the vault's health for capy_doctor: disabled (opt-in key
 // unset), unreadable, or enabled with its session count and — when any archived
 // session predates the current indexer — the reindex backlog and the command
-// that clears it.
-func (s *Server) vaultCheck(ctx context.Context) platform.CheckResult {
+// that clears it, followed by the per-platform roots check (which platform
+// session roots exist on disk, how many of each are archived). The platforms
+// check is emitted only when the vault is enabled and readable: without stats
+// its counts would be guesses, and a disabled vault sweeps nothing.
+func (s *Server) vaultChecks(ctx context.Context) []platform.CheckResult {
 	if _, err := vault.RequireVaultKey(); err != nil {
-		return platform.CheckVaultDisabled()
+		return []platform.CheckResult{platform.CheckVaultDisabled()}
 	}
 	vs, err := s.vaultStats(ctx)
 	if err != nil {
-		return platform.CheckVault(0, 0, 0, err)
+		return []platform.CheckResult{platform.CheckVault(0, 0, 0, err)}
 	}
-	return platform.CheckVault(vs.Sessions, vs.OutdatedSessions, vs.IndexVersion, nil)
+	return []platform.CheckResult{
+		platform.CheckVault(vs.Sessions, vs.OutdatedSessions, vs.IndexVersion, nil),
+		vaultPlatformsCheck(vs),
+	}
+}
+
+// vaultPlatformsCheck adapts vault.PlatformRoots (the vault's own view of which
+// roots the sweep walks) to the strings-only input of the shared
+// platform.CheckVaultPlatforms. `capy doctor` carries the same adapter
+// (cmd/capy/doctor.go) — the two surfaces must describe the roots identically.
+func vaultPlatformsCheck(stats *vault.VaultStats) platform.CheckResult {
+	roots, err := vault.PlatformRoots(stats)
+	if err != nil {
+		return platform.CheckVaultPlatforms(nil, err)
+	}
+	out := make([]platform.VaultPlatformRoot, 0, len(roots))
+	for _, r := range roots {
+		out = append(out, platform.VaultPlatformRoot{
+			Name: string(r.Platform), Root: r.Root, RootExists: r.RootExists, Archived: r.Archived,
+		})
+	}
+	return platform.CheckVaultPlatforms(out, nil)
 }
 
 // vaultStats reads the vault's stats through the server-owned long-lived handle
