@@ -150,6 +150,109 @@ func TestRestoreSession_SymlinkDirEscape(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "write must not escape the root through a symlinked directory")
 }
 
+// RestoreSessionAt is the Codex form: the main file lands at root/<mainRel>
+// (the stored relative rollout path), byte-identical to the archived bytes, and
+// the framed content hash over {"<uuid>.jsonl": written} matches the one import
+// stored — the round-trip gate (design § Success Criteria 1).
+func TestRestoreSessionAt_WritesAtRelativePath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "codex-home") // does not exist yet
+	const uuid = "019fcc39-ffbb-7212-ba7b-4291df4b05f6"
+	mainRel := "sessions/2026/08/04/rollout-2026-08-04T12-03-00-" + uuid + ".jsonl"
+	raw := codexMinimalRollout(t, codexLegacy, uuid, "/p/a")
+	wantHash, wantSize := computeContentHash(map[string][]byte{uuid + ".jsonl": raw})
+
+	res, err := RestoreSessionAt(uuid, mainRel, raw, nil, root, nil)
+	require.NoError(t, err)
+
+	target := filepath.Join(res.Root, filepath.FromSlash(mainRel))
+	assert.Equal(t, []string{target}, res.Written)
+	assert.Empty(t, res.Skipped)
+	assert.Empty(t, res.Unsafe)
+	assert.Empty(t, res.Notes, "no compressed twin → no note")
+
+	got, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, raw, got, "restored bytes must be byte-identical to the archived JSONL")
+	gotHash, gotSize := computeContentHash(map[string][]byte{uuid + ".jsonl": got})
+	assert.Equal(t, wantHash, gotHash)
+	assert.Equal(t, wantSize, gotSize)
+
+	// Nothing else was created: no root/<uuid>.jsonl, no root/<uuid>/ dir.
+	_, statErr := os.Stat(filepath.Join(res.Root, uuid+".jsonl"))
+	assert.True(t, os.IsNotExist(statErr))
+	_, statErr = os.Stat(filepath.Join(res.Root, uuid))
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+// RestoreSession is RestoreSessionAt with "<uuid>.jsonl": the Claude layout is
+// unchanged by the generalisation.
+func TestRestoreSession_DelegatesToRestoreSessionAt(t *testing.T) {
+	root := t.TempDir()
+	uuid := "abcd1234-aaaa-bbbb-cccc-1234567890ab"
+
+	viaSession, err := RestoreSession(uuid, []byte("main"), nil, root, nil)
+	require.NoError(t, err)
+	viaAt, err := RestoreSessionAt(uuid, uuid+".jsonl", []byte("main"), nil, root, func(string) bool { return true })
+	require.NoError(t, err)
+	assert.Equal(t, viaSession.Written, viaAt.Written)
+	assert.Equal(t, []string{filepath.Join(viaSession.Root, uuid+".jsonl")}, viaSession.Written)
+}
+
+// mainRel is the session's own location — an unsafe one is fatal, and nothing
+// (not even the root) is created for a path rejected up front.
+func TestRestoreSessionAt_RejectsUnsafeMainRel(t *testing.T) {
+	const uuid = "019fcc39-ffbb-7212-ba7b-4291df4b05f6"
+	tests := []struct {
+		name    string
+		mainRel string
+	}{
+		{"parent traversal", "../evil.jsonl"},
+		{"interior traversal", "sessions/../../evil.jsonl"},
+		{"absolute", "/etc/evil.jsonl"},
+		{"empty", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := t.TempDir()
+			root := filepath.Join(base, "root")
+			res, err := RestoreSessionAt(uuid, tt.mainRel, []byte("main"), nil, root, nil)
+			require.Error(t, err)
+			assert.Nil(t, res)
+			assert.Contains(t, err.Error(), "main file path")
+
+			_, statErr := os.Stat(root)
+			assert.True(t, os.IsNotExist(statErr), "root must not be created for a rejected mainRel")
+			entries, _ := os.ReadDir(base)
+			assert.Empty(t, entries, "nothing may be written anywhere")
+		})
+	}
+}
+
+// A compressed twin (root/<mainRel>.zst) is Codex's own state and is never
+// touched — the plain file is written beside it and the twin is reported.
+func TestRestoreSessionAt_LeavesZstTwinUntouched(t *testing.T) {
+	root := t.TempDir()
+	const uuid = "019fcc39-ffbb-7212-ba7b-4291df4b05f6"
+	mainRel := "sessions/2026/08/04/rollout-2026-08-04T12-03-00-" + uuid + ".jsonl"
+	twin := filepath.Join(root, filepath.FromSlash(mainRel)+".zst")
+	twinBytes := []byte("compressed bytes that must survive")
+	require.NoError(t, os.MkdirAll(filepath.Dir(twin), 0o755))
+	require.NoError(t, os.WriteFile(twin, twinBytes, 0o644))
+
+	res, err := RestoreSessionAt(uuid, mainRel, []byte("plain"), nil, root, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{filepath.Join(res.Root, filepath.FromSlash(mainRel))}, res.Written)
+	assert.Empty(t, res.Skipped, "the twin is not the target, so no overwrite decision is asked")
+
+	gotTwin, err := os.ReadFile(twin)
+	require.NoError(t, err)
+	assert.Equal(t, twinBytes, gotTwin)
+
+	require.Len(t, res.Notes, 1)
+	assert.Contains(t, res.Notes[0], filepath.Join(res.Root, filepath.FromSlash(mainRel)+".zst"))
+	assert.Contains(t, res.Notes[0], "untouched")
+}
+
 // A dangling leaf symlink at the target must not be followed: the old os.Stat
 // path would have missed it (stat fails on a dangling link), skipped the
 // overwrite prompt, and written *through* the link to an outside path.

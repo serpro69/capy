@@ -21,28 +21,59 @@ type RestoreResult struct {
 	Written []string // absolute paths written
 	Skipped []string // existing absolute paths the OverwriteFunc declined
 	Unsafe  []string // session-relative paths rejected by path-safety validation
+	// Notes are human-readable observations the CLI prints after the summary —
+	// today only "a compressed twin of the main file was left untouched at …"
+	// (see RestoreSessionAt). Empty for every Claude restore.
+	Notes []string
 }
 
-// RestoreSession writes an archived session's main JSONL and every preserved
-// sidecar back to disk under root:
+// RestoreSession writes an archived Claude Code session's main JSONL and every
+// preserved sidecar back to disk under root:
 //
 //	root/<uuid>.jsonl                  (from rawJSONL)
 //	root/<uuid>/<relative_path>        (one per vault_files entry)
 //
-// Path safety: root is created then resolved with filepath.EvalSymlinks so a
-// symlinked root component cannot redirect writes outside it; every sidecar
-// path is then validated to reject absolute paths and ".." escapes and to stay
-// within the resolved root (containment via filepath.Rel). An unsafe sidecar is
-// skipped with a warning rather than aborting the whole restore — the main
-// JSONL (the critical artifact) is always restored. Existing files are written
-// only if overwrite approves them.
+// It is RestoreSessionAt with the Claude main-file name; see there for the path
+// safety contract.
 func RestoreSession(uuid string, rawJSONL []byte, files []File, root string, overwrite OverwriteFunc) (*RestoreResult, error) {
+	return RestoreSessionAt(uuid, uuid+".jsonl", rawJSONL, files, root, overwrite)
+}
+
+// RestoreSessionAt writes an archived session back to disk under root, with the
+// main file at root/<mainRel> and every preserved sidecar at
+// root/<uuid>/<relative_path>. mainRel is the platform's location for the main
+// file: "<uuid>.jsonl" for Claude (RestoreSession), and for Codex the stored
+// relative rollout path — sessions/YYYY/MM/DD/rollout-…-<uuid>.jsonl, always
+// the plain .jsonl name even when the archived rollout was discovered as .zst
+// (design § CLI — restore). Codex rollouts have no sidecars, so files is empty
+// for them and the root/<uuid>/ convention is Claude-only in practice.
+//
+// Path safety: root is created then resolved with filepath.EvalSymlinks so a
+// symlinked root component cannot redirect writes outside it; mainRel and every
+// sidecar path are validated to reject absolute paths and ".." components and
+// to stay within the resolved root (containment via filepath.Rel). An unsafe
+// mainRel is fatal (it is the session's own location — there is nothing safe to
+// fall back to); an unsafe sidecar is skipped with a warning rather than
+// aborting the whole restore, so the main file (the critical artifact) is
+// always restored. Existing files are written only if overwrite approves them.
+//
+// A compressed twin — root/<mainRel>.zst — is never touched: Codex itself
+// materialises the plain .jsonl beside a compressed rollout when it appends, so
+// the pair is a state Codex produces. Its path is appended to
+// RestoreResult.Notes so the CLI can tell the user (design § Open Questions 5).
+func RestoreSessionAt(uuid, mainRel string, rawJSONL []byte, files []File, root string, overwrite OverwriteFunc) (*RestoreResult, error) {
 	if overwrite == nil {
 		overwrite = func(string) bool { return false }
 	}
+	// Validate the raw relative path BEFORE it is joined under root: the join
+	// cleans, so an interior ".." would otherwise be collapsed and masked.
+	if err := validateSidecarRel(mainRel); err != nil {
+		return nil, fmt.Errorf("session %q main file path: %w", uuid, err)
+	}
 
 	// 0o700: restored transcripts can carry secrets/credentials — keep them
-	// owner-only (the same user runs `claude --resume`, so this is sufficient).
+	// owner-only (the same user runs `claude --resume` / `codex resume`, so
+	// this is sufficient).
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("creating restore root %q: %w", root, err)
 	}
@@ -52,17 +83,23 @@ func RestoreSession(uuid string, rawJSONL []byte, files []File, root string, ove
 	}
 	res := &RestoreResult{Root: resolvedRoot}
 
-	// Main JSONL. A traversal-bearing uuid is fatal (it is the session's own
-	// primary key — there is nothing safe to fall back to); a symlink-escaping
-	// root is likewise fatal (it would taint every sidecar too).
-	mainTarget, err := safeChildPath(resolvedRoot, uuid+".jsonl")
+	// Main file. A traversal-bearing mainRel is fatal (see above); a
+	// symlink-escaping root is likewise fatal (it would taint every sidecar too).
+	mainTarget, err := safeChildPath(resolvedRoot, filepath.FromSlash(mainRel))
 	if err != nil {
-		return nil, fmt.Errorf("session id %q: %w", uuid, err)
+		return nil, fmt.Errorf("session %q main file path: %w", uuid, err)
 	}
 	if unsafe, err := writeRestoreFile(resolvedRoot, mainTarget, rawJSONL, overwrite, res); err != nil {
 		return nil, err
 	} else if unsafe {
 		return nil, fmt.Errorf("restore root %q escapes via a symlinked directory", resolvedRoot)
+	}
+	// Lstat, not Stat: a dangling symlink named like the twin is still "something
+	// there we did not touch" and worth the note. Worded for both outcomes of
+	// the main write — a declined overwrite means a plain file already sat there.
+	if twin := mainTarget + ".zst"; fileExistsNoFollow(twin) {
+		res.Notes = append(res.Notes, fmt.Sprintf(
+			"left a compressed copy of this session untouched at %s; a plain .jsonl sits beside it", twin))
 	}
 
 	// Sidecars under <uuid>/. relative_path is stored slash-separated.
@@ -93,10 +130,18 @@ func RestoreSession(uuid string, rawJSONL []byte, files []File, root string, ove
 	return res, nil
 }
 
+// fileExistsNoFollow reports whether something (file, dir or symlink — dangling
+// included) exists at path, without following a symlink.
+func fileExistsNoFollow(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
 // validateSidecarRel enforces the restore path-safety rules on a stored
-// (slash-separated) sidecar relative path: it must not be absolute and must not
-// contain a ".." component. These rules apply to the raw relative_path before it
-// is joined under <uuid>/, so an absolute path or interior ".." cannot be masked
+// (slash-separated) relative path — a sidecar's relative_path, or the main
+// file's mainRel (RestoreSessionAt): it must not be absolute and must not
+// contain a ".." component. These rules apply to the raw path before it is
+// joined under the root, so an absolute path or interior ".." cannot be masked
 // by the join (which would otherwise re-anchor or collapse it inside the root).
 func validateSidecarRel(rel string) error {
 	if rel == "" {

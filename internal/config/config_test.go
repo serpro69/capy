@@ -276,6 +276,25 @@ func TestClaudeProjectsDir_HonorsConfigDir(t *testing.T) {
 	assert.Equal(t, filepath.Join(cfgDir, "projects"), got)
 }
 
+func TestCodexHome_Default(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("CODEX_HOME", "")
+
+	got, err := CodexHome()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(tmpHome, ".codex"), got)
+}
+
+func TestCodexHome_HonorsEnv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CODEX_HOME", dir)
+
+	got, err := CodexHome()
+	require.NoError(t, err)
+	assert.Equal(t, dir, got)
+}
+
 func TestUnmanglePathExported(t *testing.T) {
 	root := t.TempDir()
 	projectDir := filepath.Join(root, "Projects", "capy")

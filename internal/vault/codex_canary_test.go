@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/serpro69/capy/internal/config"
 )
 
 // codex_canary_test.go runs the Codex decoder over the REAL local corpus under
@@ -27,25 +30,14 @@ import (
 // failure means either a Codex upgrade changed the rollout format or the
 // decoder regressed — inspect the reported paths before touching either.
 
-// codexRolloutNameRe parses rollout-<local ts>-<uuid>[_<rollout_id>].jsonl[.zst].
-//
-// TODO(codex-vault-sessions Slice 7.2): replace with discovery.go's
-// parseRolloutFilename once it exists; this local copy exists only because the
-// decoder slice lands before discovery.
-var codexRolloutNameRe = regexp.MustCompile(`^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(_[^.]+)?\.jsonl(\.zst)?$`)
-
-// codexCanaryHome resolves the Codex home for the canary.
-//
-// TODO(codex-vault-sessions Slice 7.1): use config.CodexHome() once it exists.
+// codexCanaryHome resolves the Codex home for the canary ("" when the home
+// directory itself cannot be resolved).
 func codexCanaryHome() string {
-	if h := os.Getenv("CODEX_HOME"); h != "" {
-		return h
-	}
-	home, err := os.UserHomeDir()
+	home, err := config.CodexHome()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".codex")
+	return home
 }
 
 // codexCanaryFile is one discovered rollout.
@@ -55,10 +47,14 @@ type codexCanaryFile struct {
 	revert     bool // _<rollout_id> variant: recognised, not decoded (v1 skips them)
 }
 
+// discoverCodexCanaryFiles walks the corpus with the canary's own loop rather
+// than DiscoverCodexSessions: the canary wants revert variants in the list (to
+// count them) and must not depend on the first-line read the discoverer adds.
+// The filename grammar is shared through parseRolloutFilename.
 func discoverCodexCanaryFiles(t *testing.T, home string) []codexCanaryFile {
 	t.Helper()
 	var files []codexCanaryFile
-	for _, sub := range []string{"sessions", "archived_sessions"} {
+	for _, sub := range codexRolloutRoots {
 		root := filepath.Join(home, sub)
 		if _, err := os.Stat(root); err != nil {
 			continue
@@ -67,11 +63,11 @@ func discoverCodexCanaryFiles(t *testing.T, home string) []codexCanaryFile {
 			if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
 				return err
 			}
-			m := codexRolloutNameRe.FindStringSubmatch(d.Name())
-			if m == nil {
+			name, ok := parseRolloutFilename(d.Name())
+			if !ok {
 				return nil
 			}
-			files = append(files, codexCanaryFile{path: path, uuid: m[1], compressed: m[3] != "", revert: m[2] != ""})
+			files = append(files, codexCanaryFile{path: path, uuid: name.UUID, compressed: name.Compressed, revert: name.RolloutID != ""})
 			return nil
 		})
 		require.NoError(t, err)
@@ -341,4 +337,70 @@ func TestCodexCanary(t *testing.T) {
 	if len(driftTypes) > 0 {
 		t.Logf("codex canary: unknown record types are skipped (ADR-021); add them to codex_types.go's known-type sets once inspected")
 	}
+}
+
+// TestCodexCanary_Discovery runs the Codex DISCOVERER (Slice 7.2) over the real
+// corpus. Discovery has the same skip-never-fail contract as the decoder (an
+// unparseable name or first line is a warning plus skip), so — as the Task 6
+// canary taught — "no error" proves nothing: the test asserts ZERO warnings of
+// any kind, that every base rollout the canary's own walk sees is discovered
+// with a project hint, and the design's cold-discovery time bound (Assumption
+// 12: all first lines read, well under the sweep's budget).
+func TestCodexCanary_Discovery(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real-corpus canary skipped under -short")
+	}
+	home := codexCanaryHome()
+	if home == "" {
+		t.Skip("no home directory")
+	}
+	files := discoverCodexCanaryFiles(t, home)
+	if len(files) == 0 {
+		t.Skipf("no Codex rollouts under %s/{sessions,archived_sessions}", home)
+	}
+	wantUUIDs := map[string]bool{}
+	var wantReverts int
+	for _, f := range files {
+		if f.revert {
+			wantReverts++
+			continue
+		}
+		wantUUIDs[f.uuid] = true
+	}
+
+	h := captureSlog(t)
+	start := time.Now()
+	sessions, report, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+
+	for _, r := range allRecords(h) {
+		assert.NotEqual(t, slog.LevelWarn, r.Level, "discovery must not warn on the real corpus: %s %v", r.Message, recordAttrs(r))
+	}
+
+	gotUUIDs := map[string]bool{}
+	var noHint []string
+	for _, sf := range sessions {
+		gotUUIDs[sf.UUID] = true
+		assert.Equal(t, PlatformCodex, sf.Platform)
+		assert.True(t, strings.HasPrefix(sf.RelativePath, "sessions/") || strings.HasPrefix(sf.RelativePath, "archived_sessions/"),
+			"RelativePath must be home-relative: %s", sf.RelativePath)
+		assert.False(t, strings.HasSuffix(sf.RelativePath, ".zst"), "RelativePath must strip .zst: %s", sf.RelativePath)
+		assert.Positive(t, sf.OnDiskSize, sf.Path)
+		if sf.ProjectPath == "" {
+			noHint = append(noHint, sf.RelativePath)
+		}
+	}
+	// Assumption 1 (line 0 is session_meta) implies every rollout yields a cwd.
+	assert.Empty(t, noHint, "rollouts discovered without a project hint")
+	assert.Equal(t, wantUUIDs, gotUUIDs, "discovered thread set differs from the canary's own walk")
+	assert.Len(t, report.SkippedRevertVariants, wantReverts)
+	assert.Equal(t, len(sessions), report.FirstLineReads, "manual discovery (no predicate) reads exactly one first line per rollout")
+	assert.Equal(t, 0, report.SkippedByPredicate)
+
+	// Assumption 12: a cold discovery over the whole corpus fits comfortably
+	// inside the sweep's 30-second budget.
+	assert.Less(t, elapsed, 5*time.Second, "cold codex discovery over %d rollouts", len(sessions))
+	t.Logf("codex canary: discovered %d rollouts (%d first-line reads, %d revert variants skipped) in %s",
+		len(sessions), report.FirstLineReads, len(report.SkippedRevertVariants), elapsed)
 }

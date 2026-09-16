@@ -142,6 +142,23 @@ func ClaudeProjectsDir() (string, error) {
 	return filepath.Join(home, ".claude", "projects"), nil
 }
 
+// CodexHome returns Codex CLI's home directory — the root holding the
+// sessions/ and archived_sessions/ rollout trees the vault discovers (and
+// Codex's own state files, which capy never reads). It honors CODEX_HOME for
+// non-default installations, falling back to ~/.codex. The path is not
+// stat-checked: a machine without Codex simply has no such directory, and
+// callers treat that as "nothing to discover".
+func CodexHome() (string, error) {
+	if dir := os.Getenv("CODEX_HOME"); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving home directory: %w", err)
+	}
+	return filepath.Join(home, ".codex"), nil
+}
+
 // UnmanglePath recovers the original filesystem path from a Claude Code mangled
 // directory name (where "/" and "." are replaced with "-") by probing the
 // filesystem. Returns "" if the path cannot be determined (e.g. the project no
