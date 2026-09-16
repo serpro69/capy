@@ -250,16 +250,29 @@ func TestDisplayReaders_DispatchFailureIsLoggedNotSilent(t *testing.T) {
 
 	body := []byte(`{"type":"user","uuid":"u1","timestamp":"2026-05-01T10:00:00Z","message":{"role":"user","content":"hello"}}` + "\n")
 
-	for _, p := range []Platform{PlatformCodex, Platform("bogus")} {
-		t.Run(string(p), func(t *testing.T) {
-			before := len(h.messagesWithPrefix("vault display: cannot decode session"))
-			assert.Equal(t, "", RenderText(p, body))
-			assert.Equal(t, "", RenderMarkdown(p, body))
-			assert.Nil(t, ParseTranscript(p, body, nil))
-			assert.Equal(t, before+3, len(h.messagesWithPrefix("vault display: cannot decode session")),
-				"one warning per failed decode")
-		})
-	}
+	// Only an unknown platform value is a dispatch failure now: since Slice 6
+	// PlatformCodex resolves to a real decoder (until then it was the
+	// ErrDecoderUnavailable stub this test originally exercised).
+	t.Run("bogus", func(t *testing.T) {
+		p := Platform("bogus")
+		before := len(h.messagesWithPrefix("vault display: cannot decode session"))
+		assert.Equal(t, "", RenderText(p, body))
+		assert.Equal(t, "", RenderMarkdown(p, body))
+		assert.Nil(t, ParseTranscript(p, body, nil))
+		assert.Equal(t, before+3, len(h.messagesWithPrefix("vault display: cannot decode session")),
+			"one warning per failed decode")
+	})
+
+	t.Run("codex over claude bytes decodes to nothing, no dispatch warning", func(t *testing.T) {
+		// The Codex decoder skips every record type it does not know (ADR-021),
+		// so Claude bytes yield an empty transcript — empty output, but NOT the
+		// dispatch failure path.
+		before := len(h.messagesWithPrefix("vault display: cannot decode session"))
+		assert.Equal(t, "", RenderText(PlatformCodex, body))
+		assert.Equal(t, "", RenderMarkdown(PlatformCodex, body))
+		assert.Nil(t, ParseTranscript(PlatformCodex, body, nil))
+		assert.Equal(t, before, len(h.messagesWithPrefix("vault display: cannot decode session")))
+	})
 
 	t.Run("claude decodes and does not warn", func(t *testing.T) {
 		before := len(h.messagesWithPrefix("vault display: cannot decode session"))
