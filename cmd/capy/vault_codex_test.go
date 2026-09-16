@@ -141,6 +141,125 @@ func TestVaultCodex_MixedPlatformSummary(t *testing.T) {
 	assert.NotContains(t, stdout, "  codex:", "a single-platform result prints no per-platform lines")
 }
 
+// codexChildRel is a sub-agent rollout spawned by codexCLIUUID: its session_meta
+// carries the parent in source.subagent.thread_spawn (CLI ≥ 0.147 shape, so it
+// has no human turn and titles from nickname · role). Both ids share their
+// first 8 hex digits, so the 12-char short id is what tells them apart.
+const codexChildRel = "sessions/2026/05/01/rollout-2026-05-01T10-05-00-" + codexChildUUID + ".jsonl"
+
+var codexChildRollout = []byte(strings.Join([]string{
+	`{"timestamp":"2026-05-01T10:05:00Z","type":"session_meta","payload":{"id":"` + codexChildUUID + `","timestamp":"2026-05-01T10:05:00Z","cwd":"/home/user/proj","originator":"codex-tui","cli_version":"0.147.0","source":{"subagent":{"thread_spawn":{"parent_thread_id":"` + codexCLIUUID + `","depth":1,"agent_path":null,"agent_nickname":"explorer","agent_role":"researcher"}}},"agent_nickname":"explorer","agent_role":"researcher","git":{"branch":"main"}}}`,
+	`{"timestamp":"2026-05-01T10:05:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The pterodactyl module owns the retry loop."}]}}`,
+}, "\n") + "\n")
+
+func writeCodexChild(t *testing.T, home string) {
+	t.Helper()
+	target := filepath.Join(home, filepath.FromSlash(codexChildRel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))
+	require.NoError(t, os.WriteFile(target, codexChildRollout, 0o644))
+}
+
+// TestVaultCodex_ParentChildSurfaces drives every Slice 9 CLI surface over a
+// Codex parent + child pair: list hides the child by default and shows it with
+// --include-children (naming its parent), --platform filters, show names
+// children/parent, search tags platform and child hits, stats breaks down per
+// platform, delete warns and does not cascade, resume refuses a Codex session.
+func TestVaultCodex_ParentChildSurfaces(t *testing.T) {
+	home := setupCodexVaultEnv(t)
+	writeCodexChild(t, home)
+	parentShort, childShort := codexCLIUUID[:12], codexChildUUID[:12]
+
+	_, stderr, code := capy(t, "vault", "import")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+
+	// list: the child is hidden by default, listed (with its parent) on request.
+	stdout, _, code := capy(t, "vault", "list")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "UUID          PLATFORM     DATE")
+	assert.Contains(t, stdout, parentShort+"  codex")
+	assert.NotContains(t, stdout, childShort)
+	stdout, _, code = capy(t, "vault", "list", "--include-children")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, childShort+"  codex")
+	assert.Contains(t, stdout, "↳ "+parentShort+"  explorer · researcher")
+	stdout, _, code = capy(t, "vault", "list", "--include-children", "--json")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, `"parent_uuid": "`+codexCLIUUID+`"`)
+	stdout, _, code = capy(t, "vault", "list", "--platform", "claude-code")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "no sessions archived")
+	stdout, _, code = capy(t, "vault", "list", "--platform", "codex")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, parentShort)
+	_, stderr, code = capy(t, "vault", "list", "--platform", "bogus")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "invalid --platform")
+
+	// show: the parent names its child, the child names its parent.
+	stdout, stderr, code = capy(t, "vault", "show", parentShort)
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "platform: codex")
+	assert.Contains(t, stdout, "children: "+childShort+"\n")
+	stdout, stderr, code = capy(t, "vault", "show", childShort, "--format", "markdown")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "- **Parent:** "+parentShort+"\n")
+	assert.Contains(t, stdout, "🤖 Codex") // the child's assistant turn decodes as Codex
+
+	// search: platform column, child hits marked, JSON carries both fields.
+	stdout, _, code = capy(t, "vault", "search", "pterodactyl")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, childShort+"  codex (child)")
+	stdout, _, code = capy(t, "vault", "search", "brontosaurus")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, parentShort+"  codex  ")
+	assert.NotContains(t, stdout, "(child)")
+	stdout, _, code = capy(t, "vault", "search", "pterodactyl", "--json")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, `"platform": "codex"`)
+	assert.Contains(t, stdout, `"parent_uuid": "`+codexCLIUUID+`"`)
+
+	// stats: per-platform rows and the child count.
+	stdout, _, code = capy(t, "vault", "stats")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "Sessions:      2\n")
+	assert.Contains(t, stdout, "Children:      1 ")
+	assert.Contains(t, stdout, "Per platform:\n")
+	assert.Regexp(t, `\n\s+2\s+[0-9.]+[KMG]?B\s+codex\n`, stdout)
+	stdout, _, code = capy(t, "vault", "stats", "--json")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, `"children": 1`)
+	assert.Contains(t, stdout, `"platform": "codex"`)
+
+	// resume: refused, and nothing restored — CODEX_HOME points at a fresh dir so
+	// a leaked restore would be visible. (The ordering against the `claude`
+	// lookup is pinned in-process by TestResumeVaultSession_CodexFailsLoudWithoutLaunch;
+	// this harness runs `go run`, so PATH cannot be emptied here.)
+	freshHome := t.TempDir()
+	t.Setenv("CODEX_HOME", freshHome)
+	_, stderr, code = capy(t, "vault", "resume", parentShort)
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "is a Codex session")
+	assert.Contains(t, stderr, "codex resume "+codexCLIUUID)
+	entries, err := os.ReadDir(freshHome)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "a refused resume restores nothing")
+	t.Setenv("CODEX_HOME", home)
+
+	// delete: warns about the child, deletes only the parent; the child survives.
+	stdout, stderr, code = capy(t, "vault", "delete", parentShort, "--yes")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.Contains(t, stderr, "warning: 1 child session(s) name this session as parent and will NOT be deleted (no cascade): "+childShort)
+	assert.Contains(t, stdout, "deleted "+parentShort)
+	stdout, _, code = capy(t, "vault", "list", "--include-children")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, childShort+"  codex", "the child is still archived")
+	assert.NotContains(t, stdout, parentShort+"  codex", "the parent row is gone")
+	assert.Contains(t, stdout, "↳ "+parentShort, "the orphaned child still names its (deleted) parent")
+	stdout, _, code = capy(t, "vault", "list")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "no sessions archived", "an orphaned child still has a parent id and stays hidden by default")
+}
+
 // Restore with no --output writes into the Codex home (CODEX_HOME), not the
 // Claude projects dir, and leaves a compressed twin untouched with a note.
 func TestVaultCodex_RestoreDefaultRootIsCodexHome(t *testing.T) {

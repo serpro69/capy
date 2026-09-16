@@ -264,6 +264,10 @@ type Session struct {
 	Platform Platform
 	// ParentUUID is the parent session of a child rollout (Codex sub-agents are
 	// standalone rollouts linked by parent_uuid). Empty == NULL; no foreign key.
+	// Invariant relied on by the CLI's short-id rendering: a parent and its
+	// children always share one Platform (a child is spawned by its own CLI), so
+	// either side's Platform may format the other's id. Revisit if a platform
+	// ever links cross-platform children.
 	ParentUUID string
 	RawJSONL   []byte
 	Name       *SessionName
