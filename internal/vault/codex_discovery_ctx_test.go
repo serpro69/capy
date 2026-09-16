@@ -98,6 +98,12 @@ func TestDiscoverAll_ResolvesOnlySelectedRoots(t *testing.T) {
 		assert.Equal(t, PlatformClaudeCode, recordAttrs(warns[0])["platform"])
 	})
 
+	t.Run("an unknown platform in the filter is an error, not an empty result", func(t *testing.T) {
+		sessions, _, err := DiscoverAll(ctx, nil, Platform("bogus"))
+		require.ErrorIs(t, err, ErrUnknownPlatform)
+		assert.Empty(t, sessions)
+	})
+
 	t.Run("every selected platform unresolvable is an error, not an empty result", func(t *testing.T) {
 		t.Setenv("CODEX_HOME", "")
 		h := captureSlog(t)

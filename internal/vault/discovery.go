@@ -210,8 +210,10 @@ func DiscoverAll(ctx context.Context, codexOpts *CodexDiscoverOptions, only ...P
 		switch {
 		case ctx.Err() != nil:
 			// The caller's budget is spent; a partial list is not a discovery
-			// result. Propagate so the caller can tell "cancelled" from "empty".
-			return nil, report, err
+			// result. Return the CONTEXT error, not the walk's: a walk that
+			// finished just before the cancellation was observed has err == nil,
+			// and a nil error with nil sessions would read as "nothing found".
+			return nil, report, ctx.Err()
 		case errors.Is(err, errNoSessions):
 			// A root that exists but holds no sessions yet is the common state
 			// for a platform the user has installed but not used from here.
@@ -231,6 +233,12 @@ func DiscoverAll(ctx context.Context, codexOpts *CodexDiscoverOptions, only ...P
 			continue
 		}
 		all = append(all, sessions...)
+	}
+	if len(only) > 0 && selected == 0 {
+		// A filter naming only unknown platforms selects nothing; the CLI
+		// validates --platform first, so this is an API misuse — say so rather
+		// than returning an empty, successful result.
+		return nil, report, fmt.Errorf("%w: no known platform in %v", ErrUnknownPlatform, only)
 	}
 	if len(unresolved) > 0 && len(unresolved) == selected {
 		// Nothing could even be looked for: the caller must hear it (a
