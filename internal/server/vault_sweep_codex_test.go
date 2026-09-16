@@ -55,12 +55,38 @@ func codexRolloutRel(uuid string) string {
 // builders are test-private.
 func codexRolloutLines(t *testing.T, uuid, cwd, prompt string) []byte {
 	t.Helper()
+	return codexRolloutLinesWithMeta(t, codexSessionMetaPayload(uuid, cwd), prompt)
+}
+
+// codexChildRolloutLines renders an archivable sub-agent rollout (CLI ≤ 0.137
+// shape: the spawn prompt is recorded as a user_message event) whose
+// session_meta names parent as its parent thread, both lifted and under
+// source.subagent.thread_spawn, so the decoder sets Meta.ParentUUID.
+func codexChildRolloutLines(t *testing.T, uuid, parent, cwd, prompt string) []byte {
+	t.Helper()
+	meta := codexSessionMetaPayload(uuid, cwd)
+	meta["parent_thread_id"] = parent
+	meta["agent_nickname"] = "Rook"
+	meta["agent_role"] = "explorer"
+	meta["source"] = map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{
+		"parent_thread_id": parent, "depth": 1,
+	}}}
+	return codexRolloutLinesWithMeta(t, meta, prompt)
+}
+
+// codexSessionMetaPayload is the session_meta payload of a plain CLI rollout.
+func codexSessionMetaPayload(uuid, cwd string) map[string]any {
+	return map[string]any{
+		"id": uuid, "timestamp": "2026-05-01T09:58:30Z", "cwd": cwd, "originator": "codex-tui",
+		"cli_version": "0.130.0", "source": "cli",
+		"git": map[string]any{"branch": "main"},
+	}
+}
+
+func codexRolloutLinesWithMeta(t *testing.T, meta map[string]any, prompt string) []byte {
+	t.Helper()
 	lines := []map[string]any{
-		{"timestamp": "2026-05-01T10:00:00Z", "type": "session_meta", "payload": map[string]any{
-			"id": uuid, "timestamp": "2026-05-01T09:58:30Z", "cwd": cwd, "originator": "codex-tui",
-			"cli_version": "0.130.0", "source": "cli",
-			"git": map[string]any{"branch": "main"},
-		}},
+		{"timestamp": "2026-05-01T10:00:00Z", "type": "session_meta", "payload": meta},
 		{"timestamp": "2026-05-01T10:00:01Z", "type": "event_msg", "payload": map[string]any{
 			"type": "user_message", "message": prompt,
 		}},

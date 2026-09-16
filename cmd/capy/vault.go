@@ -1748,14 +1748,9 @@ func parseDateFlag(s string, endOfDay bool) (time.Time, error) {
 // that lists candidates (design § Identity and display). Every CLI surface that
 // prints a session id goes through this function with the row's platform.
 func shortUUID(u string, p vault.Platform) string {
-	n := 8
-	if p.OrClaude() == vault.PlatformCodex {
-		n = 12
-	}
-	if len(u) >= n {
-		return u[:n]
-	}
-	return u
+	// The rule lives on Platform so the MCP hit meta line (internal/server)
+	// and every CLI surface render the same prefix for the same row.
+	return p.ShortID(u)
 }
 
 // displayPath shortens a home-relative absolute path to ~/… for compact display.

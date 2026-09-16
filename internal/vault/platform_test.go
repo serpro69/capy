@@ -40,6 +40,24 @@ func TestParsePlatform(t *testing.T) {
 	}
 }
 
+// ShortID is the one display-prefix rule the CLI and the MCP hit meta line
+// share: 8 for Claude (random UUIDv4), 12 for Codex (time-ordered UUIDv7 ids
+// collide at 8).
+func TestPlatform_ShortID(t *testing.T) {
+	a := "019e22ba-4c15-7ae0-a903-255537a6a1b3"
+	b := "019e22ba-9f01-7c2d-8e44-0b1c2d3e4f50"
+
+	assert.Equal(t, "019e22ba", PlatformClaudeCode.ShortID(a))
+	assert.Equal(t, "019e22ba", Platform("").ShortID(a), "the zero value is Claude")
+	assert.Equal(t, PlatformClaudeCode.ShortID(a), PlatformClaudeCode.ShortID(b), "8 chars collide on UUIDv7")
+
+	assert.Equal(t, "019e22ba-4c1", PlatformCodex.ShortID(a))
+	assert.NotEqual(t, PlatformCodex.ShortID(a), PlatformCodex.ShortID(b), "12 chars distinguish them")
+
+	assert.Equal(t, "short", PlatformClaudeCode.ShortID("short"))
+	assert.Equal(t, "short", PlatformCodex.ShortID("short"))
+}
+
 func TestPlatform_DisplayName(t *testing.T) {
 	assert.Equal(t, "Claude", PlatformClaudeCode.DisplayName())
 	assert.Equal(t, "Codex", PlatformCodex.DisplayName())
