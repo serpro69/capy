@@ -43,8 +43,10 @@
   - [Setup](#setup-2)
   - [Quick start](#quick-start-1)
   - [Archiving sessions](#archiving-sessions)
+  - [Codex sessions](#codex-sessions)
   - [Commands](#commands)
   - [Restore and resume](#restore-and-resume)
+  - [Naming sessions](#naming-sessions)
   - [Cross-machine sync](#cross-machine-sync-1)
   - [Key rotation](#key-rotation-1)
   - [Storage and limits](#storage-and-limits)
@@ -412,7 +414,7 @@ capy encrypt
 
 <img width="1690" height="896" alt="capy_vault" src="https://github.com/user-attachments/assets/c588e8a0-86d0-44bb-ab9d-c7cb1f7ab74e" />
 
-Claude Code sessions are ephemeral, project-scoped, and destructible — lost to compaction (`/compact` rewrites the JSONL), Claude Code's 30-day auto-cleanup, or accidental deletion. The **vault** inverts all three: a **permanent, global, verbatim** archive of every session across every project, in its own encrypted SQLite database. It is both a full-text search index _and_ a backup/restore system — the raw JSONL is preserved byte-for-byte, so any archived session can be restored or resumed.
+Claude Code sessions are ephemeral, project-scoped, and destructible — lost to compaction (`/compact` rewrites the JSONL), Claude Code's 30-day auto-cleanup, or accidental deletion. The **vault** inverts all three: a **permanent, global, verbatim** archive of every session across every project — from **Claude Code and Codex CLI** alike — in its own encrypted SQLite database. It is both a full-text search index _and_ a backup/restore system — the raw JSONL is preserved byte-for-byte, so any archived session can be restored or resumed.
 
 The vault is independent of the rest of capy. You can use it even if you don't run the MCP server or use any context-window features — the only prerequisite is the `CAPY_VAULT_KEY` environment variable.
 
@@ -440,17 +442,30 @@ capy vault show 3f8a1c2b       # view a session (partial UUID, 8+ chars)
 
 Two archival paths populate the vault:
 
-- **MCP server startup sweep** — when the capy MCP server boots, a background task archives the **current project's** sessions automatically (opt-in: silently skipped unless `CAPY_VAULT_KEY` is set). Captures sessions that ended since the last boot. Set `CAPY_VAULT_SWEEP_ALL` (any non-empty value) to sweep **all** projects on every boot instead of just the current one — convenient if you don't run a periodic `import`, at the cost of a heavier startup scan.
-- **`capy vault import`** — manual, scans **all projects**. This is the primary path. Because the startup sweep only covers the current project, sessions from projects you haven't reopened can age past Claude Code's 30-day cleanup. **Run `capy vault import` periodically — a cron job or shell habit** — to catch everything:
+- **MCP server startup sweep** — when the capy MCP server boots, a background task archives the **current project's** sessions automatically (opt-in: silently skipped unless `CAPY_VAULT_KEY` is set) — Claude Code sessions from the project's directory and Codex rollouts whose recorded working directory is the project. Captures sessions that ended since the last boot. Set `CAPY_VAULT_SWEEP_ALL` (any non-empty value) to sweep **all** projects on every boot instead of just the current one — convenient if you don't run a periodic `import`, at the cost of a heavier startup scan.
+- **`capy vault import`** — manual, scans **all projects** on every platform root that exists on disk (`~/.claude/projects`, and `~/.codex/sessions` + `~/.codex/archived_sessions` when present). This is the primary path. Because the startup sweep only covers the current project, sessions from projects you haven't reopened can age past Claude Code's 30-day cleanup. **Run `capy vault import` periodically — a cron job or shell habit** — to catch everything:
 
   ```bash
   # crontab -e — archive all sessions every morning at 9am
   0 9 * * *  CAPY_VAULT_KEY='…' /usr/local/bin/capy vault import
   ```
 
-Import is idempotent: unchanged sessions are skipped, grown sessions are updated in place, and a smaller (likely compacted) variant never overwrites a fuller archive. Use `--dry-run` to preview, `--project <substr>` to scope, `--source <dir>` to import from a non-default location.
+Import is idempotent: unchanged sessions are skipped, grown sessions are updated in place, and a smaller (likely compacted) variant never overwrites a fuller archive. Use `--dry-run` to preview, `--project <substr>` to scope, `--platform claude-code|codex` to restrict the run to one tool, `--source <dir>` to import from a non-default location (a Claude Code config or projects dir, or a Codex home — the layout is autodetected).
 
 > **Compaction:** `/compact` is append-only — it appends a summary entry and never rewrites earlier turns — so the full pre-compaction transcript stays in the session file, and the next startup sweep or `import` still archives it verbatim. The only residual risk is *deleting* the session file before it's been swept/imported. Import often to minimize that window.
+
+### Codex sessions
+
+The vault archives [Codex CLI](https://github.com/openai/codex) sessions alongside Claude Code's, with no extra setup: whenever `~/.codex` (or `$CODEX_HOME`) holds a `sessions/` or `archived_sessions/` directory, `import` and the startup sweep pick up its `rollout-*.jsonl` and `rollout-*.jsonl.zst` files. Everything else works the same way — search hits are rank-merged across both tools, `show` prints a `Codex` heading, and `list`, `search` and `--json` tag every row with its platform (`claude-code` or `codex`). `capy doctor` reports which platform roots were found and how many sessions of each are archived.
+
+Codex-specific behavior worth knowing:
+
+- **Sub-agent sessions are children.** Codex records each spawned agent as its own rollout; the vault archives it as its own session linked to the parent. Children are **hidden from `list` by default** — `capy vault list --include-children` shows them under their parent (`↳ <parent id>`), `show <parent>` lists them, and in the TUI press `s` to toggle them or open a child straight from the parent's launch marker (`esc` returns to the parent). Deleting a parent warns about its children and never deletes them.
+- **Short ids are 12 characters** for Codex sessions (Codex uses UUIDv7, whose 8-character prefixes collide often). Lookups still accept any unambiguous prefix of 8+ characters.
+- **Restore goes back where Codex keeps it.** `restore` writes the plain `.jsonl` at the rollout's original path under `$CODEX_HOME` (or under `--output <dir>`), byte-identical to the archived file even when the original was `.zst`-compressed. A compressed twin already at that path is left untouched and noted.
+- **Resume is not supported yet.** `capy vault resume` on a Codex session stops before touching disk and prints how to do it by hand: `capy vault restore <id>`, then `codex resume <uuid>`.
+- **Revert variants are skipped.** Codex's `thread/revert` writes a second rollout for the same thread (`rollout-…_<id>.jsonl`); the vault archives only the base rollout and warns about each variant it skipped.
+- **Older capy binaries refuse a vault that holds Codex sessions.** The first Codex session raises the vault's reader marker to 3, so a capy built before Codex support fails to open the file instead of mislabeling those sessions. Upgrade every machine before you `merge` or copy such a vault; a vault holding only Claude Code sessions is unaffected.
 
 ### Commands
 
@@ -458,16 +473,16 @@ All commands live under `capy vault` and require `CAPY_VAULT_KEY`. A persistent 
 
 | Command                                                                               | Description                                                                                                                                                                 |
 | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `import [--source <dir>] [--project <substr>] [--dry-run]`                            | Scan and archive sessions. Mutating by default.                                                                                                                             |
+| `import [--source <dir>] [--project <substr>] [--platform claude-code\|codex] [--dry-run]` | Scan and archive sessions from every platform root that exists (Claude Code, Codex). Mutating by default.                                                              |
 | `reindex`                                                                             | Rebuild the search index for sessions archived by an older indexer (reads stored blobs, not disk; rewrites only the FTS index). Run once after upgrading capy.              |
-| `list [--project <substr>] [--name <substr>] [--limit N] [--json]`                    | List sessions, newest first (`--limit` default 50, `0` = no limit). `--name` is a case-insensitive literal substring over the displayed title (custom name if set, else imported); combines with `--project`. |
+| `list [--project <substr>] [--name <substr>] [--platform claude-code\|codex] [--include-children] [--limit N] [--json]` | List sessions, newest first (`--limit` default 50, `0` = no limit). `--name` is a case-insensitive literal substring over the displayed title (custom name if set, else imported); combines with `--project`. Sub-agent (child) sessions are hidden unless `--include-children`. |
 | `search <query> [--raw] [--project] [--role] [--after] [--before] [--limit] [--json]` | Full-text search with snippets. Plain keywords by default; `--raw` for FTS5 `MATCH` syntax. `--role user\|assistant\|tool\|system`; `--after`/`--before` take `YYYY-MM-DD`. |
-| `show <session-id> [--format text\|markdown\|json]`                                   | Display a full session. Defaults to your `$PAGER`; `--format markdown\|json` for export.                                                                                    |
-| `restore <session-id> [--output <path>]`                                              | Write the JSONL + all preserved sidecars back to disk (defaults to the session's Claude Code project dir).                                                                  |
-| `resume <session-id> [--dir <path>]`                                                  | Restore, then launch `claude --resume`. Requires `claude` on `PATH`.                                                                                                        |
-| `delete <session-id> [--yes]`                                                         | Remove a session from the vault (does not touch on-disk copies). Prompts unless `--yes`.                                                                                    |
+| `show <session-id> [--format text\|markdown\|json]`                                   | Display a full session (the header names its platform and any parent or child sessions). Defaults to your `$PAGER`; `--format markdown\|json` for export.                  |
+| `restore <session-id> [--output <path>]`                                              | Write the JSONL + all preserved sidecars back to disk (defaults to the session's Claude Code project dir, or its original path under the Codex home).                       |
+| `resume <session-id> [--dir <path>]`                                                  | Restore, then launch `claude --resume`. Requires `claude` on `PATH`. Claude Code sessions only — see [Codex sessions](#codex-sessions).                                     |
+| `delete <session-id> [--yes]`                                                         | Remove a session from the vault (does not touch on-disk copies). Prompts unless `--yes`; warns when the session has child sessions (they are kept).                         |
 | `rename <session-id> <name>` · `rename <session-id> --clear`                          | Give a session a name of your own, or clear it to fall back to the imported title. Shown everywhere (`list`, `show`, `search`, JSON, TUI); the archived transcript is untouched. See [Naming sessions](#naming-sessions). |
-| `stats [--json]`                                                                      | Session count, content size, DB file size, per-project breakdown, and the search-index version (with a count of sessions still below it — i.e. a `reindex` backlog).         |
+| `stats [--json]`                                                                      | Session count, content size, DB file size, per-project and per-platform breakdown, child-session count, and the search-index version (with a count of sessions still below it — i.e. a `reindex` backlog). |
 | `checkpoint`                                                                          | Flush the WAL into `vault.db` — run before copying it to another machine.                                                                                                   |
 | `rekey [--remove-backup]`                                                             | Rotate the vault's encryption key to the current `CAPY_VAULT_KEY`. **Stop the MCP server first.** Leaves `<vault>.bak` (still decryptable by the old key) unless `--remove-backup`.  |
 | `compact`                                                                             | Recompress sessions archived before compression existed (zstd) and `VACUUM` to reclaim disk. No-op if nothing is left uncompressed. **Stop the MCP server first.**           |
@@ -479,9 +494,9 @@ Markdown in user/assistant turns is word-wrapped by default. For styled renderin
 
 ### Restore and resume
 
-`restore` writes a session's main JSONL and every preserved sidecar (subagent transcripts, tool-results) back under the Claude Code projects directory so Claude Code can find it again, or to `--output <dir>`. Existing files are never clobbered without confirmation, and unsafe paths (absolute or `..`-escaping sidecars) are skipped.
+`restore` writes a session's main JSONL and every preserved sidecar (subagent transcripts, tool-results) back under the Claude Code projects directory so Claude Code can find it again, or to `--output <dir>`. A Codex session is written at its original relative path under `$CODEX_HOME` instead (see [Codex sessions](#codex-sessions)). Existing files are never clobbered without confirmation, and unsafe paths (absolute or `..`-escaping sidecars) are skipped.
 
-`resume` does the same, then launches `claude --resume <uuid>`. The working directory is chosen from `--dir`, then the session's recorded project path, then the current directory.
+`resume` does the same, then launches `claude --resume <uuid>`. The working directory is chosen from `--dir`, then the session's recorded project path, then the current directory. For a Codex session it stops before restoring anything and prints the manual steps instead.
 
 ### Naming sessions
 
@@ -552,7 +567,7 @@ capy vault rekey                     # enter the OLD passphrase when prompted
 - **Location:** `$XDG_DATA_HOME/capy/vault.db` (default `~/.local/share/capy/vault.db`). Override per-invocation with `--path`, or environment-wide with `CAPY_VAULT_PATH`.
 - **Encrypted at rest** with `CAPY_VAULT_KEY` (sqlite3mc / SQLCipher-compatible, same as the knowledge store). A different key cannot open the DB.
 - **Archives forever** — no TTL, no automatic cleanup. Reclaim space with `capy vault delete`. Expect ~50 MB/month for an active user; `stats` shows current size.
-- **Verbatim, not redacted.** `vault.db` concentrates every secret/credential/PII that appeared in any archived session, and `restore` writes them back as plaintext. This mirrors data that already lives unencrypted under `~/.claude/projects/` on the same host — but treat `vault.db` and its key accordingly. (Search snippets _are_ secret-stripped; the stored blobs are not.) A redacted-export pipeline is deferred to a future version.
+- **Verbatim, not redacted.** `vault.db` concentrates every secret/credential/PII that appeared in any archived session, and `restore` writes them back as plaintext. This mirrors data that already lives unencrypted under `~/.claude/projects/` and `~/.codex/sessions/` on the same host — but treat `vault.db` and its key accordingly. (Search snippets _are_ secret-stripped; the stored blobs are not.) A redacted-export pipeline is deferred to a future version.
 
 ### Environment variables
 
@@ -565,6 +580,7 @@ capy vault rekey                     # enter the OLD passphrase when prompted
 | `CAPY_VAULT_NO_COMPRESS` | When set, store new blobs uncompressed (`encoding='raw'`); `capy vault compact` refuses to run. For debugging/benchmarking. |
 | `CAPY_MACHINE_ID`      | Stable machine identity (useful in Docker/CI).                                                                         |
 | `CLAUDE_CONFIG_DIR`    | Non-default Claude Code config dir; vault discovery and restore honor it.                                              |
+| `CODEX_HOME`           | Non-default Codex home (default `~/.codex`); vault discovery, the startup sweep and restore honor it.                  |
 
 ## CLI Commands
 
