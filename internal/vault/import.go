@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -297,6 +298,22 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		// Claude Code never moves a session file.
 		hint := locationHint(sf)
 		moved := found && hash == existingHash && platform == PlatformCodex && hint != existingHint
+		if moved && codexRolloutPresent(sf.Root, existingHint) {
+			// Not a move: the file at the stored hint is still on disk, so this
+			// is a duplicate copy (sessions/ and archived_sessions/ both holding
+			// the thread). The in-run map above catches that pair only when the
+			// run sees both copies; the server sweep's skip predicate drops the
+			// archived-at-its-path copy UNOPENED, so the other copy would arrive
+			// here as the run's first sighting and flip the hint — and the next
+			// start would flip it back (one write per startup, a restore target
+			// that alternates). The hint follows the file only once the old
+			// location is empty; a lingering duplicate is `skipped`, real and dry
+			// run alike.
+			slog.Debug("vault import: duplicate codex copy, stored location still present",
+				"uuid", sf.UUID, "stored", existingHint, "copy", hint)
+			res.record(outcome(StatusSkipped, size))
+			continue
+		}
 		if moved && !opts.DryRun {
 			if err := store.UpdateLocationHint(ctx, sf.UUID, hint); err != nil {
 				slog.Warn("vault import: location hint update failed", "platform", platform, "uuid", sf.UUID, "error", err)
@@ -460,6 +477,27 @@ func locationHint(sf *SessionFile) string {
 		return sf.RelativePath
 	}
 	return sf.ProjectDir
+}
+
+// codexRolloutPresent reports whether a rollout still exists at the stored
+// location hint rel (slash-separated, .zst-stripped) under the Codex home root
+// — as the plain file or its compressed twin. It is the location policy's
+// "was this a move or a duplicate?" test: true means the old copy is still
+// there, so a same-hash file elsewhere must not steal the hint. An empty root
+// (a SessionFile built without the discoverer — older callers, hand-built
+// tests) cannot be checked and reads as "not present", which keeps the
+// pre-check behavior of following the file.
+func codexRolloutPresent(root, rel string) bool {
+	if root == "" || rel == "" {
+		return false
+	}
+	base := filepath.Join(root, filepath.FromSlash(rel))
+	for _, p := range [...]string{base, base + ".zst"} {
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
+			return true
+		}
+	}
+	return false
 }
 
 // buildRecord scans the main JSONL (with the platform's decoder) and any

@@ -2,7 +2,7 @@
 
 **Design:** [design.md](./design.md) · **Tasks:** [tasks.md](./tasks.md) · **Research:** [research.md](./research.md) · **Review triage:** [design-triage.md](./design-triage.md)
 
-**Status:** Draft, revised 2026-09-13 after design review
+**Status:** Implemented (2026-09-16; all fourteen slices landed on `feat/vault_codex` — per-slice deviations from this plan are recorded under each subtask in [tasks.md](./tasks.md), and § Deferred work below is the live list of follow-ups). Plan revised 2026-09-13 after design review
 
 This plan is written for an experienced Go developer with no prior exposure to capy or to agent-CLI session formats. It is sliced Risk-First: the refactor that touches every Claude display path lands first behind a mechanical parity gate, then Codex support arrives as vertical slices that each end in a user-visible, testable path.
 
@@ -164,7 +164,7 @@ Fixture seeds: [research.md Appendix A](./research.md#appendix-a--redacted-sampl
 
 1. `docs/architecture.md` § Vault: add the transcript-model seam and decoders, replace the "three independent readers" framing, document `platform` / `parent_uuid`, the reader-version bump to 3 and what older binaries see, Codex discovery/restore paths, the revert-variant skip, the 12-character short id, and update the CLI table (`list --platform/--include-children`, Codex restore root, resume limitation). → verify: every symbol named in the section exists (`grep`).
 2. `README.md` § Session Vault: a Codex paragraph (what is discovered, where it restores, `--platform`, children hidden by default, revert variants skipped, resume not yet supported, older binaries refuse a vault holding Codex rows). → verify: commands shown actually run.
-3. `docs/feat/done/vault/design.md` *Not Doing*: append a one-line pointer that Codex support is designed in `docs/feat/wip/codex-vault-sessions/`. → verify: link resolves.
+3. `docs/feat/done/vault/design.md` *Not Doing*: append a one-line pointer that Codex support is designed in `docs/feat/done/codex-vault-sessions/`. → verify: link resolves.
 4. `docs/adr/031-transcript-model-seam-and-multi-platform-vault.md`: context (three duplicated readers, Codex), decision (pre-policy transcript model with ordered assistant parts, per-platform decoders, `platform` column with Codex-positive `DetectFormat` only for unrecognized values, Go-side validation over SQL CHECK, standalone children with `parent_uuid` and no FK, filename uuid as row identity, relative-path location hint, reader-version bump to 3 **and the standing rule that every new platform constant is a reader-version bump**, revert variants skipped in v1, no sweep opt-out), consequences (byte-identical refactor gate, older binaries refuse Codex-bearing vaults, `compact` never raises the marker past 2, an unrecognized platform value is corruption and is sniffed with a warning, no `index_version` bump), alternatives (from design § Rejected Alternatives). → verify: `docs/adr/` listing shows 031; `docs/architecture.md` links it.
 5. Index a `kk:project-conventions` note that the "three parsers in sync" convention is superseded by the transcript model (decoders own format, consumers own policy) — only now that the code reflects it. Update the existing `kk:arch-decisions` Codex notes: reader version **is** bumped to 3. (The `research.md` banner was already updated at design time.) → verify: `capy_search(source: "kk:project-conventions", queries: ["vault transcript model decoder"])` returns the note.
 

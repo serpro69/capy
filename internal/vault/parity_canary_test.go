@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -38,7 +39,7 @@ type parityEntry struct {
 }
 
 // TestParityCanary is the real-corpus half of the byte-identical gate for the
-// transcript-model refactor (docs/feat/wip/codex-vault-sessions/, Slices 3–4).
+// transcript-model refactor (docs/feat/done/codex-vault-sessions/, Slices 3–4).
 // It walks every session JSONL and subagent sidecar under
 // config.ClaudeProjectsDir(), runs the four public readers over each file via
 // readerOutputs (golden_test.go) and digests the concatenated outputs.
@@ -62,7 +63,7 @@ func TestParityCanary(t *testing.T) {
 	}
 	root, err := config.ClaudeProjectsDir()
 	require.NoError(t, err)
-	sessions, err := DiscoverSessions(root)
+	sessions, err := DiscoverSessions(context.Background(), root)
 	switch {
 	case err == nil && len(sessions) == 0,
 		errors.Is(err, fs.ErrNotExist),

@@ -459,7 +459,7 @@ Based on measured data from a real Claude Code installation (219 sessions over ~
 
 - **Cloud sync** — vault is local-only; cross-machine transfer is manual file copy
 - **Multi-user access** — single-user tool, no auth or sharing server
-- **Codex session support** — different format and discovery paths; future work. **Superseded (2026-09):** designed and implemented in [`docs/feat/wip/codex-vault-sessions/`](../../wip/codex-vault-sessions/design.md) — see [ADR-031](../../../adr/031-transcript-model-seam-and-multi-platform-vault.md)
+- **Codex session support** — different format and discovery paths; future work. **Superseded (2026-09):** designed and implemented in [`docs/feat/done/codex-vault-sessions/`](../codex-vault-sessions/design.md) — see [ADR-031](../../../adr/031-transcript-model-seam-and-multi-platform-vault.md)
 - **Session diffing** — comparing versions of the same session across compaction events
 - **Real-time watch mode** — no filesystem watcher; hook-driven + explicit import only
 - **Automatic cleanup/retention** — vault archives forever; no TTL, no tiered retention

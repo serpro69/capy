@@ -291,9 +291,14 @@ column (a pre-0006 merge source) is Claude, unsniffed — 8.8 % of real Claude s
 open with a `file-history-snapshot` line that a "Claude-shaped keys" test would
 reject. The zero-value convention is asymmetric on purpose: an empty in-memory
 `Platform` is Claude on both sides (`writePlatform` on write, `Platform.OrClaude()` at
-display and restore dispatch — every pre-0006 caller and fixture builds a `Session`
-without the field), while `DecoderFor("")` fails with `ErrUnknownPlatform`. Never
-loosen the decoder seam to absorb a zero value.
+display dispatch — every pre-0006 caller and fixture builds a `Session` without the
+field), while `DecoderFor("")` fails with `ErrUnknownPlatform`. Never loosen the
+decoder seam to absorb a zero value. `OrClaude` maps **only** the empty value: a
+surface that acts on a row (`restore`, and `resume` through the same `restoreTarget`)
+resolves the stored value with `ResolveSessionPlatform` — empty ⇒ Claude, recognized
+⇒ itself, corrupted ⇒ the same sniff-with-warning, undetectable ⇒ an error before
+anything is written — because defaulting a corrupted Codex row to Claude would
+restore its rollout under the Claude projects tree.
 
 "Any other JSON object is Claude" is safe only because **every new platform constant
 is a reader-version bump** (see [Reader version](#reader-version-min_reader_version)):
@@ -576,10 +581,15 @@ slash-separated rollout path relative to `$CODEX_HOME` with `.zst` stripped for 
 (the only faithful way to restore a local-time filename). Codex archive/unarchive is
 a move, so the first same-hash sighting of a Codex uuid at a different path performs
 a metadata-only `UpdateLocationHint` (its own immediate transaction, gated on
-`PlatformCodex` — a Claude hint is never touched) and reports `updated`; with both
-copies on disk the `sessions/` copy wins and the archived one is `skipped`. Import
-keeps an in-run map of every uuid it has seen so two files for one thread in one run
-never collide on the primary key (`SessionDigest` sees only committed state). `.zst`
+`PlatformCodex` — a Claude hint is never touched) and reports `updated` — **only if
+nothing still exists at the stored hint** (`codexRolloutPresent` stats the plain file
+and its `.zst` twin under `SessionFile.Root`, the home the walker was given). With
+both copies on disk the file in hand is a lingering duplicate and is `skipped`,
+whichever copy import happens to see: the sweep's skip predicate drops the copy at
+the stored hint unopened, so discovery order alone would have flipped the hint on
+every start. The hint follows the file once the old location is empty. Import keeps
+an in-run map of every uuid it has seen so two files for one thread in one run never
+collide on the primary key (`SessionDigest` sees only committed state). `.zst`
 rollouts are decompressed before hashing: `raw_jsonl`, `content_hash` and
 `size_bytes` are always the plain JSONL bytes. The zero-message exclusion is
 unchanged — a rollout aborted before the model answered (`task_started` then
@@ -629,8 +639,9 @@ follow-up.
 collide at 8) and 8 for Claude wherever the CLI or MCP prints a short id; the TUI
 already truncates at 12. Assistant headings use `Platform.DisplayName()`
 (`Claude`/`Codex`); every other surface — `list`, the `show` header, `search`,
-`--json`, MCP hit meta lines, `stats`, `doctor` — prints the **stored token**
-(`claude-code`/`codex`), the value `--platform` accepts. `capy doctor` and
+`--json`, MCP hit meta lines (`· <token>[ · child of <short id>]`, `formatVaultHit`),
+`stats`, `doctor` — prints the **stored token** (`claude-code`/`codex`), the value
+`--platform` accepts. `capy doctor` and
 `capy_doctor` report each platform root's existence and archived count through
 `vault.PlatformRoots` (the same `resolvePlatformRoots` the sweep uses) into the
 strings-only `platform.CheckVaultPlatforms` — `internal/platform` must not import
@@ -638,7 +649,7 @@ strings-only `platform.CheckVaultPlatforms` — `internal/platform` must not imp
 
 ### Archival Paths
 
-1. **MCP server startup** — background goroutine (`server.go` `vaultSweep`, opt-in via `CAPY_VAULT_KEY`) discovers **each platform independently** — a Claude failure or empty result never skips Codex. It imports the current project's Claude sessions, then the Codex rollouts whose first-line `cwd` equals the project dir (cleaned, symlink-resolved; a rollout with no cwd hint is unreachable by the sweep). Before Codex discovery it loads `CodexLocationSizes` once and hands the discoverer a `Skip` predicate — plain rollout: relative path **and** on-disk size match; `.zst`: path matches (rollouts are append-only, compressed ones immutable) — so an archived, unchanged file is never opened. Accepted bound, stated in the function comment: one bounded first-line read per rollout not archived at its current `(path, size)`, other projects' rollouts included, on every start, under the 30 s budget. `CAPY_VAULT_SWEEP_ALL` widens both platforms. A missing `$CODEX_HOME` is a debug line; a Codex home with no rollout root does not even open the vault (`HasCodexRolloutRoot`)
+1. **MCP server startup** — background goroutine (`server.go` `vaultSweep`, opt-in via `CAPY_VAULT_KEY`) discovers **each platform independently** — a Claude failure or empty result never skips Codex. It imports the current project's Claude sessions, then the Codex rollouts whose first-line `cwd` equals the project dir (cleaned, symlink-resolved; a rollout with no cwd hint is unreachable by the sweep). Before Codex discovery it loads `CodexLocationSizes` once and hands the discoverer a `Skip` predicate — plain rollout: relative path **and** on-disk size match; `.zst`: path matches (rollouts are append-only, compressed ones immutable) — so an archived, unchanged file is never opened. Accepted bound, stated in the function comment: one bounded first-line read per rollout not archived at its current `(path, size)`, other projects' rollouts included, on every start, under the 30 s budget. Discovery honors that budget too — every `Discoverer.Discover` takes the sweep's context, the Codex walker checks it before each entry and hands back what it found with `ctx.Err()`, and the sweep drops a cancelled walk at debug (Import would refuse the partial list at its first session boundary anyway) so the next start resumes from what is archived and shutdown never waits on a walk. `CAPY_VAULT_SWEEP_ALL` widens both platforms. A missing `$CODEX_HOME` is a debug line; a Codex home with no rollout root does not even open the vault (`HasCodexRolloutRoot`)
 2. **`capy vault import`** — manual; every platform root that exists (`DiscoverAll`), `--platform` to restrict, `--source <dir>` with layout autodetection; idempotent (hash-based, larger-total-size wins) plus the in-run reconciliation and the Codex location policy above. The summary is per platform when a run touched more than one, and counts skipped revert variants
 3. **`capy vault merge --from <path>`** — non-destructive cross-machine union (`merge.go`): reads another vault's `vault_sessions`+`vault_files`, applies the same idempotent digest decision (distinct added, larger-wins on UUID overlap), carries source metadata verbatim, re-scans FTS with the destination's decoder for the carried platform. Feature-detects a v1 (no `encoding` column) source and a pre-0006 (no `platform`/`parent_uuid`) source — absent columns mean Claude, **never sniffed**; a present but unrecognized value is sniffed with a warning and the resolved value is stored (`resolveStoredPlatform`). `--project` matches the location hint **or** `project_path` (literal substring; `LIKE` metacharacters escaped). A source whose `min_reader_version` exceeds this binary's is refused before any row. Writes only the destination, so a concurrent server sweep is absorbed by busy-timeout retry.
 

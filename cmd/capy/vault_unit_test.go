@@ -366,7 +366,7 @@ func buildCodexVault(t *testing.T, vaultPath string) {
 	require.NoError(t, os.WriteFile(filepath.Join(home, rel), codexRolloutLines(meta), 0o644))
 
 	ctx := context.Background()
-	sessions, _, err := vault.DiscoverCodexSessions(home, vault.CodexDiscoverOptions{})
+	sessions, _, err := vault.DiscoverCodexSessions(context.Background(), home, vault.CodexDiscoverOptions{})
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 	st := vault.NewVaultStore(vaultPath)
@@ -508,7 +508,7 @@ func buildVaultWithSession(t *testing.T, vaultPath, key string) string {
 		[]byte(strings.Join(lines, "\n")+"\n"), 0o644))
 
 	ctx := context.Background()
-	sessions, err := vault.DiscoverSessions(root)
+	sessions, err := vault.DiscoverSessions(context.Background(), root)
 	require.NoError(t, err)
 	st := vault.NewVaultStore(vaultPath)
 	require.NoError(t, st.Open(ctx))

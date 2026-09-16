@@ -22,7 +22,7 @@ import (
 // RenderMarkdown and ParseTranscript — for a fixture table that covers every
 // `case` arm of the three `switch line.Type` blocks and every row of
 // testdata/golden/DIVERGENCES.md. It is the byte-identical gate for the
-// transcript-model refactor (docs/feat/wip/codex-vault-sessions/, Slices 3–4):
+// transcript-model refactor (docs/feat/done/codex-vault-sessions/, Slices 3–4):
 // a refactor that changes any golden file has changed Claude behaviour.
 //
 // Regenerate deliberately with:

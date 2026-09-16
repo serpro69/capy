@@ -186,6 +186,14 @@ func TestSearchChunks_ProjectFilter(t *testing.T) {
 	for _, r := range results {
 		assert.Equal(t, chunkSearchUUIDB, r.SessionUUID, "project filter scopes to projB")
 	}
+
+	// Literal substring, like ListSessions/Search/merge (likeContains + ESCAPE):
+	// LIKE's `_` must not match the `/` in "/home/user/projB", and a bare `%`
+	// must not match everything.
+	for _, wildcard := range []string{"user_projB", "%"} {
+		assert.Empty(t, searchChunks(t, s, SearchOptions{Query: "gizmoflux", Project: wildcard}),
+			"SearchChunks --project %q must not act as a LIKE wildcard", wildcard)
+	}
 }
 
 func TestSearchChunks_TimeFilters(t *testing.T) {

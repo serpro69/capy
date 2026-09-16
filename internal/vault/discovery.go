@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,6 +47,11 @@ type SessionFile struct {
 	// filename faithfully, since the UTC metadata cannot rebuild it. Unused for
 	// Claude (whose main file is always <ProjectDir>/<uuid>.jsonl).
 	RelativePath string
+	// Root is the Codex home RelativePath is relative to (the directory the
+	// walker was given), so import can ask whether a rollout still exists at a
+	// row's stored hint before treating a same-hash file elsewhere as a move
+	// (codexRolloutPresent). Unused for Claude.
+	Root string
 	// ProjectPath is Codex's project hint: session_meta.cwd from a bounded
 	// first-line read, so project filtering needs no full scan. Empty when the
 	// first line is not a session_meta record. Unused for Claude (import
@@ -66,8 +72,13 @@ type SessionFile struct {
 // implementation is a pure directory walker: it never reads a session beyond a
 // bounded first line and never touches the vault. Two exist — claudeDiscoverer
 // and codexDiscoverer — and a third agent CLI adds a third (design § Discoverer).
+//
+// ctx bounds the walk: the server sweep runs under a 30 s budget that the walk
+// must honor as much as Import does, or a large/cold corpus eats the budget
+// before a single session is archived and every start repeats the walk. A
+// cancelled walk returns what it found so far together with ctx.Err().
 type Discoverer interface {
-	Discover(rootDir string) ([]SessionFile, DiscoveryReport, error)
+	Discover(ctx context.Context, rootDir string) ([]SessionFile, DiscoveryReport, error)
 }
 
 // DiscoveryReport carries what a discovery run skipped, so `capy vault import`
@@ -102,8 +113,8 @@ type AssociatedFile struct {
 // DiscoverSessions finds all session files reachable from rootDir. It is
 // DiscoverSessionsReport without the report — kept for callers that only need
 // the session list (the server sweep and its tests).
-func DiscoverSessions(rootDir string) ([]SessionFile, error) {
-	sessions, _, err := DiscoverSessionsReport(rootDir)
+func DiscoverSessions(ctx context.Context, rootDir string) ([]SessionFile, error) {
+	sessions, _, err := DiscoverSessionsReport(ctx, rootDir)
 	return sessions, err
 }
 
@@ -122,7 +133,7 @@ func DiscoverSessions(rootDir string) ([]SessionFile, error) {
 // maxSidecarBytes are skipped (subagent JSONLs and the main JSONL never are).
 // Results are sorted by path for determinism — within each Codex root, see
 // codexDiscoverer.
-func DiscoverSessionsReport(rootDir string) ([]SessionFile, DiscoveryReport, error) {
+func DiscoverSessionsReport(ctx context.Context, rootDir string) ([]SessionFile, DiscoveryReport, error) {
 	if rootDir == "" {
 		resolved, err := config.ClaudeProjectsDir()
 		if err != nil {
@@ -131,9 +142,9 @@ func DiscoverSessionsReport(rootDir string) ([]SessionFile, DiscoveryReport, err
 		rootDir = resolved
 	}
 	if isCodexHome(rootDir) {
-		return codexDiscoverer{}.Discover(rootDir)
+		return codexDiscoverer{}.Discover(ctx, rootDir)
 	}
-	return claudeDiscoverer{}.Discover(rootDir)
+	return claudeDiscoverer{}.Discover(ctx, rootDir)
 }
 
 // DiscoverAll discovers sessions from every platform root that exists on disk:
@@ -145,14 +156,14 @@ func DiscoverSessionsReport(rootDir string) ([]SessionFile, DiscoveryReport, err
 // uses it for its skip predicate; `capy vault import` passes nil and reads every
 // first line. only, when given, restricts discovery to those platforms (`capy
 // vault import --platform`), so the other platform's root is not walked at all
-// — not merely filtered afterwards. The returned error covers only root
-// resolution (an unresolvable home directory), never a per-platform walk.
-func DiscoverAll(codexOpts *CodexDiscoverOptions, only ...Platform) ([]SessionFile, DiscoveryReport, error) {
-	roots, err := resolvePlatformRoots()
-	if err != nil {
-		return nil, DiscoveryReport{}, err
-	}
-
+// — not even resolved: with CODEX_HOME set, `--platform codex` works on a
+// machine whose $HOME (which only the Claude root needs) cannot be resolved.
+// Root resolution is per platform and isolated: a platform whose root cannot be
+// resolved is logged at warn and skipped like a failed walk, and the returned
+// error covers only the case where EVERY selected platform failed to resolve
+// (so a single-platform run surfaces its own resolution error), never a
+// per-platform walk. ctx bounds each walk (see Discoverer).
+func DiscoverAll(ctx context.Context, codexOpts *CodexDiscoverOptions, only ...Platform) ([]SessionFile, DiscoveryReport, error) {
 	var opts CodexDiscoverOptions
 	if codexOpts != nil {
 		opts = *codexOpts
@@ -163,11 +174,23 @@ func DiscoverAll(codexOpts *CodexDiscoverOptions, only ...Platform) ([]SessionFi
 	}
 
 	var (
-		all    []SessionFile
-		report DiscoveryReport
+		all         []SessionFile
+		report      DiscoveryReport
+		selected    int
+		unresolved  []error
+		unresolvedP []Platform
 	)
-	for _, r := range roots {
-		if len(only) > 0 && !slices.Contains(only, r.Platform) {
+	for _, p := range knownPlatforms {
+		if len(only) > 0 && !slices.Contains(only, p) {
+			continue
+		}
+		selected++
+		r, err := resolvePlatformRoot(p)
+		if err != nil {
+			// Decided after the loop: logged when the other platform got through,
+			// returned when no selected platform resolved (never both).
+			unresolved = append(unresolved, err)
+			unresolvedP = append(unresolvedP, p)
 			continue
 		}
 		if !r.RootExists {
@@ -176,15 +199,19 @@ func DiscoverAll(codexOpts *CodexDiscoverOptions, only ...Platform) ([]SessionFi
 		}
 		d, ok := discoverers[r.Platform]
 		if !ok {
-			// resolvePlatformRoots and this map are maintained side by side
+			// resolvePlatformRoot and this map are maintained side by side
 			// (TestResolvePlatformRoots_CoversKnownPlatforms pins the root
 			// list); a platform in one but not the other is a programming
 			// error — skip it loudly instead of calling a nil Discoverer.
 			slog.Warn("vault discovery: no discoverer for platform root, skipping", "platform", r.Platform, "root", r.Root)
 			continue
 		}
-		sessions, rep, err := d.Discover(r.Root)
+		sessions, rep, err := d.Discover(ctx, r.Root)
 		switch {
+		case ctx.Err() != nil:
+			// The caller's budget is spent; a partial list is not a discovery
+			// result. Propagate so the caller can tell "cancelled" from "empty".
+			return nil, report, err
 		case errors.Is(err, errNoSessions):
 			// A root that exists but holds no sessions yet is the common state
 			// for a platform the user has installed but not used from here.
@@ -205,6 +232,14 @@ func DiscoverAll(codexOpts *CodexDiscoverOptions, only ...Platform) ([]SessionFi
 		}
 		all = append(all, sessions...)
 	}
+	if len(unresolved) > 0 && len(unresolved) == selected {
+		// Nothing could even be looked for: the caller must hear it (a
+		// `--platform codex` run whose CODEX_HOME and $HOME are both unusable).
+		return nil, report, errors.Join(unresolved...)
+	}
+	for i, err := range unresolved {
+		slog.Warn("vault discovery: skipping platform whose root cannot be resolved", "platform", unresolvedP[i], "error", err)
+	}
 	return all, report, nil
 }
 
@@ -216,7 +251,7 @@ type claudeDiscoverer struct{}
 
 var _ Discoverer = claudeDiscoverer{}
 
-func (claudeDiscoverer) Discover(rootDir string) ([]SessionFile, DiscoveryReport, error) {
+func (claudeDiscoverer) Discover(ctx context.Context, rootDir string) ([]SessionFile, DiscoveryReport, error) {
 	projectDirs, err := detectProjectDirs(rootDir)
 	if err != nil {
 		return nil, DiscoveryReport{}, err
@@ -224,6 +259,12 @@ func (claudeDiscoverer) Discover(rootDir string) ([]SessionFile, DiscoveryReport
 
 	var sessions []SessionFile
 	for _, projDir := range projectDirs {
+		// One project dir is the cancellation granularity: a dir holds tens of
+		// sessions, each a handful of stats — cheap enough that a finer check
+		// buys nothing.
+		if err := ctx.Err(); err != nil {
+			return sessions, DiscoveryReport{}, err
+		}
 		found, err := discoverProject(projDir)
 		if err != nil {
 			// Log and continue: one unreadable project dir must not abort discovery.
@@ -474,11 +515,13 @@ var _ Discoverer = codexDiscoverer{}
 // DiscoverCodexSessions is the exported entry to the Codex walker for callers
 // that know they hold a Codex home and need the skip predicate (the server
 // sweep). home is the Codex home directory (config.CodexHome for the default).
-func DiscoverCodexSessions(home string, opts CodexDiscoverOptions) ([]SessionFile, DiscoveryReport, error) {
-	return codexDiscoverer{opts: opts}.Discover(home)
+// A cancelled ctx stops the walk at the next file and returns the rollouts
+// found so far with ctx.Err() (see Discoverer).
+func DiscoverCodexSessions(ctx context.Context, home string, opts CodexDiscoverOptions) ([]SessionFile, DiscoveryReport, error) {
+	return codexDiscoverer{opts: opts}.Discover(ctx, home)
 }
 
-func (d codexDiscoverer) Discover(home string) ([]SessionFile, DiscoveryReport, error) {
+func (d codexDiscoverer) Discover(ctx context.Context, home string) ([]SessionFile, DiscoveryReport, error) {
 	var (
 		all    []SessionFile
 		report DiscoveryReport
@@ -490,12 +533,15 @@ func (d codexDiscoverer) Discover(home string) ([]SessionFile, DiscoveryReport, 
 			continue
 		}
 		found = true
-		sessions, err := d.walkRoot(home, root, &report)
-		if err != nil {
-			return nil, report, err
-		}
+		sessions, err := d.walkRoot(ctx, home, root, &report)
 		sort.Slice(sessions, func(i, j int) bool { return sessions[i].Path < sessions[j].Path })
 		all = append(all, sessions...)
+		if err != nil {
+			// A cancelled walk hands back the partial list (the caller decides
+			// whether a partial result is usable); a programming error in the
+			// walk does the same and is not worth a separate shape.
+			return all, report, err
+		}
 	}
 	if !found {
 		return nil, report, fmt.Errorf("no codex rollout roots (%s) under %q", strings.Join(codexRolloutRoots[:], ", "), home)
@@ -509,11 +555,15 @@ func (d codexDiscoverer) Discover(home string) ([]SessionFile, DiscoveryReport, 
 // walkRoot walks one rollout root. A rollout that survives the skip predicate
 // gets its first line read; a first line that cannot be read or parsed skips the
 // file with a warning (design § Observability). The walk itself fails only on a
-// path-relativisation error (a programming error); unreadable subtrees are
-// logged and skipped.
-func (d codexDiscoverer) walkRoot(home, root string, report *DiscoveryReport) ([]SessionFile, error) {
+// path-relativisation error (a programming error) or when ctx is cancelled —
+// checked before every entry, so no first line is read past the caller's
+// budget; unreadable subtrees are logged and skipped.
+func (d codexDiscoverer) walkRoot(ctx context.Context, home, root string, report *DiscoveryReport) ([]SessionFile, error) {
 	var sessions []SessionFile
 	err := filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if err != nil {
 			// One unreadable subtree must not abort the root. WalkDir has already
 			// skipped the entry's children when it reports a directory error.
@@ -584,6 +634,7 @@ func (d codexDiscoverer) walkRoot(home, root string, report *DiscoveryReport) ([
 			Path:         path,
 			UUID:         name.UUID,
 			RelativePath: rel,
+			Root:         home,
 			ProjectPath:  cwd,
 			Compressed:   name.Compressed,
 			OnDiskSize:   info.Size(),

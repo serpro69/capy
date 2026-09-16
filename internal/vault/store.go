@@ -1223,8 +1223,8 @@ func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Sess
 		args  []any
 	)
 	if opts.Project != "" {
-		where = append(where, `s.project_path LIKE ?`)
-		args = append(args, "%"+opts.Project+"%")
+		where = append(where, `s.project_path LIKE ? ESCAPE '\'`)
+		args = append(args, likeContains(opts.Project))
 	}
 	if !opts.IncludeChildren {
 		where = append(where, `s.parent_uuid IS NULL`)
@@ -1434,8 +1434,8 @@ func (s *VaultStore) Search(ctx context.Context, opts SearchOptions) ([]SearchRe
 	args := []any{match}
 
 	if opts.Project != "" {
-		query += ` AND s.project_path LIKE ?`
-		args = append(args, "%"+opts.Project+"%")
+		query += ` AND s.project_path LIKE ? ESCAPE '\'`
+		args = append(args, likeContains(opts.Project))
 	}
 	if opts.Role != "" {
 		query += ` AND f.role = ?`

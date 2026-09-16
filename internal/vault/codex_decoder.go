@@ -14,7 +14,7 @@ import (
 // ($CODEX_HOME/{sessions,archived_sessions}/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl,
 // decompressed) into a Transcript. Wire types live in codex_types.go; the
 // apply_patch → unified-diff conversion in codex_patch.go. Design:
-// docs/feat/wip/codex-vault-sessions/design.md § The Codex Decoder.
+// docs/feat/done/codex-vault-sessions/design.md § The Codex Decoder.
 //
 // Like the Claude decoder it is pure and pre-policy: no secret stripping, no
 // truncation, no exclusion. Every physical line advances LineIndex so anchors
@@ -140,6 +140,15 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 			return
 		}
 		slots = append(slots, codexSlot{kind: EntryHuman, lineIndex: lineIndex, timestamp: ts, text: text, fallback: fallback})
+		// Only an event-derived human closes the open assistant slot. A fallback
+		// (response_item) human is provisional — pass 2b drops it whenever the
+		// event stream produced any human — so letting it reset openAsst would
+		// split an assistant's text from its own tool calls in every ordinary
+		// file where the response_item copy of the prompt lands mid-turn.
+		// Accepted gap: in a file with NO human events at all (never observed —
+		// Assumption 2 is canary-pinned), a function_call that directly follows
+		// a fallback human with no assistant message in between attaches to the
+		// previous turn's assistant slot instead of opening a new one.
 		if !fallback {
 			eventHumans++
 			openAsst = -1
@@ -698,6 +707,11 @@ func stripExecHeader(body string) string {
 		switch {
 		case line == "Output:":
 			if dropped == 0 {
+				// A status line (`Process …` / `Script …`) followed straight by
+				// `Output:` with none of the header's own lines before it is not
+				// the wrapper grammar (real headers always lead with `Chunk ID:`),
+				// so the body — `Output:` marker included — is deliberately
+				// left untouched rather than guessed at.
 				return body
 			}
 			if !found {

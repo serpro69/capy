@@ -1,6 +1,6 @@
 # Reader divergence inventory
 
-> Gate for `docs/feat/wip/codex-vault-sessions/` Slices 3 and 4 (tasks 3.x, 4.x).
+> Gate for `docs/feat/done/codex-vault-sessions/` Slices 3 and 4 (tasks 3.x, 4.x).
 > Every row below maps to a transcript-model field (design.md § The Transcript
 > Model) or is marked **consumer policy** / **log-only**. Slices 3/4 may not start
 > while a row is unmapped. Frozen behaviour is pinned by `golden_test.go` (this

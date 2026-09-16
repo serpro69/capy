@@ -81,8 +81,8 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 	var filter strings.Builder
 	var params []any
 	if opts.Project != "" {
-		filter.WriteString(" AND s.project_path LIKE ?")
-		params = append(params, "%"+opts.Project+"%")
+		filter.WriteString(` AND s.project_path LIKE ? ESCAPE '\'`)
+		params = append(params, likeContains(opts.Project))
 	}
 	if !opts.After.IsZero() {
 		filter.WriteString(" AND s.end_time >= ?")

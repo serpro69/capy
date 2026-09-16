@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -335,8 +336,29 @@ func TestCodexCanary(t *testing.T) {
 	}
 
 	// Assumption 11: every parent-resolved child id names a discovered rollout.
+	// The corpus is live: a Codex session running during the canary can spawn a
+	// child AFTER the walk above and BEFORE its parent is decoded, so the parent
+	// names a child the walk never saw. Like parity_canary_test.go's "input
+	// changed since baseline" skip, that is not drift — re-walk once and treat a
+	// child that exists on disk now as a late arrival, not a failure.
+	var lateWalk map[string]bool
+	lateChildren := 0
 	for child, parent := range childLinks {
-		assert.True(t, knownIDs[child], "Assumption 11: child %s (spawned from %s) is not a discovered rollout", child, parent)
+		if knownIDs[child] {
+			continue
+		}
+		if lateWalk == nil {
+			lateWalk = map[string]bool{}
+			for _, f := range discoverCodexCanaryFiles(t, home) {
+				lateWalk[f.uuid] = true
+			}
+		}
+		if lateWalk[child] {
+			lateChildren++
+			t.Logf("Assumption 11: child %s (spawned from %s) appeared on disk after the walk — a live session, skipped", child, parent)
+			continue
+		}
+		assert.Failf(t, "Assumption 11 violated", "child %s (spawned from %s) is not a discovered rollout", child, parent)
 	}
 
 	assert.Empty(t, mismatches, "Assumption 2 reconciliation:\n%s", strings.Join(mismatches, "\n"))
@@ -359,7 +381,7 @@ func TestCodexCanary(t *testing.T) {
 
 	t.Logf("codex canary: %d rollouts decoded (%d legacy, %d paginated, %d sub-agents, %d compressed, %d revert variants skipped) under %s",
 		decoded, legacy, paginated, subagents, compressed, reverts, home)
-	t.Logf("codex canary: %d human, %d assistant, %d tool-result entries; %d parent→child links resolved", humansTotal, assistantsTotal, resultsTotal, len(childLinks))
+	t.Logf("codex canary: %d human, %d assistant, %d tool-result entries; %d parent→child links resolved (%d children appeared after the walk)", humansTotal, assistantsTotal, resultsTotal, len(childLinks), lateChildren)
 	t.Logf("codex canary: %d aborted-at-startup shells (0 human, 0 assistant; %d logged at debug); %d files fingerprinted unknown record types: %v",
 		len(shells), shellLevel, len(drift), driftTypes)
 	t.Logf("codex canary consumers: %d non-shell rollouts scan to ≥ 1 message (%d FTS rows); %d openable child markers, %d apply_patch diff markers",
@@ -401,7 +423,7 @@ func TestCodexCanary_Discovery(t *testing.T) {
 
 	h := captureSlog(t)
 	start := time.Now()
-	sessions, report, err := DiscoverCodexSessions(home, CodexDiscoverOptions{})
+	sessions, report, err := DiscoverCodexSessions(context.Background(), home, CodexDiscoverOptions{})
 	elapsed := time.Since(start)
 	require.NoError(t, err)
 
