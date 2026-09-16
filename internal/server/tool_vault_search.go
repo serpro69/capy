@@ -127,21 +127,34 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 
 // formatVaultHit renders one chunk hit: a session:<uuid> label (so the assistant
 // can pivot to `capy vault show`/the TUI), the session title, its project and end
-// date, the first-line anchor, and the pre-windowed chunk snippet.
+// date, the first-line anchor, the producing platform and — for a sub-agent
+// session — its parent, then the pre-windowed chunk snippet.
+//
+// The platform is the STORED token ("claude-code", "codex"), the same value
+// `capy vault list --platform` accepts and `--json` emits, so the assistant can
+// pivot without translating a display name. It is appended for every hit,
+// Claude included, so a mixed result set reads uniformly; a Claude hit is
+// otherwise byte-identical to the pre-platform format. The parent marker uses
+// the platform's short-id rule (12 chars for Codex) — parent and child always
+// share a platform (see vault.Session.ParentUUID).
 func formatVaultHit(r vault.SearchResult) string {
 	title := r.Title
 	if title == "" {
 		title = "(untitled session)"
 	}
 
-	meta := make([]string, 0, 3)
+	platform := r.Platform.OrClaude()
+	meta := make([]string, 0, 5)
 	if r.ProjectPath != "" {
 		meta = append(meta, r.ProjectPath)
 	}
 	if !r.EndTime.IsZero() {
 		meta = append(meta, r.EndTime.Format("2006-01-02"))
 	}
-	meta = append(meta, fmt.Sprintf("line %d", r.LineIndex))
+	meta = append(meta, fmt.Sprintf("line %d", r.LineIndex), platform.String())
+	if r.ParentUUID != "" {
+		meta = append(meta, "child of "+platform.ShortID(r.ParentUUID))
+	}
 
 	return fmt.Sprintf("--- [session:%s] ---\n### %s\n%s\n\n%s",
 		r.SessionUUID, title, strings.Join(meta, " · "), r.Snippet)

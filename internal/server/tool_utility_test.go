@@ -256,6 +256,30 @@ func TestStats_VaultReindexBacklog(t *testing.T) {
 	assert.Contains(t, text, "capy vault reindex")
 }
 
+// Task 11.2: the vault section breaks the archive down per platform (stored
+// token, the value `capy vault list --platform` accepts) and counts the child
+// sessions that `list` hides by default, so "Archived sessions" reconciles.
+func TestStats_VaultPerPlatformAndChildren(t *testing.T) {
+	home := setupCodexSweepEnv(t)
+	project := t.TempDir()
+	parent, child := codexSweepMatch, codexSweepOther
+	writeCodexRollout(t, home, codexRolloutRel(parent),
+		codexRolloutLines(t, parent, project, "plan the migration rollout"))
+	writeCodexRollout(t, home, codexRolloutRel(child),
+		codexChildRolloutLines(t, child, parent, project, "inspect the goroutine scheduler internals"))
+
+	srv := newTestServerWithProjectDir(t, nil, project)
+	sum := srv.vaultSweep(context.Background())
+	require.Equal(t, 2, sum.codex.Imported)
+
+	text := resultText(callStats(t, srv))
+	assert.Contains(t, text, "| Archived sessions | 2 |")
+	assert.Contains(t, text, "| Child sessions (hidden from `list` by default) | 1 |")
+	assert.Contains(t, text, "#### Per platform")
+	assert.Regexp(t, `\| codex \| 2 \| [0-9.]+KB \|`, text, "one row per stored platform value")
+	assert.NotContains(t, text, "| claude-code |", "no Claude rows were archived, so no Claude row is printed")
+}
+
 // newTestServerWithArchivedSession builds a server whose (temp) vault holds one
 // archived session, returning the session UUID. The record carries no FTS/chunk
 // rows on purpose — these tests validate only the index_version backlog

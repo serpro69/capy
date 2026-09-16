@@ -150,10 +150,13 @@ func (s *Server) handleStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.C
 			lines = append(lines, "", "### Vault", "",
 				fmt.Sprintf("Error reading vault stats: %v", err))
 		case vs.Sessions > 0:
+			// Children are counted in "Archived sessions" but hidden by `capy vault
+			// list` by default — name that so the two numbers reconcile.
 			lines = append(lines, "", "### Vault", "",
 				"| Metric | Value |",
 				"|--------|------:|",
 				fmt.Sprintf("| Archived sessions | %d |", vs.Sessions),
+				fmt.Sprintf("| Child sessions (hidden from `list` by default) | %d |", vs.Children),
 				fmt.Sprintf("| Content size | %s |", formatBytes(vs.TotalBytes)),
 				fmt.Sprintf("| Index version | v%d |", vs.IndexVersion),
 			)
@@ -162,6 +165,23 @@ func (s *Server) handleStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.C
 					fmt.Sprintf("| **Reindex backlog** | **%d session(s) below v%d — run `capy vault reindex`** |",
 						vs.OutdatedSessions, vs.IndexVersion),
 				)
+			}
+			// Per-platform breakdown (stored token, ascending — the value
+			// `capy vault list --platform` accepts), so a dual-tool user can see
+			// that both agent CLIs are being archived. The count includes
+			// children like "Archived sessions" does, and the header says so,
+			// because `list --platform <p>` hides them and would otherwise
+			// appear to disagree.
+			if len(vs.ByPlatform) > 0 {
+				lines = append(lines, "",
+					"#### Per platform",
+					"| Platform | Sessions (incl. children) | Content size |",
+					"|----------|--------------------------:|-------------:|",
+				)
+				for _, p := range vs.ByPlatform {
+					lines = append(lines, fmt.Sprintf("| %s | %d | %s |",
+						p.Platform.OrClaude(), p.Sessions, formatBytes(p.Bytes)))
+				}
 			}
 		}
 	}

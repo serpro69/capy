@@ -84,6 +84,25 @@ func (p Platform) DisplayName() string {
 	return string(p)
 }
 
+// ShortID returns the display prefix of a session uuid for platform p: 12
+// characters for Codex — UUIDv7 ids share a time-ordered prefix and collide at
+// 8 (22 of the 164 rollouts measured at research time) but not at 12 — and 8
+// for Claude, whose UUIDv4 ids are random. A shorter uuid is returned whole and
+// the zero value is Claude (OrClaude). This is the one display rule shared by
+// the CLI (`list`, `show`, search output, import table) and the MCP hit meta
+// line; lookup (minUUIDPrefix) is independent of it. The TUI's shortID truncates
+// every id at 12 and deliberately does not use this.
+func (p Platform) ShortID(uuid string) string {
+	n := 8
+	if p.OrClaude() == PlatformCodex {
+		n = 12
+	}
+	if len(uuid) >= n {
+		return uuid[:n]
+	}
+	return uuid
+}
+
 // codexSessionMetaType is the envelope `type` of the first line of every Codex
 // rollout (168/168 local files; research.md § 3.2).
 const codexSessionMetaType = "session_meta"

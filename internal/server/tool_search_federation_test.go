@@ -170,3 +170,24 @@ func TestSearch_BacklogHintFederated(t *testing.T) {
 	assert.NotContains(t, text, "knowledge base is empty", "archived sessions exist — must not claim the KB is empty")
 	assert.Contains(t, text, "capy vault reindex", "a zero-hit search with a backlog must name the reindex command")
 }
+
+// Task 11.1: the federated path renders vault hits through the same
+// formatVaultHit, so a Claude session hit in capy_search carries its platform
+// token and the session:<uuid> tag is unchanged.
+func TestSearch_FederatedVaultHitCarriesPlatform(t *testing.T) {
+	projectDir, uuid1, _ := setupVaultSweepProject(t)
+	t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)
+
+	srv := newTestServerWithProjectDir(t, nil, projectDir)
+	srv.vaultSweep(context.Background())
+	seedDurableDBGuide(t, srv)
+
+	r := callSearch(t, srv, map[string]any{
+		"queries": []any{"configure the database"},
+	})
+	assert.False(t, r.IsError)
+	text := resultText(r)
+	assert.Contains(t, text, "[session:"+uuid1+"]")
+	assert.Contains(t, text, " · claude-code\n", "a Claude vault hit is labeled with its stored platform token")
+	assert.NotContains(t, text, "child of", "a top-level Claude session has no parent marker")
+}
