@@ -103,6 +103,7 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 	if lineCap <= 0 {
 		lineCap = scanLineCap
 	}
+	log := decoderLogger(r) // carries "file" when the caller labelled r (withSource)
 	t := &Transcript{Meta: Meta{Platform: PlatformCodex}}
 	var (
 		slots        []codexSlot
@@ -162,7 +163,7 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 		}
 		var line codexLine
 		if err := json.Unmarshal(data, &line); err != nil {
-			slog.Warn("vault codex decoder: skipping malformed JSONL line", "line", lineIndex, "error", err)
+			log.Warn("vault codex decoder: skipping malformed JSONL line", "line", lineIndex, "error", err)
 			return
 		}
 		ts := parseJSONLTime(line.Timestamp)
@@ -179,7 +180,7 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 				return // first session_meta wins
 			}
 			var m codexSessionMeta
-			if !codexUnmarshalPayload(line.Payload, &m, lineIndex, codexSessionMetaType) {
+			if !codexUnmarshalPayload(log, line.Payload, &m, lineIndex, codexSessionMetaType) {
 				return
 			}
 			meta = &m
@@ -187,13 +188,13 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 
 		case codexTypeResponseItem:
 			var probe codexPayloadType
-			if !codexUnmarshalPayload(line.Payload, &probe, lineIndex, codexTypeResponseItem) {
+			if !codexUnmarshalPayload(log, line.Payload, &probe, lineIndex, codexTypeResponseItem) {
 				return
 			}
 			switch probe.Type {
 			case "message":
 				var msg codexMessage
-				if !codexUnmarshalPayload(line.Payload, &msg, lineIndex, "message") {
+				if !codexUnmarshalPayload(log, line.Payload, &msg, lineIndex, "message") {
 					return
 				}
 				switch msg.Role {
@@ -209,7 +210,7 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 
 			case "function_call":
 				var fc codexFunctionCall
-				if !codexUnmarshalPayload(line.Payload, &fc, lineIndex, "function_call") {
+				if !codexUnmarshalPayload(log, line.Payload, &fc, lineIndex, "function_call") {
 					return
 				}
 				call := &ToolCall{ID: fc.CallID, Name: fc.Name, Summary: codexFunctionCallSummary(fc)}
@@ -230,7 +231,7 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 
 			case "custom_tool_call":
 				var cc codexCustomToolCall
-				if !codexUnmarshalPayload(line.Payload, &cc, lineIndex, "custom_tool_call") {
+				if !codexUnmarshalPayload(log, line.Payload, &cc, lineIndex, "custom_tool_call") {
 					return
 				}
 				input, _ := json.Marshal(cc.Input)
@@ -238,14 +239,14 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 
 			case "web_search_call":
 				var ws codexWebSearchCall
-				if !codexUnmarshalPayload(line.Payload, &ws, lineIndex, "web_search_call") {
+				if !codexUnmarshalPayload(log, line.Payload, &ws, lineIndex, "web_search_call") {
 					return
 				}
 				attachCall(ts, &ToolCall{Name: "web_search", Summary: codexWebSearchSummary(ws.Action), Input: ws.Action})
 
 			case "function_call_output":
 				var out codexFunctionCallOutput
-				if !codexUnmarshalPayload(line.Payload, &out, lineIndex, "function_call_output") {
+				if !codexUnmarshalPayload(log, line.Payload, &out, lineIndex, "function_call_output") {
 					return
 				}
 				slots = append(slots, codexSlot{
@@ -256,7 +257,7 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 
 			case "custom_tool_call_output":
 				var out codexCustomToolCallOutput
-				if !codexUnmarshalPayload(line.Payload, &out, lineIndex, "custom_tool_call_output") {
+				if !codexUnmarshalPayload(log, line.Payload, &out, lineIndex, "custom_tool_call_output") {
 					return
 				}
 				s := codexSlot{kind: EntryToolResult, lineIndex: lineIndex, timestamp: ts, callID: out.CallID}
@@ -278,20 +279,20 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 
 		case codexTypeEventMsg:
 			var probe codexPayloadType
-			if !codexUnmarshalPayload(line.Payload, &probe, lineIndex, codexTypeEventMsg) {
+			if !codexUnmarshalPayload(log, line.Payload, &probe, lineIndex, codexTypeEventMsg) {
 				return
 			}
 			switch probe.Type {
 			case "user_message":
 				var ev codexUserMessageEvent
-				if !codexUnmarshalPayload(line.Payload, &ev, lineIndex, "user_message") {
+				if !codexUnmarshalPayload(log, line.Payload, &ev, lineIndex, "user_message") {
 					return
 				}
 				addHuman(ts, ev.Message, false)
 
 			case "item_completed":
 				var ev codexItemCompleted
-				if !codexUnmarshalPayload(line.Payload, &ev, lineIndex, "item_completed") {
+				if !codexUnmarshalPayload(log, line.Payload, &ev, lineIndex, "item_completed") {
 					return
 				}
 				switch ev.Item.Type {
@@ -311,7 +312,7 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 
 			case "collab_agent_spawn_end":
 				var ev codexCollabSpawnEnd
-				if !codexUnmarshalPayload(line.Payload, &ev, lineIndex, "collab_agent_spawn_end") {
+				if !codexUnmarshalPayload(log, line.Payload, &ev, lineIndex, "collab_agent_spawn_end") {
 					return
 				}
 				if ev.CallID != "" {
@@ -421,9 +422,9 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 	}
 	switch {
 	case humans == 0 && assistants > 0 && !isSubagent:
-		slog.Warn("vault codex decoder: no human turn found", "cli_version", cliVersion, "history_mode", historyMode, "assistant_entries", assistants)
+		log.Warn("vault codex decoder: no human turn found", "cli_version", cliVersion, "history_mode", historyMode, "assistant_entries", assistants)
 	case humans == 0 && assistants == 0:
-		slog.Debug("vault codex decoder: rollout has no human or assistant entries", "cli_version", cliVersion, "history_mode", historyMode, "lines", lineIndex+1)
+		log.Debug("vault codex decoder: rollout has no human or assistant entries", "cli_version", cliVersion, "history_mode", historyMode, "lines", lineIndex+1)
 	}
 	if len(unknown) > 0 {
 		types := make([]string, 0, len(unknown))
@@ -431,7 +432,7 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 			types = append(types, k)
 		}
 		sort.Strings(types)
-		slog.Debug("vault codex decoder: unrecognized record types", "cli_version", cliVersion, "types", types)
+		log.Debug("vault codex decoder: unrecognized record types", "cli_version", cliVersion, "types", types)
 	}
 	return t, nil
 }
@@ -439,10 +440,11 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 // codexUnmarshalPayload decodes a payload into v, logging one warning and
 // reporting false when it does not fit its declared shape — the line is then
 // skipped, never fatal (ADR-021), and never silently: a shape the wire types no
-// longer match is exactly what the warning is for.
-func codexUnmarshalPayload(data json.RawMessage, v any, lineIndex int, what string) bool {
+// longer match is exactly what the warning is for. log is the decoder's
+// labelled logger (decoderLogger) so the warning names its source file.
+func codexUnmarshalPayload(log *slog.Logger, data json.RawMessage, v any, lineIndex int, what string) bool {
 	if err := json.Unmarshal(data, v); err != nil {
-		slog.Warn("vault codex decoder: skipping malformed payload", "line", lineIndex, "payload", what, "error", err)
+		log.Warn("vault codex decoder: skipping malformed payload", "line", lineIndex, "payload", what, "error", err)
 		return false
 	}
 	return true

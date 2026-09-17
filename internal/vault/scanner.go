@@ -122,6 +122,51 @@ type ScanOutput struct {
 	Source       string    // Meta.Source — platform session origin; "" for Claude
 }
 
+// sourceReader labels the bytes a Decoder reads so its skip warnings ("skipping
+// malformed JSONL line", "skipping oversize JSONL line", …) can name the file
+// or session they came from. Decoders take a bare io.Reader — the same Decode
+// serves import-from-disk, reindex-from-BLOB and display — so the label rides
+// on the reader instead of a second parameter every call site would have to
+// thread through. Decoders read it back with decoderLogger; an *os.File
+// satisfies the same Name() method with its path, so a file handed straight to
+// ScanSession is labelled without wrapping.
+type sourceReader struct {
+	io.Reader
+	name string
+}
+
+// Name returns the source label (the method *os.File also has).
+func (s sourceReader) Name() string { return s.name }
+
+// withSource returns r labelled name for decoder warnings; an empty name
+// returns r unchanged.
+func withSource(name string, r io.Reader) io.Reader {
+	if name == "" {
+		return r
+	}
+	return sourceReader{Reader: r, name: name}
+}
+
+// decoderLogger returns the logger a decoder (or scanLines) should warn
+// through for r: the default logger carrying "file"=<label> when r is a
+// sourceReader or an *os.File, else the plain default logger. It reads
+// slog.Default() at call time so a per-test handler swap is honoured.
+//
+// The key is "file", not "source": Meta.Source / ScanOutput.Source already
+// mean "the platform's session origin" (Codex cli | exec | subagent), and a
+// decoder warning that one day logs that origin must not collide. For bytes
+// decoded from a vault BLOB rather than a file the label is "vault:<uuid>"
+// (scanSessionAndSubagents), so the value is self-describing either way.
+func decoderLogger(r io.Reader) *slog.Logger {
+	log := slog.Default()
+	if n, ok := r.(interface{ Name() string }); ok {
+		if name := n.Name(); name != "" {
+			log = log.With("file", name)
+		}
+	}
+	return log
+}
+
 // ScanSession decodes a session archived from platform p and extracts
 // searchable text for the FTS index: DecoderFor(p).Decode then ScanTranscript.
 // It accepts an io.Reader so it works for both import-from-disk (os.Open) and
@@ -800,6 +845,7 @@ func parseJSONLTime(s string) time.Time {
 // nothing past the call; a future caller that defers on data must copy first.
 func scanLines(r io.Reader, maxLineBytes int, fn func(data []byte, oversize bool)) error {
 	br := bufio.NewReaderSize(r, 64*1024)
+	log := decoderLogger(r)
 	var acc []byte
 	dropping := false
 
@@ -813,7 +859,7 @@ func scanLines(r io.Reader, maxLineBytes int, fn func(data []byte, oversize bool
 		case dropping:
 			fn(nil, true) // warn already emitted when dropping was set
 		case len(acc)+len(tail) > maxLineBytes:
-			slog.Warn("vault scanner: skipping oversize JSONL line for FTS extraction", "max_bytes", maxLineBytes)
+			log.Warn("vault scanner: skipping oversize JSONL line for FTS extraction", "max_bytes", maxLineBytes)
 			fn(nil, true)
 		case len(acc) == 0:
 			fn(trimEOL(tail), false)
@@ -837,7 +883,7 @@ func scanLines(r io.Reader, maxLineBytes int, fn func(data []byte, oversize bool
 				if len(acc)+len(chunk) > maxLineBytes {
 					dropping = true
 					acc = nil
-					slog.Warn("vault scanner: skipping oversize JSONL line for FTS extraction", "max_bytes", maxLineBytes)
+					log.Warn("vault scanner: skipping oversize JSONL line for FTS extraction", "max_bytes", maxLineBytes)
 				} else {
 					acc = append(acc, chunk...)
 				}

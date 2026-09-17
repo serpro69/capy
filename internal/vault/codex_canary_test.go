@@ -105,7 +105,7 @@ type codexRawTally struct {
 	outputIDs       []string        // *_output call_ids, in order
 }
 
-func tallyCodexRaw(t *testing.T, raw []byte) codexRawTally {
+func tallyCodexRaw(t *testing.T, path string, raw []byte) codexRawTally {
 	t.Helper()
 	tally := codexRawTally{callIDs: map[string]bool{}}
 	for i, data := range bytes.Split(raw, []byte{'\n'}) {
@@ -114,7 +114,7 @@ func tallyCodexRaw(t *testing.T, raw []byte) codexRawTally {
 			continue
 		}
 		var line codexLine
-		require.NoError(t, json.Unmarshal(data, &line), "line %d", i)
+		require.NoError(t, json.Unmarshal(data, &line), "%s: line %d", path, i)
 		switch line.Type {
 		case codexSessionMetaType:
 			var m codexSessionMeta
@@ -224,7 +224,7 @@ func TestCodexCanary(t *testing.T) {
 		require.NoError(t, err, f.path)
 		assert.Equal(t, PlatformCodex, p, "Assumption 1: first line is session_meta: %s", f.path)
 
-		tally := tallyCodexRaw(t, raw)
+		tally := tallyCodexRaw(t, f.path, raw)
 		assert.True(t, tally.firstLineIsMeta, "Assumption 1: %s", f.path)
 		assert.Equal(t, f.uuid, tally.metaID, "Assumption 1: session_meta.id == filename uuid: %s", f.path)
 		if tally.historyMode == "paginated" {

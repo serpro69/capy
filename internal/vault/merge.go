@@ -257,7 +257,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		// schema-current regardless of the source's indexer version. The decoder
 		// is the destination's own for the resolved platform: a Codex row is
 		// re-scanned with the Codex decoder even when the source binary was older.
-		_, fts, chunks, err := scanSessionAndSubagents(uuid, platform, src.rawJSONL, files)
+		_, fts, chunks, err := scanSessionAndSubagents(uuid, platform, "", src.rawJSONL, files)
 		if err != nil {
 			// Recorded as StatusError but NOT yet batched, so any existing
 			// destination row is left UNCHANGED (this scan happens before the write

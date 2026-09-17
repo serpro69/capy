@@ -511,7 +511,7 @@ func codexRolloutPresent(root, rel string) bool {
 // DB-less resume scans for, and it was known before any byte was read.
 func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, size int64, machineID string) (*SessionRecord, error) {
 	platform := importPlatform(sf)
-	scanOut, fts, chunks, err := scanSessionAndSubagents(sf.UUID, platform, mainBytes, files)
+	scanOut, fts, chunks, err := scanSessionAndSubagents(sf.UUID, platform, sf.Path, mainBytes, files)
 	if err != nil {
 		return nil, err
 	}
@@ -561,8 +561,19 @@ func buildRecord(sf *SessionFile, mainBytes []byte, files []File, hash string, s
 // session-wide here. Shared by import (buildRecord, which uses the metadata),
 // reindex, and merge (which use only the rows + chunks). platform selects the
 // decoder for the main transcript (DecoderFor); sidecars are always Claude.
-func scanSessionAndSubagents(uuid string, platform Platform, mainBytes []byte, files []File) (*ScanOutput, []FTSRow, []Chunk, error) {
-	scanOut, err := ScanSession(platform, bytes.NewReader(mainBytes))
+//
+// path is the on-disk location of the main transcript when the caller has one
+// (import) and "" when it decodes a stored BLOB (reindex, merge). It only feeds
+// the decoders' skip warnings (withSource, logged under "file"): a malformed
+// line is reported against the file path when known, else against
+// "vault:<uuid>" — the label says where the bytes came from, so the user can
+// find the offending file (or vault row) without a second import run.
+func scanSessionAndSubagents(uuid string, platform Platform, path string, mainBytes []byte, files []File) (*ScanOutput, []FTSRow, []Chunk, error) {
+	source := path
+	if source == "" {
+		source = "vault:" + uuid
+	}
+	scanOut, err := ScanSession(platform, withSource(source, bytes.NewReader(mainBytes)))
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -578,7 +589,7 @@ func scanSessionAndSubagents(uuid string, platform Platform, mainBytes []byte, f
 		if id == "" {
 			continue
 		}
-		results, serr := ScanSubagent(bytes.NewReader(f.RawContent), id)
+		results, serr := ScanSubagent(withSource(source+" sidecar "+f.RelativePath, bytes.NewReader(f.RawContent)), id)
 		if serr != nil {
 			slog.Warn("vault: subagent scan failed, skipping",
 				"uuid", uuid, "subagent", id, "error", serr)

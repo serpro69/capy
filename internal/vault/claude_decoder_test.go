@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -592,21 +593,44 @@ func TestClaudeDecoder_ZeroLineCapFollowsPackageCap(t *testing.T) {
 }
 
 // recordingHandler collects slog records so a test can assert on warnings
-// without depending on the default handler's output format.
+// without depending on the default handler's output format. Attrs bound with
+// Logger.With (the decoders' "file" label, decoderLogger) are folded into
+// each record so recordAttrs sees them like the built-in handlers would print
+// them; every WithAttrs derivative records into the root handler's slice.
 type recordingHandler struct {
 	mu      sync.Mutex
 	records []slog.Record
+
+	root  *recordingHandler // nil on the root; a WithAttrs child records into root
+	attrs []slog.Attr       // attrs bound via WithAttrs, prepended to each record
 }
 
 func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
 func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.records = append(h.records, r)
+	if len(h.attrs) > 0 {
+		r = r.Clone()
+		r.AddAttrs(h.attrs...)
+	}
+	root := h
+	if h.root != nil {
+		root = h.root
+	}
+	root.mu.Lock()
+	defer root.mu.Unlock()
+	root.records = append(root.records, r)
 	return nil
 }
-func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
+func (h *recordingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	root := h
+	if h.root != nil {
+		root = h.root
+	}
+	merged := make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	merged = append(merged, h.attrs...)
+	merged = append(merged, attrs...)
+	return &recordingHandler{root: root, attrs: merged}
+}
+func (h *recordingHandler) WithGroup(string) slog.Handler { return h }
 
 func (h *recordingHandler) messagesWithPrefix(prefix string) []string {
 	h.mu.Lock()
@@ -635,6 +659,45 @@ func TestClaudeDecoder_WarnsOnMalformedContent(t *testing.T) {
 		"vault claude decoder: skipping malformed JSONL line",        // `not json at all`
 		"vault claude decoder: skipping malformed assistant content", // content "not an array"
 	}, got)
+}
+
+// Both Claude skip warnings name the file when the reader is labelled
+// (withSource), mirroring TestCodexDecoder_WarningsNameTheSource.
+func TestClaudeDecoder_WarningsNameTheSource(t *testing.T) {
+	h := captureSlog(t)
+	c := goldenCaseByName(t, "malformed_lines")
+	const path = "/home/user/.claude/projects/-home-user-proj/abc.jsonl"
+	_, err := claudeDecoder{lineCap: c.lineCap}.Decode(withSource(path, bytes.NewReader(c.raw)))
+	require.NoError(t, err)
+
+	records := h.recordsWithMessage("vault claude decoder: skipping malformed JSONL line")
+	records = append(records, h.recordsWithMessage("vault claude decoder: skipping malformed assistant content")...)
+	require.Len(t, records, 2)
+	for _, r := range records {
+		assert.Equal(t, path, recordAttrs(r)["file"], r.Message)
+	}
+}
+
+// withSource / decoderLogger: an empty label leaves the reader untouched, a
+// labelled reader and an *os.File (whose Name is its path) both yield a logger
+// carrying "file", and a plain reader yields one without it.
+func TestDecoderLogger_SourceLabel(t *testing.T) {
+	h := captureSlog(t)
+	plain := strings.NewReader("")
+	assert.Same(t, plain, withSource("", plain).(*strings.Reader), "empty label is a no-op")
+
+	f, err := os.CreateTemp(t.TempDir(), "session-*.jsonl")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+
+	decoderLogger(plain).Warn("plain")
+	decoderLogger(withSource("label", plain)).Warn("labelled")
+	decoderLogger(f).Warn("file")
+
+	_, has := recordAttrs(h.recordsWithMessage("plain")[0])["file"]
+	assert.False(t, has)
+	assert.Equal(t, "label", recordAttrs(h.recordsWithMessage("labelled")[0])["file"])
+	assert.Equal(t, f.Name(), recordAttrs(h.recordsWithMessage("file")[0])["file"])
 }
 
 type errReader struct{ err error }
