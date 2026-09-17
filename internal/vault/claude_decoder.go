@@ -41,6 +41,10 @@ type toolCall struct {
 // subagentLabelMaxChars bounds a Claude launch marker label (Launch.Label).
 const subagentLabelMaxChars = 100
 
+const maxClaudeRecoveryCandidates = 16
+
+var claudeRecordPrefix = []byte(`{"parentUuid":`)
+
 // subagentLaunchLabel builds a short human label for a Claude Task/Agent launch
 // from its input: the description if present, else the subagent type, else the
 // prompt, truncated. Returns "subagent" when none is available. Fills
@@ -52,6 +56,35 @@ func subagentLaunchLabel(input json.RawMessage) string {
 		}
 	}
 	return "subagent"
+}
+
+// recoverClaudeRecordSuffix salvages a complete Claude record appended directly
+// to a torn record without the separating newline. Claude's conversation records
+// use parentUuid as their first field, which gives recovery a platform-specific
+// boundary instead of treating arbitrary nested JSON as another physical record.
+// The search skips byte zero (the already-failed record) and is attempt-bounded so
+// hostile malformed input cannot force unbounded repeated JSON decodes.
+func recoverClaudeRecordSuffix(data []byte) (jsonlLine, int, bool) {
+	searchFrom := 1
+	for range maxClaudeRecoveryCandidates {
+		rel := bytes.Index(data[searchFrom:], claudeRecordPrefix)
+		if rel < 0 {
+			break
+		}
+		offset := searchFrom + rel
+
+		var line jsonlLine
+		if err := json.Unmarshal(data[offset:], &line); err == nil &&
+			line.UUID != "" && line.Timestamp != "" &&
+			(line.Type != "" || len(line.Message) > 0 || len(line.Attachment) > 0) {
+			return line, offset, true
+		}
+		searchFrom = offset + len(claudeRecordPrefix)
+		if searchFrom >= len(data) {
+			break
+		}
+	}
+	return jsonlLine{}, 0, false
 }
 
 // claudeSlot is one in-order record collected during pass 1, before call↔result
@@ -80,9 +113,10 @@ type claudeSlot struct {
 }
 
 // Decode reads Claude Code session JSONL from r. It never fails on content —
-// malformed lines are logged and skipped, oversize lines are skipped, unknown
-// types are ignored — and returns only a genuine read error, wrapped exactly as
-// ScanSession reports it today ("reading session: …", D10).
+// malformed lines are logged and skipped unless they end with a complete
+// newline-less Claude record that can be recovered, oversize lines are skipped,
+// unknown types are ignored — and returns only a genuine read error, wrapped
+// exactly as ScanSession reports it today ("reading session: …", D10).
 func (d claudeDecoder) Decode(r io.Reader) (*Transcript, error) {
 	lineCap := d.lineCap
 	if lineCap <= 0 {
@@ -104,8 +138,14 @@ func (d claudeDecoder) Decode(r io.Reader) (*Transcript, error) {
 
 		var line jsonlLine
 		if err := json.Unmarshal(data, &line); err != nil {
-			log.Warn("vault claude decoder: skipping malformed JSONL line", "line", lineIndex, "error", err)
-			return
+			recovered, discarded, ok := recoverClaudeRecordSuffix(data)
+			if !ok {
+				log.Warn("vault claude decoder: skipping malformed JSONL line", "line", lineIndex, "error", err)
+				return
+			}
+			line = recovered
+			log.Warn("vault claude decoder: recovered trailing record from malformed JSONL line",
+				"line", lineIndex, "discarded_bytes", discarded, "error", err)
 		}
 
 		// message is parsed only when present and not the literal null; a

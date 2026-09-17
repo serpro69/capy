@@ -661,6 +661,37 @@ func TestClaudeDecoder_WarnsOnMalformedContent(t *testing.T) {
 	}, got)
 }
 
+// A real Claude session contained a torn assistant snapshot immediately followed
+// by a complete user record with no separating newline. Recover the complete
+// suffix at the same physical-line anchor instead of dropping the user turn.
+func TestClaudeDecoder_RecoversTrailingRecordFromMalformedLine(t *testing.T) {
+	h := captureSlog(t)
+	const (
+		path    = "/home/user/.claude/projects/-home-user-proj/abc.jsonl"
+		partial = `{"parentUuid":"p0","type":"assistant","uuid":"a0","message":{"role":"assistant","content":[],"usage":{"iterations":[{"input`
+		suffix  = `{"parentUuid":"a0","type":"user","uuid":"u1","timestamp":"2026-09-17T14:14:56.748Z","cwd":"/home/user/proj","gitBranch":"main","message":{"role":"user","content":"share this with the dev team"}}`
+	)
+
+	tr, err := claudeDecoder{}.Decode(withSource(path, strings.NewReader(partial+suffix+"\n")))
+	require.NoError(t, err)
+	require.Len(t, tr.Entries, 1)
+	assert.Equal(t, Entry{
+		Kind: EntryHuman, LineIndex: 0, Timestamp: parseJSONLTime("2026-09-17T14:14:56.748Z"),
+		Text: "share this with the dev team",
+	}, tr.Entries[0])
+	assert.Equal(t, "share this with the dev team", tr.Meta.TitleFallback)
+	assert.Equal(t, "/home/user/proj", tr.Meta.CWD)
+	assert.Equal(t, "main", tr.Meta.Branch)
+
+	records := h.recordsWithMessage("vault claude decoder: recovered trailing record from malformed JSONL line")
+	require.Len(t, records, 1)
+	attrs := recordAttrs(records[0])
+	assert.Equal(t, path, attrs["file"])
+	assert.EqualValues(t, 0, attrs["line"])
+	assert.EqualValues(t, len(partial), attrs["discarded_bytes"])
+	assert.Empty(t, h.recordsWithMessage("vault claude decoder: skipping malformed JSONL line"))
+}
+
 // Both Claude skip warnings name the file when the reader is labelled
 // (withSource), mirroring TestCodexDecoder_WarningsNameTheSource.
 func TestClaudeDecoder_WarningsNameTheSource(t *testing.T) {

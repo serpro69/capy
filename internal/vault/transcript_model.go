@@ -236,9 +236,11 @@ type Diff struct {
 
 // Decoder turns a session's archived bytes into a Transcript. Implementations
 // are pure and pre-policy (see the file comment) and never fail on bad CONTENT:
-// a malformed line is skipped (logged), an oversize line advances LineIndex
-// without content (the scanLines contract), unknown record types are ignored
-// (ADR-021). The only returned errors are genuine read errors from r.
+// a malformed line is skipped (logged), except that the Claude decoder may
+// recover a complete canonical record appended to a torn prefix; an oversize
+// line advances LineIndex without content (the scanLines contract), unknown
+// record types are ignored (ADR-021). The only returned errors are genuine read
+// errors from r.
 //
 // Skip warnings name their input when the caller labels r with withSource (or
 // hands over an *os.File): the label is logged under "file" — the on-disk path

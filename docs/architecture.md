@@ -257,7 +257,12 @@ progressive-snapshot merge by `message.id`, `queued_command` normalization,
 Human/Assistant/System entry is not emitted, a ToolResult with an empty body **is**;
 the Claude title fallback is the plain-string-only rule, computed as
 `Meta.TitleFallback` so the scanner never sees Claude content shapes. The stored
-title is `sanitize(explicit)`, else `truncate(sanitize(fallback), 120)`.
+title is `sanitize(explicit)`, else `truncate(sanitize(fallback), 120)`. Malformed
+physical lines are logged and skipped, with one narrow Claude recovery: when a
+torn record is followed without a newline by a complete canonical
+`{"parentUuid":...}` record, the decoder discards the torn prefix, keeps the valid
+suffix at the same physical `LineIndex`, and logs the recovery. It never attempts
+to reconstruct the incomplete prefix.
 
 The three former readers are now thin **consumers** over `[]Entry` and own every
 policy. `ScanTranscript` (`scanner.go`, behind `ScanSession(platform, r)`) applies
@@ -421,6 +426,10 @@ makes existing rows stale, so:
   (also collapses it in every display) or `diffResultTools` (FTS-excluded but the
   display stays special — see [Tool-result display](#tool-result-display-show-vs---tui)).
   The same bump rule applies to either.
+
+Version 5 adds the Claude torn-line suffix recovery above. Older indexes can lack
+an otherwise complete trailing user turn, so this decoder-layer extraction change
+also requires a rebuild even though `scanner.go` itself is unchanged.
 
 Stale sessions are upgraded two ways, both rewriting **only** the FTS rows (never
 the `raw_jsonl` blob): `capy vault reindex` rebuilds every session below
