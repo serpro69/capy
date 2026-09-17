@@ -588,6 +588,31 @@ func TestCodexDecoder_WarnsOnMalformedContent(t *testing.T) {
 	}
 	assert.Equal(t, []int64{5, 6, 7}, lines)
 	assert.Len(t, h.messagesWithPrefix("vault scanner: skipping oversize"), 1, "line 3")
+	for _, r := range h.records {
+		_, has := recordAttrs(r)["file"]
+		assert.False(t, has, "a bare reader carries no file label: %s", r.Message)
+	}
+}
+
+// Every skip warning names the file when the caller labelled the reader
+// (withSource) — the malformed-line, malformed-payload and oversize warnings
+// alike — so a user can find the offending rollout from the log line.
+func TestCodexDecoder_WarningsNameTheSource(t *testing.T) {
+	h := captureSlog(t)
+	c := codexCaseByName(t, "malformed_and_oversize")
+	const path = "/home/user/.codex/sessions/2026/09/17/rollout-x.jsonl"
+	_, err := codexDecoder{lineCap: c.lineCap}.Decode(withSource(path, bytes.NewReader(c.raw)))
+	require.NoError(t, err)
+
+	warnings := 0
+	for _, r := range h.records {
+		if !strings.HasPrefix(r.Message, "vault codex decoder: skipping") && !strings.HasPrefix(r.Message, "vault scanner: skipping oversize") {
+			continue
+		}
+		warnings++
+		assert.Equal(t, path, recordAttrs(r)["file"], r.Message)
+	}
+	assert.Equal(t, 5, warnings, "4 decoder skips + 1 oversize, all labelled")
 }
 
 // A zero lineCap follows the package cap the golden harness lowers.

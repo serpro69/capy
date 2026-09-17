@@ -276,6 +276,48 @@ func TestImport_SmallerTotalSkipped(t *testing.T) {
 	assert.Equal(t, 1, res.Skipped)
 }
 
+// A malformed line in an imported file is reported against that file's
+// on-disk path (and a sidecar's against the main path plus its relative
+// name), so the user can locate the offending file from the warning alone.
+func TestImport_MalformedLineWarningNamesFile(t *testing.T) {
+	h := captureSlog(t)
+	s := newTestVault(t)
+	root := t.TempDir()
+	projDir := filepath.Join(root, "-home-user-proj")
+	uuid := "11111111-2222-3333-4444-555555555555"
+
+	main := append(sampleMainJSONL(t), []byte("{not json\n")...)
+	writeSession(t, projDir, uuid, main, map[string][]byte{
+		"subagents/agent-abc.jsonl": []byte("{also not json\n"),
+	})
+	require.Equal(t, 1, importFixture(t, s, root, ImportOptions{}).Imported)
+
+	mainPath := filepath.Join(projDir, uuid+".jsonl")
+	records := h.recordsWithMessage("vault claude decoder: skipping malformed JSONL line")
+	require.Len(t, records, 2, "one malformed line in the main file, one in the sidecar")
+	sources := []string{}
+	for _, r := range records {
+		file, ok := recordAttrs(r)["file"].(string)
+		require.True(t, ok, "warning carries a string file label: %v", recordAttrs(r))
+		sources = append(sources, file)
+	}
+	assert.ElementsMatch(t, []string{mainPath, mainPath + " sidecar subagents/agent-abc.jsonl"}, sources)
+}
+
+// Reindex and merge decode a stored BLOB, not a file, so their warnings label
+// the input "vault:<uuid>" — self-describing, never mistakable for a path.
+func TestScanSessionAndSubagents_BlobWarningNamesVaultUUID(t *testing.T) {
+	h := captureSlog(t)
+	const uuid = "11111111-2222-3333-4444-555555555555"
+	main := append(sampleMainJSONL(t), []byte("{not json\n")...)
+	_, _, _, err := scanSessionAndSubagents(uuid, PlatformClaudeCode, "", main, nil)
+	require.NoError(t, err)
+
+	records := h.recordsWithMessage("vault claude decoder: skipping malformed JSONL line")
+	require.Len(t, records, 1)
+	assert.Equal(t, "vault:"+uuid, recordAttrs(records[0])["file"])
+}
+
 func TestImport_SubagentChangeDetectedByCompositeHash(t *testing.T) {
 	s := newTestVault(t)
 	root := t.TempDir()

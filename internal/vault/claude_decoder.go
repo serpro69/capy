@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"strings"
 	"time"
 )
@@ -89,6 +88,7 @@ func (d claudeDecoder) Decode(r io.Reader) (*Transcript, error) {
 	if lineCap <= 0 {
 		lineCap = scanLineCap
 	}
+	log := decoderLogger(r) // carries "file" when the caller labelled r (withSource)
 	t := &Transcript{Meta: Meta{Platform: PlatformClaudeCode}}
 	var slots []claudeSlot
 	assistantIdx := make(map[string]int) // message.id (else line uuid) → index in slots
@@ -104,7 +104,7 @@ func (d claudeDecoder) Decode(r io.Reader) (*Transcript, error) {
 
 		var line jsonlLine
 		if err := json.Unmarshal(data, &line); err != nil {
-			slog.Warn("vault claude decoder: skipping malformed JSONL line", "line", lineIndex, "error", err)
+			log.Warn("vault claude decoder: skipping malformed JSONL line", "line", lineIndex, "error", err)
 			return
 		}
 
@@ -172,7 +172,7 @@ func (d claudeDecoder) Decode(r io.Reader) (*Transcript, error) {
 			if len(msg.Content) > 0 {
 				if err := json.Unmarshal(msg.Content, &blocks); err != nil {
 					// The entry is still created/merged, with no blocks (D9 log-only).
-					slog.Warn("vault claude decoder: skipping malformed assistant content", "line", lineIndex, "error", err)
+					log.Warn("vault claude decoder: skipping malformed assistant content", "line", lineIndex, "error", err)
 				}
 			}
 			if idx, ok := assistantIdx[id]; ok {

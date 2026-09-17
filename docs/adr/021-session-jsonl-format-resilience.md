@@ -33,7 +33,7 @@ The parser degrades gracefully rather than failing loudly on format changes. The
 **Current resilience mechanisms:**
 
 1. **Unknown types are skipped.** The `switch` on `type` has no `default` panic — unrecognized values fall through silently.
-2. **Malformed lines are logged and skipped.** `json.Unmarshal` failures produce a `slog.Warn` with file, line number, and error. Parsing continues with the next line.
+2. **Malformed lines are logged and skipped.** `json.Unmarshal` failures produce a `slog.Warn` with file, line number, and error. Parsing continues with the next line. (The `file` attribute was missing in practice until 2026-09-17: the decoders only see an `io.Reader`, so import now labels the reader with the on-disk path — `withSource` / `decoderLogger` in `internal/vault/scanner.go` — and reindex/merge label it `vault:<uuid>`. Display consumers decode unlabelled and warn without a file.)
 3. **Scanner errors are non-fatal.** If `bufio.Scanner` hits `ErrTooLong` (line >16MB), lines read so far are still processed. The session is not discarded.
 4. **Progressive snapshot deduplication** uses `message.id` to keep only the last (most complete) snapshot. If the dedup key moves or disappears, each snapshot becomes a standalone message — producing duplicate text but not data loss.
 5. **`IsIndexable()` gate** requires min 2 non-subagent turn pairs and 200+ chars of assistant text. Sessions where parsing extracted nothing are automatically excluded from indexing.

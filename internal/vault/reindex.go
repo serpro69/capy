@@ -133,7 +133,7 @@ func rebuildSessionFTS(ctx context.Context, store *VaultStore, uuid string) ([]F
 	if err != nil {
 		return nil, nil, err
 	}
-	_, fts, chunks, err := scanSessionAndSubagents(uuid, platform, sess.RawJSONL, files)
+	_, fts, chunks, err := scanSessionAndSubagents(uuid, platform, "", sess.RawJSONL, files)
 	if err != nil {
 		return nil, nil, err
 	}

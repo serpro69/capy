@@ -239,6 +239,11 @@ type Diff struct {
 // a malformed line is skipped (logged), an oversize line advances LineIndex
 // without content (the scanLines contract), unknown record types are ignored
 // (ADR-021). The only returned errors are genuine read errors from r.
+//
+// Skip warnings name their input when the caller labels r with withSource (or
+// hands over an *os.File): the label is logged under "file" — the on-disk path
+// on import, "vault:<uuid>" on reindex/merge — via decoderLogger. An unlabelled
+// reader (display consumers) warns without it.
 type Decoder interface {
 	Decode(r io.Reader) (*Transcript, error)
 }
