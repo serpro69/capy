@@ -72,10 +72,15 @@ func sessionIDPrefixPattern(prefix string) (string, error) {
 //     tool_result rows are stale (its chunk tables are intact, but the rows lack
 //     the new input text) until `capy vault reindex` rebuilds them.
 //
+//   - v5: recover a complete Claude conversation record appended directly to a
+//     torn JSON object without a newline. Earlier decoders skipped the whole
+//     physical line, so an otherwise intact trailing user turn was absent from
+//     FTS and semantic chunks until `capy vault reindex` rebuilt them.
+//
 // Sessions whose index_version is below this are upgraded by `capy vault reindex`
 // (DB-driven, covers archived-and-deleted-from-disk sessions) or opportunistically
 // by a re-`import` of a still-on-disk session (see import.go skip gate).
-const currentIndexVersion = 4
+const currentIndexVersion = 5
 
 // schemaSQL is the full vault schema for a FRESH vault. Every table uses IF NOT
 // EXISTS so the DDL is safe to run on each open. vault_migrations is created by
