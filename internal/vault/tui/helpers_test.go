@@ -184,6 +184,7 @@ type stubStore struct {
 
 	searchCalls    int
 	lastQuery      string
+	lastSearchOpts vault.SearchOptions
 	listCalls      int
 	lastListOpts   vault.ListOptions
 	renameCalls    int
@@ -204,6 +205,9 @@ func (s *stubStore) ListSessions(_ context.Context, opts vault.ListOptions) ([]v
 	var out []vault.Session
 	for _, sess := range s.sessions {
 		if opts.Project != "" && !strings.Contains(sess.ProjectPath, opts.Project) {
+			continue
+		}
+		if opts.Platform != "" && sess.Platform.OrClaude() != opts.Platform {
 			continue
 		}
 		if !opts.IncludeChildren && sess.ParentUUID != "" {
@@ -237,7 +241,18 @@ func (s *stubStore) GetFiles(_ context.Context, uuid string) ([]vault.File, erro
 func (s *stubStore) Search(_ context.Context, opts vault.SearchOptions) ([]vault.SearchResult, error) {
 	s.searchCalls++
 	s.lastQuery = opts.Query
-	return s.results, s.searchErr
+	s.lastSearchOpts = opts
+	if s.searchErr != nil {
+		return nil, s.searchErr
+	}
+	var out []vault.SearchResult
+	for _, result := range s.results {
+		if opts.Platform != "" && result.Platform.OrClaude() != opts.Platform {
+			continue
+		}
+		out = append(out, result)
+	}
+	return out, nil
 }
 
 // RenameSession mirrors the real store's contract: shared normalization for a

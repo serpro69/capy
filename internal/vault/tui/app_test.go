@@ -30,6 +30,43 @@ func TestApp_DefaultStartsInList(t *testing.T) {
 	assert.Equal(t, modeList, m.mode)
 }
 
+func TestApp_PlatformScopeAppliesToListAndSearch(t *testing.T) {
+	claude, claudeFiles := sampleSession(t)
+	codex := codexSession(t, codexParentID, "", "Codex review", codexHumanLine("platform scoped query"))
+	st := &stubStore{
+		sessions: []vault.Session{claude, codex},
+		files: map[string][]vault.File{
+			claude.UUID: claudeFiles,
+			codex.UUID:  nil,
+		},
+		results: []vault.SearchResult{
+			{SessionUUID: claude.UUID, Platform: vault.PlatformClaudeCode},
+			{SessionUUID: codex.UUID, Platform: vault.PlatformCodex},
+		},
+	}
+
+	m, err := newModel(context.Background(), st, Options{Platform: vault.PlatformCodex})
+	require.NoError(t, err)
+	require.Len(t, m.list.list.Items(), 1)
+	assert.Equal(t, codex.UUID, m.list.list.Items()[0].(sessionItem).sess.UUID)
+	assert.Equal(t, vault.PlatformCodex, st.lastListOpts.Platform)
+
+	// A later list reload (the children toggle) must not widen the scope.
+	next, _ := m.Update(keyMsg(listChildrenKey))
+	m = next.(Model)
+	assert.Equal(t, vault.PlatformCodex, st.lastListOpts.Platform)
+
+	// Search opened from the scoped list inherits the same platform predicate.
+	m.search.input.SetValue("platform scoped query")
+	msg := m.search.runSearch(1)()
+	searchMsg, ok := msg.(searchResultsMsg)
+	require.True(t, ok)
+	require.NoError(t, searchMsg.err)
+	require.Len(t, searchMsg.results, 1)
+	assert.Equal(t, codex.UUID, searchMsg.results[0].SessionUUID)
+	assert.Equal(t, vault.PlatformCodex, st.lastSearchOpts.Platform)
+}
+
 func TestApp_ListEnterOpensView(t *testing.T) {
 	m, _ := newTestApp(t, Options{})
 	next, _ := m.Update(keyMsg("enter"))

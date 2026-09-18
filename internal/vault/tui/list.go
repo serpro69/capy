@@ -99,6 +99,9 @@ type listModel struct {
 	// not an in-memory filter — the default snapshot never contains the children,
 	// so every flip re-reads (Model.toggleChildren).
 	includeChildren bool
+	// platform is the immutable scope supplied by `vault list --platform` when
+	// the TUI starts. Every refresh and children toggle must preserve it.
+	platform vault.Platform
 
 	width, height int
 }
@@ -229,7 +232,7 @@ func (m listModel) setIncludeChildren(on bool) listModel {
 // setting, which only the store can apply since hidden children are never in
 // the snapshot.
 func (m listModel) listOptions() vault.ListOptions {
-	return vault.ListOptions{IncludeChildren: m.includeChildren}
+	return vault.ListOptions{IncludeChildren: m.includeChildren, Platform: m.platform}
 }
 
 // selectSession moves the highlight to the session with the given UUID when it

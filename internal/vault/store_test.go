@@ -409,6 +409,35 @@ func TestVaultStore_InsertGetListSearch(t *testing.T) {
 	assert.Empty(t, roleResults, "assistant row must not match --role user")
 }
 
+func TestVaultStore_SearchPlatformFilter(t *testing.T) {
+	s := newTestVault(t)
+	ctx := context.Background()
+
+	claude := sampleRecord("a11ce000-0000-0000-0000-000000000001")
+	codex := sampleRecord("c0de0000-0000-0000-0000-000000000002")
+	codex.Session.Platform = PlatformCodex
+	require.NoError(t, s.InsertSession(ctx, claude))
+	require.NoError(t, s.InsertSession(ctx, codex))
+
+	all, err := s.Search(ctx, SearchOptions{Query: "brontosaurus", Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+
+	codexOnly, err := s.Search(ctx, SearchOptions{
+		Query: "brontosaurus", Platform: PlatformCodex, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, codexOnly, 1)
+	assert.Equal(t, codex.Session.UUID, codexOnly[0].SessionUUID)
+
+	claudeOnly, err := s.Search(ctx, SearchOptions{
+		Query: "brontosaurus", Platform: PlatformClaudeCode, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, claudeOnly, 1)
+	assert.Equal(t, claude.Session.UUID, claudeOnly[0].SessionUUID)
+}
+
 func TestVaultStore_CascadeDelete(t *testing.T) {
 	s := newTestVault(t)
 	uuid := "bbbbbbbb-1111-2222-3333-444444444444"

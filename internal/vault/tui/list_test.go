@@ -103,8 +103,12 @@ func TestListModel_IncludeChildrenOptionsAndTitle(t *testing.T) {
 	assert.Equal(t, vault.ListOptions{}, m.listOptions(), "children hidden by default — the unfiltered read")
 	assert.NotContains(t, m.list.Title, "children")
 
+	m.platform = vault.PlatformCodex
+	assert.Equal(t, vault.ListOptions{Platform: vault.PlatformCodex}, m.listOptions(),
+		"the launch platform is retained in later store reads")
+
 	m = m.setIncludeChildren(true)
-	assert.Equal(t, vault.ListOptions{IncludeChildren: true}, m.listOptions())
+	assert.Equal(t, vault.ListOptions{IncludeChildren: true, Platform: vault.PlatformCodex}, m.listOptions())
 	m, _ = m.setSessions(nil, "")
 	assert.Contains(t, m.list.Title, "incl. children")
 

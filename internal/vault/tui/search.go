@@ -48,6 +48,9 @@ type searchModel struct {
 	styles Styles
 	width  int
 	height int
+	// platform is the immutable scope inherited from the command that launched
+	// the TUI. It also applies when list mode opens live search with `/`.
+	platform vault.Platform
 
 	input   textinput.Model
 	results []vault.SearchResult
@@ -110,7 +113,7 @@ func (m searchModel) runSearch(seq int) tea.Cmd {
 		if query == "" {
 			return searchResultsMsg{seq: seq}
 		}
-		res, err := store.Search(ctx, vault.SearchOptions{Query: query})
+		res, err := store.Search(ctx, vault.SearchOptions{Query: query, Platform: m.platform})
 		return searchResultsMsg{seq: seq, results: res, err: err}
 	}
 }

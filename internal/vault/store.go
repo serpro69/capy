@@ -330,13 +330,14 @@ type ListOptions struct {
 
 // SearchOptions controls Search.
 type SearchOptions struct {
-	Query   string
-	Raw     bool      // true == raw FTS5 MATCH syntax; false == plain keyword (auto-quoted)
-	Project string    // substring match on project_path
-	Role    string    // "", or user|assistant|tool|system
-	After   time.Time // filter on end_time >= After
-	Before  time.Time // filter on end_time <= Before
-	Limit   int       // <= 0 == default (20)
+	Query    string
+	Raw      bool      // true == raw FTS5 MATCH syntax; false == plain keyword (auto-quoted)
+	Project  string    // substring match on project_path
+	Platform Platform  // producing agent CLI; "" == no filter
+	Role     string    // "", or user|assistant|tool|system
+	After    time.Time // filter on end_time >= After
+	Before   time.Time // filter on end_time <= Before
+	Limit    int       // <= 0 == default (20)
 }
 
 const defaultSearchLimit = 20
@@ -1441,6 +1442,10 @@ func (s *VaultStore) Search(ctx context.Context, opts SearchOptions) ([]SearchRe
 	if opts.Project != "" {
 		query += ` AND s.project_path LIKE ? ESCAPE '\'`
 		args = append(args, likeContains(opts.Project))
+	}
+	if opts.Platform != "" {
+		query += ` AND s.platform = ?`
+		args = append(args, string(opts.Platform))
 	}
 	if opts.Role != "" {
 		query += ` AND f.role = ?`
