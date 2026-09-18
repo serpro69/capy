@@ -57,10 +57,10 @@ type chunkMeta struct {
 // trigram layer for typo/substring tolerance (design §D1; adding a vault
 // vocabulary is deferred until benchmark A2 shows the delta is unacceptable).
 //
-// Honored options: Query, Project (substring match on project_path), After /
-// Before (on session end_time), Limit (default 20). Role and Raw are rejected
-// loudly: role is undefined at chunk granularity (Not Doing), and the
-// retrieval engine owns query sanitization, so raw FTS5 syntax cannot be
+// Honored options: Query, Project (substring match on project_path), Platform,
+// After / Before (on session end_time), Limit (default 20). Role and Raw are
+// rejected loudly: role is undefined at chunk granularity (Not Doing), and
+// the retrieval engine owns query sanitization, so raw FTS5 syntax cannot be
 // passed through.
 func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]SearchResult, error) {
 	if opts.Role != "" {
@@ -83,6 +83,10 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 	if opts.Project != "" {
 		filter.WriteString(` AND s.project_path LIKE ? ESCAPE '\'`)
 		params = append(params, likeContains(opts.Project))
+	}
+	if opts.Platform != "" {
+		filter.WriteString(" AND s.platform = ?")
+		params = append(params, string(opts.Platform))
 	}
 	if !opts.After.IsZero() {
 		filter.WriteString(" AND s.end_time >= ?")

@@ -196,6 +196,27 @@ func TestSearchChunks_ProjectFilter(t *testing.T) {
 	}
 }
 
+func TestSearchChunks_PlatformFilter(t *testing.T) {
+	s := newChunkSearchVault(t)
+	db, err := s.getDB(context.Background())
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE vault_sessions SET platform = ? WHERE uuid = ?`,
+		string(PlatformCodex), chunkSearchUUIDB)
+	require.NoError(t, err)
+
+	codexOnly := searchChunks(t, s, SearchOptions{Query: "gizmoflux", Platform: PlatformCodex})
+	require.NotEmpty(t, codexOnly)
+	for _, result := range codexOnly {
+		assert.Equal(t, chunkSearchUUIDB, result.SessionUUID)
+	}
+
+	claudeOnly := searchChunks(t, s, SearchOptions{Query: "gizmoflux", Platform: PlatformClaudeCode})
+	require.NotEmpty(t, claudeOnly)
+	for _, result := range claudeOnly {
+		assert.NotEqual(t, chunkSearchUUIDB, result.SessionUUID)
+	}
+}
+
 func TestSearchChunks_TimeFilters(t *testing.T) {
 	s := newChunkSearchVault(t)
 	cut := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)

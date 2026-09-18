@@ -683,12 +683,14 @@ strings-only `platform.CheckVaultPlatforms` — `internal/platform` must not imp
 | `capy vault merge --from <path>` | Non-destructive cross-machine union (see Archival Paths). Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`; `--project` (location hint or project path), `--dry-run` |
 | `capy vault rekey` | Rotate the encryption key to the current `CAPY_VAULT_KEY` via `sqliteutil.Rekey` (SQLite backup-API: open old → checkpoint → copy into a new file under the new key → swap+verify). Sidesteps the WAL/PRAGMA-rekey incompatibility (ADR-020) by writing a fresh file. Stop the server first; `--remove-backup` unlinks the old-key `.bak` |
 
-`list`, `search`, and `show` support `--tui` for interactive browsing/search/viewing
-(filter `f` — effective title, project path, or UUID via the shared `ContainsFold`
+`list`, `search`, and `show` support `--tui` for interactive browsing/search/viewing.
+A `list --platform <platform> --tui` launch retains that predicate for the initial
+list, every list reload, and live search queries. Other interactions are: filter `f`
+— effective title, project path, or UUID via the shared `ContainsFold`
 matcher; rename `e` in the list and viewer, `ctrl+e` in search because its query
 input is always focused and a printable key would be untypeable; copy `c`; restore
 `r`; resume `R`; `s` in the list toggles child sessions, re-querying the store since
-hiding children is a SQL predicate, not an in-memory filter); the mutating/exec
+hiding children is a SQL predicate, not an in-memory filter. The mutating/exec
 commands do not. A rename runs as a Bubble Tea
 command and, on success, reloads authoritative store state (list re-query with the
 active filter reapplied, search rerun, viewer metadata refresh) rather than patching

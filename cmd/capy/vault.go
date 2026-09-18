@@ -302,12 +302,12 @@ hidden by default — mirroring Codex's own pickers, which reach them from the
 parent. Pass --include-children to list them; a child row shows "↳ <parent id>"
 before its title.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if tuiRequested(cmd) {
-				return launchTUI(cmd, env, tui.Options{Mode: "list"})
-			}
 			platform, err := parsePlatformFlag(platformFlag)
 			if err != nil {
 				return err
+			}
+			if tuiRequested(cmd) {
+				return launchTUI(cmd, env, tui.Options{Mode: "list", Platform: platform})
 			}
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()

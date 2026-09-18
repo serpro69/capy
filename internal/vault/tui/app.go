@@ -78,6 +78,9 @@ type Options struct {
 	Mode      string // "list" (default) | "search" | "view"
 	Query     string // initial query for search mode
 	SessionID string // session to open for view mode (partial UUID, 8+ chars)
+	// Platform scopes both the session list and live search for the lifetime of
+	// the TUI. The empty value includes every platform.
+	Platform vault.Platform
 }
 
 // Model is the root bubbletea model composing the list, viewer, and search
@@ -172,8 +175,9 @@ func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 	styles := DefaultStyles()
 
 	// The initial read hides children, the listModel's default (children reach
-	// the list through the toggle key — see listModel.includeChildren).
-	sessions, err := st.ListSessions(ctx, vault.ListOptions{})
+	// the list through the toggle key — see listModel.includeChildren), while
+	// retaining any platform scope supplied by the launching CLI command.
+	sessions, err := st.ListSessions(ctx, vault.ListOptions{Platform: opts.Platform})
 	if err != nil {
 		return Model{}, fmt.Errorf("loading sessions: %w", err)
 	}
@@ -182,14 +186,19 @@ func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 	ri.Prompt = renamePrompt
 	ri.CharLimit = 256
 
+	list := newListModel(sessions, styles, 0, 0)
+	list.platform = opts.Platform
+	search := newSearchModel(ctx, st, styles, 0, 0)
+	search.platform = opts.Platform
+
 	m := Model{
 		ctx:         ctx,
 		store:       st,
 		styles:      styles,
 		mode:        modeList,
-		list:        newListModel(sessions, styles, 0, 0),
+		list:        list,
 		viewer:      newViewerModel(styles, 0, 0),
-		search:      newSearchModel(ctx, st, styles, 0, 0),
+		search:      search,
 		renameInput: ri,
 		clipOut:     os.Stderr,
 	}
