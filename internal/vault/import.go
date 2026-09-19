@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ const (
 	StatusNew      = "new"      // a UUID not previously archived → inserted
 	StatusUpdated  = "updated"  // an existing UUID whose total content grew → replaced
 	StatusSkipped  = "skipped"  // unchanged (same hash) or a smaller divergent variant
-	StatusExcluded = "excluded" // empty session (0 messages) → not archived
+	StatusExcluded = "excluded" // empty session or new session below the minimum size
 	StatusError    = "error"    // read/scan/write failure; see ImportedSession.Err
 )
 
@@ -52,6 +53,10 @@ type ImportOptions struct {
 	// Platform, when non-empty, restricts the run to sessions discovered for that
 	// platform ("" == every platform in the list).
 	Platform Platform
+	// MinSessionBytes excludes new sessions smaller than this uncompressed total
+	// (main transcript + sidecars). Zero disables; callers validate non-negative.
+	// Existing archives still update/reindex, and excluded files can qualify later.
+	MinSessionBytes int64
 }
 
 // ImportedSession is the per-session outcome of an import run.
@@ -62,6 +67,7 @@ type ImportedSession struct {
 	ProjectPath string   // populated for new/updated; empty for skipped
 	SizeBytes   int64    // total content size (main JSONL + sidecars)
 	Status      string   // StatusNew | StatusUpdated | StatusSkipped | StatusExcluded | StatusError
+	Reason      string   // transcript exclusion reason; may accompany a name-only merge update
 	Err         error    // set only when Status == StatusError
 }
 
@@ -289,6 +295,16 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 			continue
 		}
 
+		// Size filtering is an admission rule, so it must follow the digest lookup
+		// and leave existing archives (including stale indexes and moves) alone.
+		if !found && size < opts.MinSessionBytes {
+			e := outcome(StatusExcluded, size)
+			e.ProjectPath = resolveProjectPath(sf.ProjectPath, sf.ProjectDir)
+			e.Reason = minimumSizeReason(size, opts.MinSessionBytes)
+			res.record(e)
+			continue
+		}
+
 		// Location policy (design § Import — Codex only): Codex archive/unarchive
 		// MOVES a rollout, so the same bytes can reappear at a new relative path.
 		// A same-hash Codex file whose relative path differs from the stored hint
@@ -376,6 +392,7 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		// same exclusion a real run would.
 		if rec.Session.MessageCount == 0 {
 			e := outcome(StatusExcluded, size)
+			e.Reason = "no messages"
 			e.Title, e.ProjectPath = rec.Session.Title, rec.Session.ProjectPath
 			res.record(e)
 			continue
@@ -425,6 +442,11 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 			"skipped", res.Skipped, "excluded", res.Excluded, "errors", res.Errors)
 	}
 	return res
+}
+
+// minimumSizeReason is shared by disk import and cross-vault merge reporting.
+func minimumSizeReason(size, minimum int64) string {
+	return fmt.Sprintf("below minimum size (%d < %d bytes)", size, minimum)
 }
 
 // warnOnMachineMismatch prints a prominent warning when the vault already holds

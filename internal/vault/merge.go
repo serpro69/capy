@@ -20,6 +20,8 @@ type MergeOptions struct {
 	// ImportOptions.Project, which matches the mangled dir or the cwd hint, so
 	// the two commands filter alike for both platforms.
 	Project string
+	// MinSessionBytes has the same admission-only semantics as ImportOptions.
+	MinSessionBytes int64
 	// DryRun computes every skip/insert/replace decision without writing.
 	DryRun bool
 }
@@ -201,6 +203,15 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			continue
 		}
 
+		if !found && src.sizeBytes < opts.MinSessionBytes {
+			res.record(ImportedSession{
+				UUID: uuid, Platform: platform, Title: src.title, ProjectPath: src.projectPath,
+				SizeBytes: src.sizeBytes, Status: StatusExcluded,
+				Reason: minimumSizeReason(src.sizeBytes, opts.MinSessionBytes),
+			})
+			continue
+		}
+
 		// Exclude empty sessions exactly as disk import does (Task 11). A v2 source
 		// already dropped these at its own import, but a v1 source predates the
 		// guard, so re-apply it here. message_count is the source's stored scan
@@ -213,6 +224,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			entry := ImportedSession{
 				UUID: uuid, Platform: Platform(src.platform), Title: src.title, ProjectPath: src.projectPath,
 				SizeBytes: src.sizeBytes, Status: StatusExcluded,
+				Reason: "no messages",
 			}
 			if found && srcName != nil {
 				entry = reconcileMergeName(ctx, dest, entry, *srcName, opts.DryRun)
