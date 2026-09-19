@@ -39,6 +39,9 @@ func Load(projectDir string) (*Config, error) {
 
 // validate enforces invariants on the merged configuration.
 func validate(cfg *Config) error {
+	if cfg.Vault.MinSessionBytes < 0 {
+		return fmt.Errorf("[vault] min_session_bytes must be >= 0 (0 disables size filtering)")
+	}
 	if cfg.Store.Cleanup.EphemeralTTLHours < 1 {
 		return fmt.Errorf("[store.cleanup] ephemeral_ttl_hours must be >= 1 (use capy_cleanup purge_ephemeral=true for one-shot aggressive purging)")
 	}
@@ -78,13 +81,23 @@ func loadAndMerge(cfg *Config, path string) error {
 	}
 
 	mergeConfig(cfg, &overlay)
+	// An explicit zero disables a lower-priority size filter; omission inherits it.
+	if detect.Vault.MinSessionBytes != nil {
+		if *detect.Vault.MinSessionBytes < 0 {
+			return fmt.Errorf("[vault] min_session_bytes must be >= 0 (0 disables size filtering)")
+		}
+		cfg.Vault.MinSessionBytes = *detect.Vault.MinSessionBytes
+	}
 	return nil
 }
 
 // detectionOverlay uses pointer fields to distinguish "user wrote 0" from
 // "user omitted the key", which the zero-value merge in mergeConfig can't do.
-// Only the keys that need strict zero-rejection appear here.
+// Keys needing zero-rejection or an explicit zero override appear here.
 type detectionOverlay struct {
+	Vault struct {
+		MinSessionBytes *int64 `toml:"min_session_bytes"`
+	} `toml:"vault"`
 	Store struct {
 		Cleanup struct {
 			EphemeralTTLHours *int `toml:"ephemeral_ttl_hours"`

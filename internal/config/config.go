@@ -5,6 +5,12 @@ type Config struct {
 	Store    StoreConfig    `toml:"store"`
 	Executor ExecutorConfig `toml:"executor"`
 	Server   ServerConfig   `toml:"server"`
+	Vault    VaultConfig    `toml:"vault"`
+}
+
+// VaultConfig controls admission of new sessions to the archive.
+type VaultConfig struct {
+	MinSessionBytes int64 `toml:"min_session_bytes"` // uncompressed transcript + sidecars; 0 disables
 }
 
 // StoreConfig controls the FTS5 knowledge base.

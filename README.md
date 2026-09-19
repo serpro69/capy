@@ -242,6 +242,9 @@ max_output_bytes = 102400  # 100 KB
 
 [server]
 log_level = "info"
+
+[vault]
+min_session_bytes = 0      # minimum size for new archives; 0 disables
 ```
 
 All settings have sensible defaults. Configuration files are optional — capy works out of the box.
@@ -451,6 +454,17 @@ Two archival paths populate the vault:
   ```
 
 Import is idempotent: unchanged sessions are skipped, grown sessions are updated in place, and a smaller (likely compacted) variant never overwrites a fuller archive. Use `--dry-run` to preview, `--project <substr>` to scope, `--platform claude-code|codex` to restrict the run to one tool, `--source <dir>` to import from a non-default location (a Claude Code config or projects dir, or a Codex home — the layout is autodetected).
+
+To exclude small sessions, set `[vault] min_session_bytes = 102400` in your TOML config (100 KiB), or pass `--min-size-bytes 102400` to `vault import` or `vault merge`. The setting defaults to `0` (disabled). An explicit `0` in a higher-priority config or CLI flag disables an inherited limit; negative values are rejected. Preview with:
+
+```bash
+capy vault import --min-size-bytes 102400 --dry-run
+capy vault merge --from /path/to/other-vault.db --min-size-bytes 102400 --dry-run
+```
+
+The minimum applies to **new sessions** in manual imports, startup sweeps, and merges. Size means uncompressed transcript **plus sidecar** bytes, matching the import table; a session exactly at the limit qualifies, and compressed and plain copies behave identically. Exclusions report the actual size and limit. Already archived sessions continue to update and reindex, and excluded sessions can qualify on later runs after growing. This filter does not delete existing archives or local session files. Zero-message sessions remain excluded even when the size filter is disabled.
+
+Config is loaded for the invocation's project (`--project-dir` overrides detection), and that one policy applies to the entire run, including imports or sweeps across projects. Use global config for a consistent limit in every project. Size is a coarse filter: metadata and tool output count too, so it does not classify conversation quality.
 
 > **Compaction:** `/compact` is append-only — it appends a summary entry and never rewrites earlier turns — so the full pre-compaction transcript stays in the session file, and the next startup sweep or `import` still archives it verbatim. The only residual risk is *deleting* the session file before it's been swept/imported. Import often to minimize that window.
 
