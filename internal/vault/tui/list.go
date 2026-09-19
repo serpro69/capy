@@ -131,6 +131,7 @@ func newListModel(sessions []vault.Session, styles Styles, width, height int) li
 			key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "rename")),
 			key.NewBinding(key.WithKeys(listChildrenKey), key.WithHelp(listChildrenKey, "children")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+			key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "raw JSONL")),
 			key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restore")),
 			key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "resume")),
 			key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),

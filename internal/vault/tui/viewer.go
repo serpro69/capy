@@ -473,7 +473,7 @@ func (m viewerModel) helpLine() string {
 		// handles it before delegating), so the help must keep advertising it.
 		keys = "j/k scroll · c copy · e rename · esc/q return to session"
 	}
-	return m.styles.Help.Render(keys)
+	return m.styles.Help.Render("v raw JSONL · " + keys)
 }
 
 // contentWidth is the wrap width for body text (a small right margin avoids the
