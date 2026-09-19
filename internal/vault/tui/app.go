@@ -25,6 +25,7 @@ const (
 	modeList mode = iota
 	modeView
 	modeSearch
+	modeRaw
 )
 
 // dataStore is the slice of *vault.VaultStore the TUI reads through. Defined at
@@ -105,6 +106,11 @@ type Model struct {
 	list   listModel
 	viewer viewerModel
 	search searchModel
+	raw    rawModel
+	// Raw viewing suspends the current screen without changing its navigation chain.
+	rawReturn mode
+	rawSeq    int
+	rawCancel context.CancelFunc
 
 	// viewerStack holds the viewers a child-session open (viewerActionOpenChild)
 	// stepped away from, innermost last: opening a child pushes the current
@@ -156,6 +162,10 @@ type Model struct {
 // TTY, which the restore/exec surface requires (it writes files / hands the
 // terminal to `claude --resume`).
 func Run(ctx context.Context, st *vault.VaultStore, opts Options) (Action, error) {
+	// Also cancel commands on terminal errors or Bubble Tea's own signal exit,
+	// which need not cancel the caller's context or pass through our key handler.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	m, err := newModel(ctx, st, opts)
 	if err != nil {
 		return Action{}, err
@@ -243,7 +253,10 @@ func (m Model) bodyHeight() int {
 func (m Model) layoutSubmodels() Model {
 	h := m.bodyHeight()
 	m.list = m.list.setSize(m.width, h)
-	m.viewer = m.viewer.setSize(m.width, h)
+	if m.mode != modeRaw {
+		m.viewer = m.viewer.setSize(m.width, h)
+	}
+	m.raw = m.raw.setSize(m.width, h)
 	m.search = m.search.setSize(m.width, h)
 	boundInputWidth(&m.renameInput, m.width, utf8.RuneCountInString(renameHint))
 	return m
@@ -310,6 +323,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.layoutSubmodels(), nil
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
+			if m.rawCancel != nil {
+				m.rawCancel()
+			}
 			m.quitting = true
 			return m, tea.Quit
 		}
@@ -333,7 +349,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateView(msg)
 		case modeSearch:
 			return m.updateSearch(msg)
+		case modeRaw:
+			return m.updateRaw(msg)
 		}
+	case rawLoadedMsg:
+		if m.mode != modeRaw || msg.seq != m.rawSeq || !m.raw.loading {
+			return m, nil
+		}
+		m.rawCancel()
+		m.rawCancel = nil
+		m.raw.loading = false
+		if msg.err != nil {
+			m.raw.err = "opening raw transcript: " + msg.err.Error()
+		} else {
+			m.raw.vp = msg.vp
+			m.raw.contentWidth = msg.contentWidth
+		}
+		m.raw = m.raw.setSize(m.width, m.bodyHeight())
+		return m, nil
 	case renameResultMsg:
 		return m.handleRenameResult(msg)
 	case debounceMsg, searchResultsMsg:
@@ -349,6 +382,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Non-key messages (debounce ticks, search results, viewport msgs) go to the
 	// active sub-model.
 	switch m.mode {
+	case modeRaw:
+		var cmd tea.Cmd
+		m.raw.vp, cmd = m.raw.vp.Update(msg)
+		return m, cmd
 	case modeView:
 		var cmd tea.Cmd
 		m.viewer, cmd, _ = m.viewer.Update(msg)
@@ -369,6 +406,19 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateListFilter(msg)
 	}
 	switch msg.String() {
+	case "v":
+		sess, ok := m.list.selected()
+		if !ok {
+			return m, nil
+		}
+		store := m.store
+		return m.startRaw(sess.UUID+" · archived JSONL", func(ctx context.Context) ([]byte, error) {
+			loaded, err := store.GetSession(ctx, sess.UUID)
+			if err != nil {
+				return nil, err
+			}
+			return loaded.RawJSONL, nil
+		})
 	case "q":
 		m.quitting = true
 		return m, tea.Quit
@@ -623,6 +673,14 @@ func (m Model) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// of them) so they reach the action/clipboard machinery rather than the
 	// scrolling viewport. They act on the open session / visible message.
 	switch msg.String() {
+	case "v":
+		label := m.viewer.sess.UUID + " · archived JSONL"
+		raw := m.viewer.sess.RawJSONL
+		if m.viewer.inSub {
+			label = m.viewer.subID + " · archived subagent JSONL"
+			raw = m.viewer.subagentBytes(m.viewer.subID)
+		}
+		return m.startRaw(label, func(context.Context) ([]byte, error) { return raw, nil })
 	case "r", "R":
 		return m.requestAction(actionFor(msg.String()), m.viewer.sess.UUID)
 	case "e":
@@ -772,6 +830,8 @@ func (m Model) View() string {
 	}
 	var body string
 	switch m.mode {
+	case modeRaw:
+		body = m.raw.View()
 	case modeView:
 		body = m.viewer.View()
 	case modeSearch:

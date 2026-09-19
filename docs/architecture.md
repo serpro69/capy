@@ -695,6 +695,20 @@ commands do not. A rename runs as a Bubble Tea
 command and, on success, reloads authoritative store state (list re-query with the
 active filter reapplied, search rerun, viewer metadata refresh) rather than patching
 the cached presentation.
+**Raw archive view** (`internal/vault/tui/raw.go`, key `v` in list/view mode)
+displays the archived main JSONL or the currently open Claude subagent sidecar.
+A Codex child uses its own session blob; an inline tool detail uses its containing
+session. It bypasses the platform decoders and Markdown renderer so unknown fields,
+duplicate keys, and malformed records remain inspectable. `json.Indent` formats
+each physical line independently; invalid lines retain their content with a
+source-line diagnostic, and terminal controls/invalid UTF-8 display as escapes.
+Formatting and viewport preparation run in a cancellable Bubble Tea command,
+with a sequence guard rejecting stale results. The formatted content is kept only
+while raw mode is open. The previous screen and child-session stack stay suspended;
+return restores them, rewrapping the transcript only if the terminal changed size.
+Horizontal scrolling makes long strings accessible without altering JSON escapes.
+The view reads existing `GetSession`/sidecar bytes and performs no archive writes.
+
 The viewer's markdown rendering upgrades from plain word-wrap to styled
 [glamour](https://github.com/charmbracelet/glamour) output when built with the
 optional `glamour` build tag (`make build-glamour` / `-tags fts5,glamour`) — a
