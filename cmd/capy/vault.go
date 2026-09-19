@@ -108,6 +108,10 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 			if err != nil {
 				return err
 			}
+			minSessionBytes, err := resolveVaultMinSessionBytes(cmd)
+			if err != nil {
+				return err
+			}
 
 			var (
 				sessions []vault.SessionFile
@@ -142,7 +146,9 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 				return err
 			}
 
-			res := vault.Import(cmd.Context(), st, sessions, vault.ImportOptions{Project: project, DryRun: dryRun, Platform: platform})
+			res := vault.Import(cmd.Context(), st, sessions, vault.ImportOptions{
+				Project: project, DryRun: dryRun, Platform: platform, MinSessionBytes: minSessionBytes,
+			})
 			printImportResult(res, &report, dryRun)
 			if res.Errors > 0 {
 				return fmt.Errorf("%d session(s) failed to import", res.Errors)
@@ -154,7 +160,32 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 	cmd.Flags().StringVar(&project, "project", "", "only import sessions whose Claude project dir or Codex project path matches this substring")
 	cmd.Flags().StringVar(&platformFlag, "platform", "", "only import sessions of this platform: claude-code|codex (default: all)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview what would be imported without writing")
+	cmd.Flags().Int64("min-size-bytes", 0, "minimum uncompressed size for new sessions, including sidecars (overrides vault.min_session_bytes; 0 disables)")
 	return cmd
+}
+
+// resolveVaultMinSessionBytes uses the invocation project's config, just like
+// serve. A cross-project import/merge applies this one policy to the whole run.
+func resolveVaultMinSessionBytes(cmd *cobra.Command) (int64, error) {
+	projectDir := config.DetectProjectRoot()
+	if f := cmd.Flag("project-dir"); f != nil && f.Value.String() != "" {
+		projectDir = f.Value.String()
+	}
+	cfg, err := config.Load(projectDir)
+	if err != nil {
+		return 0, fmt.Errorf("loading vault configuration: %w", err)
+	}
+	minimum := cfg.Vault.MinSessionBytes
+	if cmd.Flags().Changed("min-size-bytes") {
+		minimum, err = cmd.Flags().GetInt64("min-size-bytes")
+		if err != nil {
+			return 0, err
+		}
+	}
+	if minimum < 0 {
+		return 0, fmt.Errorf("--min-size-bytes must be >= 0 (0 disables size filtering)")
+	}
+	return minimum, nil
 }
 
 // importPlatformOrder fixes the order the per-platform summary lines print in.
@@ -176,14 +207,14 @@ func printImportResult(res vault.ImportResult, report *vault.DiscoveryReport, dr
 		}
 		return
 	}
-	fmt.Printf("%-12s  %-8s  %-28s  %8s  %s\n", "UUID", "STATUS", "PROJECT", "SIZE", "TITLE")
+	fmt.Printf("%-12s  %-8s  %-28s  %8s  %-50s  %s\n", "UUID", "STATUS", "PROJECT", "SIZE", "TITLE", "REASON")
 	for _, s := range res.Sessions {
 		if s.Status == vault.StatusError && s.Err != nil {
 			fmt.Fprintf(os.Stderr, "  error %s: %v\n", shortUUID(s.UUID, s.Platform), s.Err)
 		}
-		fmt.Printf("%-12s  %-8s  %-28s  %8s  %s\n",
+		fmt.Printf("%-12s  %-8s  %-28s  %8s  %-50s  %s\n",
 			shortUUID(s.UUID, s.Platform), s.Status, truncate(displayPath(s.ProjectPath), 28),
-			formatSize(s.SizeBytes), truncate(s.Title, 50))
+			formatSize(s.SizeBytes), truncate(s.Title, 50), s.Reason)
 	}
 	fmt.Printf("\n%s\n", importCounts{
 		imported: res.Imported, updated: res.Updated, skipped: res.Skipped, excluded: res.Excluded, errs: res.Errors,
@@ -932,6 +963,10 @@ tolerates a concurrent server sweep via busy-timeout retry, the same as import.`
 			if from == "" {
 				return fmt.Errorf("--from is required (path to the source vault.db)")
 			}
+			minSessionBytes, err := resolveVaultMinSessionBytes(cmd)
+			if err != nil {
+				return err
+			}
 			// A source path that does not exist would otherwise be CREATED as a fresh
 			// empty encrypted DB by sql.Open and merge silently as a no-op — fail loud.
 			if _, err := os.Stat(from); err != nil {
@@ -955,7 +990,7 @@ tolerates a concurrent server sweep via busy-timeout retry, the same as import.`
 			}
 
 			res, err := vault.MergeFrom(cmd.Context(), st, from, srcKey, srcKeyEnv,
-				vault.MergeOptions{Project: project, DryRun: dryRun})
+				vault.MergeOptions{Project: project, DryRun: dryRun, MinSessionBytes: minSessionBytes})
 			if err != nil {
 				return err
 			}
@@ -970,6 +1005,7 @@ tolerates a concurrent server sweep via busy-timeout retry, the same as import.`
 	cmd.Flags().StringVar(&keyFlag, "key", "", "source vault passphrase (default: CAPY_VAULT_MERGE_KEY, then CAPY_VAULT_KEY)")
 	cmd.Flags().StringVar(&project, "project", "", "only merge sessions whose location hint (mangled Claude project dir, e.g. -home-user-capy, or Codex rollout path) or project path contains this substring")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview what would be merged without writing")
+	cmd.Flags().Int64("min-size-bytes", 0, "minimum uncompressed size for new sessions, including sidecars (overrides vault.min_session_bytes; 0 disables)")
 	return cmd
 }
 

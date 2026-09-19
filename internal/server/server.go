@@ -298,11 +298,11 @@ func (s *Server) vaultSweep(ctx context.Context) sweepSummary {
 			slog.Info("vault sweep (all projects)", "platform", vault.PlatformClaudeCode,
 				"projects", countProjects(claude), "sessions", len(claude))
 		}
-		sum.claude = vault.Import(ctx, st, claude, vault.ImportOptions{})
-		if r := sum.claude; r.Imported > 0 || r.Updated > 0 || r.Errors > 0 {
+		sum.claude = vault.Import(ctx, st, claude, s.vaultImportOptions())
+		if r := sum.claude; r.Imported > 0 || r.Updated > 0 || r.Excluded > 0 || r.Errors > 0 {
 			slog.Info("vault sweep", "platform", vault.PlatformClaudeCode,
 				"imported", r.Imported, "updated", r.Updated,
-				"skipped", r.Skipped, "errors", r.Errors)
+				"skipped", r.Skipped, "excluded", r.Excluded, "errors", r.Errors)
 		}
 	}
 
@@ -423,16 +423,15 @@ func (s *Server) sweepCodex(ctx context.Context, st *vault.VaultStore, home stri
 	}
 	sum.codexMatched = len(matched)
 	if len(matched) > 0 {
-		sum.codex = vault.Import(ctx, st, matched, vault.ImportOptions{})
+		sum.codex = vault.Import(ctx, st, matched, s.vaultImportOptions())
 	}
 
 	// One line per start carrying every count the design asks for (per-platform
 	// results, predicate skips, first-line reads, skipped revert variants). It is
-	// info when the run changed the vault or skipped revert variants the user
-	// should know about, debug otherwise — so a quiet startup stays quiet, like
-	// the Claude line.
+	// info when the run changed the vault, excluded sessions, or skipped revert
+	// variants the user should know about; otherwise debug, like a quiet Claude run.
 	level := slog.LevelDebug
-	if r := sum.codex; r.Imported > 0 || r.Updated > 0 || r.Errors > 0 || len(report.SkippedRevertVariants) > 0 {
+	if r := sum.codex; r.Imported > 0 || r.Updated > 0 || r.Excluded > 0 || r.Errors > 0 || len(report.SkippedRevertVariants) > 0 {
 		level = slog.LevelInfo
 	}
 	slog.Log(ctx, level, "vault sweep", "platform", vault.PlatformCodex,
@@ -441,7 +440,15 @@ func (s *Server) sweepCodex(ctx context.Context, st *vault.VaultStore, home stri
 		"first_line_reads", report.FirstLineReads,
 		"skipped_revert_variants", len(report.SkippedRevertVariants),
 		"imported", sum.codex.Imported, "updated", sum.codex.Updated,
-		"skipped", sum.codex.Skipped, "errors", sum.codex.Errors)
+		"skipped", sum.codex.Skipped, "excluded", sum.codex.Excluded, "errors", sum.codex.Errors)
+}
+
+func (s *Server) vaultImportOptions() vault.ImportOptions {
+	var opts vault.ImportOptions
+	if s.config != nil {
+		opts.MinSessionBytes = s.config.Vault.MinSessionBytes
+	}
+	return opts
 }
 
 // filterCodexByProject keeps the rollouts whose recorded cwd (the discovery
