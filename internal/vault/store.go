@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS vault_sessions (
   parent_uuid        TEXT
 );
 
-` + sessionNamesTableSQL + `
+` + sessionNamesTableSQL + sessionProjectsTableSQL + `
 
 CREATE TABLE IF NOT EXISTS vault_files (
   session_uuid  TEXT NOT NULL REFERENCES vault_sessions(uuid) ON DELETE CASCADE,
@@ -156,6 +156,17 @@ CREATE TABLE IF NOT EXISTS vault_session_names (
   custom_title  TEXT CHECK (custom_title IS NULL OR custom_title <> ''),
   renamed_at_ns INTEGER NOT NULL,
   machine_id    TEXT NOT NULL
+);
+`
+
+// sessionProjectsTableSQL is shared by fresh vaults and migration 0007 so
+// ownership, non-empty overrides and clear tombstones have identical constraints.
+const sessionProjectsTableSQL = `
+CREATE TABLE IF NOT EXISTS vault_session_projects (
+  session_uuid   TEXT PRIMARY KEY REFERENCES vault_sessions(uuid) ON DELETE CASCADE,
+  custom_project TEXT CHECK (custom_project IS NULL OR custom_project <> ''),
+  updated_at_ns  INTEGER NOT NULL,
+  machine_id     TEXT NOT NULL
 );
 `
 
@@ -197,15 +208,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vault_chunks_trigram USING fts5(
 `
 
 // sessionMetaColumns is the table-qualified column list returned for list and
-// lookup queries. Callers must alias vault_sessions as s and vault_session_names
-// as n, and append sessionMetaJoin. It omits the potentially large raw_jsonl
-// blob while retaining both imported-title and vault-owned name provenance.
+// lookup queries. Callers append sessionMetaJoin for the s/n/p aliases. It omits
+// the potentially large raw_jsonl blob while retaining imported metadata and
+// vault-owned title/project provenance.
 const sessionMetaColumns = `s.uuid, s.title, s.start_time, s.end_time, s.message_count, s.size_bytes, ` +
 	`s.content_hash, s.machine_id, s.claude_project_dir, s.project_path, s.git_branch, s.archived_at, ` +
-	`s.index_version, n.custom_title, n.renamed_at_ns, n.machine_id, s.platform, s.parent_uuid`
+	`s.index_version, n.custom_title, n.renamed_at_ns, n.machine_id, s.platform, s.parent_uuid, ` +
+	`p.custom_project, p.updated_at_ns, p.machine_id`
 
 const sessionMetaJoin = ` FROM vault_sessions s
-	LEFT JOIN vault_session_names n ON n.session_uuid = s.uuid`
+	LEFT JOIN vault_session_names n ON n.session_uuid = s.uuid
+	LEFT JOIN vault_session_projects p ON p.session_uuid = s.uuid`
 
 // ErrSessionNotFound is returned when no session matches a lookup.
 var ErrSessionNotFound = errors.New("session not found")
@@ -273,9 +286,10 @@ type Session struct {
 	// children always share one Platform (a child is spawned by its own CLI), so
 	// either side's Platform may format the other's id. Revisit if a platform
 	// ever links cross-platform children.
-	ParentUUID string
-	RawJSONL   []byte
-	Name       *SessionName
+	ParentUUID      string
+	RawJSONL        []byte
+	Name            *SessionName
+	ProjectOverride *SessionProject
 }
 
 // File is one preserved sidecar from a session directory (vault_files).
@@ -1604,6 +1618,8 @@ func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 	var startTime, endTime sql.NullString
 	var customTitle, nameMachineID sql.NullString
 	var renamedAtNS sql.NullInt64
+	var customProject, projectMachineID sql.NullString
+	var projectUpdatedAtNS sql.NullInt64
 	var platform string
 	var parentUUID sql.NullString
 	dest := []any{
@@ -1612,6 +1628,7 @@ func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 		&gitBranch, &archivedAt, &sess.IndexVersion,
 		&customTitle, &renamedAtNS, &nameMachineID,
 		&platform, &parentUUID,
+		&customProject, &projectUpdatedAtNS, &projectMachineID,
 	}
 	var encoding sql.NullString
 	var rawBlob []byte
@@ -1638,6 +1655,15 @@ func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 		}
 	} else {
 		sess.Name = nil
+	}
+	if projectUpdatedAtNS.Valid {
+		sess.ProjectOverride = &SessionProject{
+			CustomProject: nullStringPointer(customProject),
+			UpdatedAtNS:   projectUpdatedAtNS.Int64,
+			MachineID:     projectMachineID.String,
+		}
+	} else {
+		sess.ProjectOverride = nil
 	}
 	if raw != nil {
 		decoded, err := decodeBlob(encoding.String, rawBlob)

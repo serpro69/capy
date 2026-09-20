@@ -15,7 +15,7 @@ import (
 	"github.com/serpro69/capy/internal/sqliteutil"
 )
 
-const maxSessionNameRunes = 120
+const maxSessionNameRunes = 120 // Shared by custom session names and project labels.
 
 // RenameOptions describes one explicit local name operation. Clear and Name are
 // mutually exclusive; an empty Name without Clear is invalid.
@@ -53,21 +53,27 @@ func ContainsFold(s, substr string) bool {
 // trim, redact recognized secrets, reject empty/invalid/control-bearing values,
 // then enforce the Unicode code-point limit.
 func NormalizeSessionName(name string) (string, error) {
+	return normalizeSessionLabel(name, "session name")
+}
+
+// normalizeSessionLabel keeps title and project normalization identical while
+// preserving field-specific validation errors.
+func normalizeSessionLabel(name, field string) (string, error) {
 	name = strings.TrimSpace(name)
 	name = sanitize.StripSecrets(name)
 	if name == "" {
-		return "", errors.New("session name must not be empty; use clear instead")
+		return "", fmt.Errorf("%s must not be empty; use clear instead", field)
 	}
 	if !utf8.ValidString(name) {
-		return "", errors.New("session name must be valid utf-8")
+		return "", fmt.Errorf("%s must be valid utf-8", field)
 	}
 	for _, r := range name {
 		if unicode.IsControl(r) {
-			return "", errors.New("session name must not contain control characters")
+			return "", fmt.Errorf("%s must not contain control characters", field)
 		}
 	}
 	if utf8.RuneCountInString(name) > maxSessionNameRunes {
-		return "", fmt.Errorf("session name must not exceed %d characters", maxSessionNameRunes)
+		return "", fmt.Errorf("%s must not exceed %d characters", field, maxSessionNameRunes)
 	}
 	return name, nil
 }

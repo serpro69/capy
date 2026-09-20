@@ -376,14 +376,17 @@ func TestSearchChunks_ResolvesEffectiveTitles(t *testing.T) {
 }
 
 type archivedDataSnapshot struct {
-	raw      []byte
-	encoding sql.NullString
-	hash     string
-	size     int64
-	ftsCount int
-	chunkA   int
-	chunkB   int
-	files    []File
+	raw                             []byte
+	encoding                        sql.NullString
+	hash                            string
+	size                            int64
+	ftsCount                        int
+	chunkA                          int
+	chunkB                          int
+	files                           []File
+	indexVersion                    int
+	ftsRows, chunkRows, trigramRows [][]any
+	fileRows                        [][]any
 }
 
 func snapshotArchivedData(t *testing.T, s *VaultStore, uuid string) archivedDataSnapshot {
@@ -392,14 +395,41 @@ func snapshotArchivedData(t *testing.T, s *VaultStore, uuid string) archivedData
 	db, err := s.getDB(ctx)
 	require.NoError(t, err)
 	var snap archivedDataSnapshot
-	require.NoError(t, db.QueryRow(`SELECT raw_jsonl, encoding, content_hash, size_bytes
-		FROM vault_sessions WHERE uuid = ?`, uuid).Scan(&snap.raw, &snap.encoding, &snap.hash, &snap.size))
+	require.NoError(t, db.QueryRow(`SELECT raw_jsonl, encoding, content_hash, size_bytes, index_version
+		FROM vault_sessions WHERE uuid = ?`, uuid).Scan(&snap.raw, &snap.encoding, &snap.hash, &snap.size, &snap.indexVersion))
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_fts WHERE session_uuid = ?`, uuid).Scan(&snap.ftsCount))
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_chunks WHERE session_uuid = ?`, uuid).Scan(&snap.chunkA))
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_chunks_trigram WHERE session_uuid = ?`, uuid).Scan(&snap.chunkB))
+	snap.ftsRows = snapshotArchiveRows(t, db, `SELECT rowid, * FROM vault_fts WHERE session_uuid = ? ORDER BY rowid`, uuid)
+	snap.chunkRows = snapshotArchiveRows(t, db, `SELECT rowid, * FROM vault_chunks WHERE session_uuid = ? ORDER BY rowid`, uuid)
+	snap.trigramRows = snapshotArchiveRows(t, db, `SELECT rowid, * FROM vault_chunks_trigram WHERE session_uuid = ? ORDER BY rowid`, uuid)
+	snap.fileRows = snapshotArchiveRows(t, db, `SELECT * FROM vault_files WHERE session_uuid = ? ORDER BY relative_path`, uuid)
 	snap.files, err = s.GetFiles(ctx, uuid)
 	require.NoError(t, err)
 	return snap
+}
+
+// snapshotArchiveRows captures all stored values, including FTS row IDs and
+// encoded file bytes, to catch rewrites that leave row counts unchanged.
+func snapshotArchiveRows(t *testing.T, db *sql.DB, query, uuid string) [][]any {
+	t.Helper()
+	rows, err := db.QueryContext(t.Context(), query, uuid)
+	require.NoError(t, err)
+	defer rows.Close()
+	columns, err := rows.Columns()
+	require.NoError(t, err)
+	var result [][]any
+	for rows.Next() {
+		values := make([]any, len(columns))
+		dest := make([]any, len(columns))
+		for i := range values {
+			dest[i] = &values[i]
+		}
+		require.NoError(t, rows.Scan(dest...))
+		result = append(result, values)
+	}
+	require.NoError(t, rows.Err())
+	return result
 }
 
 func TestVaultStore_RenameDoesNotMutateArchivedData(t *testing.T) {
@@ -416,6 +446,7 @@ func TestVaultStore_RenameDoesNotMutateArchivedData(t *testing.T) {
 	_, err = s.renameSessionAt(ctx, uuid, RenameOptions{Clear: true}, time.Unix(0, 11), "machine")
 	require.NoError(t, err)
 	after := snapshotArchivedData(t, s, uuid)
+	assert.Equal(t, before, after)
 
 	assert.True(t, bytes.Equal(before.raw, after.raw), "stored raw_jsonl bytes must not change")
 	assert.Equal(t, before.encoding, after.encoding)

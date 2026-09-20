@@ -483,7 +483,7 @@ Codex-specific behavior worth knowing:
 
 ### Commands
 
-All commands live under `capy vault` and require `CAPY_VAULT_KEY`. A persistent `--path <vault.db>` flag targets a specific vault file, overriding `CAPY_VAULT_PATH` and the XDG default. Lookups (`show`/`restore`/`resume`/`delete`/`rename`) accept a **partial UUID of 8+ characters**, git-style; an ambiguous prefix prints candidates to disambiguate.
+All commands live under `capy vault` and require `CAPY_VAULT_KEY`. A persistent `--path <vault.db>` flag targets a specific vault file, overriding `CAPY_VAULT_PATH` and the XDG default. Lookups (`show`/`restore`/`resume`/`delete`/`rename`/`project`) accept a **partial UUID of 8+ characters**, git-style; an ambiguous prefix prints candidates to disambiguate.
 
 | Command                                                                               | Description                                                                                                                                                                 |
 | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -496,6 +496,7 @@ All commands live under `capy vault` and require `CAPY_VAULT_KEY`. A persistent 
 | `resume <session-id> [--dir <path>]`                                                  | Restore, then launch `claude --resume`. Requires `claude` on `PATH`. Claude Code sessions only — see [Codex sessions](#codex-sessions).                                     |
 | `delete <session-id> [--yes]`                                                         | Remove a session from the vault (does not touch on-disk copies). Prompts unless `--yes`; warns when the session has child sessions (they are kept).                         |
 | `rename <session-id> <name>` · `rename <session-id> --clear`                          | Give a session a name of your own, or clear it to fall back to the imported title. Shown everywhere (`list`, `show`, `search`, JSON, TUI); the archived transcript is untouched. See [Naming sessions](#naming-sessions). |
+| `project <session-id> <name>` · `project <session-id> --clear` | Set or clear one session's custom project label; prints the resulting project. Preserves the imported path, title and archived transcript. |
 | `stats [--json]`                                                                      | Session count, content size, DB file size, per-project and per-platform breakdown, child-session count, and the search-index version (with a count of sessions still below it — i.e. a `reindex` backlog). |
 | `checkpoint`                                                                          | Flush the WAL into `vault.db` — run before copying it to another machine.                                                                                                   |
 | `rekey [--remove-backup]`                                                             | Rotate the vault's encryption key to the current `CAPY_VAULT_KEY`. **Stop the MCP server first.** Leaves `<vault>.bak` (still decryptable by the old key) unless `--remove-backup`.  |
@@ -532,6 +533,23 @@ How names behave:
 - **Validation.** Names are trimmed, must be non-empty valid UTF-8 with no control characters, and are capped at 120 characters. Duplicate names are allowed — the UUID stays the identity. Because names come back through CLI and MCP output, they pass through the same secret stripping as search snippets: a name that itself looks like a credential is stored **redacted**, not verbatim.
 - **Lookup, not search.** `list --name` matches the displayed title literally — `%`, `_`, quotes, and FTS operators are ordinary characters — with Unicode-aware case folding (`café` matches `Café`). `search` still matches transcript text only; a word that appears only in a name is not a search hit.
 - **TUI.** Press `e` in the list or the viewer (`ctrl+e` in search, where `e` types into the query) to edit the name in place; an emptied field clears it. The `f` filter matches names too.
+
+### Assigning a session project
+
+```bash
+capy vault project 3f8a1c2b "capy"
+capy vault project 3f8a1c2b --clear   # reveal the latest imported project path
+```
+
+Labels follow the same trim, secret-redaction and 120-code-point validation as
+session names. Duplicate labels are allowed. A path-looking label stays literal;
+restore and resume continue using the imported path. Each edit affects one UUID,
+independently of its title, parent and children. Clearing retains a tombstone.
+The command requires `CAPY_VAULT_KEY` and rejects `--tui`.
+
+The local set/clear command and storage are implemented. Project-aware browsing,
+search, statistics, TUI editing and cross-vault merge are pending in the
+[project-name task plan](docs/feat/wip/vault-project-names/tasks.md).
 
 ### Cross-machine sync
 

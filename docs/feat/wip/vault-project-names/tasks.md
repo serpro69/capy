@@ -6,7 +6,7 @@
 >
 > Issue: [#92](https://github.com/serpro69/capy/issues/92)
 >
-> Status: pending — agreed design; post-design review and implementation pending
+> Status: in-progress — Task 1 done; Task 2 next
 >
 > Created: 2026-09-19
 >
@@ -18,7 +18,7 @@ Each task is a complete path with regression checks. M denotes a bounded behavio
 
 ## Task 1: Set and clear a project through the CLI
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** —
@@ -26,11 +26,58 @@ Each task is a complete path with regression checks. M denotes a bounded behavio
 
 ### Subtasks
 
-- [ ] 1.1 Add internal/vault/session_project.go with SessionProject, ProjectOptions, EffectiveProject, normalization and transactional SetSessionProject. Verify local set/replace/clear, literal prefix errors, clock rollback/overflow and independent title state in session_project_test.go.
-- [ ] 1.2 Extend store.go's fresh schema and shared metadata join/scan; add the next name-keyed project migration in migrations.go. Verify fresh/legacy parity, idempotent opens, tombstones and delete cascade in migrations_test.go.
-- [ ] 1.3 Add cmd/capy/vault_project.go and register project <id> <name>/--clear. Verify CLI responses, invalid combinations and --tui rejection using the binary harness.
-- [ ] 1.4 Snapshot archived bytes, files, hash, size, FTS, chunks and index version around set/clear. Verify only project metadata changes and raw show JSON remains identical.
-- [ ] 1.5 Run Slice 1's focused checks with both required keys and FTS5; record actual results below this task during implementation.
+- [x] 1.1 Add internal/vault/session_project.go with SessionProject, ProjectOptions, EffectiveProject, normalization and transactional SetSessionProject. Verify local set/replace/clear, literal prefix errors, clock rollback/overflow and independent title state in session_project_test.go.
+- [x] 1.2 Extend store.go's fresh schema and shared metadata join/scan; add the next name-keyed project migration in migrations.go. Verify fresh/legacy parity, idempotent opens, tombstones and delete cascade in migrations_test.go.
+- [x] 1.3 Add cmd/capy/vault_project.go and register project <id> <name>/--clear. Verify CLI responses, invalid combinations and --tui rejection using the binary harness.
+- [x] 1.4 Snapshot archived bytes, files, hash, size, FTS, chunks and index version around set/clear. Verify only project metadata changes and raw show JSON remains identical.
+- [x] 1.5 Run Slice 1's focused checks with both required keys and FTS5; record actual results below this task during implementation.
+
+### Task 1 verification and review (2026-09-20)
+
+Implementation and documentation are complete for this slice. Task 2 is next;
+Tasks 2–10 remain pending. See the [implementation record](implementation.md#task-1-implementation-record-2026-09-20).
+
+All Go checks used FTS5 and both required test keys (`CAPY_DB_KEY=test-key-for-development`,
+`CAPY_VAULT_KEY=test-key`).
+
+- PASS: `go test -tags fts5 -count=1 ./internal/vault ./cmd/capy -run 'Project|Migration|SessionName|Rename'`
+  (vault 24.457s, CLI 15.255s).
+- PASS: `go test -race -tags fts5 -count=1 ./internal/vault -run 'SessionProject|NormalizeSessionName|Rename|SessionName'`
+  (22.483s; no races reported).
+- PASS: the migration `/legacy` subtest run independently, after moving its
+  fresh-schema reference outside the sibling subtests.
+- PASS: `make vet` and `git diff --check`.
+- PASS: `go test -tags fts5 ./... -skip '^TestCodexCanary$'` with an empty temporary
+  `XDG_CONFIG_HOME` (all packages; vault 104.439s, CLI 57.624s, server 94.266s).
+- Initial `make test` did **not** pass: several pre-existing CLI fixtures inherited
+  personal `vault.min_session_bytes=430080`, and the live-corpus `TestCodexCanary`
+  failed decoding an existing local rollout. The shared Claude fixture now isolates
+  XDG configuration; the full rerun also isolated it for other CLI fixtures.
+  No assertion was relaxed and no production import policy was changed.
+- `kk:review-code:isolated`: independent PAL review with Gemini 3.1 Pro found one
+  LOW issue, redundant normalization in `projectOptions`; removed it because
+  `SetSessionProject` validates before opening the database. No unresolved review
+  findings and no P0/P1 findings to index. The code-reviewer sub-agent could not
+  access files with its permitted tools, so the skill's external-reviewer fallback
+  was used. Task scope excluded the pending slices.
+- `kk:test` and `kk:document` completed. No new project conventions were indexed:
+  the metadata ownership/clock/normalization patterns are already in the design
+  and ADR-030. Quality benchmarks are reserved for the retrieval-changing slices
+  and Task 10; this slice changes no indexing, ranking or executor logic.
+
+**Known verification limits / follow-up:**
+
+- The excluded live-corpus canary fails in `tallyCodexRaw` before project metadata
+  is involved: `unexpected end of JSON input` at zero-based line 182 of
+  `~/.codex/sessions/2026/09/17/rollout-2026-09-17T08-31-24-01a0ae10-15df-7ba1-909c-aaa8b95ac150.jsonl`.
+  This local input predates the task and was left untouched. Before Task 10's
+  unrestricted full-suite gate, inspect/recover the malformed source transcript
+  or address malformed-input handling in the independent canary; then rerun
+  `TestCodexCanary` and `make test`. Do not claim the unrestricted suite passed.
+- CLI fixtures outside `setupVaultEnv` still inherit personal global configuration.
+  Standardizing all CLI fixture setup is outside Task 1. Until then, run the suite
+  with a temporary empty `XDG_CONFIG_HOME`; a follow-up should isolate the remaining
+  Codex/restore/merge fixtures while retaining explicit config-precedence tests.
 
 ## Task 2: Browse reassigned sessions in the CLI
 
@@ -185,5 +232,5 @@ Tasks 1-9 -------------------------------------> Task 10
 - Go profile, individual-developer scope, explicit naming, refined override semantics, CLI/TUI editing, persistence, filtering and interface/JSON contracts were confirmed in the design conversation.
 - Existing code and ADR-030 were inspected; the optional isolated CoVe pass was declined.
 - No implementation or runtime tests have been performed as part of authoring this plan.
-- Next gate: kk:review-design over design.md, implementation.md and tasks.md.
+- 2026-09-20: kk:review-design (standard) reviewed all three documents: SOUND, no findings. Ownership, explicit/default scope, migration, merge ordering, error handling, task dependencies and verification contracts are consistent; existing metadata/migration/CLI seams were verified. Task 1 implementation authorized by the user.
 - No agreed implementation work is deferred. Accepted compatibility limits and any later deferred findings belong in [the implementation record](implementation.md#deferred-work-and-accepted-limits).
