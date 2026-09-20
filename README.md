@@ -539,6 +539,7 @@ How names behave:
 ```bash
 capy vault project 3f8a1c2b "capy"
 capy vault list --project "capy"    # match the assigned project name
+capy vault search "timeout" --project "capy" # search transcripts in that project
 capy vault project 3f8a1c2b --clear   # reveal the latest imported project path
 ```
 
@@ -548,21 +549,24 @@ restore and resume continue using the imported path. Each edit affects one UUID,
 independently of its title, parent and children. Clearing retains a tombstone.
 The command requires `CAPY_VAULT_KEY` and rejects `--tui`.
 
-`vault list --project` matches the effective project: the custom label when set,
-otherwise the imported path. An override replaces the path for this filter.
+`vault list --project` and non-TUI `vault search --project` match the effective
+project: the custom label when set, otherwise the imported path. An override replaces the path for this filter.
 Matching is a literal substring with SQLite's ASCII case-insensitivity; `%`, `_`,
-backslash and `*` are ordinary characters. The filter composes with `--name`,
-`--platform` and `--include-children`, before `--limit` is applied.
+backslash and `*` are ordinary characters. In listing, the filter composes with
+`--name`, `--platform` and `--include-children` before `--limit`. In transcript
+search, it runs before rank selection and `--limit`, alongside role/date filters.
+Project labels are display/filter metadata; their words do not become transcript
+matches, and setting a label needs no reindex.
 
-CLI list rows, show headers, ambiguity candidates and delete previews display the
-effective project. Custom labels stay literal, including labels equal to the
+CLI list/search rows, show headers, ambiguity candidates and delete previews
+display the effective project. Custom labels stay literal, including labels equal to the
 imported path; fallback paths may be shortened to `~/…`. Show and delete details
-include the original path separately when it differs. `list --json` adds `project`
-while retaining the original `project_path`; `show --format json` remains the
-verbatim archived JSONL.
+include the original path separately when it differs. `list --json` and
+`search --json` add `project` while retaining the original `project_path`;
+`show --format json` remains the verbatim archived JSONL.
 
-Project-aware search, statistics, TUI browsing/editing and cross-vault merge are
-pending in the [project-name task plan](docs/feat/wip/vault-project-names/tasks.md).
+Project-aware MCP/chunk search, statistics, TUI browsing/editing and cross-vault
+merge are pending in the [project-name task plan](docs/feat/wip/vault-project-names/tasks.md).
 
 ### Cross-machine sync
 

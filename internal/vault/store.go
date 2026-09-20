@@ -344,14 +344,15 @@ type ListOptions struct {
 
 // SearchOptions controls Search.
 type SearchOptions struct {
-	Query    string
-	Raw      bool      // true == raw FTS5 MATCH syntax; false == plain keyword (auto-quoted)
-	Project  string    // substring match on project_path
-	Platform Platform  // producing agent CLI; "" == no filter
-	Role     string    // "", or user|assistant|tool|system
-	After    time.Time // filter on end_time >= After
-	Before   time.Time // filter on end_time <= Before
-	Limit    int       // <= 0 == default (20)
+	Query       string
+	Raw         bool      // true == raw FTS5 MATCH syntax; false == plain keyword (auto-quoted)
+	Project     string    // literal substring of the effective project; mutually exclusive with ProjectPath
+	ProjectPath string    // literal substring of the imported path (implicit filesystem scope)
+	Platform    Platform  // producing agent CLI; "" == no filter
+	Role        string    // "", or user|assistant|tool|system
+	After       time.Time // filter on end_time >= After
+	Before      time.Time // filter on end_time <= Before
+	Limit       int       // <= 0 == default (20)
 }
 
 const defaultSearchLimit = 20
@@ -370,11 +371,13 @@ type SearchResult struct {
 	// Role is set on per-line hits only; "" for chunk hits — a semantic chunk
 	// spans mixed user/assistant/tool lines, so role is undefined at chunk
 	// granularity (design vault-session-search, Not Doing).
-	Role        string
-	Snippet     string
-	Title       string
-	ProjectPath string
-	EndTime     time.Time
+	Role          string
+	Snippet       string
+	Title         string
+	ProjectPath   string  // imported filesystem path
+	Project       string  // effective project (currently populated by per-line Search)
+	CustomProject *string // non-nil for a literal custom label, including one equal to ProjectPath
+	EndTime       time.Time
 	// Platform and ParentUUID are the session's stored platform and parent (see
 	// Session), so a hit can be labeled per platform and marked as a child.
 	Platform   Platform
@@ -1429,6 +1432,10 @@ func (s *VaultStore) MachineSummary(ctx context.Context, machineID string) (tota
 // operators; Raw passes the query through unchanged. Results carry subagent_id
 // and line_index — the anchors a viewer uses to jump to the match.
 func (s *VaultStore) Search(ctx context.Context, opts SearchOptions) ([]SearchResult, error) {
+	predicate, projectArg, err := projectScopePredicate(opts.Project, opts.ProjectPath)
+	if err != nil {
+		return nil, err
+	}
 	match := opts.Query
 	if !opts.Raw {
 		match = autoQuoteFTS(opts.Query)
@@ -1442,21 +1449,22 @@ func (s *VaultStore) Search(ctx context.Context, opts SearchOptions) ([]SearchRe
 		return nil, err
 	}
 
-	// vault_session_names is joined for display-title resolution only — the name
-	// text never participates in the MATCH, so a custom name is not FTS-searchable.
+	// Names and projects are metadata only: neither custom value participates
+	// in MATCH. Project scope is applied before ranking and the result limit.
 	query := `
 		SELECT f.session_uuid, f.subagent_id, f.line_index, f.role,
 		       snippet(vault_fts, 0, '[', ']', '…', 16),
-		       s.title, n.custom_title, s.project_path, s.end_time, s.platform, s.parent_uuid
+		       s.title, n.custom_title, s.project_path, p.custom_project, s.end_time, s.platform, s.parent_uuid
 		FROM vault_fts f
 		JOIN vault_sessions s ON s.uuid = f.session_uuid
 		LEFT JOIN vault_session_names n ON n.session_uuid = f.session_uuid
+		LEFT JOIN vault_session_projects p ON p.session_uuid = s.uuid
 		WHERE vault_fts MATCH ?`
 	args := []any{match}
 
-	if opts.Project != "" {
-		query += ` AND s.project_path LIKE ? ESCAPE '\'`
-		args = append(args, likeContains(opts.Project))
+	if predicate != "" {
+		query += " AND " + predicate
+		args = append(args, projectArg)
 	}
 	if opts.Platform != "" {
 		query += ` AND s.platform = ?`
@@ -1491,14 +1499,16 @@ func (s *VaultStore) Search(ctx context.Context, opts SearchOptions) ([]SearchRe
 	out := make([]SearchResult, 0)
 	for rows.Next() {
 		var r SearchResult
-		var title, customTitle sql.NullString
+		var title, customTitle, customProject sql.NullString
 		var endTime, parentUUID sql.NullString
 		var platform string
 		if err := rows.Scan(&r.SessionUUID, &r.SubagentID, &r.LineIndex, &r.Role,
-			&r.Snippet, &title, &customTitle, &r.ProjectPath, &endTime, &platform, &parentUUID); err != nil {
+			&r.Snippet, &title, &customTitle, &r.ProjectPath, &customProject, &endTime, &platform, &parentUUID); err != nil {
 			return nil, fmt.Errorf("scanning search result: %w", err)
 		}
 		r.Title = effectiveSearchTitle(title, customTitle)
+		r.CustomProject = nullStringPointer(customProject)
+		r.Project = effectiveProject(r.ProjectPath, r.CustomProject)
 		r.EndTime = parseTime(endTime)
 		r.Platform = Platform(platform)
 		r.ParentUUID = parentUUID.String

@@ -470,7 +470,7 @@ func newVaultSearchCmd(env *vaultEnv) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&raw, "raw", false, "pass the query as raw FTS5 MATCH syntax (default: plain keywords)")
-	cmd.Flags().StringVar(&project, "project", "", "filter by project path substring")
+	cmd.Flags().StringVar(&project, "project", "", "filter by effective project substring (custom name replaces imported path)")
 	cmd.Flags().StringVar(&role, "role", "", "filter by role: user|assistant|tool|system")
 	cmd.Flags().StringVar(&after, "after", "", "only matches on or after this date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&before, "before", "", "only matches on or before this date (YYYY-MM-DD)")
@@ -494,7 +494,7 @@ func printSearchResults(results []vault.SearchResult) {
 		fmt.Printf("%-*s  %-*s  %-10s  %-10s  %-24s  %-20s  %s\n",
 			uuidColumnWidth, shortUUID(r.SessionUUID, r.Platform), searchPlatformColumnWidth, searchPlatformCell(r),
 			fmtDate(r.EndTime), truncate(role, 10),
-			truncate(displayPath(r.ProjectPath), 24), truncate(r.Title, 20), oneLine(r.Snippet))
+			truncate(displaySearchProject(r), 24), truncate(r.Title, 20), oneLine(r.Snippet))
 	}
 }
 
@@ -1494,14 +1494,15 @@ func sessionsToJSON(sessions []vault.Session) []sessionJSON {
 }
 
 type searchJSON struct {
-	UUID       string `json:"uuid"`
-	SubagentID string `json:"subagent_id,omitempty"`
-	LineIndex  int    `json:"line_index"`
-	Role       string `json:"role"`
-	Project    string `json:"project_path,omitempty"`
-	EndTime    string `json:"end_time,omitempty"`
-	Title      string `json:"title,omitempty"`
-	Snippet    string `json:"snippet"`
+	UUID        string `json:"uuid"`
+	SubagentID  string `json:"subagent_id,omitempty"`
+	LineIndex   int    `json:"line_index"`
+	Role        string `json:"role"`
+	ProjectPath string `json:"project_path,omitempty"`
+	Project     string `json:"project"`
+	EndTime     string `json:"end_time,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Snippet     string `json:"snippet"`
 	// Platform is always present; ParentUUID only for a hit from a child session
 	// — the same contract as sessionJSON.
 	Platform   string `json:"platform"`
@@ -1513,7 +1514,7 @@ func resultsToJSON(results []vault.SearchResult) []searchJSON {
 	for _, r := range results {
 		out = append(out, searchJSON{
 			UUID: r.SessionUUID, SubagentID: r.SubagentID, LineIndex: r.LineIndex, Role: r.Role,
-			Project: r.ProjectPath, EndTime: rfc3339(r.EndTime), Title: r.Title, Snippet: r.Snippet,
+			ProjectPath: r.ProjectPath, Project: r.Project, EndTime: rfc3339(r.EndTime), Title: r.Title, Snippet: r.Snippet,
 			Platform: r.Platform.OrClaude().String(), ParentUUID: r.ParentUUID,
 		})
 	}
@@ -1835,6 +1836,14 @@ func displaySessionProject(s vault.Session) string {
 		return project
 	}
 	return displayPath(project)
+}
+
+// displaySearchProject uses the vault-resolved value and its label provenance.
+func displaySearchProject(r vault.SearchResult) string {
+	if r.CustomProject != nil {
+		return r.Project
+	}
+	return displayPath(r.Project)
 }
 
 // displayPath shortens a home-relative absolute path to ~/… for compact display.

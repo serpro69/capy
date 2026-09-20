@@ -28,10 +28,20 @@ type ProjectOptions struct {
 // EffectiveProject returns the custom label when set, otherwise the latest
 // imported project path. It never normalizes a label as a filesystem path.
 func (s Session) EffectiveProject() string {
-	if s.ProjectOverride != nil && s.ProjectOverride.CustomProject != nil {
-		return *s.ProjectOverride.CustomProject
+	var custom *string
+	if s.ProjectOverride != nil {
+		custom = s.ProjectOverride.CustomProject
 	}
-	return s.ProjectPath
+	return effectiveProject(s.ProjectPath, custom)
+}
+
+// effectiveProject shares precedence with search rows without constructing
+// temporary session metadata for each hit.
+func effectiveProject(imported string, custom *string) string {
+	if custom != nil {
+		return *custom
+	}
+	return imported
 }
 
 // effectiveProjectSQL uses the s/p aliases from sessionMetaJoin. Keep its
@@ -42,6 +52,20 @@ const effectiveProjectSQL = `COALESCE(p.custom_project, s.project_path)`
 // ASCII case folding. Only trusted SQL is concatenated; the query is bound.
 func effectiveProjectPredicate(project string) (string, string) {
 	return effectiveProjectSQL + ` LIKE ? ESCAPE '\'`, likeContains(project)
+}
+
+// projectScopePredicate selects either an effective project or an imported path.
+// Empty scopes are unrestricted; mixing the two would obscure caller intent.
+func projectScopePredicate(project, projectPath string) (predicate, arg string, err error) {
+	if project != "" && projectPath != "" {
+		return "", "", errors.New("project and project path scopes are mutually exclusive")
+	}
+	if project != "" {
+		predicate, arg = effectiveProjectPredicate(project)
+	} else if projectPath != "" {
+		predicate, arg = `s.project_path LIKE ? ESCAPE '\'`, likeContains(projectPath)
+	}
+	return predicate, arg, nil
 }
 
 // NormalizeSessionProject applies the same normalization as session names:

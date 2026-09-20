@@ -1,6 +1,6 @@
 # Vault Project Names — Implementation Plan
 
-**Status:** Design reviewed; Tasks 1–2 done; Tasks 3–10 pending
+**Status:** Design reviewed; Tasks 1–3 done; Tasks 4–10 pending
 
 **Contract:** [design.md](design.md)
 
@@ -209,3 +209,22 @@ implementation requirement is deferred.
 
 Verification and independent review results are recorded in
 [tasks.md](tasks.md#task-2-verification-and-review-2026-09-20).
+
+## Task 3 implementation record (2026-09-20)
+
+- Added `SearchOptions.ProjectPath` and the shared `projectScopePredicate`.
+  Per-line search rejects mixed scopes before query/database work, joins project
+  metadata once, and applies effective or raw scope before rank/limit selection.
+- `SearchResult.Project` shares the Go resolver with `Session.EffectiveProject`, and
+  `CustomProject` carries label provenance. CLI search keeps custom labels literal;
+  JSON adds `project` while retaining imported `project_path` and every existing
+  result field. Command help, README and architecture describe the completed slice.
+- Regression fixtures cover unset/set/path-equal/clear, escaped literal queries,
+  raw/effective scope separation, role/date/platform composition and child hits,
+  eligible lower-ranked hits, unchanged titles/snippets/anchors/order, and label-only
+  terms excluded from FTS. The CLI binary fixture pins the additive JSON contract.
+- No new dependencies, schema/index changes or generated artifacts. Chunk search,
+  MCP request scoping and TUI presentation remain with their planned later tasks.
+
+Verification and isolated review results are recorded in
+[tasks.md](tasks.md#task-3-verification-and-review-2026-09-20).

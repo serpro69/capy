@@ -516,12 +516,21 @@ path-equal and cleared state. With a title filter, the existing Go-side title
 predicate still runs before the limit. These reads use the one-to-one metadata
 join and never decode transcript blobs.
 
-CLI browsing displays the effective project; override provenance keeps custom
-labels literal even when they equal an imported path. Show/delete details retain
-the original path separately when different. List JSON exposes both `project`
+Per-line `Search` joins project metadata once and applies `projectScopePredicate`
+before `ORDER BY rank LIMIT`. `SearchOptions.Project` selects the effective
+project; `ProjectPath` selects only the imported path for implicit filesystem
+scope. Supplying both is an error, including for an empty transcript query.
+`SearchResult.Project` and `Session.EffectiveProject()` share the Go resolver;
+`CustomProject` preserves display provenance, and `ProjectPath` stays imported.
+Project words never enter MATCH; titles, snippets, ranking and navigation anchors
+remain unchanged for equivalent candidate sets.
+
+CLI browsing and per-line search display the effective project; override
+provenance keeps custom labels literal even when they equal an imported path. Show/delete details retain
+the original path separately when different. List/search JSON expose both `project`
 (effective) and `project_path` (imported); raw show JSON is unchanged.
 
-Effective-project search, statistics, MCP scope separation, TUI browsing/editing
+Effective-project chunk search, statistics, MCP scope separation, TUI browsing/editing
 and independent merge reconciliation remain in the
 [project-name plan](feat/wip/vault-project-names/tasks.md).
 The [design](feat/wip/vault-project-names/design.md) defines the complete contract.
