@@ -206,3 +206,62 @@ func TestVaultProject_ChildAndAmbiguityDisplays(t *testing.T) {
 	assert.Contains(t, stderr, "child assignment")
 	assert.Contains(t, stderr, "ambiguous session id")
 }
+
+func TestVaultProject_Search(t *testing.T) {
+	root, uuid := setupVaultEnv(t)
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	path := filepath.Join(home, "vp")
+	label := filepath.Join(home, "quasarmetadata")
+	fixture := filepath.Join(root, uuid+".jsonl")
+	raw, err := os.ReadFile(fixture)
+	require.NoError(t, err)
+	raw = []byte(strings.ReplaceAll(string(raw), "/home/user/proj", path))
+	require.NoError(t, os.WriteFile(fixture, raw, 0o644))
+	run := func(args ...string) string {
+		t.Helper()
+		stdout, stderr, code := capy(t, append([]string{"vault"}, args...)...)
+		require.Equal(t, 0, code, stderr)
+		return stdout
+	}
+	run("import", "--source", root)
+	searchJSON := func(project string) map[string]any {
+		t.Helper()
+		var rows []map[string]any
+		require.NoError(t, json.Unmarshal([]byte(run("search", "brontosaurus", "--project", project, "--json")), &rows))
+		require.Len(t, rows, 1)
+		return rows[0]
+	}
+	baseline := searchJSON("")
+	assert.Equal(t, map[string]any{
+		"uuid": uuid, "line_index": float64(0), "role": "user", "project_path": path, "project": path,
+		"end_time": "2026-05-01T10:00:05Z", "title": "Fix the brontosaurus timeout",
+		"snippet": "Please fix the [brontosaurus] timeout", "platform": "claude-code",
+	}, baseline)
+	for _, tt := range []struct {
+		name    string
+		args    []string
+		project string
+		display string
+	}{
+		{name: "unset", project: path, display: "~/vp"},
+		{name: "override", args: []string{label}, project: label, display: label},
+		{name: "equal to raw path", args: []string{path}, project: path, display: path},
+		{name: "clear", args: []string{"--clear"}, project: path, display: "~/vp"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.args != nil {
+				run(append([]string{"project", uuid}, tt.args...)...)
+			}
+			row := searchJSON(tt.project)
+			assert.Equal(t, tt.project, row["project"])
+			row["project"] = path
+			assert.Equal(t, baseline, row, "all existing JSON fields remain unchanged")
+			assert.Contains(t, run("search", "brontosaurus", "--project", tt.project, "--limit", "1"), truncate(tt.display, 24))
+			assert.Contains(t, run("search", "quasarmetadata"), "no matches", "labels are not transcript content")
+			if tt.project != path {
+				assert.Contains(t, run("search", "brontosaurus", "--project", path), "no matches")
+			}
+		})
+	}
+}

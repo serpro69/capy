@@ -357,8 +357,161 @@ func TestSessionProject_SQLResolverAndLiteralQueries(t *testing.T) {
 						wantIDs = append(wantIDs, ids[i])
 					}
 					assert.Equal(t, wantIDs, gotIDs)
+					// The same literal semantics apply to transcript search in both scopes.
+					for _, rawScope := range []bool{false, true} {
+						if rawScope && state == "override" {
+							continue // raw paths differ from the effective labels in this state
+						}
+						opts := SearchOptions{Query: "brontosaurus", Project: tt.query}
+						if rawScope {
+							opts.Project, opts.ProjectPath = "", tt.query
+						}
+						hits, err := s.Search(ctx, opts)
+						require.NoError(t, err)
+						var hitIDs []string
+						for _, hit := range hits {
+							hitIDs = append(hitIDs, hit.SessionUUID)
+						}
+						assert.ElementsMatch(t, wantIDs, hitIDs, "raw scope: %v", rawScope)
+					}
 				})
 			}
 		})
 	}
+}
+
+func TestSessionProject_SearchFiltering(t *testing.T) {
+	s := newTestVault(t)
+	ctx := t.Context()
+	const target = "aaaaaaaa-1111-2222-3333-444444444444"
+	const other = "bbbbbbbb-1111-2222-3333-444444444444"
+	for i, uuid := range []string{other, target} {
+		rec := sampleRecord(uuid)
+		rec.Session.ProjectPath = "/physical/worktree"
+		rec.FTS = []FTSRow{{SessionUUID: uuid, Role: "user", LineIndex: 7,
+			ContentText: "brontosaurus " + strings.Repeat("filler ", i*100)}}
+		if uuid == target {
+			rec.Session.Platform = PlatformCodex
+			rec.Session.ParentUUID = other
+			rec.FTS[0].SubagentID = "agent-7"
+		}
+		require.NoError(t, s.InsertSession(ctx, rec))
+		label := "unrelated"
+		if uuid == target {
+			label = "labelonlyquasar"
+		}
+		_, err := s.SetSessionProject(ctx, uuid, ProjectOptions{Name: label})
+		require.NoError(t, err)
+	}
+	unscoped, err := s.Search(ctx, SearchOptions{Query: "brontosaurus", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, unscoped, 1)
+	require.Equal(t, other, unscoped[0].SessionUUID, "fixture puts the excluded hit above the target")
+	for _, tt := range []struct {
+		name string
+		opts SearchOptions
+		want []string
+	}{
+		{name: "effective before rank limit", opts: SearchOptions{Project: "LABELONLY", Limit: 1}, want: []string{target}},
+		{name: "explicit path replaced", opts: SearchOptions{Project: "physical"}},
+		{name: "raw scope retains reassigned sessions", opts: SearchOptions{ProjectPath: "physical"}, want: []string{other, target}},
+		{name: "label is not raw path", opts: SearchOptions{ProjectPath: "labelonly"}},
+		{name: "combined filters retain child", opts: SearchOptions{Project: "labelonly", Platform: PlatformCodex, Role: "user",
+			After: time.Date(2026, 5, 1, 11, 0, 0, 0, time.UTC), Before: time.Date(2026, 5, 1, 11, 0, 0, 0, time.UTC), Limit: 1}, want: []string{target}},
+		{name: "wrong platform", opts: SearchOptions{Project: "labelonly", Platform: PlatformClaudeCode}},
+		{name: "wrong role", opts: SearchOptions{Project: "labelonly", Role: "assistant"}},
+		{name: "too late", opts: SearchOptions{Project: "labelonly", After: time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC)}},
+		{name: "too early", opts: SearchOptions{Project: "labelonly", Before: time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC)}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.opts.Query = "brontosaurus"
+			hits, err := s.Search(ctx, tt.opts)
+			require.NoError(t, err)
+			var ids []string
+			for _, hit := range hits {
+				ids = append(ids, hit.SessionUUID)
+				assert.Equal(t, "/physical/worktree", hit.ProjectPath)
+				require.NotNil(t, hit.CustomProject)
+				assert.Equal(t, *hit.CustomProject, hit.Project)
+				if hit.SessionUUID == target {
+					assert.Equal(t, "labelonlyquasar", hit.Project)
+					assert.Equal(t, other, hit.ParentUUID)
+					assert.Equal(t, "agent-7", hit.SubagentID)
+					assert.Equal(t, 7, hit.LineIndex)
+				}
+			}
+			assert.Equal(t, tt.want, ids)
+		})
+	}
+	for _, query := range []string{"brontosaurus", "", " ", `"`} {
+		_, err := s.Search(ctx, SearchOptions{Query: query, Project: "labelonly", ProjectPath: "physical"})
+		require.ErrorContains(t, err, "mutually exclusive", "mixed scope must fail even for an empty query")
+	}
+	for _, raw := range []bool{false, true} {
+		hits, err := s.Search(ctx, SearchOptions{Query: "labelonlyquasar", Raw: raw, Project: "labelonly"})
+		require.NoError(t, err)
+		assert.Empty(t, hits, "project metadata never becomes an FTS match")
+	}
+	_, err = s.SetSessionProject(ctx, target, ProjectOptions{Clear: true})
+	require.NoError(t, err)
+	hits, err := s.Search(ctx, SearchOptions{Query: "brontosaurus", Project: "physical", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, target, hits[0].SessionUUID)
+	assert.Equal(t, hits[0].ProjectPath, hits[0].Project)
+	assert.Nil(t, hits[0].CustomProject)
+}
+
+func TestSessionProject_SearchOrdering(t *testing.T) {
+	s := newTestVault(t)
+	ctx := t.Context()
+	var ids []string
+	for i := range 3 {
+		uuid := fmt.Sprintf("abcd%04d-1111-2222-3333-444444444444", i)
+		ids = append(ids, uuid)
+		rec := sampleRecord(uuid)
+		rec.FTS[0].ContentText = "brontosaurus " + strings.Repeat("filler ", i*20)
+		rec.FTS[2].ContentText = "brontosaurus " + strings.Repeat("sidecar ", i*30+5)
+		require.NoError(t, s.InsertSession(ctx, rec))
+		_, err := s.RenameSession(ctx, uuid, RenameOptions{Name: "Independent title " + uuid})
+		require.NoError(t, err)
+	}
+	before, err := s.Search(ctx, SearchOptions{Query: "brontosaurus"})
+	require.NoError(t, err)
+	require.Len(t, before, 6)
+	for _, uuid := range ids[1:] {
+		_, err := s.SetSessionProject(ctx, uuid, ProjectOptions{Name: "shared label"})
+		require.NoError(t, err)
+	}
+	after, err := s.Search(ctx, SearchOptions{Query: "brontosaurus"})
+	require.NoError(t, err)
+	require.Len(t, after, len(before), "one-to-one joins cannot duplicate hits")
+	var expectedSubset []SearchResult
+	for i, hit := range after {
+		if hit.SessionUUID != ids[0] {
+			assert.Equal(t, "shared label", hit.Project)
+			expectedSubset = append(expectedSubset, hit)
+		} else {
+			assert.Equal(t, hit.ProjectPath, hit.Project)
+			assert.Nil(t, hit.CustomProject)
+		}
+		hit.Project, hit.CustomProject = before[i].Project, before[i].CustomProject
+		assert.Equal(t, before[i], hit, "order, titles, snippets and all anchors remain identical")
+	}
+	for _, limit := range []int{1, 20} {
+		subset, err := s.Search(ctx, SearchOptions{Query: "brontosaurus", Project: "shared label", Limit: limit})
+		require.NoError(t, err)
+		want := expectedSubset
+		if limit < len(want) {
+			want = want[:limit]
+		}
+		assert.Equal(t, want, subset, "the same eligible candidates keep their rank order")
+	}
+	for _, uuid := range ids[1:] {
+		_, err := s.SetSessionProject(ctx, uuid, ProjectOptions{Clear: true})
+		require.NoError(t, err)
+	}
+	cleared, err := s.Search(ctx, SearchOptions{Query: "brontosaurus"})
+	require.NoError(t, err)
+	assert.Equal(t, before, cleared)
 }

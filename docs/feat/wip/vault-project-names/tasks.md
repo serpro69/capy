@@ -6,7 +6,7 @@
 >
 > Issue: [#92](https://github.com/serpro69/capy/issues/92)
 >
-> Status: in-progress — Tasks 1–2 done; Task 3 next
+> Status: in-progress — Tasks 1–3 done; Task 4 next
 >
 > Created: 2026-09-19
 >
@@ -133,7 +133,7 @@ No Task 2 requirement is deferred.
 
 ## Task 3: Search reassigned transcripts through the CLI
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Size:** M
 - **Can run in parallel with:** —
@@ -141,9 +141,57 @@ No Task 2 requirement is deferred.
 
 ### Subtasks
 
-- [ ] 3.1 Add SearchOptions.ProjectPath, reject simultaneous effective/raw scope, and update store.go Search to select project metadata and filter before rank/limit. Verify both scopes and limit regression cases.
-- [ ] 3.2 Populate SearchResult.Project and CustomProject without changing ProjectPath; update CLI search display and JSON. Verify resolved labels and raw-path compatibility.
-- [ ] 3.3 Prove project-only words do not become transcript matches, metadata joins do not duplicate hits, and ranking/anchors remain stable for equivalent candidate sets. Run Slice 3's focused checks.
+- [x] 3.1 Add SearchOptions.ProjectPath, reject simultaneous effective/raw scope, and update store.go Search to select project metadata and filter before rank/limit. Verify both scopes and limit regression cases.
+- [x] 3.2 Populate SearchResult.Project and CustomProject without changing ProjectPath; update CLI search display and JSON. Verify resolved labels and raw-path compatibility.
+- [x] 3.3 Prove project-only words do not become transcript matches, metadata joins do not duplicate hits, and ranking/anchors remain stable for equivalent candidate sets. Run Slice 3's focused checks.
+
+### Task 3 verification and review (2026-09-20)
+
+Task 3 is complete; Task 4 is next. Tasks 4–10 remain pending. See the
+[implementation record](implementation.md#task-3-implementation-record-2026-09-20).
+
+All Go tests used FTS5 and both required keys (`CAPY_DB_KEY=test-key-for-development`,
+`CAPY_VAULT_KEY=test-key`); binary fixtures use their existing isolated vault keys.
+
+- PASS: `go test -tags fts5 -count=1 ./internal/vault ./cmd/capy -run 'Project|SearchResolves'`
+  (vault 14.171s, CLI 27.303s); rerun after the review fix passed
+  (vault 14.060s, CLI 26.936s).
+- PASS: `go test -race -tags fts5 -count=1 ./internal/vault -run 'SessionProject_(Search|SQLResolverAndLiteralQueries)|SearchResolves'`
+  (3.345s); rerun after the review fix passed (3.369s; no races).
+- PASS: `make vet`, `git diff --check`, and `gofmt -l` over changed Go files
+  (no formatting changes reported).
+- PASS: `go test -tags fts5 -count=1 ./... -skip '^TestCodexCanary$'` with an empty
+  temporary `XDG_CONFIG_HOME` (all packages; CLI 76.659s, server 95.402s,
+  vault 107.519s). This run preceded the small shared-resolver review fix;
+  the focused and race suites above verified the final code afterward.
+  The known malformed live transcript and remaining CLI fixture-isolation
+  follow-up under Task 1 remain; the unrestricted full suite is not claimed.
+- PASS: `make bench-quality` before and after the search changes, then
+  `make bench-compare BASE=vault-project-task3-before TARGET=feat-vault_project_name`.
+  Reports are `bench-results/vault-project-task3-before.json` and
+  `bench-results/feat-vault_project_name.json`; identical dataset fingerprint
+  `7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`.
+  All retrieval/context-reduction metrics were unchanged, including vault
+  R@1=0.933, R@5=0.967, NDCG@10=0.954, MRR=0.950, and negative FP=0/10.
+  Existing FTS fallback warnings and the miss for `tr_005_q3` occurred in both
+  runs. `benchstat` is unavailable, so no performance comparison is claimed.
+  These quality benchmarks cover existing chunk/knowledge retrieval; the new
+  per-line ordering/limit fixtures directly cover this task's changed query.
+  Task 10 retains the full-feature master comparison and scale measurements.
+- `kk:review-code:isolated`: the code-reviewer agent could not access its required
+  reader tools. The skill's independent external-review fallback (PAL,
+  Gemini 3.1 Pro) completed the review. Its MEDIUM finding identified a temporary
+  `SessionProject` allocation in the search loop; compiler escape analysis
+  confirmed it. Extracted `effectiveProject` for both session and search
+  projections, preserving one precedence rule; compiler analysis confirmed
+  removal of that allocation. The LOW alignment suggestion required no change:
+  `gofmt` was already clean. Independent follow-up closed both findings and
+  reported no remaining actionable issues. No P0/P1 findings to index.
+- `kk:test` and `kk:document` completed. No new conventions were indexed: the
+  scope, projection and ranking contracts are already documented in the design.
+
+No Task 3 requirement is deferred. The implementation follows Slice 3; the only
+review-driven adjustment was sharing the resolver without temporary session state.
 
 ## Task 4: Query custom projects through capy_vault_search
 
