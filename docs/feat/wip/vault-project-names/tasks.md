@@ -6,7 +6,7 @@
 >
 > Issue: [#92](https://github.com/serpro69/capy/issues/92)
 >
-> Status: in-progress — Tasks 1–3 done; Task 4 next
+> Status: in-progress — Tasks 1–4 done; Task 5 next
 >
 > Created: 2026-09-19
 >
@@ -195,7 +195,7 @@ review-driven adjustment was sharing the resolver without temporary session stat
 
 ## Task 4: Query custom projects through capy_vault_search
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** Task 5
@@ -203,10 +203,58 @@ review-driven adjustment was sharing the resolver without temporary session stat
 
 ### Subtasks
 
-- [ ] 4.1 Update chunk_search.go's project joins, row mapping and shared predicate wiring in both retrieval layers. Verify effective/raw scope and candidate filtering before retrieval limits.
-- [ ] 4.2 Add the shared MCP request-scope resolver in tool_vault_search.go and use it in handleVaultSearch. Verify omitted/empty project, explicit custom/raw value, star and all_projects precedence.
-- [ ] 4.3 Render effective project metadata in formatVaultHit and update tools.go help. Verify a renamed current-directory session stays visible by default, while a name alone does not associate a different checkout.
-- [ ] 4.4 Run Slice 4's focused tests, including existing disabled-vault, date and backlog behavior.
+- [x] 4.1 Update chunk_search.go's project joins, row mapping and shared predicate wiring in both retrieval layers. Verify effective/raw scope and candidate filtering before retrieval limits.
+- [x] 4.2 Add the shared MCP request-scope resolver in tool_vault_search.go and use it in handleVaultSearch. Verify omitted/empty project, explicit custom/raw value, star and all_projects precedence.
+- [x] 4.3 Render effective project metadata in formatVaultHit and update tools.go help. Verify a renamed current-directory session stays visible by default, while a name alone does not associate a different checkout.
+- [x] 4.4 Run Slice 4's focused tests, including existing disabled-vault, date and backlog behavior.
+
+### Task 4 verification and review (2026-09-20)
+
+Task 4 is complete; Task 5 is next. Tasks 5–10 remain pending. See the
+[implementation record](implementation.md#task-4-implementation-record-2026-09-20).
+
+All Go tests used FTS5 and both required test keys (`CAPY_DB_KEY=test-key-for-development`,
+`CAPY_VAULT_KEY=test-key`); fixtures retain their existing isolated vault keys.
+
+- PASS: `go test -tags fts5 -count=1 ./internal/vault ./internal/server -run 'Project|VaultSearch|SearchChunks|FormatVaultHit'`
+  (vault 19.399s, server 8.689s), including disabled-vault, date, backlog and
+  platform regressions. New fixtures exercise both retrieval layers beyond the
+  candidate limit and explicit/default/widened MCP scope.
+- PASS: `go test -race -tags fts5 -count=1 ./internal/vault ./internal/server -run 'SessionProject_Chunk|VaultSearch_Project|FormatVaultHit|Search_ProjectAssignment'`
+  (vault 2.314s, server 3.245s; no races).
+- PASS: `go test -tags fts5 -count=1 ./... -skip '^TestCodexCanary$'` with an empty
+  temporary `XDG_CONFIG_HOME` (all packages; CLI 78.999s, server 98.944s,
+  vault 111.128s). The known malformed live-transcript canary and remaining
+  fixture-isolation follow-up documented under Task 1 remain unchanged. The
+  unrestricted full suite is not claimed.
+- PASS: `make vet`, `git diff --check`, and `gofmt -l` over changed Go files.
+- PASS: `make bench-quality BENCH_BRANCH=vault-project-task4-before` before code
+  changes and `make bench-quality` afterward, then
+  `make bench-compare BASE=vault-project-task4-before TARGET=feat-vault_project_name`.
+  Reports are `bench-results/vault-project-task4-before.json` and
+  `bench-results/feat-vault_project_name.json`, with identical dataset fingerprint
+  `7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`.
+  All retrieval/context-reduction metrics were unchanged; vault R@1=0.933,
+  R@5=0.967, NDCG@10=0.954, MRR=0.950 and negative FP=0/10. Existing FTS fallback
+  warnings and the `tr_005_q3` miss occurred in both runs. `benchstat` is
+  unavailable, so no performance comparison is claimed. The full-feature master
+  comparison and 10,000-session measurements remain Task 10.
+- `kk:review-code:isolated`: the code-reviewer sub-agent could not read files
+  with its permitted tools. The skill's independent external-reviewer fallback
+  (PAL, Gemini 3.1 Pro) completed the review and found one LOW test clarity issue:
+  the `capy_search` compatibility regression used `vaultSearchReq`, whose request
+  name is `capy_vault_search`. Replaced it with an explicit `capy_search` request.
+  No unresolved findings or P0/P1 findings to index.
+- PASS after that test-only review fix:
+  `go test -tags fts5 -count=1 ./internal/server -run '^TestSearch_ProjectAssignmentKeepsDefaultScope$'`
+  (0.903s). Production code is unchanged since the full, race and benchmark runs.
+- `kk:test` and `kk:document` completed. No new project conventions were indexed:
+  scope separation, literal labels and pre-limit filtering are already captured
+  by the feature design. No new dependencies or generated artifacts.
+
+No Task 4 requirement is deferred. The only plan adjustment is the compatibility
+change to the shared `capy_search` caller: it explicitly passes raw `ProjectPath`
+until Task 6 updates effective-project selection and availability together.
 
 ## Task 5: Inspect effective project statistics
 

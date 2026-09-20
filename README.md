@@ -565,8 +565,20 @@ include the original path separately when it differs. `list --json` and
 `search --json` add `project` while retaining the original `project_path`;
 `show --format json` remains the verbatim archived JSONL.
 
-Project-aware MCP/chunk search, statistics, TUI browsing/editing and cross-vault
-merge are pending in the [project-name task plan](docs/feat/wip/vault-project-names/tasks.md).
+`capy_vault_search` accepts an explicit `project` substring against the effective
+project. Omitting `project` or passing an empty string scopes by the current
+directory in the **imported path**, so assigning a label keeps the session in its
+original directory's default search. A label alone does not associate a session
+with another checkout. `all_projects: true` overrides the selector; exact
+`project: "*"` also searches all projects and cannot select a star-only label.
+Chunk filters apply before retrieval limits, and MCP session hits display the
+effective project without shortening custom labels.
+
+Effective-project filtering in federated `capy_search`, statistics, TUI
+browsing/editing and cross-vault merge remain pending in the
+[project-name task plan](docs/feat/wip/vault-project-names/tasks.md).
+Until its availability check is updated, `capy_search` keeps imported-path
+selection for both default and explicit scope.
 
 ### Cross-machine sync
 

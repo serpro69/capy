@@ -1,6 +1,6 @@
 # Vault Project Names — Implementation Plan
 
-**Status:** Design reviewed; Tasks 1–3 done; Tasks 4–10 pending
+**Status:** Design reviewed; Tasks 1–4 done; Tasks 5–10 pending
 
 **Contract:** [design.md](design.md)
 
@@ -228,3 +228,30 @@ Verification and independent review results are recorded in
 
 Verification and isolated review results are recorded in
 [tasks.md](tasks.md#task-3-verification-and-review-2026-09-20).
+
+## Task 4 implementation record (2026-09-20)
+
+- `SearchChunks` joins project metadata once, validates mutually exclusive scopes
+  before an empty-query return, and passes the shared bound predicate into both
+  retrieval layers before candidate limits. Results carry effective `Project`,
+  nullable `CustomProject` and unchanged imported `ProjectPath` through the shared
+  Go resolver. Ranking, snippets, indexed content and navigation stay unchanged.
+- `vaultProjectScope` preserves MCP coercion and widening precedence: all-projects
+  selectors win, explicit non-empty values select effective projects, and omitted
+  or empty values scope by the imported path. `capy_vault_search` uses the helper;
+  `formatVaultHit` renders effective labels literally, and argument help documents
+  the reserved exact-star selector without adding any argument or mutation tool.
+- A necessary compatibility adjustment changes the existing `capy_search` call
+  to pass its selector as `ProjectPath`. This preserves its raw-path behavior
+  while Task 6 remains pending; that task must adopt the helper together with
+  effective-project availability. The dependency is marked at the call-site scope
+  block and covered with a renamed-session/empty-knowledge-store regression.
+- Regression fixtures exercise porter-only and trigram-only hits beyond ten
+  excluded candidates, raw/effective scope, clear fallback, literal metacharacters
+  and case behavior, projection/order parity, title/child/platform/date metadata,
+  MCP widening, and absence of implicit association through a label.
+- No new dependencies, schema/index changes or generated setup artifacts. README
+  and architecture describe the completed surface and the remaining slices.
+
+Verification and independent review results are recorded in
+[tasks.md](tasks.md#task-4-verification-and-review-2026-09-20).

@@ -91,7 +91,8 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 	// Project scope for the vault pass: the current project by default;
 	// all_projects (or project:"*") widens to every archived project; an explicit
-	// project substring narrows. Mirrors capy_vault_search. Knowledge.db is
+	// project substring narrows by imported path. TODO(vault-project-names Task 6):
+	// adopt vaultProjectScope together with effective-project availability. Knowledge.db is
 	// already per-project, so these fields only affect the vault pass.
 	vaultProject := s.projectDir
 	explicitProject := req.GetString("project", "")
@@ -181,9 +182,9 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		var vResults []vault.SearchResult
 		if runVaultPass {
 			r, sErr := vlt.SearchChunks(ctx, vault.SearchOptions{
-				Query:   q,
-				Project: vaultProject,
-				Limit:   effectiveLimit,
+				Query:       q,
+				ProjectPath: vaultProject,
+				Limit:       effectiveLimit,
 			})
 			if sErr != nil {
 				errs = append(errs, fmt.Sprintf("vault: %v", sErr))

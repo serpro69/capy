@@ -44,6 +44,7 @@ type chunkMeta struct {
 	firstLineIndex int
 	sessionTitle   string
 	projectPath    string
+	customProject  *string
 	endTime        time.Time
 	platform       Platform
 	parentUUID     string
@@ -57,12 +58,17 @@ type chunkMeta struct {
 // trigram layer for typo/substring tolerance (design §D1; adding a vault
 // vocabulary is deferred until benchmark A2 shows the delta is unacceptable).
 //
-// Honored options: Query, Project (substring match on project_path), Platform,
-// After / Before (on session end_time), Limit (default 20). Role and Raw are
+// Honored options: Query, Project (effective project substring), ProjectPath
+// (imported path substring), Platform, After / Before (on session end_time),
+// Limit (default 20). Project and ProjectPath are mutually exclusive. Role and Raw are
 // rejected loudly: role is undefined at chunk granularity (Not Doing), and
 // the retrieval engine owns query sanitization, so raw FTS5 syntax cannot be
 // passed through.
 func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]SearchResult, error) {
+	predicate, projectArg, err := projectScopePredicate(opts.Project, opts.ProjectPath)
+	if err != nil {
+		return nil, err
+	}
 	if opts.Role != "" {
 		return nil, errors.New("vault: chunk search does not support role filtering — a semantic chunk spans mixed roles; use per-line search (capy vault search --role)")
 	}
@@ -80,9 +86,9 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 
 	var filter strings.Builder
 	var params []any
-	if opts.Project != "" {
-		filter.WriteString(` AND s.project_path LIKE ? ESCAPE '\'`)
-		params = append(params, likeContains(opts.Project))
+	if predicate != "" {
+		filter.WriteString(" AND " + predicate)
+		params = append(params, projectArg)
 	}
 	if opts.Platform != "" {
 		filter.WriteString(" AND s.platform = ?")
@@ -105,13 +111,15 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 		// diversification caps hits per SourceID, so per-source caps become
 		// per-session caps — the vault analogue of knowledge.db's per-source
 		// diversification.
-		// vault_session_names is joined for display-title resolution only — the
-		// name text is not in either chunk FTS table, so it never matches.
+		// Title/project overrides are metadata only: their text never enters
+		// MATCH. The shared project predicate filters both retrieval layers
+		// before candidate limits, fusion and reranking.
 		SelectColumns: "c.session_uuid, c.title, c.content_text, s.rowid, " +
-			"c.subagent_id, c.first_line_index, s.title, n.custom_title, s.project_path, s.end_time, " +
+			"c.subagent_id, c.first_line_index, s.title, n.custom_title, s.project_path, p.custom_project, s.end_time, " +
 			"s.platform, s.parent_uuid",
 		Join: "JOIN vault_sessions s ON s.uuid = c.session_uuid " +
-			"LEFT JOIN vault_session_names n ON n.session_uuid = s.uuid",
+			"LEFT JOIN vault_session_names n ON n.session_uuid = s.uuid " +
+			"LEFT JOIN vault_session_projects p ON p.session_uuid = s.uuid",
 		TitleWeight:  chunkTitleWeight,
 		FilterSQL:    filter.String(),
 		FilterParams: params,
@@ -138,17 +146,19 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 			return nil, fmt.Errorf("vault: chunk search result %q carries no chunk metadata (got %T)", r.Title, r.Meta)
 		}
 		out = append(out, SearchResult{
-			SessionUUID: r.Label,
-			SubagentID:  meta.subagentID,
-			LineIndex:   meta.firstLineIndex,
-			Snippet:     chunkSnippet(r.Highlighted),
-			Title:       meta.sessionTitle,
-			ProjectPath: meta.projectPath,
-			EndTime:     meta.endTime,
-			Platform:    meta.platform,
-			ParentUUID:  meta.parentUUID,
-			Content:     r.Content,
-			MatchLayer:  r.MatchLayer,
+			SessionUUID:   r.Label,
+			SubagentID:    meta.subagentID,
+			LineIndex:     meta.firstLineIndex,
+			Snippet:       chunkSnippet(r.Highlighted),
+			Title:         meta.sessionTitle,
+			ProjectPath:   meta.projectPath,
+			Project:       effectiveProject(meta.projectPath, meta.customProject),
+			CustomProject: meta.customProject,
+			EndTime:       meta.endTime,
+			Platform:      meta.platform,
+			ParentUUID:    meta.parentUUID,
+			Content:       r.Content,
+			MatchLayer:    r.MatchLayer,
 		})
 	}
 	return out, nil
@@ -162,18 +172,19 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 func scanChunkSearchRow(rows *sql.Rows) (retrieval.SearchResult, error) {
 	var r retrieval.SearchResult
 	var meta chunkMeta
-	var sessionTitle, customTitle, endTime, parentUUID sql.NullString
+	var sessionTitle, customTitle, customProject, endTime, parentUUID sql.NullString
 	var platform string
 	if err := rows.Scan(
 		&r.Label, &r.Title, &r.Content, &r.SourceID,
 		&meta.subagentID, &meta.firstLineIndex,
-		&sessionTitle, &customTitle, &meta.projectPath, &endTime,
+		&sessionTitle, &customTitle, &meta.projectPath, &customProject, &endTime,
 		&platform, &parentUUID,
 		&r.Highlighted, &r.Rank,
 	); err != nil {
 		return retrieval.SearchResult{}, err
 	}
 	meta.sessionTitle = effectiveSearchTitle(sessionTitle, customTitle)
+	meta.customProject = nullStringPointer(customProject)
 	meta.endTime = parseTime(endTime)
 	meta.platform = Platform(platform)
 	meta.parentUUID = parentUUID.String

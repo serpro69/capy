@@ -171,6 +171,7 @@ func TestFormatVaultHit_PlatformAndParent(t *testing.T) {
 		Snippet:     "configure the database",
 		Title:       "Database setup",
 		ProjectPath: "/home/u/proj",
+		Project:     "/home/u/proj",
 		EndTime:     end,
 		// Platform left empty on purpose: a SearchResult built in memory is
 		// Claude (OrClaude), exactly like a stored default row.
@@ -239,4 +240,115 @@ func TestVaultSearch_CodexChildHitIsLabeled(t *testing.T) {
 	}
 	assert.Contains(t, parentBlock, " · codex\n")
 	assert.NotContains(t, parentBlock, "child of")
+}
+
+func TestVaultSearch_ProjectOverrideScopes(t *testing.T) {
+	projectA, uuidA, projectB, uuidB := setupVaultSweepMultiProject(t)
+	t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)
+	t.Setenv("CAPY_VAULT_SWEEP_ALL", "1")
+	srv := newTestServerWithProjectDir(t, nil, projectA)
+	srv.vaultSweep(t.Context())
+	vlt := srv.getVault()
+	require.NotNil(t, vlt)
+	const label = "labelonlyquasar"
+	_, err := vlt.SetSessionProject(t.Context(), uuidA, vault.ProjectOptions{Name: label})
+	require.NoError(t, err)
+	// Naming another checkout after A must not associate it with A's default scope.
+	_, err = vlt.SetSessionProject(t.Context(), uuidB, vault.ProjectOptions{Name: projectA})
+	require.NoError(t, err)
+	for _, tt := range []struct {
+		name, query, uuid string
+		args              map[string]any
+		want              bool
+	}{
+		{"omitted retains physical session", "database", uuidA, nil, true},
+		{"empty retains physical session", "database", uuidA, map[string]any{"project": ""}, true},
+		{"explicit custom label", "database", uuidA, map[string]any{"project": "LABELONLY"}, true},
+		{"explicit replaced path", "database", uuidA, map[string]any{"project": projectA}, false},
+		{"unrelated selector", "database", uuidA, map[string]any{"project": "unrelated"}, false},
+		{"label does not associate directory", "scheduler", uuidB, nil, false},
+		{"empty does not associate directory", "scheduler", uuidB, map[string]any{"project": ""}, false},
+		{"explicit path-looking label", "scheduler", uuidB, map[string]any{"project": projectA}, true},
+		{"replaced other path", "scheduler", uuidB, map[string]any{"project": projectB}, false},
+		{"star", "scheduler", uuidB, map[string]any{"project": "*"}, true},
+		{"all projects", "scheduler", uuidB, map[string]any{"all_projects": true}, true},
+		{"widening overrides explicit", "scheduler", uuidB, map[string]any{"all_projects": true, "project": "unrelated"}, true},
+		{"star overrides false widening", "scheduler", uuidB, map[string]any{"all_projects": false, "project": "*"}, true},
+		{"false widening keeps default", "scheduler", uuidB, map[string]any{"all_projects": false}, false},
+		{"label alone is not transcript text", label, uuidA, map[string]any{"project": label}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			args := map[string]any{"queries": []any{tt.query}}
+			for k, v := range tt.args {
+				args[k] = v
+			}
+			res, err := srv.handleVaultSearch(t.Context(), vaultSearchReq(args))
+			require.NoError(t, err)
+			require.False(t, res.IsError)
+			out := resultText(res)
+			if tt.want {
+				assert.Contains(t, out, "[session:"+tt.uuid+"]")
+				project := label
+				if tt.uuid == uuidB {
+					project = projectA
+				}
+				assert.Contains(t, out, "\n"+project+" · ", "metadata displays the literal effective project")
+			} else {
+				assert.NotContains(t, out, "[session:"+tt.uuid+"]")
+			}
+			assert.Equal(t, projectA, srv.projectDir, "scope resolution does not mutate the server directory")
+		})
+	}
+	_, err = vlt.SetSessionProject(t.Context(), uuidA, vault.ProjectOptions{Clear: true})
+	require.NoError(t, err)
+	res, err := srv.handleVaultSearch(t.Context(), vaultSearchReq(map[string]any{"query": "database", "project": projectA}))
+	require.NoError(t, err)
+	assert.Contains(t, resultText(res), "[session:"+uuidA+"]")
+	assert.Contains(t, resultText(res), "\n"+projectA+" · ")
+}
+
+func TestVaultSearch_ProjectHelp(t *testing.T) {
+	tool := toolVaultSearch()
+	require.Len(t, tool.InputSchema.Properties, 6, "no new MCP argument")
+	for _, name := range []string{"queries", "limit", "project", "all_projects", "after", "before"} {
+		require.Contains(t, tool.InputSchema.Properties, name)
+	}
+	prop, ok := tool.InputSchema.Properties["project"].(map[string]any)
+	require.True(t, ok)
+	help, ok := prop["description"].(string)
+	require.True(t, ok)
+	for _, text := range []string{"literal substring", "effective project", "custom label", "Omitted or empty", "imported path", `Exact "*" is reserved`, "all_projects: true overrides"} {
+		assert.Contains(t, help, text)
+	}
+}
+
+func TestFormatVaultHit_ProjectLabels(t *testing.T) {
+	for _, project := range []string{"named project", "/home/u/project", "~/literal", `Équipe %_\'"`} {
+		t.Run(project, func(t *testing.T) {
+			hit := vault.SearchResult{SessionUUID: "test-session", ProjectPath: "/original/path", Project: project, CustomProject: &project}
+			out := formatVaultHit(hit)
+			assert.Contains(t, out, "\n"+project+" · line 0")
+			assert.NotContains(t, out, hit.ProjectPath)
+		})
+	}
+}
+
+// Task 6 will add effective-project availability and explicit label selection
+// to capy_search together. Until then its existing raw-path scope must survive
+// the shared SearchChunks change, including an empty knowledge store.
+func TestSearch_ProjectAssignmentKeepsDefaultScope(t *testing.T) {
+	project, uuid, _ := setupVaultSweepProject(t)
+	t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)
+	srv := newTestServerWithProjectDir(t, nil, project)
+	srv.vaultSweep(t.Context())
+	_, err := srv.getVault().SetSessionProject(t.Context(), uuid, vault.ProjectOptions{Name: "renamed project"})
+	require.NoError(t, err)
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "capy_search"
+	req.Params.Arguments = map[string]any{"queries": []any{"configure database"}}
+	res, err := srv.handleSearch(t.Context(), req)
+	require.NoError(t, err)
+	require.False(t, res.IsError)
+	assert.Contains(t, resultText(res), "[session:"+uuid+"]")
+	assert.Contains(t, resultText(res), "\nrenamed project · ")
 }
