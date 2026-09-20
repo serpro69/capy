@@ -321,7 +321,7 @@ type SessionRecord struct {
 
 // ListOptions filters and bounds ListSessions.
 type ListOptions struct {
-	Project string // substring match on project_path; "" == no filter
+	Project string // literal substring match on the effective project; "" == no filter
 	// Name is a literal, case-insensitive substring over the resolved effective
 	// title ("" == no filter). Folding is Unicode simple lowercasing in Go
 	// (ContainsFold) — SQLite's lower()/NOCASE folds ASCII only — so %, _,
@@ -1226,8 +1226,8 @@ func (s *VaultStore) GetFiles(ctx context.Context, sessionUUID string) ([]File, 
 
 // ListSessions returns sessions in reverse-chronological order. Location is 1:1
 // on the row, so this is a plain SELECT (no GROUP BY). --project is a substring
-// match (LIKE %...%), which no index can accelerate; a full scan over a
-// single-user vault is cheap. The name predicate runs in Go over the resolved
+// match on the effective project (LIKE %...%), which no index can accelerate;
+// a full scan over a single-user vault is cheap. The name predicate runs in Go over the resolved
 // effective title (see ListOptions.Name), so with a name filter the SQL LIMIT
 // must not pre-truncate the candidate rows — the limit applies after both
 // predicates.
@@ -1243,8 +1243,9 @@ func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Sess
 		args  []any
 	)
 	if opts.Project != "" {
-		where = append(where, `s.project_path LIKE ? ESCAPE '\'`)
-		args = append(args, likeContains(opts.Project))
+		predicate, pattern := effectiveProjectPredicate(opts.Project)
+		where = append(where, predicate)
+		args = append(args, pattern)
 	}
 	if !opts.IncludeChildren {
 		where = append(where, `s.parent_uuid IS NULL`)

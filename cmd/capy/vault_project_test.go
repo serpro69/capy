@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,4 +109,100 @@ func TestVaultProject_ValidationDoesNotCreateVault(t *testing.T) {
 			assert.ErrorIs(t, err, os.ErrNotExist)
 		})
 	}
+}
+
+func TestVaultProject_Browse(t *testing.T) {
+	root, uuid := setupVaultEnv(t)
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	path := filepath.Join(home, "vp")
+	label := filepath.Join(home, "label")
+	fixture := filepath.Join(root, uuid+".jsonl")
+	raw, err := os.ReadFile(fixture)
+	require.NoError(t, err)
+	raw = []byte(strings.ReplaceAll(string(raw), "/home/user/proj", path))
+	require.NoError(t, os.WriteFile(fixture, raw, 0o644))
+	run := func(args ...string) string {
+		t.Helper()
+		stdout, stderr, code := capy(t, append([]string{"vault"}, args...)...)
+		require.Equal(t, 0, code, stderr)
+		return stdout
+	}
+	run("import", "--source", root)
+	listJSON := func() map[string]any {
+		t.Helper()
+		var rows []map[string]any
+		require.NoError(t, json.Unmarshal([]byte(run("list", "--json")), &rows))
+		require.Len(t, rows, 1)
+		return rows[0]
+	}
+	baseline := listJSON()
+	assert.Equal(t, map[string]any{
+		"uuid": uuid, "title": "Fix the brontosaurus timeout", "project_path": path, "project": path,
+		"git_branch": "main", "start_time": "2026-05-01T10:00:00Z", "end_time": "2026-05-01T10:00:05Z",
+		"message_count": float64(2), "size_bytes": float64(len(raw)), "platform": "claude-code",
+	}, baseline)
+	for _, tt := range []struct {
+		name    string
+		args    []string
+		project string
+		display string
+	}{
+		{name: "unset", project: path, display: "~/vp"},
+		{name: "override", args: []string{label}, project: label, display: label},
+		{name: "equal to raw path", args: []string{path}, project: path, display: path},
+		{name: "clear", args: []string{"--clear"}, project: path, display: "~/vp"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.args != nil {
+				run(append([]string{"project", uuid}, tt.args...)...)
+			}
+			row := listJSON()
+			assert.Equal(t, tt.project, row["project"])
+			row["project"] = path
+			assert.Equal(t, baseline, row, "every pre-existing field remains unchanged")
+			assert.Equal(t, string(raw), run("show", uuid, "--format", "json"))
+			assert.Contains(t, run("list"), truncate(tt.display, 28))
+			assert.Contains(t, run("list", "--project", tt.project, "--limit", "1"), uuid[:8])
+			text := run("show", uuid)
+			markdown := run("show", uuid, "--format", "markdown")
+			assert.Contains(t, text, "project: "+tt.display+"  branch:")
+			assert.Contains(t, markdown, "- **Project:** "+tt.display+"\n")
+			_, preview, code := capy(t, "vault", "delete", uuid)
+			require.Equal(t, 0, code, preview)
+			assert.Contains(t, preview, "Project:  "+tt.display+"\n")
+			if tt.project != path {
+				assert.Contains(t, text, "original path: ~/vp\n")
+				assert.Contains(t, markdown, "- **Original path:** ~/vp\n")
+				assert.Contains(t, preview, "Original path: ~/vp\n")
+				assert.Contains(t, run("list", "--project", path), "no sessions archived")
+			} else {
+				assert.NotContains(t, text, "original path:")
+				assert.NotContains(t, markdown, "Original path:")
+				assert.NotContains(t, preview, "Original path:")
+			}
+		})
+	}
+}
+
+func TestVaultProject_ChildAndAmbiguityDisplays(t *testing.T) {
+	home := setupCodexVaultEnv(t)
+	writeCodexChild(t, home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	_, stderr, code := capy(t, "vault", "import")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = capy(t, "vault", "project", codexChildUUID, "child assignment")
+	require.Equal(t, 0, code, stderr)
+	stdout, stderr, code := capy(t, "vault", "list", "--project", "child assignment", "--include-children")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "child assignment")
+	assert.Contains(t, stdout, "↳ "+shortUUID(codexParentUUID, vault.PlatformCodex))
+	assert.Contains(t, stdout, shortUUID(codexChildUUID, vault.PlatformCodex))
+	stdout, stderr, code = capy(t, "vault", "list", "--project", "child assignment")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "no sessions archived")
+	_, stderr, code = capy(t, "vault", "show", codexChildUUID[:8])
+	require.NotEqual(t, 0, code)
+	assert.Contains(t, stderr, "child assignment")
+	assert.Contains(t, stderr, "ambiguous session id")
 }

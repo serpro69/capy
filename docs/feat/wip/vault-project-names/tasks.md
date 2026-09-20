@@ -6,7 +6,7 @@
 >
 > Issue: [#92](https://github.com/serpro69/capy/issues/92)
 >
-> Status: in-progress — Task 1 done; Task 2 next
+> Status: in-progress — Tasks 1–2 done; Task 3 next
 >
 > Created: 2026-09-19
 >
@@ -81,7 +81,7 @@ All Go checks used FTS5 and both required test keys (`CAPY_DB_KEY=test-key-for-d
 
 ## Task 2: Browse reassigned sessions in the CLI
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Can run in parallel with:** —
@@ -89,10 +89,47 @@ All Go checks used FTS5 and both required test keys (`CAPY_DB_KEY=test-key-for-d
 
 ### Subtasks
 
-- [ ] 2.1 Add the shared effective-project SQL expression and literal predicate; use them in ListSessions before limits. Verify older eligible sessions survive limits and title/platform/child filters compose correctly.
-- [ ] 2.2 Update cmd/capy/vault.go list/show, ambiguity, delete and child displays to use effective projects with original-path detail. Verify labels are literal, including a custom value equal to the raw path.
-- [ ] 2.3 Add list JSON project while retaining project_path and every existing field; keep show --format json verbatim. Verify both projections in CLI fixtures.
-- [ ] 2.4 Add SQL/Go resolver parity and literal-query tests covering unset/set/clear, percent, underscore, backslash, quotes and case behavior. Run Slice 2's focused checks.
+- [x] 2.1 Add the shared effective-project SQL expression and literal predicate; use them in ListSessions before limits. Verify older eligible sessions survive limits and title/platform/child filters compose correctly.
+- [x] 2.2 Update cmd/capy/vault.go list/show, ambiguity, delete and child displays to use effective projects with original-path detail. Verify labels are literal, including a custom value equal to the raw path.
+- [x] 2.3 Add list JSON project while retaining project_path and every existing field; keep show --format json verbatim. Verify both projections in CLI fixtures.
+- [x] 2.4 Add SQL/Go resolver parity and literal-query tests covering unset/set/clear, percent, underscore, backslash, quotes and case behavior. Run Slice 2's focused checks.
+
+### Task 2 verification and review (2026-09-20)
+
+Task 2 is complete; Task 3 is next. Tasks 3–10 remain pending. See the
+[implementation record](implementation.md#task-2-implementation-record-2026-09-20).
+
+All Go tests used FTS5 and both required test keys (`CAPY_DB_KEY=test-key-for-development`,
+`CAPY_VAULT_KEY=test-key`); binary fixtures use their existing isolated vault keys.
+
+- PASS: `go test -tags fts5 -count=1 ./internal/vault ./cmd/capy -run 'Project|ListSessions|WriteShowHeader|PrintDeletePreview|WriteLookupCandidates'`
+  (vault 13.366s, CLI 20.434s). The first run exposed a missing child in the new
+  test fixture; fixed by creating the existing child rollout fixture and using
+  default platform discovery, then reran successfully.
+- PASS: `go test -tags fts5 -count=1 ./... -skip '^TestCodexCanary$'` with an empty
+  temporary `XDG_CONFIG_HOME` (all packages; CLI 69.675s, server 94.578s,
+  vault 107.004s). The unrestricted suite was not claimed: the malformed
+  live-transcript canary and fixture-isolation follow-up documented under Task 1
+  remain unchanged.
+- PASS: `make vet` and `git diff --check`.
+- PASS: `go test -race -tags fts5 -count=1 ./internal/vault -run 'SessionProject_(ListFiltering|SQLResolverAndLiteralQueries)|ListSessionsNameFilter'`
+  (3.039s; no races).
+- `kk:review-code:isolated`: the code-reviewer sub-agent could not read files
+  because its permitted reader tools were unavailable. The skill's independent
+  external-reviewer fallback (PAL, Gemini 3.1 Pro) completed the review and found
+  one LOW presentation issue: the Markdown original-path row followed dates.
+  Moved it directly below Project. No unresolved findings or P0/P1 findings to
+  index.
+- PASS after the review fix: `go test -tags fts5 -count=1 ./cmd/capy -run 'VaultProject|WriteShowHeader|PrintDeletePreview|WriteLookupCandidates'`
+  (20.299s). The list display assertion also respects the existing column width
+  so a long home directory does not make the fixture fail.
+- `kk:test` and `kk:document` completed. README, architecture, CLI help and feature
+  records describe the implemented scope. No new conventions were indexed:
+  resolver precedence, literal labels and filter ordering are already captured
+  in the design. No retrieval/indexing/executor code changed; quality benchmarks
+  remain with the retrieval-changing slices and Task 10.
+
+No Task 2 requirement is deferred.
 
 ## Task 3: Search reassigned transcripts through the CLI
 

@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -222,5 +223,142 @@ func TestSessionProject_ArchivedDataUnchanged(t *testing.T) {
 		require.NoError(t, err)
 		after.ProjectOverride = nil
 		assert.Equal(t, beforeSession, after, "all imported metadata and title state must remain identical")
+	}
+}
+
+func TestSessionProject_ListFiltering(t *testing.T) {
+	s := newTestVault(t)
+	ctx := t.Context()
+	const (
+		newest     = "aaaa0001-1111-2222-3333-444444444444"
+		otherTitle = "bbbb0002-1111-2222-3333-444444444444"
+		child      = "cccc0003-1111-2222-3333-444444444444"
+		claude     = "dddd0004-1111-2222-3333-444444444444"
+		oldest     = "eeee0005-1111-2222-3333-444444444444"
+	)
+	for i, fixture := range []struct {
+		uuid     string
+		platform Platform
+		parent   string
+		label    string
+		title    string
+	}{
+		{uuid: newest, platform: PlatformCodex, label: "unrelated", title: "TARGET"},
+		{uuid: otherTitle, platform: PlatformCodex, label: "shared", title: "other"},
+		{uuid: child, platform: PlatformCodex, parent: newest, label: "shared", title: "TARGET"},
+		{uuid: claude, platform: PlatformClaudeCode, label: "shared", title: "TARGET"},
+		{uuid: oldest, platform: PlatformCodex, label: "shared", title: "TARGET"},
+	} {
+		rec := sampleRecord(fixture.uuid)
+		rec.Session.ProjectPath = "/old/location"
+		rec.Session.Platform = fixture.platform
+		rec.Session.ParentUUID = fixture.parent
+		rec.Session.EndTime = rec.Session.EndTime.Add(-time.Duration(i) * time.Hour)
+		require.NoError(t, s.InsertSession(ctx, rec))
+		_, err := s.setSessionProjectAt(ctx, fixture.uuid, ProjectOptions{Name: fixture.label}, time.Unix(0, 1), "m")
+		require.NoError(t, err)
+		_, err = s.renameSessionAt(ctx, fixture.uuid, RenameOptions{Name: fixture.title}, time.Unix(0, 1), "m")
+		require.NoError(t, err)
+	}
+	for _, tt := range []struct {
+		name string
+		opts ListOptions
+		want []string
+	}{
+		{name: "project before SQL limit", opts: ListOptions{Project: "SHARED", Limit: 1}, want: []string{otherTitle}},
+		{name: "name before Go limit", opts: ListOptions{Project: "shared", Name: "target", Limit: 1}, want: []string{claude}},
+		{name: "all filters", opts: ListOptions{Project: "shared", Name: "target", Platform: PlatformCodex, Limit: 1}, want: []string{oldest}},
+		{name: "children included", opts: ListOptions{Project: "shared", Name: "target", Platform: PlatformCodex, IncludeChildren: true, Limit: 1}, want: []string{child}},
+		{name: "no limit", opts: ListOptions{Project: "shared"}, want: []string{otherTitle, claude, oldest}},
+		{name: "raw path replaced", opts: ListOptions{Project: "old/location"}},
+		{name: "title is not project alias", opts: ListOptions{Project: "TARGET"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := s.ListSessions(ctx, tt.opts)
+			require.NoError(t, err)
+			var ids []string
+			for _, sess := range got {
+				ids = append(ids, sess.UUID)
+				assert.Nil(t, sess.RawJSONL, "listing is metadata-only")
+				assert.Equal(t, "/old/location", sess.ProjectPath)
+			}
+			assert.Equal(t, tt.want, ids)
+		})
+	}
+	_, err := s.setSessionProjectAt(ctx, oldest, ProjectOptions{Clear: true}, time.Unix(0, 2), "m")
+	require.NoError(t, err)
+	got, err := s.ListSessions(ctx, ListOptions{Project: "old/location", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, oldest, got[0].UUID)
+	assert.Equal(t, "/old/location", got[0].EffectiveProject())
+}
+
+func TestSessionProject_SQLResolverAndLiteralQueries(t *testing.T) {
+	for _, state := range []string{"unset", "override", "equal to path", "clear"} {
+		t.Run(state, func(t *testing.T) {
+			s := newTestVault(t)
+			ctx := t.Context()
+			db, err := s.getDB(ctx)
+			require.NoError(t, err)
+			labels := []string{`MiXeD CAFÉ %_\'" *`, "ordinary", "mixed café", `MiXeD CAFÉ ax`}
+			var ids []string
+			for i, label := range labels {
+				uuid := fmt.Sprintf("abcd%04d-1111-2222-3333-444444444444", i)
+				ids = append(ids, uuid)
+				rec := sampleRecord(uuid)
+				rec.Session.ProjectPath = label
+				if state == "override" {
+					rec.Session.ProjectPath = "/replaced/path"
+				}
+				rec.Session.EndTime = rec.Session.EndTime.Add(-time.Duration(i) * time.Hour)
+				require.NoError(t, s.InsertSession(ctx, rec))
+				if state != "unset" {
+					opts := ProjectOptions{Name: label}
+					if state == "clear" {
+						opts = ProjectOptions{Clear: true}
+					}
+					_, err := s.setSessionProjectAt(ctx, uuid, opts, time.Unix(0, 1), "m")
+					require.NoError(t, err)
+				}
+				sess, err := s.GetSession(ctx, uuid)
+				require.NoError(t, err)
+				var resolved string
+				require.NoError(t, db.QueryRowContext(ctx, `SELECT `+effectiveProjectSQL+sessionMetaJoin+` WHERE s.uuid = ?`, uuid).Scan(&resolved))
+				assert.Equal(t, label, resolved)
+				assert.Equal(t, sess.EffectiveProject(), resolved)
+			}
+			for _, tt := range []struct {
+				name  string
+				query string
+				want  []int
+			}{
+				{name: "percent", query: "%", want: []int{0}},
+				{name: "underscore", query: "_", want: []int{0}},
+				{name: "backslash", query: `\`, want: []int{0}},
+				{name: "single quote", query: "'", want: []int{0}},
+				{name: "double quote", query: `"`, want: []int{0}},
+				{name: "star is literal", query: "*", want: []int{0}},
+				{name: "ASCII folding", query: "mIxEd", want: []int{0, 2, 3}},
+				{name: "uppercase accented", query: "cafÉ", want: []int{0, 3}},
+				{name: "lowercase accented", query: "CAFé", want: []int{2}},
+				{name: "compound literal", query: `%_\'"`, want: []int{0}},
+				{name: "SQL syntax is literal", query: `' OR 1=1 --`},
+				{name: "empty is unrestricted", want: []int{0, 1, 2, 3}},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					got, err := s.ListSessions(ctx, ListOptions{Project: tt.query})
+					require.NoError(t, err)
+					var gotIDs, wantIDs []string
+					for _, sess := range got {
+						gotIDs = append(gotIDs, sess.UUID)
+					}
+					for _, i := range tt.want {
+						wantIDs = append(wantIDs, ids[i])
+					}
+					assert.Equal(t, wantIDs, gotIDs)
+				})
+			}
+		})
 	}
 }

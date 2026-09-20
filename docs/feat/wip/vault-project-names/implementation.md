@@ -1,6 +1,6 @@
 # Vault Project Names — Implementation Plan
 
-**Status:** Design reviewed; Task 1 done; Tasks 2–10 pending
+**Status:** Design reviewed; Tasks 1–2 done; Tasks 3–10 pending
 
 **Contract:** [design.md](design.md)
 
@@ -186,3 +186,26 @@ Verification and isolated review results, including the pre-existing live-corpus
 canary failure and remaining CLI fixture isolation work, are recorded in
 [tasks.md](tasks.md#task-1-verification-and-review-2026-09-20). No Task 1
 implementation requirement is deferred.
+
+## Task 2 implementation record (2026-09-20)
+
+- Added `effectiveProjectSQL` and `effectiveProjectPredicate` in
+  `session_project.go`. `ListSessions` uses the bound, escaped predicate before
+  its limit; the Go title filter retains its existing limit ordering. Tests pin
+  resolver parity and literal matching, including SQLite ASCII-only folding.
+- CLI list/show, delete previews, ambiguity candidates and child list rows use
+  `displaySessionProject`. Override provenance preserves path-looking labels
+  literally, even when equal to the imported path; show/delete expose the
+  original path separately when different.
+- List JSON adds `project`, retains imported `project_path` and all other fields,
+  and leaves raw show JSON byte-identical. README, architecture and list help
+  document the completed slice and identify the pending surfaces.
+- No new dependencies, schema changes, generated artifacts, transcript search,
+  ranking or indexing changes. Retrieval quality benchmarks remain with the
+  retrieval-changing slices and Task 10.
+- The initial new child-display test omitted its child rollout. It now uses the
+  existing `writeCodexChild` fixture and default platform discovery; no production
+  import behavior or assertion was relaxed.
+
+Verification and independent review results are recorded in
+[tasks.md](tasks.md#task-2-verification-and-review-2026-09-20).
