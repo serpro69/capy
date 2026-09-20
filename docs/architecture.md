@@ -509,9 +509,21 @@ project labels share normalization, with field-specific error messages. Local
 set/clear preserves transcript bytes, sidecars, imported metadata, FTS/chunk rows
 and index versions; it neither reindexes nor changes the reader-version marker.
 
-This is the local storage/CLI slice. Effective-project filtering, read-surface
-presentation, statistics, MCP scope separation, TUI editing and independent merge
-reconciliation remain in the [project-name plan](feat/wip/vault-project-names/tasks.md).
+`ListSessions` applies a shared effective-project SQL expression
+(`COALESCE(p.custom_project, s.project_path)`) and an escaped, bound LIKE predicate
+before LIMIT. SQL and Go precedence are tested together for absent, overridden,
+path-equal and cleared state. With a title filter, the existing Go-side title
+predicate still runs before the limit. These reads use the one-to-one metadata
+join and never decode transcript blobs.
+
+CLI browsing displays the effective project; override provenance keeps custom
+labels literal even when they equal an imported path. Show/delete details retain
+the original path separately when different. List JSON exposes both `project`
+(effective) and `project_path` (imported); raw show JSON is unchanged.
+
+Effective-project search, statistics, MCP scope separation, TUI browsing/editing
+and independent merge reconciliation remain in the
+[project-name plan](feat/wip/vault-project-names/tasks.md).
 The [design](feat/wip/vault-project-names/design.md) defines the complete contract.
 
 ### Tool-result display (`show` vs `--tui`)

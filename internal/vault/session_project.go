@@ -34,6 +34,16 @@ func (s Session) EffectiveProject() string {
 	return s.ProjectPath
 }
 
+// effectiveProjectSQL uses the s/p aliases from sessionMetaJoin. Keep its
+// supported-state precedence identical to Session.EffectiveProject.
+const effectiveProjectSQL = `COALESCE(p.custom_project, s.project_path)`
+
+// effectiveProjectPredicate matches a literal substring with SQLite's existing
+// ASCII case folding. Only trusted SQL is concatenated; the query is bound.
+func effectiveProjectPredicate(project string) (string, string) {
+	return effectiveProjectSQL + ` LIKE ? ESCAPE '\'`, likeContains(project)
+}
+
 // NormalizeSessionProject applies the same normalization as session names:
 // trim, redact secrets, reject empty/invalid/control-bearing values, then check
 // the 120-code-point limit. Path-looking labels remain literal.

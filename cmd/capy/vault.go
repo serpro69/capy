@@ -358,7 +358,7 @@ before its title.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&project, "project", "", "filter by project path substring")
+	cmd.Flags().StringVar(&project, "project", "", "filter by effective project substring (custom name or imported path; literal, ASCII case-insensitive)")
 	cmd.Flags().StringVar(&name, "name", "", "filter by title substring (case-insensitive, literal; matches the effective title)")
 	cmd.Flags().StringVar(&platformFlag, "platform", "", "only sessions from this platform: claude-code|codex")
 	cmd.Flags().BoolVar(&includeChildren, "include-children", false, "also list sub-agent (child) sessions, hidden by default")
@@ -397,7 +397,7 @@ func printSessionTable(sessions []vault.Session) {
 		fmt.Printf("%-*s  %-*s  %-10s  %5d  %8s  %-28s  %s\n",
 			uuidColumnWidth, shortUUID(s.UUID, s.Platform), platformColumnWidth, s.Platform.OrClaude(),
 			fmtDate(s.EndTime), s.MessageCount, formatSize(s.SizeBytes),
-			truncate(displayPath(s.ProjectPath), 28), truncate(sessionTitleCell(s), 60))
+			truncate(displaySessionProject(s), 28), truncate(sessionTitleCell(s), 60))
 	}
 }
 
@@ -619,9 +619,13 @@ func writeShowHeader(sb *strings.Builder, sess *vault.Session, children []vault.
 	}
 	if markdown {
 		fmt.Fprintf(sb, "# %s\n\n", title)
-		fmt.Fprintf(sb, "- **UUID:** %s\n- **Platform:** %s\n- **Project:** %s\n- **Branch:** %s\n- **Dates:** %s – %s\n",
-			sess.UUID, platform, displayPath(sess.ProjectPath), orDash(sess.GitBranch),
-			fmtDateTime(sess.StartTime), fmtDateTime(sess.EndTime))
+		fmt.Fprintf(sb, "- **UUID:** %s\n- **Platform:** %s\n- **Project:** %s\n",
+			sess.UUID, platform, displaySessionProject(*sess))
+		if sess.EffectiveProject() != sess.ProjectPath {
+			fmt.Fprintf(sb, "- **Original path:** %s\n", displayPath(sess.ProjectPath))
+		}
+		fmt.Fprintf(sb, "- **Branch:** %s\n- **Dates:** %s – %s\n",
+			orDash(sess.GitBranch), fmtDateTime(sess.StartTime), fmtDateTime(sess.EndTime))
 		if sess.ParentUUID != "" {
 			fmt.Fprintf(sb, "- **Parent:** %s\n", shortUUID(sess.ParentUUID, platform))
 		}
@@ -632,7 +636,10 @@ func writeShowHeader(sb *strings.Builder, sess *vault.Session, children []vault.
 	} else {
 		fmt.Fprintf(sb, "%s\n", title)
 		fmt.Fprintf(sb, "uuid: %s  platform: %s  project: %s  branch: %s\n",
-			sess.UUID, platform, displayPath(sess.ProjectPath), orDash(sess.GitBranch))
+			sess.UUID, platform, displaySessionProject(*sess), orDash(sess.GitBranch))
+		if sess.EffectiveProject() != sess.ProjectPath {
+			fmt.Fprintf(sb, "original path: %s\n", displayPath(sess.ProjectPath))
+		}
 		fmt.Fprintf(sb, "dates: %s – %s\n", fmtDateTime(sess.StartTime), fmtDateTime(sess.EndTime))
 		if sess.ParentUUID != "" {
 			fmt.Fprintf(sb, "parent: %s\n", shortUUID(sess.ParentUUID, platform))
@@ -1374,7 +1381,10 @@ func printDeletePreview(w io.Writer, sess *vault.Session, children []vault.Sessi
 	fmt.Fprintf(w, "UUID:     %s\n", sess.UUID)
 	fmt.Fprintf(w, "Platform: %s\n", sess.Platform.OrClaude())
 	fmt.Fprintf(w, "Title:    %s\n", orDash(sess.EffectiveTitle()))
-	fmt.Fprintf(w, "Project:  %s\n", displayPath(sess.ProjectPath))
+	fmt.Fprintf(w, "Project:  %s\n", displaySessionProject(*sess))
+	if sess.EffectiveProject() != sess.ProjectPath {
+		fmt.Fprintf(w, "Original path: %s\n", displayPath(sess.ProjectPath))
+	}
 	fmt.Fprintf(w, "Messages: %d\n", sess.MessageCount)
 	fmt.Fprintf(w, "Dates:    %s – %s\n", fmtDate(sess.StartTime), fmtDate(sess.EndTime))
 	if len(children) == 0 {
@@ -1455,14 +1465,15 @@ func renameOptions(args []string, clear bool) (vault.RenameOptions, error) {
 // ---------------------------------------------------------------------------
 
 type sessionJSON struct {
-	UUID      string `json:"uuid"`
-	Title     string `json:"title,omitempty"`
-	Project   string `json:"project_path,omitempty"`
-	GitBranch string `json:"git_branch,omitempty"`
-	StartTime string `json:"start_time,omitempty"`
-	EndTime   string `json:"end_time,omitempty"`
-	Messages  int    `json:"message_count"`
-	SizeBytes int64  `json:"size_bytes"`
+	UUID        string `json:"uuid"`
+	Title       string `json:"title,omitempty"`
+	ProjectPath string `json:"project_path,omitempty"`
+	Project     string `json:"project"`
+	GitBranch   string `json:"git_branch,omitempty"`
+	StartTime   string `json:"start_time,omitempty"`
+	EndTime     string `json:"end_time,omitempty"`
+	Messages    int    `json:"message_count"`
+	SizeBytes   int64  `json:"size_bytes"`
 	// Platform is always present (every row stores one); ParentUUID only for a
 	// child session (Codex sub-agent rollouts).
 	Platform   string `json:"platform"`
@@ -1473,7 +1484,7 @@ func sessionsToJSON(sessions []vault.Session) []sessionJSON {
 	out := make([]sessionJSON, 0, len(sessions))
 	for _, s := range sessions {
 		out = append(out, sessionJSON{
-			UUID: s.UUID, Title: s.EffectiveTitle(), Project: s.ProjectPath, GitBranch: s.GitBranch,
+			UUID: s.UUID, Title: s.EffectiveTitle(), ProjectPath: s.ProjectPath, Project: s.EffectiveProject(), GitBranch: s.GitBranch,
 			StartTime: rfc3339(s.StartTime), EndTime: rfc3339(s.EndTime),
 			Messages: s.MessageCount, SizeBytes: s.SizeBytes,
 			Platform: s.Platform.String(), ParentUUID: s.ParentUUID,
@@ -1707,7 +1718,7 @@ func writeLookupCandidates(w io.Writer, amb *vault.AmbiguousUUIDError) {
 	for _, c := range amb.Candidates {
 		fmt.Fprintf(w, "  %-*s  %s  %-28s  %s\n",
 			uuidColumnWidth, shortUUID(c.UUID, c.Platform), fmtDate(c.EndTime),
-			truncate(displayPath(c.ProjectPath), 28), truncate(c.EffectiveTitle(), 50))
+			truncate(displaySessionProject(c), 28), truncate(c.EffectiveTitle(), 50))
 	}
 }
 
@@ -1814,6 +1825,16 @@ func shortUUID(u string, p vault.Platform) string {
 	// The rule lives on Platform so the MCP hit meta line (internal/server)
 	// and every CLI surface render the same prefix for the same row.
 	return p.ShortID(u)
+}
+
+// displaySessionProject preserves custom labels literally, even when a label
+// equals the imported path. Only fallback paths receive home shortening.
+func displaySessionProject(s vault.Session) string {
+	project := s.EffectiveProject()
+	if s.ProjectOverride != nil && s.ProjectOverride.CustomProject != nil {
+		return project
+	}
+	return displayPath(project)
 }
 
 // displayPath shortens a home-relative absolute path to ~/… for compact display.
