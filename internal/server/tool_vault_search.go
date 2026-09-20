@@ -58,17 +58,7 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 	}
 	limit = min(limit, vaultSearchMaxLimit)
 
-	// Project scope: the current project by default; all_projects (or project:"*")
-	// widens to every archived project. An explicit project substring wins over
-	// the default.
-	project := s.projectDir
-	explicit := req.GetString("project", "")
-	switch {
-	case req.GetBool("all_projects", false) || explicit == "*":
-		project = ""
-	case explicit != "":
-		project = explicit
-	}
+	project, projectPath := vaultProjectScope(req, s.projectDir)
 
 	after, err := parseDateArg(req.GetString("after", ""), false)
 	if err != nil {
@@ -83,11 +73,12 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 	hasResults := false
 	for _, q := range queryList {
 		results, err := vlt.SearchChunks(ctx, vault.SearchOptions{
-			Query:   q,
-			Project: project,
-			After:   after,
-			Before:  before,
-			Limit:   limit,
+			Query:       q,
+			Project:     project,
+			ProjectPath: projectPath,
+			After:       after,
+			Before:      before,
+			Limit:       limit,
 		})
 		if err != nil {
 			// Best-effort batch: a single query's failure is surfaced in-band so
@@ -125,6 +116,21 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 	return s.trackToolResponse("capy_vault_search", textResult(output)), nil
 }
 
+// vaultProjectScope resolves the existing MCP selectors without changing the
+// server's physical project directory. Widening wins over explicit selection;
+// an omitted/empty selector keeps imported-path scope even after reassignment.
+func vaultProjectScope(req mcp.CallToolRequest, projectDir string) (project, projectPath string) {
+	explicit := req.GetString("project", "")
+	switch {
+	case req.GetBool("all_projects", false) || explicit == "*":
+		return "", ""
+	case explicit != "":
+		return explicit, ""
+	default:
+		return "", projectDir
+	}
+}
+
 // formatVaultHit renders one chunk hit: a session:<uuid> label (so the assistant
 // can pivot to `capy vault show`/the TUI), the session title, its project and end
 // date, the first-line anchor, the producing platform and — for a sub-agent
@@ -145,8 +151,8 @@ func formatVaultHit(r vault.SearchResult) string {
 
 	platform := r.Platform.OrClaude()
 	meta := make([]string, 0, 5)
-	if r.ProjectPath != "" {
-		meta = append(meta, r.ProjectPath)
+	if r.Project != "" {
+		meta = append(meta, r.Project)
 	}
 	if !r.EndTime.IsZero() {
 		meta = append(meta, r.EndTime.Format("2006-01-02"))

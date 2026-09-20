@@ -530,7 +530,21 @@ provenance keeps custom labels literal even when they equal an imported path. Sh
 the original path separately when different. List/search JSON expose both `project`
 (effective) and `project_path` (imported); raw show JSON is unchanged.
 
-Effective-project chunk search, statistics, MCP scope separation, TUI browsing/editing
+`SearchChunks` uses the same scope predicate in `CorpusConfig.FilterSQL` for both
+porter and trigram queries, before their candidate limits. Its one-to-one project
+join carries the nullable override through `chunkMeta`; the shared Go resolver
+populates `SearchResult.Project` without changing imported `ProjectPath`, indexed
+content, rank inputs, or navigation metadata.
+
+`capy_vault_search` resolves request scope with `vaultProjectScope`: widening
+(`all_projects` or exact `project: "*"`) first, then a non-empty explicit effective
+project, otherwise the server directory as raw `ProjectPath`. The helper never
+changes `Server.projectDir`. `formatVaultHit` displays the resolved project
+literally for both MCP search tools. Federated `capy_search` retains raw-path
+selection until Task 6 updates its availability preflight and explicit scope
+together; its current `SearchChunks` call uses `ProjectPath` to preserve behavior.
+
+Effective-project statistics, federated availability/scope, TUI browsing/editing
 and independent merge reconciliation remain in the
 [project-name plan](feat/wip/vault-project-names/tasks.md).
 The [design](feat/wip/vault-project-names/design.md) defines the complete contract.

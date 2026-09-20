@@ -375,7 +375,7 @@ type SearchResult struct {
 	Snippet       string
 	Title         string
 	ProjectPath   string  // imported filesystem path
-	Project       string  // effective project (currently populated by per-line Search)
+	Project       string  // effective project (per-line and chunk search)
 	CustomProject *string // non-nil for a literal custom label, including one equal to ProjectPath
 	EndTime       time.Time
 	// Platform and ParentUUID are the session's stored platform and parent (see

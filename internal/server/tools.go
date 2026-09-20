@@ -230,7 +230,7 @@ func toolVaultSearch() mcp.Tool {
 			mcp.Description("Results per query (default: 3)"),
 		),
 		mcp.WithString("project",
-			mcp.Description("Restrict to sessions whose project path contains this substring. Defaults to the current project; pass \"*\" (or all_projects: true) to search all projects."),
+			mcp.Description("Match this literal substring against the effective project (custom label when set, otherwise imported path). Omitted or empty scopes by the current directory in the imported path, even after reassignment. Exact \"*\" is reserved for all projects; all_projects: true overrides any project selector."),
 		),
 		mcp.WithBoolean("all_projects",
 			mcp.Description("Search across every archived project instead of just the current one (default: false)."),
