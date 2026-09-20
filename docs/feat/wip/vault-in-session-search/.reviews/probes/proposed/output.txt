@@ -1,0 +1,4 @@
+ranking candidate="abc" score=88 ok=true positions=[{0 1} {1 2} {2 3}]
+ranking candidate="a_b_c" score=86 ok=true positions=[{0 1} {2 3} {4 5}]
+ranking candidate="a long b long c" score=76 ok=true positions=[{0 1} {7 8} {14 15}]
+PASS: 363909 exhaustive query/candidate pairs; lengths 1..256 in ASCII/Unicode; NUL, score bounds, source ranges, fold cases, and cancellation
