@@ -1,0 +1,16 @@
+go1.26.4 linux/amd64
+decoded_NUL_query_a panic=runtime error: index out of range [1] with length 1
+decoded_NUL_query_b score=-12 positions=1 invalid=0 offsets=[2]
+decoded_NUL_query_ab score=9 positions=2 invalid=0 offsets=[0 2]
+leading_NUL score=-1 positions=2 invalid=0 offsets=[1 2]
+trailing_NUL panic=runtime error: index out of range [2] with length 2
+ordinary score=30 positions=3 invalid=0 offsets=[0 1 2]
+repeat_32 score=1544183490709875 positions=32 invalid=0 offsets=[0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31]
+repeat_39 score=3377129294182480230 positions=39 invalid=0 offsets=[0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38]
+repeat_40 score=-8315356191162110941 positions=40 invalid=0 offsets=[0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39]
+repeat_41 score=-6499324499776781222 positions=41 invalid=0 offsets=[0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40]
+repeat_42 score=-1051229425620792065 positions=42 invalid=0 offsets=[0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41]
+repeat_43 score=-1051229425620792066 positions=43 invalid=1 offsets=[0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 41]
+repeat_64 score=8492147925252739361 positions=64 invalid=10
+repeat_128 score=-8030005217970444752 positions=128 invalid=31
+repeat_256 score=-6653838781291564727 positions=256 invalid=76
