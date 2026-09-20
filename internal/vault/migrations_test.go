@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/serpro69/capy/internal/sqliteutil"
@@ -407,4 +408,104 @@ func TestColumnExists(t *testing.T) {
 	has, err = columnExists(context.Background(), tx, "t", "missing")
 	require.NoError(t, err)
 	assert.False(t, has)
+}
+
+func TestSessionProject_MigrationFreshLegacyParity(t *testing.T) {
+	// Build the reference outside subtests so /legacy runs independently.
+	fresh := newTestVault(t)
+	freshDB, err := fresh.getDB(t.Context())
+	require.NoError(t, err)
+	var freshDDL string
+	require.NoError(t, freshDB.QueryRowContext(t.Context(),
+		`SELECT sql FROM sqlite_master WHERE name = 'vault_session_projects'`).Scan(&freshDDL))
+	for _, mode := range []string{"fresh", "legacy"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv(vaultKeyEnv, testVaultKey)
+			t.Setenv("CAPY_MACHINE_ID", "project-test-writer")
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "vault.db")
+			const uuid = "aaaaaaaa-1111-2222-3333-444444444444"
+			if mode == "legacy" {
+				legacy, err := sql.Open("sqlite3", sqliteutil.EncryptedDSN(path, testVaultKey))
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = legacy.Close() })
+				// The complete pre-project shape, including prior migration records.
+				_, err = legacy.ExecContext(ctx, strings.Replace(schemaSQL, sessionProjectsTableSQL, "", 1))
+				require.NoError(t, err)
+				require.NoError(t, ensureVaultMigrationsTable(ctx, legacy))
+				_, err = legacy.ExecContext(ctx, `INSERT INTO vault_migrations (name) VALUES
+					('0001_blob_encoding'), ('0003_add_index_version'), ('0004_add_chunk_fts'),
+					('0005_session_names'), ('0006_platform');
+					INSERT INTO vault_sessions (uuid, content_hash, machine_id, claude_project_dir, project_path, raw_jsonl)
+					VALUES ('aaaaaaaa-1111-2222-3333-444444444444', 'hash', 'importer', '-original', '/original', x'7b7d')`)
+				require.NoError(t, err)
+				var count int
+				require.NoError(t, legacy.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'vault_session_projects'`).Scan(&count))
+				assert.Zero(t, count)
+				// Exercise migration creation directly: schemaSQL must not hide a missing DDL.
+				require.NoError(t, migrate0007AddSessionProjects(ctx, legacy))
+				require.NoError(t, legacy.Close())
+			}
+			s := NewVaultStore(path)
+			t.Cleanup(func() { _ = s.Close() })
+			require.NoError(t, s.Open(ctx))
+			if mode == "fresh" {
+				require.NoError(t, s.InsertSession(ctx, sampleRecord(uuid)))
+			}
+			db, err := s.getDB(ctx)
+			require.NoError(t, err)
+			var ddl string
+			require.NoError(t, db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE name = 'vault_session_projects'`).Scan(&ddl))
+			assert.Equal(t, freshDDL, ddl)
+			neverEdited, err := s.GetSession(ctx, uuid)
+			require.NoError(t, err)
+			assert.Nil(t, neverEdited.ProjectOverride, "migration must not invent overrides")
+
+			// Both creation paths enforce the same storage constraints.
+			for _, tt := range []struct {
+				name, query string
+				args        []any
+			}{
+				{name: "empty override", query: `INSERT INTO vault_session_projects VALUES (?, '', 1, 'writer')`, args: []any{uuid}},
+				{name: "null timestamp", query: `INSERT INTO vault_session_projects VALUES (?, 'label', NULL, 'writer')`, args: []any{uuid}},
+				{name: "null writer", query: `INSERT INTO vault_session_projects VALUES (?, 'label', 1, NULL)`, args: []any{uuid}},
+				{name: "orphan", query: `INSERT INTO vault_session_projects VALUES ('missing', 'label', 1, 'writer')`},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					_, err := db.ExecContext(ctx, tt.query, tt.args...)
+					require.Error(t, err)
+				})
+			}
+			assigned, err := s.SetSessionProject(ctx, uuid, ProjectOptions{Name: "persisted"})
+			require.NoError(t, err)
+			_, err = db.ExecContext(ctx, `INSERT INTO vault_session_projects VALUES (?, 'duplicate', 1, 'writer')`, uuid)
+			require.Error(t, err, "one project state per UUID")
+			require.NoError(t, s.Close())
+			require.NoError(t, s.Open(ctx))
+			got, err := s.GetSession(ctx, uuid)
+			require.NoError(t, err)
+			assert.Equal(t, assigned.ProjectOverride, got.ProjectOverride)
+			cleared, err := s.SetSessionProject(ctx, uuid, ProjectOptions{Clear: true})
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+			require.NoError(t, s.Open(ctx))
+			got, err = s.GetSession(ctx, uuid)
+			require.NoError(t, err)
+			require.NotNil(t, got.ProjectOverride)
+			assert.Equal(t, cleared.ProjectOverride, got.ProjectOverride)
+			assert.Nil(t, got.ProjectOverride.CustomProject)
+			assert.Equal(t, neverEdited.ProjectPath, got.EffectiveProject())
+			db, err = s.getDB(ctx)
+			require.NoError(t, err)
+			require.NoError(t, migrateVault(ctx, db))
+			var count int
+			require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM vault_migrations WHERE name = '0007_session_projects'`).Scan(&count))
+			assert.Equal(t, 1, count)
+			deleted, err := s.DeleteSession(ctx, uuid)
+			require.NoError(t, err)
+			require.True(t, deleted)
+			require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM vault_session_projects`).Scan(&count))
+			assert.Zero(t, count, "deletion must cascade the project tombstone")
+		})
+	}
 }

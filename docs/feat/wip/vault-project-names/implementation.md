@@ -1,6 +1,6 @@
 # Vault Project Names — Implementation Plan
 
-**Status:** Pending implementation; design review pending
+**Status:** Design reviewed; Task 1 done; Tasks 2–10 pending
 
 **Contract:** [design.md](design.md)
 
@@ -161,3 +161,28 @@ No agreed success criterion is deferred. Automatic association, bulk editing and
 Accepted compatibility limitation: old binaries omit project metadata during cross-vault merge. The recovery is to upgrade and rerun merge; no reader-version gate is planned. Star-only labels cannot narrow MCP searches because the pre-existing star sentinel means all projects; use CLI filtering or choose a different label.
 
 If implementation exposes a new gap, add a concrete entry here and in tasks.md with what was skipped, why and the next step. Chat-only deferral does not count.
+
+## Task 1 implementation record (2026-09-20)
+
+- Added migration 0007_session_projects, SessionProject/ProjectOptions,
+  Session.ProjectOverride, EffectiveProject, NormalizeSessionProject and the
+  transactional SetSessionProject API. The existing title normalizer delegates
+  to a shared concrete helper while retaining its error text.
+- Added `vault project <id> <name>` / `<id> --clear`; validates before database
+  access, rejects `--tui`, and reports the effective post-write value. Existing
+  key/path flags, Cobra error handling and command-context propagation are inherited.
+- Shared metadata reads include override provenance for lookup, list, children
+  and ambiguity candidates. UI/JSON projection and selection changes remain in
+  Tasks 2–9; this slice does not claim those later behaviors.
+- Regression snapshots now compare complete FTS/chunk rows, encoded sidecars
+  and index_version as well as raw JSONL, hash and size. CLI fixtures isolate
+  XDG_CONFIG_HOME because a personal minimum-import-size setting otherwise
+  excludes the small test sessions. Initial error-text fixture expectations were
+  corrected to match the specified field-specific messages.
+- No new dependencies, query/ranking/indexing changes or generated setup artifacts.
+  Full-feature quality measurements and cross-surface documentation remain Task 10.
+
+Verification and isolated review results, including the pre-existing live-corpus
+canary failure and remaining CLI fixture isolation work, are recorded in
+[tasks.md](tasks.md#task-1-verification-and-review-2026-09-20). No Task 1
+implementation requirement is deferred.

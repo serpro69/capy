@@ -1,6 +1,6 @@
 # Vault Project Names — Design
 
-**Status:** Agreed design; implementation pending; design review pending
+**Status:** Agreed design; design reviewed; Task 1 done; Tasks 2–10 pending
 
 **Issue:** [#92 — vault: support custom session project name](https://github.com/serpro69/capy/issues/92)
 

@@ -347,6 +347,9 @@ vault_session_names — capy-owned custom titles, one row per session ever renam
                    cleared: session_uuid PK → vault_sessions (CASCADE), custom_title
                    (NULL = clear tombstone, never empty), renamed_at_ns, machine_id
                    (migration 0005; see Session names below)
+vault_session_projects — capy-owned project labels: session_uuid PK →
+		   vault_sessions (CASCADE), custom_project (NULL = clear,
+		   never empty), updated_at_ns, machine_id (migration 0007)
 vault_meta       — key-value store; holds min_reader_version (the forward-compat
                    marker: 2 = zstd blobs, 3 = non-Claude platform rows — see below)
 vault_migrations — migration tracking (by-name); migration runner lives in migrations.go
@@ -489,6 +492,27 @@ are applied in Go **after** title resolution (a SQL `LIMIT` would pre-truncate t
 candidates). Name terms are deliberately not part of transcript or chunk FTS.
 
 Rationale and rejected alternatives: [ADR-030](adr/030-vault-session-names-and-latest-wins-merge.md).
+
+### Session project assignments
+
+`session_project.go` owns local project edits beside the imported
+`vault_sessions.project_path`. `SetSessionProject` resolves a literal UUID prefix
+and writes `vault_session_projects` within one immediate transaction. Its local
+clock advances as `max(now, previous + 1)` with an explicit overflow error,
+independently of title edits. Fresh schema and migration `0007_session_projects`
+share the table DDL. No row means never edited; a NULL override is a clear
+tombstone. Session deletion cascades either state.
+
+`Session.ProjectOverride` travels through the shared metadata projection and
+`EffectiveProject()` returns the override or latest imported path. Title and
+project labels share normalization, with field-specific error messages. Local
+set/clear preserves transcript bytes, sidecars, imported metadata, FTS/chunk rows
+and index versions; it neither reindexes nor changes the reader-version marker.
+
+This is the local storage/CLI slice. Effective-project filtering, read-surface
+presentation, statistics, MCP scope separation, TUI editing and independent merge
+reconciliation remain in the [project-name plan](feat/wip/vault-project-names/tasks.md).
+The [design](feat/wip/vault-project-names/design.md) defines the complete contract.
 
 ### Tool-result display (`show` vs `--tui`)
 

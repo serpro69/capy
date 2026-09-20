@@ -74,6 +74,7 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 		newVaultResumeCmd(env),
 		newVaultDeleteCmd(env),
 		newVaultRenameCmd(env),
+		newVaultProjectCmd(env),
 	)
 	return cmd
 }
