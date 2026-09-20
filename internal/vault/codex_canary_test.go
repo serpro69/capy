@@ -29,7 +29,9 @@ import (
 //
 // Like parity_canary_test.go it is a drift detector, not a unit test: a
 // failure means either a Codex upgrade changed the rollout format or the
-// decoder regressed — inspect the reported paths before touching either.
+// decoder regressed — inspect the reported paths before touching either. The
+// only corruption exceptions are byte-pinned records investigated in issue #110;
+// their decoder warnings are required, and every semantic assertion still runs.
 
 // codexCanaryHome resolves the Codex home for the canary ("" when the home
 // directory itself cannot be resolved).
@@ -103,10 +105,10 @@ type codexRawTally struct {
 	taskStarted     int
 	callIDs         map[string]bool // function_call / custom_tool_call ids
 	outputIDs       []string        // *_output call_ids, in order
+	malformedLines  []int           // reviewed syntax errors only; physical, zero-based
 }
 
-func tallyCodexRaw(t *testing.T, path string, raw []byte) codexRawTally {
-	t.Helper()
+func tallyCodexRaw(path string, raw []byte, known []codexCanaryCorruption) (codexRawTally, error) {
 	tally := codexRawTally{callIDs: map[string]bool{}}
 	for i, data := range bytes.Split(raw, []byte{'\n'}) {
 		data = trimEOL(data)
@@ -114,11 +116,22 @@ func tallyCodexRaw(t *testing.T, path string, raw []byte) codexRawTally {
 			continue
 		}
 		var line codexLine
-		require.NoError(t, json.Unmarshal(data, &line), "%s: line %d", path, i)
+		if err := json.Unmarshal(data, &line); err != nil {
+			// A valid JSON value with an incompatible envelope is format drift,
+			// never a corruption exception. Metadata must always be intact.
+			if i > 0 && !json.Valid(data) && knownCodexCanaryCorruption(known, path, i, data) {
+				tally.malformedLines = append(tally.malformedLines, i)
+				continue
+			}
+			return tally, fmt.Errorf("%s: line %d (%d bytes, sha256=%s): %w",
+				path, i, len(data), codexCanaryLineHash(data), err)
+		}
 		switch line.Type {
 		case codexSessionMetaType:
 			var m codexSessionMeta
-			require.NoError(t, json.Unmarshal(line.Payload, &m))
+			if err := json.Unmarshal(line.Payload, &m); err != nil {
+				return tally, fmt.Errorf("%s: line %d session_meta payload: %w", path, i, err)
+			}
 			if i == 0 {
 				tally.firstLineIsMeta = true
 				tally.metaID = m.ID
@@ -158,7 +171,9 @@ func tallyCodexRaw(t *testing.T, path string, raw []byte) codexRawTally {
 					Content []codexContentPart `json:"content"`
 				} `json:"item"`
 			}
-			require.NoError(t, json.Unmarshal(line.Payload, &probe), "line %d", i)
+			if err := json.Unmarshal(line.Payload, &probe); err != nil {
+				return tally, fmt.Errorf("%s: line %d event_msg payload: %w", path, i, err)
+			}
 			switch probe.Type {
 			case "user_message":
 				if text := strings.TrimSpace(probe.Message); text != "" {
@@ -178,7 +193,7 @@ func tallyCodexRaw(t *testing.T, path string, raw []byte) codexRawTally {
 			}
 		}
 	}
-	return tally
+	return tally, nil
 }
 
 func TestCodexCanary(t *testing.T) {
@@ -206,6 +221,7 @@ func TestCodexCanary(t *testing.T) {
 		childLinks                                                 = map[string]string{} // child uuid → parent path
 		mismatches                                                 []string
 		scanned, ftsRows, openableMarkers, diffMarkers             int // consumer pass
+		corruptFiles, corruptLines                                 int
 	)
 	for _, f := range files {
 		if f.revert {
@@ -224,7 +240,13 @@ func TestCodexCanary(t *testing.T) {
 		require.NoError(t, err, f.path)
 		assert.Equal(t, PlatformCodex, p, "Assumption 1: first line is session_meta: %s", f.path)
 
-		tally := tallyCodexRaw(t, f.path, raw)
+		tally, err := tallyCodexRaw(f.path, raw, knownCodexCanaryCorruptions)
+		require.NoError(t, err)
+		if len(tally.malformedLines) > 0 {
+			corruptFiles++
+			corruptLines += len(tally.malformedLines)
+			t.Logf("reviewed historical corruption (#110): %s, zero-based lines %v; all semantic checks remain active", f.path, tally.malformedLines)
+		}
 		assert.True(t, tally.firstLineIsMeta, "Assumption 1: %s", f.path)
 		assert.Equal(t, f.uuid, tally.metaID, "Assumption 1: session_meta.id == filename uuid: %s", f.path)
 		if tally.historyMode == "paginated" {
@@ -233,9 +255,11 @@ func TestCodexCanary(t *testing.T) {
 			legacy++
 		}
 
-		tr, err := codexDecoder{}.Decode(bytes.NewReader(raw))
+		warningStart := len(allRecords(h))
+		tr, err := codexDecoder{}.Decode(withSource(f.path, bytes.NewReader(raw)))
 		require.NoError(t, err, f.path)
 		require.NotNil(t, tr)
+		require.NoError(t, checkCodexCanarySkipWarnings(allRecords(h)[warningStart:], tally.malformedLines), "decoder: %s", f.path)
 		decoded++
 		assert.Equal(t, f.uuid, tr.Meta.PlatformID, f.path)
 		assert.NotEmpty(t, tr.Meta.CWD, "session_meta.cwd: %s", f.path)
@@ -322,9 +346,14 @@ func TestCodexCanary(t *testing.T) {
 		}
 		ftsRows += len(out.Results)
 		if assistants > 0 {
+			warningStart = len(allRecords(h))
 			assert.Contains(t, RenderText(PlatformCodex, raw), "[Codex]", "show heading: %s", f.path)
+			require.NoError(t, checkCodexCanarySkipWarnings(allRecords(h)[warningStart:], tally.malformedLines), "render: %s", f.path)
 		}
-		for _, m := range ParseTranscript(PlatformCodex, raw, nil) {
+		warningStart = len(allRecords(h))
+		messages := ParseTranscript(PlatformCodex, raw, nil)
+		require.NoError(t, checkCodexCanarySkipWarnings(allRecords(h)[warningStart:], tally.malformedLines), "transcript: %s", f.path)
+		for _, m := range messages {
 			if m.Role == RoleSubagent && m.ChildUUID != "" {
 				assert.True(t, m.Openable, "a marker with a ChildUUID must be openable: %s", f.path)
 				openableMarkers++
@@ -365,7 +394,6 @@ func TestCodexCanary(t *testing.T) {
 	assert.Empty(t, unmatchedResults, "Assumption 3 (call↔result correlation):\n%s", strings.Join(unmatchedResults, "\n"))
 	assert.Empty(t, zeroHumanNonShell, "non-subagent files with assistant entries but no human turn (the zero-human warning cases):\n%s", strings.Join(zeroHumanNonShell, "\n"))
 	assert.Empty(t, h.recordsWithMessage(codexWarnNoHuman), "the zero-human warning must never fire on the corpus")
-	assert.Empty(t, h.messagesWithPrefix("vault codex decoder: skipping"), "no malformed lines or payloads in the corpus")
 	assert.Empty(t, h.messagesWithPrefix("vault scanner: skipping oversize"))
 
 	drift := h.recordsWithMessage(codexDebugDrift)
@@ -384,6 +412,7 @@ func TestCodexCanary(t *testing.T) {
 	t.Logf("codex canary: %d human, %d assistant, %d tool-result entries; %d parent→child links resolved (%d children appeared after the walk)", humansTotal, assistantsTotal, resultsTotal, len(childLinks), lateChildren)
 	t.Logf("codex canary: %d aborted-at-startup shells (0 human, 0 assistant; %d logged at debug); %d files fingerprinted unknown record types: %v",
 		len(shells), shellLevel, len(drift), driftTypes)
+	t.Logf("codex canary: %d reviewed malformed records in %d files; exact skip warnings verified on every decode pass", corruptLines, corruptFiles)
 	t.Logf("codex canary consumers: %d non-shell rollouts scan to ≥ 1 message (%d FTS rows); %d openable child markers, %d apply_patch diff markers",
 		scanned, ftsRows, openableMarkers, diffMarkers)
 	assert.Equal(t, len(childLinks), openableMarkers, "every resolved launch is exactly one openable marker")

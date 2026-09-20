@@ -1,0 +1,10 @@
+{"timestamp":"2026-09-17T06:30:00Z","ordinal":0,"type":"session_meta","payload":{"id":"019e22ba-4c15-7ae0-a903-255537a6a1b3","timestamp":"2026-09-17T06:30:00Z","cwd":"/tmp/proj","cli_version":"0.147.0","history_mode":"paginated","source":"cli"}}
+{"timestamp":"2026-09-17T06:31:00Z","ordinal":1,"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"continue after torn records"}]}}}
+{"timestamp":"2026-09-17T06:31:00Z","ordinal":2,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"continue after torn records"}]}}
+{"timestamp":"2026-09-17T06:39:32Z","ordinal":3,"type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","command":"redacted","formatted_output"
+{"timestamp":"2026-09-17T07:08:50Z","ordinal":3,"type":"event_msg","payload":{"type":"thread_settings_applied"}}
+{"timestamp":"2026-09-17T14:12:38Z","ordinal":4,"type":"response_item","payload":{"type":"custom_tool_call","call_id":"call_lost","name":"exec","input":"redacted
+{"timestamp":"2026-09-17T14:12:57Z","ordinal":4,"type":"response_item","payload":{"type":"custom_tool_call","call_id":"call_kept","name":"exec","input":"return 1"}}
+{"timestamp":"2026-09-17T14:12:58Z","ordinal":5,"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_kept","output":"result survived"}}
+{"timestamp":"2026-09-17T14:13:00Z","ordinal":6,"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"redacted
+{"timestamp":"2026-09-17T14:13:30Z","ordinal":6,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer survived"}]}}
