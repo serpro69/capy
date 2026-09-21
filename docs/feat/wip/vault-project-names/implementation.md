@@ -1,6 +1,6 @@
 # Vault Project Names — Implementation Plan
 
-**Status:** Design reviewed; Tasks 1–4 done; Tasks 5–10 pending
+**Status:** Design reviewed; Tasks 1–5 done; Tasks 6–10 pending
 
 **Contract:** [design.md](design.md)
 
@@ -255,3 +255,24 @@ Verification and isolated review results are recorded in
 
 Verification and independent review results are recorded in
 [tasks.md](tasks.md#task-4-verification-and-review-2026-09-20).
+
+## Task 5 implementation record (2026-09-21)
+
+- Added `EffectiveProjectStat` and `VaultStats.ByEffectiveProject`, using the shared
+  SQL resolver in one metadata-only aggregation. Raw `ByProject` and all existing
+  totals remain unchanged. Exact strings group together, with count-descending
+  and project-value ordering; no blob decoding or per-session reads are added.
+- Ordinary stats print effective group names literally, including imported-path
+  groups, so a path-looking custom label is never shortened. JSON retains
+  `projects` (`project_path`/`count`) and adds `project_groups` (`project`/`count`);
+  empty vaults emit empty arrays for both.
+- Store and binary-harness fixtures cover shared labels across raw paths, clear
+  fallback, absent/path-equal overrides, case-distinct groups, ordering, literal
+  labels and unchanged raw/platform/child totals. Each session counts once in
+  each breakdown.
+- No dependencies, schema, retrieval/indexing, or generated-artifact changes.
+  Availability remains Task 6; the scale measurement and full-feature quality
+  comparison remain Task 10.
+
+Verification and independent review results are recorded in
+[tasks.md](tasks.md#task-5-verification-and-review-2026-09-21).

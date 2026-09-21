@@ -6,7 +6,7 @@
 >
 > Issue: [#92](https://github.com/serpro69/capy/issues/92)
 >
-> Status: in-progress — Tasks 1–4 done; Task 5 next
+> Status: in-progress — Tasks 1–5 done; Task 6 next
 >
 > Created: 2026-09-19
 >
@@ -258,7 +258,7 @@ until Task 6 updates effective-project selection and availability together.
 
 ## Task 5: Inspect effective project statistics
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Size:** M
 - **Can run in parallel with:** Task 4
@@ -266,9 +266,52 @@ until Task 6 updates effective-project selection and availability together.
 
 ### Subtasks
 
-- [ ] 5.1 Preserve raw VaultStats.ByProject and add ByEffectiveProject with exact-string grouping. Verify grouping across different raw paths, clear fallback and unchanged child/platform totals.
-- [ ] 5.2 Update ordinary stats output to effective groups; retain stats JSON projects and add project_groups. Verify both raw and effective JSON contracts, empty vault and case-distinct names.
-- [ ] 5.3 Run Slice 5's checks and confirm every session contributes once to each breakdown.
+- [x] 5.1 Preserve raw VaultStats.ByProject and add ByEffectiveProject with exact-string grouping. Verify grouping across different raw paths, clear fallback and unchanged child/platform totals.
+- [x] 5.2 Update ordinary stats output to effective groups; retain stats JSON projects and add project_groups. Verify both raw and effective JSON contracts, empty vault and case-distinct names.
+- [x] 5.3 Run Slice 5's checks and confirm every session contributes once to each breakdown.
+
+### Task 5 verification and review (2026-09-21)
+
+Task 5 is complete; Task 6 is next. Tasks 6–10 remain pending. See the
+[implementation record](implementation.md#task-5-implementation-record-2026-09-21).
+
+All Go checks used FTS5 and both required keys (`CAPY_DB_KEY=test-key-for-development`,
+`CAPY_VAULT_KEY=test-key`); binary fixtures retain their isolated vault keys.
+
+- PASS: `go test -tags fts5 -count=1 ./internal/vault ./cmd/capy -run 'Project|Stats'`
+  (vault 9.942s, CLI 31.386s).
+- PASS: `make vet`, `git diff --check`, and `gofmt -l` over changed Go files
+  (no formatting changes reported).
+- PASS: `go test -tags fts5 -count=1 ./...`, with an empty temporary
+  `XDG_CONFIG_HOME` and `TMPDIR=/private/tmp` (all packages; CLI 76.154s,
+  server 62.069s, vault 71.346s). No test exclusions were used; the earlier
+  live-transcript canary failure did not recur in this checkout.
+- PASS: `go test -race -tags fts5 -count=1 ./internal/vault ./cmd/capy -run 'SessionProject_Stats|VaultProject_StatsJSON|StatsToJSON|StatsByPlatform'`
+  with the same environment (vault 2.165s, CLI 5.995s; no races reported).
+- The initial full run failed three existing restore fixtures because macOS
+  resolves `/var` to `/private/var`, while their expected paths use the unresolved
+  temporary root. The complete rerun above used a canonical temporary path;
+  no assertions or production restore behavior were changed.
+- `kk:review-code:isolated`: the code-reviewer sub-agent could not access files
+  with its permitted reader tools. The skill's independent external-reviewer
+  fallback (PAL, Gemini 3.1 Pro) completed the review and reported zero issues
+  across all severities. No unresolved Task 5 findings or P0/P1 findings to index.
+- `kk:test` and `kk:document` completed. README, architecture, command help and
+  feature records describe the completed stats contract. No new conventions were
+  indexed: metadata ownership, grouping and JSON compatibility are already in
+  the design. No retrieval/indexing/executor changes require quality benchmarks
+  for this slice; Task 10 retains the scale measurement and full-feature comparison.
+
+**Known verification follow-up:** `TestRestoreSession_OverwritePolicy`,
+`TestRestoreSession_SymlinkRootResolved` and
+`TestVaultCodex_RestoreDefaultRootIsCodexHome` still assume temporary paths have no
+symlinked ancestors. Fixing these unrelated restore fixtures is outside Task 5.
+Normalize their expected temporary roots with `filepath.EvalSymlinks`, keeping
+the existing containment and content assertions, then rerun them under macOS's
+default `TMPDIR`. Until then, use the canonical `TMPDIR` above for full-suite
+verification. The separate XDG fixture-isolation follow-up under Task 1 also remains.
+
+No Task 5 implementation requirement is deferred.
 
 ## Task 6: Preserve federated search availability
 

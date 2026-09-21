@@ -497,7 +497,7 @@ All commands live under `capy vault` and require `CAPY_VAULT_KEY`. A persistent 
 | `delete <session-id> [--yes]`                                                         | Remove a session from the vault (does not touch on-disk copies). Prompts unless `--yes`; warns when the session has child sessions (they are kept).                         |
 | `rename <session-id> <name>` · `rename <session-id> --clear`                          | Give a session a name of your own, or clear it to fall back to the imported title. Shown everywhere (`list`, `show`, `search`, JSON, TUI); the archived transcript is untouched. See [Naming sessions](#naming-sessions). |
 | `project <session-id> <name>` · `project <session-id> --clear` | Set or clear one session's custom project label; prints the resulting project. Preserves the imported path, title and archived transcript. |
-| `stats [--json]`                                                                      | Session count, content size, DB file size, per-project and per-platform breakdown, child-session count, and the search-index version (with a count of sessions still below it — i.e. a `reindex` backlog). |
+| `stats [--json]`                                                                      | Session count, content size, DB file size, effective-project and per-platform breakdown, child-session count, and the search-index version (with a count of sessions still below it — i.e. a `reindex` backlog). JSON retains raw-path `projects` and adds effective `project_groups`. |
 | `checkpoint`                                                                          | Flush the WAL into `vault.db` — run before copying it to another machine.                                                                                                   |
 | `rekey [--remove-backup]`                                                             | Rotate the vault's encryption key to the current `CAPY_VAULT_KEY`. **Stop the MCP server first.** Leaves `<vault>.bak` (still decryptable by the old key) unless `--remove-backup`.  |
 | `compact`                                                                             | Recompress sessions archived before compression existed (zstd) and `VACUUM` to reclaim disk. No-op if nothing is left uncompressed. **Stop the MCP server first.**           |
@@ -574,7 +574,16 @@ with another checkout. `all_projects: true` overrides the selector; exact
 Chunk filters apply before retrieval limits, and MCP session hits display the
 effective project without shortening custom labels.
 
-Effective-project filtering in federated `capy_search`, statistics, TUI
+`vault stats` groups sessions by their effective project and prints group names
+literally. Different imported paths with the same label share one group; clearing
+an assignment returns that session to its imported-path group. Grouping uses exact
+strings, so `capy` and `Capy` stay separate even though a project filter can match
+both. Groups are ordered by count descending, then project value. Children count
+once like every other session, and platform totals are unchanged.
+`stats --json` preserves `projects` rows with `project_path`/`count` and adds
+`project_groups` rows with `project`/`count`; both are empty arrays in an empty vault.
+
+Effective-project filtering in federated `capy_search`, TUI
 browsing/editing and cross-vault merge remain pending in the
 [project-name task plan](docs/feat/wip/vault-project-names/tasks.md).
 Until its availability check is updated, `capy_search` keeps imported-path

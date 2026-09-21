@@ -544,7 +544,17 @@ literally for both MCP search tools. Federated `capy_search` retains raw-path
 selection until Task 6 updates its availability preflight and explicit scope
 together; its current `SearchChunks` call uses `ProjectPath` to preserve behavior.
 
-Effective-project statistics, federated availability/scope, TUI browsing/editing
+`Stats` preserves `VaultStats.ByProject` as the raw-path aggregation and adds
+`ByEffectiveProject` with `EffectiveProjectStat.Project`/`Count`. The additional
+metadata-only query joins project state once and groups by the shared effective
+expression, ordered by count descending then exact project value. Case-distinct
+values stay separate, and each session (including children) contributes once to
+each breakdown. No transcript decoding or per-session query is involved.
+Ordinary `vault stats` prints these effective groups literally. JSON retains
+`projects` (`project_path`/`count`) and adds `project_groups` (`project`/`count`),
+with empty arrays for an empty vault. Platform and child counts remain unchanged.
+
+Federated availability/scope, TUI browsing/editing
 and independent merge reconciliation remain in the
 [project-name plan](feat/wip/vault-project-names/tasks.md).
 The [design](feat/wip/vault-project-names/design.md) defines the complete contract.
