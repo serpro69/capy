@@ -12,6 +12,80 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestVaultProject_StatsJSON(t *testing.T) {
+	root, uuid := setupVaultEnv(t)
+	readStats := func() map[string]json.RawMessage {
+		t.Helper()
+		stdout, stderr, code := capy(t, "vault", "stats", "--json")
+		require.Equal(t, 0, code, stderr)
+		var out map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal([]byte(stdout), &out))
+		return out
+	}
+	t.Run("empty", func(t *testing.T) {
+		out := readStats()
+		assert.Equal(t, "0", string(out["sessions"]))
+		assert.JSONEq(t, `[]`, string(out["projects"]))
+		assert.JSONEq(t, `[]`, string(out["project_groups"]))
+		stdout, stderr, code := capy(t, "vault", "stats")
+		require.Equal(t, 0, code, stderr)
+		assert.NotContains(t, stdout, "Per project:")
+	})
+
+	const uuid2 = "abcd5678-aaaa-bbbb-cccc-1234567890ab"
+	const uuid3 = "abcd9012-aaaa-bbbb-cccc-1234567890ab"
+	raw, err := os.ReadFile(filepath.Join(root, uuid+".jsonl"))
+	require.NoError(t, err)
+	for _, id := range []string{uuid2, uuid3} {
+		content := strings.ReplaceAll(string(raw), "/home/user/proj", "/tmp/worktree")
+		require.NoError(t, os.WriteFile(filepath.Join(root, id+".jsonl"), []byte(content), 0o644))
+	}
+	_, stderr, code := capy(t, "vault", "import", "--source", root)
+	require.Equal(t, 0, code, stderr)
+	before := readStats()
+	assert.JSONEq(t, `[{"project_path":"/tmp/worktree","count":2},{"project_path":"/home/user/proj","count":1}]`, string(before["projects"]))
+	assert.JSONEq(t, `[{"project":"/tmp/worktree","count":2},{"project":"/home/user/proj","count":1}]`, string(before["project_groups"]))
+	for _, edit := range []struct{ id, label string }{
+		{uuid, "capy"}, {uuid2, "capy"}, {uuid3, "Capy"},
+	} {
+		_, stderr, code := capy(t, "vault", "project", edit.id, edit.label)
+		require.Equal(t, 0, code, stderr)
+	}
+	check := func(wantGroups, wantText string) {
+		t.Helper()
+		after := readStats()
+		require.Len(t, after, len(before))
+		for field, value := range before {
+			if field == "project_groups" || field == "db_file_bytes" {
+				continue
+			}
+			assert.JSONEq(t, string(value), string(after[field]), "existing field %s stays unchanged", field)
+		}
+		assert.JSONEq(t, wantGroups, string(after["project_groups"]))
+		stdout, stderr, code := capy(t, "vault", "stats")
+		require.Equal(t, 0, code, stderr)
+		_, projects, found := strings.Cut(stdout, "Per project:\n")
+		require.True(t, found, stdout)
+		assert.Equal(t, wantText, projects)
+	}
+	check(`[{"project":"capy","count":2},{"project":"Capy","count":1}]`,
+		"      2  capy\n      1  Capy\n")
+	_, stderr, code = capy(t, "vault", "project", uuid2, "--clear")
+	require.Equal(t, 0, code, stderr)
+	check(`[{"project":"/tmp/worktree","count":1},{"project":"Capy","count":1},{"project":"capy","count":1}]`,
+		"      1  /tmp/worktree\n      1  Capy\n      1  capy\n")
+
+	// A path-looking custom group must stay literal, including the home prefix.
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	label := filepath.Join(home, "stats-project")
+	_, stderr, code = capy(t, "vault", "project", uuid, label)
+	require.Equal(t, 0, code, stderr)
+	stdout, stderr, code := capy(t, "vault", "stats")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "      1  "+label+"\n")
+}
+
 func TestVaultProject_Command(t *testing.T) {
 	root, uuid := setupVaultEnv(t)
 	const uuid2 = "abcd1234-bbbb-cccc-dddd-1234567890ab"

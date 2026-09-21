@@ -671,7 +671,7 @@ func newVaultStatsCmd(env *vaultEnv) *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "stats",
-		Short: "Show vault session counts, size, and per-project breakdown",
+		Short: "Show vault session counts, size, and effective-project breakdown",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
@@ -710,10 +710,10 @@ func printStats(s *vault.VaultStats, dbBytes int64) {
 			fmt.Printf("  %5d  %8s  %s\n", p.Sessions, formatSize(p.Bytes), p.Platform.OrClaude())
 		}
 	}
-	if len(s.ByProject) > 0 {
+	if len(s.ByEffectiveProject) > 0 {
 		fmt.Println("\nPer project:")
-		for _, p := range s.ByProject {
-			fmt.Printf("  %5d  %s\n", p.Count, displayPath(p.ProjectPath))
+		for _, p := range s.ByEffectiveProject {
+			fmt.Printf("  %5d  %s\n", p.Count, p.Project)
 		}
 	}
 }
@@ -1526,6 +1526,11 @@ type projectJSON struct {
 	Count       int    `json:"count"`
 }
 
+type projectGroupJSON struct {
+	Project string `json:"project"`
+	Count   int    `json:"count"`
+}
+
 type platformJSON struct {
 	Platform string `json:"platform"`
 	Sessions int    `json:"sessions"`
@@ -1533,22 +1538,27 @@ type platformJSON struct {
 }
 
 type statsJSON struct {
-	Sessions          int            `json:"sessions"`
-	Children          int            `json:"children"`
-	TotalContentBytes int64          `json:"total_content_bytes"`
-	DBFileBytes       int64          `json:"db_file_bytes"`
-	Oldest            string         `json:"oldest,omitempty"`
-	Newest            string         `json:"newest,omitempty"`
-	IndexVersion      int            `json:"index_version"`
-	OutdatedSessions  int            `json:"outdated_sessions"`
-	Platforms         []platformJSON `json:"platforms"`
-	Projects          []projectJSON  `json:"projects"`
+	Sessions          int                `json:"sessions"`
+	Children          int                `json:"children"`
+	TotalContentBytes int64              `json:"total_content_bytes"`
+	DBFileBytes       int64              `json:"db_file_bytes"`
+	Oldest            string             `json:"oldest,omitempty"`
+	Newest            string             `json:"newest,omitempty"`
+	IndexVersion      int                `json:"index_version"`
+	OutdatedSessions  int                `json:"outdated_sessions"`
+	Platforms         []platformJSON     `json:"platforms"`
+	Projects          []projectJSON      `json:"projects"`
+	ProjectGroups     []projectGroupJSON `json:"project_groups"`
 }
 
 func statsToJSON(s *vault.VaultStats, dbBytes int64) statsJSON {
 	projects := make([]projectJSON, 0, len(s.ByProject))
 	for _, p := range s.ByProject {
 		projects = append(projects, projectJSON{ProjectPath: p.ProjectPath, Count: p.Count})
+	}
+	groups := make([]projectGroupJSON, 0, len(s.ByEffectiveProject))
+	for _, p := range s.ByEffectiveProject {
+		groups = append(groups, projectGroupJSON{Project: p.Project, Count: p.Count})
 	}
 	platforms := make([]platformJSON, 0, len(s.ByPlatform))
 	for _, p := range s.ByPlatform {
@@ -1558,7 +1568,7 @@ func statsToJSON(s *vault.VaultStats, dbBytes int64) statsJSON {
 		Sessions: s.Sessions, Children: s.Children, TotalContentBytes: s.TotalBytes, DBFileBytes: dbBytes,
 		Oldest: rfc3339(s.Oldest), Newest: rfc3339(s.Newest),
 		IndexVersion: s.IndexVersion, OutdatedSessions: s.OutdatedSessions,
-		Platforms: platforms, Projects: projects,
+		Platforms: platforms, Projects: projects, ProjectGroups: groups,
 	}
 }
 

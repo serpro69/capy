@@ -1526,6 +1526,13 @@ type ProjectStat struct {
 	Count       int
 }
 
+// EffectiveProjectStat is the archived-session count for one exact effective
+// project value, which may be a custom label or an imported path.
+type EffectiveProjectStat struct {
+	Project string
+	Count   int
+}
+
 // VaultStats aggregates vault-wide counts for `capy vault stats`. TotalBytes is
 // the summed content size (vault_sessions.size_bytes), distinct from the on-disk
 // DB file size, which the CLI adds separately via os.Stat. Oldest/Newest are the
@@ -1536,6 +1543,9 @@ type VaultStats struct {
 	Oldest     time.Time
 	Newest     time.Time
 	ByProject  []ProjectStat
+	// ByEffectiveProject groups overrides and fallback paths without changing
+	// the raw-path breakdown in ByProject. Case-distinct values stay separate.
+	ByEffectiveProject []EffectiveProjectStat
 	// IndexVersion is the indexer version this binary writes (currentIndexVersion);
 	// OutdatedSessions counts archived rows still below it — i.e. how many a
 	// `capy vault reindex` would rebuild. Surfaced so the version and any reindex
@@ -1558,7 +1568,7 @@ type PlatformStat struct {
 }
 
 // Stats returns the session count, summed content size, oldest/newest activity,
-// per-project and per-platform breakdowns, and the child-session count.
+// raw/effective project and per-platform breakdowns, and the child-session count.
 // start_time/end_time are stored as fixed-width RFC3339 UTC strings, so MIN/MAX
 // over them is chronological.
 func (s *VaultStore) Stats(ctx context.Context) (*VaultStats, error) {
@@ -1596,6 +1606,26 @@ func (s *VaultStore) Stats(ctx context.Context) (*VaultStats, error) {
 	}
 	if err := projects.Err(); err != nil {
 		return nil, fmt.Errorf("iterating project stats: %w", err)
+	}
+
+	groups, err := db.QueryContext(ctx,
+		`SELECT `+effectiveProjectSQL+`, COUNT(*)
+		 FROM vault_sessions s
+		 LEFT JOIN vault_session_projects p ON p.session_uuid = s.uuid
+		 GROUP BY `+effectiveProjectSQL+` ORDER BY COUNT(*) DESC, `+effectiveProjectSQL)
+	if err != nil {
+		return nil, fmt.Errorf("querying effective project stats: %w", err)
+	}
+	defer groups.Close()
+	for groups.Next() {
+		var p EffectiveProjectStat
+		if err := groups.Scan(&p.Project, &p.Count); err != nil {
+			return nil, fmt.Errorf("scanning effective project stat: %w", err)
+		}
+		st.ByEffectiveProject = append(st.ByEffectiveProject, p)
+	}
+	if err := groups.Err(); err != nil {
+		return nil, fmt.Errorf("iterating effective project stats: %w", err)
 	}
 
 	platforms, err := db.QueryContext(ctx,

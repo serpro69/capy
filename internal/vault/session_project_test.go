@@ -13,6 +13,86 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSessionProject_Stats(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		st, err := newTestVault(t).Stats(t.Context())
+		require.NoError(t, err)
+		assert.Zero(t, st.Sessions)
+		assert.Empty(t, st.ByProject)
+		assert.Empty(t, st.ByEffectiveProject)
+	})
+
+	t.Run("group and clear", func(t *testing.T) {
+		s := newTestVault(t)
+		ctx := t.Context()
+		const parent = "57000000-0000-0000-0000-000000000001"
+		const reassigned = "57000000-0000-0000-0000-000000000002"
+		for i, fixture := range []struct {
+			path, label, parent string
+			platform            Platform
+		}{
+			{path: "/raw/a", label: "capy", platform: PlatformClaudeCode},
+			{path: "/raw/b", label: "capy", platform: PlatformCodex},
+			{path: "/raw/b", label: "Capy", parent: parent, platform: PlatformCodex},
+			{path: "/raw/c", platform: PlatformClaudeCode},
+			{path: "/raw/c", label: "/raw/c", platform: PlatformClaudeCode},
+		} {
+			uuid := fmt.Sprintf("57000000-0000-0000-0000-%012d", i+1)
+			rec := sampleRecord(uuid)
+			rec.Session.ProjectPath = fixture.path
+			rec.Session.Platform = fixture.platform
+			rec.Session.ParentUUID = fixture.parent
+			require.NoError(t, s.InsertSession(ctx, rec))
+			if fixture.label != "" {
+				_, err := s.SetSessionProject(ctx, uuid, ProjectOptions{Name: fixture.label})
+				require.NoError(t, err)
+			}
+		}
+		check := func(want []EffectiveProjectStat) *VaultStats {
+			t.Helper()
+			st, err := s.Stats(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, []ProjectStat{
+				{ProjectPath: "/raw/b", Count: 2},
+				{ProjectPath: "/raw/c", Count: 2},
+				{ProjectPath: "/raw/a", Count: 1},
+			}, st.ByProject)
+			assert.Equal(t, want, st.ByEffectiveProject)
+			var rawTotal, effectiveTotal int
+			for _, p := range st.ByProject {
+				rawTotal += p.Count
+			}
+			for _, p := range st.ByEffectiveProject {
+				effectiveTotal += p.Count
+			}
+			assert.Equal(t, 5, st.Sessions)
+			assert.Equal(t, st.Sessions, rawTotal)
+			assert.Equal(t, st.Sessions, effectiveTotal)
+			assert.Equal(t, 1, st.Children)
+			assert.Equal(t, []PlatformStat{
+				{Platform: PlatformClaudeCode, Sessions: 3, Bytes: 3 * 1234},
+				{Platform: PlatformCodex, Sessions: 2, Bytes: 2 * 1234},
+			}, st.ByPlatform)
+			return st
+		}
+		before := check([]EffectiveProjectStat{
+			{Project: "/raw/c", Count: 2},
+			{Project: "capy", Count: 2},
+			{Project: "Capy", Count: 1},
+		})
+		_, err := s.SetSessionProject(ctx, reassigned, ProjectOptions{Clear: true})
+		require.NoError(t, err)
+		after := check([]EffectiveProjectStat{
+			{Project: "/raw/c", Count: 2},
+			{Project: "/raw/b", Count: 1},
+			{Project: "Capy", Count: 1},
+			{Project: "capy", Count: 1},
+		})
+		before.ByEffectiveProject, after.ByEffectiveProject = nil, nil
+		assert.Equal(t, before, after, "clearing changes only the effective breakdown")
+	})
+}
+
 func TestSessionProject_EffectiveProject(t *testing.T) {
 	label := "~/literal/../project"
 	path := "/original/path"
