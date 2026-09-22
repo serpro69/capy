@@ -6,7 +6,7 @@
 >
 > Issue: [#92](https://github.com/serpro69/capy/issues/92)
 >
-> Status: in-progress — Tasks 1–5 done; Task 6 next
+> Status: in-progress — Tasks 1–6 done; Task 7 next
 >
 > Created: 2026-09-19
 >
@@ -315,7 +315,7 @@ No Task 5 implementation requirement is deferred.
 
 ## Task 6: Preserve federated search availability
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 4
 - **Size:** M
 - **Can run in parallel with:** —
@@ -323,10 +323,54 @@ No Task 5 implementation requirement is deferred.
 
 ### Subtasks
 
-- [ ] 6.1 Implement metadata-only HasSessionsInProject using the validated shared predicate. Verify existence agrees with effective/raw membership and mixed scope fails.
-- [ ] 6.2 Reuse the MCP scope resolver in tool_search.go; replace vaultStatsHaveSessions with the existence query and pass the same scope to SearchChunks. Verify empty-KB searches return eligible named sessions and retain physical default scoping.
-- [ ] 6.3 Surface preflight errors in-band while allowing the actual vault pass and successful knowledge results. Verify errors cannot masquerade as a definitive empty corpus.
-- [ ] 6.4 Remove only the helper made unused by this change, update capy_search help, and run existing federation/kind/source regressions plus Slice 6's checks.
+- [x] 6.1 Implement metadata-only HasSessionsInProject using the validated shared predicate. Verify existence agrees with effective/raw membership and mixed scope fails.
+- [x] 6.2 Reuse the MCP scope resolver in tool_search.go; replace vaultStatsHaveSessions with the existence query and pass the same scope to SearchChunks. Verify empty-KB searches return eligible named sessions and retain physical default scoping.
+- [x] 6.3 Surface preflight errors in-band while allowing the actual vault pass and successful knowledge results. Verify errors cannot masquerade as a definitive empty corpus.
+- [x] 6.4 Remove only the helper made unused by this change, update capy_search help, and run existing federation/kind/source regressions plus Slice 6's checks.
+
+### Task 6 verification and review (2026-09-22)
+
+Task 6 is complete; Task 7 is next. Tasks 7–10 remain pending. See the
+[implementation record](implementation.md#task-6-implementation-record-2026-09-22).
+
+All Go checks used FTS5 and both required keys (`CAPY_DB_KEY=test-key-for-development`,
+`CAPY_VAULT_KEY=test-key`), with `TMPDIR=/private/tmp`. Fixtures retain their
+existing isolated vault keys.
+
+- PASS: `go test -tags fts5 -count=1 ./internal/vault ./internal/server -run 'SessionProject_(HasSessions|SQLResolverAndLiteralQueries)|Search_.*(Project|Vault|Empty|Session|Federat|Source|Kind)|Search_Backlog'`
+  (vault 2.199s, server 11.679s). Covers availability/retrieval scope parity,
+  literal matching, cancellation/database failures, empty/nonempty knowledge
+  stores, widening, physical defaults, clear fallback and source/kind opt-outs.
+- PASS: `go test -race -tags fts5 -count=1 ./internal/vault ./internal/server -run 'SessionProject_(HasSessions|SQLResolverAndLiteralQueries)|Search_(Project|VaultAvailability)'`
+  (vault 7.044s, server 8.558s; no races reported).
+- PASS: `go test -tags fts5 -count=1 ./...` with an empty temporary
+  `XDG_CONFIG_HOME` (all packages; CLI 81.916s, server 65.110s, vault 75.404s).
+  No test exclusions were used. The temporary-path and XDG fixture-isolation
+  follow-ups recorded under Tasks 1 and 5 remain outside this slice.
+- PASS: `make vet`, `git diff --check`, and formatting of all changed Go files.
+- PASS: `make bench-quality BENCH_BRANCH=vault-project-task6-before` before code
+  changes and `make bench-quality` afterward, then
+  `make bench-compare BASE=vault-project-task6-before TARGET=feat-vault_project_name`.
+  Reports are `bench-results/vault-project-task6-before.json` and
+  `bench-results/feat-vault_project_name.json`, with identical dataset fingerprint
+  `7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`.
+  All retrieval/context-reduction metrics were unchanged; vault R@1=0.933,
+  R@5=0.967, NDCG@10=0.954, MRR=0.950 and negative FP=0/10. Existing FTS fallback
+  warnings and the `tr_005_q3` miss remain. `benchstat` is unavailable, so no
+  performance comparison is claimed. Task 10 retains the full-feature master
+  comparison and 10,000-session measurements.
+- `kk:review-code:isolated`: the code-reviewer sub-agent could not access its
+  permitted reader tools and performed no review. The skill's independent
+  external-reviewer fallback (PAL, Gemini 3.1 Pro) completed the review and
+  reported zero issues across all severities. No unresolved findings or P0/P1
+  findings to index.
+- `kk:test` and `kk:document` completed. README, architecture and tool help agree
+  with the implemented scope. No new conventions were indexed: the scope,
+  metadata-only availability and failure contracts are already in the design.
+
+No Task 6 requirement is deferred. The implementation follows Slice 6; the
+failure fixture uses the existing lazy vault handle to trigger opening errors
+without adding a production test seam or changing stored data.
 
 ## Task 7: Merge project assignments across personal vaults
 

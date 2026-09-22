@@ -210,7 +210,7 @@ func toolSearch() mcp.Tool {
 			mcp.Items(map[string]any{"type": "string", "enum": []string{"durable", "ephemeral", "session"}}),
 		),
 		mcp.WithString("project",
-			mcp.Description("Restrict the session (vault) pass to sessions whose project path contains this substring. Defaults to the current project; pass \"*\" (or all_projects: true) to search all archived projects. No effect on the knowledge pass (already per-project)."),
+			mcp.Description("Match this literal substring against the session's effective project (custom label when set, otherwise imported path). Omitted or empty scopes by the current directory in the imported path, even after reassignment. Exact \"*\" is reserved for all projects; all_projects: true overrides any project selector. No effect on the knowledge pass (already per-project)."),
 		),
 		mcp.WithBoolean("all_projects",
 			mcp.Description("Widen the session (vault) pass to every archived project instead of just the current one (default: false). When true, takes precedence over any `project` substring."),

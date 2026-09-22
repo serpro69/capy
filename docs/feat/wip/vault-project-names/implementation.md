@@ -1,6 +1,6 @@
 # Vault Project Names — Implementation Plan
 
-**Status:** Design reviewed; Tasks 1–5 done; Tasks 6–10 pending
+**Status:** Design reviewed; Tasks 1–6 done; Tasks 7–10 pending
 
 **Contract:** [design.md](design.md)
 
@@ -276,3 +276,26 @@ Verification and independent review results are recorded in
 
 Verification and independent review results are recorded in
 [tasks.md](tasks.md#task-5-verification-and-review-2026-09-21).
+
+## Task 6 implementation record (2026-09-22)
+
+- Added `HasSessionsInProject`, a context-aware metadata-only `SELECT EXISTS`
+  using `projectScopePredicate`. Mixed scopes fail before opening the vault;
+  absent/set/path-equal/clear and literal-query behavior agree with retrieval.
+  Children and sessions lacking searchable chunks still count as archived.
+- Federated `capy_search` now uses `vaultProjectScope` for both availability and
+  chunk retrieval. Explicit selectors match effective labels; omitted/empty
+  selectors retain imported-path scope. Widening precedence, knowledge scoping,
+  source/kind selection and backlog statistics remain unchanged. Removed the
+  now-unused `vaultStatsHaveSessions` helper.
+- Availability errors produce one in-band diagnostic and do not prevent either
+  normal search pass. Fixtures prove the vault pass is attempted after a failed
+  preflight and successful knowledge hits survive; definitive false availability
+  retains the existing empty-KB guide.
+- README, architecture and MCP argument help describe the completed scope.
+  No dependencies, schema/index changes or generated artifacts. TUI and merge
+  work remain Tasks 7–9; Task 10 retains the full-feature scale measurements and
+  master-baseline quality comparison.
+
+Verification and independent review results are recorded in
+[tasks.md](tasks.md#task-6-verification-and-review-2026-09-22).

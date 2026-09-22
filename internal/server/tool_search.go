@@ -89,19 +89,10 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// keeps the search knowledge-only.
 	runVaultPass := vlt != nil && sessionInScope && source == ""
 
-	// Project scope for the vault pass: the current project by default;
-	// all_projects (or project:"*") widens to every archived project; an explicit
-	// project substring narrows by imported path. TODO(vault-project-names Task 6):
-	// adopt vaultProjectScope together with effective-project availability. Knowledge.db is
-	// already per-project, so these fields only affect the vault pass.
-	vaultProject := s.projectDir
-	explicitProject := req.GetString("project", "")
-	switch {
-	case req.GetBool("all_projects", false) || explicitProject == "*":
-		vaultProject = ""
-	case explicitProject != "":
-		vaultProject = explicitProject
-	}
+	// Explicit selectors match effective projects; the default stays scoped by
+	// the imported path. Knowledge.db is already per-project, so these fields
+	// affect only vault availability and retrieval.
+	vaultProject, vaultProjectPath := vaultProjectScope(req, s.projectDir)
 
 	// Knowledge pass kinds: when the vault serves the session corpus, strip
 	// `session` from the knowledge filter so the same conversations aren't served
@@ -114,8 +105,8 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		runKnowledgePass = len(knowledgeOpts.IncludeKinds) > 0
 	}
 
-	// Vault stats feed the corpus-aware empty-KB preflight and the reindex-backlog
-	// hint; fetch once when a vault pass will run.
+	// Vault stats feed only the reindex-backlog hint. Grouped statistics cannot
+	// determine membership in both effective-project and imported-path scopes.
 	var vaultStats *vault.VaultStats
 	if runVaultPass {
 		if vs, sErr := vlt.Stats(ctx); sErr == nil {
@@ -131,8 +122,12 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// guide on a fresh project whose only vault neighbors belong to other projects.
 	kbStats, statErr := st.Stats(s.ephemeralTTL(), s.sessionTTL())
 	kbEmpty := statErr == nil && kbStats.SourceCount == 0
-	vaultCanServe := runVaultPass && vaultStatsHaveSessions(vaultStats, vaultProject)
-	if kbEmpty && !vaultCanServe {
+	var vaultCanServe bool
+	var availabilityErr error
+	if runVaultPass {
+		vaultCanServe, availabilityErr = vlt.HasSessionsInProject(ctx, vaultProject, vaultProjectPath)
+	}
+	if kbEmpty && !vaultCanServe && availabilityErr == nil {
 		return s.trackToolResponse("capy_search", &mcp.CallToolResult{
 			Content: []mcp.Content{mcp.NewTextContent(
 				"The knowledge base is empty — nothing has been indexed yet.\n\n" +
@@ -147,6 +142,11 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	var sections []string
+	if availabilityErr != nil {
+		// A failed preflight leaves availability unknown. Surface it once and
+		// still attempt both normal passes, preserving any successful results.
+		sections = append(sections, fmt.Sprintf("⚠ vault availability check failed: %v", availabilityErr))
+	}
 	totalSize := 0
 	hasResults := false
 
@@ -183,7 +183,8 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		if runVaultPass {
 			r, sErr := vlt.SearchChunks(ctx, vault.SearchOptions{
 				Query:       q,
-				ProjectPath: vaultProject,
+				Project:     vaultProject,
+				ProjectPath: vaultProjectPath,
 				Limit:       effectiveLimit,
 			})
 			if sErr != nil {
@@ -356,28 +357,6 @@ func knowledgeKindsWithoutSession(opts store.SearchOptions) []store.SourceKind {
 		}
 	}
 	return out
-}
-
-// vaultStatsHaveSessions reports whether the vault holds any archived sessions
-// in the given project scope — the corpus-aware half of the empty-KB preflight.
-// It is scoped to the same project filter the vault search pass uses: an empty
-// project means "all projects" (global count); a non-empty project matches the
-// per-project counts in VaultStats.ByProject by the same substring rule as
-// SearchChunks' project filter. A nil stats (fetch failed / vault disabled) is
-// treated as "cannot serve".
-func vaultStatsHaveSessions(stats *vault.VaultStats, project string) bool {
-	if stats == nil {
-		return false
-	}
-	if project == "" {
-		return stats.Sessions > 0
-	}
-	for _, p := range stats.ByProject {
-		if p.Count > 0 && strings.Contains(p.ProjectPath, project) {
-			return true
-		}
-	}
-	return false
 }
 
 // parseIncludeKinds normalizes the include_kinds argument to a typed slice.

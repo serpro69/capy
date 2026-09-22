@@ -1,6 +1,6 @@
 # Vault Project Names — Design
 
-**Status:** Agreed design; design reviewed; Tasks 1–5 done; Tasks 6–10 pending
+**Status:** Agreed design; design reviewed; Tasks 1–6 done; Tasks 7–10 pending
 
 **Issue:** [#92 — vault: support custom session project name](https://github.com/serpro69/capy/issues/92)
 
@@ -38,7 +38,7 @@ The relevant existing mechanisms are:
 - [session_name.go](../../../../internal/vault/session_name.go): the established local edit, tombstone, clock and reconciliation pattern.
 - [chunk_search.go](../../../../internal/vault/chunk_search.go): project predicates enter both retrieval layers through CorpusConfig.
 - [merge.go](../../../../internal/vault/merge.go): source schema probes, source selection and content-independent title reconciliation.
-- [tool_search.go](../../../../internal/server/tool_search.go) and [tool_vault_search.go](../../../../internal/server/tool_vault_search.go): explicit/default project scoping; federation currently infers session availability from raw-path stats.
+- [tool_search.go](../../../../internal/server/tool_search.go) and [tool_vault_search.go](../../../../internal/server/tool_vault_search.go): shared explicit/default project scoping; federation checks scoped session availability through a metadata-only existence query.
 - [TUI app.go](../../../../internal/vault/tui/app.go): asynchronous title editor, authoritative refresh, and consumer-owned dataStore interface.
 
 The proposed flow is CLI/TUI project edit → vault-owned metadata transaction → effective-project projection → browsing/search/stats. Cross-vault merge reconciles project state independently of transcript and title state. Imported paths retain ownership of filesystem operations and implicit MCP scope.
