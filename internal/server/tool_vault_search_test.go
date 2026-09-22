@@ -333,9 +333,8 @@ func TestFormatVaultHit_ProjectLabels(t *testing.T) {
 	}
 }
 
-// Task 6 will add effective-project availability and explicit label selection
-// to capy_search together. Until then its existing raw-path scope must survive
-// the shared SearchChunks change, including an empty knowledge store.
+// Reassigning a session must preserve implicit physical scope, including when
+// the knowledge store is empty and federation depends on the vault alone.
 func TestSearch_ProjectAssignmentKeepsDefaultScope(t *testing.T) {
 	project, uuid, _ := setupVaultSweepProject(t)
 	t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)

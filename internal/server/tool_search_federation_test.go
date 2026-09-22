@@ -2,11 +2,145 @@ package server
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/serpro69/capy/internal/vault"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSearch_ProjectOverrideScopes(t *testing.T) {
+	for _, knowledge := range []string{"empty knowledge", "populated knowledge"} {
+		t.Run(knowledge, func(t *testing.T) {
+			projectA, uuidA, projectB, uuidB := setupVaultSweepMultiProject(t)
+			t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)
+			t.Setenv("CAPY_VAULT_SWEEP_ALL", "1")
+			srv := newTestServerWithProjectDir(t, nil, projectA)
+			srv.vaultSweep(t.Context())
+			if knowledge == "populated knowledge" {
+				seedDurableDBGuide(t, srv)
+			}
+			const label = `Named CAFÉ %_\'"`
+			_, err := srv.getVault().SetSessionProject(t.Context(), uuidA, vault.ProjectOptions{Name: label})
+			require.NoError(t, err)
+			// A path-looking label on another checkout must not create an implicit association.
+			_, err = srv.getVault().SetSessionProject(t.Context(), uuidB, vault.ProjectOptions{Name: projectA})
+			require.NoError(t, err)
+
+			for _, tt := range []struct {
+				name, query, uuid string
+				args              map[string]any
+				want, emptyScope  bool
+			}{
+				{"omitted retains physical session", "database", uuidA, nil, true, false},
+				{"empty retains physical session", "database", uuidA, map[string]any{"project": ""}, true, false},
+				{"explicit label ASCII folding", "database", uuidA, map[string]any{"project": "NAMED"}, true, false},
+				{"literal metacharacters", "database", uuidA, map[string]any{"project": `%_\'"`}, true, false},
+				{"no Unicode folding", "database", uuidA, map[string]any{"project": "café"}, false, true},
+				{"explicit replaced path", "database", uuidA, map[string]any{"project": projectA}, false, false},
+				{"unrelated selector", "database", uuidA, map[string]any{"project": "unrelated"}, false, true},
+				{"no label association", "scheduler", uuidB, nil, false, false},
+				{"empty has no label association", "scheduler", uuidB, map[string]any{"project": ""}, false, false},
+				{"explicit path-looking label", "scheduler", uuidB, map[string]any{"project": projectA}, true, false},
+				{"replaced worktree path", "scheduler", uuidB, map[string]any{"project": projectB}, false, true},
+				{"star widens", "scheduler", uuidB, map[string]any{"project": "*"}, true, false},
+				{"all projects", "scheduler", uuidB, map[string]any{"all_projects": true}, true, false},
+				{"widening wins", "scheduler", uuidB, map[string]any{"all_projects": true, "project": "missing"}, true, false},
+				{"star overrides false widening", "scheduler", uuidB, map[string]any{"all_projects": false, "project": "*"}, true, false},
+				{"false widening keeps default", "scheduler", uuidB, map[string]any{"all_projects": false}, false, false},
+				{"metadata is not transcript text", "Named", uuidA, map[string]any{"project": label}, false, false},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					// Each row represents a fresh search window; throttling is tested separately.
+					srv.throttle.mu.Lock()
+					srv.throttle.count = 0
+					srv.throttle.mu.Unlock()
+					args := map[string]any{"queries": []any{tt.query}}
+					for k, v := range tt.args {
+						args[k] = v
+					}
+					res := callSearch(t, srv, args)
+					out := resultText(res)
+					wantGuide := knowledge == "empty knowledge" && tt.emptyScope
+					assert.Equal(t, wantGuide, res.IsError, out)
+					assert.Equal(t, wantGuide, strings.Contains(out, "knowledge base is empty"), out)
+					assert.Equal(t, tt.want, strings.Contains(out, "[session:"+tt.uuid+"]"), out)
+					if tt.want {
+						project := label
+						if tt.uuid == uuidB {
+							project = projectA
+						}
+						assert.Contains(t, out, "\n"+project+" · ")
+					}
+					if knowledge == "populated knowledge" && tt.query == "database" {
+						assert.Contains(t, out, "db-guide", "project selectors never scope knowledge results")
+					}
+					assert.Equal(t, projectA, srv.projectDir)
+				})
+			}
+			_, err = srv.getVault().SetSessionProject(t.Context(), uuidA, vault.ProjectOptions{Clear: true})
+			require.NoError(t, err)
+			res := callSearch(t, srv, map[string]any{"query": "database", "project": projectA})
+			assert.False(t, res.IsError)
+			assert.Contains(t, resultText(res), "[session:"+uuidA+"]", "clear restores explicit imported-path membership")
+		})
+	}
+}
+
+func TestSearch_VaultAvailabilityFailure(t *testing.T) {
+	for _, knowledge := range []string{"empty knowledge", "populated knowledge"} {
+		t.Run(knowledge, func(t *testing.T) {
+			t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)
+			srv := newTestServer(t, nil)
+			if knowledge == "populated knowledge" {
+				seedDurableDBGuide(t, srv)
+			}
+			// Cache an enabled, unopened vault, then make opening it fail. This
+			// fails availability and search independently without damaging a DB.
+			require.NotNil(t, srv.getVault())
+			t.Setenv("CAPY_VAULT_KEY", "")
+			res := callSearch(t, srv, map[string]any{"queries": []any{"database", "unmatchedquasar"}, "project": "named"})
+			out := resultText(res)
+			assert.NotContains(t, out, "knowledge base is empty")
+			assert.Equal(t, 1, strings.Count(out, "vault availability check failed"), out)
+			assert.Contains(t, out, "CAPY_VAULT_KEY")
+			assert.Contains(t, out, "## unmatchedquasar\nError: vault:", "the actual vault pass must still run")
+			if knowledge == "populated knowledge" {
+				assert.False(t, res.IsError, "successful knowledge results stay usable")
+				assert.Contains(t, out, "db-guide")
+				assert.Contains(t, out, "partial results (vault:")
+			} else {
+				assert.Contains(t, out, "## database\nError: vault:")
+			}
+
+			// Source and kind opt-outs must bypass availability as well as retrieval.
+			for _, args := range []map[string]any{
+				{"query": "database", "source": "db-guide", "project": "named"},
+				{"query": "database", "include_kinds": []any{"durable"}, "project": "named"},
+			} {
+				out := resultText(callSearch(t, srv, args))
+				assert.NotContains(t, out, "vault availability")
+				assert.NotContains(t, out, "Error: vault:")
+				if knowledge == "populated knowledge" {
+					assert.Contains(t, out, "db-guide")
+				}
+			}
+		})
+	}
+}
+
+func TestSearch_ProjectHelp(t *testing.T) {
+	tool := toolSearch()
+	require.Len(t, tool.InputSchema.Properties, 6, "no new MCP argument")
+	prop, ok := tool.InputSchema.Properties["project"].(map[string]any)
+	require.True(t, ok)
+	help, ok := prop["description"].(string)
+	require.True(t, ok)
+	for _, text := range []string{"literal substring", "effective project", "custom label", "Omitted or empty", "imported path", `Exact "*" is reserved`, "all_projects: true overrides", "No effect on the knowledge pass"} {
+		assert.Contains(t, help, text)
+	}
+}
 
 // Task 8 (A1): capy_search federates the vault chunk corpus with the knowledge
 // corpus and RRF-merges the two ranked lists. These tests exercise the seams the

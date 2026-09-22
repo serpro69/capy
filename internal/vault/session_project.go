@@ -68,6 +68,34 @@ func projectScopePredicate(project, projectPath string) (predicate, arg string, 
 	return predicate, arg, nil
 }
 
+// HasSessionsInProject reports whether any archived session belongs to the
+// effective-project or imported-path scope. It reads metadata only: a true
+// result does not promise indexed chunks or a match for any transcript query.
+// Empty scopes are unrestricted; supplying both scopes is invalid.
+func (s *VaultStore) HasSessionsInProject(ctx context.Context, project, projectPath string) (bool, error) {
+	predicate, arg, err := projectScopePredicate(project, projectPath)
+	if err != nil {
+		return false, err
+	}
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return false, err
+	}
+	query := `SELECT EXISTS(SELECT 1 FROM vault_sessions s
+		LEFT JOIN vault_session_projects p ON p.session_uuid = s.uuid`
+	var args []any
+	if predicate != "" {
+		query += " WHERE " + predicate
+		args = append(args, arg)
+	}
+	query += ")"
+	var exists bool
+	if err := db.QueryRowContext(ctx, query, args...).Scan(&exists); err != nil {
+		return false, fmt.Errorf("checking vault project availability: %w", err)
+	}
+	return exists, nil
+}
+
 // NormalizeSessionProject applies the same normalization as session names:
 // trim, redact secrets, reject empty/invalid/control-bearing values, then check
 // the 120-code-point limit. Path-looking labels remain literal.

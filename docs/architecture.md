@@ -536,13 +536,20 @@ join carries the nullable override through `chunkMeta`; the shared Go resolver
 populates `SearchResult.Project` without changing imported `ProjectPath`, indexed
 content, rank inputs, or navigation metadata.
 
-`capy_vault_search` resolves request scope with `vaultProjectScope`: widening
+Both MCP search handlers resolve request scope with `vaultProjectScope`: widening
 (`all_projects` or exact `project: "*"`) first, then a non-empty explicit effective
 project, otherwise the server directory as raw `ProjectPath`. The helper never
 changes `Server.projectDir`. `formatVaultHit` displays the resolved project
-literally for both MCP search tools. Federated `capy_search` retains raw-path
-selection until Task 6 updates its availability preflight and explicit scope
-together; its current `SearchChunks` call uses `ProjectPath` to preserve behavior.
+literally for both MCP search tools.
+
+Federated `capy_search` uses `HasSessionsInProject` for its empty-knowledge-store
+preflight. This metadata-only `SELECT EXISTS` uses `projectScopePredicate`, with
+the same effective/raw scope passed to `SearchChunks`. It neither reads transcript
+blobs nor requires indexed chunks. Statistics remain the source of backlog hints,
+but do not determine availability. A failed existence query is reported once
+in-band and leaves both search passes enabled; only a definitive empty scope can
+trigger the empty-KB guide. Knowledge scoping, source filters and kind selection
+retain their existing behavior.
 
 `Stats` preserves `VaultStats.ByProject` as the raw-path aggregation and adds
 `ByEffectiveProject` with `EffectiveProjectStat.Project`/`Count`. The additional
@@ -554,8 +561,7 @@ Ordinary `vault stats` prints these effective groups literally. JSON retains
 `projects` (`project_path`/`count`) and adds `project_groups` (`project`/`count`),
 with empty arrays for an empty vault. Platform and child counts remain unchanged.
 
-Federated availability/scope, TUI browsing/editing
-and independent merge reconciliation remain in the
+TUI browsing/editing and independent merge reconciliation remain in the
 [project-name plan](feat/wip/vault-project-names/tasks.md).
 The [design](feat/wip/vault-project-names/design.md) defines the complete contract.
 

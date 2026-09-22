@@ -13,6 +13,91 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSessionProject_HasSessions(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		s := newTestVault(t)
+		for _, scope := range [][2]string{{}, {"missing", ""}, {"", "/missing"}} {
+			found, err := s.HasSessionsInProject(t.Context(), scope[0], scope[1])
+			require.NoError(t, err)
+			assert.False(t, found)
+		}
+	})
+
+	t.Run("membership and clear", func(t *testing.T) {
+		s := newTestVault(t)
+		ctx := t.Context()
+		const uuid = "availability-session"
+		rec := sampleRecord(uuid)
+		rec.Session.ProjectPath = "/physical/worktree"
+		require.NoError(t, s.InsertSession(ctx, rec))
+		check := func(project, projectPath string, want bool) {
+			t.Helper()
+			found, err := s.HasSessionsInProject(ctx, project, projectPath)
+			require.NoError(t, err)
+			assert.Equal(t, want, found, "scope: %q / %q", project, projectPath)
+			hits, err := s.Search(ctx, SearchOptions{Query: "brontosaurus", Project: project, ProjectPath: projectPath})
+			require.NoError(t, err)
+			assert.Equal(t, len(hits) > 0, found, "availability agrees with scoped membership")
+		}
+		check("", "", true)
+		check("/physical/worktree", "", true)
+		_, err := s.SetSessionProject(ctx, uuid, ProjectOptions{Name: "Named Project"})
+		require.NoError(t, err)
+		check("NAMED", "", true)
+		check("/physical/worktree", "", false)
+		check("", "/PHYSICAL/WORKTREE", true)
+		check("", "Named", false)
+		check("missing", "", false)
+		_, err = s.SetSessionProject(ctx, uuid, ProjectOptions{Clear: true})
+		require.NoError(t, err)
+		check("Named", "", false)
+		check("/physical/worktree", "", true)
+		check("", "/physical/worktree", true)
+	})
+
+	t.Run("metadata without searchable content", func(t *testing.T) {
+		s := newTestVault(t)
+		rec := sampleRecord("availability-child")
+		rec.Session.ProjectPath = "/physical/child"
+		rec.Session.ParentUUID = "parent"
+		rec.Session.Platform = PlatformCodex
+		rec.Session.RawJSONL = []byte("not a decodable transcript")
+		rec.FTS = nil
+		require.NoError(t, s.InsertSession(t.Context(), rec))
+		_, err := s.SetSessionProject(t.Context(), rec.Session.UUID, ProjectOptions{Name: "child label"})
+		require.NoError(t, err)
+		found, err := s.HasSessionsInProject(t.Context(), "child label", "")
+		require.NoError(t, err)
+		assert.True(t, found, "children and unindexed sessions still count as archived")
+		hits, err := s.SearchChunks(t.Context(), SearchOptions{Query: "brontosaurus", Project: "child label"})
+		require.NoError(t, err)
+		assert.Empty(t, hits, "availability does not promise a transcript match")
+	})
+
+	t.Run("mixed scope validates before opening", func(t *testing.T) {
+		s := newTestVault(t)
+		t.Setenv(vaultKeyEnv, "")
+		found, err := s.HasSessionsInProject(t.Context(), "label", "/physical")
+		require.ErrorContains(t, err, "mutually exclusive")
+		assert.False(t, found)
+	})
+
+	t.Run("errors remain errors", func(t *testing.T) {
+		s := newTestVault(t)
+		db, err := s.getDB(t.Context())
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		found, err := s.HasSessionsInProject(ctx, "label", "")
+		require.ErrorIs(t, err, context.Canceled)
+		assert.False(t, found)
+		require.NoError(t, db.Close())
+		found, err = s.HasSessionsInProject(t.Context(), "label", "")
+		require.ErrorContains(t, err, "checking vault project availability")
+		assert.False(t, found)
+	})
+}
+
 func TestSessionProject_Stats(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		st, err := newTestVault(t).Stats(t.Context())
@@ -453,6 +538,9 @@ func TestSessionProject_SQLResolverAndLiteralQueries(t *testing.T) {
 							hitIDs = append(hitIDs, hit.SessionUUID)
 						}
 						assert.ElementsMatch(t, wantIDs, hitIDs, "raw scope: %v", rawScope)
+						found, err := s.HasSessionsInProject(ctx, opts.Project, opts.ProjectPath)
+						require.NoError(t, err)
+						assert.Equal(t, len(wantIDs) > 0, found, "literal availability, raw scope: %v", rawScope)
 					}
 				})
 			}
