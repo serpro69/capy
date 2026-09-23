@@ -346,7 +346,7 @@ before its title.`,
 				return err
 			}
 			if tuiRequested(cmd) {
-				return launchTUI(cmd, env, tui.Options{Mode: "list", Platform: platform})
+				return launchTUI(cmd, env, tui.Options{Mode: "list", Platform: platform, Project: project})
 			}
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
@@ -440,7 +440,7 @@ func newVaultSearchCmd(env *vaultEnv) *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if tuiRequested(cmd) {
-				return launchTUI(cmd, env, tui.Options{Mode: "search", Query: strings.Join(args, " ")})
+				return launchTUI(cmd, env, tui.Options{Mode: "search", Query: strings.Join(args, " "), Project: project})
 			}
 			afterT, err := parseDateFlag(after, false)
 			if err != nil {

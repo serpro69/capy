@@ -51,6 +51,8 @@ type searchModel struct {
 	// platform is the immutable scope inherited from the command that launched
 	// the TUI. It also applies when list mode opens live search with `/`.
 	platform vault.Platform
+	// project is the immutable effective-project scope inherited at launch.
+	project string
 
 	input   textinput.Model
 	results []vault.SearchResult
@@ -113,7 +115,7 @@ func (m searchModel) runSearch(seq int) tea.Cmd {
 		if query == "" {
 			return searchResultsMsg{seq: seq}
 		}
-		res, err := store.Search(ctx, vault.SearchOptions{Query: query, Platform: m.platform})
+		res, err := store.Search(ctx, vault.SearchOptions{Query: query, Platform: m.platform, Project: m.project})
 		return searchResultsMsg{seq: seq, results: res, err: err}
 	}
 }
@@ -215,11 +217,11 @@ func (m searchModel) resultRow(r vault.SearchResult, selected bool) string {
 		role += "/sub"
 	}
 	meta := fmt.Sprintf("%s  %-12s  %s  %s", fmtDate(r.EndTime), truncate(role, 12),
-		truncate(displayPath(r.ProjectPath), 24), truncate(r.Title, 20))
+		truncate(displaySearchProject(r), 24), truncate(r.Title, 20))
 	line := meta + "  " + oneLine(r.Snippet)
 	line = truncate(line, max(1, m.width-1))
 	if selected {
-		return m.styles.ResultSelected.Render(line)
+		return fitRow(m.styles.ResultSelected.Render(line), m.width)
 	}
-	return m.styles.ResultMeta.Render(meta) + "  " + m.styles.Snippet.Render(truncate(oneLine(r.Snippet), max(1, m.width-len(meta)-3)))
+	return fitRow(m.styles.ResultMeta.Render(meta)+"  "+m.styles.Snippet.Render(oneLine(r.Snippet)), m.width)
 }

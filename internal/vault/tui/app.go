@@ -82,6 +82,9 @@ type Options struct {
 	// Platform scopes both the session list and live search for the lifetime of
 	// the TUI. The empty value includes every platform.
 	Platform vault.Platform
+	// Project scopes list and search by effective project substring for the
+	// lifetime of the TUI. The empty value includes every project.
+	Project string
 }
 
 // Model is the root bubbletea model composing the list, viewer, and search
@@ -186,8 +189,8 @@ func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 
 	// The initial read hides children, the listModel's default (children reach
 	// the list through the toggle key — see listModel.includeChildren), while
-	// retaining any platform scope supplied by the launching CLI command.
-	sessions, err := st.ListSessions(ctx, vault.ListOptions{Platform: opts.Platform})
+	// retaining the platform and project scopes supplied by the launching CLI.
+	sessions, err := st.ListSessions(ctx, vault.ListOptions{Platform: opts.Platform, Project: opts.Project})
 	if err != nil {
 		return Model{}, fmt.Errorf("loading sessions: %w", err)
 	}
@@ -198,8 +201,10 @@ func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 
 	list := newListModel(sessions, styles, 0, 0)
 	list.platform = opts.Platform
+	list.project = opts.Project
 	search := newSearchModel(ctx, st, styles, 0, 0)
 	search.platform = opts.Platform
+	search.project = opts.Project
 
 	m := Model{
 		ctx:         ctx,
@@ -514,7 +519,7 @@ func (m Model) updateListFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // applySessionFilter narrows the list's cached snapshot to the sessions
-// matching needle across effective title, project path, and UUID
+// matching needle across effective title, effective project, and UUID
 // (filterSessions — the same Unicode-folding matcher as `vault list --name`).
 // Purely in memory: the snapshot is refreshed by reloadSessions when the
 // filter opens and after a rename, not per keystroke.
@@ -769,7 +774,9 @@ func (m Model) popViewer() Model {
 func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		m.mode = m.prevMode
+		// Search is entered from the list or the CLI. prevMode belongs to the
+		// viewer and becomes modeSearch after opening a hit.
+		m.mode = modeList
 		return m, nil
 	case "ctrl+e":
 		// ctrl+e, not bare e: the search query input is always focused, so a

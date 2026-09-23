@@ -41,18 +41,18 @@ func (i sessionItem) Title() string {
 func (i sessionItem) Description() string {
 	return fmt.Sprintf("%s · %s · %s · %dmsg · %s · %s",
 		shortID(i.sess.UUID), i.sess.Platform.OrClaude(), fmtDate(i.sess.EndTime), i.sess.MessageCount,
-		fmtSize(i.sess.SizeBytes), displayPath(i.sess.ProjectPath))
+		fmtSize(i.sess.SizeBytes), displaySessionProject(i.sess))
 }
 
 // FilterValue feeds the list's built-in filter (currently disabled — see
 // listModel) and any future fuzzy filter; effective title + project + uuid
 // covers the fields a user would search the list by.
 func (i sessionItem) FilterValue() string {
-	return i.sess.EffectiveTitle() + " " + i.sess.ProjectPath + " " + i.sess.UUID
+	return i.sess.EffectiveTitle() + " " + i.sess.EffectiveProject() + " " + i.sess.UUID
 }
 
 // filterSessions returns the sessions matching needle across effective title,
-// project path, and UUID, using the same Unicode-folding literal matcher as
+// effective project, and UUID, using the same Unicode-folding literal matcher as
 // `vault list --name` (vault.ContainsFold — design §Read Surfaces and Name
 // Lookup). An empty needle matches everything.
 func filterSessions(sessions []vault.Session, needle string) []vault.Session {
@@ -62,7 +62,7 @@ func filterSessions(sessions []vault.Session, needle string) []vault.Session {
 	var out []vault.Session
 	for _, s := range sessions {
 		if vault.ContainsFold(s.EffectiveTitle(), needle) ||
-			vault.ContainsFold(s.ProjectPath, needle) ||
+			vault.ContainsFold(s.EffectiveProject(), needle) ||
 			vault.ContainsFold(s.UUID, needle) {
 			out = append(out, s)
 		}
@@ -73,7 +73,7 @@ func filterSessions(sessions []vault.Session, needle string) []vault.Session {
 // listModel is the session browser (left/primary panel). It wraps bubbles/list.
 // The built-in "/" fuzzy filter is disabled so "/" opens the global FTS search
 // instead (design key bindings + Task 6.8); "f" drives a session filter across
-// effective title, project path, and UUID (filterSessions) over a cached
+// effective title, effective project, and UUID (filterSessions) over a cached
 // snapshot of the vault (all) — the app owns the store reads that refresh the
 // snapshot (it holds the store + ctx; see Model.reloadSessions), the listModel
 // owns the snapshot, the input widget, and the filtering flag.
@@ -102,6 +102,8 @@ type listModel struct {
 	// platform is the immutable scope supplied by `vault list --platform` when
 	// the TUI starts. Every refresh and children toggle must preserve it.
 	platform vault.Platform
+	// project is the immutable effective-project scope supplied at launch.
+	project string
 
 	width, height int
 }
@@ -140,7 +142,7 @@ func newListModel(sessions []vault.Session, styles Styles, width, height int) li
 
 	fi := textinput.New()
 	fi.Prompt = "filter: "
-	fi.Placeholder = "substring of title, project path, or uuid"
+	fi.Placeholder = "substring of title, project, or uuid"
 	fi.CharLimit = 256
 
 	return listModel{list: l, styles: styles, all: sessions, filter: fi, width: width, height: height}
@@ -228,12 +230,10 @@ func (m listModel) setIncludeChildren(on bool) listModel {
 	return m
 }
 
-// listOptions is the store query the snapshot is refreshed with: unfiltered
-// (matching happens in the TUI — filterSessions) apart from the children
-// setting, which only the store can apply since hidden children are never in
-// the snapshot.
+// listOptions preserves the launch scopes and children setting on every read.
+// The local multi-field finder (filterSessions) narrows this snapshot in memory.
 func (m listModel) listOptions() vault.ListOptions {
-	return vault.ListOptions{IncludeChildren: m.includeChildren, Platform: m.platform}
+	return vault.ListOptions{IncludeChildren: m.includeChildren, Platform: m.platform, Project: m.project}
 }
 
 // selectSession moves the highlight to the session with the given UUID when it

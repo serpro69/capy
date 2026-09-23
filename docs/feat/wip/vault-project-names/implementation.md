@@ -1,6 +1,6 @@
 # Vault Project Names — Implementation Plan
 
-**Status:** Design reviewed; Tasks 1–7 done; Tasks 8–10 pending
+**Status:** Design reviewed; Tasks 1–8 done; Tasks 9–10 pending
 
 **Contract:** [design.md](design.md)
 
@@ -328,3 +328,24 @@ Verification and independent review results are recorded in
 
 Verification and independent review results are recorded in
 [tasks.md](tasks.md#task-7-verification-and-review-2026-09-23).
+
+## Task 8 implementation record (2026-09-23)
+
+- CLI list/search launches carry `Options.Project` through initial reads,
+  reloads, child toggles and live searches alongside platform scope. The local
+  finder replaces only its project operand, retaining Unicode-folded title/UUID
+  matching and excluding replaced raw paths as project aliases.
+- TUI list/search/viewer projections use vault-resolved effective values and
+  override provenance. Path-looking labels remain literal, including labels equal
+  to imported paths. The viewer reserves a separate original-path row when
+  different; headers and search rows are bounded by terminal display width.
+- The navigation regression exposed an existing shared-return-mode bug: opening
+  a search hit set `prevMode=modeSearch`, making later Escape stay in search.
+  Search now returns directly to the list; viewer/child return behavior remains
+  unchanged. The test covers both list and search launches and repeated queries.
+- No dependencies, schema, retrieval/indexing algorithms or generated artifacts
+  changed. README and architecture document the completed TUI read surfaces;
+  project editing remains Task 9, and full-feature measurements remain Task 10.
+
+Verification and independent review results are recorded in
+[tasks.md](tasks.md#task-8-verification-and-review-2026-09-23).
