@@ -99,8 +99,7 @@ type codexRawTally struct {
 	isSubagent      bool
 	historyMode     string
 	eventTexts      []string // user_message.message (legacy) + UserMessage item text (paginated)
-	legacyEvents    int
-	filteredTexts   []string // noise-filtered response_item user texts
+	filteredTexts   []string // independently classified response_item user texts
 	taskComplete    int
 	taskStarted     int
 	callIDs         map[string]bool // function_call / custom_tool_call ids
@@ -151,7 +150,7 @@ func tallyCodexRaw(path string, raw []byte, known []codexCanaryCorruption) (code
 			switch probe.Type {
 			case "message":
 				if probe.Role == "user" {
-					if text := codexFallbackHumanText(probe.Parts); text != "" {
+					if text := codexCanaryResponseText(probe.Parts); text != "" {
 						tally.filteredTexts = append(tally.filteredTexts, text)
 					}
 				}
@@ -178,7 +177,6 @@ func tallyCodexRaw(path string, raw []byte, known []codexCanaryCorruption) (code
 			case "user_message":
 				if text := strings.TrimSpace(probe.Message); text != "" {
 					tally.eventTexts = append(tally.eventTexts, text)
-					tally.legacyEvents++
 				}
 			case "item_completed":
 				if probe.Item.Type == "UserMessage" {
@@ -194,6 +192,47 @@ func tallyCodexRaw(path string, raw []byte, known []codexCanaryCorruption) (code
 		}
 	}
 	return tally, nil
+}
+
+// The observed question-reply wrapper carries a real human answer. Count it
+// independently of events so a missing event still fails reconciliation. Other
+// tagged parts remain noise. This is a canary expectation, not a change to the
+// decoder's deliberately conservative fallback for event-free transcripts.
+func codexCanaryResponseText(parts []codexContentPart) string {
+	var kept []string
+	for _, part := range parts {
+		if part.Type != "input_text" {
+			continue
+		}
+		text := strings.TrimSpace(part.Text)
+		if !strings.HasPrefix(text, "<send_user_message_question_reply>") {
+			text = codexFallbackHumanText([]codexContentPart{part})
+		}
+		if text != "" {
+			kept = append(kept, text)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+// Compare multiplicity as well as content for BOTH history modes. Equal counts
+// alone could hide a missing response replaced by an unrelated or duplicate one.
+func reconcileCodexCanaryPrompts(tally codexRawTally) error {
+	if len(tally.eventTexts) != len(tally.filteredTexts) {
+		return fmt.Errorf("%d event prompts vs %d filtered response_item prompts (history_mode=%q)",
+			len(tally.eventTexts), len(tally.filteredTexts), tally.historyMode)
+	}
+	counts := make(map[string]int, len(tally.filteredTexts))
+	for _, text := range tally.filteredTexts {
+		counts[text]++
+	}
+	for _, text := range tally.eventTexts {
+		if counts[text] == 0 {
+			return fmt.Errorf("event prompt has no matching response_item (sha256=%s)", codexCanaryLineHash([]byte(text)))
+		}
+		counts[text]--
+	}
+	return nil
 }
 
 func TestCodexCanary(t *testing.T) {
@@ -303,20 +342,10 @@ func TestCodexCanary(t *testing.T) {
 			assert.NotEmpty(t, tr.Meta.TitleFallback, "a child titles itself from its prompt or agent identity: %s", f.path)
 		} else {
 			// Assumption 2 (non-subagent files): the event stream is complete —
-			// event-derived prompts == noise-filtered response_item user messages,
-			// and every legacy event text appears among them verbatim.
-			if len(tally.eventTexts) != len(tally.filteredTexts) {
-				mismatches = append(mismatches, fmt.Sprintf("%s: %d event prompts vs %d filtered response_item prompts (history_mode=%q)", f.path, len(tally.eventTexts), len(tally.filteredTexts), tally.historyMode))
-			} else if tally.legacyEvents > 0 {
-				set := map[string]bool{}
-				for _, s := range tally.filteredTexts {
-					set[s] = true
-				}
-				for _, s := range tally.eventTexts {
-					if !set[s] {
-						mismatches = append(mismatches, fmt.Sprintf("%s: legacy event text not among response items: %q", f.path, short(s)))
-					}
-				}
+			// event-derived prompts == independently present response_item texts,
+			// including independently recognized tagged question replies.
+			if err := reconcileCodexCanaryPrompts(tally); err != nil {
+				mismatches = append(mismatches, fmt.Sprintf("%s: %v", f.path, err))
 			}
 			assert.Equal(t, len(tally.eventTexts), humans, "decoder human count == event prompt count (events present): %s", f.path)
 		}

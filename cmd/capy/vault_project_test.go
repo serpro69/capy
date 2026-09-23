@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -11,6 +13,55 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestVaultProject_RestoreResumeKeepPhysicalPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX sh resume stub")
+	}
+	for _, clear := range []bool{false, true} {
+		name := "override"
+		if clear {
+			name = "clear"
+		}
+		t.Run(name, func(t *testing.T) {
+			root, uuid := setupVaultEnv(t)
+			physical, label := t.TempDir(), t.TempDir()
+			raw, err := os.ReadFile(filepath.Join(root, uuid+".jsonl"))
+			require.NoError(t, err)
+			raw = bytes.ReplaceAll(raw, []byte("/home/user/proj"), []byte(physical))
+			require.NoError(t, os.WriteFile(filepath.Join(root, uuid+".jsonl"), raw, 0o600))
+			_, stderr, code := capy(t, "vault", "import", "--source", root)
+			require.Equal(t, 0, code, stderr)
+			_, stderr, code = capy(t, "vault", "project", uuid, label)
+			require.Equal(t, 0, code, stderr)
+			if clear {
+				_, stderr, code = capy(t, "vault", "project", uuid, "--clear")
+				require.Equal(t, 0, code, stderr)
+			}
+			cfg := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+			invocation := filepath.Join(t.TempDir(), "claude.txt")
+			writeClaudeStub(t, invocation, 0)
+			// resume invokes the real restore path too; no --dir can mask a bad
+			// effective-project operand. The label names another existing directory.
+			_, stderr, code = capy(t, "vault", "resume", uuid)
+			require.Equal(t, 0, code, stderr)
+			got, err := os.ReadFile(invocation)
+			require.NoError(t, err)
+			resolved, err := filepath.EvalSymlinks(physical)
+			require.NoError(t, err)
+			assert.Contains(t, string(got), "PWD: "+resolved+"\n")
+			assert.Contains(t, string(got), "--resume "+uuid)
+			// Import --source retains that directory's basename as the location hint.
+			restored, err := os.ReadFile(filepath.Join(cfg, "projects", filepath.Base(root), uuid+".jsonl"))
+			require.NoError(t, err)
+			assert.Equal(t, raw, restored)
+			entries, err := os.ReadDir(label)
+			require.NoError(t, err)
+			assert.Empty(t, entries, "a path-looking label never becomes a restore directory")
+		})
+	}
+}
 
 func TestVaultProject_StatsJSON(t *testing.T) {
 	root, uuid := setupVaultEnv(t)

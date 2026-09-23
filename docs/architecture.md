@@ -596,9 +596,19 @@ metadata and independently refresh the scoped list and search. Search sequence
 IDs invalidate older results, including when a list reload fails, and refresh
 failures explicitly report that the write succeeded. Height-only viewer layout
 changes preserve offsets within messages; suspended parent frames stay untouched.
-The [design](feat/wip/vault-project-names/design.md) defines the complete contract;
-[Task 10](feat/wip/vault-project-names/tasks.md#task-10-maintenance-documentation-and-final-verification)
-tracks the remaining maintenance and full-feature checks.
+Encrypted maintenance tests preserve override and tombstone tuples through a
+larger disk import, forced reindex, legacy-blob compaction and backup-API rekey.
+They independently verify title state, latest imported paths, archive/sidecar
+bytes, hash and size. CLI regression coverage launches a stub Claude from the
+imported directory even when a custom label names another existing directory.
+Invalid compressed-blob fixtures prove list, stats, availability and both search
+paths resolve metadata without decoding archive blobs. The repeatable
+`BenchmarkSessionProjectMetadata` measures those public operations over 10,000
+sessions with and without overrides; it adds no production query or index.
+
+The [design](feat/done/vault-project-names/design.md) defines the complete contract;
+[Task 10](feat/done/vault-project-names/tasks.md#task-10-maintenance-documentation-and-final-verification)
+records maintenance, scale measurements and full-feature verification.
 
 ### Tool-result display (`show` vs `--tui`)
 
