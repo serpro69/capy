@@ -1,6 +1,6 @@
 # Vault Project Names — Implementation Plan
 
-**Status:** Design reviewed; Tasks 1–8 done; Tasks 9–10 pending
+**Status:** Design reviewed; Tasks 1–9 done; Task 10 pending
 
 **Contract:** [design.md](design.md)
 
@@ -349,3 +349,32 @@ Verification and independent review results are recorded in
 
 Verification and independent review results are recorded in
 [tasks.md](tasks.md#task-8-verification-and-review-2026-09-23).
+
+## Task 9 implementation record (2026-09-23)
+
+- The root editor now carries an explicit title/project target, with `ctrl+g`
+  routed before list/search inputs and after an already open editor. Entry reads
+  authoritative session metadata, prefills only the project override and shows
+  the original path separately. The existing title keys retain their behavior.
+- Project input has no widget length limit; store normalization runs before its
+  120-code-point validation. Enter submits `SetSessionProject` asynchronously;
+  whitespace clears, Esc cancels, pending submissions are consumed, and validation
+  or write failures retain the editor text. The program context reaches the write.
+- Successful edits refresh viewer metadata, scoped list and live search. Search
+  refresh advances its sequence even with an empty query and still runs after a
+  list reload failure; matching hits retain selection. Both list and search
+  refresh failures distinguish a committed save from a failed write.
+- Height-only viewer layout changes preserve offsets within long messages.
+  Parent frames, detail navigation and archived bytes remain intact. Editor,
+  original-path and status rows are bounded by terminal display width, including
+  wide Unicode labels. List/filter/search/viewer help advertises project editing.
+- Tests cover entry states and modes, set/clear and normalization boundaries,
+  pending/error/cancellation flows, active scopes, stale results, child independence,
+  navigation, help and narrow terminals. Existing title-rename tests are unchanged.
+  README and architecture document the completed behavior.
+- No new dependencies, schema, retrieval/indexing algorithms or generated artifacts.
+  Task 10 retains maintenance/scale/full-feature verification, including investigation
+  of the unrelated live-corpus canary failure recorded below.
+
+Verification and independent review results are recorded in
+[tasks.md](tasks.md#task-9-verification-and-review-2026-09-23).

@@ -173,23 +173,27 @@ func codexChildSession(t *testing.T, id, parent string) vault.Session {
 // stubStore is an in-memory dataStore (and searcher) for driving the models
 // without an encrypted DB.
 type stubStore struct {
-	sessions  []vault.Session
-	files     map[string][]vault.File
-	results   []vault.SearchResult
-	searchErr error
-	renameErr error
-	listErr   error // returned by ListSessions when set (post-rename refresh failure)
-	getErr    error // returned by GetSession when set (child-open store failure)
-	filesErr  error // returned by GetFiles when set
+	sessions   []vault.Session
+	files      map[string][]vault.File
+	results    []vault.SearchResult
+	searchErr  error
+	renameErr  error
+	projectErr error
+	listErr    error // returned by ListSessions when set (post-rename refresh failure)
+	getErr     error // returned by GetSession when set (child-open store failure)
+	filesErr   error // returned by GetFiles when set
 
-	searchCalls    int
-	lastQuery      string
-	lastSearchOpts vault.SearchOptions
-	listCalls      int
-	lastListOpts   vault.ListOptions
-	renameCalls    int
-	lastRenameID   string
-	lastRenameOpts vault.RenameOptions
+	searchCalls     int
+	lastQuery       string
+	lastSearchOpts  vault.SearchOptions
+	listCalls       int
+	lastListOpts    vault.ListOptions
+	projectCalls    int
+	lastProjectID   string
+	lastProjectOpts vault.ProjectOptions
+	renameCalls     int
+	lastRenameID    string
+	lastRenameOpts  vault.RenameOptions
 }
 
 func (s *stubStore) ListSessions(_ context.Context, opts vault.ListOptions) ([]vault.Session, error) {
@@ -281,6 +285,35 @@ func (s *stubStore) RenameSession(_ context.Context, prefix string, opts vault.R
 			custom = &normalized
 		}
 		s.sessions[i].Name = &vault.SessionName{CustomTitle: custom, RenamedAtNS: int64(s.renameCalls), MachineID: "stub"}
+		cp := s.sessions[i]
+		return &cp, nil
+	}
+	return nil, vault.ErrSessionNotFound
+}
+
+// SetSessionProject applies the vault normalizer and updates only project state.
+func (s *stubStore) SetSessionProject(ctx context.Context, prefix string, opts vault.ProjectOptions) (*vault.Session, error) {
+	s.projectCalls++
+	s.lastProjectID, s.lastProjectOpts = prefix, opts
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.projectErr != nil {
+		return nil, s.projectErr
+	}
+	for i := range s.sessions {
+		if !strings.HasPrefix(s.sessions[i].UUID, prefix) {
+			continue
+		}
+		var custom *string
+		if !opts.Clear {
+			value, err := vault.NormalizeSessionProject(opts.Name)
+			if err != nil {
+				return nil, err
+			}
+			custom = &value
+		}
+		s.sessions[i].ProjectOverride = &vault.SessionProject{CustomProject: custom, UpdatedAtNS: int64(s.projectCalls), MachineID: "stub"}
 		cp := s.sessions[i]
 		return &cp, nil
 	}

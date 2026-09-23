@@ -38,22 +38,32 @@ type dataStore interface {
 	GetFiles(ctx context.Context, sessionUUID string) ([]vault.File, error)
 	Search(ctx context.Context, opts vault.SearchOptions) ([]vault.SearchResult, error)
 	RenameSession(ctx context.Context, prefix string, opts vault.RenameOptions) (*vault.Session, error)
+	SetSessionProject(ctx context.Context, prefix string, opts vault.ProjectOptions) (*vault.Session, error)
 }
 
-// The rename editor's fixed texts share one reserved row: prompt, value area,
+// editTarget distinguishes the two fields sharing the root editor lifecycle.
+type editTarget int
+
+const (
+	editTitle editTarget = iota + 1
+	editProject
+)
+
+// The editor's fixed texts share one reserved row: prompt, value area,
 // two-space gap, hint. Every rune here is single-width, so rune counts are
 // display widths (the same measurement truncate uses), which is what
 // layoutSubmodels relies on to size the value area.
 const (
 	renamePrompt     = "name (empty clears): "
+	projectPrompt    = "project (empty clears): "
 	renameHint       = "enter save · esc cancel"
 	renameSavingHint = "saving…"
 )
 
-// renameResultMsg carries the outcome of an asynchronous RenameSession write
-// back into Update. sess is the store's post-write session metadata (imported
-// title plus name state), nil on error.
+// renameResultMsg carries either asynchronous metadata write back into Update.
+// sess is the store's post-write session metadata, nil on error.
 type renameResultMsg struct {
+	target  editTarget
 	sess    *vault.Session
 	cleared bool
 	err     error
@@ -123,9 +133,9 @@ type Model struct {
 	// search, so those flows are unchanged (design § TUI — root-routed child
 	// open). See viewerFrame for why a frame is the whole viewer.
 	//
-	// Suspended frames are not refreshed by handleRenameResult: a rename only
+	// Suspended frames are not refreshed by handleRenameResult: an edit only
 	// ever targets the session currently shown, and a chain cannot loop, so no
-	// suspended frame can hold the renamed session.
+	// suspended frame can hold the edited session.
 	viewerStack []viewerFrame
 
 	// clipOut is where the OSC-52 clipboard escape is written for the `c` key —
@@ -138,7 +148,7 @@ type Model struct {
 	action Action
 
 	// The rename editor is root-model state (not per-mode) because every mode —
-	// list navigation (e), viewer (e), and search (ctrl+e) — opens the same
+	// list/viewer (e), search (ctrl+e), and project editing (ctrl+g) — opens the same
 	// single-line input over the current body. While renaming, keys route to the
 	// editor before mode routing; while renamePending, all input is consumed so
 	// a duplicate submit cannot fire a second write and Esc cannot close the
@@ -146,7 +156,9 @@ type Model struct {
 	renameInput   textinput.Model
 	renaming      bool
 	renamePending bool
-	renameUUID    string // full UUID of the rename target
+	renameUUID    string // full UUID of the edit target
+	editTarget    editTarget
+	originalPath  string // authoritative imported path shown by the project editor
 
 	width, height int
 	status        string // transient one-line status; reserves the bottom row when set
@@ -248,6 +260,9 @@ func (m Model) bodyHeight() int {
 	}
 	if m.renaming {
 		h--
+		if m.editTarget == editProject {
+			h-- // original path, separate from the editable override
+		}
 	}
 	return max(1, h)
 }
@@ -263,7 +278,14 @@ func (m Model) layoutSubmodels() Model {
 	}
 	m.raw = m.raw.setSize(m.width, h)
 	m.search = m.search.setSize(m.width, h)
-	boundInputWidth(&m.renameInput, m.width, utf8.RuneCountInString(renameHint))
+	m.renameInput.Prompt = renamePrompt
+	if m.editTarget == editProject {
+		m.renameInput.Prompt = projectPrompt
+		if m.width > 0 && m.width < utf8.RuneCountInString(projectPrompt)+8 {
+			m.renameInput.Prompt = "> "
+		}
+	}
+	boundInputWidth(&m.renameInput, m.width, utf8.RuneCountInString(m.editorHint()))
 	return m
 }
 
@@ -347,6 +369,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.renaming {
 			return m.updateRename(msg)
 		}
+		if msg.String() == "ctrl+g" {
+			return m.startProjectEdit()
+		}
 		switch m.mode {
 		case modeList:
 			return m.updateList(msg)
@@ -374,7 +399,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case renameResultMsg:
 		return m.handleRenameResult(msg)
-	case debounceMsg, searchResultsMsg:
+	case searchResultsMsg:
+		refreshFailed := m.search.refreshPending && msg.seq == m.search.seq && msg.err != nil
+		var cmd tea.Cmd
+		m.search, cmd = m.search.Update(msg)
+		if refreshFailed {
+			m = m.withError("saved, refresh failed: " + msg.err.Error())
+		}
+		return m, cmd
+	case debounceMsg:
 		// Search-owned messages always reach the search model regardless of the
 		// active mode: the post-rename background rerun (handleRenameResult) and a
 		// debounce tick that outlives leaving search mode must not be dropped by
@@ -551,9 +584,56 @@ func (m Model) reloadSessions() (Model, tea.Cmd, error) {
 // target session's effective title so the user edits rather than retypes it.
 // Submitting an emptied input writes a clear tombstone (see updateRename).
 func (m Model) startRename(uuid, effectiveTitle string) (tea.Model, tea.Cmd) {
+	m.editTarget = editTitle
+	m.renameInput.CharLimit = 256
+	return m.startEditor(uuid, effectiveTitle)
+}
+
+// startProjectEdit re-reads the selected session, since cached results cannot
+// establish whether an effective project is an override or an imported path.
+// The root routes ctrl+g here even while the list finder is focused.
+func (m Model) startProjectEdit() (tea.Model, tea.Cmd) {
+	var uuid string
+	switch m.mode {
+	case modeList:
+		if sess, ok := m.list.selected(); ok {
+			uuid = sess.UUID
+		}
+	case modeSearch:
+		if hit, ok := m.search.selected(); ok {
+			uuid = hit.SessionUUID
+		}
+	case modeView:
+		if m.viewer.ready {
+			uuid = m.viewer.sess.UUID
+		}
+	}
+	if uuid == "" {
+		return m, nil
+	}
+	sess, err := m.store.GetSession(m.ctx, uuid)
+	if err != nil {
+		return m.withError("opening project editor: " + err.Error()), nil
+	}
+	if sess == nil {
+		return m.withError("opening project editor: store returned no session"), nil
+	}
+	value := ""
+	if sess.ProjectOverride != nil && sess.ProjectOverride.CustomProject != nil {
+		value = *sess.ProjectOverride.CustomProject
+	}
+	m.editTarget = editProject
+	m.originalPath = sess.ProjectPath
+	// The store validates after trimming/redaction. An input-widget limit would
+	// silently discard text before that normalization can accept or reject it.
+	m.renameInput.CharLimit = 0
+	return m.startEditor(sess.UUID, value)
+}
+
+func (m Model) startEditor(uuid, value string) (tea.Model, tea.Cmd) {
 	m.renaming = true
 	m.renameUUID = uuid
-	m.renameInput.SetValue(effectiveTitle)
+	m.renameInput.SetValue(value)
 	m.renameInput.CursorEnd()
 	m.renameInput.Focus()
 	return m.layoutSubmodels(), nil
@@ -565,6 +645,8 @@ func (m Model) closeRename() Model {
 	m.renaming = false
 	m.renamePending = false
 	m.renameUUID = ""
+	m.editTarget = 0
+	m.originalPath = ""
 	m.renameInput.Blur()
 	return m.layoutSubmodels()
 }
@@ -587,7 +669,8 @@ func (m Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			opts.Clear = true
 		} else {
 			// The raw value is passed through: NormalizeSessionName (trim, secret
-			// redaction, validation) is owned by the store, shared with the CLI.
+			// redaction, validation) or NormalizeSessionProject is owned by
+			// the store, shared with the CLI.
 			opts.Name = v
 		}
 		m.renamePending = true
@@ -602,10 +685,16 @@ func (m Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // bubbletea command convention as searchModel.runSearch). uuid is the full
 // session UUID, so the prefix lookup inside RenameSession is exact.
 func (m Model) runRename(uuid string, opts vault.RenameOptions) tea.Cmd {
-	store, ctx := m.store, m.ctx
+	store, ctx, target := m.store, m.ctx, m.editTarget
 	return func() tea.Msg {
-		sess, err := store.RenameSession(ctx, uuid, opts)
-		return renameResultMsg{sess: sess, cleared: opts.Clear, err: err}
+		var sess *vault.Session
+		var err error
+		if target == editProject {
+			sess, err = store.SetSessionProject(ctx, uuid, vault.ProjectOptions{Name: opts.Name, Clear: opts.Clear})
+		} else {
+			sess, err = store.RenameSession(ctx, uuid, opts)
+		}
+		return renameResultMsg{target: target, sess: sess, cleared: opts.Clear, err: err}
 	}
 }
 
@@ -619,14 +708,18 @@ func (m Model) runRename(uuid string, opts vault.RenameOptions) tea.Cmd {
 // open viewer refreshes its session metadata without reparsing the transcript.
 func (m Model) handleRenameResult(msg renameResultMsg) (tea.Model, tea.Cmd) {
 	m.renamePending = false
+	operation := "rename"
+	if msg.target == editProject {
+		operation = "project"
+	}
 	if msg.err != nil {
-		return m.withError("rename error: " + msg.err.Error()), nil
+		return m.withError(operation + " error: " + msg.err.Error()), nil
 	}
 	if msg.sess == nil {
 		// The store contract is session-or-error; a nil session without an error
 		// is a store bug. Fail loud in the status line rather than panic inside
 		// Update, and keep the editor open so the user can retry or cancel.
-		return m.withError("rename error: store returned no session"), nil
+		return m.withError(operation + " error: store returned no session"), nil
 	}
 	m = m.closeRename()
 
@@ -636,19 +729,30 @@ func (m Model) handleRenameResult(msg renameResultMsg) (tea.Model, tea.Cmd) {
 		status = fmt.Sprintf("cleared custom name for %s — title is now %q", shortID(msg.sess.UUID), title)
 	}
 
+	if msg.target == editProject {
+		status = fmt.Sprintf("project for %s saved as %q", shortID(msg.sess.UUID), msg.sess.EffectiveProject())
+		if msg.cleared {
+			status = fmt.Sprintf("cleared custom project for %s — project is now %q", shortID(msg.sess.UUID), msg.sess.EffectiveProject())
+		}
+	}
+
 	// The viewer needs only the returned session, so refresh it before the list
 	// re-read: a failing re-read must not leave a committed rename stale in the
 	// header the user is looking at.
 	m.viewer = m.viewer.setSessionMeta(*msg.sess)
 
-	m, listCmd, err := m.reloadSessions()
-	if err != nil {
-		return m.withError("rename succeeded, but refreshing sessions failed: " + err.Error()), nil
-	}
-	m.list = m.list.selectSession(msg.sess.UUID)
-
+	// Invalidate old results even when the independent list refresh fails.
 	var searchCmd tea.Cmd
 	m.search, searchCmd = m.search.refresh()
+	m, listCmd, err := m.reloadSessions()
+	if err != nil {
+		prefix := "rename succeeded, but refreshing sessions failed: "
+		if msg.target == editProject {
+			prefix = "project saved, refresh failed: "
+		}
+		return m.withError(prefix + err.Error()), searchCmd
+	}
+	m.list = m.list.selectSession(msg.sess.UUID)
 
 	return m.withStatus(status), tea.Batch(listCmd, searchCmd)
 }
@@ -848,26 +952,41 @@ func (m Model) View() string {
 	}
 	rows := []string{body}
 	if m.renaming {
+		if m.editTarget == editProject {
+			rows = append(rows, fitRow(m.styles.Help.Render("original path: "+oneLine(m.originalPath)), m.width))
+		}
 		rows = append(rows, m.renameLine())
 	}
 	if m.status != "" {
-		// The status sits on a row bodyHeight reserved for it; oneLine + truncate
-		// guarantee exactly one row so the composed View never exceeds m.height.
+		// Status occupies one reserved row; bound display cells as well as runes
+		// so wide Unicode labels cannot wrap after a successful metadata edit.
 		style := m.styles.StatusBar
 		if m.statusErr {
 			style = m.styles.ErrorMsg
 		}
-		rows = append(rows, style.Render(truncate(oneLine(m.status), max(1, m.width))))
+		rows = append(rows, fitRow(style.Render(truncate(oneLine(m.status), max(1, m.width))), m.width))
 	}
 	return strings.Join(rows, "\n")
 }
 
-// renameLine renders the open rename editor on its reserved row (above the
-// status row, which carries any validation error while the editor stays open).
-func (m Model) renameLine() string {
-	hint := renameHint
-	if m.renamePending {
-		hint = renameSavingHint
+// editorHint keeps the shared editor help within the available row.
+func (m Model) editorHint() string {
+	// Keep a usable value area in a narrow project editor; the full prompt and
+	// help return when the terminal grows. The input itself is never truncated.
+	if m.editTarget == editProject && m.width > 0 && m.width < utf8.RuneCountInString(projectPrompt)+utf8.RuneCountInString(renameHint)+8 {
+		return ""
 	}
-	return m.renameInput.View() + "  " + m.styles.Help.Render(hint)
+	if m.renamePending {
+		return renameSavingHint
+	}
+	return renameHint
+}
+
+// renameLine renders the shared editor above any validation-error status row.
+func (m Model) renameLine() string {
+	line := m.renameInput.View()
+	if hint := m.editorHint(); hint != "" {
+		line += "  " + m.styles.Help.Render(hint)
+	}
+	return fitRow(line, m.width)
 }

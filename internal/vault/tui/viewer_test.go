@@ -34,6 +34,8 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlD}
 	case "ctrl+e":
 		return tea.KeyMsg{Type: tea.KeyCtrlE}
+	case "ctrl+g":
+		return tea.KeyMsg{Type: tea.KeyCtrlG}
 	case "ctrl+u":
 		return tea.KeyMsg{Type: tea.KeyCtrlU}
 	default:

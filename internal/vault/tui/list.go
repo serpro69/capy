@@ -131,6 +131,7 @@ func newListModel(sessions []vault.Session, styles Styles, width, height int) li
 			key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "filter")),
 			key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "rename")),
+			key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("ctrl+g", "project")),
 			key.NewBinding(key.WithKeys(listChildrenKey), key.WithHelp(listChildrenKey, "children")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 			key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "raw JSONL")),
@@ -150,7 +151,7 @@ func newListModel(sessions []vault.Session, styles Styles, width, height int) li
 
 // listFilterHint sits to the right of the filter input on its row; setSize
 // reserves its width so a long needle scrolls instead of running off-screen.
-const listFilterHint = "enter apply · esc clear"
+const listFilterHint = "enter apply · esc clear · ctrl+g project"
 
 func (m listModel) setSize(width, height int) listModel {
 	m.width, m.height = width, height
@@ -261,7 +262,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 func (m listModel) View() string {
 	if m.filtering {
 		hint := m.styles.Help.Render(listFilterHint)
-		return m.filter.View() + "  " + hint + "\n" + m.list.View()
+		return fitRow(m.filter.View()+"  "+hint, m.width) + "\n" + m.list.View()
 	}
 	return m.list.View()
 }

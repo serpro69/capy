@@ -503,7 +503,7 @@ All commands live under `capy vault` and require `CAPY_VAULT_KEY`. A persistent 
 | `compact`                                                                             | Recompress sessions archived before compression existed (zstd) and `VACUUM` to reclaim disk. No-op if nothing is left uncompressed. **Stop the MCP server first.**           |
 | `merge --from <vault.db> [--key] [--project] [--dry-run]`                             | Non-destructively unite another machine's vault into this one — distinct sessions added, larger copy wins on UUID overlap; titles and projects reconcile independently, latest edit or clear wins. `--project` selects the source's effective project. Idempotent. Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`. |
 
-`list`, `search`, and `show` also accept **`--tui`** for an interactive terminal UI (browse, live search, vim-style viewer) built on bubbletea. Starting it with `list --platform claude-code|codex --tui` keeps that platform scope while browsing, refreshing, and searching inside the TUI. A `--project` scope from `list` or `search` is retained too, including across child toggles and mode changes. `--tui` is not supported on the mutating/exec commands (`restore`, `resume`, `delete`). In the viewer, large tool results (and any `Read`/`NotebookRead` output) collapse to a marker — cycle markers with `]`/`[` and press `enter` to expand one inline, `esc`/`q` to return. `Edit`/`Write` results expand to a colored diff (the marker shows a `(+a −b)` stat). Plain `vault show` is unaffected. Other keys: `f` filter the list by title, effective project, or UUID, `e` rename the selected/open session (`ctrl+e` in search, where `e` types into the query), `c` copy the current message to the clipboard (OSC-52), `r` restore and `R` resume the selected/open session.
+`list`, `search`, and `show` also accept **`--tui`** for an interactive terminal UI (browse, live search, vim-style viewer) built on bubbletea. Starting it with `list --platform claude-code|codex --tui` keeps that platform scope while browsing, refreshing, and searching inside the TUI. A `--project` scope from `list` or `search` is retained too, including across child toggles and mode changes. `--tui` is not supported on the mutating/exec commands (`restore`, `resume`, `delete`). In the viewer, large tool results (and any `Read`/`NotebookRead` output) collapse to a marker — cycle markers with `]`/`[` and press `enter` to expand one inline, `esc`/`q` to return. `Edit`/`Write` results expand to a colored diff (the marker shows a `(+a −b)` stat). Plain `vault show` is unaffected. Other keys: `f` filter the list by title, effective project, or UUID, `e` rename the selected/open session (`ctrl+e` in search, where `e` types into the query), `ctrl+g` edit the project in list, search, or viewer (also while the list filter is active), `c` copy the current message to the clipboard (OSC-52), `r` restore and `R` resume the selected/open session.
 
 Press **`v`** in the session list or viewer to inspect the **archived raw JSONL** in a read-only view. Each record is pretty-printed, including metadata and unknown fields. In a Claude subagent view, `v` opens that subagent's transcript; in a Codex child session, it opens the child's transcript. From an expanded tool result, it opens the containing session. From search, press `enter` to open a result, then `v`. Scroll with `j`/`k`, pan long lines with `h`/`l` (or arrow keys), use `0` to return to the left edge and `g`/`G` for top/bottom. `esc`, `q`, or `v` returns to the previous screen with its selection and reading position preserved (resizing rewraps the transcript at its source message). Malformed records remain visible with a source-line diagnostic; terminal control characters are displayed as escapes. This shows the vault's archived copy, so it works even when the original session file is gone.
 
@@ -597,8 +597,17 @@ once like every other session, and platform totals are unchanged.
 `project_groups` rows with `project`/`count`; both are empty arrays in an empty vault.
 
 Project assignments and clear tombstones also travel through cross-vault merge,
-independently of session titles. TUI project editing remains pending in the
-[project-name task plan](docs/feat/wip/vault-project-names/tasks.md).
+independently of session titles.
+
+In the TUI, press `ctrl+g` in the list, active list filter, search, or viewer to
+edit the selected session's project. The editor starts with only its custom
+label (blank when unset or cleared) and shows the original path separately.
+Enter saves, whitespace-only input clears, and Esc cancels. Invalid input or a
+failed write keeps your text for correction; a failure to refresh after a
+successful save is reported separately. The list and search retain their active
+scopes, so reassignment can remove a session from the current results. Editing a
+child affects only that child; the viewer keeps its transcript and navigation
+position. `e`/`ctrl+e` continue to edit titles.
 
 ### Cross-machine sync
 

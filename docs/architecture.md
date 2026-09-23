@@ -583,9 +583,22 @@ the initial read, every list refresh/child toggle and live search. The local `f`
 finder uses `EffectiveProject()` alongside the existing Unicode-folded title/UUID
 operands. List/search/viewer projections preserve literal labels; a differing
 original path gets a separate viewer row with reserved height. Metadata rows are
-bounded in terminal display cells. TUI project editing remains in the
-[project-name plan](feat/wip/vault-project-names/tasks.md).
-The [design](feat/wip/vault-project-names/design.md) defines the complete contract.
+bounded in terminal display cells.
+
+The root TUI editor distinguishes title and project targets. `ctrl+g` routes
+before list/search inputs but after an already open editor. Entry reads the
+selected session's authoritative metadata, prefills only the override, and
+reserves a separate original-path row. `SetSessionProject` runs as a Bubble Tea
+command with the program context; the store owns normalization and length
+validation, with no preceding input truncation. Pending writes consume duplicate
+submissions. Failures retain the editor text; successful writes refresh viewer
+metadata and independently refresh the scoped list and search. Search sequence
+IDs invalidate older results, including when a list reload fails, and refresh
+failures explicitly report that the write succeeded. Height-only viewer layout
+changes preserve offsets within messages; suspended parent frames stay untouched.
+The [design](feat/wip/vault-project-names/design.md) defines the complete contract;
+[Task 10](feat/wip/vault-project-names/tasks.md#task-10-maintenance-documentation-and-final-verification)
+tracks the remaining maintenance and full-feature checks.
 
 ### Tool-result display (`show` vs `--tui`)
 
@@ -790,7 +803,8 @@ list, every list reload, and live search queries. `list` and `search` launches
 also retain `--project` across reloads and mode changes. Other interactions are: filter `f`
 — effective title, effective project, or UUID via the shared `ContainsFold`
 matcher; rename `e` in the list and viewer, `ctrl+e` in search because its query
-input is always focused and a printable key would be untypeable; copy `c`; restore
+input is always focused and a printable key would be untypeable; project edit
+`ctrl+g` in list (including its active finder), search and viewer; copy `c`; restore
 `r`; resume `R`; `s` in the list toggles child sessions, re-querying the store since
 hiding children is a SQL predicate, not an in-memory filter. The mutating/exec
 commands do not. A rename runs as a Bubble Tea

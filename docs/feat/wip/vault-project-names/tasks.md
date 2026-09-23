@@ -6,7 +6,7 @@
 >
 > Issue: [#92](https://github.com/serpro69/capy/issues/92)
 >
-> Status: in-progress — Tasks 1–8 done; Task 9 next
+> Status: in-progress — Tasks 1–9 done; Task 10 next
 >
 > Created: 2026-09-19
 >
@@ -492,7 +492,7 @@ the existing package-test strategy documented in `cmd/capy/vault_test.go`.
 
 ## Task 9: Edit project assignments in the TUI
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 8
 - **Size:** M
 - **Can run in parallel with:** —
@@ -500,10 +500,65 @@ the existing package-test strategy documented in `cmd/capy/vault_test.go`.
 
 ### Subtasks
 
-- [ ] 9.1 Extend dataStore/stubs and the root editor with an explicit title/project target. Bind ctrl+g in list, active finder, search and viewer without intercepting an already open editor. Verify existing title and text-input keys.
-- [ ] 9.2 Load authoritative metadata, show original path separately and prefill only the override. Verify blank fallback/clear, path-looking names, input validation without truncation and narrow-terminal layout.
-- [ ] 9.3 Save asynchronously, refresh all affected views under active scope and guard against stale search results. Verify error text retention, duplicate-submit protection, cancellation, saved-but-refresh-failed status and filter disappearance.
-- [ ] 9.4 Update screen/filter help and verify independent child edits preserve parent/viewer state. Run Slice 9's checks and the existing rename suite.
+- [x] 9.1 Extend dataStore/stubs and the root editor with an explicit title/project target. Bind ctrl+g in list, active finder, search and viewer without intercepting an already open editor. Verify existing title and text-input keys.
+- [x] 9.2 Load authoritative metadata, show original path separately and prefill only the override. Verify blank fallback/clear, path-looking names, input validation without truncation and narrow-terminal layout.
+- [x] 9.3 Save asynchronously, refresh all affected views under active scope and guard against stale search results. Verify error text retention, duplicate-submit protection, cancellation, saved-but-refresh-failed status and filter disappearance.
+- [x] 9.4 Update screen/filter help and verify independent child edits preserve parent/viewer state. Run Slice 9's checks and the existing rename suite.
+
+### Task 9 verification and review (2026-09-23)
+
+Task 9 is complete; Task 10 is next. See the
+[implementation record](implementation.md#task-9-implementation-record-2026-09-23).
+All Go tests used FTS5 and both required keys (`CAPY_DB_KEY=test-key-for-development`,
+`CAPY_VAULT_KEY=test-key`), with `TMPDIR=/private/tmp`.
+
+- PASS: `go test -tags fts5 -count=1 ./internal/vault/tui -run 'Project|Rename|Keybindings|Filter'`
+  (0.546s). New coverage exercises authoritative override prefill from list,
+  active finder, search and viewer/detail; set/clear, literal paths, Unicode
+  boundaries, normalization before length validation and untruncated input;
+  async writes, duplicate submissions, cancellation and retained error text;
+  scope/filter disappearance, independent child state and stale search messages.
+- PASS: `go test -race -tags fts5 -count=1 ./internal/vault/tui`
+  (2.179s; no races), including all existing rename, navigation and render tests.
+  The first full TUI run caught the added help text clipping the existing
+  “return to session” affordance at 80 columns. Reordered the detail help and
+  retained the existing assertions; the rerun passed.
+- PASS: `go test -tags fts5,glamour -count=1 ./internal/vault/tui/...`
+  (0.584s), `make vet`, formatting checks and `git diff --check`.
+- PASS on the final code: `go test -race -tags fts5,glamour -count=1 ./internal/vault/tui/...`
+  (2.332s). Includes the added height-only scroll-offset, empty-query stale-result
+  and wide-Unicode save-status regressions. The final status-row fix bounds
+  display cells as well as rune count.
+- The unrestricted `go test -tags fts5 -count=1 ./...`, with an empty temporary
+  `XDG_CONFIG_HOME`, **failed only `TestCodexCanary`**. Every other package passed
+  (CLI 82.727s, server 63.327s, TUI 3.049s). The live paginated rollout
+  `~/.codex/sessions/2026/09/23/rollout-2026-09-23T12-08-35-01a0cdbd-12ce-7f81-8da0-05becd73490c.jsonl`
+  had 9 event prompts versus 6 filtered response-item prompts. This task changes
+  no canary or decoder code and does not alter that local transcript.
+- PASS: `go test -tags fts5 -count=1 ./internal/vault -skip '^TestCodexCanary$'`
+  (91.863s). This verifies the remaining vault tests; it is not a claim that the
+  unrestricted full suite passed.
+- `kk:review-code:isolated`: independent code-reviewer approved with no findings.
+  Supplemental PAL (Gemini 3.1 Pro) returned no issues; its zero-finding result
+  supplied no additional actionable signal. The independent reviewer also checked
+  the final Unicode status fix and its regression test and approved. No unresolved
+  Task 9 findings and no P0/P1 systemic findings to index.
+- `kk:test` and `kk:document` completed. README, architecture and feature records
+  describe the implemented editor. No new dependencies, schema, retrieval/indexing
+  algorithms or generated artifacts changed. No conventions were indexed because
+  the relevant behavior is captured in the design and implementation record.
+
+**Verification follow-up for Task 10:** inspect the reported live-rollout prompt
+reconciliation mismatch, determine whether it reflects an active-transcript
+snapshot or decoder/canary format drift, and rerun `TestCodexCanary` plus the
+unrestricted full suite. Do not weaken the assertion or claim the excluded run
+satisfies that gate. Existing XDG/macOS fixture-isolation follow-ups remain as
+recorded under Tasks 1 and 5.
+
+No Task 9 implementation requirement is deferred. The shared refresh lifecycle
+now reruns search even after a list-refresh failure, and height-only viewer
+layout preserves offsets within long messages. Task 10 retains the maintenance,
+scale and full-feature benchmark/review work.
 
 ## Task 10: Maintenance, documentation and final verification
 
