@@ -1,6 +1,6 @@
 # Vault Project Names — Design
 
-**Status:** Agreed design; design reviewed; Tasks 1–9 done; Task 10 pending
+**Status:** Complete — Tasks 1–10 verified; independent code and spec reviews passed
 
 **Issue:** [#92 — vault: support custom session project name](https://github.com/serpro69/capy/issues/92)
 
@@ -159,7 +159,7 @@ Overrides are at most one row per session; joins are one-to-one. Substring filte
 - Must hold: UUID remains the stable mutation and merge identity; source and destination are trusted personal vaults.
 - Must hold: a chosen name changes explicit project selection, not the imported directory used for filesystem operations.
 - Should hold: the ADR-030 120-code-point normalization contract is sufficient for project labels. Imported paths themselves are not length-limited.
-- Should hold: scans over thousands of metadata rows remain interactive. Validate a 10,000-session fixture and compare before/after latency; this is an unmeasured scale assumption, not a claimed SLA.
+- Measured: scans over a synthetic 10,000-session encrypted vault remain bounded in the tested environment. [Task 10 measurements](tasks.md#10000-session-measurement) record with/without-override latencies and their costs; they establish no latency SLA.
 - Should hold: users accept explicit-name searches and physical default MCP scope as different modes; help and regression tests must make the distinction concrete.
 - Accepted inherited constraint: wall-clock timestamps can be skewed and machine IDs can collide; ADR-030's total ordering defines convergence rather than real-time chronology.
 

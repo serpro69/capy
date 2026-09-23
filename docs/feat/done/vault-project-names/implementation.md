@@ -1,6 +1,6 @@
 # Vault Project Names — Implementation Plan
 
-**Status:** Design reviewed; Tasks 1–9 done; Task 10 pending
+**Status:** Complete — Tasks 1–10 verified; independent code and spec reviews passed
 
 **Contract:** [design.md](design.md)
 
@@ -161,6 +161,32 @@ No agreed success criterion is deferred. Automatic association, bulk editing and
 Accepted compatibility limitation: old binaries omit project metadata during cross-vault merge. The recovery is to upgrade and rerun merge; no reader-version gate is planned. Star-only labels cannot narrow MCP searches because the pre-existing star sentinel means all projects; use CLI filtering or choose a different label.
 
 If implementation exposes a new gap, add a concrete entry here and in tasks.md with what was skipped, why and the next step. Chat-only deferral does not count.
+
+## Task 10 implementation record (2026-09-23)
+
+- Encrypted fixtures preserve project overrides and clear tombstones through
+  actual larger disk imports, forced reindex, legacy-blob compaction and the
+  backup-API rekey. Opposite title/project states verify independence; decoded
+  archives, sidecars, hashes, sizes, latest imported paths and final index rows
+  remain intact. Set/clear versus delete races leave neither metadata orphan.
+- A binary-harness resume test uses two existing directories, assigns one as a
+  literal label and verifies Claude launches in the imported one. The real
+  restore path writes byte-identical JSONL under the stored location hint.
+- `BenchmarkSessionProjectMetadata` provides repeatable 10,000-session public
+  read measurements with/without overrides. A separate invalid-zstd fixture
+  checks list/stats/availability/per-line/chunk queries never decode archives.
+  Timings, costs and the measured master quality comparison are in Task 10.
+- README and architecture document survival and additive JSON. Existing command
+  and tool help already specify scope; routing now makes the same distinction in
+  both `GenerateRoutingInstructions` and its committed `.capy/AGENTS.md` output.
+- Task 9's live canary mismatch was a test-oracle gap for tagged question
+  replies. The test-only response classifier recognizes the observed wrapper
+  independently of events; reconciliation checks text and multiplicity across
+  both streams, including missing-event negative fixtures. No decoder policy,
+  local transcript, FTS algorithm, schema or dependency changed.
+
+Verification and independent review results are recorded in
+[tasks.md](tasks.md#task-10-verification-and-review-2026-09-23).
 
 ## Task 1 implementation record (2026-09-20)
 

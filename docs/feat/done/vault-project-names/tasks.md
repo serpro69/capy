@@ -6,7 +6,7 @@
 >
 > Issue: [#92](https://github.com/serpro69/capy/issues/92)
 >
-> Status: in-progress — Tasks 1–9 done; Task 10 next
+> Status: done — Tasks 1–10 complete
 >
 > Created: 2026-09-19
 >
@@ -562,7 +562,7 @@ scale and full-feature benchmark/review work.
 
 ## Task 10: Maintenance, documentation and final verification
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6, Task 7, Task 8, Task 9
 - **Size:** M
 - **Can run in parallel with:** —
@@ -570,13 +570,115 @@ scale and full-feature benchmark/review work.
 
 ### Subtasks
 
-- [ ] 10.1 Extend encrypted maintenance and edit/delete race fixtures for overrides and clears. Verify survival through re-import replacement, reindex, compact and rekey; prove archived bytes and restore/resume paths remain unchanged.
-- [ ] 10.2 Use kk:document to update README, architecture, command/tool help and scope/JSON/merge compatibility notes. If routing prose changes, update routing.go and regenerate .capy/AGENTS.md together; verify both generated-artifact guard tests.
-- [ ] 10.3 Measure 10,000-session metadata/query behavior with and without overrides; record baseline, environment and results here. Investigate material regressions and unexpected blob/per-hit reads.
-- [ ] 10.4 Invoke kk:test with both required keys; complete appropriate FTS5, vet, full-suite, race and glamour-tagged TUI checks. Record results; do not relax assertions to hide failures.
-- [ ] 10.5 Run quality benchmarks and compare measured master/implementation reports, observing detached-baseline filename rules. Record comparison and resolve unexplained regressions.
-- [ ] 10.6 Invoke kk:review-code with Go input and kk:review-spec for this feature. Fix blockers; record any accepted unresolved finding with reason and next step in these documents.
-- [ ] 10.7 Confirm all success criteria and documentation links against the final implementation before marking the feature done.
+- [x] 10.1 Extend encrypted maintenance and edit/delete race fixtures for overrides and clears. Verify survival through re-import replacement, reindex, compact and rekey; prove archived bytes and restore/resume paths remain unchanged.
+- [x] 10.2 Use kk:document to update README, architecture, command/tool help and scope/JSON/merge compatibility notes. If routing prose changes, update routing.go and regenerate .capy/AGENTS.md together; verify both generated-artifact guard tests.
+- [x] 10.3 Measure 10,000-session metadata/query behavior with and without overrides; record baseline, environment and results here. Investigate material regressions and unexpected blob/per-hit reads.
+- [x] 10.4 Invoke kk:test with both required keys; complete appropriate FTS5, vet, full-suite, race and glamour-tagged TUI checks. Record results; do not relax assertions to hide failures.
+- [x] 10.5 Run quality benchmarks and compare measured master/implementation reports, observing detached-baseline filename rules. Record comparison and resolve unexplained regressions.
+- [x] 10.6 Invoke kk:review-code with Go input and kk:review-spec for this feature. Fix blockers; record any accepted unresolved finding with reason and next step in these documents.
+- [x] 10.7 Confirm all success criteria and documentation links against the final implementation before marking the feature done.
+
+### Task 10 verification and review (2026-09-23)
+
+Task 10 and the feature are complete. All Go checks use FTS5, `CAPY_DB_KEY=test-key-for-development`,
+`CAPY_VAULT_KEY=test-key` and `TMPDIR=/private/tmp`; fixtures keep their isolated
+keys. Full suites use an empty temporary `XDG_CONFIG_HOME` for the known fixture
+isolation issue recorded under Task 1. No test exclusion or `-short` flag is used.
+
+- PASS: focused maintenance, edit/delete, metadata-only, restore/resume and
+  canary checks: `go test -tags fts5 -count=1 ./internal/vault ./cmd/capy -run 'SessionProject_(Maintenance|EditDelete|ReadsDoNot)|VaultProject_RestoreResume|CodexCanary|TallyCodexRaw'`
+  (vault 8.212s, CLI 4.263s).
+- PASS: `go test -tags fts5 -count=1 ./internal/platform -run 'TestGeneratedWholeFileArtifacts|TestMergedArtifactsAreIdempotent'`
+  (0.382s). Routing prose and its committed `.capy/AGENTS.md` counterpart now
+  explain explicit labels, implicit imported paths and widening together.
+- Canary investigation resolved Task 9's failure: the three extra event prompts
+  were tagged question replies present verbatim in response items, discarded by
+  the canary's generic `<` noise filter. The test-only classifier now recognizes
+  the observed `<send_user_message_question_reply>` wrapper independently of
+  events, then compares text multiplicities for both history modes. Synthetic
+  fixtures reject missing, substituted and duplicated responses/events while retaining injected-noise
+  filtering. The live canary passes. No decoder or local transcript was changed,
+  no file was exempted, and the earlier byte-pinned corruption policy is intact.
+  Independent review caught a completeness hole in the initial event-dependent
+  classification: a tagged response with no event was dropped from both counts.
+  The independent classifier and missing-tagged-event regression close it.
+- PASS: `make vet`, `make test`, and `make test-race`, without exclusions.
+  Full-suite package times: CLI 84.444s, server 61.635s, vault 112.307s;
+  full race: CLI 83.694s, server 67.837s, vault 191.623s. No races reported.
+- PASS: `go test -tags fts5,glamour -count=1 ./internal/vault/tui/...`
+  (0.674s). The full and race suites above include all default TUI tests.
+- PASS after the review correction: `go test -race -tags fts5 -count=1 ./internal/vault -run 'CodexCanary|TallyCodexRaw|SessionProject_(Maintenance|EditDelete|ReadsDoNot)'`
+  (85.083s), including the live canary. The full-suite/race runs preceded this
+  final test-only classifier correction; the targeted race run verifies it.
+  Production behavior was unchanged by that review fix.
+- `kk:review-code:isolated`: independent reviewer approved after the P2 canary
+  correction above. PAL tools were unavailable; the skill's independent sub-agent
+  fallback completed the review. `kk:review-spec:isolated`: CONFORMANT across
+  Tasks 1–10, zero findings. See [durable review report](review-task10.md).
+- `kk:test` and `kk:document` completed. Formatting, `git diff --check` and local
+  feature-document links are clean. No unresolved findings or P0/P1 systemic
+  patterns to index; no new conventions were indexed because the relevant
+  contracts and measurements are already captured in these documents.
+
+#### 10,000-session measurement
+
+`BenchmarkSessionProjectMetadata` ran with `-run '^$' -bench '^BenchmarkSessionProjectMetadata$' -benchmem -count=6`
+(85.712s). Machine: Mac16,7, Apple M4 Pro, 48 GiB RAM, macOS 26.6.2 (25G83),
+Go 1.25.2 darwin/arm64, GOMAXPROCS 14. Synthetic encrypted vault: 10,000 sessions,
+100 groups of 100, one per-line row and one chunk in each retrieval layer per
+session, no sidecars. Baseline has no overrides; after has all 10,000 assigned.
+Both select the same 100 sessions, with limit 20 and identical transcript terms.
+These compare assignment density on the implementation binary, not old versus
+new binaries. Setup/encryption/index writes are outside timing; reported public
+operation latency includes fixed result-validation overhead. Medians of six runs:
+
+| Operation | No overrides (ms) | All overridden (ms) | Change |
+| --- | ---: | ---: | ---: |
+| List, filtered/limit 20 | 11.873 | 17.340 | +46.0% |
+| Stats, all raw/effective/platform groups | 45.410 | 51.511 | +13.4% |
+| Existence, match in first 100 rows | 0.027 | 0.036 | +31.9% |
+| Existence, absent/full scan | 10.780 | 16.492 | +53.0% |
+| Per-line search, filtered/limit 20 | 5.638 | 5.836 | +3.5% |
+| Chunk search, filtered/limit 20 | 33.180 | 29.972 | -9.7% |
+
+The list and absent-scope increases are material in percentage terms: about
+5.5–5.7 ms absolute for resolving 10,000 populated project rows. Query inspection
+finds one PK-backed metadata join per query, no per-hit database calls, and no
+archive reads. Stats runs four fixed aggregations; it does not fetch sessions.
+The invalid-zstd fixture independently proves every measured read path succeeds
+without blob decoding, with `GetSession` as a failing control. This bounded scan
+cost is accepted for the stated single-user scale; it does not justify a new
+substring index or an SLA claim. The chunk timing decrease is a measurement,
+not a claimed optimization. Allocations stay bounded by selected results:
+existence 34/op in both variants, per-line 732 → 772, list 1342 → 1462;
+the additional result allocations carry override provenance.
+
+#### Master quality comparison
+
+Ran `make bench-quality` in a detached checkout of measured `master` at
+`397ecfda909be28ed281dfe7e2d40bf5cd39fa2b`, renamed its `HEAD.json` to `master.json`,
+and copied it to `bench-results/master.json`. Ran the same target on
+`feat/vault_project_name` (HEAD `ce2225e` plus Task 10 changes), then
+`make bench-compare BASE=master TARGET=feat-vault_project_name`.
+The verified dataset fingerprint is
+`7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`.
+Every retrieval/context-reduction metric is unchanged. Vault R@1=0.933,
+R@5=0.967, NDCG@10=0.954, MRR=0.950, negative FP=0/10.
+Existing FTS fallback warnings and `tr_005_q3` miss occur in both reports.
+`benchstat` is unavailable; the comparison's optional performance half was
+skipped. The separate six-run measurements above provide the scale evidence.
+
+#### Completion and reflection
+
+All seven design success criteria are covered by the completed store, CLI, MCP,
+merge, TUI and maintenance fixtures. No agreed requirement is deferred. The
+accepted mixed-version/star-selector limits remain intentional, and unrelated
+XDG/macOS fixture-isolation follow-ups remain actionable under Tasks 1 and 5.
+The unexpected work was the live canary's tagged-answer classification, resolved
+in the test oracle without changing decoder policy. Populated labels measurably
+increase metadata scan cost at 10,000 sessions; recording absolute and relative
+timings makes that accepted tradeoff explicit. Quality against measured master
+did not change, and no new dependency, schema or retrieval algorithm was needed.
 
 ## Dependency Graph
 

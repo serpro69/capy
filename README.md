@@ -596,8 +596,17 @@ once like every other session, and platform totals are unchanged.
 `stats --json` preserves `projects` rows with `project_path`/`count` and adds
 `project_groups` rows with `project`/`count`; both are empty arrays in an empty vault.
 
-Project assignments and clear tombstones also travel through cross-vault merge,
-independently of session titles.
+Project assignments and clear tombstones survive transcript growth, re-import,
+`reindex`, `compact`, backup-API `rekey`, and cross-vault merge, independently of
+session titles. Clearing reveals the latest imported path, including a new path
+from a replacement transcript. Deleting a session removes its assignment too.
+Set/clear never changes archived JSONL, sidecars, hashes, sizes or either search
+index; restore locations and resume working directories remain physical.
+
+For example, assigning `capy` to a session imported from `/tmp/worktree` produces
+`"project": "capy"` alongside `"project_path": "/tmp/worktree"` in list/search
+JSON. Its stats contribution is `{"project_path":"/tmp/worktree","count":1}`
+under `projects` and `{"project":"capy","count":1}` under `project_groups`.
 
 In the TUI, press `ctrl+g` in the list, active list filter, search, or viewer to
 edit the selected session's project. The editor starts with only its custom

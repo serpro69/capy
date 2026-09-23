@@ -27,6 +27,8 @@ Choose the tool based on what you need from the output:
 - **`capy_search`:** Query indexed knowledge **and** archived session transcripts (the vault), rank-merged. Batch all questions as array. Default excludes ephemeral — use `include_kinds` or `source:` to include. Session hits require `CAPY_VAULT_KEY` and are scoped to the current project — pass `all_projects: true` (or `project: "*"`) to widen.
 - **`capy_vault_search`:** Session-only search over the vault chunk corpus (past conversation transcripts). Use when you specifically want past-session context and not knowledge-base hits — e.g. "how did we solve X before". Supports `before`/`after` time filters and `project`/`all_projects` scoping (default current project). Requires `CAPY_VAULT_KEY`; degrades loudly when unset or when a reindex backlog exists. For a blended knowledge+session answer, prefer `capy_search`.
 
+For both search tools, an explicit `project` matches the session's custom project label, falling back to its imported path only when no label is set. Omitting it or passing an empty string scopes by the current directory in the imported path. Naming a worktree session does not associate it with another checkout. `all_projects: true` or exact `project: "*"` widens to all projects; the star is reserved and cannot narrow to a star-only label. Project selectors affect session results only; knowledge stays scoped to the current project.
+
 ## Blocked commands — enforced by hooks
 
 ### curl / wget — BLOCKED
