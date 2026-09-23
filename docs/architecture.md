@@ -578,7 +578,12 @@ a metadata-only read. `ImportedSession.ProjectPath` remains imported;
 `Project`/`CustomProject` carry the effective value and display provenance.
 Disk-import discovery and reports retain physical paths.
 
-TUI browsing/editing remains in the
+TUI `Options.Project` carries the CLI list/search effective-project scope into
+the initial read, every list refresh/child toggle and live search. The local `f`
+finder uses `EffectiveProject()` alongside the existing Unicode-folded title/UUID
+operands. List/search/viewer projections preserve literal labels; a differing
+original path gets a separate viewer row with reserved height. Metadata rows are
+bounded in terminal display cells. TUI project editing remains in the
 [project-name plan](feat/wip/vault-project-names/tasks.md).
 The [design](feat/wip/vault-project-names/design.md) defines the complete contract.
 
@@ -781,8 +786,9 @@ Both platform startup sweeps pass the server's loaded config to the importer. Ma
 
 `list`, `search`, and `show` support `--tui` for interactive browsing/search/viewing.
 A `list --platform <platform> --tui` launch retains that predicate for the initial
-list, every list reload, and live search queries. Other interactions are: filter `f`
-— effective title, project path, or UUID via the shared `ContainsFold`
+list, every list reload, and live search queries. `list` and `search` launches
+also retain `--project` across reloads and mode changes. Other interactions are: filter `f`
+— effective title, effective project, or UUID via the shared `ContainsFold`
 matcher; rename `e` in the list and viewer, `ctrl+e` in search because its query
 input is always focused and a printable key would be untypeable; copy `c`; restore
 `r`; resume `R`; `s` in the list toggles child sessions, re-querying the store since

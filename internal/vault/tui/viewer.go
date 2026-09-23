@@ -45,7 +45,8 @@ func openChildAction(uuid string) viewerAction {
 }
 
 // viewerChromeRows is the number of rows the viewer reserves outside the
-// scrolling viewport: one header line + one help line.
+// scrolling viewport: one header line + one help line. A differing original
+// project path adds one more row (see viewportHeight).
 const viewerChromeRows = 2
 
 // viewerModel renders a session transcript and, on demand, a single subagent
@@ -102,6 +103,7 @@ func (m viewerModel) inDetail() bool { return m.inSub || m.inInline }
 // land on a specific line / subagent.
 func (m viewerModel) loadSession(sess vault.Session, files []vault.File) viewerModel {
 	m.sess = sess
+	m.vp.Height = m.viewportHeight()
 	m.files = files
 	m.subIDs = sortedSubagentIDs(files)
 	m.inSub = false
@@ -252,7 +254,7 @@ func (m viewerModel) setSize(width, height int) viewerModel {
 	m.width = width
 	m.height = height
 	m.vp.Width = width
-	m.vp.Height = max(1, height-viewerChromeRows)
+	m.vp.Height = m.viewportHeight()
 	if !m.ready {
 		return m
 	}
@@ -401,7 +403,23 @@ func (m viewerModel) View() string {
 	if !m.ready {
 		return "no session loaded"
 	}
-	return strings.Join([]string{m.header(), m.vp.View(), m.helpLine()}, "\n")
+	rows := []string{m.header()}
+	if m.hasOriginalPath() {
+		rows = append(rows, fitRow(m.styles.StatusBar.Render("Original path: "+displayPath(m.sess.ProjectPath)), m.width))
+	}
+	return strings.Join(append(rows, m.vp.View(), m.helpLine()), "\n")
+}
+
+func (m viewerModel) hasOriginalPath() bool {
+	return m.sess.EffectiveProject() != m.sess.ProjectPath
+}
+
+func (m viewerModel) viewportHeight() int {
+	rows := viewerChromeRows
+	if m.hasOriginalPath() {
+		rows++
+	}
+	return max(1, m.height-rows)
 }
 
 // currentMessage returns the transcript message rendered at the top of the
@@ -434,6 +452,7 @@ func (m viewerModel) setSessionMeta(sess vault.Session) viewerModel {
 	}
 	sess.RawJSONL = m.sess.RawJSONL
 	m.sess = sess
+	m.vp.Height = m.viewportHeight()
 	return m
 }
 
@@ -455,12 +474,12 @@ func (m viewerModel) header() string {
 	if m.sess.ParentUUID != "" {
 		loc += " · child of " + shortID(m.sess.ParentUUID)
 	}
-	loc += " · " + displayPath(m.sess.ProjectPath)
+	loc += " · " + displaySessionProject(m.sess)
 	// The title budget is measured in display cells (lipgloss.Width), not bytes:
 	// loc carries several multibyte "·" separators, and a byte count would
 	// truncate the title more aggressively than the terminal requires.
-	return m.styles.Title.Render(truncate(title, max(1, m.width-lipgloss.Width(loc)-3))) +
-		"  " + m.styles.StatusBar.Render(loc)
+	return fitRow(m.styles.Title.Render(truncate(title, max(1, m.width-lipgloss.Width(loc)-3)))+
+		"  "+m.styles.StatusBar.Render(loc), m.width)
 }
 
 func (m viewerModel) helpLine() string {
@@ -473,7 +492,7 @@ func (m viewerModel) helpLine() string {
 		// handles it before delegating), so the help must keep advertising it.
 		keys = "j/k scroll · c copy · e rename · esc/q return to session"
 	}
-	return m.styles.Help.Render("v raw JSONL · " + keys)
+	return fitRow(m.styles.Help.Render("v raw JSONL · "+keys), m.width)
 }
 
 // contentWidth is the wrap width for body text (a small right margin avoids the

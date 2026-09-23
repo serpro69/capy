@@ -6,7 +6,7 @@
 >
 > Issue: [#92](https://github.com/serpro69/capy/issues/92)
 >
-> Status: in-progress — Tasks 1–7 done; Task 8 next
+> Status: in-progress — Tasks 1–8 done; Task 9 next
 >
 > Created: 2026-09-19
 >
@@ -441,7 +441,7 @@ WAL setup explicitly accounted for in preservation fixtures.
 
 ## Task 8: Browse and search custom projects in the TUI
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** —
@@ -449,9 +449,46 @@ WAL setup explicitly accounted for in preservation fixtures.
 
 ### Subtasks
 
-- [ ] 8.1 Carry Options.Project from CLI list/search launches into app.go, list options and searchModel; retain platform scope. Verify initial load, reload, child toggle and mode transitions retain project scope.
-- [ ] 8.2 Update list/search/viewer project projections and imported-path detail; change the local f filter's project operand to EffectiveProject. Verify replaced raw paths are not project aliases while title/UUID matching still works.
-- [ ] 8.3 Preserve literal labels, fallback path shortening and bounded headers. Run Slice 8's focused tests plus existing render/navigation checks.
+- [x] 8.1 Carry Options.Project from CLI list/search launches into app.go, list options and searchModel; retain platform scope. Verify initial load, reload, child toggle and mode transitions retain project scope.
+- [x] 8.2 Update list/search/viewer project projections and imported-path detail; change the local f filter's project operand to EffectiveProject. Verify replaced raw paths are not project aliases while title/UUID matching still works.
+- [x] 8.3 Preserve literal labels, fallback path shortening and bounded headers. Run Slice 8's focused tests plus existing render/navigation checks.
+
+### Task 8 verification and review (2026-09-23)
+
+Task 8 is complete; Task 9 is next. Tasks 9–10 remain pending.
+See the [implementation record](implementation.md#task-8-implementation-record-2026-09-23).
+All Go checks used FTS5 and both required keys (`CAPY_DB_KEY=test-key-for-development`,
+`CAPY_VAULT_KEY=test-key`), with `TMPDIR=/private/tmp`.
+
+- PASS: `go test -tags fts5 -count=1 ./internal/vault/tui ./cmd/capy -run 'Project|Filter|Platform|Children'`
+  (TUI 0.473s, CLI 34.741s). Covers scope propagation, effective labels, local
+  finder operands, path-equal/clear provenance, child/platform composition and
+  narrow terminal rendering. Existing package fixtures cover navigation/rendering.
+- PASS: `go test -race -tags fts5 -count=1 ./internal/vault/tui`
+  (1.964s; no races).
+- PASS: `go test -tags fts5 -count=1 ./...` with an empty temporary
+  `XDG_CONFIG_HOME` (all packages; CLI 78.349s, server 64.729s, vault 110.517s,
+  TUI 2.831s). No test exclusions.
+- PASS: `go test -tags fts5,glamour -count=1 ./internal/vault/tui/...`
+  (0.745s), `make vet`, `git diff --check`, and formatting checks.
+- The first focused run failed the new navigation regression: search Escape
+  remained in search after visiting a result because `prevMode` had changed.
+  Fixed the production return path; retained the regression and reran successfully.
+- `kk:review-code:isolated`: the independent code-reviewer approved with no
+  findings. Supplemental PAL (Gemini 3.1 Pro) raised one LOW claim that
+  `MaxWidth(0)` empties the rendered row. Pinned Lip Gloss v1.1.0 `style.go`
+  clips only under `if maxWidth > 0`; the independent reviewer checked this
+  source and confirmed no guard is needed. No unresolved findings and no P0/P1
+  systemic findings to index.
+- `kk:test` and `kk:document` completed. No new project conventions were indexed:
+  effective-project scope and label provenance are already in the feature design.
+  No retrieval/indexing algorithm changes; quality/scale measurements remain
+  Task 10. Existing XDG/macOS fixture-isolation follow-ups remain under Tasks 1/5.
+
+No Task 8 implementation requirement is deferred. Scope tests use the existing
+TUI stub to verify option propagation; SQLite matching semantics are covered by
+the prior store-level tests. CLI interactive launch requires a TTY and follows
+the existing package-test strategy documented in `cmd/capy/vault_test.go`.
 
 ## Task 9: Edit project assignments in the TUI
 

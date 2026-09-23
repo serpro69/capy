@@ -200,11 +200,11 @@ func (s *stubStore) ListSessions(_ context.Context, opts vault.ListOptions) ([]v
 	}
 	// Mirror the real store's predicates so list tests exercise the same
 	// narrowing the production query performs: the substring match on
-	// project_path, and the default `parent_uuid IS NULL` that hides child
+	// effective project, and the default `parent_uuid IS NULL` that hides child
 	// sessions unless IncludeChildren is set.
 	var out []vault.Session
 	for _, sess := range s.sessions {
-		if opts.Project != "" && !strings.Contains(sess.ProjectPath, opts.Project) {
+		if opts.Project != "" && !strings.Contains(sess.EffectiveProject(), opts.Project) {
 			continue
 		}
 		if opts.Platform != "" && sess.Platform.OrClaude() != opts.Platform {
@@ -247,6 +247,9 @@ func (s *stubStore) Search(_ context.Context, opts vault.SearchOptions) ([]vault
 	}
 	var out []vault.SearchResult
 	for _, result := range s.results {
+		if opts.Project != "" && !strings.Contains(result.Project, opts.Project) {
+			continue
+		}
 		if opts.Platform != "" && result.Platform.OrClaude() != opts.Platform {
 			continue
 		}
