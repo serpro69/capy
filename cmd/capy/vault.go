@@ -213,8 +213,15 @@ func printImportResult(res vault.ImportResult, report *vault.DiscoveryReport, dr
 		if s.Status == vault.StatusError && s.Err != nil {
 			fmt.Fprintf(os.Stderr, "  error %s: %v\n", shortUUID(s.UUID, s.Platform), s.Err)
 		}
+		project := displayPath(s.ProjectPath)
+		if s.Project != "" {
+			project = s.Project
+			if s.CustomProject == nil {
+				project = displayPath(project)
+			}
+		}
 		fmt.Printf("%-12s  %-8s  %-28s  %8s  %-50s  %s\n",
-			shortUUID(s.UUID, s.Platform), s.Status, truncate(displayPath(s.ProjectPath), 28),
+			shortUUID(s.UUID, s.Platform), s.Status, truncate(project, 28),
 			formatSize(s.SizeBytes), truncate(s.Title, 50), s.Reason)
 	}
 	fmt.Printf("\n%s\n", importCounts{
@@ -956,6 +963,12 @@ Unlike copying vault.db (which replaces the whole archive), merge unites the two
 distinct sessions are added, and where both vaults hold the same session UUID the
 larger-total-content copy wins. Re-running is idempotent.
 
+Custom titles and project assignments reconcile independently, including clears.
+--project matches the source's effective project (label, otherwise imported path)
+as a literal, ASCII case-insensitive substring. Location hints are not aliases;
+disk import keeps its physical discovery filter. Dry-run reports the prospective
+destination title and project without writing.
+
 Provide the source vault's key with --key or CAPY_VAULT_MERGE_KEY; when both
 machines share a passphrase it falls back to CAPY_VAULT_KEY. The source vault must
 be WRITABLE (merge checkpoints its WAL before reading) — copy a read-only source
@@ -1011,7 +1024,7 @@ tolerates a concurrent server sweep via busy-timeout retry, the same as import.`
 	}
 	cmd.Flags().StringVar(&from, "from", "", "path to the source vault.db to merge from (required)")
 	cmd.Flags().StringVar(&keyFlag, "key", "", "source vault passphrase (default: CAPY_VAULT_MERGE_KEY, then CAPY_VAULT_KEY)")
-	cmd.Flags().StringVar(&project, "project", "", "only merge sessions whose location hint (mangled Claude project dir, e.g. -home-user-capy, or Codex rollout path) or project path contains this substring")
+	cmd.Flags().StringVar(&project, "project", "", "only merge sessions whose source effective project contains this literal substring (custom label, otherwise imported path)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview what would be merged without writing")
 	cmd.Flags().Int64("min-size-bytes", 0, "minimum uncompressed size for new sessions, including sidecars (overrides vault.min_session_bytes; 0 disables)")
 	return cmd

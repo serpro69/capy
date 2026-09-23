@@ -61,14 +61,16 @@ type ImportOptions struct {
 
 // ImportedSession is the per-session outcome of an import run.
 type ImportedSession struct {
-	UUID        string
-	Platform    Platform // the platform the session was discovered (or, for merge, stored) as
-	Title       string   // populated for new/updated; empty for skipped (not scanned)
-	ProjectPath string   // populated for new/updated; empty for skipped
-	SizeBytes   int64    // total content size (main JSONL + sidecars)
-	Status      string   // StatusNew | StatusUpdated | StatusSkipped | StatusExcluded | StatusError
-	Reason      string   // transcript exclusion reason; may accompany a name-only merge update
-	Err         error    // set only when Status == StatusError
+	UUID          string
+	Platform      Platform // the platform the session was discovered (or, for merge, stored) as
+	Title         string   // populated for new/updated; empty for skipped (not scanned)
+	ProjectPath   string   // populated for new/updated; empty for skipped
+	Project       string   // effective destination project for merge; disk import leaves empty
+	CustomProject *string  // merge label provenance; never used for physical discovery
+	SizeBytes     int64    // total content size (main JSONL + sidecars)
+	Status        string   // StatusNew | StatusUpdated | StatusSkipped | StatusExcluded | StatusError
+	Reason        string   // transcript exclusion reason; may accompany a metadata-only merge update
+	Err           error    // set only when Status == StatusError
 }
 
 // seenSession is import's in-run record of one uuid — every uuid the run has

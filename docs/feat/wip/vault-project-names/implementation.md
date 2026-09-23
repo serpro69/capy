@@ -1,6 +1,6 @@
 # Vault Project Names — Implementation Plan
 
-**Status:** Design reviewed; Tasks 1–6 done; Tasks 7–10 pending
+**Status:** Design reviewed; Tasks 1–7 done; Tasks 8–10 pending
 
 **Contract:** [design.md](design.md)
 
@@ -299,3 +299,32 @@ Verification and independent review results are recorded in
 
 Verification and independent review results are recorded in
 [tasks.md](tasks.md#task-6-verification-and-review-2026-09-22).
+
+## Task 7 implementation record (2026-09-23)
+
+- Source merge selection feature-detects project state, reads metadata only,
+  normalizes foreign empty overrides to tombstones and matches effective projects
+  with ASCII-only literal folding. Legacy sources use imported paths; location
+  hints are no longer aliases. No source migration or blob reads during selection.
+- Added independent project ordering and transactional reconciliation beside local
+  project edits. `SessionWrite.Project` carries source state through new/replaced
+  session transactions. Metadata-only branches reconcile title and project together,
+  preserving verbatim winning tuples and counting at most one update per session.
+- Replaced the now-unused name-only reconciliation/snapshot helpers with shared
+  merge metadata reads. Dry-run projects both winners; committed batch reports
+  refresh metadata without decoding blobs. `ImportedSession.ProjectPath` stays raw,
+  while `Project` and `CustomProject` carry effective value/provenance. Existing
+  unchanged skipped reports keep omitted fields. Disk-import discovery/reporting
+  continues to use physical paths.
+- Fixtures cover order/ties, six transcript branches with independent field
+  winners, source-schema/byte preservation, foreign clears/verbatim values,
+  rollback fault injection, convergence, concurrent edits and CLI report scope.
+  The legacy fixture starts in WAL mode for its byte check: journal setup and
+  checkpointing are inherited source-open operations, not metadata migrations.
+- README, architecture and merge help document the selector compatibility change
+  and older-binary limitation. No new dependencies, schema migration, index changes,
+  or generated setup artifacts. TUI behavior remains Tasks 8–9; Task 10 retains
+  scale/maintenance/full-feature measurements and review.
+
+Verification and independent review results are recorded in
+[tasks.md](tasks.md#task-7-verification-and-review-2026-09-23).
