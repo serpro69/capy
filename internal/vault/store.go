@@ -719,6 +719,9 @@ type SessionWrite struct {
 	// (reconcileSessionNameTx); nil never touches the table. Disk import leaves
 	// it nil — import never creates, changes, or removes a name row.
 	Name *SessionName
+	// Project carries independently ordered source project state in the same
+	// transaction as the session and title. Disk import leaves it nil.
+	Project *SessionProject
 }
 
 // InsertSession writes a new session, its files, and its FTS rows in one
@@ -882,9 +885,14 @@ func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite
 		}
 	}
 	// After the session row exists (FK parent) and before children: carried
-	// name state reconciles in the same tx so new-session+name is atomic.
+	// title and project state reconcile in the same tx as the session.
 	if w.Name != nil {
 		if _, err := reconcileSessionNameTx(ctx, tx, sess.UUID, *w.Name); err != nil {
+			return 0, err
+		}
+	}
+	if w.Project != nil {
+		if _, err := reconcileSessionProjectTx(ctx, tx, sess.UUID, *w.Project); err != nil {
 			return 0, err
 		}
 	}

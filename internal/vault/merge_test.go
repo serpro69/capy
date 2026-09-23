@@ -298,7 +298,7 @@ func TestMergeFrom_ProjectFilter(t *testing.T) {
 
 	claude, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{Project: "src-proj", DryRun: true})
 	require.NoError(t, err)
-	assert.Equal(t, 2, claude.Imported, "the mangled dir matches the two Claude rows and not the Codex row")
+	assert.Equal(t, 0, claude.Imported, "a location hint alone is not an effective project match")
 
 	// The filter is a literal substring match like import's: LIKE's `_` must not
 	// act as a single-character wildcard (unescaped, "src_p6" would match the
@@ -1309,8 +1309,8 @@ func TestMergeFrom_EmptySourceTitleNormalizesToTombstone(t *testing.T) {
 // parent) instead of silently inserting orphan metadata.
 func TestVaultStore_ReconcileSessionNameMissingSessionFails(t *testing.T) {
 	s := newTestVault(t)
-	_, err := s.reconcileSessionName(context.Background(), "04040404-dead-beef-0000-000000000004",
-		SessionName{CustomTitle: namePtr("orphan"), RenamedAtNS: 1, MachineID: "m"})
+	_, _, err := s.reconcileSessionMetadata(context.Background(), "04040404-dead-beef-0000-000000000004",
+		&SessionName{CustomTitle: namePtr("orphan"), RenamedAtNS: 1, MachineID: "m"}, nil)
 	require.Error(t, err, "a name row without a parent session must be rejected")
 }
 

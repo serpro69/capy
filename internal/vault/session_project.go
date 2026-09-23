@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math"
@@ -211,4 +212,63 @@ func (s *VaultStore) setSessionProjectAt(
 
 	sess.ProjectOverride = &SessionProject{CustomProject: customProject, UpdatedAtNS: updatedAtNS, MachineID: machineID}
 	return &sess, nil
+}
+
+// sessionProjectSupersedes applies ADR-030's total order independently of title
+// state. Equal clocks/writer IDs compare values: non-null beats a tombstone,
+// then bytewise greater wins. An absent destination loses to any source state.
+func sessionProjectSupersedes(src SessionProject, dest *SessionProject) bool {
+	if dest == nil {
+		return true
+	}
+	if src.UpdatedAtNS != dest.UpdatedAtNS {
+		return src.UpdatedAtNS > dest.UpdatedAtNS
+	}
+	if src.MachineID != dest.MachineID {
+		return src.MachineID > dest.MachineID
+	}
+	switch {
+	case src.CustomProject == nil:
+		return false
+	case dest.CustomProject == nil:
+		return true
+	default:
+		return *src.CustomProject > *dest.CustomProject
+	}
+}
+
+// reconcileSessionProjectTx rechecks the stored state under the write lock and
+// preserves a winning source tuple verbatim. Local clock bumps never apply here.
+func reconcileSessionProjectTx(ctx context.Context, tx *sql.Tx, uuid string, src SessionProject) (bool, error) {
+	var (
+		custom sql.NullString
+		state  SessionProject
+		dest   *SessionProject
+	)
+	err := tx.QueryRowContext(ctx,
+		`SELECT custom_project, updated_at_ns, machine_id FROM vault_session_projects WHERE session_uuid = ?`,
+		uuid).Scan(&custom, &state.UpdatedAtNS, &state.MachineID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return false, fmt.Errorf("reading session project state: %w", err)
+	default:
+		state.CustomProject = nullStringPointer(custom)
+		dest = &state
+	}
+	if !sessionProjectSupersedes(src, dest) {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO vault_session_projects (session_uuid, custom_project, updated_at_ns, machine_id)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(session_uuid) DO UPDATE SET
+			custom_project = excluded.custom_project,
+			updated_at_ns = excluded.updated_at_ns,
+			machine_id = excluded.machine_id`,
+		uuid, pointerValue(src.CustomProject), src.UpdatedAtNS, src.MachineID,
+	); err != nil {
+		return false, fmt.Errorf("writing session project state: %w", err)
+	}
+	return true, nil
 }

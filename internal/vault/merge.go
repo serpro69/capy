@@ -14,11 +14,9 @@ import (
 // MergeOptions tunes a merge run.
 type MergeOptions struct {
 	// Project, when non-empty, restricts the merge to source sessions whose
-	// location hint (claude_project_dir — the mangled Claude project dir, e.g.
-	// "-home-user-capy", or a Codex rollout's relative path) OR whose project
-	// path (project_path, the real cwd) contains this substring — matching
-	// ImportOptions.Project, which matches the mangled dir or the cwd hint, so
-	// the two commands filter alike for both platforms.
+	// effective project contains this literal substring (ASCII case-insensitive).
+	// Unlike disk import, location hints are not project aliases. A legacy source
+	// without project state falls back to its imported project_path.
 	Project string
 	// MinSessionBytes has the same admission-only semantics as ImportOptions.
 	MinSessionBytes int64
@@ -54,6 +52,9 @@ type MergeOptions struct {
 // contributes no name state; the reverse (an older binary merging from a
 // current vault) silently carries none — accepted, non-destructive, and
 // recoverable by re-running the merge with an upgraded binary.
+// Project assignments use the same total order on an independent timestamp.
+// Both metadata fields reconcile in one transaction, regardless of transcript
+// selection; a pre-project source contributes no project state.
 //
 // Concurrency: MergeFrom writes only the destination (batched BeginImmediate), so
 // a concurrent server-startup sweep on the same vault.db is absorbed by
@@ -96,6 +97,10 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 	if err != nil {
 		return res, fmt.Errorf("probing source vault_session_names schema: %w", err)
 	}
+	srcHasProjects, err := tableExists(ctx, srcDB, "vault_session_projects")
+	if err != nil {
+		return res, fmt.Errorf("probing source vault_session_projects schema: %w", err)
+	}
 	// Feature-detect the multi-platform columns (migration 0006, added together).
 	// An ABSENT column means a pre-0006 source: every row is Claude with no parent
 	// by construction and is NEVER sniffed — 41 of 467 real Claude sessions open
@@ -112,7 +117,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 	}
 	srcCols := sourceColumns{encoding: srcSessEnc, platform: srcPlatform, parentUUID: srcParent}
 
-	uuids, err := sourceSessionUUIDs(ctx, srcDB, opts.Project)
+	uuids, err := sourceSessionUUIDs(ctx, srcDB, opts.Project, srcHasProjects)
 	if err != nil {
 		return res, fmt.Errorf("listing source sessions: %w", err)
 	}
@@ -140,9 +145,19 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 				}
 			}
 		}
-		// On success each entry keeps its pre-assigned status (StatusNew/Updated);
-		// only a failed per-session retry above mutates it to StatusError.
+		// Successful writes keep StatusNew/Updated unless the committed metadata
+		// cannot be read for reporting; every write/read failure stays visible.
 		for _, p := range pending {
+			if p.Status != StatusError {
+				// Report committed winners, including a local edit that landed
+				// after the prospective snapshot used to queue this write.
+				sess, err := dest.sessionMetadata(ctx, p.UUID)
+				if err != nil {
+					p.Status, p.Err = StatusError, err
+				} else {
+					p = mergeReportMetadata(p, sess)
+				}
+			}
 			res.record(p)
 		}
 		batch, pending, batchBytes = nil, nil, 0
@@ -191,11 +206,20 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 				continue
 			}
 		}
+		var srcProject *SessionProject
+		if srcHasProjects {
+			srcProject, err = readSourceProject(ctx, srcDB, uuid)
+			if err != nil {
+				slog.Warn("vault merge: reading source session project failed", "uuid", uuid, "error", err)
+				res.record(ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusError, Err: err})
+				continue
+			}
+		}
 
-		// The digest lookup precedes the zero-message exclusion because name state
+		// The digest lookup precedes the zero-message exclusion because metadata
 		// reconciles independently of transcript content (design §Cross-Machine
 		// Merge): the exclusion and skip branches below must still know whether a
-		// destination session exists to reconcile its name against.
+		// destination session exists to reconcile its title and project against.
 		existingHash, existingSize, _, _, found, err := dest.SessionDigest(ctx, uuid)
 		if err != nil {
 			slog.Warn("vault merge: digest lookup failed", "uuid", uuid, "error", err)
@@ -216,18 +240,17 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		// already dropped these at its own import, but a v1 source predates the
 		// guard, so re-apply it here. message_count is the source's stored scan
 		// result (stable: a session with turns is never counted as 0). A populated
-		// destination with the same UUID still reconciles name state — a migrated
-		// legacy source can rename its zero-message shell, and dropping the shell
-		// must not drop the newer name. Without a destination row the name has no
-		// FK parent and is dropped with the shell.
+		// destination with the same UUID still reconciles title/project state —
+		// dropping the shell must not discard newer edits. Without a destination
+		// row the metadata has no FK parent and is dropped with the shell.
 		if src.messageCount == 0 {
 			entry := ImportedSession{
 				UUID: uuid, Platform: Platform(src.platform), Title: src.title, ProjectPath: src.projectPath,
 				SizeBytes: src.sizeBytes, Status: StatusExcluded,
 				Reason: "no messages",
 			}
-			if found && srcName != nil {
-				entry = reconcileMergeName(ctx, dest, entry, *srcName, opts.DryRun)
+			if found {
+				entry = reconcileMergeMetadata(ctx, dest, entry, srcName, srcProject, opts.DryRun)
 			}
 			res.record(entry)
 			continue
@@ -238,17 +261,17 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		// different variant of equal-or-larger total size replaces in place. Unlike
 		// import there is no FTS-only upgrade branch — `capy vault reindex` owns
 		// version upgrades of already-present sessions; merge only brings in NEW or
-		// larger content. Both skip cases still reconcile name state: a name-only
-		// change reports the session as updated (the destination DID change).
+		// larger content. Both skip cases still reconcile title/project state:
+		// either metadata change reports the session as updated, exactly once.
 		replace := false
 		if found {
 			switch {
 			// Same-hash (idempotent re-merge) and smaller-divergent-variant skips
-			// share one arm because their name handling is identical.
+			// share one arm because their metadata handling is identical.
 			case src.contentHash == existingHash, src.sizeBytes < existingSize:
 				entry := ImportedSession{UUID: uuid, Platform: Platform(src.platform), SizeBytes: src.sizeBytes, Status: StatusSkipped}
-				if srcName != nil {
-					entry = reconcileMergeName(ctx, dest, entry, *srcName, opts.DryRun)
+				if srcName != nil || srcProject != nil {
+					entry = reconcileMergeMetadata(ctx, dest, entry, srcName, srcProject, opts.DryRun)
 				}
 				res.record(entry)
 				continue
@@ -282,35 +305,33 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 
 		rec := src.toRecord(files, fts, chunks)
 		status := StatusNew
-		// New session: the source's state is all there is, so the reported title
-		// resolves from it directly (a source tombstone falls back to src.title).
-		title := effectiveTitle(src.title, srcName)
+		prospective := &Session{Title: src.title, ProjectPath: src.projectPath}
 		if replace {
 			status = StatusUpdated
-			// A replace rewrites the imported title to the source's, but the
-			// surviving name state is whichever side wins reconciliation. This
-			// snapshot is reporting-only — writeRecord re-checks the decision inside
-			// the write transaction — so a failed read degrades the reported title,
-			// not the merge itself.
-			if _, destName, nerr := dest.sessionNameState(ctx, uuid); nerr != nil {
-				slog.Warn("vault merge: name state lookup failed", "uuid", uuid, "error", nerr)
-			} else if srcName == nil || !sessionNameSupersedes(*srcName, destName) {
-				title = effectiveTitle(src.title, destName)
+			prospective, err = dest.sessionMetadata(ctx, uuid)
+			if err != nil {
+				res.record(ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusError, Err: err})
+				continue
 			}
+			// The transcript replacement changes imported values, independently
+			// of whichever title and project states win.
+			prospective.Title, prospective.ProjectPath = src.title, src.projectPath
 		}
+		mergeMetadataState(prospective, srcName, srcProject)
 		// Platform is the resolved source value (reporting only — the CLI groups
 		// its summary by it); the write itself re-validates it in writeRecord.
 		entry := ImportedSession{
-			UUID: uuid, Platform: Platform(src.platform), Title: title, ProjectPath: src.projectPath,
+			UUID: uuid, Platform: Platform(src.platform),
 			SizeBytes: src.sizeBytes, Status: status,
 		}
+		entry = mergeReportMetadata(entry, prospective)
 
 		if opts.DryRun {
 			res.record(entry)
 			continue
 		}
 
-		batch = append(batch, SessionWrite{Record: rec, Replace: replace, Name: srcName})
+		batch = append(batch, SessionWrite{Record: rec, Replace: replace, Name: srcName, Project: srcProject})
 		pending = append(pending, entry)
 		batchBytes += src.sizeBytes
 		if len(batch) >= maxBatchSessions || batchBytes >= maxBatchBytes {
@@ -382,25 +403,21 @@ func (s *sourceSession) toRecord(files []File, fts []FTSRow, chunks []Chunk) *Se
 	}
 }
 
-// sourceSessionUUIDs lists the source vault's session UUIDs (optionally filtered
-// by location hint OR project path — see MergeOptions.Project), collected up
-// front so no read cursor is held open across the per-session reads and
-// destination writes that follow (mirrors compact's collect-keys-then-rewrite
-// discipline). Both filter columns exist in every historical schema, so the
-// query needs no feature detection. The filter is a LITERAL substring match
-// (likeContains escapes LIKE's metacharacters), the same semantics as import's
-// strings.Contains — a `_` in a project name must not match any character.
-func sourceSessionUUIDs(ctx context.Context, srcDB *sql.DB, project string) ([]string, error) {
+// sourceSessionUUIDs collects keys before any blob loading or destination write.
+// Filtered enumeration reads metadata only and normalizes foreign empty project
+// values exactly as readSourceProject does. Unfiltered enumeration stays UUID-only.
+func sourceSessionUUIDs(ctx context.Context, srcDB *sql.DB, project string, hasProjects bool) ([]string, error) {
 	query := `SELECT uuid FROM vault_sessions`
-	var args []any
 	if project != "" {
-		query += ` WHERE claude_project_dir LIKE ? ESCAPE '\' OR project_path LIKE ? ESCAPE '\'`
-		pattern := likeContains(project)
-		args = append(args, pattern, pattern)
+		query = `SELECT s.uuid, s.project_path, NULL FROM vault_sessions s`
+		if hasProjects {
+			query = `SELECT s.uuid, s.project_path, p.custom_project FROM vault_sessions s
+				LEFT JOIN vault_session_projects p ON p.session_uuid = s.uuid`
+		}
 	}
 	query += ` ORDER BY uuid`
 
-	rows, err := srcDB.QueryContext(ctx, query, args...)
+	rows, err := srcDB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -409,8 +426,17 @@ func sourceSessionUUIDs(ctx context.Context, srcDB *sql.DB, project string) ([]s
 	var uuids []string
 	for rows.Next() {
 		var u string
-		if err := rows.Scan(&u); err != nil {
+		var imported string
+		var custom sql.NullString
+		cols := []any{&u}
+		if project != "" {
+			cols = append(cols, &imported, &custom)
+		}
+		if err := rows.Scan(cols...); err != nil {
 			return nil, fmt.Errorf("scanning uuid: %w", err)
+		}
+		if project != "" && !containsProjectASCII(effectiveProject(imported, sourceCustomProject(custom)), project) {
+			continue
 		}
 		uuids = append(uuids, u)
 	}
@@ -418,6 +444,21 @@ func sourceSessionUUIDs(ctx context.Context, srcDB *sql.DB, project string) ([]s
 		return nil, fmt.Errorf("iterating uuids: %w", err)
 	}
 	return uuids, nil
+}
+
+// containsProjectASCII matches the literal SQLite LIKE predicate's ASCII-only
+// folding, without introducing the Unicode folding used by the title finder.
+func containsProjectASCII(value, query string) bool {
+	fold := func(s string) string {
+		b := []byte(s)
+		for i, c := range b {
+			if c >= 'A' && c <= 'Z' {
+				b[i] = c + ('a' - 'A')
+			}
+		}
+		return string(b)
+	}
+	return strings.Contains(fold(value), fold(query))
 }
 
 // likeContains builds the `LIKE ? ESCAPE '\'` pattern that matches s as a
@@ -484,8 +525,8 @@ func readSourceSession(ctx context.Context, srcDB *sql.DB, uuid string, cols sou
 
 // tableExists reports whether the DB has a table named table, via a
 // parameterized sqlite_master probe. Merge uses it to feature-detect
-// vault_session_names on a source that is deliberately opened WITHOUT running
-// migrations — a legacy source is supported and simply carries no name state.
+// metadata tables on a source deliberately opened WITHOUT running migrations —
+// a legacy source is supported and contributes no state for absent tables.
 // table is bound as an ordinary WHERE value (sqlite_master.name), never spliced
 // into the statement as an identifier, so no injection surface exists here.
 func tableExists(ctx context.Context, db *sql.DB, table string) (bool, error) {
@@ -526,41 +567,150 @@ func readSourceName(ctx context.Context, srcDB *sql.DB, uuid string) (*SessionNa
 	return name, nil
 }
 
-// reconcileMergeName applies name reconciliation for a source session whose
-// transcript is NOT being written (the excluded and skipped branches): a
-// winning source state flips the entry to StatusUpdated — the destination DID
-// change — and reports the resulting effective title; an older or identical
-// source returns the entry unchanged. Dry-run computes the same decision from
-// the snapshot without writing. A real run re-checks the decision inside the
-// write transaction, so when a concurrent local rename supersedes the snapshot
-// between read and write, the entry falls back to its branch status rather
-// than claiming an update.
-func reconcileMergeName(ctx context.Context, dest *VaultStore, entry ImportedSession, srcName SessionName, dryRun bool) ImportedSession {
-	importedTitle, destName, err := dest.sessionNameState(ctx, entry.UUID)
+// sourceCustomProject normalizes only unsupported empty overrides. Other foreign
+// values remain verbatim, just like source titles (ADR-030).
+func sourceCustomProject(custom sql.NullString) *string {
+	if !custom.Valid || strings.TrimSpace(custom.String) == "" {
+		return nil
+	}
+	return &custom.String
+}
+
+func readSourceProject(ctx context.Context, db *sql.DB, uuid string) (*SessionProject, error) {
+	var custom sql.NullString
+	var state SessionProject
+	err := db.QueryRowContext(ctx,
+		`SELECT custom_project, updated_at_ns, machine_id FROM vault_session_projects WHERE session_uuid = ?`,
+		uuid).Scan(&custom, &state.UpdatedAtNS, &state.MachineID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
-		slog.Warn("vault merge: name state lookup failed", "uuid", entry.UUID, "error", err)
-		entry.Status = StatusError
-		entry.Err = err
-		return entry
+		return nil, fmt.Errorf("querying source session project: %w", err)
 	}
-	if !sessionNameSupersedes(srcName, destName) {
-		return entry
+	state.CustomProject = sourceCustomProject(custom)
+	return &state, nil
+}
+
+// mergeMetadataState projects the independent winners for dry-run reporting.
+// A real write compares each field again inside its immediate transaction.
+func mergeMetadataState(sess *Session, name *SessionName, project *SessionProject) bool {
+	changed := false
+	if name != nil && sessionNameSupersedes(*name, sess.Name) {
+		sess.Name, changed = name, true
 	}
-	if !dryRun {
-		changed, err := dest.reconcileSessionName(ctx, entry.UUID, srcName)
-		if err != nil {
-			slog.Warn("vault merge: name reconcile failed", "uuid", entry.UUID, "error", err)
-			entry.Status = StatusError
-			entry.Err = err
-			return entry
-		}
-		if !changed {
-			return entry
-		}
+	if project != nil && sessionProjectSupersedes(*project, sess.ProjectOverride) {
+		sess.ProjectOverride, changed = project, true
 	}
-	entry.Status = StatusUpdated
-	entry.Title = effectiveTitle(importedTitle, &srcName)
+	return changed
+}
+
+func mergeReportMetadata(entry ImportedSession, sess *Session) ImportedSession {
+	entry.Title = sess.EffectiveTitle()
+	entry.ProjectPath, entry.Project = sess.ProjectPath, sess.EffectiveProject()
+	entry.CustomProject = nil
+	if sess.ProjectOverride != nil {
+		entry.CustomProject = sess.ProjectOverride.CustomProject
+	}
 	return entry
+}
+
+// readMergeMetadata accepts rows from either the destination pool or its write
+// transaction. It closes the metadata-only cursor before its caller can commit.
+func readMergeMetadata(rows *sql.Rows, err error) (*Session, error) {
+	if err != nil {
+		return nil, fmt.Errorf("querying session metadata: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("reading session metadata: %w", err)
+		}
+		return nil, ErrSessionNotFound
+	}
+	var sess Session
+	if err := scanSessionMeta(rows, &sess, nil); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("closing session metadata: %w", err)
+	}
+	return &sess, nil
+}
+
+func (s *VaultStore) sessionMetadata(ctx context.Context, uuid string) (*Session, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return readMergeMetadata(db.QueryContext(ctx,
+		`SELECT `+sessionMetaColumns+sessionMetaJoin+` WHERE s.uuid = ?`, uuid))
+}
+
+// reconcileSessionMetadata keeps both metadata decisions in one transaction on
+// branches that leave the transcript untouched. Errors roll back both fields;
+// a concurrent delete cannot create orphan rows or silently report success.
+func (s *VaultStore) reconcileSessionMetadata(ctx context.Context, uuid string, name *SessionName, project *SessionProject) (*Session, bool, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
+	if err != nil {
+		return nil, false, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var nameChanged, projectChanged bool
+	if name != nil {
+		nameChanged, err = reconcileSessionNameTx(ctx, tx, uuid, *name)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	if project != nil {
+		projectChanged, err = reconcileSessionProjectTx(ctx, tx, uuid, *project)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	sess, err := readMergeMetadata(tx.QueryContext(ctx,
+		`SELECT `+sessionMetaColumns+sessionMetaJoin+` WHERE s.uuid = ?`, uuid))
+	if err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("committing session metadata reconcile: %w", err)
+	}
+	return sess, nameChanged || projectChanged, nil
+}
+
+func reconcileMergeMetadata(ctx context.Context, dest *VaultStore, entry ImportedSession, name *SessionName, project *SessionProject, dryRun bool) ImportedSession {
+	var sess *Session
+	var changed bool
+	var err error
+	if dryRun {
+		sess, err = dest.sessionMetadata(ctx, entry.UUID)
+		if err == nil {
+			changed = mergeMetadataState(sess, name, project)
+		}
+	} else {
+		sess, changed, err = dest.reconcileSessionMetadata(ctx, entry.UUID, name, project)
+	}
+	if err != nil {
+		slog.Warn("vault merge: metadata reconcile failed", "uuid", entry.UUID, "error", err)
+		entry.Status, entry.Err = StatusError, err
+		return entry
+	}
+	if !changed && entry.Status == StatusSkipped {
+		return entry // preserve the existing omitted metadata on skipped rows
+	}
+	if changed {
+		entry.Status = StatusUpdated
+	}
+	// Existing excluded sessions already report metadata. Even when the source
+	// has no edits or loses both comparisons, report the destination's values.
+	return mergeReportMetadata(entry, sess)
 }
 
 // readSourceFiles loads and decodes a source session's sidecar files. As with the

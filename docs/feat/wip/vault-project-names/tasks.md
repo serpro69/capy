@@ -6,7 +6,7 @@
 >
 > Issue: [#92](https://github.com/serpro69/capy/issues/92)
 >
-> Status: in-progress — Tasks 1–6 done; Task 7 next
+> Status: in-progress — Tasks 1–7 done; Task 8 next
 >
 > Created: 2026-09-19
 >
@@ -374,7 +374,7 @@ without adding a production test seam or changing stored data.
 
 ## Task 7: Merge project assignments across personal vaults
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Size:** M
 - **Can run in parallel with:** —
@@ -382,12 +382,62 @@ without adding a production test seam or changing stored data.
 
 ### Subtasks
 
-- [ ] 7.1 Feature-detect/read project source state in merge.go; normalize foreign empty overrides consistently before metadata-only effective-project selection. Verify legacy sources, ASCII literal-matcher parity and selection before blob loading.
-- [ ] 7.2 Add deterministic project ordering/reconciliation and carry state through SessionWrite/writeRecord. Verify source tuples remain verbatim and new session plus metadata commits atomically.
-- [ ] 7.3 Reconcile title and project independently in one transaction on equal-hash, smaller and excluded-source branches. Verify changed fields survive independently, statuses count once, and no metadata orphan is created.
-- [ ] 7.4 Add effective/raw merge-report fields without changing disk-import scope; implement matching dry-run projection. Verify destination-wins display, repeated/reversed convergence and transcript replacement behavior.
-- [ ] 7.5 Update TestMergeFrom_ProjectFilter for the intentional removal of location-hint matching, preserving escaped-metacharacter coverage. Verify source vaults remain unmigrated and unchanged.
-- [ ] 7.6 Add deterministic edit/merge and title/project concurrency cases; run Slice 7's focused race checks.
+- [x] 7.1 Feature-detect/read project source state in merge.go; normalize foreign empty overrides consistently before metadata-only effective-project selection. Verify legacy sources, ASCII literal-matcher parity and selection before blob loading.
+- [x] 7.2 Add deterministic project ordering/reconciliation and carry state through SessionWrite/writeRecord. Verify source tuples remain verbatim and new session plus metadata commits atomically.
+- [x] 7.3 Reconcile title and project independently in one transaction on equal-hash, smaller and excluded-source branches. Verify changed fields survive independently, statuses count once, and no metadata orphan is created.
+- [x] 7.4 Add effective/raw merge-report fields without changing disk-import scope; implement matching dry-run projection. Verify destination-wins display, repeated/reversed convergence and transcript replacement behavior.
+- [x] 7.5 Update TestMergeFrom_ProjectFilter for the intentional removal of location-hint matching, preserving escaped-metacharacter coverage. Verify source vaults remain unmigrated and unchanged.
+- [x] 7.6 Add deterministic edit/merge and title/project concurrency cases; run Slice 7's focused race checks.
+
+### Task 7 verification and review (2026-09-23)
+
+Task 7 is complete; Task 8 is next. Tasks 8–10 remain pending.
+See the [implementation record](implementation.md#task-7-implementation-record-2026-09-23).
+
+All Go checks used FTS5 and both required keys (`CAPY_DB_KEY=test-key-for-development`,
+`CAPY_VAULT_KEY=test-key`), with `TMPDIR=/private/tmp`. Fixtures retain their
+isolated vault keys.
+
+- PASS: `go test -race -tags fts5 -count=1 ./internal/vault -run 'Project|MergeFrom_.*Name|SessionNameSupersedes'`
+  (71.122s; no races). Covers independent winners, all transcript branches,
+  tombstones, ties, dry-run parity, rollback, repeated/reversed merges, source
+  selection before blob loading, legacy sources and concurrent local edits.
+- PASS: `go test -tags fts5 -count=1 ./...` with an empty temporary
+  `XDG_CONFIG_HOME` (all packages; CLI 83.269s, server 62.792s, vault 109.496s).
+  No exclusions. Includes the binary-harness merge project/report regression.
+- PASS: `make vet` and `git diff --check`.
+- Initial focused runs found an unintended report change: unchanged skipped rows
+  included titles. Restored their existing omitted-metadata contract. The new
+  source-preservation fixture now establishes WAL before taking its byte snapshot,
+  because the existing source opener switches legacy files to WAL/checkpoints.
+  The foreign-empty fixture initially hit the local schema's CHECK; it now uses
+  a foreign test schema without that constraint. No production constraint or
+  data-preservation assertion was relaxed.
+- `kk:review-code:isolated`: the code-reviewer sub-agent found one P2 report bug:
+  an existing excluded session whose source metadata lost (or was absent) showed
+  the source path. The fixed branch preserves exclusion status/reason while
+  reporting destination metadata; unchanged skipped rows retain their established
+  omissions. Added dry-run/real regression cases for older and absent source state.
+  The reviewer independently checked the fix and approved with no remaining
+  findings. PAL (Gemini 3.1 Pro) reported no issues on the initial diff; this
+  zero-finding result was supplemental, with the sub-agent providing the actionable
+  review signal. No P0/P1 systemic findings to index.
+- PASS after the review fix:
+  `go test -race -tags fts5 -count=1 ./internal/vault -run 'MergeFrom_(Project|NameOnTranscriptBranches|NameReconciliationMatrix|ExcludesEmptySource)'`
+  (41.974s; no races). The full-suite run above preceded this small report fix;
+  this focused run verifies its final code. Formatting and `git diff --check`
+  are clean.
+- `kk:test` and `kk:document` completed. No new conventions were indexed: ordering,
+  source normalization, transaction boundaries and report contracts are already
+  documented in the feature design and ADR-030.
+- No retrieval, ranking, indexing algorithm, dependency or generated-artifact
+  changes. Task 10 retains scale measurements and the full-feature master quality
+  comparison. The existing XDG/macOS fixture-isolation follow-ups remain as
+  documented under Tasks 1 and 5.
+
+No Task 7 requirement is deferred. The implementation follows Slice 7, with a
+post-commit metadata refresh for accurate batch reports and the existing source
+WAL setup explicitly accounted for in preservation fixtures.
 
 ## Task 8: Browse and search custom projects in the TUI
 

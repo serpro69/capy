@@ -561,7 +561,24 @@ Ordinary `vault stats` prints these effective groups literally. JSON retains
 `projects` (`project_path`/`count`) and adds `project_groups` (`project`/`count`),
 with empty arrays for an empty vault. Platform and child counts remain unchanged.
 
-TUI browsing/editing and independent merge reconciliation remain in the
+Merge feature-detects `vault_session_projects` without migrating the source.
+Filtered source enumeration reads only UUID/path/override metadata, normalizes
+foreign empty or whitespace-only overrides to clear, then uses an ASCII-only
+literal substring matcher. It closes the cursor before loading any transcript.
+Unfiltered enumeration stays UUID-only; legacy sources use imported paths.
+
+Project reconciliation orders `(updated_at_ns, machine_id, value)` independently
+of titles, with non-null values beating null at equal clock/writer tuples and
+bytewise ordering between values. Winning tuples are stored verbatim. The
+metadata-only branches reconcile both fields in one immediate transaction;
+`SessionWrite.Project` carries project state alongside titles for new/replaced
+transcripts. A failure rolls back both fields and any transcript write. Dry runs
+project the same winners, and successful writes report committed metadata through
+a metadata-only read. `ImportedSession.ProjectPath` remains imported;
+`Project`/`CustomProject` carry the effective value and display provenance.
+Disk-import discovery and reports retain physical paths.
+
+TUI browsing/editing remains in the
 [project-name plan](feat/wip/vault-project-names/tasks.md).
 The [design](feat/wip/vault-project-names/design.md) defines the complete contract.
 
@@ -739,7 +756,7 @@ Both platform startup sweeps pass the server's loaded config to the importer. Ma
 
 1. **MCP server startup** — background goroutine (`server.go` `vaultSweep`, opt-in via `CAPY_VAULT_KEY`) discovers **each platform independently** — a Claude failure or empty result never skips Codex. It imports the current project's Claude sessions, then the Codex rollouts whose first-line `cwd` equals the project dir (cleaned, symlink-resolved; a rollout with no cwd hint is unreachable by the sweep). Before Codex discovery it loads `CodexLocationSizes` once and hands the discoverer a `Skip` predicate — plain rollout: relative path **and** on-disk size match; `.zst`: path matches (rollouts are append-only, compressed ones immutable) — so an archived, unchanged file is never opened. Accepted bound, stated in the function comment: one bounded first-line read per rollout not archived at its current `(path, size)`, other projects' rollouts included, on every start, under the 30 s budget. Discovery honors that budget too — every `Discoverer.Discover` takes the sweep's context, the Codex walker checks it before each entry and hands back what it found with `ctx.Err()`, and the sweep drops a cancelled walk at debug (Import would refuse the partial list at its first session boundary anyway) so the next start resumes from what is archived and shutdown never waits on a walk. `CAPY_VAULT_SWEEP_ALL` widens both platforms. A missing `$CODEX_HOME` is a debug line; a Codex home with no rollout root does not even open the vault (`HasCodexRolloutRoot`)
 2. **`capy vault import`** — manual; every platform root that exists (`DiscoverAll`), `--platform` to restrict, `--source <dir>` with layout autodetection; idempotent (hash-based, larger-total-size wins) plus the in-run reconciliation and the Codex location policy above. The summary is per platform when a run touched more than one, and counts skipped revert variants
-3. **`capy vault merge --from <path>`** — non-destructive cross-machine union (`merge.go`): reads another vault's `vault_sessions`+`vault_files`, applies the same idempotent digest decision (distinct added, larger-wins on UUID overlap), carries source metadata verbatim, re-scans FTS with the destination's decoder for the carried platform. Feature-detects a v1 (no `encoding` column) source and a pre-0006 (no `platform`/`parent_uuid`) source — absent columns mean Claude, **never sniffed**; a present but unrecognized value is sniffed with a warning and the resolved value is stored (`resolveStoredPlatform`). `--project` matches the location hint **or** `project_path` (literal substring; `LIKE` metacharacters escaped). A source whose `min_reader_version` exceeds this binary's is refused before any row. Writes only the destination, so a concurrent server sweep is absorbed by busy-timeout retry.
+3. **`capy vault merge --from <path>`** — non-destructive cross-machine union (`merge.go`): reads another vault's `vault_sessions`+`vault_files`, applies the same idempotent digest decision (distinct added, larger-wins on UUID overlap), carries source metadata verbatim, re-scans FTS with the destination's decoder for the carried platform. Feature-detects a v1 (no `encoding` column) source and a pre-0006 (no `platform`/`parent_uuid`) source — absent columns mean Claude, **never sniffed**; a present but unrecognized value is sniffed with a warning and the resolved value is stored (`resolveStoredPlatform`). `--project` matches the source's effective project with literal ASCII case-insensitive substring semantics; location hints are no longer aliases. Legacy sources fall back to imported `project_path`. A source whose `min_reader_version` exceeds this binary's is refused before any row. Destination writes tolerate a concurrent server sweep via busy-timeout retry. The established source opener enables WAL and checkpoints it; source schema and archived contents are not migrated or rewritten.
 
    **Custom names reconcile on an independent track.** The source `vault_session_names` table is feature-detected (a pre-0005 source contributes none). For every source session whose UUID exists in the destination — *including* sessions the zero-message exclusion drops and transcripts skipped as same-hash or smaller — the source name state wins when its `(renamed_at_ns, machine_id)` tuple is greater; an absent destination row loses to any tuple; an equal tuple (machine IDs can collide via `CAPY_MACHINE_ID` or a synced dotfile) is broken by value — a non-NULL title beats a tombstone, two titles compare bytewise and the greater wins — so convergence never depends on unique machine IDs. A winning state is written **verbatim** (never re-stamped with the local `max(now, stored+1)` bump, which would break idempotence), a NULL title clears, and a new session plus its name commit in one transaction to satisfy the foreign key. Name-only changes report `updated`, identical/older states `skipped`, and dry-run reports the prospective effective title. Known non-destructive gap: an older binary merging *from* a newer vault reads no `vault_session_names` and carries no names; re-running with an upgraded binary carries them.
 
@@ -759,7 +776,7 @@ Both platform startup sweeps pass the server's loaded config to the importer. Ma
 | `capy vault stats` | DB size, session count, per-project and per-platform breakdown, child count, index version + reindex backlog |
 | `capy vault checkpoint` | Flush WAL (required before cross-machine copy) |
 | `capy vault compact` | Recompress legacy (`encoding IS NULL`) blobs through the zstd codec + `VACUUM` to reclaim disk. No-op if nothing is uncompressed; aborts under `CAPY_VAULT_NO_COMPRESS` or a busy DB (stop the server first) |
-| `capy vault merge --from <path>` | Non-destructive cross-machine union (see Archival Paths). Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`; `--project` (location hint or project path), `--dry-run` |
+| `capy vault merge --from <path>` | Non-destructive cross-machine union (see Archival Paths). Titles and projects reconcile independently. Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`; `--project` (source effective project), `--dry-run` |
 | `capy vault rekey` | Rotate the encryption key to the current `CAPY_VAULT_KEY` via `sqliteutil.Rekey` (SQLite backup-API: open old → checkpoint → copy into a new file under the new key → swap+verify). Sidesteps the WAL/PRAGMA-rekey incompatibility (ADR-020) by writing a fresh file. Stop the server first; `--remove-backup` unlinks the old-key `.bak` |
 
 `list`, `search`, and `show` support `--tui` for interactive browsing/search/viewing.

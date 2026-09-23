@@ -501,7 +501,7 @@ All commands live under `capy vault` and require `CAPY_VAULT_KEY`. A persistent 
 | `checkpoint`                                                                          | Flush the WAL into `vault.db` — run before copying it to another machine.                                                                                                   |
 | `rekey [--remove-backup]`                                                             | Rotate the vault's encryption key to the current `CAPY_VAULT_KEY`. **Stop the MCP server first.** Leaves `<vault>.bak` (still decryptable by the old key) unless `--remove-backup`.  |
 | `compact`                                                                             | Recompress sessions archived before compression existed (zstd) and `VACUUM` to reclaim disk. No-op if nothing is left uncompressed. **Stop the MCP server first.**           |
-| `merge --from <vault.db> [--key] [--project] [--dry-run]`                             | Non-destructively unite another machine's vault into this one — distinct sessions added, larger copy wins on UUID overlap; custom names reconcile separately, latest rename or clear wins. Idempotent. Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`. |
+| `merge --from <vault.db> [--key] [--project] [--dry-run]`                             | Non-destructively unite another machine's vault into this one — distinct sessions added, larger copy wins on UUID overlap; titles and projects reconcile independently, latest edit or clear wins. `--project` selects the source's effective project. Idempotent. Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`. |
 
 `list`, `search`, and `show` also accept **`--tui`** for an interactive terminal UI (browse, live search, vim-style viewer) built on bubbletea. Starting it with `list --platform claude-code|codex --tui` keeps that platform scope while browsing, refreshing, and searching inside the TUI. `--tui` is not supported on the mutating/exec commands (`restore`, `resume`, `delete`). In the viewer, large tool results (and any `Read`/`NotebookRead` output) collapse to a marker — cycle markers with `]`/`[` and press `enter` to expand one inline, `esc`/`q` to return. `Edit`/`Write` results expand to a colored diff (the marker shows a `(+a −b)` stat). Plain `vault show` is unaffected. Other keys: `f` filter the list by title, project path, or UUID, `e` rename the selected/open session (`ctrl+e` in search, where `e` types into the query), `c` copy the current message to the clipboard (OSC-52), `r` restore and `R` resume the selected/open session.
 
@@ -590,7 +590,8 @@ once like every other session, and platform totals are unchanged.
 `stats --json` preserves `projects` rows with `project_path`/`count` and adds
 `project_groups` rows with `project`/`count`; both are empty arrays in an empty vault.
 
-TUI browsing/editing and cross-vault merge remain pending in the
+Project assignments and clear tombstones also travel through cross-vault merge,
+independently of session titles. TUI browsing/editing remains pending in the
 [project-name task plan](docs/feat/wip/vault-project-names/tasks.md).
 
 ### Cross-machine sync
@@ -600,6 +601,22 @@ The vault is local-only — there is no cloud sync. Two ways to move sessions be
 **Merge (non-destructive, preferred).** `capy vault merge --from <path>` unites another vault into this one without overwriting — distinct sessions are added, and where both hold the same UUID the larger-content copy wins. Re-running is idempotent.
 
 Custom names travel on their own track. For each session both vaults hold, the most recent rename or clear wins — by timestamp, then machine ID, then a deterministic value tie-break — regardless of which transcript copy won, so a name set on machine A reaches machine B even when both already hold identical transcripts. A vault written by a capy version without names contributes none. An older capy merging *from* a newer vault leaves the destination's names untouched and carries none across until it is upgraded and the merge is re-run.
+
+Project assignments use the same ordering on a separate track: a title edit on one
+machine and a project edit on another both survive. Clears travel as tombstones.
+Metadata can update even when a source transcript is identical, smaller, or an
+excluded empty shell with an existing destination session. Both fields commit
+together, and a session with either change counts as one update. Reports and
+`--dry-run` display the winning destination project, keeping custom labels literal.
+
+`merge --project <substring>` selects the **source's effective project** (custom
+label, otherwise imported path), using literal, ASCII case-insensitive matching.
+This replaces the old location-hint-or-path selector: a mangled Claude directory
+or Codex rollout-location substring alone no longer matches, even for legacy
+sources. `import --project` retains physical discovery filtering. Legacy vaults
+without assignments contribute no project edits and cannot clear destination
+labels. Upgrade all merging machines and rerun merge to carry project metadata
+omitted by older binaries.
 
 ```bash
 # Copy machine A's vault somewhere on machine B, then:
