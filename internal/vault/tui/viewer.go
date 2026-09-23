@@ -251,11 +251,18 @@ func (m viewerModel) viewportContent() string {
 }
 
 func (m viewerModel) setSize(width, height int) viewerModel {
+	widthChanged := width != m.width
 	m.width = width
 	m.height = height
 	m.vp.Width = width
 	m.vp.Height = m.viewportHeight()
 	if !m.ready {
+		return m
+	}
+	if !widthChanged {
+		// Editor/status rows change only the height. Preserve an offset within a
+		// long message instead of snapping back to that message's source line.
+		m.vp.SetYOffset(m.vp.YOffset)
 		return m
 	}
 	// Re-wrap at the new width. Capture the top source line BEFORE re-rendering
@@ -441,8 +448,8 @@ func (m viewerModel) currentMessage() (vault.TranscriptMessage, bool) {
 	return m.active.messages[idx], true
 }
 
-// setSessionMeta refreshes the loaded session's metadata (title/name state)
-// after a rename without touching the parsed transcript or sidecars: sess comes
+// setSessionMeta refreshes the loaded session's metadata (title/project state)
+// after an edit without touching the parsed transcript or sidecars: sess comes
 // from a metadata-only store read, so the archived raw bytes already held by
 // the viewer are retained. No-op when the viewer is empty or shows a different
 // session.
@@ -483,14 +490,14 @@ func (m viewerModel) header() string {
 }
 
 func (m viewerModel) helpLine() string {
-	keys := "j/k scroll · g/G top/bottom · c copy · e rename · r/R restore/resume · q back"
+	keys := "j/k scroll · g/G top/bottom · c copy · e rename · ctrl+g project · r/R restore/resume · q back"
 	if len(m.active.markers) > 0 {
-		keys = "j/k scroll · ]/[ marker · enter open · c copy · e rename · r/R restore/resume · q back"
+		keys = "j/k scroll · ]/[ marker · enter open · c copy · e rename · ctrl+g project · r/R restore/resume · q back"
 	}
 	if m.inDetail() {
 		// e still renames the owning session from a detail view (app.updateView
 		// handles it before delegating), so the help must keep advertising it.
-		keys = "j/k scroll · c copy · e rename · esc/q return to session"
+		keys = "esc/q return to session · e rename · ctrl+g project · j/k scroll · c copy"
 	}
 	return fitRow(m.styles.Help.Render("v raw JSONL · "+keys), m.width)
 }
