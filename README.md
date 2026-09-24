@@ -711,6 +711,8 @@ capy uses Claude Code's hook system to intercept tool calls before they execute.
 
 `capy setup` generates configuration for Claude Code (default) and Codex CLI (`--platform codex`). Automated setup for other platforms is planned.
 
+Codex setup forwards `CAPY_DB_KEY` and `CAPY_VAULT_KEY` from your environment to the MCP server through `.codex/config.toml`. For existing installations, rerun `capy setup --platform codex` to update the forwarded variables. Export both keys before starting Codex to enable knowledge and session-vault search.
+
 Hooks already recognize tool name aliases for these platforms, so the routing logic works once you wire up the MCP server and hook commands manually:
 
 | Platform        | Recognized tool aliases                                                                                |

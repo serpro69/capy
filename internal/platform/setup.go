@@ -542,12 +542,12 @@ func mergeMCPServer(mcpPath string) error {
 const codexMCPMarker = "[mcp_servers.capy]"
 
 // codexMCPBlock is the TOML block appended to config.toml to register capy.
-// env_vars forwards CAPY_DB_KEY from the local environment so the MCP server
-// can decrypt the knowledge database.
+// env_vars forwards CAPY_DB_KEY and CAPY_VAULT_KEY from the local environment
+// so the MCP server can decrypt the knowledge database and session vault.
 const codexMCPBlock = `[mcp_servers.capy]
 command = "bash"
 args = ["` + codexWrapperRelPath + `", "serve"]
-env_vars = ["CAPY_DB_KEY"]
+env_vars = ["CAPY_DB_KEY", "CAPY_VAULT_KEY"]
 `
 
 // mergeCodexMCPServer ensures .codex/config.toml has an up-to-date [mcp_servers.capy] entry.
