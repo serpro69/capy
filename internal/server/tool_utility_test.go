@@ -202,6 +202,9 @@ func TestDoctor_VaultDisabledWithoutKey(t *testing.T) {
 	text := resultText(r)
 	assert.Contains(t, text, "Vault:")
 	assert.Contains(t, text, "disabled (CAPY_VAULT_KEY not set)")
+	assert.Contains(t, text, "wrappers no longer source .env")
+	assert.Contains(t, text, "actual launch environment")
+	assert.Contains(t, text, "restart the host/MCP process")
 }
 
 func TestDoctor_LegacySessionReclaimHint(t *testing.T) {

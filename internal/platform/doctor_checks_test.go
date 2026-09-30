@@ -39,6 +39,9 @@ func TestCheckVaultDisabled(t *testing.T) {
 	assert.Equal(t, Warn, r.Status)
 	assert.Equal(t, "Vault", r.Name)
 	assert.Contains(t, r.Detail, "CAPY_VAULT_KEY not set")
+	assert.Contains(t, r.Detail, "wrappers no longer source .env")
+	assert.Contains(t, r.Detail, "actual launch environment")
+	assert.Contains(t, r.Detail, "restart the host/MCP process")
 }
 
 func TestCheckVault(t *testing.T) {

@@ -109,19 +109,20 @@
 
 ## Task 7: Ship wrappers with explicit upgrade and rollback guidance
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 6, 8
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 10
 - **Docs:** [Wrapper rollout and migration](implementation.md#7-generated-wrapper-rollout-and-migration)
+- **Verification:** Full `make test`, focused FTS5 wrapper/migration/checkpoint/diagnostic checks with and without `-race`, and targeted vet passed; [isolated review and validation](.reviews/task-7-code-review-2026-09-30.md).
 
 ### Subtasks
 
-- [ ] 7.1 Remove dotenv execution and the serve-only guard from `capyWrapperScript`; regenerate both committed wrappers → verify: whole-file equality, wrapper exit-code, merged-idempotency, and completeness guards pass.
-- [ ] 7.2 Reuse the CLI stdio fixture for generated launches, key-file-only startup, wrong inheritance, bare/leading-flag serve, wrapped dbsize, and no-key hooks → verify: real database operations and exit contracts match direct use.
-- [ ] 7.3 Update shared `CheckVaultDisabled` guidance/tests and cover a worktree with both keys only in main dotenv, then with the vault key in the actual launch environment → verify: knowledge works in both cases; vault is first disabled with migration guidance, then readable; its key is never taken from or overwritten by project files.
-- [ ] 7.4 Integrate Task 8's checkpoint through the generated Git pre-commit path → verify: genuine checkpoint/busy failures abort commits and the separate DB-repo guard stays keyless.
-- [ ] 7.5 Document both breaking migrations and upgrade/rollback steps; add a frozen old-shaped config fixture with unknown `key_file` → verify: the legacy shape retains `store.path`, environment-only launch works, and fresh/repeated setup emits matching artifacts. Record any actual legacy-binary smoke test separately.
+- [x] 7.1 Remove dotenv execution and the serve-only guard from `capyWrapperScript`; regenerate both committed wrappers → verify: whole-file equality, wrapper exit-code, merged-idempotency, and completeness guards pass.
+- [x] 7.2 Reuse the CLI stdio fixture for generated launches, key-file-only startup, wrong inheritance, bare/leading-flag serve, wrapped dbsize, and no-key hooks → verify: real database operations and exit contracts match direct use.
+- [x] 7.3 Update shared `CheckVaultDisabled` guidance/tests and cover a worktree with both keys only in main dotenv, then with the vault key in the actual launch environment → verify: knowledge works in both cases; vault is first disabled with migration guidance, then readable; its key is never taken from or overwritten by project files.
+- [x] 7.4 Integrate Task 8's checkpoint through the generated Git pre-commit path → verify: genuine checkpoint/busy failures abort commits and the separate DB-repo guard stays keyless.
+- [x] 7.5 Document both breaking migrations and upgrade/rollback steps; add a frozen old-shaped config fixture with unknown `key_file` → verify: the legacy shape retains `store.path`, environment-only launch works, and fresh/repeated setup emits matching artifacts. Record any actual legacy-binary smoke test separately.
 
 ## Task 8: Apply project credentials to direct cleanup and checkpoint
 

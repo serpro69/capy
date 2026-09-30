@@ -72,7 +72,7 @@
 
 `capy` is not a CLI output filter or a cloud analytics dashboard. It operates at the MCP protocol layer — raw data stays in a sandboxed subprocess and never enters your context window. Web pages, API responses, file analysis, log files — everything is processed in complete isolation.
 
-**Nothing leaves your machine.** No telemetry, no cloud sync, no usage tracking, no account required. Your code, your prompts, your session data — all local. The SQLite databases live in your home directory and are encrypted at rest. The encryption key (`CAPY_DB_KEY`) never leaves your environment.
+**Nothing leaves your machine.** No telemetry, no cloud sync, no usage tracking, no account required. Your code, your prompts, your session data — all local. The SQLite databases are encrypted at rest. Knowledge credentials come from local project files or the launch environment and are never sent to a remote service.
 
 This is a deliberate architectural choice, not a missing feature. Context optimization should happen at the source, not in a dashboard behind a per-seat subscription. Privacy-first is our philosophy — and every design decision follows from it. [License](#license)
 
@@ -146,6 +146,8 @@ mv capy /usr/local/bin/   # or anywhere on your PATH
 ### Setup
 
 **1. Set an encryption key** (required — capy refuses to start without it):
+
+For a new database, the environment-only setup below works. For separate project keys, use a [project credential file](#project-credentials). Keep the existing passphrase when connecting to an existing database.
 
 ```bash
 export CAPY_DB_KEY=$(openssl rand -base64 48)
@@ -271,6 +273,45 @@ Or use [direnv](https://direnv.net/) for per-project keys:
 echo "export CAPY_DB_KEY='your-passphrase-here'" >> .envrc
 direnv allow
 ```
+
+### Project credentials
+
+`capy serve` (including bare `capy`), `dbsize`, `cleanup`, and `checkpoint` resolve knowledge credentials in Go. A declared project credential takes precedence over an inherited `CAPY_DB_KEY`, including a nonempty key from another project.
+
+To avoid depending on the launcher's inherited knowledge key, put the **existing database passphrase** in a literal file such as `.capy/db.key` and add its path to the project's `.capy.toml` (merge this into an existing `[store]` section):
+
+```toml
+[store]
+key_file = ".capy/db.key"
+```
+
+Keep the file private (`chmod 600 .capy/db.key`) and outside version control. `capy setup` ignores `.capy/**`; other credential locations need their own ignore rules. Setup never creates credentials. The file contains only the passphrase, with no assignment or quotes; one final LF or CRLF is allowed. Its raw size limit is 4,096 bytes, including that newline. Empty files, embedded line endings/NULs, nonregular files, and oversized files fail without fallback. Symlinks to regular files are supported.
+
+Selection order is `store.key_file`, the database owner's `.env`, a distinct main-worktree `.env`, then inherited `CAPY_DB_KEY`. Relative key-file paths resolve from the database owner. With a relative `store.path`, linked worktrees share the main checkout's database and credentials; their own `.env` is ignored. Absolute/XDG database modes consult the selected worktree first. An explicitly empty `key_file = ""` clears an inherited config setting. Invalid or inaccessible selected credentials fail rather than trying another key.
+
+The dotenv reader is literal and limited: blank lines, comments, and single-line assignments, with optional `export`. It never executes shell code, expands variables, reads `.envrc`, or exports resolved values. Optional dotenv files must be regular and no larger than 1 MiB. If no knowledge-key declaration exists, readable dotenv content does not supply a key and environment-only/direnv usage continues to work.
+
+### Upgrade and credential migration
+
+**Two breaking changes require attention before regenerating wrappers:**
+
+- **Whole-file dotenv validation.** If `.env` declares `CAPY_DB_KEY`, unsupported syntax anywhere in that file, before or after the declaration, blocks resolution even when an inherited key is correct. Duplicate, empty, multiline, or executable knowledge-key declarations also fail. For an application dotenv containing shell constructs, put the same passphrase in a literal file and configure `store.key_file`; that explicit file bypasses dotenv parsing entirely.
+- **Vault keys remain environment-only.** Older wrappers sometimes sourced the main-worktree `.env` when `serve` inherited no knowledge key, incidentally loading `CAPY_VAULT_KEY` too. New wrappers do not source `.env`. A vault key stored only there no longer enables the vault. Set `CAPY_VAULT_KEY` in the environment of the process that actually launches MCP, then restart that host/daemon and MCP. Exporting it in a new terminal does not change an already-running daemon's environment. Knowledge credential resolution never reads or overwrites the vault key.
+
+Upgrade the binary, then invoke it **directly** in each project to regenerate every installed platform's wrappers:
+
+```bash
+capy setup --platform claude-code --project # use --local if that is your existing hook target
+capy setup --platform codex
+```
+
+Restart the launcher/MCP processes. Confirm actual knowledge reads with `capy_search` and vault status with `capy_doctor` through MCP; terminal doctor alone does not verify the launcher's environment. Both doctors explain the vault migration when its key is absent. Updating only the binary leaves old wrappers able to execute dotenv or stop startup before Go can select a project credential.
+
+#### Rollback
+
+Stop MCP cleanly, then run `capy checkpoint` with the current binary and valid project credential. Before downgrading, supply the **same existing knowledge passphrase** as `CAPY_DB_KEY` in the actual launch environment, and supply `CAPY_VAULT_KEY` separately if needed. Downgrade the binary, run that binary's setup for each installed platform, restart the launcher/MCP, and verify actual database reads and vault status.
+
+v0.16.4 ignores unknown `store.key_file` configuration while retaining `store.path`; it cannot obtain a passphrase from that file. Leaving the setting is compatible with that version, but leaving the credential only in the file is not. New wrappers paired with an old binary do not restore dotenv loading. This feature changes no database format: do not rotate or rewrite the database just to roll back.
 
 ### Initial encryption
 
@@ -401,6 +442,8 @@ symlink (the symlink itself isn't tracked by the project repo). The
 
 ### Key rotation
 
+Stop all processes using the target database before rotating its key. After success, update any project credential file or dotenv declaration before restarting MCP; running servers retain their selected key until restart.
+
 ```bash
 export CAPY_DB_KEY='new-passphrase'
 capy encrypt
@@ -411,7 +454,7 @@ capy encrypt
 
 - **32+ characters.** Shorter passphrases work but trigger a warning.
 - **Generated, not memorized.** `openssl rand -base64 48` or a password manager.
-- **Never in config files.** Use environment variables, direnv, or a secrets manager.
+- **Never in tracked configuration.** Store only a credential path in TOML; keep the passphrase in a private, ignored file, the launch environment, or a secrets manager.
 
 ## Session Vault
 
@@ -812,7 +855,7 @@ capy uses Claude Code's hook system to intercept tool calls before they execute.
 
 `capy setup` generates configuration for Claude Code (default) and Codex CLI (`--platform codex`). Automated setup for other platforms is planned.
 
-Codex setup forwards `CAPY_DB_KEY` and `CAPY_VAULT_KEY` from your environment to the MCP server through `.codex/config.toml`. For existing installations, rerun `capy setup --platform codex` to update the forwarded variables. Export both keys before starting Codex to enable knowledge and session-vault search.
+Codex setup forwards `CAPY_DB_KEY` and `CAPY_VAULT_KEY` already present in its launch environment through `.codex/config.toml`. Forwarding does not load absent credentials from files. Knowledge can use [project credentials](#project-credentials); the vault requires `CAPY_VAULT_KEY` in the actual launch environment. Existing installations must [regenerate wrappers and restart the launcher](#upgrade-and-credential-migration).
 
 Hooks already recognize tool name aliases for these platforms, so the routing logic works once you wire up the MCP server and hook commands manually:
 
@@ -838,7 +881,9 @@ Run `capy doctor` to diagnose issues. Common problems:
 | **Hooks: not registered** | Run `capy setup` in your project directory.                                          |
 | **MCP: not registered**   | Run `capy setup`. Check `.mcp.json` exists in project root.                          |
 | **MCP: binary not found** | The `capy` binary isn't in PATH. Move it or run `capy setup --binary /path/to/capy`. |
-| **CAPY_DB_KEY not set**   | Set `CAPY_DB_KEY` in your shell profile (see [Encryption](#encryption)).             |
+| **Knowledge credential missing** | Configure a private `store.key_file` or supply `CAPY_DB_KEY` in the actual launch environment (see [Encryption](#encryption)). |
+| **Dotenv rejected** | Move the existing passphrase to `store.key_file` to bypass an application's unsupported dotenv syntax. |
+| **Vault disabled after upgrade** | Supply `CAPY_VAULT_KEY` in the actual launch environment and restart the host/MCP; wrappers no longer source `.env`. |
 
 ## Acknowledgements
 
