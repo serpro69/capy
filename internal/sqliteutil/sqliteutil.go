@@ -29,7 +29,8 @@ import (
 // WrongPassphraseError wraps the underlying SQLite error when the canary query
 // fails on an encrypted DB. It is kept distinct from a plain corruption error
 // so callers can decline backup-and-recreate recovery on a likely key typo.
-// KeyEnv names the passphrase env var so the message points at the right one.
+// KeyEnv is a safe credential source hint (historically an environment variable
+// name). It may also identify a credential file, but must never contain a key.
 type WrongPassphraseError struct {
 	Wrapped error
 	KeyEnv  string
@@ -225,7 +226,7 @@ func IsBusy(err error) bool {
 // OpenWithCanary opens the SQLite database described by dsn and verifies it can
 // be read with the configured key by running a canary query against
 // sqlite_master. dbPath is the on-disk path, used to tell an unencrypted DB
-// apart from a wrong passphrase; keyEnv names the passphrase env var for the
+// apart from a wrong passphrase; keyEnv is a safe credential source hint for the
 // wrong-passphrase error message.
 //
 // On canary failure the error is classified:

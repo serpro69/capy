@@ -1,6 +1,6 @@
 # Project database key resolution implementation plan
 
-> Status: In progress — Task 1 complete; Tasks 2–11 pending
+> Status: In progress — Tasks 1–2 complete; Tasks 3–11 pending
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Baseline: `d9e09c1`
@@ -37,6 +37,8 @@ Primary files: `internal/store/store.go`, `internal/store/encryption.go`, `inter
 - Introduce shared command helpers in `cmd/capy/knowledge.go`: `commandProjectDir` for existing project selection, `loadKnowledgeTarget` for strict config plus resolved owner/path, and `newKnowledgeStore` for lazy construction from a target and credential. Initially use the captured environment key and route dbsize through these helpers. Keep selection separate from opening so later doctor/checkpoint callers can avoid creating a missing database. → verify: existing dbsize behavior works through the refactored path; invalid config stops before selecting a default database.
 
 Keep helpers small: resolve the target separately, resolve its credential separately, then construct the lazy store. Do not put credential loading in a root persistent pre-run hook; help, setup, vault, and Claude hook commands must remain independent.
+
+**Completed 2026-09-30.** `NewContentStore` captures the environment once, with `WithEncryptionKey` overriding both key and safe source hint. All store connections use that snapshot; empty values fail before filesystem side effects. `ValidateEncryptionReadyWithKey` shares the existing missing/short-key validation and plaintext preflight. `dbsize` now uses the strict target helpers in `knowledge.go` and constructs a lazy store with its selected environment credential. Tests cover concurrent explicit keys, environment changes before lazy open and during maintenance, close/reopen, corruption recovery, wrong-key content preservation, source-safe errors, absent directory/marker/sidecars on empty input, and config parse/type/validation/read failures. Full `make test` and focused race checks passed; isolated review found only a formatting issue, now fixed. See the [review and validation record](.reviews/task-2-code-review-2026-09-30.md). File/dotenv selection and command/server integration remain assigned to Tasks 3–10.
 
 ## 3 Explicit project key files through dbsize
 

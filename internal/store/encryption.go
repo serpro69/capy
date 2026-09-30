@@ -13,7 +13,14 @@ import (
 // already exists, that it is actually encrypted. Returns nil if the DB does
 // not exist yet (it will be created encrypted on first use).
 func ValidateEncryptionReady(dbPath string) error {
-	if _, err := RequireEncryptionKey(); err != nil {
+	return ValidateEncryptionReadyWithKey(dbPath, EncryptionKeyFromEnv(), encryptionKeyEnv)
+}
+
+// ValidateEncryptionReadyWithKey checks a selected key and rejects plaintext
+// databases without opening or creating a database. It does not authenticate
+// the key; that happens on first store use. source must contain no secret.
+func ValidateEncryptionReadyWithKey(dbPath, key, source string) error {
+	if err := validateEncryptionKey(key, source); err != nil {
 		return err
 	}
 	if sqliteutil.IsUnencryptedDB(dbPath) {
@@ -30,15 +37,33 @@ const MinPassphraseLength = 32
 // Returns an error if the key is empty. Logs a warning if the key
 // is shorter than MinPassphraseLength.
 func RequireEncryptionKey() (string, error) {
-	key := os.Getenv(encryptionKeyEnv)
+	key := EncryptionKeyFromEnv()
+	if err := validateEncryptionKey(key, encryptionKeyEnv); err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
+func encryptionSourceHint(source string) string {
+	if source == "" {
+		return "selected knowledge credential"
+	}
+	return source
+}
+
+func validateEncryptionKey(key, source string) error {
 	if key == "" {
-		return "", fmt.Errorf("%s environment variable is required (see: capy encrypt --help)", encryptionKeyEnv)
+		hint := encryptionSourceHint(source)
+		if hint == encryptionKeyEnv {
+			hint += " environment variable"
+		}
+		return fmt.Errorf("%s is required (see: capy encrypt --help)", hint)
 	}
 	if len(key) < MinPassphraseLength {
 		slog.Warn("encryption passphrase is short — 32+ characters recommended",
 			"length", len(key))
 	}
-	return key, nil
+	return nil
 }
 
 // EncryptionKeyFromEnv reads CAPY_DB_KEY from the environment and returns it.

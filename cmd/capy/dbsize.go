@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 
-	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -13,18 +12,16 @@ func newDBSizeCmd() *cobra.Command {
 		Use:   "dbsize",
 		Short: "Show knowledge base disk usage breakdown",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectDir, _ := cmd.Flags().GetString("project-dir")
-			if projectDir == "" {
-				projectDir = config.DetectProjectRoot()
+			target, err := loadKnowledgeTarget(cmd)
+			if err != nil {
+				return err
 			}
 
-			cfg, _ := config.Load(projectDir)
-			if cfg == nil {
-				cfg = config.DefaultConfig()
+			key, err := store.RequireEncryptionKey()
+			if err != nil {
+				return err
 			}
-
-			dbPath := cfg.ResolveDBPath(projectDir)
-			st := store.NewContentStore(dbPath, cfg.DBProjectDir(projectDir), 0, 0)
+			st := newKnowledgeStore(target, key, "CAPY_DB_KEY")
 			defer st.Close()
 
 			breakdown, err := st.DiskUsage()
@@ -32,7 +29,7 @@ func newDBSizeCmd() *cobra.Command {
 				return fmt.Errorf("disk usage query failed: %w", err)
 			}
 
-			fmt.Printf("Database: %s\n\n", dbPath)
+			fmt.Printf("Database: %s\n\n", target.dbPath)
 
 			if breakdown.HasDBStat {
 				fmt.Println("=== Table sizes (pages × page_size) ===")
