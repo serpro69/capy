@@ -76,18 +76,19 @@
 
 ## Task 5: Establish baseline stdio MCP round trips
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 2, 3, 4, 8, 10, subject to their dependencies
 - **Slicing strategy:** Risk-First — establish real process/transport evidence before integrating project credentials
 - **Docs:** [Baseline transport verification](implementation.md#5-baseline-stdio-mcp-transport-verification)
+- **Verification:** Full `make test`, focused FTS5 stdio tests with and without `-race`, and targeted `go vet` passed; [isolated review and validation](.reviews/task-5-code-review-2026-09-30.md).
 
 ### Subtasks
 
-- [ ] 5.1 Add `cmd/capy/mcp_stdio_helpers_test.go` with one FTS5 binary fixture, isolated child environment/cwd, JSON-RPC IDs, piped I/O, bounded deadlines, and child cleanup → verify: it handles real responses and reaps failed/timed-out processes without sleeps or key disclosure.
-- [ ] 5.2 Add `cmd/capy/mcp_stdio_test.go` for existing environment-only initialize/index/search/doctor/shutdown/reopen behavior → verify: actual tool calls and retained content pass against current behavior.
-- [ ] 5.3 Run two subprocesses with distinct projects and their respective correct environment keys → verify: each returns its own marker and the helpers can be reused by later credential/wrapper cases.
+- [x] 5.1 Add `cmd/capy/mcp_stdio_helpers_test.go` with one FTS5 binary fixture, isolated child environment/cwd, JSON-RPC IDs, piped I/O, bounded deadlines, and child cleanup → verify: it handles real responses and reaps failed/timed-out processes without sleeps or key disclosure.
+- [x] 5.2 Add `cmd/capy/mcp_stdio_test.go` for existing environment-only initialize/index/search/doctor/shutdown/reopen behavior → verify: actual tool calls and retained content pass against current behavior.
+- [x] 5.3 Run two subprocesses with distinct projects and their respective correct environment keys → verify: each returns its own marker and the helpers can be reused by later credential/wrapper cases.
 
 ## Task 6: Use project credentials in direct MCP sessions
 

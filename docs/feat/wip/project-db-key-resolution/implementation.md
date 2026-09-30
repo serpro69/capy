@@ -1,6 +1,6 @@
 # Project database key resolution implementation plan
 
-> Status: In progress — Tasks 1–4 complete; Tasks 5–11 pending
+> Status: In progress — Tasks 1–5 complete; Tasks 6–11 pending
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Baseline: `d9e09c1`
@@ -79,6 +79,8 @@ This independent Risk-First slice adds passing coverage of the existing environm
 - Build one FTS5-enabled candidate binary per test fixture and add narrowly scoped helpers for child environment/cwd, piped stdin/stdout, JSON-RPC initialization and request IDs, deadlines, and cleanup/Wait. Capture stderr separately and terminate/reap children on timeout. Do not build a general protocol framework. → verify: an environment-only initialize → index → search → doctor → clean shutdown/reopen round trip passes against current behavior.
 - Exercise two subprocesses with separate temporary projects and their respective correct environment keys, then reopen their databases. → verify: each returns only its own marker and retains content; this establishes the transport oracle without depending on the new resolver.
 - Keep transport helpers reusable by the credential and wrapper cases in slices 6 and 7. → verify: request handling does not depend on sleeps, EOF-only startup, or exposing key values in diagnostics.
+
+**Completed 2026-09-30.** The new stdio fixture builds one FTS5 binary per parent test and reuses it across isolated child processes and reopen checks. It sends initialization and the initialized notification, matches numeric request IDs, accepts intervening notifications, and bounds both pipe reads and writes. Separate bounded stderr capture redacts supplied synthetic credentials. Explicit EOF shutdown verifies a clean exit; registered cleanup terminates and reaps abandoned or failed children. Regression cases exercise early exit, read/write deadlines, mismatched IDs, protocol errors, stalled shutdown, and automatic cleanup without sleeps. Real index/search/doctor calls cover one project and two simultaneously running projects with distinct environment keys; queries omit the expected markers, reopen does not re-index, and shutdown leaves encrypted databases with no pending WAL content. Full `make test`, focused normal/race tests, and targeted vet passed. The race run instruments the harness; the launched candidate is a normal FTS5 build. Independent review found no correctness issues; two external low-priority cleanup suggestions were addressed. See the [review and validation record](.reviews/task-5-code-review-2026-09-30.md). No production code or dependency changed. Credential integration and wrapper cases remain in Tasks 6 and 7.
 
 ## 6 Direct MCP startup and store operations
 
