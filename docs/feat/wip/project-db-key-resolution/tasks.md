@@ -92,19 +92,20 @@
 
 ## Task 6: Use project credentials in direct MCP sessions
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 4, 5
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 8, 10
 - **Docs:** [Direct MCP integration](implementation.md#6-direct-mcp-startup-and-store-operations)
 - **Size rationale:** Four primary files for serve/server wiring and credential cases; Task 5 already owns transport construction.
+- **Verification:** Full `make test`, focused FTS5 server/MCP credential tests with and without `-race`, and targeted `go vet` passed; [isolated review and validation](.reviews/task-6-code-review-2026-09-30.md).
 
 ### Subtasks
 
-- [ ] 6.1 Wire `serveRunE` to strict config, shared resolution, and explicit-key preflight → verify: bare invocation and flags before/after serve obey the same project contract.
-- [ ] 6.2 Add `WithKnowledgeCredentials` and default environment capture to `internal/server/server.go`; pass the snapshot/source into `getStore` → verify: environment changes after server construction do not change the store key.
-- [ ] 6.3 Reuse Task 5's fixture in `cmd/capy/key_resolution_mcp_test.go` with crossed inherited keys and declared project credentials → verify: actual index/search/doctor calls return project-specific content and close/reopen preserves it.
-- [ ] 6.4 Cover missing explicit credentials, wrong selected keys, plaintext databases, and direct-server doctor with an explicit empty credential despite a nonempty inherited key → verify: correct failure phase/message, no directory/marker/files on missing keys, and no replacement after a wrong key.
+- [x] 6.1 Wire `serveRunE` to strict config, shared resolution, and explicit-key preflight → verify: bare invocation and flags before/after serve obey the same project contract.
+- [x] 6.2 Add `WithKnowledgeCredentials` and default environment capture to `internal/server/server.go`; pass the snapshot/source into `getStore` → verify: environment changes after server construction do not change the store key.
+- [x] 6.3 Reuse Task 5's fixture in `cmd/capy/key_resolution_mcp_test.go` with crossed inherited keys and declared project credentials → verify: actual index/search/doctor calls return project-specific content and close/reopen preserves it.
+- [x] 6.4 Cover missing explicit credentials, wrong selected keys, plaintext databases, and direct-server doctor with an explicit empty credential despite a nonempty inherited key → verify: correct failure phase/message, no directory/marker/files on missing keys, and no replacement after a wrong key.
 
 ## Task 7: Ship wrappers with explicit upgrade and rollback guidance
 
