@@ -10,7 +10,6 @@ import (
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/platform"
 	"github.com/serpro69/capy/internal/security"
-	"github.com/serpro69/capy/internal/store"
 	"github.com/serpro69/capy/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -20,18 +19,25 @@ func newDoctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check capy installation and environment",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectDir, _ := cmd.Flags().GetString("project-dir")
-			if projectDir == "" {
-				projectDir = config.DetectProjectRoot()
+			projectDir, err := commandProjectDir(cmd)
+			if err != nil {
+				return err
 			}
 
-			cfg, _ := config.Load(projectDir)
-			if cfg == nil {
-				cfg = config.DefaultConfig()
+			target, configErr := loadKnowledgeTarget(cmd)
+			// Defaults are only for independent runtime discovery. An invalid
+			// config must never select a fallback knowledge target.
+			maxOutputBytes := config.DefaultConfig().Executor.MaxOutputBytes
+			configCheck := platform.CheckResult{Name: "Config", Status: platform.Fail}
+			if configErr != nil {
+				configCheck.Detail = configErr.Error()
+			} else {
+				maxOutputBytes = target.cfg.Executor.MaxOutputBytes
+				configCheck = platform.CheckConfig(projectDir, target.dbPath)
 			}
 
 			// Detect runtimes
-			exec := executor.NewExecutor(projectDir, cfg.Executor.MaxOutputBytes)
+			exec := executor.NewExecutor(projectDir, maxOutputBytes)
 			runtimes := exec.Runtimes()
 			runtimeStrs := make(map[string]string, len(runtimes))
 			for lang, path := range runtimes {
@@ -46,17 +52,20 @@ func newDoctorCmd() *cobra.Command {
 			}
 
 			// Run checks
-			dbPath := cfg.ResolveDBPath(projectDir)
 			results := []platform.CheckResult{
 				platform.CheckVersion(),
 				platform.CheckRuntimes(runtimeStrs, executor.TotalLanguages),
 				platform.CheckFTS5(),
-				platform.CheckConfig(projectDir, dbPath),
+				configCheck,
 				platform.CheckHookRegistration(projectDir),
 				platform.CheckMCPRegistration(projectDir),
 				platform.CheckSecurity(totalDeny, len(policies)),
 			}
-			results = append(results, knowledgeBaseChecks(cfg, projectDir, dbPath)...)
+			if configErr != nil {
+				results = append(results, platform.CheckKnowledgeBaseSkipped("configuration failed; credential selection was not run"))
+			} else {
+				results = append(results, knowledgeBaseChecks(target)...)
+			}
 			results = append(results, vaultChecks(cmd.Context())...)
 			results = append(results,
 				platform.CheckResult{Name: "Project", Status: platform.Pass, Detail: projectDir},
@@ -73,29 +82,35 @@ func newDoctorCmd() *cobra.Command {
 // leftover knowledge.db session rows (the vault is the session store, ADR-027).
 // A DB that does not exist yet is reported without opening the store, which
 // would otherwise create it as a side effect of a diagnostic.
-func knowledgeBaseChecks(cfg *config.Config, projectDir, dbPath string) []platform.CheckResult {
-	if _, err := os.Stat(dbPath); err != nil {
+func knowledgeBaseChecks(target *knowledgeTarget) []platform.CheckResult {
+	key, source, err := resolveKnowledgeKey(target)
+	results := []platform.CheckResult{platform.CheckKnowledgeCredential(source.String(), err)}
+	if err != nil {
+		return append(results, platform.CheckKnowledgeBaseSkipped("credential selection failed"))
+	}
+	if _, err := os.Stat(target.dbPath); err != nil {
 		if os.IsNotExist(err) {
-			return []platform.CheckResult{platform.CheckKnowledgeBase(dbPath)}
+			return append(results, platform.CheckKnowledgeBase(target.dbPath))
 		}
-		return []platform.CheckResult{{
+		return append(results, platform.CheckResult{
 			Name:   "Knowledge base",
 			Status: platform.Fail,
 			Detail: fmt.Sprintf("cannot access database (%v)", err),
-		}}
+		})
 	}
 
-	st := store.NewContentStore(dbPath, cfg.DBProjectDir(projectDir), 0, cfg.Store.MaxSourceBytes)
+	st := newKnowledgeStore(target, key, source.String())
 	defer st.Close()
 
+	cfg := target.cfg
 	ephemeralTTL := time.Duration(cfg.Store.Cleanup.EphemeralTTLHours) * time.Hour
 	sessionTTL := time.Duration(cfg.Store.Cleanup.SessionTTLDays) * 24 * time.Hour
 	kbStats, err := st.Stats(ephemeralTTL, sessionTTL)
 	if err != nil {
-		return []platform.CheckResult{platform.CheckKnowledgeBaseError(err)}
+		return append(results, platform.CheckKnowledgeBaseError(err))
 	}
 
-	results := []platform.CheckResult{platform.CheckKnowledgeBaseStats(kbStats.SourceCount, kbStats.ChunkCount)}
+	results = append(results, platform.CheckKnowledgeBaseStats(kbStats.SourceCount, kbStats.ChunkCount))
 	if kbStats.SessionSourceCount > 0 {
 		results = append(results, platform.CheckLegacySessions(kbStats.SessionSourceCount, "capy cleanup --kind session --force"))
 	}

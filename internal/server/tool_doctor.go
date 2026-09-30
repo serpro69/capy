@@ -29,8 +29,6 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 	if s.config != nil {
 		dbPath = s.config.ResolveDBPath(s.projectDir)
 	}
-	ephemeralTTL := s.ephemeralTTL()
-	sessionTTL := s.sessionTTL()
 
 	// Shared checks
 	results := []platform.CheckResult{
@@ -49,21 +47,7 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 	)
 
 	// Knowledge base — use store directly for richer stats
-	st := s.getStore()
-	kbStats, err := st.Stats(ephemeralTTL, sessionTTL)
-	if err != nil {
-		results = append(results, platform.CheckKnowledgeBaseError(err))
-	} else {
-		results = append(results, platform.CheckKnowledgeBaseStats(kbStats.SourceCount, kbStats.ChunkCount))
-		// Legacy session rows: the knowledge.db session sweep was removed
-		// (vault-session-search D8); the vault is now the session store. Any
-		// `kind='session'` rows are pre-removal leftovers draining by TTL —
-		// surface them loudly with the reclaim command (design D4: report
-		// both the knowledge.db reclaim and the vault reindex backlog).
-		if kbStats.SessionSourceCount > 0 {
-			results = append(results, platform.CheckLegacySessions(kbStats.SessionSourceCount, "capy_cleanup purge_session"))
-		}
-	}
+	results = append(results, s.knowledgeChecks()...)
 
 	// Vault — opt-in session archive. When enabled, surface the reindex backlog
 	// loudly (design vault-session-search D4: the chunk backfill is manual via
@@ -80,6 +64,37 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 
 	text := platform.FormatDiagnostics(results)
 	return s.trackToolResponse("capy_doctor", textResult(text)), nil
+}
+
+// knowledgeChecks uses the server's snapshot, without re-reading credentials.
+// Serve rejects config/resolution errors before MCP starts. Direct constructors
+// can still supply an empty key; report it without initializing the store.
+func (s *Server) knowledgeChecks() []platform.CheckResult {
+	source := s.knowledgeSource.String()
+	if s.knowledgeKey == "" {
+		return []platform.CheckResult{
+			platform.CheckKnowledgeCredential(source, fmt.Errorf("captured credential is empty; configure %s and restart the server", source)),
+			platform.CheckKnowledgeBaseSkipped("credential selection failed"),
+		}
+	}
+	results := []platform.CheckResult{platform.CheckKnowledgeCredential(source, nil)}
+	st := s.getStore()
+	kbStats, err := st.Stats(s.ephemeralTTL(), s.sessionTTL())
+	if err != nil {
+		results = append(results, platform.CheckKnowledgeBaseError(err))
+	} else {
+		results = append(results, platform.CheckKnowledgeBaseStats(kbStats.SourceCount, kbStats.ChunkCount))
+		// Legacy session rows: the knowledge.db session sweep was removed
+		// (vault-session-search D8); the vault is now the session store. Any
+		// `kind='session'` rows are pre-removal leftovers draining by TTL —
+		// surface them loudly with the reclaim command (design D4: report
+		// both the knowledge.db reclaim and the vault reindex backlog).
+		if kbStats.SessionSourceCount > 0 {
+			results = append(results, platform.CheckLegacySessions(kbStats.SessionSourceCount, "capy_cleanup purge_session"))
+		}
+	}
+
+	return results
 }
 
 // vaultChecks reports the vault's health for capy_doctor: disabled (opt-in key

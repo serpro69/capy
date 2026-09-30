@@ -1,6 +1,6 @@
 # Project database key resolution implementation plan
 
-> Status: In progress — Tasks 1–8 complete; Tasks 9–11 pending
+> Status: In progress — Tasks 1–9 complete; Tasks 10–11 pending
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Baseline: `d9e09c1`
@@ -132,6 +132,8 @@ Primary files: `cmd/capy/doctor.go`, `internal/server/tool_doctor.go`, `internal
 - Preserve actual opening errors and show correct guidance for key-file, dotenv, and environment sources. → verify: diagnostics contain expected source/path context but none of the synthetic key strings, assignment lines, or encryption DSNs.
 
 Keep stats-error propagation and general shutdown reporting follow-ups outside this slice as recorded in the verification report.
+
+**Completed 2026-09-30.** CLI doctor now uses the strict target loader and shared credential resolver. Invalid configuration produces a failed Config check without selecting a fallback knowledge path; credential failures produce a failed Knowledge credential check and skip database access. Runtime, FTS5, and vault diagnostics continue independently. Both doctors report the safe credential source separately from database authentication, preserving opening errors and the disabled-vault migration hint. MCP doctor uses the server's captured credential and skips store initialization for an empty snapshot. Regression tests cover all three sources, crossed inheritance, wrong-key content preservation, filesystem errors, absent databases, rejected credentials without marker/sidecar creation, and secret-free output. Full `make test`, focused normal/race tests, and targeted vet passed. Both isolated reviewers reported no findings; see the [review and validation record](.reviews/task-9-code-review-2026-09-30.md). No dependency or design change was needed. Tasks 10–11 remain pending.
 
 ## 10 Path inspection and rotation compatibility
 

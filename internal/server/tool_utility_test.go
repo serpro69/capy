@@ -336,6 +336,99 @@ func TestDoctor_FTS5Available(t *testing.T) {
 	assert.Contains(t, text, "[x] FTS5: available")
 }
 
+func TestDoctor_CapturedCredentialSources(t *testing.T) {
+	const fixtureKey = "doctor-fixture-passphrase-at-least-32-characters"
+	const otherKey = "doctor-other-passphrase-at-least-32-characters"
+	for _, kind := range []string{config.KeySourceFile, config.KeySourceDotenv, config.KeySourceEnvironment} {
+		t.Run(kind, func(t *testing.T) {
+			for _, state := range []string{"readable", "wrong_key", "open_error", "empty"} {
+				t.Run(state, func(t *testing.T) {
+					t.Setenv("CAPY_VAULT_KEY", "")
+					t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+					t.Setenv("XDG_DATA_HOME", t.TempDir())
+					project := t.TempDir()
+					cfg := config.DefaultConfig()
+					cfg.Store.Path = filepath.Join(project, "database", "knowledge.db")
+					var fixture *store.ContentStore
+					if state == "readable" || state == "wrong_key" {
+						fixture = store.NewContentStore(cfg.Store.Path, project, 0, 0, store.WithEncryptionKey(fixtureKey, "test fixture"))
+						t.Cleanup(func() { assert.NoError(t, fixture.Close()) })
+						_, err := fixture.Index("# Retained\n\nDoctor credential fixture.", "retained-marker", "", store.KindDurable)
+						require.NoError(t, err)
+						require.NoError(t, fixture.Close())
+					} else if state == "open_error" {
+						require.NoError(t, os.MkdirAll(cfg.Store.Path, 0o700))
+					}
+					key := fixtureKey
+					if state == "wrong_key" {
+						key = otherKey
+					} else if state == "empty" {
+						key = ""
+					}
+					source := config.KeySource{Kind: kind}
+					if kind == config.KeySourceFile {
+						source.Path = filepath.Join(project, "db.key")
+						cfg.Store.KeyFile = "db.key"
+					} else if kind == config.KeySourceDotenv {
+						source.Path = filepath.Join(project, ".env")
+					}
+					var opts []Option
+					if kind == config.KeySourceEnvironment {
+						t.Setenv("CAPY_DB_KEY", key) // exercise the default snapshot too
+					} else {
+						opts = append(opts, WithKnowledgeCredentials(key, source))
+					}
+					srv := NewServer(cfg, nil, executor.NewExecutor(project, 0), project, opts...)
+					t.Cleanup(srv.shutdown)
+					// New values must neither rescue a wrong/empty snapshot nor
+					// break a correct one. Source files need not remain readable.
+					changedKey := otherKey
+					if state == "wrong_key" || state == "empty" {
+						changedKey = fixtureKey
+					}
+					t.Setenv("CAPY_DB_KEY", changedKey)
+					if source.Path != "" {
+						require.NoError(t, os.Mkdir(source.Path, 0o700))
+					}
+					text := resultText(callDoctor(t, srv))
+					assert.Contains(t, text, "Config: loaded (db path: "+cfg.Store.Path+")")
+					assert.Contains(t, text, "[x] FTS5: available")
+					assert.Contains(t, text, "Runtimes:")
+					assert.Contains(t, text, "[-] Vault: disabled")
+					for _, secret := range []string{fixtureKey, otherKey, "CAPY_DB_KEY=", "cipher=", "_key=", "key="} {
+						assert.NotContains(t, text, secret)
+					}
+					if state == "empty" {
+						assert.Contains(t, text, "[ ] Knowledge credential: cannot select from "+source.String())
+						assert.Contains(t, text, "captured credential is empty")
+						assert.Contains(t, text, "Knowledge base: not checked (credential selection failed)")
+						assert.NoDirExists(t, filepath.Dir(cfg.Store.Path))
+					} else {
+						assert.Contains(t, text, "[x] Knowledge credential: selected from "+source.String()+" (database authentication checked separately)")
+						switch state {
+						case "readable":
+							assert.Contains(t, text, "[x] Knowledge base: 1 sources, 1 chunks")
+						case "wrong_key":
+							assert.Contains(t, text, "[-] Knowledge base: error reading stats (")
+							assert.Contains(t, text, "wrong passphrase or corrupted database (check "+source.String()+"): file is not a database")
+						case "open_error":
+							assert.Contains(t, text, "[-] Knowledge base: error reading stats (")
+							assert.Contains(t, text, "canary query failed: unable to open database file")
+						}
+					}
+					srv.shutdown()
+					if fixture != nil {
+						sources, err := fixture.ListSources()
+						require.NoError(t, err)
+						require.Len(t, sources, 1)
+						assert.Equal(t, "retained-marker", sources[0].Label)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestDoctor_FTS5AvailableWithKnowledgeBaseError(t *testing.T) {
 	const fixtureKey = "doctor-fixture-passphrase-at-least-32-characters"
 	const wrongKey = "doctor-wrong-passphrase-at-least-32-characters"
@@ -361,7 +454,7 @@ func TestDoctor_FTS5AvailableWithKnowledgeBaseError(t *testing.T) {
 		{
 			name:    "missing key",
 			key:     "",
-			wantErr: "CAPY_DB_KEY environment variable is required",
+			wantErr: "captured credential is empty",
 		},
 		{
 			name: "database path is a directory",
@@ -396,7 +489,16 @@ func TestDoctor_FTS5AvailableWithKnowledgeBaseError(t *testing.T) {
 			assert.False(t, r.IsError)
 			text := resultText(r)
 			assert.Contains(t, text, "[x] FTS5: available")
-			assert.Contains(t, text, "[-] Knowledge base: error reading stats ("+tt.wantErr)
+			if tt.key == "" {
+				assert.Contains(t, text, "[ ] Knowledge credential: cannot select from CAPY_DB_KEY")
+				assert.Contains(t, text, tt.wantErr)
+				assert.Contains(t, text, "[-] Knowledge base: not checked (credential selection failed)")
+				assert.NoFileExists(t, cfg.Store.Path)
+				assert.NoFileExists(t, filepath.Join(projectDir, ".project"))
+			} else {
+				assert.Contains(t, text, "[x] Knowledge credential: selected from CAPY_DB_KEY")
+				assert.Contains(t, text, "[-] Knowledge base: error reading stats ("+tt.wantErr)
+			}
 			assert.Contains(t, text, "[-] Vault: disabled")
 			assert.NotContains(t, text, "Knowledge base: not initialized")
 			assert.NotContains(t, text, "[x] Knowledge base:")
