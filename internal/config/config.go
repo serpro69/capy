@@ -16,6 +16,7 @@ type VaultConfig struct {
 // StoreConfig controls the FTS5 knowledge base.
 type StoreConfig struct {
 	Path           string        `toml:"path"`
+	KeyFile        string        `toml:"key_file"`         // literal passphrase file; relative to DBProjectDir
 	TitleWeight    float64       `toml:"title_weight"`     // BM25 title weight (default 2.0)
 	MaxSourceBytes int           `toml:"max_source_bytes"` // hard cap on total content per source (default 2 MB)
 	Cleanup        CleanupConfig `toml:"cleanup"`

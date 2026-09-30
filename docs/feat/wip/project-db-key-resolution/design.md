@@ -1,6 +1,6 @@
 # Project database key resolution
 
-> Status: Design agreed; implementation in progress — Tasks 1–2 complete
+> Status: Design agreed; implementation in progress — Tasks 1–3 complete
 > Created: 2026-09-30
 > Issue: [122](https://github.com/serpro69/capy/issues/122)
 > Companions: [Investigation](investigation.md), [Implementation](implementation.md), [Tasks](tasks.md)
@@ -14,7 +14,7 @@ A developer runs concurrent Codex sessions for projects with different encrypted
 
 How might we provide reliable project-key selection and diagnostics for these concurrent sessions while preserving environment-only usage, worktree behavior, vault isolation, and key rotation?
 
-The user confirmed this framing, the Go design profile, evaluation of three approaches, approach C below, isolated technical verification, and both the credential-selection and integration contracts. This document specifies the full intended behavior. Independent FTS5 diagnostics, captured store-key lifetime, and strict environment-only dbsize are implemented and verified in Tasks 1–2; project credential-file selection and integration remain pending. See [tasks](tasks.md) for current progress.
+The user confirmed this framing, the Go design profile, evaluation of three approaches, approach C below, isolated technical verification, and both the credential-selection and integration contracts. This document specifies the full intended behavior. Independent FTS5 diagnostics, captured store-key lifetime, and strict dbsize configuration and explicit key-file resolution are implemented and verified in Tasks 1–3. Dotenv selection and remaining command/server integration are pending. See [tasks](tasks.md) for current progress.
 
 ## Acceptance criteria
 
@@ -183,4 +183,4 @@ Approach C was selected by the user. Its main failure risks are fallback after m
 
 The [implementation plan](implementation.md#verification-matrix) defines the regression matrix and observable checks. Run FTS5-tagged tests with synthetic keys and isolated config/data directories. Keep real key values out of test output and captured MCP transcripts. Scope benchmarks to actual algorithm changes; this design changes credential plumbing, not search/indexing algorithms.
 
-The [design review](.reviews/design-review-2026-09-30.md) has been corroborated finding by finding and the valid issues corrected in these documents; see the [reconciliation](.reviews/design-review-reconciliation-2026-09-30.md). Tasks 1 and 2 have separate implementation review and validation records: [Task 1](.reviews/task-1-code-review-2026-09-30.md), [Task 2](.reviews/task-2-code-review-2026-09-30.md). The remaining tasks are pending; these reviews do not establish that the full proposed credential behavior has been implemented or tested.
+The [design review](.reviews/design-review-2026-09-30.md) has been corroborated finding by finding and the valid issues corrected in these documents; see the [reconciliation](.reviews/design-review-reconciliation-2026-09-30.md). Tasks 1–3 have separate implementation review and validation records: [Task 1](.reviews/task-1-code-review-2026-09-30.md), [Task 2](.reviews/task-2-code-review-2026-09-30.md), [Task 3](.reviews/task-3-code-review-2026-09-30.md). The remaining tasks are pending; these reviews do not establish that the full proposed credential behavior has been implemented or tested.
