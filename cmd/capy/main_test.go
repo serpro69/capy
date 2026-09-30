@@ -146,28 +146,31 @@ func TestCleanupSubcommand_KindInvalid(t *testing.T) {
 }
 
 func TestCheckpointSubcommand_NoDB(t *testing.T) {
-	dir := t.TempDir()
+	dir, _ := newCLIProject(t)
+	t.Setenv("CAPY_DB_KEY", "")
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, ".capy.toml"),
-		[]byte("[store]\npath = \"test.db\"\n"),
+		[]byte("[store]\npath = 'absent/test.db'\nkey_file = 'missing.key'\n"),
 		0o644,
 	))
 	stdout, _, code := capy(t, "checkpoint", "--project-dir", dir)
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout, "no knowledge base")
+	assert.NoDirExists(t, filepath.Join(dir, "absent"))
+	assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
 }
 
 func TestCheckpointSubcommand_WithDB(t *testing.T) {
 	const testKey = "test-passphrase-at-least-32-characters-long!!"
 	t.Setenv("CAPY_DB_KEY", testKey)
 
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
+	dir, dbPath := newCLIProject(t)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, ".capy.toml"),
-		[]byte("[store]\npath = \"test.db\"\n"),
+		[]byte("[store]\npath = 'test.db'\nkey_file = 'db.key'\n"),
 		0o644,
 	))
+	writeCLIKeyFixture(t, filepath.Join(dir, "db.key"), testKey)
 
 	// Create an encrypted WAL-mode DB through the store API.
 	st := store.NewContentStore(dbPath, dir, 0, 0)
@@ -175,6 +178,7 @@ func TestCheckpointSubcommand_WithDB(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, st.Close())
 
+	t.Setenv("CAPY_DB_KEY", projectFileTestKey) // unrelated inherited credential
 	stdout, _, code := capy(t, "checkpoint", "--project-dir", dir)
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout, "WAL flushed")
@@ -189,7 +193,7 @@ func TestCheckpointSubcommand_WithDB(t *testing.T) {
 	}
 
 	// Data must survive the checkpoint.
-	st2 := store.NewContentStore(dbPath, dir, 0, 0)
+	st2 := store.NewContentStore(dbPath, dir, 0, 0, store.WithEncryptionKey(testKey, "synthetic fixture"))
 	defer st2.Close()
 	sources, err := st2.ListSources()
 	require.NoError(t, err)
@@ -198,17 +202,81 @@ func TestCheckpointSubcommand_WithDB(t *testing.T) {
 }
 
 func TestCheckpointSubcommand_BadConfig(t *testing.T) {
-	dir := t.TempDir()
+	dir, _ := newCLIProject(t)
+	t.Setenv("CAPY_DB_KEY", "")
 	// Write invalid TOML
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, ".capy.toml"),
 		[]byte("this is not [valid toml\n"),
 		0o644,
 	))
-	// Should still succeed (falls back to defaults) but warn on stderr
-	_, stderr, code := capy(t, "checkpoint", "--project-dir", dir)
-	assert.Equal(t, 0, code)
-	assert.Contains(t, stderr, "config load failed", "should warn about bad config on stderr")
+	stdout, stderr, code := capy(t, "checkpoint", "--project-dir", dir)
+	assert.NotZero(t, code)
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr, "loading configuration")
+	assert.NotContains(t, stderr, "resolving knowledge credential")
+	assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+	assert.NoFileExists(t, filepath.Join(dir, ".project"))
+}
+
+func TestCheckpointSubcommand_StatError(t *testing.T) {
+	dir, parent := newCLIProject(t)
+	writeCLIKeyFixture(t, parent, "not a directory")
+	writeCLIKeyFixture(t, filepath.Join(dir, ".capy.toml"), "[store]\npath = 'test.db/knowledge.db'\nkey_file = 'missing.key'\n")
+	_, statErr := os.Stat(filepath.Join(parent, "knowledge.db"))
+	require.Error(t, statErr)
+	require.False(t, os.IsNotExist(statErr))
+
+	stdout, stderr, code := capy(t, "checkpoint", "--project-dir", dir)
+	assert.NotZero(t, code)
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr, "accessing knowledge database")
+	assert.Contains(t, stderr, statErr.Error())
+	assert.NotContains(t, stderr, "resolving knowledge credential")
+	assert.NoFileExists(t, filepath.Join(dir, ".project"))
+}
+
+func TestCheckpointSubcommand_BusyWithProjectKey(t *testing.T) {
+	dir, dbPath := newCLIProject(t)
+	writeCLIKeyFixture(t, filepath.Join(dir, ".env"), "CAPY_DB_KEY="+projectFileTestKey+"\n")
+	st := seedKeyResolutionDB(t, dbPath, dir)
+
+	// Hold a read snapshot, then append a new WAL frame. TRUNCATE must fail
+	// until this reader releases its snapshot; no sleeps or timing races.
+	db, err := sql.Open("sqlite3", store.EncryptedDSN(dbPath, projectFileTestKey)+"&_journal_mode=WAL")
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, db.Close()) })
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	defer tx.Rollback()
+	var count int
+	require.NoError(t, tx.QueryRow("SELECT count(*) FROM sources").Scan(&count))
+	require.Equal(t, 1, count)
+	_, err = st.Index("# Pending\n\nContent waiting in WAL.", "pending-marker", "", store.KindDurable)
+	require.NoError(t, err)
+
+	stdout, stderr, code := capy(t, "checkpoint", "--project-dir", dir)
+	assert.NotZero(t, code)
+	assert.Contains(t, stderr, "checkpoint incomplete")
+	assert.Contains(t, stderr, "pages busy")
+	assert.NotContains(t, stdout, "safe to commit")
+	assert.NotContains(t, stdout+stderr, projectFileTestKey)
+	assert.NotContains(t, stdout+stderr, cliTestKey)
+	assert.NotContains(t, stdout+stderr, "cipher=")
+	info, err := os.Stat(dbPath + "-wal")
+	require.NoError(t, err)
+	assert.Positive(t, info.Size(), "failed checkpoint must retain pending WAL data")
+
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, db.Close())
+	require.NoError(t, st.Close())
+	stdout, stderr, code = capy(t, "checkpoint", "--project-dir", dir)
+	require.Zero(t, code, stderr)
+	assert.Contains(t, stdout, "safe to commit")
+	sources, err := st.ListSources()
+	require.NoError(t, err)
+	require.Len(t, sources, 2)
+	assert.ElementsMatch(t, []string{"project-B-marker", "pending-marker"}, []string{sources[0].Label, sources[1].Label})
 }
 
 func TestDefaultCommandIsServe(t *testing.T) {

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/serpro69/capy/internal/config"
-	"github.com/serpro69/capy/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -23,32 +21,28 @@ main DB on branch switches, corrupting the database.
 Capy must not be running when you checkpoint — if another process
 has the DB open, the WAL cannot be fully truncated.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectDir, _ := cmd.Flags().GetString("project-dir")
-			if projectDir == "" {
-				projectDir = config.DetectProjectRoot()
-			}
-
-			cfg, err := config.Load(projectDir)
+			target, err := loadKnowledgeTarget(cmd)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "capy checkpoint: warning: config load failed (%v), using defaults\n", err)
+				return err
 			}
-			if cfg == nil {
-				cfg = config.DefaultConfig()
-			}
-
-			dbPath := cfg.ResolveDBPath(projectDir)
+			dbPath := target.dbPath
 
 			// Check the DB file exists before trying to open it.
-			if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-				fmt.Printf("capy checkpoint: no knowledge base at %s\n", dbPath)
-				return nil
+			if _, err := os.Stat(dbPath); err != nil {
+				if os.IsNotExist(err) {
+					fmt.Printf("capy checkpoint: no knowledge base at %s\n", dbPath)
+					return nil
+				}
+				return fmt.Errorf("accessing knowledge database %q: %w", dbPath, err)
 			}
 
-			// Checkpoint directly via a single SQLite connection.
-			// We don't use ContentStore here because:
-			// 1. NewContentStore is lazy — Close() would no-op on an unopened store
-			// 2. database/sql's connection pool can interfere with checkpoint
-			st := store.NewContentStore(dbPath, cfg.DBProjectDir(projectDir), 0, 0)
+			key, source, err := resolveKnowledgeKey(target)
+			if err != nil {
+				return err
+			}
+			// Checkpoint uses a dedicated connection with the captured key;
+			// the store's lazy pool stays unopened so it cannot hold the WAL.
+			st := newKnowledgeStore(target, key, source.String())
 			if err := st.Checkpoint(); err != nil {
 				return fmt.Errorf("checkpoint failed: %w", err)
 			}
