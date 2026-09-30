@@ -125,17 +125,18 @@
 
 ## Task 8: Apply project credentials to direct cleanup and checkpoint
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 4
 - **Size:** M
 - **Can run in parallel with:** Tasks 5, 6
 - **Docs:** [Direct maintenance integration](implementation.md#8-direct-maintenance-commands)
+- **Verification:** Full `make test`, focused FTS5 maintenance tests with and without `-race`, and targeted `go vet` passed; [isolated review and validation](.reviews/task-8-code-review-2026-09-30.md).
 
 ### Subtasks
 
-- [ ] 8.1 Integrate shared target/key helpers into `cleanup.go` and `checkpoint.go` → verify: B credentials override inherited A for dry-run, reclamation, and checkpoint without changing selector behavior.
-- [ ] 8.2 Preserve missing-DB checkpoint no-op, surface other stat failures, and update `TestCheckpointSubcommand_BadConfig` to explicit failure → verify: malformed config creates no fallback DB/marker.
-- [ ] 8.3 Exercise direct checkpoint success/failure with isolated credentials → verify: busy/error cases remain nonzero; generated pre-commit integration is covered separately by dependent Task 7.
+- [x] 8.1 Integrate shared target/key helpers into `cleanup.go` and `checkpoint.go` → verify: B credentials override inherited A for dry-run, reclamation, and checkpoint without changing selector behavior.
+- [x] 8.2 Preserve missing-DB checkpoint no-op, surface other stat failures, and update `TestCheckpointSubcommand_BadConfig` to explicit failure → verify: malformed config creates no fallback DB/marker.
+- [x] 8.3 Exercise direct checkpoint success/failure with isolated credentials → verify: busy/error cases remain nonzero; generated pre-commit integration is covered separately by dependent Task 7.
 
 ## Task 9: Explain credential selection in CLI and MCP doctor
 

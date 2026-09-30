@@ -1,6 +1,6 @@
 # Project database key resolution implementation plan
 
-> Status: In progress — Tasks 1–6 complete; Tasks 7–11 pending
+> Status: In progress — Tasks 1–6 and 8 complete; Tasks 7, 9–11 pending
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Baseline: `d9e09c1`
@@ -118,6 +118,8 @@ Primary files: `cmd/capy/cleanup.go`, `cmd/capy/checkpoint.go`, `cmd/capy/main_t
 - Exercise direct cleanup/checkpoint with local credentials and deliberately failing checkpoint fixtures, using an isolated CLI environment. → verify: genuine checkpoint/busy failures retain nonzero status before wrapper integration.
 
 This slice depends only on credential selection (slice 4), so it can run alongside the direct MCP work. Generated pre-commit integration belongs to slice 7, which depends on this slice; no partial task completion is needed to relax the old serialization. Reuse existing checkpoint tests. Do not broaden this slice into a redesign of close-error reporting.
+
+**Completed 2026-09-30.** Cleanup and checkpoint now use the shared strict target loader and credential resolver. Cleanup retains its selectors, dry-run behavior, and reclamation flow; checkpoint checks for an absent database before requiring credentials and returns other stat errors explicitly. Regression tests exercise key-file/dotenv credentials under conflicting inheritance, actual cleanup and retained content, invalid configuration without fallback creation, missing/invalid/wrong local credentials, and a live read transaction that makes checkpoint fail with busy pages. The original malformed-config fixture now requires failure. Full `make test`, focused normal/race tests, and targeted vet passed; both isolated reviewers reported no findings. See the [review and validation record](.reviews/task-8-code-review-2026-09-30.md). No design deviation or dependency change was needed. Task 7 can now integrate generated wrappers and the pre-commit path.
 
 ## 9 Credential diagnostics on both surfaces
 

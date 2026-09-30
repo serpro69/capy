@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -14,14 +13,9 @@ func newCleanupCmd() *cobra.Command {
 		Use:   "cleanup",
 		Short: "Remove stale data from the knowledge base",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectDir, _ := cmd.Flags().GetString("project-dir")
-			if projectDir == "" {
-				projectDir = config.DetectProjectRoot()
-			}
-
-			cfg, _ := config.Load(projectDir)
-			if cfg == nil {
-				cfg = config.DefaultConfig()
+			target, err := loadKnowledgeTarget(cmd)
+			if err != nil {
+				return err
 			}
 
 			force, _ := cmd.Flags().GetBool("force")
@@ -42,8 +36,11 @@ func newCleanupCmd() *cobra.Command {
 			optimize, _ := cmd.Flags().GetBool("optimize")
 			reclaim := optimize || vacuum
 
-			dbPath := cfg.ResolveDBPath(projectDir)
-			st := store.NewContentStore(dbPath, cfg.DBProjectDir(projectDir), 0, cfg.Store.MaxSourceBytes)
+			key, source, err := resolveKnowledgeKey(target)
+			if err != nil {
+				return err
+			}
+			st := newKnowledgeStore(target, key, source.String())
 			defer st.Close()
 
 			// Standalone reclamation: --optimize / --vacuum with no eviction
@@ -77,10 +74,9 @@ func newCleanupCmd() *cobra.Command {
 				return finishReclaim(st, dryRun, optimize, vacuum)
 			}
 
-			ephemeralTTL := time.Duration(cfg.Store.Cleanup.EphemeralTTLHours) * time.Hour
-			sessionTTL := time.Duration(cfg.Store.Cleanup.SessionTTLDays) * 24 * time.Hour
+			ephemeralTTL := time.Duration(target.cfg.Store.Cleanup.EphemeralTTLHours) * time.Hour
+			sessionTTL := time.Duration(target.cfg.Store.Cleanup.SessionTTLDays) * 24 * time.Hour
 			var pruned []store.SourceInfo
-			var err error
 			switch kind {
 			case "ephemeral":
 				pruned, err = st.PurgeEphemeral(dryRun, ephemeralTTL)

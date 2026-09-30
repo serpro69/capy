@@ -33,6 +33,160 @@ func newCLIProject(t *testing.T) (dir, dbPath string) {
 	return dir, filepath.Join(dir, "test.db")
 }
 
+func TestCleanupSubcommand_ProjectCredentials(t *testing.T) {
+	for _, source := range []string{"key_file", "dotenv"} {
+		t.Run(source, func(t *testing.T) {
+			for _, tc := range []struct {
+				name    string
+				args    []string
+				want    string
+				removed bool
+			}{
+				{
+					name: "source_dry_run",
+					args: []string{"--source", "project-B-marker", "--optimize"},
+					want: `would remove source "project-B-marker"`,
+				},
+				{
+					name: "session_selector",
+					args: []string{"--kind", "session", "--force"},
+					want: "no evictable sources found",
+				},
+				{name: "vacuum", args: []string{"--vacuum"}, want: "vacuum complete"},
+				{name: "optimize", args: []string{"--optimize"}, want: "optimize complete"},
+				{
+					name:    "force_and_reclaim",
+					args:    []string{"--source", "project-B-marker", "--force", "--optimize"},
+					want:    "optimize complete",
+					removed: true,
+				},
+				{
+					name:    "explicit_eviction",
+					args:    []string{"--source", "project-B-marker", "--dry-run=false", "--vacuum"},
+					want:    "vacuum complete",
+					removed: true,
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					dir, dbPath := newCLIProject(t) // inherited A; local credential and database use B
+					if source == "key_file" {
+						writeCLIKeyFixture(t, filepath.Join(dir, ".capy.toml"), "[store]\npath = 'test.db'\nkey_file = 'db.key'\n")
+						writeCLIKeyFixture(t, filepath.Join(dir, "db.key"), projectFileTestKey+"\n")
+					} else {
+						writeCLIKeyFixture(t, filepath.Join(dir, ".env"), "CAPY_DB_KEY="+projectFileTestKey+"\n")
+					}
+					st := seedKeyResolutionDB(t, dbPath, dir)
+					_, err := st.Index("# Kept\n\nSurvives targeted cleanup.", "kept-marker", "", store.KindDurable)
+					require.NoError(t, err)
+					require.NoError(t, st.Close())
+
+					args := append([]string{"cleanup", "--project-dir", dir}, tc.args...)
+					stdout, stderr, code := capy(t, args...)
+					require.Zero(t, code, stderr)
+					assert.Contains(t, stdout, tc.want)
+					if tc.name == "source_dry_run" {
+						assert.Contains(t, stdout, "--optimize skipped (dry run)")
+						assert.NotContains(t, stdout, "optimize complete")
+					}
+					if tc.removed {
+						assert.Contains(t, stdout, `removed source "project-B-marker"`)
+					}
+					assert.NotContains(t, stdout+stderr, projectFileTestKey)
+					assert.NotContains(t, stdout+stderr, cliTestKey)
+					assert.NotContains(t, stdout+stderr, "cipher=")
+
+					// Reopen with B to verify both persistence and selector behavior.
+					sources, err := st.ListSources()
+					require.NoError(t, err)
+					labels := make([]string, 0, len(sources))
+					for _, s := range sources {
+						labels = append(labels, s.Label)
+					}
+					wantLabels := []string{"kept-marker"}
+					if !tc.removed {
+						wantLabels = append(wantLabels, "project-B-marker")
+					}
+					assert.ElementsMatch(t, wantLabels, labels)
+					assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+				})
+			}
+		})
+	}
+}
+
+func TestCleanupSubcommand_InvalidConfig(t *testing.T) {
+	dir, dbPath := newCLIProject(t)
+	t.Setenv("CAPY_DB_KEY", "")
+	writeCLIKeyFixture(t, filepath.Join(dir, ".capy.toml"), "this is not [valid toml\n")
+	stdout, stderr, code := capy(t, "cleanup", "--force", "--project-dir", dir)
+	assert.NotZero(t, code)
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr, "loading configuration")
+	assert.NotContains(t, stderr, "resolving knowledge credential")
+	assert.NoFileExists(t, dbPath)
+	assert.NoFileExists(t, filepath.Join(dir, ".project"))
+	assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+}
+
+func TestCleanupSubcommand_CredentialFailureBeforeCreation(t *testing.T) {
+	dir, _ := newCLIProject(t)
+	writeCLIKeyFixture(t, filepath.Join(dir, ".capy.toml"), "[store]\npath = 'absent/knowledge.db'\nkey_file = 'missing.key'\n")
+	stdout, stderr, code := capy(t, "cleanup", "--optimize", "--project-dir", dir)
+	assert.NotZero(t, code)
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr, "resolving knowledge credential")
+	assert.Contains(t, stderr, filepath.Join(dir, "missing.key"))
+	assert.NotContains(t, stderr, cliTestKey)
+	assert.NoDirExists(t, filepath.Join(dir, "absent"))
+	assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+}
+
+func TestMaintenanceSubcommands_CredentialFailuresPreserveData(t *testing.T) {
+	for _, command := range []string{"cleanup", "checkpoint"} {
+		t.Run(command, func(t *testing.T) {
+			for _, mode := range []string{"missing_file", "invalid_dotenv", "wrong_key"} {
+				t.Run(mode, func(t *testing.T) {
+					dir, dbPath := newCLIProject(t)
+					st := seedKeyResolutionDB(t, dbPath, dir)
+					before, err := os.ReadFile(dbPath)
+					require.NoError(t, err)
+					t.Setenv("CAPY_DB_KEY", projectFileTestKey) // correct inheritance must not rescue local failures
+					wantError := "resolving knowledge credential"
+					switch mode {
+					case "missing_file":
+						writeCLIKeyFixture(t, filepath.Join(dir, ".capy.toml"), "[store]\npath = 'test.db'\nkey_file = 'missing.key'\n")
+					case "invalid_dotenv":
+						writeCLIKeyFixture(t, filepath.Join(dir, ".env"), "CAPY_DB_KEY="+projectFileTestKey+"\necho unsupported\n")
+					case "wrong_key":
+						writeCLIKeyFixture(t, filepath.Join(dir, ".capy.toml"), "[store]\npath = 'test.db'\nkey_file = 'db.key'\n")
+						writeCLIKeyFixture(t, filepath.Join(dir, "db.key"), cliTestKey)
+						wantError = command + " failed"
+					}
+					args := []string{command, "--project-dir", dir}
+					if command == "cleanup" {
+						args = append(args, "--source", "project-B-marker", "--force")
+					}
+					stdout, stderr, code := capy(t, args...)
+					assert.NotZero(t, code)
+					assert.Empty(t, stdout)
+					assert.Contains(t, stderr, wantError)
+					assert.NotContains(t, stdout+stderr, projectFileTestKey)
+					assert.NotContains(t, stdout+stderr, cliTestKey)
+					assert.NotContains(t, stdout+stderr, "cipher=")
+					after, err := os.ReadFile(dbPath)
+					require.NoError(t, err)
+					assert.Equal(t, before, after, "failed maintenance must not replace or modify encrypted data")
+					sources, err := st.ListSources()
+					require.NoError(t, err)
+					require.Len(t, sources, 1)
+					assert.Equal(t, "project-B-marker", sources[0].Label)
+					assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+				})
+			}
+		})
+	}
+}
+
 // ─── cleanup --optimize / --vacuum (issue #82) ─────────────────────────────────
 
 func TestCleanupSubcommand_OptimizeStandalone(t *testing.T) {
