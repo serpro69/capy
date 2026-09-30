@@ -127,9 +127,37 @@ SHA-256 hash of content stored per source. On re-index with same label:
 ### Encryption
 
 - Mandatory at rest via sqlite3mc (SQLCipher v4 compatible)
-- Key from `CAPY_DB_KEY` environment variable
+- Knowledge credentials selected in Go from project files or the launch environment ([ADR-032](adr/032-project-db-key-resolution.md))
 - DSN uses URI-parameter encryption: `file:path?cipher=sqlcipher&legacy=4&key=<escaped>`
-- PRAGMA rekey incompatible with WAL mode — encryption path uses DELETE journal mode (ADR-020)
+- Pool closed before the dedicated final WAL checkpoint ([ADR-016](adr/016-wal-mode-and-checkpoint-strategy.md))
+- PRAGMA rekey incompatible with WAL mode — initial plaintext encryption switches to DELETE journal mode ([ADR-020](adr/020-wal-mode-incompatible-with-pragma-rekey.md)); encrypted key rotation uses `sqliteutil.Rekey`'s backup-copy, swap and verification path
+
+### Knowledge credential flow
+
+The command layer separates target selection, credential resolution, and lazy store construction. `loadKnowledgeTarget` in `cmd/capy/knowledge.go` selects the project, strictly loads its configuration, and computes the database path and owner. `Config.ResolveStoreKey` in `internal/config/keys.go` returns the secret separately from a safe `KeySource` containing only kind and source path. It neither opens the database nor changes the process environment.
+
+```text
+selected project + merged config
+  -> DBProjectDir / ResolveDBPath
+  -> ResolveStoreKey: key_file -> owner dotenv -> distinct main dotenv -> environment
+  -> serve: WithKnowledgeCredentials -> lazy getStore -> WithEncryptionKey
+     CLI:   newKnowledgeStore -> WithEncryptionKey
+  -> ContentStore captured key -> pool, recovery, maintenance, checkpoint and close
+```
+
+For relative `store.path`, a linked worktree's database owner is the main checkout, so its own dotenv is ignored. Absolute/XDG modes retain the selected worktree as owner and try its dotenv before a distinct main-checkout fallback. Configuration remains that of the selected project; database symlinks do not redefine ownership. Relative `store.key_file` paths, including globally configured ones, are anchored to the owner without `~` or variable expansion. Omission inherits a lower config layer; explicit `key_file = ""` clears it.
+
+Key files must resolve to regular files and contain at most 4,096 raw bytes, including any terminal LF/CRLF. One final line ending is removed; other bytes are literal. Empty values, NULs, and remaining line endings fail. Optional dotenv files share regular-file admission with a 1 MiB bound. Missing dotenv or admitted content without an exact knowledge-key declaration permits fallback; access errors and invalid declarations do not. A valid explicit key file bypasses dotenv parsing.
+
+**Whole-file dotenv compatibility break:** once a `CAPY_DB_KEY` declaration candidate exists, `dotenv.go` validates the entire file as blank lines, comments, and single-line assignments. Unsupported syntax before or after the declaration, duplicates, and empty values fail even under a correct inherited key. It executes no shell code and discards other variables. The [README format and migration guide](../README.md#project-credentials) explains literal quoting and moving an application dotenv credential to `store.key_file`.
+
+`Server` and `ContentStore` capture their default environment key at construction; explicit options override that snapshot, including an empty value. Serve resolves once and supplies the snapshot explicitly. Every store connection uses it, including corruption recovery, rebuild/vacuum, standalone checkpoint, close, and reopening the same store after close. Empty keys fail under the store mutex before mkdir, marker writes, or database open; the dedicated connection path checks independently. A wrong nonempty key preserves the encrypted database and never triggers credential fallback. Startup preflight checks key presence and plaintext headers; only actual database access authenticates the key. Changing a file or environment requires a new instance.
+
+`serve`, `dbsize`, `cleanup`, `checkpoint`, and CLI doctor share resolution. Missing-database checkpoint is a keyless no-op. `which` strictly loads the target without credentials. CLI doctor reports configuration/resolution errors, skips dependent knowledge checks, and continues independent checks without creating a missing database. Both doctors probe FTS5 in memory and distinguish safe source selection from database authentication. MCP doctor uses its captured source and can initialize an empty store lazily. Diagnostics omit secrets, assignment text, and DSNs.
+
+Wrappers only discover and dispatch the binary; they never source dotenv. Claude hook events keep zero-exit behavior without a knowledge credential, while Git checkpoint failures abort commits. Executor/security/session scope stays at the selected working project; the knowledge resolver exports no key. The vault still requires `CAPY_VAULT_KEY` in the actual launch environment. Forwarding passes an existing value; it cannot load a missing vault key. Both doctors explain the migration when the vault is disabled. See [upgrade and rollback](../README.md#upgrade-and-credential-migration).
+
+`capy encrypt` strictly loads the target but bypasses normal-access credential resolution: it prompts for the old key and takes the new key from the environment or a confirmed prompt. Operators must stop all attached processes, rotate, update any project credential, then restart. The command does not enforce process quiescence, rewrite credential files, or alter vault credentials.
 
 ## Hook System
 
@@ -850,7 +878,7 @@ Three-level precedence (lowest to highest):
 2. `.capy/config.toml` (project)
 3. `.capy.toml` (project root)
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full config reference.
+See [CONTRIBUTING.md](../CONTRIBUTING.md#configuration-reference) for the full config reference, including `store.key_file`. Knowledge commands reject invalid configuration instead of falling back to a default target; independent doctor checks still run.
 
 **DB path resolution** (`config.ResolveDBPath`): an absolute `store.path` is used
 verbatim; a relative `store.path` is resolved against the project directory; an
@@ -915,4 +943,4 @@ Quality benchmarks skip under `go test ./...` (gated by `CAPY_BENCH_RESULTS` env
 
 ## ADRs
 
-All Architecture Decision Records are in [docs/adr/](docs/adr/). See the directory listing for the complete set.
+All Architecture Decision Records are in [docs/adr/](adr/). See the directory listing for the complete set.

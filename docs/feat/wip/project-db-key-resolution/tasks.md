@@ -3,7 +3,8 @@
 > Design: [design.md](design.md)
 > Implementation: [implementation.md](implementation.md)
 > Investigation: [investigation.md](investigation.md)
-> Status: in-progress
+> Status: done
+> Completed: 2026-09-30
 > Created: 2026-09-30
 > Not Doing: Codex daemon changes, vault key management, shell dotenv execution, secret-manager integration, key provisioning, database-format changes, storage-identity redesign, general doctor integrity audit, shutdown-error overhaul
 > Design review: findings corroborated and corrected; see [reconciliation](.reviews/design-review-reconciliation-2026-09-30.md)
@@ -172,19 +173,20 @@
 
 ## Task 11: Verify the complete feature and update durable documentation
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 - **Size:** M
 - **Can run in parallel with:** —
 - **Docs:** [Final verification](implementation.md#11-final-verification-and-durable-documentation), [Matrix](implementation.md#verification-matrix)
+- **Verification:** Full `make test` and `make test-race`, targeted vet, 176 admission/artifact checks without skips, and the strengthened Git-root MCP group normally and with `-race` passed. Independent code/spec reviews approved the coverage fix; see the [final verification and review record](.reviews/task-11-verification-2026-09-30.md) for scope, evidence limits, and the separate pre-existing lifecycle follow-up.
 
 ### Subtasks
 
-- [ ] 11.1 Use `kk:test` for the regression matrix, `make test`, and `make test-race` with FTS5 and isolated synthetic keys → verify: all cases, including migration, bounded input, and empty-key side effects, pass without weakened assertions or real data.
-- [ ] 11.2 Use `kk:document` for README, architecture, root AGENTS, the next credential-policy ADR, and ADR-019's superseded policy → verify: whole-file dotenv break, vault launch-environment migration, file limits, linked-worktree precedence, rotation preconditions, and rollback steps are explicit and consistent.
-- [ ] 11.3 Run `kk:review-code` with Go input → verify: findings are fixed or recorded durably with reasons and concrete next steps.
-- [ ] 11.4 Run `kk:review-spec` over the implementation and feature directory → verify: design, plan, and runtime behavior agree.
-- [ ] 11.5 Check generated-artifact guards and final repository status; update feature/task status only after verification → verify: no credentials, synthetic DBs, or temporary fixtures are committed.
+- [x] 11.1 Use `kk:test` for the regression matrix, `make test`, and `make test-race` with FTS5 and isolated synthetic keys → verify: all cases, including migration, bounded input, and empty-key side effects, pass without weakened assertions or real data.
+- [x] 11.2 Use `kk:document` for README, architecture, root AGENTS, the next credential-policy ADR, and ADR-019's superseded policy → verify: whole-file dotenv break, vault launch-environment migration, file limits, linked-worktree precedence, rotation preconditions, and rollback steps are explicit and consistent.
+- [x] 11.3 Run `kk:review-code` with Go input → verify: findings are fixed or recorded durably with reasons and concrete next steps.
+- [x] 11.4 Run `kk:review-spec` over the implementation and feature directory → verify: design, plan, and runtime behavior agree.
+- [x] 11.5 Check generated-artifact guards and final repository status; update feature/task status only after verification → verify: no credentials, synthetic DBs, or temporary fixtures are committed.
 
 ## Dependency Graph
 

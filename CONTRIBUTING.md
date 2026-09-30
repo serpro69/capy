@@ -26,10 +26,11 @@ This produces a `./capy` binary. The `-tags fts5` build tag is handled by the Ma
 
 ### Verify
 
-Tests require the `CAPY_DB_KEY` environment variable (any non-empty string works for tests):
+Tests require synthetic `CAPY_DB_KEY` and `CAPY_VAULT_KEY` environment values (any non-empty strings work):
 
 ```bash
 export CAPY_DB_KEY=test-key-for-development
+export CAPY_VAULT_KEY=test-key
 
 make test       # run all tests
 make vet        # static analysis
@@ -69,10 +70,11 @@ For the full architecture, see [docs/architecture.md](docs/architecture.md).
 All tests require:
 
 1. The `fts5` build tag (handled by the Makefile)
-2. The `CAPY_DB_KEY` environment variable set to any non-empty string
+2. Both `CAPY_DB_KEY` and `CAPY_VAULT_KEY` set to non-empty synthetic values
 
 ```bash
 export CAPY_DB_KEY=test-key-for-development       # set once per shell session
+export CAPY_VAULT_KEY=test-key
 
 make test                                         # all tests
 make test-race                                    # with race detector
@@ -84,6 +86,9 @@ go test -tags fts5 -count=1 -v ./internal/hook/...  # verbose
 Top gotchas:
 - Without `-tags fts5` you'll get cryptic `no such module: fts5` errors from SQLite.
 - Without `CAPY_DB_KEY` you'll get `CAPY_DB_KEY environment variable is required` errors from store tests.
+- Credential tests must use temporary project/config/data/vault paths. Never use real credential files or databases. For an isolated full-suite run, use a temporary child home, clear inherited project and Claude/Codex discovery overrides, and preserve Go cache/module paths explicitly. Do not set one shared `CLAUDE_CONFIG_DIR`: existing fixtures set their own home or discovery roots.
+
+CI runs FTS5-tagged tests with both synthetic keys and the race detector; see [.github/workflows/ci.yml](.github/workflows/ci.yml). Credential resolution changes do not alter retrieval algorithms and do not require quality benchmarks unless search, indexing, chunking, or executor behavior also changes.
 
 ### Coverage
 
@@ -251,11 +256,13 @@ To iterate: rebuild with `make build`, then restart Claude Code (the MCP server 
 
 ### Testing the MCP Server Directly
 
-The MCP server uses stdio (JSON-RPC over stdin/stdout). The integration tests cover this path:
+The MCP server uses stdio (JSON-RPC over stdin/stdout). CLI fixtures launch a candidate binary and verify actual initialize/index/search/doctor/shutdown/reopen round trips, concurrent projects, project credentials, and generated wrappers:
 
 ```bash
-go test -tags fts5 -count=1 -v -run TestIntegration ./internal/server/...
+go test -tags fts5 -count=1 -v -run 'TestMCP|TestGenerated' ./cmd/capy
 ```
+
+The race detector instruments these test processes; the subprocess fixture builds an ordinary FTS5 candidate. In-process store/server tests exercise captured credentials under `-race`. Handler integration tests remain in `internal/server/integration_test.go`.
 
 ## Development Workflow
 
@@ -285,6 +292,8 @@ go test -tags fts5 -count=1 -v -run TestIntegration ./internal/server/...
 **SQLite WAL checkpoint** (see ADR-015, ADR-016, ADR-019): The knowledge DB uses WAL mode with mandatory encryption (sqlite3mc, SQLCipher v4 compat). On `Close()`, the WAL must be flushed into the main `.db` file — otherwise git operations corrupt the database. The checkpoint requires exclusive WAL access, which means the `database/sql` connection pool must be closed *before* checkpointing. `Close()` handles this by: (1) closing statements, (2) closing the pool, (3) opening a fresh single connection for `PRAGMA wal_checkpoint(TRUNCATE)`.
 
 **WAL/rekey incompatibility** (see ADR-020): sqlite3mc does not support `PRAGMA rekey` in WAL journal mode. `capy encrypt`'s `encryptPlain` path must switch to DELETE journal mode before rekeying.
+
+**Knowledge credential lifetime** (see [ADR-032](docs/adr/032-project-db-key-resolution.md)): resolve the target and credential before constructing a store. Use `WithKnowledgeCredentials` / `WithEncryptionKey` to inject the selected secret and safe source; never export it to the environment. All pool, recovery, and maintenance connections must use the captured key. An explicitly empty key overrides inheritance and fails before database-directory or marker creation. Rotation keeps its separate old/new-key inputs.
 
 **Security checks**: Bash deny patterns are loaded once at server startup. The `matchesAnyBashPattern` function uses cached regexes (`sync.Map`). Shell-escape patterns for non-shell languages are compiled once in `init()`.
 
@@ -341,6 +350,7 @@ capy uses TOML configuration with three-level precedence (lowest to highest):
 ```toml
 [store]
 # path = ".capy/knowledge.db"       # optional override; default: ~/.local/share/capy/<project-hash>/knowledge.db
+# key_file = ".capy/db.key"         # optional literal passphrase file, relative to DBProjectDir
 # title_weight = 2.0                # BM25 title column weight
 # max_source_bytes = 2097152        # 2 MB hard cap on total content per source
 
@@ -360,6 +370,8 @@ capy uses TOML configuration with three-level precedence (lowest to highest):
 [server]
 # log_level = "info"                # "debug", "info", "warn", "error"
 ```
+
+`store.key_file` is presence-aware: omission inherits; `""` clears a lower layer. Only the path belongs in TOML. Normal knowledge access selects that file, owner dotenv, distinct main-worktree dotenv, then the inherited environment. See [README project credentials](README.md#project-credentials) for exact formats, limits, ownership, and failure behavior, and [migration/rollback](README.md#upgrade-and-credential-migration) before regenerating old wrappers. Configuration errors stop target selection; doctor continues independent diagnostics.
 
 **Worktree DB resolution** (see ADR-026): with a relative (project-scoped)
 `store.path`, a session running in a linked git worktree resolves the DB against

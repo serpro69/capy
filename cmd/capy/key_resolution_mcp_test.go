@@ -61,14 +61,20 @@ func TestMCPProjectCredentials(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			project := stdioProject(t)
 			writeMCPProjectCredential(t, project, "key file", keyB)
+			env := stdioEnv(t, "")
 			dir := project
 			var args []string
 			switch mode {
 			case "subdirectory cwd":
+				wrapperGit(t, project, env, "init", "-q")
 				dir = filepath.Join(project, "subdir")
 				require.NoError(t, os.Mkdir(dir, 0o700))
+				// Git-root discovery must win over nearer config/credential markers.
+				writeMCPProjectCredential(t, dir, "key file", keyA)
 			case "bare override", "leading flag", "trailing flag":
+				wrapperGit(t, project, env, "init", "-q")
 				dir = stdioProject(t)
+				wrapperGit(t, dir, env, "init", "-q")
 				writeMCPProjectCredential(t, dir, "dotenv", keyA)
 				args = []string{"--project-dir", project}
 				if mode == "leading flag" {
@@ -78,7 +84,7 @@ func TestMCPProjectCredentials(t *testing.T) {
 				}
 			}
 			p := startStdioProcess(t, stdioCommand{
-				executable: bin, args: args, dir: dir, env: stdioEnv(t, ""), secrets: secrets,
+				executable: bin, args: args, dir: dir, env: env, secrets: secrets,
 			})
 			p.initialize(t)
 			stdioIndex(t, p, "copperbadger")
@@ -88,6 +94,7 @@ func TestMCPProjectCredentials(t *testing.T) {
 			stdioCheckpointed(t, project)
 			if dir != project {
 				assert.NoFileExists(t, filepath.Join(dir, "knowledge.db"))
+				assert.NoFileExists(t, filepath.Join(dir, ".project"))
 			}
 		})
 	}
