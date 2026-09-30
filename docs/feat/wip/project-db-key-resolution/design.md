@@ -1,6 +1,6 @@
 # Project database key resolution
 
-> Status: Design agreed; review findings reconciled; implementation pending
+> Status: Design agreed; implementation in progress — Task 1 complete
 > Created: 2026-09-30
 > Issue: [122](https://github.com/serpro69/capy/issues/122)
 > Companions: [Investigation](investigation.md), [Implementation](implementation.md), [Tasks](tasks.md)
@@ -14,7 +14,7 @@ A developer runs concurrent Codex sessions for projects with different encrypted
 
 How might we provide reliable project-key selection and diagnostics for these concurrent sessions while preserving environment-only usage, worktree behavior, vault isolation, and key rotation?
 
-The user confirmed this framing, the Go design profile, evaluation of three approaches, approach C below, isolated technical verification, and both the credential-selection and integration contracts. This document specifies proposed behavior. The candidate implementation has not been built.
+The user confirmed this framing, the Go design profile, evaluation of three approaches, approach C below, isolated technical verification, and both the credential-selection and integration contracts. This document specifies the full intended behavior. Task 1's independent FTS5 diagnostics are implemented and verified; credential selection and integration remain pending. See [tasks](tasks.md) for current progress.
 
 ## Acceptance criteria
 
@@ -31,7 +31,7 @@ The user confirmed this framing, the Go design profile, evaluation of three appr
 
 ## Existing system and constraints
 
-| Component | Verified current behavior |
+| Component | Verified baseline behavior (`d9e09c1`) |
 | --- | --- |
 | [config/paths.go](../../../../internal/config/paths.go) | Project selection and database ownership are separate. Only nonempty relative store paths redirect linked worktrees to the main checkout. |
 | [config/loader.go](../../../../internal/config/loader.go) | Merges XDG, selected-project `.capy/config.toml`, then `.capy.toml`. Errors discard the merged config; callers currently fall back to defaults. |
@@ -183,4 +183,4 @@ Approach C was selected by the user. Its main failure risks are fallback after m
 
 The [implementation plan](implementation.md#verification-matrix) defines the regression matrix and observable checks. Run FTS5-tagged tests with synthetic keys and isolated config/data directories. Keep real key values out of test output and captured MCP transcripts. Scope benchmarks to actual algorithm changes; this design changes credential plumbing, not search/indexing algorithms.
 
-The [design review](.reviews/design-review-2026-09-30.md) has been corroborated finding by finding and the valid issues corrected in these documents; see the [reconciliation](.reviews/design-review-reconciliation-2026-09-30.md). Implementation remains pending. Review reconciliation is not a claim that the proposed runtime behavior has been implemented or tested.
+The [design review](.reviews/design-review-2026-09-30.md) has been corroborated finding by finding and the valid issues corrected in these documents; see the [reconciliation](.reviews/design-review-reconciliation-2026-09-30.md). Task 1 has a separate [implementation review and validation record](.reviews/task-1-code-review-2026-09-30.md). The remaining tasks are pending; neither review establishes that the full proposed credential behavior has been implemented or tested.

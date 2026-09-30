@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/config"
+	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/store"
 	"github.com/serpro69/capy/internal/vault"
 	"github.com/stretchr/testify/assert"
@@ -331,14 +333,94 @@ func TestDoctor_FTS5Available(t *testing.T) {
 	assert.Contains(t, text, "[x] FTS5: available")
 }
 
-func TestDoctor_KBNotInitialized(t *testing.T) {
+func TestDoctor_FTS5AvailableWithKnowledgeBaseError(t *testing.T) {
+	const fixtureKey = "doctor-fixture-passphrase-at-least-32-characters"
+	const wrongKey = "doctor-wrong-passphrase-at-least-32-characters"
+	tests := []struct {
+		name    string
+		key     string
+		prepare func(t *testing.T, dbPath, projectDir string)
+		wantErr string
+	}{
+		{
+			name: "wrong key",
+			key:  wrongKey,
+			prepare: func(t *testing.T, dbPath, projectDir string) {
+				t.Helper()
+				st := store.NewContentStore(dbPath, projectDir, 0, 0)
+				t.Cleanup(func() { require.NoError(t, st.Close()) })
+				_, err := st.Index("Knowledge survives a failed doctor read.", "doctor-fixture", "", store.KindDurable)
+				require.NoError(t, err)
+				require.NoError(t, st.Close())
+			},
+			wantErr: "wrong passphrase or corrupted database (check CAPY_DB_KEY): file is not a database",
+		},
+		{
+			name:    "missing key",
+			key:     "",
+			wantErr: "CAPY_DB_KEY environment variable is required",
+		},
+		{
+			name: "database path is a directory",
+			key:  fixtureKey,
+			prepare: func(t *testing.T, dbPath, _ string) {
+				t.Helper()
+				require.NoError(t, os.Mkdir(dbPath, 0o755))
+			},
+			wantErr: "canary query failed: unable to open database file",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CAPY_DB_KEY", fixtureKey)
+			t.Setenv("CAPY_VAULT_KEY", "")
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("XDG_DATA_HOME", t.TempDir())
+			t.Setenv("CLAUDE_PROJECT_DIR", "")
+			projectDir := t.TempDir()
+			cfg := config.DefaultConfig()
+			cfg.Store.Path = filepath.Join(projectDir, "knowledge.db")
+			if tt.prepare != nil {
+				tt.prepare(t, cfg.Store.Path, projectDir)
+			}
+
+			// Construct directly after selecting the key: serve's missing-key
+			// preflight must not prevent exercising the doctor's diagnostics.
+			t.Setenv("CAPY_DB_KEY", tt.key)
+			srv := NewServer(cfg, nil, executor.NewExecutor(projectDir, 0), projectDir)
+			t.Cleanup(func() { srv.shutdown() })
+			r := callDoctor(t, srv)
+			assert.False(t, r.IsError)
+			text := resultText(r)
+			assert.Contains(t, text, "[x] FTS5: available")
+			assert.Contains(t, text, "[-] Knowledge base: error reading stats ("+tt.wantErr)
+			assert.Contains(t, text, "[-] Vault: disabled")
+			assert.NotContains(t, text, "Knowledge base: not initialized")
+			assert.NotContains(t, text, "[x] Knowledge base:")
+			assert.NotContains(t, text, fixtureKey)
+			assert.NotContains(t, text, wrongKey)
+			assert.NotContains(t, text, "_key=")
+
+			if tt.key == wrongKey {
+				t.Setenv("CAPY_DB_KEY", fixtureKey)
+				st := store.NewContentStore(cfg.Store.Path, projectDir, 0, 0)
+				t.Cleanup(func() { require.NoError(t, st.Close()) })
+				sources, err := st.ListSources()
+				require.NoError(t, err)
+				require.Len(t, sources, 1)
+				assert.Equal(t, "doctor-fixture", sources[0].Label)
+			}
+		})
+	}
+}
+
+func TestDoctor_InitializesEmptyKnowledgeBase(t *testing.T) {
+	t.Setenv("CAPY_VAULT_KEY", "")
 	srv := newTestServer(t, nil)
 	r := callDoctor(t, srv)
 	text := resultText(r)
-	// Store hasn't been used yet — should show lazy init message
-	// Note: doctor calls getStore() for FTS5 check, which initializes it.
-	// So KB status will show as initialized with 0 sources.
-	assert.Contains(t, text, "Knowledge base:")
+	assert.Contains(t, text, "[x] Knowledge base: 0 sources, 0 chunks")
+	assert.NotContains(t, text, "Knowledge base: not initialized")
 }
 
 func TestDoctor_ChecklistFormat(t *testing.T) {
