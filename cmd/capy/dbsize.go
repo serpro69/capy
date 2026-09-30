@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 
-	"github.com/serpro69/capy/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -17,11 +16,11 @@ func newDBSizeCmd() *cobra.Command {
 				return err
 			}
 
-			key, err := store.RequireEncryptionKey()
+			key, source, err := resolveKnowledgeKey(target)
 			if err != nil {
 				return err
 			}
-			st := newKnowledgeStore(target, key, "CAPY_DB_KEY")
+			st := newKnowledgeStore(target, key, source.String())
 			defer st.Close()
 
 			breakdown, err := st.DiskUsage()

@@ -81,6 +81,10 @@ func loadAndMerge(cfg *Config, path string) error {
 	}
 
 	mergeConfig(cfg, &overlay)
+	// An explicit empty path clears a lower-priority credential file.
+	if detect.Store.KeyFile != nil {
+		cfg.Store.KeyFile = *detect.Store.KeyFile
+	}
 	// An explicit zero disables a lower-priority size filter; omission inherits it.
 	if detect.Vault.MinSessionBytes != nil {
 		if *detect.Vault.MinSessionBytes < 0 {
@@ -91,7 +95,7 @@ func loadAndMerge(cfg *Config, path string) error {
 	return nil
 }
 
-// detectionOverlay uses pointer fields to distinguish "user wrote 0" from
+// detectionOverlay uses pointer fields to distinguish "user wrote a zero value" from
 // "user omitted the key", which the zero-value merge in mergeConfig can't do.
 // Keys needing zero-rejection or an explicit zero override appear here.
 type detectionOverlay struct {
@@ -99,6 +103,7 @@ type detectionOverlay struct {
 		MinSessionBytes *int64 `toml:"min_session_bytes"`
 	} `toml:"vault"`
 	Store struct {
+		KeyFile *string `toml:"key_file"`
 		Cleanup struct {
 			EphemeralTTLHours *int `toml:"ephemeral_ttl_hours"`
 			SessionTTLDays    *int `toml:"session_ttl_days"`

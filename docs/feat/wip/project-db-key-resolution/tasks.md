@@ -43,18 +43,19 @@
 
 ## Task 3: Read an explicitly configured key file through dbsize
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 5
 - **Docs:** [Explicit key files](implementation.md#3-explicit-project-key-files-through-dbsize)
+- **Verification:** `make test`, focused FTS5 credential/dbsize tests with and without `-race`, and targeted `go vet` passed; [isolated review and validation](.reviews/task-3-code-review-2026-09-30.md).
 
 ### Subtasks
 
-- [ ] 3.1 Add `store.key_file` and presence-aware merging in `internal/config/config.go` and `loader.go` → verify: omission inherits, empty clears, all three config layers and invalid types are covered.
-- [ ] 3.2 Implement `Config.ResolveStoreKey`, safe source metadata, and regular-file/bounded-read admission in `internal/config/keys.go` → verify: the 4,096-byte raw limit includes the newline, overflow is rejected without truncation/fallback, regular symlinks work, and nonregular targets including a pre-existing FIFO fail promptly.
-- [ ] 3.3 Wire explicit-file/environment resolution into `cmd/capy/knowledge.go` → verify: actual B database access through dbsize succeeds with A inherited and B configured.
-- [ ] 3.4 Add format and owner/path coverage in `internal/config/keys_test.go` and `cmd/capy/key_resolution_cli_test.go` → verify: empty/NUL/newline errors, exact/over-limit files, linked worktrees, submodules, `../`, absolute, XDG, and DB/credential symlinks obey the contract without reading real credentials.
+- [x] 3.1 Add `store.key_file` and presence-aware merging in `internal/config/config.go` and `loader.go` → verify: omission inherits, empty clears, all three config layers and invalid types are covered.
+- [x] 3.2 Implement `Config.ResolveStoreKey`, safe source metadata, and regular-file/bounded-read admission in `internal/config/keys.go` → verify: the 4,096-byte raw limit includes the newline, overflow is rejected without truncation/fallback, regular symlinks work, and nonregular targets including a pre-existing FIFO fail promptly.
+- [x] 3.3 Wire explicit-file/environment resolution into `cmd/capy/knowledge.go` → verify: actual B database access through dbsize succeeds with A inherited and B configured.
+- [x] 3.4 Add format and owner/path coverage in `internal/config/keys_test.go` and `cmd/capy/key_resolution_cli_test.go` → verify: empty/NUL/newline errors, exact/over-limit files, linked worktrees, submodules, `../`, absolute, XDG, and DB/credential symlinks obey the contract without reading real credentials.
 
 ## Task 4: Support literal project dotenv credentials through dbsize
 

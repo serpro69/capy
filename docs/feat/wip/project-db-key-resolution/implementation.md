@@ -1,6 +1,6 @@
 # Project database key resolution implementation plan
 
-> Status: In progress — Tasks 1–2 complete; Tasks 3–11 pending
+> Status: In progress — Tasks 1–3 complete; Tasks 4–11 pending
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Baseline: `d9e09c1`
@@ -50,6 +50,8 @@ Primary files: `internal/config/config.go` (mechanical field declaration), `inte
 - Cover normal checkout, linked worktree, submodule, absolute/XDG paths, relative `../` paths, and a symlinked DB/credential file. Do not load config from the main worktree or canonicalize project aliases. → verify: resolved DB paths match existing path rules and only the intended database is opened.
 
 Use existing `MainWorktreeDir`, `DBProjectDir`, and `ResolveDBPath`; add no second Git-layout implementation. Recognize `key_file = ""` through the existing pointer-overlay pattern. File validation errors must not echo file contents.
+
+**Completed 2026-09-30.** `store.key_file` now uses presence-aware merging across all three configuration layers. `Config.ResolveStoreKey` returns the selected secret separately from a safe `KeySource`; explicit files use the existing database owner, preserve literal bytes except one terminal LF/CRLF, reject invalid/nonregular/oversized input, and never fall back after an error. `dbsize` resolves before constructing its lazy store. Regression tests cover config clearing/types, raw byte limits, regular and FIFO symlinks, directory/device/socket rejection, permission errors, linked worktrees, submodules, relative/absolute/XDG paths, project aliases, and DB symlinks. Actual encrypted database reads succeed with a conflicting inherited key; wrong file keys preserve retained content, resolution failures leave database directories absent, and file changes affect newly resolved stores only. Full `make test`, focused normal/race checks, and targeted vet passed. Both isolated reviewers reported no findings; see the [review and validation record](.reviews/task-3-code-review-2026-09-30.md). No design deviation or new dependency was needed. Dotenv and other command integrations remain in their pending slices.
 
 ## 4 Literal dotenv compatibility through dbsize
 

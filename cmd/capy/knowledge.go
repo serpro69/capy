@@ -46,6 +46,14 @@ func loadKnowledgeTarget(cmd *cobra.Command) (*knowledgeTarget, error) {
 	}, nil
 }
 
+func resolveKnowledgeKey(target *knowledgeTarget) (string, config.KeySource, error) {
+	key, source, err := target.cfg.ResolveStoreKey(target.projectDir)
+	if err != nil {
+		return "", source, fmt.Errorf("resolving knowledge credential for %q: %w", target.dbPath, err)
+	}
+	return key, source, nil
+}
+
 func newKnowledgeStore(target *knowledgeTarget, key, source string) *store.ContentStore {
 	return store.NewContentStore(
 		target.dbPath,
