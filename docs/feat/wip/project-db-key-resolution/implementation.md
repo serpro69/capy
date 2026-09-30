@@ -1,6 +1,6 @@
 # Project database key resolution implementation plan
 
-> Status: In progress — Tasks 1–10 complete; Task 11 pending
+> Status: Done — Tasks 1–11 complete, 2026-09-30
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Baseline: `d9e09c1`
@@ -154,6 +154,8 @@ Dependencies: all previous slices. This is a verification/documentation task, no
 - Run `kk:document` to update README setup/configuration/troubleshooting/rotation, architecture credential flow, and the root AGENTS encryption invariant. Add the next available numbered ADR for this policy, cross-link ADR-019's superseded environment-only rule, and prominently record the whole-file dotenv break, environment-only vault migration, file limits, and rollback procedure. Preserve encryption/WAL invariants. → verify: docs contain the concrete migration/recovery steps and do not claim either that the knowledge key must exclusively come from the environment or that forwarding loads absent vault keys.
 - Run `kk:review-code` with Go input and `kk:review-spec` over this feature. → verify: findings are fixed or durably recorded with specific reasons and next steps; docs match actual command/format behavior.
 - Complete all task statuses only after passing verification. → verify: the repository diff contains the intended source/docs/generated copies and no synthetic key files, databases, or test artifacts.
+
+**Completed 2026-09-30.** Full `make test` and `make test-race` passed with FTS5, synthetic keys, and isolated home/config/data/vault paths; targeted vet passed. A separate config/admission/artifact run recorded 176 passes with no skips. README, architecture, root AGENTS, and CONTRIBUTING now describe the credential contract and migration; [ADR-032](../../../adr/032-project-db-key-resolution.md) supersedes ADR-019's environment-only selection policy while preserving encryption and WAL invariants. Independent code/spec reviewers found a test-fixture gap in Git-root discovery and cross-repository overrides. Real Git repositories and a conflicting nested credential now make those cases observable; the full MCP credential group passed again normally and with `-race`, and both reviewers approved the fix. PAL's additional low-priority possible shutdown race was verified as pre-existing and recorded for separate lifecycle work. No production or dependency change was needed in this final slice. See the [matrix, review dispositions, reflection, and evidence limits](.reviews/task-11-verification-2026-09-30.md). All task statuses are complete; optional daemon-host and real legacy-binary smoke tests were not performed.
 
 ## Verification matrix
 

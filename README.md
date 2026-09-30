@@ -6,7 +6,7 @@
 
 **C**ontext-**A**ware **P**rompting ...or "**Y**et another solution to LLM context problem"
 
-[![GitHub stars](https://img.shields.io/github/stars/serpro69/capy?style=for-the-badge&color=yellow)](https://github.com/serpro69/capy/stargazers) [![GitHub forks](https://img.shields.io/github/forks/serpro69/capy?style=for-the-badge&color=blue)](https://github.com/serpro69/capy/network/members) [![Last commit](https://img.shields.io/github/last-commit/serpro69/capy?style=for-the-badge&color=green)](https://github.com/serpro69/capy/commits) [![License: ELv2](https://img.shields.io/badge/License-ELv2-blue.svg?style=for-the-badge)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/serpro69/capy?style=for-the-badge&color=yellow)](https://github.com/serpro69/capy/stargazers) [![GitHub forks](https://img.shields.io/github/forks/serpro69/capy?style=for-the-badge&color=blue)](https://github.com/serpro69/capy/network/members) [![Last commit](https://img.shields.io/github/last-commit/serpro69/capy?style=for-the-badge&color=green)](https://github.com/serpro69/capy/commits) [![License: ELv2](https://img.shields.io/badge/License-ELv2-blue.svg?style=for-the-badge)](LICENSE.md)
 
 > [!IMPORTANT]
 > This project was created with the help of Claude-Code. It is, however, reviewed, tested, and reworked with a human-in-the-loop.
@@ -34,6 +34,9 @@
 - [Configuration](#configuration)
 - [Encryption](#encryption)
   - [Setup](#setup-1)
+  - [Project credentials](#project-credentials)
+  - [Upgrade and credential migration](#upgrade-and-credential-migration)
+    - [Rollback](#rollback)
   - [Initial encryption](#initial-encryption)
   - [Cross-machine sync](#cross-machine-sync)
   - [Keeping the DB out of your project repo (recommended)](#keeping-the-db-out-of-your-project-repo-recommended)
@@ -226,6 +229,7 @@ capy uses TOML configuration with three-level precedence (lowest to highest):
 ```toml
 [store]
 # path = ".capy/knowledge.db"  # optional override; default: ~/.local/share/capy/<project-hash>/knowledge.db
+# key_file = ".capy/db.key"   # optional literal passphrase file; relative to the database owner
 # title_weight = 2.0           # BM25 title column weight
 # max_source_bytes = 2097152   # 2 MB hard cap on total content per source
 
@@ -249,7 +253,7 @@ log_level = "info"
 min_session_bytes = 0      # minimum size for new archives; 0 disables
 ```
 
-All settings have sensible defaults. Configuration files are optional — capy works out of the box.
+Configuration files are optional; knowledge access still requires a [credential](#encryption). Invalid configuration stops knowledge commands instead of selecting a default database. `capy doctor` reports the configuration failure and continues independent checks.
 
 > **Caution with git and the knowledge DB.** SQLite WAL sidecar files (`.db-wal`, `.db-shm`) are created when the DB is written to during a session. capy flushes the WAL on session close automatically, but the files only get cleaned up if the session actually wrote to the DB. If you see stale WAL files (e.g., after upgrading capy or after an unclean shutdown), run `capy checkpoint` to flush them manually. If you want to commit the DB to git (e.g., to share across machines), run `capy checkpoint` first — it flushes the WAL into the main file and removes the sidecar files.
 
@@ -259,7 +263,7 @@ The knowledge database is encrypted at rest using sqlite3mc (SQLCipher v4 compat
 
 ### Setup
 
-Set `CAPY_DB_KEY` in your shell profile:
+For a new database, either provision a private [project credential file](#project-credentials) or set `CAPY_DB_KEY` in the environment that launches capy. For an existing database, reuse its current passphrase. This environment-only example stores a generated key in your shell profile:
 
 ```bash
 # Generate a strong passphrase (32+ characters recommended)
@@ -276,7 +280,7 @@ direnv allow
 
 ### Project credentials
 
-`capy serve` (including bare `capy`), `dbsize`, `cleanup`, and `checkpoint` resolve knowledge credentials in Go. A declared project credential takes precedence over an inherited `CAPY_DB_KEY`, including a nonempty key from another project.
+`capy serve` (including bare `capy`), `dbsize`, `cleanup`, `checkpoint`, and CLI `doctor` resolve knowledge credentials in Go. A declared project credential takes precedence over an inherited `CAPY_DB_KEY`, including a nonempty key from another project. `capy which` inspects the configured path without reading credentials; checkpointing a missing database is a successful no-op without a key. Help, setup, version, and Claude hook events do not require a knowledge key.
 
 To avoid depending on the launcher's inherited knowledge key, put the **existing database passphrase** in a literal file such as `.capy/db.key` and add its path to the project's `.capy.toml` (merge this into an existing `[store]` section):
 
@@ -285,11 +289,17 @@ To avoid depending on the launcher's inherited knowledge key, put the **existing
 key_file = ".capy/db.key"
 ```
 
-Keep the file private (`chmod 600 .capy/db.key`) and outside version control. `capy setup` ignores `.capy/**`; other credential locations need their own ignore rules. Setup never creates credentials. The file contains only the passphrase, with no assignment or quotes; one final LF or CRLF is allowed. Its raw size limit is 4,096 bytes, including that newline. Empty files, embedded line endings/NULs, nonregular files, and oversized files fail without fallback. Symlinks to regular files are supported.
+Keep the file private (`chmod 600 .capy/db.key`) and outside version control. `capy setup` ignores `.capy/**`; other credential locations need their own ignore rules. Setup never creates credentials. The file contains the passphrase itself; assignment syntax and quotes would become part of the passphrase. Leading/trailing spaces are preserved, and one final LF or CRLF is removed. Its raw size limit is 4,096 bytes, including that newline. Empty files, embedded line endings/NULs, nonregular files, and oversized files fail without fallback. Symlinks to regular files are supported.
 
 Selection order is `store.key_file`, the database owner's `.env`, a distinct main-worktree `.env`, then inherited `CAPY_DB_KEY`. Relative key-file paths resolve from the database owner. With a relative `store.path`, linked worktrees share the main checkout's database and credentials; their own `.env` is ignored. Absolute/XDG database modes consult the selected worktree first. An explicitly empty `key_file = ""` clears an inherited config setting. Invalid or inaccessible selected credentials fail rather than trying another key.
 
+Configuration still comes from the selected project and the global layer, even when the main checkout owns the database. This also applies to relative key-file paths declared globally. Paths do not expand `~` or environment variables, and a database symlink does not change the credential owner. `--project-dir` selects the project before resolution; an explicit subdirectory is used as supplied.
+
 The dotenv reader is literal and limited: blank lines, comments, and single-line assignments, with optional `export`. It never executes shell code, expands variables, reads `.envrc`, or exports resolved values. Optional dotenv files must be regular and no larger than 1 MiB. If no knowledge-key declaration exists, readable dotenv content does not supply a key and environment-only/direnv usage continues to work.
+
+The exact name `CAPY_DB_KEY` is recognized with spaces/tabs around `=`. LF and CRLF files work. Unquoted target values cannot contain whitespace, quotes, backslashes, expansion markers, or shell operators; `#` starts an unquoted comment only after whitespace. Single quotes preserve literal bytes. Double quotes accept only escaped backslash and double quote, and reject `$` and backticks. After a closing quote, only whitespace and an optional comment are allowed. Other assignments are checked for structure but discarded. These file-size limits do not limit environment-only passphrase length.
+
+Resolution errors occur before creating the knowledge database or its `.project` marker. A selected key that cannot decrypt an existing database produces an authentication error; capy does not retry another credential or replace that database. A running server captures its key once, so restart it after changing credentials. See [ADR-032](docs/adr/032-project-db-key-resolution.md) for the policy and connection-lifetime contract.
 
 ### Upgrade and credential migration
 
@@ -315,7 +325,7 @@ v0.16.4 ignores unknown `store.key_file` configuration while retaining `store.pa
 
 ### Initial encryption
 
-Existing unencrypted databases must be encrypted before capy will use them:
+Existing unencrypted databases must be encrypted before capy will use them. Stop all processes using the database first:
 
 ```bash
 export CAPY_DB_KEY='your-passphrase-here'
@@ -323,7 +333,7 @@ capy encrypt
 # When prompted for the current passphrase, press Enter (empty = unencrypted).
 ```
 
-The original database is preserved as `<path>.bak`.
+The original database is preserved as `<path>.bak`. After encryption, update any project credential to the new passphrase before restarting capy.
 
 ### Cross-machine sync
 
@@ -449,6 +459,8 @@ export CAPY_DB_KEY='new-passphrase'
 capy encrypt
 # Enter the OLD passphrase when prompted.
 ```
+
+The old key is always prompted for. The new key comes from `CAPY_DB_KEY`, or a confirmed prompt if that variable is empty. Project files supply neither rotation input and are never rewritten by `capy encrypt`; update them yourself before restarting. The command does not stop other processes or change the vault key. Its backup remains readable with the old key.
 
 ### Passphrase recommendations
 
@@ -872,7 +884,7 @@ Manual setup: register `capy serve` as an MCP server (stdio transport) and `capy
 
 ## Troubleshooting
 
-Run `capy doctor` to diagnose issues. Common problems:
+Run `capy doctor` to diagnose issues, and use `capy_doctor` through MCP to check the actual server. A successful **Knowledge credential** check identifies the selected source; the separate **Knowledge base** check tests access. FTS5 is checked independently in memory, so a wrong key is not an FTS5 failure. CLI doctor does not create a missing database and reports failed checks without treating every diagnostic failure as a nonzero command exit.
 
 | Check                     | Fix                                                                                  |
 | ------------------------- | ------------------------------------------------------------------------------------ |
@@ -882,6 +894,8 @@ Run `capy doctor` to diagnose issues. Common problems:
 | **MCP: not registered**   | Run `capy setup`. Check `.mcp.json` exists in project root.                          |
 | **MCP: binary not found** | The `capy` binary isn't in PATH. Move it or run `capy setup --binary /path/to/capy`. |
 | **Knowledge credential missing** | Configure a private `store.key_file` or supply `CAPY_DB_KEY` in the actual launch environment (see [Encryption](#encryption)). |
+| **Config failure** | Fix the reported TOML read, parse, or validation error. Knowledge checks are skipped; no fallback database is selected. |
+| **Knowledge base: wrong passphrase** | Check the source/path reported by doctor and restore that database's existing passphrase there. An inherited key cannot override a project declaration. Restart MCP after correction; do not delete the database. |
 | **Dotenv rejected** | Move the existing passphrase to `store.key_file` to bypass an application's unsupported dotenv syntax. |
 | **Vault disabled after upgrade** | Supply `CAPY_VAULT_KEY` in the actual launch environment and restart the host/MCP; wrappers no longer source `.env`. |
 
@@ -922,9 +936,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, architectur
 git clone https://github.com/serpro69/capy.git
 cd capy
 export CAPY_DB_KEY=test-key-for-development
+export CAPY_VAULT_KEY=test-key
 make build && make test
 ```
 
 ## License
 
-Licensed under [Elastic License 2.0](LICENSE) (source-available). You can use it, fork it, modify it, and distribute it. Two things you can't do: offer it as a hosted/managed service, or remove the licensing notices.
+Licensed under [Elastic License 2.0](LICENSE.md) (source-available). You can use it, fork it, modify it, and distribute it. Two things you can't do: offer it as a hosted/managed service, or remove the licensing notices.

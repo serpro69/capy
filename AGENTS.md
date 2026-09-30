@@ -36,7 +36,7 @@ internal/
 
 ### Critical Invariants
 
-- **Encryption is mandatory.** `CAPY_DB_KEY` must be set for the knowledge store; `CAPY_VAULT_KEY` must be set for the vault. Tests require both.
+- **Encryption is mandatory.** Normal knowledge access resolves `store.key_file` → database-owner `.env` → distinct main-worktree `.env` → inherited `CAPY_DB_KEY` (ADR-032). Invalid selected credentials fail without fallback. Store/server instances capture one key for all connections; an explicit empty key fails before filesystem side effects. Vault credentials remain environment-only via `CAPY_VAULT_KEY`; wrappers never source `.env`. Tests require both synthetic environment keys. `capy encrypt` keeps its separate prompted-old / environment-or-prompted-new key contract.
 - **FTS5 build tag required.** All builds and tests must use `-tags fts5`. The Makefile handles this.
 - **WAL checkpoint on close.** The connection pool must be closed before checkpointing (see `store.go:Close()` and ADR-016).
 - **WAL + PRAGMA rekey incompatible.** Encryption path must switch to DELETE journal mode before rekeying (ADR-020).

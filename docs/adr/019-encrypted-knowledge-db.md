@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-04-26
 **Supersedes:** [ADR-015](015-knowledge-db-not-tracked-in-git.md)
+**Partially superseded by:** [ADR-032](032-project-db-key-resolution.md) — credential source and lifetime only; mandatory encryption and WAL/commit requirements remain accepted.
 
 ## Context
 
@@ -21,7 +22,7 @@ Committing the encrypted DB to git is safe when two conditions are met:
 1. **The DB is encrypted.** A pre-commit hook verifies this by checking the file header (unencrypted SQLite DBs start with the 16-byte magic `"SQLite format 3\000"`; encrypted DBs have random bytes).
 2. **The WAL is flushed.** `capy checkpoint` must run before commit (existing behavior from ADR-016). After checkpoint, WAL/SHM sidecars are empty or absent — git tracks only the self-contained main file.
 
-Key management:
+Original key management policy (the environment-only rule is superseded by ADR-032):
 
 - Passphrase is provided via the `CAPY_DB_KEY` environment variable. Not stored in config files.
 - `capy encrypt` CLI command handles initial encryption (unencrypted → encrypted) and key rotation.
@@ -42,7 +43,7 @@ What this ADR does NOT change:
 
 ## Consequences
 
-- `CAPY_DB_KEY` is required to run capy. Breaking change for existing users — must run `capy encrypt` on existing DBs.
+- Originally, `CAPY_DB_KEY` was required for knowledge access. [ADR-032](032-project-db-key-resolution.md) adds project credential sources; a passphrase is still mandatory. Existing plaintext DBs still require `capy encrypt`.
 - Build system uses the jgiannuzzi/go-sqlite3 fork (sqlite3mc amalgamation bundled) via `go.mod` replace directive. No system library dependency.
 - Cross-machine workflow requires `store.path` configured to a project-local path (e.g., `.capy/knowledge.db`), then: set `CAPY_DB_KEY` → `capy encrypt` (once) → `capy checkpoint` → commit. On other machine: pull → set `CAPY_DB_KEY` → capy starts.
 - README must document the encryption setup and workflow.
