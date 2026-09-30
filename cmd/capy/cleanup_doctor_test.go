@@ -298,6 +298,9 @@ func TestDoctorSubcommand_KnowledgeBaseStatsAndLegacySessions(t *testing.T) {
 	assert.Contains(t, stdout, "[-] Legacy sessions: 1 legacy knowledge.db session row(s)")
 	assert.Contains(t, stdout, "`capy cleanup --kind session --force`")
 	assert.Contains(t, stdout, "[-] Vault: disabled (CAPY_VAULT_KEY not set)")
+	assert.Contains(t, stdout, "wrappers no longer source .env")
+	assert.Contains(t, stdout, "actual launch environment")
+	assert.Contains(t, stdout, "restart the host/MCP process")
 }
 
 func TestDoctorSubcommand_KnowledgeBaseNotInitialized(t *testing.T) {

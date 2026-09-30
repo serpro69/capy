@@ -1312,6 +1312,10 @@ func TestWrapperExitCodes(t *testing.T) {
 	// Binary found: non-hook subcommand propagates the fake's exit code.
 	code, out := run(foundBin, "checkpoint")
 	assert.Equal(t, 42, code, "non-hook subcommand should propagate the binary's exit code: %s", out)
+	for _, args := range [][]string{{"serve"}, {}, {"--project-dir", home, "serve"}} {
+		code, out := run(foundBin, args...)
+		assert.Equal(t, 42, code, "startup without an inherited key must reach Go: %s", out)
+	}
 
 	// Binary found: hook events always exit 0 even when the binary fails.
 	code, out = run(foundBin, "hook", "pretooluse")

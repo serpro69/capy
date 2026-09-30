@@ -334,7 +334,7 @@ func CheckVaultDisabled() CheckResult {
 	return CheckResult{
 		Name:   "Vault",
 		Status: Warn,
-		Detail: "disabled (CAPY_VAULT_KEY not set) — sessions are not archived",
+		Detail: "disabled (CAPY_VAULT_KEY not set) — sessions are not archived; wrappers no longer source .env. Set CAPY_VAULT_KEY in the actual launch environment and restart the host/MCP process",
 	}
 }
 

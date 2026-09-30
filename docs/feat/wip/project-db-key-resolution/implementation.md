@@ -1,6 +1,6 @@
 # Project database key resolution implementation plan
 
-> Status: In progress — Tasks 1–6 and 8 complete; Tasks 7, 9–11 pending
+> Status: In progress — Tasks 1–8 complete; Tasks 9–11 pending
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Baseline: `d9e09c1`
@@ -108,6 +108,8 @@ Primary files: `internal/platform/setup.go` and wrapper tests, `internal/platfor
 - Document dotenv and vault breaking changes, upgrade/setup/restart, and [rollback](design.md#rollback). Add a frozen v0.16.4-shaped config decoding fixture that ignores unknown `key_file` while retaining `store.path`; record a legacy-binary smoke check when available rather than requiring downloads in routine tests. → verify: the legacy fixture passes; upgraded wrappers and an environment-only launch work with explicit old-style credentials; fresh/repeated setup is idempotent. The reconciliation already records a v0.16.4 black-box path-resolution probe, not a completed downgrade MCP test.
 
 Do not change generated routing, hook registration, or MCP configuration unless required by an actual implementation change. If changed, update their committed counterparts and existing drift coverage together.
+
+**Completed 2026-09-30.** The generator and both committed wrappers now delegate knowledge credential selection to Go without shell dotenv sourcing or a serve-only guard. Real setup-generated launches on both platforms cover key-file-only startup, conflicting inheritance, bare/leading-flag invocation, index/search/doctor, shutdown/reopen, wrapped dbsize, and keyless hooks. Independent linked-worktree fixtures verify environment-only vault migration and retained archive reads even under a conflicting dotenv vault key. Generated project pre-commit hooks abort on real busy checkpoints and succeed with local credentials after the reader releases; the DB-repo guard remains keyless. Shared disabled-vault guidance, README upgrade/rollback instructions, and a frozen v0.16.4-shaped path decoding fixture complete rollout coverage. Full `make test`, focused normal/race checks, artifact guards, and targeted vet passed. Both isolated reviewers found no required fixes; an optional prerequisite-diagnostic suggestion was addressed and re-reviewed. See the [review and validation record](.reviews/task-7-code-review-2026-09-30.md), including test-environment corrections and smoke-test limits. No design deviation or dependency change was needed. Tasks 9–11 remain pending.
 
 ## 8 Direct maintenance commands
 
