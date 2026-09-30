@@ -312,3 +312,211 @@ func TestResolveStoreKeyPathRules(t *testing.T) {
 	assert.True(t, key == "synthetic-project-key")
 	assert.Equal(t, filepath.Join(alias, "db.key"), source.Path, "project aliases must not be canonicalized")
 }
+
+func TestResolveStoreKeyDotenvPrecedence(t *testing.T) {
+	const mainKey, linkedKey, envKey = "synthetic-main-key", "synthetic-linked-key", "synthetic-environment-key"
+	for _, tc := range []struct {
+		name, mode, main, linked, want, owner, reason string
+	}{
+		{"relative_main_wins", "relative", "CAPY_DB_KEY=" + mainKey, "CAPY_DB_KEY=" + linkedKey, mainKey, "main", ""},
+		{"relative_ignores_invalid_linked", "relative", "CAPY_DB_KEY=" + mainKey, "CAPY_DB_KEY=$(bad)", mainKey, "main", ""},
+		{"relative_absent_ignores_linked", "relative", "", "CAPY_DB_KEY=" + linkedKey, envKey, "env", ""},
+		{"relative_error_ignores_linked", "relative", "CAPY_DB_KEY=", "CAPY_DB_KEY=" + linkedKey, "", "main", "empty"},
+		{"parent_relative", "parent_relative", "CAPY_DB_KEY=" + mainKey, "CAPY_DB_KEY=" + linkedKey, mainKey, "main", ""},
+		{"absolute_owner_wins", "absolute", "CAPY_DB_KEY=", "CAPY_DB_KEY=" + linkedKey, linkedKey, "linked", ""},
+		{"xdg_owner_wins", "xdg", "CAPY_DB_KEY=", "CAPY_DB_KEY=" + linkedKey, linkedKey, "linked", ""},
+		{"absolute_main_fallback", "absolute", "CAPY_DB_KEY=" + mainKey, "", mainKey, "main", ""},
+		{"xdg_no_declaration_fallback", "xdg", "CAPY_DB_KEY=" + mainKey, "APP=$(never-run)", mainKey, "main", ""},
+		{"xdg_both_unrelated", "xdg", "APP=$(never-run)", "CAPY_DB_KEYS=unrelated", envKey, "env", ""},
+		{"xdg_both_absent", "xdg", "", "", envKey, "env", ""},
+		{"owner_empty_stops", "xdg", "CAPY_DB_KEY=" + mainKey, "CAPY_DB_KEY=", "", "linked", "empty"},
+		{"owner_malformed_stops", "absolute", "CAPY_DB_KEY=" + mainKey, "CAPY_DB_KEY+=" + linkedKey, "", "linked", "assignment"},
+		{"main_invalid_stops", "xdg", "CAPY_DB_KEY=", "OTHER=value", "", "main", "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mainDir, linked := makeLinkedWorktree(t, true)
+			t.Setenv("CAPY_DB_KEY", envKey)
+			cfg := DefaultConfig()
+			cfg.Store.Path = map[string]string{"relative": ".capy/db", "parent_relative": "../shared/db", "absolute": filepath.Join(t.TempDir(), "db"), "xdg": ""}[tc.mode]
+			if tc.main != "" {
+				writeKeyFixture(t, filepath.Join(mainDir, ".env"), tc.main)
+			}
+			if tc.linked != "" {
+				writeKeyFixture(t, filepath.Join(linked, ".env"), tc.linked)
+			}
+			key, source, err := cfg.ResolveStoreKey(linked)
+			if tc.reason == "" {
+				require.NoError(t, err)
+				assert.True(t, key == tc.want)
+			} else {
+				require.ErrorContains(t, err, tc.reason)
+				assert.Empty(t, key)
+				assert.Contains(t, err.Error(), "store.key_file")
+			}
+			if tc.owner == "env" {
+				assert.Equal(t, KeySource{Kind: KeySourceEnvironment}, source)
+			} else {
+				owner := map[string]string{"main": mainDir, "linked": linked}[tc.owner]
+				assert.Equal(t, KeySource{Kind: KeySourceDotenv, Path: filepath.Join(owner, ".env")}, source)
+				assert.Contains(t, source.String(), filepath.Join(owner, ".env"))
+			}
+		})
+	}
+}
+
+func TestResolveStoreKeyDotenvBypassAndIsolation(t *testing.T) {
+	project := t.TempDir()
+	path := filepath.Join(project, ".env")
+	sentinel := filepath.Join(project, "must-not-exist")
+	t.Setenv("CAPY_DB_KEY", "synthetic-inherited-key")
+	t.Setenv("CAPY_VAULT_KEY", "synthetic-inherited-vault")
+	t.Setenv("CAPY_TEST_DOTENV_OTHER", "unchanged")
+	before := os.Environ()
+	data := "CAPY_VAULT_KEY='synthetic-project-vault'\nCAPY_TEST_DOTENV_OTHER=changed\nCAPY_DB_KEY=$(touch " + sentinel + ")\n"
+	writeKeyFixture(t, path, data)
+	cfg := DefaultConfig()
+	key, source, err := cfg.ResolveStoreKey(project)
+	require.Error(t, err)
+	assert.Empty(t, key)
+	assert.Equal(t, KeySourceDotenv, source.Kind)
+	assert.Contains(t, err.Error(), "line 3")
+	assert.Contains(t, err.Error(), "store.key_file")
+	assert.NotContains(t, err.Error(), "touch")
+	assert.NotContains(t, err.Error(), sentinel)
+	assert.NoFileExists(t, sentinel)
+	assert.True(t, strings.Join(before, "\x00") == strings.Join(os.Environ(), "\x00"), "no assignment may alter any environment variable")
+
+	// Single-quoted shell markers are literal bytes, including on a successful
+	// resolution; discarded assignments cannot export the vault or other keys.
+	literal := "synthetic-key $(touch " + sentinel + ")"
+	writeKeyFixture(t, path, "CAPY_VAULT_KEY=synthetic-project-vault\nCAPY_TEST_DOTENV_OTHER=changed\nCAPY_DB_KEY='"+literal+"'\n")
+	key, _, err = cfg.ResolveStoreKey(project)
+	require.NoError(t, err)
+	assert.True(t, key == literal)
+	assert.True(t, strings.Join(before, "\x00") == strings.Join(os.Environ(), "\x00"))
+	assert.NoFileExists(t, sentinel)
+	writeKeyFixture(t, path, data)
+
+	// An explicit file bypasses the same unsupported dotenv entirely.
+	writeKeyFixture(t, filepath.Join(project, "db.key"), "synthetic-file-key")
+	cfg.Store.KeyFile = "db.key"
+	key, source, err = cfg.ResolveStoreKey(project)
+	require.NoError(t, err)
+	assert.True(t, key == "synthetic-file-key")
+	assert.Equal(t, KeySourceFile, source.Kind)
+	assert.True(t, strings.Join(before, "\x00") == strings.Join(os.Environ(), "\x00"))
+	assert.NoFileExists(t, sentinel)
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.True(t, string(contents) == data, "dotenv must not be rewritten")
+
+	// A failed explicit source cannot fall through to a valid dotenv.
+	writeKeyFixture(t, path, "CAPY_DB_KEY=synthetic-dotenv-key")
+	cfg.Store.KeyFile = "missing.key"
+	key, source, err = cfg.ResolveStoreKey(project)
+	require.Error(t, err)
+	assert.Empty(t, key)
+	assert.Equal(t, KeySourceFile, source.Kind)
+}
+
+func TestResolveStoreKeyDotenvMainAccess(t *testing.T) {
+	mainDir, linked := makeLinkedWorktree(t, true)
+	t.Setenv("CAPY_DB_KEY", "synthetic-environment-key")
+	require.NoError(t, os.Mkdir(filepath.Join(mainDir, ".env"), 0o700))
+	cfg := DefaultConfig() // XDG: linked owner before distinct main fallback
+	key, source, err := cfg.ResolveStoreKey(linked)
+	require.ErrorContains(t, err, "regular file")
+	assert.Empty(t, key)
+	assert.Equal(t, filepath.Join(mainDir, ".env"), source.Path)
+	writeKeyFixture(t, filepath.Join(linked, ".env"), "CAPY_DB_KEY=synthetic-linked-key")
+	key, source, err = cfg.ResolveStoreKey(linked)
+	require.NoError(t, err, "selected owner must bypass inaccessible lower-priority sources")
+	assert.True(t, key == "synthetic-linked-key")
+	assert.Equal(t, filepath.Join(linked, ".env"), source.Path)
+}
+
+func TestResolveStoreKeyDotenvFileAdmission(t *testing.T) {
+	for _, mode := range []string{"exact_limit", "over_limit", "over_limit_no_declaration", "directory", "device", "symlink_loop", "regular_symlink", "fifo", "fifo_symlink", "unreadable"} {
+		t.Run(mode, func(t *testing.T) {
+			project := t.TempDir()
+			path := filepath.Join(project, ".env")
+			t.Setenv("CAPY_DB_KEY", "synthetic-inherited-key")
+			const declaration = "CAPY_DB_KEY=synthetic-dotenv-key\n#"
+			reason := "regular file"
+			switch mode {
+			case "exact_limit", "over_limit", "over_limit_no_declaration":
+				prefix, size := declaration, 1<<20
+				if mode != "exact_limit" {
+					size++
+				}
+				if mode == "over_limit_no_declaration" {
+					prefix = "#"
+				}
+				writeKeyFixture(t, path, prefix+strings.Repeat("p", size-len(prefix)))
+				reason = "1048576-byte"
+			case "directory":
+				require.NoError(t, os.Mkdir(path, 0o700))
+			case "device":
+				require.NoError(t, os.Symlink("/dev/null", path))
+			case "symlink_loop":
+				require.NoError(t, os.Symlink(path, path))
+				reason = "inspecting"
+			case "regular_symlink":
+				regular := filepath.Join(project, "dotenv-data")
+				writeKeyFixture(t, regular, declaration)
+				require.NoError(t, os.Symlink(regular, path))
+			case "fifo", "fifo_symlink":
+				fifo := path
+				if mode == "fifo_symlink" {
+					fifo = filepath.Join(project, "fifo")
+					require.NoError(t, os.Symlink(fifo, path))
+				}
+				require.NoError(t, syscall.Mkfifo(fifo, 0o600))
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestResolveStoreKeyDotenvFIFOChild$")
+				cmd.Env = append(os.Environ(), "CAPY_TEST_DOTENV_DIR="+project)
+				output, err := cmd.CombinedOutput()
+				require.NoError(t, ctx.Err(), "resolver blocked on a pre-existing dotenv FIFO")
+				require.NoError(t, err, "%s", output)
+				return
+			case "unreadable":
+				writeKeyFixture(t, path, declaration)
+				require.NoError(t, os.Chmod(path, 0))
+				t.Cleanup(func() { assert.NoError(t, os.Chmod(path, 0o600)) })
+				if f, err := os.Open(path); err == nil {
+					require.NoError(t, f.Close())
+					t.Skip("process bypasses permissions; deterministic symlink-loop access failure covered separately")
+				}
+				reason = "opening"
+			}
+			cfg := DefaultConfig()
+			key, source, err := cfg.ResolveStoreKey(project)
+			assert.Equal(t, KeySource{Kind: KeySourceDotenv, Path: path}, source)
+			if mode == "exact_limit" || mode == "regular_symlink" {
+				require.NoError(t, err)
+				assert.True(t, key == "synthetic-dotenv-key")
+			} else {
+				require.ErrorContains(t, err, reason)
+				assert.Empty(t, key)
+				assert.Contains(t, err.Error(), "store.key_file")
+				// Even inaccessible/nonregular/oversized dotenv is bypassed.
+				writeKeyFixture(t, filepath.Join(project, "db.key"), "synthetic-file-key")
+				cfg.Store.KeyFile = "db.key"
+				key, _, err = cfg.ResolveStoreKey(project)
+				require.NoError(t, err)
+				assert.True(t, key == "synthetic-file-key")
+			}
+		})
+	}
+}
+
+func TestResolveStoreKeyDotenvFIFOChild(t *testing.T) {
+	project := os.Getenv("CAPY_TEST_DOTENV_DIR")
+	if project == "" {
+		return
+	}
+	key, _, err := DefaultConfig().ResolveStoreKey(project)
+	require.ErrorContains(t, err, "regular file")
+	require.Empty(t, key)
+}
