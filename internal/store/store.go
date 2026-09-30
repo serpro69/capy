@@ -30,6 +30,11 @@ type ContentStore struct {
 	titleWeight    float64
 	maxSourceBytes int
 
+	// Captured at construction and shared by every pool/recovery/maintenance
+	// connection, including when this store is reopened after Close.
+	encryptionKey    string
+	encryptionSource string
+
 	mu sync.Mutex
 	db *sql.DB
 
@@ -78,25 +83,46 @@ type ContentStore struct {
 	stmtTrackAccess      *sql.Stmt
 }
 
-// NewContentStore creates a new ContentStore. The database is not opened
+// Option configures a ContentStore before its first use.
+type Option func(*ContentStore)
+
+// WithEncryptionKey selects a key instead of the constructor's environment
+// snapshot. An explicit empty key fails on use; it never falls back. source
+// must be a safe diagnostic hint (a variable name or credential file path),
+// never the passphrase or a DSN.
+func WithEncryptionKey(key, source string) Option {
+	return func(s *ContentStore) {
+		s.encryptionKey = key
+		s.encryptionSource = encryptionSourceHint(source)
+	}
+}
+
+// NewContentStore creates a new ContentStore, capturing CAPY_DB_KEY unless
+// WithEncryptionKey overrides it. The database is not opened
 // until the first operation (lazy initialization via getDB).
 // titleWeight controls the BM25 title column weight; values <= 0 default to 2.0.
 // maxSourceBytes caps the total content size accepted by Index/IndexChunked;
 // values <= 0 default to DefaultMaxSourceBytes.
-func NewContentStore(dbPath, projectDir string, titleWeight float64, maxSourceBytes int) *ContentStore {
+func NewContentStore(dbPath, projectDir string, titleWeight float64, maxSourceBytes int, opts ...Option) *ContentStore {
 	if titleWeight <= 0 {
 		titleWeight = 2.0
 	}
 	if maxSourceBytes <= 0 {
 		maxSourceBytes = DefaultMaxSourceBytes
 	}
-	return &ContentStore{
-		dbPath:         dbPath,
-		projectDir:     projectDir,
-		titleWeight:    titleWeight,
-		maxSourceBytes: maxSourceBytes,
-		fuzzyCache:     make(map[string]*string),
+	s := &ContentStore{
+		dbPath:           dbPath,
+		projectDir:       projectDir,
+		titleWeight:      titleWeight,
+		maxSourceBytes:   maxSourceBytes,
+		fuzzyCache:       make(map[string]*string),
+		encryptionKey:    EncryptionKeyFromEnv(),
+		encryptionSource: encryptionKeyEnv,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // getDB returns the database connection, initializing it on first call.
@@ -107,6 +133,9 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 
 	if s.db != nil {
 		return s.db, nil
+	}
+	if err := validateEncryptionKey(s.encryptionKey, s.encryptionSource); err != nil {
+		return nil, err
 	}
 
 	dbDir := filepath.Dir(s.dbPath)
@@ -143,14 +172,9 @@ func (s *ContentStore) getDB() (*sql.DB, error) {
 }
 
 func (s *ContentStore) openDB() (*sql.DB, error) {
-	key, err := RequireEncryptionKey()
-	if err != nil {
-		return nil, err
-	}
-
-	dsn := EncryptedDSN(s.dbPath, key) +
+	dsn := EncryptedDSN(s.dbPath, s.encryptionKey) +
 		"&_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"
-	db, err := sqliteutil.OpenWithCanary(s.ctx(), dsn, s.dbPath, encryptionKeyEnv)
+	db, err := sqliteutil.OpenWithCanary(s.ctx(), dsn, s.dbPath, s.encryptionSource)
 	if err != nil {
 		return nil, err
 	}
@@ -384,11 +408,10 @@ func (s *ContentStore) Close() error {
 // encryption key, WAL journal mode, the given busy timeout, and a hard cap of
 // one connection. Callers own the returned handle and must defer Close.
 func (s *ContentStore) openSingleConn(busyTimeoutMs int) (*sql.DB, error) {
-	key, err := RequireEncryptionKey()
-	if err != nil {
+	if err := validateEncryptionKey(s.encryptionKey, s.encryptionSource); err != nil {
 		return nil, err
 	}
-	dsn := fmt.Sprintf("%s&_journal_mode=WAL&_busy_timeout=%d", EncryptedDSN(s.dbPath, key), busyTimeoutMs)
+	dsn := fmt.Sprintf("%s&_journal_mode=WAL&_busy_timeout=%d", EncryptedDSN(s.dbPath, s.encryptionKey), busyTimeoutMs)
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err

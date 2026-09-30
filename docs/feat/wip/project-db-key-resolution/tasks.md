@@ -26,19 +26,20 @@
 
 ## Task 2: Pin the store key through dbsize and maintenance connections
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 5
 - **Slicing strategy:** Risk-First — fresh maintenance connections must use the same credential as the pool
 - **Docs:** [Captured key lifetime](implementation.md#2-a-captured-key-through-the-environment-only-dbsize-path)
+- **Verification:** `make test` and focused FTS5 encryption/dbsize/doctor/race tests passed; [isolated review and validation](.reviews/task-2-code-review-2026-09-30.md).
 
 ### Subtasks
 
-- [ ] 2.1 Add private captured key/source fields and `WithEncryptionKey` in `internal/store`; snapshot the environment by default and preserve explicit-empty failure → verify: two stores with different explicit keys work under an unrelated process key.
-- [ ] 2.2 Reject an empty captured key at the top of `getDB`, under the mutex before mkdir/marker/open/recovery, and before `sql.Open` in `openSingleConn` → verify: direct store use and checkpoint leave the DB directory, marker, DB, and sidecars absent despite a nonempty inherited key. Task 6 adds the server-specific case once its constructor option exists.
-- [ ] 2.3 Route normal/recovery/maintenance opens through captured credentials; add explicit-key preflight in `encryption.go` and extend `encryption_test.go` → verify: plaintext rejection, environment changes, reopen-after-close, rebuild, vacuum, checkpoint, and close preserve the selected key and content.
-- [ ] 2.4 Create `cmd/capy/knowledge.go` helpers for project/strict-config selection and lazy store construction; route `dbsize.go` through them → verify: environment-only dbsize works and malformed config cannot select a fallback DB.
+- [x] 2.1 Add private captured key/source fields and `WithEncryptionKey` in `internal/store`; snapshot the environment by default and preserve explicit-empty failure → verify: two stores with different explicit keys work under an unrelated process key.
+- [x] 2.2 Reject an empty captured key at the top of `getDB`, under the mutex before mkdir/marker/open/recovery, and before `sql.Open` in `openSingleConn` → verify: direct store use and checkpoint leave the DB directory, marker, DB, and sidecars absent despite a nonempty inherited key. Task 6 adds the server-specific case once its constructor option exists.
+- [x] 2.3 Route normal/recovery/maintenance opens through captured credentials; add explicit-key preflight in `encryption.go` and extend `encryption_test.go` → verify: plaintext rejection, environment changes, reopen-after-close, rebuild, vacuum, checkpoint, and close preserve the selected key and content.
+- [x] 2.4 Create `cmd/capy/knowledge.go` helpers for project/strict-config selection and lazy store construction; route `dbsize.go` through them → verify: environment-only dbsize works and malformed config cannot select a fallback DB.
 
 ## Task 3: Read an explicitly configured key file through dbsize
 
