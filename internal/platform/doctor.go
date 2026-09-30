@@ -270,6 +270,29 @@ func CheckSecurity(denyCount, policyFileCount int) CheckResult {
 	}
 }
 
+// CheckKnowledgeCredential reports selection separately from database access.
+// source is a safe source hint (never a key); err must not contain credential
+// values, source lines, or a database DSN. No secret-bearing object belongs here.
+func CheckKnowledgeCredential(source string, err error) CheckResult {
+	if err != nil {
+		return CheckResult{
+			Name:   "Knowledge credential",
+			Status: Fail,
+			Detail: fmt.Sprintf("cannot select from %s (%v)", source, err),
+		}
+	}
+	return CheckResult{
+		Name:   "Knowledge credential",
+		Status: Pass,
+		Detail: fmt.Sprintf("selected from %s (database authentication checked separately)", source),
+	}
+}
+
+// CheckKnowledgeBaseSkipped explains why no knowledge database was opened.
+func CheckKnowledgeBaseSkipped(reason string) CheckResult {
+	return CheckResult{Name: "Knowledge base", Status: Warn, Detail: "not checked (" + reason + ")"}
+}
+
 // CheckKnowledgeBase checks if the knowledge base exists and reports stats.
 func CheckKnowledgeBase(dbPath string) CheckResult {
 	info, err := os.Stat(dbPath)

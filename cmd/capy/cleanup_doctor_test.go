@@ -282,6 +282,186 @@ func TestCleanupSubcommand_OptimizeAfterSourceEviction(t *testing.T) {
 
 // ─── doctor parity with capy_doctor (issue #82) ────────────────────────────────
 
+func TestDoctorSubcommand_CredentialSources(t *testing.T) {
+	for _, source := range []string{"key_file", "dotenv", "environment"} {
+		t.Run(source, func(t *testing.T) {
+			for _, state := range []string{"readable", "wrong_key", "open_error", "absent"} {
+				t.Run(state, func(t *testing.T) {
+					dir, dbPath := newCLIProject(t)
+					selectedKey := projectFileTestKey
+					if state == "wrong_key" {
+						selectedKey = cliTestKey
+					}
+					var st *store.ContentStore
+					if state == "readable" || state == "wrong_key" {
+						st = seedKeyResolutionDB(t, dbPath, dir)
+					} else if state == "open_error" {
+						require.NoError(t, os.Mkdir(dbPath, 0o700))
+					}
+					// Wrong project credentials must not be rescued by correct
+					// inheritance; correct project credentials must override it.
+					inheritedKey := cliTestKey
+					if state == "wrong_key" {
+						inheritedKey = projectFileTestKey
+					}
+					t.Setenv("CAPY_DB_KEY", inheritedKey)
+					hint := "CAPY_DB_KEY"
+					switch source {
+					case "key_file":
+						writeCLIKeyFixture(t, filepath.Join(dir, ".capy.toml"), "[store]\npath = 'test.db'\nkey_file = 'db.key'\n")
+						writeCLIKeyFixture(t, filepath.Join(dir, "db.key"), selectedKey+"\n")
+						hint = "store.key_file \"" + filepath.Join(dir, "db.key") + "\""
+					case "dotenv":
+						writeCLIKeyFixture(t, filepath.Join(dir, ".env"), "CAPY_DB_KEY="+selectedKey+"\n")
+						hint = "CAPY_DB_KEY in dotenv \"" + filepath.Join(dir, ".env") + "\""
+					case "environment":
+						t.Setenv("CAPY_DB_KEY", selectedKey)
+					}
+
+					stdout, stderr, code := capy(t, "doctor", "--project-dir", dir)
+					require.Zero(t, code, stderr)
+					assert.Contains(t, stdout, "Config: loaded (db path: "+dbPath+")")
+					assert.Contains(t, stdout, "[x] Knowledge credential: selected from "+hint+" (database authentication checked separately)")
+					assert.Contains(t, stdout, "[x] FTS5: available")
+					assert.Contains(t, stdout, "[-] Vault: disabled")
+					assertDoctorSecretsAbsent(t, stdout+stderr)
+					switch state {
+					case "readable":
+						assert.Contains(t, stdout, "[x] Knowledge base: 1 sources, 1 chunks")
+					case "wrong_key":
+						assert.Contains(t, stdout, "[-] Knowledge base: error reading stats (")
+						assert.Contains(t, stdout, "wrong passphrase or corrupted database (check "+hint+"): file is not a database")
+					case "open_error":
+						assert.Contains(t, stdout, "[-] Knowledge base: error reading stats (")
+						assert.Contains(t, stdout, "canary query failed: unable to open database file")
+					case "absent":
+						assert.Contains(t, stdout, "Knowledge base: not initialized")
+						assert.NoFileExists(t, dbPath)
+						assert.NoFileExists(t, filepath.Join(dir, ".project"))
+					}
+					if st != nil {
+						sources, err := st.ListSources()
+						require.NoError(t, err)
+						require.Len(t, sources, 1)
+						assert.Equal(t, "project-B-marker", sources[0].Label)
+					}
+					assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+				})
+			}
+		})
+	}
+}
+
+func assertDoctorSecretsAbsent(t *testing.T, output string) {
+	t.Helper()
+	for _, secret := range []string{cliTestKey, projectFileTestKey, "CAPY_DB_KEY=", "cipher=", "_key=", "key="} {
+		assert.NotContains(t, output, secret)
+	}
+}
+
+func TestDoctorSubcommand_InvalidConfig(t *testing.T) {
+	for _, mode := range []string{"parse", "type", "validation", "read"} {
+		t.Run(mode, func(t *testing.T) {
+			dir, dbPath := newCLIProject(t)
+			path := filepath.Join(dir, ".capy.toml")
+			switch mode {
+			case "parse":
+				writeCLIKeyFixture(t, path, "this is not [valid toml\n")
+			case "type":
+				writeCLIKeyFixture(t, path, "[store]\nkey_file = 42\n")
+			case "validation":
+				writeCLIKeyFixture(t, path, "[store.cleanup]\nephemeral_ttl_hours = 0\n")
+			case "read":
+				require.NoError(t, os.Remove(path))
+				require.NoError(t, os.Mkdir(path, 0o700))
+			}
+			// A resolver would fail on this declaration if called. It must
+			// never run after invalid config, even with a usable environment.
+			writeCLIKeyFixture(t, filepath.Join(dir, ".env"), "CAPY_DB_KEY=\n")
+			stdout, stderr, code := capy(t, "doctor", "--project-dir", dir)
+			require.Zero(t, code, stderr) // doctor retains its diagnostic exit convention
+			assert.Contains(t, stdout, "[ ] Config: loading configuration")
+			assert.Contains(t, stdout, "Knowledge base: not checked (configuration failed; credential selection was not run)")
+			assert.NotContains(t, stdout, "db path:")
+			assert.NotContains(t, stdout, "Knowledge credential:")
+			assert.Contains(t, stdout, "[x] FTS5: available")
+			assert.Contains(t, stdout, "Runtimes:")
+			assert.Contains(t, stdout, "[-] Vault: disabled")
+			assertDoctorSecretsAbsent(t, stdout+stderr)
+			assert.NoFileExists(t, dbPath)
+			assert.NoFileExists(t, filepath.Join(dir, ".project"))
+			assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+		})
+	}
+}
+
+func TestDoctorSubcommand_CredentialResolutionFailure(t *testing.T) {
+	for _, mode := range []string{"missing_file", "invalid_file", "invalid_dotenv", "missing_environment"} {
+		t.Run(mode, func(t *testing.T) {
+			for _, existing := range []bool{false, true} {
+				name := "absent_database"
+				if existing {
+					name = "existing_database"
+				}
+				t.Run(name, func(t *testing.T) {
+					dir, _ := newCLIProject(t)
+					dbPath := filepath.Join(dir, "absent", "knowledge.db")
+					writeCLIKeyFixture(t, filepath.Join(dir, ".capy.toml"), "[store]\npath = 'absent/knowledge.db'\n")
+					var before []byte
+					if existing {
+						seedKeyResolutionDB(t, dbPath, dir)
+						var err error
+						before, err = os.ReadFile(dbPath)
+						require.NoError(t, err)
+						// Recreating this would prove the store was opened.
+						require.NoError(t, os.Remove(filepath.Join(filepath.Dir(dbPath), ".project")))
+					}
+					t.Setenv("CAPY_DB_KEY", projectFileTestKey)
+					want := "CAPY_DB_KEY environment variable is required"
+					switch mode {
+					case "missing_file", "invalid_file":
+						writeCLIKeyFixture(t, filepath.Join(dir, ".capy.toml"), "[store]\npath = 'absent/knowledge.db'\nkey_file = 'db.key'\n")
+						want = filepath.Join(dir, "db.key")
+						if mode == "invalid_file" {
+							writeCLIKeyFixture(t, want, projectFileTestKey+"\nextra-line\n")
+						}
+					case "invalid_dotenv":
+						writeCLIKeyFixture(t, filepath.Join(dir, ".env"), "CAPY_DB_KEY="+projectFileTestKey+"\necho unsupported\n")
+						want = filepath.Join(dir, ".env") + "\" line 2: expected a single-line variable assignment"
+					case "missing_environment":
+						t.Setenv("CAPY_DB_KEY", "")
+					}
+					stdout, stderr, code := capy(t, "doctor", "--project-dir", dir)
+					require.Zero(t, code, stderr)
+					assert.Contains(t, stdout, "[ ] Knowledge credential: cannot select from ")
+					assert.Contains(t, stdout, want)
+					assert.Contains(t, stdout, "Knowledge base: not checked (credential selection failed)")
+					assert.NotContains(t, stdout, "error reading stats")
+					assert.Contains(t, stdout, "[x] FTS5: available")
+					assert.Contains(t, stdout, "Runtimes:")
+					assert.Contains(t, stdout, "[-] Vault: disabled")
+					if mode == "invalid_dotenv" {
+						assert.Contains(t, stdout, "configure store.key_file")
+						assert.NotContains(t, stdout, "echo unsupported")
+					}
+					assertDoctorSecretsAbsent(t, stdout+stderr)
+					if existing {
+						after, err := os.ReadFile(dbPath)
+						require.NoError(t, err)
+						assert.Equal(t, before, after)
+					} else {
+						assert.NoDirExists(t, filepath.Dir(dbPath))
+					}
+					for _, path := range []string{filepath.Join(filepath.Dir(dbPath), ".project"), dbPath + "-wal", dbPath + "-shm"} {
+						assert.NoFileExists(t, path)
+					}
+					assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+				})
+			}
+		})
+	}
+}
+
 func TestDoctorSubcommand_KnowledgeBaseStatsAndLegacySessions(t *testing.T) {
 	dir, dbPath := newCLIProject(t)
 	t.Setenv("CAPY_VAULT_KEY", "")

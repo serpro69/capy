@@ -141,17 +141,18 @@
 
 ## Task 9: Explain credential selection in CLI and MCP doctor
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 1, 6, 7
 - **Size:** M
 - **Can run in parallel with:** Task 10
 - **Docs:** [Credential diagnostics](implementation.md#9-credential-diagnostics-on-both-surfaces)
+- **Verification:** Full `make test`, focused FTS5 doctor checks with and without `-race`, and targeted vet passed; [isolated review and validation](.reviews/task-9-code-review-2026-09-30.md).
 
 ### Subtasks
 
-- [ ] 9.1 Add shared safe credential-result formatting in `internal/platform/doctor.go`; use it in CLI/MCP doctor while retaining Task 7's disabled-vault migration hint → verify: key-file, dotenv, and environment sources are identifiable without exposing values.
-- [ ] 9.2 Handle invalid config and resolver failures without selecting/opening a fallback target; continue independent checks → verify: FTS5/vault/runtime diagnostics remain available and no DB directory/marker is created.
-- [ ] 9.3 Add parity tests in CLI and server doctor tests → verify: selection and authentication remain distinct, real open errors survive, and all synthetic secrets/DSNs are absent.
+- [x] 9.1 Add shared safe credential-result formatting in `internal/platform/doctor.go`; use it in CLI/MCP doctor while retaining Task 7's disabled-vault migration hint → verify: key-file, dotenv, and environment sources are identifiable without exposing values.
+- [x] 9.2 Handle invalid config and resolver failures without selecting/opening a fallback target; continue independent checks → verify: FTS5/vault/runtime diagnostics remain available and no DB directory/marker is created.
+- [x] 9.3 Add parity tests in CLI and server doctor tests → verify: selection and authentication remain distinct, real open errors survive, and all synthetic secrets/DSNs are absent.
 
 ## Task 10: Preserve path inspection and key rotation contracts
 
