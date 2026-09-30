@@ -1,6 +1,6 @@
 # Project database key resolution implementation plan
 
-> Status: In progress — Tasks 1–5 complete; Tasks 6–11 pending
+> Status: In progress — Tasks 1–6 complete; Tasks 7–11 pending
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Baseline: `d9e09c1`
@@ -93,6 +93,8 @@ Primary files: `cmd/capy/serve.go`, `internal/server/server.go`, `internal/serve
 The direct binary path is complete at this point. Generated MCP launches require the next slice because old wrappers can exit before Go runs.
 
 Size is M: serve wiring, the server option, and credential-specific tests span four primary files. Transport/process-harness construction is already complete in slice 5.
+
+**Completed 2026-09-30.** Bare invocation and `serve` now use strict target loading, shared credential resolution, and explicit-key preflight. `WithKnowledgeCredentials` supplies the captured key and safe source metadata; default server construction snapshots the environment once, and lazy store construction preserves that selection. Real stdio tests cover simultaneous key-file/dotenv projects under crossed inherited keys, index/search/doctor, clean shutdown/reopen, argument placement, missing/invalid credentials/configuration, plaintext rejection, and wrong-key content preservation. Direct server tests cover environment/file changes before lazy initialization and explicit-empty doctor without filesystem side effects. Full `make test`, focused normal/race checks, and targeted vet passed. Isolated review identified a startup-test scheduling race, now fixed and re-reviewed; no production defect was reported. See the [review and validation record](.reviews/task-6-code-review-2026-09-30.md). No design deviation or new dependency was needed. Generated wrappers, other CLI paths, and expanded diagnostic formatting remain in their assigned pending tasks.
 
 ## 7 Generated wrapper rollout and migration
 

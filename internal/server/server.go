@@ -60,24 +60,50 @@ type Server struct {
 	vaultMu       sync.Once
 	bgWg          sync.WaitGroup
 	projectDir    string
+
+	// Captured before lazy initialization; never re-resolved from files or the
+	// environment during this server's lifetime.
+	knowledgeKey    string
+	knowledgeSource config.KeySource
 }
 
-// NewServer creates a new Server. The store is lazily initialized on first use.
+// Option configures a Server before its first use.
+type Option func(*Server)
+
+// WithKnowledgeCredentials replaces the constructor's environment snapshot.
+// An explicit empty key fails on store use without falling back or creating
+// database files. source contains safe metadata only, never the passphrase.
+func WithKnowledgeCredentials(key string, source config.KeySource) Option {
+	return func(s *Server) {
+		s.knowledgeKey = key
+		s.knowledgeSource = source
+	}
+}
+
+// NewServer creates a new Server, capturing CAPY_DB_KEY unless overridden by
+// WithKnowledgeCredentials. The store is lazily initialized on first use.
 func NewServer(
 	cfg *config.Config,
 	policies []security.SecurityPolicy,
 	exec *executor.PolyglotExecutor,
 	projectDir string,
+	opts ...Option,
 ) *Server {
-	return &Server{
-		config:        cfg,
-		security:      policies,
-		readDenyGlobs: security.ReadToolDenyPatterns("Read", projectDir, ""),
-		executor:      exec,
-		stats:         NewSessionStats(),
-		throttle:      &searchThrottle{windowStart: time.Now()},
-		projectDir:    projectDir,
+	s := &Server{
+		config:          cfg,
+		security:        policies,
+		readDenyGlobs:   security.ReadToolDenyPatterns("Read", projectDir, ""),
+		executor:        exec,
+		stats:           NewSessionStats(),
+		throttle:        &searchThrottle{windowStart: time.Now()},
+		projectDir:      projectDir,
+		knowledgeKey:    store.EncryptionKeyFromEnv(),
+		knowledgeSource: config.KeySource{Kind: config.KeySourceEnvironment},
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // getStore returns the lazily-initialized ContentStore.
@@ -89,6 +115,7 @@ func (s *Server) getStore() *store.ContentStore {
 			s.config.DBProjectDir(s.projectDir),
 			s.config.Store.TitleWeight,
 			s.config.Store.MaxSourceBytes,
+			store.WithEncryptionKey(s.knowledgeKey, s.knowledgeSource.String()),
 		)
 		// Wire the Read deny-policy into stale auto-refresh so a file whose
 		// deny status changed since indexing is not re-read (TOCTOU defense).

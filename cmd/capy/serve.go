@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
-	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/security"
 	"github.com/serpro69/capy/internal/server"
@@ -22,24 +20,22 @@ func newServeCmd() *cobra.Command {
 }
 
 func serveRunE(cmd *cobra.Command, _ []string) error {
-	projectDir, _ := cmd.Flags().GetString("project-dir")
-	if projectDir == "" {
-		projectDir = config.DetectProjectRoot()
-	}
-
-	cfg, err := config.Load(projectDir)
+	target, err := loadKnowledgeTarget(cmd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "capy: config warning: %v (using defaults)\n", err)
-		cfg = config.DefaultConfig()
+		return fmt.Errorf("capy serve: %w", err)
 	}
-
-	if err := store.ValidateEncryptionReady(cfg.ResolveDBPath(projectDir)); err != nil {
+	key, source, err := resolveKnowledgeKey(target)
+	if err != nil {
+		return fmt.Errorf("capy serve: %w", err)
+	}
+	if err := store.ValidateEncryptionReadyWithKey(target.dbPath, key, source.String()); err != nil {
 		return fmt.Errorf("capy serve: %w", err)
 	}
 
+	projectDir, cfg := target.projectDir, target.cfg
 	policies := security.ReadBashPolicies(projectDir, "")
 	exec := executor.NewExecutor(projectDir, cfg.Executor.MaxOutputBytes)
 
-	srv := server.NewServer(cfg, policies, exec, projectDir)
+	srv := server.NewServer(cfg, policies, exec, projectDir, server.WithKnowledgeCredentials(key, source))
 	return srv.Serve(context.Background())
 }
