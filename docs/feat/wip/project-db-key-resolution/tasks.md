@@ -59,19 +59,20 @@
 
 ## Task 4: Support literal project dotenv credentials through dbsize
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 5, 10
 - **Docs:** [Dotenv compatibility and size boundary](implementation.md#4-literal-dotenv-compatibility-through-dbsize)
 - **Size rationale:** Five bounded target files; fixed single-line grammar plus the existing resolver/file-admission helper. General dotenv/shell evaluation and transport harnesses are excluded.
+- **Verification:** `make test`, focused FTS5 dotenv/resolver/dbsize tests with and without `-race`, and targeted `go vet` passed; [isolated review and validation](.reviews/task-4-code-review-2026-09-30.md).
 
 ### Subtasks
 
-- [ ] 4.1 Create the isolated literal parser in `internal/config/dotenv.go` with declaration detection and whole-file structural validation → verify: accepted bytes match the grammar and embedded/malformed/duplicate/empty declarations fail without partial results.
-- [ ] 4.2 Add owner dotenv, distinct main-worktree fallback, then environment ordering to `keys.go`; reuse regular-file admission with the 1 MiB dotenv limit → verify: every precedence boundary, access/size errors, and explicit-file bypass are covered.
-- [ ] 4.3 Test unsupported syntax both before and after a valid declaration, including a later duplicate, with a correct inherited key → verify: failure retains the source/line and `store.key_file` migration hint without printing source text or values.
-- [ ] 4.4 Test conflicting linked-worktree dotenv, literal grammar, false-positive names, sentinel execution, and vault/environment isolation through parser/resolver and actual dbsize fixtures → verify: relative DB mode ignores the linked dotenv, absolute/XDG mode consults it, no commands execute or environment values change, and content remains intact.
+- [x] 4.1 Create the isolated literal parser in `internal/config/dotenv.go` with declaration detection and whole-file structural validation → verify: accepted bytes match the grammar and embedded/malformed/duplicate/empty declarations fail without partial results.
+- [x] 4.2 Add owner dotenv, distinct main-worktree fallback, then environment ordering to `keys.go`; reuse regular-file admission with the 1 MiB dotenv limit → verify: every precedence boundary, access/size errors, and explicit-file bypass are covered.
+- [x] 4.3 Test unsupported syntax both before and after a valid declaration, including a later duplicate, with a correct inherited key → verify: failure retains the source/line and `store.key_file` migration hint without printing source text or values.
+- [x] 4.4 Test conflicting linked-worktree dotenv, literal grammar, false-positive names, sentinel execution, and vault/environment isolation through parser/resolver and actual dbsize fixtures → verify: relative DB mode ignores the linked dotenv, absolute/XDG mode consults it, no commands execute or environment values change, and content remains intact.
 
 ## Task 5: Establish baseline stdio MCP round trips
 

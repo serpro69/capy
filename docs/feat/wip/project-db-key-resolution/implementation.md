@@ -1,6 +1,6 @@
 # Project database key resolution implementation plan
 
-> Status: In progress — Tasks 1–3 complete; Tasks 4–11 pending
+> Status: In progress — Tasks 1–4 complete; Tasks 5–11 pending
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Baseline: `d9e09c1`
@@ -67,6 +67,8 @@ Size is M: five bounded target files, one fixed single-line grammar, and an exis
 - Exercise actual dbsize reads with B's dotenv and A inherited, plus environment-only operation with no declaration. → verify: content remains readable with B after wrong-key attempts and no alternate default DB is created.
 
 Do not run a shell, use regex as a substitute for quote/assignment parsing, or accept a partial parser result after an error. No source lines or values belong in parser diagnostics.
+
+**Completed 2026-09-30.** The pure literal parser detects exact declarations and validates the entire file before returning a key. The resolver now selects owner dotenv, distinct main-worktree fallback, then environment, while explicit key files bypass dotenv. The existing file-admission helper enforces the 1 MiB raw limit. Regression coverage includes literal bytes and unsupported syntax, false-positive names, duplicates, embedded declarations, precedence and file-access boundaries, sentinel execution, environment/vault isolation, and real encrypted dbsize reads under conflicting inherited keys. Wrong selected keys preserve content; resolution errors leave DB directories/markers absent and retain safe source/line context with the key-file migration hint. Full `make test`, focused normal/race checks, and targeted vet passed; both isolated reviewers reported no actionable findings. See the [review and validation record](.reviews/task-4-code-review-2026-09-30.md). No design deviation or external dependency was needed. Command/server integration and rollout remain in Tasks 5–11.
 
 ## 5 Baseline stdio MCP transport verification
 

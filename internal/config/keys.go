@@ -2,13 +2,17 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 )
 
-const maxKeyFileBytes = 4096
+const (
+	maxKeyFileBytes = 4096
+	maxDotenvBytes  = 1 << 20
+)
 
 // KeySource describes a selected credential without retaining its secret.
 // Path is the resolved source path, preserving filesystem symlinks.
@@ -20,6 +24,7 @@ type KeySource struct {
 const (
 	KeySourceEnvironment = "environment"
 	KeySourceFile        = "key_file"
+	KeySourceDotenv      = "dotenv"
 )
 
 // String returns a safe hint for diagnostics and store authentication errors.
@@ -29,13 +34,15 @@ func (s KeySource) String() string {
 		return "CAPY_DB_KEY"
 	case KeySourceFile:
 		return fmt.Sprintf("store.key_file %q", s.Path)
+	case KeySourceDotenv:
+		return fmt.Sprintf("CAPY_DB_KEY in dotenv %q", s.Path)
 	default:
 		return "selected knowledge credential"
 	}
 }
 
-// ResolveStoreKey selects a configured literal key file, or the inherited
-// CAPY_DB_KEY when no file is configured. It does not authenticate the key,
+// ResolveStoreKey selects a configured literal key file, an owner/main-worktree
+// dotenv declaration, or the inherited CAPY_DB_KEY. It does not authenticate the key,
 // touch the database, or change the process environment. Errors retain safe
 // source metadata but never return a partial key or try a lower-priority source.
 func (c *Config) ResolveStoreKey(projectDir string) (string, KeySource, error) {
@@ -63,12 +70,38 @@ func (c *Config) ResolveStoreKey(projectDir string) (string, KeySource, error) {
 		return string(data), source, nil
 	}
 
-	source := KeySource{Kind: KeySourceEnvironment}
-	key := os.Getenv("CAPY_DB_KEY")
+	owner := c.DBProjectDir(projectDir)
+	key, source, found, err := resolveDotenvKey(owner)
+	if err != nil || found {
+		return key, source, err
+	}
+	if main := MainWorktreeDir(projectDir); main != owner {
+		key, source, found, err = resolveDotenvKey(main)
+		if err != nil || found {
+			return key, source, err
+		}
+	}
+
+	source = KeySource{Kind: KeySourceEnvironment}
+	key = os.Getenv("CAPY_DB_KEY")
 	if key == "" {
-		return "", source, fmt.Errorf("CAPY_DB_KEY environment variable is required when no store.key_file is configured (see: capy encrypt --help)")
+		return "", source, fmt.Errorf("CAPY_DB_KEY environment variable is required when no store.key_file or project dotenv credential is selected (see: capy encrypt --help)")
 	}
 	return key, source, nil
+}
+
+func resolveDotenvKey(dir string) (string, KeySource, bool, error) {
+	path := filepath.Join(dir, ".env")
+	source := KeySource{Kind: KeySourceDotenv, Path: path}
+	data, err := readCredentialFile(path, maxDotenvBytes)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", source, false, nil
+	}
+	if err != nil {
+		return "", source, false, fmt.Errorf("%s: %w; configure store.key_file with a literal passphrase file", source, err)
+	}
+	key, found, err := parseDotenvKey(data, path)
+	return key, source, found, err
 }
 
 // readCredentialFile admits only regular targets, following symlinks. Inspect

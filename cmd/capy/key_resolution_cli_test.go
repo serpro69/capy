@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/serpro69/capy/internal/config"
@@ -210,4 +211,142 @@ func TestKnowledgeStore_KeyFileSnapshot(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, other.Close()) })
 	_, err = other.ListSources()
 	require.ErrorContains(t, err, "wrong passphrase or corrupted database")
+}
+
+func TestDBSizeSubcommand_DotenvOwnership(t *testing.T) {
+	for _, mode := range []string{"checkout", "linked_relative", "linked_absolute", "linked_xdg", "linked_absolute_fallback", "linked_xdg_fallback"} {
+		t.Run(mode, func(t *testing.T) {
+			project, _ := newCLIProject(t)
+			mainDir, external := t.TempDir(), t.TempDir()
+			owner, credentialOwner := project, project
+			storePath := "test.db"
+			if strings.HasPrefix(mode, "linked_") {
+				gitDir := filepath.Join(mainDir, ".git", "worktrees", "linked")
+				writeCLIKeyFixture(t, filepath.Join(gitDir, "commondir"), "../..\n")
+				writeCLIKeyFixture(t, filepath.Join(project, ".git"), "gitdir: "+gitDir+"\n")
+				writeCLIKeyFixture(t, filepath.Join(mainDir, ".capy.toml"), "invalid main config must not be loaded")
+				switch {
+				case mode == "linked_relative":
+					owner, credentialOwner = mainDir, mainDir
+				case strings.HasPrefix(mode, "linked_absolute"):
+					storePath = filepath.Join(external, "knowledge.db")
+				default:
+					storePath = ""
+				}
+				if strings.HasSuffix(mode, "_fallback") {
+					credentialOwner = mainDir
+					writeCLIKeyFixture(t, filepath.Join(project, ".env"), "CAPY_DB_KEYS=unrelated\nAPP=$(never-run)")
+				} else {
+					other := mainDir
+					if credentialOwner == mainDir {
+						other = project
+					}
+					writeCLIKeyFixture(t, filepath.Join(other, ".env"), "CAPY_DB_KEY="+cliTestKey)
+				}
+			}
+			writeCLIKeyFixture(t, filepath.Join(project, ".capy.toml"), fmt.Sprintf("[store]\npath = %q\n", storePath))
+			writeCLIKeyFixture(t, filepath.Join(credentialOwner, ".env"), "# literal compatibility\r\nexport\tCAPY_DB_KEY = \""+projectFileTestKey+"\" # selected\r\nCAPY_VAULT_KEY=synthetic-unused-vault\r\n")
+			dbPath := filepath.Join(owner, storePath)
+			if filepath.IsAbs(storePath) {
+				dbPath = storePath
+			} else if storePath == "" {
+				dbPath = filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy", config.ProjectHash(project), "knowledge.db")
+			}
+			st := seedKeyResolutionDB(t, dbPath, owner)
+			stdout, stderr, code := capy(t, "dbsize", "--project-dir", project)
+			require.Equal(t, 0, code, stderr)
+			assert.Contains(t, stdout, "Database: "+dbPath)
+			assert.Contains(t, stdout, "project-B-marker")
+			assert.NotContains(t, stdout+stderr, projectFileTestKey)
+			assert.NotContains(t, stdout+stderr, cliTestKey)
+			assert.NotContains(t, stdout+stderr, "cipher=")
+			sources, err := st.ListSources()
+			require.NoError(t, err)
+			require.Len(t, sources, 1)
+			assert.Equal(t, "project-B-marker", sources[0].Label)
+			if storePath != "" {
+				assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+			}
+			if owner != project {
+				assert.NoFileExists(t, filepath.Join(project, "test.db"))
+			}
+		})
+	}
+}
+
+func TestDBSizeSubcommand_DotenvErrorsAndBypass(t *testing.T) {
+	valid := "CAPY_DB_KEY=" + projectFileTestKey
+	for _, tc := range []struct {
+		name, data string
+		line       int
+	}{
+		{"unsupported_before", "source unsupported-secret-script\n" + valid, 1},
+		{"unsupported_after", valid + "\nsource unsupported-secret-script", 2},
+		{"duplicate_after", valid + "\n" + valid, 2},
+		{"malformed_after", valid + "\nAPP='unterminated", 2},
+		{"empty", "CAPY_DB_KEY=", 1},
+		{"wrong_key", "CAPY_DB_KEY=" + cliTestKey, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project, dbPath := newCLIProject(t)
+			path := filepath.Join(project, ".env")
+			writeCLIKeyFixture(t, path, tc.data)
+			st := seedKeyResolutionDB(t, dbPath, project)
+			t.Setenv("CAPY_DB_KEY", projectFileTestKey) // correct inheritance must not rescue it
+			stdout, stderr, code := capy(t, "dbsize", "--project-dir", project)
+			assert.NotZero(t, code)
+			assert.Contains(t, stderr, path)
+			if tc.line != 0 {
+				assert.Contains(t, stderr, fmt.Sprintf("line %d:", tc.line))
+				assert.Contains(t, stderr, "store.key_file")
+			} else {
+				assert.Contains(t, stderr, "wrong passphrase or corrupted database")
+			}
+			assert.NotContains(t, stdout+stderr, projectFileTestKey)
+			assert.NotContains(t, stdout+stderr, cliTestKey)
+			assert.NotContains(t, stdout+stderr, "unsupported-secret-script")
+			assert.NotContains(t, stdout+stderr, "cipher=")
+			// The same dotenv cannot block access through an explicit key file.
+			writeCLIKeyFixture(t, filepath.Join(project, "db.key"), projectFileTestKey)
+			writeCLIKeyFixture(t, filepath.Join(project, ".capy.toml"), "[store]\npath = 'test.db'\nkey_file = 'db.key'\n")
+			stdout, stderr, code = capy(t, "dbsize", "--project-dir", project)
+			require.Equal(t, 0, code, stderr)
+			assert.Contains(t, stdout, "project-B-marker")
+			sources, err := st.ListSources()
+			require.NoError(t, err)
+			require.Len(t, sources, 1)
+			assert.Equal(t, "project-B-marker", sources[0].Label)
+			assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+		})
+	}
+}
+
+func TestDBSizeSubcommand_DotenvNoExecutionOrCreation(t *testing.T) {
+	project, dbPath := newCLIProject(t)
+	path := filepath.Join(project, ".env")
+	sentinel := filepath.Join(project, "must-not-exist")
+	data := "CAPY_VAULT_KEY=synthetic-unused-vault\nCAPY_DB_KEY=$(touch " + sentinel + ")\n"
+	writeCLIKeyFixture(t, path, data)
+	writeCLIKeyFixture(t, filepath.Join(project, ".capy.toml"), "[store]\npath = 'absent/knowledge.db'\n")
+	stdout, stderr, code := capy(t, "dbsize", "--project-dir", project)
+	assert.NotZero(t, code)
+	assert.Contains(t, stderr, "line 2:")
+	assert.Contains(t, stderr, "store.key_file")
+	assert.NotContains(t, stdout+stderr, "touch")
+	assert.NotContains(t, stdout+stderr, "synthetic-unused-vault")
+	assert.NoFileExists(t, sentinel)
+	assert.NoDirExists(t, filepath.Join(project, "absent"), "no DB, sidecars, or marker may be created")
+	assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+
+	// With no target declaration, unrelated application dotenv syntax is ignored.
+	// If sourced, this would create the sentinel; the near-match names cannot
+	// replace the inherited B key through the literal resolver.
+	writeCLIKeyFixture(t, path, "CAPY_DB_KEYS=unrelated\nAPP=$(touch "+sentinel+")\nexport CAPY_DB_KEY_SUFFIX=unrelated\n")
+	writeCLIKeyFixture(t, filepath.Join(project, ".capy.toml"), "[store]\npath = 'test.db'\n")
+	seedKeyResolutionDB(t, dbPath, project)
+	t.Setenv("CAPY_DB_KEY", projectFileTestKey)
+	stdout, stderr, code = capy(t, "dbsize", "--project-dir", project)
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "project-B-marker")
+	assert.NoFileExists(t, sentinel)
 }
