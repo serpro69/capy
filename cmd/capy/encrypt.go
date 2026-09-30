@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/sqliteutil"
 	"github.com/serpro69/capy/internal/store"
 	"github.com/serpro69/capy/internal/terminal"
@@ -22,6 +21,9 @@ func newEncryptCmd() *cobra.Command {
 		Long: `Encrypt an unencrypted knowledge database, or rotate the key of an
 already-encrypted one.
 
+Before running, stop all servers and other processes using the target database.
+This command does not stop them automatically.
+
 Initial encryption:
   1. Set CAPY_DB_KEY in your shell profile (32+ chars recommended).
   2. Run: capy encrypt
@@ -32,26 +34,31 @@ Key rotation:
   2. Run: capy encrypt
   3. Enter the OLD passphrase when prompted.
 
+If CAPY_DB_KEY is unset, the new passphrase is prompted for and confirmed.
+Project key files and .env do not supply the old or new rotation passphrase.
+After success, update any project credential (store.key_file or CAPY_DB_KEY in
+.env) to the new passphrase before restarting servers or other database users.
+Credential files are not rewritten automatically.
+
 The original database is preserved as <path>.bak before any changes.`,
 		RunE: runEncrypt,
 	}
 }
 
 func runEncrypt(cmd *cobra.Command, args []string) error {
-	projectDir, _ := cmd.Flags().GetString("project-dir")
-	if projectDir == "" {
-		projectDir = config.DetectProjectRoot()
-	}
+	return runEncryptWithPrompts(cmd, terminal.ReadPassphrase, terminal.ReadPassphraseConfirm)
+}
 
-	cfg, err := config.Load(projectDir)
+// runEncryptWithPrompts keeps terminal access injectable without changing the
+// rotation contract: prompt for the old key, then use the environment or a
+// confirmed prompt for the new key. Normal-access credentials are not resolved.
+func runEncryptWithPrompts(cmd *cobra.Command, readPassphrase, confirmPassphrase func(string) (string, error)) error {
+	target, err := loadKnowledgeTarget(cmd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "capy encrypt: warning: config load failed (%v), using defaults\n", err)
-	}
-	if cfg == nil {
-		cfg = config.DefaultConfig()
+		return err
 	}
 
-	dbPath := cfg.ResolveDBPath(projectDir)
+	dbPath := target.dbPath
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return fmt.Errorf("no knowledge base at %s", dbPath)
 	} else if err != nil {
@@ -59,14 +66,14 @@ func runEncrypt(cmd *cobra.Command, args []string) error {
 	}
 	dbPath = resolveDBSymlink(dbPath)
 
-	oldKey, err := terminal.ReadPassphrase("Current DB passphrase (empty if unencrypted): ")
+	oldKey, err := readPassphrase("Current DB passphrase (empty if unencrypted): ")
 	if err != nil {
 		return fmt.Errorf("reading current passphrase: %w", err)
 	}
 
 	newKey := store.EncryptionKeyFromEnv()
 	if newKey == "" {
-		newKey, err = terminal.ReadPassphraseConfirm("New passphrase: ")
+		newKey, err = confirmPassphrase("New passphrase: ")
 		if err != nil {
 			return fmt.Errorf("reading new passphrase: %w", err)
 		}
@@ -165,12 +172,13 @@ func rekeyEncrypted(dbPath, oldKey, newKey string) error {
 	return nil
 }
 
-// printRekeyDone emits the success messages for `capy encrypt`. It mirrors the
-// output the moved swapAndVerify helper used to print, keeping capy encrypt's
-// observable stdout unchanged after the I/O moved out of sqliteutil.
+// printRekeyDone reports success and the credential update needed before new
+// stores are opened with the rotated key.
 func printRekeyDone(dbPath, bakPath string) {
 	fmt.Printf("capy encrypt: done. Encrypted: %s\n", dbPath)
 	fmt.Printf("capy encrypt: backup at %s\n", bakPath)
+	fmt.Println("capy encrypt: update any project credential (store.key_file or CAPY_DB_KEY in .env) " +
+		"to the new passphrase before restarting servers or other database users.")
 }
 
 func openUnencrypted(dbPath string) (*sql.DB, error) {

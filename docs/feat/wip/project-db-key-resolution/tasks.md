@@ -156,18 +156,19 @@
 
 ## Task 10: Preserve path inspection and key rotation contracts
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 4, 5, 6, 7, 9, subject to their dependencies
 - **Docs:** [Path and rotation compatibility](implementation.md#10-path-inspection-and-rotation-compatibility)
+- **Verification:** Full `make test`, focused FTS5 path/rotation/checkpoint tests with and without `-race`, and targeted vet passed; [isolated review and validation](.reviews/task-10-code-review-2026-09-30.md).
 
 ### Subtasks
 
-- [ ] 10.1 Make `which.go` use strict config without credential lookup → verify: valid paths print with missing credentials and malformed config produces no fallback path.
-- [ ] 10.2 Make `encrypt.go` reject invalid config before prompting; preserve old/new-key selection, document stopping attached processes in help, and add the post-rotation credential-update reminder → verify: guidance is explicit and old project credentials cannot override a new environment passphrase.
-- [ ] 10.3 Add deterministic rotation tests in `encrypt_test.go`, using the narrow prompt seam if needed → verify: new key succeeds, old key fails, prompt fallback is correct, and credential files/vault environment remain unchanged.
-- [ ] 10.4 Coordinate shared `main_test.go` changes with Task 8 → verify: path/rotation and checkpoint expectations remain intact when integrated; no test purports to prove a human stopped all processes.
+- [x] 10.1 Make `which.go` use strict config without credential lookup → verify: valid paths print with missing credentials and malformed config produces no fallback path.
+- [x] 10.2 Make `encrypt.go` reject invalid config before prompting; preserve old/new-key selection, document stopping attached processes in help, and add the post-rotation credential-update reminder → verify: guidance is explicit and old project credentials cannot override a new environment passphrase.
+- [x] 10.3 Add deterministic rotation tests in `encrypt_test.go`, using the narrow prompt seam if needed → verify: new key succeeds, old key fails, prompt fallback is correct, and credential files/vault environment remain unchanged.
+- [x] 10.4 Coordinate shared `main_test.go` changes with Task 8 → verify: path/rotation and checkpoint expectations remain intact when integrated; no test purports to prove a human stopped all processes.
 
 ## Task 11: Verify the complete feature and update durable documentation
 
