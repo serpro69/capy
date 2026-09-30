@@ -293,6 +293,90 @@ func TestUnknownSubcommand(t *testing.T) {
 	require.NotEqual(t, 0, code)
 }
 
+func TestWhichSubcommand_WithoutCredentials(t *testing.T) {
+	for _, mode := range []string{
+		"missing_environment", "missing_key_file", "invalid_key_file", "nonregular_key_file", "invalid_dotenv",
+	} {
+		t.Run(mode, func(t *testing.T) {
+			project, _ := newCLIProject(t)
+			t.Setenv("CAPY_DB_KEY", "")
+			cfg := "[store]\npath = 'absent/knowledge.db'\n"
+			switch mode {
+			case "missing_key_file", "invalid_key_file", "nonregular_key_file":
+				cfg += "key_file = 'db.key'\n"
+			}
+			writeCLIKeyFixture(t, filepath.Join(project, ".capy.toml"), cfg)
+			switch mode {
+			case "invalid_key_file":
+				writeCLIKeyFixture(t, filepath.Join(project, "db.key"), "invalid\nkey\n")
+			case "nonregular_key_file":
+				require.NoError(t, os.Mkdir(filepath.Join(project, "db.key"), 0o700))
+			case "invalid_dotenv":
+				writeCLIKeyFixture(t, filepath.Join(project, ".env"), "CAPY_DB_KEY=\nunsupported statement\n")
+			}
+
+			stdout, stderr, code := capy(t, "which", "--project-dir", project)
+			require.Zero(t, code, stderr)
+			assert.Equal(t, filepath.Join(project, "absent", "knowledge.db")+"\n", stdout)
+			assert.Empty(t, stderr)
+			assert.NoDirExists(t, filepath.Join(project, "absent"))
+			assert.NoFileExists(t, filepath.Join(project, ".project"))
+			assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+		})
+	}
+}
+
+func TestPathSubcommands_InvalidConfig(t *testing.T) {
+	for _, command := range []string{"which", "encrypt"} {
+		t.Run(command, func(t *testing.T) {
+			for _, tc := range []struct {
+				name, config string
+			}{
+				{name: "malformed", config: "this is not [valid toml\n"},
+				{name: "invalid_type", config: "[store]\npath = 42\n"},
+				{name: "invalid_value", config: "[store.cleanup]\nephemeral_ttl_hours = 0\n"},
+				{name: "unreadable"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					project, dbPath := newCLIProject(t)
+					t.Setenv("CAPY_DB_KEY", "")
+					configPath := filepath.Join(project, ".capy.toml")
+					if tc.name == "unreadable" {
+						require.NoError(t, os.Remove(configPath))
+						require.NoError(t, os.Mkdir(configPath, 0o700))
+					} else {
+						writeCLIKeyFixture(t, configPath, tc.config)
+					}
+
+					stdout, stderr, code := capy(t, command, "--project-dir", project)
+					assert.NotZero(t, code)
+					assert.Empty(t, stdout)
+					assert.Contains(t, stderr, "loading configuration")
+					assert.NotContains(t, stderr, "using defaults")
+					assert.NotContains(t, stderr, "Current DB passphrase")
+					assert.NotContains(t, stderr, "New passphrase:")
+					assert.NoFileExists(t, dbPath)
+					assert.NoFileExists(t, filepath.Join(project, ".project"))
+					assert.NoDirExists(t, filepath.Join(os.Getenv("XDG_DATA_HOME"), "capy"))
+				})
+			}
+		})
+	}
+}
+
+func TestEncryptSubcommand_Help(t *testing.T) {
+	project, _ := newCLIProject(t)
+	t.Setenv("CAPY_DB_KEY", "")
+	stdout, stderr, code := capy(t, "encrypt", "--help", "--project-dir", project)
+	require.Zero(t, code, stderr)
+	for _, guidance := range []string{
+		"stop all servers", "does not stop them automatically", "OLD passphrase", "NEW passphrase",
+		"prompted for and confirmed", "store.key_file", "before restarting", "not rewritten automatically",
+	} {
+		assert.Contains(t, stdout, guidance)
+	}
+}
+
 func TestEncryptPlain_WALMode(t *testing.T) {
 	const passphrase = "test-encrypt-plain-at-least-32-characters!!"
 

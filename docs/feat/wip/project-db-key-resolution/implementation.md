@@ -1,6 +1,6 @@
 # Project database key resolution implementation plan
 
-> Status: In progress — Tasks 1–9 complete; Tasks 10–11 pending
+> Status: In progress — Tasks 1–10 complete; Task 11 pending
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Baseline: `d9e09c1`
@@ -143,6 +143,8 @@ Primary files: `cmd/capy/which.go`, `cmd/capy/encrypt.go`, `cmd/capy/main_test.g
 - Make encrypt fail on invalid config before prompting or opening a DB. Keep normal-access credential resolution out of its new-key path; an existing key file/dotenv must not replace an explicitly supplied new environment key. State the stop-attached-processes precondition in help and add a success reminder to update project credentials before restarting. → verify: guidance is present, malformed config does not prompt, and rotation with an old project credential and a new environment key produces a DB readable with the new key, not the old one. Do not claim a test can enforce operator behavior.
 - Test the command's passphrase selection without relying on a developer's controlling terminal. If needed, introduce a narrow unexported prompt-function seam in `encrypt.go` that defaults to the existing terminal helpers; tests supply old/new answers through that seam. Do not change the terminal package or add a PTY dependency. → verify: the new-key prompt is used only when the environment key is absent, and old-key prompting remains intact.
 - Verify project credential files are not rewritten and vault credentials are unchanged. → verify: byte-for-byte file comparison and vault-key assertions accompany the rotation test.
+
+**Completed 2026-09-30.** `which` and `encrypt` now use the shared strict target loader. Path inspection succeeds without reading credentials, including missing or invalid project key files and dotenv declarations. Configuration errors stop both commands without a fallback target; encryption stops before prompting or modifying an existing database. Rotation retains its prompted old key and environment-or-confirmed-prompt new key, with a narrow function seam for deterministic tests. Help documents stopping attached processes, and successful encryption/rotation reminds users to update project credentials before restarting. Real rotation tests verify new-key access, old-key rejection, retained data, prompt error handling, unchanged credential-file bytes, and unchanged knowledge/vault environment values. Full `make test`, focused normal/race checks including existing checkpoint tests, and targeted vet passed. Independent review found no production defects; an external low-priority test capture lifecycle suggestion was applied and re-reviewed, then the affected tests passed normally and with `-race`. See the [review and validation record](.reviews/task-10-code-review-2026-09-30.md). No design deviation or external dependency change was needed. Task 11 remains pending for final feature verification and durable documentation.
 
 ## 11 Final verification and durable documentation
 
