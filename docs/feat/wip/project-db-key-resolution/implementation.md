@@ -1,6 +1,6 @@
 # Project database key resolution implementation plan
 
-> Status: Pending implementation
+> Status: In progress — Task 1 complete; Tasks 2–11 pending
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Baseline: `d9e09c1`
@@ -23,6 +23,8 @@ Primary files: `internal/server/tool_doctor.go`, `internal/server/tool_utility_t
 - In CLI doctor, treat only `os.IsNotExist` as an absent database; preserve other stat errors as diagnostic failures. → verify: the existing no-creation test still passes, and a deterministic invalid path component produces an access error rather than “not initialized.”
 
 This slice is independent of credential resolution and may land first.
+
+**Completed 2026-09-30.** Both diagnostic paths now distinguish FTS5 capability from knowledge access failures. Regression tests cover wrong/missing keys, a database path pointing to a directory, invalid CLI path components, preserved encrypted content, empty-store initialization, and missing-DB/marker non-creation. `make test` and focused doctor tests with and without `-race` passed. Both isolated reviewers reported no findings. See the [review and validation record](.reviews/task-1-code-review-2026-09-30.md), including unrelated test-environment follow-ups. Credential selection remains environment-only until the dependent slices land.
 
 ## 2 A captured key through the environment-only dbsize path
 

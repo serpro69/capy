@@ -75,7 +75,14 @@ func newDoctorCmd() *cobra.Command {
 // would otherwise create it as a side effect of a diagnostic.
 func knowledgeBaseChecks(cfg *config.Config, projectDir, dbPath string) []platform.CheckResult {
 	if _, err := os.Stat(dbPath); err != nil {
-		return []platform.CheckResult{platform.CheckKnowledgeBase(dbPath)}
+		if os.IsNotExist(err) {
+			return []platform.CheckResult{platform.CheckKnowledgeBase(dbPath)}
+		}
+		return []platform.CheckResult{{
+			Name:   "Knowledge base",
+			Status: platform.Fail,
+			Detail: fmt.Sprintf("cannot access database (%v)", err),
+		}}
 	}
 
 	st := store.NewContentStore(dbPath, cfg.DBProjectDir(projectDir), 0, cfg.Store.MaxSourceBytes)

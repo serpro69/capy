@@ -20,6 +20,10 @@ const cliTestKey = "test-passphrase-at-least-32-characters-long!!"
 func newCLIProject(t *testing.T) (dir, dbPath string) {
 	t.Helper()
 	t.Setenv("CAPY_DB_KEY", cliTestKey)
+	t.Setenv("CAPY_VAULT_KEY", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("CLAUDE_PROJECT_DIR", "")
 	dir = t.TempDir()
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, ".capy.toml"),
@@ -148,8 +152,35 @@ func TestDoctorSubcommand_KnowledgeBaseNotInitialized(t *testing.T) {
 	assert.Equal(t, 0, code, stderr)
 	assert.Contains(t, stdout, "Knowledge base: not initialized")
 	// A diagnostic must not create the DB as a side effect.
-	_, err := os.Stat(dbPath)
-	assert.True(t, os.IsNotExist(err), "doctor must not create the knowledge DB")
+	for _, path := range []string{dbPath, filepath.Join(dir, ".project")} {
+		_, err := os.Stat(path)
+		assert.True(t, os.IsNotExist(err), "doctor must not create %s", path)
+	}
+}
+
+func TestDoctorSubcommand_KnowledgeBaseStatError(t *testing.T) {
+	dir, parentPath := newCLIProject(t)
+	// A regular file as a parent component reliably fails Stat, even when
+	// running as a user who could bypass permission-based fixtures.
+	require.NoError(t, os.WriteFile(parentPath, []byte("not a directory"), 0o600))
+	dbPath := filepath.Join(parentPath, "knowledge.db")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".capy.toml"),
+		[]byte("[store]\npath = \"test.db/knowledge.db\"\n"),
+		0o644,
+	))
+	_, statErr := os.Stat(dbPath)
+	require.Error(t, statErr)
+	require.False(t, os.IsNotExist(statErr))
+
+	stdout, stderr, code := capy(t, "doctor", "--project-dir", dir)
+	assert.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "[x] FTS5: available")
+	assert.Contains(t, stdout, "[ ] Knowledge base: cannot access database ("+statErr.Error()+")")
+	assert.NotContains(t, stdout, "Knowledge base: not initialized")
+	assert.NotContains(t, stdout, cliTestKey)
+	_, err := os.Stat(filepath.Join(dir, ".project"))
+	assert.True(t, os.IsNotExist(err), "doctor must not open the knowledge store")
 }
 
 func TestDoctorSubcommand_VaultEnabledButNotCreated(t *testing.T) {

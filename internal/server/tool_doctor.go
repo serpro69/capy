@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/executor"
@@ -37,26 +36,7 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 	results := []platform.CheckResult{
 		platform.CheckVersion(),
 		platform.CheckRuntimes(runtimeStrs, executor.TotalLanguages),
-	}
-
-	// FTS5 — use the store directly since we have it
-	fts5OK := false
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Debug("FTS5 check panicked", "panic", r)
-			}
-		}()
-		st := s.getStore()
-		if st != nil {
-			_, err := st.Stats(ephemeralTTL, sessionTTL)
-			fts5OK = err == nil
-		}
-	}()
-	if fts5OK {
-		results = append(results, platform.CheckResult{Name: "FTS5", Status: platform.Pass, Detail: "available"})
-	} else {
-		results = append(results, platform.CheckResult{Name: "FTS5", Status: platform.Fail, Detail: "unavailable (binary may not be built with -tags fts5)"})
+		platform.CheckFTS5(),
 	}
 
 	// Config
@@ -69,27 +49,20 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 	)
 
 	// Knowledge base — use store directly for richer stats
-	if s.store != nil {
-		kbStats, err := s.store.Stats(ephemeralTTL, sessionTTL)
-		if err == nil {
-			results = append(results, platform.CheckKnowledgeBaseStats(kbStats.SourceCount, kbStats.ChunkCount))
-			// Legacy session rows: the knowledge.db session sweep was removed
-			// (vault-session-search D8); the vault is now the session store. Any
-			// `kind='session'` rows are pre-removal leftovers draining by TTL —
-			// surface them loudly with the reclaim command (design D4: report
-			// both the knowledge.db reclaim and the vault reindex backlog).
-			if kbStats.SessionSourceCount > 0 {
-				results = append(results, platform.CheckLegacySessions(kbStats.SessionSourceCount, "capy_cleanup purge_session"))
-			}
-		} else {
-			results = append(results, platform.CheckKnowledgeBaseError(err))
-		}
+	st := s.getStore()
+	kbStats, err := st.Stats(ephemeralTTL, sessionTTL)
+	if err != nil {
+		results = append(results, platform.CheckKnowledgeBaseError(err))
 	} else {
-		results = append(results, platform.CheckResult{
-			Name:   "Knowledge base",
-			Status: platform.Warn,
-			Detail: "not initialized (lazy — will init on first use)",
-		})
+		results = append(results, platform.CheckKnowledgeBaseStats(kbStats.SourceCount, kbStats.ChunkCount))
+		// Legacy session rows: the knowledge.db session sweep was removed
+		// (vault-session-search D8); the vault is now the session store. Any
+		// `kind='session'` rows are pre-removal leftovers draining by TTL —
+		// surface them loudly with the reclaim command (design D4: report
+		// both the knowledge.db reclaim and the vault reindex backlog).
+		if kbStats.SessionSourceCount > 0 {
+			results = append(results, platform.CheckLegacySessions(kbStats.SessionSourceCount, "capy_cleanup purge_session"))
+		}
 	}
 
 	// Vault — opt-in session archive. When enabled, surface the reindex backlog

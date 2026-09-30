@@ -3,25 +3,26 @@
 > Design: [design.md](design.md)
 > Implementation: [implementation.md](implementation.md)
 > Investigation: [investigation.md](investigation.md)
-> Status: pending
+> Status: in-progress
 > Created: 2026-09-30
 > Not Doing: Codex daemon changes, vault key management, shell dotenv execution, secret-manager integration, key provisioning, database-format changes, storage-identity redesign, general doctor integrity audit, shutdown-error overhaul
 > Design review: findings corroborated and corrected; see [reconciliation](.reviews/design-review-reconciliation-2026-09-30.md)
-> Renumbering: original Task 5 is now Task 6; original Tasks 6–10 are now Tasks 7–11. New Task 5 isolates stdio transport verification. Implementation statuses remain pending.
+> Renumbering: original Task 5 is now Task 6; original Tasks 6–10 are now Tasks 7–11. New Task 5 isolates stdio transport verification.
 
 ## Task 1: Correct FTS5 diagnostics under database failures
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 2, 3, 4, 5, 6, 7, 10, subject to their dependencies
 - **Docs:** [Independent diagnostics](implementation.md#1-independent-fts5-diagnostics)
+- **Verification:** `make test` and focused FTS5 doctor/race tests passed; [isolated review and environment notes](.reviews/task-1-code-review-2026-09-30.md).
 
 ### Subtasks
 
-- [ ] 1.1 Replace MCP doctor's stats-based FTS5 check in `internal/server/tool_doctor.go` with `platform.CheckFTS5`; explicitly initialize the knowledge store and call stats once → verify: wrong-key fixture reports available FTS5 and the real knowledge error.
-- [ ] 1.2 Add missing-key and open-error cases to `internal/server/tool_utility_test.go`; preserve initialized-empty-store and legacy-session reporting → verify: focused doctor tests pass without using startup success as the oracle.
-- [ ] 1.3 Distinguish `os.IsNotExist` from other stat failures in `cmd/capy/doctor.go`, with coverage in `cleanup_doctor_test.go` → verify: missing DB is not created, invalid path access is reported accurately.
+- [x] 1.1 Replace MCP doctor's stats-based FTS5 check in `internal/server/tool_doctor.go` with `platform.CheckFTS5`; explicitly initialize the knowledge store and call stats once → verify: wrong-key fixture reports available FTS5 and the real knowledge error.
+- [x] 1.2 Add missing-key and open-error cases to `internal/server/tool_utility_test.go`; preserve initialized-empty-store and legacy-session reporting → verify: focused doctor tests pass without using startup success as the oracle.
+- [x] 1.3 Distinguish `os.IsNotExist` from other stat failures in `cmd/capy/doctor.go`, with coverage in `cleanup_doctor_test.go` → verify: missing DB is not created, invalid path access is reported accurately.
 
 ## Task 2: Pin the store key through dbsize and maintenance connections
 
