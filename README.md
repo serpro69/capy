@@ -415,6 +415,13 @@ symlink-expanded, so SQLite opens the real file and creates its WAL/SHM sidecars
 in `~/capy-db/`, **not** in your project. The project repo ignores the symlink
 automatically (`.capy/**` is gitignored), so `git status` there stays clean.
 
+`capy checkpoint` resolves the database symlink and verifies the WAL/SHM files
+beside the real database in the private repo. Credentials still come from the
+owning project. Stop all processes using that database before checkpointing:
+the command returns an error if a non-empty WAL or any SHM file remains, or if
+it cannot inspect the sidecars. An idle connection can keep SHM present even
+after the WAL is flushed. No additional WAL/SHM symlinks are needed.
+
 Commit and sync from the private repo instead — commit **as usual**; the guard
 hook installed in step 4 makes it safe by construction:
 

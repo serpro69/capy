@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -40,6 +41,14 @@ has the DB open, the WAL cannot be fully truncated.`,
 			if err != nil {
 				return err
 			}
+			// SQLite follows database symlinks, so sidecars live beside the real
+			// file. Resolve once for both the connection and verification while
+			// retaining the selected project's credential ownership (ADR-032).
+			dbPath, err = filepath.EvalSymlinks(dbPath)
+			if err != nil {
+				return fmt.Errorf("resolving knowledge database %q: %w", target.dbPath, err)
+			}
+			target.dbPath = dbPath
 			// Checkpoint uses a dedicated connection with the captured key;
 			// the store's lazy pool stays unopened so it cannot hold the WAL.
 			st := newKnowledgeStore(target, key, source.String())
@@ -47,23 +56,32 @@ has the DB open, the WAL cannot be fully truncated.`,
 				return fmt.Errorf("checkpoint failed: %w", err)
 			}
 
-			// Verify sidecar files are gone or empty.
-			// After PRAGMA wal_checkpoint(TRUNCATE), SQLite may leave a 0-byte
-			// WAL file — that's fine. A non-empty WAL means another process
-			// held the DB open and the checkpoint was incomplete.
-			incomplete := false
-			for _, suffix := range []string{"-wal", "-shm"} {
-				if info, err := os.Stat(dbPath + suffix); err == nil && info.Size() > 0 {
-					incomplete = true
-					fmt.Fprintf(os.Stderr, "capy checkpoint: warning: %s still has data (%d bytes) — is another process using the DB?\n", dbPath+suffix, info.Size())
-				}
+			if err := verifyCheckpointSidecars(dbPath); err != nil {
+				return err
 			}
 
-			if !incomplete {
-				fmt.Printf("capy checkpoint: %s — WAL flushed, safe to commit\n", dbPath)
-			}
-
+			fmt.Printf("capy checkpoint: %s — WAL flushed, safe to commit\n", dbPath)
 			return nil
 		},
 	}
+}
+
+// verifyCheckpointSidecars applies the DB-repo guard's commit-safety rule:
+// tolerate an empty WAL, but reject any SHM file (an open connection may remain
+// even when SQLite reports a successful TRUNCATE). Never delete live sidecars.
+func verifyCheckpointSidecars(dbPath string) error {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		path := dbPath + suffix
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("checking checkpoint sidecar %q: %w", path, err)
+		}
+		if !info.Mode().IsRegular() || suffix == "-shm" || info.Size() > 0 {
+			return fmt.Errorf("checkpoint incomplete: %s remains — stop processes using the database and retry", path)
+		}
+	}
+	return nil
 }
