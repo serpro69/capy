@@ -105,7 +105,10 @@ func TestApp_RawViewReturnsToSameDetail(t *testing.T) {
 				m.viewer = m.viewer.openSubagent("xyz", 1)
 				want = m.viewer.subagentBytes("xyz")
 			case "tool":
-				m.viewer = m.viewer.openInlineContent(vault.TranscriptMessage{Body: "expanded tool result"})
+				m.viewer = m.viewer.setActive(renderTranscript(m.viewer.platform(), []vault.TranscriptMessage{
+					{Role: vault.RoleTool, Body: "expanded tool result", Collapsed: true},
+				}, m.viewer.styles, m.viewer.contentWidth()), 0)
+				m.viewer = m.viewer.openInlineContent(0)
 			}
 			before := m.viewer
 			m = openRaw(t, m)
@@ -121,8 +124,8 @@ func TestApp_RawViewReturnsToSameDetail(t *testing.T) {
 			m = press(t, m, "esc")
 			assert.Equal(t, modeView, m.mode)
 			assert.Equal(t, before.View(), m.viewer.View())
-			assert.Equal(t, before.inSub, m.viewer.inSub)
-			assert.Equal(t, before.inInline, m.viewer.inInline)
+			assert.Equal(t, before.target.kind == viewerTargetSidecar, m.viewer.target.kind == viewerTargetSidecar)
+			assert.Equal(t, before.target.kind == viewerTargetTool, m.viewer.target.kind == viewerTargetTool)
 		})
 	}
 }

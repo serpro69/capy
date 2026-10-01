@@ -210,7 +210,7 @@ func TestProjectPresentation_NarrowTerminal(t *testing.T) {
 					sess.ProjectOverride = &vault.SessionProject{}
 					sess.RawJSONL = nil
 					v = v.setSessionMeta(sess)
-					assert.True(t, v.inSub)
+					assert.True(t, v.target.kind == viewerTargetSidecar)
 					assert.Equal(t, active, v.active.content())
 					assert.NotEmpty(t, v.sess.RawJSONL)
 					assert.NotContains(t, v.View(), "Original path:")

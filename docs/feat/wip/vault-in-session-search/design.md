@@ -1,6 +1,6 @@
 # In-session vault search — design
 
-> Status: Task 1 implemented and reviewed; Tasks 2–6 pending
+> Status: Tasks 1–2 implemented and reviewed; Tasks 3–6 pending
 > Created: 2026-09-20
 > Issue: [#101 — vault: searching within a session](https://github.com/serpro69/capy/issues/101)
 > Companions: [Implementation](implementation.md), [Tasks](tasks.md)
@@ -233,9 +233,12 @@ editor/shortcut ownership, cancellable latest-pending work and root execution
 epochs. The [design re-review](.reviews/review-design-2026-10-01.md) passed;
 the [isolated implementation review](.reviews/review-code-task1-2026-10-01.md)
 approved Task 1 after restoration regressions were corrected.
-[Measured exact feasibility](performance.md) passes in both builds. The full
-feature's hidden-target, nested-scope and fuzzy acceptance criteria remain open
-in Tasks 2–6. Earlier design reviews and their reconciliation remain historical
+[Measured exact feasibility](performance.md) passes in both builds. Task 2 adds
+complete local frames, independent search in manually opened details, nested
+parent return and containing-transcript provenance. Its
+[isolated review](.reviews/review-code-task2-2026-10-01.md) approved the migration.
+The full feature's hidden-target, root/raw suspension and fuzzy acceptance
+criteria remain open in Tasks 3–6. Earlier design reviews and their reconciliation remain historical
 evidence, not claims that pending production behavior exists.
 
 The ordered task slices intentionally expose a partial feature during development: Task 1 covers main-transcript exact find plus the early measurement gate; Task 2 establishes local frames and manual nested return; Task 3 adds full collapsed-body search; Task 4 integrates suspension and root actions; Task 5 adds fuzzy selection; Task 6 verifies the whole feature. These are scheduled work items, not silently deferred requirements.

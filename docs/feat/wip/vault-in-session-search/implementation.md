@@ -1,6 +1,6 @@
 # In-session vault search — implementation plan
 
-> Status: Task 1 complete and reviewed; Tasks 2–6 pending
+> Status: Tasks 1–2 implemented and reviewed; Tasks 3–6 pending
 > Created: 2026-09-20
 > Issue: [#101](https://github.com/serpro69/capy/issues/101)
 > Design: [design.md](design.md)
@@ -99,6 +99,33 @@ Primary files: new viewer_targets.go, viewer.go, viewer_find.go. app.go/raw.go r
 4. Create each manually opened target's own local corpus using Task 1's generic source machinery; suspend and restore its parent's committed search and snapshots. Migrate tests asserting private flags to target or observable assertions without relaxing existing guarantees. → verify: TestViewerFindScopes checks isolated counts and the same selected match after nested return.
 
 The frame shape and ownership are now final for this feature. Task 3 adds the transient search-selected target using these fields; Task 4 adds root lifecycle behavior, not another representation migration.
+
+### Task 2 implementation notes
+
+Implemented 2026-10-01. `viewerTargetFrame` is the viewer's active state and the
+element of its local parent stack. Each target carries its containing session,
+sidecar/platform, scope, and original tool message/field identity. The old detail
+flags, saved-main position and separate main render cache were removed. Back now
+restores the immediate parent, including main → sidecar → tool → sidecar → main.
+
+Frames share immutable messages, rows, corpus and hit slices. Detached snapshots
+retain query, selection, viewport and marker values, while dropping live input
+and worker ownership. Returning allocates a fresh execution epoch; a pending
+normal-render clear survives suspension. At a new width, restoration preserves
+the logical reading anchor separately from the selected occurrence. Structural
+headers retain their own row instead of drifting into message content.
+
+Slash works in manually opened sidecars and tools. A tool's full summary and
+Body are separate searchable fields, and copy still returns the original Body.
+Raw inspection uses the containing transcript, including a sidecar-owned tool.
+The [Task 2 review](.reviews/review-code-task2-2026-10-01.md) covers these paths;
+[tasks.md](tasks.md#task-2-evidence--2026-10-01) records verification.
+
+No dependency, CLI/configuration, schema or CI changes were needed. Build/test
+requirements remain those in the repository [AGENTS.md](../../../../AGENTS.md).
+Public controls and complete latency evidence remain scheduled for Task 6;
+automatic hidden-result navigation remains Task 3, and root/raw search
+suspension remains Task 4. No additional project convention was introduced.
 
 ## Task 3 — exact matches inside collapsed tool details
 

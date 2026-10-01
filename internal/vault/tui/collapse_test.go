@@ -71,8 +71,8 @@ func TestViewer_OpenAndReturnInlineToolResult(t *testing.T) {
 	require.Equal(t, 0, v.focusedMarker)
 
 	v, _ = v.openFocusedMarker()
-	require.True(t, v.inInline, "enter on a collapsed tool marker opens the inline body")
-	assert.False(t, v.inSub, "inline detail is not a subagent view")
+	require.True(t, v.target.kind == viewerTargetTool, "enter on a collapsed tool marker opens the inline body")
+	assert.False(t, v.target.kind == viewerTargetSidecar, "inline detail is not a subagent view")
 	assert.Contains(t, v.active.content(), "log line 17", "the full body is shown on open")
 
 	out := v.View()
@@ -82,7 +82,7 @@ func TestViewer_OpenAndReturnInlineToolResult(t *testing.T) {
 	// esc returns to the main session (not out of the viewer).
 	v, _, action := v.Update(keyMsg("esc"))
 	assert.Equal(t, viewerNone, action)
-	assert.False(t, v.inInline, "esc returns to the main session from the inline detail")
+	assert.False(t, v.target.kind == viewerTargetTool, "esc returns to the main session from the inline detail")
 }
 
 func TestViewer_SmallToolResultStaysInline(t *testing.T) {
@@ -132,7 +132,7 @@ func TestViewer_EditDiffMarkerAndExpand(t *testing.T) {
 	v = v.focusMarker(1)
 	require.Equal(t, 0, v.focusedMarker)
 	v, _ = v.openFocusedMarker()
-	require.True(t, v.inInline, "enter opens the inline diff")
+	require.True(t, v.target.kind == viewerTargetTool, "enter opens the inline diff")
 
 	content := v.active.content()
 	assert.Contains(t, content, "@@ -244,1 +244,1 @@", "hunk header shown on expand")
