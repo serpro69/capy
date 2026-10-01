@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/platform"
 	"github.com/serpro69/capy/internal/vault"
@@ -78,6 +79,16 @@ func (s *Server) knowledgeChecks() []platform.CheckResult {
 		}
 	}
 	results := []platform.CheckResult{platform.CheckKnowledgeCredential(source, nil)}
+	if s.knowledgeSource.Kind == config.KeySourceFile {
+		check := platform.CheckResult{Name: "Key file permissions", Status: platform.Pass, Detail: source + " (0400 or 0600)"}
+		if err := s.knowledgeSource.CheckFilePermissions(); err != nil {
+			check.Status = platform.Fail
+			check.Detail = err.Error()
+		}
+		// Metadata health is independent of the already-captured key. Continue
+		// checking the database without re-reading or replacing that key.
+		results = append(results, check)
+	}
 	st := s.getStore()
 	kbStats, err := st.Stats(s.ephemeralTTL(), s.sessionTTL())
 	if err != nil {

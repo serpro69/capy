@@ -82,6 +82,9 @@ func writeCapyWrapper(projectDir string) error {
 // Configs reference a portable wrapper script instead of a hardcoded binary
 // path, making them work across machines and platforms (fixes #10).
 func SetupClaudeCode(binaryPath, projectDir string, target SettingsTarget) error {
+	if err := ensureStoreKeyFilePermissions(projectDir); err != nil {
+		return err
+	}
 	// 1. Resolve binary path (validation only — configs use the portable wrapper)
 	if binaryPath == "" {
 		var err error
@@ -170,6 +173,9 @@ func SetupClaudeCode(binaryPath, projectDir string, target SettingsTarget) error
 // .codex/scripts/capy.sh, creates the .capy/ directory, and adds .capy/
 // to .gitignore.
 func SetupCodex(binaryPath, projectDir string) error {
+	if err := ensureStoreKeyFilePermissions(projectDir); err != nil {
+		return err
+	}
 	// 1. Resolve binary path (validation only — configs use the portable wrapper)
 	if binaryPath == "" {
 		var err error
@@ -222,6 +228,16 @@ func SetupCodex(binaryPath, projectDir string) error {
 	cleanupOldRoutingFile(projectDir)
 
 	return nil
+}
+
+// Resolve only the configured path: setup can repair permissions before a key
+// can be read, and must remain usable before credentials have been provisioned.
+func ensureStoreKeyFilePermissions(projectDir string) error {
+	cfg, err := config.Load(projectDir)
+	if err != nil {
+		return fmt.Errorf("loading configuration: %w", err)
+	}
+	return cfg.EnsureStoreKeyFilePermissions(projectDir)
 }
 
 // preCommitMarkerStart is the start marker for the capy block in pre-commit hooks.

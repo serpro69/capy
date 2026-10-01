@@ -289,7 +289,9 @@ To avoid depending on the launcher's inherited knowledge key, put the **existing
 key_file = ".capy/db.key"
 ```
 
-Keep the file private (`chmod 600 .capy/db.key`) and outside version control. `capy setup` ignores `.capy/**`; other credential locations need their own ignore rules. Setup never creates credentials. The file contains the passphrase itself; assignment syntax and quotes would become part of the passphrase. Leading/trailing spaces are preserved, and one final LF or CRLF is removed. Its raw size limit is 4,096 bytes, including that newline. Empty files, embedded line endings/NULs, nonregular files, and oversized files fail without fallback. Symlinks to regular files are supported.
+Keep the file private (`chmod 600 .capy/db.key`) and outside version control. Key files must have mode `0400` or `0600`, with no execute, group/other, or special permission bits. Commands reject unsafe permissions before reading the passphrase, without falling back to another credential. Project `capy setup` repairs existing configured key files to `0600`, preserving files already at `0400` or `0600`. For symlinks it checks and repairs the regular-file target, including targets outside the project. Setup reports access or repair failures, skips missing targets, and never creates credentials or changes their contents. The `--db-repo` setup mode only installs its database-repository artifacts. This permission policy applies to `store.key_file`; dotenv files retain their existing admission rules. It checks Unix mode bits, not extended ACLs or parent-directory permissions.
+
+`capy setup` ignores `.capy/**`; other credential locations need their own ignore rules. The file contains the passphrase itself; assignment syntax and quotes would become part of the passphrase. Leading/trailing spaces are preserved, and one final LF or CRLF is removed. Its raw size limit is 4,096 bytes, including that newline. Empty files, embedded line endings/NULs, nonregular files, and oversized files fail without fallback. Symlinks to regular files are supported.
 
 Selection order is `store.key_file`, the database owner's `.env`, a distinct main-worktree `.env`, then inherited `CAPY_DB_KEY`. Relative key-file paths resolve from the database owner. With a relative `store.path`, linked worktrees share the main checkout's database and credentials; their own `.env` is ignored. Absolute/XDG database modes consult the selected worktree first. An explicitly empty `key_file = ""` clears an inherited config setting. Invalid or inaccessible selected credentials fail rather than trying another key.
 
@@ -301,12 +303,16 @@ The exact name `CAPY_DB_KEY` is recognized with spaces/tabs around `=`. LF and C
 
 Resolution errors occur before creating the knowledge database or its `.project` marker. A selected key that cannot decrypt an existing database produces an authentication error; capy does not retry another credential or replace that database. A running server captures its key once, so restart it after changing credentials. See [ADR-032](docs/adr/032-project-db-key-resolution.md) for the policy and connection-lifetime contract.
 
+CLI `capy doctor` reports unsafe key-file permissions as a failed credential check and skips database access. The MCP `capy_doctor` tool checks the current key-file metadata separately: a failed permission check does not replace the running server's captured key or stop its database diagnostics. Neither doctor repairs permissions.
+
 ### Upgrade and credential migration
 
 **Two breaking changes require attention before regenerating wrappers:**
 
 - **Whole-file dotenv validation.** If `.env` declares `CAPY_DB_KEY`, unsupported syntax anywhere in that file, before or after the declaration, blocks resolution even when an inherited key is correct. Duplicate, empty, multiline, or executable knowledge-key declarations also fail. For an application dotenv containing shell constructs, put the same passphrase in a literal file and configure `store.key_file`; that explicit file bypasses dotenv parsing entirely.
 - **Vault keys remain environment-only.** Older wrappers sometimes sourced the main-worktree `.env` when `serve` inherited no knowledge key, incidentally loading `CAPY_VAULT_KEY` too. New wrappers do not source `.env`. A vault key stored only there no longer enables the vault. Set `CAPY_VAULT_KEY` in the environment of the process that actually launches MCP, then restart that host/daemon and MCP. Exporting it in a new terminal does not change an already-running daemon's environment. Knowledge credential resolution never reads or overwrites the vault key.
+
+**Key-file permission enforcement:** existing `store.key_file` credentials with broader permissions now block normal access and MCP startup. Run project `capy setup` or set the target file to `0600` before restarting. Existing `0400` files remain supported.
 
 Upgrade the binary, then invoke it **directly** in each project to regenerate every installed platform's wrappers:
 

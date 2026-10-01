@@ -47,12 +47,8 @@ func (s KeySource) String() string {
 // source metadata but never return a partial key or try a lower-priority source.
 func (c *Config) ResolveStoreKey(projectDir string) (string, KeySource, error) {
 	if c.Store.KeyFile != "" {
-		path := c.Store.KeyFile
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(c.DBProjectDir(projectDir), path)
-		}
-		source := KeySource{Kind: KeySourceFile, Path: path}
-		data, err := readCredentialFile(path, maxKeyFileBytes)
+		source := c.storeKeyFileSource(projectDir)
+		data, err := readCredentialFile(source.Path, maxKeyFileBytes, checkKeyFileMode)
 		if err != nil {
 			return "", source, fmt.Errorf("%s: %w", source, err)
 		}
@@ -93,7 +89,7 @@ func (c *Config) ResolveStoreKey(projectDir string) (string, KeySource, error) {
 func resolveDotenvKey(dir string) (string, KeySource, bool, error) {
 	path := filepath.Join(dir, ".env")
 	source := KeySource{Kind: KeySourceDotenv, Path: path}
-	data, err := readCredentialFile(path, maxDotenvBytes)
+	data, err := readCredentialFile(path, maxDotenvBytes, nil)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", source, false, nil
 	}
@@ -109,13 +105,18 @@ func resolveDotenvKey(dir string) (string, KeySource, bool, error) {
 // again. Bound the actual read independently of the reported file size.
 // Missing files remain recognizable with errors.Is(err, fs.ErrNotExist), for
 // optional credential sources to distinguish absence from other access errors.
-func readCredentialFile(path string, limit int64) ([]byte, error) {
+func readCredentialFile(path string, limit int64, checkMode func(os.FileMode) error) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting credential file: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("credential file must be a regular file")
+	}
+	if checkMode != nil {
+		if err := checkMode(info.Mode()); err != nil {
+			return nil, err
+		}
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -128,6 +129,11 @@ func readCredentialFile(path string, limit int64) ([]byte, error) {
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("opened credential file must be a regular file")
+	}
+	if checkMode != nil {
+		if err := checkMode(info.Mode()); err != nil {
+			return nil, err
+		}
 	}
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {

@@ -225,15 +225,11 @@ func TestResolveStoreKeyUnreadable(t *testing.T) {
 	writeKeyFixture(t, path, "synthetic-unreadable-key")
 	require.NoError(t, os.Chmod(path, 0))
 	t.Cleanup(func() { assert.NoError(t, os.Chmod(path, 0o600)) })
-	if f, err := os.Open(path); err == nil {
-		require.NoError(t, f.Close())
-		t.Skip("process bypasses file permissions; deterministic invalid-parent failure covered separately")
-	}
 	t.Setenv("CAPY_DB_KEY", "synthetic-valid-fallback")
 	cfg := DefaultConfig()
 	cfg.Store.KeyFile = path
 	key, _, err := cfg.ResolveStoreKey(project)
-	require.ErrorContains(t, err, "opening credential file")
+	require.ErrorContains(t, err, "unsafe key file permissions")
 	assert.Empty(t, key)
 }
 
