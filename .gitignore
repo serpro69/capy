@@ -13,6 +13,7 @@
 !.sessions/
 !.arc.yml
 !docs/**/.files
+!.gitleaks.toml
 
 # Logs
 logs
