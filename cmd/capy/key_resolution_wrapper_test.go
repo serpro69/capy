@@ -262,10 +262,20 @@ func TestGeneratedPreCommitProjectCredentials(t *testing.T) {
 			assert.Equal(t, head, wrapperGit(t, project, env, "rev-parse", "HEAD"))
 			require.NoError(t, tx.Rollback())
 			require.NoError(t, db.Close())
+			// Releasing the reader permits WAL truncation, but the writer store
+			// still holds SHM open. The hook must reject this idle connection too.
+			out, err = runWrapperCommand(t, stdioCommand{
+				executable: "git", args: []string{"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "blocked-idle"},
+				dir: project, env: env, secrets: []string{projectFileTestKey, inherited},
+			})
+			require.Error(t, err)
+			assert.Contains(t, out, "-shm remains")
+			assert.Contains(t, out, "checkpoint failed; commit aborted")
+			assert.Equal(t, head, wrapperGit(t, project, env, "rev-parse", "HEAD"))
+			require.NoError(t, st.Close())
 			wrapperGit(t, project, env, "commit", "-qm", "checkpointed")
 			assert.NotEqual(t, head, wrapperGit(t, project, env, "rev-parse", "HEAD"))
 			assert.Equal(t, wrapperGit(t, project, env, "hash-object", "knowledge.db"), wrapperGit(t, project, env, "rev-parse", "HEAD:knowledge.db"))
-			require.NoError(t, st.Close())
 			stdioCheckpointed(t, project)
 			sources, err := st.ListSources()
 			require.NoError(t, err)
