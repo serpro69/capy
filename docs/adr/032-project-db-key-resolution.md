@@ -2,6 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-09-30
+**Amended:** 2026-10-01 — key-file permission enforcement and setup repair ([#124](https://github.com/serpro69/capy/issues/124))
 **Partially supersedes:** [ADR-019](019-encrypted-knowledge-db.md) — environment-only knowledge credential selection
 **Preserves:** [ADR-016](016-wal-mode-and-checkpoint-strategy.md), [ADR-020](020-wal-mode-incompatible-with-pragma-rekey.md), [ADR-026](026-worktree-shared-knowledge-db.md)
 
@@ -39,7 +40,9 @@ Both file readers follow symlinks to regular files, check type before open and o
 | Key file | 4,096 bytes, including a terminal newline | Literal passphrase; remove at most one terminal LF/CRLF; preserve spaces; reject empty, NUL, or remaining CR/LF |
 | Optional dotenv | 1 MiB | Literal single-line compatibility grammar; retain only the knowledge key |
 
-These are file admission limits, not environment passphrase-length limits. Capy does not create, chmod, or rewrite credentials. The documented `.capy/db.key` location is covered by setup's `.capy/**` ignore rule; users must provision it privately and manage ignores elsewhere.
+These are file admission limits, not environment passphrase-length limits. Explicit key files must also have mode `0400` or `0600`, with no special bits. The resolver validates permissions before opening and on the opened descriptor before reading bytes. Unsafe permissions fail without fallback. Dotenv retains its existing admission rules. This policy checks Unix mode bits, not extended ACLs or parent-directory permissions.
+
+The #124 amendment replaces the original prohibition on chmod during setup: project setup strictly loads the selected configuration and repairs an existing configured key file to `0600` before generating platform artifacts. It preserves safe `0400`/`0600` files, uses the same database-owner path resolution, and follows symlinks to their regular-file targets, including external targets. Missing targets are skipped; access, nonregular-target, and chmod failures stop setup. Setup does not read, create, or rewrite credential contents. The separate `--db-repo` mode retains its artifact-only contract. The documented `.capy/db.key` location is covered by setup's `.capy/**` ignore rule; users must provision it privately and manage ignores elsewhere.
 
 **Breaking change: whole-file dotenv validation.** When an exact `CAPY_DB_KEY` declaration candidate exists, every line must be blank, a comment, or a supported single-line assignment. Optional `export` and whitespace around `=` are accepted. Duplicate or empty targets, multiline strings, executable statements, and unsupported syntax before or after the target fail even with a correct inherited key. Unquoted target values forbid whitespace, quotes, backslashes, shell operators, and expansion markers; comments require separating whitespace. Single quotes preserve bytes. Double quotes allow escaped backslash/double quote only and reject `$` and backticks. Other values are structurally checked and discarded. No commands, expansions, or environment mutations occur. Files without a recognized candidate contribute no key, subject to admission limits. See the [README](../../README.md#project-credentials) for usage.
 
@@ -50,6 +53,8 @@ The resolver returns the secret separately from `KeySource` (kind and safe sourc
 `ContentStore` checks emptiness before directory creation, `.project` writes, or open/recovery, and checks separately on dedicated connections. Pool, recovery, rebuild, vacuum, checkpoint, close, and reopen-after-close all use the captured key. Files and environment are not live key-reload channels. The pool still closes before the final checkpoint (ADR-016).
 
 `serve`, `dbsize`, `cleanup`, `checkpoint`, and CLI doctor use the shared resolver. Checkpoint retains a keyless missing-database no-op. `which` requires valid target configuration but never reads credentials. Help, setup, version, and Claude hook events do not gain a knowledge-key requirement. Both doctors report safe source selection separately from authentication and check FTS5 independently in memory. CLI doctor does not create a missing database; MCP doctor may lazily initialize an empty store. Errors never include values, assignment text, or DSNs.
+
+CLI doctor reports unsafe permissions through its credential-selection check and skips dependent database checks. MCP doctor checks the current explicit key source's metadata separately, without rereading the passphrase or replacing the captured key. A missing, nonregular, or unsafe current key file fails that metadata check while database diagnostics continue using the snapshot. Ordinary MCP requests keep using the captured key; permissions are enforced whenever a new instance resolves the file. Neither doctor repairs files. Existing broad-mode key files must be repaired with setup or chmod before new normal-access commands or MCP startup succeed.
 
 `capy encrypt` bypasses normal-access resolution. It strictly loads the target, prompts for the old key, and uses the new `CAPY_DB_KEY` or a confirmed prompt for the new key. Operators must stop all attached processes, rotate, update project credentials, then restart. The command cannot enforce that process precondition and does not rewrite credential files or change vault credentials. Plaintext encryption retains the DELETE-before-PRAGMA-rekey rule; encrypted rotation uses the backup API (ADR-020).
 

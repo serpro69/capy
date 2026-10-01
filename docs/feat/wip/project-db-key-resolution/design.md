@@ -74,6 +74,8 @@ Resolve and validate credentials before operations that would open/create the da
 
 ### Key file format
 
+**Follow-up amendment:** #124 adds permission validation and setup-only chmod repair. The original no-chmod decision below is superseded by [ADR-032's permission amendment](../../../adr/032-project-db-key-resolution.md); key format, path ownership, and captured-key lifetime remain as designed here.
+
 The file contains the passphrase itself. Remove at most one terminal LF, or one terminal CRLF, for ordinary text-file compatibility. Preserve other bytes, including leading/trailing spaces; do not trim or unquote. Reject an empty result, NUL, and remaining CR/LF characters. Follow filesystem symlinks to regular files, supporting externally provisioned credential files. Do not write, chmod, rotate, or provision this file automatically.
 
 Require a regular-file target before opening; directories, FIFOs, sockets, and devices are errors. Recheck the opened descriptor's type before reading. Cap raw key-file input at **4,096 bytes, including any terminal newline**, and read at most 4,097 bytes to detect overflow; neither reported stat size nor an EOF-only read is sufficient. Reject oversized input without truncation or credential fallback. Apply the same regular-file and bounded-read policy to optional dotenv inputs with a **1 MiB** limit; oversized or nonregular optional files are access errors, not absent declarations. These are admission limits on files, not a new passphrase-length limit on environment-only keys.
