@@ -54,15 +54,15 @@ The query editor also consumes Ctrl+G before the root project editor and disable
 the widget's external clipboard utility binding. Terminal bracketed paste remains
 supported and is covered by the Unicode 256-code-point limit regression.
 
-The next task is Task 2. Slash currently searches main-transcript ordinary bodies,
-launch labels and full summaries. Manual detail scopes/parent-query suspension
-remain Task 2; hidden Body navigation remains Task 3 despite full computational
-coverage. Root/raw suspension remains Task 4. Fuzzy and final public documentation
-remain Tasks 5/6. The inline eligibility and main-only comments name these tasks.
+Task 2 now adds manual detail scopes and parent-query suspension. Slash searches
+ordinary bodies, launch labels and full summaries in each opened transcript,
+plus the full Body of a manually opened tool. Automatic hidden Body navigation
+remains Task 3 despite full computational coverage. Root/raw suspension remains
+Task 4; fuzzy and final public documentation remain Tasks 5/6.
 
 ## Task 2: Local frames and manual nested return
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, including its performance gate
 - **Size:** M
 - **Can run in parallel with:** —
@@ -72,10 +72,37 @@ remain Tasks 5/6. The inline eligibility and main-only comments name these tasks
 
 ### Subtasks
 
-- [ ] 2.1 Add the complete frame contract in viewer_targets.go, including provenance, position, presentation and committed search state → verify: TestViewerTargetsClone proves mutable child state does not alias a parent.
-- [ ] 2.2 Migrate viewer.go target readers/writers and viewer_find.go scope ownership; remove independently mutable legacy flags/return state → verify: TestViewerTargetsNested and existing viewer/collapse/marker tests cover manual main/sidecar/tool return, resize and global-search entry.
-- [ ] 2.3 Adapt app.go/raw.go consumers to derived frame accessors in the same commit → verify: TestViewerTargetsConsumers confirms correct platform, copy source, owning session and sidecar raw bytes, with no shadow-state writes.
-- [ ] 2.4 Start each manual detail's own corpus and restore its parent's committed state; migrate private-field test assertions without weakening behavior → verify: TestViewerFindScopes checks isolated counts and selected-occurrence restoration.
+- [x] 2.1 Add the complete frame contract in viewer_targets.go, including provenance, position, presentation and committed search state → verify: TestViewerTargetsClone proves mutable child state does not alias a parent.
+- [x] 2.2 Migrate viewer.go target readers/writers and viewer_find.go scope ownership; remove independently mutable legacy flags/return state → verify: TestViewerTargetsNested and existing viewer/collapse/marker tests cover manual main/sidecar/tool return, resize and global-search entry.
+- [x] 2.3 Adapt app.go/raw.go consumers to derived frame accessors in the same commit → verify: TestViewerTargetsConsumers confirms correct platform, copy source, owning session and sidecar raw bytes, with no shadow-state writes.
+- [x] 2.4 Start each manual detail's own corpus and restore its parent's committed state; migrate private-field test assertions without weakening behavior → verify: TestViewerFindScopes checks isolated counts and selected-occurrence restoration.
+
+### Task 2 evidence — 2026-10-01
+
+- [Isolated code review](.reviews/review-code-task2-2026-10-01.md): APPROVE,
+  no P0–P3 findings. The independent code-reviewer performed static review;
+  PAL returned no issues and no additional actionable signal.
+- Complete TUI suites passed with `-count=1` under `fts5` and `fts5,glamour`.
+  Complete TUI race runs passed under both tags (2.738 s / 3.034 s), including
+  `TestViewerTargetsClone`, `TestViewerTargetsNested`,
+  `TestViewerTargetsConsumers`, `TestViewerFindScopes`, stale-result retirement
+  and pending-clear restoration. Existing viewer, collapse, marker, raw, child,
+  global-search and metadata tests retain their behavior assertions.
+- `make vet` and `go vet -tags fts5,glamour ./internal/vault/tui/...` passed.
+  Tests use synthetic encryption keys, `GOCACHE=/tmp/capy-go-build` and, for
+  repository-wide checks, an empty `XDG_CONFIG_HOME=/tmp/capy-task2-config`.
+- `make test` passed across the repository with local socket access (CLI
+  218.261 s, server 108.253 s, vault 219.961 s). The restricted run was stopped
+  after it made no package-output progress; it is not counted as a passing run.
+- `make bench-quality BENCH_BRANCH=vault-find-task2` passed. Qualstat verified
+  the fixture digest and found every retrieval/context-reduction metric
+  unchanged against `vault-find-task1.json` (f99d758). The current measurement
+  is the dirty `master` worktree at a415bda, saved as `vault-find-task2.json`;
+  no existing report was overwritten. This is quality evidence, not a new
+  claim about unimplemented UI latency paths.
+- No dependency, schema, decoder, setup-artifact, CLI flag or CI changes. No
+  additional conventions to index. Public documentation and full performance
+  verification remain Task 6.
 
 ## Task 3: Exact find opens collapsed results at the match
 
@@ -156,8 +183,9 @@ Task 1 (exact feasibility gate)
 
 The three supplied review rounds consolidate to six unique claims. Each was checked against the current documents/code; both upstream matcher failures were independently reproduced. [The reconciliation](.reviews/consolidated-findings-2026-09-20.md) records qualified verdicts, fixes and standalone prototype evidence.
 
-Task 1 and its exact feasibility gate are complete. Tasks 2–6 remain pending;
-the measured early path does not certify their interactions. The original review
+Tasks 1–2 and the exact feasibility gate are complete. The next task is Task 3.
+Tasks 3–6 remain pending; the measured early path does not certify their
+interactions. The original review
 files remain historical evidence; their repeated P1 findings are tracked once in
 the reconciliation.
 

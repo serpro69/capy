@@ -22,8 +22,10 @@ func findTestViewer(t *testing.T, messages []vault.TranscriptMessage, width, hei
 	v := newViewerModel(DefaultStyles(), width, height)
 	v.sess = vault.Session{UUID: "find-test", Title: "Find test"}
 	v.ready = true
-	v.main = renderTranscript(vault.PlatformClaudeCode, messages, v.styles, v.contentWidth())
-	v = v.setActive(v.main, 0)
+	rt := renderTranscript(vault.PlatformClaudeCode, messages, v.styles, v.contentWidth())
+	v.target = viewerTarget{kind: viewerTargetMain, scope: v.sess.UUID,
+		source: viewerTranscriptSource{session: v.sess.UUID, platform: vault.PlatformClaudeCode}}
+	v = v.setActive(rt, 0)
 	v.find.ctx = t.Context()
 	return v
 }
@@ -252,7 +254,7 @@ func TestViewerFindAsyncCancelAndStaleLayout(t *testing.T) {
 		v, next = v.nextFindCommand()
 		v = settleViewerFind(t, v, next)
 	}
-	assert.Equal(t, before.view.query, v.find.view.query)
+	assert.Equal(t, before.frame.find.view.query, v.find.view.query)
 	assert.False(t, v.find.editing)
 	assert.Equal(t, findWorkID{}, v.find.running)
 	v = searchViewer(t, v, "needle")

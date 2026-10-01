@@ -158,6 +158,11 @@ func (p *findProjection) rowForHit(hit findHit) int {
 }
 
 func (p *findProjection) rowForPosition(c *findCorpus, position findPosition) int {
+	// Structural anchors (headers and markers) have no source field. Preserve
+	// that row across a suspended-frame resize instead of moving into its body.
+	if position.field == 0 && position.message < len(p.transcript.msgRowStart) {
+		return p.transcript.msgRowStart[position.message]
+	}
 	li := sort.Search(len(c.lines), func(i int) bool {
 		line := c.lines[i]
 		end := line.position

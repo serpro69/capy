@@ -50,8 +50,7 @@ func openChildAction(uuid string) viewerAction {
 // project path adds one more row (see viewportHeight).
 const viewerChromeRows = 2
 
-// viewerModel renders a session transcript and, on demand, a single subagent
-// transcript standalone. It owns no store handle: the app fetches the session +
+// viewerModel renders a session transcript and nested local detail frames. It owns no store handle: the app fetches the session +
 // sidecars and hands them in via loadSession, and the viewer keeps the sidecar
 // File set so it can open a subagent's transcript (search-jump or marker) without
 // another DB round-trip.
@@ -59,7 +58,7 @@ const viewerChromeRows = 2
 // Subagents are markers-only (the chosen v1 fallback, design.md §Viewer Model):
 // launch points render as visible markers; a subagent transcript is viewed
 // standalone — opened by a search hit (exact, via subagent_id) or by selecting an
-// openable marker — with esc/q returning to the main session. No inline interleave.
+// openable marker — with esc/q returning to its immediate parent. No inline interleave.
 type viewerModel struct {
 	styles        Styles
 	width, height int
@@ -68,38 +67,26 @@ type viewerModel struct {
 	files  []vault.File
 	subIDs []string // sorted subagent ids, for ParseTranscript's launch mapping
 
-	main   renderedTranscript // the main session transcript
-	active renderedTranscript // == main, or a detail transcript (subagent / inline tool body) when inDetail
-	inSub  bool
-	subID  string
-	// inInline / inlineLabel mirror inSub for the A1 collapse-then-open detail view:
-	// a collapsed tool_result's full body shown standalone (esc/q returns to main).
-	// inSub and inInline are mutually exclusive — see inDetail.
-	inInline      bool
-	inlineLabel   string
-	savedMainLine int // main source line at the top of the viewport when a detail was opened; restored (via rowForLine) on return so a resize re-wrap can't stale it
-	focusedMarker int // index into active.markers, or -1
-
-	vp    viewport.Model
-	ready bool
-	find  findController
+	// The embedded active frame and local return stack are the sole owners of
+	// target, reading and search state. Root session frames remain in app.go.
+	viewerTargetFrame
+	parents   []viewerTargetFrame
+	findEpoch uint64 // high-water mark across local frame switches
+	ready     bool
 }
 
 func newViewerModel(styles Styles, width, height int) viewerModel {
 	return viewerModel{
-		styles:        styles,
-		width:         width,
-		height:        height,
-		focusedMarker: -1,
-		vp:            viewport.New(width, max(1, height-viewerChromeRows)),
-		find:          findController{ctx: context.Background()},
+		styles: styles,
+		width:  width,
+		height: height,
+		viewerTargetFrame: viewerTargetFrame{
+			focusedMarker: -1,
+			vp:            viewport.New(width, max(1, height-viewerChromeRows)),
+			find:          findController{ctx: context.Background()},
+		},
 	}
 }
-
-// inDetail reports whether a standalone detail transcript is open over the main
-// session — a subagent (inSub) or a collapsed tool_result's body (inInline). esc/q
-// returns to main from either; setSize re-wraps the active detail in both.
-func (m viewerModel) inDetail() bool { return m.inSub || m.inInline }
 
 // loadSession resets the viewer to a new session's main transcript. files are the
 // session's sidecars (subagent transcripts among them). Call jumpTo afterwards to
@@ -110,18 +97,16 @@ func (m viewerModel) loadSession(sess vault.Session, files []vault.File) viewerM
 	m.vp.Height = m.viewportHeight()
 	m.files = files
 	m.subIDs = sortedSubagentIDs(files)
-	m.inSub = false
-	m.subID = ""
-	m.inInline = false
-	m.inlineLabel = ""
-	m.savedMainLine = 0
+	m.parents = nil
+	m.target = viewerTarget{kind: viewerTargetMain, scope: sess.UUID,
+		source: viewerTranscriptSource{session: sess.UUID, platform: m.platform()}}
 	// The stored platform (migration 0006) selects the decoder for the main
 	// transcript; sidecars stay Claude (openSubagent). OrClaude: a Session built
 	// in memory without the field (tests) is a Claude session.
 	p := m.platform()
-	m.main = renderTranscript(p, vault.ParseTranscript(p, sess.RawJSONL, m.subIDs), m.styles, m.contentWidth())
+	rt := renderTranscript(p, vault.ParseTranscript(p, sess.RawJSONL, m.subIDs), m.styles, m.contentWidth())
 	m.ready = true
-	return m.setActive(m.main, 0)
+	return m.setActive(rt, 0)
 }
 
 // platform is the loaded session's platform with the in-memory zero value
@@ -130,112 +115,13 @@ func (m viewerModel) loadSession(sess vault.Session, files []vault.File) viewerM
 // directly (see activePlatform).
 func (m viewerModel) platform() vault.Platform { return m.sess.Platform.OrClaude() }
 
-// activePlatform is the platform the ACTIVE transcript renders under: Claude
-// for a subagent sidecar (a Claude Code concept, whatever the session's
-// platform), the session's platform otherwise (main, or an inline tool body
-// lifted from main). It only affects the assistant header label.
-func (m viewerModel) activePlatform() vault.Platform {
-	if m.inSub {
-		return vault.PlatformClaudeCode
-	}
-	return m.platform()
-}
-
-// jumpTo scrolls to a search hit. An empty subagentID targets the main
-// transcript; a set subagentID opens that subagent standalone. Unknown subagent
-// ids fall back to the main transcript so a jump never dead-ends.
-func (m viewerModel) jumpTo(subagentID string, line int) viewerModel {
-	if subagentID == "" {
-		if m.inDetail() {
-			m = m.returnToMain()
-		}
-		m.vp.SetYOffset(m.main.rowForLine(line))
-		return m
-	}
-	return m.openSubagent(subagentID, line)
-}
-
-// openSubagent loads a subagent transcript as the active target and scrolls to
-// line. If the subagent's bytes are not archived, it stays on the current target.
-func (m viewerModel) openSubagent(id string, line int) viewerModel {
-	raw := m.subagentBytes(id)
-	if raw == nil {
-		return m // not archived; caller's search/marker shouldn't have offered it
-	}
-	if m.find.view.plain {
-		// Task 2 adds parent-query suspension using complete local frames.
-		m = m.clearFind()
-	}
-	if !m.inDetail() {
-		// Remember the main top as a source line (not a row offset) so a resize
-		// re-wrap while in the detail can't stale it; rowForLine re-derives the
-		// row on return.
-		m.savedMainLine = m.main.lineForRow(m.vp.YOffset)
-	}
-	// nil subIDs: a subagent transcript has no nested subagent markers to map.
-	// Sidecars are always Claude JSONL (a Claude Code concept), whatever the
-	// session's platform.
-	sub := renderTranscript(vault.PlatformClaudeCode, vault.ParseTranscript(vault.PlatformClaudeCode, raw, nil), m.styles, m.contentWidth())
-	m.inSub = true
-	m.subID = id
-	m.inInline = false
-	m.inlineLabel = ""
-	return m.setActive(sub, sub.rowForLine(line))
-}
-
-// openInlineContent opens a collapsed tool_result's full body as a standalone
-// detail view (esc/q returns to the session). Unlike openSubagent — which fetches
-// a sidecar transcript by id — the body is inline in raw_jsonl and already carried
-// on msg, so this renders a single-message transcript from it: no DB round-trip
-// and no separate "open inline content" file target (design.md § Addenda A1). The
-// call summary surfaces in the header (inlineLabel) rather than the body.
-func (m viewerModel) openInlineContent(msg vault.TranscriptMessage) viewerModel {
-	if m.find.view.plain {
-		m = m.clearFind()
-	}
-	// In normal flow inDetail() is false here (inline markers exist only on main,
-	// and inSub/inInline are mutually exclusive); the guard mirrors openSubagent so
-	// savedMainLine is captured once, from main, on any future nesting path.
-	if !m.inDetail() {
-		m.savedMainLine = m.main.lineForRow(m.vp.YOffset)
-	}
-	label := msg.ToolSummary
-	if label == "" {
-		label = "tool result"
-	}
-	// A non-collapsed RoleTool message so renderTranscript shows the body inline.
-	// Carry Diff so an Edit/Write body renders as a colored diff (A3 renderDiffBody).
-	detail := renderTranscript(m.platform(),
-		[]vault.TranscriptMessage{{Role: vault.RoleTool, Body: msg.Body, Diff: msg.Diff}},
-		m.styles, m.contentWidth(),
-	)
-	m.inSub = false
-	m.subID = ""
-	m.inInline = true
-	m.inlineLabel = label
-	return m.setActive(detail, 0)
-}
-
-// returnToMain restores the main transcript at the source line that was on top
-// when the detail (subagent or inline body) was opened (re-derived to the current
-// wrap width).
-func (m viewerModel) returnToMain() viewerModel {
-	if !m.inDetail() {
-		return m
-	}
-	m.inSub = false
-	m.subID = ""
-	m.inInline = false
-	m.inlineLabel = ""
-	return m.setActive(m.main, m.main.rowForLine(m.savedMainLine))
-}
-
 // setActive swaps the active transcript into the viewport at the given offset
 // and clears any marker focus. Value receiver returning the model (the bubbletea
 // value-model convention) — every viewerModel method passes/returns by value.
 func (m viewerModel) setActive(rt renderedTranscript, yOffset int) viewerModel {
 	m = m.resetFind()
 	m.active = rt
+	m.wrapWidth = m.contentWidth()
 	m.focusedMarker = -1
 	m.vp.SetContent(m.viewportContent())
 	m.vp.SetYOffset(yOffset)
@@ -245,7 +131,7 @@ func (m viewerModel) setActive(rt renderedTranscript, yOffset int) viewerModel {
 // viewportContent is the active transcript's content with the focused marker row
 // (if any) re-styled as focused. Computing the focus overlay at content time —
 // rather than mutating the rows slice — avoids aliasing the backing array shared
-// between m.main and m.active. The per-keystroke copy is cheap (a slice of string
+// between active and suspended frames. The per-keystroke copy is cheap (a slice of string
 // headers).
 func (m viewerModel) viewportContent() string {
 	return m.active.focusedContent(m.styles, m.focusedMarker)
@@ -272,18 +158,13 @@ func (m viewerModel) setSize(width, height int) viewerModel {
 		m.vp.SetYOffset(m.vp.YOffset)
 		return m
 	}
-	// Re-wrap at the new width. Capture the top source line BEFORE re-rendering
-	// (the offset is in old-render row space), then restore it via rowForLine in
-	// the new render so the scroll position survives the re-wrap.
-	topLine := m.active.lineForRow(m.vp.YOffset)
-	m.main = renderTranscript(m.platform(), m.main.messages, m.styles, m.contentWidth())
-	if m.inDetail() {
-		m.active = renderTranscript(m.activePlatform(), m.active.messages, m.styles, m.contentWidth())
-	} else {
-		m.active = m.main
-	}
+	// Normal rendering promises message-level restoration after a re-wrap.
+	// Use the message ordinal: SourceLine is not unique across display messages.
+	anchor := m.findReadingAnchor()
+	m.active = renderTranscript(m.activePlatform(), m.active.messages, m.styles, m.contentWidth())
+	m.wrapWidth = m.contentWidth()
 	m.vp.SetContent(m.viewportContent())
-	m.vp.SetYOffset(m.active.rowForLine(topLine))
+	m.vp.SetYOffset(m.rowForMessage(anchor.message))
 	return m
 }
 
@@ -317,13 +198,13 @@ func (m viewerModel) update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
 			return m.clearFind(), nil, viewerNone
 		}
 		if m.inDetail() {
-			return m.returnToMain(), nil, viewerNone
+			return m.returnToParent(), nil, viewerNone
 		}
 		return m, nil, viewerBack
 	case "q":
 		m = m.invalidateFind()
 		if m.inDetail() {
-			return m.returnToMain(), nil, viewerNone
+			return m.returnToParent(), nil, viewerNone
 		}
 		return m, nil, viewerBack
 	case "j", "down":
@@ -447,7 +328,7 @@ func (m viewerModel) openFocusedMarker() (viewerModel, viewerAction) {
 		}
 		return m.openSubagent(msg.AgentID, 0), viewerNone
 	case msg.Role == vault.RoleTool && msg.Collapsed:
-		return m.openInlineContent(msg), viewerNone
+		return m.openInlineContent(mi), viewerNone
 	}
 	return m, viewerNone
 }
@@ -517,10 +398,11 @@ func (m viewerModel) header() string {
 	if title == "" {
 		title = "(untitled)"
 	}
-	if m.inSub {
-		title = fmt.Sprintf("%s › subagent %s", title, shortID(m.subID))
-	} else if m.inInline {
-		title = fmt.Sprintf("%s › %s", title, m.inlineLabel)
+	if id := m.target.source.subagent; id != "" {
+		title = fmt.Sprintf("%s › subagent %s", title, shortID(id))
+	}
+	if m.target.kind == viewerTargetTool {
+		title = fmt.Sprintf("%s › %s", title, m.target.label)
 	}
 	// The location segment names the platform, and for a child session (a Codex
 	// sub-agent rollout with parent_uuid set) its parent — "Codex · child of
@@ -546,7 +428,14 @@ func (m viewerModel) helpLine() string {
 	if m.inDetail() {
 		// e still renames the owning session from a detail view (app.updateView
 		// handles it before delegating), so the help must keep advertising it.
-		keys = "esc/q return to session · e rename · ctrl+g project · j/k scroll · c copy"
+		back := "session"
+		if len(m.parents) > 0 && m.parents[len(m.parents)-1].target.kind == viewerTargetSidecar {
+			back = "subagent"
+		}
+		keys = "esc/q return to " + back + " · / find · e rename · ctrl+g project · j/k scroll · c copy"
+		if len(m.active.markers) > 0 {
+			keys = "esc/q return to " + back + " · / find · ]/[ marker · enter open · c copy"
+		}
 	}
 	return fitRow(m.styles.Help.Render("v raw JSONL · "+keys), m.width)
 }

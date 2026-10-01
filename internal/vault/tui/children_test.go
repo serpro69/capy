@@ -138,7 +138,7 @@ func TestApp_OpenChildSurvivesResizeWhileInChild(t *testing.T) {
 	m, _ := codexFamilyApp(t, parent, child)
 
 	m = press(t, m, "enter", "]")
-	topLine := m.viewer.main.lineForRow(m.viewer.vp.YOffset)
+	topLine := m.viewer.active.lineForRow(m.viewer.vp.YOffset)
 	require.Greater(t, topLine, 0)
 	m = press(t, m, "enter")
 	require.Equal(t, codexChildID, m.viewer.sess.UUID)
@@ -148,7 +148,7 @@ func TestApp_OpenChildSurvivesResizeWhileInChild(t *testing.T) {
 	m = press(t, m, "q")
 	assert.Equal(t, codexParentID, m.viewer.sess.UUID)
 	assert.Equal(t, 60, m.viewer.width, "the restored parent is re-sized to the current terminal")
-	assert.Equal(t, topLine, m.viewer.main.lineForRow(m.viewer.vp.YOffset), "top source line preserved")
+	assert.Equal(t, topLine, m.viewer.active.lineForRow(m.viewer.vp.YOffset), "top source line preserved")
 }
 
 // TestApp_TwoLevelChildChainPopsInOrder: parent → child → grandchild, then two

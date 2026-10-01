@@ -115,8 +115,8 @@ func TestApp_SearchEnterOpensViewAndJumps(t *testing.T) {
 	m = next.(Model)
 
 	assert.Equal(t, modeView, m.mode)
-	assert.True(t, m.viewer.inSub, "a subagent hit opens the subagent transcript standalone")
-	assert.Equal(t, "xyz", m.viewer.subID)
+	assert.True(t, m.viewer.target.kind == viewerTargetSidecar, "a subagent hit opens the subagent transcript standalone")
+	assert.Equal(t, "xyz", m.viewer.target.source.subagent)
 	assert.Equal(t, modeSearch, m.prevMode, "view returns to search when opened from search")
 }
 

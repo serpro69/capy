@@ -16,7 +16,7 @@ import (
 
 // Only Update mutates a controller. Workers receive value requests referring to
 // immutable corpus/projection data; snapshots share those caches, never input or
-// mutable selection. Task 2 moves this reading state into complete local frames.
+// mutable selection. Each local frame owns its controller and committed view.
 type findViewState struct {
 	query      string
 	corpus     *findCorpus
@@ -32,12 +32,7 @@ type findViewState struct {
 }
 
 type findSnapshot struct {
-	view          findViewState
-	viewport      viewport.Model
-	active        renderedTranscript
-	anchor        findPosition
-	width         int
-	focusedMarker int
+	frame         viewerTargetFrame
 	normalRestore bool
 }
 
@@ -57,6 +52,7 @@ type findRequest struct {
 	normal        bool
 	restoreAnchor bool
 	focusedMarker int
+	toolDetail    bool
 }
 
 type findResultMsg struct {
@@ -95,7 +91,8 @@ func (m viewerModel) resetFind() viewerModel {
 	if m.find.cancel != nil {
 		m.find.cancel()
 	}
-	m.find = findController{ctx: m.find.ctx, epoch: m.find.epoch + 1}
+	m.findEpoch = max(m.findEpoch, m.find.epoch) + 1
+	m.find = findController{ctx: m.find.ctx, epoch: m.findEpoch}
 	return m
 }
 
@@ -108,33 +105,18 @@ func (m viewerModel) findReadingAnchor() findPosition {
 }
 
 func (m viewerModel) startFind() viewerModel {
-	// TODO(vault-in-session-search Task 2): enable local detail scopes together
-	// with complete frames, so manual detail opens can suspend the parent query.
-	if !m.ready || m.inDetail() {
+	if !m.ready {
 		return m
 	}
-	// Actual row width can lag terminal width while a resize/restore runs.
-	// Cache that identity, and retain a suspended normal-restore intent so
-	// cancelling this new editor cannot revive a presentation already cleared.
-	presentationWidth := m.contentWidth()
-	if m.find.view.plain {
-		presentationWidth = m.find.view.projection.width
-	} else if m.find.latest != nil && m.find.latest.normal {
-		presentationWidth = m.find.view.normalWidth
-	}
+	snapshot := m.targetSnapshot()
 	if !m.find.view.plain {
 		m.find.view.normal, m.find.view.normalVP = m.active, m.vp
-		m.find.view.normalWidth = presentationWidth
+		m.find.view.normalWidth = snapshot.frame.wrapWidth
 		m.find.view.normalFocus = m.focusedMarker
+		// First entry needs a normal-render restoration source too.
+		snapshot.frame.find.view = m.find.view
 	}
 	anchor := m.findReadingAnchor()
-	snapshot := findSnapshot{
-		view: m.find.view, viewport: m.vp, active: m.active, anchor: anchor,
-		width: presentationWidth, focusedMarker: m.focusedMarker,
-	}
-	if desired := m.find.latest; desired != nil && (desired.normal || desired.restoreAnchor) {
-		snapshot.normalRestore, snapshot.anchor = desired.normal, desired.anchor
-	}
 	m.find.snapshot = &snapshot
 	m.find.anchor = anchor
 	m.find.editing = true
@@ -165,10 +147,10 @@ func (m viewerModel) queueFind(query string, anchor, fallback findPosition, keep
 		m.find.cancel()
 	}
 	r := findRequest{
-		id: m.find.id(), view: m.find.view, query: query, scope: m.sess.UUID,
+		id: m.find.id(), view: m.find.view, query: query, scope: m.target.scope,
 		platform: m.activePlatform(), styles: m.styles, width: m.contentWidth(),
 		anchor: anchor, fallback: fallback, keepSelection: keepSelection, normal: normal,
-		focusedMarker: m.focusedMarker,
+		focusedMarker: m.focusedMarker, toolDetail: m.target.kind == viewerTargetTool,
 	}
 	m.find.pending = &r
 	m.find.latest = &r
@@ -190,6 +172,25 @@ func (m viewerModel) nextFindCommand() (viewerModel, tea.Cmd) {
 		defer cancel()
 		return runFindRequest(ctx, r)
 	}
+}
+
+// A manually opened tool is its own scope, with separate summary and Body
+// fields. Ordinary transcripts keep the usual no-duplication policy. Parsed
+// messages and the published corpus remain immutable.
+func buildFindScopeCorpus(ctx context.Context, scope string, messages []vault.TranscriptMessage, toolDetail bool) (*findCorpus, error) {
+	if !toolDetail || len(messages) == 0 {
+		return buildFindCorpus(ctx, scope, messages)
+	}
+	msg := messages[0]
+	msg.Collapsed = true
+	corpus, err := buildFindCorpus(ctx, scope, []vault.TranscriptMessage{msg})
+	if err != nil {
+		return nil, err
+	}
+	for i := range corpus.lines {
+		corpus.lines[i].hidden = false
+	}
+	return corpus, nil
 }
 
 func runFindRequest(ctx context.Context, r findRequest) findResultMsg {
@@ -218,7 +219,7 @@ func runFindRequest(ctx context.Context, r findRequest) findResultMsg {
 		return result
 	}
 	if f.corpus == nil {
-		f.corpus, result.err = buildFindCorpus(ctx, r.scope, f.normal.messages)
+		f.corpus, result.err = buildFindScopeCorpus(ctx, r.scope, f.normal.messages, r.toolDetail)
 		if result.err != nil {
 			return result
 		}
@@ -292,9 +293,11 @@ func (m viewerModel) showFindView(offset int) viewerModel {
 		m.active, m.vp = f.projection.transcript, f.projection.viewport
 	} else {
 		m.active, m.vp = f.normal, f.normalVP
-		if !m.inDetail() {
-			m.main = f.normal
-		}
+	}
+	if f.plain {
+		m.wrapWidth = f.projection.width
+	} else {
+		m.wrapWidth = f.normalWidth
 	}
 	m.vp.Width, m.vp.Height = m.width, m.viewportHeight()
 	m.vp.SetYOffset(offset)
@@ -319,17 +322,21 @@ func (m viewerModel) cancelFind() viewerModel {
 	if snapshot == nil {
 		return m
 	}
-	m.find.view = snapshot.view
-	m.active, m.vp = snapshot.active, snapshot.viewport
-	m.focusedMarker = snapshot.focusedMarker
+	// Keep the live scheduler so its cancelled completion can retire. Restore
+	// the complete pre-edit frame's target and presentation.
+	controller := m.find
+	m.viewerTargetFrame = snapshot.frame.clone()
+	m.find = controller
+	m.find.view = snapshot.frame.find.view
+	m.find.wrapped = snapshot.frame.find.wrapped
 	m.vp.Width, m.vp.Height = m.width, m.viewportHeight()
 	m.vp.SetYOffset(m.vp.YOffset)
-	if snapshot.width == m.contentWidth() && !snapshot.normalRestore {
+	if snapshot.frame.wrapWidth == m.contentWidth() && !snapshot.normalRestore {
 		m.find.applied = m.find.id()
 		return m
 	}
-	normal := snapshot.normalRestore || !snapshot.view.plain
-	m = m.queueFind(snapshot.view.query, snapshot.anchor, snapshot.anchor, true, normal)
+	normal := snapshot.normalRestore || !snapshot.frame.find.view.plain
+	m = m.queueFind(m.find.view.query, snapshot.frame.anchor, snapshot.frame.anchor, true, normal)
 	// The occurrence counter and the reading position are independent after
 	// manual scrolling. Cancel restores both, rather than jumping to selection.
 	m.find.latest.restoreAnchor = true

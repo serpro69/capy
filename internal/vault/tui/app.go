@@ -809,13 +809,7 @@ func (m Model) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// scrolling viewport. They act on the open session / visible message.
 	switch msg.String() {
 	case "v":
-		label := m.viewer.sess.UUID + " · archived JSONL"
-		raw := m.viewer.sess.RawJSONL
-		if m.viewer.inSub {
-			label = m.viewer.subID + " · archived subagent JSONL"
-			raw = m.viewer.subagentBytes(m.viewer.subID)
-		}
-		return m.startRaw(label, func(context.Context) ([]byte, error) { return raw, nil })
+		return m.startViewerRaw()
 	case "r", "R":
 		return m.requestAction(actionFor(msg.String()), m.viewer.sess.UUID)
 	case "e":
