@@ -1,6 +1,6 @@
 # In-session vault search — implementation plan
 
-> Status: Pending implementation; review corrections documented; re-review pending
+> Status: Task 1 complete and reviewed; Tasks 2–6 pending
 > Created: 2026-09-20
 > Issue: [#101](https://github.com/serpro69/capy/issues/101)
 > Design: [design.md](design.md)
@@ -58,6 +58,32 @@ Primary files: new find_text.go, find_render.go, viewer_find.go; viewer.go and a
 6. Create find_bench_test.go's deterministic 10,000-line corpus and opt-in harness now. Build/scan the full corpus, including hidden fields, as a computational check; exercise the implemented visible exact-search path from input through View, including first projection, edits, commit, n/N, and resize. Record both builds in performance.md with the final protocol's fixture/machine metadata and 100 samples per implemented operation. → verify: every recorded implemented operation meets 100 ms and all source-location checks pass before Task 2 starts. Mark hidden-target and fuzzy operations as not implemented, not as passing.
 
 This is a mandatory go/no-go gate. On failure, optimize and remeasure or obtain a concrete design revision from the user; do not begin dependent tasks or drop required results. The normal viewer and global search must also pass the focused suites under both tags. Task 6 repeats the complete feature measurements; it is no longer the first measurement.
+
+### Task 1 implementation notes
+
+Completed 2026-10-01. See [tasks and verification](tasks.md#task-1-evidence--2026-10-01)
+and [performance.md](performance.md). The row map stores original byte intervals;
+visible highlight rendering reconstructs graphemes and escapes locally, avoiding
+a full per-character map. Prepared corpus/projection data is immutable and shared;
+query selection and editor snapshots remain value state.
+
+Restoration has an explicit pending target, independent of the currently shown
+presentation. Snapshot reading anchors, selected occurrence identity, actual
+prepared width and normal marker-focus overlays must survive independently.
+Review regressions cover repeated resize, reopening slash while restoration is
+pending, and changing marker focus before a normal-render completion arrives.
+Task 2 must carry these guarantees into its complete local frame migration.
+
+The pinned textinput's Ctrl+V dispatches external clipboard utilities, so only
+that binding is disabled for local find; terminal bracketed paste still uses
+ordinary rune insertion. Existing metadata modals retain priority, while find
+owns Ctrl+G and printable action shortcuts during editing.
+
+CLI/configuration/schema/CI changes are N/A for this slice; it uses the existing
+vault command and build-tag setup documented in the repository AGENTS.md.
+Public README/architecture controls remain scheduled for Task 6 so they describe
+the completed feature. No new project convention beyond the agreed design was
+introduced.
 
 ## Task 2 — local frames and manual nested return
 
@@ -188,7 +214,10 @@ CAPY_FIND_BENCH=1 go test -tags fts5,glamour -run '^TestFindLatency$' -count=1 -
 
 Also measure 100,000 lines, a single 1 MiB content line, long grapheme sequences, rapid query replacement, and repeated nested open/back. These stress cases assess cancellation and memory; the agreed 100 ms gate applies to the defined 10,000-line workload, not arbitrary input size. Verify that the local matcher's in-line cancellation checks retire a long-line scan; record observed cancellation latency and retained memory.
 
-Performance evidence is not yet available. Do not create a report with fabricated numbers or mark this gate complete based on library README timings.
+Task 1 performance evidence is available in [performance.md](performance.md).
+It measures the implemented exact path and scans the full corpus computationally.
+Integrated hidden-target, suspension and fuzzy evidence is still pending; those
+gates cannot be marked complete using these Task 1 measurements.
 
 ## Assumptions and bounded follow-ups
 
@@ -206,4 +235,7 @@ The unrelated vault-project-names WIP may also modify app.go/viewer metadata pat
 
 There is no data migration or persisted search state. Reverting this feature restores previous viewer behavior without archive conversion. Keep normal renderer/global-search tests as compatibility guards. The precise n/N and Esc changes apply only while local search state is active.
 
-The supplied design reviews have been verified and reconciled in the linked findings report. Re-run $kk:review-design vault-in-session-search over the revised design.md, implementation.md, and tasks.md before implementation. The corrections and standalone matcher prototype do not claim production correctness or feature latency.
+The supplied design reviews were verified and reconciled in the linked findings
+report. The required [re-review](.reviews/review-design-2026-10-01.md) passed before
+Task 1 implementation. Its standalone fuzzy prototype remains review evidence;
+production fuzzy correctness and latency are still owned by Task 5.

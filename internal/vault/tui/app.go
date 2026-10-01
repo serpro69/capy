@@ -137,6 +137,7 @@ type Model struct {
 	// ever targets the session currently shown, and a chain cannot loop, so no
 	// suspended frame can hold the edited session.
 	viewerStack []viewerFrame
+	findEpoch   uint64 // root-issued identity; never reused after reopening a session
 
 	// clipOut is where the OSC-52 clipboard escape is written for the `c` key —
 	// os.Stderr in production (the same TTY as the renderer, but out-of-band), a
@@ -344,12 +345,27 @@ func (m Model) clearStatus() Model {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	out, ok := next.(Model)
+	if !ok {
+		return next, cmd
+	}
+	if out.mode == modeView && !out.quitting {
+		var findCmd tea.Cmd
+		out.viewer, findCmd = out.viewer.nextFindCommand()
+		cmd = tea.Batch(cmd, findCmd)
+	}
+	return out, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m.layoutSubmodels(), nil
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
+			m.viewer = m.viewer.invalidateFind()
 			if m.rawCancel != nil {
 				m.rawCancel()
 			}
@@ -369,6 +385,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.renaming {
 			return m.updateRename(msg)
 		}
+		// Local input owns every application shortcut, including Ctrl+G's
+		// root-level project editor. Existing metadata modals retain priority.
+		if m.mode == modeView && m.viewer.find.editing {
+			var cmd tea.Cmd
+			m.viewer, cmd, _ = m.viewer.Update(msg)
+			return m, cmd
+		}
 		if msg.String() == "ctrl+g" {
 			return m.startProjectEdit()
 		}
@@ -382,6 +405,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modeRaw:
 			return m.updateRaw(msg)
 		}
+	case findResultMsg:
+		m.viewer = m.viewer.applyFindResult(msg, m.mode == modeView && !m.quitting)
+		return m, nil
 	case rawLoadedMsg:
 		if m.mode != modeRaw || msg.seq != m.rawSeq || !m.raw.loading {
 			return m, nil
@@ -846,6 +872,7 @@ func (m Model) openChild(uuid string) Model {
 	}
 	m.viewerStack = append(m.viewerStack, viewerFrame{viewer: m.viewer})
 	m.viewer = m.viewer.loadSession(*sess, files)
+	m = m.assignFindEpoch()
 	return m
 }
 
@@ -924,6 +951,7 @@ func (m Model) openSession(sessionID string, returnTo mode, subagentID string, l
 		return m, fmt.Errorf("loading session files: %w", err)
 	}
 	m.viewer = m.viewer.loadSession(*sess, files)
+	m = m.assignFindEpoch()
 	if subagentID != "" || line > 0 {
 		m.viewer = m.viewer.jumpTo(subagentID, line)
 	}
@@ -933,6 +961,12 @@ func (m Model) openSession(sessionID string, returnTo mode, subagentID string, l
 	m.prevMode = returnTo
 	m.mode = modeView
 	return m, nil
+}
+
+func (m Model) assignFindEpoch() Model {
+	m.findEpoch = max(m.findEpoch, m.viewer.find.epoch) + 1
+	m.viewer.find.epoch, m.viewer.find.ctx = m.findEpoch, m.ctx
+	return m
 }
 
 func (m Model) View() string {

@@ -3,15 +3,15 @@
 > Design: [design.md](design.md)
 > Implementation: [implementation.md](implementation.md)
 > Issue: [#101](https://github.com/serpro69/capy/issues/101)
-> Status: pending
+> Status: in-progress
 > Created: 2026-09-20
-> Design review: Findings verified and corrected in the plan; re-review pending
+> Design review: [Re-review passed](.reviews/review-design-2026-10-01.md); Task 1 feasibility gate passed in both builds
 > Reconciliation: [Consolidated findings](.reviews/consolidated-findings-2026-09-20.md)
 > Not Doing: raw JSONL search, recursive child/subagent search, regex/multiline queries, full fzf syntax, persistent history, global FTS/MCP/CLI changes, rich Markdown during search, decoder-policy changes, general lazy rendering
 
 ## Task 1: Exact find with mandatory early feasibility evidence
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** —
@@ -20,13 +20,45 @@
 
 ### Subtasks
 
-- [ ] 1.1 Add find_text.go full corpus identities and overlapping literal matching, including hidden Body computational coverage; temporarily expose only supported visible fields in the viewer → verify: TestFindText covers duplicates, case, spaces, punctuation, overlaps, and full hidden text without FTS bounds.
-- [ ] 1.2 Add find_render.go tracked plain wrapping, escaping and source spans; reserve two cells for generated selection brackets and promote pinned x/ansi only if imported → verify: TestFindRender maps Unicode/wrapped hits, and stripped-ANSI output brackets the chosen occurrence on same-row and wrapped cases.
-- [ ] 1.3 Add viewer_find.go slash preview/commit/cancel, counter, n/N and Esc clear; wire viewer.go → verify: TestViewerFind and TestViewerFindResize pass under both tags.
-- [ ] 1.4 Add latest-pending cancellable commands and root epochs → verify: TestViewerFindAsync covers stale results, cancellation, pending submit and same-session reopen.
-- [ ] 1.5 Route local input before app.go actions and bound layout → verify: TestAppFindRouting prevents unintended actions and store searches.
-- [ ] 1.6 Create find_bench_test.go's deterministic reference corpus and opt-in harness; record full-corpus computational measurements and implemented exact UI operations in performance.md under both tags → verify: all location checks and every recorded implemented operation pass the 100 ms gate before Task 2 starts.
-- [ ] 1.7 Run both focused suites and label the temporary hidden-navigation gap as Task 3 work → verify: normal/global search regressions pass; early evidence explicitly identifies unimplemented operation classes.
+- [x] 1.1 Add find_text.go full corpus identities and overlapping literal matching, including hidden Body computational coverage; temporarily expose only supported visible fields in the viewer → verify: TestFindText covers duplicates, case, spaces, punctuation, overlaps, and full hidden text without FTS bounds.
+- [x] 1.2 Add find_render.go tracked plain wrapping, escaping and source spans; reserve two cells for generated selection brackets and promote pinned x/ansi only if imported → verify: TestFindRender maps Unicode/wrapped hits, and stripped-ANSI output brackets the chosen occurrence on same-row and wrapped cases.
+- [x] 1.3 Add viewer_find.go slash preview/commit/cancel, counter, n/N and Esc clear; wire viewer.go → verify: TestViewerFind and TestViewerFindResize pass under both tags.
+- [x] 1.4 Add latest-pending cancellable commands and root epochs → verify: TestViewerFindAsync covers stale results, cancellation, pending submit and same-session reopen.
+- [x] 1.5 Route local input before app.go actions and bound layout → verify: TestAppFindRouting prevents unintended actions and store searches.
+- [x] 1.6 Create find_bench_test.go's deterministic reference corpus and opt-in harness; record full-corpus computational measurements and implemented exact UI operations in performance.md under both tags → verify: all location checks and every recorded implemented operation pass the 100 ms gate before Task 2 starts.
+- [x] 1.7 Run both focused suites and label the temporary hidden-navigation gap as Task 3 work → verify: normal/global search regressions pass; early evidence explicitly identifies unimplemented operation classes.
+
+### Task 1 evidence — 2026-10-01
+
+- [Performance report](performance.md): 100 samples per operation in both builds,
+  full hidden-field computational scans, Unicode/long-line stress and retained
+  heap measurements. Final maximum 27.052 ms against the 100 ms gate.
+- [Isolated code review](.reviews/review-code-task1-2026-10-01.md): approved after
+  six reproduced restoration/mapping findings were fixed. PAL's external reviewer
+  returned 503; the independent code-reviewer completed the review and follow-ups.
+- Both complete TUI suites passed with -count=1 under fts5 and fts5,glamour;
+  final race runs passed under both tags (2.475 s / 2.752 s). They include existing
+  global-search, viewer, collapse, marker, raw, child and metadata regressions.
+- make test passed with synthetic keys and isolated XDG_CONFIG_HOME; make vet
+  and glamour TUI vet passed. Both binaries built and native nm confirmed
+  default excludes glamour while the tagged build includes it. This Go
+  installation lacks go tool nm, so the system symbol tool was used.
+- BenchmarkFind ran six repetitions under both tags. make bench-quality and
+  qualstat comparison against an independently archived f99d758 baseline showed
+  no retrieval-quality or context-reduction change.
+- No schema, decoder, persisted state, CLI flags, setup artifacts or CI pipeline
+  changes. x/ansi v0.11.6 was promoted to a direct requirement without a version
+  or go.sum change. All new behavior is confined to the TUI.
+
+The query editor also consumes Ctrl+G before the root project editor and disables
+the widget's external clipboard utility binding. Terminal bracketed paste remains
+supported and is covered by the Unicode 256-code-point limit regression.
+
+The next task is Task 2. Slash currently searches main-transcript ordinary bodies,
+launch labels and full summaries. Manual detail scopes/parent-query suspension
+remain Task 2; hidden Body navigation remains Task 3 despite full computational
+coverage. Root/raw suspension remains Task 4. Fuzzy and final public documentation
+remain Tasks 5/6. The inline eligibility and main-only comments name these tasks.
 
 ## Task 2: Local frames and manual nested return
 
@@ -124,4 +156,17 @@ Task 1 (exact feasibility gate)
 
 The three supplied review rounds consolidate to six unique claims. Each was checked against the current documents/code; both upstream matcher failures were independently reproduced. [The reconciliation](.reviews/consolidated-findings-2026-09-20.md) records qualified verdicts, fixes and standalone prototype evidence.
 
-All feature implementation checkboxes remain open. The early exact/fuzzy latency gates, actual frame migration, no-color rendering, worker integration and full performance target have not run. Re-review the revised plan before implementation. The original review files remain historical evidence; their repeated P1 findings are tracked once in the reconciliation.
+Task 1 and its exact feasibility gate are complete. Tasks 2–6 remain pending;
+the measured early path does not certify their interactions. The original review
+files remain historical evidence; their repeated P1 findings are tracked once in
+the reconciliation.
+
+Pre-existing test-environment follow-up: some CLI import/merge fixtures inherit
+the user's vault.min_session_bytes policy (192 KiB on this machine), excluding
+their tiny archives. The full suite passed with XDG_CONFIG_HOME pointed at an
+empty temporary directory. This TUI task leaves unrelated CLI fixtures unchanged;
+isolate XDG_CONFIG_HOME in setupCodexVaultEnv and the remaining custom
+import/restore/merge fixtures in a separate test-hermeticity fix. Local TCP/Unix
+listener tests also require socket access beyond the restricted sandbox; the
+successful full run used that access. No production failure was hidden by
+changing assertions or skipping tests.
