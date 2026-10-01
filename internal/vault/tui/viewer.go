@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -81,6 +82,7 @@ type viewerModel struct {
 
 	vp    viewport.Model
 	ready bool
+	find  findController
 }
 
 func newViewerModel(styles Styles, width, height int) viewerModel {
@@ -90,6 +92,7 @@ func newViewerModel(styles Styles, width, height int) viewerModel {
 		height:        height,
 		focusedMarker: -1,
 		vp:            viewport.New(width, max(1, height-viewerChromeRows)),
+		find:          findController{ctx: context.Background()},
 	}
 }
 
@@ -102,6 +105,7 @@ func (m viewerModel) inDetail() bool { return m.inSub || m.inInline }
 // session's sidecars (subagent transcripts among them). Call jumpTo afterwards to
 // land on a specific line / subagent.
 func (m viewerModel) loadSession(sess vault.Session, files []vault.File) viewerModel {
+	m = m.resetFind()
 	m.sess = sess
 	m.vp.Height = m.viewportHeight()
 	m.files = files
@@ -158,6 +162,10 @@ func (m viewerModel) openSubagent(id string, line int) viewerModel {
 	if raw == nil {
 		return m // not archived; caller's search/marker shouldn't have offered it
 	}
+	if m.find.view.plain {
+		// Task 2 adds parent-query suspension using complete local frames.
+		m = m.clearFind()
+	}
 	if !m.inDetail() {
 		// Remember the main top as a source line (not a row offset) so a resize
 		// re-wrap while in the detail can't stale it; rowForLine re-derives the
@@ -182,6 +190,9 @@ func (m viewerModel) openSubagent(id string, line int) viewerModel {
 // and no separate "open inline content" file target (design.md § Addenda A1). The
 // call summary surfaces in the header (inlineLabel) rather than the body.
 func (m viewerModel) openInlineContent(msg vault.TranscriptMessage) viewerModel {
+	if m.find.view.plain {
+		m = m.clearFind()
+	}
 	// In normal flow inDetail() is false here (inline markers exist only on main,
 	// and inSub/inInline are mutually exclusive); the guard mirrors openSubagent so
 	// savedMainLine is captured once, from main, on any future nesting path.
@@ -223,6 +234,7 @@ func (m viewerModel) returnToMain() viewerModel {
 // and clears any marker focus. Value receiver returning the model (the bubbletea
 // value-model convention) — every viewerModel method passes/returns by value.
 func (m viewerModel) setActive(rt renderedTranscript, yOffset int) viewerModel {
+	m = m.resetFind()
 	m.active = rt
 	m.focusedMarker = -1
 	m.vp.SetContent(m.viewportContent())
@@ -236,18 +248,7 @@ func (m viewerModel) setActive(rt renderedTranscript, yOffset int) viewerModel {
 // between m.main and m.active. The per-keystroke copy is cheap (a slice of string
 // headers).
 func (m viewerModel) viewportContent() string {
-	if m.focusedMarker < 0 || m.focusedMarker >= len(m.active.markers) {
-		return m.active.content()
-	}
-	mi := m.active.markers[m.focusedMarker]
-	row := m.active.msgRowStart[mi]
-	if row < 0 || row >= len(m.active.rows) {
-		return m.active.content()
-	}
-	rows := make([]string, len(m.active.rows))
-	copy(rows, m.active.rows)
-	rows[row] = m.styles.markerRowFor(m.active.messages[mi], true)
-	return strings.Join(rows, "\n")
+	return m.active.focusedContent(m.styles, m.focusedMarker)
 }
 
 func (m viewerModel) setSize(width, height int) viewerModel {
@@ -258,6 +259,12 @@ func (m viewerModel) setSize(width, height int) viewerModel {
 	m.vp.Height = m.viewportHeight()
 	if !m.ready {
 		return m
+	}
+	if m.find.editing || m.find.view.plain || m.find.latest != nil {
+		m = m.sizeFindInput()
+		if widthChanged {
+			return m.resizeFind()
+		}
 	}
 	if !widthChanged {
 		// Editor/status rows change only the height. Preserve an offset within a
@@ -281,6 +288,20 @@ func (m viewerModel) setSize(width, height int) viewerModel {
 }
 
 func (m viewerModel) Update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
+	m, cmd, action := m.update(msg)
+	m, findCmd := m.nextFindCommand()
+	return m, tea.Batch(cmd, findCmd), action
+}
+
+func (m viewerModel) update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
+	if result, ok := msg.(findResultMsg); ok {
+		return m.applyFindResult(result, true), nil, viewerNone
+	}
+	if m.find.editing {
+		var cmd tea.Cmd
+		m, cmd = m.updateFindInput(msg)
+		return m, cmd, viewerNone
+	}
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		var cmd tea.Cmd
@@ -289,7 +310,18 @@ func (m viewerModel) Update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
 	}
 
 	switch key.String() {
-	case "esc", "q":
+	case "/":
+		return m.startFind(), nil, viewerNone
+	case "esc":
+		if m.find.view.plain {
+			return m.clearFind(), nil, viewerNone
+		}
+		if m.inDetail() {
+			return m.returnToMain(), nil, viewerNone
+		}
+		return m, nil, viewerBack
+	case "q":
+		m = m.invalidateFind()
 		if m.inDetail() {
 			return m.returnToMain(), nil, viewerNone
 		}
@@ -306,9 +338,21 @@ func (m viewerModel) Update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
 		m.vp.HalfPageDown()
 	case "ctrl+u", "pgup", "b":
 		m.vp.HalfPageUp()
-	case "]", "tab", "n":
+	case "n":
+		if m.find.view.query != "" {
+			m = m.stepFind(1)
+		} else {
+			m = m.focusMarker(1)
+		}
+	case "N":
+		if m.find.view.query != "" {
+			m = m.stepFind(-1)
+		} else {
+			m = m.focusMarker(-1)
+		}
+	case "]", "tab":
 		m = m.focusMarker(1)
-	case "[", "shift+tab", "N":
+	case "[", "shift+tab":
 		m = m.focusMarker(-1)
 	case "enter":
 		var action viewerAction
@@ -352,7 +396,9 @@ func (m viewerModel) focusMarker(delta int) viewerModel {
 	// Re-render so the newly-focused marker is highlighted (not just scrolled into
 	// view). Then scroll only if it's off-screen — focusedMarkerVisible now reports
 	// on `next`, since m.focusedMarker == next.
-	m.vp.SetContent(m.viewportContent())
+	if !m.find.view.plain {
+		m.vp.SetContent(m.viewportContent())
+	}
 	if !m.focusedMarkerVisible() {
 		if row := m.active.rowForMarker(next); row >= 0 {
 			m.vp.SetYOffset(row)
@@ -409,6 +455,9 @@ func (m viewerModel) openFocusedMarker() (viewerModel, viewerAction) {
 func (m viewerModel) View() string {
 	if !m.ready {
 		return "no session loaded"
+	}
+	if m.find.editing || m.find.view.plain || m.find.err != "" {
+		return m.findView()
 	}
 	rows := []string{m.header()}
 	if m.hasOriginalPath() {
@@ -490,9 +539,9 @@ func (m viewerModel) header() string {
 }
 
 func (m viewerModel) helpLine() string {
-	keys := "j/k scroll · g/G top/bottom · c copy · e rename · ctrl+g project · r/R restore/resume · q back"
+	keys := "/ find · j/k scroll · g/G top/bottom · c copy · e rename · ctrl+g project · r/R restore/resume · q back"
 	if len(m.active.markers) > 0 {
-		keys = "j/k scroll · ]/[ marker · enter open · c copy · e rename · ctrl+g project · r/R restore/resume · q back"
+		keys = "/ find · j/k scroll · ]/[ marker · enter open · c copy · e rename · ctrl+g project · r/R restore/resume · q back"
 	}
 	if m.inDetail() {
 		// e still renames the owning session from a detail view (app.updateView

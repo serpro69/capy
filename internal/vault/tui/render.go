@@ -86,6 +86,24 @@ func (r renderedTranscript) content() string {
 	return strings.Join(r.rows, "\n")
 }
 
+// focusedContent overlays marker focus without changing immutable base rows.
+// Search restoration also calls this in its worker when focus changed while the
+// normal viewport was suspended.
+func (r renderedTranscript) focusedContent(st Styles, focused int) string {
+	if focused < 0 || focused >= len(r.markers) {
+		return r.content()
+	}
+	mi := r.markers[focused]
+	row := r.msgRowStart[mi]
+	if row < 0 || row >= len(r.rows) {
+		return r.content()
+	}
+	rows := make([]string, len(r.rows))
+	copy(rows, r.rows)
+	rows[row] = st.markerRowFor(r.messages[mi], true)
+	return strings.Join(rows, "\n")
+}
+
 // rowForLine maps a source JSONL line index to the row to scroll to: the start
 // row of the last message at or before that line (deduped assistant snapshots
 // resolve to their canonical first line, so an exact hit lands on the message).

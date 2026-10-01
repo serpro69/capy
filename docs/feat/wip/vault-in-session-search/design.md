@@ -1,6 +1,6 @@
 # In-session vault search — design
 
-> Status: Agreed interaction; review corrections documented; implementation and re-review pending
+> Status: Task 1 implemented and reviewed; Tasks 2–6 pending
 > Created: 2026-09-20
 > Issue: [#101 — vault: searching within a session](https://github.com/serpro69/capy/issues/101)
 > Companions: [Implementation](implementation.md), [Tasks](tasks.md)
@@ -14,7 +14,7 @@ An individual developer reading an archived Claude Code or Codex session wants t
 
 How might we help that reader locate a remembered passage without leaving the viewer?
 
-The user confirmed exact find and a fuzzy line picker, inclusion of collapsed tool-result bodies, separate search scopes for separately opened transcripts, the acceptance targets below, and the temporary plain-text presentation described here. This document specifies proposed behavior, not functionality already implemented.
+The user confirmed exact find and a fuzzy line picker, inclusion of collapsed tool-result bodies, separate search scopes for separately opened transcripts, the acceptance targets below, and the temporary plain-text presentation described here. This document specifies the full target behavior; the implementation status below distinguishes the completed slice from pending work.
 
 ## Acceptance criteria
 
@@ -228,7 +228,15 @@ Task 5 likewise gates the first integrated fuzzy path on correctness and latency
 
 ## Implementation and review status
 
-No production code or feature tests are changed by this design. All implementation tasks are pending. Reviews have been consolidated and each distinct claim checked against documents, code, or execution; see the linked reconciliation. These corrections address the design findings. Re-review of the revised plan and measured feature feasibility remain open.
+Task 1 is implemented: main-transcript literal find, tracked plain rendering,
+editor/shortcut ownership, cancellable latest-pending work and root execution
+epochs. The [design re-review](.reviews/review-design-2026-10-01.md) passed;
+the [isolated implementation review](.reviews/review-code-task1-2026-10-01.md)
+approved Task 1 after restoration regressions were corrected.
+[Measured exact feasibility](performance.md) passes in both builds. The full
+feature's hidden-target, nested-scope and fuzzy acceptance criteria remain open
+in Tasks 2–6. Earlier design reviews and their reconciliation remain historical
+evidence, not claims that pending production behavior exists.
 
 The ordered task slices intentionally expose a partial feature during development: Task 1 covers main-transcript exact find plus the early measurement gate; Task 2 establishes local frames and manual nested return; Task 3 adds full collapsed-body search; Task 4 integrates suspension and root actions; Task 5 adds fuzzy selection; Task 6 verifies the whole feature. These are scheduled work items, not silently deferred requirements.
 
