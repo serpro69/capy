@@ -6,4 +6,5 @@ useDefault = true
 [allowlist]
 paths = [
   '''.*test\.go''',
+  '''docs/feat/*'''
 ]
