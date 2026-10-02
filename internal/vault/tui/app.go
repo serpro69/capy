@@ -1018,8 +1018,10 @@ func (m Model) View() string {
 		}
 		rows = append(rows, m.renameLine())
 	}
-	if m.status != "" {
-		// Status occupies one reserved row; bound display cells as well as runes
+	if m.status != "" && m.height > 1 {
+		// At one row the submodel (including find's query/counter) takes priority.
+		// Keep the status in state so it returns when the terminal grows.
+		// Status otherwise occupies one reserved row; bound display cells as well as runes
 		// so wide Unicode labels cannot wrap after a successful metadata edit.
 		style := m.styles.StatusBar
 		if m.statusErr {

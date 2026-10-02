@@ -453,3 +453,38 @@ func TestAppFindFrameLifetime(t *testing.T) {
 	assert.Zero(t, st.searchCalls)
 	assert.Zero(t, st.renameCalls)
 }
+
+func TestAppFindStatusAtOneRow(t *testing.T) {
+	for _, fuzzy := range []bool{false, true} {
+		for _, startHeight := range []int{1, 10} {
+			t.Run(fmt.Sprintf("fuzzy=%v/start-height=%d", fuzzy, startHeight), func(t *testing.T) {
+				m, _ := newTestApp(t, Options{Mode: "view", SessionID: "abcdef01"})
+				m.viewer = findTestViewer(t, []vault.TranscriptMessage{{
+					Role: vault.RoleAssistant, Body: "needle needle needle",
+				}}, 80, 10)
+				m = appFindResize(t, m, 80, 10)
+				m.viewer = searchViewer(t, m.viewer, "needle")
+				if fuzzy {
+					for _, key := range []string{"ctrl+f", "needle", "enter"} {
+						m = appFindKey(t, m, key)
+					}
+				}
+				position := selectedFindPosition(t, m.viewer)
+				m = appFindResize(t, m, 80, startHeight)
+				var clipboard bytes.Buffer
+				m.clipOut = &clipboard
+				m = appFindKey(t, m, "c")
+				require.NotEmpty(t, m.status)
+				m = appFindResize(t, m, 80, 1)
+				view := ansi.Strip(m.View())
+				require.Equal(t, 1, len(strings.Split(view, "\n")))
+				assert.Contains(t, view, m.viewer.findCounter(), "query/counter takes the sole row")
+				assert.NotContains(t, view, m.status)
+				assert.Equal(t, position, selectedFindPosition(t, m.viewer))
+				m = appFindResize(t, m, 80, 10)
+				assert.Contains(t, ansi.Strip(m.View()), m.status, "status returns when space is available")
+				requireFindLanding(t, m.viewer, position)
+			})
+		}
+	}
+}

@@ -158,20 +158,37 @@ func BenchmarkFindHighlight(b *testing.B) {
 // Execute commands as Bubble Tea does: Batch children run independently, so a
 // cosmetic blink timer cannot delay search delivery. Only find messages are
 // delivered here; cursor ticks are outside the input-to-search-result measure.
-func dispatchFindLatency(cmd tea.Cmd, output chan<- findResultMsg) {
+func dispatchFindLatency(cmd tea.Cmd, output chan<- findResultMsg) <-chan struct{} {
+	done := make(chan struct{})
 	if cmd == nil {
-		return
+		close(done)
+		return done
 	}
 	go func() {
+		defer close(done)
 		switch result := cmd().(type) {
 		case tea.BatchMsg:
+			children := make([]<-chan struct{}, 0, len(result))
 			for _, child := range result {
-				dispatchFindLatency(child, output)
+				children = append(children, dispatchFindLatency(child, output))
+			}
+			for _, child := range children {
+				<-child
 			}
 		case findResultMsg:
 			output <- result
 		}
 	}()
+	return done
+}
+
+func submitFindLatency(t *testing.T, cmd tea.Cmd, output chan<- findResultMsg) {
+	t.Helper()
+	done := dispatchFindLatency(cmd, output)
+	// Search latency excludes cosmetic timers, but no command may outlive its
+	// test. Lifetime measurements use subtest cleanup as an explicit retirement
+	// boundary before reading retained heap, without a guessed sleep interval.
+	t.Cleanup(func() { <-done })
 }
 
 func finishFindLatency(t *testing.T, m Model, output <-chan findResultMsg, submit func(tea.Cmd)) Model {
@@ -201,8 +218,8 @@ func stepFindLatency(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
 	output := make(chan findResultMsg, 8)
 	next, cmd := m.Update(msg)
-	dispatchFindLatency(cmd, output)
-	return finishFindLatency(t, next.(Model), output, func(cmd tea.Cmd) { dispatchFindLatency(cmd, output) })
+	submitFindLatency(t, cmd, output)
+	return finishFindLatency(t, next.(Model), output, func(cmd tea.Cmd) { submitFindLatency(t, cmd, output) })
 }
 
 func measureFindLatency(t *testing.T, name string, operation func() time.Duration) {
@@ -310,12 +327,12 @@ func TestFindLatency(t *testing.T) {
 		for _, key := range "needle0" {
 			next, cmd := m.Update(keyMsg(string(key)))
 			m = next.(Model)
-			dispatchFindLatency(cmd, output)
+			submitFindLatency(t, cmd, output)
 		}
 		start := time.Now()
 		next, cmd := m.Update(keyMsg("8"))
-		dispatchFindLatency(cmd, output)
-		m = finishFindLatency(t, next.(Model), output, func(cmd tea.Cmd) { dispatchFindLatency(cmd, output) })
+		submitFindLatency(t, cmd, output)
+		m = finishFindLatency(t, next.(Model), output, func(cmd tea.Cmd) { submitFindLatency(t, cmd, output) })
 		if m.viewer.find.view.query != "needle08" {
 			t.Fatal("obsolete rapid-typing query applied")
 		}
@@ -334,11 +351,10 @@ func TestFindLatency(t *testing.T) {
 		})
 	}
 	measureFindFuzzyLatency(t, base)
-	t.Log("Exact and integrated fuzzy gates measured; complete suspension protocol remains Task 6")
+	measureFindLifecycle(t, base, true)
 }
 
-// Task 1 stress evidence covers current construction/matching/projection paths;
-// Task 6 adds repeated nested open/back measurements using the local frames.
+// Stress sizes are outside the reference workload's 100 ms acceptance gate.
 func TestFindStress(t *testing.T) {
 	if os.Getenv("CAPY_FIND_BENCH") != "1" {
 		t.Skip("opt-in stress measurements")
@@ -372,6 +388,22 @@ func TestFindStress(t *testing.T) {
 			t.Logf("bytes=%d lines=%d hits=%d rows=%d build+scan+projection=%v retained-heap-delta=%d",
 				len(fixture.body), len(c.lines), len(hits), len(p.rows), elapsed,
 				int64(after.HeapAlloc)-int64(before.HeapAlloc))
+			runtime.KeepAlive(p)
+			runtime.KeepAlive(hits)
+			// Measure the complete fuzzy result set and prepared snippets separately
+			// from the exact structures, retaining both across this GC boundary.
+			before = after
+			start = time.Now()
+			picker, err := prepareFindPicker(t.Context(), c, messages, "needle", 99, DefaultStyles(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			elapsed = time.Since(start)
+			runtime.GC()
+			runtime.ReadMemStats(&after)
+			t.Logf("fuzzy hits=%d match+sort+snippets=%v incremental-retained-heap=%d", len(picker.hits), elapsed,
+				int64(after.HeapAlloc)-int64(before.HeapAlloc))
+			runtime.KeepAlive(picker)
 			runtime.KeepAlive(p)
 			runtime.KeepAlive(hits)
 			ctx := &findCheckpointContext{Context: context.Background(), remaining: 4}
@@ -499,12 +531,12 @@ func measureFindFuzzyLatency(t *testing.T, base Model) {
 		for _, key := range "needle0" {
 			next, cmd := m.Update(keyMsg(string(key)))
 			m = next.(Model)
-			dispatchFindLatency(cmd, output)
+			submitFindLatency(t, cmd, output)
 		}
 		start := time.Now()
 		next, cmd := m.Update(keyMsg("8"))
-		dispatchFindLatency(cmd, output)
-		m = finishFindLatency(t, next.(Model), output, func(cmd tea.Cmd) { dispatchFindLatency(cmd, output) })
+		submitFindLatency(t, cmd, output)
+		m = finishFindLatency(t, next.(Model), output, func(cmd tea.Cmd) { submitFindLatency(t, cmd, output) })
 		if m.viewer.find.picker.results.query != "needle08" {
 			t.Fatal("obsolete fuzzy result survived replacement")
 		}

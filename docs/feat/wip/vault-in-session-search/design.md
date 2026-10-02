@@ -1,6 +1,6 @@
 # In-session vault search — design
 
-> Status: Tasks 1–5 implemented and reviewed; Task 6 pending
+> Status: done — Tasks 1–6 implemented, reviewed and verified
 > Created: 2026-09-20
 > Issue: [#101 — vault: searching within a session](https://github.com/serpro69/capy/issues/101)
 > Companions: [Implementation](implementation.md), [Tasks](tasks.md)
@@ -212,7 +212,7 @@ Task 5 likewise gates the first integrated fuzzy path on correctness and latency
 - Parsed TranscriptMessage fields contain the content the reader expects to search; raw-only metadata and omitted decoder content are intentionally outside the agreed scope. Validate fixtures against actual parsed messages.
 - The plain search renderer can preserve byte provenance through wrapping/escaping. This is the first implementation risk to prove, especially for repeated text, Unicode, and soft-wrap boundaries.
 - The local leftmost alignment and bounded additive score produce useful line ranking for prose and tool output. Task 5 verifies representative examples; optimal alignment and fzf score parity are not promised.
-- A complete update on the defined 10,000-line fixture can meet 100 ms without data-store changes. The exact and integrated fuzzy gates pass in both builds; Task 6 must still verify the complete suspension and retained-memory protocol.
+- A complete update on the defined 10,000-line fixture can meet 100 ms without data-store changes. The [complete Task 6 protocol](performance.md#task-6-complete-protocol--2026-10-02) passes in both builds, including suspension and retained-memory measurements.
 - Sharing immutable corpus/render data across a shallow navigation stack keeps memory reasonable. Measure a stress corpus and repeated open/back cycles; do not retain a new full copy per query.
 
 ## Not Doing
@@ -248,7 +248,12 @@ the changes after a pending-resize return regression was corrected. Task 5 adds
 the fuzzy line picker, local bounded matcher, complete snapshot cancellation and
 precise ordinary/hidden-result acceptance. Its [isolated review](.reviews/review-code-task5-2026-10-02.md)
 approved the final corrections, and the [fuzzy gate](performance.md#task-5-fuzzy-gate--2026-10-02)
-passes in both builds. Complete feature verification remains Task 6. Earlier
+passes in both builds. Task 6 adds the complete 86-class latency protocol and
+retained-memory measurements, recorded in [performance.md](performance.md),
+with acceptance evidence in [verification.md](verification.md). Final review
+and compatibility checks passed and are recorded in [tasks.md](tasks.md). The
+[full-feature spec review](.reviews/review-spec-task6-2026-10-02.md) is conformant
+after the one-row root status correction. Earlier
 design reviews and their reconciliation remain historical evidence, not claims
 that pending production behavior exists.
 

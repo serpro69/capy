@@ -1,0 +1,100 @@
+=== Performance (benchstat) ===
+benchstat not found — install with: go install golang.org/x/perf/cmd/benchstat@latest
+Skipping performance comparison.
+
+=== Retrieval Quality (qualstat) ===
+Dataset: sha256:7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d (verified)
+Base:    HEAD (397ecfd)
+Target:  feat/session_search (9f89f15)
+
+=== Retrieval Quality ===
+Metric                                      Base      Target       delta
+------------------------------------------------------------------------
+R@1 (curated)                              0.967       0.967           ~
+R@3 (curated)                              1.000       1.000           ~
+R@5 (curated)                              1.000       1.000           ~
+R@10 (curated)                             1.000       1.000           ~
+NDCG@10 (curated)                          0.988       0.988           ~
+MRR (curated)                              0.983       0.983           ~
+Match-Layer Accuracy (curated)             1.000       1.000           ~
+Rank Ceiling Pass (curated)                1.000       1.000           ~
+R@1 (json)                                 0.800       0.800           ~
+R@3 (json)                                 0.900       0.900           ~
+R@5 (json)                                 0.933       0.933           ~
+R@10 (json)                                0.967       0.967           ~
+NDCG@10 (json)                             0.881       0.881           ~
+MRR (json)                                 0.857       0.857           ~
+Match-Layer Accuracy (json)                1.000       1.000           ~
+Rank Ceiling Pass (json)                   1.000       1.000           ~
+R@1 (markdown)                             0.889       0.889           ~
+R@3 (markdown)                             0.972       0.972           ~
+R@5 (markdown)                             1.000       1.000           ~
+R@10 (markdown)                            1.000       1.000           ~
+NDCG@10 (markdown)                         0.948       0.948           ~
+MRR (markdown)                             0.938       0.938           ~
+Match-Layer Accuracy (markdown)            1.000       1.000           ~
+Rank Ceiling Pass (markdown)               1.000       1.000           ~
+R@1 (plaintext)                            0.933       0.933           ~
+R@3 (plaintext)                            1.000       1.000           ~
+R@5 (plaintext)                            1.000       1.000           ~
+R@10 (plaintext)                           1.000       1.000           ~
+NDCG@10 (plaintext)                        0.974       0.974           ~
+MRR (plaintext)                            0.967       0.967           ~
+Match-Layer Accuracy (plaintext)           1.000       1.000           ~
+Rank Ceiling Pass (plaintext)              1.000       1.000           ~
+R@1 (transcript)                           0.967       0.967           ~
+R@3 (transcript)                           1.000       1.000           ~
+R@5 (transcript)                           1.000       1.000           ~
+R@10 (transcript)                          1.000       1.000           ~
+NDCG@10 (transcript)                       0.988       0.988           ~
+MRR (transcript)                           0.983       0.983           ~
+Match-Layer Accuracy (transcript)          1.000       1.000           ~
+Rank Ceiling Pass (transcript)             1.000       1.000           ~
+R@1 (vault_session)                        0.933       0.933           ~
+R@3 (vault_session)                        0.967       0.967           ~
+R@5 (vault_session)                        0.967       0.967           ~
+R@10 (vault_session)                       0.967       0.967           ~
+NDCG@10 (vault_session)                    0.954       0.954           ~
+MRR (vault_session)                        0.950       0.950           ~
+Match-Layer Accuracy (vault_session)       0.967       0.967           ~
+Rank Ceiling Pass (vault_session)          0.967       0.967           ~
+R@1 (overall)                              0.910       0.910           ~
+R@3 (overall)                              0.974       0.974           ~
+R@5 (overall)                              0.987       0.987           ~
+R@10 (overall)                             0.994       0.994           ~
+NDCG@10 (overall)                          0.955       0.955           ~
+MRR (overall)                              0.945       0.945           ~
+Match-Layer Accuracy (overall)             1.000       1.000           ~
+Rank Ceiling Pass (overall)                1.000       1.000           ~
+
+=== Context Reduction ===
+Metric                                      Base      Target       delta
+------------------------------------------------------------------------
+Compression Ratio (curated)                48.4%       48.4%           ~
+Context Recall (curated)                   1.000       1.000           ~
+Perfect Recall Rate (curated)             100.0%      100.0%           ~
+Eff. Compression (curated)                 48.4%       48.4%           ~
+Compression Ratio (json)                   44.3%       44.3%           ~
+Context Recall (json)                      0.925       0.925           ~
+Perfect Recall Rate (json)                 87.5%       87.5%           ~
+Eff. Compression (json)                    43.9%       43.9%           ~
+Compression Ratio (markdown)               39.1%       39.1%           ~
+Context Recall (markdown)                  0.990       0.990           ~
+Perfect Recall Rate (markdown)             97.9%       97.9%           ~
+Eff. Compression (markdown)                39.1%       39.1%           ~
+Compression Ratio (plaintext)              60.4%       60.4%           ~
+Context Recall (plaintext)                 1.000       1.000           ~
+Perfect Recall Rate (plaintext)           100.0%      100.0%           ~
+Eff. Compression (plaintext)               60.4%       60.4%           ~
+Compression Ratio (transcript)             59.0%       59.0%           ~
+Context Recall (transcript)                1.000       1.000           ~
+Perfect Recall Rate (transcript)          100.0%      100.0%           ~
+Eff. Compression (transcript)              59.0%       59.0%           ~
+Compression Ratio (vault_session)           0.0%        0.0%           ~
+Context Recall (vault_session)             0.000       0.000           ~
+Perfect Recall Rate (vault_session)         0.0%        0.0%           ~
+Eff. Compression (vault_session)            0.0%        0.0%           ~
+Compression Ratio (overall)                49.8%       49.8%           ~
+Context Recall (overall)                   0.983       0.983           ~
+Perfect Recall Rate (overall)              97.1%       97.1%           ~
+Eff. Compression (overall)                 49.7%       49.7%           ~

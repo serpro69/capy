@@ -685,8 +685,8 @@ A1): **any** large result collapses, not just excluded ones —
 
 A collapsed result renders as a **focusable openable marker**, the same `]`/`[` +
 `enter` mechanism subagent launch points use. Markers are *role-dispatched* at the
-open seam: a subagent marker opens a sidecar transcript by id (`openSubagent` →
-`GetFiles`), whereas a collapsed `tool_result` body is inline in `raw_jsonl`, so it
+open seam: a subagent marker opens a sidecar transcript by id (`openSubagent`,
+using files already loaded by the root), whereas a collapsed `tool_result` body is inline in `raw_jsonl`, so it
 opens a distinct in-memory target (`openInlineContent`, rendering the body carried
 on `TranscriptMessage.Body`); both return with `esc`/`q`. An Edit/Write diff uses
 that **same** inline target — only the render differs: `TranscriptMessage.Diff`
@@ -695,7 +695,7 @@ marker whose `TranscriptMessage.ChildUUID` is set (a Codex child) names a *sessi
 not a sidecar, and the viewer owns no store handle — so `openFocusedMarker` returns
 `openChildAction(uuid)` and the root `Model` (`app.go`) loads the child through
 `dataStore`, pushes the current viewer onto `viewerStack` as a `viewerFrame`, and pops
-it verbatim on `esc`/`q` (an unarchived child is a transient status line, not an
+it on back navigation, restoring its search and reading position (an unarchived child is a transient status line, not an
 error). To add a new openable kind, touch `renderTranscript`'s marker branch +
 `markerRowFor` (`render.go`) and `openFocusedMarker`'s role switch (`viewer.go`).
 `transcriptMessages` is TUI-only and kept separate from `displayMessages` precisely so
@@ -856,7 +856,7 @@ the cached presentation.
 **Raw archive view** (`internal/vault/tui/raw.go`, key `v` in list/view mode)
 displays the archived main JSONL or the currently open Claude subagent sidecar.
 A Codex child uses its own session blob; an inline tool detail uses its containing
-session. It bypasses the platform decoders and Markdown renderer so unknown fields,
+transcript, including a sidecar-owned tool's sidecar. It bypasses the platform decoders and Markdown renderer so unknown fields,
 duplicate keys, and malformed records remain inspectable. `json.Indent` formats
 each physical line independently; invalid lines retain their content with a
 source-line diagnostic, and terminal controls/invalid UTF-8 display as escapes.
@@ -866,6 +866,55 @@ while raw mode is open. The previous screen and child-session stack stay suspend
 return restores them, rewrapping the transcript only if the terminal changed size.
 Horizontal scrolling makes long strings accessible without altering JSON escapes.
 The view reads existing `GetSession`/sidecar bytes and performs no archive writes.
+
+**In-session search** is local to the already-open viewer. `/` opens a
+case-sensitive literal editor; `enter` commits, and `n`/`N` wraps through every
+occurrence, including overlaps. `ctrl+f` opens a scrollable fuzzy line picker:
+case-insensitive ordered subsequences, literal spaces, deterministic bounded
+scores, and one result per content line. Empty input browses nonempty lines.
+Up/Down, `ctrl+p`/`ctrl+n` and PageUp/PageDown move selection; `enter` accepts.
+Both inputs accept up to 256 Unicode code points, with no regex or multiline
+syntax. A fuzzy choice replaces exact search; `n`/`N` then navigate markers.
+Brackets and Tab/Shift+Tab remain marker keys outside input.
+
+`find_text.go` builds immutable lines from parsed `TranscriptMessage.Body` and
+separate collapsed `ToolSummary` fields, including full hidden bodies and diffs.
+Identity is scope + message ordinal + field + original byte span; `SourceLine`
+remains provenance for global FTS jumps. Role headings, metadata and decoder-omitted
+content are outside this corpus. `find_fuzzy.go` implements Unicode simple folding
+and leftmost subsequence alignment with bounded additive scores; it does not call
+the transitive `sahilm/fuzzy` dependency. `find_picker.go` prepares cell-bounded
+snippets from full-line matches and keeps the selected row reachable.
+
+`find_render.go` maps original bytes through grapheme-aware wrapping and escaped
+control text. Search bypasses glamour and labels the view “find · plain text” in
+both builds. Selected exact text has ASCII brackets on each affected row; a fuzzy
+selection brackets its first-to-last matched span, and `>` marks the picker row.
+Corpus/projection caches are immutable and keyed by scope and width. Highlighting
+does not rewrap, and resize retains occurrence identity. Clearing returns to the
+normal renderer at the containing message.
+
+`viewer_targets.go` owns local target frames: main → sidecar → tool can return
+one level at a time. Manual detail opens and root Codex child opens suspend the
+parent's committed search and start independent scopes. A hidden search result
+uses one replaceable detail frame while retaining its owner's corpus/query;
+search does not recursively include unopened transcripts. `esc` cancels an
+editor/picker transaction; after acceptance it clears search before going back.
+Clearing a hidden result leaves the detail open and clears its saved owner too.
+`q` goes back immediately, restoring a manually opened target's parent search or
+clearing a search-opened detail's owner query. Copy reads the original Body;
+rename refreshes metadata without replacing search identities.
+
+`viewer_find.go` schedules one running command plus one replaceable pending
+request. Workers build corpora, matches and projections from immutable snapshots;
+only Bubble Tea Update applies them. Root epochs, query revisions and layout
+revisions reject stale completions. Cancellation is checked during construction
+and within long-line scans. Local/root/raw returns issue fresh epochs, restore
+reading state and release discarded frame caches. Root key routing gives an
+active query input priority over actions, with `ctrl+c` retaining quit behavior.
+These paths use no store search, archive write, external process or persisted
+query history, and need no reindex. Existing global FTS and raw JSONL modes keep
+their separate contracts.
 
 The viewer's markdown rendering upgrades from plain word-wrap to styled
 [glamour](https://github.com/charmbracelet/glamour) output when built with the

@@ -3,7 +3,7 @@
 > Design: [design.md](design.md)
 > Implementation: [implementation.md](implementation.md)
 > Issue: [#101](https://github.com/serpro69/capy/issues/101)
-> Status: in-progress
+> Status: done
 > Created: 2026-09-20
 > Design review: [Re-review passed](.reviews/review-design-2026-10-01.md); Task 1 feasibility gate passed in both builds
 > Reconciliation: [Consolidated findings](.reviews/consolidated-findings-2026-09-20.md)
@@ -239,7 +239,7 @@ picker and its latency gate. Final public documentation remains Task 6.
 
 ## Task 6: Complete verification, performance evidence, and documentation
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, including both early gates
 - **Size:** M
 - **Can run in parallel with:** —
@@ -247,12 +247,48 @@ picker and its latency gate. Final public documentation remains Task 6.
 
 ### Subtasks
 
-- [ ] 6.1 Extend the existing latency harness to all hidden-target and suspension paths; record both builds and stress cases in performance.md → verify: all recorded reference operations meet 100 ms, all correctness invariants pass, and comparisons with Tasks 1/5 are explicit.
-- [ ] 6.2 Run $kk:test for full suite, race tests, both TUI tags and relevant vet/linkage checks → verify: record commands/outcomes with synthetic fixtures.
-- [ ] 6.3 Run make bench-quality and compare with an explicit baseline → verify: no unexplained retrieval regression and correct detached report naming.
-- [ ] 6.4 Run $kk:document; update README.md and docs/architecture.md controls, scope, plain presentation and return semantics → verify: manual Claude/Codex walkthrough agrees with app tests.
-- [ ] 6.5 Run $kk:review-code with Go language input → verify: findings resolved or durably recorded with concrete next steps.
-- [ ] 6.6 Run $kk:review-spec across all feature documents → verify: all acceptance criteria have implementation evidence; no early probe is mislabeled as feature verification.
+- [x] 6.1 Extend the existing latency harness to all hidden-target and suspension paths; record both builds and stress cases in performance.md → verify: all recorded reference operations meet 100 ms, all correctness invariants pass, and comparisons with Tasks 1/5 are explicit.
+- [x] 6.2 Run $kk:test for full suite, race tests, both TUI tags and relevant vet/linkage checks → verify: record commands/outcomes with synthetic fixtures.
+- [x] 6.3 Run make bench-quality and compare with an explicit baseline → verify: no unexplained retrieval regression and correct detached report naming.
+- [x] 6.4 Run $kk:document; update README.md and docs/architecture.md controls, scope, plain presentation and return semantics → verify: manual Claude/Codex walkthrough agrees with app tests.
+- [x] 6.5 Run $kk:review-code with Go language input → verify: findings resolved or durably recorded with concrete next steps.
+- [x] 6.6 Run $kk:review-spec across all feature documents → verify: all acceptance criteria have implementation evidence; no early probe is mislabeled as feature verification.
+
+### Task 6 evidence — 2026-10-02
+
+- [Complete performance protocol](performance.md#task-6-complete-protocol--2026-10-02):
+  86 classes × 100 samples per build, all below 100 ms. Maximum 29.135 ms default /
+  28.601 ms glamour. The report includes full stress/cancellation measurements,
+  fuzzy retained memory and twenty nested child/tool/raw/back cycles.
+- [Acceptance verification](verification.md) maps all seven criteria to code and
+  tests, records the real-terminal synthetic Claude/Codex walkthrough, and notes
+  unchanged CLI/configuration, dependency, archive and build-tag contracts.
+- [Isolated code review](.reviews/review-code-task6-2026-10-02.md): APPROVE after
+  cursor-timer commands were explicitly retired before heap checkpoints. The
+  independent reviewer re-read the correction; PAL returned no actionable issues.
+- Full `make test` and `make test-race` passed with synthetic keys, empty temporary
+  XDG configuration, canonical TMPDIR and local socket access. Vet and both
+  binary linkage checks passed. After both the retirement and one-row layout
+  corrections, full TUI suites passed under `fts5` / `fts5,glamour`
+  (20.754 s / 22.215 s), as did both race suites (36.067 s / 49.575 s), final
+  `make vet`, glamour TUI vet, builds and native-symbol linkage checks.
+- All 15 conventional find sub-benchmarks completed six repetitions per build.
+  `make bench-quality BENCH_BRANCH=vault-find-task6` and `bench-compare`
+  found every retrieval/context-reduction metric unchanged against the matching
+  `master.json` baseline (detached HEAD at `397ecfd`). The new report records dirty
+  `feat/session_search` at `9f89f15`; dataset digest is
+  `7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`.
+  The optional benchstat comparison was skipped because the binary is unavailable.
+- Spec review reproduced a P2 one-row status overflow. Four regression cases
+  failed before the correction; `Model.View` now preserves the search footer
+  within the sole available row and shows the retained status again after growth.
+  The independent code and spec reviewers approved the follow-up. Both final
+  latency/stress runs were repeated after the correction and their metrics,
+  raw logs and full viewer digest refreshed in the performance report.
+- [Isolated full-feature spec review](.reviews/review-spec-task6-2026-10-02.md):
+  CONFORMANT, no outstanding findings. All seven acceptance criteria have
+  implementation/test evidence. No intentional deviations to index. The command
+  retirement measurement pattern was indexed as `kk:test-patterns`.
 
 ## Dependency Graph
 
@@ -269,9 +305,9 @@ Task 1 (exact feasibility gate)
 
 The three supplied review rounds consolidate to six unique claims. Each was checked against the current documents/code; both upstream matcher failures were independently reproduced. [The reconciliation](.reviews/consolidated-findings-2026-09-20.md) records qualified verdicts, fixes and standalone prototype evidence.
 
-Tasks 1–5 and both exact/fuzzy feasibility gates are complete. The next task is
-Task 6, which remains pending. These gates do not certify the complete suspension
-latency or retained-memory protocol. The original review
+All six tasks and the final feature acceptance verification are complete. Earlier
+exact/fuzzy feasibility gates retain their historical scope; Task 6 supplies the
+complete suspension and retained-memory evidence. The original review
 files remain historical evidence; their repeated P1 findings are tracked once in
 the reconciliation.
 
