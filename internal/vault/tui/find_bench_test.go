@@ -333,7 +333,8 @@ func TestFindLatency(t *testing.T) {
 			return 0
 		})
 	}
-	t.Log("Exact sample set includes previous-hit wrap into a collapsed tool; complete hidden-target, suspension and fuzzy performance coverage remains Task 6")
+	measureFindFuzzyLatency(t, base)
+	t.Log("Exact and integrated fuzzy gates measured; complete suspension protocol remains Task 6")
 }
 
 // Task 1 stress evidence covers current construction/matching/projection paths;
@@ -380,6 +381,133 @@ func TestFindStress(t *testing.T) {
 				t.Fatalf("mid-scan cancellation failed: %v", err)
 			}
 			t.Logf("cancel after four scan checkpoints: %v", time.Since(start))
+			ctx = &findCheckpointContext{Context: context.Background(), remaining: 4}
+			start = time.Now()
+			_, err = findFuzzy(ctx, c, "absent")
+			if err != context.Canceled {
+				t.Fatalf("fuzzy mid-scan cancellation failed: %v", err)
+			}
+			t.Logf("fuzzy cancel after four scan checkpoints: %v", time.Since(start))
 		})
 	}
+}
+
+func BenchmarkFindFuzzy(b *testing.B) {
+	c, err := buildFindCorpus(b.Context(), "fixture", findReferenceMessages())
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i, query := range findBenchmarkQueries {
+		b.Run(fmt.Sprintf("query%d", i), func(b *testing.B) {
+			for b.Loop() {
+				if _, err := findFuzzy(b.Context(), c, query); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func measureFindFuzzyLatency(t *testing.T, base Model) {
+	measureFindLatency(t, "fuzzy/open-cold", func() time.Duration {
+		m := stepFindLatency(t, base, keyMsg("ctrl+f"))
+		if len(m.viewer.find.picker.results.hits) != 10_000 {
+			t.Fatal("empty picker must retain all nonempty reference lines")
+		}
+		return 0
+	})
+	opened := stepFindLatency(t, base, keyMsg("ctrl+f"))
+	for i, query := range findBenchmarkQueries {
+		measureFindLatency(t, fmt.Sprintf("fuzzy/edit%d/%d", i, utf8.RuneCountInString(query)), func() time.Duration {
+			m := stepFindLatency(t, opened, keyMsg(query))
+			if m.viewer.find.picker.results.query != query {
+				t.Fatal("obsolete picker query applied")
+			}
+			if i < 5 && len(m.viewer.find.picker.results.hits) == 0 {
+				t.Fatal("positive fuzzy fixture query lost all results")
+			}
+			return 0
+		})
+	}
+	for _, key := range []string{"down", "pgdown", "pgup"} {
+		start := opened
+		if key == "pgup" {
+			start = stepFindLatency(t, start, keyMsg("pgdown"))
+		}
+		measureFindLatency(t, "fuzzy/"+key, func() time.Duration {
+			stepFindLatency(t, start, keyMsg(key))
+			return 0
+		})
+	}
+	measureFindLatency(t, "fuzzy/picker-resize", func() time.Duration {
+		stepFindLatency(t, opened, tea.WindowSizeMsg{Width: 80, Height: 30})
+		return 0
+	})
+	for _, target := range []string{"visible", "summary", "body", "browse"} {
+		preview := opened
+		if target != "browse" {
+			preview = stepFindLatency(t, opened, keyMsg("needle08"))
+			found := false
+			for _, hit := range preview.viewer.find.picker.results.hits {
+				line := preview.viewer.find.picker.results.corpus.lines[hit.line]
+				if target == "visible" && line.position.field == findBody && !line.hidden ||
+					target == "summary" && line.position.field == findSummary || target == "body" && line.hidden {
+					found = true
+					break
+				}
+				preview = stepFindLatency(t, preview, keyMsg("down"))
+			}
+			if !found {
+				t.Fatal("missing fixture target: " + target)
+			}
+		}
+		measureFindLatency(t, "fuzzy/accept-"+target, func() time.Duration {
+			m := stepFindLatency(t, preview, keyMsg("enter"))
+			if !m.viewer.find.view.fuzzy || m.viewer.find.view.query != "" {
+				t.Fatal("picker acceptance did not replace exact search")
+			}
+			if (target == "summary" || target == "body") && !m.viewer.target.searchSelected {
+				t.Fatal("hidden fuzzy selection did not open detail")
+			}
+			return 0
+		})
+		accepted := stepFindLatency(t, preview, keyMsg("enter"))
+		measureFindLatency(t, "fuzzy/resize-"+target, func() time.Duration {
+			m := stepFindLatency(t, accepted, tea.WindowSizeMsg{Width: 80, Height: 30})
+			if m.viewer.find.view.hits[0] != accepted.viewer.find.view.hits[0] {
+				t.Fatal("resize moved fuzzy selection")
+			}
+			return 0
+		})
+	}
+	exact := stepFindLatency(t, base, keyMsg("/"))
+	exact = stepFindLatency(t, exact, keyMsg("needle08"))
+	exact = stepFindLatency(t, exact, keyMsg("enter"))
+	exact = stepFindLatency(t, exact, keyMsg("N"))
+	picker := stepFindLatency(t, exact, keyMsg("ctrl+f"))
+	picker = stepFindLatency(t, picker, keyMsg("Markdown"))
+	measureFindLatency(t, "fuzzy/cancel-exact", func() time.Duration {
+		m := stepFindLatency(t, picker, keyMsg("esc"))
+		if m.viewer.target != exact.viewer.target || m.viewer.find.view.query != "needle08" {
+			t.Fatal("cancel did not restore exact detail")
+		}
+		return 0
+	})
+	measureFindLatency(t, "fuzzy/rapid-final", func() time.Duration {
+		m := opened
+		output := make(chan findResultMsg, 8)
+		for _, key := range "needle0" {
+			next, cmd := m.Update(keyMsg(string(key)))
+			m = next.(Model)
+			dispatchFindLatency(cmd, output)
+		}
+		start := time.Now()
+		next, cmd := m.Update(keyMsg("8"))
+		dispatchFindLatency(cmd, output)
+		m = finishFindLatency(t, next.(Model), output, func(cmd tea.Cmd) { dispatchFindLatency(cmd, output) })
+		if m.viewer.find.picker.results.query != "needle08" {
+			t.Fatal("obsolete fuzzy result survived replacement")
+		}
+		return time.Since(start)
+	})
 }

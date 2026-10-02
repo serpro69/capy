@@ -27,6 +27,7 @@ type findViewState struct {
 	hits            []findHit
 	selected        int
 	plain           bool
+	fuzzy           bool // accepted line: hits are its individual rune spans
 
 	normal      renderedTranscript
 	normalVP    viewport.Model
@@ -61,6 +62,8 @@ type findRequest struct {
 	owner         viewerTarget // query/corpus scope
 	wrapped       bool
 	navigation    bool // selection is pending, not part of the applied frame yet
+	picker        bool
+	pickerResults *findPickerResults
 }
 
 type findResultMsg struct {
@@ -70,6 +73,7 @@ type findResultMsg struct {
 	err     error
 	target  viewerTarget
 	wrapped bool
+	picker  *findPickerResults
 }
 
 type findController struct {
@@ -89,6 +93,8 @@ type findController struct {
 	view     findViewState
 	input    textinput.Model
 	editing  bool
+	picking  bool
+	picker   findPicker
 	snapshot *findSnapshot
 	anchor   findPosition // fixed for an entire editing transaction
 	err      string
@@ -148,6 +154,7 @@ func (m viewerModel) startFind() viewerModel {
 	m.find.snapshot = &snapshot
 	m.find.anchor = anchor
 	m.find.editing = true
+	m.find.picking, m.find.picker = false, findPicker{}
 	m.find.input = textinput.New()
 	// The widget's Ctrl+V uses external clipboard utilities. Local search must
 	// stay in-process; terminal-delivered (bracketed) paste is still ordinary input.
@@ -162,7 +169,7 @@ func (m viewerModel) startFind() viewerModel {
 }
 
 func (m viewerModel) sizeFindInput() viewerModel {
-	boundInputWidth(&m.find.input, m.width, len(m.findCounter()))
+	boundInputWidth(&m.find.input, m.width, ansi.StringWidth(m.findCounter()))
 	return m
 }
 
@@ -184,6 +191,7 @@ func (m viewerModel) queueFind(query string, anchor, fallback findPosition, keep
 		anchor: anchor, fallback: fallback, keepSelection: keepSelection, normal: normal,
 		focusedMarker: m.focusedMarker, toolDetail: owner.kind == viewerTargetTool,
 		target: target, owner: owner,
+		picker: m.find.picking, pickerResults: m.find.picker.results,
 	}
 	m.find.pending = &r
 	m.find.latest = &r
@@ -245,11 +253,17 @@ func runFindRequest(ctx context.Context, r findRequest) findResultMsg {
 			f.normalFocus = r.focusedMarker
 		}
 		f.query, f.hits, f.selected, f.plain = "", nil, -1, false
+		f.fuzzy = false
 		if r.anchor.message < len(f.normal.msgRowStart) {
 			result.offset = f.normal.msgRowStart[r.anchor.message]
 		}
 		result.err = ctx.Err()
 		return result
+	}
+	if r.picker && r.pickerResults != nil && r.pickerResults.corpus.scope == r.scope {
+		// Picker caches belong to the picker until acceptance. The applied frame
+		// may still present a previous scope while a normal clear is pending.
+		f.corpus = r.pickerResults.corpus
 	}
 	if f.corpus == nil || f.corpus.scope != r.scope {
 		f.corpus, result.err = buildFindScopeCorpus(ctx, r.scope, f.normal.messages, r.toolDetail)
@@ -258,13 +272,18 @@ func runFindRequest(ctx context.Context, r findRequest) findResultMsg {
 		}
 		f.projection, f.ownerProjection = nil, nil
 	}
+	if r.picker {
+		result.picker, result.err = prepareFindPicker(ctx, f.corpus, f.normal.messages, r.query, r.width, r.styles, r.pickerResults)
+		return result
+	}
 	if f.ownerProjection == nil || f.ownerProjection.width != r.width {
 		f.ownerProjection, result.err = buildFindProjection(ctx, f.corpus, f.normal.messages, r.platform, r.styles, r.width)
 		if result.err != nil {
 			return result
 		}
 	}
-	if !f.plain || f.query != r.query {
+	if !(r.keepSelection && f.fuzzy) && (!f.plain || f.query != r.query || f.fuzzy) {
+		f.fuzzy = false
 		f.hits, result.err = findExact(ctx, f.corpus, r.query)
 		if result.err != nil {
 			return result
@@ -323,6 +342,15 @@ func (m viewerModel) applyFindResult(result findResultMsg, apply bool) viewerMod
 		}
 		return m
 	}
+	if result.picker != nil {
+		// Publish only picker data. Its corpus can have different line identities
+		// from the still-applied frame; selection installs the new corpus and
+		// projection together, never a mixed old-row/new-corpus presentation.
+		m.find.picker.results = result.picker
+		m.find.picker = m.find.picker.window(m.height - 3)
+		m.find.applied, m.find.latest = result.id, nil
+		return m.sizeFindInput()
+	}
 	if !result.view.plain && result.view.normalFocus != m.focusedMarker {
 		// Marker keys remain live while normal rendering is prepared. Never
 		// install an overlay that disagrees with the target Enter would open.
@@ -330,6 +358,9 @@ func (m viewerModel) applyFindResult(result findResultMsg, apply bool) viewerMod
 		return m.queueFind("", desired.anchor, desired.fallback, true, true)
 	}
 	m = m.showFindTarget(result.target)
+	if result.view.fuzzy {
+		m = m.clearFindOwner()
+	}
 	m.find.view = result.view
 	m.find.wrapped = result.wrapped
 	m.find.applied = result.id
@@ -373,6 +404,7 @@ func (m viewerModel) cancelFind() viewerModel {
 	snapshot := m.find.snapshot
 	m = m.invalidateFind()
 	m.find.editing, m.find.snapshot, m.find.err = false, nil, ""
+	m.find.picking, m.find.picker = false, findPicker{}
 	if snapshot == nil {
 		return m
 	}
@@ -422,6 +454,7 @@ func (m viewerModel) clearFindAt(anchor findPosition) viewerModel {
 	m = m.invalidateFind()
 	m.find.editing, m.find.snapshot, m.find.err = false, nil, ""
 	m.find.view.query, m.find.view.hits, m.find.view.selected = "", nil, -1
+	m.find.view.fuzzy = false
 	if m.find.view.normalWidth != m.contentWidth() || m.find.view.normalFocus != m.focusedMarker {
 		return m.queueFind("", anchor, anchor, false, true)
 	}
@@ -444,6 +477,9 @@ func (m viewerModel) clearFind() viewerModel {
 }
 
 func (m viewerModel) updateFindInput(msg tea.Msg) (viewerModel, tea.Cmd) {
+	if m.find.picking {
+		return m.updateFindPicker(msg)
+	}
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "esc":
@@ -497,8 +533,24 @@ func (m viewerModel) stepFind(delta int) viewerModel {
 	return m
 }
 
+// Acceptance replaces exact navigation immediately, even while its target is
+// being prepared. The previously applied query cannot turn fuzzy rune spans
+// into occurrences when n/N arrives before that completion.
+func (m viewerModel) exactFindActive() bool {
+	return m.find.view.query != "" && !m.pendingFuzzySelection()
+}
+
+func (m viewerModel) pendingFuzzySelection() bool {
+	desired := m.find.latest
+	return desired != nil && desired.navigation && desired.view.fuzzy
+}
+
 func (m viewerModel) resizeFind() viewerModel {
 	m.find.layout++
+	if m.find.picking {
+		m.find.picker = m.find.picker.window(m.height - 3)
+		return m.queueFind(m.find.input.Value(), m.find.anchor, m.find.anchor, false, false).sizeFindInput()
+	}
 	anchor := m.findReadingAnchor()
 	query := m.find.view.query
 	if m.find.editing {
@@ -516,6 +568,13 @@ func (m viewerModel) resizeFind() viewerModel {
 		// visible. Resizing follows the requested target, never that old view.
 		query, anchor = desired.query, desired.anchor
 		normal, restoreAnchor, keep = desired.normal, desired.restoreAnchor, true
+	}
+	if navigation {
+		// An accepted picker row may still be preparing over normal rendering
+		// or an older exact query. Resize carries the entire requested operation,
+		// not just its hits; otherwise it can clear or rescan that selection.
+		query, anchor = requested.query, requested.anchor
+		normal, restoreAnchor, keep = false, false, true
 	}
 	m = m.queueFind(query, anchor, anchor, keep, normal)
 	m.find.latest.restoreAnchor = restoreAnchor
@@ -539,6 +598,16 @@ func (m viewerModel) findCounter() string {
 		return "finding…"
 	}
 	f := m.find.view
+	if m.find.picking {
+		p := m.find.picker
+		if p.results == nil || len(p.results.hits) == 0 {
+			return "no matches"
+		}
+		return fmt.Sprintf("%d/%d", p.cursor+1, len(p.results.hits))
+	}
+	if f.fuzzy {
+		return "fuzzy selection · plain text"
+	}
 	if f.query == "" {
 		return "find · plain text"
 	}
@@ -578,7 +647,11 @@ func (m viewerModel) findViewport() string {
 		if ri >= len(f.projection.rows) {
 			break
 		}
-		rows[i] = f.projection.highlightRow(f.corpus, ri, hits, selected, m.styles)
+		if f.fuzzy {
+			rows[i] = f.projection.highlightFuzzyRow(f.corpus, ri, hits, m.styles)
+		} else {
+			rows[i] = f.projection.highlightRow(f.corpus, ri, hits, selected, m.styles)
+		}
 		if m.focusedMarker >= 0 && m.active.rowForMarker(m.focusedMarker) == ri {
 			rows[i] = strings.Replace(rows[i], "▸", "▶", 1)
 		}
@@ -588,12 +661,18 @@ func (m viewerModel) findViewport() string {
 }
 
 func (m viewerModel) findView() string {
+	if m.find.picking {
+		return m.findPickerView()
+	}
 	height := max(1, m.height)
 	footer := m.findFooter()
 	if height == 1 {
 		return footer
 	}
 	label := "find · plain text · n/N next/previous · esc clear · q back"
+	if m.find.view.fuzzy {
+		label = "find · plain text · n/N markers · ctrl+f fuzzy · esc clear · q back"
+	}
 	if m.find.editing {
 		label = "find · plain text · enter commit · esc cancel"
 	}

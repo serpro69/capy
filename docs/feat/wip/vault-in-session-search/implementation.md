@@ -1,6 +1,6 @@
 # In-session vault search — implementation plan
 
-> Status: Tasks 1–4 implemented and reviewed; Tasks 5–6 pending
+> Status: Tasks 1–5 implemented and reviewed; Task 6 pending
 > Created: 2026-09-20
 > Issue: [#101](https://github.com/serpro69/capy/issues/101)
 > Design: [design.md](design.md)
@@ -244,6 +244,44 @@ Primary files: new find_fuzzy.go, new find_picker.go, viewer_find.go. Reuse Task
 
 There is no external executable discovery or fallback search mode.
 
+### Task 5 implementation notes
+
+Implemented 2026-10-02. Ctrl+F opens a ranked content-line picker in the current
+scope, including full collapsed bodies and summaries. The local matcher uses
+Unicode simple-fold equivalence, leftmost rune alignment, original byte spans,
+bounded additive scoring and 4 KiB cancellation checkpoints. NUL is ordinary
+content. Empty input browses nonempty lines; paging keeps every result reachable.
+Workers prepare cell-bounded, escaped excerpts around the first matched grapheme.
+
+The picker owns its prepared corpus until acceptance. Its results never partially
+replace the underlying frame's corpus or row mappings, including while an earlier
+clear is still preparing. Enter stages the selected spans and complete target as
+one navigation request. Resize carries that request's query and operation as well
+as its selection; n/N and Esc recognize pending acceptance immediately. Esc from
+the picker restores the full pre-picker snapshot. Accepted fuzzy highlights use
+ASCII span brackets and individually styled characters, and clear the old exact
+query in a saved search owner as well as the active result.
+
+Independent review exposed mixed corpus/projection state after clearing a hidden
+detail, its pending-clear variant, and pending-accept resize/key-routing issues.
+Deterministic withheld-command tests reproduce those paths and guard the fixes.
+Counter-width tests also cover the transition from 9 to 10 selected rows.
+The matcher tests compare a separate dynamic-programming existence oracle and
+verify spans for every query length 1–256, including NUL and Unicode fold cycles.
+
+The integrated latency harness now measures opening, editing, paging, accepting
+visible/summary/body/browsing results, resizing, cancelling back to exact search,
+and rapid replacement. The [performance report](performance.md) records actual
+both-tag measurements and their limits; [tasks.md](tasks.md) records verification
+and isolated review. Measurement identified avoidable per-line glyph allocations;
+reusing one bounded scratch buffer reduced empty-picker allocations substantially.
+
+Dependencies, CLI flags/configuration, schemas, setup artifacts and CI changes
+are N/A for this TUI-only task. Build/test requirements are inherited from
+[AGENTS.md](../../../../AGENTS.md). Full suspension/acceptance verification and
+public README/architecture documentation remain Task 6. No new project convention
+beyond the design was introduced.
+
 ## Task 6 — final verification and documentation
 
 **Size:** M. **Depends on:** Tasks 1–5, including both early gates.
@@ -315,8 +353,9 @@ Also measure 100,000 lines, a single 1 MiB content line, long grapheme sequences
 
 Task 1 performance evidence is available in [performance.md](performance.md).
 It measures the implemented exact path and scans the full corpus computationally.
-Integrated hidden-target, suspension and fuzzy evidence is still pending; those
-gates cannot be marked complete using these Task 1 measurements.
+Task 5's integrated fuzzy gate is recorded separately in the same report.
+Complete hidden-target and suspension evidence remains Task 6; those paths cannot
+be certified using the Task 1 or Task 5 sample sets alone.
 
 ## Assumptions and bounded follow-ups
 
