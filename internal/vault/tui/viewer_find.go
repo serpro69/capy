@@ -21,9 +21,12 @@ type findViewState struct {
 	query      string
 	corpus     *findCorpus
 	projection *findProjection
-	hits       []findHit
-	selected   int
-	plain      bool
+	// The owner projection survives temporary tool targets; only the currently
+	// displayed detail is cached, bounding memory across repeated n/N cycles.
+	ownerProjection *findProjection
+	hits            []findHit
+	selected        int
+	plain           bool
 
 	normal      renderedTranscript
 	normalVP    viewport.Model
@@ -33,6 +36,7 @@ type findViewState struct {
 
 type findSnapshot struct {
 	frame         viewerTargetFrame
+	parents       []viewerTargetFrame // immutable stack snapshot; edits detach it
 	normalRestore bool
 }
 
@@ -53,13 +57,19 @@ type findRequest struct {
 	restoreAnchor bool
 	focusedMarker int
 	toolDetail    bool
+	target        viewerTarget // fallback/restore presentation
+	owner         viewerTarget // query/corpus scope
+	wrapped       bool
+	navigation    bool // selection is pending, not part of the applied frame yet
 }
 
 type findResultMsg struct {
-	id     findWorkID
-	view   findViewState
-	offset int
-	err    error
+	id      findWorkID
+	view    findViewState
+	offset  int
+	err     error
+	target  viewerTarget
+	wrapped bool
 }
 
 type findController struct {
@@ -142,15 +152,20 @@ func (m viewerModel) queueFind(query string, anchor, fallback findPosition, keep
 	m.find.revision++
 	m.find.submit = 0
 	m.find.err = ""
-	m.find.wrapped = false
 	if m.find.cancel != nil {
 		m.find.cancel()
 	}
+	owner := m.findOwnerTarget()
+	target := m.target
+	if query == "" && !normal && m.find.snapshot != nil {
+		target = m.find.snapshot.frame.target
+	}
 	r := findRequest{
-		id: m.find.id(), view: m.find.view, query: query, scope: m.target.scope,
+		id: m.find.id(), view: m.find.view, query: query, scope: owner.scope,
 		platform: m.activePlatform(), styles: m.styles, width: m.contentWidth(),
 		anchor: anchor, fallback: fallback, keepSelection: keepSelection, normal: normal,
-		focusedMarker: m.focusedMarker, toolDetail: m.target.kind == viewerTargetTool,
+		focusedMarker: m.focusedMarker, toolDetail: owner.kind == viewerTargetTool,
+		target: target, owner: owner,
 	}
 	m.find.pending = &r
 	m.find.latest = &r
@@ -194,7 +209,7 @@ func buildFindScopeCorpus(ctx context.Context, scope string, messages []vault.Tr
 }
 
 func runFindRequest(ctx context.Context, r findRequest) findResultMsg {
-	result := findResultMsg{id: r.id, view: r.view}
+	result := findResultMsg{id: r.id, view: r.view, target: r.target, wrapped: r.wrapped}
 	f := &result.view
 	if err := ctx.Err(); err != nil {
 		result.err = err
@@ -218,25 +233,24 @@ func runFindRequest(ctx context.Context, r findRequest) findResultMsg {
 		result.err = ctx.Err()
 		return result
 	}
-	if f.corpus == nil {
+	if f.corpus == nil || f.corpus.scope != r.scope {
 		f.corpus, result.err = buildFindScopeCorpus(ctx, r.scope, f.normal.messages, r.toolDetail)
 		if result.err != nil {
 			return result
 		}
+		f.projection, f.ownerProjection = nil, nil
 	}
-	if f.projection == nil || f.projection.width != r.width {
-		f.projection, result.err = buildFindProjection(ctx, f.corpus, f.normal.messages, r.platform, r.styles, r.width)
+	if f.ownerProjection == nil || f.ownerProjection.width != r.width {
+		f.ownerProjection, result.err = buildFindProjection(ctx, f.corpus, f.normal.messages, r.platform, r.styles, r.width)
 		if result.err != nil {
 			return result
 		}
 	}
 	if !f.plain || f.query != r.query {
-		var hits []findHit
-		hits, result.err = findExact(ctx, f.corpus, r.query)
+		f.hits, result.err = findExact(ctx, f.corpus, r.query)
 		if result.err != nil {
 			return result
 		}
-		f.hits = findVisibleHits(f.corpus, hits)
 	}
 	f.query, f.plain = r.query, true
 	if !r.keepSelection || f.selected >= len(f.hits) {
@@ -247,6 +261,26 @@ func runFindRequest(ctx context.Context, r findRequest) findResultMsg {
 				f.selected = 0
 			}
 		}
+	}
+	if !r.restoreAnchor && f.selected >= 0 && f.selected < len(f.hits) {
+		position := f.corpus.position(f.hits[f.selected])
+		msg := f.normal.messages[position.message]
+		result.target = r.owner
+		if msg.Collapsed && !r.toolDetail {
+			result.target = toolViewerTarget(r.owner, msg, position)
+			result.target.searchSelected = true
+		}
+	}
+	if result.target.searchSelected {
+		message := result.target.origin.message
+		if f.projection == nil || !f.projection.detail || f.projection.messageOffset != message || f.projection.width != r.width {
+			f.projection, result.err = buildFindTargetProjection(ctx, f.corpus, f.normal.messages, r.platform, r.styles, r.width, message)
+			if result.err != nil {
+				return result
+			}
+		}
+	} else {
+		f.projection = f.ownerProjection
 	}
 	result.offset = f.projection.rowForPosition(f.corpus, r.fallback)
 	if !r.restoreAnchor && f.selected >= 0 && f.selected < len(f.hits) {
@@ -277,7 +311,9 @@ func (m viewerModel) applyFindResult(result findResultMsg, apply bool) viewerMod
 		desired := m.find.latest
 		return m.queueFind("", desired.anchor, desired.fallback, true, true)
 	}
+	m = m.showFindTarget(result.target)
 	m.find.view = result.view
+	m.find.wrapped = result.wrapped
 	m.find.applied = result.id
 	m.find.latest = nil
 	m = m.showFindView(result.offset)
@@ -326,6 +362,7 @@ func (m viewerModel) cancelFind() viewerModel {
 	// the complete pre-edit frame's target and presentation.
 	controller := m.find
 	m.viewerTargetFrame = snapshot.frame.clone()
+	m.parents = snapshot.parents
 	m.find = controller
 	m.find.view = snapshot.frame.find.view
 	m.find.wrapped = snapshot.frame.find.wrapped
@@ -355,6 +392,15 @@ func (m viewerModel) commitFind() viewerModel {
 }
 
 func (m viewerModel) clearFindAt(anchor findPosition) viewerModel {
+	if m.target.searchSelected {
+		m = m.clearFindOwner()
+		m.target.searchSelected = false
+		// This becomes an ordinary manually scoped detail. Normal rendering is
+		// prepared off Update; the old corpus remains only for the pending view.
+		m.find.view.normal = renderedTranscript{messages: m.active.messages}
+		m.find.view.normalWidth, m.find.view.normalFocus = 0, -1
+		anchor.message = 0
+	}
 	m = m.invalidateFind()
 	m.find.editing, m.find.snapshot, m.find.err = false, nil, ""
 	m.find.view.query, m.find.view.hits, m.find.view.selected = "", nil, -1
@@ -409,14 +455,27 @@ func (m viewerModel) updateFindInput(msg tea.Msg) (viewerModel, tea.Cmd) {
 }
 
 func (m viewerModel) stepFind(delta int) viewerModel {
-	n := len(m.find.view.hits)
-	if n == 0 || m.find.applied != m.find.id() {
+	view := m.find.view
+	if m.find.applied != m.find.id() {
+		if m.find.latest == nil || !m.find.latest.navigation {
+			return m
+		}
+		view = m.find.latest.view // repeated keys advance the latest requested hit
+	}
+	n := len(view.hits)
+	if n == 0 {
 		return m
 	}
-	next := m.find.view.selected + delta
-	m.find.wrapped = next < 0 || next >= n
-	m.find.view.selected = (next + n) % n
-	m.vp.SetYOffset(m.find.view.projection.rowForHit(m.find.view.hits[m.find.view.selected]))
+	next := view.selected + delta
+	selected := (next + n) % n
+	anchor := view.corpus.position(view.hits[selected])
+	m = m.queueFind(view.query, anchor, anchor, true, false)
+	// Selection belongs to the prepared target. Keep the applied view coherent
+	// if slash/cancel snapshots it before this navigation command completes.
+	m.find.latest.view = view
+	m.find.latest.view.selected = selected
+	m.find.latest.wrapped = next < 0 || next >= n
+	m.find.latest.navigation = true
 	return m
 }
 
@@ -432,6 +491,8 @@ func (m viewerModel) resizeFind() viewerModel {
 	keep := m.find.view.plain && query == m.find.view.query
 	normal := !m.find.view.plain && !m.find.editing
 	restoreAnchor := false
+	navigation := m.find.latest != nil && m.find.latest.navigation
+	requested := m.find.latest
 	if desired := m.find.latest; desired != nil && (desired.normal || desired.restoreAnchor) {
 		// A restore can still be preparing while a different presentation is
 		// visible. Resizing follows the requested target, never that old view.
@@ -440,6 +501,12 @@ func (m viewerModel) resizeFind() viewerModel {
 	}
 	m = m.queueFind(query, anchor, anchor, keep, normal)
 	m.find.latest.restoreAnchor = restoreAnchor
+	if navigation {
+		// Width changes supersede prepared rows, not the requested occurrence.
+		m.find.latest.view = requested.view
+		m.find.latest.wrapped = requested.wrapped
+		m.find.latest.navigation = true
+	}
 	if submit {
 		m.find.submit = m.find.revision
 	}

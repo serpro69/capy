@@ -135,7 +135,7 @@ func TestViewerFindScopes(t *testing.T) {
 			v = findKey(t, v, "enter")
 			assert.Empty(t, v.find.view.query)
 			v = searchViewer(t, v, "needle")
-			require.Len(t, v.find.view.hits, 2, "hidden bodies remain Task 3; main text is outside the sidecar scope")
+			require.Len(t, v.find.view.hits, 5, "full sidecar bodies participate; main text is outside its scope")
 			v = findKey(t, v, "n")
 			v = findKey(t, v, "]")
 			sideView, sideHit := v.View(), v.find.view.hits[v.find.view.selected]

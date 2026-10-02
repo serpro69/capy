@@ -290,7 +290,10 @@ func TestFindLatency(t *testing.T) {
 	committed := stepFindLatency(t, preview, keyMsg("enter"))
 	for _, key := range []string{"n", "N"} {
 		measureFindLatency(t, "navigate/"+key, func() time.Duration {
-			stepFindLatency(t, committed, keyMsg(key))
+			m := stepFindLatency(t, committed, keyMsg(key))
+			if key == "N" && !m.viewer.target.searchSelected {
+				t.Fatal("previous-hit wrap must open the final collapsed tool")
+			}
 			return 0
 		})
 	}
@@ -330,11 +333,11 @@ func TestFindLatency(t *testing.T) {
 			return 0
 		})
 	}
-	t.Log("Task 1 only: hidden-target navigation, local/root suspension and fuzzy operations are not implemented or certified")
+	t.Log("Exact sample set includes previous-hit wrap into a collapsed tool; complete hidden-target, suspension and fuzzy performance coverage remains Task 6")
 }
 
 // Task 1 stress evidence covers current construction/matching/projection paths;
-// Task 6 adds repeated nested open/back once frames exist.
+// Task 6 adds repeated nested open/back measurements using the local frames.
 func TestFindStress(t *testing.T) {
 	if os.Getenv("CAPY_FIND_BENCH") != "1" {
 		t.Skip("opt-in stress measurements")
