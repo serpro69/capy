@@ -58,8 +58,8 @@ Tasks 2–3 add manual detail scopes, parent-query suspension and hidden-result
 navigation. Slash searches
 ordinary bodies, launch labels and full summaries in each opened transcript,
 including full collapsed tool bodies and manually opened details.
-Root/raw suspension remains
-Task 4; fuzzy and final public documentation remain Tasks 5/6.
+Task 4 now preserves root/raw suspension and action state. Fuzzy and final public
+documentation remain Tasks 5/6.
 
 ## Task 2: Local frames and manual nested return
 
@@ -150,7 +150,7 @@ Task 4; fuzzy and final public documentation remain Tasks 5/6.
 
 ## Task 4: Preserve search through root suspension and actions
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** —
@@ -159,10 +159,34 @@ Task 4; fuzzy and final public documentation remain Tasks 5/6.
 
 ### Subtasks
 
-- [ ] 4.1 Integrate child-session push/pop, cancellation, fresh epochs and stale completion retirement in app.go/viewer_find.go → verify: TestAppFindChildScopes covers nested, missing/failed children and late results.
-- [ ] 4.2 Preserve search around raw inspection using Task 2's provenance accessor → verify: TestAppFindRawReturn covers sidecar-owned tools, children, resize and pending work.
-- [ ] 4.3 Preserve source position through copy/status and rename; retain q/Esc precedence → verify: TestAppFindActions checks original Body copying, metadata-only updates and action keys outside input.
-- [ ] 4.4 Recheck frame lifetime and cross-mode isolation → verify: both TUI suites/race tests pass without query resurrection or stack growth.
+- [x] 4.1 Integrate child-session push/pop, cancellation, fresh epochs and stale completion retirement in app.go/viewer_find.go → verify: TestAppFindChildScopes covers nested, missing/failed children and late results.
+- [x] 4.2 Preserve search around raw inspection using Task 2's provenance accessor → verify: TestAppFindRawReturn covers sidecar-owned tools, children, resize and pending work.
+- [x] 4.3 Preserve source position through copy/status and rename; retain q/Esc precedence → verify: TestAppFindActions checks original Body copying, metadata-only updates and action keys outside input.
+- [x] 4.4 Recheck frame lifetime and cross-mode isolation → verify: both TUI suites/race tests pass without query resurrection or stack growth.
+
+### Task 4 evidence — 2026-10-02
+
+- Complete TUI suites passed with `-count=1` under `fts5` and `fts5,glamour`.
+  Final complete race suites passed (2.999 s / 3.618 s). Deterministic regressions
+  cover two child levels, failed child reads, stale results across suspension,
+  pending navigation/resize/clear, raw sidecar-owned tools, shrinking dimensions,
+  manual reading anchors, copy, rename, action routing and repeated frame release.
+- Final `make test` passed across the repository after the review correction with local socket access,
+  synthetic encryption keys, `GOCACHE=/tmp/capy-go-build`, empty
+  `XDG_CONFIG_HOME=/tmp/capy-task4-config` and canonical `TMPDIR=/private/tmp`.
+  `make vet` and `go vet -tags fts5,glamour ./internal/vault/tui/...` passed.
+- `make bench-quality BENCH_BRANCH=vault-find-task4` passed. Qualstat verified
+  dataset digest `7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`
+  and all retrieval/context-reduction metrics matched `master.json` (detached
+  HEAD at `397ecfd`). The new report records dirty `feat/session_search` at
+  `217062b`. This is quality evidence; full suspension latency remains Task 6.
+- [Isolated code review](.reviews/review-code-task4-2026-10-02.md): APPROVE after
+  a P2 pending-resize/raw-return finding was reproduced, fixed and re-reviewed.
+  The new regression verifies the selected landing and rejects the stale result.
+  PAL returned no findings and no additional actionable signal.
+- No dependency, schema, parser, CLI/configuration, setup artifact or CI changes.
+  No additional conventions to index. Fuzzy selection remains Task 5 and final
+  public documentation and feature-wide verification remain Task 6.
 
 ## Task 5: Fuzzy line picker with safe matching and a latency gate
 
@@ -212,9 +236,9 @@ Task 1 (exact feasibility gate)
 
 The three supplied review rounds consolidate to six unique claims. Each was checked against the current documents/code; both upstream matcher failures were independently reproduced. [The reconciliation](.reviews/consolidated-findings-2026-09-20.md) records qualified verdicts, fixes and standalone prototype evidence.
 
-Tasks 1–3 and the exact feasibility gate are complete. The next task is Task 4.
-Tasks 4–6 remain pending; the measured exact path does not certify their
-interactions. The original review
+Tasks 1–4 and the exact feasibility gate are complete. The next task is Task 5.
+Tasks 5–6 remain pending; the measured exact path does not certify fuzzy search
+or the complete suspension latency protocol. The original review
 files remain historical evidence; their repeated P1 findings are tracked once in
 the reconciliation.
 

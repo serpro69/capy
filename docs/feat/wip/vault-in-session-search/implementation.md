@@ -1,6 +1,6 @@
 # In-session vault search — implementation plan
 
-> Status: Tasks 1–3 implemented and reviewed; Tasks 4–6 pending
+> Status: Tasks 1–4 implemented and reviewed; Tasks 5–6 pending
 > Created: 2026-09-20
 > Issue: [#101](https://github.com/serpro69/capy/issues/101)
 > Design: [design.md](design.md)
@@ -184,6 +184,49 @@ Primary files: viewer_find.go, app.go, raw.go. viewer_targets.go accessors may b
 2. Suspend/resume active search around raw inspection using the provenance accessor already migrated in Task 2. Keep the original selected occurrence after resize when returning to a plain search projection. → verify: TestAppFindRawReturn covers main, sidecar, sidecar-owned tool, Codex child, and pending cancellation.
 3. Preserve match identity through metadata-only rename and status-height changes. Copy uses original Body; q exits immediately and Esc clears first. → verify: TestAppFindActions covers copy, successful/failed rename, resize/status changes, q/Esc precedence, and normal restore/resume outside input.
 4. Recheck cross-mode isolation and lifetime boundaries without changing the local frame representation. → verify: both TUI suites and race tests show no stale result application, query resurrection, or retained stack growth.
+
+### Task 4 implementation notes
+
+Implemented 2026-10-02. Child opens and raw inspection detach the existing active
+frame after cancelling its live command. Suspended frames retain the committed
+query, selected occurrence, target, reading anchor and any accepted clear still
+waiting for normal rendering. Unapplied navigation is cancelled as a unit;
+the target and selection stay at the last applied result. Missing or failed
+child reads leave the parent's live controller intact.
+
+Root return assigns a fresh epoch before restoring or preparing rows. It shares
+the local frame restoration path and retains the highest epoch reached inside
+the departing child. Late parent, child and raw results cannot change the resumed
+view or block a new command. Popping a session releases the removed stack entries;
+leaving the viewer releases its local frames and search caches.
+
+At unchanged dimensions, return preserves the viewport offset. After resize,
+a previously visible selected occurrence stays visible, including height-only
+shrinks; when the reader had scrolled away from the selection, return restores
+the reading anchor while keeping that selection. This distinction was pinned by
+the raw-return tests after unconditional anchor restoration hid a selected hit
+below a shortened viewport. Independent review also found the pending-resize
+variant: desired dimensions may already be updated while the prepared rows still
+use the old width. Return checks the saved prepared width as well; a regression
+holds that old completion across raw return and verifies the exact landing.
+
+Copy retains the original Body, including from a search-selected sidecar tool.
+Rename uses the owning session and refreshes metadata without replacing search
+identities or archive bytes. Restore/resume and Ctrl+C cancel outstanding work;
+Esc clears first, while q returns immediately with the parent's separate query.
+`app_find_test.go` covers these actions, nested children, pending work and repeated
+open/return cycles with deterministic command delivery.
+
+The [isolated review](.reviews/review-code-task4-2026-10-02.md) approved the
+correction. [Task 4 evidence](tasks.md#task-4-evidence--2026-10-02) records the final
+both-tag suites/race runs, repository suite, vet and quality comparison.
+
+CLI flags/configuration, dependencies, schemas, setup artifacts and CI changes
+are N/A for this TUI-only slice. Build/test requirements are inherited from
+[AGENTS.md](../../../../AGENTS.md). Full latency measurements for suspension,
+public README/architecture controls and feature-wide acceptance remain Task 6;
+fuzzy selection remains Task 5. No new project convention beyond the design was
+introduced.
 
 ## Task 5 — fuzzy line selection
 
