@@ -112,6 +112,13 @@ func (m viewerModel) returnToParent() viewerModel {
 	// array, and previous value models retain their own stack.
 	m.parents = append([]viewerTargetFrame(nil), m.parents[:n-1]...)
 	m = m.resetFind()
+	return m.restoreTarget(saved)
+}
+
+// restoreTarget resumes a detached frame under the caller's fresh execution
+// epoch. Local back, child return and raw return share the same position and
+// pending-clear contract. Set the viewer dimensions before calling.
+func (m viewerModel) restoreTarget(saved viewerTargetFrame) viewerModel {
 	epoch, ctx := m.find.epoch, m.find.ctx
 	m.viewerTargetFrame = saved.clone()
 	m.find.epoch, m.find.ctx = epoch, ctx

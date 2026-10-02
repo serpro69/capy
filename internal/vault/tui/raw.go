@@ -35,7 +35,6 @@ type rawLoadedMsg struct {
 }
 
 // Select the containing transcript, including a tool inside a Claude sidecar.
-// Raw suspension lifecycle is integrated in vault-in-session-search Task 4.
 func (m Model) startViewerRaw() (tea.Model, tea.Cmd) {
 	source := m.viewer.target.source
 	label, raw := source.session+" · archived JSONL", m.viewer.sess.RawJSONL
@@ -49,6 +48,9 @@ func (m Model) startViewerRaw() (tea.Model, tea.Cmd) {
 // startRaw runs both archive reads (when needed) and formatting outside Update.
 // The command owns the new viewport until delivery; raw bytes are immutable.
 func (m Model) startRaw(title string, load func(context.Context) ([]byte, error)) (tea.Model, tea.Cmd) {
+	if m.mode == modeView {
+		m = m.suspendViewer()
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.rawCancel = cancel
 	m.rawSeq++
@@ -98,9 +100,8 @@ func (m Model) updateRaw(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.mode = m.rawReturn
 		m.raw = rawModel{} // release the formatted archive on close
-		// Keep the exact viewport offset unless a resize requires re-wrapping.
-		if m.mode == modeView && (m.viewer.width != m.width || m.viewer.height != m.bodyHeight()) {
-			m.viewer = m.viewer.setSize(m.width, m.bodyHeight())
+		if m.mode == modeView {
+			m = m.resumeViewer()
 		}
 		return m, nil
 	case "g", "home":

@@ -74,12 +74,11 @@ type renameResultMsg struct {
 // whole viewerModel rather than the (session, files, offset, focused marker)
 // tuple the plan sketched: the value model already carries exactly that state
 // plus the parent's rendered transcript and any open detail view, so a pop is a
-// plain reassignment — no re-parse, no re-derived offset, no lost detail state.
+// restoration of detached frames — no re-parse or lost detail/search state.
 // The cost is holding each suspended level's render in memory for the depth of
 // the chain, which is bounded by how many children the user drills into (Codex
-// nests one or two levels). A pop re-runs setSize so a terminal resize while
-// in the child re-wraps the parent at the current width (setSize preserves the
-// top source line across the re-wrap).
+// nests one or two levels). A pop resumes under a fresh execution epoch and
+// re-wraps at the current width, preserving the saved logical reading anchor.
 type viewerFrame struct {
 	viewer viewerModel
 }
@@ -791,6 +790,7 @@ func (m Model) requestAction(kind ActionKind, uuid string) (tea.Model, tea.Cmd) 
 		return m, nil
 	}
 	m.action = Action{Kind: kind, SessionUUID: uuid}
+	m.viewer = m.viewer.invalidateFind()
 	m.quitting = true
 	return m, tea.Quit
 }
@@ -864,7 +864,8 @@ func (m Model) openChild(uuid string) Model {
 	if err != nil {
 		return m.withError(fmt.Sprintf("loading child session files: %v", err))
 	}
-	m.viewerStack = append(m.viewerStack, viewerFrame{viewer: m.viewer})
+	m = m.suspendViewer()
+	m.viewerStack = append(m.viewerStack[:len(m.viewerStack):len(m.viewerStack)], viewerFrame{viewer: m.viewer})
 	m.viewer = m.viewer.loadSession(*sess, files)
 	m = m.assignFindEpoch()
 	return m
@@ -875,24 +876,56 @@ func (m Model) openChild(uuid string) Model {
 // for prevMode exactly as before child sessions existed, so opens from list and
 // search are unchanged.
 //
-// The frame is restored verbatim — same scroll offset, same focused marker —
-// unless the terminal was resized while the child was open, in which case it
-// is re-wrapped through setSize. setSize is deliberately NOT run when the size
-// is unchanged: it re-derives the offset from the top message's source line, so
-// an offset the viewport had clamped mid-message (a focused marker in the last
-// page) would drift up to that message's first row. A real resize accepts that
-// message-level fidelity, exactly as any resize of an open viewer does today.
+// Retire the departing controller before restoring a detached parent. Resume
+// preserves the exact offset at the same width and the logical reading anchor
+// after rewrapping, independently of the committed occurrence selection.
 func (m Model) popViewer() Model {
+	m.viewer = m.viewer.resetFind()
+	m.findEpoch = max(m.findEpoch, m.viewer.find.epoch)
 	if n := len(m.viewerStack); n > 0 {
 		frame := m.viewerStack[n-1]
-		m.viewerStack = m.viewerStack[:n-1]
+		m.viewerStack = append([]viewerFrame(nil), m.viewerStack[:n-1]...)
 		m.viewer = frame.viewer
-		if h := m.bodyHeight(); m.viewer.width != m.width || m.viewer.height != h {
-			m.viewer = m.viewer.setSize(m.width, h)
-		}
-		return m
+		return m.resumeViewer()
 	}
+	// Leaving the chain releases its corpus, projections and local return stack.
+	m.viewer = newViewerModel(m.styles, m.width, m.bodyHeight())
 	m.mode = m.prevMode
+	return m
+}
+
+func (m Model) suspendViewer() Model {
+	// Local detail opens also issue epochs. Retain that high-water mark before
+	// replacing the viewer so a resumed parent cannot collide with a child job.
+	m.findEpoch = max(m.findEpoch, m.viewer.findEpoch, m.viewer.find.epoch)
+	m.viewer = m.viewer.suspendFind()
+	return m
+}
+
+func (m Model) resumeViewer() Model {
+	m = m.assignFindEpoch()
+	saved := m.viewer.viewerTargetFrame
+	selectedRow := -1
+	sizeChanged := m.viewer.width != m.width || m.viewer.height != m.bodyHeight()
+	m.viewer.width, m.viewer.height = m.width, m.bodyHeight()
+	// A resize may have updated desired dimensions before its rows applied.
+	if sizeChanged || saved.wrapWidth != m.viewer.contentWidth() {
+		f := saved.find.view
+		if f.plain && f.projection != nil && f.selected >= 0 && f.selected < len(f.hits) {
+			row := f.projection.rowForHit(f.hits[f.selected])
+			if row >= saved.vp.YOffset && row < saved.vp.YOffset+saved.vp.Height {
+				// Keep a visible selection on screen when the terminal shrinks.
+				// If the reader scrolled away, restore their reading anchor instead.
+				saved.anchor = f.corpus.position(f.hits[f.selected])
+				selectedRow = row
+			}
+		}
+	}
+	m.viewer = m.viewer.restoreTarget(saved)
+	if selectedRow >= 0 && saved.wrapWidth == m.viewer.contentWidth() {
+		// Clamp using the resumed height, not the larger suspended viewport.
+		m.viewer.vp.SetYOffset(selectedRow)
+	}
 	return m
 }
 
@@ -958,7 +991,7 @@ func (m Model) openSession(sessionID string, returnTo mode, subagentID string, l
 }
 
 func (m Model) assignFindEpoch() Model {
-	m.findEpoch = max(m.findEpoch, m.viewer.find.epoch) + 1
+	m.findEpoch = max(m.findEpoch, m.viewer.findEpoch, m.viewer.find.epoch) + 1
 	m.viewer.find.epoch, m.viewer.find.ctx = m.findEpoch, m.ctx
 	return m
 }

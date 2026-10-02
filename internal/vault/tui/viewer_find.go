@@ -106,6 +106,24 @@ func (m viewerModel) resetFind() viewerModel {
 	return m
 }
 
+// suspendFind cancels the live worker and detaches its controller. Keep the
+// last stable selection/target together; an unapplied navigation is cancelled.
+// A clear already accepted by the user must still finish on resume.
+func (m viewerModel) suspendFind() viewerModel {
+	if m.find.editing {
+		m = m.cancelFind()
+	}
+	saved := m.targetSnapshot()
+	if m.find.cancel != nil {
+		m.find.cancel()
+	}
+	m.viewerTargetFrame = saved.frame
+	if saved.normalRestore {
+		m.find.latest = &findRequest{normal: true, restoreAnchor: true, anchor: saved.frame.anchor}
+	}
+	return m
+}
+
 func (m viewerModel) findReadingAnchor() findPosition {
 	if f := m.find.view; f.plain && f.projection != nil {
 		return f.projection.positionForRow(f.corpus, m.vp.YOffset)
