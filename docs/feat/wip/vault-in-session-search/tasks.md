@@ -58,8 +58,8 @@ Tasks 2–3 add manual detail scopes, parent-query suspension and hidden-result
 navigation. Slash searches
 ordinary bodies, launch labels and full summaries in each opened transcript,
 including full collapsed tool bodies and manually opened details.
-Task 4 now preserves root/raw suspension and action state. Fuzzy and final public
-documentation remain Tasks 5/6.
+Task 4 preserves root/raw suspension and action state. Task 5 adds the fuzzy
+picker and its latency gate. Final public documentation remains Task 6.
 
 ## Task 2: Local frames and manual nested return
 
@@ -190,7 +190,7 @@ documentation remain Tasks 5/6.
 
 ## Task 5: Fuzzy line picker with safe matching and a latency gate
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 4
 - **Size:** M
 - **Can run in parallel with:** —
@@ -198,11 +198,44 @@ documentation remain Tasks 5/6.
 
 ### Subtasks
 
-- [ ] 5.1 Add find_fuzzy.go's local whole-line subsequence matcher with ordinary NUL handling, original byte spans, bounded additive scoring and in-line cancellation; do not import sahilm/fuzzy → verify: TestFindFuzzy covers NUL before/after/across hits, every length 1–256, 39–43/64/128/256 boundary cases, Unicode, oracle agreement, strictly increasing spans, correspondence/completeness, score bounds and ties.
-- [ ] 5.2 Add find_picker.go scrolling/paging, role/location metadata, full-line snippets and ASCII > selection prefix → verify: TestFindPicker keeps selected results reachable and has a concrete ANSI-free indicator.
-- [ ] 5.3 Wire Ctrl+F accept/cancel into viewer_find.go and shared frame navigation → verify: TestAppFindPicker opens ordinary/hidden/nested hits and restores exact state on Esc.
-- [ ] 5.4 Add key fixtures and dynamic help, including accepted fuzzy span brackets and n/N marker behavior → verify: routing/no-color tests pass; go.mod/go.sum have no new fuzzy import/version change.
-- [ ] 5.5 Test NUL/long-query worker completion, replacement and mid-line cancellation, then extend the reference harness to integrated fuzzy operations → verify: TestViewerFindFuzzyCompletion retires every job and both builds meet 100 ms before final verification.
+- [x] 5.1 Add find_fuzzy.go's local whole-line subsequence matcher with ordinary NUL handling, original byte spans, bounded additive scoring and in-line cancellation; do not import sahilm/fuzzy → verify: TestFindFuzzy covers NUL before/after/across hits, every length 1–256, 39–43/64/128/256 boundary cases, Unicode, oracle agreement, strictly increasing spans, correspondence/completeness, score bounds and ties.
+- [x] 5.2 Add find_picker.go scrolling/paging, role/location metadata, full-line snippets and ASCII > selection prefix → verify: TestFindPicker keeps selected results reachable and has a concrete ANSI-free indicator.
+- [x] 5.3 Wire Ctrl+F accept/cancel into viewer_find.go and shared frame navigation → verify: TestAppFindPicker opens ordinary/hidden/nested hits and restores exact state on Esc.
+- [x] 5.4 Add key fixtures and dynamic help, including accepted fuzzy span brackets and n/N marker behavior → verify: routing/no-color tests pass; go.mod/go.sum have no new fuzzy import/version change.
+- [x] 5.5 Test NUL/long-query worker completion, replacement and mid-line cancellation, then extend the reference harness to integrated fuzzy operations → verify: TestViewerFindFuzzyCompletion retires every job and both builds meet 100 ms before final verification.
+
+### Task 5 evidence — 2026-10-02
+
+- [Isolated code review](.reviews/review-code-task5-2026-10-02.md): APPROVE after
+  one P1 cache-publication issue (including its pending-clear variant), three P2
+  lifecycle/layout issues and two external LOW findings were corrected. The
+  independent reviewer re-read the final corrections; the P1 pattern was indexed
+  as `kk:review-findings`.
+- Complete TUI suites and race suites passed under `fts5` and `fts5,glamour`.
+  Matcher tests cover all lengths 1–256, fold cycles, NUL, invalid UTF-8, exact
+  original spans, score bounds, deterministic ties and an independent
+  dynamic-programming oracle. Picker tests cover every row across multiple pages,
+  cell bounds, full counters, ANSI-free selection/brackets, both platforms,
+  ordinary and collapsed fields, nested sidecars, cancellation and pending work.
+- Final `make test`, `make vet` and glamour TUI vet passed after the corrections.
+  Tests used synthetic encryption keys, `GOCACHE=/tmp/capy-go-build`, an empty
+  `XDG_CONFIG_HOME=/tmp/capy-task5-config` and canonical `TMPDIR=/private/tmp`;
+  repository-wide tests had local socket access. A final added wrapped-span
+  assertion also passed with race detection in both builds.
+- [Final latency gate](performance.md#task-5-fuzzy-gate--2026-10-02): 39 operation
+  classes × 100 samples per build, including 21 integrated fuzzy classes. Maximum
+  28.876 ms default / 27.462 ms glamour against the 100 ms gate. Fuzzy in-line
+  cancellation was measured on 100,000 lines, one MiB line and long graphemes.
+  Matcher/sort benchmarks completed six repetitions per query in both builds;
+  their ranges are recorded in the performance report.
+- `make bench-quality BENCH_BRANCH=vault-find-task5` passed. `bench-compare`
+  verified dataset digest `7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`
+  and every retrieval/context-reduction metric matched `master.json` (detached
+  HEAD at `397ecfd`). The measurement is dirty `feat/session_search` at `26fa34c`.
+  Optional benchstat comparison was skipped because that binary is unavailable.
+- No dependency/version, schema, parser, CLI/configuration, setup artifact or CI
+  changes. No additional project conventions to index. Full feature verification,
+  retained-memory/suspension measurements and public documentation remain Task 6.
 
 ## Task 6: Complete verification, performance evidence, and documentation
 
@@ -236,9 +269,9 @@ Task 1 (exact feasibility gate)
 
 The three supplied review rounds consolidate to six unique claims. Each was checked against the current documents/code; both upstream matcher failures were independently reproduced. [The reconciliation](.reviews/consolidated-findings-2026-09-20.md) records qualified verdicts, fixes and standalone prototype evidence.
 
-Tasks 1–4 and the exact feasibility gate are complete. The next task is Task 5.
-Tasks 5–6 remain pending; the measured exact path does not certify fuzzy search
-or the complete suspension latency protocol. The original review
+Tasks 1–5 and both exact/fuzzy feasibility gates are complete. The next task is
+Task 6, which remains pending. These gates do not certify the complete suspension
+latency or retained-memory protocol. The original review
 files remain historical evidence; their repeated P1 findings are tracked once in
 the reconciliation.
 

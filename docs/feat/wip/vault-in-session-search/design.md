@@ -1,6 +1,6 @@
 # In-session vault search — design
 
-> Status: Tasks 1–4 implemented and reviewed; Tasks 5–6 pending
+> Status: Tasks 1–5 implemented and reviewed; Task 6 pending
 > Created: 2026-09-20
 > Issue: [#101 — vault: searching within a session](https://github.com/serpro69/capy/issues/101)
 > Companions: [Implementation](implementation.md), [Tasks](tasks.md)
@@ -211,8 +211,8 @@ Task 5 likewise gates the first integrated fuzzy path on correctness and latency
 
 - Parsed TranscriptMessage fields contain the content the reader expects to search; raw-only metadata and omitted decoder content are intentionally outside the agreed scope. Validate fixtures against actual parsed messages.
 - The plain search renderer can preserve byte provenance through wrapping/escaping. This is the first implementation risk to prove, especially for repeated text, Unicode, and soft-wrap boundaries.
-- The local leftmost alignment and bounded additive score produce useful line ranking for prose and tool output. Validate representative examples; optimal alignment and fzf score parity are not promised.
-- A complete update on the defined 10,000-line fixture can meet 100 ms without data-store changes. Feature performance remains unmeasured. Mandatory gates in Tasks 1 and 5 must pass before their dependent work, and Task 6 must verify the complete path.
+- The local leftmost alignment and bounded additive score produce useful line ranking for prose and tool output. Task 5 verifies representative examples; optimal alignment and fzf score parity are not promised.
+- A complete update on the defined 10,000-line fixture can meet 100 ms without data-store changes. The exact and integrated fuzzy gates pass in both builds; Task 6 must still verify the complete suspension and retained-memory protocol.
 - Sharing immutable corpus/render data across a shallow navigation stack keeps memory reasonable. Measure a stress corpus and repeated open/back cycles; do not retain a new full copy per query.
 
 ## Not Doing
@@ -244,8 +244,11 @@ approved the changes after two async navigation regressions were corrected.
 Task 4 preserves committed search through child/raw suspension, uses fresh
 execution epochs on return, and retains search identity through copy and metadata
 actions. Its [isolated review](.reviews/review-code-task4-2026-10-02.md) approved
-the changes after a pending-resize return regression was corrected. Fuzzy search
-and complete latency/acceptance verification remain open in Tasks 5–6. Earlier
+the changes after a pending-resize return regression was corrected. Task 5 adds
+the fuzzy line picker, local bounded matcher, complete snapshot cancellation and
+precise ordinary/hidden-result acceptance. Its [isolated review](.reviews/review-code-task5-2026-10-02.md)
+approved the final corrections, and the [fuzzy gate](performance.md#task-5-fuzzy-gate--2026-10-02)
+passes in both builds. Complete feature verification remains Task 6. Earlier
 design reviews and their reconciliation remain historical evidence, not claims
 that pending production behavior exists.
 

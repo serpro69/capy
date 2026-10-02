@@ -228,6 +228,14 @@ func findLineStyle(st Styles, msg vault.TranscriptMessage, line string) lipgloss
 // Highlight only visible rows. Selection brackets are an overlay, never corpus
 // text, and every row always wraps with the same two-cell reservation.
 func (p *findProjection) highlightRow(c *findCorpus, rowIndex int, hits []findHit, selected int, st Styles) string {
+	return p.highlightMatches(c, rowIndex, hits, selected, false, st)
+}
+
+func (p *findProjection) highlightFuzzyRow(c *findCorpus, rowIndex int, hits []findHit, st Styles) string {
+	return p.highlightMatches(c, rowIndex, hits, -1, true, st)
+}
+
+func (p *findProjection) highlightMatches(c *findCorpus, rowIndex int, hits []findHit, selected int, fuzzy bool, st Styles) string {
 	row := p.rows[rowIndex]
 	if row.line < 0 {
 		return p.transcript.rows[rowIndex]
@@ -243,8 +251,13 @@ func (p *findProjection) highlightRow(c *findCorpus, rowIndex int, hits []findHi
 	} else {
 		chosen.line = -1
 	}
+	if fuzzy && len(hits) > 0 {
+		chosen = hits[0]
+		chosen.end = hits[len(hits)-1].end
+	}
 	var out, run strings.Builder
 	state := -1
+	bracketed := false
 	flush := func() {
 		if run.Len() == 0 {
 			return
@@ -273,7 +286,17 @@ func (p *findProjection) highlightRow(c *findCorpus, rowIndex int, hits []findHi
 		if hi < len(hits) && hits[hi].line == row.line && hits[hi].start < next {
 			current = 1
 		}
-		if chosen.line == row.line && chosen.start < next && chosen.end > offset {
+		inside := chosen.line == row.line && chosen.start < next && chosen.end > offset
+		if fuzzy && p.width >= 3 && inside != bracketed {
+			flush()
+			if inside {
+				out.WriteByte('[')
+			} else {
+				out.WriteByte(']')
+			}
+			bracketed = inside
+		}
+		if !fuzzy && inside {
 			current = 2
 		}
 		if current != state {
@@ -284,5 +307,8 @@ func (p *findProjection) highlightRow(c *findCorpus, rowIndex int, hits []findHi
 		offset = next
 	}
 	flush()
+	if bracketed {
+		out.WriteByte(']')
+	}
 	return ansi.Truncate(out.String(), max(1, p.width), "")
 }

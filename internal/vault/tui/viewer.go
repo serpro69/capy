@@ -193,8 +193,10 @@ func (m viewerModel) update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
 	switch key.String() {
 	case "/":
 		return m.startFind(), nil, viewerNone
+	case "ctrl+f":
+		return m.startFindPicker(), nil, viewerNone
 	case "esc":
-		if m.find.view.plain {
+		if m.find.view.plain || m.pendingFuzzySelection() {
 			return m.clearFind(), nil, viewerNone
 		}
 		if m.inDetail() {
@@ -221,13 +223,13 @@ func (m viewerModel) update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
 	case "ctrl+u", "pgup", "b":
 		m.vp.HalfPageUp()
 	case "n":
-		if m.find.view.query != "" {
+		if m.exactFindActive() {
 			m = m.stepFind(1)
 		} else {
 			m = m.focusMarker(1)
 		}
 	case "N":
-		if m.find.view.query != "" {
+		if m.exactFindActive() {
 			m = m.stepFind(-1)
 		} else {
 			m = m.focusMarker(-1)
@@ -438,7 +440,7 @@ func (m viewerModel) helpLine() string {
 			keys = "esc/q return to " + back + " · / find · ]/[ marker · enter open · c copy"
 		}
 	}
-	return fitRow(m.styles.Help.Render("v raw JSONL · "+keys), m.width)
+	return fitRow(m.styles.Help.Render("ctrl+f fuzzy · v raw JSONL · "+keys), m.width)
 }
 
 // contentWidth is the wrap width for body text (a small right margin avoids the
