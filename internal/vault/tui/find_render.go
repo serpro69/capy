@@ -28,6 +28,10 @@ type findProjection struct {
 	rows       []findRow
 	lineRows   []int
 	viewport   viewport.Model // immutable prepared content; copy before scrolling
+	// Detail rows retain the owner's corpus ordinals while their displayed
+	// transcript contains just one message (for copy and marker consumers).
+	messageOffset int
+	detail        bool
 }
 
 // findGlyph returns safe presentation text and the original byte length. The
@@ -95,7 +99,19 @@ func wrapFindLine(ctx context.Context, line findLine, width int, emit func(start
 }
 
 func buildFindProjection(ctx context.Context, c *findCorpus, messages []vault.TranscriptMessage, platform vault.Platform, st Styles, width int) (*findProjection, error) {
-	p := &findProjection{width: width, lineRows: make([]int, len(c.lines))}
+	return buildFindTargetProjection(ctx, c, messages, platform, st, width, -1)
+}
+
+// A negative detail ordinal renders the owner. Otherwise both original fields
+// of that tool are mapped, without rebuilding or renumbering the owner's corpus.
+func buildFindTargetProjection(ctx context.Context, c *findCorpus, messages []vault.TranscriptMessage, platform vault.Platform, st Styles, width, detail int) (*findProjection, error) {
+	p := &findProjection{width: width, lineRows: make([]int, len(c.lines)), detail: detail >= 0}
+	if p.detail {
+		p.messageOffset = detail
+		msg := messages[detail]
+		msg.Collapsed = false
+		messages = []vault.TranscriptMessage{msg}
+	}
 	p.transcript.messages = messages
 	p.transcript.msgRowStart = make([]int, len(messages))
 	for i := range p.lineRows {
@@ -105,7 +121,7 @@ func buildFindProjection(ctx context.Context, c *findCorpus, messages []vault.Tr
 		p.transcript.rows = append(p.transcript.rows, ansi.Truncate(text, max(1, width), ""))
 		p.rows = append(p.rows, findRow{line: -1})
 	}
-	li := 0
+	li := sort.Search(len(c.lines), func(i int) bool { return c.lines[i].position.message >= p.messageOffset })
 	for mi, msg := range messages {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -123,9 +139,9 @@ func buildFindProjection(ctx context.Context, c *findCorpus, messages []vault.Tr
 		default:
 			structural(st.messageHeader(msg.Role, msg.Queued, platform))
 		}
-		for li < len(c.lines) && c.lines[li].position.message == mi {
+		for li < len(c.lines) && c.lines[li].position.message == mi+p.messageOffset {
 			line := c.lines[li]
-			if !line.hidden {
+			if !line.hidden || p.detail {
 				p.lineRows[li] = len(p.rows)
 				err := wrapFindLine(ctx, line, max(1, width-2), func(start, end int, text string) {
 					p.rows = append(p.rows, findRow{li, start, end})
@@ -160,8 +176,9 @@ func (p *findProjection) rowForHit(hit findHit) int {
 func (p *findProjection) rowForPosition(c *findCorpus, position findPosition) int {
 	// Structural anchors (headers and markers) have no source field. Preserve
 	// that row across a suspended-frame resize instead of moving into its body.
-	if position.field == 0 && position.message < len(p.transcript.msgRowStart) {
-		return p.transcript.msgRowStart[position.message]
+	message := position.message - p.messageOffset
+	if position.field == 0 && message >= 0 && message < len(p.transcript.msgRowStart) {
+		return p.transcript.msgRowStart[message]
 	}
 	li := sort.Search(len(c.lines), func(i int) bool {
 		line := c.lines[i]
@@ -175,8 +192,8 @@ func (p *findProjection) rowForPosition(c *findCorpus, position findPosition) in
 		}
 		return p.rowForHit(findHit{li, position.offset, position.offset})
 	}
-	if position.message < len(p.transcript.msgRowStart) {
-		return p.transcript.msgRowStart[position.message]
+	if message >= 0 && message < len(p.transcript.msgRowStart) {
+		return p.transcript.msgRowStart[message]
 	}
 	return 0
 }
@@ -191,7 +208,7 @@ func (p *findProjection) positionForRow(c *findCorpus, row int) findPosition {
 		}
 	}
 	mi := max(0, sort.Search(len(p.transcript.msgRowStart), func(i int) bool { return p.transcript.msgRowStart[i] > row })-1)
-	return findPosition{message: mi}
+	return findPosition{message: mi + p.messageOffset}
 }
 
 func findLineStyle(st Styles, msg vault.TranscriptMessage, line string) lipgloss.Style {
@@ -216,7 +233,7 @@ func (p *findProjection) highlightRow(c *findCorpus, rowIndex int, hits []findHi
 		return p.transcript.rows[rowIndex]
 	}
 	line := c.lines[row.line]
-	style := findLineStyle(st, p.transcript.messages[line.position.message], line.text)
+	style := findLineStyle(st, p.transcript.messages[line.position.message-p.messageOffset], line.text)
 	hi := sort.Search(len(hits), func(i int) bool {
 		return hits[i].line > row.line || (hits[i].line == row.line && hits[i].end > row.start)
 	})

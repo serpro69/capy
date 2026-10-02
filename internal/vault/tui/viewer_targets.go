@@ -32,6 +32,9 @@ type viewerTarget struct {
 	// SourceLine lookup (several messages can share one physical JSONL line).
 	ownerScope string
 	origin     findPosition
+	// A search-selected tool is a presentation of its immediate parent's scope.
+	// It occupies one replaceable frame until a visible hit, clear, or back.
+	searchSelected bool
 }
 
 // A frame owns one target's presentation and committed search. Parsed messages,
@@ -73,7 +76,7 @@ func (m viewerModel) targetSnapshot() findSnapshot {
 	} else if m.find.latest != nil && m.find.latest.normal {
 		f.wrapWidth = m.find.view.normalWidth
 	}
-	snapshot := findSnapshot{frame: f}
+	snapshot := findSnapshot{frame: f, parents: m.parents}
 	if desired := m.find.latest; desired != nil && (desired.normal || desired.restoreAnchor) {
 		snapshot.normalRestore, snapshot.frame.anchor = desired.normal, desired.anchor
 	}
@@ -177,15 +180,61 @@ func (m viewerModel) openInlineContent(message int) viewerModel {
 		return m
 	}
 	msg := m.active.messages[message]
+	target := toolViewerTarget(m.target, msg, findPosition{message: message, field: findBody})
+	msg.Collapsed = false
+	return m.pushTarget(target, []vault.TranscriptMessage{msg}, 0)
+}
+
+func toolViewerTarget(owner viewerTarget, msg vault.TranscriptMessage, origin findPosition) viewerTarget {
 	label := msg.ToolSummary
 	if label == "" {
 		label = "tool result"
 	}
-	target := viewerTarget{
-		kind: viewerTargetTool, source: m.target.source,
-		scope: fmt.Sprintf("%s/tool/%d", m.target.scope, message), label: label,
-		ownerScope: m.target.scope, origin: findPosition{message: message, field: findBody},
+	return viewerTarget{
+		kind: viewerTargetTool, source: owner.source,
+		scope: fmt.Sprintf("%s/tool/%d", owner.scope, origin.message), label: label,
+		ownerScope: owner.scope, origin: origin,
 	}
-	msg.Collapsed = false
-	return m.pushTarget(target, []vault.TranscriptMessage{msg}, 0)
+}
+
+func (m viewerModel) findOwnerTarget() viewerTarget {
+	if m.target.searchSelected {
+		return m.parents[len(m.parents)-1].target
+	}
+	return m.target
+}
+
+// Keep the live controller while exchanging presentation frames. Search-driven
+// navigation saves the owner once; subsequent hidden hits replace that target.
+func (m viewerModel) showFindTarget(target viewerTarget) viewerModel {
+	switch {
+	case target.searchSelected && !m.target.searchSelected:
+		m.parents = append(m.parents[:len(m.parents):len(m.parents)], m.targetSnapshot().frame)
+		m.focusedMarker = -1
+	case !target.searchSelected && m.target.searchSelected:
+		n := len(m.parents)
+		m.focusedMarker = m.parents[n-1].focusedMarker
+		m.parents = append([]viewerTargetFrame(nil), m.parents[:n-1]...)
+	}
+	m.target = target
+	return m
+}
+
+// Clear the saved owner as well as the displayed result so back cannot revive
+// the query. A pending normal rewrap is retained by the existing frame contract.
+func (m viewerModel) clearFindOwner() viewerModel {
+	if !m.target.searchSelected {
+		return m
+	}
+	n := len(m.parents)
+	owner := m
+	owner.viewerTargetFrame = m.parents[n-1].clone()
+	owner = owner.clearFindAt(m.target.origin)
+	saved := owner.targetSnapshot()
+	if saved.normalRestore {
+		saved.frame.find.latest = &findRequest{normal: true, restoreAnchor: true, anchor: saved.frame.anchor}
+	}
+	m.parents = append([]viewerTargetFrame(nil), m.parents...)
+	m.parents[n-1] = saved.frame
+	return m
 }

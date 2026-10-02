@@ -133,16 +133,3 @@ func findExact(ctx context.Context, c *findCorpus, query string) ([]findHit, err
 	}
 	return hits, ctx.Err()
 }
-
-// TODO(vault-in-session-search Task 3): remove this UI-only eligibility gate
-// when search-selected tool details can open full hidden bodies at a source span.
-// Computational scans and the reference workload already include those bodies.
-func findVisibleHits(c *findCorpus, hits []findHit) []findHit {
-	visible := make([]findHit, 0, len(hits))
-	for _, hit := range hits {
-		if !c.lines[hit.line].hidden {
-			visible = append(visible, hit)
-		}
-	}
-	return visible
-}

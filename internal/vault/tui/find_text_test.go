@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/serpro69/capy/internal/vault"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,7 +65,54 @@ func TestFindTextFields(t *testing.T) {
 	assert.Equal(t, findPosition{1, findBody, 100_000}, c.position(hits[3]))
 	assert.Equal(t, findPosition{2, findBody, 0}, c.position(hits[4]))
 	assert.Equal(t, 1, c.lines[hits[5].line].ordinal)
-	assert.Len(t, findVisibleHits(c, hits), 5, "only the Task 1 UI hides collapsed bodies")
+}
+
+func TestFindTextCollapsed(t *testing.T) {
+	large := strings.Repeat("before\n", 12_000) + "middle-needle\n" + strings.Repeat("after\n", 12_000)
+	for _, tool := range []string{"Read", "Bash", "exec_command"} {
+		t.Run(tool, func(t *testing.T) {
+			platform := vault.PlatformClaudeCode
+			body := large
+			if tool == "Read" {
+				body = "middle-needle" // excluded from FTS regardless of length
+			}
+			var raw []byte
+			if tool == "exec_command" {
+				platform = vault.PlatformCodex
+				raw = jsonlLines(t,
+					codexHumanLine("run it"),
+					codexEnv("response_item", map[string]any{"type": "function_call", "name": tool, "call_id": "call",
+						"arguments": `{"cmd":"summary-only"}`}),
+					codexEnv("response_item", map[string]any{"type": "function_call_output", "call_id": "call", "output": body}),
+				)
+			} else {
+				raw = jsonlLines(t,
+					userLine("run it"),
+					assistantLine("call", []map[string]any{{"type": "tool_use", "id": "t1", "name": tool,
+						"input": map[string]any{"command": "summary-only", "file_path": "/p/summary-only"}}}),
+					toolResultLine(body),
+				)
+			}
+			messages := vault.ParseTranscript(platform, raw, nil)
+			require.Equal(t, 3, len(messages), "prompt, displayed tool call, and result")
+			require.True(t, messages[2].Collapsed)
+			c, err := buildFindCorpus(t.Context(), tool, messages)
+			require.NoError(t, err)
+			hits, err := findExact(t.Context(), c, "middle-needle")
+			require.NoError(t, err)
+			require.Len(t, hits, 1)
+			assert.Equal(t, findPosition{2, findBody, strings.Index(body, "middle-needle")}, c.position(hits[0]))
+			hits, err = findExact(t.Context(), c, "summary-only")
+			require.NoError(t, err)
+			require.Len(t, hits, 2, "one displayed call Body plus one result ToolSummary")
+			assert.Equal(t, findBody, c.position(hits[0]).field)
+			assert.Equal(t, findSummary, c.position(hits[1]).field)
+			v := newViewerModel(DefaultStyles(), 75, 9).loadSession(vault.Session{UUID: tool, Platform: platform, RawJSONL: raw}, nil)
+			v = searchViewer(t, v, "middle-needle")
+			requireFindLanding(t, v, findPosition{2, findBody, strings.Index(body, "middle-needle")})
+			assert.Contains(t, ansi.Strip(v.View()), "[middle-needle]")
+		})
+	}
 }
 
 // A deterministic context that expires after checkpoints, allowing cancellation

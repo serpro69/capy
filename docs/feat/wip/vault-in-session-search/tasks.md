@@ -54,10 +54,11 @@ The query editor also consumes Ctrl+G before the root project editor and disable
 the widget's external clipboard utility binding. Terminal bracketed paste remains
 supported and is covered by the Unicode 256-code-point limit regression.
 
-Task 2 now adds manual detail scopes and parent-query suspension. Slash searches
+Tasks 2–3 add manual detail scopes, parent-query suspension and hidden-result
+navigation. Slash searches
 ordinary bodies, launch labels and full summaries in each opened transcript,
-plus the full Body of a manually opened tool. Automatic hidden Body navigation
-remains Task 3 despite full computational coverage. Root/raw suspension remains
+including full collapsed tool bodies and manually opened details.
+Root/raw suspension remains
 Task 4; fuzzy and final public documentation remain Tasks 5/6.
 
 ## Task 2: Local frames and manual nested return
@@ -106,7 +107,7 @@ Task 4; fuzzy and final public documentation remain Tasks 5/6.
 
 ## Task 3: Exact find opens collapsed results at the match
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Size:** M
 - **Can run in parallel with:** —
@@ -114,10 +115,38 @@ Task 4; fuzzy and final public documentation remain Tasks 5/6.
 
 ### Subtasks
 
-- [ ] 3.1 Enable full collapsed-body result navigation using Task 1's corpus; remove the temporary eligibility predicate → verify: TestFindTextCollapsed reaches excluded/large outputs, summaries and diffs without duplicate indexing.
-- [ ] 3.2 Use Task 2's complete frames to open mapped summary/body passages, including within an opened sidecar → verify: TestViewerFindCollapsed and TestViewerFindDiff land on the precise span.
-- [ ] 3.3 Preserve the originating query/corpus while replacing temporary search targets → verify: repeated visible/hidden/hidden/visible navigation wraps without growing the stack.
-- [ ] 3.4 Implement cancel/clear/back distinctions and replace invalidated comments → verify: TestViewerFindCollapsedCancelClear never revives a cleared query and both rendering suites pass.
+- [x] 3.1 Enable full collapsed-body result navigation using Task 1's corpus; remove the temporary eligibility predicate → verify: TestFindTextCollapsed reaches excluded/large outputs, summaries and diffs without duplicate indexing.
+- [x] 3.2 Use Task 2's complete frames to open mapped summary/body passages, including within an opened sidecar → verify: TestViewerFindCollapsed and TestViewerFindDiff land on the precise span.
+- [x] 3.3 Preserve the originating query/corpus while replacing temporary search targets → verify: repeated visible/hidden/hidden/visible navigation wraps without growing the stack.
+- [x] 3.4 Implement cancel/clear/back distinctions and replace invalidated comments → verify: TestViewerFindCollapsedCancelClear never revives a cleared query and both rendering suites pass.
+
+### Task 3 evidence — 2026-10-02
+
+- [Isolated code review](.reviews/review-code-task3-2026-10-02.md): APPROVE after
+  two reproduced async navigation findings were fixed and re-reviewed. Pending
+  selection now applies with its target, and survives repeated keys and resize.
+- Complete TUI suites passed under `fts5` and `fts5,glamour` with `-count=1`.
+  Final race suites passed under both tags (2.653 s / 3.176 s). Regressions cover
+  decoded Read/Bash/exec_command outputs beyond FTS bounds, reconstructed diffs,
+  long summaries, exact locations, bounded repeated cycles, sidecar isolation,
+  copy-source identity, clear/back and cancellation before navigation completes.
+- `make vet` and the final TUI vet checks under both tags passed. Synthetic
+  encryption keys and `GOCACHE=/tmp/capy-go-build` were used throughout.
+- `make bench-quality BENCH_BRANCH=vault-find-task3` passed. Qualstat verified
+  fixture digest `7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`
+  and every retrieval/context-reduction metric matched the existing
+  `master.json` baseline (detached HEAD at `397ecfd`). Current measurement:
+  dirty `feat/session_search` at `81a4fcd`, saved as `vault-find-task3.json`.
+- `make test` passed across the repository with local socket access,
+  `XDG_CONFIG_HOME=/tmp/capy-task3-config` and `TMPDIR=/private/tmp` (CLI
+  209.647 s, server 70.307 s, vault 131.206 s). The initial noncanonical-TMPDIR
+  run failed unrelated path assertions; the follow-up below records the cause.
+- [Exact latency rerun](performance.md#task-3-exact-path-rerun--2026-10-02):
+  100 samples per operation in both builds; final maximum 11.569 ms. Previous-hit
+  wrap now opens a collapsed tool and is asserted by the harness. This does not
+  certify every hidden-target/suspension/fuzzy operation scheduled for Task 6.
+- No dependency, schema, parser, CLI/config, setup artifact or CI changes.
+  Public documentation remains Task 6.
 
 ## Task 4: Preserve search through root suspension and actions
 
@@ -183,8 +212,8 @@ Task 1 (exact feasibility gate)
 
 The three supplied review rounds consolidate to six unique claims. Each was checked against the current documents/code; both upstream matcher failures were independently reproduced. [The reconciliation](.reviews/consolidated-findings-2026-09-20.md) records qualified verdicts, fixes and standalone prototype evidence.
 
-Tasks 1–2 and the exact feasibility gate are complete. The next task is Task 3.
-Tasks 3–6 remain pending; the measured early path does not certify their
+Tasks 1–3 and the exact feasibility gate are complete. The next task is Task 4.
+Tasks 4–6 remain pending; the measured exact path does not certify their
 interactions. The original review
 files remain historical evidence; their repeated P1 findings are tracked once in
 the reconciliation.
@@ -198,3 +227,13 @@ import/restore/merge fixtures in a separate test-hermeticity fix. Local TCP/Unix
 listener tests also require socket access beyond the restricted sandbox; the
 successful full run used that access. No production failure was hidden by
 changing assertions or skipping tests.
+
+Task 3 also exposed pre-existing macOS temporary-path assumptions in
+`cmd/capy/key_resolution_mcp_test.go` (`TestMCPProjectCredentials`) and
+`internal/vault/restore_test.go` (`TestRestoreSession_OverwritePolicy` and
+`TestRestoreSession_SymlinkRootResolved`). They compare unresolved `/var/...`
+fixture paths with canonical `/private/var/...` production paths. The initial
+full run failed those assertions; rerun uses `TMPDIR=/private/tmp`. This task
+leaves those unrelated fixtures unchanged. Follow-up: canonicalize expected
+temporary paths with `filepath.EvalSymlinks` and verify both a symlinked and a
+canonical TMPDIR, alongside the XDG_CONFIG_HOME isolation fix above.

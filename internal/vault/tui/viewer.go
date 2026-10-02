@@ -203,6 +203,7 @@ func (m viewerModel) update(msg tea.Msg) (viewerModel, tea.Cmd, viewerAction) {
 		return m, nil, viewerBack
 	case "q":
 		m = m.invalidateFind()
+		m = m.clearFindOwner()
 		if m.inDetail() {
 			return m.returnToParent(), nil, viewerNone
 		}

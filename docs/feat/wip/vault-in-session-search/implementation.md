@@ -1,6 +1,6 @@
 # In-session vault search — implementation plan
 
-> Status: Tasks 1–2 implemented and reviewed; Tasks 3–6 pending
+> Status: Tasks 1–3 implemented and reviewed; Tasks 4–6 pending
 > Created: 2026-09-20
 > Issue: [#101](https://github.com/serpro69/capy/issues/101)
 > Design: [design.md](design.md)
@@ -142,6 +142,35 @@ Primary files: find_text.go, viewer_find.go, viewer_targets.go, and find_render.
 5. Replace comments that assume every inline detail returns directly to main, only where these new transitions invalidate them. → verify: existing collapse_test.go, marker_nav_test.go, and viewer_test.go paths pass under both tags without changing expected unrelated behavior.
 
 This slice completes exact hidden-body coverage using the already-migrated local frames, including a tool inside an opened sidecar. Root suspension and asynchronous integration remain scheduled in Task 4.
+
+### Task 3 implementation notes
+
+Implemented 2026-10-02. Every corpus occurrence now participates in viewer
+navigation. A collapsed Body or ToolSummary match opens that tool's complete
+plain projection at the original byte span. The projection retains corpus
+ordinals while its displayed transcript contains the single original message,
+preserving copying and sidecar/platform provenance.
+
+The existing local stack saves the search owner once. Hidden matches replace
+the temporary tool target; visible matches restore the owner. Only the owner
+projection and current detail are cached. Transaction snapshots retain the
+parent stack as well as the active frame. Clear converts the temporary target
+into an ordinary detail and clears its saved owner query; q clears and returns
+in one action. Subsequent slash searches the cleared detail's own scope.
+
+Navigation prepares its target asynchronously. Pending selection and wrap state
+stay in the request until the complete presentation applies; repeated n/N keys
+advance that request, and resize preserves it. This prevents slash/cancel from
+capturing a mixed old-target/new-selection snapshot. Both async issues were
+reproduced with withheld command delivery before correction and independent
+re-review. See the [review](.reviews/review-code-task3-2026-10-02.md) and
+[verification record](tasks.md#task-3-evidence--2026-10-02).
+
+No dependency, CLI/configuration, archive/schema, setup artifact or CI change was
+needed. Build/test requirements remain inherited from
+[AGENTS.md](../../../../AGENTS.md). Public controls and the complete performance
+protocol remain Task 6; root/raw suspension remains Task 4. No new project
+convention beyond this design was introduced.
 
 ## Task 4 — preserve search through root suspension and actions
 

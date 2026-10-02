@@ -1,9 +1,11 @@
-# Task 1 performance evidence
+# Exact-search performance evidence
 
 The implemented main-transcript exact-search path passes the early 100 ms gate
 in both builds. The final measured maximum was **27.052 ms**. This report covers
-Task 1 only; hidden-target navigation, nested frame suspension, raw/child return,
-and fuzzy selection remain Tasks 2–5 and have no performance certification here.
+the original Task 1 gate; hidden-target navigation, nested frame suspension,
+raw/child return and fuzzy selection were not certified by that gate. The
+[Task 3 rerun](#task-3-exact-path-rerun--2026-10-02) below records the current
+exact sample set separately.
 
 ## Reference machine and fixture
 
@@ -149,3 +151,61 @@ sha256:7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d.
 qualstat reported no change in any retrieval-quality or context-reduction
 metric. This is the Task 1 compatibility check against its actual starting
 revision; Task 6 still owns its separately specified final feature comparison.
+
+## Task 3 exact-path rerun — 2026-10-02
+
+The final exact-search sample set passes in both builds, with a maximum of
+**11.569 ms**. This is a rerun on a different machine, not a claim of speedup
+against Task 1's Linux measurements.
+
+Machine: Apple M4 Pro, macOS 26.6.2 (25G83), Go 1.25.2 darwin/arm64,
+GOMAXPROCS=14. The full-suite, race and vet jobs had finished before these
+sequential measurements; no other build/test job was launched during them.
+Revision: dirty `feat/session_search` at `81a4fcd`. SHA-256 of concatenated
+find_text.go, find_render.go, viewer_find.go, viewer_targets.go and viewer.go,
+in that order: `3ebab022edbebdc32eff8e44c446cf125e0f88eb58d4538a1db973411f431b8b`.
+
+The seed, fixture digest, 10,000 lines, 1,034,588 bytes, 200 messages,
+100 collapsed bodies, query set and 100×30 terminal are unchanged from the
+reference fixture above. Commands use the synthetic keys, CGO and
+`GOCACHE=/tmp/capy-go-build`:
+
+~~~sh
+CAPY_FIND_BENCH=1 go test -tags fts5 -run '^TestFindLatency$' -count=1 -v ./internal/vault/tui/
+CAPY_FIND_BENCH=1 go test -tags fts5,glamour -run '^TestFindLatency$' -count=1 -v ./internal/vault/tui/
+~~~
+
+Each row contains 100 completed samples. Times are milliseconds; allocation
+is mean bytes per complete operation. The measurement includes result
+application and View as before. Unlike Task 1, previous-hit wrap now opens the
+last collapsed tool; the harness asserts that target. All corpus hits now
+participate in navigation. The full hidden-target transition matrix, nested
+suspension, fuzzy operations and retained-memory protocol remain scheduled for
+Task 6 and are not certified by this rerun.
+
+| Operation | Default median | p95 | Maximum | Bytes/op | Glamour median | p95 | Maximum | Bytes/op |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| open/cold-projection | 10.119 | 11.265 | 11.569 | 6501644 | 10.244 | 10.899 | 11.394 | 6504762 |
+| edit/0/1-runes | 4.495 | 4.741 | 4.921 | 14691587 | 4.331 | 4.724 | 5.218 | 14702616 |
+| edit/1/8-runes | 2.904 | 3.099 | 3.248 | 637601 | 2.925 | 3.199 | 3.384 | 636829 |
+| edit/2/32-runes | 2.676 | 2.768 | 2.986 | 534540 | 2.722 | 2.920 | 3.152 | 533020 |
+| edit/3/256-runes | 2.403 | 2.492 | 2.809 | 520923 | 2.521 | 2.656 | 2.997 | 522248 |
+| edit/4/256-runes | 2.516 | 2.745 | 2.930 | 561658 | 2.622 | 2.770 | 3.039 | 560942 |
+| edit/5/15-runes | 2.751 | 2.846 | 3.150 | 504577 | 2.817 | 2.938 | 3.079 | 509478 |
+| enter | 0.185 | 0.207 | 0.599 | 280542 | 0.196 | 0.237 | 0.622 | 279830 |
+| navigate/n | 0.237 | 0.271 | 0.633 | 508448 | 0.241 | 0.458 | 0.904 | 505621 |
+| navigate/N | 0.260 | 0.459 | 0.552 | 604522 | 0.264 | 0.419 | 0.816 | 605889 |
+| selected/resize | 9.987 | 10.399 | 10.646 | 5750612 | 10.238 | 10.624 | 10.809 | 5758385 |
+| rapid/final-keystroke | 2.860 | 3.175 | 3.289 | 2329524 | 2.870 | 3.165 | 3.272 | 2328944 |
+| full-corpus/build+scan0 | 3.741 | 4.021 | 4.422 | 16302159 | 3.838 | 4.392 | 6.290 | 16302221 |
+| full-corpus/build+scan1 | 3.020 | 3.195 | 3.301 | 2351130 | 2.902 | 3.182 | 3.266 | 2351131 |
+| full-corpus/build+scan2 | 2.710 | 2.893 | 3.248 | 2248728 | 2.676 | 2.867 | 2.896 | 2248730 |
+| full-corpus/build+scan3 | 2.393 | 2.484 | 2.550 | 2227229 | 2.418 | 2.601 | 2.712 | 2227224 |
+| full-corpus/build+scan4 | 2.397 | 2.533 | 2.657 | 2225692 | 2.524 | 2.881 | 3.218 | 2225689 |
+| full-corpus/build+scan5 | 2.851 | 3.227 | 3.852 | 2224238 | 2.830 | 3.019 | 3.565 | 2224180 |
+
+The Task 3 quality run also passed. `vault-find-task3.json` was compared with
+the existing `master.json` baseline (detached HEAD at `397ecfd`); qualstat
+verified the common dataset digest and every retrieval/context-reduction metric
+was unchanged. See [Task 3 evidence](tasks.md#task-3-evidence--2026-10-02) for
+review and full-suite results.
