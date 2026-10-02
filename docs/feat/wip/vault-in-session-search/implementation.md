@@ -1,6 +1,6 @@
 # In-session vault search — implementation plan
 
-> Status: Tasks 1–5 implemented and reviewed; Task 6 pending
+> Status: done — Tasks 1–6 implemented, reviewed and verified
 > Created: 2026-09-20
 > Issue: [#101](https://github.com/serpro69/capy/issues/101)
 > Design: [design.md](design.md)
@@ -294,6 +294,29 @@ Primary artifacts: extend the existing find_bench_test.go and feature performanc
 4. Use $kk:document to update README.md's vault TUI controls and docs/architecture.md's viewer description: scopes, exact/fuzzy semantics, plain rendering, nested return behavior, and no reindex requirement. Do not advertise these before the feature is implemented. → verify: documented keys/scope/clear behavior match app-level tests and a manual TUI walkthrough.
 5. Invoke $kk:test for the full suite, $kk:review-code with Go language input, and $kk:review-spec for all three feature documents. Resolve findings or record an actionable remaining item at the affected site and in tasks.md; do not mark the issue complete with an unmet acceptance criterion. → verify: final review/test evidence and remaining work, if any, are durable.
 
+### Task 6 implementation notes
+
+The final harness extends the existing reference fixture to 86 operation classes
+per build, including hidden-result transitions and local/root/raw suspension.
+All 100 samples per class pass the 100 ms gate. `find_lifecycle_bench_test.go`
+also runs the new scenario assertions in ordinary tests on both platforms and
+measures twenty nested open/back cycles in its opt-in retained-memory harness.
+Explicit command completion joins cosmetic Batch children before heap checkpoints,
+without including those timer waits in search-update latency. Both final latency
+runs use this corrected harness. See [performance.md](performance.md) for complete
+tables, stress measurements and comparisons with the earlier gates.
+
+[verification.md](verification.md) maps every acceptance criterion to code/tests
+and records the synthetic terminal walkthrough, build/linkage checks and test
+environment. README and architecture now document the completed controls, scope,
+plain presentation and nested return semantics. Spec review also reproduced a
+one-row overflow when copy status was appended below the search footer.
+`Model.View` now hides that transient status at height one and restores it on
+growth; the new exact/fuzzy regression retains counter and source identity.
+No dependency, CLI/configuration, schema, setup-artifact or CI change was required.
+Build/test/CI conventions are inherited from [AGENTS.md](../../../../AGENTS.md).
+Final review and compatibility outcomes are recorded in [tasks.md](tasks.md).
+
 ### Verification matrix
 
 | Area | Essential cases |
@@ -354,8 +377,9 @@ Also measure 100,000 lines, a single 1 MiB content line, long grapheme sequences
 Task 1 performance evidence is available in [performance.md](performance.md).
 It measures the implemented exact path and scans the full corpus computationally.
 Task 5's integrated fuzzy gate is recorded separately in the same report.
-Complete hidden-target and suspension evidence remains Task 6; those paths cannot
-be certified using the Task 1 or Task 5 sample sets alone.
+The [complete Task 6 protocol](performance.md#task-6-complete-protocol--2026-10-02)
+adds hidden-target and suspension evidence; those paths are not certified by
+the Task 1 or Task 5 sample sets alone.
 
 ## Assumptions and bounded follow-ups
 

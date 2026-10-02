@@ -1,8 +1,10 @@
 # In-session search performance evidence
 
-The [Task 5 fuzzy gate](#task-5-fuzzy-gate--2026-10-02) passes on the final reviewed
-implementation, with a maximum of **28.876 ms** across both builds. Task 6 still
-owns the complete feature verification matrix.
+The [complete Task 6 protocol](#task-6-complete-protocol--2026-10-02) passes: all
+86 operation classes × 100 samples per build meet 100 ms, with a maximum of
+**29.135 ms default / 28.601 ms glamour**. It includes the final suspension and
+retained-memory measurements. Earlier sections below preserve the historical
+Task 1/3/5 gates and their limits at the time of measurement.
 
 The implemented main-transcript exact-search path passes the early 100 ms gate
 in both builds. The final measured maximum was **27.052 ms**. This report covers
@@ -342,3 +344,262 @@ cost analysis and do not replace the application-path gate above.
 | 256 ASCII runes | 5335027–5421404 | 5105981–5294231 | 240408–240409 | 240408–240410 |
 | 256 Unicode runes | 5540534–5778477 | 5449132–5594712 | 120600 | 120600 |
 | No match | 5427337–5519394 | 5405761–6488367 | 24 | 24 |
+
+## Task 6 complete protocol — 2026-10-02
+
+The final harness passes **all 86 operation classes × 100 completed samples per
+build**: maximum **29.135 ms default / 28.601 ms glamour**, below the 100 ms gate.
+This includes the earlier 39 exact/fuzzy classes and 47 new hidden-transition,
+local-frame, child-session and raw-return classes. Ordinary `TestFindLifecycle`
+runs the same new scenario assertions for both Claude and Codex without timing
+thresholds. Final raw measurements:
+[default](.reviews/task6-latency-default.txt),
+[glamour](.reviews/task6-latency-glamour.txt).
+
+Machine: Apple M4 Pro (14 logical CPUs), macOS 26.6.2 (25G83), Go 1.25.2
+darwin/arm64, GOMAXPROCS=14, CGO enabled. Measurements ran sequentially after the
+repository test/race/vet/build jobs finished. The machine sample before the final
+runs reported 92.1% CPU idle. Revision: dirty `feat/session_search` at `9f89f15`;
+Task 6 adds test harnesses and documentation plus a narrow one-row status layout
+correction found by final spec review. The search-core source digest
+uses Task 5's same file order:
+`eefba817459a4cff20fb39247beeeef52cda8c2d7d8b05505324b908ef6ba57e`.
+Harness digest (`find_bench_test.go`, then `find_lifecycle_bench_test.go`):
+`eedce7f824e74e8a214835376e97d66b37982122b6988447548cb7a6c3af0c4c`.
+
+Both final runs were repeated after the one-row root status correction. The
+full viewer bundle digest (the seven Task 5 files followed by `app.go`, `raw.go`)
+is `a951ce7132e364accea0fd35c2959d382e972e13845e549298d55679f413d703`.
+
+The fixture remains seed 20260920, SHA-256
+`d565dddaa76fbb50f300b5ab7d5c79e3f5b0add1c46fa09d1d8528175b9a0ef9`:
+10,000 content lines, 1,034,588 field bytes, 200 messages and 100 collapsed bodies.
+The original 1/8/32/256-code-point queries and no-match query are unchanged.
+Initial size is 100×30; return cases include 80×30 width changes and 100×10 height
+changes. These are parsed-message fixtures installed in already-open scopes;
+archive loading/decoding and raw formatting finish before timed search returns.
+Model.Update, command scheduling, computation, result application and Model.View
+are included. The terminal emulator's painting remains outside this measure.
+
+New exact cases cover visible → summary → hidden body → visible, replacement of
+one tool detail by another, hidden resize, draft cancellation, clear, and both
+clear-then-back and immediate back. Local cases restore a tool's sidecar and a
+sidecar's parent; root cases restore two child levels, with and without resize.
+Raw-return cases cover main, sidecar, manual tool, search-selected tool and child,
+each with exact or accepted fuzzy selection and all three terminal sizes. Checks
+pin original source positions, query/highlight identity, target, bounded frame
+depth, fresh epochs, worker retirement and zero search/metadata mutations.
+
+Each row below reports milliseconds and mean allocated bytes per operation.
+Timing includes correctness assertions as well as the application work. Test
+cleanup joins all dispatched Batch children, including cosmetic cursor timers;
+those waits are outside search-update timing. The initial default run also passed
+(maximum 27.924 ms), but its unjoined timer closures contaminated retained-memory
+checkpoints. The table and heap evidence below use the corrected, re-reviewed
+harness and fresh runs; no failing reference operation was dropped.
+
+| Operation | Default median | p95 | Maximum | Bytes/op | Glamour median | p95 | Maximum | Bytes/op |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| open/cold-projection | 10.038 | 10.463 | 13.432 | 6508520 | 10.113 | 10.908 | 12.191 | 6499092 |
+| edit/0/1-runes | 4.379 | 4.579 | 4.813 | 14691754 | 4.421 | 4.675 | 5.177 | 14706203 |
+| edit/1/8-runes | 2.902 | 3.099 | 3.228 | 638292 | 2.894 | 3.191 | 3.508 | 643229 |
+| edit/2/32-runes | 2.672 | 2.812 | 3.075 | 534746 | 2.703 | 3.093 | 3.242 | 536743 |
+| edit/3/256-runes | 2.438 | 2.665 | 2.813 | 524447 | 2.430 | 2.601 | 2.816 | 523682 |
+| edit/4/256-runes | 2.559 | 2.778 | 2.950 | 561076 | 2.521 | 2.746 | 2.969 | 561734 |
+| edit/5/15-runes | 2.808 | 3.049 | 3.231 | 509548 | 2.765 | 3.060 | 3.193 | 508793 |
+| enter | 0.181 | 0.203 | 0.346 | 281086 | 0.185 | 0.231 | 0.490 | 281834 |
+| navigate/n | 0.244 | 0.263 | 0.689 | 509812 | 0.249 | 0.353 | 0.616 | 506959 |
+| navigate/N | 0.274 | 0.456 | 0.707 | 614000 | 0.275 | 0.462 | 0.615 | 607657 |
+| selected/resize | 10.105 | 10.401 | 10.575 | 5751123 | 10.186 | 10.913 | 12.073 | 5753800 |
+| rapid/final-keystroke | 2.875 | 3.104 | 3.178 | 2336382 | 2.850 | 3.094 | 3.466 | 2334272 |
+| full-corpus/build+scan0 | 3.834 | 4.005 | 4.207 | 16302297 | 3.798 | 4.019 | 4.374 | 16302167 |
+| full-corpus/build+scan1 | 2.824 | 3.109 | 3.202 | 2351132 | 2.815 | 3.229 | 3.272 | 2351129 |
+| full-corpus/build+scan2 | 2.647 | 2.879 | 3.094 | 2248732 | 2.622 | 3.016 | 3.192 | 2248728 |
+| full-corpus/build+scan3 | 2.334 | 2.629 | 2.783 | 2227226 | 2.333 | 2.704 | 2.802 | 2227228 |
+| full-corpus/build+scan4 | 2.340 | 2.745 | 2.812 | 2225690 | 2.349 | 2.782 | 2.931 | 2225688 |
+| full-corpus/build+scan5 | 2.757 | 3.002 | 3.139 | 2224176 | 2.727 | 3.074 | 3.206 | 2224180 |
+| fuzzy/open-cold | 11.067 | 11.515 | 11.575 | 8960424 | 11.160 | 11.736 | 11.950 | 8960370 |
+| fuzzy/edit0/1 | 25.573 | 26.832 | 29.135 | 9032603 | 25.032 | 26.641 | 28.601 | 9032385 |
+| fuzzy/edit1/8 | 17.218 | 18.142 | 18.644 | 3867726 | 17.060 | 19.008 | 20.574 | 3867658 |
+| fuzzy/edit2/32 | 6.865 | 7.197 | 7.322 | 1082732 | 6.841 | 7.554 | 7.787 | 1082771 |
+| fuzzy/edit3/256 | 6.492 | 6.875 | 7.087 | 997282 | 6.460 | 6.767 | 7.049 | 997344 |
+| fuzzy/edit4/256 | 5.608 | 5.884 | 6.112 | 642500 | 5.648 | 5.991 | 6.429 | 642428 |
+| fuzzy/edit5/15 | 5.524 | 5.842 | 6.019 | 439023 | 5.690 | 6.324 | 6.562 | 439041 |
+| fuzzy/down | 0.068 | 0.148 | 0.285 | 218894 | 0.077 | 0.117 | 0.273 | 218906 |
+| fuzzy/pgdown | 0.064 | 0.130 | 0.218 | 218897 | 0.077 | 0.123 | 0.283 | 218897 |
+| fuzzy/pgup | 0.069 | 0.088 | 0.242 | 218898 | 0.078 | 0.085 | 0.214 | 218868 |
+| fuzzy/picker-resize | 8.902 | 9.317 | 9.410 | 3473133 | 9.177 | 10.334 | 10.724 | 3473106 |
+| fuzzy/accept-visible | 9.995 | 10.378 | 10.600 | 4261442 | 9.882 | 10.253 | 10.643 | 4261382 |
+| fuzzy/resize-visible | 10.261 | 10.791 | 11.107 | 5754207 | 10.231 | 10.851 | 12.467 | 5746388 |
+| fuzzy/accept-summary | 10.103 | 10.793 | 12.544 | 4370794 | 9.924 | 10.298 | 11.008 | 4366435 |
+| fuzzy/resize-summary | 10.362 | 10.834 | 11.445 | 5880939 | 10.157 | 10.595 | 10.802 | 5880156 |
+| fuzzy/accept-body | 9.992 | 10.394 | 10.560 | 4362953 | 9.832 | 10.271 | 10.376 | 4365629 |
+| fuzzy/resize-body | 10.220 | 10.596 | 10.843 | 5882015 | 10.451 | 11.272 | 12.462 | 5887614 |
+| fuzzy/accept-browse | 9.879 | 10.268 | 10.537 | 4261462 | 9.923 | 10.379 | 10.616 | 4261440 |
+| fuzzy/resize-browse | 10.256 | 10.662 | 10.982 | 5754573 | 10.321 | 11.016 | 12.088 | 5750286 |
+| fuzzy/cancel-exact | 0.186 | 0.213 | 0.351 | 276495 | 0.190 | 0.208 | 0.426 | 276491 |
+| fuzzy/rapid-final | 17.346 | 17.947 | 18.288 | 5555476 | 17.575 | 18.427 | 19.625 | 5553934 |
+| exact/visible-to-summary | 0.395 | 0.426 | 1.421 | 680703 | 0.400 | 0.483 | 1.096 | 677895 |
+| exact/summary-to-body | 0.360 | 0.384 | 0.819 | 576280 | 0.359 | 0.397 | 0.921 | 580562 |
+| exact/body-to-visible | 0.393 | 0.421 | 0.887 | 589858 | 0.398 | 0.443 | 0.856 | 587693 |
+| exact/detail-to-detail | 0.386 | 0.441 | 0.913 | 658096 | 0.371 | 0.405 | 0.926 | 655980 |
+| exact/hidden-resize | 10.411 | 10.826 | 11.117 | 5898509 | 10.600 | 11.546 | 12.175 | 5901204 |
+| exact/cancel-hidden | 0.197 | 0.228 | 0.539 | 276356 | 0.190 | 0.223 | 0.815 | 276335 |
+| exact/clear-hidden | 0.245 | 0.421 | 0.553 | 529483 | 0.264 | 0.299 | 0.794 | 530891 |
+| exact/back-cleared | 0.143 | 0.164 | 0.364 | 263821 | 0.141 | 0.165 | 0.604 | 264304 |
+| exact/back-hidden | 0.149 | 0.173 | 0.426 | 273334 | 0.151 | 0.164 | 0.412 | 272330 |
+| local/tool-return/resize=false | 0.239 | 0.299 | 0.628 | 292904 | 0.239 | 0.268 | 0.880 | 291455 |
+| local/tool-return/resize=true | 10.333 | 10.801 | 11.035 | 5730540 | 10.397 | 11.028 | 11.602 | 5732607 |
+| local/sidecar-return/resize=false | 0.212 | 0.244 | 0.459 | 280174 | 0.218 | 0.248 | 0.649 | 280879 |
+| local/sidecar-return/resize=true | 10.313 | 10.899 | 12.037 | 5717557 | 10.242 | 10.753 | 11.125 | 5721127 |
+| root/child-return/resize=false | 0.389 | 0.416 | 0.893 | 359852 | 0.386 | 0.440 | 1.119 | 361969 |
+| root/child-return/resize=true | 10.353 | 10.858 | 11.203 | 5770229 | 10.439 | 10.949 | 11.153 | 5767358 |
+| root/grandchild-return/resize=false | 0.382 | 0.405 | 0.417 | 377496 | 0.384 | 0.414 | 0.715 | 379654 |
+| root/grandchild-return/resize=true | 10.361 | 10.808 | 10.993 | 5786495 | 10.537 | 11.183 | 12.329 | 5783673 |
+| raw/main/fuzzy=false/100x30 | 0.215 | 0.233 | 0.247 | 279456 | 0.213 | 0.235 | 0.762 | 280205 |
+| raw/main/fuzzy=false/100x10 | 0.123 | 0.142 | 0.559 | 230442 | 0.121 | 0.135 | 0.146 | 229696 |
+| raw/main/fuzzy=false/80x30 | 10.533 | 11.299 | 11.576 | 5716821 | 10.360 | 10.774 | 10.946 | 5718899 |
+| raw/main/fuzzy=true/100x30 | 0.199 | 0.242 | 0.601 | 273846 | 0.191 | 0.209 | 0.566 | 274547 |
+| raw/main/fuzzy=true/100x10 | 0.132 | 0.145 | 0.159 | 230979 | 0.123 | 0.138 | 0.141 | 230978 |
+| raw/main/fuzzy=true/80x30 | 10.297 | 10.776 | 11.406 | 5849392 | 10.417 | 11.091 | 11.269 | 5850054 |
+| raw/sidecar/fuzzy=false/100x30 | 0.238 | 0.258 | 0.755 | 281307 | 0.240 | 0.263 | 0.794 | 282011 |
+| raw/sidecar/fuzzy=false/100x10 | 0.117 | 0.128 | 0.138 | 226608 | 0.118 | 0.146 | 0.471 | 228060 |
+| raw/sidecar/fuzzy=false/80x30 | 10.267 | 10.841 | 10.906 | 5720903 | 10.288 | 10.785 | 11.124 | 5719451 |
+| raw/sidecar/fuzzy=true/100x30 | 0.187 | 0.202 | 0.216 | 273800 | 0.184 | 0.199 | 0.209 | 273800 |
+| raw/sidecar/fuzzy=true/100x10 | 0.123 | 0.142 | 0.576 | 230581 | 0.118 | 0.143 | 0.372 | 231284 |
+| raw/sidecar/fuzzy=true/80x30 | 10.295 | 10.858 | 10.935 | 5857641 | 10.449 | 11.156 | 11.983 | 5860381 |
+| raw/manual-tool/fuzzy=false/100x30 | 0.194 | 0.217 | 0.683 | 275603 | 0.202 | 0.219 | 0.520 | 276308 |
+| raw/manual-tool/fuzzy=false/100x10 | 0.121 | 0.140 | 0.149 | 229832 | 0.135 | 0.153 | 0.491 | 230580 |
+| raw/manual-tool/fuzzy=false/80x30 | 0.263 | 0.284 | 0.984 | 500711 | 0.273 | 0.297 | 0.748 | 496447 |
+| raw/manual-tool/fuzzy=true/100x30 | 0.195 | 0.225 | 0.589 | 273841 | 0.204 | 0.229 | 0.545 | 274552 |
+| raw/manual-tool/fuzzy=true/100x10 | 0.122 | 0.144 | 0.366 | 231287 | 0.131 | 0.145 | 0.462 | 231987 |
+| raw/manual-tool/fuzzy=true/80x30 | 0.262 | 0.279 | 0.491 | 497969 | 0.264 | 0.299 | 0.555 | 500837 |
+| raw/selected-tool/fuzzy=false/100x30 | 0.200 | 0.222 | 0.332 | 276324 | 0.200 | 0.220 | 0.478 | 275661 |
+| raw/selected-tool/fuzzy=false/100x10 | 0.121 | 0.142 | 0.350 | 229820 | 0.121 | 0.137 | 0.227 | 229073 |
+| raw/selected-tool/fuzzy=false/80x30 | 10.395 | 10.836 | 10.972 | 5819351 | 10.306 | 10.847 | 11.310 | 5814417 |
+| raw/selected-tool/fuzzy=true/100x30 | 0.189 | 0.208 | 0.882 | 274544 | 0.189 | 0.213 | 0.442 | 275252 |
+| raw/selected-tool/fuzzy=true/100x10 | 0.122 | 0.135 | 0.359 | 230578 | 0.119 | 0.133 | 0.401 | 230584 |
+| raw/selected-tool/fuzzy=true/80x30 | 10.332 | 10.855 | 10.945 | 5846480 | 10.374 | 10.882 | 11.097 | 5847145 |
+| raw/child/fuzzy=false/100x30 | 0.212 | 0.231 | 0.752 | 280932 | 0.214 | 0.233 | 0.721 | 280934 |
+| raw/child/fuzzy=false/100x10 | 0.119 | 0.143 | 0.355 | 231172 | 0.124 | 0.144 | 0.337 | 230466 |
+| raw/child/fuzzy=false/80x30 | 10.432 | 11.532 | 12.428 | 5717532 | 10.419 | 11.322 | 11.627 | 5717532 |
+| raw/child/fuzzy=true/100x30 | 0.193 | 0.217 | 0.598 | 274568 | 0.218 | 0.261 | 0.767 | 275279 |
+| raw/child/fuzzy=true/100x10 | 0.125 | 0.140 | 0.148 | 229856 | 0.129 | 0.145 | 0.429 | 231310 |
+| raw/child/fuzzy=true/80x30 | 10.334 | 11.115 | 12.356 | 5849369 | 10.317 | 10.827 | 12.658 | 5847170 |
+
+### Comparison with the earlier gates
+
+Task 1's maximum was 27.052 ms on Linux/Intel; different hardware and an earlier
+partial interaction set prevent a speedup/regression inference. Task 5 used this
+same Apple/Go configuration and recorded 28.876 ms default / 27.462 ms glamour
+across its 39 classes. Task 6 reruns those classes and adds 47; all samples still
+pass. Small timing differences are observed run-to-run variation, not a claim of
+statistical equivalence or improvement. The normal viewer's load/render cost is
+outside all three search-update protocols.
+
+### Stress and retained memory
+
+These larger inputs assess scaling and cancellation; the 100 ms contract applies
+to the reference fixture, not arbitrary input size. Exact retained bytes keep the
+corpus, matches and projection alive across GC after baseline source strings
+already exist. Fuzzy retained bytes are incremental for full matching, sorting
+and prepared snippets while the exact structures also remain live. No result cap
+or dropped line is used.
+
+| Workload | Default exact time / retained bytes | Glamour exact time / retained bytes | Default fuzzy time / extra bytes | Glamour fuzzy time / extra bytes |
+| --- | --- | --- | --- | --- |
+| 100,000 lines (1,199,999 bytes) | 18.081542ms / 19657688 | 19.948542ms / 19657936 | 623.2155ms / 23829320 | 623.878ms / 23829256 |
+| One MiB line (1,048,576 bytes) | 11.751958ms / 2883208 | 11.506584ms / 2883208 | 6.762042ms / 2936 | 6.383416ms / 2936 |
+| Long graphemes (1,049,152 bytes / 65 lines) | 12.579125ms / 2208128 | 10.190625ms / 2208192 | 11.071875ms / 1195752 | 9.878208ms / 1195752 |
+
+Cancellation is injected after four scanner checkpoints, including inside long
+lines. These values include work before that checkpoint, not an OS scheduling
+guarantee. Every cancellation returned the typed cancellation result.
+
+| Workload | Default exact / fuzzy | Glamour exact / fuzzy |
+| --- | --- | --- |
+| 100,000 lines | 875ns / 792ns | 1.042µs / 1µs |
+| One MiB line | 27.458µs / 28.625µs | 28.042µs / 28.042µs |
+| Long graphemes | 15.208µs / 61µs | 15.375µs / 58.25µs |
+
+`TestFindLifetimeStress` warms the normal viewer, then measures exact search and
+an open fuzzy picker. Twenty cycles open a Codex child with a fresh reference
+corpus, open its tool detail, accept a fuzzy selection, inspect raw data and return
+to the parent. Every heap checkpoint follows command retirement and GC; suspended
+and discarded stack capacities are asserted empty on return. The final viewer
+exit also asserts nil corpus/projection and empty stacks.
+
+| Heap delta, bytes | Default | Glamour |
+| --- | ---: | ---: |
+| Exact above warm normal | 3032664 | 3039512 |
+| Open picker above exact | 636384 | 637064 |
+| Nested child/tool/fuzzy above parent | 6567048 | 6448040 |
+| After 1 return cycle | -176 | -208 |
+| After 10 return cycles | 5424 | 10496 |
+| After 20 return cycles | 13424 | 14048 |
+| After leaving viewer | -6657448 | -6528344 |
+
+Large nested search structures are released on return. Small residual deltas
+include testing/runtime bookkeeping and caches; these are measured heap samples,
+not an assertion that every byte of process memory is constant. Negative exit
+deltas reflect releasing the parent as well. Initial measurements before timer
+retirement are excluded from this table because they mixed live cosmetic work
+with retained frames.
+
+Reproduction uses the synthetic keys, `CGO_ENABLED=1`, writable
+`GOCACHE=/tmp/capy-go-build` and canonical `TMPDIR=/private/tmp`:
+
+~~~sh
+CAPY_FIND_BENCH=1 go test -tags fts5 -run '^TestFind(Latency|Stress|LifetimeStress)$' -count=1 -v ./internal/vault/tui/
+CAPY_FIND_BENCH=1 go test -tags fts5,glamour -run '^TestFind(Latency|Stress|LifetimeStress)$' -count=1 -v ./internal/vault/tui/
+~~~
+
+### Conventional benchmark detail
+
+All 15 corpus/exact/fuzzy/projection/highlight sub-benchmarks completed six
+repetitions in each build after the final latency runs. Raw outputs:
+[default](.reviews/task6-bench-default.txt),
+[glamour](.reviews/task6-bench-glamour.txt). These isolate costs; the application
+latency gate remains the evidence above. The benchmarked corpus, matcher,
+projection and highlight functions are identical to the final Task 5 source;
+Task 6's root one-row status correction does not change these functions.
+
+| Benchmark | Default ns/op range | Glamour ns/op range | Default B/op range | Glamour B/op range |
+| --- | ---: | ---: | ---: | ---: |
+| Corpus | 289393–304540 | 283526–286329 | 2224182–2224190 | 2224184–2224190 |
+| Exact/query0 | 3574338–3668358 | 3533777–3753505 | 14077937–14077940 | 14077968–14077978 |
+| Exact/query1 | 2708763–2745592 | 2707167–2725758 | 126952–126952 | 126952–126953 |
+| Exact/query2 | 2469773–2531006 | 2468497–2515520 | 24552–24552 | 24552–24552 |
+| Exact/query3 | 2209760–2239860 | 2214403–2245732 | 3048–3048 | 3048–3048 |
+| Exact/query4 | 2233007–2295864 | 2237241–2250273 | 1512–1512 | 1512–1512 |
+| Exact/query5 | 2605696–2665434 | 2611041–2620967 | 0–0 | 0–0 |
+| Projection | 9724287–10322810 | 9966724–10494996 | 3745264–3745272 | 3745275–3745281 |
+| Highlight | 98918–101283 | 99428–102876 | 13896–13896 | 13896–13896 |
+| Fuzzy/query0 | 4516420–4624202 | 4523932–4905815 | 2082970–2082974 | 2082974–2082976 |
+| Fuzzy/query1 | 5961222–6234230 | 5721998–5951949 | 573464–573465 | 573464–573467 |
+| Fuzzy/query2 | 5825992–5922080 | 5643101–5751152 | 293912–293912 | 293912–293914 |
+| Fuzzy/query3 | 5532836–5644782 | 5334815–5485325 | 240408–240408 | 240408–240409 |
+| Fuzzy/query4 | 5860838–6113196 | 5598954–5773420 | 120600–120600 | 120600–120600 |
+| Fuzzy/query5 | 5837849–6073638 | 5632651–5939249 | 24–24 | 24–24 |
+
+~~~sh
+go test -tags fts5 -run '^$' -bench '^BenchmarkFind' -benchmem -count=6 ./internal/vault/tui/
+go test -tags fts5,glamour -run '^$' -bench '^BenchmarkFind' -benchmem -count=6 ./internal/vault/tui/
+~~~
+
+### Final retrieval compatibility
+
+`make bench-quality BENCH_BRANCH=vault-find-task6` and
+`make bench-compare BASE=master TARGET=vault-find-task6` passed. The
+[comparison output](.reviews/task6-quality-compare.txt) verifies dataset SHA-256
+`7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`.
+Every retrieval-quality and context-reduction metric is unchanged.
+
+Baseline: the existing matching `bench-results/master.json`, produced from
+**detached HEAD at 397ecfd**, not a claim that the file was measured on the current
+master. Target: `bench-results/vault-find-task6.json`, measured on dirty
+`feat/session_search` at **9f89f15** with an explicit report label. No existing
+report was overwritten and no new detached checkout/report was created.
+The optional benchstat half was skipped because that binary is unavailable;
+both conventional six-repetition benchmark sets above completed and retain their
+raw results. This is the completed feature comparison, separate from earlier gates.
