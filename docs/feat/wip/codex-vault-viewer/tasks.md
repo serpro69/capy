@@ -6,7 +6,7 @@
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
 > Status: in-progress
 > Created: 2026-10-03
-> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); Tasks 1–2 complete
+> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); Tasks 1–3 complete
 > Not Doing: JavaScript interpretation, shell-edit inference, Rust renderer port, rich syntax highlighting, line-number gutter, per-file picker, global FTS changes, export changes, schema/version changes, general cross-platform tool-input UI, live filesystem verification
 
 ## Task 1: Freeze synthetic and real-corpus compatibility
@@ -46,11 +46,11 @@ This slice handles completed paginated updates. Task 3 completes other operation
 and identity resilience; Tasks 4–5 finish legacy edits and long-input disclosure.
 
 Evidence: [verification](verification.md#task-2--grouped-completed-paginated-updates-2026-10-03),
-[isolated code review](.reviews/task-2-code-review-2026-10-03.md). Task 3 is next.
+[isolated code review](.reviews/task-2-code-review-2026-10-03.md).
 
 ## Task 3: Complete paginated operations, states, and identity
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Size:** M
 - **Can run in parallel with:** Task 5
@@ -58,10 +58,16 @@ Evidence: [verification](verification.md#task-2--grouped-completed-paginated-upd
 
 ### Subtasks
 
-- [ ] 3.1 Add add/delete/move conversion and absent/null/real destination handling → verify: empty files, line endings, and malformed destination fixtures.
-- [ ] 3.2 Complete exact failure/decline/unconfirmed/partial labels and diagnostics → verify: no unconfirmed applied hunks or incomplete aggregate totals.
-- [ ] 3.3 Implement explicit normalized equality and exact-ID dedup/conflict handling → verify: stdout/stderr/diagnostic-only changes conflict; map order/location changes do not.
-- [ ] 3.4 Compare corpus digests and inspect real adverse/move cases read-only → verify: correct states with unchanged scanner/export bytes.
+- [x] 3.1 Add add/delete/move conversion and absent/null/real destination handling → verify: empty files, line endings, and malformed destination fixtures.
+- [x] 3.2 Complete exact failure/decline/unconfirmed/partial labels and diagnostics → verify: no unconfirmed applied hunks or incomplete aggregate totals.
+- [x] 3.3 Implement explicit normalized equality and exact-ID dedup/conflict handling → verify: stdout/stderr/diagnostic-only changes conflict; map order/location changes do not.
+- [x] 3.4 Compare corpus digests and inspect real adverse/move cases read-only → verify: correct states with unchanged scanner/export bytes.
+
+Evidence: [verification](verification.md#task-3--paginated-operations-states-and-identity-2026-10-03),
+[isolated code review](.reviews/task-3-code-review-2026-10-03.md). Task 4 is next.
+Explicit empty-string update diffs cover pure moves and no-op updates; missing
+or null remains unavailable. Mixed-family wire fixtures remain with Task 4's
+legacy adapter; the normalized equality is already shared.
 
 ## Task 4: Legacy events and direct results reconcile correctly
 

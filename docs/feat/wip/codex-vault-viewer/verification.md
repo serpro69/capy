@@ -205,3 +205,109 @@ input grammar and a read-only aggregate corpus scan. Strict prefix validation is
 retained; the added prefixed/unprefixed regression cases passed under `-race`.
 Two unmeasured allocation suggestions are recorded for Task 6's performance work.
 There are no outstanding required Task 2 fixes or new conventions to index.
+
+## Task 3 — paginated operations, states and identity (2026-10-03)
+
+Task 3 completes paginated add/delete/move conversion and exact event identity.
+Adds and deletes use archived content, including empty files, CRLF and missing
+final newlines. Absent/null destinations mean no move; nonempty strings retain
+both paths, while empty/wrong-type destinations remain unavailable. Completed
+groups keep valid sibling diffs without presenting partial totals as complete.
+Failed, declined and unconfirmed groups show reported paths and diagnostics,
+with no applied hunks or aggregate line counts.
+
+Nonempty IDs reconcile once per transcript at the first physical event anchor.
+Equality compares state, availability, sorted original paths, operations,
+destinations, verbatim content/diff bytes, stdout/stderr and diagnostic
+code/field/value. Rendered text/counts, timestamps and diagnostic locations are
+excluded. Diagnostic JSON is normalized for member order without rounding
+numbers. Conflicts become one unconfirmed detail with source-line references;
+empty IDs remain independent. Raw records are untouched.
+
+### Synthetic coverage and corpus discoveries
+
+`TestCodexFileChangeDiff_*` covers archived adds/deletes, empty content versus
+missing/null content, destination shapes, exact counts and newline annotations.
+`TestCodexFileChangePaginated_AllOperationsAndStates` checks all operation headers
+and conservative state presentation. `TestCodexFileChangeIdentity_*` checks each
+equality field, output-only/diagnostic-only conflicts, map order, optional nulls,
+distinct/empty IDs, repeated conflicts, location-independent diagnostics and
+physical anchors across malformed/oversized neighbors. Warnings are bounded and
+do not contain patch bodies, IDs or paths; ordinary failure/decline emits none.
+
+Read-only inspection exposed six pure moves with explicitly empty diff strings.
+A later live recording also contained an explicit empty no-op update. Both now
+produce valid zero-count diffs; missing/null and whitespace-only diffs remain
+unavailable. This refines the plan's empty-versus-unavailable distinction without
+relaxing numbered-hunk validation. The initial synthetic run also caught the
+shared JSON string helper's acceptance of `null` as an empty string; the new
+converter uses a local presence-aware guard, preserving older consumer behavior.
+
+The new opt-in `TestCodexFileChangeCanary` reads the local corpus and independently
+checks wire states, canonical ID counts and first anchors against viewer details.
+Its exact content/diagnostic equality coverage remains synthetic. Final default
+run: **121 recordings with paginated edits; 926 completed, 9 failed, 1 declined;
+782 added, 47 deleted and 998 updated file records, including 12 moves; zero
+unavailable completed-file diffs** (8.85 seconds). Counts are observations of a
+live corpus, separate from the parity run below. Raw paths/content stay local.
+
+```sh
+GOCACHE=/tmp/capy-codex-vault-viewer-go-cache \
+CAPY_DB_KEY=test-key-for-development CAPY_VAULT_KEY=test-key \
+CAPY_CODEX_CHANGES_CANARY=1 \
+  go test -tags fts5 -count=1 -run '^TestCodexFileChangeCanary$' -v ./internal/vault
+```
+
+Early probe failures are not counted as passes. A faulty move assertion was
+replaced with checks over normalized file records, and private-body assertions
+were replaced with boolean checks. The isolated review then identified a canary
+assumption incompatible with deduplication; the final probe groups nonempty IDs
+and accepts unconfirmed conflicts. The final implementation plus corpus probe
+also passed under `-race` (81.37 seconds, including the focused Codex suite).
+
+### Scanner/export compatibility
+
+Working-tree base: `91c966d203bfc3a5a62e4876aaff7e2426a90744`.
+The original Task 1 baseline and companion retain their recorded SHA-256 values:
+
+- TSV: `c68edd3a7734c202c364d7e87a02298050fb2e64be7a50ca5337b050c1a08055`.
+- Companion: `d7178b74f3810e02f6d48c98626c0361b3feec2721f3404acf440bf9674abc4f`.
+
+The same `CAPY_CODEX_PARITY_BASELINE` command documented under Task 1 passed
+after the final empty-diff change (50.48 seconds): **478 unchanged recordings,
+zero scanner/text/Markdown output mismatches**. It discovered 523 recordings:
+4 appended, 0 otherwise changed, 41 new, 0 removed, 0 vanished, 0 compressed and
+0 revert variants. Unchanged category coverage remains 111 completed paginated,
+8 failed, 1 declined, 2 real-move and 13 legacy-direct recordings. Frozen
+synthetic scanner/export goldens also pass. Legacy viewer changes remain Task 4.
+
+### Checks and review
+
+All Go commands use `-tags fts5`, the task-specific `/tmp` Go cache and synthetic
+knowledge/vault keys; glamour commands add the `glamour` build tag.
+
+- `go test -tags fts5 -count=1 ./...` passed every package, using an empty
+  temporary `XDG_CONFIG_HOME` and unrestricted execution for existing socket tests.
+  Vault: 239.40 seconds; default TUI: 21.89 seconds; CLI: 233.01 seconds.
+- `go test -tags fts5,glamour -count=1 ./internal/vault/tui/...` passed
+  (24.23 seconds).
+- After the final empty-update and canary fixes, the entire affected subtree
+  passed again: `go test -tags fts5 -count=1 ./internal/vault/...`
+  (vault 218.09 seconds, TUI 21.77 seconds).
+- Focused race checks passed in both builds. Final glamour invocation:
+  `go test -race -tags fts5,glamour -count=1 -run
+  '^(TestCodexFileChange|TestCodexConsumers|TestCodexDecoder|TestViewerCodexFileChanges|TestTranscriptHeadingOverride|TestViewerFind)'
+  ./internal/vault ./internal/vault/tui` (1.63 and 1.82 seconds).
+- `make bench-quality BENCH_BRANCH=codex-vault-viewer-task3` passed, preserving
+  previous reports. `make bench-compare BASE=codex-vault-viewer-task2
+  TARGET=codex-vault-viewer-task3` found identical retrieval quality and context
+  reduction against Task 2's `8afa3de` report on dataset SHA-256
+  `7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`.
+  Performance comparison was explicitly skipped because `benchstat` is absent;
+  final parse/render and find-latency measurements remain Task 6.
+
+The [isolated review](.reviews/task-3-code-review-2026-10-03.md) is complete:
+the independent reviewer approved the final fixes; the external reviewer returned
+no actionable findings. No required Task 3 fix or new convention remains to index.
+Task 4 owns legacy/direct reconciliation and mixed-family wire tests, Task 5 owns
+long executable inputs, and Task 6 owns final feature documentation/verification.

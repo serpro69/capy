@@ -46,7 +46,18 @@ func codexPaginatedFileChange(item codexTurnItem) *FileChangeSet {
 }
 
 func changeDiagnostic(code, field string, raw json.RawMessage, message string) FileChangeDiagnostic {
-	return FileChangeDiagnostic{Code: code, Field: field, Value: string(raw), Message: message}
+	// Compare malformed values independently of JSON whitespace/member order,
+	// without rounding numbers or normalizing bytes inside recorded strings.
+	value := string(raw)
+	var decoded any
+	d := json.NewDecoder(strings.NewReader(value))
+	d.UseNumber()
+	if d.Decode(&decoded) == nil {
+		if encoded, err := json.Marshal(decoded); err == nil {
+			value = string(encoded)
+		}
+	}
+	return FileChangeDiagnostic{Code: code, Field: field, Value: value, Message: message}
 }
 
 func codexChangeOutput(raw json.RawMessage, field string, diagnostics *[]FileChangeDiagnostic) string {
@@ -68,15 +79,26 @@ func codexNormalizeFileChange(path string, raw json.RawMessage) FileChange {
 		return f
 	}
 	f.Kind, _ = asJSONString(wire.Type)
-	if f.Kind != "update" {
-		// Task 3 adds archived-content conversion for adds/deletes. Retain the
-		// source now, and show the operation as unavailable instead of omitting it.
+	switch f.Kind {
+	case "add", "delete":
+		content, ok := codexChangeString(wire.Content)
+		if !ok {
+			f.Diagnostics = append(f.Diagnostics, changeDiagnostic("content", "content", wire.Content,
+				"Recorded file content is missing or is not text."))
+			return f
+		}
+		f.Content = content
+		f.Diff = codexContentDiff(content, f.Kind == "add")
+		return f
+	case "update":
+		// Unified hunks and an optional move destination are handled below.
+	default:
 		f.Content, _ = asJSONString(wire.Content)
 		f.Diagnostics = append(f.Diagnostics, changeDiagnostic("operation", "type", wire.Type,
 			"Diff conversion for this file operation is unavailable."))
 		return f
 	}
-	text, ok := asJSONString(wire.UnifiedDiff)
+	text, ok := codexChangeString(wire.UnifiedDiff)
 	if !ok {
 		f.Diagnostics = append(f.Diagnostics, changeDiagnostic("diff", "unified_diff", wire.UnifiedDiff,
 			"Recorded update diff is missing or is not text."))
@@ -90,12 +112,15 @@ func codexNormalizeFileChange(path string, raw json.RawMessage) FileChange {
 				"Recorded move destination is malformed."))
 		} else {
 			f.MovePath = destination
-			// Task 3 completes move conversion; do not show a move as an update.
-			f.Diagnostics = append(f.Diagnostics, changeDiagnostic("move", "move_path", nil,
-				"Diff conversion for moves is unavailable."))
 		}
 	}
 	if len(f.Diagnostics) > 0 {
+		return f
+	}
+	// An explicitly empty diff records zero changed lines (a pure rename when
+	// a destination is present, otherwise a no-op). Missing/null was rejected.
+	if text == "" {
+		f.Diff = &Diff{}
 		return f
 	}
 	diff, reason := codexUpdateDiff(text)
@@ -107,6 +132,125 @@ func codexNormalizeFileChange(path string, raw json.RawMessage) FileChange {
 	return f
 }
 
+// Unlike optional output/destination fields, content must distinguish JSON null
+// from an explicitly recorded empty file. The shared string decoder accepts
+// null as Go's empty string for compatibility with older transcript consumers.
+func codexChangeString(raw json.RawMessage) (string, bool) {
+	if strings.TrimSpace(string(raw)) == "null" {
+		return "", false
+	}
+	return asJSONString(raw)
+}
+
+// codexContentDiff derives exact ranges from archived add/delete content. A
+// trailing newline terminates a line; it does not create an extra empty line.
+// Preserve CR bytes, and make a missing final newline explicit in the diff.
+func codexContentDiff(content string, added bool) *Diff {
+	d := &Diff{}
+	if content == "" {
+		return d
+	}
+	n := strings.Count(content, "\n")
+	if !strings.HasSuffix(content, "\n") {
+		n++
+	}
+	var body strings.Builder
+	prefix := byte('-')
+	if added {
+		d.Added = n
+		prefix = '+'
+		body.WriteString("@@ -0,0 +1," + strconv.Itoa(n) + " @@\n")
+	} else {
+		d.Removed = n
+		body.WriteString("@@ -1," + strconv.Itoa(n) + " +0,0 @@\n")
+	}
+	for rest := content; rest != ""; {
+		line, tail, newline := strings.Cut(rest, "\n")
+		rest = tail
+		body.WriteByte(prefix)
+		body.WriteString(line)
+		body.WriteByte('\n')
+		if !newline {
+			body.WriteString("\\ No newline at end of file\n")
+		}
+	}
+	d.Text = body.String()
+	return d
+}
+
+// Equality is over recorded evidence, not generated diffs or display messages.
+// Adapters sort files once and normalize optional values before this comparison.
+func codexFileChangesEqual(a, b *FileChangeSet) bool {
+	if a.State != b.State || a.ChangesAvailable != b.ChangesAvailable ||
+		a.Stdout != b.Stdout || a.Stderr != b.Stderr || len(a.Files) != len(b.Files) ||
+		!codexChangeDiagnosticsEqual(a.Diagnostics, b.Diagnostics) {
+		return false
+	}
+	for i, af := range a.Files {
+		bf := b.Files[i]
+		if af.Path != bf.Path || af.Kind != bf.Kind || af.MovePath != bf.MovePath ||
+			af.Content != bf.Content || !codexChangeDiagnosticsEqual(af.Diagnostics, bf.Diagnostics) {
+			return false
+		}
+	}
+	return true
+}
+
+func codexChangeDiagnosticsEqual(a, b []FileChangeDiagnostic) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, diagnostic := range a {
+		if diagnostic.Code != b[i].Code || diagnostic.Field != b[i].Field || diagnostic.Value != b[i].Value {
+			return false
+		}
+	}
+	return true
+}
+
+// Reconcile once before materializing entries. Slot indices stay stable, so
+// assistant grouping and physical anchors remain independent of deduplication.
+func codexReconcileFileChanges(slots []codexSlot, log *slog.Logger) {
+	type firstEvent struct {
+		index    int
+		original *FileChangeSet
+		conflict *FileChangeDiagnostic
+	}
+	byID := make(map[string]*firstEvent)
+	for i := range slots {
+		s := &slots[i]
+		if s.kind != EntryFileChange || s.fileChange.ID == "" {
+			continue
+		}
+		first := byID[s.fileChange.ID]
+		if first == nil {
+			byID[s.fileChange.ID] = &firstEvent{index: i, original: s.fileChange}
+			continue
+		}
+		if !codexFileChangesEqual(first.original, s.fileChange) {
+			canonical := &slots[first.index]
+			if first.conflict == nil {
+				// Preserve the original evidence for subsequent comparisons. Only
+				// the canonical copy acquires the unconfirmed state/diagnostic.
+				merged := *first.original
+				merged.State = FileChangeUnconfirmed
+				merged.Diagnostics = append(append([]FileChangeDiagnostic(nil), merged.Diagnostics...), FileChangeDiagnostic{
+					Code: "identity", Field: "id", Message: "Conflicting records for the same operation; changes are unconfirmed.",
+					SourceLines: []int{canonical.lineIndex},
+				})
+				first.conflict = &merged.Diagnostics[len(merged.Diagnostics)-1]
+				canonical.fileChange = &merged
+				log.Warn("vault codex decoder: conflicting file change identity",
+					"line", s.lineIndex, "first_line", canonical.lineIndex, "category", "item_completed/FileChange", "reason", "identity")
+			}
+			first.conflict.SourceLines = append(first.conflict.SourceLines, s.lineIndex)
+		}
+		// The first slot owns the canonical entry, including conflicts. Keep
+		// all original records available through the unchanged raw archive.
+		s.fileChange = nil
+	}
+}
+
 // Log at most one bounded warning per recognized event. Tool output, patches,
 // paths and offending wire values stay in the model, never in logs.
 func codexLogFileChange(log *slog.Logger, s *FileChangeSet, line int) {
@@ -116,11 +260,6 @@ func codexLogFileChange(log *slog.Logger, s *FileChangeSet, line int) {
 	} else {
 		for _, f := range s.Files {
 			for _, diagnostic := range f.Diagnostics {
-				// These are recognized operations intentionally awaiting Task 3,
-				// not malformed archives or format drift.
-				if diagnostic.Code == "move" || diagnostic.Code == "operation" && (f.Kind == "add" || f.Kind == "delete") {
-					continue
-				}
 				reason = diagnostic.Code
 				break
 			}
