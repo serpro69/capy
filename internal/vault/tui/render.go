@@ -105,18 +105,25 @@ func (r renderedTranscript) focusedContent(st Styles, focused int) string {
 }
 
 // rowForLine maps a source JSONL line index to the row to scroll to: the start
-// row of the last message at or before that line (deduped assistant snapshots
-// resolve to their canonical first line, so an exact hit lands on the message).
+// row of the latest source-line group at or before that line. An explicit
+// SourceAnchor in that group wins; otherwise its last message wins as before.
+// Deduped assistant snapshots resolve to their canonical first line.
 // Returns 0 when there is no match (empty transcript or a line before the first
 // message).
 func (r renderedTranscript) rowForLine(line int) int {
 	row := 0
+	groupLine, anchored := -1, false
 	for i, m := range r.messages {
-		if m.SourceLine <= line {
-			row = r.msgRowStart[i]
-		} else {
+		if m.SourceLine > line {
 			break
 		}
+		if m.SourceLine != groupLine {
+			groupLine, anchored = m.SourceLine, false
+		}
+		if !anchored || m.SourceAnchor {
+			row = r.msgRowStart[i]
+		}
+		anchored = anchored || m.SourceAnchor
 	}
 	return row
 }

@@ -56,7 +56,7 @@ func TestParseTranscript_RolesAndAnchors(t *testing.T) {
 
 func TestParseTranscript_MCPToolUseGenericInputRedacted(t *testing.T) {
 	// The TUI routes non-Agent/Task tool_use blocks through toolUseSummary via
-	// assistantBodyAndLaunches, so an MCP call renders its generic key=value summary
+	// assistantBodyAndDetails, so an MCP call renders its generic key=value summary
 	// inline — with credential-shaped values redacted (in-function sanitization).
 	prefixSecret := "sk-ant-" + strings.Repeat("a", 30)
 	raw := jsonlBytes(t,
@@ -71,7 +71,7 @@ func TestParseTranscript_MCPToolUseGenericInputRedacted(t *testing.T) {
 	msgs := ParseTranscript(PlatformClaudeCode, raw, nil)
 	a := findMessage(t, msgs, RoleAssistant)
 	assert.Contains(t, a.Body, `→ mcp__capy__capy_search queries=["tool input"]`,
-		"MCP tool_use renders the generic summary through assistantBodyAndLaunches")
+		"MCP tool_use renders the generic summary through assistantBodyAndDetails")
 	assert.NotContains(t, a.Body, prefixSecret, "credential redacted in the TUI transcript")
 	assert.Contains(t, a.Body, "[REDACTED_SECRET]", "the redaction placeholder is shown")
 }

@@ -240,7 +240,11 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 					return
 				}
 				input, _ := json.Marshal(cc.Input)
-				attachCall(ts, &ToolCall{ID: cc.CallID, Name: cc.Name, Summary: codexCustomCallSummary(cc), Input: input})
+				call := &ToolCall{ID: cc.CallID, Name: cc.Name, Summary: codexCustomCallSummary(cc), Input: input}
+				if cc.Name == "exec" {
+					call.CodeText = cc.Input
+				}
+				attachCall(ts, call)
 
 			case "web_search_call":
 				var ws codexWebSearchCall

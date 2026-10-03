@@ -417,3 +417,94 @@ recordings, 993 completed/9 failed/1 declined operations, 858 adds/48 deletes/1,
 updates, 12 moves, zero unavailable completed diffs, and the same 21 exact legacy
 direct associations. Growth since the earlier run is reported separately from
 the unchanged-input parity comparison.
+
+## Task 5 — compact executable inputs and source landing (2026-10-03)
+
+Codex custom `exec` calls now supply verbatim `ToolCall.CodeText`; their shared
+`Input`, `Name`, and `Summary` retain the prior representation. The viewer uses
+the existing strict thresholds (over 20 lines or over 2,000 bytes) to replace
+long input summaries with `→ exec · input` placeholders. One assistant body
+retains part order, followed by input and launch markers in call order. Input
+details retain `RoleTool`, the `Tool input` heading, and the complete code body.
+The existing normal/find heading helper introduced in Task 2 is reused.
+
+A viewer-only map assigns `exec · output` to results by exact response call ID,
+including results preceding their calls. Nested edit IDs do not participate.
+Both inline and collapsed output retain their complete bodies. Only the owning
+assistant body receives `SourceAnchor`; global source-line jumps prefer it
+within the latest eligible line group. Existing unmarked ties still select the
+last message, and local restoration continues to use message ordinals.
+
+### Synthetic and viewer coverage
+
+`TestTranscriptCodeInput_*` covers exact byte/line boundaries, multibyte byte
+counts, empty/short calls, pragmas, quotes, escaped newlines, CRLF, optional JSON
+omission, mixed input/launch ordering, sidecar mapping, compact inline/collapsed
+results, unmatched IDs, unchanged shared summaries, and the wrapped four-file
+fixture with its +23/−14 grouped edit. The existing group test now selects the
+file-change heading explicitly because input details also carry headings.
+
+`TestViewerCodeInput*` covers one heading per assistant entry, Markdown bypass,
+full-body detail and clipboard data, exact/fuzzy hidden-text matches, repeated
+visible/hidden navigation without corpus duplication or frame growth, pending
+navigation resize/cancel, raw return, child return, and marker restoration after
+rewrap. A tall assistant body pins global landing on its heading and early phrase
+despite appended input and launch markers. These tests pass in both builds.
+
+### Corpus evidence
+
+Working-tree base: `9e99ed3acbe509e11645c9e9da150a92271cdc12`.
+The original machine-local baseline and companion remain unchanged:
+
+- TSV SHA-256: `c68edd3a7734c202c364d7e87a02298050fb2e64be7a50ca5337b050c1a08055`.
+- Companion SHA-256: `d7178b74f3810e02f6d48c98626c0361b3feec2721f3404acf440bf9674abc4f`.
+
+`TestCodexParityCanary` passed in 66.36 seconds: **478 unchanged recordings,
+zero scanner/text/Markdown mismatches**. Of 565 discovered recordings, 4 were
+appended, 83 new, 0 otherwise changed, 0 removed and 0 vanished; none were
+compressed or revert variants. Unchanged category coverage: 111 completed
+paginated, 8 failed, 1 declined, 2 real-move and all 13 legacy-direct recordings.
+The original absolute `CAPY_CODEX_PARITY_BASELINE` path was used; no baseline
+was recaptured. Raw recordings and per-session paths remain machine-local.
+
+### Checks
+
+All checks use `GOCACHE=/tmp/capy-codex-vault-viewer-go-cache`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`.
+
+- Focused input, file-change, decoder/consumer and navigation checks passed.
+  Frozen scanner/text/Markdown goldens and existing Claude goldens pass without
+  regeneration. Initial new test failures were incorrect bracket expectations
+  for the existing plain result prefix; assertions now match its actual format.
+- `go test -tags fts5 -count=1 ./...` passed every package with an empty temporary
+  `XDG_CONFIG_HOME` and unrestricted execution for existing socket tests.
+  CLI: 230.53 seconds; vault: 241.16 seconds; default TUI: 22.19 seconds.
+- `go test -race -tags fts5 -count=1 -run
+  'TestTranscriptCodeInput|TestViewerCodeInput|TestCodexDecoder|TestCodexConsumers|TestViewerFind|TestViewerTargets|TestAppFind'
+  ./internal/vault/...` passed (vault 1.66 seconds, TUI 19.79 seconds).
+- `go test -race -tags fts5,glamour -count=1 ./internal/vault/tui/...` passed
+  the full glamour TUI suite (56.18 seconds).
+- `go test -tags fts5 -count=1 -run '^TestCodexParityCanary$' -v
+  ./internal/vault` passed with the original baseline, as reported above.
+- `gofmt` and `git diff --check` are clean.
+
+No new dependency, schema/index change, setup artifact, or search matcher was
+introduced. Final same-corpus performance, find-latency and retrieval-quality
+benchmarks, public documentation, and feature-wide spec review remain Task 6.
+Task 5 required no design deviation or new convention beyond the recorded plan.
+
+### Review completion
+
+The [isolated review](.reviews/task-5-code-review-2026-10-03.md) is complete.
+The independent reviewer approved the implementation and its follow-up without
+findings. Gemini's single native HIGH finding concerned redundant newline scans
+in the shared collapse predicate. A before/after helper benchmark confirmed the
+cost; the predicate now checks byte length first. Detailed measurements and
+their limits are in the review report. This changes neither threshold and does
+not affect scanner/export output.
+
+After that reorder, focused default input/tool/navigation race tests passed
+(vault 1.20 seconds, TUI 19.76 seconds), as did the glamour input-navigation race
+subset (1.18 seconds). The full suites above preceded this equivalent predicate
+reorder; the post-fix runs target its affected behavior. No Task 5 follow-up
+remains. Task 6 and issue #121 remain open.
