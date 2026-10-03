@@ -1,7 +1,7 @@
 # Readable Codex edits in the vault viewer
 
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
-> Status: supplied review addressed; Tasks 1–4 complete; remaining viewer work in Task 5
+> Status: supplied review addressed; Tasks 1–5 complete; final verification/documentation in Task 6
 > Created: 2026-10-03
 > Implementation: [implementation.md](implementation.md)
 > Tasks: [tasks.md](tasks.md)

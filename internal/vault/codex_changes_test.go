@@ -31,7 +31,7 @@ func TestCodexFileChangePaginated_GroupedUpdates(t *testing.T) {
 	msgs := transcriptMessages(tr, nil)
 	var groups []TranscriptMessage
 	for _, msg := range msgs {
-		if msg.Heading != "" {
+		if msg.Heading == "File changes · completed" {
 			groups = append(groups, msg)
 		}
 	}

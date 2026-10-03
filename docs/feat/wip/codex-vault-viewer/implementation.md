@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
-> Status: Tasks 1–4 complete — [compatibility evidence](verification.md); Tasks 5–6 pending
+> Status: Tasks 1–5 complete — [compatibility evidence](verification.md); Task 6 pending
 > Review resolution: [supplied findings](.reviews/review-resolution-2026-10-03.md)
 
 ## Starting point and task boundaries
@@ -242,10 +242,13 @@ empty/false omission. This task depends on the baseline task, not edit events.
    → verify: complete code occurs once in the owner corpus and opening a detail
    neither duplicates it nor grows the frame stack on repeated search navigation.
 
-The shared heading override is introduced once by whichever of Tasks 2 and 5
-lands first; the other reuses it. Shared files require coordination/rebase, not a
-fabricated semantic dependency. Task 5's source-anchor rule is independent of
-legacy result correlation and has its own explicit viewport regression test.
+Implemented and independently reviewed; see [Task 5 evidence](verification.md#task-5--compact-executable-inputs-and-source-landing-2026-10-03)
+and its [isolated review](.reviews/task-5-code-review-2026-10-03.md). Task 5 reuses
+Task 2's shared heading override, so `tui/find_render.go` required no change.
+The source-anchor rule is independent of legacy result correlation and has its
+own explicit tall-body viewport regression test. External review prompted a
+measured, behavior-preserving reorder of the collapse predicate: check byte
+length before counting newlines so large inputs avoid repeated full scans.
 
 ## Verification matrix
 

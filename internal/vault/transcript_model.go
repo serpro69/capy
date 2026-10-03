@@ -217,6 +217,10 @@ type ToolCall struct {
 	// Input is the raw call input JSON, kept for future generic rendering
 	// (ADR-025 § Deferred). Nil when the platform records none.
 	Input json.RawMessage
+	// CodeText is verbatim executable source when the platform records it as
+	// such (currently Codex custom exec). Consumers choose disclosure policy;
+	// Input and Summary retain their existing indexing/export representation.
+	CodeText string `json:",omitempty"`
 	// Launch marks a sub-agent spawn (Claude Task/Agent, Codex spawn_agent).
 	// Nil for every other call.
 	Launch *Launch

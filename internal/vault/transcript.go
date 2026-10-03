@@ -31,8 +31,8 @@ const (
 	RoleSubagent  = "subagent"       // launch-point marker
 )
 
-// collapseToolResultLines / collapseToolResultBytes bound an inline tool_result in
-// the TUI viewer (design.md § Addenda A1): a RoleTool body exceeding either is
+// collapseToolResultLines / collapseToolResultBytes bound inline tool results and
+// executable inputs in the TUI viewer: a RoleTool body exceeding either is
 // collapsed to a focusable, openable marker that expands on demand. Excluded-tool
 // results (excludedResultTools — Read/NotebookRead) collapse regardless of size.
 // Plain `vault show` is unaffected: it renders via render.go's displayMessages,
@@ -72,11 +72,16 @@ type TranscriptMessage struct {
 	// details retain RoleTool styling, Markdown bypass and navigation semantics.
 	Heading string `json:",omitempty"`
 
+	// SourceAnchor prefers this message for global source-line jumps when its
+	// appended detail markers share the same SourceLine. Local navigation and
+	// resize restoration continue to use message ordinals.
+	SourceAnchor bool `json:",omitempty"`
+
 	// Collapsed marks a RoleTool message the viewer renders as a focusable,
 	// openable marker (expand-on-demand) rather than inline — an excluded-tool body
 	// or one over the collapseToolResult* thresholds (A1). Body still carries the
-	// full result text for the open target; ToolSummary is the compact call label
-	// ("Read /path", "Bash <cmd>") shown on the marker row.
+	// full result or executable input for the open target; ToolSummary is the
+	// compact call label ("Read /path", "exec · input") shown on the marker row.
 	Collapsed   bool
 	ToolSummary string
 
@@ -128,8 +133,8 @@ func ParseTranscript(p Platform, raw []byte, subagentIDs []string) []TranscriptM
 }
 
 // transcriptMessages is the TUI consumer over the transcript model: it walks the
-// decoded entries in order and emits one TranscriptMessage per message, plus a
-// RoleSubagent marker per launch. This is where every VIEWER policy lives (the
+// decoded entries in order and emits one TranscriptMessage per message, plus
+// input and launch markers. This is where every VIEWER policy lives (the
 // decoder is pre-policy — see transcript_model.go):
 //
 //   - A Human entry is a RoleUser message anchored to its LineIndex.
@@ -138,9 +143,9 @@ func ParseTranscript(p Platform, raw []byte, subagentIDs []string) []TranscriptM
 //     (D18); otherwise an empty Body is skipped, an excludedResultTools result or
 //     one over the collapse thresholds is a collapsed marker with the full Body,
 //     and everything else is inline with the CallSummary prefix (viewerToolMessage).
-//   - An Assistant message's body is its text parts and non-launch calls as
-//     "→ <Summary>" lines in part order; each launch becomes a RoleSubagent
-//     marker AFTER the body, labelled by Launch.Label (D19).
+//   - An Assistant message keeps one body in part order, with compact
+//     placeholders for long executable inputs. Input and launch markers
+//     follow the body in call order (D19).
 //   - A System entry is shown unless SearchOnly (D7).
 //
 // Output for Claude sessions is byte-identical to the pre-model parser
@@ -153,6 +158,7 @@ func transcriptMessages(t *Transcript, subagentIDs []string) []TranscriptMessage
 	var msgs []TranscriptMessage
 	var markerIdx []int // indices in msgs of RoleSubagent markers without a ChildUUID (count-based mapping)
 	changeStates := make(map[string]FileChangeState)
+	outputAliases := executableOutputAliases(t.Entries)
 	for _, e := range t.Entries {
 		if e.Kind == EntryFileChange && e.FileChange != nil && e.FileChange.ID != "" {
 			changeStates[e.FileChange.ID] = e.FileChange.State
@@ -168,6 +174,9 @@ func transcriptMessages(t *Transcript, subagentIDs []string) []TranscriptMessage
 			msgs = append(msgs, TranscriptMessage{Role: RoleUser, Body: e.Text, SourceLine: e.LineIndex, Queued: e.Queued})
 
 		case EntryToolResult:
+			if alias := outputAliases[e.CallID]; alias != "" {
+				e.CallSummary = alias // viewer-local copy; shared consumers keep the original
+			}
 			if e.FileChangeID != "" && e.ReportedSuccess && e.Body != "" && changeStates[e.FileChangeID] == FileChangeCompleted {
 				msgs = append(msgs, TranscriptMessage{
 					Role: RoleTool, Body: e.Body, SourceLine: e.LineIndex, Heading: "Tool result",
@@ -180,18 +189,16 @@ func transcriptMessages(t *Transcript, subagentIDs []string) []TranscriptMessage
 			}
 
 		case EntryAssistant:
-			body, launches := assistantBodyAndLaunches(e.Parts)
+			body, details, sourceAnchor := assistantBodyAndDetails(e.Parts)
 			if body != "" {
-				msgs = append(msgs, TranscriptMessage{Role: RoleAssistant, Body: body, SourceLine: e.LineIndex})
+				msgs = append(msgs, TranscriptMessage{Role: RoleAssistant, Body: body, SourceLine: e.LineIndex, SourceAnchor: sourceAnchor})
 			}
-			for _, l := range launches {
-				if l.ChildUUID == "" {
+			for _, detail := range details {
+				detail.SourceLine = e.LineIndex
+				if detail.Role == RoleSubagent && detail.ChildUUID == "" {
 					markerIdx = append(markerIdx, len(msgs))
 				}
-				msgs = append(msgs, TranscriptMessage{
-					Role: RoleSubagent, Body: l.Label, SourceLine: e.LineIndex,
-					ChildUUID: l.ChildUUID, Openable: l.ChildUUID != "",
-				})
+				msgs = append(msgs, detail)
 			}
 
 		case EntrySystem:
@@ -253,31 +260,10 @@ func viewerToolMessage(e Entry) (TranscriptMessage, bool) {
 	return TranscriptMessage{Role: RoleTool, Body: prefixToolResult(e.CallSummary, e.Body), SourceLine: e.LineIndex}, true
 }
 
-// assistantBodyAndLaunches splits an assistant entry's ordered parts into a
-// display body and its launches. Text parts are kept verbatim; a non-launch call
-// renders as a "→ <Summary>" body line (as render.go does); a call carrying a
-// Launch (Task/Agent, spawn_agent) is returned for a marker instead of a body
-// line. A call with an empty Summary contributes nothing.
-func assistantBodyAndLaunches(parts []Part) (body string, launches []*Launch) {
-	var lines []string
-	for _, p := range parts {
-		switch {
-		case p.Call != nil && p.Call.Launch != nil:
-			launches = append(launches, p.Call.Launch)
-		case p.Call != nil:
-			if p.Call.Summary != "" {
-				lines = append(lines, "→ "+p.Call.Summary)
-			}
-		case p.Text != "":
-			lines = append(lines, p.Text)
-		}
-	}
-	return strings.Join(lines, "\n"), launches
-}
-
-// overCollapseThreshold reports whether a tool_result body is large enough to
-// collapse to a marker in the viewer (A1) — by line count or byte size, so both a
+// overCollapseThreshold reports whether a tool result or executable input is
+// large enough to collapse in the viewer — by line count or byte size, so both a
 // many-line log and a single huge line collapse.
 func overCollapseThreshold(body string) bool {
-	return strings.Count(body, "\n")+1 > collapseToolResultLines || len(body) > collapseToolResultBytes
+	// Bound newline counting to small bodies; inputs can be megabytes long.
+	return len(body) > collapseToolResultBytes || strings.Count(body, "\n")+1 > collapseToolResultLines
 }

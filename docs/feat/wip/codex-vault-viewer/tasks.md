@@ -6,7 +6,7 @@
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
 > Status: in-progress
 > Created: 2026-10-03
-> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); Tasks 1–4 complete
+> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); Tasks 1–5 complete
 > Not Doing: JavaScript interpretation, shell-edit inference, Rust renderer port, rich syntax highlighting, line-number gutter, per-file picker, global FTS changes, export changes, schema/version changes, general cross-platform tool-input UI, live filesystem verification
 
 ## Task 1: Freeze synthetic and real-corpus compatibility
@@ -85,11 +85,11 @@ legacy adapter; the normalized equality is already shared.
 - [x] 4.4 Retain event-less successful direct fallback and compare real legacy output digests → verify: old direct cases remain valid and observed call→event→output records render correctly.
 
 Evidence: [verification](verification.md#task-4--legacy-events-and-direct-results-2026-10-03),
-[isolated code review](.reviews/task-4-code-review-2026-10-03.md). Task 5 is next.
+[isolated code review](.reviews/task-4-code-review-2026-10-03.md).
 
 ## Task 5: Long executable inputs stay compact and searchable
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Can run in parallel with:** Task 2, Task 3, Task 4
@@ -97,15 +97,15 @@ Evidence: [verification](verification.md#task-4--legacy-events-and-direct-result
 
 ### Subtasks
 
-- [ ] 5.1 Preserve `CodeText` in Codex normalization without changing shared input/summary fields → verify: exact input bytes and scanner/export parity.
-- [ ] 5.2 Keep one assistant body, insert ordered placeholders, and append input/launch markers; reuse `RoleTool` with the heading override → verify: one Codex header and complete detail bodies in both builds.
-- [ ] 5.3 Apply compact output aliases by response call ID, independent of edit event IDs → verify: inline/collapsed labels cannot repeat the escaped patch.
-- [ ] 5.4 Mark the owning body as `SourceAnchor` and honor it in `rowForLine` → verify: an early phrase in a tall body remains visible after a global jump; old unmarked ties are unchanged.
-- [ ] 5.5 Exercise existing detail/find/copy/raw/child paths with the new bodies and headings → verify: full hidden text, exact/fuzzy navigation, pending resize/cancel, stable return, and no extra corpus/frame ownership.
+- [x] 5.1 Preserve `CodeText` in Codex normalization without changing shared input/summary fields → verify: exact input bytes and scanner/export parity.
+- [x] 5.2 Keep one assistant body, insert ordered placeholders, and append input/launch markers; reuse `RoleTool` with the heading override → verify: one Codex header and complete detail bodies in both builds.
+- [x] 5.3 Apply compact output aliases by response call ID, independent of edit event IDs → verify: inline/collapsed labels cannot repeat the escaped patch.
+- [x] 5.4 Mark the owning body as `SourceAnchor` and honor it in `rowForLine` → verify: an early phrase in a tall body remains visible after a global jump; old unmarked ties are unchanged.
+- [x] 5.5 Exercise existing detail/find/copy/raw/child paths with the new bodies and headings → verify: full hidden text, exact/fuzzy navigation, pending resize/cancel, stable return, and no extra corpus/frame ownership.
 
-Tasks 2 and 5 introduce the same specified heading helper only once; whichever
-lands second reuses it. Coordinate shared-file edits when running in parallel.
-File sharing is not a semantic dependency on the legacy-edit work.
+Task 5 reuses Task 2's heading helper and the existing tool-detail/find frames.
+Evidence: [verification](verification.md#task-5--compact-executable-inputs-and-source-landing-2026-10-03),
+[isolated code review](.reviews/task-5-code-review-2026-10-03.md). Task 6 is next.
 
 ## Task 6: Final verification, documentation, and review
 
