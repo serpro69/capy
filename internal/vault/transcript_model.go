@@ -88,6 +88,8 @@ const (
 	EntryToolResult
 	// EntrySystem is platform-injected text (Text, SearchOnly).
 	EntrySystem
+	// EntryFileChange is a recorded edit operation, independent of tool calls.
+	EntryFileChange
 )
 
 // String returns the kind's name for logs and test output.
@@ -101,6 +103,8 @@ func (k EntryKind) String() string {
 		return "tool_result"
 	case EntrySystem:
 		return "system"
+	case EntryFileChange:
+		return "file_change"
 	}
 	return fmt.Sprintf("EntryKind(%d)", int(k))
 }
@@ -164,6 +168,10 @@ type Entry struct {
 	// diff-tool result of a line — D15; Codex: the apply_patch input, on
 	// success only). Nil when there is none.
 	Diff *Diff
+
+	// FileChange is the recorded edit event. Consumers decide whether candidate
+	// diffs represent completed changes; scanner and exports deliberately skip it.
+	FileChange *FileChangeSet
 
 	// --- EntrySystem ---
 
@@ -232,6 +240,51 @@ type Diff struct {
 	Text    string
 	Added   int
 	Removed int
+}
+
+// FileChangeState records outcome evidence, never an inference from a wrapper.
+type FileChangeState string
+
+const (
+	FileChangeCompleted   FileChangeState = "completed"
+	FileChangeFailed      FileChangeState = "failed"
+	FileChangeDeclined    FileChangeState = "declined"
+	FileChangeUnconfirmed FileChangeState = "unconfirmed"
+)
+
+// FileChangeDiagnostic retains a location-independent reason for unavailable or
+// uncertain data. Value is the offending wire value where needed for equality;
+// it must never be logged. Message is a fixed, safe explanation for the viewer.
+type FileChangeDiagnostic struct {
+	Code    string
+	Field   string
+	Value   string
+	Message string
+}
+
+// FileChangeSet is one recorded patch. Files are sorted by original path once
+// during decoding. ChangesAvailable distinguishes an empty map from unreadable
+// changes; neither case invents counts. No fields are persisted in SQLite.
+type FileChangeSet struct {
+	ID               string
+	State            FileChangeState
+	Files            []FileChange
+	ChangesAvailable bool
+	Stdout           string
+	Stderr           string
+	Diagnostics      []FileChangeDiagnostic
+}
+
+// FileChange keeps source data as well as its candidate diff. Content contains
+// the verbatim archived content (add/delete) or unified diff (update). Nil Diff
+// means unavailable, distinct from a valid empty diff with zero counts.
+type FileChange struct {
+	Path        string
+	Kind        string
+	MovePath    string
+	Content     string
+	Diff        *Diff
+	Diagnostics []FileChangeDiagnostic
 }
 
 // Decoder turns a session's archived bytes into a Transcript. Implementations

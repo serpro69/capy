@@ -232,14 +232,27 @@ type codexItemCompleted struct {
 // codexTurnItem is a paginated TurnItem (codex-rs/protocol/src/items.rs). Type
 // is PascalCase on the wire (UserMessage, AgentMessage, SubAgentActivity, …).
 // Content is read for UserMessage ({type: text, text}); ID (= the spawn call's
-// call_id), AgentThreadID and AgentPath for SubAgentActivity. Every other item
-// type duplicates a response_item and is skipped.
+// call_id), AgentThreadID and AgentPath for SubAgentActivity. FileChange carries
+// independent edit evidence, including for calls nested inside exec wrappers.
 type codexTurnItem struct {
 	Type          string             `json:"type"`
 	ID            string             `json:"id"`
 	Content       []codexContentPart `json:"content"`
 	AgentThreadID string             `json:"agent_thread_id"`
 	AgentPath     string             `json:"agent_path"`
+	Status        json.RawMessage    `json:"status"`
+	Changes       json.RawMessage    `json:"changes"`
+	Stdout        json.RawMessage    `json:"stdout"`
+	Stderr        json.RawMessage    `json:"stderr"`
+}
+
+// codexFileChange is one member of the path-keyed changes map. Raw fields keep
+// missing, null and malformed values distinguishable without dropping siblings.
+type codexFileChange struct {
+	Type        json.RawMessage `json:"type"`
+	Content     json.RawMessage `json:"content"`
+	UnifiedDiff json.RawMessage `json:"unified_diff"`
+	MovePath    json.RawMessage `json:"move_path"`
 }
 
 // codexCollabSpawnEnd is a legacy `collab_agent_spawn_end` event: the parent-side

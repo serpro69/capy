@@ -68,6 +68,10 @@ type TranscriptMessage struct {
 	// empty so the Claude transcript goldens (golden_test.go) are unchanged.
 	ChildUUID string `json:",omitempty"`
 
+	// Heading optionally overrides the role-derived display heading. Tool
+	// details retain RoleTool styling, Markdown bypass and navigation semantics.
+	Heading string `json:",omitempty"`
+
 	// Collapsed marks a RoleTool message the viewer renders as a focusable,
 	// openable marker (expand-on-demand) rather than inline — an excluded-tool body
 	// or one over the collapseToolResult* thresholds (A1). Body still carries the
@@ -150,6 +154,10 @@ func transcriptMessages(t *Transcript, subagentIDs []string) []TranscriptMessage
 	var markerIdx []int // indices in msgs of RoleSubagent markers without a ChildUUID (count-based mapping)
 	for _, e := range t.Entries {
 		switch e.Kind {
+		case EntryFileChange:
+			if e.FileChange != nil {
+				msgs = append(msgs, viewerFileChangeMessage(e, t.Meta.CWD))
+			}
 		case EntryHuman:
 			msgs = append(msgs, TranscriptMessage{Role: RoleUser, Body: e.Text, SourceLine: e.LineIndex, Queued: e.Queued})
 

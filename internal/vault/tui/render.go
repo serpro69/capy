@@ -67,7 +67,7 @@ func renderTranscript(p vault.Platform, messages []vault.TranscriptMessage, st S
 			out.rows = append(out.rows, st.toolMarkerRow(m, false))
 			continue
 		}
-		out.rows = append(out.rows, st.messageHeader(m.Role, m.Queued, p))
+		out.rows = append(out.rows, st.transcriptMessageHeader(m, p))
 		if m.Role == vault.RoleTool && m.Diff {
 			// An expanded Edit/Write diff (A3): color by unified-diff prefix instead
 			// of word-wrapping as plain text (and never route through glamour, which
@@ -193,6 +193,15 @@ func (s Styles) messageHeader(role string, queued bool, p vault.Platform) string
 		label += " · queued"
 	}
 	return s.roleStyle(role).Render("▌ " + label)
+}
+
+// transcriptMessageHeader is shared by normal and find projections. Flatten
+// overrides so a header always occupies exactly one viewport row.
+func (s Styles) transcriptMessageHeader(m vault.TranscriptMessage, p vault.Platform) string {
+	if m.Heading != "" {
+		return s.roleStyle(m.Role).Render("▌ " + singleLine(m.Heading))
+	}
+	return s.messageHeader(m.Role, m.Queued, p)
 }
 
 // markerRow renders a subagent launch marker. The leading glyph differs by state

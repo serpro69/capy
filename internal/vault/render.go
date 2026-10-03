@@ -96,6 +96,8 @@ func displayMessages(t *Transcript) []displayMsg {
 	var msgs []displayMsg
 	for _, e := range t.Entries {
 		switch e.Kind {
+		case EntryFileChange:
+			continue // Viewer-only edit evidence; preserve text/Markdown exports.
 		case EntryHuman:
 			msgs = append(msgs, displayMsg{role: displayUser, body: e.Text, queued: e.Queued})
 

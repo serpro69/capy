@@ -83,6 +83,8 @@ type codexSlot struct {
 	body       string
 	structured bool
 	success    bool
+
+	fileChange *FileChangeSet // EntryFileChange; does not close openAsst
 }
 
 // codexCallInfo is the pass-2 correlation record for one call id.
@@ -296,6 +298,12 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 					return
 				}
 				switch ev.Item.Type {
+				case "FileChange":
+					changes := codexPaginatedFileChange(ev.Item)
+					codexLogFileChange(log, changes, lineIndex)
+					// Keep openAsst unchanged: calls after this event still belong
+					// to the same assistant row in scanner/export consumers.
+					slots = append(slots, codexSlot{kind: EntryFileChange, lineIndex: lineIndex, timestamp: ts, fileChange: changes})
 				case "UserMessage":
 					addHuman(ts, codexTextParts(ev.Item.Content), false)
 				case "SubAgentActivity":
@@ -374,6 +382,8 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 	humans, assistants := 0, 0
 	for _, s := range slots {
 		switch s.kind {
+		case EntryFileChange:
+			t.Entries = append(t.Entries, Entry{Kind: EntryFileChange, LineIndex: s.lineIndex, Timestamp: s.timestamp, FileChange: s.fileChange})
 		case EntryHuman:
 			if s.fallback && !useFallback {
 				continue

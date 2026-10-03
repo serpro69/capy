@@ -255,6 +255,8 @@ func ScanTranscript(t *Transcript) *ScanOutput {
 
 	for _, e := range t.Entries {
 		switch e.Kind {
+		case EntryFileChange:
+			continue // Viewer-only edit evidence; preserve persisted search bytes.
 		case EntryHuman:
 			// Only human text starts a new turn; a tool_result-only user line
 			// (no Human entry) continues the calling assistant's turn.
