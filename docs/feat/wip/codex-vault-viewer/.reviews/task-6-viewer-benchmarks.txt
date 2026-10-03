@@ -1,0 +1,263 @@
+paired-before.txt
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14401179 ns/op	 3118957 B/op	    4381 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     249	    978628 ns/op	  520348 B/op	    1051 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    5290	     47116 ns/op	  210736 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14678111 ns/op	 3102922 B/op	    4376 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     247	   1003604 ns/op	  520912 B/op	    1051 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    4423	     49378 ns/op	  210737 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14237697 ns/op	 3115314 B/op	    4381 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     249	    959072 ns/op	  518532 B/op	    1051 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    5648	     47401 ns/op	  210737 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14356963 ns/op	 3115834 B/op	    4380 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     248	    983125 ns/op	  519320 B/op	    1051 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    5425	     45551 ns/op	  210736 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14059658 ns/op	 3111896 B/op	    4379 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     249	    962403 ns/op	  517902 B/op	    1051 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    5664	     45642 ns/op	  210736 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14320043 ns/op	 3091613 B/op	    4374 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     247	    960989 ns/op	  520412 B/op	    1051 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    4954	     46688 ns/op	  210737 B/op	       8 allocs/op
+PASS
+
+paired-final.txt
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14531798 ns/op	 3453913 B/op	    4604 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     688	    355303 ns/op	  138319 B/op	     727 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    5001	     50778 ns/op	  210993 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14788773 ns/op	 3447025 B/op	    4602 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     667	    354170 ns/op	  137836 B/op	     727 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    4759	     49910 ns/op	  210992 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14675705 ns/op	 3442437 B/op	    4602 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     667	    349734 ns/op	  138158 B/op	     727 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    4767	     48659 ns/op	  210992 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  15121874 ns/op	 3443755 B/op	    4600 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     668	    366881 ns/op	  138262 B/op	     727 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    4363	     48941 ns/op	  210992 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      16	  14300765 ns/op	 3453499 B/op	    4604 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     682	    344586 ns/op	  138238 B/op	     727 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    5334	     48195 ns/op	  210992 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      14	  14555661 ns/op	 3435559 B/op	    4600 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     700	    349309 ns/op	  137989 B/op	     727 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    4635	     48669 ns/op	  210993 B/op	       8 allocs/op
+PASS
+
+paired-before-glamour.txt
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      14	  14564672 ns/op	 3079147 B/op	    4368 allocs/op
+BenchmarkCodexViewerArchive/render-2        	      37	   5706824 ns/op	 2113737 B/op	   55485 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3950	     56601 ns/op	  210736 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      16	  14431308 ns/op	 3074497 B/op	    4366 allocs/op
+BenchmarkCodexViewerArchive/render-2        	      34	   5970342 ns/op	 2118538 B/op	   55486 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3528	     59640 ns/op	  210736 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14107534 ns/op	 3079312 B/op	    4367 allocs/op
+BenchmarkCodexViewerArchive/render-2        	      38	   5851749 ns/op	 2110439 B/op	   55478 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3714	     57706 ns/op	  210736 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14240355 ns/op	 3062834 B/op	    4365 allocs/op
+BenchmarkCodexViewerArchive/render-2        	      39	   5973982 ns/op	 2109930 B/op	   55478 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3769	     57453 ns/op	  210736 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14308770 ns/op	 3073972 B/op	    4368 allocs/op
+BenchmarkCodexViewerArchive/render-2        	      40	   5671816 ns/op	 2108908 B/op	   55479 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3949	     63961 ns/op	  210736 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      16	  14414167 ns/op	 3071402 B/op	    4366 allocs/op
+BenchmarkCodexViewerArchive/render-2        	      39	   6005459 ns/op	 2112459 B/op	   55479 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3570	     58802 ns/op	  210736 B/op	       8 allocs/op
+PASS
+
+paired-final-glamour.txt
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      16	  14594312 ns/op	 3405211 B/op	    4587 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     141	   1681412 ns/op	  765769 B/op	   14812 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3979	     60942 ns/op	  210992 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  14761784 ns/op	 3420682 B/op	    4590 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     150	   1598583 ns/op	  768438 B/op	   14811 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3535	     62772 ns/op	  210992 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      16	  14516591 ns/op	 3413241 B/op	    4589 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     141	   1663678 ns/op	  768854 B/op	   14812 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3578	     59105 ns/op	  210992 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      15	  16555433 ns/op	 3414515 B/op	    4589 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     148	   1623014 ns/op	  766865 B/op	   14812 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3844	     62728 ns/op	  210993 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      14	  16377227 ns/op	 3433870 B/op	    4593 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     141	   1665998 ns/op	  767770 B/op	   14812 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3492	     61616 ns/op	  210993 B/op	       8 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault/tui
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+    codex_bench_test.go:30: input bytes=997960 sha256=45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131 width=99
+BenchmarkCodexViewerArchive/parse-2         	      16	  14395540 ns/op	 3416471 B/op	    4590 allocs/op
+BenchmarkCodexViewerArchive/render-2        	     146	   1613792 ns/op	  765674 B/op	   14811 allocs/op
+BenchmarkCodexViewerArchive/find-corpus-2   	    3940	     60153 ns/op	  210993 B/op	       8 allocs/op
+PASS
+
+archive-final-default.txt (synthetic stress only)
+BenchmarkCodexViewerLargeEdit/parse-2       	       6	  35313437 ns/op	12839845 B/op	     214 allocs/op
+BenchmarkCodexViewerLargeEdit/parse-2       	       7	  33351819 ns/op	12839883 B/op	     214 allocs/op
+BenchmarkCodexViewerLargeEdit/parse-2       	       7	  33057388 ns/op	12840001 B/op	     215 allocs/op
+BenchmarkCodexViewerLargeEdit/parse-2       	       7	  31708987 ns/op	12840013 B/op	     215 allocs/op
+BenchmarkCodexViewerLargeEdit/parse-2       	       7	  36412255 ns/op	12839844 B/op	     214 allocs/op
+BenchmarkCodexViewerLargeEdit/parse-2       	       7	  30638872 ns/op	12839845 B/op	     214 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	   10000	     25054 ns/op	    2021 B/op	      56 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	    8853	     25077 ns/op	    2032 B/op	      56 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	   10000	     24384 ns/op	    2014 B/op	      56 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	    9862	     23685 ns/op	    2007 B/op	      56 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	   10000	     23573 ns/op	    2007 B/op	      56 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	   11043	     21709 ns/op	    2013 B/op	      56 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      30	   7614002 ns/op	15916752 B/op	      25 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      32	   7455770 ns/op	15916752 B/op	      25 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      34	   6849076 ns/op	15916752 B/op	      25 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      33	   6844120 ns/op	15916752 B/op	      25 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      27	   7645053 ns/op	15916752 B/op	      25 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      38	   6642911 ns/op	15916752 B/op	      25 allocs/op
+
+archive-final-glamour.txt (synthetic stress only)
+BenchmarkCodexViewerLargeEdit/parse-2       	       8	  27225283 ns/op	12541982 B/op	     209 allocs/op
+BenchmarkCodexViewerLargeEdit/parse-2       	       8	  27259929 ns/op	12542021 B/op	     210 allocs/op
+BenchmarkCodexViewerLargeEdit/parse-2       	       8	  27600335 ns/op	11648405 B/op	     198 allocs/op
+BenchmarkCodexViewerLargeEdit/parse-2       	       8	  27916992 ns/op	12839758 B/op	     213 allocs/op
+BenchmarkCodexViewerLargeEdit/parse-2       	       8	  27789397 ns/op	12839740 B/op	     212 allocs/op
+BenchmarkCodexViewerLargeEdit/parse-2       	       6	  33813245 ns/op	12839848 B/op	     214 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	    3267	     70722 ns/op	   50807 B/op	     435 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	    3260	     65700 ns/op	   50806 B/op	     435 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	    3616	     67052 ns/op	   50805 B/op	     435 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	    3337	     65690 ns/op	   50805 B/op	     435 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	    3919	     63969 ns/op	   50806 B/op	     435 allocs/op
+BenchmarkCodexViewerLargeEdit/render-2      	    2665	     89701 ns/op	   50806 B/op	     435 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      24	   8781071 ns/op	15916752 B/op	      25 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      30	   7707636 ns/op	15916752 B/op	      25 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      24	  10820810 ns/op	15916752 B/op	      25 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      31	   7313106 ns/op	15916752 B/op	      25 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      28	   7326346 ns/op	15916752 B/op	      25 allocs/op
+BenchmarkCodexViewerLargeEdit/find-corpus-2 	      25	   9135040 ns/op	15916752 B/op	      25 allocs/op

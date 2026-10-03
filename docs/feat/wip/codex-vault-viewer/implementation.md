@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
-> Status: Tasks 1–5 complete — [compatibility evidence](verification.md); Task 6 pending
+> Status: all six tasks complete — [verification and compatibility evidence](verification.md)
 > Review resolution: [supplied findings](.reviews/review-resolution-2026-10-03.md)
 
 ## Starting point and task boundaries
@@ -252,8 +252,8 @@ length before counting newlines so large inputs avoid repeated full scans.
 
 ## Verification matrix
 
-New test names/contracts are planned, not claims of implemented tests. Reuse the
-existing Codex fixture and TUI helpers. Proposed focused families are
+The implementation reuses the existing Codex fixture and TUI helpers. Focused
+test families include
 `TestCodexFileChangePaginated`, `TestCodexFileChangeDiff`,
 `TestCodexFileChangeIdentity`, `TestCodexFileChangeLegacy`,
 `TestCodexFileChangeDirectResult`, `TestTranscriptCodeInput`,
@@ -302,6 +302,10 @@ An unavailable real corpus is a documented skip, not a parity success claim.
    measured regression. Profile those paths here; compare valid large hunks and
    malformed inputs rejected early before choosing builder capacity, and adopt
    either optimization only when the measurements support it.
+   Final profiling supported byte-based null checks and eliminated the update
+   builder entirely: the validated hunk suffix can retain the original text,
+   which `FileChange.Content` already owns. The valid/early-malformed comparison
+   and exact-byte/corpus checks are recorded in [verification.md](verification.md).
 4. Run `make bench-quality` and compare against an identified baseline using
    `make bench-compare`, preserving previous reports. → verify: no quality
    regression and the independent corpus-output parity gate still passes.
@@ -314,6 +318,12 @@ An unavailable real corpus is a documented skip, not a parity success claim.
 
 No setup artifact is in scope. An unexpected generator/output change requires
 the repository's paired-artifact sync checks and an explicit plan adjustment.
+
+Completed: both builds, full tests and race coverage, real-corpus parity/viewer
+checks, paired parse/render measurements, both find-latency gates and retrieval
+quality comparison passed. Public documentation and model comments are updated;
+isolated code/spec reviews approved the implementation and measured follow-up.
+See [Task 6 evidence](verification.md#task-6--final-verification-and-documentation-2026-10-03).
 
 ## Deferred work
 

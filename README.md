@@ -573,6 +573,49 @@ All commands live under `capy vault` and require `CAPY_VAULT_KEY`. A persistent 
 
 `list`, `search`, and `show` also accept **`--tui`** for an interactive terminal UI (browse, live search, vim-style viewer) built on bubbletea. Starting it with `list --platform claude-code|codex --tui` keeps that platform scope while browsing, refreshing, and searching inside the TUI. A `--project` scope from `list` or `search` is retained too, including across child toggles and mode changes. `--tui` is not supported on the mutating/exec commands (`restore`, `resume`, `delete`). In the viewer, large tool results (and any `Read`/`NotebookRead` output) collapse to a marker — cycle markers with `]`/`[` and press `enter` to expand one inline, `esc`/`q` to return. `Edit`/`Write` results expand to a colored diff (the marker shows a `(+a −b)` stat). Plain `vault show` is unaffected. Other keys: `f` filter the list by title, effective project, or UUID, `e` rename the selected/open session (`ctrl+e` in search, where `e` types into the query), `ctrl+g` edit the project in list, search, or viewer (also while the list filter is active), `c` copy the current message to the clipboard (OSC-52), `r` restore and `R` resume the selected/open session.
 
+#### Codex edits and executable inputs
+
+In `capy vault show <id> --tui`, a recorded Codex patch appears as one expandable
+group, such as `4 files changed (+23 −14)`. Use `]`/`[` to select it and `enter`
+to see every file, sorted by original path, with add/delete/update/move labels,
+per-file counts, and colored diffs. Paths beneath the session's recorded working
+directory are shortened; moves show both source and destination.
+
+The viewer supports both legacy patch events and paginated file-change events.
+The marker reports the recorded outcome:
+
+| Recorded evidence | Marker | Detail heading |
+| --- | --- | --- |
+| Completed with complete diffs | `N files changed (+A −R)` | `File changes · completed` |
+| Completed with some unavailable diffs | `N files changed · diff incomplete` | `File changes · completed` |
+| Completed with an empty file list | `Patch completed · no file changes recorded` | `File changes · completed` |
+| Completed with unreadable changes | `Patch completed · diff unavailable` | `File changes · completed` |
+| Failed | `Patch failed` | `File changes · failed` |
+| Declined | `Patch declined` | `File changes · declined` |
+| Missing or conflicting outcome/identity | `Patch unconfirmed` | `File changes · unconfirmed` |
+
+The marker uses `file` for a single file. Failed, declined and unconfirmed groups
+show known paths and diagnostics without presenting candidate hunks as completed
+edits. Failure does not establish that no partial change occurred. A completed
+group describes archived evidence; it does not check today's filesystem.
+
+Executable `exec` inputs over 20 lines or 2,000 bytes appear as `exec · input`
+markers under the owning Codex turn. Their `Tool input` detail retains the full
+original code without executing it. Correlated results use the compact label
+`exec · output`. A successful direct patch result associated with a completed
+group appears as `apply_patch · output`, avoiding repeated success text while
+retaining the full `Tool result` body. Short executable inputs keep their usual
+inline presentation.
+
+These details use the existing navigation: `esc`/`q` returns, `c` copies the
+current body, `/` and `ctrl+f` search the complete hidden content, and `v` opens
+the containing raw transcript. When find is active, the first `esc` clears it.
+Global search lands on the owning Codex turn when its input markers share the
+same source line. Both default and glamour builds show code and diffs without
+Markdown interpretation. Existing archives gain this presentation when reopened:
+no import or reindex is needed. Plain-text/Markdown exports, global search
+indexing, and archived bytes are unchanged.
+
 #### Find within an open transcript
 
 Press **`/`** in the viewer to find a case-sensitive literal passage. Typing previews a match; `enter` commits it, then `n`/`N` visits every occurrence, including overlaps, and wraps at either end. The counter shows the selected occurrence, whose text is enclosed in ASCII brackets. Spaces and punctuation are literal. Queries are single-line and limited to 256 Unicode code points.

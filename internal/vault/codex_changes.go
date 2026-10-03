@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"bytes"
 	"encoding/json"
 	"log/slog"
 	"regexp"
@@ -100,7 +101,7 @@ func changeDiagnostic(code, field string, raw json.RawMessage, message string) F
 }
 
 func codexChangeOutput(raw json.RawMessage, field string, diagnostics *[]FileChangeDiagnostic) string {
-	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return ""
 	}
 	if text, ok := asJSONString(raw); ok {
@@ -144,7 +145,7 @@ func codexNormalizeFileChange(path string, raw json.RawMessage) FileChange {
 	} else {
 		f.Content = text
 	}
-	if len(wire.MovePath) > 0 && strings.TrimSpace(string(wire.MovePath)) != "null" {
+	if len(wire.MovePath) > 0 && !bytes.Equal(bytes.TrimSpace(wire.MovePath), []byte("null")) {
 		destination, valid := asJSONString(wire.MovePath)
 		if !valid || destination == "" {
 			f.Diagnostics = append(f.Diagnostics, changeDiagnostic("destination", "move_path", wire.MovePath,
@@ -175,7 +176,7 @@ func codexNormalizeFileChange(path string, raw json.RawMessage) FileChange {
 // from an explicitly recorded empty file. The shared string decoder accepts
 // null as Go's empty string for compatibility with older transcript consumers.
 func codexChangeString(raw json.RawMessage) (string, bool) {
-	if strings.TrimSpace(string(raw)) == "null" {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return "", false
 	}
 	return asJSONString(raw)
@@ -378,19 +379,24 @@ var codexUnifiedHunk = regexp.MustCompile(`^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+
 func codexUpdateDiff(text string) (*Diff, string) {
 	const invalid = "Recorded update has malformed unified hunks or inconsistent line counts."
 	d := &Diff{}
-	var body strings.Builder
+	// Validation never rewrites hunk bytes. Keep the suffix after optional file
+	// headers instead of copying it; FileChange.Content already retains text.
+	// This also avoids allocating a large builder for malformed input.
+	bodyStart := 0
 	oldLeft, newLeft, hunks := 0, 0, 0
 	canAnnotate, oldHeader, newHeader := false, false, false
 	for rest := text; rest != ""; {
-		line, tail, newline := strings.Cut(rest, "\n")
+		line, tail, _ := strings.Cut(rest, "\n")
 		rest = tail
 		parseLine := strings.TrimSuffix(line, "\r")
 		switch {
 		case hunks == 0 && strings.HasPrefix(parseLine, "--- ") && !oldHeader:
 			oldHeader = true
+			bodyStart = len(text) - len(rest)
 			continue
 		case hunks == 0 && strings.HasPrefix(parseLine, "+++ ") && oldHeader && !newHeader:
 			newHeader = true
+			bodyStart = len(text) - len(rest)
 			continue
 		case strings.HasPrefix(parseLine, "@@"):
 			if oldLeft != 0 || newLeft != 0 || oldHeader != newHeader {
@@ -438,15 +444,11 @@ func codexUpdateDiff(text string) (*Diff, string) {
 			}
 			canAnnotate = true
 		}
-		body.WriteString(line)
-		if newline {
-			body.WriteByte('\n')
-		}
 	}
 	if hunks == 0 || oldLeft != 0 || newLeft != 0 {
 		return nil, invalid
 	}
-	d.Text = body.String()
+	d.Text = text[bodyStart:]
 	return d, ""
 }
 

@@ -4,9 +4,9 @@
 > Implementation: [implementation.md](implementation.md)
 > Research: [research.md](research.md)
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
-> Status: in-progress
+> Status: done
 > Created: 2026-10-03
-> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); Tasks 1–5 complete
+> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); all six tasks complete and independently reviewed
 > Not Doing: JavaScript interpretation, shell-edit inference, Rust renderer port, rich syntax highlighting, line-number gutter, per-file picker, global FTS changes, export changes, schema/version changes, general cross-platform tool-input UI, live filesystem verification
 
 ## Task 1: Freeze synthetic and real-corpus compatibility
@@ -105,11 +105,11 @@ Evidence: [verification](verification.md#task-4--legacy-events-and-direct-result
 
 Task 5 reuses Task 2's heading helper and the existing tool-detail/find frames.
 Evidence: [verification](verification.md#task-5--compact-executable-inputs-and-source-landing-2026-10-03),
-[isolated code review](.reviews/task-5-code-review-2026-10-03.md). Task 6 is next.
+[isolated code review](.reviews/task-5-code-review-2026-10-03.md). Final feature evidence follows in Task 6.
 
 ## Task 6: Final verification, documentation, and review
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5
 - **Size:** M
 - **Can run in parallel with:** —
@@ -117,11 +117,20 @@ Evidence: [verification](verification.md#task-5--compact-executable-inputs-and-s
 
 ### Subtasks
 
-- [ ] 6.1 Run `$kk:test`, focused/full/race checks, and default/glamour builds with synthetic keys → verify: applicable checks pass and genuine skips are recorded.
-- [ ] 6.2 Recompare the pre-change corpus baseline and exercise real completed/failed/declined/move/legacy cases → verify: zero unchanged-input digest mismatches and explicit category coverage.
-- [ ] 6.3 Measure parse/render costs, run the source-owned find latency harness, and compare retrieval-quality benchmarks → verify: reference latency/quality gates hold; extra stress results are separate.
-- [ ] 6.4 Run `$kk:document` for public viewer guidance, architecture, and comments → verify: exact labels, source landing, keys, scope, and links match both builds.
-- [ ] 6.5 Run `$kk:review-code` (Go) and `$kk:review-spec`; save evidence locally → verify: findings fixed or durably recorded with concrete next actions; no required work silently deferred.
+- [x] 6.1 Run `$kk:test`, focused/full/race checks, and default/glamour builds with synthetic keys → verify: applicable checks pass and genuine skips are recorded.
+- [x] 6.2 Recompare the pre-change corpus baseline and exercise real completed/failed/declined/move/legacy cases → verify: zero unchanged-input digest mismatches and explicit category coverage.
+- [x] 6.3 Measure parse/render costs, run the source-owned find latency harness, and compare retrieval-quality benchmarks → verify: reference latency/quality gates hold; extra stress results are separate.
+- [x] 6.4 Run `$kk:document` for public viewer guidance, architecture, and comments → verify: exact labels, source landing, keys, scope, and links match both builds.
+- [x] 6.5 Run `$kk:review-code` (Go) and `$kk:review-spec`; save evidence locally → verify: findings fixed or durably recorded with concrete next actions; no required work silently deferred.
+
+Evidence: [final verification](verification.md#task-6--final-verification-and-documentation-2026-10-03),
+[isolated code review](.reviews/task-6-code-review-2026-10-03.md),
+[isolated spec review](.reviews/task-6-spec-review-2026-10-03.md).
+All checks passed. The vault race suite completed in 817.57 seconds with a
+30-minute timeout after the initial run exceeded Go's 10-minute default.
+Corpus parity compared 478 unchanged recordings with zero mismatches; all
+86 × 100 find-latency samples per build stayed below 100 ms. Retrieval quality
+matches the pre-feature revision. No required behavior or review fix remains.
 
 ## Dependency Graph
 

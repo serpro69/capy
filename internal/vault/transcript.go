@@ -79,17 +79,18 @@ type TranscriptMessage struct {
 
 	// Collapsed marks a RoleTool message the viewer renders as a focusable,
 	// openable marker (expand-on-demand) rather than inline — an excluded-tool body
-	// or one over the collapseToolResult* thresholds (A1). Body still carries the
-	// full result or executable input for the open target; ToolSummary is the
+	// or one over the collapseToolResult* thresholds (A1). Recorded edit groups
+	// and associated successful patch results also collapse regardless of size.
+	// Body carries the complete result, input or edit detail; ToolSummary is the
 	// compact call label ("Read /path", "exec · input") shown on the marker row.
 	Collapsed   bool
 	ToolSummary string
 
-	// Diff marks a RoleTool message whose Body is reconstructed unified-diff text
-	// from an Edit/Write structuredPatch (A3) rather than a raw tool_result body.
+	// Diff marks a RoleTool message whose Body is a reconstructed diff (A3) or a
+	// recorded edit group. Groups may include unavailable-data/status sections.
 	// The viewer colors it by line prefix on expand (tui render.go renderDiffBody)
-	// and the marker shows a "(+a −b)" stat (baked into ToolSummary) instead of a
-	// line count. Set only alongside Collapsed on a diff-tool result.
+	// and the marker uses ToolSummary's counts or outcome instead of a line
+	// count. Set only alongside Collapsed.
 	Diff bool
 
 	// Queued marks a RoleUser message recovered from a queued_command attachment

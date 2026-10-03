@@ -1,0 +1,193 @@
+=== RUN   TestFindLatency
+    find_bench_test.go:270: seed=20260920 digest=d565dddaa76fbb50f300b5ab7d5c79e3f5b0add1c46fa09d1d8528175b9a0ef9 lines=10000 bytes=1034588 messages=200 collapsed=100 terminal=100x30 Go=go1.26.4 linux/amd64 GOMAXPROCS=2
+    find_bench_test.go:282: open/cold-projection   n=100 median=  14.646ms p95=  26.740ms max=  37.255ms bytes/op=6526364
+    find_bench_test.go:288: edit/0/1-runes         n=100 median=   7.352ms p95=   8.544ms max=   8.911ms bytes/op=14691984
+    find_bench_test.go:288: edit/1/8-runes         n=100 median=   4.073ms p95=   4.382ms max=   4.479ms bytes/op=635256
+    find_bench_test.go:288: edit/2/32-runes        n=100 median=   3.911ms p95=   4.153ms max=   4.498ms bytes/op=532205
+    find_bench_test.go:288: edit/3/256-runes       n=100 median=   3.086ms p95=   3.375ms max=   3.620ms bytes/op=519958
+    find_bench_test.go:288: edit/4/256-runes       n=100 median=   3.207ms p95=   3.613ms max=   3.980ms bytes/op=559456
+    find_bench_test.go:288: edit/5/15-runes        n=100 median=   4.197ms p95=   4.495ms max=   4.899ms bytes/op=505882
+    find_bench_test.go:303: enter                  n=100 median=   0.267ms p95=   0.351ms max=   0.578ms bytes/op=279604
+    find_bench_test.go:309: navigate/n             n=100 median=   0.317ms p95=   0.545ms max=   0.847ms bytes/op=505404
+    find_bench_test.go:309: navigate/N             n=100 median=   0.342ms p95=   0.638ms max=   0.729ms bytes/op=602515
+    find_bench_test.go:317: selected/resize        n=100 median=  14.596ms p95=  15.039ms max=  15.242ms bytes/op=5764085
+    find_bench_test.go:324: rapid/final-keystroke  n=100 median=   3.994ms p95=   4.601ms max=   4.806ms bytes/op=2326088
+    find_bench_test.go:342: full-corpus/build+scan0 n=100 median=   6.476ms p95=   7.876ms max=   8.773ms bytes/op=16302080
+    find_bench_test.go:342: full-corpus/build+scan1 n=100 median=   3.900ms p95=   4.851ms max=   4.932ms bytes/op=2351104
+    find_bench_test.go:342: full-corpus/build+scan2 n=100 median=   3.832ms p95=   4.712ms max=   5.102ms bytes/op=2248704
+    find_bench_test.go:342: full-corpus/build+scan3 n=100 median=   2.937ms p95=   3.824ms max=   3.925ms bytes/op=2227200
+    find_bench_test.go:342: full-corpus/build+scan4 n=100 median=   2.909ms p95=   3.667ms max=   3.804ms bytes/op=2225664
+    find_bench_test.go:342: full-corpus/build+scan5 n=100 median=   4.018ms p95=   4.598ms max=   4.986ms bytes/op=2224176
+    find_bench_test.go:444: fuzzy/open-cold        n=100 median=  17.140ms p95=  17.760ms max=  18.892ms bytes/op=8958668
+    find_bench_test.go:453: fuzzy/edit0/1          n=100 median=  35.456ms p95=  37.779ms max=  38.547ms bytes/op=9030867
+    find_bench_test.go:453: fuzzy/edit1/8          n=100 median=  23.029ms p95=  24.420ms max=  27.033ms bytes/op=3866936
+    find_bench_test.go:453: fuzzy/edit2/32         n=100 median=   7.745ms p95=   8.305ms max=   8.910ms bytes/op=1082525
+    find_bench_test.go:453: fuzzy/edit3/256        n=100 median=   7.588ms p95=  10.827ms max=  14.752ms bytes/op=997075
+    find_bench_test.go:453: fuzzy/edit4/256        n=100 median=   5.963ms p95=   7.031ms max=   9.818ms bytes/op=642336
+    find_bench_test.go:453: fuzzy/edit5/15         n=100 median=   5.571ms p95=   6.022ms max=   6.790ms bytes/op=439032
+    find_bench_test.go:469: fuzzy/down             n=100 median=   0.085ms p95=   0.138ms max=   0.245ms bytes/op=218854
+    find_bench_test.go:469: fuzzy/pgdown           n=100 median=   0.085ms p95=   0.141ms max=   0.438ms bytes/op=218853
+    find_bench_test.go:469: fuzzy/pgup             n=100 median=   0.086ms p95=   0.133ms max=   0.657ms bytes/op=218857
+    find_bench_test.go:474: fuzzy/picker-resize    n=100 median=  12.588ms p95=  13.946ms max=  23.354ms bytes/op=3472500
+    find_bench_test.go:496: fuzzy/accept-visible   n=100 median=  13.735ms p95=  14.728ms max=  15.420ms bytes/op=4260160
+    find_bench_test.go:507: fuzzy/resize-visible   n=100 median=  14.053ms p95=  14.956ms max=  15.955ms bytes/op=5751529
+    find_bench_test.go:496: fuzzy/accept-summary   n=100 median=  13.717ms p95=  14.417ms max=  14.719ms bytes/op=4368247
+    find_bench_test.go:507: fuzzy/resize-summary   n=100 median=  14.328ms p95=  15.458ms max=  15.680ms bytes/op=5886013
+    find_bench_test.go:496: fuzzy/accept-body      n=100 median=  14.692ms p95=  15.631ms max=  27.622ms bytes/op=4366759
+    find_bench_test.go:507: fuzzy/resize-body      n=100 median=  14.338ms p95=  15.357ms max=  16.309ms bytes/op=5880096
+    find_bench_test.go:496: fuzzy/accept-browse    n=100 median=  13.720ms p95=  14.482ms max=  14.633ms bytes/op=4258107
+    find_bench_test.go:507: fuzzy/resize-browse    n=100 median=  14.384ms p95=  15.398ms max=  16.488ms bytes/op=5749085
+    find_bench_test.go:521: fuzzy/cancel-exact     n=100 median=   0.253ms p95=   0.335ms max=   0.558ms bytes/op=275734
+    find_bench_test.go:528: fuzzy/rapid-final      n=100 median=  23.452ms p95=  24.641ms max=  25.280ms bytes/op=5550908
+    find_bench_test.go:354: exact/visible-to-summary n=100 median=   0.550ms p95=   0.985ms max=   1.234ms bytes/op=674934
+    find_bench_test.go:354: exact/summary-to-body  n=100 median=   0.495ms p95=   0.738ms max=   1.126ms bytes/op=575454
+    find_bench_test.go:354: exact/body-to-visible  n=100 median=   0.555ms p95=   0.825ms max=   1.447ms bytes/op=584764
+    find_bench_test.go:354: exact/detail-to-detail n=100 median=   0.530ms p95=   0.906ms max=   1.403ms bytes/op=653018
+    find_bench_test.go:354: exact/hidden-resize    n=100 median=  14.903ms p95=  16.028ms max=  17.441ms bytes/op=5900165
+    find_bench_test.go:354: exact/cancel-hidden    n=100 median=   0.259ms p95=   0.321ms max=   0.598ms bytes/op=275592
+    find_bench_test.go:354: exact/clear-hidden     n=100 median=   0.333ms p95=   0.592ms max=   0.893ms bytes/op=523008
+    find_bench_test.go:354: exact/back-cleared     n=100 median=   0.196ms p95=   0.250ms max=   0.775ms bytes/op=262827
+    find_bench_test.go:354: exact/back-hidden      n=100 median=   0.203ms p95=   0.246ms max=   0.435ms bytes/op=272293
+    find_bench_test.go:354: local/tool-return/resize=false n=100 median=   0.345ms p95=   0.502ms max=   0.707ms bytes/op=291416
+    find_bench_test.go:354: local/tool-return/resize=true n=100 median=  14.618ms p95=  15.847ms max=  16.508ms bytes/op=5732531
+    find_bench_test.go:354: local/sidecar-return/resize=false n=100 median=   0.294ms p95=   0.345ms max=   0.600ms bytes/op=280841
+    find_bench_test.go:354: local/sidecar-return/resize=true n=100 median=  14.828ms p95=  16.550ms max=  18.487ms bytes/op=5724613
+    find_bench_test.go:354: root/child-return/resize=false n=100 median=   0.522ms p95=   0.627ms max=   0.972ms bytes/op=358405
+    find_bench_test.go:354: root/child-return/resize=true n=100 median=  14.331ms p95=  16.251ms max=  20.372ms bytes/op=5766161
+    find_bench_test.go:354: root/grandchild-return/resize=false n=100 median=   0.528ms p95=   0.598ms max=   0.984ms bytes/op=378207
+    find_bench_test.go:354: root/grandchild-return/resize=true n=100 median=  14.788ms p95=  16.339ms max=  16.878ms bytes/op=5788079
+    find_bench_test.go:354: raw/main/fuzzy=false/100x30 n=100 median=   0.300ms p95=   0.331ms max=   0.363ms bytes/op=279456
+    find_bench_test.go:354: raw/main/fuzzy=false/100x10 n=100 median=   0.172ms p95=   0.241ms max=   0.469ms bytes/op=229701
+    find_bench_test.go:354: raw/main/fuzzy=false/80x30 n=100 median=  14.307ms p95=  15.838ms max=  16.747ms bytes/op=5721791
+    find_bench_test.go:354: raw/main/fuzzy=true/100x30 n=100 median=   0.262ms p95=   0.322ms max=   0.764ms bytes/op=274508
+    find_bench_test.go:354: raw/main/fuzzy=true/100x10 n=100 median=   0.163ms p95=   0.282ms max=   0.375ms bytes/op=231681
+    find_bench_test.go:354: raw/main/fuzzy=true/80x30 n=100 median=  14.123ms p95=  15.468ms max=  16.300ms bytes/op=5848686
+    find_bench_test.go:354: raw/sidecar/fuzzy=false/100x30 n=100 median=   0.333ms p95=   0.388ms max=   1.136ms bytes/op=282680
+    find_bench_test.go:354: raw/sidecar/fuzzy=false/100x10 n=100 median=   0.159ms p95=   0.213ms max=   0.630ms bytes/op=226613
+    find_bench_test.go:354: raw/sidecar/fuzzy=false/80x30 n=100 median=  14.116ms p95=  15.538ms max=  17.010ms bytes/op=5717397
+    find_bench_test.go:354: raw/sidecar/fuzzy=true/100x30 n=100 median=   0.263ms p95=   0.319ms max=   0.573ms bytes/op=274508
+    find_bench_test.go:354: raw/sidecar/fuzzy=true/100x10 n=100 median=   0.162ms p95=   0.168ms max=   0.202ms bytes/op=229832
+    find_bench_test.go:354: raw/sidecar/fuzzy=true/80x30 n=100 median=  14.062ms p95=  15.274ms max=  16.254ms bytes/op=5858352
+    find_bench_test.go:354: raw/manual-tool/fuzzy=false/100x30 n=100 median=   0.271ms p95=   0.321ms max=   0.747ms bytes/op=276272
+    find_bench_test.go:354: raw/manual-tool/fuzzy=false/100x10 n=100 median=   0.163ms p95=   0.205ms max=   0.684ms bytes/op=229837
+    find_bench_test.go:354: raw/manual-tool/fuzzy=false/80x30 n=100 median=   0.323ms p95=   0.358ms max=   0.727ms bytes/op=495693
+    find_bench_test.go:354: raw/manual-tool/fuzzy=true/100x30 n=100 median=   0.260ms p95=   0.308ms max=   0.866ms bytes/op=275214
+    find_bench_test.go:354: raw/manual-tool/fuzzy=true/100x10 n=100 median=   0.163ms p95=   0.203ms max=   0.861ms bytes/op=229837
+    find_bench_test.go:354: raw/manual-tool/fuzzy=true/80x30 n=100 median=   0.320ms p95=   0.607ms max=   1.022ms bytes/op=495123
+    find_bench_test.go:354: raw/selected-tool/fuzzy=false/100x30 n=100 median=   0.271ms p95=   0.325ms max=   0.648ms bytes/op=274917
+    find_bench_test.go:354: raw/selected-tool/fuzzy=false/100x10 n=100 median=   0.164ms p95=   0.228ms max=   0.793ms bytes/op=228373
+    find_bench_test.go:354: raw/selected-tool/fuzzy=false/80x30 n=100 median=  14.202ms p95=  18.088ms max=  22.111ms bytes/op=5814495
+    find_bench_test.go:354: raw/selected-tool/fuzzy=true/100x30 n=100 median=   0.264ms p95=   0.321ms max=   0.622ms bytes/op=274511
+    find_bench_test.go:354: raw/selected-tool/fuzzy=true/100x10 n=100 median=   0.166ms p95=   0.328ms max=   0.599ms bytes/op=229837
+    find_bench_test.go:354: raw/selected-tool/fuzzy=true/80x30 n=100 median=  14.322ms p95=  15.965ms max=  19.253ms bytes/op=5849389
+    find_bench_test.go:354: raw/child/fuzzy=false/100x30 n=100 median=   0.299ms p95=   0.361ms max=   0.825ms bytes/op=280191
+    find_bench_test.go:354: raw/child/fuzzy=false/100x10 n=100 median=   0.168ms p95=   0.319ms max=   0.530ms bytes/op=230428
+    find_bench_test.go:354: raw/child/fuzzy=false/80x30 n=100 median=  14.540ms p95=  15.958ms max=  16.625ms bytes/op=5719044
+    find_bench_test.go:354: raw/child/fuzzy=true/100x30 n=100 median=   0.265ms p95=   0.314ms max=   0.653ms bytes/op=274535
+    find_bench_test.go:354: raw/child/fuzzy=true/100x10 n=100 median=   0.166ms p95=   0.211ms max=   0.886ms bytes/op=229861
+    find_bench_test.go:354: raw/child/fuzzy=true/80x30 n=100 median=  14.358ms p95=  15.436ms max=  16.020ms bytes/op=5846582
+--- PASS: TestFindLatency (56.11s)
+=== RUN   TestFindLifetimeStress
+=== RUN   TestFindLifetimeStress/prepare_exact
+=== RUN   TestFindLifetimeStress/prepare_picker
+=== RUN   TestFindLifetimeStress/cancel_picker
+=== NAME  TestFindLifetimeStress
+    find_lifecycle_bench_test.go:265: reference retained heap: exact-minus-normal=3039720 picker-minus-exact=638136
+=== RUN   TestFindLifetimeStress/open_1
+=== NAME  TestFindLifetimeStress
+    find_lifecycle_bench_test.go:282: nested child/tool/fuzzy/raw-return retained delta=6478152
+=== RUN   TestFindLifetimeStress/return_1
+=== NAME  TestFindLifetimeStress
+    find_lifecycle_bench_test.go:293: after 1 nested open/back cycles retained delta=-16
+=== RUN   TestFindLifetimeStress/open_2
+=== RUN   TestFindLifetimeStress/return_2
+=== RUN   TestFindLifetimeStress/open_3
+=== RUN   TestFindLifetimeStress/return_3
+=== RUN   TestFindLifetimeStress/open_4
+=== RUN   TestFindLifetimeStress/return_4
+=== RUN   TestFindLifetimeStress/open_5
+=== RUN   TestFindLifetimeStress/return_5
+=== RUN   TestFindLifetimeStress/open_6
+=== RUN   TestFindLifetimeStress/return_6
+=== RUN   TestFindLifetimeStress/open_7
+=== RUN   TestFindLifetimeStress/return_7
+=== RUN   TestFindLifetimeStress/open_8
+=== RUN   TestFindLifetimeStress/return_8
+=== RUN   TestFindLifetimeStress/open_9
+=== RUN   TestFindLifetimeStress/return_9
+=== RUN   TestFindLifetimeStress/open_10
+=== RUN   TestFindLifetimeStress/return_10
+=== NAME  TestFindLifetimeStress
+    find_lifecycle_bench_test.go:293: after 10 nested open/back cycles retained delta=7824
+=== RUN   TestFindLifetimeStress/open_11
+=== RUN   TestFindLifetimeStress/return_11
+=== RUN   TestFindLifetimeStress/open_12
+=== RUN   TestFindLifetimeStress/return_12
+=== RUN   TestFindLifetimeStress/open_13
+=== RUN   TestFindLifetimeStress/return_13
+=== RUN   TestFindLifetimeStress/open_14
+=== RUN   TestFindLifetimeStress/return_14
+=== RUN   TestFindLifetimeStress/open_15
+=== RUN   TestFindLifetimeStress/return_15
+=== RUN   TestFindLifetimeStress/open_16
+=== RUN   TestFindLifetimeStress/return_16
+=== RUN   TestFindLifetimeStress/open_17
+=== RUN   TestFindLifetimeStress/return_17
+=== RUN   TestFindLifetimeStress/open_18
+=== RUN   TestFindLifetimeStress/return_18
+=== RUN   TestFindLifetimeStress/open_19
+=== RUN   TestFindLifetimeStress/return_19
+=== RUN   TestFindLifetimeStress/open_20
+=== RUN   TestFindLifetimeStress/return_20
+=== NAME  TestFindLifetimeStress
+    find_lifecycle_bench_test.go:293: after 20 nested open/back cycles retained delta=11120
+=== RUN   TestFindLifetimeStress/leave_viewer
+=== NAME  TestFindLifetimeStress
+    find_lifecycle_bench_test.go:302: after leaving viewer retained delta=-6530408
+--- PASS: TestFindLifetimeStress (16.47s)
+    --- PASS: TestFindLifetimeStress/prepare_exact (0.55s)
+    --- PASS: TestFindLifetimeStress/prepare_picker (0.55s)
+    --- PASS: TestFindLifetimeStress/cancel_picker (0.00s)
+    --- PASS: TestFindLifetimeStress/open_1 (0.75s)
+    --- PASS: TestFindLifetimeStress/return_1 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_2 (0.75s)
+    --- PASS: TestFindLifetimeStress/return_2 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_3 (0.76s)
+    --- PASS: TestFindLifetimeStress/return_3 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_4 (0.75s)
+    --- PASS: TestFindLifetimeStress/return_4 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_5 (0.75s)
+    --- PASS: TestFindLifetimeStress/return_5 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_6 (0.75s)
+    --- PASS: TestFindLifetimeStress/return_6 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_7 (0.74s)
+    --- PASS: TestFindLifetimeStress/return_7 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_8 (0.76s)
+    --- PASS: TestFindLifetimeStress/return_8 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_9 (0.75s)
+    --- PASS: TestFindLifetimeStress/return_9 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_10 (0.75s)
+    --- PASS: TestFindLifetimeStress/return_10 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_11 (0.77s)
+    --- PASS: TestFindLifetimeStress/return_11 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_12 (0.74s)
+    --- PASS: TestFindLifetimeStress/return_12 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_13 (0.74s)
+    --- PASS: TestFindLifetimeStress/return_13 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_14 (0.75s)
+    --- PASS: TestFindLifetimeStress/return_14 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_15 (0.74s)
+    --- PASS: TestFindLifetimeStress/return_15 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_16 (0.73s)
+    --- PASS: TestFindLifetimeStress/return_16 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_17 (0.73s)
+    --- PASS: TestFindLifetimeStress/return_17 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_18 (0.73s)
+    --- PASS: TestFindLifetimeStress/return_18 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_19 (0.77s)
+    --- PASS: TestFindLifetimeStress/return_19 (0.00s)
+    --- PASS: TestFindLifetimeStress/open_20 (0.76s)
+    --- PASS: TestFindLifetimeStress/return_20 (0.00s)
+    --- PASS: TestFindLifetimeStress/leave_viewer (0.00s)
+PASS
+ok  	github.com/serpro69/capy/internal/vault/tui	72.598s

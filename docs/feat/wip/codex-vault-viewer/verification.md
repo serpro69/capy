@@ -1,5 +1,8 @@
 # Codex vault viewer verification
 
+All six tasks are complete. [Task 6](#task-6--final-verification-and-documentation-2026-10-03)
+records final acceptance; earlier sections retain their historical task boundaries.
+
 ## Task 1 — compatibility baseline (2026-10-03)
 
 Task 1 adds test fixtures and compatibility gates only. Production code remains
@@ -508,3 +511,223 @@ After that reorder, focused default input/tool/navigation race tests passed
 subset (1.18 seconds). The full suites above preceded this equivalent predicate
 reorder; the post-fix runs target its affected behavior. No Task 5 follow-up
 remains. Task 6 and issue #121 remain open.
+
+## Task 6 — final verification and documentation (2026-10-03)
+
+Working-tree base: `a0d2a9bafc78` (Tasks 1–5). Task 6 adds reproducible viewer
+and decoder benchmarks, public documentation, and two measured allocation
+improvements. It changes neither recorded outcomes nor displayed bytes.
+
+### Final compatibility and real viewer evidence
+
+The original pre-feature production revision is
+`0be03aaeaeb8429c480fd631de371007b56b7d38`. The machine-local baseline files were
+not regenerated:
+
+- TSV SHA-256: `c68edd3a7734c202c364d7e87a02298050fb2e64be7a50ca5337b050c1a08055`.
+- Companion SHA-256: `d7178b74f3810e02f6d48c98626c0361b3feec2721f3404acf440bf9674abc4f`.
+
+After the allocation changes, `TestCodexParityCanary` passed in 73.54 seconds:
+**478 unchanged recordings, zero scanner/text/Markdown mismatches**. Of 570
+discovered recordings, 4 were appended, 88 new, 0 otherwise changed, 0 removed
+and 0 vanished. There were no compressed recordings or revert variants in this
+local corpus; synthetic cases cover them. Unchanged category coverage remains
+111 completed paginated, 8 failed, 1 declined, 2 real-move and 13 legacy-direct
+recordings. Changed/new recordings are excluded from parity claims.
+
+The final read-only viewer canary passed on 158 edit recordings: 1,022 completed,
+9 failed and 1 declined canonical operations; 872 adds, 48 deletes, 1,095 updates
+and 12 moves; zero unavailable completed-file diffs. All 21 legacy events retained
+exact direct associations and the expected grouped-edit/compact-result display.
+These are decoder/viewer assertions over real bytes, not a human visual audit.
+Only aggregate evidence is committed; raw recordings and per-session paths stay
+machine-local. Synthetic frozen scanner/export outputs and Claude goldens pass
+without regeneration.
+
+```sh
+CAPY_CODEX_PARITY_BASELINE="$PWD/bench-results/codex-vault-viewer-parity.tsv" \
+CAPY_CODEX_CHANGES_CANARY=1 \
+  go test -tags fts5 -count=1 \
+  -run '^(TestCodexFileChangeCanary|TestCodexParityCanary|TestCodexFileChangeDiff.*)$' \
+  -v ./internal/vault
+```
+
+### Tests and builds
+
+All Go runs use `CGO_ENABLED=1`, `GOCACHE=/tmp/capy-codex-vault-viewer-go-cache`,
+synthetic `CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`,
+and an empty `XDG_CONFIG_HOME=/tmp/capy-viewer-task6/config`. Full-suite commands
+run with local-socket access for the existing socket tests.
+
+- `go test -tags fts5 -count=1 ./...`: passed before and after the measured
+  decoder changes. Final CLI 250.64 s, vault 261.08 s, default TUI 22.73 s;
+  every package passed.
+- `go test -race -tags fts5,glamour -count=1 ./internal/vault/tui/...`: passed
+  the full glamour TUI suite (58.74 s). The affected viewer subset passed again
+  after the decoder changes (1.22 s).
+- `make build`, `make build-glamour`, and `go vet -tags fts5 ./...`: passed
+  after the final decoder change. Builds emitted nonfatal read-only module-cache
+  metadata warnings; both exited successfully.
+- The initial `go test -race -tags fts5 -count=1 ./...` passed every package
+  except vault, where the existing live-corpus `TestCodexCanary` exceeded Go's
+  default 10-minute timeout while scanning/sanitizing recordings. No race was
+  reported. `go test -race -tags fts5 -count=1 -timeout=30m ./internal/vault/...`
+  then passed the complete vault package (817.57 s) and default TUI (36.46 s),
+  including the live-corpus canary, after the final decoder change. Together
+  with the other packages from the original run, every package passed under
+  race detection. The timed-out invocation itself is not counted as a pass.
+
+Ordinary suites skip opt-in latency, quality and parity tests unless their
+environment gates are set; those gates were explicitly exercised separately.
+No real corpus category was skipped. The absent `benchstat` binary means no
+statistical-significance claim is made for timing comparisons.
+
+### Find latency and ownership
+
+The unchanged source-owned `TestFindLatency` ran with `CAPY_FIND_BENCH=1` and
+`GOMAXPROCS=2`: **86 operation classes × 100 samples in each build, all below
+100 ms**. Maximum: **53.611 ms default**, **38.547 ms glamour** (both fuzzy
+one-character editing). Full per-operation median/p95/maximum/allocation logs:
+[default](.reviews/task-6-latency-default.txt),
+[glamour](.reviews/task-6-latency-glamour.txt).
+
+Environment: Go 1.26.4, Linux 7.1.1/amd64, Intel Core i7-11800H. Reference seed
+20260920; SHA-256 `d565dddaa76fbb50f300b5ab7d5c79e3f5b0add1c46fa09d1d8528175b9a0ef9`;
+10,000 lines, 1,034,588 content bytes, 200 messages, 100 collapsed bodies;
+100×30 terminal. Measurements include root Update, scheduling, matching,
+projection/application and View; archive parsing is excluded by the established
+protocol. Race tests were running separately, so these timings are environment
+observations rather than a cross-machine comparison with earlier reports.
+
+`TestFindLifetimeStress` also passed in both builds. Twenty nested
+child/tool/fuzzy/raw open/back cycles left empty frame backing arrays, preserved
+the parent search, and released the corpus/projection on viewer exit. The default
+retained-heap delta after twenty cycles was 11,456 bytes; leaving the viewer
+released about 6.66 MB relative to the prepared-search baseline. This is a bounded
+retention observation, not a proof about arbitrary archive sizes.
+
+```sh
+CAPY_FIND_BENCH=1 GOMAXPROCS=2 go test -tags fts5 -count=1 \
+  -run '^(TestFindLatency|TestFindLifetimeStress)$' -v ./internal/vault/tui
+CAPY_FIND_BENCH=1 GOMAXPROCS=2 go test -tags fts5,glamour -count=1 \
+  -run '^(TestFindLatency|TestFindLifetimeStress)$' -v ./internal/vault/tui
+```
+
+### Allocation profiling and chosen implementation
+
+`BenchmarkCodexUpdateDiff` compares small/large valid hunks with malformed input
+rejected at the first line. `BenchmarkCodexChangeOutput` measures 64-byte and
+1-MiB stdout. Six samples use `-benchmem -benchtime=200ms`, Go 1.26.4 and
+`GOMAXPROCS=2`. A separate one-second CPU/alloc-space profile attributed 61.5%
+of sampled allocation space to builder growth in this deliberately narrow
+microbenchmark workload. JSON validation/unquoting remains the major stdout cost.
+
+| Case | Before median | After median | Before → after bytes/op | Allocations/op |
+| --- | ---: | ---: | ---: | ---: |
+| 32-line valid update | 2.142 µs | 0.839 µs | 4,584 → 192 | 11 → 3 |
+| 16,384-line valid update | 918.086 µs | 269.953 µs | 3,241,971 → 192 | 35 → 3 |
+| Large input, early malformed | 28.670 ns | 26.830 ns | 32 → 32 | 1 → 1 |
+| 1-MiB stdout | 4.353 ms | 3.992 ms | 2,105,504 → 1,048,736 | 4 → 3 |
+
+Raw [before](.reviews/task-6-hotspots-before.txt) and
+[after](.reviews/task-6-hotspots-after.txt) results are retained. The after run
+first used a Go overlay with the same final code to validate the optimization
+before changing production. Timing differences are descriptive medians;
+allocation reductions are the basis for adopting the changes.
+
+Byte-based null checks remove temporary copies in stdout/stderr, content and
+destination decoding. For updates, validation never rewrites hunk bytes, so
+`Diff.Text` can retain the original suffix after optional file headers. This
+removes the builder entirely rather than reserving a large capacity before
+validating malformed input. `FileChange.Content` already retains the same source
+string. Existing exact-byte tests cover multiple hunks, file headers, CRLF,
+annotations, final-newline absence and malformed boundaries. Both independent
+reviewers and the external reviewer approved the equivalence.
+
+### Same-archive viewer costs and separate stress
+
+`BenchmarkCodexViewerArchive` reads an opt-in frozen uncompressed recording
+outside timing. The selected file is an unchanged completed-paginated recording
+from the Task 1 manifest: 997,960 bytes, SHA-256
+`45f3d04990e0dfa347862780c99704c7fc42ff5be2faaa3fa5b536033d8fd131`.
+Its path/content remain machine-local. The identical harness was copied into
+the `0be03aa` snapshot, and default/glamour test binaries were compiled there
+and from the final working tree. Six sequential before/after pairs per build
+used `GOMAXPROCS=2`, `-test.benchmem`, `-test.benchtime=200ms`, width 99.
+The independent long-running race test remained active; these are local paired
+observations, not statistically significant estimates. Earlier exploratory runs
+overlapped full-suite/corpus work and are not used for the comparison below.
+
+| Build/operation | Before median | Final median | Before → final bytes/op |
+| --- | ---: | ---: | ---: |
+| Default parse | 14.339 ms | 14.616 ms | 3,113,605 → 3,445,390 |
+| Default collapsed render | 0.971 ms | 0.352 ms | 519,834 → 138,198 |
+| Default find-corpus build | 0.047 ms | 0.049 ms | 210,737 → 210,992 |
+| Glamour parse | 14.361 ms | 14.678 ms | 3,074,235 → 3,415,493 |
+| Glamour collapsed render | 5.911 ms | 1.643 ms | 2,111,449 → 767,318 |
+| Glamour find-corpus build | 0.058 ms | 0.061 ms | 210,736 → 210,993 |
+
+Parsing now normalizes events that were previously skipped and materializes their
+viewer bodies: approximately 0.3 ms and 0.33 MB more on this input. Rendering
+benefits from compact input markers (about 64%/72% less elapsed time), while the
+complete searchable content remains present. No unexplained cost change remains
+on this measured archive; this is not a guarantee for every recording.
+
+The separate synthetic `BenchmarkCodexViewerLargeEdit` includes a 16,384-line
+executable input and a 16,384-line replacement hunk. Final default/glamour medians:
+parse 33.205/27.695 ms, collapsed render 0.024/0.066 ms, find-corpus build
+7.152/8.244 ms. Parse allocates about 12.84/12.69 MB and the complete find corpus
+15.92 MB. These measurements overlapped other validation and have **no 100 ms
+acceptance claim**. They measure parsing/collapsed rendering/corpus construction;
+expanded-detail input-to-frame behavior is covered by navigation tests and the
+separate established latency workload, not by these throughput benchmarks.
+
+[Raw paired archive and stress results](.reviews/task-6-viewer-benchmarks.txt).
+Reproduce after choosing the same frozen local input:
+
+```sh
+CAPY_CODEX_VIEWER_BENCH_INPUT=/absolute/path/to/frozen-rollout.jsonl \
+GOMAXPROCS=2 go test -tags fts5 -run '^$' -v \
+  -bench '^BenchmarkCodexViewer(Archive|LargeEdit)$' -benchmem -benchtime=200ms \
+  -count=6 ./internal/vault/tui
+# Repeat with -tags fts5,glamour; use the same harness and input on the baseline.
+```
+
+### Retrieval quality, documentation and review
+
+`make bench-quality` passed before and after the decoder optimization, retaining
+reports as `codex-vault-viewer-task6.json` and `codex-vault-viewer-task6-final.json`.
+The baseline was newly generated from a clean `git archive 0be03aa` snapshot under
+`/tmp`, named `codex-vault-viewer-pre-feature.json`; its embedded Git metadata is
+`unknown` because the snapshot has no `.git`, so the source revision is recorded
+here explicitly. Earlier benchmark files were preserved.
+
+`make bench-compare BASE=codex-vault-viewer-pre-feature TARGET=codex-vault-viewer-task6-final`
+found identical retrieval and context-reduction metrics on dataset SHA-256
+`7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`.
+Overall R@1/R@10/NDCG@10/MRR remain 0.910/0.994/0.955/0.945. Performance comparison
+via `benchstat` was skipped because it is not installed; the dedicated viewer
+measurements are separate from quality and the corpus-output parity gate.
+
+`kk:document` updated README viewer guidance, architecture mechanisms and model
+comments. The existing CLI and CI configuration is inherited; no command, flag,
+configuration setting, dependency version, deployment, CI or setup artifact is
+changed. ADR-031 already governs the decoder/consumer boundary; no new ADR is
+needed for these display policies. Optional prose clarification can be requested
+with `kk:clarify-docs README.md docs/architecture.md`.
+
+The [isolated code review](.reviews/task-6-code-review-2026-10-03.md) and
+[isolated spec review](.reviews/task-6-spec-review-2026-10-03.md) approved the
+feature and measured follow-up. All external LOW suggestions were addressed;
+no required behavior or review fix is deferred. No new convention or systemic
+finding needs indexing beyond the decisions and measurements recorded here.
+
+### Completion and reflection
+
+Task 6 and the feature are complete; all accepted behavior is implemented and
+verified. No required work is deferred. The only implementation refinement was
+measurement-driven: retaining validated hunk text removed the need to choose a
+builder capacity and preserved cheap malformed-input rejection. The live-corpus
+race canary needed a longer timeout, while paired normal rendering became much
+cheaper once long code was disclosed through markers. These observations are
+captured above rather than promoted to general timing guarantees.
