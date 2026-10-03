@@ -137,7 +137,7 @@ func buildFindTargetProjection(ctx context.Context, c *findCorpus, messages []va
 			}
 			structural(st.MarkerOpenable.Render("▸ subagent"))
 		default:
-			structural(st.messageHeader(msg.Role, msg.Queued, platform))
+			structural(st.transcriptMessageHeader(msg, platform))
 		}
 		for li < len(c.lines) && c.lines[li].position.message == mi+p.messageOffset {
 			line := c.lines[li]

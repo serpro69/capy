@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
-> Status: Task 1 complete — [compatibility evidence](verification.md); Tasks 2–6 pending
+> Status: Tasks 1–2 complete — [compatibility evidence](verification.md); Tasks 3–6 pending
 > Review resolution: [supplied findings](.reviews/review-resolution-2026-10-03.md)
 
 ## Starting point and task boundaries
@@ -127,6 +127,10 @@ Task 2 is a complete path for completed paginated updates. Full operation suppor
 and event-identity resilience remain Task 3, legacy/direct reconciliation Task 4,
 and long-input disclosure Task 5. Do not mark #121 complete at this intermediate
 point. The task adds no new frame kind, role, or search matcher.
+
+Implemented and verified; see [Task 2 evidence](verification.md#task-2--grouped-completed-paginated-updates-2026-10-03)
+and its [isolated review](.reviews/task-2-code-review-2026-10-03.md). Task 5 reuses
+`TranscriptMessage.Heading` and the shared normal/find header helper.
 
 ## Task 3 — Complete paginated operations and event resilience
 
@@ -274,6 +278,11 @@ An unavailable real corpus is a documented skip, not a parity success claim.
    → verify: the existing reference gate holds and no parse/render regression
    remains unexplained. These source links survive moving the earlier feature
    documentation from `wip` to `done`.
+   Task 2's external review suggested byte-based JSON-null checks for large
+   stdout/stderr and preallocating the update-diff builder. Neither came with a
+   measured regression. Profile those paths here; compare valid large hunks and
+   malformed inputs rejected early before choosing builder capacity, and adopt
+   either optimization only when the measurements support it.
 4. Run `make bench-quality` and compare against an identified baseline using
    `make bench-compare`, preserving previous reports. → verify: no quality
    regression and the independent corpus-output parity gate still passes.

@@ -6,7 +6,7 @@
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
 > Status: in-progress
 > Created: 2026-10-03
-> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); Task 1 complete
+> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); Tasks 1–2 complete
 > Not Doing: JavaScript interpretation, shell-edit inference, Rust renderer port, rich syntax highlighting, line-number gutter, per-file picker, global FTS changes, export changes, schema/version changes, general cross-platform tool-input UI, live filesystem verification
 
 ## Task 1: Freeze synthetic and real-corpus compatibility
@@ -25,11 +25,11 @@
 - [x] 1.3 Capture and recompare the local baseline before production edits; record aggregate evidence in `verification.md` → verify: required real categories covered and every unchanged input matches.
 
 Evidence: [verification](verification.md), [isolated code review](.reviews/task-1-code-review-2026-10-03.md).
-Production code is unchanged; Task 2 is next.
+Task 1 changed no production code.
 
 ## Task 2: Completed paginated updates open as grouped diffs
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Can run in parallel with:** Task 5
@@ -37,13 +37,16 @@ Production code is unchanged; Task 2 is next.
 
 ### Subtasks
 
-- [ ] 2.1 Add normalized file-change entries and paginated dispatch without changing `openAsst` → verify: physical anchors, status gating, and metadata are correct.
-- [ ] 2.2 Convert completed update hunks and compose grouped details in `codex_changes.go`/`transcript_changes.go` → verify: counts, paths, several hunks/files, and unavailable-data handling.
-- [ ] 2.3 Introduce/reuse the optional heading override in normal/find rendering and use exact design labels → verify: one expandable group has the specified heading in both builds.
-- [ ] 2.4 Register explicit scanner/export skip cases and compare synthetic plus real-corpus outputs → verify: byte parity and no unknown-kind warnings.
+- [x] 2.1 Add normalized file-change entries and paginated dispatch without changing `openAsst` → verify: physical anchors, status gating, and metadata are correct.
+- [x] 2.2 Convert completed update hunks and compose grouped details in `codex_changes.go`/`transcript_changes.go` → verify: counts, paths, several hunks/files, and unavailable-data handling.
+- [x] 2.3 Introduce/reuse the optional heading override in normal/find rendering and use exact design labels → verify: one expandable group has the specified heading in both builds.
+- [x] 2.4 Register explicit scanner/export skip cases and compare synthetic plus real-corpus outputs → verify: byte parity and no unknown-kind warnings.
 
 This slice handles completed paginated updates. Task 3 completes other operations
 and identity resilience; Tasks 4–5 finish legacy edits and long-input disclosure.
+
+Evidence: [verification](verification.md#task-2--grouped-completed-paginated-updates-2026-10-03),
+[isolated code review](.reviews/task-2-code-review-2026-10-03.md). Task 3 is next.
 
 ## Task 3: Complete paginated operations, states, and identity
 

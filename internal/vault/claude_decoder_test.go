@@ -67,6 +67,9 @@ func describeEntry(e Entry) string {
 		if e.SearchOnly {
 			sb.WriteString(" searchonly")
 		}
+	case EntryFileChange:
+		fmt.Fprintf(&sb, "F@%d %q %s files=%d available=%t", e.LineIndex,
+			e.FileChange.ID, e.FileChange.State, len(e.FileChange.Files), e.FileChange.ChangesAvailable)
 	default:
 		fmt.Fprintf(&sb, "?@%d kind=%s", e.LineIndex, e.Kind)
 	}
@@ -410,7 +413,16 @@ func assertPayloadIsolation(t *testing.T, name string, tr *Transcript) {
 	t.Helper()
 	for i, e := range tr.Entries {
 		where := fmt.Sprintf("%s entry %d (%s)", name, i, describeEntry(e))
+		if e.Kind != EntryFileChange {
+			assert.Nil(t, e.FileChange, where)
+		}
 		switch e.Kind {
+		case EntryFileChange:
+			assert.NotNil(t, e.FileChange, where)
+			assert.Empty(t, e.Text+e.CallID+e.CallName+e.CallSummary+e.Body, where)
+			assert.Nil(t, e.Parts, where)
+			assert.Nil(t, e.Diff, where)
+			assert.False(t, e.Queued || e.SearchOnly, where)
 		case EntryHuman:
 			assert.NotEmpty(t, e.Text, where)
 			assert.Nil(t, e.Parts, where)
@@ -762,6 +774,7 @@ func TestEntryKind_String(t *testing.T) {
 	assert.Equal(t, "assistant", EntryAssistant.String())
 	assert.Equal(t, "tool_result", EntryToolResult.String())
 	assert.Equal(t, "system", EntrySystem.String())
+	assert.Equal(t, "file_change", EntryFileChange.String())
 	assert.Equal(t, "EntryKind(0)", EntryUnknown.String())
 }
 

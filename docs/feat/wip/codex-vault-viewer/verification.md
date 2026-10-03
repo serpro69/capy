@@ -131,3 +131,77 @@ fixtures). This is outside the test-only compatibility task and is not changed
 here. Run them with an empty `XDG_CONFIG_HOME` for reproducible validation; a
 separate follow-up should isolate config consistently in those fixture helpers
 and pin a regression with a non-default personal minimum-size policy.
+
+## Task 2 — grouped completed paginated updates (2026-10-03)
+
+Task 2 adds the viewer path for recorded paginated updates. The neutral four-file
+fixture opens one `4 files changed (+23 −14)` marker, with sorted file sections,
+archived-CWD-relative paths and the `File changes · completed` heading. Normal
+and find rendering share the optional heading override. The existing tool detail
+retains complete bodies, copy selection, marker return, resize and local search
+ownership. No new role, frame type, dependency, schema or index version is added.
+
+`TestCodexFileChangePaginated_*` covers status evidence, unavailable/partial data,
+metadata, physical anchors across malformed/oversized neighbors, preservation of
+the open assistant slot, and bounded body-free warnings. `TestCodexFileChangeDiff`
+covers several hunks, exact ranges/counts, file headers, CRLF, no-final-newline
+annotations, empty ranges and malformed content. `TestViewerCodexFileChanges`
+opens the four-file group and finds all 23 additions while reusing one corpus;
+`TestTranscriptHeadingOverride` checks normal/find headings, single-row headers,
+Markdown bypass and omitted empty JSON fields in both builds.
+
+### Compatibility evidence
+
+The working tree is based on `8afa3de4d7e1f9f2869989b7a1a021cc764510cd`.
+The original Task 1 TSV and companion remain unchanged, with the same SHA-256
+values recorded above. Frozen synthetic scanner/text/Markdown goldens passed.
+The same opt-in corpus command used by Task 1 passed in 53.14 seconds:
+
+- 497 recordings discovered; 478 unchanged inputs compared, **zero mismatches**.
+- 4 appended, 0 otherwise changed, 15 new, 0 removed and 0 vanished.
+- Unchanged category coverage: 111 completed paginated, 8 failed, 1 declined,
+  2 real-move and 13 legacy-direct recordings.
+- No compressed recordings or revert variants were present.
+
+This is scanner/export byte parity, not a claim that pending operation and legacy
+viewer behavior is implemented. Raw recordings and per-session paths remain local.
+
+### Checks and scope
+
+All commands use `GOCACHE=/tmp/capy-codex-vault-viewer-go-cache`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`.
+
+- Focused decoder/consumer/model tests passed.
+- `go test -tags fts5 -count=1 ./...` passed every package, including the full
+  vault (229.23 seconds), default TUI (22.78 seconds), and CLI (227.11 seconds)
+  suites. This run used an empty temporary `XDG_CONFIG_HOME` and unrestricted
+  execution for existing socket tests, as described in Task 1.
+- Focused race tests passed: `go test -race -tags fts5 -count=1 -run
+  '^(TestCodexFileChange|TestCodexConsumers|TestCodexDecoder|TestViewerCodexFileChanges|TestTranscriptHeadingOverride|TestViewerFind)'
+  ./internal/vault ./internal/vault/tui`.
+- The full glamour TUI suite passed: `go test -tags fts5,glamour -count=1
+  ./internal/vault/tui/...` (24.34 seconds).
+- `make bench-quality BENCH_BRANCH=codex-vault-viewer-task2` passed. The explicit
+  report name preserves earlier results. `make bench-compare BASE=vault-find-task2
+  TARGET=codex-vault-viewer-task2` found identical quality/context-reduction metrics
+  against the existing `a415bda` baseline, using the same dataset SHA-256
+  `7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`.
+  Its performance comparison was skipped because `benchstat` is not installed;
+  this does not establish parse/render latency. Task 6 retains that measurement.
+
+Task 3 still owns add/delete/move conversion and duplicate/conflicting identities.
+Those operations currently retain labeled unavailable details; ordinary failed,
+declined and unconfirmed groups show diagnostics without candidate hunks. Task 4
+owns legacy/direct reconciliation; Task 5 owns long executable input disclosure.
+Task 5 should reuse the heading override introduced here. Public feature guidance
+and final performance/spec validation remain Task 6. Issue #121 is not complete.
+
+### Review completion
+
+The [isolated code review](.reviews/task-2-code-review-2026-10-03.md) is complete.
+The independent reviewer approved without findings. The external review's blank
+context-line concern was checked against the design, the other parser's distinct
+input grammar and a read-only aggregate corpus scan. Strict prefix validation is
+retained; the added prefixed/unprefixed regression cases passed under `-race`.
+Two unmeasured allocation suggestions are recorded for Task 6's performance work.
+There are no outstanding required Task 2 fixes or new conventions to index.
