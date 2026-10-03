@@ -4,14 +4,14 @@
 > Implementation: [implementation.md](implementation.md)
 > Research: [research.md](research.md)
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
-> Status: pending
+> Status: in-progress
 > Created: 2026-10-03
-> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); implementation pending
+> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); Task 1 complete
 > Not Doing: JavaScript interpretation, shell-edit inference, Rust renderer port, rich syntax highlighting, line-number gutter, per-file picker, global FTS changes, export changes, schema/version changes, general cross-platform tool-input UI, live filesystem verification
 
 ## Task 1: Freeze synthetic and real-corpus compatibility
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** —
@@ -20,9 +20,12 @@
 
 ### Subtasks
 
-- [ ] 1.1 Add neutral wrapped/direct fixtures and freeze current complete scanner/text/Markdown outputs in Codex fixture/consumer tests → verify: they pass before decoder changes.
-- [ ] 1.2 Add `codex_parity_test.go` with opt-in input/output SHA-256 baselines, reusing baseline I/O helpers → verify: deterministic outputs, mismatch detection, changed-input accounting, and no zero-comparison success.
-- [ ] 1.3 Capture and recompare the local baseline before production edits; record aggregate evidence in `verification.md` → verify: required real categories covered and every unchanged input matches.
+- [x] 1.1 Add neutral wrapped/direct fixtures and freeze current complete scanner/text/Markdown outputs in Codex fixture/consumer tests → verify: they pass before decoder changes.
+- [x] 1.2 Add `codex_parity_test.go` with opt-in input/output SHA-256 baselines, reusing baseline I/O helpers → verify: deterministic outputs, mismatch detection, changed-input accounting, and no zero-comparison success.
+- [x] 1.3 Capture and recompare the local baseline before production edits; record aggregate evidence in `verification.md` → verify: required real categories covered and every unchanged input matches.
+
+Evidence: [verification](verification.md), [isolated code review](.reviews/task-1-code-review-2026-10-03.md).
+Production code is unchanged; Task 2 is next.
 
 ## Task 2: Completed paginated updates open as grouped diffs
 

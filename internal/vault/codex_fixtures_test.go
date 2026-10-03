@@ -293,6 +293,89 @@ func codexCustomOutputJSON(t testing.TB, output string, exitCode int) string {
 	return string(b)
 }
 
+// codexFileChangeEvent uses independently authored, neutral edit data. Nested
+// operation IDs deliberately differ from the surrounding exec response ID.
+func codexFileChangeEvent(ts, id, status string, changes map[string]any) map[string]any {
+	return codexItemCompletedLine(ts, map[string]any{
+		"type": "FileChange", "id": id, "status": status, "changes": changes,
+		"stdout": "", "stderr": "",
+	})
+}
+
+// codexEditCompatibilityCases stays separate from codexCases: these freeze
+// scanner/export policy while the viewer and normalized entries will change.
+func codexEditCompatibilityCases(t testing.TB) []codexCase {
+	t.Helper()
+	changes := map[string]any{}
+	var patch strings.Builder
+	patch.WriteString("*** Begin Patch\n")
+	for i, counts := range [][2]int{{5, 2}, {2, 2}, {10, 8}, {6, 2}} {
+		path := fmt.Sprintf("/tmp/edit-demo/file-%d.txt", i+1)
+		var hunk strings.Builder
+		for n := 0; n < counts[1]; n++ {
+			fmt.Fprintf(&hunk, "-Old example line %d for the neutral compatibility fixture.\n", n+1)
+		}
+		for n := 0; n < counts[0]; n++ {
+			fmt.Fprintf(&hunk, "+New example line %d for the neutral compatibility fixture.\n", n+1)
+		}
+		changes[path] = map[string]any{"type": "update", "move_path": nil,
+			"unified_diff": fmt.Sprintf("@@ -1,%d +1,%d @@\n%s", counts[1], counts[0], hunk.String())}
+		fmt.Fprintf(&patch, "*** Update File: %s\n@@\n%s", path, hunk.String())
+	}
+	patch.WriteString("*** End Patch\n")
+	quoted, err := json.Marshal(patch.String())
+	require.NoError(t, err)
+	code := "const edit = await tools.apply_patch(" + string(quoted) + ");\ntext(edit);\n"
+
+	wrapped := codexRollout(t, codexPaginated,
+		codexSessionMetaLine(at(0), codexPaginated, codexMetaOpts{cwd: "/tmp/edit-demo", payloadTS: codexPayloadTS}), // 0
+		codexUserItem(at(1), "Update the four example files."),                                                       // 1
+		codexAssistant(at(2), "I will update the examples and check them."),                                          // 2
+		codexCustomToolCallLine(at(3), "call_wrapper", "exec", code),                                                 // 3
+		codexFileChangeEvent(at(4), "exec-patch-four", "completed", changes),                                         // 4
+		// A call AFTER the edit still attaches to the assistant at line 2.
+		codexFunctionCallLine(t, at(5), "call_check", "exec_command", map[string]any{"cmd": "check examples"}), // 5
+		codexCustomToolOutputParts(at(6), "call_wrapper", "Script completed\n{}\n"),                            // 6
+		codexFunctionOutput(at(7), "call_check", codexExecOutput(0, "examples checked\n")),                     // 7
+		codexAssistant(at(8), "The four examples are ready."),                                                  // 8
+	)
+	one := map[string]any{"/tmp/edit-demo/one.txt": map[string]any{
+		"type": "update", "unified_diff": "@@ -1 +1 @@\n-old\n+new\n", "move_path": nil,
+	}}
+	two := map[string]any{"/tmp/edit-demo/two.txt": map[string]any{
+		"type": "add", "content": "second example\n",
+	}}
+	nested := codexRollout(t, codexPaginated,
+		codexSessionMetaLine(at(0), codexPaginated, codexMetaOpts{cwd: "/tmp/edit-demo", payloadTS: codexPayloadTS}),
+		codexUserItem(at(1), "Apply two independent edits."),
+		codexAssistant(at(2), "Applying both edits."),
+		codexCustomToolCallLine(at(3), "call_batch", "exec", "const first = await tools.apply_patch(\"*** Begin Patch\\n*** Update File: /tmp/edit-demo/one.txt\\n@@\\n-old\\n+new\\n*** End Patch\");\nconst second = await tools.apply_patch(\"*** Begin Patch\\n*** Add File: /tmp/edit-demo/two.txt\\n+second example\\n*** End Patch\");\ntext([first, second]);"),
+		codexFileChangeEvent(at(4), "exec-first", "completed", one),
+		codexFileChangeEvent(at(5), "exec-second", "completed", two),
+		codexCustomToolCallLine(at(6), "call_after", "exec", "text('after edits');"),
+		codexCustomToolOutputParts(at(7), "call_batch", "Script completed\n[{},{}]"),
+		codexCustomToolOutputParts(at(8), "call_after", "after edits"),
+		codexAssistant(at(9), "Both edits are ready."),
+	)
+	legacy := codexRollout(t, codexLegacy,
+		codexSessionMetaLine(at(0), codexLegacy, codexMetaOpts{cwd: "/tmp/edit-demo", payloadTS: codexPayloadTS}),
+		codexUserEvent(at(1), "Add the second example."),
+		codexAssistant(at(2), "Adding the example."),
+		codexCustomToolCallLine(at(3), "call_direct", "apply_patch", "*** Begin Patch\n*** Add File: /tmp/edit-demo/two.txt\n+second example\n*** End Patch\n"),
+		codexEnv(at(4), "event_msg", map[string]any{
+			"type": "patch_apply_end", "call_id": "call_direct", "success": true, "status": "completed",
+			"changes": two, "stdout": "Success. Updated the following files:\nA /tmp/edit-demo/two.txt\n", "stderr": "",
+		}),
+		codexCustomToolOutput(at(5), "call_direct", codexCustomOutputJSON(t, "Success. Updated the following files:\nA /tmp/edit-demo/two.txt\n", 0)),
+		codexAssistant(at(6), "The example is ready."),
+	)
+	return []codexCase{
+		{name: "wrapped_four_files", raw: wrapped},
+		{name: "several_nested_edits", raw: nested},
+		{name: "legacy_direct_edit", raw: legacy},
+	}
+}
+
 // codexAddPatch is a one-file apply_patch input adding script.py.
 const codexAddPatch = "*** Begin Patch\n*** Add File: /tmp/proj/script.py\n+#!/usr/bin/env python3\n+import json\n*** End Patch\n"
 

@@ -1,0 +1,30 @@
+## 👤 You
+
+Update the four example files.
+
+## 🤖 Codex
+
+I will update the examples and check them.
+→ exec const edit = await tools.apply_patch("*** Begin Patch\n*** Update File: /tmp/edit-demo/file-1.txt\n@@\n-Old example line 1 for the neutral compatibility fixture.\n-Old example line 2 for the neutral compatibility fixture.\n+New example line 1 for the neutral compatibility fixture.\n+New example line 2 for the neutral compatibility fixture.\n+New example line 3 for the neutral compatibility fixture.\n+New example line 4 for the neutral compatibility fixture.\n+New example line 5 for the neutral compatibility fixture.\n*** Update File: /tmp/edit-demo/file-2.txt\n@@\n-Old example line 1 for the neutral compatibility fixture.\n-Old example line 2 for the neutral compatibility fixture.\n+New example line 1 for the neutral compatibility fixture.\n+New example line 2 for the neutral compatibility fixture.\n*** Update File: /tmp/edit-demo/file-3.txt\n@@\n-Old example line 1 for the neutral compatibility fixture.\n-Old example line 2 for the neutral compatibility fixture.\n-Old example line 3 for the neutral compatibility fixture.\n-Old example line 4 for the neutral compatibility fixture.\n-Old example line 5 for the neutral compatibility fixture.\n-Old example line 6 for the neutral compatibility fixture.\n-Old example line 7 for the neutral compatibility fixture.\n-Old example line 8 for the neutral compatibility fixture.\n+New example line 1 for the neutral compatibility fixture.\n+New example line 2 for the neutral compatibility fixture.\n+New example line 3 for the neutral compatibility fixture.\n+New example line 4 for the neutral compatibility fixture.\n+New example line 5 for the neutral compatibility fixture.\n+New example line 6 for the neutral compatibility fixture.\n+New example line 7 for the neutral compatibility fixture.\n+New example line 8 for the neutral compatibility fixture.\n+New example line 9 for the neutral compatibility fixture.\n+New example line 10 for the neutral compatibility fixture.\n*** Update File: /tmp/edit-demo/file-4.txt\n@@\n-Old example line 1 for the neutral compatibility fixture.\n-Old example line 2 for the neutral compatibility fixture.\n+New example line 1 for the neutral compatibility fixture.\n+New example line 2 for the neutral compatibility fixture.\n+New example line 3 for the neutral compatibility fixture.\n+New example line 4 for the neutral compatibility fixture.\n+New example line 5 for the neutral compatibility fixture.\n+New example line 6 for the neutral compatibility fixture.\n*** End Patch\n");
+→ exec_command check examples
+
+## ⎿ Tool result
+
+```
+exec const edit = await tools.apply_patch("*** Begin Patch\n*** Update File: /tmp/edit-demo/file-1.txt\n@@\n-Old example line 1 for the neutral compatibility fixture.\n-Old example line 2 for the neutral compatibility fixture.\n+New example line 1 for the neutral compatibility fixture.\n+New example line 2 for the neutral compatibility fixture.\n+New example line 3 for the neutral compatibility fixture.\n+New example line 4 for the neutral compatibility fixture.\n+New example line 5 for the neutral compatibility fixture.\n*** Update File: /tmp/edit-demo/file-2.txt\n@@\n-Old example line 1 for the neutral compatibility fixture.\n-Old example line 2 for the neutral compatibility fixture.\n+New example line 1 for the neutral compatibility fixture.\n+New example line 2 for the neutral compatibility fixture.\n*** Update File: /tmp/edit-demo/file-3.txt\n@@\n-Old example line 1 for the neutral compatibility fixture.\n-Old example line 2 for the neutral compatibility fixture.\n-Old example line 3 for the neutral compatibility fixture.\n-Old example line 4 for the neutral compatibility fixture.\n-Old example line 5 for the neutral compatibility fixture.\n-Old example line 6 for the neutral compatibility fixture.\n-Old example line 7 for the neutral compatibility fixture.\n-Old example line 8 for the neutral compatibility fixture.\n+New example line 1 for the neutral compatibility fixture.\n+New example line 2 for the neutral compatibility fixture.\n+New example line 3 for the neutral compatibility fixture.\n+New example line 4 for the neutral compatibility fixture.\n+New example line 5 for the neutral compatibility fixture.\n+New example line 6 for the neutral compatibility fixture.\n+New example line 7 for the neutral compatibility fixture.\n+New example line 8 for the neutral compatibility fixture.\n+New example line 9 for the neutral compatibility fixture.\n+New example line 10 for the neutral compatibility fixture.\n*** Update File: /tmp/edit-demo/file-4.txt\n@@\n-Old example line 1 for the neutral compatibility fixture.\n-Old example line 2 for the neutral compatibility fixture.\n+New example line 1 for the neutral compatibility fixture.\n+New example line 2 for the neutral compatibility fixture.\n+New example line 3 for the neutral compatibility fixture.\n+New example line 4 for the neutral compatibility fixture.\n+New example line 5 for the neutral compatibility fixture.\n+New example line 6 for the neutral compatibility fixture.\n*** End Patch\n");
+Script completed
+{}
+```
+
+## ⎿ Tool result
+
+```
+exec_command check examples
+Process exited with code 0
+examples checked
+
+```
+
+## 🤖 Codex
+
+The four examples are ready.

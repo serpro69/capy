@@ -2,12 +2,36 @@ package vault
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// These goldens freeze COMPLETE ScanOutput metadata/rows and both exports before
+// codex-vault-viewer changes production code. Deliberate initial capture only:
+// go test -tags fts5 -run '^TestCodexConsumers_EditCompatibility$' ./internal/vault -update
+// Do not update these to accept viewer-only changes; those must preserve bytes.
+func TestCodexConsumers_EditCompatibility(t *testing.T) {
+	for _, fixture := range codexEditCompatibilityCases(t) {
+		t.Run(fixture.name, func(t *testing.T) {
+			outputs := codexCompatibilityOutputs(t, fixture.raw)
+			for _, reader := range codexCompatibilityReaders {
+				filename := filepath.Join("testdata", "codex-edits", fixture.name+"."+reader)
+				if *updateGolden {
+					require.NoError(t, os.MkdirAll(filepath.Dir(filename), 0o755))
+					require.NoError(t, os.WriteFile(filename, outputs[reader], 0o644))
+				}
+				want, err := os.ReadFile(filename)
+				require.NoError(t, err)
+				assert.Equal(t, string(want), string(outputs[reader]), reader)
+			}
+		})
+	}
+}
 
 // codex_consumers_test.go runs the three platform-blind consumers — the FTS
 // scanner (ScanSession), the `show` renderer (RenderText / RenderMarkdown) and
