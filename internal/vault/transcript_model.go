@@ -245,7 +245,10 @@ type Diff struct {
 	// per hunk followed by the hunk's prefixed lines. Codex (codex_patch.go): the
 	// patch's own `*** Add/Update/Delete File:` section lines, an exact numbered
 	// header for file adds, and Codex's line-number-less `@@ [hint]` header for
-	// update hunks. Consumers must key only on the line prefixes — `@@` for a
+	// update hunks. Structured Codex events (codex_changes.go) preserve validated
+	// numbered update hunks or derive add/delete hunks from archived content;
+	// the viewer supplies sorted file sections and only presents candidate hunks
+	// for completed groups. Consumers must key only on the line prefixes — `@@` for a
 	// hunk header, '+', '-', ' ' for hunk lines, anything else plain — which is
 	// exactly what the TUI's renderDiffBody does; the prefixes are preserved
 	// verbatim so it can colour by first byte.

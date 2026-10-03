@@ -1,7 +1,7 @@
 # Readable Codex edits in the vault viewer
 
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
-> Status: supplied review addressed; Tasks 1–5 complete; final verification/documentation in Task 6
+> Status: implemented and verified; all six tasks complete, isolated code/spec reviews approved
 > Created: 2026-10-03
 > Implementation: [implementation.md](implementation.md)
 > Tasks: [tasks.md](tasks.md)
@@ -24,10 +24,10 @@ must not appear as confirmed applied changes. Search, back navigation, resize,
 and raw-archive access must work from the new detail views.
 
 The user selected design after investigation established the structured-event
-approach. This document settles implementation choices for that approach. Two UI
-preferences were requested during drafting: grouping and export scope. Pending
-different preferences, the draft uses one summary per patch and limits the change
-to the interactive viewer. These are draft defaults, not recorded user approvals.
+approach. This document settles implementation choices for that approach. The
+implementation follows the design defaults of one summary per patch and
+viewer-only scope. No separate grouping/export preference answer was recorded
+during drafting.
 
 ## Scope and constraints
 
@@ -365,9 +365,9 @@ separately; do not impose new timing numbers without a measured baseline.
    compare the same fixture bytes afterward. Also compare SHA-256 digests of
    complete scanner, text, and Markdown outputs for unchanged real Codex inputs;
    a shape-only canary cannot establish byte parity.
-5. One group per patch and viewer-only scope are the drafting defaults described
-   above. They can be revised during design review without changing the event
-   identity or status rules.
+5. One group per patch and viewer-only scope are the implemented design defaults
+   described above; the event identity and status rules are independent of those
+   presentation choices.
 
 ## Not Doing
 
@@ -403,7 +403,7 @@ separately; do not impose new timing numbers without a measured baseline.
 ## Acceptance and review
 
 The [implementation plan](implementation.md#verification-matrix) names the
-fixtures and checks for each contract. The final review must examine the event
-identity/status rules, unchanged search/export outputs, and the complete
-input/result display path together. This is an authored proposal, not an
-independently verified architecture or an implementation completion report.
+fixtures and checks for each contract. The isolated code/spec reviews examine
+event identity/status, unchanged search/export outputs and the complete
+input/result path together. This document records the authored design;
+[verification.md](verification.md) records execution evidence and review limits.

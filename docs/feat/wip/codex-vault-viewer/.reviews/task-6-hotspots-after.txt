@@ -1,0 +1,42 @@
+goos: linux
+goarch: amd64
+pkg: github.com/serpro69/capy/internal/vault
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+BenchmarkCodexUpdateDiff/lines=32/malformed=false-2         	  264621	       839.8 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=32/malformed=false-2         	  280149	       839.0 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=32/malformed=false-2         	  277532	       838.2 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=32/malformed=false-2         	  277449	       839.2 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=32/malformed=false-2         	  288769	       837.7 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=32/malformed=false-2         	  281953	       840.8 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=32/malformed=true-2          	 9340342	        26.45 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexUpdateDiff/lines=32/malformed=true-2          	 9004819	        26.69 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexUpdateDiff/lines=32/malformed=true-2          	 8882757	        26.67 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexUpdateDiff/lines=32/malformed=true-2          	 9012255	        26.58 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexUpdateDiff/lines=32/malformed=true-2          	 8623759	        27.45 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexUpdateDiff/lines=32/malformed=true-2          	 9125001	        25.97 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=false-2      	     928	    262379 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=false-2      	     828	    283504 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=false-2      	     879	    273747 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=false-2      	     918	    263948 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=false-2      	     924	    266158 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=false-2      	     752	    302168 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=true-2       	 8914966	        28.49 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=true-2       	 7983902	        33.44 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=true-2       	 8428810	        27.09 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=true-2       	 9211856	        26.44 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=true-2       	 9113685	        26.32 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexUpdateDiff/lines=16384/malformed=true-2       	 9031191	        26.57 ns/op	      32 B/op	       1 allocs/op
+BenchmarkCodexChangeOutput/bytes=64-2                       	  510012	       439.4 ns/op	     224 B/op	       3 allocs/op
+BenchmarkCodexChangeOutput/bytes=64-2                       	  574401	       480.9 ns/op	     224 B/op	       3 allocs/op
+BenchmarkCodexChangeOutput/bytes=64-2                       	  514605	       432.7 ns/op	     224 B/op	       3 allocs/op
+BenchmarkCodexChangeOutput/bytes=64-2                       	  603510	       406.4 ns/op	     224 B/op	       3 allocs/op
+BenchmarkCodexChangeOutput/bytes=64-2                       	  605077	       417.8 ns/op	     224 B/op	       3 allocs/op
+BenchmarkCodexChangeOutput/bytes=64-2                       	  572880	       408.5 ns/op	     224 B/op	       3 allocs/op
+BenchmarkCodexChangeOutput/bytes=1048576-2                  	      55	   3992002 ns/op	 1048736 B/op	       3 allocs/op
+BenchmarkCodexChangeOutput/bytes=1048576-2                  	      56	   4011686 ns/op	 1048736 B/op	       3 allocs/op
+BenchmarkCodexChangeOutput/bytes=1048576-2                  	      58	   3993832 ns/op	 1048736 B/op	       3 allocs/op
+BenchmarkCodexChangeOutput/bytes=1048576-2                  	      56	   3992504 ns/op	 1048736 B/op	       3 allocs/op
+BenchmarkCodexChangeOutput/bytes=1048576-2                  	      57	   3990361 ns/op	 1048736 B/op	       3 allocs/op
+BenchmarkCodexChangeOutput/bytes=1048576-2                  	      60	   3983372 ns/op	 1048736 B/op	       3 allocs/op
+PASS
+ok  	github.com/serpro69/capy/internal/vault	8.785s

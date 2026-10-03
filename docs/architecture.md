@@ -664,11 +664,12 @@ the verbatim one-line success body (collapsing it would hide nothing useful), wh
 the TUI collapses to a marker that expands to a **colored unified diff**.
 
 The diff isn't in the result body (which is the success string). The **decoder**
-fills `ToolResult.Diff`: the Claude decoder from the sibling top-level JSONL field
+fills the result entry's `Diff`: the Claude decoder from the sibling top-level JSONL field
 `toolUseResult.structuredPatch` via `diff.go`'s `diffBodyFromToolResult`, the Codex
-decoder from the matching `apply_patch` call's `*** Begin Patch` input via
-`codex_patch.go`'s `codexPatchToDiff` — **only when the result reports success**, so
-the viewer never shows a diff that was not applied. Both produce unified-diff *text*
+decoder as a fallback from the matching `apply_patch` call's `*** Begin Patch`
+input via `codex_patch.go`'s `codexPatchToDiff`, only with decoded success evidence
+and no structured edit event superseding it. This is recorded outcome evidence,
+not verification of the live filesystem. Both produce unified-diff *text*
 (kept in package `vault`); `viewerToolMessage` (`transcript.go`) turns a `Diff` into
 the marker (a `Diff` wins over an empty body), and the `tui` package owns the *color*
 (`render.go` `renderDiffBody`: `+` green / `-` red / `@@` cyan), which bypasses the
@@ -681,7 +682,52 @@ diff falls back to the plain success body. To extend the diff-view to another to
 The TUI adds one display-only behavior beyond the shared set (vault v2 § Addenda
 A1): **any** large result collapses, not just excluded ones —
 `overCollapseThreshold` (>20 lines or >2000 bytes; constants in `transcript.go`).
-`vault show` and the FTS index ignore size; only the viewer collapses by threshold.
+`vault show` and the FTS index ignore these viewer thresholds.
+
+**Codex structured edits and inputs.** `codex_changes.go` normalizes legacy
+`patch_apply_end` and paginated `item_completed/FileChange` into `EntryFileChange`
+with a `FileChangeSet`. These independent event entries retain their physical
+line and do not close the assistant call-attachment window. Adapters preserve
+recorded content, optional destinations, stdout/stderr and diagnostics, sort paths
+once, and validate unified-hunk ranges. Missing data differs from an explicit
+empty file or zero-change move. Both scanner and export consumers explicitly
+skip this entry kind; they also ignore `ToolCall.CodeText` and result associations.
+
+Nonempty operation IDs deduplicate equal normalized evidence at its first line.
+Conflicting duplicates become unconfirmed; empty IDs remain independent. Only
+unique direct `apply_patch` call/result IDs equal to the event ID associate through
+`Entry.FileChangeID`. Nested exec IDs are independent. Repeated response IDs or
+contradictory explicit result exit codes make the edit unconfirmed. A recognized
+failed/unconfirmed event cannot be bypassed by the successful input fallback.
+Maps are built once; result composition does not rescan the transcript.
+
+`transcript_changes.go` composes one collapsed `RoleTool` group per canonical
+event, shortening paths lexically against archived `Meta.CWD`. Completed groups
+show sorted add/delete/update/move sections and exact counts; partial groups say
+`diff incomplete` without partial aggregate totals. Failed, declined and
+unconfirmed groups show reported paths and diagnostics without candidate hunks.
+An associated completed event plus `Entry.ReportedSuccess` forces a nonempty
+result body into `apply_patch · output`, headed `Tool result`. Other results keep
+their normal size-based policy. The [viewer guide](../README.md#codex-edits-and-executable-inputs)
+lists exact state labels and headings.
+
+`transcript_inputs.go` discloses Codex `ToolCall.CodeText` over the same strict
+20-line/2,000-byte thresholds. Shared input and summary fields stay intact.
+The assistant remains one body with ordered `→ exec · input` placeholders;
+input and launch markers follow in call-part order. Exact response call IDs map
+correlated results to `exec · output`. The complete input is a `RoleTool` body
+headed `Tool input`, using the existing tool target/frame and Markdown bypass.
+`TranscriptMessage.Heading` is honored by normal and find rendering.
+
+Only the owning body receives `SourceAnchor`. Within the latest source-line
+group at or before a global hit, `rowForLine` prefers that body; unmarked groups
+keep the last-message rule. Local find and return retain ordinal/byte identities,
+and all composed bodies join the immutable find corpus once. Copy includes the
+full selected body; raw view still opens the containing archive. Both build
+variants use the same policy. No stored bytes, schema, reader/index version,
+global FTS output or text/Markdown export changed, so reopening existing archives
+needs no reimport/reindex. Frozen synthetic outputs and the real-corpus digest
+gate establish this compatibility; see the [feature verification](feat/wip/codex-vault-viewer/verification.md).
 
 A collapsed result renders as a **focusable openable marker**, the same `]`/`[` +
 `enter` mechanism subagent launch points use. Markers are *role-dispatched* at the
@@ -778,8 +824,10 @@ Assistant messages become Assistant entries; `function_call`, `custom_tool_call`
 line>`, `apply_patch <files>`, `spawn_agent <task> (<type>)`, `web_search <query>`,
 bare MCP names). Results are correlated by `call_id`; the `exec_command` wrapper
 header is stripped (`stripExecHeader`, keeping the `Process exited with code N`
-status line as search signal); a **successful** `apply_patch` result gets a `Diff`
-converted from Codex's `*** Begin Patch` format (`codexPatchToDiff`). `reasoning`,
+status line as search signal). Structured patch events produce independent
+`EntryFileChange` records; a successful direct `apply_patch` result gets an
+input-derived `Diff` only when no corresponding structured event supersedes it
+(see tool-result display above). `reasoning`,
 `compacted`, `turn_context`, `token_count`, `world_state` and unknown types are
 skipped (ADR-021) with a per-file debug fingerprint of unseen types; a non-subagent
 file with assistant entries but no human turn logs one warning with `cli_version` and
