@@ -1,0 +1,19 @@
+[You]
+Apply two independent edits.
+
+[Codex]
+Applying both edits.
+→ exec const first = await tools.apply_patch("*** Begin Patch\n*** Update File: /tmp/edit-demo/one.txt\n@@\n-old\n+new\n*** End Patch");
+→ exec text('after edits');
+
+[Tool result]
+exec const first = await tools.apply_patch("*** Begin Patch\n*** Update File: /tmp/edit-demo/one.txt\n@@\n-old\n+new\n*** End Patch");
+Script completed
+[{},{}]
+
+[Tool result]
+exec text('after edits');
+after edits
+
+[Codex]
+Both edits are ready.

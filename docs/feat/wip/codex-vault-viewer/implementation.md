@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
-> Status: planned — no implementation or test results claimed
+> Status: Task 1 complete — [compatibility evidence](verification.md); Tasks 2–6 pending
 > Review resolution: [supplied findings](.reviews/review-resolution-2026-10-03.md)
 
 ## Starting point and task boundaries
@@ -56,6 +56,12 @@ as `TestCodexCanary`, including `.jsonl.zst` and excluding revert variants. Read
 each file once for a run. Reuse `parityEntry`, `readParityBaseline`, and
 `writeParityBaseline` from `parity_canary_test.go`; do not reuse its Claude-only
 `readerOutputs` set, which also hashes the intentionally changing TUI output.
+
+Task 1 also stores a machine-local `.tsv.json` companion beside the TSV baseline.
+It records each input's uncompressed byte length and category membership and is
+bound to the TSV's SHA-256. Keep both files: prefix hashing distinguishes true
+appends, and captured categories must retain unchanged representatives on later
+runs. A missing or invalid companion fails instead of recapturing the baseline.
 
 For each root-relative logical rollout path, store SHA-256 of the uncompressed
 input and a combined SHA-256 of three independently named output digests:
