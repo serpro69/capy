@@ -6,7 +6,7 @@
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
 > Status: in-progress
 > Created: 2026-10-03
-> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); Tasks 1–3 complete
+> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); Tasks 1–4 complete
 > Not Doing: JavaScript interpretation, shell-edit inference, Rust renderer port, rich syntax highlighting, line-number gutter, per-file picker, global FTS changes, export changes, schema/version changes, general cross-platform tool-input UI, live filesystem verification
 
 ## Task 1: Freeze synthetic and real-corpus compatibility
@@ -64,14 +64,14 @@ Evidence: [verification](verification.md#task-2--grouped-completed-paginated-upd
 - [x] 3.4 Compare corpus digests and inspect real adverse/move cases read-only → verify: correct states with unchanged scanner/export bytes.
 
 Evidence: [verification](verification.md#task-3--paginated-operations-states-and-identity-2026-10-03),
-[isolated code review](.reviews/task-3-code-review-2026-10-03.md). Task 4 is next.
+[isolated code review](.reviews/task-3-code-review-2026-10-03.md).
 Explicit empty-string update diffs cover pure moves and no-op updates; missing
 or null remains unavailable. Mixed-family wire fixtures remain with Task 4's
 legacy adapter; the normalized equality is already shared.
 
 ## Task 4: Legacy events and direct results reconcile correctly
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** Task 5
@@ -79,10 +79,13 @@ legacy adapter; the normalized equality is already shared.
 
 ### Subtasks
 
-- [ ] 4.1 Add legacy status normalization through the shared converter → verify: every legacy status-table row and mixed event families.
-- [ ] 4.2 Associate exact direct IDs and preserve `ReportedSuccess`/explicit exit evidence in decoding → verify: independent nested IDs and ambiguous/missing/conflicting outcomes.
-- [ ] 4.3 Replace duplicate direct diff cards and force associated positive output into a compact marker → verify: no inline boilerplate, full body/find/copy access, and no text heuristics.
-- [ ] 4.4 Retain event-less successful direct fallback and compare real legacy output digests → verify: old direct cases remain valid and observed call→event→output records render correctly.
+- [x] 4.1 Add legacy status normalization through the shared converter → verify: every legacy status-table row and mixed event families.
+- [x] 4.2 Associate exact direct IDs and preserve `ReportedSuccess`/explicit exit evidence in decoding → verify: independent nested IDs and ambiguous/missing/conflicting outcomes.
+- [x] 4.3 Replace duplicate direct diff cards and force associated positive output into a compact marker → verify: no inline boilerplate, full body/find/copy access, and no text heuristics.
+- [x] 4.4 Retain event-less successful direct fallback and compare real legacy output digests → verify: old direct cases remain valid and observed call→event→output records render correctly.
+
+Evidence: [verification](verification.md#task-4--legacy-events-and-direct-results-2026-10-03),
+[isolated code review](.reviews/task-4-code-review-2026-10-03.md). Task 5 is next.
 
 ## Task 5: Long executable inputs stay compact and searchable
 

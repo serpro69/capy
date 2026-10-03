@@ -83,12 +83,15 @@ type codexSlot struct {
 	body       string
 	structured bool
 	success    bool
+	exitCode   *int
 
-	fileChange *FileChangeSet // EntryFileChange; does not close openAsst
+	fileChange     *FileChangeSet // EntryFileChange; does not close openAsst
+	changeCategory string         // wire family, for bounded diagnostics only
 }
 
 // codexCallInfo is the pass-2 correlation record for one call id.
 type codexCallInfo struct {
+	count   int // duplicate response-call IDs cannot establish edit provenance
 	name    string
 	summary string
 	patch   string // apply_patch input text, for Diff on success
@@ -264,7 +267,7 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 				}
 				s := codexSlot{kind: EntryToolResult, lineIndex: lineIndex, timestamp: ts, callID: out.CallID}
 				if str, ok := asJSONString(out.Output); ok {
-					s.body, s.structured, s.success = codexCustomOutputText(str)
+					s.body, s.structured, s.success, s.exitCode = codexCustomOutputText(str)
 				} else {
 					// Content-array form (hosted exec): plain parts, no inner JSON,
 					// never a Diff.
@@ -292,6 +295,16 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 				}
 				addHuman(ts, ev.Message, false)
 
+			case "patch_apply_end":
+				var ev codexPatchApplyEnd
+				if !codexUnmarshalPayload(log, line.Payload, &ev, lineIndex, "patch_apply_end") {
+					return
+				}
+				changes := codexLegacyFileChange(ev)
+				codexLogFileChange(log, changes, lineIndex, "patch_apply_end")
+				slots = append(slots, codexSlot{kind: EntryFileChange, lineIndex: lineIndex, timestamp: ts,
+					fileChange: changes, changeCategory: "patch_apply_end"})
+
 			case "item_completed":
 				var ev codexItemCompleted
 				if !codexUnmarshalPayload(log, line.Payload, &ev, lineIndex, "item_completed") {
@@ -300,10 +313,11 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 				switch ev.Item.Type {
 				case "FileChange":
 					changes := codexPaginatedFileChange(ev.Item)
-					codexLogFileChange(log, changes, lineIndex)
+					codexLogFileChange(log, changes, lineIndex, "item_completed/FileChange")
 					// Keep openAsst unchanged: calls after this event still belong
 					// to the same assistant row in scanner/export consumers.
-					slots = append(slots, codexSlot{kind: EntryFileChange, lineIndex: lineIndex, timestamp: ts, fileChange: changes})
+					slots = append(slots, codexSlot{kind: EntryFileChange, lineIndex: lineIndex, timestamp: ts,
+						fileChange: changes, changeCategory: "item_completed/FileChange"})
 				case "UserMessage":
 					addHuman(ts, codexTextParts(ev.Item.Content), false)
 				case "SubAgentActivity":
@@ -367,7 +381,10 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 			if p.Call.ID == "" {
 				continue
 			}
-			info := &codexCallInfo{name: p.Call.Name, summary: p.Call.Summary, call: p.Call}
+			info := &codexCallInfo{count: 1, name: p.Call.Name, summary: p.Call.Summary, call: p.Call}
+			if previous := calls[p.Call.ID]; previous != nil {
+				info.count += previous.count
+			}
 			if p.Call.Name == "apply_patch" {
 				var patch string
 				_ = json.Unmarshal(p.Call.Input, &patch)
@@ -376,6 +393,7 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 			calls[p.Call.ID] = info
 		}
 	}
+	changes, resultCounts := codexReconcileDirectChanges(slots, calls, log)
 
 	// Pass 2b: slots → entries. Fallback humans are used only when the event
 	// stream produced none (design § Human turns come from events).
@@ -403,15 +421,20 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 			assistants++
 			t.Entries = append(t.Entries, Entry{Kind: EntryAssistant, LineIndex: s.lineIndex, Timestamp: s.timestamp, Parts: s.parts})
 		case EntryToolResult:
-			e := Entry{Kind: EntryToolResult, LineIndex: s.lineIndex, Timestamp: s.timestamp, CallID: s.callID, Body: s.body}
+			e := Entry{Kind: EntryToolResult, LineIndex: s.lineIndex, Timestamp: s.timestamp, CallID: s.callID, Body: s.body,
+				ReportedSuccess: s.structured && s.success, ExitCode: s.exitCode}
 			if info := calls[s.callID]; info != nil {
 				e.CallName, e.CallSummary = info.name, info.summary
 				// Diff only for a structured, successful apply_patch result whose
 				// patch converts — the viewer must never show a diff that was not
 				// applied (design § Tool results).
-				if info.name == "apply_patch" && s.structured && s.success {
-					if text, added, removed, ok := codexPatchToDiff(info.patch); ok {
-						e.Diff = &Diff{Text: text, Added: added, Removed: removed}
+				if info.name == "apply_patch" && info.count == 1 && resultCounts[s.callID] == 1 {
+					if changes[s.callID] != nil {
+						e.FileChangeID = s.callID
+					} else if e.ReportedSuccess {
+						if text, added, removed, ok := codexPatchToDiff(info.patch); ok {
+							e.Diff = &Diff{Text: text, Added: added, Removed: removed}
+						}
 					}
 				}
 			}
@@ -665,10 +688,12 @@ func codexOutputText(raw json.RawMessage) string {
 // `.output`, the raw string is the body verbatim with no exit-code line,
 // structured=false and success=false: the content is preserved, only the
 // structure is not trusted (and no Diff is ever built from it).
-func codexCustomOutputText(raw string) (body string, structured, success bool) {
+// The optional exitCode retains explicitly decoded metadata even when output
+// is unusable; this can contradict an edit event without inventing success.
+func codexCustomOutputText(raw string) (body string, structured, success bool, exitCode *int) {
 	trimmed := strings.TrimSpace(raw)
 	if !isJSONObject(json.RawMessage(trimmed)) {
-		return raw, false, false
+		return raw, false, false, nil
 	}
 	var probe struct {
 		Output   json.RawMessage `json:"output"`
@@ -677,21 +702,21 @@ func codexCustomOutputText(raw string) (body string, structured, success bool) {
 		} `json:"metadata"`
 	}
 	if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
-		return raw, false, false
+		return raw, false, false, nil
 	}
 	inner, ok := asJSONString(probe.Output)
 	if !ok {
-		return raw, false, false
+		return raw, false, false, probe.Metadata.ExitCode
 	}
 	if code := probe.Metadata.ExitCode; code != nil {
 		success = *code == 0
 		line := fmt.Sprintf("%s%d", codexExitCodeLinePrefix, *code)
 		if inner == "" {
-			return line, true, success
+			return line, true, success, code
 		}
-		return line + "\n" + inner, true, success
+		return line + "\n" + inner, true, success, code
 	}
-	return inner, true, strings.HasPrefix(inner, "Success.")
+	return inner, true, strings.HasPrefix(inner, "Success."), nil
 }
 
 // stripExecHeader removes the exec_command wrapper header from a shell result:

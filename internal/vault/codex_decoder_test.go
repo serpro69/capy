@@ -718,7 +718,7 @@ func TestCodexCustomOutputText(t *testing.T) {
 		"empty":              {"", "", false, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			body, structured, success := codexCustomOutputText(tc.in)
+			body, structured, success, _ := codexCustomOutputText(tc.in)
 			assert.Equal(t, tc.body, body)
 			assert.Equal(t, tc.structured, structured, "structured")
 			assert.Equal(t, tc.success, success, "success")

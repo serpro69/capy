@@ -28,7 +28,7 @@ func TestCodexFileChangeCanary(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	states, operations := map[string]int{}, map[string]int{}
 	unavailable := map[string]int{}
-	missingDiffs, moves, recordings := 0, 0, 0
+	missingDiffs, moves, recordings, legacyEvents, directResults := 0, 0, 0, 0, 0
 	for _, file := range files {
 		if file.revert {
 			continue
@@ -45,41 +45,88 @@ func TestCodexFileChangeCanary(t *testing.T) {
 			state                    string
 			repeated, statusConflict bool
 		}
+		type responseCall struct {
+			name        string
+			line, count int
+		}
+		calls := map[string]responseCall{}
+		results := map[string][]int{}
 		expected := map[int]outcome{}
 		firstByID := map[string]int{}
 		physical := -1
 		err = scanLines(bytes.NewReader(raw), scanLineCap, func(data []byte, oversize bool) {
 			physical++
 			var line codexLine
-			if oversize || json.Unmarshal(data, &line) != nil || line.Type != "event_msg" {
+			if oversize || json.Unmarshal(data, &line) != nil {
+				return
+			}
+			if line.Type == "response_item" {
+				var response struct {
+					Type, Name string
+					CallID     string `json:"call_id"`
+				}
+				if json.Unmarshal(line.Payload, &response) != nil || response.CallID == "" {
+					return
+				}
+				switch response.Type {
+				case "custom_tool_call", "function_call":
+					calls[response.CallID] = responseCall{response.Name, physical, calls[response.CallID].count + 1}
+				case "custom_tool_call_output", "function_call_output":
+					results[response.CallID] = append(results[response.CallID], physical)
+				}
+				return
+			}
+			if line.Type != "event_msg" {
 				return
 			}
 			var event struct {
-				Type string `json:"type"`
-				Item struct {
+				Type    string          `json:"type"`
+				CallID  string          `json:"call_id"`
+				Success json.RawMessage `json:"success"`
+				Status  json.RawMessage `json:"status"`
+				Item    struct {
 					Type   string          `json:"type"`
 					ID     string          `json:"id"`
 					Status json.RawMessage `json:"status"`
 				} `json:"item"`
 			}
-			if json.Unmarshal(line.Payload, &event) == nil && event.Type == "item_completed" && event.Item.Type == "FileChange" {
+			if json.Unmarshal(line.Payload, &event) == nil && (event.Type == "patch_apply_end" || event.Type == "item_completed" && event.Item.Type == "FileChange") {
+				id, rawStatus := event.Item.ID, event.Item.Status
+				legacy := event.Type == "patch_apply_end"
+				if legacy {
+					id, rawStatus = event.CallID, event.Status
+					legacyEvents++
+				}
 				state := "unconfirmed"
 				var status string
-				if json.Unmarshal(event.Item.Status, &status) == nil {
+				if json.Unmarshal(rawStatus, &status) == nil {
 					switch status {
 					case "completed", "failed", "declined":
 						state = status
 					}
 				}
-				if first, exists := firstByID[event.Item.ID]; event.Item.ID != "" && exists {
+				if legacy {
+					var success *bool
+					if json.Unmarshal(event.Success, &success) != nil || success == nil {
+						state = "unconfirmed"
+					} else if len(rawStatus) == 0 {
+						state = "failed"
+						if *success {
+							state = "completed"
+						}
+					} else if *success != (state == "completed") {
+						state = "unconfirmed"
+					}
+				}
+				if first, exists := firstByID[id]; id != "" && exists {
 					previous := expected[first]
 					previous.repeated = true
 					previous.statusConflict = previous.statusConflict || previous.state != state
 					expected[first] = previous
 					return
 				}
-				if event.Item.ID != "" {
-					firstByID[event.Item.ID] = physical
+				if id != "" {
+					firstByID[id] = physical
 				}
 				expected[physical] = outcome{state: state}
 			}
@@ -91,6 +138,55 @@ func TestCodexFileChangeCanary(t *testing.T) {
 		recordings++
 		tr, err := DecoderFor(PlatformCodex).Decode(bytes.NewReader(raw))
 		require.NoError(t, err)
+		// Independently account for explicit result contradictions and repeated
+		// response IDs before checking viewer states. Bodies remain private.
+		for id, first := range firstByID {
+			call := calls[id]
+			if call.count > 1 || call.name == "apply_patch" && len(results[id]) > 1 {
+				want := expected[first]
+				want.state = "unconfirmed"
+				expected[first] = want
+			}
+		}
+		for _, e := range tr.Entries {
+			if e.Kind != EntryToolResult {
+				continue
+			}
+			first, hasEvent := firstByID[e.CallID]
+			call := calls[e.CallID]
+			associated := hasEvent && call.name == "apply_patch" && call.count == 1 && len(results[e.CallID]) == 1
+			require.True(t, (e.FileChangeID != "") == associated, "only unique exact direct IDs associate")
+			if !associated {
+				continue
+			}
+			require.True(t, e.FileChangeID == e.CallID, "event association is exact")
+			require.True(t, e.Diff == nil, "structured event supersedes fallback")
+			want := expected[first]
+			if e.ExitCode != nil && (want.state == "completed" && *e.ExitCode != 0 ||
+				(want.state == "failed" || want.state == "declined") && *e.ExitCode == 0) {
+				want.state = "unconfirmed"
+				expected[first] = want
+			}
+			directResults++
+			require.True(t, call.line < first && first < e.LineIndex, "observed direct call-event-output order")
+		}
+		messages := transcriptMessages(tr, nil)
+		messagesByLine := make(map[int]TranscriptMessage, len(messages))
+		for _, m := range messages {
+			messagesByLine[m.SourceLine] = m
+		}
+		for _, e := range tr.Entries {
+			if e.Kind != EntryToolResult || e.FileChangeID == "" || !e.ReportedSuccess || e.Body == "" {
+				continue
+			}
+			want := expected[firstByID[e.FileChangeID]]
+			if want.repeated || want.state != "completed" {
+				continue
+			}
+			m := messagesByLine[e.LineIndex]
+			require.True(t, m.Collapsed && !m.Diff && m.ToolSummary == "apply_patch · output" && m.Heading == "Tool result", "compact direct output")
+			require.True(t, m.Body == e.Body, "full direct output retained")
+		}
 		seen := 0
 		for _, e := range tr.Entries {
 			if e.Kind != EntryFileChange {
@@ -139,12 +235,13 @@ func TestCodexFileChangeCanary(t *testing.T) {
 				}
 			}
 		}
-		require.Equal(t, len(expected), seen, "all recorded paginated edits remain visible")
+		require.Equal(t, len(expected), seen, "all recorded edits remain visible")
 	}
 	t.Logf("viewer corpus: recordings=%d states=%v completed operations=%v moves=%d unavailable files=%d",
 		recordings, states, operations, moves, missingDiffs)
 	t.Logf("unavailable reasons=%v", unavailable)
-	require.Positive(t, recordings, "no paginated edits compared")
+	t.Logf("legacy events=%d exact direct results=%d", legacyEvents, directResults)
+	require.Positive(t, recordings, "no edits compared")
 	require.Zero(t, missingDiffs, "investigate actual unavailable completed changes")
 	for _, category := range []string{"completed", "failed", "declined"} {
 		if states[category] == 0 {
@@ -153,5 +250,8 @@ func TestCodexFileChangeCanary(t *testing.T) {
 	}
 	if moves == 0 {
 		t.Log("category unavailable: moves (synthetic coverage only)")
+	}
+	if legacyEvents == 0 {
+		t.Log("category unavailable: legacy edits (synthetic coverage only)")
 	}
 }

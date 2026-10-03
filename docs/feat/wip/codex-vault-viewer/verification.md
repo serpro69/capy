@@ -311,3 +311,109 @@ the independent reviewer approved the final fixes; the external reviewer returne
 no actionable findings. No required Task 3 fix or new convention remains to index.
 Task 4 owns legacy/direct reconciliation and mixed-family wire tests, Task 5 owns
 long executable inputs, and Task 6 owns final feature documentation/verification.
+
+## Task 4 — legacy events and direct results (2026-10-03)
+
+Legacy `patch_apply_end` records now use the shared file-change converter and
+canonical event identity. Presence-aware success/status normalization implements
+all rows of the design table, including absent status, null, malformed and
+contradictory evidence. Both event families work regardless of declared history
+mode. Legacy events retain their physical anchor without closing the assistant
+call-attachment window.
+
+Only a unique, nonempty direct `apply_patch` call/result ID associates with its
+canonical event. Structured events supersede input-derived fallback diffs even
+when failed, unconfirmed or unavailable. Duplicate call IDs, and conservatively
+repeated result IDs, cannot prove a successful fallback. Explicit result exit
+codes that contradict the event make the event unconfirmed; absence of positive
+result evidence alone does not. The existing event-less successful direct patch
+fallback remains covered by the original decoder/consumer tests.
+
+The decoder preserves `ReportedSuccess`, optional `ExitCode` and `FileChangeID`
+as transient model facts. The viewer builds one event-state map and uses those
+facts to collapse a nonempty associated successful output into
+`apply_patch · output`, with the `Tool result` heading and complete result body.
+There is one grouped edit card; the duplicate input-derived diff is removed.
+Other result bodies retain their existing inline/size-based policy. Scanner and
+exports ignore the new evidence, retaining their existing summaries and bodies.
+
+### Synthetic and viewer coverage
+
+`TestCodexFileChangeLegacy_*` covers the status matrix, mixed-family duplicate
+and conflicting records in both orders, warning privacy, assistant grouping and
+physical anchors across malformed/oversized neighbors.
+`TestCodexFileChangeDirectResult_*` covers independent wrapper IDs, unique direct
+association, duplicate calls/results, absent/unusable event identity, unavailable
+changes, explicit exit contradictions, missing exit codes, unstructured
+success-looking text, event-less fallback and results preceding their events.
+`TestViewerCodexDirectPatchOutput` opens the grouped diff and compact result,
+checks absence of inline boilerplate and fallback content, and exercises full-body
+copy selection, parent return, hidden-body find, shared corpus ownership and
+resize. It passes in both build variants.
+
+### Corpus evidence
+
+Working-tree base: `6877641057de68729e5d7d81604c7f7e2a40d939`.
+The Task 1 baseline files remain unchanged:
+
+- TSV SHA-256: `c68edd3a7734c202c364d7e87a02298050fb2e64be7a50ca5337b050c1a08055`.
+- Companion SHA-256: `d7178b74f3810e02f6d48c98626c0361b3feec2721f3404acf440bf9674abc4f`.
+
+The extended read-only `TestCodexFileChangeCanary` passed (10.23 seconds):
+153 recordings with edits; 987 completed, 9 failed and 1 declined canonical
+operations; 855 adds, 48 deletes, 1,042 updates and 12 moves; zero unavailable
+completed-file diffs. **All 21 legacy events had exact direct associations and
+call→event→output order**, with one grouped edit and compact, complete output.
+Only aggregate evidence is retained; raw recordings and paths stay machine-local.
+
+`TestCodexParityCanary` passed in 59.25 seconds: **478 unchanged recordings,
+zero scanner/text/Markdown mismatches**. Of 555 discovered recordings, 4 were
+appended, 73 new, 0 otherwise changed, 0 removed and 0 vanished; none were
+compressed or revert variants. Unchanged category coverage: 111 completed
+paginated, 8 failed, 1 declined, 2 real-move and all 13 legacy-direct recordings.
+Frozen synthetic scanner/text/Markdown goldens also pass.
+
+Both corpus tests used the original absolute `CAPY_CODEX_PARITY_BASELINE` path
+and `CAPY_CODEX_CHANGES_CANARY=1`, with the Task 1 cache and synthetic keys:
+
+```sh
+go test -tags fts5 -count=1 \
+  -run '^(TestCodexFileChangeCanary|TestCodexParityCanary)$' -v ./internal/vault
+```
+
+### Checks
+
+All Go checks use `GOCACHE=/tmp/capy-codex-vault-viewer-go-cache`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`.
+
+- Focused Codex decoder, consumer, file-change and TUI checks passed.
+- `go test -tags fts5 -count=1 ./...` passed every package, using an empty
+  temporary `XDG_CONFIG_HOME` and unrestricted execution for existing socket
+  tests. Vault: 243.22 seconds; default TUI: 22.50 seconds; CLI: 232.84 seconds.
+- Focused race checks passed with `-tags fts5` over both vault and TUI packages,
+  including existing find regressions (1.60 and 1.71 seconds).
+- The full glamour TUI suite passed under the race detector:
+  `go test -race -tags fts5,glamour -count=1 ./internal/vault/tui/...`
+  (57.22 seconds).
+- `make bench-quality BENCH_BRANCH=codex-vault-viewer-task4` passed.
+  `make bench-compare BASE=codex-vault-viewer-task3 TARGET=codex-vault-viewer-task4`
+  found identical retrieval quality and context reduction on dataset SHA-256
+  `7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`.
+  Performance comparison was skipped because `benchstat` is absent; final
+  parse/render and find-latency measurements remain Task 6.
+
+Task 5 still owns long executable inputs; Task 6 owns public feature documentation
+and final feature-wide verification. Issue #121 is not complete at this point.
+
+### Review completion
+
+The [isolated review](.reviews/task-4-code-review-2026-10-03.md) is complete.
+The independent code reviewer approved without findings; Gemini 3.1 Pro returned
+no actionable findings. Author review changed one corpus assertion to avoid
+printing private diff content on failure. No required Task 4 fixes remain and no
+new project convention or systemic P0/P1 finding requires indexing.
+The canary passed again after that assertion change (10.32 seconds): 155 edit
+recordings, 993 completed/9 failed/1 declined operations, 858 adds/48 deletes/1,054
+updates, 12 moves, zero unavailable completed diffs, and the same 21 exact legacy
+direct associations. Growth since the earlier run is reported separately from
+the unchanged-input parity comparison.

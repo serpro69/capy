@@ -1,7 +1,7 @@
 # Readable Codex edits in the vault viewer
 
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
-> Status: supplied review addressed; Tasks 1–3 complete; remaining viewer work in Tasks 4–5
+> Status: supplied review addressed; Tasks 1–4 complete; remaining viewer work in Task 5
 > Created: 2026-10-03
 > Implementation: [implementation.md](implementation.md)
 > Tasks: [tasks.md](tasks.md)
@@ -203,6 +203,8 @@ Carry a direct result's positive `structured && success` fact into an optional
 `EntryToolResult.ReportedSuccess` boolean (false omitted). This does not equate a
 false value with failure. It allows the viewer to collapse an associated success
 response even after the structured event has replaced its fallback `Diff`.
+The optional `EntryToolResult.ExitCode` preserves explicit decoded metadata for
+contradiction handling, including when the result's output field is unusable.
 
 The new format work belongs in `codex_changes.go` with wire types alongside the
 existing Codex types. `codex_decoder.go` collects and reconciles these entries.
@@ -255,6 +257,8 @@ exit status, or a success-looking string in JavaScript/output.
    attach an `exec-…` ID to a surrounding `call_…` ID by location or prefix.
    Duplicated response-call IDs make the association unconfirmed: preserve raw
    results and do not construct successful input-fallback diffs for that ID.
+   Repeated direct result IDs are likewise ambiguous; preserve every result body
+   without associating it or constructing successful fallback diffs.
 5. A structured event supersedes the direct call-input diff for that operation.
    The matched response result has no fallback `Diff`. When its associated event
    is completed and `ReportedSuccess` is true, force its nonempty body into a

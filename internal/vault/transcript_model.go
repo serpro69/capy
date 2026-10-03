@@ -160,13 +160,21 @@ type Entry struct {
 	CallID      string
 	CallName    string
 	CallSummary string
+	// FileChangeID associates an unambiguous direct result with the canonical
+	// recorded edit of the same nonempty ID. Its event supersedes input Diff.
+	FileChangeID string `json:",omitempty"`
+	// ReportedSuccess preserves a positively decoded structured result. False
+	// means no positive evidence, not necessarily failure. ExitCode is present
+	// only when explicitly decoded, never inferred from output text.
+	ReportedSuccess bool `json:",omitempty"`
+	ExitCode        *int `json:",omitempty"`
 	// Body is the verbatim, untruncated result text (a string, or the text
 	// blocks of a block array joined by "\n", trimmed; image blocks skipped).
 	Body string
 	// Diff is the unified-diff view of the change a result applied, when the
 	// platform records one (Claude: toolUseResult.structuredPatch on the FIRST
 	// diff-tool result of a line — D15; Codex: the apply_patch input, on
-	// success only). Nil when there is none.
+	// success only, when no canonical edit event supersedes it). Nil otherwise.
 	Diff *Diff
 
 	// FileChange is the recorded edit event. Consumers decide whether candidate

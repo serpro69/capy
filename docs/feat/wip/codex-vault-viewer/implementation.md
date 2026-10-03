@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
-> Status: Tasks 1–3 complete — [compatibility evidence](verification.md); Tasks 4–6 pending
+> Status: Tasks 1–4 complete — [compatibility evidence](verification.md); Tasks 5–6 pending
 > Review resolution: [supplied findings](.reviews/review-resolution-2026-10-03.md)
 
 ## Starting point and task boundaries
@@ -197,6 +197,12 @@ registrations in `transcript_model.go`.
 5. Compare unchanged scanner/export digests and inspect legacy recordings
    read-only. → verify: actual call→event→output sequences have the documented
    order/presentation and no persisted-output changes.
+
+Implemented and independently reviewed; see [Task 4 evidence](verification.md#task-4--legacy-events-and-direct-results-2026-10-03)
+and its [isolated review](.reviews/task-4-code-review-2026-10-03.md). Repeated direct
+result IDs use the same conservative ambiguity policy as duplicate call IDs.
+Explicit exit evidence is retained as optional `Entry.ExitCode`; absent positive
+success evidence alone does not contradict a completed event.
 
 ## Task 5 — Long executable inputs stay compact and searchable
 
