@@ -161,6 +161,16 @@ Only when a whole file yields **zero** human entries from events does the decode
 
 Legacy `agent_message` events and paginated `AgentMessage`, `CommandExecution`, `McpToolCall`, `FileChange`, `WebSearch` items are skipped: they duplicate `response_item` content byte-for-byte (verified).
 
+> **Correction — 2026-10-03, issue #121:** the byte-for-byte duplication claim
+> above is incorrect for nested-exec `FileChange` items. They carry completion
+> status and structured diffs with independent operation IDs; the response item
+> contains wrapper code instead. The current decoder still skips these events.
+> The proposed [Codex viewer design](../../wip/codex-vault-viewer/design.md)
+> supersedes that rationale and specifies independent event decoding while
+> preserving existing indexed/exported text. Its
+> [research](../../wip/codex-vault-viewer/research.md#wider-corpus-corroboration--2026-10-03)
+> records the corroborating corpus evidence; implementation remains pending.
+
 ### Assistant entries and tool calls
 
 `response_item` / `message` with `role == "assistant"` becomes an Assistant entry (`output_text` parts joined with newlines; `phase` ignored). There are no progressive snapshots to merge.

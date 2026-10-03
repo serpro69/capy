@@ -3,222 +3,287 @@
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
 > Status: planned — no implementation or test results claimed
+> Review resolution: [supplied findings](.reviews/review-resolution-2026-10-03.md)
 
-## Starting point
+## Starting point and task boundaries
 
-Read the [research](research.md) and the design's status/identity rules before
-editing. The relevant pipeline is `DecoderFor` → `Transcript` → three consumers:
-`ScanTranscript` for persisted search, `displayMessages` for text/Markdown, and
-`transcriptMessages` for the interactive viewer. The TUI renders the last
-consumer's `TranscriptMessage` slice; it must not parse Codex wire records.
+Read the [research](research.md) and the design's status/identity rules first.
+The pipeline is `DecoderFor` → `Transcript` → `ScanTranscript` (persisted search),
+`displayMessages` (text/Markdown), or `transcriptMessages` (interactive viewer).
+The TUI consumes `TranscriptMessage`; it never parses Codex wire records.
 
-There are two user-facing slices: displaying structured edits, and disclosing
-long executable inputs. The first is split into paginated and legacy/direct-call
-tasks so each change remains reviewable. Implement every task as a complete,
-testable path; do not finish all model work before integrating the viewer.
+Two independent user-facing branches follow a compatibility-baseline task:
+structured edits (Tasks 2–4) and long executable inputs (Task 5). Tasks 2 and 3
+split the former broad paginated task into a working update-only path and its
+remaining operations/resilience. Task 5 no longer fragments assistant bodies,
+introduces a role, or changes detail-frame/search-corpus ownership.
 
-Use the repository's existing libraries. The proposed model field/type names
-below make contracts explicit; the implementer may refine names consistently
-without changing behavior. File assignments include required mechanical
-registrations, which do not constitute separate horizontal tasks.
+The primary files under each task name the substantive logic. Small enum/field
+registrations, fixture builders, and explicit consumer skip cases are accounted
+for separately; they are not hidden unfinished layers. Tasks 2 and 5 share the
+specified optional `TranscriptMessage.Heading` and rendering override: whichever
+lands first introduces it, and the other reuses it. This is an integration point,
+not a dependency on the legacy-edit branch. Coordinate shared-file edits if tasks
+run concurrently; no new dependency or library is needed.
 
-## Task 1 — Paginated edits from archive to expandable diff
+## Task 1 — Capture compatibility before production changes
 
-Primary files: `internal/vault/transcript_model.go`, new
-`internal/vault/codex_changes.go`, new `internal/vault/transcript_changes.go`, and
-`internal/vault/transcript.go`. Wire types and decoder/consumer switch cases are
-small registrations in `codex_types.go`, `codex_decoder.go`, `scanner.go`, and
-`render.go`.
+Primary files: new `internal/vault/codex_parity_test.go` and existing
+`codex_fixtures_test.go`/`codex_consumers_test.go`. This is an explicit test-only
+prerequisite, not a production-layer task.
 
-1. Before changing decoding, add a synthetic paginated fixture with a long
-   custom `exec`, two nested `FileChange` events with distinct `exec-…` IDs,
-   ordinary command output, and the final custom-tool output. Include a smaller
-   four-file issue reproduction. Freeze their current scanner output, metadata,
-   and text/Markdown output as compatibility expectations. Use neutral paths and
-   authored text, never copied private rollouts. → verify: the baseline tests
-   pass with the current decoder; expectations include all source-line indices.
-2. Extend the model with `EntryFileChange`, `FileChangeSet`, per-file normalized
-   data, and completion states. Add the new kind to `EntryKind.String` and
-   entry-description test helpers. Preserve absent/invalid data distinctly from
-   valid empty content and zero counts. → verify: model/converter tests exercise
-   zero-length adds/deletes, unsupported operations, and unknown status.
-3. Decode `item_completed/FileChange` through a dedicated raw wire type rather
-   than expanding unrelated user/subagent parsing. Store its ID, diagnostics,
-   physical line, timestamp, status, and changes; do not close `openAsst` or
-   invent a call. Normalize exact duplicate events and conflicting IDs according
-   to the design. → verify: `TestCodexFileChangePaginated` checks completed,
-   failed, declined, absent/unknown status, empty IDs, repeats, and conflicts.
-4. Convert archived content and unified hunks without filesystem reads. Validate
-   update hunk counts; preserve rename targets and missing-final-newline
-   annotations. Mark unsupported/malformed files as unavailable without dropping
-   valid siblings or reporting incomplete totals as complete. → verify:
-   `TestCodexFileChangeDiff` covers add/delete/update/move, multiple hunks,
-   optional unified-file headers, empty files, CRLF, and malformed hunk lengths.
-5. Compose one collapsed `RoleTool` message per canonical event in
-   `transcript_changes.go`, called from `transcriptMessages`. A completed group
-   gets its full body and `Diff` styling; other states get plain diagnostics.
-   Use archived `Meta.CWD` for lexical display paths. The marker is compact and
-   the expanded body has stable per-file operation/path/count headers. → verify:
-   `TestCodexFileChangeTranscript` asserts grouping, ordering, paths, counts,
-   failure labels, and exact event `SourceLine`; a TUI test opens and closes it
-   with the existing marker navigation.
-6. Add explicit new-kind skip cases to `ScanTranscript` and `displayMessages`.
-   Keep assistant composition and all existing call/result text unchanged.
-   → verify: the frozen compatibility expectations still pass byte-for-byte;
-   the new entries do not trigger unknown-kind consumer warnings.
+1. Add neutral synthetic fixtures for the wrapped four-file example, several
+   nested events in one exec, and a legacy direct patch. Freeze complete current
+   scanner output/metadata and text/Markdown outputs. → verify: all expectations
+   pass with the unchanged decoder, including source lines and `ToolNames`.
+2. Implement the opt-in Codex digest canary described below, reusing the existing
+   baseline reader/writer helpers where compatible. Test its deterministic
+   serialization and baseline comparison with synthetic data. Do not include
+   viewer output in the digest. → verify: an output change with identical input
+   fails; changed/new/removed inputs are separately reported.
+3. Capture a machine-local baseline before any production edit, then compare it
+   again to prove the harness works. Record the production revision, corpus
+   categories, baseline-file digest, and comparison totals in `verification.md`.
+   → verify: unchanged recordings compare byte-identically, with the required
+   representative categories covered and no unexplained zero-comparison pass.
 
-Task 1 delivers paginated event display. Legacy events and matching direct-call
-deduplication are explicitly Task 2 work; the feature is not complete before that
-task. Keep that status visible in `tasks.md` rather than treating the first
-fixture's success as completion of #121.
+### Corpus parity gate
 
-## Task 2 — Legacy edits and direct-call reconciliation
+Use new `TestCodexParityCanary`, gated by `CAPY_CODEX_PARITY_BASELINE`, with an
+absolute baseline path under ignored `bench-results/`. Discover eligible main and
+child rollouts under both Codex roots using the same discovery/decompression rules
+as `TestCodexCanary`, including `.jsonl.zst` and excluding revert variants. Read
+each file once for a run. Reuse `parityEntry`, `readParityBaseline`, and
+`writeParityBaseline` from `parity_canary_test.go`; do not reuse its Claude-only
+`readerOutputs` set, which also hashes the intentionally changing TUI output.
 
-Primary files: `codex_changes.go`, `codex_decoder.go`,
-`transcript_model.go`, and `transcript.go`/`transcript_changes.go`.
+For each root-relative logical rollout path, store SHA-256 of the uncompressed
+input and a combined SHA-256 of three independently named output digests:
 
-1. Add the legacy patch-end wire adapter with presence-aware `success` and
-   `status` fields and reuse Task 1's converter/payload. Keep both adapters active
-   regardless of `history_mode`. → verify: `TestCodexFileChangeLegacy` covers the
-   entire design status table, including status absent with explicit success,
-   missing success, contradictory fields, and shape changes.
-2. Reconcile events by non-empty recorded ID once per decode. Normalize identical
-   events from either family to the first anchor; conflicting records produce an
-   unconfirmed event with source-line diagnostics. Use maps, not repeated scans
-   over entries. → verify: `TestCodexFileChangeIdentity` includes mixed families,
-   repeated identical payloads, same-path distinct IDs, empty IDs, and conflicting
-   bodies/statuses. Similar paths or nearby records never establish a match.
-3. Associate an unambiguous direct `apply_patch` response result using the exact
-   event ID. Add `EntryToolResult.FileChangeID` without modifying existing result
-   text or call summaries. Expose presence-aware direct result exit status for
-   reconciliation, using `metadata.exit_code` only when explicitly decoded;
-   retain the current fallback success rules for event-less direct calls.
-   → verify: `TestCodexFileChangeDirectResult` distinguishes explicit nonzero
-   exit, missing exit, unstructured output, and the existing success-prefix
-   fallback; a missing code is not treated as an explicit failure.
-4. Prefer the structured event over the old call-input diff. A recognized
-   failed/unconfirmed event suppresses that operation's successful-input fallback.
-   Contradictory explicit result/event outcomes yield an unconfirmed presentation.
-   Keep every original result body through the ordinary result policy, with no
-   fallback `Diff` on a matched result. Do not add output-text equality or
-   suppression heuristics. Ambiguous response-call IDs also disable successful
-   fallback diffs and leave their raw diagnostics visible. → verify: tests assert exactly one edit card,
-   reachable diagnostics, no fake success, and unchanged scanner/export output.
-5. Preserve the old direct-input converter for records with no associated usable
-   event. A malformed outer record that the decoder skips cannot claim an ID and
-   suppress an otherwise valid result. → verify: existing
-   `TestCodexDecoder_DiffText`, direct patch consumer tests, and a mixed
-   direct/nested fixture retain their expected behavior and physical anchors.
+- The deterministic serialization of the complete `ScanTranscript`/`ScanSession`
+  `ScanOutput`, including every row, metadata field, `ToolNames`, and line index.
+- `RenderText(PlatformCodex, raw)` as complete UTF-8 bytes.
+- `RenderMarkdown(PlatformCodex, raw)` as complete UTF-8 bytes.
 
-New event-only entries must not fabricate assistant turns, `ToolNames`, or
-searchable file summaries. A scanner difference is a design deviation requiring
-an explicit scope decision under ADR-025, not a reason to update parity goldens.
+Use unambiguous reader-name/length framing or a fixed serialization of named
+digests before combining them. Do not sanitize, truncate, sort scan rows, or omit
+metadata for this comparison. A valid baseline is created by the new test while
+production code still matches the recorded pre-feature revision; ordinary test
+success after decoder changes is not a substitute for that baseline.
 
-## Task 3 — Expand long executable inputs without repeated summaries
+After each production task and at final verification, compare against that same
+baseline. Identical input with changed output is a failure. Count appended,
+new, removed, and vanished recordings separately; never regenerate the baseline
+to bless a mismatch. At least one unchanged recording must be compared, and
+unchanged representatives must cover completed paginated edits, failed edits,
+declined edits, real moves, and legacy direct edits when those categories were
+available at capture. If live growth removes category coverage, select another
+unchanged representative and report the limitation rather than claiming coverage.
+Permission or decompression errors fail the run.
 
-Primary files: `transcript.go`, new `transcript_inputs.go`, `tui/render.go`, and
-`tui/viewer.go`. Small registrations add `ToolCall.CodeText` in
-`transcript_model.go`, populate it for custom `exec` in `codex_decoder.go`, and
-add the input-role label/style in `tui/styles.go` and `tui/find_render.go`.
+Keep raw data, per-session paths, and the baseline file machine-local. Commit only
+aggregate counts, categories, revisions, baseline-file SHA-256, commands, and
+comparison results in `verification.md`. CI without a local corpus reports a
+skip and still runs synthetic compatibility tests; a local acceptance run with
+the known available corpus must exercise it. This is the evidence supporting the
+no-reindex claim, alongside unchanged retrieval-quality benchmarks.
 
-1. Populate `CodeText` with the original decoded custom-exec input. Retain the
-   existing raw `Input`, name, and summary, including the first-line summary.
-   → verify: `TestCodexCodeInput` tests exact bytes, empty code, pragmas, quotes,
-   and multiline input; scanner/export fixtures remain unchanged.
-2. Build a viewer-only call-ID map of inputs exceeding the existing collapse
-   thresholds. Split only affected assistant entries into ordered text segments
-   and `RoleToolInput` markers. Each fragment uses the original entry's
-   `SourceLine`; do not use line number as a unique message identity. Preserve
-   the old path for entries without collapsed code. → verify:
-   `TestTranscriptCodeInput` covers text→call→text, several calls, mixed launch
-   parts, exact threshold boundaries, and byte-identical Claude fixtures.
-3. Give input markers a compact `exec · input` summary and their complete code
-   body. Give their correlated result a compact `exec · output` display alias
-   both when collapsed and when inline. Never overwrite the model's shared
-   `CallSummary`; unidentified results retain current labels. → verify: the
-   motivating main transcript contains no 4.5 KB summary on either side, while
-   input and output detail bodies remain complete.
-4. Generalize collapsed local-detail rendering and Enter handling to
-   `RoleToolInput`; use the existing `viewerTargetTool` frame. Update normal and
-   find-mode structural headers to say "Tool input" where appropriate, and map
-   its style to the existing tool palette. Glamour's non-message path should
-   already bypass Markdown; pin that behavior. → verify:
-   `TestViewerCodeInput` exercises marker navigation, expansion, copy, raw-view
-   return, and Enter/Esc at narrow widths in both builds.
-5. Integrate complete hidden input bodies with existing exact/fuzzy find. Retain
-   message-ordinal identity, parent query state, and the current global-source
-   anchor tie rule. No extra search corpus or persisted index is introduced.
-   → verify: `TestViewerFindCodeInput` covers hidden hits beyond FTS truncation,
-   duplicate `SourceLine` values, pending resize/cancel, repeated hidden/visible
-   navigation, and local detail return without stack growth.
+## Task 2 — Completed paginated updates open as grouped diffs
 
-The grouping preference changes only Task 1's composition/navigation if revised.
-The viewer/export scope preference changes the explicit `displayMessages` policy
-and corresponding compatibility expectations; it must be resolved before any
-implementation that changes exports.
+Primary files: `transcript_model.go`, new `codex_changes.go`, new
+`transcript_changes.go`, and `tui/render.go`. Registrations are the wire adapter
+in `codex_types.go`, event dispatch in `codex_decoder.go`, the new-kind branch in
+`transcript.go`, and explicit skips in `scanner.go`/`render.go`.
+
+1. Add `EntryFileChange`, completion state, `FileChangeSet`, and per-file normalized
+   data. Retain original text and diagnostic reasons for equality, and represent
+   unavailable diffs/counts separately from empty files and zero counts.
+   → verify: model and entry-description tests distinguish those states.
+2. Decode paginated `item_completed/FileChange` at its own physical line without
+   changing `openAsst` or fabricating an assistant call. Map explicit status;
+   missing/unknown status remains unconfirmed. This task renders valid completed
+   update operations; other operations receive labeled unavailable details until
+   Task 3. Failed/declined/unconfirmed events have diagnostics, never applied
+   hunks. → verify: an update-only wrapped fixture opens correctly, and non-success
+   records cannot enter the success path.
+3. Convert archived update hunks, validate line counts, and build one grouped
+   detail with stable path ordering and archived-CWD-relative headings. Add the
+   optional `Heading` override to normal and find-mode rendering if Task 5 has not
+   already done so. Use the exact design label table. → verify: updates with
+   several files/hunks show complete bodies and correct aggregate counts in both
+   builds; malformed hunks produce explicit unavailable data.
+4. Keep scanner/export consumers explicitly neutral to the new entry kind and
+   preserve old assistant composition. → verify: frozen synthetic outputs and
+   the Task 1 real-corpus comparison both remain identical; consumers emit no
+   unknown-kind warnings for valid edit entries.
+
+Task 2 is a complete path for completed paginated updates. Full operation support
+and event-identity resilience remain Task 3, legacy/direct reconciliation Task 4,
+and long-input disclosure Task 5. Do not mark #121 complete at this intermediate
+point. The task adds no new frame kind, role, or search matcher.
+
+## Task 3 — Complete paginated operations and event resilience
+
+Primary files: `codex_changes.go`, `transcript_changes.go`, and their tests.
+
+1. Add archived-content conversion for adds/deletes and move destinations on
+   updates. Treat absent/null `move_path` as no move; preserve nonempty strings;
+   diagnose empty/wrong-type destinations. → verify: add/delete/update/move,
+   absent/null/real destinations, empty files, CRLF, and missing final newlines.
+2. Finish unavailable/partial group handling and all status/diagnostic views.
+   Valid sibling diffs remain available for completed events, but partial totals
+   never masquerade as complete totals. → verify: exact label-table assertions
+   for failed, declined, unconfirmed, empty, complete, and partial groups.
+3. Apply the design's explicit event equality over state, original per-file data,
+   stdout, stderr, and location-independent diagnostic reasons. Ignore timestamps,
+   physical locations, map order, and event family. → verify: mutations of each
+   equality field conflict; different map order/location does not; null and absent
+   optional destinations normalize alike. Do not compare only rendered diffs.
+4. Deduplicate identical nonempty IDs at the first event anchor. Conflicting IDs
+   become unconfirmed with source-line diagnostics; empty IDs remain independent.
+   → verify: same-path distinct IDs, mixed-family duplicates, conflicting status,
+   output-only/diagnostic-only conflicts, and malformed/oversize neighbors.
+5. Rerun synthetic and real-corpus parity, and exercise observed failures,
+   decline, and real moves read-only. → verify: no consumer digest changes and
+   actual adverse-event labels follow the same rules as the synthetic fixtures.
+
+## Task 4 — Legacy events and direct results reconcile correctly
+
+Primary files: `codex_changes.go`, `codex_decoder.go`, and
+`transcript_changes.go`/`transcript.go`; model association/outcome fields are small
+registrations in `transcript_model.go`.
+
+1. Add the legacy adapter with presence-aware success/status fields; reuse the
+   normalized model/converters regardless of `history_mode`. → verify: every row
+   of the design's status table, including contradictory/missing evidence.
+2. Link only unambiguous matching direct `apply_patch` IDs through `FileChangeID`.
+   Preserve positive structured success as `ReportedSuccess` and retain explicit
+   exit-code presence for contradiction handling. Never connect nested event IDs
+   to nearby exec IDs. → verify: 1:1 direct correlation, several independent
+   nested edits, ambiguous call IDs, absent codes, and explicit outcome conflicts.
+3. Prefer structured edits over the old direct-input `Diff`. When the associated
+   event is completed and `ReportedSuccess` is true, force the full nonempty
+   result into `apply_patch · output`, even below collapse thresholds. Preserve
+   all body bytes and local find/copy access. Build one viewer-local map from
+   canonical event ID to its final state before composing results; look up
+   `FileChangeID` there instead of rescanning entries per result. Other results
+   retain current policy.
+   → verify: one edit card plus one compact output marker, no inline success
+   boilerplate, and reachable diagnostics without output-text heuristics.
+4. Preserve the existing successful direct-input fallback when no associated
+   usable event exists. Recognized failure/unconfirmed/conflicting identities
+   cannot be bypassed by a success-looking input result. → verify: existing
+   `TestCodexDecoder_DiffText`/consumer cases and new malformed/event-less cases.
+5. Compare unchanged scanner/export digests and inspect legacy recordings
+   read-only. → verify: actual call→event→output sequences have the documented
+   order/presentation and no persisted-output changes.
+
+## Task 5 — Long executable inputs stay compact and searchable
+
+Primary files: new `transcript_inputs.go`, `transcript.go`, `tui/render.go`, and
+`tui/find_render.go`. Registrations add `ToolCall.CodeText` and populate it in the
+Codex custom-exec decoder, plus `TranscriptMessage.Heading`/`SourceAnchor` with
+empty/false omission. This task depends on the baseline task, not edit events.
+
+1. Preserve exact custom-exec input as `CodeText`; do not change `Input`, `Name`,
+   or the shared summary. → verify: quotes, escapes, pragmas, empty/multiline code,
+   threshold boundaries, and unchanged synthetic/real scanner/export output.
+2. Compose one assistant body with `→ exec · input` at each collapsed call's part
+   position. Append input/launch markers after the body in call-part order. Mark
+   only this owning body `SourceAnchor=true`. Keep entries without such inputs
+   on the current path. Extend/replace `assistantBodyAndLaunches` to return an
+   ordered `[]TranscriptMessage` detail list instead of a launch-only slice;
+   register sidecar launch indices only for its `RoleSubagent` elements.
+   → verify: one Codex header, text→call→text preservation,
+   several inputs, mixed launches, and unchanged Claude fixtures. No fragment
+   machinery is introduced.
+3. Reuse `RoleTool` and `viewerTargetTool` for complete input bodies, with the
+   `Tool input` heading and exact `exec · input` summary (no excerpt). Add/reuse
+   the heading override in both normal/find rendering. → verify: existing
+   Enter/Esc, copy, raw/child return, and Markdown bypass work in both builds;
+   no new role, frame owner, or corpus is introduced.
+4. Build a viewer-only map from collapsed input call IDs to `exec · output` result
+   aliases, covering inline and collapsed outputs. → verify: neither side repeats
+   the large escaped script; unidentified results retain their current labels
+   and every output body remains complete.
+5. Make `rowForLine` prefer an explicit `SourceAnchor` within the latest eligible
+   source-line group, preserving its old fallback when no flag is set. Rewrap and
+   detail return keep ordinal-based anchors. → verify: a tall assistant body with
+   an early search phrase remains visible after a global jump despite trailing
+   markers; existing Claude launch-only ties and local restoration are unchanged.
+6. Exercise existing exact/fuzzy navigation against hidden input bodies, duplicate
+   source lines, pending resize/cancel, and repeated visible/hidden transitions.
+   → verify: complete code occurs once in the owner corpus and opening a detail
+   neither duplicates it nor grows the frame stack on repeated search navigation.
+
+The shared heading override is introduced once by whichever of Tasks 2 and 5
+lands first; the other reuses it. Shared files require coordination/rebase, not a
+fabricated semantic dependency. Task 5's source-anchor rule is independent of
+legacy result correlation and has its own explicit viewport regression test.
 
 ## Verification matrix
 
-The named new tests are intended test contracts, not claims that they already
-exist. Put decoder/converter cases in new `codex_changes_test.go` and fixture
-builders in `codex_fixtures_test.go`; reuse the existing consumer and TUI test
-helpers instead of constructing a second transcript reader.
+New test names/contracts are planned, not claims of implemented tests. Reuse the
+existing Codex fixture and TUI helpers. Proposed focused families are
+`TestCodexFileChangePaginated`, `TestCodexFileChangeDiff`,
+`TestCodexFileChangeIdentity`, `TestCodexFileChangeLegacy`,
+`TestCodexFileChangeDirectResult`, `TestTranscriptCodeInput`,
+`TestViewerCodeInput`, and `TestViewerCodeInputSourceJump`.
 
 | Contract | Verification |
 | --- | --- |
-| Issue reproduction | Synthetic wrapped call + four-file event: one group, complete hunks, accurate counts, compact input/result labels |
-| Both history formats | Same normalized operations from legacy and paginated fixtures; record-shape dispatch independent of metadata |
-| Status truthfulness | Completed, failed, declined, missing/unknown, conflicting events, and explicit direct-result contradiction |
-| Identity | Nested ID differs from wrapper ID; several patches per exec; exact repeats; direct event/result pair; no proximity/path matching |
-| Diff fidelity | Add/delete/update/move, empty content, absent content, invalid ranges, mixed valid/unsupported files, final-newline and CRLF cases |
-| Compatibility | Frozen same-input scanner/export output, metadata, `ToolNames`, physical anchors, and existing Claude goldens |
-| Detail behavior | Marker focus/open/back, correct input heading, copy, raw and child return, resize, both rendering builds |
-| Local search | Full hidden bodies, duplicates sharing source line, exact/fuzzy navigation, async cancellation and pending operations |
-| Resilience | Malformed and oversize records retain current skip/line-count behavior; warnings identify shape/source without payload text |
-| Cost | Same-corpus parse/render comparison; existing find latency protocol with hidden code and multi-file diffs |
+| Issue reproduction | Four-file grouped diff and compact input/result labels with all bodies retained |
+| Wire/status coverage | Both event families; completed, failed, declined, missing/unknown, and conflicting evidence |
+| Identity/equality | Exact IDs; every compared field; output/diagnostic-only conflicts; excluded location/map-order differences |
+| Diff fidelity | All operations, null/absent/real moves, empty/missing content, ranges, final newlines, partial groups |
+| Presentation | Exact label/section/heading table; one assistant header; forced collapse of associated positive patch output |
+| Search landing | Tall owning body remains in view; trailing markers do not steal its source anchor |
+| Compatibility | Frozen fixtures plus complete scanner/text/Markdown corpus digests; Claude goldens |
+| Local detail/find | Existing frames, full hidden text, exact/fuzzy navigation, copy/raw/child return, async resize/cancel |
+| Resilience | Malformed/oversize records preserve physical lines and produce bounded diagnostics |
+| Cost | Same-corpus parse/render comparison and existing reference-workload latency gate |
 
-Use synthetic `CAPY_DB_KEY` and `CAPY_VAULT_KEY` for all checks. Focused commands
-are `go test -tags fts5 -count=1 ./internal/vault/...` and
-`go test -tags fts5,glamour -count=1 ./internal/vault/tui/...`. The former includes
-real-corpus canaries when available; an unavailable corpus is a reported skip,
-not evidence that private recordings were tested.
+Use synthetic `CAPY_DB_KEY` and `CAPY_VAULT_KEY`. Focused suites are
+`go test -tags fts5 -count=1 ./internal/vault/...` and
+`go test -tags fts5,glamour -count=1 ./internal/vault/tui/...`. The opt-in parity
+test compares against the existing absolute `CAPY_CODEX_PARITY_BASELINE` path.
+An unavailable real corpus is a documented skip, not a parity success claim.
 
-## Task 4 — Final compatibility, documentation, and reviews
+## Task 6 — Final compatibility, documentation, and reviews
 
-1. Run the focused suites above, the repository's full test/race checks, and
-   the glamour TUI race subset. Confirm default and glamour builds. Do not
-   repeatedly rerun passing checks without a relevant code change or concern.
-   → verify: record commands, environment, results, and genuine skips in a new
-   feature-local `verification.md`.
-2. Exercise the motivating locally available archive read-only and record
-   aggregate outcomes without copying private content into the repository.
-   Compare decoder/viewer timings on the same machine and run the existing
-   [find performance protocol](../vault-in-session-search/performance.md) with
-   the new hidden-input/diff cases. → verify: correct counts/locations, the
-   existing 100 ms reference-workload maximum in both builds, and no unexplained
-   parse/render regression; report additional stress workloads separately.
-3. Because shared decoder/scanner code is touched, run `make bench-quality` and
-   compare with an identified baseline using `make bench-compare`. This is a
-   compatibility guard even though the design requires identical search output.
-   Preserve existing reports; record the revisions and result paths. → verify:
-   no retrieval-quality regression and scanner parity still exact.
-4. Use `$kk:document` to update the Session Vault viewer guidance in `README.md`,
-   the transcript description in `docs/architecture.md`, and the relevant model
-   comments. Document grouped edits, completion states, input expansion, and
-   unchanged global search/export scope. → verify: documented keys and examples
-   match both builds, and internal links resolve.
-5. Run `$kk:test`, `$kk:review-code` (Go), and `$kk:review-spec` against this
-   design and implementation plan. → verify: review findings are fixed or
-   explicitly recorded with a reason and next action in `tasks.md` or
-   `verification.md`; do not claim completion while required work remains.
+1. Run `$kk:test`, focused/full/race checks, the glamour TUI race subset, and both
+   builds. → verify: record actual commands/results and genuine skips in
+   `verification.md`; do not rerun passing checks without a relevant change.
+2. Compare the pre-change Codex baseline again, recording baseline SHA-256,
+   revisions, compared/changed/new/removed counts, mismatch count, and category
+   coverage. Exercise completed/failed/declined/move and legacy direct recordings
+   read-only as well as synthetic cases. → verify: zero output mismatches for
+   unchanged inputs and correct actual-viewer behavior for each available category.
+3. Compare parse/render cost on the same input and use the source-owned
+   [find latency harness](../../../../internal/vault/tui/find_bench_test.go) and
+   [lifecycle checks](../../../../internal/vault/tui/find_lifecycle_bench_test.go).
+   Run `TestFindLatency` with `CAPY_FIND_BENCH=1`: 100 samples per operation on its
+   fixed reference corpus, 100 ms maximum, in both builds. Record the corpus
+   digest/environment; report additional large-edit/input stress separately.
+   → verify: the existing reference gate holds and no parse/render regression
+   remains unexplained. These source links survive moving the earlier feature
+   documentation from `wip` to `done`.
+4. Run `make bench-quality` and compare against an identified baseline using
+   `make bench-compare`, preserving previous reports. → verify: no quality
+   regression and the independent corpus-output parity gate still passes.
+5. Use `$kk:document` for `README.md`, `docs/architecture.md`, and affected model
+   comments. → verify: grouping, exact states/headings, source landing, output
+   collapse, and unchanged export/global-index scope match both builds.
+6. Run `$kk:review-code` (Go) and `$kk:review-spec` against these documents.
+   → verify: findings fixed or durably recorded with concrete reasons/actions;
+   required behavior must be complete before claiming the issue resolved.
 
-No setup generator or committed setup artifact is in scope. If implementation
-unexpectedly changes one, apply the repository's generator/counterpart sync rule
-and extend the plan rather than treating a generated-file edit as standalone.
+No setup artifact is in scope. An unexpected generator/output change requires
+the repository's paired-artifact sync checks and an explicit plan adjustment.
 
 ## Deferred work
 
-No accepted requirement is intentionally deferred beyond these tasks. The
-design's Not Doing list defines exclusions, not promises of later implementation.
-If a required behavior cannot be completed, record the exact gap, reason, and
-next step in this section and the affected task before calling the work partial.
+No accepted requirement is deferred beyond these tasks. Intermediate limits are
+stated under their task and are removed by dependent tasks before completion.
+The design's Not Doing list defines exclusions, not future promises. Record any
+new partial implementation with its reason and next action here and in tasks.md.

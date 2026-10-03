@@ -31,13 +31,50 @@ A bounded scan of 116 uncompressed rollouts dated September 29 found 300
 `FileChange` events, all completed. None of their IDs matched a recorded response
 function/custom-tool call ID. Their file operations comprised 208 updates and
 365 adds. This supports independent event rendering; it does not establish the
-absence of matching IDs in other clients or direct-call recordings. Failure,
-decline, conflicting status, and deletion cases need synthetic fixtures because
-this sample did not cover them.
+absence of matching IDs in other clients or direct-call recordings. This narrow
+sample did not cover failure, decline, conflicting status, or deletion. Synthetic
+fixtures remain necessary for deterministic CI; the wider scan below supplies
+additional real examples for read-only verification.
 
 These were read-only local observations. No raw private rollout, session ID, or
 absolute local source path is included here. Implementation should encode a
 small synthetic reproduction using neutral paths and independently authored text.
+
+### Wider corpus corroboration — 2026-10-03
+
+A fresh read-only scan for the supplied review covered 476 canonical uncompressed
+rollouts (about 485 MB) under both default Codex roots; the archive root
+was empty and no compressed files were present. It parsed actual record types,
+counted event IDs within each file, and compared legacy IDs and physical order
+against response calls/results. One malformed candidate record was skipped; no
+private transcript text or paths were retained in this report. The corpus is live,
+so these counts are observations from this scan, not permanent fixture counts.
+
+| Evidence | Observed |
+| --- | --- |
+| Legacy patch events | 21 events in 13 files, CLI 0.124.0/0.125.0/0.130.0 |
+| Legacy direct association | 21/21 match `apply_patch` call IDs with call→event→output order |
+| Legacy output shape | 21/21 have structured, successful output by current decoder rules |
+| Paginated edit events | 842 events in 113 files across 10 CLI versions, 0.147.0–0.160.0 |
+| Paginated states | 832 completed, 9 failed, 1 declined; status present on every item |
+| Paginated response-call ID matches | 0 |
+| File operations across both families | 741 adds, 45 deletes, 887 updates |
+| Update move destinations | 881 JSON null, 6 nonempty destinations; none absent/empty |
+| Repeated nonempty event IDs within a file | 0 |
+| Files containing both event families | 0 |
+
+The supplied review's narrower counts (352 null destinations, 5 failures) are not
+the current full-corpus counts. Its compatibility recommendations remain valid:
+null must mean no move, a real move must be tested, and failed/declined/legacy
+recordings must join the live-corpus checks. Real moves also provide test evidence
+beyond synthetic fixtures. Missing status and conflicting IDs remain defensive
+cases requiring synthetic coverage, despite their absence from this scan.
+
+The existing `TestCodexCanary` checks shapes/roles, not output bytes.
+`TestParityCanary` digests reader output for Claude only. The revised plan therefore
+requires a separate pre-change Codex scanner/text/Markdown digest baseline and
+unchanged-input comparisons; this research scan is not that baseline or a parity
+test result. See the [corpus parity gate](implementation.md#corpus-parity-gate).
 
 ## Existing implementation
 

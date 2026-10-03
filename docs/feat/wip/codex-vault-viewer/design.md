@@ -1,11 +1,12 @@
 # Readable Codex edits in the vault viewer
 
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
-> Status: draft — implementation has not started; independent review pending
+> Status: revised draft — supplied review addressed; implementation has not started
 > Created: 2026-10-03
 > Implementation: [implementation.md](implementation.md)
 > Tasks: [tasks.md](tasks.md)
 > Evidence: [research.md](research.md)
+> Review resolution: [finding-by-finding verdicts](.reviews/review-resolution-2026-10-03.md)
 
 ## Problem and outcome
 
@@ -46,7 +47,10 @@ to the interactive viewer. These are draft defaults, not recorded user approvals
 - Stored bytes, encryption, compression, schema, reader version, and index version
   do not change. Per [ADR-025](../../../adr/025-vault-index-version-and-reindex.md),
   existing archives gain the viewer behavior when reopened without reimport or
-  reindex. This claim is conditional on the scanner parity checks passing.
+  reindex. This claim is conditional on synthetic parity checks and a before/after
+  digest comparison over unchanged real Codex recordings passing. Capture the
+  machine-local baseline before changing the decoder; see the implementation
+  plan's [corpus parity gate](implementation.md#corpus-parity-gate).
 
 ## Alternatives and decision
 
@@ -91,6 +95,45 @@ them shows known affected paths, status explanation, and recorded diagnostics.
 Candidate changes on these events are not displayed as applied diffs. A failed
 event does not prove that no partial filesystem changes occurred.
 
+### Labels and headings
+
+The table specifies the stored summary and expanded message heading. The existing
+marker glyph, non-diff line-count suffix, and Enter hint remain renderer chrome;
+their omitted-line count is distinct from the file count in the summary. Use
+`file` for one and `files` otherwise. `A`/`R` are exact line counts; `N` is the
+number of recorded file entries, including unsupported entries.
+
+| Condition | Summary | Expanded heading (after `▌ `) |
+| --- | --- | --- |
+| Completed; every file diff/count available; N > 0 | `N files changed (+A −R)` | `File changes · completed` |
+| Completed; some file diffs/counts unavailable | `N files changed · diff incomplete` | `File changes · completed` |
+| Completed; empty changes map | `Patch completed · no file changes recorded` | `File changes · completed` |
+| Completed; changes data cannot be decoded | `Patch completed · diff unavailable` | `File changes · completed` |
+| Failed | `Patch failed` | `File changes · failed` |
+| Declined | `Patch declined` | `File changes · declined` |
+| Missing, unknown, conflicting status/identity | `Patch unconfirmed` | `File changes · unconfirmed` |
+| Long executable input | `exec · input` | `Tool input` |
+| Correlated executable output | `exec · output` | `Tool result` |
+| Associated, positively successful direct patch output | `apply_patch · output` | `Tool result` |
+
+Completed file sections use `*** Add File: {path} (+A −0)`,
+`*** Delete File: {path} (+0 −R)`, or
+`*** Update File: {path} (+A −R)`. A move uses
+`*** Move File: {source} → {destination} (+A −R)`.
+For unavailable diffs replace the count suffix with `(diff unavailable)` and
+follow it with the reason; an unknown operation uses `*** File: {path}`.
+Non-completed groups use the same known-operation/path header with `(reported)`
+instead of counts, followed by status explanation and labeled `stdout:`/`stderr:`
+sections when present. They never include candidate hunk bodies. Unreadable
+changes use an explicit unavailable-data explanation without inventing `N`.
+
+Introduce an optional `TranscriptMessage.Heading` display override, omitted from
+JSON when empty. Keep these details as `RoleTool` messages: the existing collapsed
+tool path already supplies the appropriate styling, Markdown bypass, search, and
+local frames. Normal and find-mode rendering honor the same heading override;
+existing messages keep their role-derived heading. The detail frame's title keeps
+using the marker summary. No new input role or target kind is needed.
+
 ### Long executable inputs
 
 The Codex decoder marks the verbatim executable text of custom `exec` calls in a
@@ -99,15 +142,19 @@ and `Summary` unchanged; in particular do not shorten `codexCustomCallSummary`,
 which is also used by indexing and exports.
 
 The viewer collapses this input when it exceeds the existing 20-line or
-2,000-byte tool-body thresholds. The compact label is `exec · input`; the body is
-the complete decoded JavaScript source, including its original escape sequences.
+2,000-byte tool-body thresholds. The compact label is exactly `exec · input`,
+with no first-line excerpt, even for multiline scripts. The body is the complete
+decoded JavaScript source, including its original escape sequences.
 Opening the input does not execute it or pretend that its patch strings succeeded.
 Short calls retain their current presentation.
 
-Split assistant display bodies only where such a marker is inserted, preserving
-the order of surrounding text and calls. Every split fragment retains the parent
-entry's physical source-line anchor. Entries without such inputs keep their
-existing composition, including the Claude launch-marker behavior.
+Keep one assistant display body and one Codex heading per entry. At a collapsed
+call's original part position, render the placeholder `→ exec · input`; surrounding
+text and other calls retain their order. Append its openable input marker after
+the complete body, following the existing launch-marker pattern. When an entry
+has both launches and inputs, append their markers in original call-part order.
+All markers share the entry's physical `SourceLine`. Entries without long inputs
+keep their existing composition and launch-marker behavior.
 
 For a correlated result of a collapsed input, use `exec · output` as its viewer
 label, including an inline result's prefix. Its full result body is unchanged.
@@ -115,11 +162,10 @@ Otherwise the original long summary would still flood either the marker or the
 inline output. Resolve this display alias by the response call's exact ID; it is
 unrelated to the independent IDs of nested file-change events.
 
-Add `RoleToolInput` for input details so their heading is "Tool input", not
-"Tool result". Generalize the existing local collapsed-detail routing to that
-role. Keep `viewerTargetTool` and the current frame stack; a new file picker,
-target stack, or search engine is unnecessary. Tool input bypasses Markdown in
-both builds, as tool output already does.
+Use `RoleTool` with the `Tool input` heading override and keep `viewerTargetTool`
+and the current frame stack. Tool input bypasses Markdown in both builds, as tool
+output already does. The after-body marker alone does not fix source-line ties;
+the owning assistant body is the explicit search landing point described below.
 
 ## Transcript model and ownership
 
@@ -145,6 +191,18 @@ Add an optional `FileChangeID` association to a direct `EntryToolResult` when a
 canonical structured edit with that exact non-empty ID exists. The association
 records provenance; it does not change the raw result body or scanner summary.
 No field is persisted in SQLite.
+
+For updates, absent or JSON-null `move_path` normalizes to no destination. A
+nonempty string is a real destination; an empty string or another JSON type is
+malformed data, not a rename to an empty path. Tests include absent, null, a real
+destination, empty, and wrong-type values. Keep the original recorded content or
+unified-diff text and structured diagnostic reasons available for event equality;
+rendered text/counts alone cannot distinguish all different recordings.
+
+Carry a direct result's positive `structured && success` fact into an optional
+`EntryToolResult.ReportedSuccess` boolean (false omitted). This does not equate a
+false value with failure. It allows the viewer to collapse an associated success
+response even after the structured event has replaced its fallback `Diff`.
 
 The new format work belongs in `codex_changes.go` with wire types alongside the
 existing Codex types. `codex_decoder.go` collects and reconciles these entries.
@@ -178,7 +236,16 @@ exit status, or a success-looking string in JavaScript/output.
 
 1. Both event adapters populate the recorded operation ID. Identical normalized
    events with the same non-empty ID produce one canonical entry at the first
-   event's physical line. Do not deduplicate by paths, content, or proximity.
+   event's physical line. Equality compares normalized completion state; sorted
+   per-file original paths, operation, optional destination, and verbatim content
+   or unified-diff bytes; stdout and stderr; and normalized format/status
+   diagnostic reasons (code, field, and offending value where retained).
+   Diagnostic source-line annotations are not part of equality. Optional absent
+   or null stdout/stderr normalize to empty text; absent/null move destinations
+   normalize alike. Do not trim nonempty text or normalize CRLF for equality.
+   Timestamp, source line, CLI version, event family, and JSON object member order
+   do not participate. Unknown fields not consumed by the adapters are ignored.
+   Do not deduplicate by paths, content alone, or proximity.
 2. A conflicting duplicate ID becomes one unconfirmed entry at that same anchor,
    with a conflict diagnostic and references to the conflicting source lines.
    It has no applied diff or aggregate counts. Raw view retains every record.
@@ -189,13 +256,15 @@ exit status, or a success-looking string in JavaScript/output.
    Duplicated response-call IDs make the association unconfirmed: preserve raw
    results and do not construct successful input-fallback diffs for that ID.
 5. A structured event supersedes the direct call-input diff for that operation.
-   The matched response result has no fallback `Diff`, but its original body
-   still renders through the existing plain/collapsed result policy. This gives
-   one edit card while keeping every response diagnostic in order; no text
-   equality heuristic is needed to decide whether output is safe to hide. A
-   result with an explicit contradictory exit status makes the edit presentation
-   unconfirmed. Only an explicitly decoded exit code establishes such a
-   contradiction; `structured && !success` alone is not proof of failure.
+   The matched response result has no fallback `Diff`. When its associated event
+   is completed and `ReportedSuccess` is true, force its nonempty body into a
+   collapsed `apply_patch · output` marker, even below normal size thresholds.
+   The full body remains accessible and searchable; there is one edit card and
+   no repeated inline success boilerplate. All other results keep their existing
+   plain/size-based policy. A contradictory explicit result exit status makes the
+   edit unconfirmed before this decision. Only an explicitly decoded exit code
+   establishes that contradiction; `structured && !success` is not proof of
+   failure. This policy uses decoded outcome facts, not output-text heuristics.
 6. If no usable structured event identifies the direct operation, preserve the
    current successful direct-`apply_patch` fallback through `codexPatchToDiff`.
    A recognized failed/unconfirmed event must never be bypassed by that fallback.
@@ -221,17 +290,26 @@ map gets a status/diagnostics view without fabricated file or line counts.
 
 ## Navigation and search compatibility
 
-The collapsed patch group is one existing `RoleTool` detail. Its complete display
+The collapsed patch group is one `RoleTool` detail with a heading override. Its complete display
 body, including all file sections, participates in `/` find and the fuzzy picker.
 The long input detail also supplies its full body to the existing find corpus.
 Do not index the same detail separately when opening it through a search hit.
 
 Preserve the existing `(scope, message ordinal, field, byte offset)` identity.
-Several fragments can share a `SourceLine`; that value is not a local-detail
-key. Global FTS still jumps to the containing decoded entry using its original
-anchor. The current last-message-at-or-before-line tie rule can land on the last
-fragment of a split assistant entry; exact textual selection belongs to local
-find, not global FTS. Do not renumber physical JSONL lines to improve presentation.
+Bodies and appended markers can share a `SourceLine`; it is not a local-detail
+key. Add an optional `TranscriptMessage.SourceAnchor` flag (false omitted) on the
+single assistant body owning appended input markers. Within the latest source-line
+group at or before the requested global hit, `rowForLine` prefers that marked body;
+without an explicit anchor it retains the existing last-message rule. There is
+at most one explicit anchor per such group. This protects the new Codex input
+case without changing existing Claude launch-only behavior or marker navigation.
+
+Pin a regression with an assistant body taller than the viewport, an early
+searchable phrase, and appended input/launch markers: jumping to the assistant
+source line must show its heading and early phrase, not scroll to the trailing
+markers. Exact character selection still belongs to local find. Rewrap and local
+return continue to use message ordinals, so this source-hit preference must not
+alter their restoration behavior. Never renumber physical JSONL lines.
 
 All body changes happen before the immutable find corpus is built. Labels and
 headers introduced by these views must obey the one-render-row/one-viewport-line
@@ -272,10 +350,13 @@ separately; do not impose new timing numbers without a measured baseline.
    path rather than silently choosing a successful version.
 3. Existing detail frames can serve one grouped diff and one code-input body.
    The current ordinal-based search mapping supports this; navigation tests must
-   verify the new role and split-message cases in both builds.
+   verify heading overrides, after-body markers, and source-hit preference in
+   both builds.
 4. Skipping the new semantic entries and retaining existing summaries preserves
    scanner/export output. Freeze baseline outputs before decoder changes and
-   compare the same fixture bytes afterward; do not assume this from code shape.
+   compare the same fixture bytes afterward. Also compare SHA-256 digests of
+   complete scanner, text, and Markdown outputs for unchanged real Codex inputs;
+   a shape-only canary cannot establish byte parity.
 5. One group per patch and viewer-only scope are the drafting defaults described
    above. They can be revised during design review without changing the event
    identity or status rules.
@@ -304,6 +385,9 @@ separately; do not impose new timing numbers without a measured baseline.
 - Shortening the shared decoder summary would alter indexed text and exports.
 - Hiding all wrapper input/output would discard useful code and diagnostics;
   local disclosure keeps both available.
+- Splitting assistant text around input markers duplicates headers and complicates
+  source hits. A placeholder plus after-body detail follows the existing launch
+  pattern; an explicit source anchor also closes that pattern's tie-rule risk.
 - Treating edit events as ordinary response tool results would force export/FTS
   behavior to depend on fabricated call names. A semantic entry keeps those
   consumer policies explicit.

@@ -6,81 +6,111 @@
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
 > Status: pending
 > Created: 2026-10-03
-> Design review: pending; draft defaults are one edit group per patch and viewer-only scope
+> Design review: [supplied findings corroborated and addressed](.reviews/review-resolution-2026-10-03.md); implementation pending
 > Not Doing: JavaScript interpretation, shell-edit inference, Rust renderer port, rich syntax highlighting, line-number gutter, per-file picker, global FTS changes, export changes, schema/version changes, general cross-platform tool-input UI, live filesystem verification
 
-## Task 1: Paginated edits open as grouped diffs
+## Task 1: Freeze synthetic and real-corpus compatibility
 
 - **Status:** pending
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** —
-- **Strategy:** Risk-First — prove the motivating archive-to-viewer path and consumer parity
-- **Docs:** [Task 1 implementation](implementation.md#task-1--paginated-edits-from-archive-to-expandable-diff)
+- **Strategy:** Risk-First — capture compatibility evidence before production changes
+- **Docs:** [Task 1](implementation.md#task-1--capture-compatibility-before-production-changes), [Corpus parity gate](implementation.md#corpus-parity-gate)
 
 ### Subtasks
 
-- [ ] 1.1 Add synthetic wrapped-call fixtures and freeze current scanner/export outputs in the existing Codex fixture/consumer tests → verify: baseline expectations pass before decoder changes.
-- [ ] 1.2 Add `EntryFileChange` and its normalized payload in `transcript_model.go`, wire parsing in `codex_changes.go`/`codex_types.go`, and decoder registration without changing `openAsst` → verify: paginated state, identity, metadata, and physical-line tests pass.
-- [ ] 1.3 Convert add/delete/update/move data with explicit unavailable states for malformed files → verify: converter tests cover counts, ranges, empty files, final newlines, and mixed valid/unsupported records.
-- [ ] 1.4 Compose grouped viewer messages in `transcript_changes.go`/`transcript.go`; explicitly skip the new kind in scanner and export consumers → verify: grouped expansion works and frozen consumer output remains identical.
-- [ ] 1.5 Verify completed/failure/decline/unconfirmed presentation and exact duplicate/conflicting event behavior → verify: no uncertain applied diff and no repeated identical event card.
+- [ ] 1.1 Add neutral wrapped/direct fixtures and freeze current complete scanner/text/Markdown outputs in Codex fixture/consumer tests → verify: they pass before decoder changes.
+- [ ] 1.2 Add `codex_parity_test.go` with opt-in input/output SHA-256 baselines, reusing baseline I/O helpers → verify: deterministic outputs, mismatch detection, changed-input accounting, and no zero-comparison success.
+- [ ] 1.3 Capture and recompare the local baseline before production edits; record aggregate evidence in `verification.md` → verify: required real categories covered and every unchanged input matches.
 
-Legacy/direct-call reconciliation remains Task 2; long input/result summaries
-remain Task 3. Task 1 alone does not complete the issue.
-
-## Task 2: Legacy events and direct patch results reconcile correctly
+## Task 2: Completed paginated updates open as grouped diffs
 
 - **Status:** pending
 - **Depends on:** Task 1
 - **Size:** M
-- **Can run in parallel with:** —
-- **Docs:** [Task 2 implementation](implementation.md#task-2--legacy-edits-and-direct-call-reconciliation)
+- **Can run in parallel with:** Task 5
+- **Docs:** [Task 2](implementation.md#task-2--completed-paginated-updates-open-as-grouped-diffs)
 
 ### Subtasks
 
-- [ ] 2.1 Add the legacy adapter and presence-aware status normalization in `codex_changes.go`/`codex_types.go` → verify: every status-table row and mixed history formats.
-- [ ] 2.2 Reconcile exact non-empty operation IDs and link direct results in `codex_decoder.go`/`transcript_model.go` → verify: multiple nested edits stay independent and no path/proximity matching occurs.
-- [ ] 2.3 Prefer structured event diffs while retaining original plain result bodies and detecting explicit outcome conflicts → verify: one direct-operation edit card, visible failures, and no inferred success.
-- [ ] 2.4 Retain successful direct-input fallback only without an associated usable event → verify: existing direct-patch tests plus malformed/event-less compatibility cases and unchanged consumer outputs.
+- [ ] 2.1 Add normalized file-change entries and paginated dispatch without changing `openAsst` → verify: physical anchors, status gating, and metadata are correct.
+- [ ] 2.2 Convert completed update hunks and compose grouped details in `codex_changes.go`/`transcript_changes.go` → verify: counts, paths, several hunks/files, and unavailable-data handling.
+- [ ] 2.3 Introduce/reuse the optional heading override in normal/find rendering and use exact design labels → verify: one expandable group has the specified heading in both builds.
+- [ ] 2.4 Register explicit scanner/export skip cases and compare synthetic plus real-corpus outputs → verify: byte parity and no unknown-kind warnings.
 
-## Task 3: Long executable inputs and their results stay readable
+This slice handles completed paginated updates. Task 3 completes other operations
+and identity resilience; Tasks 4–5 finish legacy edits and long-input disclosure.
+
+## Task 3: Complete paginated operations, states, and identity
 
 - **Status:** pending
 - **Depends on:** Task 2
 - **Size:** M
-- **Can run in parallel with:** —
-- **Docs:** [Task 3 implementation](implementation.md#task-3--expand-long-executable-inputs-without-repeated-summaries)
+- **Can run in parallel with:** Task 5
+- **Docs:** [Task 3](implementation.md#task-3--complete-paginated-operations-and-event-resilience)
 
 ### Subtasks
 
-- [ ] 3.1 Populate optional `ToolCall.CodeText` for Codex custom `exec` without altering shared summaries → verify: byte-exact input and scanner/export parity tests.
-- [ ] 3.2 Add ordered input-marker composition and result display aliases in `transcript_inputs.go`/`transcript.go` → verify: both sides of the motivating wrapper stay compact while their bodies remain complete.
-- [ ] 3.3 Add `RoleToolInput` labels/styles and generalized existing detail routing in TUI rendering, `viewer.go`, and find headers → verify: correct input heading, Enter/Esc, copy/raw return, and both build variants.
-- [ ] 3.4 Verify exact/fuzzy find over full hidden input and grouped diff bodies using existing corpus/frame semantics → verify: duplicate source lines, pending resize/cancel, repeated navigation, and source anchors.
+- [ ] 3.1 Add add/delete/move conversion and absent/null/real destination handling → verify: empty files, line endings, and malformed destination fixtures.
+- [ ] 3.2 Complete exact failure/decline/unconfirmed/partial labels and diagnostics → verify: no unconfirmed applied hunks or incomplete aggregate totals.
+- [ ] 3.3 Implement explicit normalized equality and exact-ID dedup/conflict handling → verify: stdout/stderr/diagnostic-only changes conflict; map order/location changes do not.
+- [ ] 3.4 Compare corpus digests and inspect real adverse/move cases read-only → verify: correct states with unchanged scanner/export bytes.
 
-## Task 4: Final verification, documentation, and review
+## Task 4: Legacy events and direct results reconcile correctly
 
 - **Status:** pending
-- **Depends on:** Task 1, Task 2, Task 3
+- **Depends on:** Task 3
 - **Size:** M
-- **Can run in parallel with:** —
-- **Docs:** [Final verification](implementation.md#task-4--final-compatibility-documentation-and-reviews), [Verification matrix](implementation.md#verification-matrix)
+- **Can run in parallel with:** Task 5
+- **Docs:** [Task 4](implementation.md#task-4--legacy-events-and-direct-results-reconcile-correctly)
 
 ### Subtasks
 
-- [ ] 4.1 Run `$kk:test`, focused/full/race checks, and default/glamour builds with synthetic encryption keys → verify: all applicable checks pass; genuine canary skips are recorded.
-- [ ] 4.2 Check the motivating archive read-only, compare parse/render costs, and exercise the existing find latency protocol → verify: correct edit counts/navigation with no unexplained regression.
-- [ ] 4.3 Run retrieval-quality benchmarks against an identified baseline → verify: unchanged scanner outputs and no quality regression; preserve prior reports.
-- [ ] 4.4 Run `$kk:document` for `README.md`, `docs/architecture.md`, and model comments → verify: keys, scope, state semantics, and links match the implementation.
-- [ ] 4.5 Run `$kk:review-code` (Go) and `$kk:review-spec`; save verification/review evidence locally → verify: findings fixed or durably recorded with concrete next actions; no required work silently deferred.
+- [ ] 4.1 Add legacy status normalization through the shared converter → verify: every legacy status-table row and mixed event families.
+- [ ] 4.2 Associate exact direct IDs and preserve `ReportedSuccess`/explicit exit evidence in decoding → verify: independent nested IDs and ambiguous/missing/conflicting outcomes.
+- [ ] 4.3 Replace duplicate direct diff cards and force associated positive output into a compact marker → verify: no inline boilerplate, full body/find/copy access, and no text heuristics.
+- [ ] 4.4 Retain event-less successful direct fallback and compare real legacy output digests → verify: old direct cases remain valid and observed call→event→output records render correctly.
+
+## Task 5: Long executable inputs stay compact and searchable
+
+- **Status:** pending
+- **Depends on:** Task 1
+- **Size:** M
+- **Can run in parallel with:** Task 2, Task 3, Task 4
+- **Docs:** [Task 5](implementation.md#task-5--long-executable-inputs-stay-compact-and-searchable)
+
+### Subtasks
+
+- [ ] 5.1 Preserve `CodeText` in Codex normalization without changing shared input/summary fields → verify: exact input bytes and scanner/export parity.
+- [ ] 5.2 Keep one assistant body, insert ordered placeholders, and append input/launch markers; reuse `RoleTool` with the heading override → verify: one Codex header and complete detail bodies in both builds.
+- [ ] 5.3 Apply compact output aliases by response call ID, independent of edit event IDs → verify: inline/collapsed labels cannot repeat the escaped patch.
+- [ ] 5.4 Mark the owning body as `SourceAnchor` and honor it in `rowForLine` → verify: an early phrase in a tall body remains visible after a global jump; old unmarked ties are unchanged.
+- [ ] 5.5 Exercise existing detail/find/copy/raw/child paths with the new bodies and headings → verify: full hidden text, exact/fuzzy navigation, pending resize/cancel, stable return, and no extra corpus/frame ownership.
+
+Tasks 2 and 5 introduce the same specified heading helper only once; whichever
+lands second reuses it. Coordinate shared-file edits when running in parallel.
+File sharing is not a semantic dependency on the legacy-edit work.
+
+## Task 6: Final verification, documentation, and review
+
+- **Status:** pending
+- **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5
+- **Size:** M
+- **Can run in parallel with:** —
+- **Docs:** [Task 6](implementation.md#task-6--final-compatibility-documentation-and-reviews), [Verification matrix](implementation.md#verification-matrix)
+
+### Subtasks
+
+- [ ] 6.1 Run `$kk:test`, focused/full/race checks, and default/glamour builds with synthetic keys → verify: applicable checks pass and genuine skips are recorded.
+- [ ] 6.2 Recompare the pre-change corpus baseline and exercise real completed/failed/declined/move/legacy cases → verify: zero unchanged-input digest mismatches and explicit category coverage.
+- [ ] 6.3 Measure parse/render costs, run the source-owned find latency harness, and compare retrieval-quality benchmarks → verify: reference latency/quality gates hold; extra stress results are separate.
+- [ ] 6.4 Run `$kk:document` for public viewer guidance, architecture, and comments → verify: exact labels, source landing, keys, scope, and links match both builds.
+- [ ] 6.5 Run `$kk:review-code` (Go) and `$kk:review-spec`; save evidence locally → verify: findings fixed or durably recorded with concrete next actions; no required work silently deferred.
 
 ## Dependency Graph
 
 ```text
-Task 1 → Task 2 → Task 3 → Task 4
+Task 1 → Task 2 → Task 3 → Task 4 → Task 6
+Task 1 → Task 5 ─────────────────→ Task 6
 ```
-
-All tasks are serial because they share decoder, transcript, or viewer contracts.
-The two user-facing slices remain structured edit display (Tasks 1–2) and long
-input disclosure (Task 3), followed by complete verification.
