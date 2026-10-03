@@ -24,11 +24,50 @@ func codexPaginatedFileChange(item codexTurnItem) *FileChangeSet {
 		s.Diagnostics = append(s.Diagnostics, changeDiagnostic("status", "status", item.Status,
 			"Completion status is missing or unrecognized; changes are unconfirmed."))
 	}
-	s.Stdout = codexChangeOutput(item.Stdout, "stdout", &s.Diagnostics)
-	s.Stderr = codexChangeOutput(item.Stderr, "stderr", &s.Diagnostics)
+	return codexChangeDetails(s, item.Changes, item.Stdout, item.Stderr)
+}
+
+func codexLegacyFileChange(event codexPatchApplyEnd) *FileChangeSet {
+	s := &FileChangeSet{ID: event.CallID, State: FileChangeUnconfirmed}
+	var success *bool
+	if json.Unmarshal(event.Success, &success) != nil || success == nil {
+		s.Diagnostics = append(s.Diagnostics, changeDiagnostic("success", "success", event.Success,
+			"Recorded success is missing or is not a boolean; changes are unconfirmed."))
+	}
+	status, validStatus := asJSONString(event.Status)
+	if len(event.Status) == 0 {
+		// Older legacy recordings omit status but explicitly report success.
+		validStatus = true
+		if success != nil && *success {
+			status = string(FileChangeCompleted)
+		} else {
+			status = string(FileChangeFailed)
+		}
+	}
+	if validStatus && success != nil && len(s.Diagnostics) == 0 {
+		switch {
+		case *success && status == string(FileChangeCompleted):
+			s.State = FileChangeCompleted
+		case !*success && status == string(FileChangeFailed):
+			s.State = FileChangeFailed
+		case !*success && status == string(FileChangeDeclined):
+			s.State = FileChangeDeclined
+		}
+	}
+	if s.State == FileChangeUnconfirmed {
+		s.Diagnostics = append(s.Diagnostics, changeDiagnostic("status", "status", event.Status,
+			"Recorded status and success do not establish a consistent completion state; changes are unconfirmed."))
+	}
+	return codexChangeDetails(s, event.Changes, event.Stdout, event.Stderr)
+}
+
+// Both wire families use the same content and diagnostic normalization.
+func codexChangeDetails(s *FileChangeSet, raw, stdout, stderr json.RawMessage) *FileChangeSet {
+	s.Stdout = codexChangeOutput(stdout, "stdout", &s.Diagnostics)
+	s.Stderr = codexChangeOutput(stderr, "stderr", &s.Diagnostics)
 	var changes map[string]json.RawMessage
-	if !isJSONObject(item.Changes) || json.Unmarshal(item.Changes, &changes) != nil {
-		s.Diagnostics = append(s.Diagnostics, changeDiagnostic("changes", "changes", item.Changes,
+	if !isJSONObject(raw) || json.Unmarshal(raw, &changes) != nil {
+		s.Diagnostics = append(s.Diagnostics, changeDiagnostic("changes", "changes", raw,
 			"Recorded changes data is unavailable or malformed."))
 		return s
 	}
@@ -241,7 +280,7 @@ func codexReconcileFileChanges(slots []codexSlot, log *slog.Logger) {
 				first.conflict = &merged.Diagnostics[len(merged.Diagnostics)-1]
 				canonical.fileChange = &merged
 				log.Warn("vault codex decoder: conflicting file change identity",
-					"line", s.lineIndex, "first_line", canonical.lineIndex, "category", "item_completed/FileChange", "reason", "identity")
+					"line", s.lineIndex, "first_line", canonical.lineIndex, "category", s.changeCategory, "reason", "identity")
 			}
 			first.conflict.SourceLines = append(first.conflict.SourceLines, s.lineIndex)
 		}
@@ -251,9 +290,66 @@ func codexReconcileFileChanges(slots []codexSlot, log *slog.Logger) {
 	}
 }
 
+// Resolve exact direct-call provenance once, after event deduplication and the
+// call map are complete. Keep historical last-call summaries for scanner/export
+// compatibility, but never use ambiguous IDs as proof that edits were applied.
+func codexReconcileDirectChanges(slots []codexSlot, calls map[string]*codexCallInfo, log *slog.Logger) (map[string]*codexSlot, map[string]int) {
+	changes := make(map[string]*codexSlot)
+	resultCounts := make(map[string]int)
+	for i := range slots {
+		s := &slots[i]
+		if s.kind == EntryFileChange && s.fileChange != nil && s.fileChange.ID != "" {
+			changes[s.fileChange.ID] = s
+		}
+		if s.kind == EntryToolResult && s.callID != "" {
+			resultCounts[s.callID]++
+		}
+	}
+	for id, event := range changes {
+		info := calls[id]
+		if info == nil {
+			continue
+		}
+		if info.count > 1 || (info.name == "apply_patch" && resultCounts[id] > 1) {
+			event.fileChange.State = FileChangeUnconfirmed
+			event.fileChange.Diagnostics = append(event.fileChange.Diagnostics, FileChangeDiagnostic{
+				Code: "association", Field: "call_id",
+				Message:     "Repeated response call or result IDs make the edit association ambiguous; changes are unconfirmed.",
+				SourceLines: []int{event.lineIndex},
+			})
+			log.Warn("vault codex decoder: ambiguous direct edit association",
+				"line", event.lineIndex, "category", event.changeCategory, "reason", "association")
+		}
+	}
+	for _, s := range slots {
+		if s.kind != EntryToolResult || s.exitCode == nil {
+			continue
+		}
+		info, event := calls[s.callID], changes[s.callID]
+		if info == nil || info.name != "apply_patch" || info.count != 1 || resultCounts[s.callID] != 1 || event == nil {
+			continue
+		}
+		state := event.fileChange.State
+		contradiction := state == FileChangeCompleted && *s.exitCode != 0 ||
+			(state == FileChangeFailed || state == FileChangeDeclined) && *s.exitCode == 0
+		if !contradiction {
+			continue
+		}
+		event.fileChange.State = FileChangeUnconfirmed
+		event.fileChange.Diagnostics = append(event.fileChange.Diagnostics, FileChangeDiagnostic{
+			Code: "outcome", Field: "exit_code", Value: strconv.Itoa(*s.exitCode),
+			Message:     "The explicit result exit code contradicts the recorded edit status; changes are unconfirmed.",
+			SourceLines: []int{event.lineIndex, s.lineIndex},
+		})
+		log.Warn("vault codex decoder: contradictory direct edit outcome",
+			"line", s.lineIndex, "first_line", event.lineIndex, "category", event.changeCategory, "reason", "outcome")
+	}
+	return changes, resultCounts
+}
+
 // Log at most one bounded warning per recognized event. Tool output, patches,
 // paths and offending wire values stay in the model, never in logs.
-func codexLogFileChange(log *slog.Logger, s *FileChangeSet, line int) {
+func codexLogFileChange(log *slog.Logger, s *FileChangeSet, line int, category string) {
 	var reason string
 	if len(s.Diagnostics) > 0 {
 		reason = s.Diagnostics[0].Code
@@ -270,7 +366,7 @@ func codexLogFileChange(log *slog.Logger, s *FileChangeSet, line int) {
 	}
 	if reason != "" {
 		log.Warn("vault codex decoder: file change data unavailable or unconfirmed",
-			"line", line, "category", "item_completed/FileChange", "reason", reason)
+			"line", line, "category", category, "reason", reason)
 	}
 }
 

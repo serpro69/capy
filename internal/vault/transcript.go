@@ -152,6 +152,12 @@ func transcriptMessages(t *Transcript, subagentIDs []string) []TranscriptMessage
 	}
 	var msgs []TranscriptMessage
 	var markerIdx []int // indices in msgs of RoleSubagent markers without a ChildUUID (count-based mapping)
+	changeStates := make(map[string]FileChangeState)
+	for _, e := range t.Entries {
+		if e.Kind == EntryFileChange && e.FileChange != nil && e.FileChange.ID != "" {
+			changeStates[e.FileChange.ID] = e.FileChange.State
+		}
+	}
 	for _, e := range t.Entries {
 		switch e.Kind {
 		case EntryFileChange:
@@ -162,6 +168,13 @@ func transcriptMessages(t *Transcript, subagentIDs []string) []TranscriptMessage
 			msgs = append(msgs, TranscriptMessage{Role: RoleUser, Body: e.Text, SourceLine: e.LineIndex, Queued: e.Queued})
 
 		case EntryToolResult:
+			if e.FileChangeID != "" && e.ReportedSuccess && e.Body != "" && changeStates[e.FileChangeID] == FileChangeCompleted {
+				msgs = append(msgs, TranscriptMessage{
+					Role: RoleTool, Body: e.Body, SourceLine: e.LineIndex, Heading: "Tool result",
+					Collapsed: true, ToolSummary: "apply_patch · output",
+				})
+				continue
+			}
 			if m, ok := viewerToolMessage(e); ok {
 				msgs = append(msgs, m)
 			}

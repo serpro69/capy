@@ -223,6 +223,17 @@ type codexUserMessageEvent struct {
 	Message string `json:"message"`
 }
 
+// codexPatchApplyEnd is the legacy edit event. Raw status/success retain
+// presence and malformed values, so missing evidence cannot become success.
+type codexPatchApplyEnd struct {
+	CallID  string          `json:"call_id"`
+	Success json.RawMessage `json:"success"`
+	Status  json.RawMessage `json:"status"`
+	Changes json.RawMessage `json:"changes"`
+	Stdout  json.RawMessage `json:"stdout"`
+	Stderr  json.RawMessage `json:"stderr"`
+}
+
 // codexItemCompleted is a paginated (≥ 0.147) `item_completed` event wrapping a
 // TurnItem. `thread_id` / `turn_id` / timings are not read.
 type codexItemCompleted struct {

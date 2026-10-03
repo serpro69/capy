@@ -92,3 +92,51 @@ func TestTranscriptHeadingOverride(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "Heading", "existing Claude goldens omit the optional override")
 }
+
+func TestViewerCodexDirectPatchOutput(t *testing.T) {
+	const output = "Success. full result needle\nA /archive/project/a\n"
+	inner, err := json.Marshal(map[string]any{"output": output, "metadata": map[string]any{"exit_code": 0}})
+	require.NoError(t, err)
+	raw := jsonlLines(t,
+		map[string]any{"type": "response_item", "payload": map[string]any{
+			"type": "custom_tool_call", "name": "apply_patch", "call_id": "direct", "input": "*** Begin Patch\n*** Add File: /archive/project/a\n+input fallback\n*** End Patch"}},
+		map[string]any{"type": "event_msg", "payload": map[string]any{
+			"type": "patch_apply_end", "call_id": "direct", "success": true, "status": "completed",
+			"changes": map[string]any{"/archive/project/a": map[string]any{"type": "add", "content": "recorded content\n"}}}},
+		map[string]any{"type": "response_item", "payload": map[string]any{
+			"type": "custom_tool_call_output", "call_id": "direct", "output": string(inner)}},
+	)
+	v := newViewerModel(DefaultStyles(), 100, 24).loadSession(vault.Session{
+		UUID: "legacy-direct", Platform: vault.PlatformCodex, RawJSONL: raw}, nil)
+	require.Len(t, v.active.markers, 2, "one grouped edit and one compact result")
+	assert.Contains(t, v.active.content(), "1 file changed (+1 −0)")
+	assert.Contains(t, v.active.content(), "apply_patch · output")
+	assert.NotContains(t, v.active.content(), "Success.")
+	assert.NotContains(t, v.active.content(), "input fallback")
+	v = v.focusMarker(1)
+	v, _ = v.openFocusedMarker()
+	assert.Contains(t, v.active.content(), "+recorded content")
+	assert.NotContains(t, v.active.content(), "input fallback")
+	v = v.returnToParent().focusMarker(1)
+	before, position := v.active.content(), v.vp.YOffset
+	v, _ = v.openFocusedMarker()
+	assert.Equal(t, viewerTargetTool, v.target.kind)
+	assert.Equal(t, "apply_patch · output", v.target.label)
+	assert.Contains(t, ansi.Strip(v.active.content()), "▌ Tool result")
+	msg, ok := v.currentMessage()
+	require.True(t, ok)
+	assert.Equal(t, "Process exited with code 0\n"+output, msg.Body, "copy gets the full decoded result")
+	v = v.returnToParent()
+	assert.Equal(t, before, v.active.content())
+	assert.Equal(t, position, v.vp.YOffset)
+	v = searchViewer(t, v, "full result needle")
+	require.True(t, v.target.searchSelected)
+	require.Len(t, v.find.view.hits, 1)
+	assert.Contains(t, ansi.Strip(v.active.content()), "▌ Tool result")
+	corpus := v.find.view.corpus
+	v = findKey(t, v, "n")
+	assert.Same(t, corpus, v.find.view.corpus)
+	assert.Len(t, v.parents, 1)
+	v = resizeTargetViewer(t, v, 60)
+	assert.Contains(t, ansi.Strip(v.View()), "[full result needle]")
+}

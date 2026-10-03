@@ -201,7 +201,7 @@ func TestCodexFileChangePaginated_AnchorsAndWarnings(t *testing.T) {
 	s := codexPaginatedFileChange(codexTurnItem{Status: json.RawMessage(`"private-status"`),
 		Changes: json.RawMessage(`{"/private/path":{"type":"update","unified_diff":"private-patch"}}`),
 		Stderr:  json.RawMessage(`"private-error"`)})
-	codexLogFileChange(slog.Default(), s, 7)
+	codexLogFileChange(slog.Default(), s, 7, "item_completed/FileChange")
 	assert.Equal(t, 1, strings.Count(logs.String(), "level=WARN"))
 	assert.Contains(t, logs.String(), "line=7")
 	assert.NotContains(t, logs.String(), "private")

@@ -211,7 +211,7 @@ func TestCodexTypes_ToolCalls(t *testing.T) {
 		require.NoError(t, json.Unmarshal(p, &out))
 		inner, ok := asJSONString(out.Output)
 		require.True(t, ok, "apply_patch output is the JSON-string form")
-		body, structured, success := codexCustomOutputText(inner)
+		body, structured, success, _ := codexCustomOutputText(inner)
 		assert.True(t, structured)
 		assert.True(t, success)
 		assert.Equal(t, "Process exited with code 0\nSuccess. Updated the following files:\nA /tmp/proj/script.py\n", body)
