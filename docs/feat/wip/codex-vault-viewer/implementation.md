@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Tasks: [tasks.md](tasks.md)
-> Status: Tasks 1–2 complete — [compatibility evidence](verification.md); Tasks 3–6 pending
+> Status: Tasks 1–3 complete — [compatibility evidence](verification.md); Tasks 4–6 pending
 > Review resolution: [supplied findings](.reviews/review-resolution-2026-10-03.md)
 
 ## Starting point and task boundaries
@@ -138,7 +138,9 @@ Primary files: `codex_changes.go`, `transcript_changes.go`, and their tests.
 
 1. Add archived-content conversion for adds/deletes and move destinations on
    updates. Treat absent/null `move_path` as no move; preserve nonempty strings;
-   diagnose empty/wrong-type destinations. → verify: add/delete/update/move,
+   diagnose empty/wrong-type destinations. An explicitly empty-string update diff
+   has zero changed lines (pure move or no-op); missing/null stays unavailable.
+   → verify: add/delete/update/move,
    absent/null/real destinations, empty files, CRLF, and missing final newlines.
 2. Finish unavailable/partial group handling and all status/diagnostic views.
    Valid sibling diffs remain available for completed events, but partial totals
@@ -151,11 +153,18 @@ Primary files: `codex_changes.go`, `transcript_changes.go`, and their tests.
    optional destinations normalize alike. Do not compare only rendered diffs.
 4. Deduplicate identical nonempty IDs at the first event anchor. Conflicting IDs
    become unconfirmed with source-line diagnostics; empty IDs remain independent.
-   → verify: same-path distinct IDs, mixed-family duplicates, conflicting status,
+   → verify: same-path distinct IDs, family-independent normalized equality, conflicting status,
    output-only/diagnostic-only conflicts, and malformed/oversize neighbors.
+   Mixed-family wire fixtures join this contract in Task 4, when the legacy
+   adapter exists.
 5. Rerun synthetic and real-corpus parity, and exercise observed failures,
    decline, and real moves read-only. → verify: no consumer digest changes and
    actual adverse-event labels follow the same rules as the synthetic fixtures.
+
+Implemented and independently reviewed; see [Task 3 evidence](verification.md#task-3--paginated-operations-states-and-identity-2026-10-03)
+and its [isolated review](.reviews/task-3-code-review-2026-10-03.md). The real
+corpus exposed pure moves and no-op updates with explicitly empty diff strings;
+these now retain exact zero counts without weakening malformed-hunk validation.
 
 ## Task 4 — Legacy events and direct results reconcile correctly
 
@@ -165,7 +174,8 @@ registrations in `transcript_model.go`.
 
 1. Add the legacy adapter with presence-aware success/status fields; reuse the
    normalized model/converters regardless of `history_mode`. → verify: every row
-   of the design's status table, including contradictory/missing evidence.
+   of the design's status table, including contradictory/missing evidence, and
+   mixed-family duplicate/conflicting identities using Task 3's shared equality.
 2. Link only unambiguous matching direct `apply_patch` IDs through `FileChangeID`.
    Preserve positive structured success as `ReportedSuccess` and retain explicit
    exit-code presence for contradiction handling. Never connect nested event IDs

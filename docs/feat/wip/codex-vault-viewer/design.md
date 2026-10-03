@@ -1,7 +1,7 @@
 # Readable Codex edits in the vault viewer
 
 > Issue: [#121](https://github.com/serpro69/capy/issues/121)
-> Status: supplied review addressed; Tasks 1–2 complete; remaining viewer work in Tasks 3–5
+> Status: supplied review addressed; Tasks 1–3 complete; remaining viewer work in Tasks 4–5
 > Created: 2026-10-03
 > Implementation: [implementation.md](implementation.md)
 > Tasks: [tasks.md](tasks.md)
@@ -281,6 +281,10 @@ Preserve empty files and missing final newlines, and derive counts from actual
 content lines. For updates, preserve the archived unified hunks and validate
 their line prefixes and old/new lengths when counting changes. File headers and
 "no newline" annotations do not count as edits. Preserve move destinations.
+An explicitly recorded empty-string update diff has zero changed lines: with a
+destination it is a pure move, otherwise a no-op update. Missing or null diff
+data remains unavailable. Both empty-string cases were observed during Task 3's
+read-only corpus validation.
 
 Keep malformed or unsupported file records in the group as labeled diagnostics.
 Valid files may still have individual diffs when the event is completed, but a

@@ -260,6 +260,9 @@ type FileChangeDiagnostic struct {
 	Field   string
 	Value   string
 	Message string
+	// SourceLines annotates conflicting records with 0-based physical anchors.
+	// Locations and the display message are excluded from event equality.
+	SourceLines []int
 }
 
 // FileChangeSet is one recorded patch. Files are sorted by original path once

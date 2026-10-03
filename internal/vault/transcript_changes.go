@@ -89,6 +89,13 @@ func viewerFileChangeMessage(e Entry, cwd string) TranscriptMessage {
 func writeChangeDiagnostics(body *strings.Builder, diagnostics []FileChangeDiagnostic) {
 	for _, diagnostic := range diagnostics {
 		body.WriteString(diagnostic.Message)
+		if len(diagnostic.SourceLines) > 0 {
+			body.WriteString(" Source lines (1-based):")
+			for _, line := range diagnostic.SourceLines {
+				fmt.Fprintf(body, " %d", line+1)
+			}
+			body.WriteByte('.')
+		}
 		body.WriteByte('\n')
 	}
 }

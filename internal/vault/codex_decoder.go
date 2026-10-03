@@ -348,6 +348,7 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 	if t.Meta.StartTime.IsZero() {
 		t.Meta.StartTime = firstTS
 	}
+	codexReconcileFileChanges(slots, log)
 
 	// Pass 2a: the whole-transcript call map, and Launch resolution for spawns.
 	calls := map[string]*codexCallInfo{}
@@ -383,7 +384,9 @@ func (d codexDecoder) Decode(r io.Reader) (*Transcript, error) {
 	for _, s := range slots {
 		switch s.kind {
 		case EntryFileChange:
-			t.Entries = append(t.Entries, Entry{Kind: EntryFileChange, LineIndex: s.lineIndex, Timestamp: s.timestamp, FileChange: s.fileChange})
+			if s.fileChange != nil {
+				t.Entries = append(t.Entries, Entry{Kind: EntryFileChange, LineIndex: s.lineIndex, Timestamp: s.timestamp, FileChange: s.fileChange})
+			}
 		case EntryHuman:
 			if s.fallback && !useFallback {
 				continue
