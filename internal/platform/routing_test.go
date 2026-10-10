@@ -77,6 +77,9 @@ func TestRoutingToolDiscoveryFallback(t *testing.T) {
 		assert.Contains(t, text, "discovery is unavailable or the tools are absent")
 		assert.Contains(t, text, "native tools")
 		assert.Contains(t, text, "Do not loop on discovery")
+		assert.Contains(t, text, "60 seconds")
+		assert.Contains(t, text, "independently")
+		assert.Contains(t, text, "native fallback")
 	}
 }
 

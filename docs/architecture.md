@@ -32,8 +32,9 @@ capy is an MCP (Model Context Protocol) server that reduces LLM context window c
 │  PreToolUse:  curl/wget → block, WebFetch → deny, Bash → guidance,     │
 │               Agent/Task → inject routing, capy_* → security check      │
 │  SessionStart: inject routing block                                     │
-│  SessionEnd:   no-op (WAL checkpoint handled by MCP server Close())     │
-│  PostToolUse / PreCompact / UserPromptSubmit: stubs (future use)        │
+│  PostToolUse: record successful child execute/fetch observations       │
+│  SessionEnd: clear its session observations; no database access        │
+│  PreCompact / UserPromptSubmit: stubs (future use)                     │
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -172,10 +173,10 @@ Hooks run as short-lived processes (`capy hook <event>`) invoked by the AI codin
 | Event | Handler | Purpose |
 |-------|---------|---------|
 | `PreToolUse` | Route Bash, block curl/wget/WebFetch, inject subagent routing, security checks | Main routing logic |
-| `PostToolUse` | Stub | Future session continuity |
+| `PostToolUse` | Record successful child execute/fetch observations | One-use routing evidence |
 | `PreCompact` | Stub | Future resume snapshot |
 | `SessionStart` | Inject routing block | Teach LLM about capy on session start |
-| `SessionEnd` | No-op | WAL checkpoint handled by server Close() |
+| `SessionEnd` | Clear its stable session's observation entries | No database access; WAL checkpoint remains in server Close() |
 | `UserPromptSubmit` | Stub | Future user decision capture |
 
 Main-agent Bash HTTP routing rejections use `FormatBlock`: the Claude Code response carries
@@ -190,8 +191,30 @@ capy tools receive `FormatAllow` advisory context for HTTP/WebFetch calls, leavi
 native permission handling intact. Guidance suggests deferred schema discovery
 once when supported, then native fallback if discovery or tools are unavailable.
 Neither local agent definitions nor the Bash-to-general-purpose upgrade establish
-the effective tool pool. Successful-call observations are a later Task 5a slice;
-current child redirects remain advisory, including their first native call.
+the effective tool pool. A successful execute/fetch call can supply one-use
+evidence for a suitable redirect. Each tool's timestamp expires independently at
+60 seconds, and all alternatives for that child are consumed before a denial.
+Arbitrary Bash HTTP requires execute evidence. HTTP(S) WebFetch accepts either
+tool; Git issue/PR/MR comprehension keeps native advice without consumption.
+Failed retries cannot renew evidence; state failures also preserve advisory
+fallback. A child's first native call can therefore remain unblocked.
+
+`observations.go` stores at most 128 stable session/agent pairs in one serialized
+file capped at 64 KiB. Only safe ID components, known tool names and timestamps
+are stored; PID-fallback identities are excluded. Reads are bounded and reject
+malformed, future-dated, oversized or non-regular state. Updates expire stale
+observations before admission and evict oldest entries to enforce both limits.
+A separate permanent lock file serializes read/modify/atomic replacement, using
+nonblocking `flock` with at most 20 ms of contention waiting. The fixed staging
+filename bounds leftovers after a killed writer. A failed consumption write
+cannot authorize a redirect. Cleanup never unlinks or replaces the shared lock.
+
+SessionEnd best-effort removes only its stable session's entries, retaining
+sibling sessions. Expiry and caps bound state if SessionEnd is missed. Hooks
+judge success from host/MCP status flags, not prose inside the returned content;
+this includes existing server results marked successful despite partial failures.
+Tool input/output content and knowledge/vault database contents are not stored
+in the observation file.
 
 The hook entry point resolves project identity before loading Bash or Read
 policies: explicit flag, environment, payload-anchored discovery, then

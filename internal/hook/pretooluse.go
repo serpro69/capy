@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -43,11 +44,19 @@ func routePreToolUse(event *adapter.PreToolUseEvent, a adapter.HookAdapter, poli
 
 	// ─── WebFetch: deny → redirect with comprehension-aware guidance ───
 	if canonical == "WebFetch" {
+		rawURL, _ := toolInput["url"].(string)
 		if event.AgentID != "" {
+			parsedURL, err := url.Parse(rawURL)
+			eligible := err == nil && parsedURL.Hostname() != "" &&
+				(parsedURL.Scheme == "https" || parsedURL.Scheme == "http") && gitPlatformBlockMessage(rawURL) == ""
+			if eligible {
+				if tool := consumeChildObservation(event, ctx, true); tool != "" {
+					return a.FormatBlock("capy: Use " + tool + " for this web extraction. If that call fails or the tool is unavailable, retry the native tool.")
+				}
+			}
 			return a.FormatAllow(childToolGuidance)
 		}
-		url, _ := toolInput["url"].(string)
-		return a.FormatBlock(webFetchBlockMessage(url))
+		return a.FormatBlock(webFetchBlockMessage(rawURL))
 	}
 
 	// ─── Read: guidance once ───
@@ -94,9 +103,10 @@ func routeBash(event *adapter.PreToolUseEvent, a adapter.HookAdapter, policies [
 			}
 		}
 		if !allSafe {
-			// D5: agent type/local frontmatter cannot establish the effective tool
-			// pool. Task 5a adds one-use observations; until then it is unknown.
 			if event.AgentID != "" {
+				if tool := consumeChildObservation(event, ctx, false); tool != "" {
+					return a.FormatBlock("capy: Use " + tool + "(language, code) for this HTTP call. If that call fails or the tool is unavailable, retry the native tool.")
+				}
 				return a.FormatAllow(childToolGuidance)
 			}
 			return a.FormatBlock("capy: curl/wget blocked (stdout flood risk). " +
@@ -110,6 +120,9 @@ func routeBash(event *adapter.PreToolUseEvent, a adapter.HookAdapter, policies [
 	noHeredoc := stripHeredocs(command)
 	if hasInlineHTTP(noHeredoc) {
 		if event.AgentID != "" {
+			if tool := consumeChildObservation(event, ctx, false); tool != "" {
+				return a.FormatBlock("capy: Use " + tool + "(language, code) for this HTTP call. If that call fails or the tool is unavailable, retry the native tool.")
+			}
 			return a.FormatAllow(childToolGuidance)
 		}
 		return a.FormatBlock("capy: Inline HTTP blocked. " +
@@ -119,6 +132,20 @@ func routeBash(event *adapter.PreToolUseEvent, a adapter.HookAdapter, policies [
 
 	// Allow, but inject routing nudge (once per session)
 	return guidanceOnce("bash", BASH_GUIDANCE, a, ctx.projectDir, event.SessionID)
+}
+
+func consumeChildObservation(event *adapter.PreToolUseEvent, ctx hookContext, allowFetch bool) string {
+	// D5: this is one-use evidence, not authoritative discovery of a child tool
+	// pool. A child's first native call has no evidence and remains advisory.
+	if !event.SessionIDStable || event.SessionID == "" || event.AgentID == "" {
+		return ""
+	}
+	tool, err := newObservationStore(ctx.projectDir).consume(event.SessionID, event.AgentID, allowFetch)
+	if err != nil {
+		slog.Warn("could not consume child tool observation", "error", err)
+		return ""
+	}
+	return tool
 }
 
 // routeAgent injects the routing block into Agent/Task subagent prompts.

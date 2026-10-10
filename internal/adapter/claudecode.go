@@ -29,10 +29,10 @@ func (a *ClaudeCodeAdapter) ParsePreToolUse(input []byte) (*PreToolUseEvent, err
 	event := &PreToolUseEvent{
 		ToolName:  raw.ToolName,
 		ToolInput: raw.ToolInput,
-		SessionID: extractSessionID(raw.SessionID, raw.TranscriptPath),
 		AgentID:   raw.AgentID,
 		AgentType: raw.AgentType,
 	}
+	event.SessionID, event.SessionIDStable = resolveSessionID(raw.SessionID, raw.TranscriptPath)
 	if len(raw.Cwd) != 0 {
 		if err := json.Unmarshal(raw.Cwd, &event.Cwd); err != nil || event.Cwd == "" {
 			event.InvalidCwd = true
@@ -44,18 +44,23 @@ func (a *ClaudeCodeAdapter) ParsePreToolUse(input []byte) (*PreToolUseEvent, err
 // extractSessionID resolves a session ID using a 4-tier priority:
 // transcript_path UUID > session_id field > CLAUDE_SESSION_ID env > ppid fallback.
 func extractSessionID(sessionID, transcriptPath string) string {
+	id, _ := resolveSessionID(sessionID, transcriptPath)
+	return id
+}
+
+func resolveSessionID(sessionID, transcriptPath string) (string, bool) {
 	if transcriptPath != "" {
 		if m := uuidInTranscriptRe.FindStringSubmatch(transcriptPath); len(m) > 1 {
-			return m[1]
+			return m[1], true
 		}
 	}
 	if sessionID != "" {
-		return sessionID
+		return sessionID, true
 	}
 	if env := os.Getenv("CLAUDE_SESSION_ID"); env != "" {
-		return env
+		return env, true
 	}
-	return fmt.Sprintf("pid-%d", os.Getppid())
+	return fmt.Sprintf("pid-%d", os.Getppid()), false
 }
 
 func (a *ClaudeCodeAdapter) FormatBlock(reason string) ([]byte, error) {

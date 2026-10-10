@@ -975,6 +975,14 @@ An agent type or local definition alone cannot establish tool availability.
 Security denies and matched asks still apply. This fallback can permit a child's
 first native call even when it ultimately has capy tools.
 
+A successful child `capy_execute` or `capy_fetch_and_index` call provides evidence
+for one suitable redirect during the next 60 seconds. Bash HTTP requires execute
+evidence; WebFetch can use either tool, while Git issue/PR comprehension keeps
+native CLI advice. A redirect consumes all alternatives for that child. Failed
+or canceled calls do not renew the evidence, so a failed retry leaves native
+fallback available. Missing stable identities or failed state access also fall
+back to advice; observations do not establish permanent availability.
+
 | Pattern                                           | What happens                                                                                                        |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `curl`/`wget` in Bash                             | Denied with guidance to use `capy_fetch_and_index` or `capy_execute`; silent/quiet file downloads remain allowed     |
@@ -992,6 +1000,11 @@ then the process working directory. Invalid explicit/environment selections fail
 invalid payload directories emit a diagnostic and fall back. Settings and
 guidance state belong to the selected project. Cwd-relative Read rules use the
 validated payload cwd, falling back to the selected project when absent.
+
+Child observations share one bounded `.capy/tool-observations.json` per project,
+with a separate permanent lock file. SessionEnd removes only its session's
+entries; missing SessionEnd events are handled by expiry and fixed storage caps.
+These hooks do not open the knowledge or vault databases.
 
 ### Platform support
 

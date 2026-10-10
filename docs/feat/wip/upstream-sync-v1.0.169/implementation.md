@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4 and 5 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5 and 5a complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -169,8 +169,8 @@ Children identified by `agent_id` get unverified-tool advice for HTTP/WebFetch
 routing, while security enforcement and main-agent denials stay intact. No local
 frontmatter is used as proof of availability. Both injected routing and the
 generator/committed `.capy/AGENTS.md` describe conditional one-attempt discovery,
-native fallback and the limits of the Bash type upgrade. Task 5a remains pending
-and owns observation-backed redirects. D5's authoritative first-call discovery
+native fallback and the limits of the Bash type upgrade. Task 5a below adds
+observation-backed redirects. D5's authoritative first-call discovery
 remains deferred. The old knowledge note recommending a two-file lookup is
 superseded by this feature's reconciled design.
 
@@ -181,6 +181,34 @@ superseded by this feature's reconciled design.
 Implement the one-use, per-tool 60-second evidence in design §3.5, stored in one bounded project file behind a separate stable lock → verify: exact eligible tools, no renewal on failures or another tool's success, 64 KiB/128-entry eviction, missing stable identity, sibling isolation, concurrent update/consume, lock timeout and corrupt/future state.
 
 Consume all of that child's evidence before one redirect and follow the explicit alternative table → verify: failed capy retry permits the next native attempt, arbitrary HTTP is never turned into a fetch-only operation, and security decisions still dominate without consuming evidence. Parse stable identity for SessionEnd and remove only its entries, without DB access → verify: cleanup, missed SessionEnd expiry, live sibling preservation and no unbounded per-session file creation. Update routing generator/copy together. D5 remains the unknown first-call limitation.
+
+Task 5a implementation notes (2026-10-10): `observationStore` owns the bounded
+JSON file, its permanent `flock` lock and fixed staging filename. Only a successful
+atomic replacement publishes consumed evidence. State read/validation/write or
+20 ms lock-wait failures produce diagnostics and advisory fallback. Both metadata
+and actual descriptor reads enforce the 64 KiB limit; regular-file/no-follow
+checks reject FIFO and symlink state/lock entries. A fixed staging name also
+bounds leftovers after a killed writer without a directory sweep.
+
+The adapter records whether its session ID came from transcript, payload or
+environment rather than the PID fallback. PostToolUse filters exact execute/fetch
+names and host/MCP error/interruption flags, including serialized results; no
+tool content is retained. Success renews only that tool. SessionEnd removes only
+the matching stable session and neither sweeps sibling entries nor opens a DB.
+
+The Git comprehension exception applies to WebFetch; Bash HTTP still requires
+execute evidence, since execute accepts arbitrary methods/headers/body and does
+not refuse Git URLs. WebFetch requires an absolute HTTP(S) URL and can use fetch
+or execute. Consumption removes all alternatives only when a suitable one exists.
+Native security denies and matched asks in the existing policy path run first.
+The generator and committed routing instructions describe the same limits.
+
+Success means host/MCP protocol success. Some pre-existing server responses
+encode partial failures as successful results and can therefore mint evidence.
+If semantic failures must invalidate observations, normalize those server status
+flags with handler fixtures before changing hook classification; do not match
+arbitrary error words in returned content. D5 remains deferred: one-use evidence
+does not establish authoritative pre-call or permanent tool availability.
 
 ## 6. Batch heredocs and stderr
 
