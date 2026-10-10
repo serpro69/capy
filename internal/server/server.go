@@ -52,7 +52,8 @@ type Server struct {
 	vault         *vault.VaultStore
 	executor      *executor.PolyglotExecutor
 	security      []security.SecurityPolicy
-	readDenyGlobs [][]string // cached Read deny patterns
+	readPolicy    *security.FilePolicy // immutable policy snapshot
+	readPolicyErr error                // blocks file admission if preparation failed
 	config        *config.Config
 	stats         *SessionStats
 	throttle      *searchThrottle
@@ -92,7 +93,6 @@ func NewServer(
 	s := &Server{
 		config:          cfg,
 		security:        policies,
-		readDenyGlobs:   security.ReadToolDenyPatterns("Read", projectDir, ""),
 		executor:        exec,
 		stats:           NewSessionStats(),
 		throttle:        &searchThrottle{windowStart: time.Now()},
@@ -102,6 +102,12 @@ func NewServer(
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	s.readPolicy, s.readPolicyErr = security.LoadReadPolicy(security.FilePolicyContext{ProjectDir: projectDir})
+	if s.readPolicyErr == nil {
+		for _, warning := range s.readPolicy.Warnings() {
+			slog.Warn(warning)
+		}
 	}
 	return s
 }
@@ -120,8 +126,11 @@ func (s *Server) getStore() *store.ContentStore {
 		// Wire the Read deny-policy into stale auto-refresh so a file whose
 		// deny status changed since indexing is not re-read (TOCTOU defense).
 		s.store.SetDenyChecker(func(filePath string) bool {
-			denied, _ := security.EvaluateFilePath(filePath, s.readDenyGlobs, s.projectDir)
-			return denied
+			if err := s.checkReadPath(filePath); err != nil {
+				slog.Warn("stale refresh: Read policy blocked file", "error", err)
+				return true
+			}
+			return false
 		})
 	})
 	return s.store

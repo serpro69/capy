@@ -48,12 +48,15 @@ func (s *Server) checkNonShellDenyPolicy(code, language string) *mcp.CallToolRes
 // checkFilePathDenyPolicy checks a file path against Read deny patterns
 // cached at server construction.
 func (s *Server) checkFilePathDenyPolicy(filePath string) *mcp.CallToolResult {
-	denied, pattern := security.EvaluateFilePath(filePath, s.readDenyGlobs, s.projectDir)
-	if denied {
-		return errorResult(fmt.Sprintf(
-			"File access blocked by security policy: path matches Read deny pattern %s",
-			pattern,
-		))
+	if err := s.checkReadPath(filePath); err != nil {
+		return errorResult(fmt.Sprintf("File access blocked by security policy: %v", err))
 	}
 	return nil
+}
+
+func (s *Server) checkReadPath(filePath string) error {
+	if s.readPolicyErr != nil {
+		return s.readPolicyErr
+	}
+	return s.readPolicy.Check(filePath)
 }

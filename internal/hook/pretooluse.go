@@ -3,6 +3,7 @@ package hook
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"maps"
 	"strings"
 
@@ -135,6 +136,20 @@ func routeAgent(toolInput map[string]any, a adapter.HookAdapter) ([]byte, error)
 
 // routeCapyTool runs security checks and routing guidance on capy MCP tools.
 func routeCapyTool(toolName string, toolInput map[string]any, policies []security.SecurityPolicy, projectDir string, a adapter.HookAdapter) ([]byte, error) {
+	if strings.HasSuffix(toolName, "execute_file") || strings.HasSuffix(toolName, "_index") {
+		if filePath, _ := toolInput["path"].(string); filePath != "" {
+			policy, err := security.LoadReadPolicy(security.FilePolicyContext{ProjectDir: projectDir})
+			if err == nil {
+				for _, warning := range policy.Warnings() {
+					slog.Warn(warning)
+				}
+				err = policy.Check(filePath)
+			}
+			if err != nil {
+				return a.FormatBlock(fmt.Sprintf("Blocked by security policy: %v", err))
+			}
+		}
+	}
 	// Scanner limits apply even without configured policy patterns.
 	switch {
 	case strings.HasSuffix(toolName, "execute") && !strings.HasSuffix(toolName, "batch_execute"):
@@ -143,14 +158,6 @@ func routeCapyTool(toolName string, toolInput map[string]any, policies []securit
 		return checkCodeSecurity(code, lang, policies, a)
 
 	case strings.HasSuffix(toolName, "execute_file"):
-		filePath, _ := toolInput["path"].(string)
-		if filePath != "" {
-			denyGlobs := security.ReadToolDenyPatterns("Read", projectDir, "")
-			denied, pattern := security.EvaluateFilePath(filePath, denyGlobs, projectDir)
-			if denied {
-				return a.FormatBlock(fmt.Sprintf("Blocked by security policy: file path matches Read deny pattern %s", pattern))
-			}
-		}
 		lang, _ := toolInput["language"].(string)
 		code, _ := toolInput["code"].(string)
 		return checkCodeSecurity(code, lang, policies, a)

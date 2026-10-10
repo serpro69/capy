@@ -33,7 +33,7 @@ explicitly deferred in `implementation.md` with ordinary-quote guidance.
 
 ## Task 2a: Prepare origin-aware Read policies on current file paths
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 6, 7, 10, 11
@@ -41,9 +41,14 @@ explicitly deferred in `implementation.md` with ordinary-quote guidance.
 
 ### Subtasks
 
-- [ ] 2a.1 Retain rule source/anchors and prepare supported path grammar in `internal/security` → verify: root/home/settings/cwd anchors, escaped literals, bare Read and unsupported syntax diagnostics.
-- [ ] 2a.2 Preserve single-slash legacy denies conservatively; never use legacy interpretation for new allows → verify: no weakened deny or broadened grant through symlink aliases.
-- [ ] 2a.3 Wire the prepared policy into existing direct-file and stale-refresh consumers → verify: relative, absolute and physical inputs make the same decision using isolated project/user settings.
+- [x] 2a.1 Retain rule source/anchors and prepare supported path grammar in `internal/security` → verify: root/home/settings/cwd anchors, escaped literals, bare Read and unsupported syntax diagnostics.
+- [x] 2a.2 Preserve single-slash legacy denies conservatively; never use legacy interpretation for new allows → verify: no weakened deny or broadened grant through symlink aliases.
+- [x] 2a.3 Wire the prepared policy into existing direct-file and stale-refresh consumers → verify: relative, absolute and physical inputs make the same decision using isolated project/user settings.
+
+Evidence: [verification](verification.md#task-2a-prepared-read-policies) and
+[isolated review](.reviews/task-2a-code-review-2026-10-10.md). Policy preparation
+and legacy-deny compatibility are complete. Execute-file containment/path
+handoff and validated hook cwd selection remain Tasks 2 and 5.
 
 ## Task 2: Admit execute-file paths consistently
 
