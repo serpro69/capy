@@ -867,6 +867,17 @@ capy completion fish | source
 
 ## MCP Tools
 
+Boolean arguments accept native JSON booleans or whitespace-trimmed,
+case-insensitive `"true"`/`"false"` strings. Omission preserves each tool's default:
+`dry_run` defaults to true; `background`, `force`, cleanup action flags and
+`all_projects` default to false. Null, numbers, arrays, objects and other strings
+are errors before work begins.
+
+Compatibility: string booleans that cleanup, execution and fetch previously
+ignored now take effect. In particular, **`dry_run: "false"` performs eviction**
+when an eviction is requested. Search no longer accepts numeric `all_projects`
+values or shortcuts such as `"1"` or `"t"`; use native booleans instead.
+
 ### Execution
 
 | Tool                 | What It Does                                                                                                                                                                                                  |

@@ -46,7 +46,10 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	args := req.GetArguments()
 	url := req.GetString("url", "")
 	source := req.GetString("source", "")
-	force, _ := args["force"].(bool)
+	force, err := boolArg(args, "force", false)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 	kindStr := req.GetString("kind", "")
 	requests := coerceFetchRequests(args["requests"])
 

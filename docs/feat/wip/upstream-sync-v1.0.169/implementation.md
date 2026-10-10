@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a and 6 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6 and 6a complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -235,6 +235,23 @@ raw-byte accounting changes.
 Implement the presence-aware literal parser once; preserve each omitted default and return explicit errors for unsupported supplied types. Wire background and force, then every cleanup boolean and both all-projects selectors → verify: native/string true and false, whitespace/case, null/numeric/collection/invalid values, default dry run, no child spawned on invalid background, no purge/optimization on invalid cleanup input, and no accidental cross-project search.
 
 The SDK's current `GetBool` already accepts string booleans and numeric truthiness, unlike capy's direct assertions. Replacing it deliberately narrows numeric all-projects inputs; do not write a test claiming its old string-true behavior was false. Validate real stdio calls as well as handlers. Task 13 reuses the helper for its new directory booleans; mechanical boundary forwarding does not create a second parser.
+
+Task 6a implementation notes (2026-10-10): `boolArg(args, name, defaultValue)`
+returns a value or a parameter-specific error without echoing the supplied data.
+The cleanup-local permissive helper is removed; every affected handler uses the
+shared parser. `vaultProjectScope` returns validation errors to both search
+handlers before vault access or search-throttle accounting. Even a knowledge-only
+request or `project: "*"` cannot hide an invalid supplied `all_projects` value.
+
+The advertised MCP types remain boolean; string support is boundary robustness,
+verified through actual JSON-RPC stdio calls. Handler tests prove no process,
+HTTP request, store/vault initialization, purge or stats reset on invalid input.
+Stdio fixtures verify explicit string-false eviction, background detachment,
+single/batch fetch-cache bypass, and cross-project vault scoping. The pinned
+`mcp-go v0.46.0` source confirms its former `GetBool` accepted numeric truthiness
+and `strconv.ParseBool` shortcuts as well as string true/false. Those shortcuts
+are now rejected; trimmed mixed-case literals are accepted. Task 13 will reuse
+the parser for directory options. CLI flags and dependency versions are unchanged.
 
 ## 7. Project cwd for every runtime
 

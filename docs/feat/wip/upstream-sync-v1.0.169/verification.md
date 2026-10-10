@@ -575,3 +575,72 @@ budgets and parallel per-command timeouts retain their semantics. Task 18 still
 owns provenance, response-budget and raw-byte-accounting changes. CLI flags,
 credentials, database formats, CI configuration and generated artifacts are
 unchanged.
+
+## Task 6a: Consistent boolean request validation
+
+Implemented 2026-10-10. Scope: shared boolean parsing in `coerce.go` and validation
+at execute, fetch, cleanup and both search boundaries.
+
+### Behavior and coverage
+
+- Omitted arguments preserve their defaults. Native booleans and whitespace-
+  trimmed, case-insensitive literal true/false strings are accepted. Explicit
+  null, integer/float/JSON-number values, arrays, objects, empty/other strings,
+  numeric strings and single-letter shortcuts are rejected with a parameter
+  name; errors do not echo the supplied value.
+- Handler tests cover all existing boolean arguments, both fetch modes,
+  knowledge-only searches, star selectors and vault searches. Invalid values
+  create no child marker, HTTP request or database file, initialize neither
+  store nor vault, and leave usage counters and the search budget untouched.
+- Invalid cleanup values also preserve an already-populated store and its stats
+  when combined with real purge/optimize/vacuum requests. Omitted/string-true
+  dry runs preserve sources; string-false dry runs evict them. Literal action
+  strings preserve mutual exclusions and standalone reclamation behavior.
+- Background string true detaches; false times out normally. Fetch string false
+  uses the cache and string true issues another HTTP request, in both modes.
+  Existing real-vault fixtures exercise mixed-case strings on both search tools.
+- `TestMCPStdioBooleanArgs` builds and launches the real server, negotiates MCP,
+  and sends JSON-RPC requests. It tests malformed values on every boolean,
+  content preservation, no child marker, the search budget, destructive string
+  false, background behavior and single/batch force. The force fixture uses a
+  seeded cache entry and the real loopback SSRF refusal to prove bypass without
+  permitting a network request. A separately imported/reindexed encrypted vault
+  session proves false stays scoped and true finds another project's session.
+  Invalid selectors still error when the vault is disabled or `project` is `*`.
+
+### Verification commands
+
+Tests use `CGO_ENABLED=1`, `GOCACHE=/tmp/capy-go-build`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`.
+HTTP handler fixtures have local socket access. Stdio fixtures isolate child
+configuration, discovery directories and credentials. The stdio test harness
+runs under `-race`; its child binary uses the existing helper's ordinary FTS5
+build. The server handler tests themselves run under the race detector.
+
+| Command | Result |
+|---|---|
+| `go test -race -tags fts5 -count=1 ./internal/server -run 'Test(Bool\|Search_ProjectOverrideScopes\|VaultSearch_ProjectOverrideScopes)'` | Passed, 8.705s. |
+| `go test -race -tags fts5 -count=1 ./cmd/capy -run '^TestMCPStdioBooleanArgs$'` | Passed, 6.734s. |
+| `go test -tags fts5 ./...` | All packages passed, with unchanged packages using cached results: CLI 226.500s, server 121.090s, hook 0.521s, platform 0.189s, vault 252.519s. Used an empty temporary `XDG_CONFIG_HOME` and cleared `CLAUDE_PROJECT_DIR`. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task6a` | Passed: store 5.707s, server 0.503s, vault 0.527s. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task6.json bench-results/upstream-sync-task6a.json` | Dataset verified; all 84 retrieval/context metrics match. Reports reflect the Task 6 working tree based on `9eca616` and this working tree based on `2f74147`. |
+| `git diff --check` | Passed after final documentation/task updates. |
+
+### Compatibility and scope
+
+The [isolated review](.reviews/task-6a-code-review-2026-10-10.md) approved with
+no P0–P3 findings. PAL was unavailable. No findings require knowledge indexing.
+
+`dry_run: "false"` now intentionally performs requested eviction instead of
+being ignored. Literal string background, force and cleanup action values now
+take effect. The pinned `mcp-go v0.46.0` source confirms `GetBool` already accepted
+string booleans, numeric truthiness and `strconv.ParseBool` shortcuts; numeric
+`all_projects`, `"1"`, `"t"` and similar shortcuts now return validation errors.
+Trimmed mixed-case true/false strings are supported uniformly. Native boolean
+MCP schemas and omitted defaults are preserved.
+
+No dependency upgrade, CLI option, database migration, generated artifact or
+CI change was needed. The core is one parser; the five handler boundaries use
+it before side effects. Future directory booleans remain Task 13. The plan
+required no behavioral deviation, and no new project convention needs separate
+knowledge indexing because the contract is documented here and in the design.
