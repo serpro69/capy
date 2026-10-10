@@ -4,6 +4,7 @@
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
+> Review reconciliation: [.reviews/reconciliation-2026-10-10.md](.reviews/reconciliation-2026-10-10.md)
 
 ## Contributor orientation
 
@@ -19,18 +20,26 @@ No dependency upgrade is planned. Git ignore calls use the existing executable; 
 
 **Owners:** `internal/security/split.go`, `eval.go`, their tests; handler regression cases in `internal/hook/hook_test.go` and server execute/batch tests where those files already own coverage.
 
-1. Introduce a shared bounded scanner that emits executable elements while respecting escapes, quotes, substitutions, redirections and heredoc bodies → verify: table cases for newline/background chains, double-quoted substitutions, literal quotes, escaped pipes, even/odd backslashes, nested substitutions and arithmetic.
+1. Introduce a shared bounded scanner with the input/frame/element/visit limits from design §3.1 → verify: newline/background chains, double-quoted substitutions, quoted heredoc literals, substitutions within unquoted heredoc data, escaped pipes, even/odd backslashes, nested substitutions and arithmetic.
 2. Apply element-wise deny and full-policy evaluation without changing settings precedence or deny-only defaults → verify: an allowed prefix cannot authorize a denied/unknown later executable element; literal data containing a denied command remains allowed.
 3. Exercise the same scanner through shell execute, batch and non-shell extracted command checks → verify: `go test -tags fts5 -count=1 ./internal/security/... ./internal/hook/... ./internal/server/...`.
 
-Do not add a full shell interpreter. Detect unsupported/excessive scanner state explicitly; do not quietly ignore a nesting overflow. Preserve unmatched-ask hook behavior described in design §3.1.
+Do not add a full shell interpreter. Propagate a typed limit/evaluation error through both evaluators, hook routing and non-shell extraction checks; every affected handler blocks before execution rather than using a partial list. Test each limit immediately below/above its boundary in the hook, MCP execute and batch paths. Preserve unmatched-ask hook behavior described in design §3.1.
+
+## 2a. Prepared Read policy on existing paths
+
+**Owners:** `internal/security/settings.go`, `eval.go`, new `file_policy.go`; existing server/hook policy wiring and stale-read callback.
+
+Retain rule origin and explicit anchor/cwd/home context when loading local/shared/user settings. Prepare the supported grammar and bare-tool rule; preserve a legacy absolute interpretation for single-slash **denies only**, with a diagnostic. New allows use host anchors only → verify: `//`, `~/`, source-relative `/`, cwd-relative rules, escaped literals, unsupported syntax and differing user/project settings origins.
+
+Use one prepared object in existing MCP direct reads and the store's deny callback before adding new ingestion/CLI paths → verify: the same relative deny blocks raw-relative, absolute and physical paths, including stale refresh, and no local symlink alias grants an external target. Invalid policy preparation blocks file admission visibly. Test this end-to-end, not only the legacy exported matcher. Keep settings origin distinct from execution cwd. Run security/server/stale tests; coordinate shared files with Task 1 without making its shell parser a dependency.
 
 ## 2. Execute-file path admission
 
 **Owners:** `internal/security/eval.go`, `settings.go`, `internal/server/security_check.go`, `server.go`, `tool_execute_file.go`; corresponding tests.
 
-1. Generalize permission-pattern reading to select Read allow or deny lists, keeping `ReadToolDenyPatterns` as a compatible entry point → verify: local/shared/global settings fixtures and literal false/missing patterns preserve existing deny behavior.
-2. Add a checked absolute-path resolver with lexical and physical containment and explicit external-target allows; wire cached allows alongside server denies → verify: absolute outside paths, traversal, sibling-prefix paths, direct symlinks, symlink-then-`..`, denied-but-allowed targets, and valid external exceptions.
+1. Consume Task 2a's prepared policy rather than raw glob arrays → verify: native absolute/home grants and legacy deny compatibility on local/shared/user fixtures.
+2. Add a checked absolute-path resolver with lexical and physical containment and explicit external grants covering requested and real paths → verify: absolute outside paths, traversal, sibling-prefix paths, direct symlinks, symlink-then-`..`, denied-but-allowed targets, and valid external exceptions.
 3. Pass the admitted absolute path into `ExecuteFile` → verify: a server project different from process cwd reads the expected fixture and rejects a denied path before any child is spawned.
 4. Document the remaining check/open race at the helper and link [D2](upstream-audit.md#d2-filesystem-replacement-between-policy-checks-and-runtime-reads) → verify: documentation and error text do not claim an OS sandbox.
 
@@ -52,20 +61,36 @@ The rationale is reliable expression of a block, not an unverified assertion tha
 
 ## 5. Subagent-aware routing and discovery
 
-**Owners:** `internal/adapter/adapter.go`, `claudecode.go`, `internal/hook/pretooluse.go`, `routing.go`; `internal/platform/routing.go` and `.capy/AGENTS.md` where shared instructions need the same availability rule.
+**Owners:** adapter event parsing, `cmd/capy/hook.go` and hook context selection, `internal/hook/pretooluse.go`/`routing.go`; generated routing owner/copy where wording changes.
 
-1. Preserve `agent_id`/`agent_type` in parsed hook context → verify: actual child ID, missing fields and type-only main-agent fixtures.
-2. Thread child context into routing, bypassing only capy redirects/nudges when tool availability is unverified → verify: child native WebFetch/HTTP can proceed, while an explicit denied shell command remains denied and a matched ask remains an ask.
+1. Preserve `agent_id`/`agent_type`/`cwd` and resolve project identity before policy loading using design §3.4 precedence → verify: actual child, type-only main agent, environment missing, explicit project override, payload cwd outside process cwd and nested project directories. Prepared rule origin/state storage must use the selected project consistently.
+2. Treat child availability as unknown unless demonstrated by Task 5a; keep advisory discovery and native-tool fallback → verify: unknown/fixed-tool children do not get trapped, while explicit denies and matched asks still run first. Do not label every child unavailable or use two local frontmatter files as the effective host tool pool.
 3. Add one-attempt deferred-tool discovery guidance with native-tool fallback; preserve original Agent/Task fields → verify: no recursive bootstrap, no bootstrap mandate without discovery support, and Bash-to-general-purpose behavior remains covered.
 4. Align generated routing text and its committed copy → verify: `go test -tags fts5 ./internal/platform -run 'TestGeneratedWholeFileArtifacts|TestMergedArtifactsAreIdempotent'` plus hook/adapter tests.
 
 A parent MCP server's existence is not evidence that a fixed-tool child can call it. Do not introduce a new ready sentinel or Codex hook adapter.
+
+## 5a. Re-enforce redirects after observed child capabilities
+
+**Owners:** `internal/hook/posttooluse.go`, `pretooluse.go`, `guidance.go` and dispatch wiring.
+
+Record the exact capy tool from a child PostToolUse event in bounded session/agent-scoped state; reuse safe filename components and ensure parallel updates do not overwrite sibling capabilities → verify: one child's execute capability cannot authorize another child's redirect, and search alone is not proof of execute/fetch availability.
+
+Select an observed suitable redirect alternative; absent/corrupt state stays unknown and advisory → verify: inherit-all child first calls capy execute, then a native flood is redirected; fixed-tool and unseen children retain fallback; security checks still dominate. Document the first-call limitation and D5. Update routing generator/copy if the selected alternative's guidance changes.
 
 ## 6. Batch heredocs and stderr
 
 **Owners:** `internal/server/tool_batch.go`, `tool_batch_test.go`.
 
 Remove suffix redirection from both worker paths and share deterministic captured-stream formatting → verify: terminal heredocs with/without trailing newline, quoted delimiters, stdout-only, stderr-only, combined output and empty streams work at concurrency 1 and greater than 1. Preserve serial skipped commands and parallel timeout/error isolation. Run the server batch subset with `-race`; inspect indexed content, not just a successful exit.
+
+## 6a. Consistent boolean request validation
+
+**Owners:** `internal/server/coerce.go` and the boolean-consuming tool boundaries in execute/fetch/cleanup/search/vault-search.
+
+Implement the presence-aware literal parser once; preserve each omitted default and return explicit errors for unsupported supplied types. Wire background and force, then every cleanup boolean and both all-projects selectors → verify: native/string true and false, whitespace/case, null/numeric/collection/invalid values, default dry run, no child spawned on invalid background, no purge/optimization on invalid cleanup input, and no accidental cross-project search.
+
+The SDK's current `GetBool` already accepts string booleans and numeric truthiness, unlike capy's direct assertions. Replacing it deliberately narrows numeric all-projects inputs; do not write a test claiming its old string-true behavior was false. Validate real stdio calls as well as handlers. Task 13 reuses the helper for its new directory booleans; mechanical boundary forwarding does not create a second parser.
 
 ## 7. Project cwd for every runtime
 
@@ -75,7 +100,7 @@ Remove suffix redirection from both worker paths and share deterministic capture
 2. Run compiled Rust from the project but compile in its temporary workspace; keep output binary paths absolute → verify: a compiled fixture finds a project-relative marker.
 3. Resolve direct executor `ExecuteFile` relative paths against its project rather than process cwd → verify: use different process/project directories without calling `os.Chdir` from concurrent tests.
 
-Run executor tests and `make bench-quality` as part of the final comparison. Check Go module behavior and Elixir project detection; do not patch failures by reverting non-shell cwd piecemeal.
+Run executor tests and the final benchmarks. Add isolated Go fixtures for local imports, `replace`, module/toolchain directives and automatic vendor selection; preserve `GOFLAGS` removal by `BuildSafeEnv`. Check Elixir project detection; do not patch failures by reverting non-shell cwd piecemeal.
 
 ## 8. Per-call cwd overrides
 
@@ -112,22 +137,30 @@ Keep the store's source-size bound and sanitization-before-hash flow. Test overl
 
 ## 12. Shared, bounded file ingestion
 
-**Owners:** new `internal/knowledge/index.go`, `internal/server/tool_index.go`, ingestion/server tests.
+**Owners:** new `internal/knowledge/index.go`, `internal/server/tool_index.go`, `internal/store/search.go:fileChangedSince`; optional dependency-free bounded-reader helper.
 
 Extract the single-file operation behind a filesystem-ingestion API that receives project, policy and store dependencies. Preserve inline-content handling in the server. Keep canonical labels, durable kind, file-backed stale refresh and deny-before-content-read behavior → verify: the existing MCP file suite remains valid through the new owner.
 
-Bound the actual descriptor read as well as checking stat size, reject non-regular files before reading, and expose an explicit per-file outcome suitable for directory aggregation → verify: growing files, FIFOs/devices, denied files, same-content dedup and failed reads. If a dedup indicator is added to `IndexResult`, it is response metadata only, not a schema change. Run knowledge/store/server tests.
+Bound the actual descriptor read as well as stat size in **both initial ingestion and stale refresh**, reject non-regular files before reading, and expose a per-file outcome for aggregation. Reuse Task 2a's prepared policy → verify: deterministic file growth after stat via a read seam, FIFOs/devices, relative denies passed absolute paths, cached content retained with a logged skip, same-content dedup and read failures. Reuse existing `IndexResult.AlreadyIndexed` rather than inventing a second dedup indicator. Run knowledge/store/server tests.
 
 This slice delivers the existing file path with a stricter read bound; directory support is the next complete path.
+
+## 12a. Persistently schedule bounded stale refresh
+
+**Owners:** store source schema/migration/statements, `search.go` refresh loop and scheduling state transfer in `index.go`.
+
+Add `file_check_seq` plus its partial scheduling index after column admission. Page at most 32 oldest-checked sources, close metadata rows before writes, and advance only attempted rows with a logical sequence derived from the indexed current maximum. Ensure replacement rows retain the completed check's position → verify: migration/reopen, query plans using the scheduling index, no full-source snapshot, and repeated CLI processes advancing beyond the first page.
+
+Apply the per-pass byte/admission-time limits from design §5.5 using Task 12's bounded reads → verify: 10,000 sources, changed/unchanged/missing/denied files, budget exhaustion leaving unprocessed rows eligible, cancellation, concurrent bounded duplicate checks, and eventual progress in a quiescent corpus. Record raw latency/allocation/read/write counts for final baseline comparison. This changes freshness timing, not retrieval ranking or retention timestamps.
 
 ## 13. Directory ingestion with selection controls
 
 **Owners:** new `internal/knowledge/directory.go`, `patterns.go`, `gitignore.go`; MCP path dispatch in `tool_index.go` and schema in `tools.go`.
 
-1. Implement deterministic bounded traversal with the design's default/hard limits, incremental directory reads, exclusions, source naming and per-file outcomes → verify: depth 0, file/entry/byte ceilings, an oversized flat directory, cancellation and bounded failure summaries.
+1. Implement deterministic bounded traversal with the design's default/hard limits, incremental directory reads, exclusions, colon-separated source prefixes and per-file outcomes → verify: depth 0, file/entry/byte ceilings, an oversized flat directory, cancellation, same/different-prefix dedup and bounded failure summaries.
 2. Implement and document include/exclude/extension selection and optional root-contained symlink following → verify: cycles, aliases, dangling/escaping links, root symlink denial, hidden metadata and direct-file versus recursive admission.
-3. In a Git worktree, use `git check-ignore --no-index --stdin -z` with bounded input/output and request cancellation; run with the intended working directory and without inherited Git directory/index/worktree overrides → verify: nested ignores, negation, tracked-but-ignored files, spaces/newlines in names, and wrong inherited repository variables. Treat exits 0/1 as normal; surface other failures. Outside Git, visibly report that ignore evaluation was unavailable by context; in a Git tree with missing/broken Git, fail instead of proceeding unfiltered.
-4. Expose directory controls and aggregate results through `capy_index` → verify: repeated ingestion deduplicates, every file remains searchable by label and auto-refreshable, and failures do not erase prior sources.
+3. Discover the worktree containing the canonical ingestion root and use `git check-ignore --no-index --stdin -z` with bounded input/output and request cancellation, without inherited Git directory/index/worktree overrides → verify: external root in another repo with conflicting ignores, nested/negated/tracked rules, unusual filenames and wrong inherited Git variables. Keep selected-project policies/credentials unchanged. Treat exits 0/1 as normal; surface other failures. Outside Git report no Git ignores; missing/broken Git in a repo fails visibly.
+4. Expose directory controls using Task 6a's boolean parser and Task 2a's prepared policy → verify: direct/walked/refreshed absolute paths obey the same relative denies, repeated labels deduplicate, and Task 12a bounds searches after many repeated ingestion calls.
 
 The directory API is one bounded ingestion path, not a repository crawler/index-all feature. Keep the implementation reviewable; split selection/ignore additions into another complete user-facing slice if the five substantive files exceed M scope. Do not weaken defaults temporarily to make a partial task appear complete.
 
@@ -143,61 +176,71 @@ Report partial/failure/cap outcomes with the documented exit semantics. Always c
 
 **Owners:** new `cmd/capy/search.go`, `main.go`, CLI tests; reuse `knowledge.go`.
 
-Expose knowledge query, source, type, bounded limit and kind flags; wire the same Read-deny stale-refresh callback used by MCP. Output bounded snippets with source/title and no secrets → verify: MCP-indexed data is found by CLI, literal wildcard labels stay scoped, denied backing files are not reread, ephemeral content is opt-in except explicit source bypass, and vault-only content is not silently included.
+Expose knowledge query, source, type, bounded limit and kind flags; wire Task 2a's prepared policy into the stale-refresh callback. Output bounded snippets with source/title and no secrets → verify: MCP-indexed data is found by CLI, literal wildcard labels stay scoped, relative/native-anchor denies protect absolute backing paths, repeated CLI processes progress through Task 12a's scheduler, ephemeral content is opt-in except explicit source bypass, and vault-only content is not silently included.
 
 Validate arguments before store access; empty results exit successfully and key/DB failures do not → verify: actual command exit codes and help output. Run CLI and store tests. The task depends on the source-filter fix, not on introducing a server instance into the command.
 
 Amend ADR-012 to name the terminal filtering use case while keeping the MCP content-type field unexposed → verify: CLI help and actual MCP descriptors match that distinction.
 
+## 16a. Renew persisted fetch freshness
+
+**Owners:** source schema/migration/metadata, new store fetched-index orchestration over `indexPreparedChunks`, `internal/server/tool_fetch.go` integration.
+
+Add nullable millisecond validation metadata and an atomic fetched-index operation; generic indexing does not renew the marker. Deliver it through both fetch modes using today's configured TTL → verify: expired → unchanged fetch → immediate hit, force → hit, unchanged kind transition, changed/new content, failed fetch/index not renewing, no search/access renewal and retained stored chunk counts in the unchanged response.
+
+Keep `indexed_at` and retention semantics unchanged for identical content; do not reuse the existing stale-file timestamp updater. Old rows miss conservatively until revalidated → verify: old encrypted schema, repeated migrations, reopen, pre-change binary coexistence/downgrade and source replacement clearing an old marker. Extend ADR-013's freshness rationale. This is a complete default-cache correction before Task 16 adds per-call controls.
+
 ## 16. Fetch TTL and argument normalization
 
 **Owners:** `internal/server/coerce.go`, `tool_fetch.go`, `tools.go`, fetch/coercion tests.
 
-1. Parse optional TTL and force using the design's accepted forms and overflow checks → verify: omitted versus zero TTL, integer strings, fractional/negative/overflow/null TTL, and literal `false` versus malformed booleans before network activity.
-2. Share freshness policy across single and batch cache paths → verify: configured fallback, short TTL refresh, long TTL hit, force precedence, requested-kind mismatch, composite URL keys and mixed batch cache outcomes using a fake clock or controlled timestamps.
-3. Display effective freshness separately from lifecycle TTL → verify: no message promises a durable cache merely because a large TTL was supplied, and SSRF/size/concurrency tests still pass.
+1. Parse TTL with the accepted forms/overflow checks and consume Task 6a's force parser → verify: omitted/zero/integer-string/fractional/negative/overflow/null cases before I/O.
+2. Compare against Task 16a's persisted millisecond marker in both fetch modes → verify: fractional-second 500 ms boundaries, strict expiry, legacy NULL/future markers, configured fallback, force, kind mismatch, URL keys, unchanged revalidation and reopen.
+3. Display effective freshness separately from retention and return accurate unchanged/new outcomes → verify: an old ephemeral source can still expire through retention despite fresh validation.
+4. Classify typed fetch failures before formatting and append the bounded one-retry hint only to the selected transient categories → verify: single and batch temporary-DNS/timeout/unreachable failures, and negative cancellation/SSRF/NXDOMAIN/TLS/permission/HTTP/body cases. No automatic retries.
 
-Run the server fetch subset with `-race`; do not add new config precedence or per-request persistent TTL columns.
+Run real stdio and fetch tests with `-race`; no per-request TTL value is persisted. The validation timestamp migration belongs to Task 16a, not a change to old timestamp formats.
 
 ## 17. Cache outcome statistics
 
 **Owners:** `internal/server/stats.go`, `tool_fetch.go`, `tool_stats.go`, stats/fetch tests.
 
-Count one hit or attempted miss per eligible URL, including bypasses and failed network attempts; update snapshot and reset under the existing mutex → verify: mixed concurrent batches produce exact counts, rejected URLs do not inflate attempts, and purge-all resets the new counters while preserving uptime.
+Count typed terminal outcomes once per URL, including bypasses and failed network attempts → verify: concurrent batches, zero-count Git-platform redirects/SSRF/syntax rejection, attempted post-fetch failures, and purge-all reset preserving uptime.
 
-Render hit/miss counts and a zero-safe rate even when all attempts missed. Preserve estimated savings and existing source/chunk statistics; no last-index timestamp or analytics migration is needed for this contract → verify: focused stats/fetch tests plus `go test -race -tags fts5 ./internal/server/...`.
+Render hit/miss counts and a zero-safe rate even when all attempts missed. Replace uptime-based TTL remaining with configured default freshness; use one shared one-decimal savings formatter with the nonzero-return clamp at both display sites → verify: long uptime plus mixed TTLs, 99.888%, extremely-near-100%, true zero-return and zero-processed fixtures. Preserve existing savings formula and source/chunk statistics. Update ADR-013's obsolete stats consequence. Run focused stats/fetch tests under `-race`.
 
 ## 18. Batch search controls and provenance
 
 **Owners:** `internal/server/tool_batch.go`, `tools.go`, batch tests.
 
 1. Make queries optional and validate supplied queries and `query_scope` before command execution → verify: no-query calls still index; malformed arrays/scopes produce no child side effects rather than becoming indexing-only calls.
-2. Default to exact batch source; make global scope explicitly durable+ephemeral knowledge-only → verify: unrelated durable/ephemeral fixtures appear only globally and vault sessions are not queried.
-3. Add source/scope information and a sanitized command inventory within per-command and aggregate byte budgets → verify: secret-bearing commands, huge heredocs, Markdown delimiters and UTF-8; complete commands still execute, raw-output stats exclude echoed source, and final response accounting includes the inventory.
+2. Default to exact batch source; make global scope explicitly durable+ephemeral knowledge-only and label every hit with its own source → verify: two equal-titled sources remain distinguishable, and vault sessions are not queried.
+3. Persist bounded sanitized command previews in indexed sections as well as returning a capped command inventory → verify: later source-filtered provenance retrieval without vault, secret/heredoc/Markdown/UTF-8 cases, and unchanged complete execution/raw-output accounting.
+4. Enforce design §4.4's whole serialized-result budget and bounded section metadata query → verify: 8,000 headings, indexing-only/query modes, long labels/queries/terms, escaping, inventory omissions and final serialized size at or below 81,920 bytes. Do not truncate stored content to meet a response budget.
 
 Preserve serial/parallel timeout semantics from Task 6. Existing label-based batch dedup remains; do not claim isolation for simultaneous batches using the same truncated label (follow-up in design risk notes). Run batch and federation suites, then the quality benchmarks.
 
 ## 19. Search throttle visibility
 
-**Owners:** `internal/server/server.go`, `tool_search.go`, `tools.go` description, search tests.
+**Owners:** `internal/config/config.go`, `loader.go`; server throttle policy and response formatting, schemas/docs and tests.
 
-Return a coherent throttle snapshot from the existing atomic advance operation and format one notice on every admitted request path. Keep invalid-input paths outside accounting → verify: calls 1, 3, 4, 8, 9 and post-reset behavior, empty store, partial vault failure and concurrent calls. Prefer a clock seam to minute-long sleeps.
+Add the three `[search]` settings with omission-aware merging, explicit-zero/type/range validation and post-merge taper/block validation. Capture the resulting policy per server and return a coherent snapshot from atomic advance → verify: global/project precedence, defaults, invalid settings, changed thresholds, exact window boundary, empty/partial-result paths, and concurrent calls. Use a clock seam rather than minute-long sleeps; invalid requests remain outside accounting.
 
 The notice states the actual effective limit and shared-server scope. Add an actionable code comment referencing [D1](upstream-audit.md#d1-per-agent-search-budgets) beside `searchThrottle`; do not add a per-agent map without verified request identity. Run server search/federation/vault-search tests under `-race` and retain current source-kind behavior.
 
 ## 20. Final verification and documentation
 
-Depends on every implementation slice.
+Depends on every implementation slice, including Tasks 2a, 5a, 6a, 12a and 16a. Shared files require coordination; dependencies elsewhere represent behavior prerequisites rather than schema-file serialization.
 
 1. Run `kk:test`: `make test`, `make test-race`, `make build`, and `go test -tags fts5,glamour ./internal/vault/tui/...` to protect the shared retrieval consumers → verify: save commands, outcomes and any environmental limitations in `verification.md`.
 2. Run the real CLI/MCP round trips using `cmd/capy/mcp_stdio_helpers_test.go` conventions → verify: fresh and existing encrypted stores, same target across interfaces, correct project selection, shutdown checkpoint and unchanged vault ownership.
-3. Run `make bench` (which includes `bench-quality` and `bench-perf`) against the pre-change capy baseline `c0bfff2` and the implementation branch; compare with `make bench-compare BASE=<baseline-label> TARGET=<branch-label>` → verify: explain metric deltas, inspect retrieval rank/recall failures and do not trade correctness assertions for passing numbers. A detached baseline writes `HEAD.json`/`HEAD.txt`; rename the artifacts to the baseline label before comparing. Keep baseline production isolated from ongoing work.
-4. Run `kk:document` to update README/tool/CLI usage, relevant architecture sections and compatibility notes → verify: new parameters, source kinds, freshness versus retention, directory bounds and intentional behavior changes agree across docs and actual schemas.
+3. Run `make bench` against `c0bfff2` and the implementation branch, plus the 10,000-file stale-refresh workload; compare quality/performance and record bounded work, latency, allocation and DB-write measurements → verify: no hidden full-source scan or CLI starvation and no weakened correctness assertions. Rename detached `HEAD.json`/`HEAD.txt` to the baseline label before `make bench-compare`.
+4. Run `kk:document` for README/tool/CLI usage, architecture and the complete design §10 compatibility list. Create the three named proposed ADRs there and amend ADR-005/008/012/013/022 where needed → verify: origin-aware grants, cwd/project separation, additive metadata, independent retention and bounded work are recorded with rationale/provenance. Test actual old-reader compatibility before claiming it.
 5. Run generated artifact checks and `git diff --check` → verify: each changed generator matches its committed counterpart and no unrelated generated file is included.
 6. Run `kk:review-code` with Go input, then `kk:review-spec` against all feature artifacts → verify: fix actionable findings or record each unresolved item durably with a reason and next step. Mark implementation tasks done only with evidence.
 
-Do not remove deferred D1/D2/D3 merely because the suite passes. The design review recommended after drafting is a separate gate; author checks do not count as independent review.
+Do not remove deferred D1–D5 merely because the suite passes. Both supplied independent reviews have been reconciled; the reconciliation is an author response, not a new independent approval.
 
 ## Verification status at design time
 
-Only repository/upstream source inspection, contract lookup and documentation consistency checks are in scope for this design task. No Go runtime code has been changed or behaviorally verified. The commands above are the implementation acceptance plan, not a record of completed tests.
+The reconciliation reran the existing synthetic encrypted-store probe and focused current security/store tests; results are in its evidence ledger. No feature runtime implementation was changed. All future-behavior tests above remain acceptance criteria, not completed implementation evidence.

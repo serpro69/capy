@@ -4,13 +4,16 @@
 > Capy baseline: `c0bfff2800614b47a163949eef34645f854fff3a`
 > Previous design: [upstream-sync-v1.0.136](../../done/upstream-sync-v1.0.136/design.md)
 > Result: [design](design.md), [implementation](implementation.md), [tasks](tasks.md)
-> Evidence: local commit history, source diffs, current Go implementation; no runtime reproductions performed during this audit.
+> Reconciled: 2026-10-10 at capy `d182825c824cfd154926d9f59ba7af6d8821f225` (runtime unchanged from `c0bfff2`)
+> Evidence: source/history inspection, host documentation, rerun synthetic encrypted-store probe and focused existing tests; see [reconciliation](.reviews/reconciliation-2026-10-10.md).
 
 ## Exact comparison
 
-Capy's HEAD updates `context-mode` from `f8d46390613f068f232eb14ad91804841c64bdfa` to `0dfbe8de71abcb637a07dd6444bee5823c3186fc`. The previous design names that same `f8d4639` as its endpoint. Therefore the correct exclusive/inclusive comparison is `f8d4639..0dfbe8d`, with no gap between the documented sync and the old submodule pointer.
+Capy commit **`c0bfff2`** updates `context-mode` from `f8d46390613f068f232eb14ad91804841c64bdfa` to `0dfbe8de71abcb637a07dd6444bee5823c3186fc`; it is no longer HEAD. The previous design names that same `f8d4639` as its endpoint. Therefore the correct exclusive/inclusive comparison is `f8d4639..0dfbe8d`, with no gap between the documented sync and the old submodule pointer.
 
 The range contains **620 commits: 581 non-merge commits and 39 merges**. Its endpoint has package version **1.0.169**, but `git describe` reports **`v1.0.169-167-g0dfbe8d`**. The feature directory uses the package version for continuity with previous syncs; the full endpoint SHA, not the release tag, defines its scope. The v1.0.169 tag resolves to `442f1eb6c7cdad3f0cb2411d00756f9e5cf2b587`.
+
+Before filtering, the complete diff touches 399 files with 49,372 insertions and 13,582 deletions. These are range totals, not estimates of the selected Go implementation.
 
 Reproduce the inventory with `git -C context-mode log --no-merges --format='%h %s' f8d4639..0dfbe8d` and inspect behavior with `git -C context-mode diff f8d4639 0dfbe8d -- <paths>`. Use `git show <commit> -- <paths>` to distinguish contributions within mixed commits. Do not compare against today's remote branch or stop at the v1.0.169 tag.
 
@@ -27,22 +30,26 @@ Reproduce the inventory with `git -C context-mode log --no-merges --format='%h %
 
 | ID | Upstream evidence | What changed and why it applies | Capy disposition |
 |---|---|---|---|
-| S1 | `c1933fb` (#763), `src/security.ts` | Inspect nested command substitutions; split newline/background operators; evaluate allow/ask over every executable element. | `internal/security/split.go` lacks those boundaries; `eval.go` checks allow/ask against the whole string. Adapt the behavior, including quote/heredoc regressions, rather than copy TS's scanner literally. Tasks 1. |
-| S2 | `d1ae562` (#852) | Constrain the explicit execute-file path to the project, with existing host Read allows as exceptions. | `ExecuteFile` resolves against process cwd, while the server checks against `projectDir`; no default project boundary exists. Add a consistent checked path and explicit exceptions. Task 2. |
+| S1 | `c1933fb` (#763), `src/security.ts` | Inspect nested command substitutions; split newline/background operators; evaluate allow/ask over every executable element. | `split.go` lacks those boundaries and `eval.go` checks allow/ask against the whole string. Add explicit error/limit semantics and unquoted-heredoc expansion cases. Task 1. |
+| S2 | `d1ae562` (#852) | Constrain the explicit execute-file path to the project, with Read allows as exceptions. | Task 2a first repairs capy's origin-free matcher for supported host anchors and absolute walker/refresh inputs, preserving legacy denies. Task 2 then uses it for a consistent checked path and explicit external grants. This matcher work is a capy prerequisite, not a claim upstream already solved it. |
 | S3 | `547c18b` (#716), session-ID filename hardening | Prevent a session identifier from escaping its state directory. | Capy does not persist upstream stats files, but `internal/hook/guidance.go` interpolates an unchecked session ID into a filename. Adapt to that actual sink. Task 3. |
 | H1 | `4bc292f`, `hooks/core/formatters.mjs` | Use an explicit denial for a Bash redirect rather than depend on command replacement. | `routeBash` currently emits an echo command through `FormatModify`. Express the intended block directly; keep Agent prompt edits separate. Task 4. |
-| H2 | `85f64d2` (#834), `b1ba5cc` (#724/#725) | Avoid routing a subagent into tools it cannot call; bootstrap deferred tools when available. | Capy's parsed event drops subagent identity and injected routing assumes tools exist. Preserve security decisions, relax only capy routing requirements for child contexts, and add bounded discovery guidance. Task 5. |
+| H2 | `85f64d2` (#834), `b1ba5cc` (#724/#725) | Avoid routing a subagent into tools it cannot call; bootstrap deferred tools when available. | Preserve child identity, keep unknown availability advisory, and restore redirects for suitable per-child observed tools. Do not equate child status with missing MCP or trust two local definition files. Tasks 5/5a; first-call limitation D5. |
+| H3 | `getInputProjectDir` already present at **baseline `f8d4639`** | Hook payload cwd can differ from process cwd/environment. | Pre-existing capy gap found during reconciliation, not a new-range delta. Task 5 separates working-directory context from selected project and loads rules after selection. |
 | E1 | `3988090` (#657) | Stop appending shell redirection to user commands; merge captured streams afterward. | Both Go batch execution paths append ` 2>&1`, which can invalidate a terminal heredoc delimiter. Task 6. |
 | E2 | `a12a64c` (#45), `498460d` (#765), portable hunk of `89f4e73` (#788) | Make execution cwd deliberate and consistent across runtimes; support per-call overrides. | Shell uses capy's project, other runtimes and Rust use temporary directories; execute-file uses process cwd. Unify defaults and add explicit overrides without transcript guessing or changing database identity. Tasks 7–8. |
 | E3 | `0fb15c7` (#848) | Drain detached child output without closing its read pipe or accumulating it. | Go already keeps its pipe readers alive, so the exact SIGPIPE fix is unnecessary. However, `safeBuffer` keeps appending after background return while the cap monitor exits. Adapt to bounded discard-after-detach and eventual temp cleanup, explicitly revisiting ADR-005's accepted accumulation. Task 9. |
-| R1 | `9dd92d7` (#646) | Treat `%`, `_`, and escape characters in a source selector literally. | `knowledgeFilterClauses` interpolates the bound argument into a LIKE pattern without escaping it. Both FTS corpora use this shared knowledge filter. Task 10. |
+| R1 | `9dd92d7` (#646) | Treat `%`, `_`, and escape characters in a source selector literally. | `knowledgeFilterClauses` uses an unescaped LIKE pattern. Both knowledge FTS tables share this filter; it is not the vault project filter. Task 10. |
 | R2 | `6f699fa` (#789) | Enforce the chunk byte cap in every plaintext strategy, including oversized single lines. | `chunkPlainText` has no 4,096-byte enforcement, despite the source-level 2 MiB cap. Task 11. |
-| I1 | `f749957` (#687), root-symlink hunk of `547c18b` | Add bounded directory ingestion while retaining per-file read checks. | `capy_index(path)` rejects directories. Add shared path ingestion, bounded traversal, explicit outcomes, and exact Git ignore evaluation rather than TS's incomplete parser. Tasks 12–13. |
+| I1 | `f749957` (#687), root-symlink hunk of `547c18b` | Add bounded directory ingestion while retaining per-file read checks. | Tasks 12/13 share prepared admission and bounded initial/stale reads. Task 12a adds persistent bounded stale scheduling because repeated directory imports otherwise multiply synchronous all-file work. Scheduling is a capy adaptation, not an upstream port. |
 | C1 | `b51873f` (#721) | Expose indexing and knowledge retrieval outside an MCP host. | Capy has neither `capy index` nor knowledge `capy search`; existing `capy vault search` is a different corpus. Reuse ADR-032 credential selection and the shared ingestion path. Tasks 14–15. |
-| F1 | `04ff30f` (#666), `7a3482e` (#679) | Per-call fetch freshness; tolerate literal string booleans and serialized request arrays. | Capy has configured TTL and serialized request arrays, but no per-call TTL; a string `force` is silently ignored. Add validated TTL/force handling to both fetch modes. Task 16. |
+| F1 | `04ff30f` (#666), `7a3482e` (#679) | Per-call fetch freshness and robust arguments. | Same-hash indexing leaves `indexed_at` old and second-resolution timestamps cannot honor sub-second TTLs. Task 16a adds independent persisted millisecond validation; Task 16 adds overrides, accurate unchanged outcomes and retention separation. |
+| A1 | Portable shared-server hunk of `7c82220` (#627), plus `7a3482e` | Literal boolean coercion for background/force despite a platform-labeled commit. | Task 6a shares strict presence-aware handling across booleans, preserving defaults and rejecting malformed inputs. `GetBool` already accepts string booleans and numbers; direct assertions do not. Do not conflate them. |
+| F2 | `9e29a94` (#683), fetch-error hunks | Suggest one retry for transient fetch failure. | Task 16 uses typed Go causes for selected DNS/timeout/unreachable cases, in both modes; reject upstream's permission-error/string heuristics and automatic/network-guarantee claims. |
 | B1 | `50ec3b9` (#697/#698), `9e29a94` (#683) | Optional batch queries and explicit batch/global search scope. | Queries are mandatory and always batch-local. Preserve that default scope; allow indexing-only calls and explicit whole-knowledge-store retrieval, including ephemeral output. Task 18. |
-| B2 | `f7af3ca`, `c1030ca` (#717/#736) | Expose which commands produced an indexed batch. | Capy returns section labels only. Add sanitized, bounded command provenance without copying arbitrary full source into every tool response. Task 18. |
-| O1 | `50ec3b9` (#697/#698) | Make cache outcomes and search throttling visible before users encounter limits. | Capy tracks cache hits but not attempts/misses and only announces the throttle near its soft cap. Add local counters and always-visible request budgets. Tasks 17, 19. |
+| B2 | `f7af3ca`, `c1030ca` (#717/#736) | Persist command provenance and also show an immediate inventory. | Task 18 implements both parts, labels every global hit, and caps the entire serialized response including section inventory, query text and notices. Stored content is independent of response truncation. |
+| O1 | `50ec3b9` (#697/#698) | Cache outcome reporting, visible throttle state **and operator-tunable thresholds**. | Task 17 reports eligible outcomes and configured default freshness; Task 19 adds validated `[search]` settings with unchanged defaults through capy's own config. No upstream env names or unverified per-agent keys. |
+| O2 | `49fa9d2` | Avoid rounding an ordinary 99.9% saving to 100%. | Portable display hunk separated from excluded analytics. Task 17 fixes both Go display sites, clamping nonzero-return cases below 100.0%, without changing the savings formula. |
 
 ## Already covered or deliberately different
 
@@ -53,6 +60,7 @@ Reproduce the inventory with `git -C context-mode log --no-merges --format='%h %
 | `ff5b0cf` (#846), tool annotations | `internal/server/tools.go` already supplies behavior-specific annotations to all ten tools. | Covered; preserve actual descriptor tests, no blanket annotation rewrite. |
 | `547c18b`, bounded remote response | Native fetch uses `fetchMaxBody`, a bounded reader, safe transport, and a 20-request batch cap. | Preserve Go implementation; do not port embedded JS fetchers or raise its limit to upstream's 50 MiB. |
 | `7a3482e`, stringified request arrays | `coerceFetchRequests` already handles this. | Covered portion of F1; only missing argument behavior is selected. |
+| `7c82220`, bare-string query lifting and numeric limit coercion | Capy deliberately accepts actual/serialized query arrays plus the separate `query` alias; the pinned SDK's `GetFloat` already accepts numeric strings. | Retain the explicit array contract: a malformed supplied `queries` is an error, not a singleton lift or an indexing-only request. Literal-boolean behavior is independently selected as A1. |
 | `19a7590`, `ba571f7`, project-filter portion of `3a45eb1` | Knowledge is selected through capy's configured DB target; vault project scopes already distinguish effective labels and imported paths. | Preserve ADR-027/028 and the newer project-name contract. Do not add session IDs to knowledge chunks or interpret a `project:` query token as a new selector. Explicitly sharing a knowledge DB continues to share its content. |
 | `3d8db08`, `fa6541f`, runtime storage overrides | `internal/config` already handles project/global config, XDG/absolute/relative store paths, worktrees, and credentials. | Preserve capy configuration; no `CONTEXT_MODE_*` aliases. |
 | `afd109b`, auto-memory project leakage | Capy has no upstream auto-memory directory scanner; vault selection owns project isolation. | Not applicable. |
@@ -86,7 +94,7 @@ These are explicit scope exclusions, not unfinished ports.
 
 `3a45eb1` adds a bounded map of counters keyed by `currentAttribution().sessionId`. That function uses an in-process override or environment/latest-session lookup. Those are not proof of which concurrent Claude subagent issued a particular stdio MCP request.
 
-Capy's `searchThrottle` is shared by one server, and the pinned `mcp-go` session represents the transport connection, not necessarily a child agent. **The shared-budget limitation remains after this sync.** Task 19 makes it visible, but must not claim to fix isolation.
+Capy's `searchThrottle` is shared by one server, and the pinned `mcp-go` session represents the transport connection, not necessarily a child agent. **The shared-budget limitation remains after this sync.** Task 19 makes limits configurable and visible, but must not claim to fix isolation.
 
 Next step: capture real request envelopes from two simultaneously active agents on each supported host, establish a stable host-supplied per-request identity, then design bounded keyed counters and a shared fallback. Do not add a model-chosen `agent_id` argument, hash queries, or key on the last hook file written. The implementer records the follow-up at `searchThrottle` and in the final verification notes.
 
@@ -102,6 +110,18 @@ Next step: separately evaluate a bounded snapshot or descriptor-based file hando
 
 Next step: design a request-specific source identity or source-ID snapshot strategy with explicit ephemeral-retention and friendly-label semantics, then add overlapping-identical-label regression tests. Task 18 records this at the label builder. This sync's batch-scope wording must describe label scoping without promising per-request isolation.
 
+### D4: Markdown and structured JSON leaf chunk limits
+
+`SplitOversized` can retain a large paragraph/fence, and `walkJSON` can retain a large primitive. Upstream `6f699fa` fixes plaintext, not those representations. The selected plaintext port therefore does not establish a universal 4 KiB invariant. Existing source-size admission (2 MiB by default) still applies, and Task 18 separately caps rendered batch responses.
+
+Next step: design representation-aware splitting with fence/key-path and overlap fixtures, then benchmark those corpora before extending the cap. Task 11 documents the remaining paths beside the new plaintext guarantee. This preserves the explicit scope recognized by Reviewer 1 while addressing Reviewer 2's concern that readers could overgeneralize it.
+
+### D5: Authoritative child tool pools before the first call
+
+The hook fields identify the child, not its complete effective tool pool. Project/user files can be shadowed by higher-priority definitions or supplied through plugins/CLI; omission of `tools` does not itself prove the parent's capy server is callable. Tasks 5/5a use advisory fallback until an exact capy capability is observed, then enforce applicable redirects for that child. The first unobserved native call can still pass through, even for an inherit-all child.
+
+Next step: identify a supported host capability feed covering effective definitions and live tool availability, with managed/CLI/plugin precedence and disconnected-server tests. Do not advertise a two-file frontmatter reader as that feed or force fixed-tool children into unavailable tools. Record this limitation in hook routing tests and user guidance.
+
 ## External contract checks
 
 - [Claude Code hooks reference](https://code.claude.com/docs/en/hooks#pretooluse-decision-control), checked 2026-10-10, documents input replacement and explicit denial. Thus upstream's claim that Bash rewriting is broken is historical evidence, not a universal current-host fact. H1 chooses denial because blocking is the intended operation. The [common input fields](https://code.claude.com/docs/en/hooks#common-input-fields) identify subagents with `agent_id`; an `agent_type` alone can identify a main-thread custom agent, so do not copy upstream's OR test blindly.
@@ -114,4 +134,6 @@ Next step: design a request-specific source identity or source-ID snapshot strat
 - [x] Mixed platform commits separated by behavior.
 - [x] Selected items mapped to current Go owners and implementation tasks.
 - [x] Covered behavior, intentional differences and deferred gaps recorded.
-- [ ] Independent design review; recommended after the four artifacts are drafted.
+- [x] Two independent reviews supplied by the user; every finding mapped to evidence/disposition in the reconciliation.
+- [x] Design/implementation/tasks revised for valid findings and explicit alternative decisions.
+- [ ] Independent review of the revised artifacts; author reconciliation is not independent approval.

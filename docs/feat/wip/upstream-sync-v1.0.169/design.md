@@ -5,6 +5,8 @@
 > Feature: `upstream-sync-v1.0.169`
 > Upstream range: `f8d46390613f068f232eb14ad91804841c64bdfa..0dfbe8de71abcb637a07dd6444bee5823c3186fc`
 > Capy inspected at: `c0bfff2800614b47a163949eef34645f854fff3a`
+> Reconciled against: `d182825c824cfd154926d9f59ba7af6d8821f225`; runtime unchanged from the baseline
+> Review resolution: [combined findings and evidence](.reviews/reconciliation-2026-10-10.md)
 > Related: [audit](upstream-audit.md), [implementation](implementation.md), [tasks](tasks.md), [previous sync](../../done/upstream-sync-v1.0.136/design.md)
 
 ## 1. Problem and outcome
@@ -26,7 +28,7 @@ This is a non-trivial selective port. Constraint mapping and a failure-first rev
 - `cmd/capy/knowledge.go` owns project/config/credential selection. New CLI commands must reuse this flow and the captured key rather than opening a database from a fresh environment lookup.
 - Only `ClaudeCodeAdapter` implements hooks. Codex support consists of MCP setup/routing and vault decoding; this sync does not create a Codex hook subsystem.
 
-Preserve mandatory encryption, FTS5 build tags, pool-close-before-checkpoint ordering, source-kind checks, strict fetch SSRF behavior, sanitized content hashing, source-size limits, per-source diversification and the existing RRF/rerank formulas. No schema migration or module upgrade is required.
+Preserve mandatory encryption, FTS5 build tags, pool-close-before-checkpoint ordering, source-kind checks, strict fetch SSRF behavior, sanitized content hashing, source-size limits, per-source diversification and the existing RRF/rerank formulas. Two additive knowledge-store migrations are now required: a fetch-validation timestamp and a persistent stale-check scheduling field/index (§5.5, §7.1). Neither changes vault format, existing timestamp representations or source kinds. No module upgrade is required.
 
 ## 3. Security and hook behavior
 
@@ -34,19 +36,31 @@ Preserve mandatory encryption, FTS5 build tags, pool-close-before-checkpoint ord
 
 Use one command-element scanner for both evaluators. Recognize executable segments separated by newline/CR, `;`, pipes, `&&`, `||` and background `&`, plus nested `$()` and backtick substitutions. Track escape parity and shell quote contexts rather than inspecting only the preceding byte. A separator that is escaped or quoted is data; redirection such as `2>&1` is not a background-command boundary.
 
-Do not treat literal single-quoted or quoted-heredoc text as commands. Double-quoted substitutions still execute. Arithmetic syntax is not itself a command, but nested substitutions inside it are. Cover these distinctions before changing policy decisions; the TS implementation is a case source, not an authoritative shell parser.
+Do not treat literal single-quoted or quoted-heredoc text as commands. Double-quoted substitutions still execute. Unquoted heredoc bodies are data except for their shell expansions: inspect executable substitutions there, but do not interpret ordinary body lines as commands. Arithmetic syntax is not itself a command, but nested substitutions inside it are. Cover these distinctions before changing policy decisions; the TS implementation is a case source, not an authoritative shell parser.
 
 Any denied element denies the whole request. Preserve ordered settings precedence for ask/allow; within a policy, an explicit ask wins, and allow requires every executable element to match. Otherwise the full evaluator returns ask; the deny-only evaluator still allows non-denied commands. Capy's existing hook only surfaces asks backed by a matched pattern; do not silently convert its unmatched default into a new mandatory approval mechanism.
 
 Retain capy's existing case-sensitive policy matching. Do not port upstream's blanket macOS case-folding assumption into command matching or filesystem admission.
 
-Bound scanner nesting/work and return a clear evaluation failure for inputs exceeding that bound. This remains static policy matching, not a complete shell interpreter or a security boundary for arbitrary code in other languages.
+Scanner limits are 1 MiB of input, 64 nested substitution/quote/heredoc frames, 4,096 emitted executable elements, and an aggregate visit budget of eight times the input byte length plus 4,096 steps. Bound recursive extraction by that aggregate budget rather than rescanning without accounting. Exceeding any limit produces a typed evaluation error, not a partial list. The MCP shell, batch, and extracted non-shell paths return an error result before spawning anything; the hook emits `FormatBlock` with the exceeded limit as reason, regardless of whether a deny pattern matched. This is distinct from the existing unmatched-ask outcome. This remains static policy matching, not a complete shell interpreter or a security boundary for arbitrary code in other languages.
+
+### 3.2a Prepared Read rules — prerequisite for S2/I1/C1
+
+Replace origin-free glob arrays on production read paths with a prepared file policy retaining each rule's action, source settings path, source anchor, selected project, working directory and home directory. Parse anchor syntax before path cleaning. The currently documented host anchors are `//` for filesystem root, `~/` for home, `/` for the settings source and unprefixed/`./` for cwd; project/local settings use the primary working directory, while user settings use the settings file's directory. [Host permission reference](https://code.claude.com/docs/en/permissions#read-and-edit).
+
+For capy's MCP and CLI file operations, both the primary directory and rule cwd are the selected project; an execution `cwd` override never changes them. Hooks retain project identity for settings/state and use the validated payload cwd for cwd-relative rules. Resolve patterns to anchored candidates, so a relative deny matches a file whether the caller supplies a relative name, a walker supplies an absolute name, or stale refresh supplies its stored path. Preserve lexical and physical paths, including symlink-before-`..` resolution; denies apply to either. For an external grant, require its normalized allow to cover both the requested path and physical target. This intentionally rejects an allowed-looking alias to an ungranted target.
+
+Support the existing `*`, `**`, `?` grammar plus escaped literals. An unprefixed pattern with no slash, such as `*.env`, matches a basename at any depth under its cwd anchor; explicitly anchored path patterns keep their path scope. Do not claim complete host policy emulation: bracket classes, leading negation and other unsupported constructs must produce a policy diagnostic and fail admission rather than becoming a permissive approximation. A bare `Read` rule means every read. Continue loading capy's existing local/shared/user settings locations; managed/CLI/session host policy discovery is not added by this sync.
+
+**Legacy single-slash compatibility:** denies written as `/absolute/**` currently mean filesystem-root paths in capy. Prepare both the host-anchored interpretation and that legacy absolute interpretation for such denies, and warn once per rule/source that `//absolute/**` removes the ambiguity. This union may deny more, but cannot silently remove an existing deny. New external allows use only the documented anchor interpretation; no legacy alias may broaden a grant. Expose the matched rule/source safely in diagnostics. Invalid selected policy data fails file admission; it is not an empty allow/deny list.
+
+Task 2a delivers this policy through existing direct-file and stale-refresh paths. Tasks 2, 12–15 reuse it. The old exported matcher may remain for compatibility, but production callers must not bypass the prepared policy. Tests cover local/user origins, every anchor, relative and absolute callers, physical aliases, legacy denies, unsupported syntax, CLI, walking and stale refresh.
 
 ### 3.2 Execute-file path admission — S2
 
 Resolve an explicit `path` relative to the server's selected project directory once; absolute inputs remain absolute. Run Read denies against raw, lexical and physical candidates, retaining symlink-before-`..` handling. Check ordinary containment using path-component relationships, not string-prefix similarity.
 
-In-project paths are admitted; an external path requires a matching existing `Read(...)` allow for its external target. A deny always wins. Matching a project-local symlink alias is insufficient to authorize an external real target. Failure to resolve the configured project or an existing target is an error, not a reason to silently disable containment. Missing paths produce normal file errors. Return a concise reason and the existing settings mechanism for a legitimate exception.
+In-project paths are admitted subject to the prepared Read policy; an external path requires its normalized Read allow (§3.2a). A deny always wins. Matching a project-local symlink alias is insufficient to authorize an external real target. Failure to resolve the configured project or an existing target is an error, not a reason to silently disable containment. Missing paths produce normal file errors. Return a concise reason and the existing settings mechanism for a legitimate exception, using `Read(//absolute/path/**)` in examples.
 
 Pass the admitted absolute path to the executor so the checked target and `FILE_CONTENT` refer to the same path. This boundary applies to the **execute-file path parameter**. Preserve `capy_index`'s current explicit absolute-file admission contract; directory ingestion applies its own traversal-root containment. Neither rule restricts all filesystem accesses made by arbitrary submitted code. The concurrent replacement limitation is recorded as [D2](upstream-audit.md#d2-filesystem-replacement-between-policy-checks-and-runtime-reads).
 
@@ -58,7 +72,13 @@ Use one session-to-filename helper for guidance creation and reset. Keep ordinar
 
 Use `FormatBlock` for the main agent's curl/wget and inline-HTTP redirects, carrying guidance directly as the denial reason. Preserve safe file-download exceptions and comprehension-aware WebFetch guidance. Keep `FormatModify` for actual Agent/Task prompt updates, copying the original input fields.
 
-Extend parsed hook events with `agent_id` and `agent_type`. An actual nonempty agent ID identifies a child context; a type alone does not establish one. In a child context with unverified capy tool availability, suppress capy-specific blocking redirects and unavailable-tool nudges. Explicit user security denies and matched asks still run first and remain enforceable. Main-agent behavior is unchanged apart from the explicit-deny transport above.
+Extend parsed hook events with `agent_id`, `agent_type` and `cwd`. An actual nonempty agent ID identifies a child context; a type alone does not establish one. Parse payload cwd as working-directory context, with environment/CLI directory fallback. Select the project once, before loading policies: explicit `--project-dir` wins, then `CLAUDE_PROJECT_DIR`, then project detection anchored at payload cwd, then process cwd. Do not load rules for one project and overwrite only the routing directory afterward. This closes a pre-existing capy gap; upstream's payload-cwd helper already existed at `f8d4639`.
+
+Child status does **not** imply missing tools: inherited tool pools can include MCP. Conversely, reading two agent-definition files cannot establish effective availability because managed, CLI and plugin definitions also exist. [Host subagent scope and tool controls](https://code.claude.com/docs/en/sub-agents#choose-the-subagent-scope). Do not implement the proposed two-file lookup as an authority or infer availability solely from `agent_type`.
+
+Use per-child observed capabilities instead. A `PostToolUse` event for a capy tool records that exact callable tool in session/agent-scoped state using the safe filename helper. Subsequent child redirects may require only an observed suitable alternative: execute/execute-file are not inferred from a successful search. The finite set is bounded by capy's tool names and cleared with session state; isolate siblings and tolerate missing/corrupt state as unknown. Main-agent redirects retain current behavior. For unknown child availability, issue advisory discovery/native-tool guidance without a capy-specific block. Actual user security denies and matched asks always run first. Task 5a adds observation and re-enforcement tests.
+
+This deliberately leaves a child's first native call unblocked when no usable capy capability has been observed, even for an inherit-all definition. It avoids a deadlock without claiming perfect first-call flood prevention. Establishing authoritative pre-call tool pools across all host definition sources is a separate follow-up, D5.
 
 Injected subagent guidance should say to discover deferred capy schemas once if the host offers tool discovery, then use them. If discovery is unavailable or reports that the tools are absent, use native tools following the comprehension/extraction principle; do not prescribe retry loops. Keep Bash-to-general-purpose upgrades, but do not treat that type change as proof of MCP availability.
 
@@ -75,6 +95,8 @@ Separate the script location from the process working directory. Default executi
 Add optional `cwd` to execute, execute-file and batch MCP requests. Resolve relative values against the selected project, require an existing directory, and pass the result through the execution request; never call process-wide `os.Chdir`. The override applies to every runtime, and once to the entire batch. It changes execution location only: database target, key ownership, policy origin, vault scope, and execute-file `path` resolution remain tied to the server's selected project. Absolute external cwd values remain possible because execute already runs arbitrary code; they are not a way to bypass execute-file path admission.
 
 Do not infer cwd from the newest Claude/Codex transcript or plugin cache. Document the change for scripts that previously wrote relative outputs into a temporary directory; temporary script files and safe temporary environment variables remain isolated.
+
+For Go, project cwd deliberately changes main-module/workspace discovery. Verify project-local imports, `replace`, automatic vendor mode and toolchain selection using isolated fixtures; preserve the existing safe-environment removal of `GOFLAGS` rather than treating inherited `-mod` flags as supported. The `go run <absolute temporary script>` invocation remains unchanged.
 
 ### 4.3 Background output — E3
 
@@ -95,11 +117,15 @@ This proposes superseding the accepted memory-accumulation decision in [ADR-005]
 
 A supplied malformed `queries` value is also an error before execution. Preserve existing support for serialized JSON arrays, but distinguish an omitted/empty valid array from failed coercion; failed parsing must not silently become an indexing-only call.
 
-Always label the selected scope. `global` must explicitly include ephemeral sources: merely removing the source filter would reapply capy's defaults and hide the newly executed batch.
+Always label the selected scope. `global` must explicitly include ephemeral sources: merely removing the source filter would reapply capy's defaults and hide the newly executed batch. Every hit includes its own source label before title/snippet, including global hits whose title matches a current-batch title.
 
 The existing source label derives from truncated command labels. Simultaneous requests with the same resulting label can overwrite one another; batch scope here means that exact source label, not a new guarantee of request isolation. The source-identity change is recorded as [D3](upstream-audit.md#d3-concurrent-batch-source-label-collisions).
 
-Provide a command inventory with sanitized previews, at most 500 UTF-8 bytes per command and 4,096 bytes for the entire inventory including headings/markers. Include an omitted-entry count when capped. Use safe Markdown formatting and avoid breaking fences with user input. Do not prepend source-code echoes to ordinary execute/execute-file responses. Continue counting raw captured work as sandbox bytes and complete formatted responses as returned bytes; echoed input is not newly sandboxed output.
+Persist one sanitized, whitespace-normalized command preview (at most 500 UTF-8 bytes including its truncation marker) under each indexed command section. Use safe Markdown/plain-text formatting so submitted delimiters cannot create fake provenance sections. This ports the stored-output part of `f7af3ca`, as well as the immediate inventory from `c1030ca`. A later source-filtered query can retrieve the producing command even when the vault is disabled; do not promise every arbitrary snippet repeats the preview. Skipped commands are marked as not executed. Source-size admission counts this added metadata; it cannot displace/truncate captured command output silently.
+
+The **entire serialized MCP tool result** is capped at 81,920 bytes, excluding the JSON-RPC envelope. Include summaries, source/scope labels, both inventories, query headings/hits, errors, terms and truncation notices in this budget. Measure JSON escaping as well as UTF-8 length, reserving space for a source selector and omitted counts before adding optional sections. The command inventory has an additional 4,096-byte cap. The section inventory shows at most 40 entries with 160-byte titles, within 8,192 bytes; obtain bounded metadata rather than loading every chunk's content solely to build an inventory. Query output consumes the remaining budget, and one aggregate notice replaces arbitrarily many omitted-query notices. Cap displayed arbitrary hit labels/queries while retaining the exact bounded batch source for follow-up.
+
+Preserve the full admitted indexed content and complete executed commands. Do not prepend source-code echoes to ordinary execute/execute-file responses. Sandbox byte counters count captured stdout/stderr only; indexing counts stored payload, including provenance; returned-byte accounting includes the complete formatted result. Regression fixtures include the 8,000-heading case from the review probe, indexing-only calls, identical titles from different sources, later provenance retrieval, long labels/queries, escaping and Unicode.
 
 ## 5. Retrieval and ingestion
 
@@ -113,11 +139,13 @@ Every plaintext strategy must emit chunks with content at most `MaxChunkBytes` (
 
 This is a plaintext fix, including JSON's fallback-to-plaintext path. It does not redesign markdown/JSON chunking or the vault chunk format. Existing same-hash sources are not automatically rewritten. New or changed indexing uses the cap; users can explicitly remove/reindex an old oversized source. Do not bump the schema or silently rewrite all persistent knowledge on startup.
 
+Markdown single paragraphs/fences and structured JSON primitive leaves can still exceed 4,096 bytes. They remain bounded by the configured source limit (2 MiB by default); batch markdown and converted HTML follow those paths. This is a deliberate narrow port of upstream `6f699fa`, not a universal chunk invariant. Splitting those representations while preserving fence/key-path meaning needs separate quality fixtures (D4). The complete response budget in §4.4 applies regardless of chunk type.
+
 ### 5.3 Shared file and directory ingestion — I1
 
 Add `internal/knowledge` for filesystem ingestion orchestration shared by MCP and CLI. It owns path admission, bounded reads, traversal and aggregate outcomes. It receives the selected project, source-size limit, policy snapshot and store; `internal/store` remains responsible for sanitization, hashes, source kind, chunking and writes. Avoid constructing an MCP server just to implement a CLI command.
 
-Refactor the existing single-file path through this helper before extending it. Preserve descriptor-bound regular-file checks and nonblocking admission, and cap the actual read at the source limit plus one byte so growth after stat cannot bypass the limit. Denied files are never opened for content. Every indexed file remains a durable, file-backed source with stale refresh support.
+Refactor the existing single-file path through this helper before extending it. Preserve descriptor-bound regular-file checks and nonblocking admission, and cap the actual read at the source limit plus one byte so growth after stat cannot bypass the limit. Apply the same actual-read limit in `store.fileChangedSince`, retaining cached content and logging a skipped refresh if the bound is exceeded. A dependency-free low-level bounded-reader package may be shared by store and knowledge; never introduce a store-to-knowledge import cycle. Denied files are never opened for content. Every indexed file remains a durable, file-backed source with stale refresh support through the prepared policy.
 
 Directory ingestion walks in deterministic lexical order and writes one file at a time. Defaults: depth 5 (root depth 0), 200 eligible files, no symlink following, and extensions `.md`, `.mdx`, `.txt`, `.json`, `.yaml`, `.yml`, `.toml`, `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.rs`, `.go`, `.sh`. Hard ceilings: depth 20, 1,000 files, 20,000 visited entries and 32 MiB admitted content per request. Bounds are enforced during traversal/read, not after collecting the tree. Cancellation stops further work and returns a marked partial outcome.
 
@@ -125,7 +153,7 @@ Read directory entries incrementally within the remaining entry budget, then sor
 
 Prune directory components `.git`, `.hg`, `.svn`, `.capy`, `.aws`, `.ssh`, `node_modules`, `vendor`, `dist`, `build`, `.next`, `coverage`, `.venv`, `venv`, `__pycache__`, `target`, `.cache`, and filenames `.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa`, `id_ed25519`, `credentials`. A non-Git tree is supported with those exclusions. File roots retain their existing explicit-path behavior; recursive defaults do not silently apply to a directly named file.
 
-Each source label defaults to its canonical absolute file path. An explicit directory `source` becomes a prefix followed by the relative path, not one label overwritten by every file. Repeated ingestion deduplicates per file. Removed/excluded files do not implicitly delete previously indexed sources; cleanup remains explicit.
+Each source label defaults to its canonical absolute file path. An explicit directory `source` produces `source + ":" + relativePath`, with the path normalized to forward slashes relative to the canonical ingestion root. Deduplication is by complete label and sanitized hash, not inode: rerunning with the same prefix/path deduplicates; changing the prefix creates another source. Reusing one prefix for two roots can intentionally collide on equal relative paths, so the caller owns that namespace. Removed/excluded files do not implicitly delete previously indexed sources; cleanup remains explicit.
 
 Return indexed/unchanged, denied, skipped, failed and byte/chunk counts; state which bound stopped the walk and whether the scan completed. Report at most ten individual failure details and an omitted count. An invalid root is a tool error; partial progress is explicitly marked, and the CLI returns nonzero for operational failures/cancellation. Intentional filters are not errors; reaching an operator-supplied bound is a successful but incomplete scan.
 
@@ -133,9 +161,17 @@ Return indexed/unchanged, denied, skipped, failed and byte/chunk counts; state w
 
 Expose `max_depth`, `max_files`, `extensions`, `include`, `exclude`, `respect_gitignore` and `follow_symlinks`. Validate all controls before indexing: depth is an integer in 0–20 and file count in 1–1,000. Empty/omitted extensions use the default list; nonempty extensions replace that list and are normalized to lowercase leading-dot forms. Empty/omitted includes select everything admitted by the other filters; excludes add to the mandatory defaults. User include/exclude patterns match entire root-relative POSIX-style paths, supporting `*`, `?`, and `**`; reject absolute paths, `..` components and unsupported pattern syntax instead of approximately interpreting it. Default directory exclusions match path components. Includes cannot override mandatory exclusions.
 
-With `respect_gitignore: true` (default) in a Git worktree, use the existing Git executable's ignore evaluator on bounded, NUL-delimited batches, including ancestor/nested rules and negation. Deliberately apply ignore rules to tracked files too. Clear inherited repository-routing environment variables so the requested worktree determines the lookup. Do not shell-interpolate filenames. A Git lookup failure stops the scan with a visible partial/error result; it does not silently turn ignores off. Outside a Git worktree, state that Git ignores were not applied. This avoids advertising a home-grown subset as Git semantics.
+With `respect_gitignore: true` (default), discover the Git worktree containing the **canonical ingestion root**, even when it differs from the selected capy project. Use its ignore evaluator on bounded, NUL-delimited batches, including ancestor/nested rules and negation. Deliberately apply ignore rules to tracked files too. Clear inherited repository-routing environment variables so that worktree determines the lookup. This affects ignores only: the selected capy project still owns credentials, storage and prepared Read rules. Do not shell-interpolate filenames. A Git lookup failure stops the scan with a visible partial/error result; it does not silently turn ignores off. Outside a Git worktree, state that Git ignores were not applied. This avoids advertising a home-grown subset as Git semantics.
 
 Opt-in symlink following must stay within the canonical traversal root, detect visited-target cycles and deduplicate aliases. Recheck Read denies for the canonical root and every file. The default skips both file and directory symlinks. Source-size, entry, depth and aggregate-byte limits apply equally to followed targets.
+
+### 5.5 Bounded automatic stale checks
+
+Directory ingestion makes an unbounded all-file refresh on every eligible search unacceptable. Task 12a adds `sources.file_check_seq INTEGER NOT NULL DEFAULT 0` and a partial index on `(file_check_seq, id)` for file-backed rows. A pass selects at most 32 oldest-checked rows and closes its query cursor before file I/O/writes. After each attempted file (including denied/missing/unchanged files), persist a new logical sequence greater than the current maximum; unprocessed rows do not advance. Reindexing a changed row carries scheduling state to its replacement source. This survives CLI restarts and does not repeatedly favor the first 32 paths. Concurrent server instances may duplicate a bounded check; no cross-process exclusion guarantee is promised.
+
+Keep the five-second in-process cooldown and single-winner guard. Bound content read per pass to the larger of 8 MiB and one configured maximum-size source, and stop admitting more work after 100 ms elapsed; an in-progress regular-file operation may finish, so this is not an OS I/O deadline. Only admit a file if its bounded read fits the remaining byte allowance, leaving it eligible for the next pass otherwise. Retain old searchable content on a denied, failed or postponed refresh. No result promises that every backing file was just validated.
+
+Validate with 10,000 file-backed sources: metadata selection stays at 32 rows, at most 32 files are attempted, reads respect the byte budget, and repeated new CLI instances eventually check late-added and high-ID files. Measure unchanged/changed-tree search latency, memory and write overhead against the baseline in Task 20. Create the scheduling index only after its column exists; `schemaSQL` runs before migrations on legacy databases.
 
 ## 6. Knowledge CLI — C1
 
@@ -151,17 +187,31 @@ The CLI type flag uses existing backend filtering without adding a parameter to 
 
 ### 7.1 Per-call TTL — F1
 
-Add optional `ttl` in milliseconds. Omission uses configured `store.cache.fetch_ttl_hours`; zero bypasses cache; `force: true` also bypasses regardless of TTL. Accept nonnegative integral JSON numbers and decimal integer strings that fit a Go duration; reject negative, fractional, nonfinite, overflow, null and unrelated types. Parse before cache/network/index work. No per-item overrides in a batch.
+Add optional `ttl` in milliseconds, deliberately matching upstream and existing MCP timeout units. Omission converts configured `store.cache.fetch_ttl_hours` to milliseconds; zero bypasses cache; `force: true` also bypasses regardless of TTL. Accept nonnegative integral JSON numbers and decimal integer strings that fit a Go duration; reject negative, fractional, nonfinite, overflow, null and unrelated types. Parse before cache/network/index work. No per-item overrides in a batch.
 
-Normalize `force` from a boolean or trimmed case-insensitive `true`/`false` string; malformed supplied values fail instead of silently becoming false. Preserve already-supported serialized `requests` arrays. Do not use truthiness, where the string `false` becomes true.
+Use the shared boolean contract (§7.3) for `force`. Preserve already-supported serialized `requests` arrays.
 
-Single and batch cache checks use one policy. Keep label+URL identity, requested-kind compatibility and SSRF behavior. Responses show the effective freshness window. This is a read-time cache decision, not a retention change: an ephemeral source may be evicted before a long requested freshness window; `kind: "durable"` remains the way to request durable knowledge.
+Add nullable `sources.fetch_validated_at_ms INTEGER`, exposed as optional metadata. Single and batch fetches share an atomic store operation that indexes/deduplicates the sanitized result and records successful validation time in the same transaction. New content, unchanged content and requested-kind transitions all renew that field on successful fetch+index. Failed HTTP/body/transform/store work does not renew it. Cache hits and ordinary searches do not renew it. Generic index calls never stamp it; a generic replacement clears it. Keep label+URL identity, kind compatibility and SSRF behavior.
+
+Freshness is `0 <= now_ms - validated_at_ms < ttl_ms`. Integer Unix milliseconds preserve sub-second behavior without changing the old second-resolution `indexed_at` format or its readers. An absent/invalid/future marker is a miss. Existing rows with NULL conservatively revalidate once after upgrade; do not infer validation from a label or a second-resolution timestamp. Persist the marker across reopen. Capture the success time through a clock seam and include 500 ms boundary tests.
+
+An unchanged success returns **revalidated, unchanged**, with the stored chunk count, rather than claiming zero newly indexed sections; changed/new content reports its actual write outcome. Updating freshness alone does not advance `indexed_at` or alter retention/decay. Existing same-hash kind/access behavior remains; changed content still replaces the source as today. Thus an old ephemeral entry can be evicted after a successful unchanged revalidation: freshness and retention are intentionally independent, and durable retention still requires `kind: "durable"`.
+
+The migration is additive and uses existing encrypted migration/open/close paths. Old binaries ignore the new column; old replacement writes leave it NULL and force one later revalidation. Test old-schema migration, rollback/reopen and both dedup branches. Task 16a delivers renewal under the configured default TTL; Task 16 adds the override and precision boundary cases.
 
 ### 7.2 Cache and throttle visibility — O1
 
-Record hits and fetch attempts once per eligible URL, including force/TTL-zero bypasses; malformed/rejected URLs are not attempts. A network failure remains an attempted miss. Keep counters under the existing stats mutex and reset/snapshot them together. Show hit/miss counts and a rate with a defined zero-attempt representation; preserve estimated cache-byte savings as an estimate. No hosted analytics, pricing, token-cost or tracing subsystem is introduced.
+Record a hit or attempted miss once per eligible URL, including force/TTL-zero bypasses. Malformed URLs, SSRF policy blocks, Git-platform CLI redirects and pre-dispatch cancellation count as neither. A real fetch that fails DNS/network, HTTP, body validation or subsequent indexing counts as one attempted miss. Carry a typed outcome until accounting rather than guessing from formatted error text. Keep counters under the existing stats mutex and reset/snapshot them together. Show `hits / (hits + attempted misses)` and `n/a` when that denominator is zero; preserve estimated cache-byte savings as an estimate.
 
-For valid `capy_search` requests, report call count, current effective result limit, calls until taper/block and remaining time until reset, including the first call, empty-store and partial-result responses. Keep the current 60-second/3/8 policy. Invalid requests do not consume a count. State that the budget belongs to the shared MCP server when no agent identity is available. Per-agent isolation is [deferred D1](upstream-audit.md#d1-per-agent-search-budgets), not delivered by this feature.
+Replace the current session-uptime-derived **TTL remaining** field with **Default fetch freshness** from configuration. Individual fetch responses state their own effective TTL; no single remaining lifetime exists for a mixed cache. At both savings-percentage display sites use one decimal, clamped to 99.9% whenever returned bytes are nonzero; 100.0% is reserved for positive processed bytes and zero returned bytes. Zero processed bytes displays 0.0%. This ports the separable display fix from `49fa9d2` and avoids claiming exact exclusion near the rounding boundary. The underlying savings formula is unchanged. No hosted analytics, pricing, token-cost or tracing subsystem is introduced.
+
+For valid `capy_search` requests, report call count, current effective result limit, calls until taper/block and remaining time until reset, including the first call, empty-store and partial-result responses. Add `[search] window_ms`, `taper_after`, `block_after` through capy's existing TOML merge/validation flow. Defaults remain 60000/3/8. Require integers, `1000 <= window_ms <= 3600000` and `1 <= taper_after < block_after <= 10000`; explicit zero/invalid values fail config loading. Taper when count exceeds `taper_after`, block when it exceeds `block_after`, and reset at or after the configured window. All notices use the effective values. Invalid requests do not consume a count. No upstream environment aliases or per-request threshold overrides are added. State that the budget belongs to the shared MCP server; tunability mitigates fan-out but does not supply [D1](upstream-audit.md#d1-per-agent-search-budgets)'s missing per-agent identity.
+
+### 7.3 Boolean inputs and fetch failure guidance
+
+Task 6a introduces one presence-aware parser: omission uses the parameter's established default; a native boolean or trimmed case-insensitive `true`/`false` string is accepted; null, numbers, collections and other strings fail before side effects. Apply it to `background`, `force`, `dry_run`, every `purge_*`, `optimize`, `vacuum`, `all_projects` on both search tools, and new directory booleans. Preserve `dry_run=true` and `respect_gitignore=true` defaults. A malformed supplied value never becomes a different operation. This deliberately changes literal strings such as `dry_run: "false"` from ignored to honored, which must appear in release notes and destructive-operation tests.
+
+Port the useful fetch retry hint from `9e29a94` by classifying typed Go errors before formatting: temporary/timeout DNS, uncanceled network timeouts and network-unreachable errors may suggest **one retry of the same capy call**. Keep the original cause. Cancellation, SSRF blocks, NXDOMAIN, certificate/permission errors and ordinary HTTP/body/index errors do not get that hint. Do not copy upstream's broad `EPERM`/`getaddrinfo` string heuristic, promise network access, or automatically retry. Single and batch paths share this behavior.
 
 ## 8. Alternatives and assumptions
 
@@ -180,7 +230,7 @@ Verify these during implementation:
 1. A 4,096-byte plaintext cap improves bounded retrieval without unacceptable quality loss; compare fixtures and quality benchmarks before release.
 2. The proposed directory ceilings fit explicit documentation/source ingestion. Measure representative trees and report cap outcomes; do not silently increase bounds to make a test pass.
 3. Changing non-shell default cwd is useful but observable. Test Go, Python/JS where installed, Rust run/compile separation and Elixir wrapping; document migration for relative writes.
-4. Host hook payloads provide `agent_id` for child contexts. Verify actual supported-host fixtures; do not infer tool availability from a running server or from `agent_type` alone.
+4. Host hook payloads provide `agent_id` for child contexts and post-tool events. Verify actual supported-host fixtures; observed per-tool availability does not establish an entire tool pool or guarantee the first native call is redirected.
 5. Git 2.34.1-compatible ignore flags are sufficient; no Go module is added. An unavailable Git executable is only relevant when applying Git ignores in a repository.
 6. No stable per-agent stdio request identity has been established. This is a limitation to measure, not an assumption that a transport session ID solves it.
 
@@ -189,7 +239,7 @@ Verify these during implementation:
 - CI/bundle/docs-only upstream ports and unsupported operating systems/runtimes/hosts: excluded by request.
 - Upstream analytics/pricing/hosted Insight or event/directive replay: different product and persistence model.
 - New Codex hooks, new languages or a transcript-based cwd resolver: existing integrations do not require those subsystems.
-- Knowledge/vault schema changes, key-resolution changes, ranking-formula changes or blanket reindexing: preserve capy's established invariants.
+- Vault schema/key-resolution changes, ranking-formula changes or blanket reindexing: preserve capy's established invariants. The two knowledge metadata additions described above are selected exceptions, not a storage redesign.
 - Unconditional execution-source echoes or command-length output guesses: these conflict with capy's context-routing purpose.
 - OS-level sandboxing of submitted code: this feature strengthens explicit tool inputs and existing policy enforcement.
 
@@ -197,9 +247,11 @@ Deferred work is listed separately in the audit; it is not hidden in these exclu
 
 ## 10. Rollout, reversibility and verification
 
-Implement as the [small task slices](tasks.md). Additive parameters preserve omitted-input defaults except the intentional non-shell cwd correction, literal source wildcard correction, explicit execute-file containment, and reliable main-agent redirect denial. Document those four behavior changes prominently.
+Implement as the [small task slices](tasks.md). Release notes must enumerate shell element/limit decisions, non-shell cwd/module behavior, literal source selectors, prepared Read anchors and conservative legacy-deny handling, execute-file external grants, explicit main-agent blocks and child availability tradeoffs, stdout-then-stderr batch presentation, strict supplied-boolean handling (including rejection of previously coerced numeric all-projects values), the one-time legacy-cache miss, full-response truncation, and bounded/possibly deferred stale checks. Preserve omitted defaults unless a change is explicitly listed; do not reduce this to the former four-item list.
 
-No data-format rollback is necessary. New CLI commands and directory source labels use existing encrypted source rows. Already-indexed chunks remain valid for older binaries. Rolling back cwd/path behavior restores prior semantics, so release notes must make that tradeoff visible.
+No destructive rollback is necessary: older binaries ignore the additive source columns/index, and chunk/cipher formats remain unchanged. They lose renewal/scheduling guarantees and may reset a marker when replacing a source. Test that compatibility rather than claiming there is no migration. Rolling back cwd/path behavior restores prior semantics, so release notes must make that tradeoff visible.
+
+Task 20 records proposed ADRs titled **Execution working directories and project identity**, **Prepared Read rules and execute-file admission**, and **Fetch validation time and bounded stale checks**, using the next available ADR numbers at implementation time. They cover S1/S2/E2/I1/C1 tradeoffs without falsely marking unimplemented decisions as accepted. Amend ADR-005, ADR-008, ADR-012, ADR-013 and ADR-022 where their existing claims change; preserve their historical rationale.
 
 Update generators and their committed counterparts together whenever routing/setup artifacts change: `internal/platform/routing.go` with `.capy/AGENTS.md`, and any affected wrapper/config pair listed in repository `AGENTS.md`. Run whole-file artifact and merge-idempotence checks; do not patch just the generated copy.
 

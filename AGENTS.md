@@ -41,7 +41,7 @@ internal/
 - **WAL checkpoint on close.** The connection pool must be closed before checkpointing (see `store.go:Close()` and ADR-016).
 - **WAL + PRAGMA rekey incompatible.** Encryption path must switch to DELETE journal mode before rekeying (ADR-020).
 - **Source kinds are schema-enforced.** `CHECK (kind IN ('ephemeral', 'durable', 'session'))` — no other values accepted.
-- **Vault blob `encoding` column is authoritative.** Compressed (`'zstd'`) vs raw (`'raw'`/`NULL`-legacy) blobs are distinguished by the per-row `encoding` column, never magic-byte detection (sidecars hold arbitrary bytes). The first compressed write stamps `vault_meta.min_reader_version`; `openDB` refuses a vault whose marker exceeds `supportedReaderVersion` (2). `content_hash`/`size_bytes`/FTS are always computed on **uncompressed** bytes.
+- **Vault blob `encoding` column is authoritative.** Compressed (`'zstd'`) vs raw (`'raw'`/`NULL`-legacy) blobs are distinguished by the per-row `encoding` column, never magic-byte detection (sidecars hold arbitrary bytes). Compressed writes require reader version 2; platform-aware writes can require version 3. Each write stamps the version it needs in `vault_meta.min_reader_version`; `openDB` refuses a vault whose marker exceeds `supportedReaderVersion` (3). `content_hash`/`size_bytes`/FTS are always computed on **uncompressed** bytes.
 - **Vault rekey uses the backup-API, not PRAGMA rekey.** `sqliteutil.Rekey` writes a fresh new-key file (open old → checkpoint → backup-copy → swap+verify), sidestepping the WAL/PRAGMA-rekey incompatibility above. Shared by `capy vault rekey` and `capy encrypt`.
 - **Hooks are short-lived processes.** Each hook invocation is a separate `capy hook <event>` process. State persists via `.capy/guidance-<sessionID>.json` files.
 - **`capy setup` generates artifacts in two places — keep the generator and this repo's committed copies in sync.** Everything `capy setup` writes (`internal/platform/setup.go` + `routing.go`) has a committed counterpart in this repo. A fix applied to the committed file but NOT the generator (or vice versa) works here but ships stale to every consumer that re-runs `capy setup`. This has already bitten us more than once (PR #93 wrapper fix; commit `8d5f2a2` routing wording). The generator is the source of truth; the committed files must be reproducible from it. Any fix MUST edit BOTH sides. The generated artifacts and their generators:
@@ -81,6 +81,10 @@ Key files: `internal/store/bench_test.go` (retrieval + NIAH), `internal/store/be
 ## ADRs
 
 Architecture Decision Records are in [docs/adr/](docs/adr/).
+
+## Knowledge note labels
+
+Knowledge indexing replaces content with the same source label; it does not append to a category. For plugin-managed notes, use a stable, unique per-concept suffix such as `kk:review-findings:upstream-sync-v1.0.169:fetch-freshness`, and search by the category prefix. Never index a new concept under a bare category label such as `kk:review-findings` or `kk:arch-decisions`. Skip indexing when the finding is already captured in repository documentation.
 
 ## Completed Features
 
