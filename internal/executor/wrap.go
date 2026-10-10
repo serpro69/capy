@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -32,31 +31,32 @@ func mixExists(projectDir string) bool {
 	return err == nil
 }
 
-// injectFileContent prepends file-reading boilerplate for execute_file.
-func injectFileContent(lang Language, code, absPath string) string {
-	escaped := strconv.Quote(absPath)
+const fileContentPathEnv = "CAPY_FILE_CONTENT_PATH"
+
+// injectFileContent prepends file-reading boilerplate for execute_file. The
+// request-local child environment carries the path as data, never source text.
+func injectFileContent(lang Language, code string) string {
 	switch lang {
 	case JavaScript, TypeScript:
-		return fmt.Sprintf("const FILE_CONTENT_PATH = %s;\nconst file_path = FILE_CONTENT_PATH;\nconst FILE_CONTENT = require(\"fs\").readFileSync(FILE_CONTENT_PATH, \"utf-8\");\n%s", escaped, code)
+		return fmt.Sprintf("const FILE_CONTENT_PATH = require(\"process\").env[%q];\nconst file_path = FILE_CONTENT_PATH;\nconst FILE_CONTENT = require(\"fs\").readFileSync(FILE_CONTENT_PATH, \"utf-8\");\n%s", fileContentPathEnv, code)
 	case Python:
-		return fmt.Sprintf("FILE_CONTENT_PATH = %s\nfile_path = FILE_CONTENT_PATH\nwith open(FILE_CONTENT_PATH, \"r\", encoding=\"utf-8\") as _f:\n    FILE_CONTENT = _f.read()\n%s", escaped, code)
+		return fmt.Sprintf("import os as _capy_os\nFILE_CONTENT_PATH = _capy_os.environ[%q]\nfile_path = FILE_CONTENT_PATH\nwith open(FILE_CONTENT_PATH, \"r\", encoding=\"utf-8\") as _f:\n    FILE_CONTENT = _f.read()\n%s", fileContentPathEnv, code)
 	case Shell:
-		sq := quotePosixSingle(absPath)
-		return fmt.Sprintf("FILE_CONTENT_PATH=%s\nfile_path=%s\nFILE_CONTENT=$(cat %s)\n%s", sq, sq, sq, code)
+		return fmt.Sprintf("FILE_CONTENT_PATH=\"$%s\"\nfile_path=\"$FILE_CONTENT_PATH\"\nFILE_CONTENT=$(cat \"$FILE_CONTENT_PATH\")\n%s", fileContentPathEnv, code)
 	case Ruby:
-		return fmt.Sprintf("FILE_CONTENT_PATH = %s\nfile_path = FILE_CONTENT_PATH\nFILE_CONTENT = File.read(FILE_CONTENT_PATH, encoding: \"utf-8\")\n%s", escaped, code)
+		return fmt.Sprintf("FILE_CONTENT_PATH = ENV.fetch(%q)\nfile_path = FILE_CONTENT_PATH\nFILE_CONTENT = File.read(FILE_CONTENT_PATH, encoding: \"utf-8\")\n%s", fileContentPathEnv, code)
 	case Go:
-		return fmt.Sprintf("package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\nvar FILE_CONTENT_PATH = %s\nvar file_path = FILE_CONTENT_PATH\n\nfunc main() {\n\tb, _ := os.ReadFile(FILE_CONTENT_PATH)\n\tFILE_CONTENT := string(b)\n\t_ = FILE_CONTENT\n\t_ = fmt.Sprint()\n%s\n}\n", escaped, code)
+		return fmt.Sprintf("package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\nvar FILE_CONTENT_PATH = os.Getenv(%q)\nvar file_path = FILE_CONTENT_PATH\n\nfunc main() {\n\tb, _ := os.ReadFile(FILE_CONTENT_PATH)\n\tFILE_CONTENT := string(b)\n\t_ = FILE_CONTENT\n\t_ = fmt.Sprint()\n%s\n}\n", fileContentPathEnv, code)
 	case Rust:
-		return fmt.Sprintf("#![allow(unused_variables)]\nuse std::fs;\n\nfn main() {\n    let file_content_path = %s;\n    let file_path = file_content_path;\n    let file_content = fs::read_to_string(file_content_path).unwrap();\n%s\n}\n", escaped, code)
+		return fmt.Sprintf("#![allow(unused_variables)]\nuse std::fs;\n\nfn main() {\n    let file_content_path: &str = &std::env::var(%q).unwrap();\n    let file_path = file_content_path;\n    let file_content = fs::read_to_string(file_content_path).unwrap();\n%s\n}\n", fileContentPathEnv, code)
 	case PHP:
-		return fmt.Sprintf("<?php\n$FILE_CONTENT_PATH = %s;\n$file_path = $FILE_CONTENT_PATH;\n$FILE_CONTENT = file_get_contents($FILE_CONTENT_PATH);\n%s", escaped, code)
+		return fmt.Sprintf("<?php\n$FILE_CONTENT_PATH = getenv(%q);\n$file_path = $FILE_CONTENT_PATH;\n$FILE_CONTENT = file_get_contents($FILE_CONTENT_PATH);\n%s", fileContentPathEnv, code)
 	case Perl:
-		return fmt.Sprintf("my $FILE_CONTENT_PATH = %s;\nmy $file_path = $FILE_CONTENT_PATH;\nopen(my $fh, '<:encoding(UTF-8)', $FILE_CONTENT_PATH) or die \"Cannot open: $!\";\nmy $FILE_CONTENT = do { local $/; <$fh> };\nclose($fh);\n%s", escaped, code)
+		return fmt.Sprintf("my $FILE_CONTENT_PATH = $ENV{%q};\nmy $file_path = $FILE_CONTENT_PATH;\nopen(my $fh, '<:encoding(UTF-8)', $FILE_CONTENT_PATH) or die \"Cannot open: $!\";\nmy $FILE_CONTENT = do { local $/; <$fh> };\nclose($fh);\n%s", fileContentPathEnv, code)
 	case R:
-		return fmt.Sprintf("FILE_CONTENT_PATH <- %s\nfile_path <- FILE_CONTENT_PATH\nFILE_CONTENT <- readLines(FILE_CONTENT_PATH, warn=FALSE, encoding=\"UTF-8\")\nFILE_CONTENT <- paste(FILE_CONTENT, collapse=\"\\n\")\n%s", escaped, code)
+		return fmt.Sprintf("FILE_CONTENT_PATH <- Sys.getenv(%q)\nfile_path <- FILE_CONTENT_PATH\nFILE_CONTENT <- readLines(FILE_CONTENT_PATH, warn=FALSE, encoding=\"UTF-8\")\nFILE_CONTENT <- paste(FILE_CONTENT, collapse=\"\\n\")\n%s", fileContentPathEnv, code)
 	case Elixir:
-		return fmt.Sprintf("file_content_path = %s\nfile_path = file_content_path\nfile_content = File.read!(file_content_path)\n%s", escaped, code)
+		return fmt.Sprintf("file_content_path = System.fetch_env!(%q)\nfile_path = file_content_path\nfile_content = File.read!(file_content_path)\n%s", fileContentPathEnv, code)
 	}
 	return code
 }

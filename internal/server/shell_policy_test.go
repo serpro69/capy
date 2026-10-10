@@ -16,6 +16,8 @@ import (
 func TestShellPolicyLimitsBeforeSpawn(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	srv := newTestServer(t, nil)
+	inputFile := filepath.Join(srv.projectDir, "input.txt")
+	require.NoError(t, os.WriteFile(inputFile, []byte("input"), 0o600))
 	marker := filepath.Join(t.TempDir(), "spawned")
 	prefix := ": > " + marker + "; "
 	for _, tc := range []struct{ name, at, over string }{
@@ -34,7 +36,7 @@ func TestShellPolicyLimitsBeforeSpawn(t *testing.T) {
 					var err error
 					switch mode {
 					case "file":
-						req.Params.Arguments = map[string]any{"language": "shell", "code": command, "path": filepath.Join(t.TempDir(), "missing")}
+						req.Params.Arguments = map[string]any{"language": "shell", "code": command, "path": inputFile}
 						result, err = srv.handleExecuteFile(context.Background(), req)
 					case "batch serial", "batch parallel":
 						concurrency := 1
