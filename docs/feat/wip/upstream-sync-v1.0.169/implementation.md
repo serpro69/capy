@@ -5,6 +5,7 @@
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
 > Review reconciliation: [.reviews/reconciliation-2026-10-10.md](.reviews/reconciliation-2026-10-10.md)
+> Latest readiness check: [.reviews/readiness-2026-10-10.md](.reviews/readiness-2026-10-10.md)
 
 ## Contributor orientation
 
@@ -49,7 +50,7 @@ Run `go test -tags fts5 -count=1 ./internal/security/... ./internal/server/...`.
 
 **Owners:** `internal/hook/guidance.go`, guidance tests.
 
-Use a single bounded filename-component function from both `guidanceOnce` and `ResetGuidanceFile`. Preserve safe IDs; digest unsafe/oversized ones without exposing their contents → verify: repeated invocations share one file, two different unsafe IDs remain separate, reset removes the same file, and traversal/NUL/long IDs create nothing outside the temporary `.capy` directory. Run the hook package tests.
+Use design §3.4's exact ID alphabet/128-byte bound and digest prefix from both `guidanceOnce` and `ResetGuidanceFile`; empty IDs stay non-persisting → verify: repeated invocations share one file, safe IDs remain compatible, unsafe IDs stay separate, reset targets the same file, and traversal/NUL/long IDs create nothing outside temporary `.capy`. New observations have a separate format and reuse only the component helper. Run hook tests.
 
 ## 4. Explicit main-agent redirects
 
@@ -61,9 +62,10 @@ The rationale is reliable expression of a block, not an unverified assertion tha
 
 ## 5. Subagent-aware routing and discovery
 
-**Owners:** adapter event parsing, `cmd/capy/hook.go` and hook context selection, `internal/hook/pretooluse.go`/`routing.go`; generated routing owner/copy where wording changes.
+**Owners:** adapter event parsing, `cmd/capy/hook.go` and hook context selection, an anchored detection helper in `internal/config/paths.go`, pre-tool routing; generated routing owner/copy where wording changes.
 
-1. Preserve `agent_id`/`agent_type`/`cwd` and resolve project identity before policy loading using design §3.4 precedence → verify: actual child, type-only main agent, environment missing, explicit project override, payload cwd outside process cwd and nested project directories. Prepared rule origin/state storage must use the selected project consistently.
+1. Preserve `agent_id`/`agent_type`/`cwd` and resolve project identity before policy loading using design §3.5 precedence → verify: actual child, type-only main agent, environment missing, explicit project override, payload cwd outside process cwd and nested project directories. Prepared rule origin/state storage must use the selected project consistently.
+   The existing `DetectProjectRoot()` is process-cwd-based. Add a start-directory helper rather than temporarily calling `os.Chdir` or changing environment variables; pin any Git probe's directory and clear repository-routing overrides. Invalid/nonabsolute payload cwd is ignored with a diagnostic and uses the stated fallback; an invalid explicit selected directory is an error, not an alternative-project fallback.
 2. Treat child availability as unknown unless demonstrated by Task 5a; keep advisory discovery and native-tool fallback → verify: unknown/fixed-tool children do not get trapped, while explicit denies and matched asks still run first. Do not label every child unavailable or use two local frontmatter files as the effective host tool pool.
 3. Add one-attempt deferred-tool discovery guidance with native-tool fallback; preserve original Agent/Task fields → verify: no recursive bootstrap, no bootstrap mandate without discovery support, and Bash-to-general-purpose behavior remains covered.
 4. Align generated routing text and its committed copy → verify: `go test -tags fts5 ./internal/platform -run 'TestGeneratedWholeFileArtifacts|TestMergedArtifactsAreIdempotent'` plus hook/adapter tests.
@@ -72,11 +74,11 @@ A parent MCP server's existence is not evidence that a fixed-tool child can call
 
 ## 5a. Re-enforce redirects after observed child capabilities
 
-**Owners:** `internal/hook/posttooluse.go`, `pretooluse.go`, `guidance.go` and dispatch wiring.
+**Owners:** new bounded observation-state helper in `internal/hook`, post/pre-tool routing, session-end cleanup and dispatch wiring; reuse the ID helper from `guidance.go`.
 
-Record the exact capy tool from a child PostToolUse event in bounded session/agent-scoped state; reuse safe filename components and ensure parallel updates do not overwrite sibling capabilities → verify: one child's execute capability cannot authorize another child's redirect, and search alone is not proof of execute/fetch availability.
+Implement the one-use, per-tool 60-second evidence in design §3.5, stored in one bounded project file behind a separate stable lock → verify: exact eligible tools, no renewal on failures or another tool's success, 64 KiB/128-entry eviction, missing stable identity, sibling isolation, concurrent update/consume, lock timeout and corrupt/future state.
 
-Select an observed suitable redirect alternative; absent/corrupt state stays unknown and advisory → verify: inherit-all child first calls capy execute, then a native flood is redirected; fixed-tool and unseen children retain fallback; security checks still dominate. Document the first-call limitation and D5. Update routing generator/copy if the selected alternative's guidance changes.
+Consume all of that child's evidence before one redirect and follow the explicit alternative table → verify: failed capy retry permits the next native attempt, arbitrary HTTP is never turned into a fetch-only operation, and security decisions still dominate without consuming evidence. Parse stable identity for SessionEnd and remove only its entries, without DB access → verify: cleanup, missed SessionEnd expiry, live sibling preservation and no unbounded per-session file creation. Update routing generator/copy together. D5 remains the unknown first-call limitation.
 
 ## 6. Batch heredocs and stderr
 
@@ -149,20 +151,28 @@ This slice delivers the existing file path with a stricter read bound; directory
 
 **Owners:** store source schema/migration/statements, `search.go` refresh loop and scheduling state transfer in `index.go`.
 
-Add `file_check_seq` plus its partial scheduling index after column admission. Page at most 32 oldest-checked sources, close metadata rows before writes, and advance only attempted rows with a logical sequence derived from the indexed current maximum. Ensure replacement rows retain the completed check's position → verify: migration/reopen, query plans using the scheduling index, no full-source snapshot, and repeated CLI processes advancing beyond the first page.
+Add `file_check_seq` plus its partial scheduling index after column admission. Page at most 32 oldest-checked sources, close metadata rows before writes, and allocate/update completed-check sequences atomically in short transactions using the indexed current maximum. Skip concurrently removed/replaced incarnations; carry state only through the refresh's own same-file replacement → verify: migration/reopen, query plans, concurrent updates, no resurrection or full-source snapshot, and new CLI processes advancing beyond page one.
 
-Apply the per-pass byte/admission-time limits from design §5.5 using Task 12's bounded reads → verify: 10,000 sources, changed/unchanged/missing/denied files, budget exhaustion leaving unprocessed rows eligible, cancellation, concurrent bounded duplicate checks, and eventual progress in a quiescent corpus. Record raw latency/allocation/read/write counts for final baseline comparison. This changes freshness timing, not retrieval ranking or retention timestamps.
+Apply design §5.5's byte budget including the growth-detection byte, post-metadata admission clock and single-active-refresh guard → verify: maximum source sizes above 8 MiB still make progress, slow metadata does not suppress every first attempt, slow I/O cannot start overlapping passes in one instance, and unattempted rows stay eligible. Include 10,000-source/fairness/restart, cancellation, scheduling-write failure and bounded cross-instance duplicate cases. Record latency/allocation/read/write counts. This changes freshness timing, not ranking or retention timestamps.
 
 ## 13. Directory ingestion with selection controls
 
 **Owners:** new `internal/knowledge/directory.go`, `patterns.go`, `gitignore.go`; MCP path dispatch in `tool_index.go` and schema in `tools.go`.
 
-1. Implement deterministic bounded traversal with the design's default/hard limits, incremental directory reads, exclusions, colon-separated source prefixes and per-file outcomes → verify: depth 0, file/entry/byte ceilings, an oversized flat directory, cancellation, same/different-prefix dedup and bounded failure summaries.
-2. Implement and document include/exclude/extension selection and optional root-contained symlink following → verify: cycles, aliases, dangling/escaping links, root symlink denial, hidden metadata and direct-file versus recursive admission.
-3. Discover the worktree containing the canonical ingestion root and use `git check-ignore --no-index --stdin -z` with bounded input/output and request cancellation, without inherited Git directory/index/worktree overrides → verify: external root in another repo with conflicting ignores, nested/negated/tracked rules, unusual filenames and wrong inherited Git variables. Keep selected-project policies/credentials unchanged. Treat exits 0/1 as normal; surface other failures. Outside Git report no Git ignores; missing/broken Git in a repo fails visibly.
+1. Implement deterministic default non-following traversal with the design's hard limits and explicit outcomes → verify: counts distinguish visited entries/admitted attempts, raw reads include unchanged/failed/growing files and probe bytes, hard/operator caps are incomplete-success while operational failures are partial errors, and no partial file is indexed at exhaustion.
+2. Implement validated include/exclude/extensions, canonical root selection and colon labels → verify: direct-root symlinks versus skipped descendant links, depth 0, huge flat directories, same/different-prefix dedup and mandatory exclusions.
+3. Discover the canonical root's worktree and prune descendant Git roots before invoking bounded `git check-ignore --no-index --stdin -z` calls → verify: external roots, nested repositories/submodules, negated/tracked rules, unusual filenames and inherited Git variables. Keep selected-project policies/credentials fixed. Treat exits 0/1 as normal; other Git failures are visible, never an implicit unfiltered scan.
 4. Expose directory controls using Task 6a's boolean parser and Task 2a's prepared policy → verify: direct/walked/refreshed absolute paths obey the same relative denies, repeated labels deduplicate, and Task 12a bounds searches after many repeated ingestion calls.
 
-The directory API is one bounded ingestion path, not a repository crawler/index-all feature. Keep the implementation reviewable; split selection/ignore additions into another complete user-facing slice if the five substantive files exceed M scope. Do not weaken defaults temporarily to make a partial task appear complete.
+Task 13 delivers default directory ingestion; Task 13a separately adds descendant symlink following. This keeps the Git/symlink integration risk out of an oversized single task without weakening default admission.
+
+## 13a. Follow admitted symlinks during directory ingestion
+
+**Owners:** `internal/knowledge/directory.go`, `gitignore.go`; `follow_symlinks` schema/CLI option wiring and tests.
+
+Add the opt-in path with canonical target selection, cycle/alias dedup and both alias/target mandatory-exclusion and prepared-policy checks → verify: innocent aliases to ignored/denied/credential targets remain excluded, and links stay in the canonical root and its selected worktree.
+
+Git checks a symlink entry itself and canonical target paths, never a path descending lexically through a directory symlink → verify: reproduce Git's `beyond a symbolic link` failure with a raw alias spelling, then prove ingestion uses the canonical path and honors its ignores. Check prefixed labels, overlapping aliases, nested Git targets, dangling links and all inherited budgets. A broken opt-in must not silently downgrade to unfiltered following.
 
 ## 14. CLI indexing
 
@@ -186,7 +196,7 @@ Amend ADR-012 to name the terminal filtering use case while keeping the MCP cont
 
 **Owners:** source schema/migration/metadata, new store fetched-index orchestration over `indexPreparedChunks`, `internal/server/tool_fetch.go` integration.
 
-Add nullable millisecond validation metadata and an atomic fetched-index operation; generic indexing does not renew the marker. Deliver it through both fetch modes using today's configured TTL → verify: expired → unchanged fetch → immediate hit, force → hit, unchanged kind transition, changed/new content, failed fetch/index not renewing, no search/access renewal and retained stored chunk counts in the unchanged response.
+Add nullable millisecond metadata and an atomic fetched-index operation. Carry each URL's timestamp from completed/admitted HTTP body read through conversion and serial indexing; generic indexing never renews it → verify: queue/lock delays do not restart freshness, out-of-order commits pair marker with their actual content, and expired/forced unchanged revalidation re-arms caching. Include kind transitions, failed fetch/index, no access renewal and accurate stored chunk counts.
 
 Keep `indexed_at` and retention semantics unchanged for identical content; do not reuse the existing stale-file timestamp updater. Old rows miss conservatively until revalidated → verify: old encrypted schema, repeated migrations, reopen, pre-change binary coexistence/downgrade and source replacement clearing an old marker. Extend ADR-013's freshness rationale. This is a complete default-cache correction before Task 16 adds per-call controls.
 
@@ -211,12 +221,13 @@ Render hit/miss counts and a zero-safe rate even when all attempts missed. Repla
 
 ## 18. Batch search controls and provenance
 
-**Owners:** `internal/server/tool_batch.go`, `tools.go`, batch tests.
+**Owners:** `internal/server/tool_batch.go`, `tools.go`, the store's bounded section-metadata query, batch tests.
 
 1. Make queries optional and validate supplied queries and `query_scope` before command execution → verify: no-query calls still index; malformed arrays/scopes produce no child side effects rather than becoming indexing-only calls.
 2. Default to exact batch source; make global scope explicitly durable+ephemeral knowledge-only and label every hit with its own source → verify: two equal-titled sources remain distinguishable, and vault sessions are not queried.
 3. Persist bounded sanitized command previews in indexed sections as well as returning a capped command inventory → verify: later source-filtered provenance retrieval without vault, secret/heredoc/Markdown/UTF-8 cases, and unchanged complete execution/raw-output accounting.
 4. Enforce design §4.4's whole serialized-result budget and bounded section metadata query → verify: 8,000 headings, indexing-only/query modes, long labels/queries/terms, escaping, inventory omissions and final serialized size at or below 81,920 bytes. Do not truncate stored content to meet a response budget.
+5. Handle `AlreadyIndexed` as an unchanged outcome and read its stored total before summary/omission arithmetic → verify: repeated identical batches report retained sections rather than zero, and omitted inventory counts reflect the stored source.
 
 Preserve serial/parallel timeout semantics from Task 6. Existing label-based batch dedup remains; do not claim isolation for simultaneous batches using the same truncated label (follow-up in design risk notes). Run batch and federation suites, then the quality benchmarks.
 
@@ -230,7 +241,7 @@ The notice states the actual effective limit and shared-server scope. Add an act
 
 ## 20. Final verification and documentation
 
-Depends on every implementation slice, including Tasks 2a, 5a, 6a, 12a and 16a. Shared files require coordination; dependencies elsewhere represent behavior prerequisites rather than schema-file serialization.
+Depends on every implementation slice, including Tasks 2a, 5a, 6a, 12a, 13a and 16a. Shared files require coordination; dependencies elsewhere represent behavior prerequisites rather than schema-file serialization.
 
 1. Run `kk:test`: `make test`, `make test-race`, `make build`, and `go test -tags fts5,glamour ./internal/vault/tui/...` to protect the shared retrieval consumers → verify: save commands, outcomes and any environmental limitations in `verification.md`.
 2. Run the real CLI/MCP round trips using `cmd/capy/mcp_stdio_helpers_test.go` conventions → verify: fresh and existing encrypted stores, same target across interfaces, correct project selection, shutdown checkpoint and unchanged vault ownership.

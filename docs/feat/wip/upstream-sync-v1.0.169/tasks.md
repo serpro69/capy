@@ -4,11 +4,12 @@
 > Implementation: [implementation.md](implementation.md)
 > Audit: [upstream-audit.md](upstream-audit.md)
 > Reconciliation: [.reviews/reconciliation-2026-10-10.md](.reviews/reconciliation-2026-10-10.md)
+> Readiness: [.reviews/readiness-2026-10-10.md](.reviews/readiness-2026-10-10.md)
 > Status: pending
 > Created: 2026-10-10
 > Not Doing: CI/bundle/docs-only ports, unsupported platforms, hosted analytics/pricing, event/directive replay, new Codex hooks, new runtimes, transcript-based cwd guessing, vault schema/key changes, ranking rewrites, unconditional source echoes, OS sandboxing
 > Deferred follow-ups: per-agent throttle identity (D1), atomic checked-file handoff (D2), colliding concurrent batch labels (D3), structured chunk splitting (D4), authoritative child tool-pool discovery (D5); see audit.
-> Review additions: lettered Tasks 2a, 5a, 6a, 12a, 16a preserve the original task numbers; dependencies, not heading order, determine execution order.
+> Review additions: lettered Tasks 2a, 5a, 6a, 12a, 13a, 16a preserve the original task numbers; dependencies, not heading order, determine execution order.
 > Size convention: tests/fixtures and mechanical schema/registration/generated-copy updates do not inflate the substantive-file size. Split any slice that grows to L before coding.
 
 ## Task 1: Enforce shell policies on every executable element
@@ -63,7 +64,7 @@
 
 ### Subtasks
 
-- [ ] 3.1 Share bounded session-component mapping between guidance creation and reset in `internal/hook/guidance.go` → verify: normal IDs stay compatible; unsafe IDs remain stable and separate.
+- [ ] 3.1 Share the specified alphabet/128-byte/digest mapping between guidance creation and reset → verify: normal IDs stay compatible, unsafe IDs stay separate, empty IDs remain non-persisting.
 - [ ] 3.2 Add traversal/NUL/oversized-ID tests with a temporary project → verify: no filesystem effects outside `.capy` and reset targets the same state file.
 
 ## Task 4: Emit direct main-agent routing denials
@@ -89,7 +90,7 @@
 
 ### Subtasks
 
-- [ ] 5.1 Preserve child identity/payload cwd; select project before loading rules in the hook command/context path → verify: explicit/environment/payload/process precedence and no mismatched policy directory.
+- [ ] 5.1 Preserve child identity/payload cwd and add start-directory detection in `config/paths.go` → verify: explicit/environment/payload/process precedence, invalid payload fallback, no global cwd/env mutation and no mismatched policy directory.
 - [ ] 5.2 Treat unverified child tools as unknown, with advisory fallback and security checks intact → verify: unknown/fixed-tool children avoid unavailable redirects, and type alone does not classify a child or its tool pool.
 - [ ] 5.3 Add bounded deferred-tool discovery/fallback wording to injected and generated routing → verify: Agent inputs survive, generated `.capy/AGENTS.md` matches its generator, and artifact tests pass.
 
@@ -103,9 +104,9 @@
 
 ### Subtasks
 
-- [ ] 5a.1 Record finite per-tool capabilities from child PostToolUse events with safe session/agent-scoped state → verify: concurrent updates, sibling isolation and corrupt/missing state.
-- [ ] 5a.2 Require only an observed suitable alternative in a child redirect → verify: execute-capable child is guarded, search-only child is not forced into execute, and security decisions still dominate.
-- [ ] 5a.3 Document the first-call unknown limitation and D5; synchronize any generated wording → verify: no claim that two definition files reveal the effective tool pool.
+- [ ] 5a.1 Record one-use, independently expiring execute/fetch observations in the bounded project-state file → verify: 60-second expiry, no error/other-tool renewal, byte/entry caps, stable identities, atomic consumption and lock-timeout fallback.
+- [ ] 5a.2 Consume evidence before one suitable redirect; wire SessionEnd identity/entry cleanup → verify: failed retry allows native fallback, arbitrary HTTP requires execute, sibling state survives, and no knowledge DB is opened.
+- [ ] 5a.3 Document first-call/transient-observation limits and D5; synchronize generated wording → verify: no claim of permanent availability or authoritative frontmatter inference.
 
 ## Task 6: Preserve batch heredocs and captured stderr
 
@@ -227,7 +228,7 @@
 ### Subtasks
 
 - [ ] 12a.1 Add the scheduling column/index through safe additive migration and bounded metadata selection → verify: old encrypted schema, query plans, migration idempotence and 32-row limit.
-- [ ] 12a.2 Persist attempted-check order, transfer it through source replacement and enforce read/time-admission budgets → verify: denied/missing/changed files, unprocessed rows stay eligible, and repeated new CLI instances progress beyond page one.
+- [ ] 12a.2 Atomically advance only checked incarnations, handle scheduling errors and use the detection-byte-inclusive budget/one-active-pass guard → verify: configured files over 8 MiB, slow metadata/I/O, concurrent replacement, unprocessed-row eligibility and repeated CLI progress.
 - [ ] 12a.3 Add a 10,000-source measurement fixture → verify: bounded work/memory, eventual progress and recorded latency/write overhead for Task 20.
 
 ## Task 13: Index directories with explicit traversal limits
@@ -240,15 +241,29 @@
 
 ### Subtasks
 
-- [ ] 13.1 Implement deterministic traversal, per-file labels/outcomes and all hard bounds in `internal/knowledge` → verify: partial/capped/canceled scans report their actual extent.
-- [ ] 13.2 Implement validated pattern/extension controls, canonical symlink containment and cycle detection → verify: deny rules and secret/VCS exclusions survive all options.
-- [ ] 13.3 Apply the ignore evaluator from the canonical root's containing worktree → verify: external root uses its own ignores while capy project policies/keys stay fixed, plus nested/negated/tracked rules and visible failures.
+- [ ] 13.1 Implement default non-following traversal with explicit attempt/raw-read counters and all hard bounds → verify: failed/unchanged/growing files consume actual bytes, no partial file is indexed, and caps/errors have distinct outcomes.
+- [ ] 13.2 Implement pattern/extension controls and canonical explicit-root admission → verify: direct root links versus skipped descendant links, mandatory exclusions and stable label/dedup semantics.
+- [ ] 13.3 Apply the canonical root's Git ignores and prune nested repository/worktree/submodule roots → verify: external/explicit nested roots, negation/tracked rules and visible failures without changing capy policy/key identity.
 - [ ] 13.4 Add dispatch/schema fields using shared boolean validation and prepared rules → verify: colon-label identity, same/different-prefix reruns, bounded stale checks and no implicit deletion.
+
+## Task 13a: Follow allowed directory symlinks without bypassing filters
+
+- **Status:** pending
+- **Depends on:** Task 13
+- **Size:** M
+- **Can run in parallel with:** Tasks 3, 6, 7, 9, 10, 15, 16, 19
+- **Docs:** [Symlink traversal](implementation.md#13a-follow-admitted-symlinks-during-directory-ingestion)
+
+### Subtasks
+
+- [ ] 13a.1 Add opt-in following with canonical target identity, cycle/alias dedup and alias/target mandatory exclusions → verify: ignored/denied/credential targets cannot be renamed into eligibility.
+- [ ] 13a.2 Query Git with canonical target paths, never directory-symlink descendant spellings → verify: the real Git failure fixture, canonical ignore behavior, nested Git boundaries and prefixed labels.
+- [ ] 13a.3 Expose `follow_symlinks` while preserving all inherited bounds/defaults → verify: descendant links only follow when requested, and direct-root links retain their admission contract.
 
 ## Task 14: Add terminal knowledge indexing
 
 - **Status:** pending
-- **Depends on:** Task 13
+- **Depends on:** Tasks 13, 13a
 - **Size:** S
 - **Can run in parallel with:** Tasks 1, 6, 9, 10, 16, 17, 18, 19
 - **Docs:** [CLI index](implementation.md#14-cli-indexing)
@@ -283,7 +298,7 @@
 ### Subtasks
 
 - [ ] 16a.1 Add nullable millisecond validation metadata and fetched-index transaction semantics → verify: migration/reopen, generic replacements clear markers, and old readers remain compatible.
-- [ ] 16a.2 Use it in both fetch modes under the configured TTL, including identical-content/kind-transition outcomes → verify: expire/force → unchanged revalidation → hit with correct stored chunk counts.
+- [ ] 16a.2 Carry body-read validation time through both modes and atomic indexing → verify: delayed queues/out-of-order commits retain content-matched timestamps, and expire/force → unchanged → hit uses correct chunk counts.
 - [ ] 16a.3 Preserve indexed-at retention and prevent renewal on fetch/index failures or ordinary search → verify: durable/ephemeral lifecycle fixtures and ADR-013 amendment.
 
 ## Task 16: Add per-call fetch freshness
@@ -327,7 +342,7 @@
 
 - [ ] 18.1 Make queries optional and implement validated batch/global scope → verify: no-query indexing and durable+ephemeral knowledge-only global results.
 - [ ] 18.2 Persist sanitized bounded per-command provenance and label every global hit by source → verify: later knowledge-only retrieval and equal-titled sources remain attributable.
-- [ ] 18.3 Bound the entire serialized result, section metadata and inventories → verify: 8,000 sections, long headings/queries, escaping and Unicode stay within 81,920 bytes without losing indexed content.
+- [ ] 18.3 Bound the entire serialized result and section metadata; use stored totals for unchanged batches → verify: 8,000 sections, repeated batches, omission counts, escaping and Unicode stay within 81,920 bytes without losing indexed content.
 - [ ] 18.4 Preserve raw/output accounting and execution semantics; record D3 at the existing label builder → verify: batch/federation suites and final benchmark comparison.
 
 ## Task 19: Configure and report the shared search budget
@@ -347,7 +362,7 @@
 ## Task 20: Verify the complete sync and document compatibility
 
 - **Status:** pending
-- **Depends on:** Tasks 1–19, 2a, 5a, 6a, 12a, 16a
+- **Depends on:** Tasks 1–19, 2a, 5a, 6a, 12a, 13a, 16a
 - **Size:** M
 - **Can run in parallel with:** —
 - **Docs:** [Final verification](implementation.md#20-final-verification-and-documentation)
@@ -367,12 +382,12 @@ Task 2a                       --> Task 2
 Tasks 2a, 3, 4               --> Task 5 --> Task 5a
 Tasks 2, 6, 7                --> Task 8
 Task 2a                       --> Task 12 --> Task 12a
-Tasks 2a, 6a, 11, 12, 12a    --> Task 13 --> Task 14
+Tasks 2a, 6a, 11, 12, 12a    --> Task 13 --> Task 13a --> Task 14
 Tasks 2a, 10, 12a            --> Task 15
 Tasks 6a, 16a                --> Task 16 --> Task 17
 Task 6                        --> Task 18
 Tasks 1, 2a, 3, 4, 6, 6a, 7, 9, 10, 11, 16a, 19 have no prerequisites.
-Tasks 1-19, 2a, 5a, 6a, 12a, 16a --> Task 20
+Tasks 1-19, 2a, 5a, 6a, 12a, 13a, 16a --> Task 20
 ```
 
 Parallel markers indicate possible independent work after dependencies are met, not permission to overwrite another contributor's shared file. Coordinate mechanically shared schema/registration edits.

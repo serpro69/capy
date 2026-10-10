@@ -7,6 +7,7 @@
 > Upstream: `f8d46390613f068f232eb14ad91804841c64bdfa..0dfbe8de71abcb637a07dd6444bee5823c3186fc`
 > Revised: [design](../design.md), [implementation](../implementation.md), [tasks](../tasks.md), [audit](../upstream-audit.md)
 > Status: all supplied findings evaluated; valid design defects corrected or resolved by an explicit scoped decision. Feature implementation remains pending.
+> Historical response: the section numbers/counts below describe the revision committed as `22d1310`. See the [later readiness check](readiness-2026-10-10.md) for subsequent corrections and the current packet.
 
 ## Method and provenance
 
