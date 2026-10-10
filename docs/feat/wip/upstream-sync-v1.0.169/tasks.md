@@ -146,7 +146,7 @@ authoritative pre-call tool discovery remains deferred.
 
 ## Task 6: Preserve batch heredocs and captured stderr
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Tasks 1, 2, 3, 4, 5, 7, 10, 11, 12
@@ -154,8 +154,14 @@ authoritative pre-call tool discovery remains deferred.
 
 ### Subtasks
 
-- [ ] 6.1 Execute original commands in both batch worker paths and combine captured streams afterward → verify: heredoc terminators and multiline commands run intact.
-- [ ] 6.2 Cover partial/empty/stderr-only output and serial/parallel timeout semantics → verify: batch tests under `-race` and assertions against indexed content.
+- [x] 6.1 Execute original commands in both batch worker paths and combine captured streams afterward → verify: heredoc terminators and multiline commands run intact.
+- [x] 6.2 Cover partial/empty/stderr-only output and serial/parallel timeout semantics → verify: batch tests under `-race` and assertions against indexed content.
+
+Evidence: [verification](verification.md#task-6-batch-heredocs-and-captured-stderr)
+and [isolated review](.reviews/task-6-code-review-2026-10-10.md). Both workers
+preserve the submitted command and index captured stdout followed by stderr.
+Timeout/order semantics remain intact. Task 18's batch provenance, response
+budgets and raw-byte accounting remain pending.
 
 ## Task 6a: Validate boolean inputs consistently
 

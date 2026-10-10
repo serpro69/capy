@@ -61,6 +61,13 @@ capy is an MCP (Model Context Protocol) server that reduces LLM context window c
 6. Otherwise: return truncated stdout (configurable max_output_bytes, default 100KB)
 7. Stats tracked for the session
 
+Batch execution passes each submitted shell command unchanged to the executor.
+After capture, the server combines stdout followed by stderr, inserting a newline
+only when the streams need separation, then indexes the command sections in input
+order. This preserves terminal heredocs and stderr-only/partial output without
+claiming stream interleaving. Serial batches retain their shared timeout budget
+and cascading skips; parallel workers retain independent per-command timeouts.
+
 The retrieval engine is corpus-agnostic (`internal/retrieval`, ADR-028): the same
 two-layer RRF / rerank / entity-boost pipeline runs over any `Corpus` — the knowledge
 store's `chunks`/`chunks_trigram` tables and the vault's `vault_chunks`/`vault_chunks_trigram`

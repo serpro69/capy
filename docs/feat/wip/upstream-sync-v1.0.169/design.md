@@ -1,6 +1,6 @@
 # Design: Upstream sync through context-mode 0dfbe8d
 
-> Status: implementation in progress; Tasks 1, 2a, 2, 3, 4, 5 and 5a complete, remaining tasks proposed
+> Status: implementation in progress; Tasks 1, 2a, 2, 3, 4, 5, 5a and 6 complete, remaining tasks proposed
 > Created: 2026-10-10
 > Feature: `upstream-sync-v1.0.169`
 > Upstream range: `f8d46390613f068f232eb14ad91804841c64bdfa..0dfbe8de71abcb637a07dd6444bee5823c3186fc`

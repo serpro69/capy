@@ -53,6 +53,101 @@ func TestBatchExecute_BasicSearch(t *testing.T) {
 	assert.Contains(t, text, "OS Info")
 }
 
+func TestBatchExecute_CapturedStreams(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{"heredoc", "cat <<EOF\nheredoc marker\nEOF", "heredoc marker"},
+		{"heredoc newline", "cat <<EOF\nheredoc marker\nEOF\n", "heredoc marker"},
+		{"quoted heredoc", "cat <<'EOF'\n$HOME $(printf expanded)\nEOF", "$HOME $(printf expanded)"},
+		{"quoted heredoc newline", "cat <<'EOF'\n$HOME $(printf expanded)\nEOF\n", "$HOME $(printf expanded)"},
+		{"stdout only", "printf 'stdout marker'", "stdout marker"},
+		{"stderr only", "printf 'stderr marker' >&2", "stderr marker"},
+		{"stderr before stdout", "printf 'stderr marker' >&2\nprintf 'stdout marker'", "stdout marker\nstderr marker"},
+		{"stdout newline", "printf 'stdout marker\\n'; printf 'stderr marker' >&2", "stdout marker\nstderr marker"},
+		{"stderr newline", "printf 'stdout marker'; printf '\\nstderr marker' >&2", "stdout marker\nstderr marker"},
+		{"both newlines", "printf 'stdout marker\\n'; printf '\\nstderr marker' >&2", "stdout marker\n\nstderr marker"},
+		{"empty streams", "true", "(no output)"},
+		{"failed command", "printf 'partial stdout'; printf 'partial stderr' >&2; exit 7", "partial stdout\npartial stderr"},
+	}
+	for _, mode := range []struct {
+		name        string
+		concurrency float64
+	}{
+		{"serial", 1},
+		{"parallel", 3},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			srv := newTestServer(t, nil)
+			commands := make([]any, 0, len(tests))
+			for _, tt := range tests {
+				commands = append(commands, map[string]any{"label": tt.name, "command": tt.command})
+			}
+			r := callBatch(t, srv, map[string]any{
+				"commands": commands, "queries": []any{"stderr marker"}, "concurrency": mode.concurrency,
+			})
+			require.False(t, r.IsError, resultText(r))
+			assert.Contains(t, resultText(r), "stderr marker")
+
+			// Read persisted sections so successful exits or unrelated search hits
+			// cannot hide a malformed heredoc, lost stream or reordered command.
+			sources, err := srv.getStore().ListSources()
+			require.NoError(t, err)
+			require.Len(t, sources, 1)
+			chunks, err := srv.getStore().GetChunksBySource(sources[0].ID)
+			require.NoError(t, err)
+			require.Len(t, chunks, len(tests))
+			for i, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					assert.Equal(t, tt.name, chunks[i].Title)
+					assert.Equal(t, tt.want, chunks[i].Content)
+				})
+			}
+		})
+	}
+}
+
+func TestBatchExecute_TimeoutCapturedStreams(t *testing.T) {
+	for _, mode := range []struct {
+		name        string
+		concurrency float64
+	}{
+		{"serial", 1},
+		{"parallel", 2},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			srv := newTestServer(t, nil)
+			// Warm detection before starting the shared serial timeout budget.
+			srv.executor.Runtimes()
+			r := callBatch(t, srv, map[string]any{
+				"commands": []any{
+					map[string]any{"label": "slow", "command": "printf 'partial stdout'; printf 'partial stderr' >&2; sleep 30"},
+					map[string]any{"label": "after", "command": "printf 'sibling marker'"},
+				},
+				"queries": []any{"partial"}, "timeout": float64(2000), "concurrency": mode.concurrency,
+			})
+			require.False(t, r.IsError, resultText(r))
+			sources, err := srv.getStore().ListSources()
+			require.NoError(t, err)
+			require.Len(t, sources, 1)
+			chunks, err := srv.getStore().GetChunksBySource(sources[0].ID)
+			require.NoError(t, err)
+			require.Len(t, chunks, 2)
+			assert.Equal(t, "slow", chunks[0].Title)
+			assert.Equal(t, "after", chunks[1].Title)
+			if mode.concurrency == 1 {
+				assert.Equal(t, "partial stdout\npartial stderr", chunks[0].Content)
+				assert.Equal(t, "(skipped — batch timeout exceeded)", chunks[1].Content)
+			} else {
+				assert.Equal(t, "partial stdout\npartial stderr\n(timed out)", chunks[0].Content)
+				assert.Equal(t, "sibling marker", chunks[1].Content)
+			}
+		})
+	}
+}
+
 func TestBatchExecute_SecurityDeny(t *testing.T) {
 	policies := []security.SecurityPolicy{
 		{Deny: []string{"Bash(sudo *)"}},
@@ -275,7 +370,7 @@ func TestExecuteBatchParallel_ErrorIsolation(t *testing.T) {
 	require.Len(t, out, 3)
 	assert.Contains(t, out[0], "HELLO")
 	assert.Contains(t, out[2], "WORLD")
-	// The failing command's stderr (merged via 2>&1) lands in its own slot.
+	// The failing command's captured stderr lands in its own slot.
 	assert.Contains(t, out[1], "broken")
 	assert.Contains(t, strings.ToLower(out[1]), "no such file")
 }
