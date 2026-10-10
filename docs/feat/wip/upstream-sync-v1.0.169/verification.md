@@ -240,3 +240,59 @@ PAL was unavailable; the independent code-reviewer supplied static review.
 
 Optional documentation follow-up: `kk:clarify-docs` can review the new execute-file
 paragraph in `README.md` and File Path Evaluation in `docs/architecture.md`.
+
+## Task 3: Guidance state filenames
+
+Implemented 2026-10-10. Scope: the shared session filename component in
+`internal/hook/guidance.go`, creation/reset callers, and regression tests.
+
+### Behavior and coverage
+
+- Preserve 1–128-byte IDs containing only ASCII letters, digits, `.`, `_` or `-`.
+  Other nonempty IDs become `sha256-` plus the full lowercase SHA-256 digest.
+  Empty IDs retain the non-persisting guidance fallback; reset is a no-op.
+- Golden mapping cases cover the full allowed alphabet, UUIDs, dots, 128/129-byte
+  boundaries, an invalid final byte, slashes, backslashes, NUL, Unicode and spaces.
+- Hook JSON calls with fresh test adapters verify persisted Read/Grep throttling,
+  reset, separate sessions, and traversal/Unicode/NUL/1 MiB IDs. Files outside
+  `.capy` remain byte-identical, with no unexpected files or directories.
+- The existing environment-independent test adapter prevents inherited
+  `CLAUDE_PROJECT_DIR` from redirecting filesystem writes outside the fixture.
+
+### Verification commands
+
+Commands used `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development`, and `CAPY_VAULT_KEY=test-key`. Broad tests
+also used an empty temporary `XDG_CONFIG_HOME` to avoid personal config settings.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/hook/...` | Passed, 0.370s. |
+| `go test -race -tags fts5 -count=1 ./internal/hook/... ./internal/adapter/...` | Passed: hook 5.248s, adapter 1.010s. |
+| `go test -race -tags fts5 -count=1 ./internal/hook/... -run 'Test(SessionIDComponent\|GuidanceSession\|GuidanceEmpty)'` with an external temporary `CLAUDE_PROJECT_DIR` | Passed after the review fix, 1.329s; the external directory remained empty. |
+| `go test -tags fts5 ./...` | All packages passed except sandbox-blocked Unix/TCP socket fixtures in config/server. CLI passed in 223.958s, vault in 254.548s. |
+| `go test -tags fts5 ./internal/config/... ./internal/server/...` with socket permission | Both previously blocked packages passed: config 0.047s, server 106.733s. |
+| `git diff --check` | Passed after documentation updates. |
+
+The broad attempt began before the test-adapter review fix; the focused race
+rerun above verifies the final tests under the environment that exposed the
+issue. Production code was unchanged throughout verification. All packages are
+covered by the broad run plus the socket-enabled rerun; no assertions were
+weakened. No search, indexing, chunking or executor code changed, so retrieval
+benchmarks are not applicable to this task.
+
+### Review and compatibility
+
+The [isolated review](.reviews/task-3-code-review-2026-10-10.md) approved the final
+change after one P2 test-isolation fix. PAL was unavailable; the independent
+code-reviewer supplied static review. No systemic P0/P1 findings or new project
+conventions require knowledge indexing; the mapping is already specified in
+the feature design and documented in the architecture guide.
+
+Compatible filenames and guidance JSON remain unchanged. Unsafe legacy filenames
+are neither read nor migrated or deleted; those IDs begin using the safe digest
+filename and may receive guidance again once after upgrade. This change contains
+the session ID's path syntax; it does not add protection against a separately
+replaced/symlinked project directory or state file. Task 5a's observation-state
+format and lifecycle remain pending. No CLI option, dependency version, database,
+generated artifact or CI configuration changed.

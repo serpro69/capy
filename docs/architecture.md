@@ -180,7 +180,12 @@ Hooks run as short-lived processes (`capy hook <event>`) invoked by the AI codin
 
 ### Guidance System
 
-One-time advisories (Read, Grep, Bash) shown once per session. State persisted to `.capy/guidance-<sessionID>.json` since hooks are separate processes.
+One-time advisories (Read, Grep, Bash) shown once per session. State persisted to
+`.capy/guidance-<session-component>.json` since hooks are separate processes.
+Creation and reset share a stable component mapping: IDs of 1–128 ASCII letters,
+digits, dots, underscores or hyphens keep their existing filenames; other
+nonempty IDs use `sha256-` followed by the full hexadecimal SHA-256 digest.
+Empty IDs do not persist state and continue to receive guidance on every call.
 
 ### Platform Adapter
 
