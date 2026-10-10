@@ -89,7 +89,7 @@ separate observation-state format and lifecycle remain pending.
 
 ## Task 4: Emit direct main-agent routing denials
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Tasks 2, 3, 6, 7, 10, 11, 12, 16
@@ -97,8 +97,13 @@ separate observation-state format and lifecycle remain pending.
 
 ### Subtasks
 
-- [ ] 4.1 Use `FormatBlock` in `routeBash` for capy redirects → verify: deny JSON contains actionable guidance and does not approve an echo replacement.
-- [ ] 4.2 Preserve safe downloads, security asks and Agent input edits → verify: hook and adapter tests.
+- [x] 4.1 Use `FormatBlock` in `routeBash` for capy redirects → verify: deny JSON contains actionable guidance and does not approve an echo replacement.
+- [x] 4.2 Preserve safe downloads, security asks and Agent input edits → verify: hook and adapter tests.
+
+Evidence: [verification](verification.md#task-4-direct-routing-denials) and
+[isolated review](.reviews/task-4-code-review-2026-10-10.md). Both Bash redirect
+paths now emit direct denials with guidance. Child capability handling remains
+Tasks 5 and 5a.
 
 ## Task 5: Route subagents according to available tools
 

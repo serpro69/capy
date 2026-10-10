@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2 and 3 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3 and 4 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -128,6 +128,15 @@ files outside `.capy` remain intact. Task 5a's observation store remains pending
 Replace echo-command rewrites for curl/wget and inline HTTP with direct `FormatBlock` calls. Preserve safe-download exceptions, actual security asks/denies and Agent input modifications → verify: inspect the returned JSON decision and reason, and prove the original command is not approved as part of the redirect. Run `go test -tags fts5 -count=1 ./internal/hook/... ./internal/adapter/...`.
 
 The rationale is reliable expression of a block, not an unverified assertion that every current Claude Code build ignores `updatedInput`.
+
+Task 4 implementation notes (2026-10-10): both Bash redirect branches now return
+`FormatBlock` with plain guidance; `routeAgent` retains `FormatModify`. Existing
+detectors, silent/quiet download admission, WebFetch comprehension guidance and
+security evaluation order are unchanged. Real-adapter tests assert deny JSON
+without `updatedInput`, repeated denials after a guidance nudge, matched
+deny/ask precedence, and preserved Agent/Task fields. New stateful fixtures pin
+`CLAUDE_PROJECT_DIR` to their temporary project. Child identity/capability handling
+remains Tasks 5 and 5a; this task does not claim those distinctions already exist.
 
 ## 5. Subagent-aware routing and discovery
 

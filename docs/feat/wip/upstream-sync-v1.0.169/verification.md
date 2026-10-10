@@ -296,3 +296,63 @@ the session ID's path syntax; it does not add protection against a separately
 replaced/symlinked project directory or state file. Task 5a's observation-state
 format and lifecycle remain pending. No CLI option, dependency version, database,
 generated artifact or CI configuration changed.
+
+## Task 4: Direct routing denials
+
+Implemented 2026-10-10. Scope: the two Bash HTTP routing rejection paths in
+`internal/hook/pretooluse.go`, their hook/adapter integration coverage, and usage
+documentation.
+
+### Behavior and coverage
+
+- Blocked curl/wget and recognized inline HTTP now use `FormatBlock`. The real
+  Claude adapter emits `permissionDecision: "deny"` with actionable capy guidance
+  in `permissionDecisionReason`, without an approved replacement command or
+  `updatedInput`.
+- Tests cover curl, wget, Python requests, JavaScript fetch/http calls, tool
+  aliases, mixed safe/unsafe chains, stdout aliases, verbose output, and repeated
+  denials after a Bash guidance nudge has been persisted.
+- Existing silent/quiet file-download exceptions and quoted-text behavior remain
+  covered. Matching security denies and asks take precedence over routing,
+  including for otherwise allowed downloads and competing allow rules.
+- Agent and Task calls still receive prompt edits and retain their description,
+  model, background, resume and subagent-type fields. Existing Bash-subagent
+  upgrade and WebFetch comprehension-guidance tests pass.
+- New stateful real-adapter fixtures pin `CLAUDE_PROJECT_DIR` to a temporary
+  project; the security-precedence fixture clears it.
+
+### Verification commands
+
+Commands used `CLAUDE_PROJECT_DIR=`, `GOCACHE=/tmp/capy-go-build`,
+`CGO_ENABLED=1`, `CAPY_DB_KEY=test-key-for-development`, and
+`CAPY_VAULT_KEY=test-key`. The full suite also used an empty temporary
+`XDG_CONFIG_HOME` and the Unix/loopback socket permission required by its local
+config/server fixtures.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/hook/... ./internal/adapter/...` | Passed: hook 0.341s, adapter 0.002s. |
+| `go test -race -tags fts5 -count=1 ./internal/hook/... ./internal/adapter/...` | Passed: hook 5.385s, adapter 1.009s. |
+| `go test -tags fts5 ./...` | All packages passed; CLI 224.455s, hook 0.424s, server 113.580s, vault 257.506s. |
+| `git diff --check` | Passed after documentation updates. |
+
+An initial Node fixture used `require('http').get(...)`, outside the unchanged
+detector's supported `http.get(...)` spelling. The fixture now declares `http`
+and calls that recognized form; no runtime detector or assertion was weakened.
+Direct `require('http').get(...)` remains an existing detection gap, outside this
+response-formatting task. A future detector change should add positive/negative
+fixtures for direct module-member calls and aliases before expanding matching.
+
+### Review and compatibility
+
+The [isolated reviewer](.reviews/task-4-code-review-2026-10-10.md) approved the
+change with no P0–P3 findings. PAL was unavailable; review used the independent
+code-reviewer. No findings or new conventions require knowledge indexing.
+
+Hosts now receive a direct rejection where they previously received approval to
+run an echo replacement. Live host behavior was not tested; the JSON contract is
+covered without claiming that every host ignores argument modifications.
+Detection rules and policy order are unchanged. Child identity/capability
+handling remains Tasks 5/5a. No dependencies, generated artifacts, database
+behavior, search/indexing/chunking or executor code changed; benchmarks are not
+applicable. README and architecture now describe the direct-denial behavior.

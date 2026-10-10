@@ -178,6 +178,12 @@ Hooks run as short-lived processes (`capy hook <event>`) invoked by the AI codin
 | `SessionEnd` | No-op | WAL checkpoint handled by server Close() |
 | `UserPromptSubmit` | Stub | Future user decision capture |
 
+Bash HTTP routing rejections use `FormatBlock`: the Claude Code response carries
+`permissionDecision: "deny"` and the capy guidance in `permissionDecisionReason`.
+It contains no replacement command. Security denies and matched asks run first;
+the existing silent/quiet file-download exceptions still apply. `FormatModify`
+remains in use for Agent/Task prompt injection, preserving other input fields.
+
 ### Guidance System
 
 One-time advisories (Read, Grep, Bash) shown once per session. State persisted to
