@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5 and 5a complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a and 6 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -215,6 +215,18 @@ does not establish authoritative pre-call or permanent tool availability.
 **Owners:** `internal/server/tool_batch.go`, `tool_batch_test.go`.
 
 Remove suffix redirection from both worker paths and share deterministic captured-stream formatting → verify: terminal heredocs with/without trailing newline, quoted delimiters, stdout-only, stderr-only, combined output and empty streams work at concurrency 1 and greater than 1. Preserve serial skipped commands and parallel timeout/error isolation. Run the server batch subset with `-race`; inspect indexed content, not just a successful exit.
+
+Task 6 implementation notes (2026-10-10): both workers pass `cmd.Command`
+unchanged and use `batchCapturedOutput` to present stdout followed by stderr.
+The helper inserts a newline only when both streams are nonempty and neither
+side already supplies a newline at their boundary. Existing bytes are retained;
+`(no output)` is used only when both streams are empty. Output capture and
+truncation remain owned by the executor. Indexed-section fixtures cover terminal
+and quoted heredocs, explicit stderr redirects, multiline/nonzero-exit commands,
+and partial output on timeout. Serial skips and parallel timeout annotations
+retain their existing behavior. This presentation intentionally does not recover
+stream interleaving. Task 18 still owns batch provenance, response budgets and
+raw-byte accounting changes.
 
 ## 6a. Consistent boolean request validation
 

@@ -517,3 +517,61 @@ checkpoint or database access. State is ephemeral project metadata with no tool
 contents, remains covered by the existing `.capy/**` ignore rule, and requires no
 database migration or key. No dependency version, indexing, chunking, retrieval
 or executor code changed; retrieval benchmarks are not applicable.
+
+## Task 6: Batch heredocs and captured stderr
+
+Implemented 2026-10-10. Scope: unchanged command forwarding and deterministic
+captured-stream presentation in both batch worker paths.
+
+### Behavior and coverage
+
+- Commands reach the executor without an appended `2>&1`. Terminal heredocs
+  work with or without a trailing newline, including quoted delimiters whose
+  body contains literal shell expansions.
+- Both workers combine stdout followed by stderr, adding a newline only when
+  needed at the stream boundary. Existing boundary newlines survive, and only
+  two empty streams produce `(no output)`.
+- Handler fixtures check exact persisted section titles/content at concurrency
+  1 and 3. They cover heredocs, multiline commands, stdout-only, stderr-only,
+  stderr emitted before stdout, all separator cases, empty output and partial
+  output from a nonzero exit.
+- Timeout fixtures check both persisted streams, serial cascading skips and
+  parallel sibling completion. Existing worker-order, error-isolation,
+  concurrency-clamping and sub-second timeout tests also pass under `-race`.
+- Before the fix, these fixtures reproduced `EOF 2>&1` being indexed as heredoc
+  body text and stderr disappearing, including before a timeout, in both paths.
+
+### Verification commands
+
+Tests use `CGO_ENABLED=1`, `GOCACHE=/tmp/capy-go-build`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`.
+The full suite additionally uses an empty temporary `XDG_CONFIG_HOME`, clears
+`CLAUDE_PROJECT_DIR`, and has local socket access for HTTP fixtures.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/server -run 'TestBatchExecute_(CapturedStreams\|TimeoutCapturedStreams)$'` before the fix | Failed as expected in both paths; heredoc and stderr regressions reproduced. |
+| `go test -race -tags fts5 -count=1 ./internal/server -run 'Test(Batch\|ExecuteBatch\|TruncateLabel)'` | Passed, 15.582s. |
+| `go test -tags fts5 ./...` | All packages passed, with unchanged packages using cached results: CLI 227.358s, server 118.894s, hook 0.516s, platform 0.194s, vault 257.430s. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task6` | Passed: store 6.114s, server 0.603s, vault 0.550s. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/feat-upstream_sync.json bench-results/upstream-sync-task6.json` | Dataset verified; all retrieval and context-reduction metrics match the existing branch snapshot (`771bcca`). Current report reflects the working tree based on `9eca616`. |
+| `git diff --check` | Passed after final documentation/task updates. |
+
+The benchmark branch override preserves the existing report. This is a quality
+comparison, not an executor latency/allocation claim; Task 20 still owns the full
+feature's baseline performance comparison.
+
+### Review and compatibility
+
+The [isolated review](.reviews/task-6-code-review-2026-10-10.md) approved with no
+P0–P3 findings. PAL was unavailable. No findings or conventions require knowledge
+indexing because the behavior and its rationale are documented here, in the
+implementation notes, README and architecture.
+
+Batch sections now present stdout before stderr instead of relying on shell
+redirection; their ordering does not represent runtime stream interleaving.
+Capture/truncation limits remain owned by the executor. Existing serial timeout
+budgets and parallel per-command timeouts retain their semantics. Task 18 still
+owns provenance, response-budget and raw-byte-accounting changes. CLI flags,
+credentials, database formats, CI configuration and generated artifacts are
+unchanged.

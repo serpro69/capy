@@ -875,6 +875,12 @@ capy completion fish | source
 | `capy_execute_file`  | Inject a file into a sandbox variable (`FILE_CONTENT`) and process it with code you write. The raw file never enters context — only your printed summary does.                                                |
 | `capy_batch_execute` | The primary research tool. Runs multiple shell commands, auto-indexes all output as markdown, and searches with multiple queries — all in ONE call.                                                           |
 
+Batch commands run as submitted, including multiline commands and heredocs.
+Each indexed command section presents captured stdout followed by stderr, with a
+separating newline when needed; it does not preserve stream interleaving. Serial
+batches share a timeout budget and skip remaining commands after a timeout.
+Parallel batches give each command its own timeout and retain command order.
+
 ### Knowledge
 
 | Tool                   | What It Does                                                                                                                                                                                                                     |

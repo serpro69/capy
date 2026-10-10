@@ -157,7 +157,7 @@ func executeBatchSerial(ctx context.Context, commands []CommandInput, timeout in
 
 		result, err := exec.Execute(ctx, executor.ExecRequest{
 			Language:   executor.Shell,
-			Code:       cmd.Command + " 2>&1",
+			Code:       cmd.Command,
 			TimeoutSec: remainingSec,
 		})
 		if err != nil {
@@ -166,10 +166,7 @@ func executeBatchSerial(ctx context.Context, commands []CommandInput, timeout in
 			continue
 		}
 
-		output := result.Stdout
-		if output == "" {
-			output = "(no output)"
-		}
+		output := batchCapturedOutput(result.Stdout, result.Stderr)
 		outputs = append(outputs,
 			fmt.Sprintf("# %s\n\n%s\n", cmd.Label, output))
 
@@ -213,7 +210,7 @@ func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout,
 		g.Go(func() error {
 			result, err := exec.Execute(ctx, executor.ExecRequest{
 				Language:   executor.Shell,
-				Code:       cmd.Command + " 2>&1",
+				Code:       cmd.Command,
 				TimeoutSec: timeoutSec,
 			})
 			if err != nil {
@@ -221,10 +218,7 @@ func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout,
 				return nil
 			}
 
-			output := result.Stdout
-			if output == "" {
-				output = "(no output)"
-			}
+			output := batchCapturedOutput(result.Stdout, result.Stderr)
 			if result.TimedOut {
 				output += "\n(timed out)"
 			}
@@ -239,6 +233,19 @@ func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout,
 	// revisited (and sibling-cancellation semantics reconsidered).
 	_ = g.Wait()
 	return results
+}
+
+// batchCapturedOutput presents stdout before stderr without modifying the shell
+// command (a suffix can break a terminal heredoc). Stream interleaving is not
+// preserved; add a newline only if the captured streams need a separator.
+func batchCapturedOutput(stdout, stderr string) string {
+	if stdout == "" && stderr == "" {
+		return "(no output)"
+	}
+	if stdout != "" && stderr != "" && !strings.HasSuffix(stdout, "\n") && !strings.HasPrefix(stderr, "\n") {
+		return stdout + "\n" + stderr
+	}
+	return stdout + stderr
 }
 
 // truncateLabel builds a source label from command labels, truncated to 80 chars.
