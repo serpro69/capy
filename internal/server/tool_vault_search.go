@@ -41,6 +41,11 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 		return errorResult("Error: provide query or queries"), nil
 	}
 
+	project, projectPath, err := vaultProjectScope(req, s.projectDir)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	// Degrade loudly: session archival (and therefore vault search) is opt-in.
 	vlt := s.getVault()
 	if vlt == nil {
@@ -57,8 +62,6 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 		limit = 3
 	}
 	limit = min(limit, vaultSearchMaxLimit)
-
-	project, projectPath := vaultProjectScope(req, s.projectDir)
 
 	after, err := parseDateArg(req.GetString("after", ""), false)
 	if err != nil {
@@ -119,15 +122,21 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 // vaultProjectScope resolves the existing MCP selectors without changing the
 // server's physical project directory. Widening wins over explicit selection;
 // an omitted/empty selector keeps imported-path scope even after reassignment.
-func vaultProjectScope(req mcp.CallToolRequest, projectDir string) (project, projectPath string) {
+// Validate all_projects before throttle/storage work, even for knowledge-only
+// queries or an explicit star selector. Knowledge scope remains per-project.
+func vaultProjectScope(req mcp.CallToolRequest, projectDir string) (project, projectPath string, err error) {
+	allProjects, err := boolArg(req.GetArguments(), "all_projects", false)
+	if err != nil {
+		return "", "", err
+	}
 	explicit := req.GetString("project", "")
 	switch {
-	case req.GetBool("all_projects", false) || explicit == "*":
-		return "", ""
+	case allProjects || explicit == "*":
+		return "", "", nil
 	case explicit != "":
-		return explicit, ""
+		return explicit, "", nil
 	default:
-		return "", projectDir
+		return "", projectDir, nil
 	}
 }
 

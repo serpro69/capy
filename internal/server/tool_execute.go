@@ -14,7 +14,10 @@ func (s *Server) handleExecute(ctx context.Context, req mcp.CallToolRequest) (*m
 	language := executor.Language(req.GetString("language", ""))
 	code := req.GetString("code", "")
 	timeout := int(req.GetFloat("timeout", 30000))
-	background, _ := args["background"].(bool)
+	background, err := boolArg(args, "background", false)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 	intent := req.GetString("intent", "")
 
 	if code == "" {

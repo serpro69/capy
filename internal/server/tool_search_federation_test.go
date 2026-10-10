@@ -46,6 +46,8 @@ func TestSearch_ProjectOverrideScopes(t *testing.T) {
 				{"replaced worktree path", "scheduler", uuidB, map[string]any{"project": projectB}, false, true},
 				{"star widens", "scheduler", uuidB, map[string]any{"project": "*"}, true, false},
 				{"all projects", "scheduler", uuidB, map[string]any{"all_projects": true}, true, false},
+				{"string true widens", "scheduler", uuidB, map[string]any{"all_projects": " TrUe "}, true, false},
+				{"string false stays scoped", "scheduler", uuidB, map[string]any{"all_projects": " FaLsE "}, false, false},
 				{"widening wins", "scheduler", uuidB, map[string]any{"all_projects": true, "project": "missing"}, true, false},
 				{"star overrides false widening", "scheduler", uuidB, map[string]any{"all_projects": false, "project": "*"}, true, false},
 				{"false widening keeps default", "scheduler", uuidB, map[string]any{"all_projects": false}, false, false},

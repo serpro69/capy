@@ -12,18 +12,31 @@ import (
 
 func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
-	dryRun := true
-	if v, ok := args["dry_run"]; ok {
-		if b, ok := v.(bool); ok {
-			dryRun = b
-		}
+	dryRun, err := boolArg(args, "dry_run", true)
+	if err != nil {
+		return errorResult(err.Error()), nil
 	}
 	sourceLabel := req.GetString("source", "")
-	purgeEphemeral := boolArg(args, "purge_ephemeral")
-	purgeSession := boolArg(args, "purge_session")
-	purgeAll := boolArg(args, "purge_all")
-	optimize := boolArg(args, "optimize")
-	vacuum := boolArg(args, "vacuum")
+	purgeEphemeral, err := boolArg(args, "purge_ephemeral", false)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+	purgeSession, err := boolArg(args, "purge_session", false)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+	purgeAll, err := boolArg(args, "purge_all", false)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+	optimize, err := boolArg(args, "optimize", false)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+	vacuum, err := boolArg(args, "vacuum", false)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 	reclaim := optimize || vacuum
 
 	if purgeEphemeral && purgeSession {
@@ -93,7 +106,6 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	ephTTL := s.ephemeralTTL()
 	sessTTL := s.sessionTTL()
 	var pruned []store.SourceInfo
-	var err error
 	switch {
 	case purgeEphemeral:
 		pruned, err = st.PurgeEphemeral(dryRun, ephTTL)
@@ -169,17 +181,6 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	return s.finishCleanup(st, strings.Join(lines, "\n"), dryRun, optimize, vacuum)
-}
-
-// boolArg reads an optional boolean tool argument, defaulting to false when
-// absent or not a bool.
-func boolArg(args map[string]any, name string) bool {
-	if v, ok := args[name]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	return false
 }
 
 // finishCleanup appends the reclamation outcome to an eviction result. After a

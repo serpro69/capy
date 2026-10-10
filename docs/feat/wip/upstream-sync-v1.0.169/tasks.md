@@ -165,7 +165,7 @@ budgets and raw-byte accounting remain pending.
 
 ## Task 6a: Validate boolean inputs consistently
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 3, 7, 10, 11, 12a
@@ -173,9 +173,15 @@ budgets and raw-byte accounting remain pending.
 
 ### Subtasks
 
-- [ ] 6a.1 Add the presence-aware literal parser in `coerce.go` and wire execute/fetch flags → verify: string booleans preserve intent; invalid background spawns nothing.
-- [ ] 6a.2 Apply it to cleanup and both all-projects selectors, preserving omitted defaults → verify: invalid/null/numeric values cause no purge/optimization/widening, and explicit literal `dry_run: "false"` is intentionally honored.
-- [ ] 6a.3 Exercise actual stdio requests and record compatibility changes → verify: no handler-only coercion claim or false assertion about the SDK's previous string handling.
+- [x] 6a.1 Add the presence-aware literal parser in `coerce.go` and wire execute/fetch flags → verify: string booleans preserve intent; invalid background spawns nothing.
+- [x] 6a.2 Apply it to cleanup and both all-projects selectors, preserving omitted defaults → verify: invalid/null/numeric values cause no purge/optimization/widening, and explicit literal `dry_run: "false"` is intentionally honored.
+- [x] 6a.3 Exercise actual stdio requests and record compatibility changes → verify: no handler-only coercion claim or false assertion about the SDK's previous string handling.
+
+Evidence: [verification](verification.md#task-6a-consistent-boolean-request-validation)
+and [isolated review](.reviews/task-6a-code-review-2026-10-10.md). All existing
+boolean arguments share presence-aware validation before side effects. Literal
+string-false cleanup is intentionally honored; numeric all-projects coercion is
+rejected. Task 13 will reuse the parser for directory controls.
 
 ## Task 7: Use project cwd for every runtime
 

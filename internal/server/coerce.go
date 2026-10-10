@@ -3,7 +3,30 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
+
+// boolArg preserves omitted defaults but rejects malformed supplied values.
+// Only literal true/false strings are accepted; numeric truthiness and the
+// single-letter forms accepted by strconv.ParseBool are intentionally excluded.
+func boolArg(args map[string]any, name string, defaultValue bool) (bool, error) {
+	value, present := args[name]
+	if !present {
+		return defaultValue, nil
+	}
+	switch v := value.(type) {
+	case bool:
+		return v, nil
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true":
+			return true, nil
+		case "false":
+			return false, nil
+		}
+	}
+	return false, fmt.Errorf("invalid parameter %q: expected a boolean or a true/false string", name)
+}
 
 // coerceStringArray handles double-serialized JSON arrays and []any → []string.
 func coerceStringArray(val any) []string {

@@ -68,6 +68,14 @@ order. This preserves terminal heredocs and stderr-only/partial output without
 claiming stream interleaving. Serial batches retain their shared timeout budget
 and cascading skips; parallel workers retain independent per-command timeouts.
 
+MCP boolean inputs share a presence-aware parser in `internal/server/coerce.go`.
+It accepts native booleans and trimmed, case-insensitive true/false strings;
+omission preserves defaults, while malformed supplied values return tool errors.
+Execute/fetch/cleanup validate before process, cache, network or storage work.
+Both search tools validate `all_projects` before vault access, and knowledge
+search validates it before advancing the throttle, including knowledge-only
+requests and explicit `project: "*"` selectors.
+
 The retrieval engine is corpus-agnostic (`internal/retrieval`, ADR-028): the same
 two-layer RRF / rerank / entity-boost pipeline runs over any `Corpus` — the knowledge
 store's `chunks`/`chunks_trigram` tables and the vault's `vault_chunks`/`vault_chunks_trigram`
