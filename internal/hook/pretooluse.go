@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"strings"
@@ -65,14 +66,8 @@ func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.S
 // routeBash handles Bash tool routing: security check, curl/wget, HTTP, build tools, guidance.
 func routeBash(command string, policies []security.SecurityPolicy, a adapter.HookAdapter, projectDir, sessionID string) ([]byte, error) {
 	// Stage 1: Security check (full evaluateCommand with ask support)
-	if len(policies) > 0 {
-		result := security.EvaluateCommand(command, policies)
-		if result.Decision == "deny" {
-			return a.FormatBlock(fmt.Sprintf("Blocked by security policy: matches deny pattern %s", result.MatchedPattern))
-		}
-		if result.Decision == "ask" && result.MatchedPattern != "" {
-			return a.FormatAsk()
-		}
+	if result, err := checkCommandSecurity(command, policies, a); result != nil || err != nil {
+		return result, err
 	}
 
 	// Stage 2: Context-mode routing
@@ -140,42 +135,49 @@ func routeAgent(toolInput map[string]any, a adapter.HookAdapter) ([]byte, error)
 
 // routeCapyTool runs security checks and routing guidance on capy MCP tools.
 func routeCapyTool(toolName string, toolInput map[string]any, policies []security.SecurityPolicy, projectDir string, a adapter.HookAdapter) ([]byte, error) {
-	// Security checks (only when policies exist)
-	if len(policies) > 0 {
-		switch {
-		case strings.HasSuffix(toolName, "execute") && !strings.HasSuffix(toolName, "batch_execute"):
-			lang, _ := toolInput["language"].(string)
-			if lang == "shell" {
-				code, _ := toolInput["code"].(string)
-				return checkCommandSecurity(code, policies, a)
-			}
+	// Scanner limits apply even without configured policy patterns.
+	switch {
+	case strings.HasSuffix(toolName, "execute") && !strings.HasSuffix(toolName, "batch_execute"):
+		lang, _ := toolInput["language"].(string)
+		code, _ := toolInput["code"].(string)
+		return checkCodeSecurity(code, lang, policies, a)
 
-		case strings.HasSuffix(toolName, "execute_file"):
-			filePath, _ := toolInput["path"].(string)
-			if filePath != "" {
-				denyGlobs := security.ReadToolDenyPatterns("Read", projectDir, "")
-				denied, pattern := security.EvaluateFilePath(filePath, denyGlobs, projectDir)
-				if denied {
-					return a.FormatBlock(fmt.Sprintf("Blocked by security policy: file path matches Read deny pattern %s", pattern))
-				}
-			}
-			lang, _ := toolInput["language"].(string)
-			if lang == "shell" {
-				code, _ := toolInput["code"].(string)
-				return checkCommandSecurity(code, policies, a)
-			}
-
-		case strings.HasSuffix(toolName, "batch_execute"):
-			commands, _ := toolInput["commands"].([]any)
-			for _, entry := range commands {
-				if m, ok := entry.(map[string]any); ok {
-					cmd, _ := m["command"].(string)
-					if result, err := checkCommandSecurity(cmd, policies, a); result != nil || err != nil {
-						return result, err
-					}
-				}
+	case strings.HasSuffix(toolName, "execute_file"):
+		filePath, _ := toolInput["path"].(string)
+		if filePath != "" {
+			denyGlobs := security.ReadToolDenyPatterns("Read", projectDir, "")
+			denied, pattern := security.EvaluateFilePath(filePath, denyGlobs, projectDir)
+			if denied {
+				return a.FormatBlock(fmt.Sprintf("Blocked by security policy: file path matches Read deny pattern %s", pattern))
 			}
 		}
+		lang, _ := toolInput["language"].(string)
+		code, _ := toolInput["code"].(string)
+		return checkCodeSecurity(code, lang, policies, a)
+
+	case strings.HasSuffix(toolName, "batch_execute"):
+		raw := toolInput["commands"]
+		if encoded, ok := raw.(string); ok {
+			if err := json.Unmarshal([]byte(encoded), &raw); err != nil {
+				return a.FormatBlock("Command blocked: invalid batch commands JSON")
+			}
+		}
+		entries, ok := raw.([]any)
+		if !ok {
+			return a.FormatBlock("Command blocked: expected batch commands array")
+		}
+		commands := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			if m, ok := entry.(map[string]any); ok {
+				entry = m["command"]
+			}
+			command, ok := entry.(string)
+			if !ok {
+				return a.FormatBlock("Command blocked: invalid command format (expected string)")
+			}
+			commands = append(commands, command)
+		}
+		return checkCommandsSecurity(commands, policies, a)
 	}
 
 	// Git platform URL enforcement for fetch_and_index (fires every call)
@@ -194,12 +196,31 @@ func routeCapyTool(toolName string, toolInput map[string]any, policies []securit
 
 // checkCommandSecurity evaluates a command against deny policies.
 func checkCommandSecurity(command string, policies []security.SecurityPolicy, a adapter.HookAdapter) ([]byte, error) {
-	result := security.EvaluateCommand(command, policies)
-	if result.Decision == "deny" {
-		return a.FormatBlock(fmt.Sprintf("Blocked by security policy: matches deny pattern %s", result.MatchedPattern))
+	return checkCommandsSecurity([]string{command}, policies, a)
+}
+
+func checkCommandsSecurity(commands []string, policies []security.SecurityPolicy, a adapter.HookAdapter) ([]byte, error) {
+	ask := false
+	for _, command := range commands {
+		result, err := security.EvaluateCommand(command, policies)
+		if err != nil {
+			return a.FormatBlock(fmt.Sprintf("Command blocked: %v", err))
+		}
+		if result.Decision == "deny" {
+			return a.FormatBlock(fmt.Sprintf("Blocked by security policy: matches deny pattern %s", result.MatchedPattern))
+		}
+		ask = ask || result.Decision == "ask" && result.MatchedPattern != ""
 	}
-	if result.Decision == "ask" && result.MatchedPattern != "" {
+	// A matched ask must not hide a later deny or scanner failure in the request.
+	if ask {
 		return a.FormatAsk()
 	}
 	return nil, nil
+}
+
+func checkCodeSecurity(code, language string, policies []security.SecurityPolicy, a adapter.HookAdapter) ([]byte, error) {
+	if language == "shell" {
+		return checkCommandSecurity(code, policies, a)
+	}
+	return checkCommandsSecurity(security.ExtractShellCommands(code, language), policies, a)
 }

@@ -208,7 +208,27 @@ Security policies loaded from `.claude/settings.json` (project and global). Thre
 2. **ask** — prompt user for confirmation (hook only, not MCP)
 3. **allow** — command permitted
 
-Chained commands (`&&`, `;`, `|`) split and checked individually. Pattern syntax: `Tool(glob)` with `*` wildcard and colon syntax for command prefix matching.
+One bounded scanner checks executable elements separated by newlines, `;`, pipes,
+`&&`, `||`, and background `&`, including nested `$()` and backtick substitutions.
+Quoted literals and quoted heredoc bodies remain data; unquoted heredocs and
+arithmetic expressions are inspected for executable substitutions. Descriptor
+redirection such as `2>&1` does not split a command.
+
+Deny matches on any element win across settings. In the full hook evaluator, a
+policy's explicit ask wins over its allows, and an allow must cover every element;
+settings retain their order. An unmatched default ask still passes through the
+hook. MCP enforces denies only. Pattern syntax remains case-sensitive
+`Tool(glob)` with `*` wildcards and colon syntax for command prefixes.
+
+Each command is limited to 1 MiB, 64 active scanner frames, 4,096 executable
+elements, and `8 × input bytes + 4,096` aggregate visit steps. Limit errors return
+no partial result and block hook/MCP execution before spawning, including batch
+preflight and commands extracted from non-shell code. Malformed unterminated
+quotes/substitutions also fail evaluation. ANSI-C/localized heredoc delimiters
+(`$'EOF'`/`$"EOF"`) fail closed with guidance to use ordinary quoting; their
+delimiter decoding is not implemented. These are static policy checks, not a
+full shell interpreter or an OS sandbox; dynamic code and non-shell extraction
+retain their existing limitations.
 
 ### File Path Evaluation
 
