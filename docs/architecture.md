@@ -178,11 +178,34 @@ Hooks run as short-lived processes (`capy hook <event>`) invoked by the AI codin
 | `SessionEnd` | No-op | WAL checkpoint handled by server Close() |
 | `UserPromptSubmit` | Stub | Future user decision capture |
 
-Bash HTTP routing rejections use `FormatBlock`: the Claude Code response carries
+Main-agent Bash HTTP routing rejections use `FormatBlock`: the Claude Code response carries
 `permissionDecision: "deny"` and the capy guidance in `permissionDecisionReason`.
 It contains no replacement command. Security denies and matched asks run first;
 the existing silent/quiet file-download exceptions still apply. `FormatModify`
 remains in use for Agent/Task prompt injection, preserving other input fields.
+
+The adapter preserves `agent_id`, `agent_type` and payload `cwd`. Only a nonempty
+agent ID selects child routing; a type alone does not. Children with unverified
+capy tools receive `FormatAllow` advisory context for HTTP/WebFetch calls, leaving
+native permission handling intact. Guidance suggests deferred schema discovery
+once when supported, then native fallback if discovery or tools are unavailable.
+Neither local agent definitions nor the Bash-to-general-purpose upgrade establish
+the effective tool pool. Successful-call observations are a later Task 5a slice;
+current child redirects remain advisory, including their first native call.
+
+The hook entry point resolves project identity before loading Bash or Read
+policies: explicit flag, environment, payload-anchored discovery, then
+process-cwd discovery. Relative explicit/environment paths are anchored to process
+cwd; selected directories must exist. Invalid selections produce structured
+PreToolUse denials, or errors without state mutation for other events. Invalid
+payload cwd produces a diagnostic and fallback. Directory normalization resolves
+symlinks before parent components; anchored Git probes set their own directory
+and discard inherited `GIT_*` overrides without changing the parent process.
+
+Read policy ownership remains the selected project while cwd-relative rules use
+the validated payload directory (or selected project as fallback). Capy file
+parameters remain project-relative regardless of rule cwd. Guidance state uses
+the same selected project. Hooks do not resolve database keys or open a store.
 
 ### Guidance System
 

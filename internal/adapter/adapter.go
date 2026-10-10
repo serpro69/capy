@@ -16,7 +16,10 @@ type PreToolUseEvent struct {
 	ToolName   string
 	ToolInput  map[string]any
 	SessionID  string
-	ProjectDir string
+	AgentID    string
+	AgentType  string
+	Cwd        string
+	InvalidCwd bool // supplied cwd was not a nonempty JSON string
 }
 
 // PlatformCapabilities describes what a platform's hook system supports.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"path/filepath"
 	"strings"
 
 	"github.com/serpro69/capy/internal/adapter"
@@ -16,43 +17,47 @@ func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.S
 	if err != nil {
 		return nil, nil // pass through on parse error — don't block the tool
 	}
+	ctx := hookContext{projectDir: projectDir, workingDir: projectDir}
+	if cwd := validatedPayloadCwd(event); cwd != "" {
+		ctx.workingDir = cwd
+	}
+	return routePreToolUse(event, a, policies, ctx)
+}
 
+func routePreToolUse(event *adapter.PreToolUseEvent, a adapter.HookAdapter, policies []security.SecurityPolicy, ctx hookContext) ([]byte, error) {
 	toolName := event.ToolName
 	toolInput := event.ToolInput
 	sessionID := event.SessionID
-
-	// Use projectDir from event if available, otherwise fall back to the one from CLI
-	if event.ProjectDir != "" {
-		projectDir = event.ProjectDir
-	}
 
 	canonical := canonicalToolName(toolName)
 
 	// ─── Capy MCP tools: security checks only ───
 	if isCapyTool(toolName) {
-		return routeCapyTool(toolName, toolInput, policies, projectDir, a)
+		return routeCapyTool(toolName, toolInput, policies, ctx, a)
 	}
 
 	// ─── Bash: security check + routing ───
 	if canonical == "Bash" {
-		command, _ := toolInput["command"].(string)
-		return routeBash(command, policies, a, projectDir, sessionID)
+		return routeBash(event, a, policies, ctx)
 	}
 
 	// ─── WebFetch: deny → redirect with comprehension-aware guidance ───
 	if canonical == "WebFetch" {
+		if event.AgentID != "" {
+			return a.FormatAllow(childToolGuidance)
+		}
 		url, _ := toolInput["url"].(string)
 		return a.FormatBlock(webFetchBlockMessage(url))
 	}
 
 	// ─── Read: guidance once ───
 	if canonical == "Read" {
-		return guidanceOnce("read", READ_GUIDANCE, a, projectDir, sessionID)
+		return guidanceOnce("read", READ_GUIDANCE, a, ctx.projectDir, sessionID)
 	}
 
 	// ─── Grep: guidance once ───
 	if canonical == "Grep" {
-		return guidanceOnce("grep", GREP_GUIDANCE, a, projectDir, sessionID)
+		return guidanceOnce("grep", GREP_GUIDANCE, a, ctx.projectDir, sessionID)
 	}
 
 	// ─── Agent/Task: inject routing block into subagent prompt ───
@@ -65,7 +70,8 @@ func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.S
 }
 
 // routeBash handles Bash tool routing: security check, curl/wget, HTTP, build tools, guidance.
-func routeBash(command string, policies []security.SecurityPolicy, a adapter.HookAdapter, projectDir, sessionID string) ([]byte, error) {
+func routeBash(event *adapter.PreToolUseEvent, a adapter.HookAdapter, policies []security.SecurityPolicy, ctx hookContext) ([]byte, error) {
+	command, _ := event.ToolInput["command"].(string)
 	// Stage 1: Security check (full evaluateCommand with ask support)
 	if result, err := checkCommandSecurity(command, policies, a); result != nil || err != nil {
 		return result, err
@@ -88,6 +94,11 @@ func routeBash(command string, policies []security.SecurityPolicy, a adapter.Hoo
 			}
 		}
 		if !allSafe {
+			// D5: agent type/local frontmatter cannot establish the effective tool
+			// pool. Task 5a adds one-use observations; until then it is unknown.
+			if event.AgentID != "" {
+				return a.FormatAllow(childToolGuidance)
+			}
 			return a.FormatBlock("capy: curl/wget blocked (stdout flood risk). " +
 				"Use capy_fetch_and_index(url, source) to fetch URLs, or capy_execute(language, code) to run HTTP calls in sandbox. " +
 				"Silent file downloads with -o/--output (curl) or -O/--output-document (wget) are allowed.")
@@ -98,13 +109,16 @@ func routeBash(command string, policies []security.SecurityPolicy, a adapter.Hoo
 	// Inline HTTP detection (strip only heredocs — code in -e/-c flags should be visible)
 	noHeredoc := stripHeredocs(command)
 	if hasInlineHTTP(noHeredoc) {
+		if event.AgentID != "" {
+			return a.FormatAllow(childToolGuidance)
+		}
 		return a.FormatBlock("capy: Inline HTTP blocked. " +
 			"Use capy_execute(language, code) to run HTTP calls in sandbox, or capy_fetch_and_index(url, source) for web pages. " +
 			"Do NOT retry with Bash.")
 	}
 
 	// Allow, but inject routing nudge (once per session)
-	return guidanceOnce("bash", BASH_GUIDANCE, a, projectDir, sessionID)
+	return guidanceOnce("bash", BASH_GUIDANCE, a, ctx.projectDir, event.SessionID)
 }
 
 // routeAgent injects the routing block into Agent/Task subagent prompts.
@@ -135,13 +149,21 @@ func routeAgent(toolInput map[string]any, a adapter.HookAdapter) ([]byte, error)
 }
 
 // routeCapyTool runs security checks and routing guidance on capy MCP tools.
-func routeCapyTool(toolName string, toolInput map[string]any, policies []security.SecurityPolicy, projectDir string, a adapter.HookAdapter) ([]byte, error) {
+func routeCapyTool(toolName string, toolInput map[string]any, policies []security.SecurityPolicy, ctx hookContext, a adapter.HookAdapter) ([]byte, error) {
 	if strings.HasSuffix(toolName, "execute_file") || strings.HasSuffix(toolName, "_index") {
 		if filePath, _ := toolInput["path"].(string); filePath != "" {
-			policy, err := security.LoadReadPolicy(security.FilePolicyContext{ProjectDir: projectDir})
+			policy, err := security.LoadReadPolicy(security.FilePolicyContext{
+				ProjectDir: ctx.projectDir,
+				WorkingDir: ctx.workingDir,
+			})
 			if err == nil {
 				for _, warning := range policy.Warnings() {
 					slog.Warn(warning)
+				}
+				// Capy file parameters stay project-relative; only the rule's cwd
+				// anchor follows the hook payload. Preserve symlink-before-.. input.
+				if !filepath.IsAbs(filePath) {
+					filePath = ctx.projectDir + string(filepath.Separator) + filePath
 				}
 				err = policy.Check(filePath)
 			}

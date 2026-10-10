@@ -356,3 +356,83 @@ Detection rules and policy order are unchanged. Child identity/capability
 handling remains Tasks 5/5a. No dependencies, generated artifacts, database
 behavior, search/indexing/chunking or executor code changed; benchmarks are not
 applicable. README and architecture now describe the direct-denial behavior.
+
+## Task 5: Subagent routing and hook context
+
+Implemented 2026-10-10. Scope: adapter metadata, hook project/rule-cwd selection,
+anchored configuration discovery, unknown-child advisory routing, and injected
+and generated routing instructions.
+
+### Behavior and coverage
+
+- Adapter fixtures retain `agent_id`, `agent_type` and payload `cwd`. Invalid cwd
+  types, null and empty strings preserve tool/security input and trigger fallback
+  diagnostics. Identity semantics were checked against the official
+  [hook input reference](https://code.claude.com/docs/en/hooks#common-input-fields):
+  agent type can exist on a main-agent session, so only nonempty ID selects the
+  child path. Tool scope/discovery was also checked through official Context7
+  documentation; live Claude sessions were not exercised.
+- Context fixtures cover explicit/environment/payload precedence, relative
+  selections, missing/nonabsolute/non-directory/NUL payload paths, empty/invalid
+  explicit paths, invalid environment selections, and symlink-before-parent
+  resolution. Checks confirm the production helpers leave cwd and environment
+  unchanged. Invalid PreToolUse selections become structured denies; other
+  events error without guidance-state mutation.
+- A real CLI subprocess runs from a different project's nested directory and
+  verifies policy selection, payload/process discovery, invalid cwd diagnostics,
+  invalid selections, and exact guidance-state ownership. Synthetic home/config
+  directories isolate settings; the CLI fixtures unset both database keys.
+- Prepared Read checks keep settings at the selected project and rule cwd at the
+  payload directory. Relative capy file inputs remain project-relative; absolute
+  cwd-denied paths and malformed selected policies still block child calls.
+- Child cases include fixed-tool/inherit-all local definitions, unknown plugin
+  types, and missing types. Their HTTP/WebFetch results contain advice without
+  an explicit permission grant/deny. Type-only main sessions still get direct
+  denials. Bash and capy shell security denies/asks retain precedence, including
+  when cwd has an invalid type. Git-page advice favors native comprehension tools.
+- Anchored Git discovery ignores inherited `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_COMMON_DIR`, ceiling and command-config overrides. Tests retain Git's
+  precedence over nested capy markers and exercise marker/no-marker fallback.
+  Generated whole-file and merge-idempotence checks pass with the generator and
+  committed `.capy/AGENTS.md` synchronized.
+
+### Verification commands
+
+Commands use `CLAUDE_PROJECT_DIR=`, `GOCACHE=/tmp/capy-go-build`,
+`CGO_ENABLED=1`, `CAPY_DB_KEY=test-key-for-development`, and
+`CAPY_VAULT_KEY=test-key`. The broad suite uses an empty temporary
+`XDG_CONFIG_HOME` and local socket permission for config/server fixtures.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/hook/... ./internal/adapter/... ./internal/platform/...` | Existing suites passed after initial implementation: hook 0.374s, adapter 0.002s, platform 0.194s. |
+| `go test -race -tags fts5 -count=1 ./internal/hook/... ./internal/adapter/... ./internal/platform/... ./internal/config/... ./cmd/capy/... -run 'Test(Hook\|Child\|ResolveHook\|ParsePreToolUse\|DetectProjectRootFrom\|Routing\|GeneratedWholeFileArtifacts\|MergedArtifactsAreIdempotent\|PreparedReadPolicyHook)'` | Passed: hook 1.088s, adapter 1.016s, platform 1.017s, config 1.027s, CLI 3.048s. |
+| `go test -tags fts5 -count=1 -v ./internal/config -run '^TestDetectProjectRootFromMarkersAndFallback$'` outside the sandbox | All four marker/no-marker cases passed, 0.003s. |
+| `go test -tags fts5 ./...` | All packages passed: CLI 225.615s, hook 0.517s, adapter 0.003s, config 0.077s, platform 0.238s, server 113.171s, vault 256.099s. |
+| `git diff --check` | Passed after documentation updates. |
+
+The sandbox supplies an ambient `/tmp/.git`, so the initial no-marker fixture
+correctly discovered that ancestor instead of falling back to its start
+directory. The test now skips only that case when its unmarked-ancestry
+precondition is false; the unsandboxed rerun above exercised the assertion and
+passed. Discovery behavior and assertions were not weakened.
+
+### Review and compatibility
+
+The [independent reviewer](.reviews/task-5-code-review-2026-10-10.md) approved with
+no P0–P3 findings. PAL was unavailable. No knowledge indexing is needed: the
+decisions and limitations are recorded here and in the reconciled design.
+
+Hook policy/state ownership now follows one validated selection. Payload cwd can
+change cwd-relative rule matching without moving settings or state. Explicitly
+empty/invalid directories now fail instead of selecting another project. Default
+Git discovery also uses the new anchored helper, so inherited `GIT_*` overrides
+no longer redirect it; `CLAUDE_PROJECT_DIR` retains precedence.
+
+All child capabilities remain unverified in this slice, including inherit-all
+types and children that may actually have capy tools. They can make native calls
+with advisory guidance. Task 5a must add its bounded one-use observations before
+renewed child redirects are claimed; D5 still tracks authoritative pre-call
+tool-pool discovery. No vault behavior, database/key access, new hook platform,
+dependency version or search/indexing/chunking/executor behavior changed.
+Benchmarks are not applicable to this task.

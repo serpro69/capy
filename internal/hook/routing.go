@@ -29,7 +29,17 @@ func RoutingBlock() string {
     - capy_search: query indexed content (batch questions as array)
   </capy_tools>
 
+  <tool_availability>
+    A child agent's capy tool availability is unverified; agent type alone is not proof.
+    If the host offers deferred-tool discovery, discover capy schemas once, then use available tools.
+    If discovery is unavailable or the tools are absent, use native tools following the
+    comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.
+    A Bash-to-general-purpose upgrade does not prove that MCP tools are available.
+  </tool_availability>
+
   <blocked>
+    Main-agent redirects are enforced below. Children with unverified capy tools receive
+    discovery/native-tool advice instead; security denies and matched asks still apply.
     - curl/wget in Bash → use capy_fetch_and_index or capy_execute
     - Inline HTTP in Bash → use capy_execute
     - WebFetch → for git issues/PRs/MRs: platform CLI (gh issue view) or WebSearch; for large content: capy_fetch_and_index
@@ -52,6 +62,11 @@ func RoutingBlock() string {
   </capy_commands>
 </context_window_protection>`
 }
+
+const childToolGuidance = `capy: This child's capy tool availability is unverified.
+If the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.
+If discovery is unavailable or the tools are absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.
+For git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.`
 
 // READ_GUIDANCE is the one-time advisory shown when Read is used.
 const READ_GUIDANCE = `<context_guidance>

@@ -43,12 +43,27 @@ func TestParsePreToolUse_EmptyInput(t *testing.T) {
 	assert.Nil(t, event.ToolInput)
 }
 
-func TestParsePreToolUse_ProjectDirFromEnv(t *testing.T) {
+func TestParsePreToolUse_PayloadContext(t *testing.T) {
 	t.Setenv("CLAUDE_PROJECT_DIR", "/test/project")
 	a := &ClaudeCodeAdapter{}
-	event, err := a.ParsePreToolUse([]byte(`{"tool_name":"Bash","tool_input":{}}`))
+	event, err := a.ParsePreToolUse([]byte(`{"tool_name":"Bash","tool_input":{},"agent_id":"child-1","agent_type":"Explore","cwd":"/payload/project"}`))
 	require.NoError(t, err)
-	assert.Equal(t, "/test/project", event.ProjectDir)
+	assert.Equal(t, "/payload/project", event.Cwd)
+	assert.Equal(t, "child-1", event.AgentID)
+	assert.Equal(t, "Explore", event.AgentType)
+	assert.False(t, event.InvalidCwd)
+}
+
+func TestParsePreToolUse_InvalidCwdPreservesSecurityInput(t *testing.T) {
+	for _, cwd := range []string{`42`, `null`, `false`, `[]`, `{}`, `""`} {
+		t.Run(cwd, func(t *testing.T) {
+			event, err := (&ClaudeCodeAdapter{}).ParsePreToolUse([]byte(`{"tool_name":"Bash","tool_input":{"command":"sudo true"},"cwd":` + cwd + `}`))
+			require.NoError(t, err)
+			assert.True(t, event.InvalidCwd)
+			assert.Equal(t, "Bash", event.ToolName)
+			assert.Equal(t, "sudo true", event.ToolInput["command"])
+		})
+	}
 }
 
 // ─── Session ID extraction tests ───────────────────────────────────────────────

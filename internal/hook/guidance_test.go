@@ -159,8 +159,8 @@ func guidanceHookCall(t *testing.T, project, sessionID, tool string) []byte {
 		"tool_name": tool, "tool_input": map[string]any{}, "session_id": sessionID,
 	})
 	require.NoError(t, err)
-	// The real adapter imports CLAUDE_PROJECT_DIR into the event, overriding
-	// project. Keep filesystem tests independent of the developer's environment.
+	// Supply the temporary project directly to keep filename tests independent
+	// of the production entry point's environment/project selection.
 	output, err := handlePreToolUse(input, &testAdapter{}, nil, project)
 	require.NoError(t, err)
 	return output
