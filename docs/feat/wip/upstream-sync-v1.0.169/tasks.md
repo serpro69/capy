@@ -5,7 +5,7 @@
 > Audit: [upstream-audit.md](upstream-audit.md)
 > Reconciliation: [.reviews/reconciliation-2026-10-10.md](.reviews/reconciliation-2026-10-10.md)
 > Readiness: [.reviews/readiness-2026-10-10.md](.reviews/readiness-2026-10-10.md)
-> Status: pending
+> Status: in-progress
 > Created: 2026-10-10
 > Not Doing: CI/bundle/docs-only ports, unsupported platforms, hosted analytics/pricing, event/directive replay, new Codex hooks, new runtimes, transcript-based cwd guessing, vault schema/key changes, ranking rewrites, unconditional source echoes, OS sandboxing
 > Deferred follow-ups: per-agent throttle identity (D1), atomic checked-file handoff (D2), colliding concurrent batch labels (D3), structured chunk splitting (D4), authoritative child tool-pool discovery (D5); see audit.
@@ -14,7 +14,7 @@
 
 ## Task 1: Enforce shell policies on every executable element
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 6, 7, 10, 11, 12
@@ -22,9 +22,14 @@
 
 ### Subtasks
 
-- [ ] 1.1 Extend the scanner in `internal/security/split.go` for nested substitutions, real command separators and quote/escape/heredoc contexts → verify: table-driven positive and literal-data negative cases.
-- [ ] 1.2 Use executable elements in both evaluators in `eval.go`, preserving deny precedence and existing ask behavior → verify: allowed prefixes cannot authorize later commands.
-- [ ] 1.3 Propagate typed scanner-limit errors as hook blocks/MCP errors before spawning; test unquoted-heredoc substitutions and every numeric bound → verify: security/hook/server suites, with no partial-list fallback.
+- [x] 1.1 Extend the scanner in `internal/security/split.go` for nested substitutions, real command separators and quote/escape/heredoc contexts → verify: table-driven positive and literal-data negative cases.
+- [x] 1.2 Use executable elements in both evaluators in `eval.go`, preserving deny precedence and existing ask behavior → verify: allowed prefixes cannot authorize later commands.
+- [x] 1.3 Propagate typed scanner-limit errors as hook blocks/MCP errors before spawning; test unquoted-heredoc substitutions and every numeric bound → verify: security/hook/server suites, with no partial-list fallback.
+
+Evidence: [verification](verification.md#task-1-shell-policy-evaluation) and
+[isolated review](.reviews/task-1-code-review-2026-10-10.md). Unsupported
+ANSI-C/localized heredoc delimiters fail closed; bounded delimiter decoding is
+explicitly deferred in `implementation.md` with ordinary-quote guidance.
 
 ## Task 2a: Prepare origin-aware Read policies on current file paths
 

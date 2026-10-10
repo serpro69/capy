@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSplitChainedCommands(t *testing.T) {
@@ -48,9 +49,9 @@ func TestSplitChainedCommands(t *testing.T) {
 			[]string{`echo "a || b"`, "fail"},
 		},
 		{
-			"backtick quoted ; preserved",
+			"backtick commands inspected",
 			"echo `date; time` ; ls",
-			[]string{"echo `date; time`", "ls"},
+			[]string{"date", "time", "echo `date; time`", "ls"},
 		},
 		{
 			"no operators",
@@ -70,7 +71,9 @@ func TestSplitChainedCommands(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, SplitChainedCommands(tt.command))
+			got, err := SplitChainedCommands(tt.command)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

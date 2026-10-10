@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: pending
+> Status: in-progress (Task 1 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -26,6 +26,17 @@ No dependency upgrade is planned. Git ignore calls use the existing executable; 
 3. Exercise the same scanner through shell execute, batch and non-shell extracted command checks → verify: `go test -tags fts5 -count=1 ./internal/security/... ./internal/hook/... ./internal/server/...`.
 
 Do not add a full shell interpreter. Propagate a typed limit/evaluation error through both evaluators, hook routing and non-shell extraction checks; every affected handler blocks before execution rather than using a partial list. Test each limit immediately below/above its boundary in the hook, MCP execute and batch paths. Preserve unmatched-ask hook behavior described in design §3.1.
+
+Task 1 implementation notes (2026-10-10): the scanner also tracks comments,
+ANSI-C string quotes and parameter-expansion boundaries because each can hide
+substitutions if treated as ordinary characters. Hook batches normalize the
+server's supported JSON-string/plain-string command forms before scanning, and
+defer matched asks until all commands have cleared deny/error checks. Unsupported
+ANSI-C/localized **heredoc delimiter** quoting fails closed with an actionable
+message. Full delimiter escape/locale decoding is deferred to avoid approximating
+shell semantics; add differential Bash fixtures and bounded decoding before
+admitting those forms. Ordinary quoted delimiters remain supported. See
+[Task 1 verification](verification.md#task-1-shell-policy-evaluation).
 
 ## 2a. Prepared Read policy on existing paths
 

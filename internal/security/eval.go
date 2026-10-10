@@ -17,47 +17,67 @@ type CommandDecision struct {
 // otherwise "allow".
 //
 // Splits chained commands to prevent bypass via prepending innocent commands.
-func EvaluateCommandDenyOnly(command string, policies []SecurityPolicy) CommandDecision {
-	segments := SplitChainedCommands(command)
+func EvaluateCommandDenyOnly(command string, policies []SecurityPolicy) (CommandDecision, error) {
+	segments, err := SplitChainedCommands(command)
+	if err != nil {
+		return CommandDecision{}, err
+	}
 	for _, segment := range segments {
 		for _, policy := range policies {
 			if match := matchesAnyBashPattern(segment, policy.Deny, false); match != "" {
-				return CommandDecision{Decision: "deny", MatchedPattern: match}
+				return CommandDecision{Decision: "deny", MatchedPattern: match}, nil
 			}
 		}
 	}
-	return CommandDecision{Decision: "allow"}
+	return CommandDecision{Decision: "allow"}, nil
 }
 
 // EvaluateCommand evaluates a command against policies with full deny > ask > allow logic.
 //
-// Splits chained commands and checks each segment against deny patterns.
-// Then checks the full command against ask/allow patterns.
+// Checks every executable element, including nested substitutions.
 // Within each policy: deny > ask > allow (most restrictive wins).
 // First definitive match across policies wins.
 // Default (no match in any policy): "ask".
-func EvaluateCommand(command string, policies []SecurityPolicy) CommandDecision {
+func EvaluateCommand(command string, policies []SecurityPolicy) (CommandDecision, error) {
 	// Check each segment of chained commands against deny patterns
-	segments := SplitChainedCommands(command)
+	segments, err := SplitChainedCommands(command)
+	if err != nil {
+		return CommandDecision{}, err
+	}
 	for _, segment := range segments {
 		for _, policy := range policies {
 			if match := matchesAnyBashPattern(segment, policy.Deny, false); match != "" {
-				return CommandDecision{Decision: "deny", MatchedPattern: match}
+				return CommandDecision{Decision: "deny", MatchedPattern: match}, nil
 			}
 		}
 	}
 
-	// Check ask/allow against the full command
+	// Preserve settings precedence. An allow from one policy must cover all
+	// elements; a matched ask within that policy wins over any allows.
 	for _, policy := range policies {
-		if match := matchesAnyBashPattern(command, policy.Ask, false); match != "" {
-			return CommandDecision{Decision: "ask", MatchedPattern: match}
+		for _, segment := range segments {
+			if match := matchesAnyBashPattern(segment, policy.Ask, false); match != "" {
+				return CommandDecision{Decision: "ask", MatchedPattern: match}, nil
+			}
 		}
-		if match := matchesAnyBashPattern(command, policy.Allow, false); match != "" {
-			return CommandDecision{Decision: "allow", MatchedPattern: match}
+		allAllowed := len(segments) > 0
+		var matched string
+		for _, segment := range segments {
+			match := matchesAnyBashPattern(segment, policy.Allow, false)
+			if match == "" {
+				allAllowed = false
+				break
+			}
+			if matched == "" {
+				matched = match
+			}
+		}
+		if allAllowed {
+			return CommandDecision{Decision: "allow", MatchedPattern: matched}, nil
 		}
 	}
 
-	return CommandDecision{Decision: "ask"}
+	return CommandDecision{Decision: "ask"}, nil
 }
 
 // EvaluateFilePath checks if a file path should be denied based on deny globs.
