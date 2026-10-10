@@ -436,3 +436,84 @@ renewed child redirects are claimed; D5 still tracks authoritative pre-call
 tool-pool discovery. No vault behavior, database/key access, new hook platform,
 dependency version or search/indexing/chunking/executor behavior changed.
 Benchmarks are not applicable to this task.
+
+## Task 5a: One-use child tool observations
+
+Implemented 2026-10-10. Scope: bounded project observation state, stable session
+identity metadata, successful PostToolUse recording, suitable child redirects,
+SessionEnd cleanup, and synchronized routing instructions.
+
+### Behavior and coverage
+
+- Stable transcript/payload/environment session IDs can record observations;
+  PID fallbacks and absent child IDs cannot. Explicit pid-like IDs remain stable
+  when their source is stable. Unsafe IDs use the shared component mapping.
+- Only execute/fetch tool names and their MCP-qualified forms mint observations.
+  Protocol error/interruption/cancellation flags, malformed flags, failure event
+  names, serialized MCP errors, absent responses and other tools do not renew
+  existing evidence. Returned prose is not searched for error words. The official
+  [hook reference](https://code.claude.com/docs/en/hooks#posttooluse) and Context7
+  describe PostToolUse as a success event with an arbitrary tool response; live
+  Claude sessions were not used for verification.
+- Clock-controlled tests cover 59.999-second validity, strict 60-second expiry,
+  independent execute/fetch clocks, and consumption of all alternatives before
+  one redirect. Fetch alone cannot redirect arbitrary Bash HTTP. WebFetch accepts
+  either tool for absolute HTTP(S) URLs; Git issue/PR and invalid URL paths retain
+  native advice without consuming evidence. Existing denies/asks run first.
+- Tests cover 128-entry admission/oldest eviction, the 64 KiB serialized bound,
+  oversize reads, malformed/future/negative state, duplicate or unsafe identities,
+  unknown tools, FIFO/symlink/directory rejection and unwritable state. Failed
+  consumption writes return no tool and retain the old file.
+- Concurrent updates retain every committed observation, and concurrent consumes
+  return evidence exactly once. A separate helper process holds the lock while
+  another attempt reaches the 20 ms deadline and falls back; the same lock inode
+  survives later consumption. A fixed staging name recovers a simulated killed
+  writer's leftover without accumulating files or sweeping the directory.
+- Separate capy CLI processes exercise first-call advice, success → redirect →
+  failed retry → native fallback, and SessionEnd removal with live sibling
+  sessions retained. Both database keys are unset and isolated homes/data paths
+  remain free of knowledge/vault database artifacts. Unit cleanup checks also
+  preserve expired sibling entries, proving SessionEnd does not sweep them.
+- Generated whole-file and merge-idempotence checks pass with both routing
+  representations synchronized. macOS compilation checks the new Unix APIs;
+  runtime lock tests were performed on Linux only.
+
+### Verification commands
+
+Test runs use `CLAUDE_PROJECT_DIR=`, `GOCACHE=/tmp/capy-go-build`,
+`CGO_ENABLED=1`, `CAPY_DB_KEY=test-key-for-development`, and
+`CAPY_VAULT_KEY=test-key`. The broad run uses an empty temporary
+`XDG_CONFIG_HOME` and local socket permission for config/server fixtures.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/hook/... ./internal/adapter/...` | Passed after initial implementation: hook 0.456s, adapter 0.002s. |
+| `go test -race -tags fts5 -count=1 ./internal/hook/... ./internal/adapter/... ./internal/platform/... ./cmd/capy/... -run 'Test(Observation\|Observed\|HandleSessionEnd\|SessionIDStability\|HookObservationsAcrossProcesses\|Routing\|GeneratedWholeFileArtifacts\|MergedArtifactsAreIdempotent)'` | Passed after fixed staging-file and wording updates: hook 2.417s, adapter 1.010s, platform 1.015s, CLI 2.525s. |
+| `GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go test -tags fts5 -c -o /tmp/capy-task5a-darwin-hook.test ./internal/hook` | Passed; compile-only verification. |
+| `go test -tags fts5 ./...` | All packages passed: CLI 225.873s, hook 0.838s, adapter 0.003s, config 0.054s, platform 0.264s, server 114.407s, vault 255.128s. |
+| `git diff --check` | Passed after documentation updates. |
+
+An initial generated-wording assertion required the phrase "native fallback";
+both generator and committed copy now state that behavior explicitly. No runtime
+assertion was removed or relaxed. The write-permission test skips only when run
+as root; the reported Linux runs used the unprivileged development account.
+
+### Review and compatibility
+
+The [isolated reviewer](.reviews/task-5a-code-review-2026-10-10.md) approved with no
+P0–P3 findings. PAL was unavailable. No findings or new conventions require
+knowledge indexing because the state invariants are recorded in the design,
+architecture and repository instructions.
+
+The first child native call can remain advisory. Observations describe recent
+host/MCP success, not permanent availability or semantic success of every nested
+operation. D5 remains deferred. Failed or unavailable state access stays advisory;
+invalid data is not silently trusted or overwritten. The lock coordinates capy
+hook processes; external replacement of the project directory is outside that
+guarantee. The 20 ms bound applies to lock contention, not an OS disk-I/O deadline.
+
+SessionEnd now removes its observation entries, but still performs no knowledge
+checkpoint or database access. State is ephemeral project metadata with no tool
+contents, remains covered by the existing `.capy/**` ignore rule, and requires no
+database migration or key. No dependency version, indexing, chunking, retrieval
+or executor code changed; retrieval benchmarks are not applicable.

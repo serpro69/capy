@@ -126,7 +126,7 @@ native fallback. Task 5a's one-use observation-based enforcement remains pending
 
 ## Task 5a: Restore child redirects for observed available tools
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 3, 5
 - **Size:** M
 - **Can run in parallel with:** Tasks 6, 7, 10, 11, 16
@@ -134,9 +134,15 @@ native fallback. Task 5a's one-use observation-based enforcement remains pending
 
 ### Subtasks
 
-- [ ] 5a.1 Record one-use, independently expiring execute/fetch observations in the bounded project-state file → verify: 60-second expiry, no error/other-tool renewal, byte/entry caps, stable identities, atomic consumption and lock-timeout fallback.
-- [ ] 5a.2 Consume evidence before one suitable redirect; wire SessionEnd identity/entry cleanup → verify: failed retry allows native fallback, arbitrary HTTP requires execute, sibling state survives, and no knowledge DB is opened.
-- [ ] 5a.3 Document first-call/transient-observation limits and D5; synchronize generated wording → verify: no claim of permanent availability or authoritative frontmatter inference.
+- [x] 5a.1 Record one-use, independently expiring execute/fetch observations in the bounded project-state file → verify: 60-second expiry, no error/other-tool renewal, byte/entry caps, stable identities, atomic consumption and lock-timeout fallback.
+- [x] 5a.2 Consume evidence before one suitable redirect; wire SessionEnd identity/entry cleanup → verify: failed retry allows native fallback, arbitrary HTTP requires execute, sibling state survives, and no knowledge DB is opened.
+- [x] 5a.3 Document first-call/transient-observation limits and D5; synchronize generated wording → verify: no claim of permanent availability or authoritative frontmatter inference.
+
+Evidence: [verification](verification.md#task-5a-one-use-child-tool-observations)
+and [isolated review](.reviews/task-5a-code-review-2026-10-10.md). Successful
+execute/fetch observations now provide bounded, independently expiring one-use
+redirect evidence. SessionEnd clears only its stable session's entries. D5's
+authoritative pre-call tool discovery remains deferred.
 
 ## Task 6: Preserve batch heredocs and captured stderr
 

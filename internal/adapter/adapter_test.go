@@ -106,6 +106,29 @@ func TestExtractSessionID_Priority(t *testing.T) {
 	assert.Equal(t, "a1b2c3d4-e5f6-7890-abcd-ef1234567890", id)
 }
 
+func TestSessionIDStability(t *testing.T) {
+	for _, tt := range []struct {
+		name, session, transcript, environment string
+		stable                                 bool
+	}{
+		{name: "payload", session: "session", stable: true},
+		{name: "explicit pid-like ID", session: "pid-123", stable: true},
+		{name: "transcript", transcript: "/path/a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl", stable: true},
+		{name: "environment", environment: "session-env", stable: true},
+		{name: "PID fallback"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CLAUDE_SESSION_ID", tt.environment)
+			input, err := json.Marshal(map[string]any{"session_id": tt.session, "transcript_path": tt.transcript})
+			require.NoError(t, err)
+			event, err := (&ClaudeCodeAdapter{}).ParsePreToolUse(input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.stable, event.SessionIDStable)
+			assert.NotEmpty(t, event.SessionID)
+		})
+	}
+}
+
 // ─── Format tests ──────────────────────────────────────────────────────────────
 
 func parseJSON(t *testing.T, data []byte) map[string]any {

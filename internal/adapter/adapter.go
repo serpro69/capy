@@ -13,13 +13,14 @@ type HookAdapter interface {
 
 // PreToolUseEvent is the parsed hook input for a PreToolUse event.
 type PreToolUseEvent struct {
-	ToolName   string
-	ToolInput  map[string]any
-	SessionID  string
-	AgentID    string
-	AgentType  string
-	Cwd        string
-	InvalidCwd bool // supplied cwd was not a nonempty JSON string
+	ToolName        string
+	ToolInput       map[string]any
+	SessionID       string
+	SessionIDStable bool // false for the process-parent fallback
+	AgentID         string
+	AgentType       string
+	Cwd             string
+	InvalidCwd      bool // supplied cwd was not a nonempty JSON string
 }
 
 // PlatformCapabilities describes what a platform's hook system supports.

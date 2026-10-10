@@ -48,7 +48,7 @@ func handleEvent(event string, input []byte, a adapter.HookAdapter, explicitProj
 		policies := security.ReadBashPolicies(ctx.projectDir, "")
 		return routePreToolUse(parsed, a, policies, ctx)
 	case "posttooluse":
-		return handlePostToolUse(input, a)
+		return handlePostToolUse(input, parsed, ctx)
 	case "precompact":
 		return handlePreCompact(input, a)
 	case "sessionstart":
@@ -56,7 +56,7 @@ func handleEvent(event string, input []byte, a adapter.HookAdapter, explicitProj
 	case "userpromptsubmit":
 		return handleUserPromptSubmit(input, a)
 	case "sessionend":
-		handleSessionEnd(ctx.projectDir)
+		handleSessionEnd(ctx.projectDir, parsed)
 		return nil, nil // no output, no error — best effort
 	default:
 		return nil, fmt.Errorf("unknown hook event: %s", event)

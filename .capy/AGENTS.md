@@ -31,7 +31,7 @@ For both search tools, an explicit `project` matches the session's custom projec
 
 ## Blocked commands — enforced by hooks
 
-The redirects below apply to the main agent. Children with unverified capy tool availability receive discovery/native-tool advice instead of a capy-specific block. Security denies and matched asks still apply.
+The redirects below apply to the main agent. A child may receive one redirect to a suitable capy tool that succeeded for that child within 60 seconds; otherwise it receives discovery/native-tool advice. Security denies and matched asks still apply. Bash HTTP requires a recent capy_execute success; WebFetch can also use capy_fetch_and_index. Git issue/PR/MR comprehension keeps native CLI guidance.
 
 ### curl / wget — BLOCKED
 Any Bash command containing `curl` or `wget` is intercepted and replaced with an error message. Do NOT retry.
@@ -94,6 +94,8 @@ Every indexed entry has a **kind** that controls its lifecycle and search visibi
 When spawning subagents (Agent/Task tool), the routing block is automatically injected into their prompt. Bash-type subagents are upgraded to general-purpose; that type change does not prove MCP tools are available.
 
 If the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools. If discovery is unavailable or the tools are absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery. Agent type or a local definition alone does not establish the effective tool pool.
+
+Successful execute/fetch observations expire independently after 60 seconds and are consumed together before one child redirect. A failed retry cannot renew them, so native fallback is available on the next attempt. Missing stable identities or unavailable state also use advisory fallback. This does not guarantee first-call interception or permanent tool availability.
 
 ## capy commands
 
