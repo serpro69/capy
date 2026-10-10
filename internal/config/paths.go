@@ -20,21 +20,32 @@ func DetectProjectRoot() string {
 		return dir
 	}
 
-	if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
-		// Trim trailing newline.
-		s := string(out)
-		if len(s) > 0 && s[len(s)-1] == '\n' {
-			s = s[:len(s)-1]
-		}
-		return s
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "."
 	}
+	return DetectProjectRootFrom(cwd)
+}
 
-	dir := cwd
+// DetectProjectRootFrom detects a project from an existing absolute directory.
+// It ignores CLAUDE_PROJECT_DIR and inherited Git overrides: callers select
+// explicit/environment projects before using this anchored discovery path.
+func DetectProjectRootFrom(startDir string) string {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = startDir
+	cmd.Env = make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "GIT_") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	if out, err := cmd.Output(); err == nil {
+		if root := strings.TrimSuffix(string(out), "\n"); filepath.IsAbs(root) {
+			return root
+		}
+	}
+
+	dir := startDir
 	for {
 		for _, marker := range []string{".git", ".capy.toml", ".capy"} {
 			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
@@ -48,7 +59,7 @@ func DetectProjectRoot() string {
 		dir = parent
 	}
 
-	return cwd
+	return startDir
 }
 
 // MainWorktreeDir returns the main worktree of the git repository that

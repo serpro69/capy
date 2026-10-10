@@ -31,6 +31,8 @@ For both search tools, an explicit `project` matches the session's custom projec
 
 ## Blocked commands — enforced by hooks
 
+The redirects below apply to the main agent. Children with unverified capy tool availability receive discovery/native-tool advice instead of a capy-specific block. Security denies and matched asks still apply.
+
 ### curl / wget — BLOCKED
 Any Bash command containing `curl` or `wget` is intercepted and replaced with an error message. Do NOT retry.
 Instead use:
@@ -89,7 +91,9 @@ Every indexed entry has a **kind** that controls its lifecycle and search visibi
 
 ## Subagent routing
 
-When spawning subagents (Agent/Task tool), the routing block is automatically injected into their prompt. Bash-type subagents are upgraded to general-purpose so they have access to MCP tools. You do NOT need to manually instruct subagents about capy.
+When spawning subagents (Agent/Task tool), the routing block is automatically injected into their prompt. Bash-type subagents are upgraded to general-purpose; that type change does not prove MCP tools are available.
+
+If the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools. If discovery is unavailable or the tools are absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery. Agent type or a local definition alone does not establish the effective tool pool.
 
 ## capy commands
 

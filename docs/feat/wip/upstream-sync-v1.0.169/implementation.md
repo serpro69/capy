@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3 and 4 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4 and 5 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -149,6 +149,30 @@ remains Tasks 5 and 5a; this task does not claim those distinctions already exis
 4. Align generated routing text and its committed copy → verify: `go test -tags fts5 ./internal/platform -run 'TestGeneratedWholeFileArtifacts|TestMergedArtifactsAreIdempotent'` plus hook/adapter tests.
 
 A parent MCP server's existence is not evidence that a fixed-tool child can call it. Do not introduce a new ready sentinel or Codex hook adapter.
+
+Task 5 implementation notes (2026-10-10): `hook.Run` now owns input parsing and
+project selection before policy loading. A nil explicit-directory pointer means
+omission; an explicitly empty flag is invalid. `resolveHookContext` captures one
+project and an independently validated rule cwd. The adapter no longer injects
+an environment project into the event. `DetectProjectRootFrom` pins Git's child
+directory and removes inherited `GIT_*` variables, then retains marker/fallback
+discovery. Neither helper changes global cwd or environment.
+
+Directory validation resolves symlinks before `..`. Hook Read rules use payload
+cwd while settings and state use the selected project; relative capy file
+parameters are separately anchored to that project without pre-cleaning away
+symlink/parent components. Missing or malformed payload cwd falls back to the
+selected project for rules. Selection and affected Read-preparation failures
+produce structured PreToolUse blocks; other events report selection errors.
+
+Children identified by `agent_id` get unverified-tool advice for HTTP/WebFetch
+routing, while security enforcement and main-agent denials stay intact. No local
+frontmatter is used as proof of availability. Both injected routing and the
+generator/committed `.capy/AGENTS.md` describe conditional one-attempt discovery,
+native fallback and the limits of the Bash type upgrade. Task 5a remains pending
+and owns observation-backed redirects. D5's authoritative first-call discovery
+remains deferred. The old knowledge note recommending a two-file lookup is
+superseded by this feature's reconciled design.
 
 ## 5a. Re-enforce redirects after observed child capabilities
 

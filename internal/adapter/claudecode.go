@@ -15,20 +15,30 @@ var uuidInTranscriptRe = regexp.MustCompile(`([a-f0-9-]{36})\.jsonl$`)
 
 func (a *ClaudeCodeAdapter) ParsePreToolUse(input []byte) (*PreToolUseEvent, error) {
 	var raw struct {
-		ToolName       string         `json:"tool_name"`
-		ToolInput      map[string]any `json:"tool_input"`
-		SessionID      string         `json:"session_id"`
-		TranscriptPath string         `json:"transcript_path"`
+		ToolName       string          `json:"tool_name"`
+		ToolInput      map[string]any  `json:"tool_input"`
+		SessionID      string          `json:"session_id"`
+		TranscriptPath string          `json:"transcript_path"`
+		AgentID        string          `json:"agent_id"`
+		AgentType      string          `json:"agent_type"`
+		Cwd            json.RawMessage `json:"cwd"`
 	}
 	if err := json.Unmarshal(input, &raw); err != nil {
 		return nil, err
 	}
-	return &PreToolUseEvent{
-		ToolName:   raw.ToolName,
-		ToolInput:  raw.ToolInput,
-		SessionID:  extractSessionID(raw.SessionID, raw.TranscriptPath),
-		ProjectDir: os.Getenv("CLAUDE_PROJECT_DIR"),
-	}, nil
+	event := &PreToolUseEvent{
+		ToolName:  raw.ToolName,
+		ToolInput: raw.ToolInput,
+		SessionID: extractSessionID(raw.SessionID, raw.TranscriptPath),
+		AgentID:   raw.AgentID,
+		AgentType: raw.AgentType,
+	}
+	if len(raw.Cwd) != 0 {
+		if err := json.Unmarshal(raw.Cwd, &event.Cwd); err != nil || event.Cwd == "" {
+			event.InvalidCwd = true
+		}
+	}
+	return event, nil
 }
 
 // extractSessionID resolves a session ID using a 4-tier priority:

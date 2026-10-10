@@ -170,7 +170,7 @@ capy doctor   # verify everything is green
 - **curl/wget** calls are denied with guidance to use `capy_fetch_and_index` or `capy_execute`; silent file downloads remain allowed
 - **WebFetch** is blocked in favor of `capy_fetch_and_index`
 - **Read** for analysis (not editing) is nudged toward `capy_execute_file`
-- **Subagents** get routing instructions injected automatically
+- **Subagents** get routing instructions with one tool-discovery attempt when supported and native-tool fallback when capy tools are unavailable
 - **Past sessions** are indexed on server start for cross-session search
 
 You don't need to call capy tools yourself. The LLM learns the routing from the hooks and CLAUDE.md instructions that `capy setup` installed. But you can ask it directly: "use capy_batch_execute to research X" if you want to be explicit.
@@ -967,6 +967,14 @@ capy uses Claude Code's hook system to intercept tool calls before they execute.
 
 ### What gets intercepted
 
+The HTTP routing denials below apply to the main agent. Calls with a nonempty
+child `agent_id` receive advisory guidance while their capy tools are unverified:
+discover deferred capy schemas once if the host supports discovery, then use
+available tools; otherwise use native tools with bounded extraction output.
+An agent type or local definition alone cannot establish tool availability.
+Security denies and matched asks still apply. This fallback can permit a child's
+first native call even when it ultimately has capy tools.
+
 | Pattern                                           | What happens                                                                                                        |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `curl`/`wget` in Bash                             | Denied with guidance to use `capy_fetch_and_index` or `capy_execute`; silent/quiet file downloads remain allowed     |
@@ -977,6 +985,13 @@ capy uses Claude Code's hook system to intercept tool calls before they execute.
 | `Agent`/`Task` tools                              | Routing block injected into subagent prompt; Bash subagents upgraded to general-purpose                             |
 | `capy_fetch_and_index`                            | Git platform issue/PR/MR URLs blocked with platform CLI redirect; gist URLs get soft guidance                       |
 | `capy_*` tools (shell)                            | Security policy enforcement on shell code and batch commands                                                        |
+
+Hooks select their project before loading policies: `--project-dir` wins over
+`CLAUDE_PROJECT_DIR`, followed by project detection from a valid payload `cwd`,
+then the process working directory. Invalid explicit/environment selections fail;
+invalid payload directories emit a diagnostic and fall back. Settings and
+guidance state belong to the selected project. Cwd-relative Read rules use the
+validated payload cwd, falling back to the selected project when absent.
 
 ### Platform support
 

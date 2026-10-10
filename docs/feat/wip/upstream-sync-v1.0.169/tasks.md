@@ -107,7 +107,7 @@ Tasks 5 and 5a.
 
 ## Task 5: Route subagents according to available tools
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 2a, 3, 4
 - **Size:** M
 - **Can run in parallel with:** Tasks 2, 6, 7, 10, 11, 12, 16
@@ -115,9 +115,14 @@ Tasks 5 and 5a.
 
 ### Subtasks
 
-- [ ] 5.1 Preserve child identity/payload cwd and add start-directory detection in `config/paths.go` → verify: explicit/environment/payload/process precedence, invalid payload fallback, no global cwd/env mutation and no mismatched policy directory.
-- [ ] 5.2 Treat unverified child tools as unknown, with advisory fallback and security checks intact → verify: unknown/fixed-tool children avoid unavailable redirects, and type alone does not classify a child or its tool pool.
-- [ ] 5.3 Add bounded deferred-tool discovery/fallback wording to injected and generated routing → verify: Agent inputs survive, generated `.capy/AGENTS.md` matches its generator, and artifact tests pass.
+- [x] 5.1 Preserve child identity/payload cwd and add start-directory detection in `config/paths.go` → verify: explicit/environment/payload/process precedence, invalid payload fallback, no global cwd/env mutation and no mismatched policy directory.
+- [x] 5.2 Treat unverified child tools as unknown, with advisory fallback and security checks intact → verify: unknown/fixed-tool children avoid unavailable redirects, and type alone does not classify a child or its tool pool.
+- [x] 5.3 Add bounded deferred-tool discovery/fallback wording to injected and generated routing → verify: Agent inputs survive, generated `.capy/AGENTS.md` matches its generator, and artifact tests pass.
+
+Evidence: [verification](verification.md#task-5-subagent-routing-and-hook-context)
+and [isolated review](.reviews/task-5-code-review-2026-10-10.md). Context selection
+now precedes policy loading, and children with unverified tools receive advisory
+native fallback. Task 5a's one-use observation-based enforcement remains pending.
 
 ## Task 5a: Restore child redirects for observed available tools
 

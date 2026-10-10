@@ -2,9 +2,7 @@ package main
 
 import (
 	"github.com/serpro69/capy/internal/adapter"
-	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/hook"
-	"github.com/serpro69/capy/internal/security"
 	"github.com/spf13/cobra"
 )
 
@@ -16,14 +14,14 @@ func newHookCmd() *cobra.Command {
 		ValidArgs: []string{"pretooluse", "posttooluse", "precompact", "sessionstart", "sessionend", "userpromptsubmit"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectDir, _ := cmd.Flags().GetString("project-dir")
-			if projectDir == "" {
-				projectDir = config.DetectProjectRoot()
+			var explicitProjectDir *string
+			if cmd.Flags().Changed("project-dir") {
+				explicitProjectDir = &projectDir
 			}
 
-			policies := security.ReadBashPolicies(projectDir, "")
 			a := &adapter.ClaudeCodeAdapter{}
 
-			return hook.Run(args[0], a, policies, projectDir)
+			return hook.Run(args[0], a, explicitProjectDir)
 		},
 	}
 }
