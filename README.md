@@ -906,9 +906,38 @@ capy enforces the same permission rules you already use — but extends them to 
 }
 ```
 
-Add to `.claude/settings.json` (project) or `~/.claude/settings.json` (global). Pattern: `Tool(glob)` where `*` = anything. Colon syntax (`git:*`) matches the command with or without arguments.
+Add to `.claude/settings.local.json` (local), `.claude/settings.json` (project), or `~/.claude/settings.json` (user). Bash patterns use `*` for any text; colon syntax (`git:*`) matches the command with or without arguments.
 
 Chained commands (`&&`, `;`, `|`) are split and checked individually. **deny always wins over allow.**
+
+Read denies protect `capy_index(path)`, `capy_execute_file(path)`, and automatic
+refreshes of indexed files. Rules keep their settings origin and apply to
+relative, absolute, and symlink-resolved paths:
+
+| Read pattern | Anchor |
+| --- | --- |
+| `Read(//absolute/path/**)` | Filesystem root |
+| `Read(~/private/**)` | Home directory |
+| `Read(/private/**)` | Selected project for local/project settings; the settings file's directory for user settings |
+| `Read(./private/**)` or `Read(private/**)` | Selected project for MCP file operations |
+| `Read(*.env)` | Any basename at any depth under that directory |
+| `Read` | Every file read through these paths |
+
+Path patterns support `*` (within one component), `**` (across components), `?`
+(one character), and backslash-escaped literals. Explicit anchors keep their
+path scope: `Read(./*.env)` only covers that directory. Bracket classes, leading
+negation, brace/extglob expressions, and dot components after wildcards are not
+supported; invalid rules or malformed settings block file admission with a
+diagnostic. This is a supported subset of host permissions, not complete host
+policy emulation.
+
+For compatibility, single-slash **denies** also keep their former absolute-path
+interpretation and emit a warning. Migrate an intended absolute deny to `//`;
+new allows never receive the legacy interpretation. Servers capture policy at
+startup, so restart after settings changes. A blocked stale refresh keeps cached
+content searchable and logs the skipped read; it does not remove an already
+indexed source. These checks protect the explicit path inputs, not all file
+access by arbitrary submitted code.
 
 ### Sandbox protections
 

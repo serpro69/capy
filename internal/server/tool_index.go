@@ -27,7 +27,7 @@ func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 	// file readable by the server process could otherwise be indexed into FTS5
 	// and surfaced by capy_search, bypassing the Read deny-pattern mitigation
 	// (e.g. .ssh/id_rsa, .env, ~/.aws/credentials). checkFilePathDenyPolicy
-	// resolves the raw path against the project root (see EvaluateFilePath), so
+	// uses the prepared policy anchored to the selected project, so
 	// relative "../" traversal and symlink escapes are caught too. Inline
 	// content-only indexing (path == "") is unaffected.
 	if path != "" {
@@ -59,7 +59,7 @@ func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 			// segments (/tmp/a/../b.md) would be stored uncleaned as both the
 			// source label and the file_path column, defeating dedup (two
 			// spellings of one file → two sources). The earlier deny check runs
-			// EvaluateFilePath, which Cleans+resolves symlinks independently, so
+			// the prepared Read policy, which checks lexical and physical paths, so
 			// cleaning here does not affect the security decision.
 			path = filepath.Clean(path)
 		}
@@ -67,8 +67,9 @@ func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 		if maxFileSize <= 0 {
 			maxFileSize = int64(store.DefaultMaxSourceBytes)
 		}
-		// fd-bound read: bind the deny check (above), the stat, and the read to
-		// a single descriptor so the file cannot be swapped between them.
+		// Bind stat and read to one descriptor. The earlier policy check is
+		// separate: replacement before open remains deferred issue D2 in the
+		// upstream-sync-v1.0.169 audit.
 		// O_NONBLOCK prevents a FIFO from blocking the open before the
 		// IsRegular guard can reject it (no-op for regular files); IsRegular
 		// also blocks device/socket/dir reads.

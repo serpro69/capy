@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Task 1 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1 and 2a complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -45,6 +45,25 @@ admitting those forms. Ordinary quoted delimiters remain supported. See
 Retain rule origin and explicit anchor/cwd/home context when loading local/shared/user settings. Prepare the supported grammar and bare-tool rule; preserve a legacy absolute interpretation for single-slash **denies only**, with a diagnostic. New allows use host anchors only → verify: `//`, `~/`, source-relative `/`, cwd-relative rules, escaped literals, unsupported syntax and differing user/project settings origins.
 
 Use one prepared object in existing MCP direct reads and the store's deny callback before adding new ingestion/CLI paths → verify: the same relative deny blocks raw-relative, absolute and physical paths, including stale refresh, and no local symlink alias grants an external target. Invalid policy preparation blocks file admission visibly. Test this end-to-end, not only the legacy exported matcher. Keep settings origin distinct from execution cwd. Run security/server/stale tests; coordinate shared files with Task 1 without making its shell parser a dependency.
+
+Task 2a implementation notes (2026-10-10): `LoadReadPolicy(FilePolicyContext)`
+captures rule origin/action/anchor and returns a prepared `FilePolicy` or an
+error. Server construction retains either outcome; all direct reads and the
+stale checker enforce it. Hooks return `FormatBlock` on errors for execute-file
+and file-index calls. Missing settings are normal; malformed JSON, invalid
+permission arrays and unsupported Read patterns are not empty policies.
+Diagnostics quote rule/source data and compatibility warnings are deduplicated
+per rule/source in the snapshot. Server policy changes require restart.
+
+Literal deny prefixes resolve physically as well as lexically; allows resolve
+the anchor only and must cover both normalized requested and physical targets.
+This avoids turning an allowed alias into an external grant. The API's `Allows`
+method prepares Task 2's grant check; current direct reads enforce denies only.
+The legacy exported loader/matcher are retained without production callers.
+Task 5 still owns validated hook payload-cwd/project selection. D2 still owns
+atomic checked-file handoff; neither this task nor descriptor-bound stat/read
+eliminates replacement between policy evaluation and open. Named ADR creation
+remains Task 20. No CLI interface or CI configuration changes in this slice.
 
 ## 2. Execute-file path admission
 

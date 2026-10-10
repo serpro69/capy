@@ -232,7 +232,36 @@ retain their existing limitations.
 
 ### File Path Evaluation
 
-Read deny patterns (e.g., `Read(.env)`) checked for `capy_execute_file` paths.
+`security.LoadReadPolicy` prepares one immutable policy snapshot with the selected
+project, rule cwd, home, and each rule's action/settings source/anchor. MCP direct
+reads (`capy_execute_file`, `capy_index`) and the store's stale-refresh deny
+callback share the server snapshot. Hooks prepare rules per invocation and
+return structured blocks for policy errors. The legacy exported glob loader and
+matcher remain for compatibility; production file consumers use the prepared
+policy.
+
+Anchors are parsed before path cleaning: `//` means filesystem root, `~/` means
+home, `/` means the source anchor (project for local/shared settings; settings
+parent for user settings), and unprefixed/`./` means rule cwd. MCP uses its
+selected project as rule cwd. Bare `Read` matches every file; unprefixed
+basename-only rules match at any depth under cwd. Supported syntax is `*`, `**`,
+`?`, and escaped literals; unsupported patterns and invalid settings fail file
+admission. Missing settings remain normal.
+
+Denies match requested, lexical and physical paths, resolving symlinks before
+`..`; literal deny prefixes also resolve physically so absolute callers cannot
+bypass a deny expressed through an alias. Single-slash denies keep a conservative
+union of settings-relative and legacy absolute meanings with a compatibility
+warning. Explicit allows cover both normalized requested and physical paths
+without that legacy union or alias-prefix expansion. Ask rules are validated and
+retained but never grant MCP access.
+
+The server does not reload settings mid-session. Denied or invalid-policy stale
+reads are logged and skipped while preserving cached content. There remains a
+check/open replacement race (feature audit D2); this is not an OS sandbox.
+Execute-file containment/checked-path handoff and hook payload-cwd selection are
+separate pending Tasks 2 and 5 in the
+[current sync](feat/wip/upstream-sync-v1.0.169/tasks.md).
 
 ### SSRF Protection
 
