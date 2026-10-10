@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a and 2 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2 and 3 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -111,6 +111,15 @@ The named admission ADR remains part of Task 20.
 **Owners:** `internal/hook/guidance.go`, guidance tests.
 
 Use design §3.4's exact ID alphabet/128-byte bound and digest prefix from both `guidanceOnce` and `ResetGuidanceFile`; empty IDs stay non-persisting → verify: repeated invocations share one file, safe IDs remain compatible, unsafe IDs stay separate, reset targets the same file, and traversal/NUL/long IDs create nothing outside temporary `.capy`. New observations have a separate format and reuse only the component helper. Run hook tests.
+
+Task 3 implementation notes (2026-10-10): `sessionIDComponent` supplies the shared
+mapping in `guidance.go`. Both entry points leave empty IDs/project directories
+without filesystem effects. Existing compatible filenames and the guidance JSON
+format remain unchanged; unsafe IDs start using their digest filename without
+reading, migrating or deleting a legacy raw-ID path. Tests exercise JSON hook
+input with a fresh adapter on each call, guidance-type/session isolation, reset,
+the 128/129-byte boundary, and traversal/NUL/Unicode/1 MiB identifiers. Sentinel
+files outside `.capy` remain intact. Task 5a's observation store remains pending.
 
 ## 4. Explicit main-agent redirects
 

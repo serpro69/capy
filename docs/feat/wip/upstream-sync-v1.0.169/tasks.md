@@ -71,7 +71,7 @@ filename interpolation. D2's atomic check/read handoff remains deferred.
 
 ## Task 3: Contain guidance state filenames
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Tasks 1, 2, 6, 7, 10, 11, 12, 16
@@ -79,8 +79,13 @@ filename interpolation. D2's atomic check/read handoff remains deferred.
 
 ### Subtasks
 
-- [ ] 3.1 Share the specified alphabet/128-byte/digest mapping between guidance creation and reset → verify: normal IDs stay compatible, unsafe IDs stay separate, empty IDs remain non-persisting.
-- [ ] 3.2 Add traversal/NUL/oversized-ID tests with a temporary project → verify: no filesystem effects outside `.capy` and reset targets the same state file.
+- [x] 3.1 Share the specified alphabet/128-byte/digest mapping between guidance creation and reset → verify: normal IDs stay compatible, unsafe IDs stay separate, empty IDs remain non-persisting.
+- [x] 3.2 Add traversal/NUL/oversized-ID tests with a temporary project → verify: no filesystem effects outside `.capy` and reset targets the same state file.
+
+Evidence: [verification](verification.md#task-3-guidance-state-filenames) and
+[isolated review](.reviews/task-3-code-review-2026-10-10.md). Compatible filenames
+are preserved; unsafe IDs use the same digest for creation and reset. Task 5a's
+separate observation-state format and lifecycle remain pending.
 
 ## Task 4: Emit direct main-agent routing denials
 
