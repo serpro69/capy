@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1 and 2a complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a and 2 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -75,6 +75,36 @@ remains Task 20. No CLI interface or CI configuration changes in this slice.
 4. Document the remaining check/open race at the helper and link [D2](upstream-audit.md#d2-filesystem-replacement-between-policy-checks-and-runtime-reads) → verify: documentation and error text do not claim an OS sandbox.
 
 Run `go test -tags fts5 -count=1 ./internal/security/... ./internal/server/...`. Existing explicit external-path tests should use intentional allow fixtures; do not just remove them or weaken the assertions.
+
+Task 2 implementation notes (2026-10-10): `FilePolicy.ResolveExecuteFile`
+reuses the prepared deny/grant matchers and candidate resolver in
+`internal/security/file_policy.go`. It resolves relative inputs from the selected
+project, even when the policy's rule cwd differs, and checks both lexical and
+physical containment using path components. Symlinked project roots accept their
+lexical and canonical spellings. One allow must cover both candidates for an
+external read; unrelated partial allows do not combine. Missing/unresolvable
+targets and invalid projects fail before execution. The server forwards the
+returned physical absolute path to the executor while keeping existing response
+source labels. No second policy load is needed.
+
+Isolated review found that embedding that physical path in generated Ruby,
+Elixir, PHP or Perl source could interpolate a filename into a different, denied
+target. The executor now transfers it in the request-local child environment as
+`CAPY_FILE_CONTENT_PATH`; each runtime reads that value into its existing path
+variable. This also avoids incompatible control/Unicode escapes across runtimes.
+The parent environment is never mutated, and inherited values cannot override
+the request. Rust receives it when running the compiled binary. This necessary
+handoff fix touches `executor.go` and `wrap.go`; Task 7's cwd changes stay pending.
+JavaScript/TypeScript obtain the environment through `require("process")` so a
+snippet's own `process` declaration does not shadow the preamble.
+
+The original external-success fixture now declares an intentional absolute Read
+allow. Shell-policy fixtures use existing project files so they still exercise
+command rejection. Tests cover differing process/project cwd and symlink-before-
+`..` handoff with distinct file contents. `capy_index` keeps deny-only explicit
+file admission. D2 remains documented at the helper: an atomic checked-file
+handoff into the child runtime is required to close concurrent replacement.
+The named admission ADR remains part of Task 20.
 
 ## 3. Safe guidance filenames
 

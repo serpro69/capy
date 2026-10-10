@@ -60,3 +60,12 @@ func (s *Server) checkReadPath(filePath string) error {
 	}
 	return s.readPolicy.Check(filePath)
 }
+
+// resolveExecuteFilePath enforces the captured policy and project containment in
+// one admission pass. Other file consumers retain their deny-only contract.
+func (s *Server) resolveExecuteFilePath(filePath string) (string, error) {
+	if s.readPolicyErr != nil {
+		return "", s.readPolicyErr
+	}
+	return s.readPolicy.ResolveExecuteFile(filePath)
+}

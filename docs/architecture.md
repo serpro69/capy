@@ -256,11 +256,20 @@ warning. Explicit allows cover both normalized requested and physical paths
 without that legacy union or alias-prefix expansion. Ask rules are validated and
 retained but never grant MCP access.
 
+`FilePolicy.ResolveExecuteFile` resolves the execute-file path parameter once
+relative to the selected project, checks Read denies, and requires component-wise
+lexical and physical containment. The selected project's lexical and canonical
+spellings both count as local. An external path needs one explicit allow covering
+both requested and physical candidates. Unresolvable projects/targets fail
+before spawning; the executor receives the checked physical absolute path. It
+passes that path as request-local child environment data, so runtime string
+interpolation and language-specific escaping cannot change the admitted target.
+`capy_index` retains its explicit absolute-file, deny-only admission contract.
+
 The server does not reload settings mid-session. Denied or invalid-policy stale
 reads are logged and skipped while preserving cached content. There remains a
 check/open replacement race (feature audit D2); this is not an OS sandbox.
-Execute-file containment/checked-path handoff and hook payload-cwd selection are
-separate pending Tasks 2 and 5 in the
+Hook payload-cwd selection remains pending Task 5 in the
 [current sync](feat/wip/upstream-sync-v1.0.169/tasks.md).
 
 ### SSRF Protection

@@ -285,26 +285,26 @@ func TestExecuteShellPreservesPATH(t *testing.T) {
 // --- File content injection ---
 
 func TestInjectFileContentPython(t *testing.T) {
-	code := injectFileContent(Python, "print(FILE_CONTENT)", "/tmp/test.txt")
+	code := injectFileContent(Python, "print(FILE_CONTENT)")
 	assert.Contains(t, code, "FILE_CONTENT_PATH")
-	assert.Contains(t, code, "/tmp/test.txt")
+	assert.Contains(t, code, fileContentPathEnv)
 	assert.Contains(t, code, "print(FILE_CONTENT)")
 }
 
 func TestInjectFileContentShell(t *testing.T) {
-	code := injectFileContent(Shell, "echo $FILE_CONTENT", "/tmp/test.txt")
+	code := injectFileContent(Shell, "echo $FILE_CONTENT")
 	assert.Contains(t, code, "FILE_CONTENT_PATH=")
 	assert.Contains(t, code, "echo $FILE_CONTENT")
 }
 
 func TestInjectFileContentJS(t *testing.T) {
-	code := injectFileContent(JavaScript, "console.log(FILE_CONTENT)", "/tmp/test.txt")
+	code := injectFileContent(JavaScript, "console.log(FILE_CONTENT)")
 	assert.Contains(t, code, "readFileSync")
 	assert.Contains(t, code, "console.log(FILE_CONTENT)")
 }
 
 func TestInjectFileContentRuby(t *testing.T) {
-	code := injectFileContent(Ruby, "puts FILE_CONTENT", "/tmp/test.txt")
+	code := injectFileContent(Ruby, "puts FILE_CONTENT")
 	assert.Contains(t, code, "File.read")
 }
 

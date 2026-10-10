@@ -52,7 +52,7 @@ handoff and validated hook cwd selection remain Tasks 2 and 5.
 
 ## Task 2: Admit execute-file paths consistently
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2a
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 6, 10, 11, 12
@@ -60,9 +60,14 @@ handoff and validated hook cwd selection remain Tasks 2 and 5.
 
 ### Subtasks
 
-- [ ] 2.1 Use Task 2a's prepared Read rules for canonical containment and external grants → verify: native absolute/home rules, traversal, symlink aliases, deny-wins and explicit exceptions.
-- [ ] 2.2 Resolve the path once in server security handling and pass it to `handleExecuteFile`'s executor request → verify: process cwd differs from project without reading the wrong file.
-- [ ] 2.3 Record D2 at the helper and test failure paths before child spawn → verify: security/server suites and accurate boundary documentation.
+- [x] 2.1 Use Task 2a's prepared Read rules for canonical containment and external grants → verify: native absolute/home rules, traversal, symlink aliases, deny-wins and explicit exceptions.
+- [x] 2.2 Resolve the path once in server security handling and pass it to `handleExecuteFile`'s executor request → verify: process cwd differs from project without reading the wrong file.
+- [x] 2.3 Record D2 at the helper and test failure paths before child spawn → verify: security/server suites and accurate boundary documentation.
+
+Evidence: [verification](verification.md#task-2-execute-file-path-admission) and
+[isolated review](.reviews/task-2-code-review-2026-10-10.md). Review also required
+passing the admitted path through the child environment to prevent runtime
+filename interpolation. D2's atomic check/read handoff remains deferred.
 
 ## Task 3: Contain guidance state filenames
 

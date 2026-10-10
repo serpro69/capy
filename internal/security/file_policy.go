@@ -61,6 +61,10 @@ func (p *FilePolicy) Allows(path string) (bool, error) {
 	if len(candidates) < 2 {
 		return false, nil
 	}
+	return p.allowsCandidates(candidates), nil
+}
+
+func (p *FilePolicy) allowsCandidates(candidates []string) bool {
 	for _, rule := range p.rules {
 		if rule.action != "allow" {
 			continue
@@ -73,13 +77,59 @@ func (p *FilePolicy) Allows(path string) (bool, error) {
 			}
 		}
 		if matches {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
+}
+
+// ResolveExecuteFile admits a path relative to the selected project and returns
+// its checked physical absolute path for the executor. Both lexical and physical
+// containment are required unless one explicit Read allow covers both paths.
+// This protects only the path parameter, not filesystem access by submitted code.
+// TODO(D2): bind admission to the runtime read with an atomic checked-file handoff;
+// returning a path cannot prevent concurrent replacement before the child reads.
+// See docs/feat/wip/upstream-sync-v1.0.169/upstream-audit.md#d2-filesystem-replacement-between-policy-checks-and-runtime-reads.
+func (p *FilePolicy) ResolveExecuteFile(path string) (string, error) {
+	if p == nil {
+		return "", fmt.Errorf("Read policy is unavailable")
+	}
+	project, err := filepath.EvalSymlinks(p.context.ProjectDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve execute-file project: %w", err)
+	}
+	info, err := os.Stat(project)
+	if err != nil {
+		return "", fmt.Errorf("stat execute-file project: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("execute-file project %q is not a directory", project)
+	}
+	candidates, err := p.resolveCandidates(path, p.context.ProjectDir, true)
+	if err != nil {
+		return "", err
+	}
+	lexical, physical := candidates[0], candidates[1]
+	local := (pathWithin(p.context.ProjectDir, lexical) || pathWithin(project, lexical)) && pathWithin(project, physical)
+	if !local && !p.allowsCandidates(candidates) {
+		return "", fmt.Errorf("execute-file path %q is outside the selected project without an explicit Read allow covering the requested and physical paths; add a matching permissions.allow rule in .claude/settings.local.json (for example Read(//absolute/path/**))", path)
+	}
+	return physical, nil
+}
+
+func pathWithin(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 func (p *FilePolicy) checkedCandidates(path string) ([]string, error) {
+	if p == nil {
+		return nil, fmt.Errorf("Read policy is unavailable")
+	}
+	return p.resolveCandidates(path, p.context.WorkingDir, false)
+}
+
+func (p *FilePolicy) resolveCandidates(path, base string, requireExisting bool) ([]string, error) {
 	if p == nil {
 		return nil, fmt.Errorf("Read policy is unavailable")
 	}
@@ -92,7 +142,7 @@ func (p *FilePolicy) checkedCandidates(path string) ([]string, error) {
 	// Do not use Join here: it cleans away symlinks before a following '..'.
 	input := path
 	if !filepath.IsAbs(input) {
-		input = p.context.WorkingDir + string(filepath.Separator) + input
+		input = base + string(filepath.Separator) + input
 	}
 	candidates := []string{filepath.Clean(input)}
 	if err := p.checkDenies(input); err != nil {
@@ -103,7 +153,7 @@ func (p *FilePolicy) checkedCandidates(path string) ([]string, error) {
 	}
 	physical, err := filepath.EvalSymlinks(input)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) && !requireExisting {
 			return candidates, nil
 		}
 		return nil, fmt.Errorf("resolve file path %q: %w", path, err)

@@ -939,6 +939,18 @@ content searchable and logs the skipped read; it does not remove an already
 indexed source. These checks protect the explicit path inputs, not all file
 access by arbitrary submitted code.
 
+`capy_execute_file(path)` resolves relative paths from the selected project.
+Both the requested path and its physical target must be inside that project,
+unless one explicit Read allow covers both. To process an external file, add a
+matching rule such as `"Read(//absolute/path/**)"` or `"Read(~/reports/**)"` to
+`permissions.allow` in your settings and restart the server. Denies always win;
+allowing only a project-local symlink does not grant access to its external target.
+Missing or unresolvable paths fail before code starts. The executor receives the
+checked physical absolute path, including when process cwd differs from the
+selected project. `capy_index(path)` retains its explicit absolute-file behavior
+subject to Read denies. Concurrent replacement between checking and reading
+remains possible; see [D2](docs/feat/wip/upstream-sync-v1.0.169/upstream-audit.md#d2-filesystem-replacement-between-policy-checks-and-runtime-reads).
+
 ### Sandbox protections
 
 - **Process group isolation** — child processes can't escape cleanup

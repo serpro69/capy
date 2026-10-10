@@ -142,3 +142,101 @@ descriptor read. No new convention needs indexing beyond these repository docs.
 Optional documentation follow-up: `kk:clarify-docs` can review the updated
 `README.md` Security section and `docs/architecture.md` File Path Evaluation
 section. This is editorial polish, not an unfinished Task 2a requirement.
+
+## Task 2: Execute-file path admission
+
+Implemented 2026-10-10. Scope: prepared-policy containment/external grants,
+checked absolute-path forwarding, and regression tests. Runtime cwd changes,
+per-call cwd overrides and hook cwd selection remain separate pending tasks.
+
+### Behavior and coverage
+
+- Relative paths resolve from the selected project independently of process cwd
+  and the policy's rule cwd. Both spellings of a symlinked project are local.
+  Sibling-prefix, traversal, external-alias and symlink-before-`..` inputs require
+  a grant when either lexical or physical containment fails.
+- Native absolute/home/bare Read allows work through local, shared and user
+  settings. One grant must cover both candidates; separate alias-only and
+  target-only grants do not combine. Denies still win on raw, lexical and physical
+  paths, including conservative legacy single-slash denies.
+- Empty/NUL paths, missing targets, dangling/looping links, unavailable policies
+  and disappeared/non-directory projects return errors. Server marker tests
+  establish that rejected admissions do not spawn submitted code.
+- A real shell fixture proves `FILE_CONTENT` uses the selected project even when
+  a same-named file exists in process cwd. Another proves symlink-before-`..`
+  reads the physical target rather than the different lexical file. Existing
+  external-success coverage now uses an intentional grant; command-deny/limit
+  fixtures use existing local inputs and retain their original assertions.
+- The review-driven handoff regression covers runtime interpolation, quotes,
+  backslashes, newlines, control characters and Unicode in physical filenames
+  behind safe aliases, with denied alternative filenames. JavaScript, Python,
+  shell, Go, Rust and Perl passed; capy's detector found no TypeScript, Ruby, PHP,
+  R or Elixir runtime, so those cases skip explicitly. Node v24.21.0 is installed
+  and a direct TypeScript probe passed, but the TypeScript candidate list only
+  includes bun, tsx and ts-node. Adding Node detection is outside Task 2.
+  The parent environment stays intact
+  and cannot override the per-child admitted path. Rustup's toolchain location
+  is preserved while isolating home/settings.
+- Explicit external `capy_index(path)` still succeeds under an empty deny policy.
+  No retrieval, indexing algorithm, module dependency, storage format, key
+  resolution, CLI interface, CI configuration or generated artifact changed.
+
+### Verification commands
+
+Go commands use `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development`, and `CAPY_VAULT_KEY=test-key`. The broad
+suite additionally uses a temporary home/config directory with the installed
+`GOPATH=/home/sergio/go` and `GOMODCACHE=/home/sergio/go/pkg/mod`. Final runtime
+checks also set `RUSTUP_HOME=/home/sergio/.rustup` to retain the installed compiler.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/security/... ./internal/server/... -run 'TestResolveExecuteFile\|TestExecuteFile_\|TestPreparedReadPolicy\|TestShellPolicyLimitsBeforeSpawn'` | Passed: security 0.020s, server 3.116s. |
+| `go test -race -tags fts5 -count=1 ./internal/security ./internal/server -run 'Test(ReadPolicy\|ResolveExecuteFile\|PreparedReadPolicy\|ExecuteFile\|ShellPolicyLimitsBeforeSpawn)'` | Passed including the final lexical-deny case: security 1.061s, server 5.085s. |
+| `go vet -tags fts5 ./internal/security ./internal/server` | Passed. |
+| `go test -tags fts5 ./...` | Before the review-driven executor fix: CLI, executor, hook, platform, security, vault and TUI passed; remaining unchanged packages used cache. Config/server needed the socket-enabled rerun below. |
+| `go test -tags fts5 -count=1 ./internal/config ./internal/security ./internal/server` | Socket-enabled rerun passed: config 0.060s, security 0.029s, server 105.892s. |
+| `go test -tags fts5 -count=1 ./internal/server -run TestExecuteFile_LiteralPhysicalPath -v` | Passed after the handoff fix: six installed runtimes; five explicit skips. |
+| `go test -tags fts5 -count=1 ./internal/security/... ./internal/server/... ./internal/executor/...` | Final code, isolated settings and socket access: security 0.036s, server 107.439s, executor 2.226s; all passed. |
+| `go test -race -tags fts5 -count=1 ./internal/security ./internal/server ./internal/executor -run 'Test(ReadPolicy\|ResolveExecuteFile\|PreparedReadPolicy\|ExecuteFile\|ShellPolicyLimitsBeforeSpawn\|InjectFileContent)'` | Final code passed: security 1.058s, server 5.218s, executor 1.015s. |
+| `go vet -tags fts5 ./internal/security ./internal/server ./internal/executor` | Passed after the handoff fix. |
+| `go test -race -tags fts5 -count=1 ./internal/server ./internal/executor -run 'Test(ExecuteFile\|InjectFileContent)'` | After the final JS/TS shadowing fix: server 1.773s, executor 1.017s; passed. Vet also passed again. |
+| `make bench-quality` | Passed; report: `bench-results/feat-upstream_sync.json`. |
+| `git diff --check` | Passed. |
+
+The first test attempt could not write the sandbox's default Go cache; using the
+temporary cache resolved that setup failure. The initial broad suite passed all
+packages except config/server fixtures requiring local Unix/TCP sockets; these
+passed when rerun with socket permission. The first literal-filename runtime
+probe exposed the temporary home's missing rustup configuration, fixed by
+retaining its installed toolchain location without weakening the assertions.
+
+Because review required an executor handoff change, quality benchmarks were run
+as required by repository guidance. A clean `git archive` of pre-task commit
+`771bcca` was benchmarked using `CAPY_BENCH_RESULTS=/tmp/capy-task2-baseline.json`
+and `go test -tags fts5 -run '^TestBench' -p 1 ./internal/store ./internal/server
+./internal/vault`. The dataset hash matches. All quality metrics (156 knowledge
+cases plus vault cases), post-processing deltas, failure records and threshold
+output/compression decisions match exactly. Only run metadata and latency differ:
+threshold baseline/current milliseconds were 1.966/1.943, 312.383/309.177,
+6.353/6.644 and 21.807/22.324. These single-run timings do not establish statistical
+performance significance. Task 20 retains final feature comparisons.
+
+### Compatibility and remaining boundary
+
+External execute-file inputs now require an explicit Read allow. The request's
+existing response/source labels are preserved, while the executor gets the
+admitted physical absolute path. Missing paths fail before execution instead of
+depending on the runtime's file-read behavior. D2 remains: concurrent replacement
+after admission is possible until the checked file can be handed atomically into
+the runtime. The helper and user-facing documentation state that limitation.
+These decisions are already recorded in repository docs, so no duplicate
+knowledge note is needed. CLI and CI documentation changes are N/A for this task.
+
+The [isolated reviewer](.reviews/task-2-code-review-2026-10-10.md) approved the
+final changes with no remaining actionable findings. The original P1 runtime
+interpolation and follow-up P2 JS/TS `process` shadowing were fixed and retested.
+PAL was unavailable; the independent code-reviewer supplied static review.
+
+Optional documentation follow-up: `kk:clarify-docs` can review the new execute-file
+paragraph in `README.md` and File Path Evaluation in `docs/architecture.md`.
