@@ -109,7 +109,7 @@ func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecR
 		workDir = e.projectDir
 	}
 
-	result, err := e.runProcess(ctx, bin, args, workDir, tmpDir, req.Background)
+	result, err := e.runProcess(ctx, bin, args, workDir, tmpDir, req)
 	if result != nil && result.Backgrounded {
 		cleanupTmp = false
 	}
@@ -122,7 +122,8 @@ func (e *PolyglotExecutor) ExecuteFile(ctx context.Context, req ExecRequest) (*E
 	if err != nil {
 		return nil, fmt.Errorf("resolving file path: %w", err)
 	}
-	req.Code = injectFileContent(req.Language, req.Code, absPath)
+	req.FilePath = absPath
+	req.Code = injectFileContent(req.Language, req.Code)
 	return e.Execute(ctx, req)
 }
 
@@ -143,16 +144,22 @@ func (e *PolyglotExecutor) executeRust(ctx context.Context, rustc, srcPath, tmpD
 	}
 
 	// Run.
-	return e.runProcess(ctx, binPath, nil, tmpDir, tmpDir, req.Background)
+	return e.runProcess(ctx, binPath, nil, tmpDir, tmpDir, req)
 }
 
-func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []string, workDir, tmpDir string, background bool) (*ExecResult, error) {
+func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []string, workDir, tmpDir string, req ExecRequest) (*ExecResult, error) {
 	// Don't use exec.CommandContext — it only kills the process, not the
 	// process group. We manage timeout ourselves via the context + SIGKILL
 	// to the entire process group.
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = workDir
 	cmd.Env = BuildSafeEnv(tmpDir)
+	if req.FilePath != "" {
+		// Keep the admitted path out of generated source: language interpolation
+		// and incompatible string escapes must never select a different file.
+		// os/exec uses the last value for duplicate keys, overriding inherited data.
+		cmd.Env = append(cmd.Env, fileContentPathEnv+"="+req.FilePath)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	// Thread-safe buffers: the monitoring goroutine reads Size() while
@@ -180,7 +187,7 @@ func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []st
 		for {
 			select {
 			case <-ctx.Done():
-				if !background {
+				if !req.Background {
 					killProcessGroup(cmd)
 				}
 				return
@@ -197,7 +204,7 @@ func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []st
 
 	// Decide how to wait: in background mode, return early on timeout.
 	// In normal mode, wait for the process to finish.
-	if background {
+	if req.Background {
 		select {
 		case waitErr := <-waitDone:
 			// Process finished before timeout — normal result.

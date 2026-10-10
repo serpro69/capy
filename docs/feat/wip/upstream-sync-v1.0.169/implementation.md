@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: pending
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6 and 6a complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -27,6 +27,17 @@ No dependency upgrade is planned. Git ignore calls use the existing executable; 
 
 Do not add a full shell interpreter. Propagate a typed limit/evaluation error through both evaluators, hook routing and non-shell extraction checks; every affected handler blocks before execution rather than using a partial list. Test each limit immediately below/above its boundary in the hook, MCP execute and batch paths. Preserve unmatched-ask hook behavior described in design §3.1.
 
+Task 1 implementation notes (2026-10-10): the scanner also tracks comments,
+ANSI-C string quotes and parameter-expansion boundaries because each can hide
+substitutions if treated as ordinary characters. Hook batches normalize the
+server's supported JSON-string/plain-string command forms before scanning, and
+defer matched asks until all commands have cleared deny/error checks. Unsupported
+ANSI-C/localized **heredoc delimiter** quoting fails closed with an actionable
+message. Full delimiter escape/locale decoding is deferred to avoid approximating
+shell semantics; add differential Bash fixtures and bounded decoding before
+admitting those forms. Ordinary quoted delimiters remain supported. See
+[Task 1 verification](verification.md#task-1-shell-policy-evaluation).
+
 ## 2a. Prepared Read policy on existing paths
 
 **Owners:** `internal/security/settings.go`, `eval.go`, new `file_policy.go`; existing server/hook policy wiring and stale-read callback.
@@ -34,6 +45,25 @@ Do not add a full shell interpreter. Propagate a typed limit/evaluation error th
 Retain rule origin and explicit anchor/cwd/home context when loading local/shared/user settings. Prepare the supported grammar and bare-tool rule; preserve a legacy absolute interpretation for single-slash **denies only**, with a diagnostic. New allows use host anchors only → verify: `//`, `~/`, source-relative `/`, cwd-relative rules, escaped literals, unsupported syntax and differing user/project settings origins.
 
 Use one prepared object in existing MCP direct reads and the store's deny callback before adding new ingestion/CLI paths → verify: the same relative deny blocks raw-relative, absolute and physical paths, including stale refresh, and no local symlink alias grants an external target. Invalid policy preparation blocks file admission visibly. Test this end-to-end, not only the legacy exported matcher. Keep settings origin distinct from execution cwd. Run security/server/stale tests; coordinate shared files with Task 1 without making its shell parser a dependency.
+
+Task 2a implementation notes (2026-10-10): `LoadReadPolicy(FilePolicyContext)`
+captures rule origin/action/anchor and returns a prepared `FilePolicy` or an
+error. Server construction retains either outcome; all direct reads and the
+stale checker enforce it. Hooks return `FormatBlock` on errors for execute-file
+and file-index calls. Missing settings are normal; malformed JSON, invalid
+permission arrays and unsupported Read patterns are not empty policies.
+Diagnostics quote rule/source data and compatibility warnings are deduplicated
+per rule/source in the snapshot. Server policy changes require restart.
+
+Literal deny prefixes resolve physically as well as lexically; allows resolve
+the anchor only and must cover both normalized requested and physical targets.
+This avoids turning an allowed alias into an external grant. The API's `Allows`
+method prepares Task 2's grant check; current direct reads enforce denies only.
+The legacy exported loader/matcher are retained without production callers.
+Task 5 still owns validated hook payload-cwd/project selection. D2 still owns
+atomic checked-file handoff; neither this task nor descriptor-bound stat/read
+eliminates replacement between policy evaluation and open. Named ADR creation
+remains Task 20. No CLI interface or CI configuration changes in this slice.
 
 ## 2. Execute-file path admission
 
@@ -46,11 +76,50 @@ Use one prepared object in existing MCP direct reads and the store's deny callba
 
 Run `go test -tags fts5 -count=1 ./internal/security/... ./internal/server/...`. Existing explicit external-path tests should use intentional allow fixtures; do not just remove them or weaken the assertions.
 
+Task 2 implementation notes (2026-10-10): `FilePolicy.ResolveExecuteFile`
+reuses the prepared deny/grant matchers and candidate resolver in
+`internal/security/file_policy.go`. It resolves relative inputs from the selected
+project, even when the policy's rule cwd differs, and checks both lexical and
+physical containment using path components. Symlinked project roots accept their
+lexical and canonical spellings. One allow must cover both candidates for an
+external read; unrelated partial allows do not combine. Missing/unresolvable
+targets and invalid projects fail before execution. The server forwards the
+returned physical absolute path to the executor while keeping existing response
+source labels. No second policy load is needed.
+
+Isolated review found that embedding that physical path in generated Ruby,
+Elixir, PHP or Perl source could interpolate a filename into a different, denied
+target. The executor now transfers it in the request-local child environment as
+`CAPY_FILE_CONTENT_PATH`; each runtime reads that value into its existing path
+variable. This also avoids incompatible control/Unicode escapes across runtimes.
+The parent environment is never mutated, and inherited values cannot override
+the request. Rust receives it when running the compiled binary. This necessary
+handoff fix touches `executor.go` and `wrap.go`; Task 7's cwd changes stay pending.
+JavaScript/TypeScript obtain the environment through `require("process")` so a
+snippet's own `process` declaration does not shadow the preamble.
+
+The original external-success fixture now declares an intentional absolute Read
+allow. Shell-policy fixtures use existing project files so they still exercise
+command rejection. Tests cover differing process/project cwd and symlink-before-
+`..` handoff with distinct file contents. `capy_index` keeps deny-only explicit
+file admission. D2 remains documented at the helper: an atomic checked-file
+handoff into the child runtime is required to close concurrent replacement.
+The named admission ADR remains part of Task 20.
+
 ## 3. Safe guidance filenames
 
 **Owners:** `internal/hook/guidance.go`, guidance tests.
 
 Use design §3.4's exact ID alphabet/128-byte bound and digest prefix from both `guidanceOnce` and `ResetGuidanceFile`; empty IDs stay non-persisting → verify: repeated invocations share one file, safe IDs remain compatible, unsafe IDs stay separate, reset targets the same file, and traversal/NUL/long IDs create nothing outside temporary `.capy`. New observations have a separate format and reuse only the component helper. Run hook tests.
+
+Task 3 implementation notes (2026-10-10): `sessionIDComponent` supplies the shared
+mapping in `guidance.go`. Both entry points leave empty IDs/project directories
+without filesystem effects. Existing compatible filenames and the guidance JSON
+format remain unchanged; unsafe IDs start using their digest filename without
+reading, migrating or deleting a legacy raw-ID path. Tests exercise JSON hook
+input with a fresh adapter on each call, guidance-type/session isolation, reset,
+the 128/129-byte boundary, and traversal/NUL/Unicode/1 MiB identifiers. Sentinel
+files outside `.capy` remain intact. Task 5a's observation store remains pending.
 
 ## 4. Explicit main-agent redirects
 
@@ -59,6 +128,15 @@ Use design §3.4's exact ID alphabet/128-byte bound and digest prefix from both 
 Replace echo-command rewrites for curl/wget and inline HTTP with direct `FormatBlock` calls. Preserve safe-download exceptions, actual security asks/denies and Agent input modifications → verify: inspect the returned JSON decision and reason, and prove the original command is not approved as part of the redirect. Run `go test -tags fts5 -count=1 ./internal/hook/... ./internal/adapter/...`.
 
 The rationale is reliable expression of a block, not an unverified assertion that every current Claude Code build ignores `updatedInput`.
+
+Task 4 implementation notes (2026-10-10): both Bash redirect branches now return
+`FormatBlock` with plain guidance; `routeAgent` retains `FormatModify`. Existing
+detectors, silent/quiet download admission, WebFetch comprehension guidance and
+security evaluation order are unchanged. Real-adapter tests assert deny JSON
+without `updatedInput`, repeated denials after a guidance nudge, matched
+deny/ask precedence, and preserved Agent/Task fields. New stateful fixtures pin
+`CLAUDE_PROJECT_DIR` to their temporary project. Child identity/capability handling
+remains Tasks 5 and 5a; this task does not claim those distinctions already exist.
 
 ## 5. Subagent-aware routing and discovery
 
@@ -72,6 +150,30 @@ The rationale is reliable expression of a block, not an unverified assertion tha
 
 A parent MCP server's existence is not evidence that a fixed-tool child can call it. Do not introduce a new ready sentinel or Codex hook adapter.
 
+Task 5 implementation notes (2026-10-10): `hook.Run` now owns input parsing and
+project selection before policy loading. A nil explicit-directory pointer means
+omission; an explicitly empty flag is invalid. `resolveHookContext` captures one
+project and an independently validated rule cwd. The adapter no longer injects
+an environment project into the event. `DetectProjectRootFrom` pins Git's child
+directory and removes inherited `GIT_*` variables, then retains marker/fallback
+discovery. Neither helper changes global cwd or environment.
+
+Directory validation resolves symlinks before `..`. Hook Read rules use payload
+cwd while settings and state use the selected project; relative capy file
+parameters are separately anchored to that project without pre-cleaning away
+symlink/parent components. Missing or malformed payload cwd falls back to the
+selected project for rules. Selection and affected Read-preparation failures
+produce structured PreToolUse blocks; other events report selection errors.
+
+Children identified by `agent_id` get unverified-tool advice for HTTP/WebFetch
+routing, while security enforcement and main-agent denials stay intact. No local
+frontmatter is used as proof of availability. Both injected routing and the
+generator/committed `.capy/AGENTS.md` describe conditional one-attempt discovery,
+native fallback and the limits of the Bash type upgrade. Task 5a below adds
+observation-backed redirects. D5's authoritative first-call discovery
+remains deferred. The old knowledge note recommending a two-file lookup is
+superseded by this feature's reconciled design.
+
 ## 5a. Re-enforce redirects after observed child capabilities
 
 **Owners:** new bounded observation-state helper in `internal/hook`, post/pre-tool routing, session-end cleanup and dispatch wiring; reuse the ID helper from `guidance.go`.
@@ -80,11 +182,51 @@ Implement the one-use, per-tool 60-second evidence in design §3.5, stored in on
 
 Consume all of that child's evidence before one redirect and follow the explicit alternative table → verify: failed capy retry permits the next native attempt, arbitrary HTTP is never turned into a fetch-only operation, and security decisions still dominate without consuming evidence. Parse stable identity for SessionEnd and remove only its entries, without DB access → verify: cleanup, missed SessionEnd expiry, live sibling preservation and no unbounded per-session file creation. Update routing generator/copy together. D5 remains the unknown first-call limitation.
 
+Task 5a implementation notes (2026-10-10): `observationStore` owns the bounded
+JSON file, its permanent `flock` lock and fixed staging filename. Only a successful
+atomic replacement publishes consumed evidence. State read/validation/write or
+20 ms lock-wait failures produce diagnostics and advisory fallback. Both metadata
+and actual descriptor reads enforce the 64 KiB limit; regular-file/no-follow
+checks reject FIFO and symlink state/lock entries. A fixed staging name also
+bounds leftovers after a killed writer without a directory sweep.
+
+The adapter records whether its session ID came from transcript, payload or
+environment rather than the PID fallback. PostToolUse filters exact execute/fetch
+names and host/MCP error/interruption flags, including serialized results; no
+tool content is retained. Success renews only that tool. SessionEnd removes only
+the matching stable session and neither sweeps sibling entries nor opens a DB.
+
+The Git comprehension exception applies to WebFetch; Bash HTTP still requires
+execute evidence, since execute accepts arbitrary methods/headers/body and does
+not refuse Git URLs. WebFetch requires an absolute HTTP(S) URL and can use fetch
+or execute. Consumption removes all alternatives only when a suitable one exists.
+Native security denies and matched asks in the existing policy path run first.
+The generator and committed routing instructions describe the same limits.
+
+Success means host/MCP protocol success. Some pre-existing server responses
+encode partial failures as successful results and can therefore mint evidence.
+If semantic failures must invalidate observations, normalize those server status
+flags with handler fixtures before changing hook classification; do not match
+arbitrary error words in returned content. D5 remains deferred: one-use evidence
+does not establish authoritative pre-call or permanent tool availability.
+
 ## 6. Batch heredocs and stderr
 
 **Owners:** `internal/server/tool_batch.go`, `tool_batch_test.go`.
 
 Remove suffix redirection from both worker paths and share deterministic captured-stream formatting → verify: terminal heredocs with/without trailing newline, quoted delimiters, stdout-only, stderr-only, combined output and empty streams work at concurrency 1 and greater than 1. Preserve serial skipped commands and parallel timeout/error isolation. Run the server batch subset with `-race`; inspect indexed content, not just a successful exit.
+
+Task 6 implementation notes (2026-10-10): both workers pass `cmd.Command`
+unchanged and use `batchCapturedOutput` to present stdout followed by stderr.
+The helper inserts a newline only when both streams are nonempty and neither
+side already supplies a newline at their boundary. Existing bytes are retained;
+`(no output)` is used only when both streams are empty. Output capture and
+truncation remain owned by the executor. Indexed-section fixtures cover terminal
+and quoted heredocs, explicit stderr redirects, multiline/nonzero-exit commands,
+and partial output on timeout. Serial skips and parallel timeout annotations
+retain their existing behavior. This presentation intentionally does not recover
+stream interleaving. Task 18 still owns batch provenance, response budgets and
+raw-byte accounting changes.
 
 ## 6a. Consistent boolean request validation
 
@@ -93,6 +235,23 @@ Remove suffix redirection from both worker paths and share deterministic capture
 Implement the presence-aware literal parser once; preserve each omitted default and return explicit errors for unsupported supplied types. Wire background and force, then every cleanup boolean and both all-projects selectors → verify: native/string true and false, whitespace/case, null/numeric/collection/invalid values, default dry run, no child spawned on invalid background, no purge/optimization on invalid cleanup input, and no accidental cross-project search.
 
 The SDK's current `GetBool` already accepts string booleans and numeric truthiness, unlike capy's direct assertions. Replacing it deliberately narrows numeric all-projects inputs; do not write a test claiming its old string-true behavior was false. Validate real stdio calls as well as handlers. Task 13 reuses the helper for its new directory booleans; mechanical boundary forwarding does not create a second parser.
+
+Task 6a implementation notes (2026-10-10): `boolArg(args, name, defaultValue)`
+returns a value or a parameter-specific error without echoing the supplied data.
+The cleanup-local permissive helper is removed; every affected handler uses the
+shared parser. `vaultProjectScope` returns validation errors to both search
+handlers before vault access or search-throttle accounting. Even a knowledge-only
+request or `project: "*"` cannot hide an invalid supplied `all_projects` value.
+
+The advertised MCP types remain boolean; string support is boundary robustness,
+verified through actual JSON-RPC stdio calls. Handler tests prove no process,
+HTTP request, store/vault initialization, purge or stats reset on invalid input.
+Stdio fixtures verify explicit string-false eviction, background detachment,
+single/batch fetch-cache bypass, and cross-project vault scoping. The pinned
+`mcp-go v0.46.0` source confirms its former `GetBool` accepted numeric truthiness
+and `strconv.ParseBool` shortcuts as well as string true/false. Those shortcuts
+are now rejected; trimmed mixed-case literals are accepted. Task 13 will reuse
+the parser for directory options. CLI flags and dependency versions are unchanged.
 
 ## 7. Project cwd for every runtime
 

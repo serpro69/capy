@@ -70,6 +70,19 @@ func TestRoutingBlockWebComprehension(t *testing.T) {
 		"routing block should mention gh CLI as example")
 }
 
+func TestRoutingToolDiscoveryFallback(t *testing.T) {
+	for _, text := range []string{GenerateRoutingInstructions(), hook.RoutingBlock()} {
+		assert.Contains(t, text, "If the host offers deferred-tool discovery")
+		assert.Contains(t, text, "capy schemas once")
+		assert.Contains(t, text, "discovery is unavailable or the tools are absent")
+		assert.Contains(t, text, "native tools")
+		assert.Contains(t, text, "Do not loop on discovery")
+		assert.Contains(t, text, "60 seconds")
+		assert.Contains(t, text, "independently")
+		assert.Contains(t, text, "native fallback")
+	}
+}
+
 func TestCapyToolNamesComplete(t *testing.T) {
 	expected := []string{
 		"capy_execute",

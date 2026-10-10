@@ -53,6 +53,10 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return errorResult("Error: " + err.Error()), nil
 	}
+	vaultProject, vaultProjectPath, err := vaultProjectScope(req, s.projectDir)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 
 	// Progressive throttling (atomic check+reset+increment)
 	callNum, windowAge := s.throttle.advance(searchWindowDuration)
@@ -88,11 +92,6 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// targets knowledge-store labels, which the vault has no analogue for, so it
 	// keeps the search knowledge-only.
 	runVaultPass := vlt != nil && sessionInScope && source == ""
-
-	// Explicit selectors match effective projects; the default stays scoped by
-	// the imported path. Knowledge.db is already per-project, so these fields
-	// affect only vault availability and retrieval.
-	vaultProject, vaultProjectPath := vaultProjectScope(req, s.projectDir)
 
 	// Knowledge pass kinds: when the vault serves the session corpus, strip
 	// `session` from the knowledge filter so the same conversations aren't served

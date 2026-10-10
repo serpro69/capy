@@ -2,8 +2,11 @@ package security
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 )
 
 // SecurityPolicy holds Bash permission patterns from a single settings file.
@@ -158,4 +161,87 @@ func ReadToolDenyPatterns(toolName, projectDir, globalSettingsPath string) [][]s
 	}
 
 	return result
+}
+
+// LoadReadPolicy prepares a snapshot of local, shared and user Read rules.
+// Unlike the legacy Bash loader, invalid selected settings fail file admission.
+// Callers must retain and enforce the error, never substitute an empty policy.
+func LoadReadPolicy(ctx FilePolicyContext) (*FilePolicy, error) {
+	ctx, err := normalizeFilePolicyContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	policy := &FilePolicy{context: ctx}
+	sources := []struct{ path, anchor string }{
+		{filepath.Join(ctx.ProjectDir, ".claude", "settings.local.json"), ctx.ProjectDir},
+		{filepath.Join(ctx.ProjectDir, ".claude", "settings.json"), ctx.ProjectDir},
+		{ctx.GlobalSettingsPath, filepath.Dir(ctx.GlobalSettingsPath)},
+	}
+	for _, source := range sources {
+		permissions, err := readFilePermissions(source.path)
+		if err != nil {
+			return nil, err
+		}
+		for _, action := range []string{"deny", "allow", "ask"} {
+			for _, pattern := range permissions[action] {
+				if pattern != "Read" && !strings.HasPrefix(pattern, "Read(") {
+					continue
+				}
+				rule, warning, err := prepareReadRule(pattern, action, source.path, source.anchor, ctx)
+				if err != nil {
+					return nil, fmt.Errorf("invalid Read policy %q in %q: %w", pattern, source.path, err)
+				}
+				policy.rules = append(policy.rules, rule)
+				if warning != "" && !slices.Contains(policy.warnings, warning) {
+					policy.warnings = append(policy.warnings, warning)
+				}
+			}
+		}
+	}
+	return policy, nil
+}
+
+func readFilePermissions(path string) (map[string][]string, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		// A dangling selected settings symlink is invalid, not absent policy.
+		if _, statErr := os.Lstat(path); os.IsNotExist(statErr) {
+			return nil, nil
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read policy settings %q: %w", path, err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(data, &document); err != nil || document == nil {
+		// Do not echo parser input: settings may contain credentials.
+		return nil, fmt.Errorf("invalid policy settings %q: expected JSON object", path)
+	}
+	raw, exists := document["permissions"]
+	if !exists {
+		return nil, nil
+	}
+	var permissions map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &permissions); err != nil || permissions == nil {
+		return nil, fmt.Errorf("invalid policy settings %q: permissions must be an object", path)
+	}
+	result := make(map[string][]string)
+	for _, action := range []string{"deny", "allow", "ask"} {
+		raw, exists := permissions[action]
+		if !exists {
+			continue
+		}
+		var values []any
+		if err := json.Unmarshal(raw, &values); err != nil || values == nil {
+			return nil, fmt.Errorf("invalid policy settings %q: permissions.%s must be an array of strings", path, action)
+		}
+		for _, value := range values {
+			pattern, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid policy settings %q: permissions.%s must contain strings", path, action)
+			}
+			result[action] = append(result[action], pattern)
+		}
+	}
+	return result, nil
 }

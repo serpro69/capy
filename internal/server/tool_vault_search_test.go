@@ -272,6 +272,8 @@ func TestVaultSearch_ProjectOverrideScopes(t *testing.T) {
 		{"replaced other path", "scheduler", uuidB, map[string]any{"project": projectB}, false},
 		{"star", "scheduler", uuidB, map[string]any{"project": "*"}, true},
 		{"all projects", "scheduler", uuidB, map[string]any{"all_projects": true}, true},
+		{"string true widens", "scheduler", uuidB, map[string]any{"all_projects": " TrUe "}, true},
+		{"string false stays scoped", "scheduler", uuidB, map[string]any{"all_projects": " FaLsE "}, false},
 		{"widening overrides explicit", "scheduler", uuidB, map[string]any{"all_projects": true, "project": "unrelated"}, true},
 		{"star overrides false widening", "scheduler", uuidB, map[string]any{"all_projects": false, "project": "*"}, true},
 		{"false widening keeps default", "scheduler", uuidB, map[string]any{"all_projects": false}, false},

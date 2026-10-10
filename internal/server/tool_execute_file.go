@@ -19,9 +19,10 @@ func (s *Server) handleExecuteFile(ctx context.Context, req mcp.CallToolRequest)
 		return errorResult("missing required parameter: path and code"), nil
 	}
 
-	// Security: check file path against Read deny patterns
-	if denied := s.checkFilePathDenyPolicy(filePath); denied != nil {
-		return denied, nil
+	// Admit once and hand the same checked absolute path to the executor.
+	admittedPath, err := s.resolveExecuteFilePath(filePath)
+	if err != nil {
+		return errorResult(fmt.Sprintf("File access blocked by security policy: %v", err)), nil
 	}
 
 	// Security: check code against deny patterns
@@ -32,7 +33,7 @@ func (s *Server) handleExecuteFile(ctx context.Context, req mcp.CallToolRequest)
 	result, err := s.executor.ExecuteFile(ctx, executor.ExecRequest{
 		Language:   language,
 		Code:       code,
-		FilePath:   filePath,
+		FilePath:   admittedPath,
 		TimeoutSec: timeout / 1000,
 	})
 	if err != nil {

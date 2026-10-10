@@ -43,12 +43,27 @@ func TestParsePreToolUse_EmptyInput(t *testing.T) {
 	assert.Nil(t, event.ToolInput)
 }
 
-func TestParsePreToolUse_ProjectDirFromEnv(t *testing.T) {
+func TestParsePreToolUse_PayloadContext(t *testing.T) {
 	t.Setenv("CLAUDE_PROJECT_DIR", "/test/project")
 	a := &ClaudeCodeAdapter{}
-	event, err := a.ParsePreToolUse([]byte(`{"tool_name":"Bash","tool_input":{}}`))
+	event, err := a.ParsePreToolUse([]byte(`{"tool_name":"Bash","tool_input":{},"agent_id":"child-1","agent_type":"Explore","cwd":"/payload/project"}`))
 	require.NoError(t, err)
-	assert.Equal(t, "/test/project", event.ProjectDir)
+	assert.Equal(t, "/payload/project", event.Cwd)
+	assert.Equal(t, "child-1", event.AgentID)
+	assert.Equal(t, "Explore", event.AgentType)
+	assert.False(t, event.InvalidCwd)
+}
+
+func TestParsePreToolUse_InvalidCwdPreservesSecurityInput(t *testing.T) {
+	for _, cwd := range []string{`42`, `null`, `false`, `[]`, `{}`, `""`} {
+		t.Run(cwd, func(t *testing.T) {
+			event, err := (&ClaudeCodeAdapter{}).ParsePreToolUse([]byte(`{"tool_name":"Bash","tool_input":{"command":"sudo true"},"cwd":` + cwd + `}`))
+			require.NoError(t, err)
+			assert.True(t, event.InvalidCwd)
+			assert.Equal(t, "Bash", event.ToolName)
+			assert.Equal(t, "sudo true", event.ToolInput["command"])
+		})
+	}
 }
 
 // ─── Session ID extraction tests ───────────────────────────────────────────────
@@ -89,6 +104,29 @@ func TestExtractSessionID_Priority(t *testing.T) {
 	// Transcript path UUID takes priority over session_id
 	id := extractSessionID("session-id", "/path/a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl")
 	assert.Equal(t, "a1b2c3d4-e5f6-7890-abcd-ef1234567890", id)
+}
+
+func TestSessionIDStability(t *testing.T) {
+	for _, tt := range []struct {
+		name, session, transcript, environment string
+		stable                                 bool
+	}{
+		{name: "payload", session: "session", stable: true},
+		{name: "explicit pid-like ID", session: "pid-123", stable: true},
+		{name: "transcript", transcript: "/path/a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl", stable: true},
+		{name: "environment", environment: "session-env", stable: true},
+		{name: "PID fallback"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CLAUDE_SESSION_ID", tt.environment)
+			input, err := json.Marshal(map[string]any{"session_id": tt.session, "transcript_path": tt.transcript})
+			require.NoError(t, err)
+			event, err := (&ClaudeCodeAdapter{}).ParsePreToolUse(input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.stable, event.SessionIDStable)
+			assert.NotEmpty(t, event.SessionID)
+		})
+	}
 }
 
 // ─── Format tests ──────────────────────────────────────────────────────────────

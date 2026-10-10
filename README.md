@@ -167,10 +167,10 @@ capy doctor   # verify everything is green
 **3. Use normally.** Start using Claude Code — capy works automatically:
 
 - **Bash commands** producing large output are nudged toward the sandbox
-- **curl/wget** calls are intercepted and redirected to `capy_fetch_and_index`
+- **curl/wget** calls are denied with guidance to use `capy_fetch_and_index` or `capy_execute`; silent file downloads remain allowed
 - **WebFetch** is blocked in favor of `capy_fetch_and_index`
 - **Read** for analysis (not editing) is nudged toward `capy_execute_file`
-- **Subagents** get routing instructions injected automatically
+- **Subagents** get routing instructions with one tool-discovery attempt when supported and native-tool fallback when capy tools are unavailable
 - **Past sessions** are indexed on server start for cross-session search
 
 You don't need to call capy tools yourself. The LLM learns the routing from the hooks and CLAUDE.md instructions that `capy setup` installed. But you can ask it directly: "use capy_batch_execute to research X" if you want to be explicit.
@@ -867,6 +867,17 @@ capy completion fish | source
 
 ## MCP Tools
 
+Boolean arguments accept native JSON booleans or whitespace-trimmed,
+case-insensitive `"true"`/`"false"` strings. Omission preserves each tool's default:
+`dry_run` defaults to true; `background`, `force`, cleanup action flags and
+`all_projects` default to false. Null, numbers, arrays, objects and other strings
+are errors before work begins.
+
+Compatibility: string booleans that cleanup, execution and fetch previously
+ignored now take effect. In particular, **`dry_run: "false"` performs eviction**
+when an eviction is requested. Search no longer accepts numeric `all_projects`
+values or shortcuts such as `"1"` or `"t"`; use native booleans instead.
+
 ### Execution
 
 | Tool                 | What It Does                                                                                                                                                                                                  |
@@ -874,6 +885,12 @@ capy completion fish | source
 | `capy_execute`       | Run code in a sandboxed subprocess. Supports 11 languages: JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, Elixir. Only stdout enters context. Pass `intent` to auto-index large output. |
 | `capy_execute_file`  | Inject a file into a sandbox variable (`FILE_CONTENT`) and process it with code you write. The raw file never enters context — only your printed summary does.                                                |
 | `capy_batch_execute` | The primary research tool. Runs multiple shell commands, auto-indexes all output as markdown, and searches with multiple queries — all in ONE call.                                                           |
+
+Batch commands run as submitted, including multiline commands and heredocs.
+Each indexed command section presents captured stdout followed by stderr, with a
+separating newline when needed; it does not preserve stream interleaving. Serial
+batches share a timeout budget and skip remaining commands after a timeout.
+Parallel batches give each command its own timeout and retain command order.
 
 ### Knowledge
 
@@ -906,9 +923,50 @@ capy enforces the same permission rules you already use — but extends them to 
 }
 ```
 
-Add to `.claude/settings.json` (project) or `~/.claude/settings.json` (global). Pattern: `Tool(glob)` where `*` = anything. Colon syntax (`git:*`) matches the command with or without arguments.
+Add to `.claude/settings.local.json` (local), `.claude/settings.json` (project), or `~/.claude/settings.json` (user). Bash patterns use `*` for any text; colon syntax (`git:*`) matches the command with or without arguments.
 
 Chained commands (`&&`, `;`, `|`) are split and checked individually. **deny always wins over allow.**
+
+Read denies protect `capy_index(path)`, `capy_execute_file(path)`, and automatic
+refreshes of indexed files. Rules keep their settings origin and apply to
+relative, absolute, and symlink-resolved paths:
+
+| Read pattern | Anchor |
+| --- | --- |
+| `Read(//absolute/path/**)` | Filesystem root |
+| `Read(~/private/**)` | Home directory |
+| `Read(/private/**)` | Selected project for local/project settings; the settings file's directory for user settings |
+| `Read(./private/**)` or `Read(private/**)` | Selected project for MCP file operations |
+| `Read(*.env)` | Any basename at any depth under that directory |
+| `Read` | Every file read through these paths |
+
+Path patterns support `*` (within one component), `**` (across components), `?`
+(one character), and backslash-escaped literals. Explicit anchors keep their
+path scope: `Read(./*.env)` only covers that directory. Bracket classes, leading
+negation, brace/extglob expressions, and dot components after wildcards are not
+supported; invalid rules or malformed settings block file admission with a
+diagnostic. This is a supported subset of host permissions, not complete host
+policy emulation.
+
+For compatibility, single-slash **denies** also keep their former absolute-path
+interpretation and emit a warning. Migrate an intended absolute deny to `//`;
+new allows never receive the legacy interpretation. Servers capture policy at
+startup, so restart after settings changes. A blocked stale refresh keeps cached
+content searchable and logs the skipped read; it does not remove an already
+indexed source. These checks protect the explicit path inputs, not all file
+access by arbitrary submitted code.
+
+`capy_execute_file(path)` resolves relative paths from the selected project.
+Both the requested path and its physical target must be inside that project,
+unless one explicit Read allow covers both. To process an external file, add a
+matching rule such as `"Read(//absolute/path/**)"` or `"Read(~/reports/**)"` to
+`permissions.allow` in your settings and restart the server. Denies always win;
+allowing only a project-local symlink does not grant access to its external target.
+Missing or unresolvable paths fail before code starts. The executor receives the
+checked physical absolute path, including when process cwd differs from the
+selected project. `capy_index(path)` retains its explicit absolute-file behavior
+subject to Read denies. Concurrent replacement between checking and reading
+remains possible; see [D2](docs/feat/wip/upstream-sync-v1.0.169/upstream-audit.md#d2-filesystem-replacement-between-policy-checks-and-runtime-reads).
 
 ### Sandbox protections
 
@@ -926,16 +984,44 @@ capy uses Claude Code's hook system to intercept tool calls before they execute.
 
 ### What gets intercepted
 
+The HTTP routing denials below apply to the main agent. Calls with a nonempty
+child `agent_id` receive advisory guidance while their capy tools are unverified:
+discover deferred capy schemas once if the host supports discovery, then use
+available tools; otherwise use native tools with bounded extraction output.
+An agent type or local definition alone cannot establish tool availability.
+Security denies and matched asks still apply. This fallback can permit a child's
+first native call even when it ultimately has capy tools.
+
+A successful child `capy_execute` or `capy_fetch_and_index` call provides evidence
+for one suitable redirect during the next 60 seconds. Bash HTTP requires execute
+evidence; WebFetch can use either tool, while Git issue/PR comprehension keeps
+native CLI advice. A redirect consumes all alternatives for that child. Failed
+or canceled calls do not renew the evidence, so a failed retry leaves native
+fallback available. Missing stable identities or failed state access also fall
+back to advice; observations do not establish permanent availability.
+
 | Pattern                                           | What happens                                                                                                        |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `curl`/`wget` in Bash                             | Command replaced with message directing to `capy_fetch_and_index` (file-output flags like `-o` are allowed through) |
-| `fetch()`, `requests.get()`, `http.get()` in Bash | Command replaced with message directing to `capy_execute`                                                           |
+| `curl`/`wget` in Bash                             | Denied with guidance to use `capy_fetch_and_index` or `capy_execute`; silent/quiet file downloads remain allowed     |
+| `fetch()`, `requests.get()`, `http.get()` in Bash | Denied with guidance to use `capy_execute` or `capy_fetch_and_index`                                                 |
 | `WebFetch` tool                                   | Denied — use `capy_fetch_and_index` instead (git platform URLs get CLI-specific redirect guidance)                  |
 | `Read` tool                                       | One-time advisory: prefer `capy_execute_file` for analysis                                                          |
 | `Grep` tool                                       | One-time advisory: prefer `capy_execute` for large searches                                                         |
 | `Agent`/`Task` tools                              | Routing block injected into subagent prompt; Bash subagents upgraded to general-purpose                             |
 | `capy_fetch_and_index`                            | Git platform issue/PR/MR URLs blocked with platform CLI redirect; gist URLs get soft guidance                       |
 | `capy_*` tools (shell)                            | Security policy enforcement on shell code and batch commands                                                        |
+
+Hooks select their project before loading policies: `--project-dir` wins over
+`CLAUDE_PROJECT_DIR`, followed by project detection from a valid payload `cwd`,
+then the process working directory. Invalid explicit/environment selections fail;
+invalid payload directories emit a diagnostic and fall back. Settings and
+guidance state belong to the selected project. Cwd-relative Read rules use the
+validated payload cwd, falling back to the selected project when absent.
+
+Child observations share one bounded `.capy/tool-observations.json` per project,
+with a separate permanent lock file. SessionEnd removes only its session's
+entries; missing SessionEnd events are handled by expiry and fixed storage caps.
+These hooks do not open the knowledge or vault databases.
 
 ### Platform support
 

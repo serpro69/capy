@@ -1,8 +1,12 @@
 package hook
 
 import (
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"maps"
+	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/serpro69/capy/internal/adapter"
@@ -14,43 +18,55 @@ func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.S
 	if err != nil {
 		return nil, nil // pass through on parse error — don't block the tool
 	}
+	ctx := hookContext{projectDir: projectDir, workingDir: projectDir}
+	if cwd := validatedPayloadCwd(event); cwd != "" {
+		ctx.workingDir = cwd
+	}
+	return routePreToolUse(event, a, policies, ctx)
+}
 
+func routePreToolUse(event *adapter.PreToolUseEvent, a adapter.HookAdapter, policies []security.SecurityPolicy, ctx hookContext) ([]byte, error) {
 	toolName := event.ToolName
 	toolInput := event.ToolInput
 	sessionID := event.SessionID
-
-	// Use projectDir from event if available, otherwise fall back to the one from CLI
-	if event.ProjectDir != "" {
-		projectDir = event.ProjectDir
-	}
 
 	canonical := canonicalToolName(toolName)
 
 	// ─── Capy MCP tools: security checks only ───
 	if isCapyTool(toolName) {
-		return routeCapyTool(toolName, toolInput, policies, projectDir, a)
+		return routeCapyTool(toolName, toolInput, policies, ctx, a)
 	}
 
 	// ─── Bash: security check + routing ───
 	if canonical == "Bash" {
-		command, _ := toolInput["command"].(string)
-		return routeBash(command, policies, a, projectDir, sessionID)
+		return routeBash(event, a, policies, ctx)
 	}
 
 	// ─── WebFetch: deny → redirect with comprehension-aware guidance ───
 	if canonical == "WebFetch" {
-		url, _ := toolInput["url"].(string)
-		return a.FormatBlock(webFetchBlockMessage(url))
+		rawURL, _ := toolInput["url"].(string)
+		if event.AgentID != "" {
+			parsedURL, err := url.Parse(rawURL)
+			eligible := err == nil && parsedURL.Hostname() != "" &&
+				(parsedURL.Scheme == "https" || parsedURL.Scheme == "http") && gitPlatformBlockMessage(rawURL) == ""
+			if eligible {
+				if tool := consumeChildObservation(event, ctx, true); tool != "" {
+					return a.FormatBlock("capy: Use " + tool + " for this web extraction. If that call fails or the tool is unavailable, retry the native tool.")
+				}
+			}
+			return a.FormatAllow(childToolGuidance)
+		}
+		return a.FormatBlock(webFetchBlockMessage(rawURL))
 	}
 
 	// ─── Read: guidance once ───
 	if canonical == "Read" {
-		return guidanceOnce("read", READ_GUIDANCE, a, projectDir, sessionID)
+		return guidanceOnce("read", READ_GUIDANCE, a, ctx.projectDir, sessionID)
 	}
 
 	// ─── Grep: guidance once ───
 	if canonical == "Grep" {
-		return guidanceOnce("grep", GREP_GUIDANCE, a, projectDir, sessionID)
+		return guidanceOnce("grep", GREP_GUIDANCE, a, ctx.projectDir, sessionID)
 	}
 
 	// ─── Agent/Task: inject routing block into subagent prompt ───
@@ -63,23 +79,18 @@ func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.S
 }
 
 // routeBash handles Bash tool routing: security check, curl/wget, HTTP, build tools, guidance.
-func routeBash(command string, policies []security.SecurityPolicy, a adapter.HookAdapter, projectDir, sessionID string) ([]byte, error) {
+func routeBash(event *adapter.PreToolUseEvent, a adapter.HookAdapter, policies []security.SecurityPolicy, ctx hookContext) ([]byte, error) {
+	command, _ := event.ToolInput["command"].(string)
 	// Stage 1: Security check (full evaluateCommand with ask support)
-	if len(policies) > 0 {
-		result := security.EvaluateCommand(command, policies)
-		if result.Decision == "deny" {
-			return a.FormatBlock(fmt.Sprintf("Blocked by security policy: matches deny pattern %s", result.MatchedPattern))
-		}
-		if result.Decision == "ask" && result.MatchedPattern != "" {
-			return a.FormatAsk()
-		}
+	if result, err := checkCommandSecurity(command, policies, a); result != nil || err != nil {
+		return result, err
 	}
 
 	// Stage 2: Context-mode routing
 
 	// curl/wget detection (strip quoted content to avoid false positives)
-	// Replace command with echo message (FormatModify) instead of hard deny,
-	// matching the TS reference — the LLM sees the guidance in stdout.
+	// Return routing guidance as a denial reason, without approving a replacement
+	// command. FormatModify is reserved for actual Agent/Task input edits.
 	// Smart check: allow curl/wget that writes to a file silently (#166).
 	stripped := stripQuotedContent(command)
 	if isCurlOrWget(stripped) {
@@ -92,9 +103,15 @@ func routeBash(command string, policies []security.SecurityPolicy, a adapter.Hoo
 			}
 		}
 		if !allSafe {
-			return a.FormatModify(map[string]any{
-				"command": `echo "capy: curl/wget blocked (stdout flood risk). Use capy_fetch_and_index(url, source) to fetch URLs, or capy_execute(language, code) to run HTTP calls in sandbox. File downloads with -o/--output are allowed."`,
-			})
+			if event.AgentID != "" {
+				if tool := consumeChildObservation(event, ctx, false); tool != "" {
+					return a.FormatBlock("capy: Use " + tool + "(language, code) for this HTTP call. If that call fails or the tool is unavailable, retry the native tool.")
+				}
+				return a.FormatAllow(childToolGuidance)
+			}
+			return a.FormatBlock("capy: curl/wget blocked (stdout flood risk). " +
+				"Use capy_fetch_and_index(url, source) to fetch URLs, or capy_execute(language, code) to run HTTP calls in sandbox. " +
+				"Silent file downloads with -o/--output (curl) or -O/--output-document (wget) are allowed.")
 		}
 		// All curl/wget segments write to file silently — allow through
 	}
@@ -102,13 +119,33 @@ func routeBash(command string, policies []security.SecurityPolicy, a adapter.Hoo
 	// Inline HTTP detection (strip only heredocs — code in -e/-c flags should be visible)
 	noHeredoc := stripHeredocs(command)
 	if hasInlineHTTP(noHeredoc) {
-		return a.FormatModify(map[string]any{
-			"command": `echo "capy: Inline HTTP blocked. Use capy_execute(language, code) to run HTTP calls in sandbox, or capy_fetch_and_index(url, source) for web pages. Do NOT retry with Bash."`,
-		})
+		if event.AgentID != "" {
+			if tool := consumeChildObservation(event, ctx, false); tool != "" {
+				return a.FormatBlock("capy: Use " + tool + "(language, code) for this HTTP call. If that call fails or the tool is unavailable, retry the native tool.")
+			}
+			return a.FormatAllow(childToolGuidance)
+		}
+		return a.FormatBlock("capy: Inline HTTP blocked. " +
+			"Use capy_execute(language, code) to run HTTP calls in sandbox, or capy_fetch_and_index(url, source) for web pages. " +
+			"Do NOT retry with Bash.")
 	}
 
 	// Allow, but inject routing nudge (once per session)
-	return guidanceOnce("bash", BASH_GUIDANCE, a, projectDir, sessionID)
+	return guidanceOnce("bash", BASH_GUIDANCE, a, ctx.projectDir, event.SessionID)
+}
+
+func consumeChildObservation(event *adapter.PreToolUseEvent, ctx hookContext, allowFetch bool) string {
+	// D5: this is one-use evidence, not authoritative discovery of a child tool
+	// pool. A child's first native call has no evidence and remains advisory.
+	if !event.SessionIDStable || event.SessionID == "" || event.AgentID == "" {
+		return ""
+	}
+	tool, err := newObservationStore(ctx.projectDir).consume(event.SessionID, event.AgentID, allowFetch)
+	if err != nil {
+		slog.Warn("could not consume child tool observation", "error", err)
+		return ""
+	}
+	return tool
 }
 
 // routeAgent injects the routing block into Agent/Task subagent prompts.
@@ -139,43 +176,64 @@ func routeAgent(toolInput map[string]any, a adapter.HookAdapter) ([]byte, error)
 }
 
 // routeCapyTool runs security checks and routing guidance on capy MCP tools.
-func routeCapyTool(toolName string, toolInput map[string]any, policies []security.SecurityPolicy, projectDir string, a adapter.HookAdapter) ([]byte, error) {
-	// Security checks (only when policies exist)
-	if len(policies) > 0 {
-		switch {
-		case strings.HasSuffix(toolName, "execute") && !strings.HasSuffix(toolName, "batch_execute"):
-			lang, _ := toolInput["language"].(string)
-			if lang == "shell" {
-				code, _ := toolInput["code"].(string)
-				return checkCommandSecurity(code, policies, a)
-			}
-
-		case strings.HasSuffix(toolName, "execute_file"):
-			filePath, _ := toolInput["path"].(string)
-			if filePath != "" {
-				denyGlobs := security.ReadToolDenyPatterns("Read", projectDir, "")
-				denied, pattern := security.EvaluateFilePath(filePath, denyGlobs, projectDir)
-				if denied {
-					return a.FormatBlock(fmt.Sprintf("Blocked by security policy: file path matches Read deny pattern %s", pattern))
+func routeCapyTool(toolName string, toolInput map[string]any, policies []security.SecurityPolicy, ctx hookContext, a adapter.HookAdapter) ([]byte, error) {
+	if strings.HasSuffix(toolName, "execute_file") || strings.HasSuffix(toolName, "_index") {
+		if filePath, _ := toolInput["path"].(string); filePath != "" {
+			policy, err := security.LoadReadPolicy(security.FilePolicyContext{
+				ProjectDir: ctx.projectDir,
+				WorkingDir: ctx.workingDir,
+			})
+			if err == nil {
+				for _, warning := range policy.Warnings() {
+					slog.Warn(warning)
 				}
-			}
-			lang, _ := toolInput["language"].(string)
-			if lang == "shell" {
-				code, _ := toolInput["code"].(string)
-				return checkCommandSecurity(code, policies, a)
-			}
-
-		case strings.HasSuffix(toolName, "batch_execute"):
-			commands, _ := toolInput["commands"].([]any)
-			for _, entry := range commands {
-				if m, ok := entry.(map[string]any); ok {
-					cmd, _ := m["command"].(string)
-					if result, err := checkCommandSecurity(cmd, policies, a); result != nil || err != nil {
-						return result, err
-					}
+				// Capy file parameters stay project-relative; only the rule's cwd
+				// anchor follows the hook payload. Preserve symlink-before-.. input.
+				if !filepath.IsAbs(filePath) {
+					filePath = ctx.projectDir + string(filepath.Separator) + filePath
 				}
+				err = policy.Check(filePath)
+			}
+			if err != nil {
+				return a.FormatBlock(fmt.Sprintf("Blocked by security policy: %v", err))
 			}
 		}
+	}
+	// Scanner limits apply even without configured policy patterns.
+	switch {
+	case strings.HasSuffix(toolName, "execute") && !strings.HasSuffix(toolName, "batch_execute"):
+		lang, _ := toolInput["language"].(string)
+		code, _ := toolInput["code"].(string)
+		return checkCodeSecurity(code, lang, policies, a)
+
+	case strings.HasSuffix(toolName, "execute_file"):
+		lang, _ := toolInput["language"].(string)
+		code, _ := toolInput["code"].(string)
+		return checkCodeSecurity(code, lang, policies, a)
+
+	case strings.HasSuffix(toolName, "batch_execute"):
+		raw := toolInput["commands"]
+		if encoded, ok := raw.(string); ok {
+			if err := json.Unmarshal([]byte(encoded), &raw); err != nil {
+				return a.FormatBlock("Command blocked: invalid batch commands JSON")
+			}
+		}
+		entries, ok := raw.([]any)
+		if !ok {
+			return a.FormatBlock("Command blocked: expected batch commands array")
+		}
+		commands := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			if m, ok := entry.(map[string]any); ok {
+				entry = m["command"]
+			}
+			command, ok := entry.(string)
+			if !ok {
+				return a.FormatBlock("Command blocked: invalid command format (expected string)")
+			}
+			commands = append(commands, command)
+		}
+		return checkCommandsSecurity(commands, policies, a)
 	}
 
 	// Git platform URL enforcement for fetch_and_index (fires every call)
@@ -194,12 +252,31 @@ func routeCapyTool(toolName string, toolInput map[string]any, policies []securit
 
 // checkCommandSecurity evaluates a command against deny policies.
 func checkCommandSecurity(command string, policies []security.SecurityPolicy, a adapter.HookAdapter) ([]byte, error) {
-	result := security.EvaluateCommand(command, policies)
-	if result.Decision == "deny" {
-		return a.FormatBlock(fmt.Sprintf("Blocked by security policy: matches deny pattern %s", result.MatchedPattern))
+	return checkCommandsSecurity([]string{command}, policies, a)
+}
+
+func checkCommandsSecurity(commands []string, policies []security.SecurityPolicy, a adapter.HookAdapter) ([]byte, error) {
+	ask := false
+	for _, command := range commands {
+		result, err := security.EvaluateCommand(command, policies)
+		if err != nil {
+			return a.FormatBlock(fmt.Sprintf("Command blocked: %v", err))
+		}
+		if result.Decision == "deny" {
+			return a.FormatBlock(fmt.Sprintf("Blocked by security policy: matches deny pattern %s", result.MatchedPattern))
+		}
+		ask = ask || result.Decision == "ask" && result.MatchedPattern != ""
 	}
-	if result.Decision == "ask" && result.MatchedPattern != "" {
+	// A matched ask must not hide a later deny or scanner failure in the request.
+	if ask {
 		return a.FormatAsk()
 	}
 	return nil, nil
+}
+
+func checkCodeSecurity(code, language string, policies []security.SecurityPolicy, a adapter.HookAdapter) ([]byte, error) {
+	if language == "shell" {
+		return checkCommandSecurity(code, policies, a)
+	}
+	return checkCommandsSecurity(security.ExtractShellCommands(code, language), policies, a)
 }

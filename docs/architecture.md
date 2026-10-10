@@ -32,8 +32,9 @@ capy is an MCP (Model Context Protocol) server that reduces LLM context window c
 │  PreToolUse:  curl/wget → block, WebFetch → deny, Bash → guidance,     │
 │               Agent/Task → inject routing, capy_* → security check      │
 │  SessionStart: inject routing block                                     │
-│  SessionEnd:   no-op (WAL checkpoint handled by MCP server Close())     │
-│  PostToolUse / PreCompact / UserPromptSubmit: stubs (future use)        │
+│  PostToolUse: record successful child execute/fetch observations       │
+│  SessionEnd: clear its session observations; no database access        │
+│  PreCompact / UserPromptSubmit: stubs (future use)                     │
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -59,6 +60,21 @@ capy is an MCP (Model Context Protocol) server that reduces LLM context window c
 5. If output > 5KB and `intent` provided: auto-index into FTS5, search with intent, return matching sections
 6. Otherwise: return truncated stdout (configurable max_output_bytes, default 100KB)
 7. Stats tracked for the session
+
+Batch execution passes each submitted shell command unchanged to the executor.
+After capture, the server combines stdout followed by stderr, inserting a newline
+only when the streams need separation, then indexes the command sections in input
+order. This preserves terminal heredocs and stderr-only/partial output without
+claiming stream interleaving. Serial batches retain their shared timeout budget
+and cascading skips; parallel workers retain independent per-command timeouts.
+
+MCP boolean inputs share a presence-aware parser in `internal/server/coerce.go`.
+It accepts native booleans and trimmed, case-insensitive true/false strings;
+omission preserves defaults, while malformed supplied values return tool errors.
+Execute/fetch/cleanup validate before process, cache, network or storage work.
+Both search tools validate `all_projects` before vault access, and knowledge
+search validates it before advancing the throttle, including knowledge-only
+requests and explicit `project: "*"` selectors.
 
 The retrieval engine is corpus-agnostic (`internal/retrieval`, ADR-028): the same
 two-layer RRF / rerank / entity-boost pipeline runs over any `Corpus` — the knowledge
@@ -172,15 +188,71 @@ Hooks run as short-lived processes (`capy hook <event>`) invoked by the AI codin
 | Event | Handler | Purpose |
 |-------|---------|---------|
 | `PreToolUse` | Route Bash, block curl/wget/WebFetch, inject subagent routing, security checks | Main routing logic |
-| `PostToolUse` | Stub | Future session continuity |
+| `PostToolUse` | Record successful child execute/fetch observations | One-use routing evidence |
 | `PreCompact` | Stub | Future resume snapshot |
 | `SessionStart` | Inject routing block | Teach LLM about capy on session start |
-| `SessionEnd` | No-op | WAL checkpoint handled by server Close() |
+| `SessionEnd` | Clear its stable session's observation entries | No database access; WAL checkpoint remains in server Close() |
 | `UserPromptSubmit` | Stub | Future user decision capture |
+
+Main-agent Bash HTTP routing rejections use `FormatBlock`: the Claude Code response carries
+`permissionDecision: "deny"` and the capy guidance in `permissionDecisionReason`.
+It contains no replacement command. Security denies and matched asks run first;
+the existing silent/quiet file-download exceptions still apply. `FormatModify`
+remains in use for Agent/Task prompt injection, preserving other input fields.
+
+The adapter preserves `agent_id`, `agent_type` and payload `cwd`. Only a nonempty
+agent ID selects child routing; a type alone does not. Children with unverified
+capy tools receive `FormatAllow` advisory context for HTTP/WebFetch calls, leaving
+native permission handling intact. Guidance suggests deferred schema discovery
+once when supported, then native fallback if discovery or tools are unavailable.
+Neither local agent definitions nor the Bash-to-general-purpose upgrade establish
+the effective tool pool. A successful execute/fetch call can supply one-use
+evidence for a suitable redirect. Each tool's timestamp expires independently at
+60 seconds, and all alternatives for that child are consumed before a denial.
+Arbitrary Bash HTTP requires execute evidence. HTTP(S) WebFetch accepts either
+tool; Git issue/PR/MR comprehension keeps native advice without consumption.
+Failed retries cannot renew evidence; state failures also preserve advisory
+fallback. A child's first native call can therefore remain unblocked.
+
+`observations.go` stores at most 128 stable session/agent pairs in one serialized
+file capped at 64 KiB. Only safe ID components, known tool names and timestamps
+are stored; PID-fallback identities are excluded. Reads are bounded and reject
+malformed, future-dated, oversized or non-regular state. Updates expire stale
+observations before admission and evict oldest entries to enforce both limits.
+A separate permanent lock file serializes read/modify/atomic replacement, using
+nonblocking `flock` with at most 20 ms of contention waiting. The fixed staging
+filename bounds leftovers after a killed writer. A failed consumption write
+cannot authorize a redirect. Cleanup never unlinks or replaces the shared lock.
+
+SessionEnd best-effort removes only its stable session's entries, retaining
+sibling sessions. Expiry and caps bound state if SessionEnd is missed. Hooks
+judge success from host/MCP status flags, not prose inside the returned content;
+this includes existing server results marked successful despite partial failures.
+Tool input/output content and knowledge/vault database contents are not stored
+in the observation file.
+
+The hook entry point resolves project identity before loading Bash or Read
+policies: explicit flag, environment, payload-anchored discovery, then
+process-cwd discovery. Relative explicit/environment paths are anchored to process
+cwd; selected directories must exist. Invalid selections produce structured
+PreToolUse denials, or errors without state mutation for other events. Invalid
+payload cwd produces a diagnostic and fallback. Directory normalization resolves
+symlinks before parent components; anchored Git probes set their own directory
+and discard inherited `GIT_*` overrides without changing the parent process.
+
+Read policy ownership remains the selected project while cwd-relative rules use
+the validated payload directory (or selected project as fallback). Capy file
+parameters remain project-relative regardless of rule cwd. Guidance state uses
+the same selected project. Hooks do not resolve database keys or open a store.
 
 ### Guidance System
 
-One-time advisories (Read, Grep, Bash) shown once per session. State persisted to `.capy/guidance-<sessionID>.json` since hooks are separate processes.
+One-time advisories (Read, Grep, Bash) shown once per session. State persisted to
+`.capy/guidance-<session-component>.json` since hooks are separate processes.
+Creation and reset share a stable component mapping: IDs of 1–128 ASCII letters,
+digits, dots, underscores or hyphens keep their existing filenames; other
+nonempty IDs use `sha256-` followed by the full hexadecimal SHA-256 digest.
+Empty IDs do not persist state and continue to receive guidance on every call.
 
 ### Platform Adapter
 
@@ -208,11 +280,69 @@ Security policies loaded from `.claude/settings.json` (project and global). Thre
 2. **ask** — prompt user for confirmation (hook only, not MCP)
 3. **allow** — command permitted
 
-Chained commands (`&&`, `;`, `|`) split and checked individually. Pattern syntax: `Tool(glob)` with `*` wildcard and colon syntax for command prefix matching.
+One bounded scanner checks executable elements separated by newlines, `;`, pipes,
+`&&`, `||`, and background `&`, including nested `$()` and backtick substitutions.
+Quoted literals and quoted heredoc bodies remain data; unquoted heredocs and
+arithmetic expressions are inspected for executable substitutions. Descriptor
+redirection such as `2>&1` does not split a command.
+
+Deny matches on any element win across settings. In the full hook evaluator, a
+policy's explicit ask wins over its allows, and an allow must cover every element;
+settings retain their order. An unmatched default ask still passes through the
+hook. MCP enforces denies only. Pattern syntax remains case-sensitive
+`Tool(glob)` with `*` wildcards and colon syntax for command prefixes.
+
+Each command is limited to 1 MiB, 64 active scanner frames, 4,096 executable
+elements, and `8 × input bytes + 4,096` aggregate visit steps. Limit errors return
+no partial result and block hook/MCP execution before spawning, including batch
+preflight and commands extracted from non-shell code. Malformed unterminated
+quotes/substitutions also fail evaluation. ANSI-C/localized heredoc delimiters
+(`$'EOF'`/`$"EOF"`) fail closed with guidance to use ordinary quoting; their
+delimiter decoding is not implemented. These are static policy checks, not a
+full shell interpreter or an OS sandbox; dynamic code and non-shell extraction
+retain their existing limitations.
 
 ### File Path Evaluation
 
-Read deny patterns (e.g., `Read(.env)`) checked for `capy_execute_file` paths.
+`security.LoadReadPolicy` prepares one immutable policy snapshot with the selected
+project, rule cwd, home, and each rule's action/settings source/anchor. MCP direct
+reads (`capy_execute_file`, `capy_index`) and the store's stale-refresh deny
+callback share the server snapshot. Hooks prepare rules per invocation and
+return structured blocks for policy errors. The legacy exported glob loader and
+matcher remain for compatibility; production file consumers use the prepared
+policy.
+
+Anchors are parsed before path cleaning: `//` means filesystem root, `~/` means
+home, `/` means the source anchor (project for local/shared settings; settings
+parent for user settings), and unprefixed/`./` means rule cwd. MCP uses its
+selected project as rule cwd. Bare `Read` matches every file; unprefixed
+basename-only rules match at any depth under cwd. Supported syntax is `*`, `**`,
+`?`, and escaped literals; unsupported patterns and invalid settings fail file
+admission. Missing settings remain normal.
+
+Denies match requested, lexical and physical paths, resolving symlinks before
+`..`; literal deny prefixes also resolve physically so absolute callers cannot
+bypass a deny expressed through an alias. Single-slash denies keep a conservative
+union of settings-relative and legacy absolute meanings with a compatibility
+warning. Explicit allows cover both normalized requested and physical paths
+without that legacy union or alias-prefix expansion. Ask rules are validated and
+retained but never grant MCP access.
+
+`FilePolicy.ResolveExecuteFile` resolves the execute-file path parameter once
+relative to the selected project, checks Read denies, and requires component-wise
+lexical and physical containment. The selected project's lexical and canonical
+spellings both count as local. An external path needs one explicit allow covering
+both requested and physical candidates. Unresolvable projects/targets fail
+before spawning; the executor receives the checked physical absolute path. It
+passes that path as request-local child environment data, so runtime string
+interpolation and language-specific escaping cannot change the admitted target.
+`capy_index` retains its explicit absolute-file, deny-only admission contract.
+
+The server does not reload settings mid-session. Denied or invalid-policy stale
+reads are logged and skipped while preserving cached content. There remains a
+check/open replacement race (feature audit D2); this is not an OS sandbox.
+Hook payload-cwd selection remains pending Task 5 in the
+[current sync](feat/wip/upstream-sync-v1.0.169/tasks.md).
 
 ### SSRF Protection
 

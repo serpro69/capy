@@ -5,7 +5,7 @@
 > Audit: [upstream-audit.md](upstream-audit.md)
 > Reconciliation: [.reviews/reconciliation-2026-10-10.md](.reviews/reconciliation-2026-10-10.md)
 > Readiness: [.reviews/readiness-2026-10-10.md](.reviews/readiness-2026-10-10.md)
-> Status: pending
+> Status: in-progress
 > Created: 2026-10-10
 > Not Doing: CI/bundle/docs-only ports, unsupported platforms, hosted analytics/pricing, event/directive replay, new Codex hooks, new runtimes, transcript-based cwd guessing, vault schema/key changes, ranking rewrites, unconditional source echoes, OS sandboxing
 > Deferred follow-ups: per-agent throttle identity (D1), atomic checked-file handoff (D2), colliding concurrent batch labels (D3), structured chunk splitting (D4), authoritative child tool-pool discovery (D5); see audit.
@@ -14,7 +14,7 @@
 
 ## Task 1: Enforce shell policies on every executable element
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 6, 7, 10, 11, 12
@@ -22,13 +22,18 @@
 
 ### Subtasks
 
-- [ ] 1.1 Extend the scanner in `internal/security/split.go` for nested substitutions, real command separators and quote/escape/heredoc contexts → verify: table-driven positive and literal-data negative cases.
-- [ ] 1.2 Use executable elements in both evaluators in `eval.go`, preserving deny precedence and existing ask behavior → verify: allowed prefixes cannot authorize later commands.
-- [ ] 1.3 Propagate typed scanner-limit errors as hook blocks/MCP errors before spawning; test unquoted-heredoc substitutions and every numeric bound → verify: security/hook/server suites, with no partial-list fallback.
+- [x] 1.1 Extend the scanner in `internal/security/split.go` for nested substitutions, real command separators and quote/escape/heredoc contexts → verify: table-driven positive and literal-data negative cases.
+- [x] 1.2 Use executable elements in both evaluators in `eval.go`, preserving deny precedence and existing ask behavior → verify: allowed prefixes cannot authorize later commands.
+- [x] 1.3 Propagate typed scanner-limit errors as hook blocks/MCP errors before spawning; test unquoted-heredoc substitutions and every numeric bound → verify: security/hook/server suites, with no partial-list fallback.
+
+Evidence: [verification](verification.md#task-1-shell-policy-evaluation) and
+[isolated review](.reviews/task-1-code-review-2026-10-10.md). Unsupported
+ANSI-C/localized heredoc delimiters fail closed; bounded delimiter decoding is
+explicitly deferred in `implementation.md` with ordinary-quote guidance.
 
 ## Task 2a: Prepare origin-aware Read policies on current file paths
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 6, 7, 10, 11
@@ -36,13 +41,18 @@
 
 ### Subtasks
 
-- [ ] 2a.1 Retain rule source/anchors and prepare supported path grammar in `internal/security` → verify: root/home/settings/cwd anchors, escaped literals, bare Read and unsupported syntax diagnostics.
-- [ ] 2a.2 Preserve single-slash legacy denies conservatively; never use legacy interpretation for new allows → verify: no weakened deny or broadened grant through symlink aliases.
-- [ ] 2a.3 Wire the prepared policy into existing direct-file and stale-refresh consumers → verify: relative, absolute and physical inputs make the same decision using isolated project/user settings.
+- [x] 2a.1 Retain rule source/anchors and prepare supported path grammar in `internal/security` → verify: root/home/settings/cwd anchors, escaped literals, bare Read and unsupported syntax diagnostics.
+- [x] 2a.2 Preserve single-slash legacy denies conservatively; never use legacy interpretation for new allows → verify: no weakened deny or broadened grant through symlink aliases.
+- [x] 2a.3 Wire the prepared policy into existing direct-file and stale-refresh consumers → verify: relative, absolute and physical inputs make the same decision using isolated project/user settings.
+
+Evidence: [verification](verification.md#task-2a-prepared-read-policies) and
+[isolated review](.reviews/task-2a-code-review-2026-10-10.md). Policy preparation
+and legacy-deny compatibility are complete. Execute-file containment/path
+handoff and validated hook cwd selection remain Tasks 2 and 5.
 
 ## Task 2: Admit execute-file paths consistently
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2a
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 6, 10, 11, 12
@@ -50,13 +60,18 @@
 
 ### Subtasks
 
-- [ ] 2.1 Use Task 2a's prepared Read rules for canonical containment and external grants → verify: native absolute/home rules, traversal, symlink aliases, deny-wins and explicit exceptions.
-- [ ] 2.2 Resolve the path once in server security handling and pass it to `handleExecuteFile`'s executor request → verify: process cwd differs from project without reading the wrong file.
-- [ ] 2.3 Record D2 at the helper and test failure paths before child spawn → verify: security/server suites and accurate boundary documentation.
+- [x] 2.1 Use Task 2a's prepared Read rules for canonical containment and external grants → verify: native absolute/home rules, traversal, symlink aliases, deny-wins and explicit exceptions.
+- [x] 2.2 Resolve the path once in server security handling and pass it to `handleExecuteFile`'s executor request → verify: process cwd differs from project without reading the wrong file.
+- [x] 2.3 Record D2 at the helper and test failure paths before child spawn → verify: security/server suites and accurate boundary documentation.
+
+Evidence: [verification](verification.md#task-2-execute-file-path-admission) and
+[isolated review](.reviews/task-2-code-review-2026-10-10.md). Review also required
+passing the admitted path through the child environment to prevent runtime
+filename interpolation. D2's atomic check/read handoff remains deferred.
 
 ## Task 3: Contain guidance state filenames
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Tasks 1, 2, 6, 7, 10, 11, 12, 16
@@ -64,12 +79,17 @@
 
 ### Subtasks
 
-- [ ] 3.1 Share the specified alphabet/128-byte/digest mapping between guidance creation and reset → verify: normal IDs stay compatible, unsafe IDs stay separate, empty IDs remain non-persisting.
-- [ ] 3.2 Add traversal/NUL/oversized-ID tests with a temporary project → verify: no filesystem effects outside `.capy` and reset targets the same state file.
+- [x] 3.1 Share the specified alphabet/128-byte/digest mapping between guidance creation and reset → verify: normal IDs stay compatible, unsafe IDs stay separate, empty IDs remain non-persisting.
+- [x] 3.2 Add traversal/NUL/oversized-ID tests with a temporary project → verify: no filesystem effects outside `.capy` and reset targets the same state file.
+
+Evidence: [verification](verification.md#task-3-guidance-state-filenames) and
+[isolated review](.reviews/task-3-code-review-2026-10-10.md). Compatible filenames
+are preserved; unsafe IDs use the same digest for creation and reset. Task 5a's
+separate observation-state format and lifecycle remain pending.
 
 ## Task 4: Emit direct main-agent routing denials
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Tasks 2, 3, 6, 7, 10, 11, 12, 16
@@ -77,12 +97,17 @@
 
 ### Subtasks
 
-- [ ] 4.1 Use `FormatBlock` in `routeBash` for capy redirects → verify: deny JSON contains actionable guidance and does not approve an echo replacement.
-- [ ] 4.2 Preserve safe downloads, security asks and Agent input edits → verify: hook and adapter tests.
+- [x] 4.1 Use `FormatBlock` in `routeBash` for capy redirects → verify: deny JSON contains actionable guidance and does not approve an echo replacement.
+- [x] 4.2 Preserve safe downloads, security asks and Agent input edits → verify: hook and adapter tests.
+
+Evidence: [verification](verification.md#task-4-direct-routing-denials) and
+[isolated review](.reviews/task-4-code-review-2026-10-10.md). Both Bash redirect
+paths now emit direct denials with guidance. Child capability handling remains
+Tasks 5 and 5a.
 
 ## Task 5: Route subagents according to available tools
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 2a, 3, 4
 - **Size:** M
 - **Can run in parallel with:** Tasks 2, 6, 7, 10, 11, 12, 16
@@ -90,13 +115,18 @@
 
 ### Subtasks
 
-- [ ] 5.1 Preserve child identity/payload cwd and add start-directory detection in `config/paths.go` → verify: explicit/environment/payload/process precedence, invalid payload fallback, no global cwd/env mutation and no mismatched policy directory.
-- [ ] 5.2 Treat unverified child tools as unknown, with advisory fallback and security checks intact → verify: unknown/fixed-tool children avoid unavailable redirects, and type alone does not classify a child or its tool pool.
-- [ ] 5.3 Add bounded deferred-tool discovery/fallback wording to injected and generated routing → verify: Agent inputs survive, generated `.capy/AGENTS.md` matches its generator, and artifact tests pass.
+- [x] 5.1 Preserve child identity/payload cwd and add start-directory detection in `config/paths.go` → verify: explicit/environment/payload/process precedence, invalid payload fallback, no global cwd/env mutation and no mismatched policy directory.
+- [x] 5.2 Treat unverified child tools as unknown, with advisory fallback and security checks intact → verify: unknown/fixed-tool children avoid unavailable redirects, and type alone does not classify a child or its tool pool.
+- [x] 5.3 Add bounded deferred-tool discovery/fallback wording to injected and generated routing → verify: Agent inputs survive, generated `.capy/AGENTS.md` matches its generator, and artifact tests pass.
+
+Evidence: [verification](verification.md#task-5-subagent-routing-and-hook-context)
+and [isolated review](.reviews/task-5-code-review-2026-10-10.md). Context selection
+now precedes policy loading, and children with unverified tools receive advisory
+native fallback. Task 5a's one-use observation-based enforcement remains pending.
 
 ## Task 5a: Restore child redirects for observed available tools
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 3, 5
 - **Size:** M
 - **Can run in parallel with:** Tasks 6, 7, 10, 11, 16
@@ -104,13 +134,19 @@
 
 ### Subtasks
 
-- [ ] 5a.1 Record one-use, independently expiring execute/fetch observations in the bounded project-state file → verify: 60-second expiry, no error/other-tool renewal, byte/entry caps, stable identities, atomic consumption and lock-timeout fallback.
-- [ ] 5a.2 Consume evidence before one suitable redirect; wire SessionEnd identity/entry cleanup → verify: failed retry allows native fallback, arbitrary HTTP requires execute, sibling state survives, and no knowledge DB is opened.
-- [ ] 5a.3 Document first-call/transient-observation limits and D5; synchronize generated wording → verify: no claim of permanent availability or authoritative frontmatter inference.
+- [x] 5a.1 Record one-use, independently expiring execute/fetch observations in the bounded project-state file → verify: 60-second expiry, no error/other-tool renewal, byte/entry caps, stable identities, atomic consumption and lock-timeout fallback.
+- [x] 5a.2 Consume evidence before one suitable redirect; wire SessionEnd identity/entry cleanup → verify: failed retry allows native fallback, arbitrary HTTP requires execute, sibling state survives, and no knowledge DB is opened.
+- [x] 5a.3 Document first-call/transient-observation limits and D5; synchronize generated wording → verify: no claim of permanent availability or authoritative frontmatter inference.
+
+Evidence: [verification](verification.md#task-5a-one-use-child-tool-observations)
+and [isolated review](.reviews/task-5a-code-review-2026-10-10.md). Successful
+execute/fetch observations now provide bounded, independently expiring one-use
+redirect evidence. SessionEnd clears only its stable session's entries. D5's
+authoritative pre-call tool discovery remains deferred.
 
 ## Task 6: Preserve batch heredocs and captured stderr
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Tasks 1, 2, 3, 4, 5, 7, 10, 11, 12
@@ -118,12 +154,18 @@
 
 ### Subtasks
 
-- [ ] 6.1 Execute original commands in both batch worker paths and combine captured streams afterward → verify: heredoc terminators and multiline commands run intact.
-- [ ] 6.2 Cover partial/empty/stderr-only output and serial/parallel timeout semantics → verify: batch tests under `-race` and assertions against indexed content.
+- [x] 6.1 Execute original commands in both batch worker paths and combine captured streams afterward → verify: heredoc terminators and multiline commands run intact.
+- [x] 6.2 Cover partial/empty/stderr-only output and serial/parallel timeout semantics → verify: batch tests under `-race` and assertions against indexed content.
+
+Evidence: [verification](verification.md#task-6-batch-heredocs-and-captured-stderr)
+and [isolated review](.reviews/task-6-code-review-2026-10-10.md). Both workers
+preserve the submitted command and index captured stdout followed by stderr.
+Timeout/order semantics remain intact. Task 18's batch provenance, response
+budgets and raw-byte accounting remain pending.
 
 ## Task 6a: Validate boolean inputs consistently
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 3, 7, 10, 11, 12a
@@ -131,9 +173,15 @@
 
 ### Subtasks
 
-- [ ] 6a.1 Add the presence-aware literal parser in `coerce.go` and wire execute/fetch flags → verify: string booleans preserve intent; invalid background spawns nothing.
-- [ ] 6a.2 Apply it to cleanup and both all-projects selectors, preserving omitted defaults → verify: invalid/null/numeric values cause no purge/optimization/widening, and explicit literal `dry_run: "false"` is intentionally honored.
-- [ ] 6a.3 Exercise actual stdio requests and record compatibility changes → verify: no handler-only coercion claim or false assertion about the SDK's previous string handling.
+- [x] 6a.1 Add the presence-aware literal parser in `coerce.go` and wire execute/fetch flags → verify: string booleans preserve intent; invalid background spawns nothing.
+- [x] 6a.2 Apply it to cleanup and both all-projects selectors, preserving omitted defaults → verify: invalid/null/numeric values cause no purge/optimization/widening, and explicit literal `dry_run: "false"` is intentionally honored.
+- [x] 6a.3 Exercise actual stdio requests and record compatibility changes → verify: no handler-only coercion claim or false assertion about the SDK's previous string handling.
+
+Evidence: [verification](verification.md#task-6a-consistent-boolean-request-validation)
+and [isolated review](.reviews/task-6a-code-review-2026-10-10.md). All existing
+boolean arguments share presence-aware validation before side effects. Literal
+string-false cleanup is intentionally honored; numeric all-projects coercion is
+rejected. Task 13 will reuse the parser for directory controls.
 
 ## Task 7: Use project cwd for every runtime
 
