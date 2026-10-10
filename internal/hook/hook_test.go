@@ -87,9 +87,9 @@ func TestPreToolUse_CurlBlocked(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output)
 	result := parseResult(t, output)
-	assert.Equal(t, "modify", result["action"])
-	updated := result["updatedInput"].(map[string]any)
-	assert.Contains(t, updated["command"], "fetch_and_index")
+	assert.Equal(t, "deny", result["action"])
+	assert.Contains(t, result["reason"], "capy_fetch_and_index")
+	assert.NotContains(t, result, "updatedInput")
 }
 
 func TestPreToolUse_WgetBlocked(t *testing.T) {
@@ -100,7 +100,9 @@ func TestPreToolUse_WgetBlocked(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output)
 	result := parseResult(t, output)
-	assert.Equal(t, "modify", result["action"])
+	assert.Equal(t, "deny", result["action"])
+	assert.Contains(t, result["reason"], "capy_execute")
+	assert.NotContains(t, result, "updatedInput")
 }
 
 func TestPreToolUse_CurlSilentFileOutputAllowed(t *testing.T) {
@@ -112,7 +114,7 @@ func TestPreToolUse_CurlSilentFileOutputAllowed(t *testing.T) {
 	// Should get guidance (first bash call), not a block
 	if output != nil {
 		result := parseResult(t, output)
-		assert.NotEqual(t, "modify", result["action"], "silent curl with -o should be allowed")
+		assert.Equal(t, "context", result["action"], "silent curl with -o should be allowed")
 	}
 }
 
@@ -124,7 +126,7 @@ func TestPreToolUse_CurlOutputNoSilentBlocked(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output)
 	result := parseResult(t, output)
-	assert.Equal(t, "modify", result["action"], "curl with -o but no -s should be blocked")
+	assert.Equal(t, "deny", result["action"], "curl with -o but no -s should be blocked")
 }
 
 func TestPreToolUse_WgetQuietOutputAllowed(t *testing.T) {
@@ -135,7 +137,7 @@ func TestPreToolUse_WgetQuietOutputAllowed(t *testing.T) {
 	require.NoError(t, err)
 	if output != nil {
 		result := parseResult(t, output)
-		assert.NotEqual(t, "modify", result["action"], "quiet wget with -O should be allowed")
+		assert.Equal(t, "context", result["action"], "quiet wget with -O should be allowed")
 	}
 }
 
@@ -147,7 +149,7 @@ func TestPreToolUse_WgetNoQuietBlocked(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output)
 	result := parseResult(t, output)
-	assert.Equal(t, "modify", result["action"], "wget with -O but no -q should be blocked")
+	assert.Equal(t, "deny", result["action"], "wget with -O but no -q should be blocked")
 }
 
 func TestPreToolUse_CurlChainedMixed(t *testing.T) {
@@ -159,7 +161,7 @@ func TestPreToolUse_CurlChainedMixed(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output)
 	result := parseResult(t, output)
-	assert.Equal(t, "modify", result["action"], "mixed chain should be blocked")
+	assert.Equal(t, "deny", result["action"], "mixed chain should be blocked")
 }
 
 func TestPreToolUse_CurlChainedAllSafe(t *testing.T) {
@@ -171,7 +173,7 @@ func TestPreToolUse_CurlChainedAllSafe(t *testing.T) {
 	require.NoError(t, err)
 	if output != nil {
 		result := parseResult(t, output)
-		assert.NotEqual(t, "modify", result["action"], "all-safe chain should be allowed")
+		assert.Equal(t, "context", result["action"], "all-safe chain should be allowed")
 	}
 }
 
@@ -184,7 +186,7 @@ func TestPreToolUse_CurlStdoutAliasBlocked(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output)
 	result := parseResult(t, output)
-	assert.Equal(t, "modify", result["action"], "curl -o - should be blocked")
+	assert.Equal(t, "deny", result["action"], "curl -o - should be blocked")
 }
 
 func TestPreToolUse_CurlVerboseBlocked(t *testing.T) {
@@ -195,7 +197,7 @@ func TestPreToolUse_CurlVerboseBlocked(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output)
 	result := parseResult(t, output)
-	assert.Equal(t, "modify", result["action"], "verbose curl should be blocked")
+	assert.Equal(t, "deny", result["action"], "verbose curl should be blocked")
 }
 
 func TestPreToolUse_CurlInQuotesAllowed(t *testing.T) {
@@ -219,9 +221,10 @@ func TestPreToolUse_InlineHTTPBlocked(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output)
 	result := parseResult(t, output)
-	assert.Equal(t, "modify", result["action"])
-	updated := result["updatedInput"].(map[string]any)
-	assert.Contains(t, updated["command"], "HTTP")
+	assert.Equal(t, "deny", result["action"])
+	assert.Contains(t, result["reason"], "Inline HTTP blocked")
+	assert.Contains(t, result["reason"], "capy_execute")
+	assert.NotContains(t, result, "updatedInput")
 }
 
 func TestPreToolUse_FetchBlocked(t *testing.T) {
@@ -232,7 +235,8 @@ func TestPreToolUse_FetchBlocked(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output)
 	result := parseResult(t, output)
-	assert.Equal(t, "modify", result["action"])
+	assert.Equal(t, "deny", result["action"])
+	assert.NotContains(t, result, "updatedInput")
 }
 
 func TestPreToolUse_BuildToolGuidance(t *testing.T) {
@@ -416,7 +420,7 @@ func TestPreToolUse_GeminiAlias(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output)
 	result := parseResult(t, output)
-	assert.Equal(t, "modify", result["action"])
+	assert.Equal(t, "deny", result["action"])
 }
 
 // ─── Helper tests ──────────────────────────────────────────────────────────────

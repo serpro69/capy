@@ -37,9 +37,9 @@ func ccParse(t *testing.T, output []byte) map[string]any {
 	return hso
 }
 
-// ─── Bash curl → modify (redirect to sandbox) ─────────────────────────────────
+// ─── Bash routing → direct denial with actionable guidance ────────────────────
 
-func TestHookIntegration_BashCurl_Modify(t *testing.T) {
+func TestHookIntegration_BashCurl_Denied(t *testing.T) {
 	ResetGuidanceThrottle()
 	a := ccAdapter()
 	input := ccInput("Bash", map[string]any{"command": "curl https://api.github.com/repos/anthropics/capy"})
@@ -49,17 +49,53 @@ func TestHookIntegration_BashCurl_Modify(t *testing.T) {
 
 	hso := ccParse(t, output)
 	assert.Equal(t, "PreToolUse", hso["hookEventName"])
-	assert.Equal(t, "allow", hso["permissionDecision"])
-	assert.Equal(t, "Routed to capy sandbox", hso["permissionDecisionReason"])
+	assert.Equal(t, "deny", hso["permissionDecision"])
+	assert.Contains(t, hso["permissionDecisionReason"], "capy_fetch_and_index")
+	assert.Contains(t, hso["permissionDecisionReason"], "capy_execute")
+	assert.NotContains(t, hso, "updatedInput")
+}
 
-	updated := hso["updatedInput"].(map[string]any)
-	assert.Contains(t, updated["command"], "fetch_and_index")
+func TestHookIntegration_RoutingDenialsRepeat(t *testing.T) {
+	project := t.TempDir()
+	t.Setenv("CLAUDE_PROJECT_DIR", project)
+	// A previously shown Bash nudge must not throttle a routing denial.
+	output, err := handlePreToolUse(ccInput("Bash", map[string]any{"command": "echo hello"}), ccAdapter(), nil, project)
+	require.NoError(t, err)
+	require.NotEmpty(t, output)
+	tests := []struct {
+		name    string
+		command string
+		reason  string
+	}{
+		{name: "wget", command: "wget -O - https://example.com", reason: "stdout flood risk"},
+		{name: "python", command: `python3 -c "import requests; requests.get('https://example.com')"`, reason: "Inline HTTP blocked"},
+		{name: "javascript fetch", command: `node -e "fetch('https://example.com')"`, reason: "Inline HTTP blocked"},
+		{name: "javascript http", command: `node -e "const http = require('http'); http.get('http://example.com')"`, reason: "Inline HTTP blocked"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for range 2 {
+				input := ccInput("Bash", map[string]any{"command": tt.command})
+				output, err := handlePreToolUse(input, ccAdapter(), nil, project)
+				require.NoError(t, err)
+				hso := ccParse(t, output)
+				assert.Equal(t, "PreToolUse", hso["hookEventName"])
+				assert.Equal(t, "deny", hso["permissionDecision"])
+				assert.Contains(t, hso["permissionDecisionReason"], tt.reason)
+				assert.Contains(t, hso["permissionDecisionReason"], "capy_execute")
+				assert.Contains(t, hso["permissionDecisionReason"], "capy_fetch_and_index")
+				assert.NotContains(t, hso, "updatedInput")
+				assert.NotContains(t, hso, "additionalContext")
+			}
+		})
+	}
 }
 
 // ─── Bash curl silent file output → allowed through ──────────────────────────
 
 func TestHookIntegration_BashCurlSafeDownload_Allowed(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("CLAUDE_PROJECT_DIR", dir)
 	ResetGuidanceFile(dir, "test-session-123")
 	a := ccAdapter()
 	input := ccInput("Bash", map[string]any{"command": "curl -sSL -o /tmp/archive.tar.gz https://example.com/archive.tar.gz"})
@@ -84,9 +120,9 @@ func TestHookIntegration_BashCurlUnsafeNoSilent_Blocked(t *testing.T) {
 	require.NotNil(t, output)
 
 	hso := ccParse(t, output)
-	assert.Equal(t, "allow", hso["permissionDecision"])
-	updated := hso["updatedInput"].(map[string]any)
-	assert.Contains(t, updated["command"], "blocked")
+	assert.Equal(t, "deny", hso["permissionDecision"])
+	assert.Contains(t, hso["permissionDecisionReason"], "blocked")
+	assert.NotContains(t, hso, "updatedInput")
 }
 
 // ─── Normal bash → context guidance (first call only) ──────────────────────────
@@ -161,24 +197,35 @@ func TestHookIntegration_Read_Guidance(t *testing.T) {
 // ─── Agent → routing block injected ────────────────────────────────────────────
 
 func TestHookIntegration_Agent_RoutingBlockInjected(t *testing.T) {
-	ResetGuidanceThrottle()
-	a := ccAdapter()
-	input := ccInput("Agent", map[string]any{
-		"prompt":        "Investigate the build failure",
-		"subagent_type": "general-purpose",
-	})
-	output, err := handlePreToolUse(input, a, nil, "")
-	require.NoError(t, err)
-	require.NotNil(t, output)
+	for _, tool := range []string{"Agent", "Task"} {
+		t.Run(tool, func(t *testing.T) {
+			input := ccInput(tool, map[string]any{
+				"prompt":            "Investigate the build failure",
+				"subagent_type":     "general-purpose",
+				"description":       "Inspect build logs",
+				"model":             "sonnet",
+				"run_in_background": true,
+				"resume":            "existing-agent",
+			})
+			output, err := handlePreToolUse(input, ccAdapter(), nil, "")
+			require.NoError(t, err)
+			require.NotNil(t, output)
 
-	hso := ccParse(t, output)
-	assert.Equal(t, "PreToolUse", hso["hookEventName"])
-	assert.Equal(t, "allow", hso["permissionDecision"])
+			hso := ccParse(t, output)
+			assert.Equal(t, "PreToolUse", hso["hookEventName"])
+			assert.Equal(t, "allow", hso["permissionDecision"])
 
-	updated := hso["updatedInput"].(map[string]any)
-	prompt := updated["prompt"].(string)
-	assert.Contains(t, prompt, "Investigate the build failure")
-	assert.Contains(t, prompt, "context_window_protection")
+			updated := hso["updatedInput"].(map[string]any)
+			prompt := updated["prompt"].(string)
+			assert.Contains(t, prompt, "Investigate the build failure")
+			assert.Contains(t, prompt, "context_window_protection")
+			assert.Equal(t, "general-purpose", updated["subagent_type"])
+			assert.Equal(t, "Inspect build logs", updated["description"])
+			assert.Equal(t, "sonnet", updated["model"])
+			assert.Equal(t, true, updated["run_in_background"])
+			assert.Equal(t, "existing-agent", updated["resume"])
+		})
+	}
 }
 
 // ─── Bash subagent → upgraded to general-purpose ───────────────────────────────
@@ -200,6 +247,44 @@ func TestHookIntegration_BashSubagent_Upgraded(t *testing.T) {
 }
 
 // ─── Security policy enforcement via Claude Code adapter ───────────────────────
+
+func TestHookIntegration_RoutingSecurityPrecedence(t *testing.T) {
+	t.Setenv("CLAUDE_PROJECT_DIR", "")
+	commands := []struct {
+		name    string
+		command string
+		pattern string
+	}{
+		{name: "curl", command: "curl https://example.com", pattern: "Bash(curl *)"},
+		{name: "wget", command: "wget https://example.com", pattern: "Bash(wget *)"},
+		{name: "inline HTTP", command: `node -e "fetch('https://example.com')"`, pattern: "Bash(node *)"},
+		{name: "silent download", command: "curl -sSL -o /tmp/file https://example.com", pattern: "Bash(curl *)"},
+		{name: "quiet download", command: "wget -qO /tmp/file https://example.com", pattern: "Bash(wget *)"},
+	}
+	for _, cmd := range commands {
+		t.Run(cmd.name, func(t *testing.T) {
+			for _, decision := range []string{"deny", "ask"} {
+				t.Run(decision, func(t *testing.T) {
+					policy := security.SecurityPolicy{Allow: []string{cmd.pattern}, Ask: []string{cmd.pattern}}
+					if decision == "deny" {
+						policy.Deny = []string{cmd.pattern}
+					}
+					input := ccInput("Bash", map[string]any{"command": cmd.command})
+					output, err := handlePreToolUse(input, ccAdapter(), []security.SecurityPolicy{policy}, "")
+					require.NoError(t, err)
+					hso := ccParse(t, output)
+					assert.Equal(t, decision, hso["permissionDecision"])
+					if decision == "deny" {
+						assert.Contains(t, hso["permissionDecisionReason"], "security policy")
+						assert.Contains(t, hso["permissionDecisionReason"], cmd.pattern)
+					}
+					assert.NotContains(t, hso, "updatedInput")
+					assert.NotContains(t, hso, "additionalContext")
+				})
+			}
+		})
+	}
+}
 
 func TestHookIntegration_SecurityDeny_BashSudo(t *testing.T) {
 	ResetGuidanceThrottle()
@@ -255,9 +340,9 @@ func TestHookIntegration_GeminiAlias_CurlBlocked(t *testing.T) {
 	require.NotNil(t, output)
 
 	hso := ccParse(t, output)
-	assert.Equal(t, "allow", hso["permissionDecision"])
-	updated := hso["updatedInput"].(map[string]any)
-	assert.Contains(t, updated["command"], "fetch_and_index")
+	assert.Equal(t, "deny", hso["permissionDecision"])
+	assert.Contains(t, hso["permissionDecisionReason"], "capy_fetch_and_index")
+	assert.NotContains(t, hso, "updatedInput")
 }
 
 // ─── Build tool routing ────────────────────────────────────────────────────────

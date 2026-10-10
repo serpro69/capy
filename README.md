@@ -167,7 +167,7 @@ capy doctor   # verify everything is green
 **3. Use normally.** Start using Claude Code — capy works automatically:
 
 - **Bash commands** producing large output are nudged toward the sandbox
-- **curl/wget** calls are intercepted and redirected to `capy_fetch_and_index`
+- **curl/wget** calls are denied with guidance to use `capy_fetch_and_index` or `capy_execute`; silent file downloads remain allowed
 - **WebFetch** is blocked in favor of `capy_fetch_and_index`
 - **Read** for analysis (not editing) is nudged toward `capy_execute_file`
 - **Subagents** get routing instructions injected automatically
@@ -969,8 +969,8 @@ capy uses Claude Code's hook system to intercept tool calls before they execute.
 
 | Pattern                                           | What happens                                                                                                        |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `curl`/`wget` in Bash                             | Command replaced with message directing to `capy_fetch_and_index` (file-output flags like `-o` are allowed through) |
-| `fetch()`, `requests.get()`, `http.get()` in Bash | Command replaced with message directing to `capy_execute`                                                           |
+| `curl`/`wget` in Bash                             | Denied with guidance to use `capy_fetch_and_index` or `capy_execute`; silent/quiet file downloads remain allowed     |
+| `fetch()`, `requests.get()`, `http.get()` in Bash | Denied with guidance to use `capy_execute` or `capy_fetch_and_index`                                                 |
 | `WebFetch` tool                                   | Denied — use `capy_fetch_and_index` instead (git platform URLs get CLI-specific redirect guidance)                  |
 | `Read` tool                                       | One-time advisory: prefer `capy_execute_file` for analysis                                                          |
 | `Grep` tool                                       | One-time advisory: prefer `capy_execute` for large searches                                                         |

@@ -74,8 +74,8 @@ func routeBash(command string, policies []security.SecurityPolicy, a adapter.Hoo
 	// Stage 2: Context-mode routing
 
 	// curl/wget detection (strip quoted content to avoid false positives)
-	// Replace command with echo message (FormatModify) instead of hard deny,
-	// matching the TS reference — the LLM sees the guidance in stdout.
+	// Return routing guidance as a denial reason, without approving a replacement
+	// command. FormatModify is reserved for actual Agent/Task input edits.
 	// Smart check: allow curl/wget that writes to a file silently (#166).
 	stripped := stripQuotedContent(command)
 	if isCurlOrWget(stripped) {
@@ -88,9 +88,9 @@ func routeBash(command string, policies []security.SecurityPolicy, a adapter.Hoo
 			}
 		}
 		if !allSafe {
-			return a.FormatModify(map[string]any{
-				"command": `echo "capy: curl/wget blocked (stdout flood risk). Use capy_fetch_and_index(url, source) to fetch URLs, or capy_execute(language, code) to run HTTP calls in sandbox. File downloads with -o/--output are allowed."`,
-			})
+			return a.FormatBlock("capy: curl/wget blocked (stdout flood risk). " +
+				"Use capy_fetch_and_index(url, source) to fetch URLs, or capy_execute(language, code) to run HTTP calls in sandbox. " +
+				"Silent file downloads with -o/--output (curl) or -O/--output-document (wget) are allowed.")
 		}
 		// All curl/wget segments write to file silently — allow through
 	}
@@ -98,9 +98,9 @@ func routeBash(command string, policies []security.SecurityPolicy, a adapter.Hoo
 	// Inline HTTP detection (strip only heredocs — code in -e/-c flags should be visible)
 	noHeredoc := stripHeredocs(command)
 	if hasInlineHTTP(noHeredoc) {
-		return a.FormatModify(map[string]any{
-			"command": `echo "capy: Inline HTTP blocked. Use capy_execute(language, code) to run HTTP calls in sandbox, or capy_fetch_and_index(url, source) for web pages. Do NOT retry with Bash."`,
-		})
+		return a.FormatBlock("capy: Inline HTTP blocked. " +
+			"Use capy_execute(language, code) to run HTTP calls in sandbox, or capy_fetch_and_index(url, source) for web pages. " +
+			"Do NOT retry with Bash.")
 	}
 
 	// Allow, but inject routing nudge (once per session)
