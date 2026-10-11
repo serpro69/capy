@@ -115,6 +115,10 @@ type CorpusConfig struct {
 	// Fuzzy may be nil, which disables the fuzzy-correction pass for this
 	// corpus (corpora without a vocabulary table).
 	Fuzzy FuzzyCorrector
+	// OnError optionally receives layer query, row-scan and iteration failures
+	// instead of logging them. It may be called concurrently by both layers;
+	// callers must synchronize any captured state. Nil keeps best-effort search.
+	OnError func(error)
 }
 
 // Corpus supplies the corpus-specific parts of a search. The zero value is
@@ -158,9 +162,9 @@ func NewCorpus(cfg CorpusConfig) (Corpus, error) {
 
 // execSearch is the shared layer-query skeleton: it builds one FTS5 MATCH
 // query from the corpus-supplied pieces (see the CorpusConfig doc for the
-// query shape) and maps result rows through MapRow. Errors degrade to nil
-// results with a logged warning — one malformed layer query must not fail the
-// whole search.
+// query shape) and maps result rows through MapRow. Errors are sent to OnError
+// when supplied, otherwise logged. Execution stays best-effort so existing
+// callers retain fallback behavior; strict callers reject the collected result.
 func (cfg CorpusConfig) execSearch(ctx context.Context, table, ftsQuery string, limit int) []SearchResult {
 	query := fmt.Sprintf(
 		`SELECT %s,
@@ -183,7 +187,11 @@ func (cfg CorpusConfig) execSearch(ctx context.Context, table, ftsQuery string, 
 	if err != nil {
 		// Warn, not Debug: a malformed query degrades silently to "no results"
 		// otherwise, hiding real SQL bugs from operators.
-		slog.Warn("search query failed", "error", err, "query", ftsQuery)
+		if cfg.OnError != nil {
+			cfg.OnError(fmt.Errorf("search query: %w", err))
+		} else {
+			slog.Warn("search query failed", "error", err, "query", ftsQuery)
+		}
 		return nil
 	}
 	defer rows.Close()
@@ -192,13 +200,21 @@ func (cfg CorpusConfig) execSearch(ctx context.Context, table, ftsQuery string, 
 	for rows.Next() {
 		r, err := cfg.MapRow(rows)
 		if err != nil {
-			slog.Warn("search row scan failed, skipping", "error", err)
+			if cfg.OnError != nil {
+				cfg.OnError(fmt.Errorf("search row scan: %w", err))
+			} else {
+				slog.Warn("search row scan failed, skipping", "error", err)
+			}
 			continue
 		}
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {
-		slog.Warn("search row iteration failed", "error", err)
+		if cfg.OnError != nil {
+			cfg.OnError(fmt.Errorf("search row iteration: %w", err))
+		} else {
+			slog.Warn("search row iteration failed", "error", err)
+		}
 		return nil
 	}
 	return results

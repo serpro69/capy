@@ -31,10 +31,11 @@ type Chunk struct {
 // SearchOptions controls filtering for search queries.
 type SearchOptions struct {
 	Source          string       // partial match filter (LIKE '%source%')
-	ContentType     string       // "code", "prose", or "" (no filter) — internal only, not in MCP schema
+	ContentType     string       // "code", "prose", or "" (no filter) — CLI/backend only, not in MCP schema
 	SourceMatchMode string       // "like" (default) or "exact"
 	MaxPerSource    int          // per-source result cap for diversification; 0 = default (2)
 	IncludeKinds    []SourceKind // empty = default (durable + session); ignored when Source != ""
+	FailOnError     bool         // return layer query/scan errors instead of best-effort results (CLI)
 }
 
 // SearchResult is a single result from a search query. It is an alias for the

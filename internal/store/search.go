@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/serpro69/capy/internal/retrieval"
@@ -41,13 +42,24 @@ func (s *ContentStore) SearchWithFallbackContext(ctx context.Context, query stri
 		return nil, err
 	}
 
-	corpus, err := s.searchCorpus(opts)
+	var queryErr error
+	var firstError sync.Once
+	var onError func(error)
+	if opts.FailOnError {
+		onError = func(err error) { firstError.Do(func() { queryErr = err }) }
+	}
+	corpus, err := s.searchCorpusWithErrorHandler(opts, onError)
 	if err != nil {
 		return nil, err
 	}
 	results := retrieval.SearchWithFallback(ctx, corpus, query, limit, opts.MaxPerSource)
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	// Retrieval has joined every layer worker before returning. Strict callers
+	// cannot mistake an unavailable layer or skipped row for a complete search.
+	if queryErr != nil {
+		return nil, queryErr
 	}
 
 	if len(results) > 0 {
@@ -64,6 +76,10 @@ func (s *ContentStore) SearchWithFallbackContext(ctx context.Context, query stri
 // vocabulary-backed fuzzy corrector is the optional corpus capability that
 // corpora without a vocabulary table leave nil.
 func (s *ContentStore) searchCorpus(opts SearchOptions) (retrieval.Corpus, error) {
+	return s.searchCorpusWithErrorHandler(opts, nil)
+}
+
+func (s *ContentStore) searchCorpusWithErrorHandler(opts SearchOptions, onError func(error)) (retrieval.Corpus, error) {
 	db, err := s.getDB()
 	if err != nil {
 		return retrieval.Corpus{}, err
@@ -80,6 +96,7 @@ func (s *ContentStore) searchCorpus(opts SearchOptions) (retrieval.Corpus, error
 		FilterParams:  filterParams,
 		MapRow:        scanSearchRow,
 		Fuzzy:         s.fuzzyCorrectWord,
+		OnError:       onError,
 	})
 }
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -9,6 +10,28 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSearchFailOnError(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.Index("orchard query", "source", "", KindDurable); err != nil {
+		t.Fatal(err)
+	}
+	db, err := s.getDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(t.Context(), "DROP TABLE chunks; DROP TABLE chunks_trigram"); err != nil {
+		t.Fatal(err)
+	}
+	for _, strict := range []bool{false, true} {
+		t.Run(fmt.Sprintf("strict=%t", strict), func(t *testing.T) {
+			results, err := s.SearchWithFallbackContext(context.Background(), "orchard", 3, SearchOptions{FailOnError: strict})
+			if (err != nil) != strict || len(results) != 0 {
+				t.Fatalf("search strict=%t: results=%d err=%v", strict, len(results), err)
+			}
+		})
+	}
+}
 
 func indexTestContent(t *testing.T, s *ContentStore) {
 	t.Helper()

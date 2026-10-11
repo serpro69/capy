@@ -16,7 +16,7 @@ import (
 	"github.com/serpro69/capy/internal/store"
 )
 
-func runIndexCLI(t *testing.T, command stdioCommand) (string, string, int) {
+func runKnowledgeCLI(t *testing.T, command stdioCommand) (string, string, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), stdioTimeout)
 	defer cancel()
@@ -32,13 +32,13 @@ func runIndexCLI(t *testing.T, command stdioCommand) (string, string, int) {
 		}
 	}
 	if ctx.Err() != nil {
-		t.Fatal("index CLI timed out")
+		t.Fatal("knowledge CLI timed out")
 	}
 	code := 0
 	if err != nil {
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) {
-			t.Fatalf("start index CLI: %v", err)
+			t.Fatalf("start knowledge CLI: %v", err)
 		}
 		code = exit.ExitCode()
 	}
@@ -84,7 +84,7 @@ func TestIndexCLI(t *testing.T) {
 		writeCLIKeyFixture(t, filepath.Join(project, ".capy.toml"), "[store]\npath = 'absent/knowledge.db'\n")
 		command.env = stdioEnv(t, "") // help/validation cannot require credentials
 		command.args = []string{"index", "--project-dir", project, "--help"}
-		out, stderr, code := runIndexCLI(t, command)
+		out, stderr, code := runKnowledgeCLI(t, command)
 		if code != 0 || stderr != "" {
 			t.Fatalf("help: code=%d, stderr=%s", code, stderr)
 		}
@@ -109,7 +109,7 @@ func TestIndexCLI(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				command.args = append([]string{"index", "--project-dir", project}, tc.args...)
-				_, stderr, code := runIndexCLI(t, command)
+				_, stderr, code := runKnowledgeCLI(t, command)
 				if code != 1 || strings.Contains(stderr, "resolving knowledge credential") {
 					t.Fatalf("validation order/status: %d, %s", code, stderr)
 				}
@@ -150,7 +150,7 @@ func TestIndexCLI(t *testing.T) {
 			writeCLIKeyFixture(t, filepath.Join(fileRoot, "note.md"), "# Orchard\n\nThe transport orchard retains amberlynx.")
 			command.args = []string{"index", input, "--project-dir", project, "--source", "cli:orchard"}
 			for _, status := range []string{"Indexed", "Unchanged"} {
-				out, stderr, code := runIndexCLI(t, command)
+				out, stderr, code := runKnowledgeCLI(t, command)
 				if code != 0 || !strings.Contains(out, status+` "cli:orchard": 1 retained sections`) {
 					t.Fatalf("file index: code=%d, stdout=%s, stderr=%s", code, out, stderr)
 				}
@@ -184,12 +184,12 @@ func TestIndexCLI(t *testing.T) {
 			t.Fatal(err)
 		}
 		command.args = []string{"index", "docs", "--project-dir", project, "--source=cli:docs", "--max-depth=0", "--max-files=1"}
-		out, stderr, code := runIndexCLI(t, command)
+		out, stderr, code := runKnowledgeCLI(t, command)
 		if code != 0 || !strings.Contains(out, "incomplete") || !strings.Contains(out, "max_files") {
 			t.Fatalf("cap outcome: %d, %s, %s", code, out, stderr)
 		}
 		command.args = []string{"index", "docs", "--project-dir", project, "--source=cli:docs", "--extensions=MD,txt", "--include=a.md", "--include=sub/*", "--exclude=sub/drop.md", "--respect-gitignore=false", "--follow-symlinks"}
-		out, stderr, code = runIndexCLI(t, command)
+		out, stderr, code = runKnowledgeCLI(t, command)
 		if code != 0 || !strings.Contains(out, "Directory scan: complete") || !strings.Contains(out, "Indexed: 1; unchanged: 1") {
 			t.Fatalf("selected outcome: %d, %s, %s", code, out, stderr)
 		}
@@ -206,7 +206,7 @@ func TestIndexCLI(t *testing.T) {
 		writeCLIKeyFixture(t, filepath.Join(project, "docs", "b.md"), strings.Repeat("x", 33))
 		writeCLIKeyFixture(t, filepath.Join(project, "docs", "c.md"), "retained last file")
 		command.args = []string{"index", "docs", "--project-dir", project, "--source=partial"}
-		out, stderr, code := runIndexCLI(t, command)
+		out, stderr, code := runKnowledgeCLI(t, command)
 		if code != 1 || !strings.Contains(out, "partial error") || !strings.Contains(out, "Indexed: 2") || !strings.Contains(out, "failed: 1") || strings.Contains(stderr, "Usage:") {
 			t.Fatalf("partial exit/summary: %d, %s, %s", code, out, stderr)
 		}
@@ -230,7 +230,7 @@ func TestIndexCLI(t *testing.T) {
 			}
 			for _, value := range []string{"false", "true"} {
 				command.args = []string{"index", "docs", "--project-dir", project, "--" + flag + "=" + value}
-				out, stderr, code := runIndexCLI(t, command)
+				out, stderr, code := runKnowledgeCLI(t, command)
 				wantCode := 0
 				if value == "true" {
 					wantCode = 1
@@ -275,7 +275,7 @@ func TestIndexCLI(t *testing.T) {
 				args, wantCode = []string{"--extensions=go"}, 0
 			}
 			command.args = append([]string{"index", input, "--project-dir", project}, args...)
-			out, stderr, code := runIndexCLI(t, command)
+			out, stderr, code := runKnowledgeCLI(t, command)
 			if code != wantCode || (code == 0 && !strings.Contains(out, "Indexed: 0")) {
 				t.Fatalf("admission outcome: %d, %s, %s", code, out, stderr)
 			}
@@ -289,13 +289,13 @@ func TestIndexCLI(t *testing.T) {
 		project, command := fixture(t)
 		writeCLIKeyFixture(t, filepath.Join(project, "a.md"), "original orchard")
 		command.args = []string{"index", "a.md", "--project-dir", project, "--source=original"}
-		if out, stderr, code := runIndexCLI(t, command); code != 0 {
+		if out, stderr, code := runKnowledgeCLI(t, command); code != 0 {
 			t.Fatalf("seed: %d, %s, %s", code, out, stderr)
 		}
 		writeCLIKeyFixture(t, filepath.Join(project, ".capy.toml"), "[store]\npath='knowledge.db'\nkey_file='db.key'\n")
 		writeCLIKeyFixture(t, filepath.Join(project, "db.key"), otherKey)
 		command.args = []string{"index", "a.md", "--project-dir", project, "--source=must-not-exist"}
-		out, stderr, code := runIndexCLI(t, command)
+		out, stderr, code := runKnowledgeCLI(t, command)
 		if code != 1 || !strings.Contains(stderr, "wrong passphrase or corrupted database") || strings.Contains(out+stderr, "cipher=") {
 			t.Fatalf("wrong-key outcome: %d, %s, %s", code, out, stderr)
 		}

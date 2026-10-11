@@ -1566,3 +1566,92 @@ verification/ADRs remain pending, as does D2.
 
 Optional editorial follow-up: `kk:clarify-docs` on `README.md` and
 `docs/architecture.md`; this is separate from Task 14 completion.
+
+## Task 15: Terminal knowledge search
+
+### Implemented behavior
+
+- `capy search <query...>` joins query arguments and validates nonempty input,
+  limit 1–100, code/prose types and repeatable durable/ephemeral kinds before
+  storage access. Durable is the explicit default; supplied kinds replace it.
+  A nonempty source remains a literal substring and bypasses kinds.
+- Real MCP-to-CLI round trips cover environment, project dotenv, selected key
+  file and linked-worktree owner credentials, with conflicting inherited keys
+  and a process cwd outside the selected project. Tests check output for key
+  leaks and immediate encrypted reopen/checkpoint behavior.
+- A real MCP descriptor check confirms that `capy_search` still has no type
+  filter. Terminal code/prose tests inspect returned markers, not just flags.
+  Literal percent, underscore, backslash and quote labels exclude wildcard
+  decoys; ephemeral results require opt-in or a named source. A populated vault
+  remains separately searchable and does not enter terminal knowledge results.
+- Prepared relative, settings-root and native absolute Read denies prevent
+  changed backing content from entering retrieval while retaining cached
+  content. A later process observes changed settings and refreshes. Sixty-five
+  file-backed sources progress across fresh CLI invocations, with each pass
+  adding no more than 32 refreshed sources and eventually reaching the last.
+- UTF-8 prefix snippets stay within 1,500 bytes including ellipsis. Metadata is
+  bounded/quoted, known secrets are redacted before truncation, and terminal
+  control bytes are removed. Empty results return 0. Invalid arguments, key,
+  policy, configuration and DB-path failures return 1. Cancellation/output
+  failure tests verify cleanup and retained data.
+- Review found query-stage errors could be mistaken for no matches. Optional
+  per-corpus reporting and CLI-only `FailOnError` collect concurrent layer
+  failures and return before access tracking/output. Query, scan and iteration
+  tests run under race detection; an encrypted malformed-row fixture verifies
+  actual CLI exit 1 with empty stdout. Legacy best-effort behavior is covered
+  separately, without changing ranking or fallback formulas.
+
+### Verification commands
+
+Commands use `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development`, and `CAPY_VAULT_KEY=test-key`.
+Broad/quality runs use `XDG_CONFIG_HOME=/tmp/capy-task15-config`; the final full
+run also clears `CLAUDE_PROJECT_DIR`. New CLI children isolate home/config/data
+and vault paths, and use synthetic credentials only.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 ./cmd/capy -run 'TestSearch\|TestKnowledgeSearchOutput' -count=1` | Passed, 19.081s before the review correction. |
+| `go test -race -tags fts5 ./cmd/capy/... ./internal/store/... ./internal/retrieval/...` | Passed: CLI 290.435s, store 115.364s, retrieval 1.089s before the correction. |
+| Final `go test -race -tags fts5 ./cmd/capy ./internal/store ./internal/retrieval -run 'TestSearch\|TestKnowledgeSearchOutput\|TestCorpusReportsLayerErrors' -count=1` | Passed: CLI 24.353s, store 12.539s, retrieval 1.126s, including the review fix. |
+| Final `make test` with local sockets | Every package passed: CLI 277.387s, knowledge 30.447s, retrieval 0.256s, server 137.267s, store 92.593s, vault 300.697s; other packages passed or used cache. |
+| Final `go vet -tags fts5 ./cmd/capy ./internal/store ./internal/retrieval` | Passed. |
+| Final `make build` | Passed; nonfatal read-only module-stat-cache warning. |
+| Final `make bench-quality BENCH_BRANCH=upstream-sync-task15` | Passed for store/server/vault, zero reported failures. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task14.json bench-results/upstream-sync-task15.json` | Dataset verified; all 84 quality/context metrics unchanged. |
+| `go test -tags fts5 ./internal/platform -run 'TestGeneratedWholeFileArtifacts\|TestMergedArtifactsAreIdempotent' -count=1` | Passed. |
+| `git diff --check` | Passed. |
+
+The first test invocation could not write the default Go cache; moving it to
+`/tmp` resolved that environmental failure. The first broad sandbox run passed
+CLI/store/retrieval and the other unaffected packages but blocked Unix/TCP
+listeners in existing config/server tests (`operation not permitted`). The
+full suite was rerun with local sockets enabled. The initial kind fixture was
+corrected because `capy_index` always creates durable sources; ephemeral test
+rows now use the store API.
+
+Benchmark baseline is the saved Task 14 report (HEAD metadata `943dd09` including
+its implementation); the target contains HEAD metadata `986c8f0` plus this task's
+working-tree changes. No timing improvement is claimed. Reports live under
+ignored `bench-results/`; logs are `/tmp/capy-task15-{focused,full,full-sockets,
+race,review-fix,vet-final,build-final,quality-final,quality-comparison-final}.log`.
+
+### Review and scope
+
+The [isolated review](.reviews/task-15-code-review-2026-10-11.md) approves the
+final implementation after the P1 query-error propagation fix, with no remaining
+P0–P3 findings. PAL's external review was unavailable because its configured API
+key was invalid; it produced no expert assessment. The skill's independent-agent
+fallback supplied the completed review. The documented finding does not require
+a duplicate knowledge note.
+
+The command began as a small adapter; the storage-error contract required
+opt-in error reporting across the existing shared retrieval boundary, expanding
+Task 15 to M. CLI documentation and ADR-012 record syntax, flags, defaults,
+output limits, ownership, exit behavior and terminal-only type selection.
+CI changes are N/A; build/test conventions inherit `AGENTS.md`. Dependencies
+were checked at their pinned versions; no upgrade, migration, generated artifact
+or vault change was needed. Tasks 16a–20 and deferred D1–D5 remain pending.
+
+Optional editorial follow-up: `kk:clarify-docs` on `README.md`,
+`docs/architecture.md` and `docs/adr/012-contenttype-internal-only.md`.

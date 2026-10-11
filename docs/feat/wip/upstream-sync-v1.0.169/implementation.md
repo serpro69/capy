@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a and 14 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14 and 15 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -612,12 +612,58 @@ the existing FTS5/synthetic-key test conventions from `AGENTS.md` apply.
 ## 15. CLI knowledge search
 
 **Owners:** new `cmd/capy/search.go`, `main.go`, CLI tests; reuse `knowledge.go`.
+Review correction: opt-in error reporting in `internal/retrieval/retrieval.go`
+and `internal/store/search.go`/`types.go`, with regression tests.
 
 Expose knowledge query, source, type, bounded limit and kind flags; wire Task 2a's prepared policy into the stale-refresh callback. Output bounded snippets with source/title and no secrets → verify: MCP-indexed data is found by CLI, literal wildcard labels stay scoped, relative/native-anchor denies protect absolute backing paths, repeated CLI processes progress through Task 12a's scheduler, ephemeral content is opt-in except explicit source bypass, and vault-only content is not silently included.
 
 Validate arguments before store access; empty results exit successfully and key/DB failures do not → verify: actual command exit codes and help output. Run CLI and store tests. The task depends on the source-filter fix, not on introducing a server instance into the command.
 
 Amend ADR-012 to name the terminal filtering use case while keeping the MCP content-type field unexposed → verify: CLI help and actual MCP descriptors match that distinction.
+
+Task 15 implementation notes (2026-10-11): `newSearchCmd` joins positional query
+arguments and validates nonempty queries, limits 1–100, chunk types and repeatable
+durable/ephemeral kinds before target, policy, credential or storage access.
+Supplied kinds replace the durable default; a nonempty literal source retains
+the store's existing kind bypass. The command calls `SearchWithFallbackContext`
+with a prepared Read snapshot, reusing Task 12a's persisted refresh scheduling.
+It never creates a server or opens the vault. SIGINT/SIGTERM and late cancellation
+propagate, and deferred close joins checkpoint failures with the command error.
+
+Output uses bounded UTF-8 prefix snippets (1,500 bytes including an ellipsis),
+512-byte source labels and 256-byte titles. Metadata is quoted; known secrets
+are stripped before truncation and terminal controls removed. Empty results
+exit 0; invalid options, credentials, policy, storage, output and cancellation
+errors exit 1, following existing command conventions. Prefix snippets are
+documented so a long chunk does not imply the match itself must be displayed.
+
+CLI tests run real subprocesses with isolated homes and synthetic keys, checking
+MCP-to-CLI retrieval, crossed credentials and linked-worktree ownership, actual
+exit statuses, literal wildcard labels, kind/type filters, Read-policy anchors,
+65 file-backed sources across repeated invocations and separate vault search.
+ADR-012 now records terminal type selection while the real MCP descriptor stays
+unchanged. No dependency upgrade, migration or generated artifact changes are
+needed. [Cobra v1.10.2](https://pkg.go.dev/github.com/spf13/cobra@v1.10.2) and
+[pflag v1.0.9](https://pkg.go.dev/github.com/spf13/pflag@v1.0.9) APIs were checked
+against their pinned documentation after Context7 lacked matching versions. CI changes
+are N/A; FTS5 and synthetic-key verification inherit repository `AGENTS.md`.
+
+Isolated review found that the existing retrieval executor logged SQL query,
+row-scan and iteration errors but returned empty/partial results with no error.
+The CLI now opts into `SearchOptions.FailOnError`: the corpus reports layer
+errors to a request-local, synchronized collector, and the store returns the
+first error after all layer workers finish, before access tracking or successful
+CLI output. Default MCP/vault behavior and ranking/fallback logic stay unchanged.
+Strict CLI searches also surface generated FTS-query failures rather than
+claiming success from partial layers. Denied/deferred/failed stale-file reads
+remain intentionally nonfatal and retain cached content. This necessary fix
+expands the task to M without changing retrieval formulas.
+
+Regression tests cover all three layer failure stages, legacy versus strict
+store behavior after dropping initialized FTS tables, and actual CLI exit 1
+from an encrypted database whose matching FTS row cannot be scanned. That
+fixture preserves a valid schema/open path, so it proves query-stage errors
+reach the command rather than merely repeating a credential/open failure.
 
 ## 16a. Renew persisted fetch freshness
 

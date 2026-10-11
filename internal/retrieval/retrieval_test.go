@@ -3,6 +3,7 @@ package retrieval
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -12,6 +13,51 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCorpusReportsLayerErrors(t *testing.T) {
+	for _, mode := range []string{"query", "row scan", "row iteration"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := validCorpusConfig(t)
+			if mode != "query" {
+				_, err := cfg.DB.ExecContext(t.Context(), `
+					CREATE VIRTUAL TABLE chunks USING fts5(title, content);
+					CREATE VIRTUAL TABLE chunks_trigram USING fts5(title, content);
+					INSERT INTO chunks VALUES ('orchard', 'orchard');
+					INSERT INTO chunks_trigram VALUES ('orchard', 'orchard');`)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			fault := errors.New("row mapper failure")
+			if mode == "row scan" {
+				cfg.MapRow = func(*sql.Rows) (SearchResult, error) { return SearchResult{}, fault }
+			}
+			var mu sync.Mutex
+			var reported []error
+			cfg.OnError = func(err error) { mu.Lock(); defer mu.Unlock(); reported = append(reported, err) }
+			corpus, err := NewCorpus(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			query := `"orchard"`
+			if mode == "row iteration" {
+				query = `"orchard" OR`
+			}
+			results := RRFSearch(t.Context(), corpus, query, query, "orchard", 3)
+			if len(results) != 0 || len(reported) != 2 {
+				t.Fatalf("results=%d errors=%v", len(results), reported)
+			}
+			for _, err := range reported {
+				if !strings.Contains(err.Error(), "search "+mode) {
+					t.Fatalf("wrong failure stage: %v", err)
+				}
+				if mode == "row scan" && !errors.Is(err, fault) {
+					t.Fatalf("lost error cause: %v", err)
+				}
+			}
+		})
+	}
+}
 
 // --- Corpus construction ---
 
