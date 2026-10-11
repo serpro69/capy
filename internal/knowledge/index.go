@@ -4,6 +4,7 @@ package knowledge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -80,12 +81,22 @@ func (i *Indexer) IndexFile(ctx context.Context, path, source string) (FileResul
 	if err := i.policy.Check(path); err != nil {
 		return out, fmt.Errorf("file access blocked by security policy: %w", err)
 	}
-	out.Path = path
+	return i.indexAdmittedFile(ctx, path, source, 0, false)
+}
+
+// indexAdmittedFile shares descriptor-bound reads with the directory walker.
+// A positive allowance includes the detection byte; zero means single-file mode.
+func (i *Indexer) indexAdmittedFile(ctx context.Context, path, source string, allowance int64, noFollow bool) (FileResult, error) {
+	out := FileResult{Path: path}
 	// TODO(D2): bind policy admission atomically to open. A descriptor binds
 	// stat/read to one file but cannot prevent replacement before open.
 	// See upstream-sync-v1.0.169/upstream-audit.md's checked-file handoff.
 	// Nonblocking open prevents a FIFO from hanging before the mode check.
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	flags := os.O_RDONLY | syscall.O_NONBLOCK
+	if noFollow {
+		flags |= syscall.O_NOFOLLOW
+	}
+	f, err := os.OpenFile(path, flags, 0)
 	if err != nil {
 		return out, fmt.Errorf("read file: %w", err)
 	}
@@ -100,8 +111,22 @@ func (i *Indexer) IndexFile(ctx context.Context, path, source string) (FileResul
 	if info.Size() > int64(i.maxSourceBytes) {
 		return out, &fileio.TooLargeError{Size: info.Size(), Limit: i.maxSourceBytes}
 	}
-	data, err := i.readContent(f, i.maxSourceBytes)
+	limit := i.maxSourceBytes
+	if allowance > 0 && allowance <= int64(limit) {
+		limit = int(allowance - 1)
+	}
+	var data []byte
+	if limit == 0 {
+		// One remaining byte can only prove that an empty file is complete.
+		data, err = io.ReadAll(io.LimitReader(f, 1))
+	} else {
+		data, err = i.readContent(f, limit)
+	}
 	out.BytesRead = int64(len(data))
+	var tooLarge *fileio.TooLargeError
+	if limit < i.maxSourceBytes && len(data) > limit && (err == nil || errors.As(err, &tooLarge)) {
+		return out, errDirectoryByteLimit
+	}
 	if err != nil {
 		return out, fmt.Errorf("read file: %w", err)
 	}

@@ -108,7 +108,7 @@ vocabulary table; the vault passes `nil`).
 
 ### File ingestion
 
-`internal/knowledge.Indexer` owns single-file path admission, descriptor-bound
+`internal/knowledge.Indexer` owns file/directory path admission, descriptor-bound
 stat/read and durable file-backed indexing. The MCP handler supplies the selected
 project, prepared Read policy, effective size limit and existing store. Inline
 content stays in the handler. Credentials and database selection remain with the
@@ -124,6 +124,33 @@ cached content. `FileResult` distinguishes bytes read (including probe/partial
 bytes) from raw bytes submitted for indexing, allowing later traversal accounting
 without counting rejected content as indexed. Policy checking still precedes
 open; the atomic checked-file handoff remains deferred issue D2.
+
+`IndexPath` dispatches files and directories after validating all traversal
+controls. `directory.go` walks a canonical root in lexical order, preserving the
+requested root spelling for descendant Read-policy checks too. It skips descendant
+symlinks and prunes nested Git roots even when ignores are disabled. Each directory
+is incrementally enumerated within the 20,000-entry request allowance before
+sorting; a directory that exhausts the allowance is not partly processed in
+filesystem order. Maximum depth defaults to 5 (root depth 0) and file attempts to
+200, with ceilings of 20 and 1,000. The 32 MiB raw-read allowance includes failed/unchanged reads and
+detection bytes; partial content never reaches the store.
+
+`patterns.go` validates extensions and whole relative-path selection globs, and
+owns mandatory component/credential exclusions. `gitignore.go` discovers the
+canonical root's worktree and evaluates ignores with bounded NUL-delimited
+`git check-ignore --no-index --stdin -z` batches, including tracked files. Child
+Git calls have deadlines, bounded output and cleared inherited `GIT_*` routing
+variables. Empty `.git` directories are not discovery candidates; gitfiles or
+directories containing `HEAD` are, and failed Git calls remain visible errors.
+Worktree discovery never changes capy's selected project, credentials or store.
+
+Directory sources use canonical absolute paths or `prefix:relative/path` labels.
+The store's normal label/hash deduplication and stale-refresh scheduling apply;
+there is no implicit deletion of vanished/excluded files. `DirectoryResult`
+separates committed progress, raw reads, attempts, skips/denies, limits and bounded
+failure details. Limits are incomplete successes; operational errors and
+cancellation become tool errors while preserving committed files. Descendant
+symlink following remains Task 13a; terminal entry points remain Tasks 14–15.
 
 ### Bounded stale refresh
 
@@ -157,7 +184,7 @@ fails; a search does not certify that all backing files were just checked.
 retrieval, and MCP search, batch and intent paths pass their context. The existing
 contextless method remains a wrapper for library callers. Separate processes may
 duplicate a bounded check; the active-pass guard is per store, not cross-process.
-Directory ingestion and CLI entry points remain Tasks 13–15 in the
+Directory ingestion uses these bounds; CLI entry points remain Tasks 14–15 in the
 [current sync](feat/wip/upstream-sync-v1.0.169/tasks.md).
 
 ### Schema

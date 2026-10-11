@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12 and 12a complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a and 13 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -505,6 +505,37 @@ task adds no commands, flags or workflows.
 4. Expose directory controls using Task 6a's boolean parser and Task 2a's prepared policy → verify: direct/walked/refreshed absolute paths obey the same relative denies, repeated labels deduplicate, and Task 12a bounds searches after many repeated ingestion calls.
 
 Task 13 delivers default directory ingestion; Task 13a separately adds descendant symlink following. This keeps the Git/symlink integration risk out of an oversized single task without weakening default admission.
+
+Task 13 implementation notes (2026-10-11): `IndexPath` validates controls before
+dispatch, preserving explicit-file and inline-content behavior. Existing lexical
+file targets take precedence over physical directory dispatch, retaining the
+earlier symlink/parent-component file contract. Directory walks
+canonicalize the selected root but retain its requested spelling for descendant
+Read checks. Per-file labels and Git queries use canonical paths. Incremental
+directory enumeration consumes the shared 20,000-entry budget before sorting;
+exhaustion before observing EOF stops without processing that directory. Depth
+limits prune further descent while siblings continue; file/entry/byte limits
+stop further admission. Each outcome separates visits, file attempts, raw reads,
+bytes offered to indexing, retained chunks, skips, denies and failures.
+
+The shared descriptor reader accepts a directory allowance including its probe
+byte, distinguishes a request byte cap from a source-size failure, and never
+indexes incomplete content. Unchanged results retrieve stored chunk counts.
+Git queries use batches of at most 128 paths, no shell, five-second child
+deadlines and bounded stdout/stderr. Root worktree discovery ignores empty
+`.git` directories as Git does; candidate gitfile/HEAD errors stay visible.
+Nested-root pruning treats any `.git` marker conservatively, including when
+ignores are disabled. No module was added; the Git interface was checked against
+the installed 2.34.1 manual after Context7 had no version-specific coverage.
+
+Tests cover root aliases and alias-relative child denies, external-root ignores,
+tracked/negated rules, linked worktrees/submodule layouts, raw byte accounting,
+limit/error distinctions, ordered prefixes, invalid arguments without storage
+effects and an encrypted MCP stdio reopen. README and architecture describe the
+new behavior. CLI and CI rubric topics are N/A: no command, flag or workflow was
+added; tests use the existing `serve` entry point and FTS5 build conventions.
+D2, opt-in following and terminal indexing remain separate tasks. The combined
+admission/freshness ADR and feature-wide performance comparison remain Task 20.
 
 ## 13a. Follow admitted symlinks during directory ingestion
 
