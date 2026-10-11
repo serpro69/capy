@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14, 15 and 16a complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14, 15, 16a and 16 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -708,6 +708,39 @@ Task 16 still owns per-call TTL parsing and typed retry hints; Task 17 owns stat
 4. Classify typed fetch failures before formatting and append the bounded one-retry hint only to the selected transient categories → verify: single and batch temporary-DNS/timeout/unreachable failures, and negative cancellation/SSRF/NXDOMAIN/TLS/permission/HTTP/body cases. No automatic retries.
 
 Run real stdio and fetch tests with `-race`; no per-request TTL value is persisted. The validation timestamp migration belongs to Task 16a, not a change to old timestamp formats.
+
+Task 16 implementation notes (2026-10-11): `fetchTTLArg` preserves omission,
+accepts integral numeric values and trimmed decimal digit strings, and checks
+the whole-millisecond duration limit before multiplication. A supplied invalid
+value fails even with force enabled. Omission selects configured hours through
+checked conversion; a negative/overflowing selected configuration is an error.
+The MCP schema exposes optional numeric `ttl` with bounds and `multipleOf: 1`;
+real stdio also verifies accepted integer-string inputs. No default is embedded
+in the descriptor because the selected project supplies it.
+
+Single and batch paths pass one duration per request into the existing persisted
+marker predicate; zero and force bypass cache reads. Responses distinguish fetch
+freshness from configured ephemeral retention or durable scoring. The supplied
+TTL is never written to the source or mutable server configuration. Existing
+kind/URL-label identity, unchanged-result metadata and retention age are retained.
+
+`transientFetchError` inspects typed dispatch errors before formatting. It uses
+DNS flags, network timeout interfaces and wrapped unreachable errno values,
+with request cancellation, permission and NXDOMAIN exclusions. It walks past
+wrappers because `url.Error.Timeout` only forwards to its immediate cause.
+Body/status/conversion/index failures never enter this classifier. Both modes
+reuse the same fixed one-retry hint and perform no automatic retry.
+
+Dependency checks followed `kk:dependency-handling`: Context7 lacked exact Go
+1.25.2 coverage and returned current rather than pinned MCP docs. The APIs were
+verified against [Go 1.25.2 net](https://github.com/golang/go/blob/go1.25.2/src/net/net.go),
+[url](https://github.com/golang/go/blob/go1.25.2/src/net/url/url.go),
+[strconv](https://github.com/golang/go/blob/go1.25.2/src/strconv/atoi.go),
+[time](https://pkg.go.dev/time@go1.25.2#Duration), and the installed
+`mcp-go v0.46.0` source (`WithNumber`, `Min`, `Max`, `MultipleOf`). No dependency
+upgrade is required. CLI and CI changes are N/A; the real stdio fixtures use the
+existing serve command and inherit FTS5/key conventions from `AGENTS.md`.
+Task 17 still owns cache counters and the uptime-based stats display correction.
 
 ## 17. Cache outcome statistics
 

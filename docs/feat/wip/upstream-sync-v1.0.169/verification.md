@@ -1748,3 +1748,84 @@ boolean-fixture correction without findings. PAL's configured external reviewer
 failed with `API_KEY_INVALID`; it supplied no expert assessment. The independent
 agent fallback completed the required review. Task 16a is done; no findings or new conventions
 needed knowledge indexing beyond the repository documentation.
+
+## Task 16: Per-call fetch freshness and retry guidance
+
+Implemented on 2026-10-11. `ttl` is an optional request-local millisecond window,
+validated before cache/network/index work and passed unchanged into single or
+batch cache checks. Omission uses configured hours; zero and force bypass cache
+reads. Effective freshness is displayed separately from retention. Typed transient
+transport failures may append fixed guidance suggesting one retry; capy never
+adds an automatic retry loop.
+
+### Behavioral coverage
+
+- Omitted, zero, integer numeric, decimal integer string, trimmed string and
+  maximum-duration inputs; fractional, negative, nonfinite, null, unrelated and
+  overflowing values. Invalid values fail even under force before constructing
+  a store or transport. Configured-hour conversion is also overflow-checked.
+- Clock-controlled single/batch 499 ms hits and strict 500 ms expiry, deliberately
+  crossing a wall-clock second boundary; unchanged renewal, accurate retained
+  counts, zero/force bypasses, larger later TTLs, configured fallback and reopen.
+- NULL, future and unreadable persisted markers miss conservatively. Requested
+  kind mismatch revalidates. Actual cleanup still removes an old ephemeral
+  source immediately after unchanged revalidation; output reflects its configured
+  72-hour retention separately from a 500 ms freshness request.
+- Injected temporary/timeout DNS, nested network timeout and network/host
+  unreachable errors append exactly one hint per URL. Single calls and parallel
+  two-URL batches make exactly one transport attempt per URL. Original causes
+  remain visible. Cancellation, parent deadline, SSRF, NXDOMAIN, permanent DNS,
+  certificate/TLS, permission, connection refusal and text-only lookalikes do not
+  receive hints. HTTP failures and even typed body timeout/unreachable failures
+  also receive no hint because they never enter transport classification.
+- Real MCP stdio verifies the optional descriptor and bounds, numeric/string
+  values, validation before storage, serialized batch arrays, force strings,
+  per-request/configured scope, reopen and unchanged validation timestamps after
+  cache hits and failed bypasses. Seeded loopback cache entries reach the actual
+  SSRF guard when bypassed; no production-policy override is installed.
+
+### Verification commands
+
+Commands use `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development`, `CAPY_VAULT_KEY=test-key`, and
+`XDG_CONFIG_HOME=/tmp/capy-task16-config`, with `CLAUDE_PROJECT_DIR` cleared.
+Socket-dependent tests run with local listeners enabled. New CLI/MCP children
+isolate home/config/data/vault paths and use synthetic keys only.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 ./internal/server -run 'TestFetch\|TestBoolArg\|TestCoerce' -count=1` | Passed, 16.320s. |
+| `go test -tags fts5 ./internal/server -run 'TestFetchTTL\|TestFetchRetry\|TestFetchAndIndex\|TestFetchBatch' -count=1` | Passed, 14.661s. |
+| `go test -race -tags fts5 ./internal/server ./cmd/capy -run 'TestFetch\|TestBoolArg\|TestMCPStdioBooleanArgs' -count=1` | Passed: server 25.222s, CLI 13.468s. |
+| `go test -race -tags fts5 ./internal/server -count=1` | Passed, 157.063s, including all server/SSRF/concurrency tests. |
+| Final `go test -race -tags fts5 ./internal/server -run TestFetchRetry -count=1` | Passed, 1.089s after placing typed classification literally before error formatting. |
+| `make test` | All packages passed: CLI 290.616s, server 141.076s, vault 308.670s; other packages passed or used cache. |
+| `make build` | Passed; nonfatal read-only module-stat-cache warning. |
+| `go vet -tags fts5 ./cmd/capy` | Passed. Including the server reports the pre-existing lock-copy warning in `tool_boolean_test.go:110`. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task16` | Passed for store/server/vault. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task16a.json bench-results/upstream-sync-task16.json` | Dataset verified; all 84 quality/context metrics unchanged. |
+| `go test -tags fts5 ./internal/platform -run 'TestGeneratedWholeFileArtifacts\|TestMergedArtifactsAreIdempotent' -count=1` | Passed. |
+| `git diff --check` | Passed. |
+
+The complete suite and broad race run compiled before the final two-line
+classification-order adjustment; the focused final race check covers that edit.
+No dependency versions, schema, migration, generated artifacts, vault ownership
+or retrieval formula changed. Benchmark target metadata is `c8539d3` plus this
+working tree; the baseline is the saved Task 16a report (`c5a2f29` plus that task's
+changes). No timing improvement is claimed. Logs are `/tmp/capy-task16-*.log` and
+quality artifacts are under ignored `bench-results/`.
+
+### Review and documentation
+
+The [independent review](.reviews/task-16-code-review-2026-10-11.md) approved the
+final diff without P0–P3 findings. PAL's expert step failed with `API_KEY_INVALID`;
+no external approval is claimed. No findings or new conventions need knowledge
+indexing beyond the existing code comments and documentation.
+
+README, architecture, tool descriptors and ADR-013 describe units, defaults,
+accepted forms, overflow/precision behavior, request scope, retention separation
+and retry exclusions. Exact dependency references and lookup limitations are in
+`implementation.md`. CLI and CI changes are N/A; build, credential and FTS5
+requirements inherit `AGENTS.md`. Tasks 17–20 and deferred D1–D5 remain pending.
+Optional editorial follow-up: `kk:clarify-docs` on `README.md`,
+`docs/architecture.md` and `docs/adr/013-configurable-fetch-ttl.md`.

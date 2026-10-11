@@ -50,7 +50,30 @@ Existing rows intentionally miss once after upgrade. A binary from `c5a2f297`
 (before this migration) was verified reading/writing the upgraded database while
 a new store was open and after reopen; old replacement writes leave the marker
 NULL. Downgrades retain readable content but lose the new freshness guarantees.
-Per-call TTL controls and cache-statistics corrections remain Tasks 16 and 17.
+Per-call controls are recorded below; cache-statistics corrections remain Task 17.
+
+## Amendment: request-scoped fetch freshness (2026-10-11)
+
+Task 16 adds optional `ttl` in milliseconds to both fetch modes. Omission uses
+configured hours, zero bypasses, and `force: true` always bypasses. Accept integral
+JSON numbers and trimmed decimal digit strings, bounded by 9,223,372,036,854 ms
+so multiplication into Go's nanosecond duration cannot overflow. Validate supplied
+values even when force is true. Negative/overflowing configured hours also fail
+before I/O when omission selects them. No per-item overrides or persisted TTLs
+are introduced. String exponent/decimal/sign syntax is deliberately excluded.
+
+The effective duration is passed as a request-local value to each batch worker.
+The persisted validation predicate keeps its strict millisecond boundary, so an
+entry aged exactly 500 ms misses under `ttl: 500`. Changing a later request's TTL
+re-evaluates the same marker; cache reads never renew it. Output separates fetch
+freshness from the configured ephemeral retention period or durable scoring.
+
+Fetch dispatch errors retain their typed causes until classification. Temporary
+or timeout DNS, uncanceled network timeouts, and network/host-unreachable errors
+may append one fixed retry suggestion. Cancellation, permission and NXDOMAIN
+errors do not qualify; neither do ordinary TLS/certificate, SSRF, HTTP, body,
+conversion or indexing failures. This keeps guidance actionable without an
+automatic retry, permissive string heuristic or change to security policy.
 
 ## Consequences
 
