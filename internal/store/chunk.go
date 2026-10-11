@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const MaxChunkBytes = 4096
@@ -173,9 +175,9 @@ func chunkPlainText(content string, linesPerChunk int) []Chunk {
 
 	lines := strings.Split(content, "\n")
 
-	// Single chunk if small enough.
+	// Short outputs keep one logical section, split further only by bytes.
 	if len(lines) <= linesPerChunk {
-		return []Chunk{{Title: "Output", Content: strings.TrimSpace(content)}}
+		return appendPlainTextChunks(nil, content, "Output")
 	}
 
 	// Phase 1: try blank-line splitting.
@@ -191,33 +193,75 @@ func chunkPlainText(content string, linesPerChunk int) []Chunk {
 			if title == "" {
 				title = fmt.Sprintf("Section %d", i+1)
 			}
-			chunks = append(chunks, Chunk{Title: title, Content: sec})
+			chunks = appendPlainTextChunks(chunks, sec, title)
 		}
 		return chunks
 	}
 
 	// Phase 2: fixed-line groups with overlap.
 	const overlap = 2
-	step := max(linesPerChunk-overlap, 1)
 	var chunks []Chunk
-	for i := 0; i < len(lines); i += step {
+	for i := 0; i < len(lines); {
 		end := min(i+linesPerChunk, len(lines))
 		slice := lines[i:end]
 		text := strings.Join(slice, "\n")
 		text = strings.TrimSpace(text)
-		if text == "" {
-			continue
+		if text != "" {
+			title := firstLine(text, 80)
+			chunks = appendPlainTextChunks(chunks, text, title)
 		}
-		title := firstLine(text, 80)
-		if title == "" {
-			title = fmt.Sprintf("Lines %d-%d", i+1, end)
-		}
-		chunks = append(chunks, Chunk{Title: title, Content: text})
 		if end == len(lines) {
 			break
 		}
+		next := max(end-overlap, i+1)
+		// Preserve ordinary two-line overlap, but do not emit an entire
+		// oversized line again after splitting it into bounded chunks.
+		for j := next; j < end; j++ {
+			if len(lines[j]) > MaxChunkBytes {
+				next = j + 1
+			}
+		}
+		i = next
 	}
 	return chunks
+}
+
+// appendPlainTextChunks bounds a strategy's output without adding overlap. Prefer
+// line boundaries, then whitespace, then a UTF-8 boundary. Only whitespace is
+// removed. Append directly to avoid allocating a temporary slice per section.
+func appendPlainTextChunks(chunks []Chunk, text, title string) []Chunk {
+	text = strings.TrimSpace(text)
+	start := len(chunks)
+	for len(text) > MaxChunkBytes {
+		end := len(utf8Prefix(text, MaxChunkBytes))
+		if i := strings.LastIndexByte(text[:end], '\n'); i > 0 {
+			end = i
+		} else if i := strings.LastIndexFunc(text[:end], unicode.IsSpace); i > 0 {
+			end = i
+		}
+		chunks = append(chunks, Chunk{Title: title, Content: strings.TrimSpace(text[:end])})
+		text = strings.TrimSpace(text[end:])
+	}
+	if text != "" || len(chunks) == start {
+		chunks = append(chunks, Chunk{Title: title, Content: text})
+	}
+	return chunks
+}
+
+// utf8Prefix caps bytes while preserving valid UTF-8 input. Invalid input is
+// retained as bytes, with forward progress even for runs of continuation bytes.
+func utf8Prefix(text string, maxBytes int) string {
+	if len(text) <= maxBytes {
+		return text
+	}
+	end := maxBytes
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	if end == 0 {
+		end = maxBytes
+	}
+	return text[:end]
 }
 
 func allUnder(sections []string, maxBytes int) bool {
@@ -232,10 +276,7 @@ func allUnder(sections []string, maxBytes int) bool {
 func firstLine(text string, maxLen int) string {
 	line, _, _ := strings.Cut(text, "\n")
 	line = strings.TrimSpace(line)
-	if len(line) > maxLen {
-		line = line[:maxLen]
-	}
-	return line
+	return utf8Prefix(line, maxLen)
 }
 
 // walkJSON recursively chunks a parsed JSON value.

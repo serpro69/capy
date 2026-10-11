@@ -267,7 +267,7 @@ pass; all 84 quality metrics are unchanged. Review found no issues.
 
 ## Task 11: Cap every plaintext chunk by bytes
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Tasks 1, 6, 10, 12, 15, 16
@@ -275,9 +275,16 @@ pass; all 84 quality metrics are unchanged. Review found no issues.
 
 ### Subtasks
 
-- [ ] 11.1 Bound each plaintext strategy and title truncation safely in `chunk.go` → verify: boundary-size and multibyte tests retain content.
-- [ ] 11.2 Guard the final plaintext fallback in `index.go` and assert persisted size/tail retrieval for oversized sections, single lines, whitespace and JSON fallback → verify: store/retrieval tests and quality comparison in Task 20.
-- [ ] 11.3 Document existing same-hash chunk behavior and explicit remove/reindex repair → verify: no implicit data migration is introduced.
+- [x] 11.1 Bound each plaintext strategy and title truncation safely in `chunk.go` → verify: boundary-size and multibyte tests retain content.
+- [x] 11.2 Guard the final plaintext fallback in `index.go` and assert persisted size/tail retrieval for oversized sections, single lines, whitespace and JSON fallback → verify: store/retrieval tests and quality comparison in Task 20.
+- [x] 11.3 Document existing same-hash chunk behavior and explicit remove/reindex repair → verify: no implicit data migration is introduced.
+
+Evidence: [verification](verification.md#task-11-plaintext-chunk-byte-cap) and
+[isolated review](.reviews/task-11-code-review-2026-10-11.md). All plaintext
+strategies and fallback now respect the byte cap, with valid UTF-8 and normal
+overlap preserved. Store/retrieval race checks, vet and fuzz smoke checks pass;
+all 84 quality metrics are unchanged. Review found no issues. Legacy same-hash
+chunks require explicit remove/reindex; structured splitting remains D4.
 
 ## Task 12: Share bounded file ingestion
 

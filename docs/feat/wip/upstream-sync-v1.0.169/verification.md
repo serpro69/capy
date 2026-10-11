@@ -985,3 +985,104 @@ fallback was used. No findings or new project conventions need indexing.
 The implementation follows Task 10 without expanding runtime scope. The new
 README paragraph documents that callers relying on wildcard selectors must now
 use literal label fragments. Task 11 and later work remain pending.
+
+## Task 11: Plaintext chunk byte cap
+
+Implemented on 2026-10-11. Plaintext's short-output, blank-section and fixed-line
+strategies now split their output into at most 4,096-byte chunks, choosing line,
+Unicode whitespace and UTF-8 boundaries in that order. Fixed groups retain
+ordinary two-line overlap and skip oversized lines when selecting overlap.
+Titles remain deterministic and valid UTF-8; empty-source fallback remains one
+bounded empty chunk. Malformed JSON follows the same plaintext path.
+
+### Behavioral evidence
+
+`chunk_plaintext_test.go` covers 4,096/4,097 bytes, 4,097/5,000-byte blank sections,
+19 huge lines, a long single line, two-/three-/four-byte characters, Unicode
+whitespace, title truncation and empty input. Content comparisons preserve every
+non-whitespace character. Fixed-line fixtures count ordinary overlap markers
+and verify a huge overlap line's 5,000 characters occur exactly once.
+
+Encrypted-store fixtures check the byte length (SQL `CAST(content AS BLOB)`) and
+row count in both `chunks` and `chunks_trigram`, then retrieve tail markers from
+each oversized strategy and malformed JSON. Whitespace-only fallback cannot
+reintroduce the original large input. The legacy fixture seeds an oversized
+chunk, closes/reopens the store, verifies same-hash indexing keeps it, and then
+verifies explicit eviction/reindex creates bounded chunks. The original
+source-size, sanitization and hash/dedup tests also pass.
+
+Before the production fix, the new regressions failed on oversized stored
+content, split expectations, invalid titles, repeated huge overlap lines and
+legacy reindexing. The focused tests pass after the fix. The fuzz target checks
+the cap, non-whitespace retention and valid UTF-8, including invalid-byte seeds
+to exercise progress without imposing a new invalid-input contract.
+
+### Verification commands
+
+Go commands use `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 ./internal/store -run 'TestChunkPlainText\|TestIndexPlaintextByteCap\|TestPlaintextLegacyChunksRequireReindex'` before the fix | Expected regression failures; `/tmp/capy-task11-before.log`. |
+| Same focused command with `-count=1` after the fix | Passed, 3.839s. |
+| `go test -tags fts5 -count=1 ./internal/store/... ./internal/retrieval/...` | Passed: store 65.857s, retrieval 0.077s. |
+| `go test -race -tags fts5 -count=1 ./internal/store/... ./internal/retrieval/...` | Final version passed: store 72.955s, retrieval 1.096s; initial version also passed. |
+| `go vet -tags fts5 ./internal/store/... ./internal/retrieval/...` | Passed. |
+| `go test -tags fts5 ./internal/store -run '^$' -fuzz '^FuzzPlaintextByteCap$' -fuzztime=10s -parallel=2` | Final version passed, 99 executions after six corpus entries; initial run passed with 107 executions. Short smoke runs, not exhaustive coverage. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task11-before` before the fix | Passed across store/server/vault. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task11` | Passed across store/server/vault. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task11-before.json bench-results/upstream-sync-task11.json` | Dataset verified; all 84 quality/context metrics unchanged. |
+
+Quality reports are ignored artifacts with HEAD metadata `eba76ec`: the baseline
+was generated before production edits and the target includes the working-tree
+implementation. Their existing corpus remains unchanged; new pathological size
+and retention cases are regression fixtures rather than changes to that corpus.
+Logs are `/tmp/capy-task11-{before,focused,tests,race,vet,fuzz,quality-before,quality,quality-comparison}.log`.
+After removing temporary splitter-slice allocations, repeated the full affected
+race suite, vet, fuzz and quality checks; all passed. Those logs use
+`/tmp/capy-task11-{race,vet,fuzz,quality}-final.log`.
+
+### Performance comparison
+
+Ran the same added pure-chunker benchmarks and existing plaintext indexing
+benchmark before production edits and after the implementation, using
+`go test -tags fts5 ./internal/store -run '^$' -bench 'BenchmarkChunkPlainText|BenchmarkIndex/plaintext' -benchmem -benchtime=200ms -count=6`.
+The final run did not overlap other test/benchmark jobs. Six-sample medians:
+
+| Fixture | Before time | After time | Before/after B/op | Before/after allocs/op |
+|---|---:|---:|---:|---:|
+| Existing plaintext indexing | 4.097 ms | 4.199 ms | 63,498 / 63,702 | 661.5 / 661.5 |
+| Normal fixed lines | 12.82 µs | 12.48 µs | 5,187 / 5,192 | 12 / 12 |
+| 100 KB single line | 1.24 µs | 25.17 µs | 80 / 3,936 | 2 / 7 |
+| Twenty oversized blank sections | 34.11 µs | 55.81 µs | 8,304 / 12,414 | 31 / 32 |
+| 300 KB Unicode line in overlap | 104.09 µs | 1,309.21 µs | 608,876 / 321,337 | 10 / 14 |
+
+The oversized fixtures previously returned unbounded chunks without doing the
+required splitting; the added scanning and chunk allocations account for their
+increased cost. Skipping the repeated huge overlap line cuts its allocated bytes
+by about 47%. An initial version added six allocations to normal fixed-line
+output; appending into the destination slice removed that overhead. Normal
+chunking/indexing medians are within 3% of baseline. `benchstat` is unavailable,
+so these are descriptive medians, not claims of statistical significance.
+Logs: `/tmp/capy-task11-perf-before.log`, `/tmp/capy-task11-perf.log` (initial
+version), `/tmp/capy-task11-perf-final.log` (destination-slice version).
+
+No module, schema, CLI, CI or generated artifacts change. Markdown/structured
+JSON splitting remains D4; the cap is not a universal database-size guarantee.
+The README documents explicit remove/reindex repair without an implicit
+migration. Full feature-wide comparisons against `c0bfff2` remain Task 20.
+
+### Review and scope
+
+The [isolated code review](.reviews/task-11-code-review-2026-10-11.md) approved
+both the initial change and the destination-slice revision with no findings.
+PAL was unavailable, so the skill's independent single-reviewer fallback was
+used. The implementing session completed the final verification reruns after
+review. `git diff --check` passes. No novel conventions or findings require
+knowledge indexing; the relevant decisions are captured in these feature docs.
+
+The implementation follows Task 11's narrow plaintext scope. Measurement caught
+avoidable temporary-slice allocations, which were removed before completion.
+The remaining cost on oversized inputs is explicit splitting work; existing
+quality fixtures are unchanged. Task 12 and later work remain pending.
