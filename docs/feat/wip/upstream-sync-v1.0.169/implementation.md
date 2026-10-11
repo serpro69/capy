@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11 and 12 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12 and 12a complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -459,6 +459,41 @@ neither commands/flags nor workflows; existing build/test conventions apply.
 Add `file_check_seq` plus its partial scheduling index after column admission. Page at most 32 oldest-checked sources, close metadata rows before writes, and allocate/update completed-check sequences atomically in short transactions using the indexed current maximum. Skip concurrently removed/replaced incarnations; carry state only through the refresh's own same-file replacement → verify: migration/reopen, query plans, concurrent updates, no resurrection or full-source snapshot, and new CLI processes advancing beyond page one.
 
 Apply design §5.5's byte budget including the growth-detection byte, post-metadata admission clock and single-active-refresh guard → verify: maximum source sizes above 8 MiB still make progress, slow metadata does not suppress every first attempt, slow I/O cannot start overlapping passes in one instance, and unattempted rows stay eligible. Include 10,000-source/fairness/restart, cancellation, scheduling-write failure and bounded cross-instance duplicate cases. Record latency/allocation/read/write counts. This changes freshness timing, not ranking or retention timestamps.
+
+Task 12a implementation notes (2026-10-11): migration 020 installs
+`file_check_seq` and `idx_sources_file_check` after the column exists. Fresh
+schemas contain the column but leave index creation to migration. Both oldest
+selection and maximum-sequence lookup use this partial index. `stale.go` owns
+the bounded 32-row selection, explicit active-pass guard, cooldown, byte
+reservation/accounting and post-metadata admission clock; the cursor is closed
+before any file operation. The first selected source is admitted unless canceled,
+and subsequent admissions stop at the byte/time bounds.
+
+Completed checks allocate a sequence under the same write lock as their update.
+Identity guards compare source ID, hash, backing path and kind, with the label
+also checked for completion. Refresh indexing uses the same guard before its
+replacement transaction; checking only the later schedule update would still
+allow old file content to overwrite a concurrent replacement. Missing/replaced
+incarnations are skipped. Ordinary same-file replacement carries its sequence;
+an explicit different backing path resets it even when the content deduplicates.
+Scheduling errors stop visibly, and cancellation leaves unprocessed rows eligible.
+
+The store adds `SearchWithFallbackContext` while preserving the existing wrapper.
+MCP knowledge search, batch search and intent search forward the request context;
+the later CLI task can use the same entry point. This necessary mechanical
+forwarding makes cancellation executable rather than a test-only refresh option.
+Context propagation across unrelated store operations is not part of this slice.
+
+Tests include encrypted legacy migration/rollback/concurrent opening, query-plan
+checks, restart fairness, 10,000 real files plus a late source, same/different-file
+replacement, concurrent incarnation changes, all read-byte outcomes, a 9 MiB
+configured file, clock/cancellation boundaries, two stores, single-active-pass
+protection and scheduling failure/overflow. The workload benchmark measures
+unchanged and 128-changed-file trees of 10,000 sources using ordinary search and
+write paths. The combined freshness/scheduling ADR remains Task 20, alongside
+feature-wide baseline comparisons. Dependencies, generated artifacts, vault
+schema and ranking are unchanged. CLI and CI rubric topics are N/A because this
+task adds no commands, flags or workflows.
 
 ## 13. Directory ingestion with selection controls
 

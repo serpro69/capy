@@ -154,7 +154,7 @@ func TestIntentSearch_IndexErrorTruncates(t *testing.T) {
 	srv := NewServer(cfg, nil, nil, t.TempDir())
 
 	bigOutput := strings.Repeat("x", 10000)
-	result := srv.intentSearch(bigOutput, "test", "source", 5)
+	result := srv.intentSearch(t.Context(), bigOutput, "test", "source", 5)
 
 	// Should NOT return full 10KB output — should truncate
 	assert.Less(t, len(result), 4000, "should truncate output on index failure")

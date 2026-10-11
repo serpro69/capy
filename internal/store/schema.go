@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS sources (
   access_count INTEGER NOT NULL DEFAULT 0,
   content_hash TEXT,
   kind TEXT NOT NULL DEFAULT 'durable' CHECK (kind IN ('ephemeral', 'durable', 'session')),
-  file_path TEXT
+  file_path TEXT,
+  file_check_seq INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(

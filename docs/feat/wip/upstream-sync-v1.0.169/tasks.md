@@ -310,7 +310,7 @@ refresh scheduler and D2's atomic policy/open handoff remain pending.
 
 ## Task 12a: Bound stale-refresh work across server and CLI searches
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 12
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 6, 6a, 7, 11, 19
@@ -318,9 +318,19 @@ refresh scheduler and D2's atomic policy/open handoff remain pending.
 
 ### Subtasks
 
-- [ ] 12a.1 Add the scheduling column/index through safe additive migration and bounded metadata selection → verify: old encrypted schema, query plans, migration idempotence and 32-row limit.
-- [ ] 12a.2 Atomically advance only checked incarnations, handle scheduling errors and use the detection-byte-inclusive budget/one-active-pass guard → verify: configured files over 8 MiB, slow metadata/I/O, concurrent replacement, unprocessed-row eligibility and repeated CLI progress.
-- [ ] 12a.3 Add a 10,000-source measurement fixture → verify: bounded work/memory, eventual progress and recorded latency/write overhead for Task 20.
+- [x] 12a.1 Add the scheduling column/index through safe additive migration and bounded metadata selection → verify: old encrypted schema, query plans, migration idempotence and 32-row limit.
+- [x] 12a.2 Atomically advance only checked incarnations, handle scheduling errors and use the detection-byte-inclusive budget/one-active-pass guard → verify: configured files over 8 MiB, slow metadata/I/O, concurrent replacement, unprocessed-row eligibility and repeated CLI progress.
+- [x] 12a.3 Add a 10,000-source measurement fixture → verify: bounded work/memory, eventual progress and recorded latency/write overhead for Task 20.
+
+Evidence: [verification](verification.md#task-12a-bounded-persistent-stale-refresh)
+and [isolated review](.reviews/task-12a-code-review-2026-10-11.md). Refresh selects
+at most 32 sources with persisted progress, byte/time admission bounds and an
+active-pass guard. Transactional identity checks prevent stale reads from
+overwriting or rescheduling concurrent replacements. Full FTS5 tests, affected
+race suites and build pass; all 84 quality metrics are unchanged. The 10,000-file
+benchmark records bounded attempts, lower allocation/latency and the added
+scheduling writes. Review approved without findings. The pre-existing server-vet
+warning and feature-wide Task 20 comparisons remain recorded follow-ups.
 
 ## Task 13: Index directories with explicit traversal limits
 

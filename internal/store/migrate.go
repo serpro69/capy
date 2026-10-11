@@ -18,6 +18,7 @@ import (
 //     CHECK constraint to accept 'session' as a valid kind value.
 //   - 019_add_file_path: adds the nullable `file_path` column to the sources
 //     table, used by hash-based stale detection to re-index changed files.
+//   - 020_add_file_check_seq: persistent bounded-refresh scheduling and index.
 func applyMigrations(db *sql.DB) error {
 	if err := migrate017AddSourceKind(db); err != nil {
 		return fmt.Errorf("migration 017_add_source_kind: %w", err)
@@ -31,7 +32,43 @@ func applyMigrations(db *sql.DB) error {
 	if err := migrate019AddFilePath(db); err != nil {
 		return fmt.Errorf("migration 019_add_file_path: %w", err)
 	}
+	if err := migrate020AddFileCheckSeq(db); err != nil {
+		return fmt.Errorf("migration 020_add_file_check_seq: %w", err)
+	}
 	return nil
+}
+
+// The scheduling index belongs here, not schemaSQL: schemaSQL runs before
+// migrations and old sources tables do not yet have file_check_seq.
+func migrate020AddFileCheckSeq(db *sql.DB) error {
+	tx, err := sqliteutil.BeginImmediate(db, "sources")
+	if err != nil {
+		return fmt.Errorf("begin immediate: %w", err)
+	}
+	defer tx.Rollback()
+	applied, err := migrationApplied(tx, "020_add_file_check_seq")
+	if err != nil {
+		return err
+	}
+	if applied {
+		return tx.Commit()
+	}
+	hasColumn, err := sourcesHasColumn(tx, "file_check_seq")
+	if err != nil {
+		return err
+	}
+	if !hasColumn {
+		if _, err := tx.Exec(`ALTER TABLE sources ADD COLUMN file_check_seq INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add file check sequence: %w", err)
+		}
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_sources_file_check ON sources(file_check_seq, id) WHERE file_path IS NOT NULL`); err != nil {
+		return fmt.Errorf("create file check index: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO migrations (name) VALUES ('020_add_file_check_seq')`); err != nil {
+		return fmt.Errorf("record migration: %w", err)
+	}
+	return tx.Commit()
 }
 
 // migrate017AddSourceKind adds the `kind` column to the sources table.

@@ -125,9 +125,40 @@ bytes) from raw bytes submitted for indexing, allowing later traversal accountin
 without counting rejected content as indexed. Policy checking still precedes
 open; the atomic checked-file handoff remains deferred issue D2.
 
-This bounds each file read. Bounding the number of sources and total work in a
-refresh pass remains Task 12a; directory ingestion and CLI entry points remain
-Tasks 13–15 in the [current sync](feat/wip/upstream-sync-v1.0.169/tasks.md).
+### Bounded stale refresh
+
+`internal/store/stale.go` selects at most 32 oldest-checked file-backed sources
+through the partial `(file_check_seq, id)` index, then closes the metadata cursor
+before filesystem work or writes. Migration 020 adds the scheduling column and
+creates its index after column admission; putting that index in the pre-migration
+schema script would break legacy database opens. Scheduling persists across new
+store instances and encrypted reopen.
+
+A store permits one active pass and retains its five-second start-to-start
+cooldown. Each pass reserves a maximum file read plus its probe byte before open,
+within `max(8 MiB, max_source_bytes + 1)`, and charges only actual bytes returned
+by the reader, including partial/error/oversize reads. The 100 ms admission window
+starts after metadata selection and always permits the first selected source
+unless canceled. Operations already in progress may finish; this is not a total
+search-latency or OS I/O deadline. Unattempted rows remain eligible.
+
+Every attempted source, including denied/missing/unchanged files, receives a
+sequence above the current indexed maximum. Allocation and update share one
+short SQLite write transaction. Changed-content refresh also checks its original
+source ID/hash/path/kind under the indexing write lock, so a source replaced or
+removed during the file read cannot be overwritten or resurrected. Completion
+updates only that incarnation or the replacement produced by this refresh.
+Same-backing-path replacements preserve scheduling; changing an explicit backing
+path resets it, including same-hash deduplication. A scheduling failure is logged
+and stops the pass. Cached content remains available when refresh is skipped or
+fails; a search does not certify that all backing files were just checked.
+
+`SearchWithFallbackContext` carries request cancellation through refresh and
+retrieval, and MCP search, batch and intent paths pass their context. The existing
+contextless method remains a wrapper for library callers. Separate processes may
+duplicate a bounded check; the active-pass guard is per store, not cross-process.
+Directory ingestion and CLI entry points remain Tasks 13–15 in the
+[current sync](feat/wip/upstream-sync-v1.0.169/tasks.md).
 
 ### Schema
 

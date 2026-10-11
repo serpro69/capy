@@ -1,20 +1,17 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
 	"math"
-	"os"
 	"slices"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
-	"github.com/serpro69/capy/internal/fileio"
 	"github.com/serpro69/capy/internal/retrieval"
-	"github.com/serpro69/capy/internal/sanitize"
 )
 
 // SearchWithFallback runs the shared retrieval engine (Reciprocal Rank Fusion
@@ -22,6 +19,15 @@ import (
 // when results are sparse) over the knowledge corpus, wrapped by the
 // knowledge-only steps: stale-source refresh before and access tracking after.
 func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOptions) ([]SearchResult, error) {
+	return s.SearchWithFallbackContext(s.ctx(), query, limit, opts)
+}
+
+// SearchWithFallbackContext propagates cancellation through bounded refresh and
+// retrieval. The contextless entry point remains for existing library callers.
+func (s *ContentStore) SearchWithFallbackContext(ctx context.Context, query string, limit int, opts SearchOptions) ([]SearchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if _, err := s.getDB(); err != nil {
 		return nil, err
 	}
@@ -30,13 +36,19 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOp
 	// indexing, so RRF and all downstream passes operate on fresh data. The
 	// call is internally throttled (staleRefreshCooldown) to avoid stat storms
 	// on rapid query bursts.
-	s.refreshStaleSources()
+	s.refreshStaleSourcesContext(ctx)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	corpus, err := s.searchCorpus(opts)
 	if err != nil {
 		return nil, err
 	}
-	results := retrieval.SearchWithFallback(s.ctx(), corpus, query, limit, opts.MaxPerSource)
+	results := retrieval.SearchWithFallback(ctx, corpus, query, limit, opts.MaxPerSource)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	if len(results) > 0 {
 		s.trackAccess(results)
@@ -114,188 +126,6 @@ func scanSearchRow(rows *sql.Rows) (retrieval.SearchResult, error) {
 	var r retrieval.SearchResult
 	err := rows.Scan(&r.Label, &r.Title, &r.Content, &r.SourceID, &r.ContentType, &r.Highlighted, &r.Rank)
 	return r, err
-}
-
-// staleRefreshCooldown throttles refreshStaleSources. Each search is an IPC
-// round-trip and every file-backed source costs a stat (and possibly a read),
-// so a short cooldown keeps rapid query bursts from triggering redundant stat
-// storms while still catching genuinely changed files within a few searches.
-const staleRefreshCooldown = 5 * time.Second
-
-// SetDenyChecker installs the Read deny-policy predicate used by stale
-// auto-refresh. The predicate returns true when a path is denied. It is
-// consulted immediately before re-reading a file so a deny-policy change since
-// the original index (TOCTOU) is honored. Passing nil disables deny filtering
-// (the default for standalone store usage outside the server).
-func (s *ContentStore) SetDenyChecker(fn func(string) bool) {
-	s.denyChecker = fn
-}
-
-// refreshStaleSources scans file-backed sources, detects on-disk content
-// changes via an mtime gate + SHA-256 comparison, and re-indexes changed files
-// so subsequent search passes see fresh data. It returns the number of sources
-// re-indexed.
-//
-// Throttling: the first caller within each staleRefreshCooldown window claims
-// the window via an atomic CAS and does the work; concurrent/rapid callers
-// return 0 immediately. Failures (missing files, read errors, denied paths) are
-// skipped, never fatal — stale detection must never break search.
-func (s *ContentStore) refreshStaleSources() int {
-	now := time.Now().UnixNano()
-	last := s.lastRefreshTime.Load()
-	if now-last < int64(staleRefreshCooldown) {
-		return 0
-	}
-	// Claim the window. If another goroutine claimed it first, defer to it.
-	if !s.lastRefreshTime.CompareAndSwap(last, now) {
-		return 0
-	}
-
-	if _, err := s.getDB(); err != nil {
-		return 0
-	}
-
-	// Snapshot the file-backed sources up front so the cursor is closed before
-	// any re-index opens its own write transaction (avoids holding a read
-	// cursor across writes).
-	type fileSource struct {
-		id                                                   int64
-		label, filePath, contentHash, indexedAt, contentType string
-		kind                                                 SourceKind
-	}
-	rows, err := s.stmtListFileBackedSources.Query()
-	if err != nil {
-		slog.Warn("stale refresh: listing file-backed sources failed", "error", err)
-		return 0
-	}
-	var sources []fileSource
-	for rows.Next() {
-		var fs fileSource
-		var filePath sql.NullString
-		if err := rows.Scan(&fs.id, &fs.label, &filePath, &fs.contentHash, &fs.indexedAt, &fs.contentType, &fs.kind); err != nil {
-			slog.Warn("stale refresh: row scan failed, skipping", "error", err)
-			continue
-		}
-		if !filePath.Valid || filePath.String == "" {
-			continue
-		}
-		fs.filePath = filePath.String
-		sources = append(sources, fs)
-	}
-	// Close the cursor before any re-index opens a write tx — a deferred close
-	// would hold the read cursor across writes.
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		slog.Warn("stale refresh: row iteration failed", "error", err)
-		return 0
-	}
-
-	refreshed := 0
-	for _, fs := range sources {
-		// TOCTOU defense: a path's deny status may have changed since indexing.
-		// Fail closed — skip the re-read if denied.
-		if s.denyChecker != nil && s.denyChecker(fs.filePath) {
-			continue
-		}
-
-		// SQLite CURRENT_TIMESTAMP is UTC and time.Parse with no zone returns
-		// UTC, so the mtime comparison below converts mtime to UTC too.
-		indexedAt, perr := time.Parse("2006-01-02 15:04:05", fs.indexedAt)
-		if perr != nil {
-			slog.Warn("stale refresh: unparseable indexed_at, skipping", "label", fs.label, "value", fs.indexedAt)
-			continue
-		}
-
-		changed, sanitized, current := s.fileChangedSince(fs.filePath, fs.contentHash, indexedAt)
-		switch {
-		case changed:
-			// Reuse the stored content_type rather than re-detecting: file-backed
-			// sources are first indexed via handleIndex with contentType "", so the
-			// stored value is already whatever DetectContentType chose for this file
-			// at first index — preserving it keeps chunking stable across refreshes.
-			if _, err := s.IndexWithFilePath(sanitized, fs.label, fs.contentType, fs.kind, fs.filePath); err != nil {
-				slog.Warn("stale refresh: re-index failed", "path", fs.filePath, "error", err)
-				continue
-			}
-			refreshed++
-		case current:
-			// Touched on disk but content unchanged: advance indexed_at so the
-			// mtime fast-path skips this file on subsequent searches instead of
-			// re-reading and re-hashing it every time the gate stays open.
-			if _, err := s.stmtUpdateSourceIndexedAt.Exec(fs.id); err != nil {
-				slog.Warn("stale refresh: advancing indexed_at failed", "label", fs.label, "error", err)
-			}
-		}
-	}
-	return refreshed
-}
-
-// fileChangedSince inspects the file at path against the stored sanitized
-// content hash. It returns:
-//   - changed: the file's sanitized content differs — re-index with sanitized.
-//   - sanitized: the freshly-sanitized content (only when changed is true).
-//   - current: the file was read and its hash matched — content is confirmed
-//     unchanged, so the caller should advance indexed_at to close the mtime gate.
-//
-// When the file is skipped without reading (deleted, non-regular, oversized, or
-// the mtime gate says unchanged), all three are zero values.
-//
-// It binds stat and read to a single descriptor (fd-bound: Open → Stat →
-// bounded read) so the file cannot be swapped mid-check, and rejects non-regular
-// files (FIFO/device/socket/dir). O_NONBLOCK keeps the open from blocking on a
-// FIFO before the IsRegular guard can reject it (a no-op for regular files);
-// IsRegular rejects char/block devices and sockets before content reads.
-// The actual read is capped at maxSourceBytes + 1 so growth after stat is also
-// rejected before sanitization, hashing or writes. Cached content stays intact.
-// TODO(D2): policy admission still precedes open; atomically bind the checked
-// path to the opened descriptor to close the remaining replacement race.
-//
-// The hash is compared against the sanitized byte stream because capy stores
-// content_hash post-StripSecrets (index.go) — comparing raw file bytes would
-// mismatch forever for any secret-bearing file, causing perpetual re-indexing.
-func (s *ContentStore) fileChangedSince(path, storedHash string, indexedAt time.Time) (changed bool, sanitized string, current bool) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		// Deleted or unreadable — keep cached results.
-		return false, "", false
-	}
-	defer f.Close()
-
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return false, "", false
-	}
-
-	// mtime gate (fast path): unchanged files never get read or hashed.
-	if !info.ModTime().UTC().After(indexedAt) {
-		return false, "", false
-	}
-
-	// Size guard mirrors handleIndex: a file that grew past the limit after
-	// indexing must not be slurped into memory (OOM risk) only for the
-	// subsequent re-index to reject it with SourceTooLargeError. Skip without
-	// reading — the next IndexWithFilePath would fail on it anyway.
-	if info.Size() > int64(s.maxSourceBytes) {
-		slog.Warn("stale refresh: file exceeds max source size, skipping", "path", path, "size", info.Size(), "limit", s.maxSourceBytes)
-		return false, "", false
-	}
-
-	read := s.readFileContent
-	if read == nil {
-		read = fileio.ReadAll
-	}
-	raw, err := read(f, s.maxSourceBytes)
-	if err != nil {
-		slog.Warn("stale refresh: read failed, skipping", "path", path, "error", err)
-		return false, "", false
-	}
-
-	sanitized = sanitize.StripSecrets(string(raw))
-	if contentHash(sanitized) == storedHash {
-		// Touched but content unchanged after sanitization.
-		return false, "", true
-	}
-	return true, sanitized, false
 }
 
 // CountSourcesByKind returns the number of sources with the given kind.
