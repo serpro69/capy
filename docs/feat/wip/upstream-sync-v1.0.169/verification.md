@@ -1655,3 +1655,96 @@ or vault change was needed. Tasks 16a–20 and deferred D1–D5 remain pending.
 
 Optional editorial follow-up: `kk:clarify-docs` on `README.md`,
 `docs/architecture.md` and `docs/adr/012-contenttype-internal-only.md`.
+
+## Task 16a: Atomic fetch validation renewal
+
+Implemented on 2026-10-11. Migration 021 adds nullable integer milliseconds to
+knowledge sources. The fetch-specific write path pairs the supplied validation
+time with content and kind in the existing transaction; generic replacement
+writes clear the marker. Same-hash fetches return retained counts/type without
+changing indexing age. Both fetch modes use this metadata for the configured
+freshness window and distinguish unchanged revalidation from new indexing.
+
+Behavioral coverage:
+
+- Encrypted legacy schema migration, concurrent opening, idempotence, rollback
+  and reopen; invalid index inputs fail before database creation.
+- New content, both same-hash kind branches, retained metadata when the proposed
+  chunking differs, out-of-order content/time pairs, generic inline/file/chunked
+  replacements, and transactional rollback of content/kind/marker on failure.
+- Missing, nonpositive, future and expired markers; legacy revalidation,
+  expiry/force → unchanged → hit in both fetch modes, and persisted cache hits
+  over fresh real MCP stdio processes. Cache hits and ordinary searches leave
+  validation time unchanged.
+- HTTP, empty/binary/oversized body, truncated read, store-size and actual HTML
+  conversion failures retain the previous entry. The conversion fixture exceeds
+  x/net/html's nesting limit, exercising the error without a converter mock.
+- A response-body Close wrapper advances an atomic clock by two hours per
+  response. Single and serial-batch tests prove the marker was captured before
+  cleanup and the serial indexing queue, not when each database write occurs.
+- An unchanged freshly validated ephemeral source retains its old indexing age
+  and is actually evicted by the normal TTL cleanup. Durable indexing age is
+  likewise unchanged; existing access/kind transitions are preserved.
+
+Commands use `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`. Quality runs
+also use `XDG_CONFIG_HOME=/tmp/capy-task16a-config`. CLI/MCP children use temporary
+home/config/data/vault paths and synthetic keys through the existing helpers.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 ./internal/server ./internal/store -run 'TestFetch\|TestIndexFetched\|TestMigration' -count=1` | Passed: server 15.510s, store 3.670s. |
+| Final `env -u CLAUDE_PROJECT_DIR XDG_CONFIG_HOME=/tmp/capy-task16a-config make test` | All packages passed: CLI 272.387s, server 134.404s, vault 290.350s; other packages passed or used cache. |
+| `go test -race -tags fts5 ./internal/store ./internal/server -count=1` | Passed: store 128.049s, server 155.448s. |
+| `go test -race -tags fts5 ./internal/server -run 'TestFetchFreshnessFailedRevalidation/.*/transform' -count=1` | Passed, 1.720s; this test-only addition followed the broad race run. |
+| `CAPY_TEST_OLD_BINARY=/tmp/capy-task16a-old-binary go test -tags fts5 ./cmd/capy -run TestFetchFreshness -count=1 -v` | Passed, 5.200s, including both real stdio and actual old-binary coexistence. |
+| Same CLI subset with `-race` | Passed, 5.483s. |
+| `go test -race -tags fts5 ./cmd/capy -run TestMCPStdioBooleanArgs -count=1` | Passed, 7.307s after updating the existing cache seed to use fetch validation. |
+| `make build` | Passed; nonfatal read-only module-stat-cache warning. |
+| `go vet -tags fts5 ./internal/store ./cmd/capy` | Passed. Adding `./internal/server` reports the existing `tool_boolean_test.go:110` lock-copy warning, unchanged by this task. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task16a` | Passed for store/server/vault. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task15.json bench-results/upstream-sync-task16a.json` | Dataset verified; all 84 quality/context metrics unchanged. |
+| `go test -tags fts5 ./internal/platform -run 'TestGeneratedWholeFileArtifacts\|TestMergedArtifactsAreIdempotent' -count=1` | Passed. |
+| `git diff --check` | Passed. |
+
+The first full run passed all packages except `cmd/capy`. Its boolean stdio
+fixture previously seeded a cache hit through generic `capy_index`; it now uses
+`IndexFetched` while retaining all force-string and SSRF assertions. Existing
+vault CLI fixtures also inherited the user's minimum import-size configuration,
+excluding their small synthetic sessions. A targeted rerun passed with
+`CLAUDE_PROJECT_DIR` cleared and `XDG_CONFIG_HOME` isolated; the final full run
+uses the same isolation. These failures did not require vault runtime changes.
+
+The default Go cache was read-only; using `/tmp` resolved it. Local HTTP listeners
+were denied by the sandbox, so socket-dependent tests ran with that restriction
+lifted. An existing migration-count assertion was updated from four to five.
+The first timing fixture needed the existing transport seam's return type widened
+from `*http.Transport` to `http.RoundTripper` so it could wrap response cleanup;
+production still returns the same shared SSRF-safe transport.
+
+The old binary was built from a `git archive` of `c5a2f297f50f3c1486b26f6bfd3a9a2c54eb84ff`
+using `go build -buildvcs=false -tags fts5`. The compatibility fixture is optional
+in ordinary runs: set `CAPY_TEST_OLD_BINARY` to rerun it without requiring history
+or a download in every test invocation. It verifies old search, same-hash writes,
+replacement clearing the marker, new revalidation and a fresh old process after
+reopen. Benchmark baseline is Task 15's saved report (HEAD metadata `986c8f0` plus
+that task's changes); target metadata is `c5a2f29` plus Task 16a's working tree.
+No latency/performance improvement is claimed. Logs are `/tmp/capy-16a-*.log`;
+quality artifacts are in ignored `bench-results/`.
+
+README, architecture and ADR-013 document the one-time legacy cache miss,
+freshness/retention separation and conversion-error behavior. CLI and CI changes
+are N/A; build, FTS5 and key requirements inherit repository `AGENTS.md`.
+No dependency upgrade, vault schema, ranking or generated-artifact change is
+needed. Task 16's per-call TTL and typed retry hints, Tasks 17–20 and D1–D5 remain
+pending. Optional editorial follow-up: `kk:clarify-docs` on `README.md`,
+`docs/architecture.md` and `docs/adr/013-configurable-fetch-ttl.md`.
+
+### Review
+
+The [independent code review](.reviews/task-16a-code-review-2026-10-11.md)
+approved Task 16a without P0–P3 findings. A separate follow-up review approved the
+boolean-fixture correction without findings. PAL's configured external reviewer
+failed with `API_KEY_INVALID`; it supplied no expert assessment. The independent
+agent fallback completed the required review. Task 16a is done; no findings or new conventions
+needed knowledge indexing beyond the repository documentation.

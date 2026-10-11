@@ -767,7 +767,7 @@ func TestSearch_NoResults_NoSourceLabelsLeaked(t *testing.T) {
 func disableSSRFValidation(t *testing.T) {
 	t.Helper()
 	orig := newFetchTransport
-	newFetchTransport = func() *http.Transport { return &http.Transport{} }
+	newFetchTransport = func() http.RoundTripper { return &http.Transport{} }
 	t.Cleanup(func() { newFetchTransport = orig })
 }
 

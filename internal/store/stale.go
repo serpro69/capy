@@ -115,7 +115,7 @@ func (s *ContentStore) refreshStaleSourcesContext(ctx context.Context) int {
 		}
 		if checked.changed {
 			chunks := chunkContent(checked.sanitized, fs.contentType)
-			result, err := s.indexPreparedChunksChecked(ctx, checked.sanitized, fs.label, fs.contentType, fs.kind, fs.filePath, chunks, &fs)
+			result, err := s.indexPreparedChunksChecked(ctx, checked.sanitized, fs.label, fs.contentType, fs.kind, fs.filePath, chunks, &fs, nil)
 			if err != nil {
 				slog.Warn("stale refresh: re-index failed", "path", fs.filePath, "error", err)
 			} else if result != nil {

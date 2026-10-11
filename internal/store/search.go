@@ -467,7 +467,7 @@ func (s *ContentStore) GetSourceMeta(label string) (*SourceMeta, error) {
 
 	var meta SourceMeta
 	var indexedAt string
-	err := s.stmtGetSourceMeta.QueryRow(label).Scan(&meta.Label, &meta.ChunkCount, &indexedAt, &meta.Kind)
+	err := s.stmtGetSourceMeta.QueryRow(label).Scan(&meta.Label, &meta.ChunkCount, &indexedAt, &meta.Kind, &meta.FetchValidatedAtMS)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil

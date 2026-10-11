@@ -213,8 +213,8 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	// --- Indexing ---
 
 	s.stmtInsertSource, err = db.Prepare(`
-		INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, kind, file_path, file_check_seq)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+		INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, kind, file_path, file_check_seq, fetch_validated_at_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -293,7 +293,7 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	// --- Queries ---
 
 	s.stmtGetSourceMeta, err = db.Prepare(`
-		SELECT label, chunk_count, indexed_at, kind FROM sources WHERE label = ?`)
+		SELECT label, chunk_count, indexed_at, kind, fetch_validated_at_ms FROM sources WHERE label = ?`)
 	if err != nil {
 		return err
 	}

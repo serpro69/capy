@@ -22,6 +22,36 @@ Make the TTL configurable via `[store.cache] fetch_ttl_hours = 24` in `.capy.tom
 - Configurable per-project via `.capy.toml`
 - The `force: true` parameter on `capy_fetch_and_index` always bypasses the cache regardless of TTL
 
+## Amendment: successful validation renews freshness (2026-10-11)
+
+Task 16a of upstream-sync-v1.0.169 replaces `indexed_at` as the cache clock with
+nullable `sources.fetch_validated_at_ms`. Same-hash indexing preserves indexing
+age, so using it for freshness caused repeated network fetches after expiry.
+`last_accessed_at` is also unsuitable because ordinary searches change it.
+
+Capture each successful response's timestamp after its complete body is admitted,
+before HTML conversion, response cleanup, batch queueing or database lock waits.
+`IndexFetched` commits content, requested kind and the supplied timestamp in one
+transaction. Unchanged content renews this marker and returns stored chunk counts;
+it retains `indexed_at` and existing kind/access behavior. A delayed older response
+that commits last carries its own timestamp, never a newer response's marker.
+Failures leave the old entry intact. HTML conversion errors are now returned
+instead of falling back to a cacheable raw-HTML entry.
+
+Both fetch modes require a matching source kind and
+`0 <= now_ms - validated_at_ms < configured_ttl_ms`. NULL, nonpositive, unreadable
+or future markers miss conservatively. Generic indexing never stamps validation;
+replacement clears it. Cache hits and search access cannot renew it. Ephemeral
+retention still uses indexing age, so cleanup can evict an old unchanged source
+immediately after successful revalidation. Durable retention scoring is unchanged.
+
+Migration 021 is additive, idempotent and transactional on encrypted stores.
+Existing rows intentionally miss once after upgrade. A binary from `c5a2f297`
+(before this migration) was verified reading/writing the upgraded database while
+a new store was open and after reopen; old replacement writes leave the marker
+NULL. Downgrades retain readable content but lose the new freshness guarantees.
+Per-call TTL controls and cache-statistics corrections remain Tasks 16 and 17.
+
 ## Consequences
 
 - `CacheConfig.FetchTTLHours` added to config with default 24

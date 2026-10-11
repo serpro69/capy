@@ -61,6 +61,8 @@ type Server struct {
 	vaultMu       sync.Once
 	bgWg          sync.WaitGroup
 	projectDir    string
+	// Optional fetch clock, fixed before concurrent use. Nil uses time.Now.
+	fetchNow func() time.Time
 
 	// Captured before lazy initialization; never re-resolved from files or the
 	// environment during this server's lifetime.

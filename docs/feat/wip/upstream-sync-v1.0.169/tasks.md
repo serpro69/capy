@@ -421,7 +421,7 @@ Tasks 16a–20 and D1–D5 remain pending.
 
 ## Task 16a: Renew fetch freshness atomically on successful validation
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 3, 4, 7, 9, 11, 19; coordinate store migrations with Task 12a
@@ -429,9 +429,19 @@ Tasks 16a–20 and D1–D5 remain pending.
 
 ### Subtasks
 
-- [ ] 16a.1 Add nullable millisecond validation metadata and fetched-index transaction semantics → verify: migration/reopen, generic replacements clear markers, and old readers remain compatible.
-- [ ] 16a.2 Carry body-read validation time through both modes and atomic indexing → verify: delayed queues/out-of-order commits retain content-matched timestamps, and expire/force → unchanged → hit uses correct chunk counts.
-- [ ] 16a.3 Preserve indexed-at retention and prevent renewal on fetch/index failures or ordinary search → verify: durable/ephemeral lifecycle fixtures and ADR-013 amendment.
+- [x] 16a.1 Add nullable millisecond validation metadata and fetched-index transaction semantics → verify: migration/reopen, generic replacements clear markers, and old readers remain compatible.
+- [x] 16a.2 Carry body-read validation time through both modes and atomic indexing → verify: delayed queues/out-of-order commits retain content-matched timestamps, and expire/force → unchanged → hit uses correct chunk counts.
+- [x] 16a.3 Preserve indexed-at retention and prevent renewal on fetch/index failures or ordinary search → verify: durable/ephemeral lifecycle fixtures and ADR-013 amendment.
+
+Evidence: [verification](verification.md#task-16a-atomic-fetch-validation-renewal)
+and [isolated review](.reviews/task-16a-code-review-2026-10-11.md). Successful
+fetches now atomically persist body-validation time, including unchanged/kind
+transitions, without extending retention. Both modes reuse it across reopen and
+report retained section counts. Full FTS5 tests, affected race checks, actual
+old-binary/stdio compatibility and build pass; all 84 quality metrics are
+unchanged. Independent review and the fixture follow-up found no issues. The
+pre-existing server-vet warning and unavailable external reviewer are recorded.
+Task 16's per-call TTL and typed retry guidance remain pending.
 
 ## Task 16: Add per-call fetch freshness
 

@@ -99,10 +99,19 @@ vocabulary table; the vault passes `nil`).
 
 1. SSRF validation (block localhost, private networks, cloud metadata)
 2. Git platform URL detection → redirect to platform CLI
-3. TTL cache check (skip re-fetch within configurable window)
-4. HTTP fetch with timeout and size limits
+3. TTL cache check against nullable `fetch_validated_at_ms` (skip re-fetch within the configured window only for a matching kind and nonfuture marker)
+4. HTTP fetch with timeout and size limits; capture validation time after the complete body passes admission, before conversion, cleanup and batch queueing
 5. Content-type routing: HTML → markdown conversion, JSON → key-path chunking, text → plaintext chunking
-6. Index as ephemeral (default, 24h TTL) or durable (explicit)
+6. Atomically index as ephemeral (default, 24h retention TTL) or durable (explicit), pairing the content with its validation time
+
+Migration 021 adds nullable integer milliseconds without changing `indexed_at`.
+Legacy rows miss conservatively until revalidated. `IndexFetched` updates the
+marker in the same transaction as deduplication, kind changes or replacement;
+out-of-order commits keep their own content/time pair. Same-hash successes return
+retained chunk metadata and preserve retention age. Cache hits, searches and
+generic dedup do not renew validation; generic replacements bind NULL. Fetch,
+conversion and transactional indexing failures leave the prior entry intact.
+See [ADR-013](adr/013-configurable-fetch-ttl.md).
 
 ## Knowledge Base
 

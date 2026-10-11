@@ -105,7 +105,7 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	// second's. Used as both the GetSourceMeta lookup key and the storage label.
 	cacheKey := composeFetchCacheKey(label, url)
 
-	// TTL cache check — skip re-fetch if content was recently indexed
+	// TTL cache check — only successful remote validation establishes freshness.
 	if !force {
 		st := s.getStore()
 		ttl := time.Duration(s.config.Store.Cache.FetchTTLHours) * time.Hour
@@ -113,7 +113,8 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 		if err != nil {
 			slog.Warn("cache check failed, proceeding with fetch", "label", label, "error", err)
 		}
-		if err == nil && meta != nil && time.Since(meta.IndexedAt) < ttl && meta.Kind == kind {
+		now := s.fetchTime()
+		if err == nil && fetchCacheFresh(meta, kind, now, ttl) {
 			s.stats.AddCacheHit(int64(meta.ChunkCount) * 1600) // ~1.6KB per chunk estimate
 			kindInfo := string(meta.Kind)
 			if meta.Kind == store.KindEphemeral {
@@ -122,8 +123,8 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 			// Surface the friendly label (not the composite key): a search source
 			// filter is LIKE-based, so the short label still matches the stored key.
 			text := fmt.Sprintf(
-				"**Cache hit** — source %q was indexed %s (%d chunks, %s).\nConfigured TTL: %dh. Use `force: true` to re-fetch.\nUse search(queries: [...], source: %q) for lookups.",
-				label, formatAge(time.Since(meta.IndexedAt)), meta.ChunkCount, kindInfo,
+				"**Cache hit** — source %q was validated %s (%d chunks, %s).\nConfigured TTL: %dh. Use `force: true` to re-fetch.\nUse search(queries: [...], source: %q) for lookups.",
+				label, formatAge(now.Sub(time.UnixMilli(*meta.FetchValidatedAtMS))), meta.ChunkCount, kindInfo,
 				s.config.Store.Cache.FetchTTLHours, label,
 			)
 			return s.trackToolResponse("capy_fetch_and_index", textResult(text)), nil
@@ -131,7 +132,7 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	}
 
 	// Fetch the remote content (SSRF-safe transport, redirect cap, size limit).
-	content, contentType, fetchErr := fetchRemoteContent(ctx, url)
+	content, contentType, validatedAt, fetchErr := s.fetchRemoteContent(ctx, url)
 	if fetchErr != "" {
 		return errorResult(fetchErr), nil
 	}
@@ -142,7 +143,7 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	// Index via the content-type-aware strategy. content becomes the (possibly
 	// HTML→markdown converted) text used for the preview below.
 	st := s.getStore()
-	content, indexed, err := indexFetchedContent(st, content, contentType, cacheKey, kind)
+	content, indexed, err := indexFetchedContent(st, content, contentType, cacheKey, kind, validatedAt)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Index error: %v", err)), nil
 	}
@@ -164,12 +165,34 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 
 	// Surface the friendly label rather than the composite cache key (label|url):
 	// the search source filter is LIKE-based, so the short label still matches.
+	outcome := "Fetched and indexed"
+	if indexed.AlreadyIndexed {
+		outcome = "Revalidated, unchanged — retained"
+	}
 	text := fmt.Sprintf(
-		"Fetched and indexed **%d sections** (%sKB) from: %s\n%s\nUse search(queries: [...], source: %q) for specific lookups.\n\n---\n\n%s",
-		indexed.TotalChunks, totalKB, label, kindNote, label, preview,
+		"%s **%d sections** (%sKB) from: %s\n%s\nUse search(queries: [...], source: %q) for specific lookups.\n\n---\n\n%s",
+		outcome, indexed.TotalChunks, totalKB, label, kindNote, label, preview,
 	)
 
 	return s.trackToolResponse("capy_fetch_and_index", textResult(text)), nil
+}
+
+func (s *Server) fetchTime() time.Time {
+	if s.fetchNow != nil {
+		return s.fetchNow()
+	}
+	return time.Now()
+}
+
+func fetchCacheFresh(meta *store.SourceMeta, kind store.SourceKind, now time.Time, ttl time.Duration) bool {
+	if meta == nil || meta.Kind != kind || meta.FetchValidatedAtMS == nil {
+		return false
+	}
+	validated := *meta.FetchValidatedAtMS
+	nowMS := now.UnixMilli()
+	// Reject absent, invalid and future markers. With positive timestamps the
+	// subtraction cannot overflow; compare integer milliseconds, not seconds.
+	return validated > 0 && nowMS >= validated && nowMS-validated < ttl.Milliseconds()
 }
 
 // composeFetchCacheKey derives the cache/storage key for a fetched URL by joining
@@ -207,14 +230,14 @@ func truncateRunes(s string, n int) string {
 
 // fetchRemoteContent performs the HTTP GET for a single URL using the SSRF-safe
 // transport, redirect cap, and body-size limit, returning the decoded text body
-// and its Content-Type. The third return is a non-empty, user-facing error
+// and its Content-Type plus the body-admission time. The last return is a non-empty, user-facing error
 // message on any failure (empty means success) — kept as a plain string rather
 // than an error so the pre-formatted messages reach the caller verbatim. Binary
 // and empty responses are rejected here. It performs no store I/O, so callers may
 // invoke it concurrently. The request honors ctx, so a client cancellation aborts
 // the in-flight fetch (in addition to the fetchTimeout ceiling) — important for
 // the batch path, where up to maxFetchBatchRequests fetches may be in flight.
-func fetchRemoteContent(ctx context.Context, url string) (content, contentType, errMsg string) {
+func (s *Server) fetchRemoteContent(ctx context.Context, url string) (content, contentType string, validatedAt time.Time, errMsg string) {
 	// Fetch with timeout, redirect limit, and SSRF-safe transport. The transport's
 	// DialContext resolves DNS and classifies every IP at connect time, so each
 	// redirect to a new host is re-validated (DNS-rebinding defense).
@@ -231,62 +254,61 @@ func fetchRemoteContent(ctx context.Context, url string) (content, contentType, 
 
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return "", "", fmt.Sprintf("Invalid URL: %v", err)
+		return "", "", time.Time{}, fmt.Sprintf("Invalid URL: %v", err)
 	}
 	httpReq.Header.Set("User-Agent", fetchUserAgent)
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", "", fmt.Sprintf("Failed to fetch %s: %v", url, err)
+		return "", "", time.Time{}, fmt.Sprintf("Failed to fetch %s: %v", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "", fmt.Sprintf("Failed to fetch %s: HTTP %d", url, resp.StatusCode)
+		return "", "", time.Time{}, fmt.Sprintf("Failed to fetch %s: HTTP %d", url, resp.StatusCode)
 	}
 
 	// Read body with size limit
 	limited := io.LimitReader(resp.Body, fetchMaxBody+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {
-		return "", "", fmt.Sprintf("Failed to read response from %s: %v", url, err)
+		return "", "", time.Time{}, fmt.Sprintf("Failed to read response from %s: %v", url, err)
 	}
 	if len(body) > fetchMaxBody {
-		return "", "", fmt.Sprintf("Response too large (>%dMB)", fetchMaxBody/(1024*1024))
+		return "", "", time.Time{}, fmt.Sprintf("Response too large (>%dMB)", fetchMaxBody/(1024*1024))
 	}
 	if len(body) == 0 {
-		return "", "", fmt.Sprintf("Fetched %s but got empty content", url)
+		return "", "", time.Time{}, fmt.Sprintf("Fetched %s but got empty content", url)
 	}
 
 	ct := resp.Header.Get("Content-Type")
 	if isBinaryContent(ct, body) {
-		return "", "", fmt.Sprintf("Cannot index binary content from %s (Content-Type: %s)", url, ct)
+		return "", "", time.Time{}, fmt.Sprintf("Cannot index binary content from %s (Content-Type: %s)", url, ct)
 	}
 
-	return string(body), ct, ""
+	return string(body), ct, s.fetchTime(), ""
 }
 
 // indexFetchedContent routes fetched content to the correct index strategy based
 // on its Content-Type and returns the content used for the preview (HTML is
-// converted to markdown) alongside the index result. Callers MUST serialize these
-// calls — SQLite writes must not run concurrently.
-func indexFetchedContent(st *store.ContentStore, content, contentType, cacheKey string, kind store.SourceKind) (string, *store.IndexResult, error) {
+// converted to markdown) alongside the index result. Validation time stays paired
+// with these bytes even if conversion or the store's write lock delays indexing.
+func indexFetchedContent(st *store.ContentStore, content, contentType, cacheKey string, kind store.SourceKind, validatedAt time.Time) (string, *store.IndexResult, error) {
 	switch {
 	case strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json"):
-		indexed, err := st.IndexJSON(content, cacheKey, kind)
+		indexed, err := st.IndexFetched(content, cacheKey, "json", kind, validatedAt)
 		return content, indexed, err
 
 	case strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/xhtml"):
 		md, convErr := convertHTMLToMarkdown(content)
 		if convErr != nil {
-			indexed, err := st.IndexPlainText(content, cacheKey, kind)
-			return content, indexed, err
+			return "", nil, fmt.Errorf("converting fetched HTML: %w", convErr)
 		}
-		indexed, err := st.Index(md, cacheKey, "", kind)
+		indexed, err := st.IndexFetched(md, cacheKey, "", kind, validatedAt)
 		return md, indexed, err
 
 	default:
-		indexed, err := st.IndexPlainText(content, cacheKey, kind)
+		indexed, err := st.IndexFetched(content, cacheKey, "plaintext", kind, validatedAt)
 		return content, indexed, err
 	}
 }
@@ -304,6 +326,7 @@ type fetchItemResult struct {
 	cacheMeta   *store.SourceMeta
 	content     string
 	contentType string
+	validatedAt time.Time
 }
 
 // fetchOne validates, cache-checks, and fetches a single batch request. It only
@@ -339,19 +362,20 @@ func (s *Server) fetchOne(ctx context.Context, st *store.ContentStore, rq fetchR
 		if err != nil {
 			slog.Warn("cache check failed, proceeding with fetch", "label", label, "error", err)
 		}
-		if err == nil && meta != nil && time.Since(meta.IndexedAt) < ttl && meta.Kind == kind {
+		if err == nil && fetchCacheFresh(meta, kind, s.fetchTime(), ttl) {
 			res.cacheMeta = meta
 			return res
 		}
 	}
 
-	content, contentType, errMsg := fetchRemoteContent(ctx, rq.URL)
+	content, contentType, validatedAt, errMsg := s.fetchRemoteContent(ctx, rq.URL)
 	if errMsg != "" {
 		res.errMsg = errMsg
 		return res
 	}
 	res.content = content
 	res.contentType = contentType
+	res.validatedAt = validatedAt
 	return res
 }
 
@@ -405,6 +429,7 @@ func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, 
 		previews   []string
 		okCount    int // URLs whose content is in the index (freshly indexed or cache hit)
 		cachedHits int
+		unchanged  int
 		freshBytes int
 	)
 	for _, it := range items {
@@ -423,14 +448,19 @@ func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, 
 
 		default:
 			s.stats.AddBytesIndexed(int64(len(it.content)))
-			finalContent, indexed, err := indexFetchedContent(st, it.content, it.contentType, it.cacheKey, kind)
+			finalContent, indexed, err := indexFetchedContent(st, it.content, it.contentType, it.cacheKey, kind, it.validatedAt)
 			if err != nil {
 				lines = append(lines, fmt.Sprintf("✗ %s — index error: %v", it.url, err))
 				continue
 			}
 			okCount++
 			freshBytes += len(finalContent)
-			lines = append(lines, fmt.Sprintf("✓ %s — indexed %d sections", it.label, indexed.TotalChunks))
+			if indexed.AlreadyIndexed {
+				unchanged++
+				lines = append(lines, fmt.Sprintf("✓ %s — revalidated, unchanged (%d sections retained)", it.label, indexed.TotalChunks))
+			} else {
+				lines = append(lines, fmt.Sprintf("✓ %s — indexed %d sections", it.label, indexed.TotalChunks))
+			}
 
 			// Rune-safe truncation — a raw byte cut can split a multibyte UTF-8 rune.
 			preview := finalContent
@@ -442,8 +472,8 @@ func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, 
 	}
 
 	var out strings.Builder
-	fmt.Fprintf(&out, "Processed %d/%d URLs — %d newly indexed (%.1fKB), %d from cache (kind=%s).\n\n",
-		okCount, len(requests), okCount-cachedHits, float64(freshBytes)/1024, cachedHits, kind)
+	fmt.Fprintf(&out, "Processed %d/%d URLs — %d newly indexed, %d revalidated unchanged (%.1fKB fetched), %d from cache (kind=%s).\n\n",
+		okCount, len(requests), okCount-cachedHits-unchanged, unchanged, float64(freshBytes)/1024, cachedHits, kind)
 	out.WriteString(strings.Join(lines, "\n"))
 	if len(previews) > 0 {
 		out.WriteString("\n\n---\n\n")
@@ -480,7 +510,7 @@ func convertHTMLToMarkdown(html string) (string, error) {
 // loopback connections (httptest.NewServer binds to 127.0.0.1, which the
 // SSRF-safe dialer blocks). Production resolves to getFetchTransport, which
 // shares one SSRF-safe transport process-wide so connections pool correctly.
-var newFetchTransport = getFetchTransport
+var newFetchTransport = func() http.RoundTripper { return getFetchTransport() }
 
 // isBinaryContent returns true if the content appears to be binary (images, PDFs, etc.)
 // based on Content-Type header and byte content inspection.

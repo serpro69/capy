@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/serpro69/capy/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -120,11 +121,16 @@ func TestMCPStdioBooleanArgs(t *testing.T) {
 			assert.Contains(t, text, tc.want)
 		}
 
-		// Seed a durable cache entry for a loopback URL. False must use it;
+		// Seed a validated durable cache entry for a loopback URL. Generic
+		// indexing cannot establish remote freshness. False must use it;
 		// true must bypass it and reach the real SSRF guard, with no HTTP server
 		// or production-policy override in this stdio fixture.
 		const url = "http://127.0.0.1:1/boolean"
-		p.tool(t, "capy_index", map[string]any{"content": "Retained fetch marker", "source": "boolean-cache|" + url})
+		seed := store.NewContentStore(filepath.Join(project, "knowledge.db"), project, 0, 0, store.WithEncryptionKey(key, "test"))
+		t.Cleanup(func() { require.NoError(t, seed.Close()) })
+		_, err := seed.IndexFetched("Retained fetch marker", "boolean-cache|"+url, "plaintext", store.KindDurable, time.Now())
+		require.NoError(t, err)
+		require.NoError(t, seed.Close())
 		for _, mode := range []string{"single", "batch"} {
 			t.Run(mode, func(t *testing.T) {
 				args := map[string]any{"url": url, "source": "boolean-cache", "kind": "durable", "force": " FaLsE "}

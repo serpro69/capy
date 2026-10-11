@@ -1006,6 +1006,20 @@ sends SIGTERM to tracked background process groups.
 | `capy_search`          | Search indexed content. Multi-layer search: Porter stemming + trigram substring + fuzzy Levenshtein, fused with Reciprocal Rank Fusion. Defaults to durable + session sources; pass `include_kinds` to search ephemeral content. |
 | `capy_fetch_and_index` | Fetch a URL, convert HTML to markdown, index into the knowledge base, return a ~3 KB preview. Default ephemeral (24h TTL). Git platform issue/PR URLs are blocked with CLI redirect guidance.                                    |
 
+Fetch cache freshness uses the last successful remote validation, persisted in
+milliseconds. An expired or forced fetch with identical content reports
+“revalidated, unchanged” with the retained section count and renews the configured
+`store.cache.fetch_ttl_hours` window. Cache hits and searches do not renew it.
+Existing cache entries revalidate once after upgrade because they lack this
+timestamp. Failed fetches, conversions and indexing leave the previous entry
+unchanged; HTML conversion errors are reported rather than cached as raw HTML.
+
+Freshness is separate from retention: unchanged validation does not reset the
+source's indexing age. An old ephemeral entry can still be removed by its
+retention TTL; use `kind: "durable"` for persistent reference material. Older
+binaries can read the additive metadata schema, but their replacements clear
+the validation marker and require another successful fetch after upgrading again.
+
 The `capy_search` `source` filter matches a literal substring of a knowledge
 label: `%`, `_`, and backslashes match themselves. For example,
 `source: "team_notes"` matches `docs:team_notes` but not `docs:teamXnotes`. An explicit
