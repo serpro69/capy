@@ -828,3 +828,102 @@ literals now use named fields with identical values/assertions; the reviewer
 confirmed the fix and approved with no remaining findings. The matrix was
 rerun under `-race` after that test-only edit. PAL was unavailable. No review
 finding or convention needs separate knowledge indexing.
+
+## Task 9: Bounded background output
+
+Implemented 2026-10-11. Scope: detached output retention, process/pipe ownership,
+eventual cleanup and the ADR-005 amendment. Remaining sync tasks stay pending.
+
+### Behavior and coverage
+
+- Each stream atomically snapshots, drops its backing allocation and permanently
+  discards later writes. A 256 MiB post-transition buffer fixture retains zero
+  bytes/capacity and allocates nothing per write. Concurrent writers cannot
+  restore retained content or its byte counter after the transition.
+- A detached shell writes 4 MiB to each stream, then creates a progress marker
+  and verifies its temporary script still exists. Natural exit and shutdown
+  remove the directory and retire its registry entry. The partial response
+  preserves both streams captured before detachment.
+- Two Go readers retain pipe ownership through detachment. Exit observation does
+  not reap the leader; both readers finish before the one final `cmd.Wait`.
+  Reaping, registry changes and all group signals share a mutex. Exited-leader
+  fixtures retain a pipe-owning descendant and verify foreground timeout, the
+  100 MiB hard cap and background shutdown still terminate the group. The leader
+  remains unreaped before cleanup, reserving its PID.
+- Repeated exit/cancellation races retire the waiter and tracking. An injected
+  observer EPERM tests attached error propagation, detached warning logging,
+  no duplicate attached logging, and cleanup in both cases.
+- Foreground timeout/truncation and the existing runtime/cwd matrix pass. No
+  CLI options, schemas, CI or generated setup/routing artifacts changed. The
+  existing pinned `x/sys` module supplies the observation APIs.
+
+### Verification commands
+
+Commands use `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key` unless
+cross-compiling the executor-only test binary with `CGO_ENABLED=0`.
+
+| Command | Result |
+|---|---|
+| `go test -race -tags fts5 -count=1 ./internal/executor/...` | Passed after the final review fix, 7.641s. |
+| `go test -race -tags fts5 ./internal/executor -run '^Test(SafeBufferConcurrentSnapshotAndDiscard\|BackgroundExitCancellationRace\|ExitedLeaderRetainsGroupOwnership)$' -count=10` | Passed, 15.268s. |
+| `go test -race -tags fts5 ./internal/server ./cmd/capy -run 'Test(BatchExecute\|Execute\|MCPStdioBooleanArguments\|MCPStdioExecutionCwd)' -count=1` | Passed: server 17.500s, CLI 3.039s. |
+| `env -u CLAUDE_PROJECT_DIR XDG_CONFIG_HOME=/tmp/capy-task9-config make test` | Final reviewed tree passed every package: CLI 223.355s, executor 5.252s, server 119.418s; unchanged packages used cached results. |
+| `go vet -tags fts5 ./internal/executor/...` | Passed after the final review fix. |
+| `GOOS=darwin GOARCH=arm64 go test -tags fts5 -c -o /tmp/capy-task9-darwin.test ./internal/executor` | Cross-compiled successfully; no Darwin runtime validation. |
+| `GOOS=linux GOARCH=arm64 go test -tags fts5 -c -o /tmp/capy-task9-linux-arm64.test ./internal/executor` | Cross-compiled successfully. |
+| `make build` | Passed; non-fatal read-only module-stat-cache warning. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task9` | Passed for store, server and vault. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task8.json bench-results/upstream-sync-task9.json` | Dataset verified; all 84 retrieval/context metrics match. |
+| `git diff --check` | Passed. |
+
+The initial full-suite run inside the sandbox failed on prohibited local
+`httptest` sockets. Running with socket access, no inherited `CLAUDE_PROJECT_DIR`
+and `XDG_CONFIG_HOME=/tmp/capy-task9-config` passed every package, including the
+final rerun after the error-path review fix. Its log is
+`/tmp/capy-task9-full-tests-reviewed.log`.
+
+### Executor measurements and limits
+
+Compared the reviewed working tree against a temporary copy of the executor at
+`6b6e7f7`, using `go test -tags fts5 -run '^$' -bench
+'^BenchmarkExecutorOverhead$/./executor$' -benchmem -count=3 ./internal/executor`.
+Median measurements:
+
+| Runtime | Baseline time | Reviewed time | Baseline allocations | Reviewed allocations |
+|---|---:|---:|---:|---:|
+| Shell | 1.015 ms | 0.949 ms | 342 | 329 |
+| JavaScript | 20.136 ms | 21.023 ms | 363 | 352 |
+| Python | 10.618 ms | 10.324 ms | 351 | 339 |
+
+Three samples with other test work running are a smoke measurement, not a
+statistical speedup/regression claim. JavaScript's median is 4.4% higher; these
+samples cannot establish whether that is a regression. Allocations decrease in
+every runtime.
+The controlled feature-wide comparison against `c0bfff2` remains Task 20.
+Logs are `/tmp/capy-task9-baseline-performance-final.log` and
+`/tmp/capy-task9-performance-reviewed.log`; the quality report is
+`bench-results/upstream-sync-task9.json` (an ignored benchmark artifact).
+
+The broader pre-existing executor-overhead benchmark fails identically on the
+baseline and changed tree: its JavaScript **direct** case uses `node -c` with
+inline code, which Node treats as a filename. The narrowed command above selects
+the working executor cases. Follow-up for Task 20: choose the runtime's correct
+inline-code flag (`node -e`) in `bench_test.go` before comparing the direct case;
+do not weaken its failure assertion. `benchstat` was unavailable.
+
+### Review and plan refinement
+
+The [isolated review](.reviews/task-9-code-review-2026-10-11.md) approved the final
+implementation. Its two P1 process-lifetime findings and one P2 error-visibility
+finding were fixed and re-reviewed; none remains deferred. PAL was unavailable.
+
+The original S-sized plan assumed `exec.Cmd`'s internal readers could remain
+unchanged. Its reap-before-drain ordering made that incompatible with both
+descendant cleanup and safe PID ownership. The task expanded to M: explicit
+readers and non-reaping Linux/Darwin exit observation provide the required
+ordering. The design, implementation and ADR now state that refinement, while
+preserving ADR-005's historical decision. No pipes are closed or replaced at
+detachment. These findings are already documented, so no duplicate knowledge
+notes were indexed. Shutdown remains best-effort SIGTERM without a new escalation
+policy; a child that ignores it still owns its live resources.

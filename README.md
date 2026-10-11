@@ -914,6 +914,13 @@ separating newline when needed; it does not preserve stream interleaving. Serial
 batches share a timeout budget and skip remaining commands after a timeout.
 Parallel batches give each command its own timeout and retain command order.
 
+With `capy_execute(background: true)`, a process that outlasts its timeout returns
+its PID and partial output while continuing to run. Later stdout/stderr are drained
+and discarded, so they no longer accumulate in server memory. Write logs to an
+explicit file if you need them after detachment. Temporary scripts and `TMPDIR`
+remain available until the process exits, when they are removed. Server shutdown
+sends SIGTERM to tracked background process groups.
+
 ### Knowledge
 
 | Tool                   | What It Does                                                                                                                                                                                                                     |

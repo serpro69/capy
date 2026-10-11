@@ -227,17 +227,24 @@ resolved. The pre-existing server-vet warning is documented as a follow-up.
 
 ## Task 9: Bound detached-process output retention
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
-- **Size:** S
+- **Size:** M
 - **Can run in parallel with:** Tasks 3, 5, 10, 11, 12, 15, 16
 - **Docs:** [Background output](implementation.md#9-bounded-background-output)
 
 ### Subtasks
 
-- [ ] 9.1 Add atomic snapshot/discard semantics to `safeBuffer` and use them at detach → verify: child progress continues with bounded retained bytes.
-- [ ] 9.2 Let the eventual waiter clean temporary files and untrack the PID once → verify: detached exit, shutdown and timeout/exit race cases under `-race`.
-- [ ] 9.3 Supersede ADR-005's accepted output accumulation while preserving its history → verify: documented pipe ownership and discard behavior match the implementation.
+- [x] 9.1 Add atomic snapshot/discard semantics to `safeBuffer` and use them at detach → verify: child progress continues with bounded retained bytes.
+- [x] 9.2 Let the eventual waiter clean temporary files and untrack the PID once → verify: detached exit, shutdown and timeout/exit race cases under `-race`.
+- [x] 9.3 Supersede ADR-005's accepted output accumulation while preserving its history → verify: documented pipe ownership and discard behavior match the implementation.
+
+Evidence: [verification](verification.md#task-9-bounded-background-output) and
+[isolated review](.reviews/task-9-code-review-2026-10-11.md). Detached streams now
+drain without retention; one waiter owns cleanup and PID retirement. Review
+required explicit reader ownership and non-reaping exit observation to preserve
+descendant cleanup and serialize signals with reaping, expanding this task to M.
+All review findings are resolved. Darwin is cross-compiled, not runtime-tested.
 
 ## Task 10: Treat knowledge source selectors literally
 
