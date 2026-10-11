@@ -63,6 +63,7 @@ func TestIndexDirectoryInvalidInputsBeforeSideEffects(t *testing.T) {
 		{"exclude", []any{nil, []any{false}, []any{"/absolute"}}},
 		{"extensions", []any{nil, []any{"md", 1}, []string{"*.md"}}},
 		{"respect_gitignore", []any{nil, 0, 1, "yes", []any{}}},
+		{"follow_symlinks", []any{nil, 0, 1, "yes", []any{}}},
 	} {
 		for n, value := range tc.values {
 			t.Run(fmt.Sprintf("%s-%d", tc.name, n), func(t *testing.T) {

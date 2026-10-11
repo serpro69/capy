@@ -962,7 +962,7 @@ cleanup.
 
 Directory controls are `max_depth` (0–20, default 5; root depth 0), `max_files`
 (1–1,000 eligible open/read attempts, default 200), `extensions`, `include`,
-`exclude`, and `respect_gitignore` (default true). Empty extensions use
+`exclude`, `respect_gitignore` (default true), and `follow_symlinks` (default false). Empty extensions use
 `md, mdx, txt, json, yaml, yml, toml, ts, tsx, js, jsx, py, rs, go, sh`;
 a nonempty list replaces them, case-insensitively with optional leading dots.
 Include/exclude patterns match entire root-relative paths using `/`, `*`, `?`
@@ -973,13 +973,22 @@ mandatory exclusions.
 Scans always prune `.git`, `.hg`, `.svn`, `.capy`, `.aws`, `.ssh`, `node_modules`,
 `vendor`, `dist`, `build`, `.next`, `coverage`, `.venv`, `venv`, `__pycache__`,
 `target`, `.cache`, and credential names `.env`, `.env.*`, `*.pem`, `*.key`,
-`id_rsa`, `id_ed25519`, `credentials`. Descendant symlinks and nested Git
-repositories/worktrees/submodules are skipped. An explicitly named root may
+`id_rsa`, `id_ed25519`, `credentials`. Descendant symlinks are skipped by default;
+nested Git repositories/worktrees/submodules are always skipped. An explicitly named root may
 be a symlink; its requested and canonical paths remain subject to Read denies.
 Git ignores come from that root's worktree, including rules for tracked files;
 an external root still uses the selected capy project's database, key and Read
 policy. Non-Git scans report that ignores were not applied. Git lookup failures
 are errors. Direct file inputs retain their existing explicit-path behavior.
+
+Set `follow_symlinks: true` to follow descendant links within the canonical
+ingestion root. Aliases and targets must pass mandatory exclusions and Read
+policy. Extensions, include/exclude patterns, source labels and Git ignores use
+the canonical target-relative path, so an alias cannot rename a filtered target
+into eligibility. Git also checks the link entry itself. Cycles and duplicate
+targets are skipped; links cannot cross nested Git roots or bypass depth limits.
+Dangling or unresolvable links produce a partial error, retaining committed files.
+The existing entry, file and byte limits still apply.
 
 Each scan admits at most 20,000 directory entries and reads at most 32 MiB of
 file content, counting unchanged/failed reads and oversize probes. A directory

@@ -99,7 +99,7 @@ func withinDirectory(root, path string) bool {
 }
 
 // IndexDirectory admits an explicit root (including a symlink) and walks its
-// canonical directory. Descendant symlinks are skipped; following is Task 13a.
+// canonical directory. Opt-in descendant following keeps targets in that root.
 func (i *Indexer) IndexDirectory(ctx context.Context, path, source string, options DirectoryOptions) (DirectoryResult, error) {
 	out := DirectoryResult{SourcePrefix: source, GitIgnoreStatus: "disabled"}
 	selection, err := options.prepare()
@@ -141,8 +141,11 @@ func (i *Indexer) IndexDirectory(ctx context.Context, path, source string, optio
 			out.GitIgnoreStatus = "applied using " + worktree
 		}
 	}
-	w := directoryWalk{indexer: i, selection: selection, worktree: worktree, requestedRoot: requested, out: &out}
-	w.walk(ctx, root, 0)
+	w := directoryWalk{
+		indexer: i, selection: selection, worktree: worktree, requestedRoot: requested, out: &out,
+		directories: make(map[string]int), files: make(map[string]bool),
+	}
+	w.walk(ctx, root, requested, 0)
 	out.Complete = w.err == nil && len(out.Limits) == 0
 	return out, w.err
 }
@@ -155,6 +158,8 @@ type directoryWalk struct {
 	out           *DirectoryResult
 	err           error // first cause; bounded individual details live in out
 	stopped       bool
+	directories   map[string]int // canonical path -> shallowest admitted walk depth
+	files         map[string]bool
 }
 
 func (r *DirectoryResult) fail(path string, err error) {
@@ -192,10 +197,24 @@ func (w *directoryWalk) canceled(ctx context.Context) bool {
 	return w.stopped
 }
 
-func (w *directoryWalk) walk(ctx context.Context, dir string, depth int) {
+func (w *directoryWalk) walk(ctx context.Context, dir, alias string, depth int) {
 	if w.canceled(ctx) {
 		return
 	}
+	if previous, seen := w.directories[dir]; seen && previous <= depth {
+		w.out.Skipped++
+		return
+	}
+	w.directories[dir] = depth
+	denied, failed := w.out.Denied, w.out.Failed
+	defer func() {
+		// An alias-specific denial must not hide an otherwise readable target
+		// when it is later reached through its ordinary path. Entries still
+		// consume the shared work budget; files are deduplicated separately.
+		if w.out.Denied != denied || w.out.Failed != failed {
+			delete(w.directories, dir)
+		}
+	}()
 	entries, err := w.entries(ctx, dir)
 	if err != nil {
 		w.fail(dir, err)
@@ -207,27 +226,71 @@ func (w *directoryWalk) walk(ctx context.Context, dir string, depth int) {
 	}
 	// Exclusions, policy checks and nested-root pruning happen BEFORE Git sees
 	// paths, avoiding errors on submodule descendants and skipped symlinks.
-	candidates := make([]os.DirEntry, 0, len(entries))
+	type candidate struct {
+		path, alias, encountered string
+		isDir                    bool
+		depth                    int
+	}
+	candidates := make([]candidate, 0, len(entries))
 	paths := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if w.canceled(ctx) {
 			return
 		}
 		path := filepath.Join(dir, entry.Name())
+		encountered := path // physical parent + entry; safe for Git even for a link
+		aliasPath := alias + string(filepath.Separator) + entry.Name()
 		rel, err := filepath.Rel(w.out.Root, path)
 		if err != nil {
 			w.fail(path, err)
 			continue
 		}
 		rel = filepath.ToSlash(rel)
-		if mandatoryExcluded(rel) || matchesAny(w.selection.exclude, rel) || entry.Type()&os.ModeSymlink != 0 {
+		link := entry.Type()&os.ModeSymlink != 0
+		if mandatoryExcluded(rel) || (link && !w.selection.followSymlinks) {
 			w.out.Skipped++
 			continue
 		}
-		if !w.admitPath(path) {
+		if link {
+			path, err = filepath.EvalSymlinks(path)
+			if err != nil {
+				w.fail(encountered, err)
+				continue
+			}
+		}
+		if !w.admitAlias(encountered, aliasPath) {
 			continue
 		}
-		if entry.IsDir() {
+		isDir, regular := entry.IsDir(), entry.Type().IsRegular()
+		entryDepth := depth
+		if link {
+			if !withinDirectory(w.out.Root, path) {
+				w.out.Skipped++
+				continue
+			}
+			rel, err = filepath.Rel(w.out.Root, path)
+			if err != nil {
+				w.fail(path, err)
+				continue
+			}
+			rel = filepath.ToSlash(rel)
+			info, err := os.Stat(path)
+			if err != nil {
+				w.fail(path, err)
+				continue
+			}
+			isDir, regular = info.IsDir(), info.Mode().IsRegular()
+			// A shallow alias cannot bypass the canonical target's depth cap.
+			entryDepth = max(depth, strings.Count(rel, "/"))
+			if !w.admitTarget(path, rel, isDir, entryDepth) {
+				continue
+			}
+		}
+		if matchesAny(w.selection.exclude, rel) {
+			w.out.Skipped++
+			continue
+		}
+		if isDir {
 			nested, err := hasGitMarker(path)
 			if err != nil {
 				w.fail(path, err)
@@ -237,12 +300,17 @@ func (w *directoryWalk) walk(ctx context.Context, dir string, depth int) {
 				w.out.Skipped++
 				continue
 			}
-		} else if !entry.Type().IsRegular() || !w.selection.selectsFile(rel) {
+		} else if !regular || !w.selection.selectsFile(rel) {
 			w.out.Skipped++
 			continue
 		}
-		candidates = append(candidates, entry)
+		candidates = append(candidates, candidate{path, aliasPath, encountered, isDir, entryDepth})
 		paths = append(paths, path)
+		if link {
+			// Never pass alias/child to Git: it rejects paths beyond a
+			// directory symlink. Check only the link entry and real target.
+			paths = append(paths, encountered)
+		}
 	}
 	ignored, err := ignoredPaths(ctx, w.worktree, paths)
 	if err != nil {
@@ -250,26 +318,67 @@ func (w *directoryWalk) walk(ctx context.Context, dir string, depth int) {
 		w.stopped = true
 		return
 	}
-	for n, entry := range candidates {
+	for _, entry := range candidates {
 		if w.canceled(ctx) {
 			return
 		}
-		path := paths[n]
-		if ignored[path] {
+		path := entry.path
+		if ignored[path] || ignored[entry.encountered] {
 			w.out.Skipped++
 			continue
 		}
-		if entry.IsDir() {
-			if depth >= w.selection.maxDepth {
+		if entry.isDir {
+			if entry.depth >= w.selection.maxDepth {
 				w.out.Skipped++
 				w.limit("max_depth", false)
 				continue
 			}
-			w.walk(ctx, path, depth+1)
+			w.walk(ctx, path, entry.alias, entry.depth+1)
 			continue
 		}
-		w.indexFile(ctx, path)
+		w.indexFile(ctx, path, entry.alias)
 	}
+}
+
+// A followed target can jump over directories the ordinary walk would prune.
+// Check those canonical ancestors before Git sees the target or content opens.
+func (w *directoryWalk) admitTarget(path, rel string, isDir bool, depth int) bool {
+	if mandatoryExcluded(rel) {
+		w.out.Skipped++
+		return false
+	}
+	if depth > w.selection.maxDepth {
+		w.out.Skipped++
+		w.limit("max_depth", false)
+		return false
+	}
+	for current := path; current != w.out.Root; current = filepath.Dir(current) {
+		relative, err := filepath.Rel(w.out.Root, current)
+		if err != nil {
+			w.fail(current, err)
+			return false
+		}
+		if matchesAny(w.selection.exclude, filepath.ToSlash(relative)) {
+			w.out.Skipped++
+			return false
+		}
+		if !w.admitPath(current) {
+			return false
+		}
+		if current == path && !isDir {
+			continue
+		}
+		nested, err := hasGitMarker(current)
+		if err != nil {
+			w.fail(current, err)
+			return false
+		}
+		if nested {
+			w.out.Skipped++
+			return false
+		}
+	}
+	return true
 }
 
 // Enumerate incrementally, charging entries immediately. Never process a
@@ -305,7 +414,11 @@ func (w *directoryWalk) entries(ctx context.Context, dir string) ([]os.DirEntry,
 	return entries, nil
 }
 
-func (w *directoryWalk) indexFile(ctx context.Context, path string) {
+func (w *directoryWalk) indexFile(ctx context.Context, path, alias string) {
+	if w.files[path] {
+		w.out.Skipped++
+		return
+	}
 	if w.out.Attempts >= w.selection.maxFiles {
 		w.limit("max_files", true)
 		return
@@ -317,9 +430,10 @@ func (w *directoryWalk) indexFile(ctx context.Context, path string) {
 	}
 	// Check again immediately before content open; filtered/denied entries do
 	// not consume an attempt. Read errors and unchanged/index-failed files do.
-	if !w.admitPath(path) {
+	if !w.admitAlias(path, alias) {
 		return
 	}
+	w.files[path] = true
 	w.out.Attempts++
 	rel, err := filepath.Rel(w.out.Root, path)
 	if err != nil {
@@ -381,7 +495,19 @@ func (w *directoryWalk) checkPath(path string) error {
 }
 
 func (w *directoryWalk) admitPath(path string) bool {
-	err := w.checkPath(path)
+	return w.admissionResult(path, w.checkPath(path))
+}
+
+func (w *directoryWalk) admitAlias(path, alias string) bool {
+	// Retain descendant aliases under both spellings of an explicit root link.
+	// Canonicalizing the entire path would erase those lexical Read denies.
+	rel := strings.TrimPrefix(alias, w.requestedRoot+string(filepath.Separator))
+	rootAlias := w.out.Root + string(filepath.Separator) + rel
+	return w.admissionResult(alias, w.indexer.policy.Check(alias)) &&
+		w.admissionResult(rootAlias, w.indexer.policy.Check(rootAlias)) && w.admitPath(path)
+}
+
+func (w *directoryWalk) admissionResult(path string, err error) bool {
 	if err == nil {
 		return true
 	}

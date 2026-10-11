@@ -356,7 +356,7 @@ resolved. D2 and Task 13a's opt-in descendant following remain pending.
 
 ## Task 13a: Follow allowed directory symlinks without bypassing filters
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 13
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 6, 7, 9, 10, 15, 16, 19
@@ -364,9 +364,17 @@ resolved. D2 and Task 13a's opt-in descendant following remain pending.
 
 ### Subtasks
 
-- [ ] 13a.1 Add opt-in following with canonical target identity, cycle/alias dedup and alias/target mandatory exclusions → verify: ignored/denied/credential targets cannot be renamed into eligibility.
-- [ ] 13a.2 Query Git with canonical target paths, never directory-symlink descendant spellings → verify: the real Git failure fixture, canonical ignore behavior, nested Git boundaries and prefixed labels.
-- [ ] 13a.3 Expose `follow_symlinks` while preserving all inherited bounds/defaults → verify: descendant links only follow when requested, and direct-root links retain their admission contract.
+- [x] 13a.1 Add opt-in following with canonical target identity, cycle/alias dedup and alias/target mandatory exclusions → verify: ignored/denied/credential targets cannot be renamed into eligibility.
+- [x] 13a.2 Query Git with canonical target paths, never directory-symlink descendant spellings → verify: the real Git failure fixture, canonical ignore behavior, nested Git boundaries and prefixed labels.
+- [x] 13a.3 Expose `follow_symlinks` while preserving all inherited bounds/defaults → verify: descendant links only follow when requested, and direct-root links retain their admission contract.
+
+Evidence: [verification](verification.md#task-13a-opt-in-descendant-symlink-traversal)
+and [isolated review](.reviews/task-13a-code-review-2026-10-11.md). Opt-in following
+preserves canonical filters/labels, alias and target Read checks, nested Git
+boundaries and all traversal/read bounds. Full tests, affected race suites and
+build pass; all 84 quality metrics are unchanged. Reviews found no issues.
+The pre-existing server-vet warning remains recorded; terminal indexing and
+D2's atomic admission/open handoff remain separate tasks.
 
 ## Task 14: Add terminal knowledge indexing
 

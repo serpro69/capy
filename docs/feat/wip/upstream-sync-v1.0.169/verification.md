@@ -1408,3 +1408,79 @@ feature-wide benchmark/ADR work remain in their assigned later tasks.
 
 Optional editorial follow-up: `kk:clarify-docs` on `README.md` and
 `docs/architecture.md`; it is not an unfinished Task 13 requirement.
+
+## Task 13a: Opt-in descendant symlink traversal
+
+Implemented on 2026-10-11. `follow_symlinks` defaults to false and uses the
+shared literal boolean parser. Opt-in following keeps targets within the
+canonical ingestion root and preserves the selected project's policies/store.
+
+### Behavioral evidence
+
+- Alias and target admission: mandatory credential/component exclusions,
+  canonical ancestor Read denies and user exclusions, external targets,
+  requested-root aliases plus descendant aliases, and direct-root compatibility.
+  Excluded targets are checked with a content-read seam that fails if invoked.
+- Identity and selection: canonical extensions/include/exclude patterns,
+  prefixed labels, stored refresh paths, overlapping file/directory aliases,
+  root/self cycles, unchanged reruns and shallower canonical revisits. A deny
+  through one alias does not erase a later admissible ordinary path.
+- Git: a real command reproduces `beyond a symbolic link` for `alias/file`.
+  Ingestion succeeds using physical link entries and canonical targets, honors
+  ignored/tracked targets and ignored ancestors, and prunes nested Git targets
+  with ignores enabled or disabled. Explicit nested-root aliases select their
+  own worktree.
+- Bounds/outcomes: canonical and traversal depth, one-file admission, exact
+  20,000-entry allowance while following an alias, 32 MiB actual read cap with
+  growth, no partial-content writes, cancellation, and ten retained diagnostics
+  for dangling/unresolvable links. Operational failures retain committed files.
+- MCP: schema discovery, invalid booleans before store initialization, native
+  and literal string controls, default skipping, opt-in broken-link errors and
+  encrypted close/reopen/search through the actual stdio transport.
+
+### Verification commands
+
+Commands use `GOCACHE=/tmp/capy-go-cache`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development`, and `CAPY_VAULT_KEY=test-key`.
+Server/full/quality runs clear `CLAUDE_PROJECT_DIR` and use
+`XDG_CONFIG_HOME=/tmp/capy-task13a-config`. Existing HTTP fixtures require local
+socket access; that was enabled for the full/race reruns.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 ./internal/knowledge ./internal/server ./cmd/capy -run 'Test(IndexDirectory\|Directory\|MCPStdioDirectory)' -count=1` | Passed: knowledge 20.818s, server 1.223s, CLI 2.130s. |
+| `make test` with local sockets | Every package passed: CLI 260.065s, server 149.677s, vault 310.332s; unchanged/tested packages may use cache. |
+| `go test -race -tags fts5 ./internal/knowledge ./internal/server -count=1` with local sockets | Passed: knowledge 137.031s, server 156.497s. |
+| `go test -race -tags fts5 ./internal/knowledge -run 'TestDirectoryFollowSymlinks(EntryLimit\|ShallowerRevisit)' -count=1` | Passed, 2.172s; covers the two tests added after the broader runs began. |
+| `go vet -tags fts5 ./internal/knowledge` | Passed. |
+| Vet including `./internal/server ./cmd/capy` | Only the existing `tool_boolean_test.go:110` mutex-copy warning recorded in earlier tasks. |
+| `make build` | Passed; nonfatal read-only module-stat-cache warning. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task13a` | Passed for store/server/vault. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task13a-before.json bench-results/upstream-sync-task13a.json` | Dataset verified; all 84 quality/context metrics unchanged. |
+| `git diff --check` | Passed. |
+
+The quality baseline is the saved Task 13 final report (HEAD metadata `362bc39`,
+including that task's working-tree implementation); the target has HEAD metadata
+`bf15083` plus this working tree. These comparisons do not claim timing changes.
+Reports are ignored under `bench-results/`; command logs are
+`/tmp/capy-task13a-{focused,full,full-sockets,race,race-sockets,extra,vet,build,quality,quality-comparison}.log`.
+The initial default Go cache was read-only, and sandbox Unix/TCP sockets prevented
+the first broad runs from completing successfully; the stated reruns address
+those environment constraints.
+
+### Review and scope
+
+The [isolated review](.reviews/task-13a-code-review-2026-10-11.md) approved the
+change with no findings. PAL's external review likewise recommended no fixes.
+No findings or new conventions require duplicate knowledge indexing; decisions
+and regression evidence are documented here and in the implementation notes.
+
+The first alias-policy regression exposed a missing lexical descendant spelling
+when both the explicit root and a child were symlinks; retaining both root
+spellings fixed it. No module, schema, ranking or generated-artifact changes
+were needed. CLI and CI rubric topics are N/A; terminal flags remain Task 14,
+and existing build/test conventions are inherited from `AGENTS.md`. D2's atomic
+policy/open handoff and Task 20's feature-wide comparisons/ADRs remain pending.
+
+Optional editorial follow-up: `kk:clarify-docs` on `README.md` and
+`docs/architecture.md`; this is separate from Task 13a completion.

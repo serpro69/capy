@@ -189,7 +189,7 @@ func toolIndex() mcp.Tool {
 			mcp.Description("Raw text/markdown to index. Provide this OR path, not both."),
 		),
 		mcp.WithString("path",
-			mcp.Description("File or directory path to index, relative to the selected project or absolute. Directories create one durable source per file, skip descendant symlinks, and report partial scans. Provide this OR content."),
+			mcp.Description("File or directory path to index, relative to the selected project or absolute. Directories create one durable source per file, skip descendant symlinks by default, and report partial scans. Provide this OR content."),
 		),
 		mcp.WithString("source",
 			mcp.Description("Label for content/files; directory prefix produces source:relative/path labels. Omit for absolute file-path labels. Reusing a prefix owns that namespace; removed files require explicit cleanup."),
@@ -216,6 +216,9 @@ func toolIndex() mcp.Tool {
 		),
 		mcp.WithBoolean("respect_gitignore",
 			mcp.Description("Apply the indexed root's Git ignores, including tracked files (default true). Git errors are visible. Nested repositories are always skipped."),
+		),
+		mcp.WithBoolean("follow_symlinks",
+			mcp.Description("Follow descendant symlinks within the canonical directory root (default false). Aliases and targets must pass exclusions and Read policy; selection, labels and Git ignores use canonical targets. Cycles and duplicate targets are skipped; nested repositories remain excluded. Explicit root symlinks are accepted independently."),
 		),
 	)
 }
