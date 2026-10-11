@@ -97,9 +97,9 @@ vocabulary table; the vault passes `nil`).
 
 ### Fetch and Index (capy_fetch_and_index)
 
-1. SSRF validation (block localhost, private networks, cloud metadata)
+1. Validate `force` and optional millisecond `ttl` before I/O; SSRF validation blocks localhost, private networks and cloud metadata
 2. Git platform URL detection → redirect to platform CLI
-3. TTL cache check against nullable `fetch_validated_at_ms` (skip re-fetch within the configured window only for a matching kind and nonfuture marker)
+3. TTL cache check against nullable `fetch_validated_at_ms` (skip re-fetch within the request's effective window only for a matching kind and nonfuture marker; `ttl: 0` or `force: true` bypasses)
 4. HTTP fetch with timeout and size limits; capture validation time after the complete body passes admission, before conversion, cleanup and batch queueing
 5. Content-type routing: HTML → markdown conversion, JSON → key-path chunking, text → plaintext chunking
 6. Atomically index as ephemeral (default, 24h retention TTL) or durable (explicit), pairing the content with its validation time
@@ -112,6 +112,21 @@ retained chunk metadata and preserve retention age. Cache hits, searches and
 generic dedup do not renew validation; generic replacements bind NULL. Fetch,
 conversion and transactional indexing failures leave the prior entry intact.
 See [ADR-013](adr/013-configurable-fetch-ttl.md).
+
+The presence-aware TTL parser accepts nonnegative integral numbers and decimal
+digit strings up to the whole-millisecond `time.Duration` limit. Omission uses
+checked conversion from configured fetch hours; invalid or overflowing values
+fail before cache/storage/network work. One duration is passed through all batch
+workers, never stored on the server or persisted with a source. Success/cache
+responses show effective freshness separately from retention; batch output uses
+one shared notice.
+
+Only errors from HTTP request dispatch are classified for retry guidance, while
+their Go error chains remain available. Typed temporary/timeout DNS, uncanceled
+network timeouts and network/host-unreachable errors can receive a fixed one-retry
+hint. Cancellation, permission errors and NXDOMAIN take precedence; ordinary
+policy, certificate, HTTP, body, conversion and indexing errors get no hint.
+There is no automatic retry loop or error-string matching.
 
 ## Knowledge Base
 

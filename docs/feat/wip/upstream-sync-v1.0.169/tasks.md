@@ -445,7 +445,7 @@ Task 16's per-call TTL and typed retry guidance remain pending.
 
 ## Task 16: Add per-call fetch freshness
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 6a, 16a
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 5, 9, 10, 11, 12, 14, 15
@@ -453,10 +453,19 @@ Task 16's per-call TTL and typed retry guidance remain pending.
 
 ### Subtasks
 
-- [ ] 16.1 Parse strict TTL and reuse shared force normalization → verify: omitted/zero/invalid/overflow cases before I/O.
-- [ ] 16.2 Compare persisted millisecond markers and expose `ttl` → verify: 500 ms boundaries, NULL/future markers, unchanged revalidation, cache-key/kind behavior, force and reopen.
-- [ ] 16.3 Display effective freshness separately from retention → verify: fetch/SSRF/size-limit tests under `-race`.
-- [ ] 16.4 Add typed transient-error retry guidance to single and batch fetch → verify: temporary DNS/timeout/unreachable hints and negative cancellation/policy/NXDOMAIN/TLS/permission cases, with no automatic retry.
+- [x] 16.1 Parse strict TTL and reuse shared force normalization → verify: omitted/zero/invalid/overflow cases before I/O.
+- [x] 16.2 Compare persisted millisecond markers and expose `ttl` → verify: 500 ms boundaries, NULL/future markers, unchanged revalidation, cache-key/kind behavior, force and reopen.
+- [x] 16.3 Display effective freshness separately from retention → verify: fetch/SSRF/size-limit tests under `-race`.
+- [x] 16.4 Add typed transient-error retry guidance to single and batch fetch → verify: temporary DNS/timeout/unreachable hints and negative cancellation/policy/NXDOMAIN/TLS/permission cases, with no automatic retry.
+
+Evidence: [verification](verification.md#task-16-per-call-fetch-freshness-and-retry-guidance)
+and [isolated review](.reviews/task-16-code-review-2026-10-11.md). Both modes now
+accept strict request-local millisecond freshness, preserve configured omission
+and retention semantics, and provide bounded typed retry guidance. Full FTS5
+tests, server and focused CLI race checks, actual stdio schemas/reopen, build and
+artifact checks pass; all 84 quality metrics are unchanged. Independent review
+approved without findings. The existing server-vet warning and unavailable PAL
+reviewer are recorded. Task 17's cache counters and stats display remain pending.
 
 ## Task 17: Report cache hits and attempted misses
 

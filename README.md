@@ -1008,8 +1008,9 @@ sends SIGTERM to tracked background process groups.
 
 Fetch cache freshness uses the last successful remote validation, persisted in
 milliseconds. An expired or forced fetch with identical content reports
-“revalidated, unchanged” with the retained section count and renews the configured
-`store.cache.fetch_ttl_hours` window. Cache hits and searches do not renew it.
+“revalidated, unchanged” with the retained section count and renews freshness.
+Omitting `ttl` uses the configured `store.cache.fetch_ttl_hours` window. Cache
+hits and searches do not renew it.
 Existing cache entries revalidate once after upgrade because they lack this
 timestamp. Failed fetches, conversions and indexing leave the previous entry
 unchanged; HTML conversion errors are reported rather than cached as raw HTML.
@@ -1019,6 +1020,22 @@ source's indexing age. An old ephemeral entry can still be removed by its
 retention TTL; use `kind: "durable"` for persistent reference material. Older
 binaries can read the additive metadata schema, but their replacements clear
 the validation marker and require another successful fetch after upgrading again.
+
+Set `ttl: 500` for a 500 ms freshness window, or `ttl: 0` to bypass the cache.
+`force: true` also bypasses it. The top-level value applies to every URL in a
+batch, including serialized `requests` arrays, and is never persisted. Native
+integral numbers and trimmed decimal digit strings such as `"500"` are accepted,
+from 0 through 9,223,372,036,854 ms. Null, negative, fractional, nonfinite and
+overflowing values fail before cache, network or indexing work. String signs,
+decimal points and exponent notation are rejected. A 500 ms entry is expired
+at exactly 500 ms. Responses identify effective freshness separately from the
+configured ephemeral retention period or durable retention scoring.
+
+Temporary DNS failures, network timeouts while the request is still active,
+and unreachable-network errors may suggest one retry of the same capy call.
+Capy does not retry automatically. Cancellation, SSRF blocks, missing DNS names,
+certificate/permission failures and HTTP/body/index errors do not receive that
+hint; the original cause remains visible.
 
 The `capy_search` `source` filter matches a literal substring of a knowledge
 label: `%`, `_`, and backslashes match themselves. For example,

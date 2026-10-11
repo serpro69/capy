@@ -2,11 +2,15 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -50,6 +54,10 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
+	ttl, err := fetchTTLArg(args, s.config.Store.Cache.FetchTTLHours)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 	kindStr := req.GetString("kind", "")
 	requests := coerceFetchRequests(args["requests"])
 
@@ -68,7 +76,7 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	// remain the single-URL path for backward compatibility.
 	if len(requests) > 0 {
 		concurrency := int(req.GetFloat("concurrency", 1))
-		return s.handleFetchBatch(ctx, requests, kind, force, concurrency)
+		return s.handleFetchBatch(ctx, requests, kind, force, ttl, concurrency)
 	}
 	// `requests` was supplied but yielded no usable entries (not an array, or every
 	// entry missing a url) — fail loud rather than emitting the confusing
@@ -106,9 +114,8 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	cacheKey := composeFetchCacheKey(label, url)
 
 	// TTL cache check — only successful remote validation establishes freshness.
-	if !force {
+	if !force && ttl > 0 {
 		st := s.getStore()
-		ttl := time.Duration(s.config.Store.Cache.FetchTTLHours) * time.Hour
 		meta, err := st.GetSourceMeta(cacheKey)
 		if err != nil {
 			slog.Warn("cache check failed, proceeding with fetch", "label", label, "error", err)
@@ -123,9 +130,9 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 			// Surface the friendly label (not the composite key): a search source
 			// filter is LIKE-based, so the short label still matches the stored key.
 			text := fmt.Sprintf(
-				"**Cache hit** — source %q was validated %s (%d chunks, %s).\nConfigured TTL: %dh. Use `force: true` to re-fetch.\nUse search(queries: [...], source: %q) for lookups.",
+				"**Cache hit** — source %q was validated %s (%d chunks, %s).\n%s\nUse search(queries: [...], source: %q) for lookups.",
 				label, formatAge(now.Sub(time.UnixMilli(*meta.FetchValidatedAtMS))), meta.ChunkCount, kindInfo,
-				s.config.Store.Cache.FetchTTLHours, label,
+				s.fetchFreshnessNote(ttl, force, kind), label,
 			)
 			return s.trackToolResponse("capy_fetch_and_index", textResult(text)), nil
 		}
@@ -158,7 +165,7 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	kindNote := fmt.Sprintf("Indexed as **%s**", kind)
 	if kind == store.KindEphemeral {
 		kindNote += fmt.Sprintf(
-			" (24h TTL, excluded from default search — use `source: %q` or `include_kinds: [\"durable\",\"ephemeral\"]` for follow-up queries)",
+			" (excluded from default search — use `source: %q` or `include_kinds: [\"durable\",\"ephemeral\"]` for follow-up queries)",
 			label,
 		)
 	}
@@ -170,11 +177,27 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 		outcome = "Revalidated, unchanged — retained"
 	}
 	text := fmt.Sprintf(
-		"%s **%d sections** (%sKB) from: %s\n%s\nUse search(queries: [...], source: %q) for specific lookups.\n\n---\n\n%s",
-		outcome, indexed.TotalChunks, totalKB, label, kindNote, label, preview,
+		"%s **%d sections** (%sKB) from: %s\n%s\n%s\nUse search(queries: [...], source: %q) for specific lookups.\n\n---\n\n%s",
+		outcome, indexed.TotalChunks, totalKB, label, kindNote, s.fetchFreshnessNote(ttl, force, kind), label, preview,
 	)
 
 	return s.trackToolResponse("capy_fetch_and_index", textResult(text)), nil
+}
+
+func (s *Server) fetchFreshnessNote(ttl time.Duration, force bool, kind store.SourceKind) string {
+	note := fmt.Sprintf("Fetch freshness: %d ms", ttl.Milliseconds())
+	switch {
+	case force:
+		note += " (cache bypassed by force: true)."
+	case ttl == 0:
+		note += " (cache bypassed by ttl: 0)."
+	default:
+		note += ". Use force: true to re-fetch."
+	}
+	if kind == store.KindEphemeral {
+		return note + fmt.Sprintf(" Retention: %s from indexing; unchanged revalidation does not extend it.", s.ephemeralTTL())
+	}
+	return note + " Retention: durable scoring; unchanged revalidation preserves indexing age."
 }
 
 func (s *Server) fetchTime() time.Time {
@@ -260,7 +283,12 @@ func (s *Server) fetchRemoteContent(ctx context.Context, url string) (content, c
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", "", time.Time{}, fmt.Sprintf("Failed to fetch %s: %v", url, err)
+		retryable := transientFetchError(ctx, err)
+		message := fmt.Sprintf("Failed to fetch %s: %v", url, err)
+		if retryable {
+			message += fetchRetryHint
+		}
+		return "", "", time.Time{}, message
 	}
 	defer resp.Body.Close()
 
@@ -287,6 +315,33 @@ func (s *Server) fetchRemoteContent(ctx context.Context, url string) (content, c
 	}
 
 	return string(body), ct, s.fetchTime(), ""
+}
+
+const fetchRetryHint = "\nThis may be a transient network failure. You may retry the same capy_fetch_and_index call once."
+
+// Only transport failures reach this classifier. HTTP status, body validation,
+// conversion and indexing failures must never gain a network retry hint.
+func transientFetchError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, os.ErrPermission) {
+		return false
+	}
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return !dns.IsNotFound && (dns.IsTimeout || dns.IsTemporary)
+	}
+	if errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) {
+		return true
+	}
+	// url.Error.Timeout only examines its direct cause. Continue through wrappers
+	// so a contextual fmt.Errorf cannot hide a deeper typed network timeout.
+	for err != nil {
+		var networkError net.Error
+		if errors.As(err, &networkError) && networkError.Timeout() {
+			return true
+		}
+		err = errors.Unwrap(err)
+	}
+	return false
 }
 
 // indexFetchedContent routes fetched content to the correct index strategy based
@@ -335,7 +390,7 @@ type fetchItemResult struct {
 // phase. The store is passed in (resolved once by the caller) rather than fetched
 // per goroutine. ctx is the parent request context — a client cancellation aborts
 // every in-flight fetch.
-func (s *Server) fetchOne(ctx context.Context, st *store.ContentStore, rq fetchRequest, kind store.SourceKind, force bool) fetchItemResult {
+func (s *Server) fetchOne(ctx context.Context, st *store.ContentStore, rq fetchRequest, kind store.SourceKind, force bool, ttl time.Duration) fetchItemResult {
 	label := rq.Source
 	if label == "" {
 		label = rq.URL
@@ -356,8 +411,7 @@ func (s *Server) fetchOne(ctx context.Context, st *store.ContentStore, rq fetchR
 	}
 
 	// TTL cache check, keyed by the same composite as the single-URL path.
-	if !force {
-		ttl := time.Duration(s.config.Store.Cache.FetchTTLHours) * time.Hour
+	if !force && ttl > 0 {
 		meta, err := st.GetSourceMeta(res.cacheKey)
 		if err != nil {
 			slog.Warn("cache check failed, proceeding with fetch", "label", label, "error", err)
@@ -385,7 +439,7 @@ func (s *Server) fetchOne(ctx context.Context, st *store.ContentStore, rq fetchR
 // mutated concurrently. ctx is threaded into every fetch so a client cancellation
 // aborts in-flight requests instead of leaving up to concurrency goroutines
 // blocked on the network until fetchTimeout.
-func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, kind store.SourceKind, force bool, concurrency int) (*mcp.CallToolResult, error) {
+func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, kind store.SourceKind, force bool, ttl time.Duration, concurrency int) (*mcp.CallToolResult, error) {
 	// Cap the batch SIZE, not just the worker count. The concurrency clamp below
 	// bounds how many fetches are in-flight at once, but every fetched body (up to
 	// fetchMaxBody = 10MB) is retained in `items` until the serial phase — so peak
@@ -412,7 +466,7 @@ func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, 
 	g.SetLimit(concurrency)
 	for i, rq := range requests {
 		g.Go(func() error {
-			items[i] = s.fetchOne(ctx, st, rq, kind, force)
+			items[i] = s.fetchOne(ctx, st, rq, kind, force, ttl)
 			return nil
 		})
 	}
@@ -474,6 +528,8 @@ func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, 
 	var out strings.Builder
 	fmt.Fprintf(&out, "Processed %d/%d URLs — %d newly indexed, %d revalidated unchanged (%.1fKB fetched), %d from cache (kind=%s).\n\n",
 		okCount, len(requests), okCount-cachedHits-unchanged, unchanged, float64(freshBytes)/1024, cachedHits, kind)
+	out.WriteString(s.fetchFreshnessNote(ttl, force, kind))
+	out.WriteString("\n\n")
 	out.WriteString(strings.Join(lines, "\n"))
 	if len(previews) > 0 {
 		out.WriteString("\n\n---\n\n")

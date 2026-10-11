@@ -3,8 +3,70 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
+	"time"
 )
+
+const maxFetchTTLMS = int64(math.MaxInt64) / int64(time.Millisecond)
+
+// fetchTTLArg validates milliseconds before any storage or network work. The
+// maximum is below 2^53, so every accepted integer is exactly representable by
+// the JSON decoder's float64. Check bounds before multiplying into a duration.
+func fetchTTLArg(args map[string]any, defaultHours int) (time.Duration, error) {
+	value, present := args["ttl"]
+	if !present {
+		if defaultHours < 0 || int64(defaultHours) > math.MaxInt64/int64(time.Hour) {
+			return 0, fmt.Errorf("invalid store.cache.fetch_ttl_hours: must fit a nonnegative duration")
+		}
+		return time.Duration(defaultHours) * time.Hour, nil
+	}
+	invalid := fmt.Errorf("invalid parameter %q: expected integer milliseconds from 0 to %d", "ttl", maxFetchTTLMS)
+	var ms int64
+	switch v := value.(type) {
+	case int:
+		ms = int64(v)
+	case int64:
+		ms = v
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > float64(maxFetchTTLMS) || math.Trunc(v) != v {
+			return 0, invalid
+		}
+		ms = int64(v)
+	case json.Number:
+		var decoded any
+		if err := json.Unmarshal([]byte(v), &decoded); err != nil {
+			return 0, invalid
+		}
+		n, ok := decoded.(float64)
+		if !ok {
+			return 0, invalid
+		}
+		return fetchTTLArg(map[string]any{"ttl": n}, defaultHours)
+	case string:
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return 0, invalid
+		}
+		for _, digit := range v {
+			if digit < '0' || digit > '9' {
+				return 0, invalid
+			}
+		}
+		var err error
+		ms, err = strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return 0, invalid
+		}
+	default:
+		return 0, invalid
+	}
+	if ms < 0 || ms > maxFetchTTLMS {
+		return 0, invalid
+	}
+	return time.Duration(ms) * time.Millisecond, nil
+}
 
 // boolArg preserves omitted defaults but rejects malformed supplied values.
 // Only literal true/false strings are accepted; numeric truthiness and the
