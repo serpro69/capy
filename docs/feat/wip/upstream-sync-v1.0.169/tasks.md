@@ -185,7 +185,7 @@ rejected. Task 13 will reuse the parser for directory controls.
 
 ## Task 7: Use project cwd for every runtime
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 3, 4, 5, 6, 10, 11, 12
@@ -193,9 +193,16 @@ rejected. Task 13 will reuse the parser for directory controls.
 
 ### Subtasks
 
-- [ ] 7.1 Separate temporary scripts from execution cwd in `executor.go` → verify: project-relative fixture operations across installed runtimes.
-- [ ] 7.2 Keep Rust compilation temporary and run its binary in the project; align direct execute-file path resolution → verify: compiled and file-processing fixtures when process cwd differs.
-- [ ] 7.3 Test Go module/replace/vendor/toolchain behavior and Elixir project detection; retain safe-env stripping of `GOFLAGS` → verify: executor fixtures and documented relative-write/module changes.
+- [x] 7.1 Separate temporary scripts from execution cwd in `executor.go` → verify: project-relative fixture operations across installed runtimes.
+- [x] 7.2 Keep Rust compilation temporary and run its binary in the project; align direct execute-file path resolution → verify: compiled and file-processing fixtures when process cwd differs.
+- [x] 7.3 Test Go module/replace/vendor/toolchain behavior and Elixir project detection; retain safe-env stripping of `GOFLAGS` → verify: executor fixtures and documented relative-write/module changes.
+
+Evidence: [verification](verification.md#task-7-project-cwd-for-every-runtime)
+and [isolated review](.reviews/task-7-code-review-2026-10-11.md). All runtimes
+use the selected project for execution; scripts, Rust compilation and absolute
+temporary paths remain isolated. Six installed runtimes passed behavioral
+fixtures; five unavailable runtimes are explicitly recorded as skipped.
+Task 8's per-call cwd overrides remain pending.
 
 ## Task 8: Expose per-call execution cwd
 

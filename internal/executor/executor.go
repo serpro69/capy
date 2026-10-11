@@ -72,6 +72,13 @@ func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecR
 			os.RemoveAll(tmpDir)
 		}
 	}()
+	// TMPDIR may be relative to the parent process. Child cwd changes must not
+	// reinterpret the script, compiled binary or temporary environment paths.
+	absTmpDir, err := filepath.Abs(tmpDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving temp dir: %w", err)
+	}
+	tmpDir = absTmpDir
 
 	// Apply auto-wrapping.
 	code := autoWrap(req.Language, req.Code, e.projectDir)
@@ -103,21 +110,21 @@ func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecR
 		return result, err
 	}
 
-	// Working directory: projectDir for shell, tmpDir for others.
-	workDir := tmpDir
-	if req.Language == Shell {
-		workDir = e.projectDir
-	}
-
-	result, err := e.runProcess(ctx, bin, args, workDir, tmpDir, req)
+	// Scripts and TMPDIR stay isolated; relative user I/O and runtime project
+	// discovery use the selected project for every language.
+	result, err := e.runProcess(ctx, bin, args, e.projectDir, tmpDir, req)
 	if result != nil && result.Backgrounded {
 		cleanupTmp = false
 	}
 	return result, err
 }
 
-// ExecuteFile resolves a file path and injects FILE_CONTENT boilerplate.
+// ExecuteFile resolves relative paths from the project and injects FILE_CONTENT
+// boilerplate. Server callers already supply the admitted absolute path.
 func (e *PolyglotExecutor) ExecuteFile(ctx context.Context, req ExecRequest) (*ExecResult, error) {
+	if !filepath.IsAbs(req.FilePath) {
+		req.FilePath = filepath.Join(e.projectDir, req.FilePath)
+	}
 	absPath, err := filepath.Abs(req.FilePath)
 	if err != nil {
 		return nil, fmt.Errorf("resolving file path: %w", err)
@@ -143,8 +150,8 @@ func (e *PolyglotExecutor) executeRust(ctx context.Context, rustc, srcPath, tmpD
 		}, nil
 	}
 
-	// Run.
-	return e.runProcess(ctx, binPath, nil, tmpDir, tmpDir, req)
+	// Keep compilation artifacts temporary, but run with project-relative I/O.
+	return e.runProcess(ctx, binPath, nil, e.projectDir, tmpDir, req)
 }
 
 func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []string, workDir, tmpDir string, req ExecRequest) (*ExecResult, error) {
