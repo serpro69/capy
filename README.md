@@ -935,6 +935,14 @@ label: `%`, `_`, and backslashes match themselves. For example,
 source includes matching ephemeral entries and skips vault search. Selectors
 that previously relied on SQL wildcards must use a literal label fragment.
 
+New or changed plaintext sources use chunks of at most 4,096 bytes, including
+malformed JSON that falls back to plaintext. Splits preserve non-whitespace
+content and valid UTF-8. Markdown and structured JSON chunks can still exceed
+this limit. Reindexing identical content keeps its existing chunks. To repair
+an older oversized plaintext source, retain its original content, call
+`capy_cleanup` with `source: "<exact label>"` and `dry_run: false`, then call
+`capy_index` again with the original content or path and the same source label.
+
 ### Utility
 
 | Tool           | What It Does                                                                                                                                                                                                                       |

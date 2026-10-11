@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9 and 10 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10 and 11 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -393,6 +393,24 @@ needed. README documents the compatibility change for wildcard-based selectors.
 Add a reusable plaintext byte-bound splitter and apply it after each existing chunk strategy → verify: 4,096/4,097-byte boundaries, 4,097–5,000-byte blank sections, fewer-than-20 huge lines, long single lines, multibyte characters at boundaries, long titles, empty/whitespace-only input, and fallback from malformed JSON. Ensure the final empty-chunk fallback cannot resurrect an oversized plaintext chunk. Assert maximum persisted content bytes in both FTS tables and retrieval of markers near the end of oversized input.
 
 Keep the store's source-size bound and sanitization-before-hash flow. Test overlap/content retention, not just chunk count. Existing same-hash data is intentionally not re-chunked automatically; document explicit remove/reindex instructions. Run `go test -tags fts5 ./internal/store/... ./internal/retrieval/...` and quality/performance comparisons.
+
+Task 11 implementation notes (2026-10-11): each plaintext strategy uses the same
+byte-bound splitter after choosing its existing logical sections. Splits prefer
+newlines, then Unicode whitespace, then a UTF-8 boundary, retaining all
+non-whitespace content. Split parts retain their logical section's title; title
+truncation also preserves UTF-8. Fixed-line groups retain ordinary two-line
+overlap but advance past oversized overlap lines so those bytes are emitted
+only once. The final empty-chunk fallback uses the bounded splitter, including
+whitespace-only malformed JSON, and still stores one empty chunk.
+
+Boundary/content/overlap tests, encrypted persistence checks against both FTS
+tables, tail-marker retrieval and a fuzz target cover the cap. A legacy fixture
+survives close/reopen and same-hash indexing unchanged, then receives bounded
+chunks after explicit eviction/reindex. README records that repair procedure
+and D4's remaining markdown/structured-JSON limitation. Source-size admission,
+sanitization, hashing and schemas are unchanged. New imports are Go standard
+library Unicode helpers; no module changes are needed. CLI and CI rubric topics
+are N/A for this slice because it changes neither commands nor workflows.
 
 ## 12. Shared, bounded file ingestion
 

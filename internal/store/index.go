@@ -244,7 +244,9 @@ func chunkContent(content, contentType string) []Chunk {
 		chunks = chunkPlainText(content, 20)
 	}
 	if len(chunks) == 0 {
-		chunks = []Chunk{{Title: "Content", Content: content}}
+		// In particular, whitespace-only plaintext (including malformed JSON's
+		// fallback) must not resurrect the entire oversized input here.
+		chunks = appendPlainTextChunks(nil, content, "Content")
 	}
 	return chunks
 }
