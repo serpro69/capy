@@ -202,11 +202,11 @@ and [isolated review](.reviews/task-7-code-review-2026-10-11.md). All runtimes
 use the selected project for execution; scripts, Rust compilation and absolute
 temporary paths remain isolated. Six installed runtimes passed behavioral
 fixtures; five unavailable runtimes are explicitly recorded as skipped.
-Task 8's per-call cwd overrides remain pending.
+Task 8 adds per-call cwd overrides.
 
 ## Task 8: Expose per-call execution cwd
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 2, 6, 7
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 5, 10, 11, 12, 15
@@ -214,9 +214,16 @@ Task 8's per-call cwd overrides remain pending.
 
 ### Subtasks
 
-- [ ] 8.1 Add request-local cwd normalization and executor handling → verify: relative/absolute/missing/non-directory cases without global `Chdir`.
-- [ ] 8.2 Wire execute, execute-file and batch schema/handler inputs → verify: simultaneous different cwd requests remain isolated, including parallel batch workers.
-- [ ] 8.3 Preserve selected DB/key/policy/vault identity and execute-file path anchoring → verify: executor/server tests under `-race`.
+- [x] 8.1 Add request-local cwd normalization and executor handling → verify: relative/absolute/missing/non-directory cases without global `Chdir`.
+- [x] 8.2 Wire execute, execute-file and batch schema/handler inputs → verify: simultaneous different cwd requests remain isolated, including parallel batch workers.
+- [x] 8.3 Preserve selected DB/key/policy/vault identity and execute-file path anchoring → verify: executor/server tests under `-race`.
+
+Evidence: [verification](verification.md#task-8-per-call-execution-cwd) and
+[isolated review](.reviews/task-8-code-review-2026-10-11.md). All three tools
+validate and forward a per-call cwd; parallel calls and batches retain their
+own directories while input admission, storage, credentials and vault scope
+stay tied to the selected project. The review's one P3 test-style finding is
+resolved. The pre-existing server-vet warning is documented as a follow-up.
 
 ## Task 9: Bound detached-process output retention
 

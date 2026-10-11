@@ -31,6 +31,10 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 	if len(queries) == 0 {
 		return errorResult("missing required parameter: queries"), nil
 	}
+	cwd, err := s.executionCwd(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 
 	// Security: check each command individually
 	for _, cmd := range commands {
@@ -49,9 +53,9 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 	// per-command output slice regardless of which path produced it.
 	var perCommandOutputs []string
 	if concurrency <= 1 {
-		perCommandOutputs = executeBatchSerial(ctx, commands, timeout, s.executor)
+		perCommandOutputs = executeBatchSerial(ctx, commands, timeout, s.executor, cwd)
 	} else {
-		perCommandOutputs = executeBatchParallel(ctx, commands, timeout, concurrency, s.executor)
+		perCommandOutputs = executeBatchParallel(ctx, commands, timeout, concurrency, s.executor, cwd)
 	}
 
 	combinedOutput := strings.Join(perCommandOutputs, "\n")
@@ -139,7 +143,7 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 // budget across the whole batch. When the budget is exhausted, or a command
 // times out, the remaining commands are recorded as skipped. This is the
 // pre-concurrency behavior, preserved unchanged for concurrency <= 1.
-func executeBatchSerial(ctx context.Context, commands []CommandInput, timeout int, exec *executor.PolyglotExecutor) []string {
+func executeBatchSerial(ctx context.Context, commands []CommandInput, timeout int, exec *executor.PolyglotExecutor, cwd string) []string {
 	outputs := make([]string, 0, len(commands))
 	startTime := time.Now()
 
@@ -158,6 +162,7 @@ func executeBatchSerial(ctx context.Context, commands []CommandInput, timeout in
 		result, err := exec.Execute(ctx, executor.ExecRequest{
 			Language:   executor.Shell,
 			Code:       cmd.Command,
+			Cwd:        cwd,
 			TimeoutSec: remainingSec,
 		})
 		if err != nil {
@@ -189,7 +194,7 @@ func executeBatchSerial(ctx context.Context, commands []CommandInput, timeout in
 // failing or timed-out command never affects its siblings. The executor is
 // safe for concurrent use (sync.Once detection, per-call temp dirs, a mutex
 // over background PIDs).
-func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout, concurrency int, exec *executor.PolyglotExecutor) []string {
+func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout, concurrency int, exec *executor.PolyglotExecutor, cwd string) []string {
 	results := make([]string, len(commands))
 	// Each command gets the full timeout. Guard the sub-second case: truncating
 	// ms→s would yield 0, which the executor reads as "no timeout → 30s default",
@@ -211,6 +216,7 @@ func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout,
 			result, err := exec.Execute(ctx, executor.ExecRequest{
 				Language:   executor.Shell,
 				Code:       cmd.Command,
+				Cwd:        cwd,
 				TimeoutSec: timeoutSec,
 			})
 			if err != nil {

@@ -47,6 +47,11 @@ func (e *PolyglotExecutor) Runtimes() map[Language]string {
 
 // Execute runs code in a sandboxed subprocess.
 func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecResult, error) {
+	workDir, err := ResolveCwd(e.projectDir, req.Cwd)
+	if err != nil {
+		return nil, err
+	}
+	req.Cwd = workDir
 	runtimes := e.Runtimes()
 	rt, ok := runtimes[req.Language]
 	if !ok {
@@ -81,7 +86,7 @@ func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecR
 	tmpDir = absTmpDir
 
 	// Apply auto-wrapping.
-	code := autoWrap(req.Language, req.Code, e.projectDir)
+	code := autoWrap(req.Language, req.Code, workDir)
 
 	// Write script file.
 	filename := scriptFilenames[req.Language]
@@ -111,8 +116,8 @@ func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecR
 	}
 
 	// Scripts and TMPDIR stay isolated; relative user I/O and runtime project
-	// discovery use the selected project for every language.
-	result, err := e.runProcess(ctx, bin, args, e.projectDir, tmpDir, req)
+	// discovery use the request's execution directory for every language.
+	result, err := e.runProcess(ctx, bin, args, workDir, tmpDir, req)
 	if result != nil && result.Backgrounded {
 		cleanupTmp = false
 	}
@@ -150,8 +155,8 @@ func (e *PolyglotExecutor) executeRust(ctx context.Context, rustc, srcPath, tmpD
 		}, nil
 	}
 
-	// Keep compilation artifacts temporary, but run with project-relative I/O.
-	return e.runProcess(ctx, binPath, nil, e.projectDir, tmpDir, req)
+	// Keep compilation artifacts temporary, but run with the request's cwd.
+	return e.runProcess(ctx, binPath, nil, req.Cwd, tmpDir, req)
 }
 
 func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []string, workDir, tmpDir string, req ExecRequest) (*ExecResult, error) {

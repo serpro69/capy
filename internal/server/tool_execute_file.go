@@ -18,6 +18,10 @@ func (s *Server) handleExecuteFile(ctx context.Context, req mcp.CallToolRequest)
 	if filePath == "" || code == "" {
 		return errorResult("missing required parameter: path and code"), nil
 	}
+	cwd, err := s.executionCwd(req.GetArguments())
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 
 	// Admit once and hand the same checked absolute path to the executor.
 	admittedPath, err := s.resolveExecuteFilePath(filePath)
@@ -34,6 +38,7 @@ func (s *Server) handleExecuteFile(ctx context.Context, req mcp.CallToolRequest)
 		Language:   language,
 		Code:       code,
 		FilePath:   admittedPath,
+		Cwd:        cwd,
 		TimeoutSec: timeout / 1000,
 	})
 	if err != nil {

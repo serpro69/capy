@@ -330,7 +330,7 @@ func TestExecuteBatchParallel_Speedup(t *testing.T) {
 	}
 
 	start := time.Now()
-	out := executeBatchParallel(context.Background(), commands, 30000, 4, exec)
+	out := executeBatchParallel(context.Background(), commands, 30000, 4, exec, "")
 	elapsed := time.Since(start)
 
 	require.Len(t, out, 4)
@@ -346,7 +346,7 @@ func TestExecuteBatchParallel_OrderPreserved(t *testing.T) {
 		{Label: "second", Command: "echo BRAVO"},
 		{Label: "third", Command: "sleep 1; echo CHARLIE"},
 	}
-	out := executeBatchParallel(context.Background(), commands, 30000, 3, exec)
+	out := executeBatchParallel(context.Background(), commands, 30000, 3, exec, "")
 	require.Len(t, out, 3)
 	// "second" completes first but must remain in slot 1.
 	assert.Contains(t, out[0], "first")
@@ -366,7 +366,7 @@ func TestExecuteBatchParallel_ErrorIsolation(t *testing.T) {
 		{Label: "broken", Command: "ls /capy-nonexistent-xyz"},
 		{Label: "ok-two", Command: "echo WORLD"},
 	}
-	out := executeBatchParallel(context.Background(), commands, 30000, 3, exec)
+	out := executeBatchParallel(context.Background(), commands, 30000, 3, exec, "")
 	require.Len(t, out, 3)
 	assert.Contains(t, out[0], "HELLO")
 	assert.Contains(t, out[2], "WORLD")
@@ -384,7 +384,7 @@ func TestExecuteBatchParallel_TimeoutIsolated(t *testing.T) {
 		{Label: "fast", Command: "echo QUICK"},
 	}
 	start := time.Now()
-	out := executeBatchParallel(context.Background(), commands, 2000, 2, exec) // 2s timeout
+	out := executeBatchParallel(context.Background(), commands, 2000, 2, exec, "") // 2s timeout
 	elapsed := time.Since(start)
 
 	require.Len(t, out, 2)
@@ -403,7 +403,7 @@ func TestExecuteBatchParallel_SubSecondTimeout(t *testing.T) {
 		{Label: "slow", Command: "sleep 5"},
 	}
 	start := time.Now()
-	out := executeBatchParallel(context.Background(), commands, 500, 1, exec) // 500ms → clamp to 1s
+	out := executeBatchParallel(context.Background(), commands, 500, 1, exec, "") // 500ms → clamp to 1s
 	elapsed := time.Since(start)
 
 	require.Len(t, out, 1)

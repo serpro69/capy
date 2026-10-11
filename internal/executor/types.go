@@ -25,6 +25,7 @@ type ExecRequest struct {
 	Language   Language
 	Code       string
 	FilePath   string // for ExecuteFile
+	Cwd        string // execution directory; empty defaults to project, relative anchors there
 	Background bool
 	TimeoutSec int // 0 = use default
 }
