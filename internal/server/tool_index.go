@@ -3,17 +3,13 @@ package server
 import (
 	"context"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
-	"syscall"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/knowledge"
 	"github.com/serpro69/capy/internal/store"
 )
 
-func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleIndex(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	content := req.GetString("content", "")
 	path := req.GetString("path", "")
 	source := req.GetString("source", "")
@@ -22,108 +18,32 @@ func (s *Server) handleIndex(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 		return errorResult("Either content or path must be provided"), nil
 	}
 
-	// Security: when a path is supplied, check it against Read deny patterns
-	// before any file I/O. This closes a search-index exfiltration path — any
-	// file readable by the server process could otherwise be indexed into FTS5
-	// and surfaced by capy_search, bypassing the Read deny-pattern mitigation
-	// (e.g. .ssh/id_rsa, .env, ~/.aws/credentials). checkFilePathDenyPolicy
-	// uses the prepared policy anchored to the selected project, so
-	// relative "../" traversal and symlink escapes are caught too. Inline
-	// content-only indexing (path == "") is unaffected.
-	if path != "" {
-		if denied := s.checkFilePathDenyPolicy(path); denied != nil {
-			return denied, nil
-		}
-	}
-
-	// fileBacked holds the resolved absolute path when content was read from
-	// disk; it stays "" for inline-content indexing. Only file-backed sources
-	// get stale auto-refresh, so it gates the IndexWithFilePath call below.
-	var fileBacked string
-
-	// Read file content if path provided
-	if path != "" && content == "" {
-		// Resolve relative paths against project root with traversal protection
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(s.projectDir, path)
-			// Ensure resolved path stays within project root (prevents ../../../etc/passwd)
-			cleanPath := filepath.Clean(path)
-			projectRoot := filepath.Clean(s.projectDir)
-			if !strings.HasPrefix(cleanPath, projectRoot+string(filepath.Separator)) && cleanPath != projectRoot {
-				return errorResult("Path escapes project directory"), nil
-			}
-			path = cleanPath
-		} else {
-			// Absolute inputs skip the resolve-and-Clean above, so canonicalize
-			// them here too. Without this, an absolute path with traversal
-			// segments (/tmp/a/../b.md) would be stored uncleaned as both the
-			// source label and the file_path column, defeating dedup (two
-			// spellings of one file → two sources). The earlier deny check runs
-			// the prepared Read policy, which checks lexical and physical paths, so
-			// cleaning here does not affect the security decision.
-			path = filepath.Clean(path)
-		}
-		maxFileSize := int64(s.config.Store.MaxSourceBytes)
-		if maxFileSize <= 0 {
-			maxFileSize = int64(store.DefaultMaxSourceBytes)
-		}
-		// Bind stat and read to one descriptor. The earlier policy check is
-		// separate: replacement before open remains deferred issue D2 in the
-		// upstream-sync-v1.0.169 audit.
-		// O_NONBLOCK prevents a FIFO from blocking the open before the
-		// IsRegular guard can reject it (no-op for regular files); IsRegular
-		// also blocks device/socket/dir reads.
-		f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-		if err != nil {
-			return errorResult(fmt.Sprintf("Failed to read file: %v", err)), nil
-		}
-		info, err := f.Stat()
-		if err != nil {
-			f.Close()
-			return errorResult(fmt.Sprintf("Failed to read file: %v", err)), nil
-		}
-		if !info.Mode().IsRegular() {
-			f.Close()
-			return errorResult("Failed to read file: not a regular file"), nil
-		}
-		if info.Size() > maxFileSize {
-			f.Close()
-			return errorResult(fmt.Sprintf("File too large: %d bytes exceeds %d byte limit (configure store.max_source_bytes to adjust)", info.Size(), maxFileSize)), nil
-		}
-		data, err := io.ReadAll(f)
-		f.Close()
-		if err != nil {
-			return errorResult(fmt.Sprintf("Failed to read file: %v", err)), nil
-		}
-		content = string(data)
-		fileBacked = path
-		if source == "" {
-			// Default the label to the resolved absolute path, not its basename.
-			// filepath.Base drops the directory, so two distinct files sharing a
-			// basename (docs/api.md and notes/api.md) would collide on the label
-			// "api.md" — and since dedup is keyed by label, indexing the second
-			// destroys the first. The absolute path is unique per file and
-			// canonicalizes equivalent spellings (foo.md, ./foo.md) to one label.
-			source = path
-		}
-	}
-
-	if source == "" {
-		source = "indexed-content"
-	}
-
-	// Track raw bytes being indexed
-	s.stats.AddBytesIndexed(int64(len(content)))
-
-	st := s.getStore()
 	var result *store.IndexResult
 	var err error
-	if fileBacked != "" {
-		// Record the backing path so search can auto-refresh this source when
-		// the file changes on disk.
-		result, err = st.IndexWithFilePath(content, source, "", store.KindDurable, fileBacked)
+	if path != "" && content == "" {
+		if s.readPolicyErr != nil {
+			return errorResult(fmt.Sprintf("File access blocked by security policy: %v", s.readPolicyErr)), nil
+		}
+		ingestion := knowledge.NewIndexer(s.projectDir, s.config.Store.MaxSourceBytes, s.readPolicy, s.getStore())
+		outcome, err := ingestion.IndexFile(ctx, path, source)
+		s.stats.AddBytesIndexed(outcome.BytesIndexed)
+		if err != nil {
+			return errorResult(fmt.Sprintf("Failed to read file or index it: %v", err)), nil
+		}
+		result = outcome.Result
 	} else {
-		result, err = st.Index(content, source, "", store.KindDurable)
+		// Supplying both still indexes inline content, but the supplied path
+		// must pass the existing Read policy even though it is not opened.
+		if path != "" {
+			if denied := s.checkFilePathDenyPolicy(path); denied != nil {
+				return denied, nil
+			}
+		}
+		if source == "" {
+			source = "indexed-content"
+		}
+		s.stats.AddBytesIndexed(int64(len(content)))
+		result, err = s.getStore().Index(content, source, "", store.KindDurable)
 	}
 	if err != nil {
 		return errorResult(fmt.Sprintf("Index error: %v", err)), nil

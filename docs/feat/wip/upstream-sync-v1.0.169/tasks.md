@@ -288,7 +288,7 @@ chunks require explicit remove/reindex; structured splitting remains D4.
 
 ## Task 12: Share bounded file ingestion
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2a
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 6, 10, 11, 16
@@ -296,8 +296,17 @@ chunks require explicit remove/reindex; structured splitting remains D4.
 
 ### Subtasks
 
-- [ ] 12.1 Extract filesystem ingestion into `internal/knowledge/index.go` and route MCP file indexing through it → verify: existing canonical labels, dedup, durable kind and stale refresh remain valid.
-- [ ] 12.2 Bound actual reads in ingestion and `store.fileChangedSince`, using prepared rules → verify: deterministic growth-after-stat, FIFO, absolute input matching a relative deny, cached-content retention and logged skip.
+- [x] 12.1 Extract filesystem ingestion into `internal/knowledge/index.go` and route MCP file indexing through it → verify: existing canonical labels, dedup, durable kind and stale refresh remain valid.
+- [x] 12.2 Bound actual reads in ingestion and `store.fileChangedSince`, using prepared rules → verify: deterministic growth-after-stat, FIFO, absolute input matching a relative deny, cached-content retention and logged skip.
+
+Evidence: [verification](verification.md#task-12-shared-bounded-file-ingestion)
+and [isolated review](.reviews/task-12-code-review-2026-10-11.md). MCP file
+ingestion now uses `internal/knowledge`; both ingestion and refresh cap actual
+reads before sanitization, retaining cached content on rejected refreshes.
+Full FTS5 tests, affected race suites and the default build pass; all 84 quality
+metrics are unchanged. Independent review approved with no remaining findings.
+The pre-existing server-vet warning remains documented; Task 12a's aggregate
+refresh scheduler and D2's atomic policy/open handoff remain pending.
 
 ## Task 12a: Bound stale-refresh work across server and CLI searches
 

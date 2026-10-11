@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -66,6 +67,8 @@ type ContentStore struct {
 	// the 5-second cooldown gate.
 	denyChecker     func(string) bool
 	lastRefreshTime atomic.Int64
+	// Optional read seam, fixed before first use. Nil uses fileio.ReadAll.
+	readFileContent func(io.Reader, int) ([]byte, error)
 
 	// Fuzzy correction cache: nil value = "no correction"; key-missing = "not cached".
 	fuzzyCacheMu sync.RWMutex

@@ -943,6 +943,14 @@ an older oversized plaintext source, retain its original content, call
 `capy_cleanup` with `source: "<exact label>"` and `dry_run: false`, then call
 `capy_index` again with the original content or path and the same source label.
 
+File indexing and automatic stale-file refresh enforce `store.max_source_bytes`
+(2 MiB by default) on the raw bytes read, including files that grow after the
+initial size check. They read at most the limit plus one detection byte and
+reject oversized content before sanitization or indexing. An oversized file or
+failed content read during refresh is logged; previously indexed content stays
+searchable. Only
+regular files are admitted; a FIFO cannot block the server waiting for a writer.
+
 ### Utility
 
 | Tool           | What It Does                                                                                                                                                                                                                       |
