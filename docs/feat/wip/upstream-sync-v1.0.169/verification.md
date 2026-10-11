@@ -927,3 +927,61 @@ preserving ADR-005's historical decision. No pipes are closed or replaced at
 detachment. These findings are already documented, so no duplicate knowledge
 notes were indexed. Shutdown remains best-effort SIGTERM without a new escalation
 policy; a child that ignores it still owns its live resources.
+
+## Task 10: Literal knowledge source selectors
+
+Implemented on 2026-10-11. `knowledgeFilterClauses` binds an escaped literal
+substring with SQL `ESCAPE '\'`; exact selectors still bind the original label
+with equality. The shared retrieval engine and vault matching are unchanged.
+
+### Behavioral evidence
+
+`TestSearchLiteralSourceFiltering` indexes an ephemeral literal label and
+durable decoys containing the same content. Nine selector cases cover `%`, `_`,
+backslashes, a trailing backslash, backslash/wildcard combinations, quotes,
+SQL-looking text and ordinary partial labels. Each runs porter-only, trigram-only,
+fuzzy and AND-to-OR fallback queries, asserting the returned label and match
+layer. A durable-only kind request still returns the explicitly selected
+ephemeral source. Exact full labels match; exact fragments do not.
+
+Before the production fix, the four wildcard-bearing selector cases failed in
+all four retrieval paths by returning unrelated labels. The other cases and
+exact-mode checks passed. All fixtures pass after the fix. The initial porter
+fixture used a synonym-expanded word that also matched trigram; using
+`ponies` against `pony` makes the porter-only assertion precise.
+
+### Verification commands
+
+Go commands use `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/store -run '^TestSearchLiteralSourceFiltering$'` before the fix | Expected regression failures in 16 wildcard/path combinations; log `/tmp/capy-task10-regression-before.log`. |
+| `go test -tags fts5 -count=1 ./internal/store/... ./internal/retrieval/...` | Passed: store 64.338s, retrieval 0.104s. |
+| `go test -race -tags fts5 -count=1 ./internal/store/... ./internal/retrieval/...` | Passed: store 69.729s, retrieval 1.100s. |
+| `go vet -tags fts5 ./internal/store/... ./internal/retrieval/...` | Passed. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task10-before` before the fix | Passed: store 5.384s, server 0.502s, vault 0.489s. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task10` | Passed: store 5.233s, server 0.474s, vault 0.479s. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task10-before.json bench-results/upstream-sync-task10.json` | Dataset verified; all 84 retrieval/context metrics unchanged. |
+| `git diff --check` | Passed. |
+
+Quality reports are ignored benchmark artifacts. Their metadata names the same
+HEAD (`1ce1ba6`); the `before` report was generated before changing production
+code and the other report includes the working-tree fix. Logs are under
+`/tmp/capy-task10-{tests,race,vet,quality,quality-before,quality-comparison}.log`.
+This slice validates the affected store/retrieval packages and existing quality
+fixtures. Full feature-wide performance comparisons and validation remain Task
+20. There are no dependency, schema, CLI, CI or generated-artifact changes.
+
+### Review and scope
+
+The [isolated code review](.reviews/task-10-code-review-2026-10-11.md) approved
+the change with no findings. The reviewer independently inspected the diff,
+retrieval integration and documentation; test execution was performed by the
+implementing session. PAL was unavailable, so the skill's single-reviewer
+fallback was used. No findings or new project conventions need indexing.
+
+The implementation follows Task 10 without expanding runtime scope. The new
+README paragraph documents that callers relying on wildcard selectors must now
+use literal label fragments. Task 11 and later work remain pending.

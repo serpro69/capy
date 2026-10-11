@@ -248,7 +248,7 @@ All review findings are resolved. Darwin is cross-compiled, not runtime-tested.
 
 ## Task 10: Treat knowledge source selectors literally
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** S
 - **Can run in parallel with:** Tasks 1, 6, 9, 11, 12, 14, 16
@@ -256,8 +256,14 @@ All review findings are resolved. Darwin is cross-compiled, not runtime-tested.
 
 ### Subtasks
 
-- [ ] 10.1 Escape LIKE metacharacters in `knowledgeFilterClauses` → verify: literal `%`, `_`, backslash and quoted-label fixtures.
-- [ ] 10.2 Cover porter/trigram/fallback, exact matching and explicit ephemeral-source bypass → verify: store/retrieval suites.
+- [x] 10.1 Escape LIKE metacharacters in `knowledgeFilterClauses` → verify: literal `%`, `_`, backslash and quoted-label fixtures.
+- [x] 10.2 Cover porter/trigram/fallback, exact matching and explicit ephemeral-source bypass → verify: store/retrieval suites.
+
+Evidence: [verification](verification.md#task-10-literal-knowledge-source-selectors)
+and [isolated review](.reviews/task-10-code-review-2026-10-11.md). Literal source
+selectors now stay scoped across every retrieval path, with exact matching and
+ephemeral-source bypass preserved. Store/retrieval suites, race checks and vet
+pass; all 84 quality metrics are unchanged. Review found no issues.
 
 ## Task 11: Cap every plaintext chunk by bytes
 

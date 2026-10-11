@@ -218,6 +218,79 @@ func TestSearchSourceFiltering(t *testing.T) {
 	assert.Empty(t, results2)
 }
 
+func TestSearchLiteralSourceFiltering(t *testing.T) {
+	selectors := []struct {
+		name   string
+		source string
+		decoys []string
+	}{
+		{name: "percent", source: "team%notes", decoys: []string{"teamXnotes", "teamnotes"}},
+		{name: "underscore", source: "team_notes", decoys: []string{"teamXnotes", "teamnotes"}},
+		{name: "backslash", source: `team\notes`, decoys: []string{"teamnotes", "team/notes"}},
+		{name: "trailing backslash", source: `team\`, decoys: []string{"team", "team%"}},
+		{name: "backslash percent", source: `team\%notes`, decoys: []string{`team\Xnotes`, "team%notes"}},
+		{name: "combined escapes", source: `team\_%notes`, decoys: []string{`team\XYnotes`, "team_%notes"}},
+		{name: "quotes", source: `team's "notes"`, decoys: []string{"teams notes"}},
+		{name: "SQL text", source: `' OR 1=1 --`, decoys: []string{"unrelated"}},
+		{name: "ordinary substring", source: "team-notes", decoys: []string{"other-notes"}},
+	}
+	queries := []struct {
+		name  string
+		query string
+		layer string
+	}{
+		{name: "porter", query: "ponies", layer: "porter"},
+		{name: "trigram", query: "thenticat", layer: "trigram"},
+		{name: "fuzzy", query: "authentcation", layer: "fuzzy+rrf(porter+trigram)"},
+		// No document contains the second term, so the AND pass must fall back to OR.
+		{name: "OR fallback", query: "authentication zzqqvv", layer: "rrf(porter+trigram)"},
+	}
+	for _, selector := range selectors {
+		t.Run(selector.name, func(t *testing.T) {
+			s := newTestStore(t)
+			label := "scope:" + selector.source + ":guide"
+			const content = "pony authentication reference material."
+			_, err := s.IndexPlainText(content, label, KindEphemeral)
+			require.NoError(t, err)
+			for _, decoy := range selector.decoys {
+				_, err := s.IndexPlainText(content, "scope:"+decoy+":guide", KindDurable)
+				require.NoError(t, err)
+			}
+
+			for _, query := range queries {
+				t.Run(query.name, func(t *testing.T) {
+					// An explicit source must still select the ephemeral entry even
+					// when IncludeKinds requests only durable sources.
+					results, err := s.SearchWithFallback(query.query, 10, SearchOptions{
+						Source:       selector.source,
+						IncludeKinds: []SourceKind{KindDurable},
+					})
+					require.NoError(t, err)
+					require.Len(t, results, 1)
+					assert.Equal(t, label, results[0].Label)
+					assert.Equal(t, query.layer, results[0].MatchLayer)
+				})
+			}
+
+			t.Run("exact label", func(t *testing.T) {
+				results, err := s.SearchWithFallback("authentication", 10, SearchOptions{
+					Source: label, SourceMatchMode: "exact",
+				})
+				require.NoError(t, err)
+				require.Len(t, results, 1)
+				assert.Equal(t, label, results[0].Label)
+			})
+			t.Run("exact fragment", func(t *testing.T) {
+				results, err := s.SearchWithFallback("authentication", 10, SearchOptions{
+					Source: selector.source, SourceMatchMode: "exact",
+				})
+				require.NoError(t, err)
+				assert.Empty(t, results)
+			})
+		})
+	}
+}
+
 // --- Kind filtering ---
 
 // indexMixedKinds seeds two sources matching the same query term, one durable

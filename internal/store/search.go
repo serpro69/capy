@@ -82,10 +82,16 @@ func knowledgeFilterClauses(opts SearchOptions) (string, []any) {
 	if opts.Source != "" {
 		if opts.SourceMatchMode == "exact" {
 			clauses.WriteString(" AND s.label = ?")
+			params = append(params, opts.Source)
 		} else {
-			clauses.WriteString(" AND s.label LIKE '%' || ? || '%'")
+			// Source selectors are literal substrings. Escape backslashes first
+			// so the escapes added for LIKE wildcards are not escaped again.
+			source := strings.ReplaceAll(opts.Source, `\`, `\\`)
+			source = strings.ReplaceAll(source, `%`, `\%`)
+			source = strings.ReplaceAll(source, `_`, `\_`)
+			clauses.WriteString(` AND s.label LIKE ? ESCAPE '\'`)
+			params = append(params, "%"+source+"%")
 		}
-		params = append(params, opts.Source)
 	}
 	if opts.ContentType != "" {
 		clauses.WriteString(" AND c.content_type = ?")

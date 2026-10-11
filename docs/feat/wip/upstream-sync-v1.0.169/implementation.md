@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8 and 9 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9 and 10 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -374,6 +374,17 @@ No dependency versions, schemas, CLI flags, CI or generated artifacts change.
 **Owners:** `internal/store/search.go`, `search_test.go`.
 
 Bind a literal LIKE-escaped substring and declare the SQL escape character in `knowledgeFilterClauses` → verify: `%`, `_`, backslashes and quoted labels match themselves, normal partial labels still match, exact mode is unchanged, and both porter/trigram/fuzzy paths obey the filter. Include explicit ephemeral-source queries to protect kind bypass. Run store and retrieval tests; do not change vault project filters or the shared ranking engine.
+
+Task 10 implementation notes (2026-10-11): the knowledge adapter escapes
+backslashes before percent signs and underscores, then binds the complete
+substring pattern with an explicit SQL escape character. Equality mode keeps
+the original label. The existing prepared corpus carries the same filter to
+porter, trigram, OR fallback and fuzzy correction; source-kind bypass remains
+unchanged. Regression fixtures distinguish literal labels from wildcard decoys
+and assert each retrieval path, including ephemeral matches with a durable-only
+kind request. Quotes, SQL-looking text, trailing backslashes and combined escape
+characters remain bound data. No dependency, schema or ranking changes are
+needed. README documents the compatibility change for wildcard-based selectors.
 
 ## 11. Plaintext chunk cap
 
