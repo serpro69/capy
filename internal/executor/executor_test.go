@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -352,6 +351,7 @@ func TestExecuteFile(t *testing.T) {
 
 func TestBackgroundModeReturnsImmediately(t *testing.T) {
 	e := newTestExecutor(t)
+	t.Cleanup(e.CleanupBackgrounded)
 	if e.Runtimes()[Shell] == "" {
 		t.Skip("no shell runtime")
 	}
@@ -378,10 +378,12 @@ func TestBackgroundModeReturnsImmediately(t *testing.T) {
 	e.bgMu.Unlock()
 	assert.True(t, tracked, "background PID should be tracked")
 
-	// Kill the background process so the test doesn't hang waiting
-	// for the orphaned cmd.Wait() goroutine.
-	syscall.Kill(-result.PID, syscall.SIGKILL)
-	time.Sleep(200 * time.Millisecond)
+	e.CleanupBackgrounded()
+	require.Eventually(t, func() bool {
+		e.bgMu.Lock()
+		defer e.bgMu.Unlock()
+		return len(e.backgroundPids) == 0
+	}, 5*time.Second, 5*time.Millisecond)
 }
 
 func TestBackgroundModeProcessFinishesBeforeTimeout(t *testing.T) {
@@ -405,12 +407,9 @@ func TestBackgroundModeProcessFinishesBeforeTimeout(t *testing.T) {
 
 func TestCleanupBackgrounded(t *testing.T) {
 	e := newTestExecutor(t)
-	// Track some fake PIDs and verify cleanup doesn't panic.
-	e.bgMu.Lock()
-	e.backgroundPids[99999] = struct{}{} // non-existent PID
-	e.bgMu.Unlock()
-
-	// Should not panic.
+	// Cleanup of an empty executor is idempotent; live processes are covered
+	// by TestBackgroundOutputDiscardAndCleanup without signalling fake PIDs.
+	e.CleanupBackgrounded()
 	e.CleanupBackgrounded()
 
 	e.bgMu.Lock()

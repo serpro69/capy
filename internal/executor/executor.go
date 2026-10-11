@@ -3,13 +3,15 @@ package executor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -20,9 +22,15 @@ type PolyglotExecutor struct {
 	projectDir     string
 	maxOutputBytes int
 	detectOnce     sync.Once
+	observeExit    func(int) error // fixed at construction; replaceable in tests
 
 	bgMu           sync.Mutex
-	backgroundPids map[int]struct{}
+	backgroundPids map[int]*backgroundProcess
+}
+
+type backgroundProcess struct {
+	cmd            *exec.Cmd
+	stdout, stderr *safeBuffer
 }
 
 // NewExecutor creates a new PolyglotExecutor.
@@ -33,7 +41,8 @@ func NewExecutor(projectDir string, maxOutputBytes int) *PolyglotExecutor {
 	return &PolyglotExecutor{
 		projectDir:     projectDir,
 		maxOutputBytes: maxOutputBytes,
-		backgroundPids: make(map[int]struct{}),
+		observeExit:    waitForExit,
+		backgroundPids: make(map[int]*backgroundProcess),
 	}
 }
 
@@ -174,76 +183,141 @@ func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []st
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	// Thread-safe buffers: the monitoring goroutine reads Size() while
-	// exec.Cmd's internal goroutines write concurrently.
+	// Own the readers so pipe draining can finish BEFORE cmd.Wait reaps the
+	// group leader. An unreaped leader reserves its PID even after it exits,
+	// allowing timeout/shutdown to safely signal descendants holding the pipes.
 	var stdout, stderr safeBuffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	outRead, outWrite, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("creating stdout pipe: %w", err)
+	}
+	errRead, errWrite, err := os.Pipe()
+	if err != nil {
+		outRead.Close()
+		outWrite.Close()
+		return nil, fmt.Errorf("creating stderr pipe: %w", err)
+	}
+	cmd.Stdout = outWrite
+	cmd.Stderr = errWrite
 
 	if err := cmd.Start(); err != nil {
+		outRead.Close()
+		outWrite.Close()
+		errRead.Close()
+		errWrite.Close()
 		return nil, fmt.Errorf("starting process: %w", err)
 	}
+	outWrite.Close()
+	errWrite.Close()
+	copied := make(chan error, 2)
+	drain := func(reader *os.File, buffer *safeBuffer) {
+		_, err := io.Copy(buffer, reader)
+		reader.Close()
+		copied <- err
+	}
+	go drain(outRead, &stdout)
+	go drain(errRead, &stderr)
+	process := &backgroundProcess{cmd: cmd, stdout: &stdout, stderr: &stderr}
 
-	// Wait for the process in a goroutine so we can return early
-	// in background mode when the context times out.
-	waitDone := make(chan error, 1)
+	// One waiter owns cmd.Wait and eventual detached cleanup. The same mutex
+	// serializes completion and detachment so an exited child cannot be added
+	// back to the background registry after the waiter removed it.
+	waitDone := make(chan struct{})
+	var waitErr, captureErr error
+	finished, detached := false, false // guarded by bgMu
 	go func() {
-		waitDone <- cmd.Wait()
-	}()
-
-	// Monitor context cancellation and hard cap.
-	var hardKilled atomic.Bool
-	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				if !req.Background {
-					killProcessGroup(cmd)
-				}
-				return
-			case <-ticker.C:
-				total := stdout.Size() + stderr.Size()
-				if total > int64(HardCapBytes) {
-					hardKilled.Store(true)
-					killProcessGroup(cmd)
-					return
-				}
+		observeErr := e.observeExit(cmd.Process.Pid)
+		if observeErr != nil {
+			// Observation does not reap. On failure stop our still-owned
+			// group, then close readers so failed observation cannot strand
+			// the waiter. ECHILD means ownership was lost: never signal it.
+			e.bgMu.Lock()
+			if !errors.Is(observeErr, syscall.ECHILD) {
+				syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}
+			finished = true
+			if e.backgroundPids[cmd.Process.Pid] == process {
+				delete(e.backgroundPids, cmd.Process.Pid)
+			}
+			e.bgMu.Unlock()
+			outRead.Close()
+			errRead.Close()
 		}
+		copyErr := errors.Join(<-copied, <-copied)
+		e.bgMu.Lock()
+		// Exit was observed without reaping and both streams are drained:
+		// Wait cannot block on a live child or pipe-copy goroutine here.
+		// All group signals use this same lock, so none can follow reaping.
+		if observeErr != nil {
+			captureErr = fmt.Errorf("observing process exit: %w", observeErr)
+		}
+		if copyErr != nil {
+			captureErr = errors.Join(captureErr, fmt.Errorf("draining process output: %w", copyErr))
+		}
+		waitErr = cmd.Wait()
+		finished = true
+		cleanup := detached
+		if detached && e.backgroundPids[cmd.Process.Pid] == process {
+			delete(e.backgroundPids, cmd.Process.Pid)
+		}
+		e.bgMu.Unlock()
+		if cleanup {
+			if captureErr != nil {
+				slog.Warn("background process capture failed", "pid", cmd.Process.Pid, "error", captureErr)
+			}
+			os.RemoveAll(tmpDir)
+		}
+		close(waitDone)
 	}()
+	kill := func() {
+		e.bgMu.Lock()
+		defer e.bgMu.Unlock()
+		if !finished {
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
 
-	// Decide how to wait: in background mode, return early on timeout.
-	// In normal mode, wait for the process to finish.
-	if req.Background {
+	// Monitor only while attached. Returning stops the ticker; there is no
+	// lingering monitor that can signal a completed or detached process.
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
 		select {
-		case waitErr := <-waitDone:
-			// Process finished before timeout — normal result.
-			return e.buildResult(waitErr, &stdout, &stderr, ctx, hardKilled.Load()), nil
+		case <-waitDone:
+			return e.buildResult(waitErr, &stdout, &stderr, ctx, false), captureErr
 		case <-ctx.Done():
-			// Timeout fired while process still running — background it.
+			if !req.Background {
+				kill()
+				<-waitDone
+				return e.buildResult(waitErr, &stdout, &stderr, ctx, false), captureErr
+			}
+			e.bgMu.Lock()
+			if finished {
+				e.bgMu.Unlock()
+				<-waitDone
+				return e.buildResult(waitErr, &stdout, &stderr, ctx, false), captureErr
+			}
+			// Keep the pipe readers alive, but release captured bytes and
+			// discard subsequent writes before handing off the child.
 			pid := cmd.Process.Pid
 			result := &ExecResult{
-				Stdout:       SmartTruncate(stdout.String(), e.maxOutputBytes),
-				Stderr:       SmartTruncate(stderr.String(), e.maxOutputBytes),
+				Stdout:       SmartTruncate(stdout.SnapshotAndDiscard(), e.maxOutputBytes),
+				Stderr:       SmartTruncate(stderr.SnapshotAndDiscard(), e.maxOutputBytes),
 				Backgrounded: true,
 				PID:          pid,
 			}
-			e.trackBackgroundPid(pid)
-			// Untrack PID when the process exits to prevent killing
-			// unrelated processes if the OS reuses the PID.
-			go func() {
-				<-waitDone
-				e.untrackBackgroundPid(pid)
-			}()
+			detached = true
+			e.backgroundPids[pid] = process
+			e.bgMu.Unlock()
 			return result, nil
+		case <-ticker.C:
+			if stdout.Size()+stderr.Size() > int64(HardCapBytes) {
+				kill()
+				<-waitDone
+				return e.buildResult(waitErr, &stdout, &stderr, ctx, true), captureErr
+			}
 		}
 	}
-
-	// Normal (non-background) path: wait for process to finish.
-	waitErr := <-waitDone
-	return e.buildResult(waitErr, &stdout, &stderr, ctx, hardKilled.Load()), nil
 }
 
 func (e *PolyglotExecutor) buildResult(waitErr error, stdout, stderr *safeBuffer, ctx context.Context, hardKilled bool) *ExecResult {
@@ -268,31 +342,14 @@ func (e *PolyglotExecutor) buildResult(waitErr error, stdout, stderr *safeBuffer
 	return result
 }
 
-func (e *PolyglotExecutor) trackBackgroundPid(pid int) {
-	e.bgMu.Lock()
-	defer e.bgMu.Unlock()
-	e.backgroundPids[pid] = struct{}{}
-}
-
-func (e *PolyglotExecutor) untrackBackgroundPid(pid int) {
-	e.bgMu.Lock()
-	defer e.bgMu.Unlock()
-	delete(e.backgroundPids, pid)
-}
-
 // CleanupBackgrounded kills all tracked background processes.
 func (e *PolyglotExecutor) CleanupBackgrounded() {
 	e.bgMu.Lock()
 	defer e.bgMu.Unlock()
 	for pid := range e.backgroundPids {
+		// The waiter removes the entry while holding bgMu across reaping.
+		// Until then the unreaped group leader reserves this identifier.
 		syscall.Kill(-pid, syscall.SIGTERM)
-	}
-	e.backgroundPids = make(map[int]struct{})
-}
-
-func killProcessGroup(cmd *exec.Cmd) {
-	if cmd.Process != nil {
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 }
 

@@ -291,7 +291,17 @@ mutate the parent process cwd or environment.
 - **Output hard cap** — process killed if stdout+stderr exceeds 100MB
 - **Timeout enforcement** — configurable per-call, default 30s
 - **Shell-escape detection** — non-shell languages scanned for embedded shell commands
-- **Background mode** — process survives timeout, partial output returned, PID tracked for cleanup
+- **Background mode** — process survives timeout; captured output is snapshotted,
+  then stdout/stderr are drained and discarded without retaining later bytes.
+  The single process waiter removes detached temporary files and retires its
+  background entry on exit; shutdown sends SIGTERM to tracked groups. See
+  [ADR-005](adr/005-background-mode-output-streams.md).
+
+The executor owns stdout/stderr read ends and drains both before reaping the
+leader. A non-reaping exit observer (`waitid` on Linux, `kqueue` on Darwin) keeps
+its PID reserved while descendants hold the pipes. Group signals, final reap and
+registry changes share a mutex, so exited leaders do not prevent descendant
+cleanup and recycled identifiers are never signalled through stale entries.
 
 ## Security
 

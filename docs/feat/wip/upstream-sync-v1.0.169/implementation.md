@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7 and 8 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8 and 9 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -324,14 +324,50 @@ cwd/project-identity ADR remains Task 20.
 
 ## 9. Bounded background output
 
-**Owners:** `internal/executor/safebuf.go`, `executor.go`, related tests.
+**Owners:** `internal/executor/safebuf.go`, `executor.go`, `wait_linux.go`,
+`wait_darwin.go`, related tests.
 
 1. Add a synchronized snapshot-and-discard transition to the capture buffer; later writes return success without appending → verify: concurrent writers cannot retain bytes after the transition and the snapshot remains stable.
-2. Use it when returning a background result while keeping `cmd.Wait` pipe readers alive → verify: a child continues writing/progressing after timeout, no pipe failure occurs, and retained bytes stay bounded.
+2. Use it when returning a background result while keeping the pipe readers alive → verify: a child continues writing/progressing after timeout, no pipe failure occurs, and retained bytes stay bounded.
 3. Transfer temporary cleanup to the eventual waiter and untrack the PID exactly once → verify: normal detached exit and `CleanupBackgrounded` termination remove artifacts, without killing a reused PID or waiting twice.
 4. Record the replacement of ADR-005's accepted accumulation with a discard-capable writer, retaining the original rationale as history → verify: the ADR and new executor behavior agree without claiming pipe descriptors were replaced.
 
 Run `go test -race -tags fts5 -count=1 ./internal/executor/...`. Foreground hard-cap/timeout tests remain required. Use synchronization/files/pipes for assertions rather than long sleeps.
+
+Task 9 implementation notes (2026-10-11): `safeBuffer.SnapshotAndDiscard`
+serializes the snapshot, release and permanent discard transition with writers.
+Its byte counter now denotes retained bytes and resets under the same mutex;
+late writes cannot restore it. Both streams remain attached to the same readers
+after detachment. The call's timeout/hard-cap select stops at return, and one
+waiter owns `cmd.Wait`, detached cleanup and registry retirement. Completion and
+detachment are serialized. The foreground caller still removes its own temporary
+directory.
+
+Independent review exposed a gap in the original pipe-ownership assumption:
+`cmd.Wait` reaps the leader before its internal readers finish. A leader-liveness
+check then prevents terminating surviving descendants and still races with PID
+reuse. The executor now owns two drain goroutines and observes exit without
+reaping (`wait_linux.go` / `wait_darwin.go`). It drains both streams before calling
+`cmd.Wait` under the same mutex as every group signal and registry change. The
+unreaped leader reserves the PID until the final reap. This necessary lifecycle
+work expands the task from S to M and is recorded in design §4.3 and ADR-005.
+The existing pinned `x/sys v0.43.0` supplies the observation APIs; no version bump
+or new module is needed.
+
+Exit-observation and pipe-drain failures remain separate from ordinary command
+exit status: attached calls return the infrastructure cause, and detached
+waiters log it before cleanup. An instance-local observer seam verifies both
+paths with an injected permission failure, without changing the host's syscall
+policy or hiding the error behind an exit code.
+
+Regression fixtures write 256 MiB through a discarded buffer with zero retained
+capacity or write allocations, and release a detached child to write 4 MiB to
+each stream before checking progress and temporary-script availability. Natural
+exit and shutdown remove the temporary directory and registry entry. Separate
+concurrency and exit/cancellation fixtures run under `-race`; a foreground
+101 MiB fixture retains the hard-cap kill behavior. ADR-005 preserves its original
+decision as history and supersedes output accumulation with drain/discard.
+No dependency versions, schemas, CLI flags, CI or generated artifacts change.
 
 ## 10. Literal source filters
 

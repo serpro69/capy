@@ -1,6 +1,6 @@
 # Design: Upstream sync through context-mode 0dfbe8d
 
-> Status: implementation in progress; Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7 and 8 complete, remaining tasks proposed
+> Status: implementation in progress; Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8 and 9 complete, remaining tasks proposed
 > Created: 2026-10-10
 > Feature: `upstream-sync-v1.0.169`
 > Upstream range: `f8d46390613f068f232eb14ad91804841c64bdfa..0dfbe8de71abcb637a07dd6444bee5823c3186fc`
@@ -111,7 +111,14 @@ At background return, atomically snapshot the retained stdout/stderr and switch 
 
 The process waiter owns eventual temporary-directory cleanup and PID untracking after a detached child exits, including shutdown-triggered termination. Handle the exit/timeout race without double waits or unsafe PID reuse. Test bounded retained memory, continued child progress and eventual cleanup under the race detector.
 
-This proposes superseding the accepted memory-accumulation decision in [ADR-005](../../../adr/005-background-mode-output-streams.md). A discard-capable writer keeps Go's existing pipe ownership intact; it does not require manually replacing pipe descriptors. Task 9 must record that changed rationale while preserving the historical decision.
+This supersedes the accepted memory-accumulation decision in [ADR-005](../../../adr/005-background-mode-output-streams.md). A discard-capable writer does not require replacing or closing pipe descriptors at detachment. Task 9 records that changed rationale while preserving the historical decision.
+
+Task 9 review refinement: the executor must own its readers from process creation
+and drain them before reaping. `exec.Cmd.Wait` otherwise reaps the leader before
+its internal readers finish, losing the reserved PID while descendants can still
+hold the pipes. Observe exit without reaping (`waitid` on Linux, `kqueue` on
+Darwin), then serialize the final reap/registry removal with group signalling.
+This preserves descendant cleanup and closes the liveness-check/kill race.
 
 ### 4.4 Batch query scope and provenance — B1/B2
 
