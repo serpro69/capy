@@ -106,6 +106,29 @@ vocabulary table; the vault passes `nil`).
 
 ## Knowledge Base
 
+### File ingestion
+
+`internal/knowledge.Indexer` owns single-file path admission, descriptor-bound
+stat/read and durable file-backed indexing. The MCP handler supplies the selected
+project, prepared Read policy, effective size limit and existing store. Inline
+content stays in the handler. Credentials and database selection remain with the
+caller; an explicitly indexed external file does not select another database.
+Default labels retain cleaned absolute paths, and the store owns sanitization,
+hashes, deduplication (`IndexResult.AlreadyIndexed`), chunking and writes.
+
+The dependency-free `internal/fileio.ReadAll` limits actual reads to
+`max_source_bytes + 1`, rejecting growth after the stat check. Both initial
+ingestion and stale refresh use it after nonblocking open and descriptor-bound
+regular-file/size checks. Oversize and read-failure refreshes log a skip and keep
+cached content. `FileResult` distinguishes bytes read (including probe/partial
+bytes) from raw bytes submitted for indexing, allowing later traversal accounting
+without counting rejected content as indexed. Policy checking still precedes
+open; the atomic checked-file handoff remains deferred issue D2.
+
+This bounds each file read. Bounding the number of sources and total work in a
+refresh pass remains Task 12a; directory ingestion and CLI entry points remain
+Tasks 13–15 in the [current sync](feat/wip/upstream-sync-v1.0.169/tasks.md).
+
 ### Schema
 
 ```sql

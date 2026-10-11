@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"errors"
-	"io"
 	"log/slog"
 	"math"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/serpro69/capy/internal/fileio"
 	"github.com/serpro69/capy/internal/retrieval"
 	"github.com/serpro69/capy/internal/sanitize"
 )
@@ -241,10 +241,14 @@ func (s *ContentStore) refreshStaleSources() int {
 // the mtime gate says unchanged), all three are zero values.
 //
 // It binds stat and read to a single descriptor (fd-bound: Open → Stat →
-// ReadAll) so the file cannot be swapped mid-check, and rejects non-regular
+// bounded read) so the file cannot be swapped mid-check, and rejects non-regular
 // files (FIFO/device/socket/dir). O_NONBLOCK keeps the open from blocking on a
 // FIFO before the IsRegular guard can reject it (a no-op for regular files);
-// IsRegular is what rejects char/block devices and sockets before ReadAll.
+// IsRegular rejects char/block devices and sockets before content reads.
+// The actual read is capped at maxSourceBytes + 1 so growth after stat is also
+// rejected before sanitization, hashing or writes. Cached content stays intact.
+// TODO(D2): policy admission still precedes open; atomically bind the checked
+// path to the opened descriptor to close the remaining replacement race.
 //
 // The hash is compared against the sanitized byte stream because capy stores
 // content_hash post-StripSecrets (index.go) — comparing raw file bytes would
@@ -276,9 +280,13 @@ func (s *ContentStore) fileChangedSince(path, storedHash string, indexedAt time.
 		return false, "", false
 	}
 
-	raw, err := io.ReadAll(f)
+	read := s.readFileContent
+	if read == nil {
+		read = fileio.ReadAll
+	}
+	raw, err := read(f, s.maxSourceBytes)
 	if err != nil {
-		slog.Warn("stale refresh: read failed", "path", path, "error", err)
+		slog.Warn("stale refresh: read failed, skipping", "path", path, "error", err)
 		return false, "", false
 	}
 

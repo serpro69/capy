@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10 and 11 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11 and 12 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -421,6 +421,36 @@ Extract the single-file operation behind a filesystem-ingestion API that receive
 Bound the actual descriptor read as well as stat size in **both initial ingestion and stale refresh**, reject non-regular files before reading, and expose a per-file outcome for aggregation. Reuse Task 2a's prepared policy → verify: deterministic file growth after stat via a read seam, FIFOs/devices, relative denies passed absolute paths, cached content retained with a logged skip, same-content dedup and read failures. Reuse existing `IndexResult.AlreadyIndexed` rather than inventing a second dedup indicator. Run knowledge/store/server tests.
 
 This slice delivers the existing file path with a stricter read bound; directory support is the next complete path.
+
+Task 12 implementation notes (2026-10-11): `knowledge.NewIndexer` receives the
+selected project, effective source limit, immutable prepared policy and existing
+store. `IndexFile` owns Read admission, lexical absolute path labels, nonblocking
+regular-file open/stat, bounded content reading and `IndexWithFilePath` with
+durable kind. Relative traversal containment and explicit external absolute-file
+admission retain the existing contract. Inline content (including requests that
+also supply an admitted path) remains in the MCP handler and does not gain a
+backing file. Credential and store construction remain caller-owned.
+
+`fileio.ReadAll` is shared by ingestion and `fileChangedSince`, avoiding a
+store-to-knowledge cycle. It reads at most the configured limit plus one byte,
+returns a typed oversize error and preserves partial byte counts on errors.
+Invalid limits that cannot accommodate a detection byte fail before reading.
+The existing descriptor stat gate avoids reads of already-oversized files;
+growth after stat is rejected before sanitization/hashing. Failed stale reads
+log a skip and retain the cached source. `FileResult.BytesRead` counts actual
+bytes including probes; `BytesIndexed` counts raw bytes offered to the store,
+preserving the MCP counter's unchanged-input and store-error behavior. Store
+`IndexResult.AlreadyIndexed` remains the sole deduplication indicator.
+
+Instance-local read seams make growth and I/O-failure regressions deterministic.
+The stale-growth fixture uses content that sanitizes below the configured limit,
+proving that post-sanitization store admission cannot substitute for a raw-read
+bound. Read errors, limits, cancellation, regular-file admission, policies,
+encrypted reopen, deduplication and automatic refresh are covered. D2's atomic
+policy/open handoff remains documented at both readers; Task 12a still owns the
+bounded refresh scheduler. No schema, dependency, generated artifact or ranking
+changes are introduced. CLI and CI documentation topics are N/A: this slice adds
+neither commands/flags nor workflows; existing build/test conventions apply.
 
 ## 12a. Persistently schedule bounded stale refresh
 

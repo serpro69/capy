@@ -1086,3 +1086,105 @@ The implementation follows Task 11's narrow plaintext scope. Measurement caught
 avoidable temporary-slice allocations, which were removed before completion.
 The remaining cost on oversized inputs is explicit splitting work; existing
 quality fixtures are unchanged. Task 12 and later work remain pending.
+
+## Task 12: Shared bounded file ingestion
+
+Implemented 2026-10-11. MCP file indexing delegates to `internal/knowledge`;
+initial ingestion and stale refresh share the dependency-free bounded reader in
+`internal/fileio`. Inline indexing stays in the MCP handler. Existing lexical
+absolute labels, durable kind, file-backed refresh and store-owned deduplication
+are preserved. The selected project still owns policy, credentials and storage.
+
+### Behavioral evidence
+
+- Deterministic read seams grow an admitted file after descriptor stat. The
+  reader stops at the configured raw-byte limit plus one detection byte, before
+  sanitization, hashing or indexing. Partial data never replaces cached content.
+- Before adding the bound, the extracted reader consumed 1,024 bytes for a
+  64-byte ingestion limit. The stale fixture consumed 1,061 bytes and replaced
+  the cached source because sanitization reduced that input below the store
+  limit. Both regressions fail against the extracted unbounded implementation
+  and pass with the bound; they do not rely on timing races.
+- Reader cases cover empty/exact/over-limit content, partial read errors and
+  invalid/overflowing detection-byte limits. Ingestion covers FIFO, device and
+  directory rejection, missing files, absolute input matching a relative deny,
+  symlink denies, unavailable policy, relative traversal and explicit external
+  files. Failed admissions do not initialize the database.
+- Real encrypted-store fixtures verify canonical-label deduplication, durable
+  sources, explicit labels, automatic refresh and close/reopen. MCP fixtures
+  preserve inline-plus-path admission and byte/call accounting, including
+  unchanged input and oversize rejection. Existing prepared-policy refresh
+  tests still verify denied backing files retain cached search results.
+- Growth and read-error refreshes retain content and index time while logging
+  the skip. Already-oversized files never reach the reader. Cancellation checks
+  prevent indexing after cancellation; they are not an OS I/O deadline.
+
+### Verification commands
+
+Go commands use `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`. Full/focused
+tests and quality runs clear inherited `CLAUDE_PROJECT_DIR` and set
+`XDG_CONFIG_HOME=/tmp/capy-task12-config`; policy fixtures use temporary homes.
+Commands ran with writable temporary storage and local test socket access.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/fileio ./internal/knowledge ./internal/store -run 'TestReadAll\|TestIndexFile\|TestStaleRefreshBoundedReads'` before bounding the extracted reader | Expected failures: excessive reads, growth offered for indexing, and stale-cache replacement. `/tmp/capy-task12-regression-before.log`. |
+| `go test -tags fts5 -count=1 ./internal/fileio ./internal/knowledge ./internal/store ./internal/server -run 'TestReadAll\|TestIndexFile\|TestStaleRefreshBoundedReads\|TestStaleDetection\|TestIndex_\|TestPreparedReadPolicy'` | Passed: 0.002s / 2.082s / 6.413s / 6.981s respectively. |
+| `make test` | All packages passed. CLI 252.916s, server 140.011s, store 74.230s, vault 296.601s, TUI 22.223s; some unchanged packages used cache. |
+| `go test -race -tags fts5 -count=1 ./internal/fileio ./internal/knowledge ./internal/store ./internal/server` | Passed: 1.009s / 4.132s / 86.524s / 143.573s respectively. |
+| `go vet -tags fts5 ./internal/fileio ./internal/knowledge ./internal/store` | Passed. |
+| Same vet command including `./internal/server` | Reports only the pre-existing `tool_boolean_test.go:110` lock-copy warning; see follow-up below. A new test diagnostic's lock copy was fixed before final vet/review. |
+| `make build` | Passed with the required FTS5 tag. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task12-before` before production edits | Passed across store/server/vault. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task12` | Passed across store/server/vault. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task12-before.json bench-results/upstream-sync-task12.json` | Dataset verified; all 84 retrieval/context metrics unchanged. |
+| `git diff --check` | Passed. |
+
+Quality reports are ignored artifacts whose HEAD metadata is `9d5c659`; the
+baseline predates production changes and the target includes this working tree.
+Logs are `/tmp/capy-task12-{focused,full-tests,race,vet-final,vet-packages,build,quality-before,quality,quality-comparison}.log`.
+
+### Reader performance
+
+Compared the extracted unbounded reader with the final bounded reader using
+`go test -tags fts5 ./internal/fileio -run '^$' -bench BenchmarkReadAll -benchmem
+-benchtime=200ms -count=6`. Neither reader measurement overlapped test/benchmark
+runs. Six-sample medians on Linux/amd64, Go 1.26.4:
+
+| Input | Unbounded time | Bounded time | Before/after B/op | Before/after allocs/op |
+|---|---:|---:|---:|---:|
+| 4 KiB | 1.704 µs | 1.833 µs | 10,400 / 10,424 | 10 / 11 |
+| 2 MiB | 690.184 µs | 643.993 µs | 4,702,006 / 4,702,034 | 27 / 28 |
+
+The limiter adds one allocation (24 bytes in the small fixture). The small-read
+median rises about 7.6%, or 0.13 µs; the larger-read median falls about 6.7%.
+These in-memory reader measurements exclude filesystem, policy and encryption
+costs. `benchstat` is unavailable, so these are descriptive results, not
+statistical speedup/regression claims. Logs:
+`/tmp/capy-task12-perf-before.log`, `/tmp/capy-task12-perf-after.log`.
+
+### Review, follow-up and scope
+
+The [isolated review](.reviews/task-12-code-review-2026-10-11.md) approved the final
+code with no remaining P0–P3 findings. PAL was unavailable; an independent
+code-reviewer performed the static review. Its README logging clarification was
+applied and checked. The implementing session performed verification.
+
+The server-vet warning is the same unrelated `SessionStats` comparison recorded
+under Task 8. It remains deferred to avoid expanding this ingestion slice:
+replace `assert.Equal` on the mutex-bearing value at `tool_boolean_test.go:110`
+with comparison of all counter fields or snapshot pointers, preserving the
+assertion that invalid cleanup leaves every statistic unchanged, then rerun
+server vet. No new unresolved review findings remain.
+
+No plan deviation was needed. The shared low-level reader avoids an import cycle;
+the sanitization fixture exposed why checking only the eventual indexed size is
+insufficient. D2's policy/open race remains explicit at both read sites. Task 12a
+still owns aggregate stale-refresh bounds; directory/CLI work remains later.
+Schemas, dependencies, generated artifacts and ranking are unchanged. CLI and CI
+rubric topics are N/A because no commands, flags or workflows change. Relevant
+decisions are captured here, so no duplicate knowledge note was indexed.
+
+Optional editorial follow-up: `kk:clarify-docs` on `README.md` and
+`docs/architecture.md`; this is not an unfinished Task 12 requirement.
