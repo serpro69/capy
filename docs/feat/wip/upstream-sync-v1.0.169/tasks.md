@@ -378,7 +378,7 @@ D2's atomic admission/open handoff remain separate tasks.
 
 ## Task 14: Add terminal knowledge indexing
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 13, 13a
 - **Size:** S
 - **Can run in parallel with:** Tasks 1, 6, 9, 10, 16, 17, 18, 19
@@ -386,8 +386,15 @@ D2's atomic admission/open handoff remain separate tasks.
 
 ### Subtasks
 
-- [ ] 14.1 Add `cmd/capy/index.go` and register the command with shared ingestion options → verify: file/directory help and input validation.
-- [ ] 14.2 Reuse project/key/store selection and documented partial-result exit codes → verify: encrypted CLI→MCP round trip, crossed credentials and immediate reopen after close.
+- [x] 14.1 Add `cmd/capy/index.go` and register the command with shared ingestion options → verify: file/directory help and input validation.
+- [x] 14.2 Reuse project/key/store selection and documented partial-result exit codes → verify: encrypted CLI→MCP round trip, crossed credentials and immediate reopen after close.
+
+Evidence: [verification](verification.md#task-14-terminal-knowledge-indexing)
+and [isolated review](.reviews/task-14-code-review-2026-10-11.md). `capy index`
+reuses shared file/directory admission and project/key ownership, with explicit
+limit/partial outcomes and checkpointing. Full tests, final CLI race checks, vet
+and build pass; all 84 quality metrics are unchanged. Review's late-cancellation
+finding is fixed and re-reviewed. Task 15's terminal search remains pending.
 
 ## Task 15: Add terminal knowledge search
 

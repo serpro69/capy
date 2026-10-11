@@ -162,8 +162,16 @@ The store's normal label/hash deduplication and stale-refresh scheduling apply;
 there is no implicit deletion of vanished/excluded files. `DirectoryResult`
 separates committed progress, raw reads, attempts, skips/denies, limits and bounded
 failure details. Limits are incomplete successes; operational errors and
-cancellation become tool errors while preserving committed files. Terminal entry
-points remain Tasks 14–15.
+cancellation become tool errors while preserving committed files.
+
+`cmd/capy/index.go` exposes the same ingester as `capy index <path>` without
+constructing an MCP server. It validates options before loading storage,
+uses `loadKnowledgeTarget`/`resolveKnowledgeKey`/`newKnowledgeStore`, and prepares
+Read rules for the selected project. External inputs do not change key or DB
+ownership. The command's context handles SIGINT/SIGTERM; deferred store close
+joins checkpoint errors with the operation result. Directory limits produce
+exit 0 with an incomplete summary; failures/cancellation produce exit 1 while
+retaining committed files. Terminal knowledge search remains Task 15.
 
 ### Bounded stale refresh
 
@@ -197,7 +205,7 @@ fails; a search does not certify that all backing files were just checked.
 retrieval, and MCP search, batch and intent paths pass their context. The existing
 contextless method remains a wrapper for library callers. Separate processes may
 duplicate a bounded check; the active-pass guard is per store, not cross-process.
-Directory ingestion uses these bounds; CLI entry points remain Tasks 14–15 in the
+Directory ingestion uses these bounds; terminal knowledge search remains Task 15 in the
 [current sync](feat/wip/upstream-sync-v1.0.169/tasks.md).
 
 ### Schema
@@ -1255,6 +1263,7 @@ against the repository's **main worktree** so all worktrees share one committed 
 | `capy doctor` | Run diagnostics |
 | `capy which` | Print knowledge base path |
 | `capy cleanup` | Remove stale entries; `--vacuum` reclaims freelist pages, `--optimize` rebuilds FTS indexes + VACUUM to reclaim FTS tombstone bloat (ADR-029) |
+| `capy index <path>` | Index a file or bounded directory into the selected project's durable knowledge store |
 | `capy checkpoint` | Flush WAL into main DB file |
 | `capy encrypt` | Encrypt DB or rotate key |
 | `capy dbsize` | Show DB disk usage |

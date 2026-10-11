@@ -34,6 +34,7 @@ func main() {
 		newSetupCmd(),
 		newDoctorCmd(),
 		newCleanupCmd(),
+		newIndexCmd(),
 		newCheckpointCmd(),
 		newEncryptCmd(),
 		newWhichCmd(),

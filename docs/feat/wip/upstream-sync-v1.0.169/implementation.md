@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13 and 13a complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a and 14 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -576,6 +576,38 @@ No dependency upgrade, migration or generated-artifact change is required.
 Add the file/directory command and translate CLI flags into the same ingestion options. Reuse `--project-dir`, `loadKnowledgeTarget`, key resolution and `newKnowledgeStore` → verify: CLI-indexed markers are returned by an MCP server using the same target, and an explicit external input does not choose another database.
 
 Report partial/failure/cap outcomes with the documented exit semantics. Always close the store and surface its close error where command conventions permit → verify: immediate encrypted reopen and retained content, missing/invalid selected keys without fallback or unintended files, and crossed environment/project credentials. Run the `cmd/capy` integration subset with synthetic keys and isolated homes.
+
+Task 14 implementation notes (2026-10-11): `newIndexCmd` registers `index <path>`
+and maps local flags to `knowledge.DirectoryOptions`; exact argument count and
+option validation precede target/credential loading. Repeatable include/exclude
+flags preserve commas, while extensions accept comma-separated/repeated values.
+The shared ingester owns all path, policy, Git, limit and label behavior. The CLI
+uses the existing knowledge-target helpers and an immutable Read snapshot,
+never an MCP server instance or input-directory-derived storage selection.
+
+The command prints directory counters/limits/bounded failure details and reports
+stored chunk counts for unchanged files. It returns exit 0 for complete or
+limit-stopped scans, including empty/all-filtered/all-denied scans; invalid
+arguments, operational failures and cancellation return the existing generic
+exit 1. SIGINT/SIGTERM cancel its context. Deferred `Close` flushes through the
+existing pool-close/checkpoint path, joining any close failure with the primary
+error. No global signal/cwd/config changes affect other commands.
+
+Review required checking the command context after ingestion and after cleanup:
+the store's transaction/checkpoint path does not use that context, so a signal
+during the final write must still produce an error after the commit finishes.
+Regression tests cancel after the final file/directory commit and verify both
+the canceled result and readable, checkpointed content. Output-write failures
+also preserve committed data and run store cleanup.
+
+Dependency lookup used Context7, then pinned
+[Cobra v1.10.2](https://pkg.go.dev/github.com/spf13/cobra@v1.10.2) and
+[pflag v1.0.9](https://pkg.go.dev/github.com/spf13/pflag@v1.0.9) documentation/source
+because Context7 did not provide version-specific coverage. No dependency
+upgrade is needed. The [Go signal API](https://pkg.go.dev/os/signal#NotifyContext)
+provides command-local cancellation. README/help cover syntax, flags, labels,
+project/key ownership, output and exit codes. CI workflow changes are N/A;
+the existing FTS5/synthetic-key test conventions from `AGENTS.md` apply.
 
 ## 15. CLI knowledge search
 

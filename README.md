@@ -55,6 +55,7 @@
   - [Storage and limits](#storage-and-limits)
   - [Environment variables](#environment-variables)
 - [CLI Commands](#cli-commands)
+  - [Knowledge indexing](#knowledge-indexing)
   - [Shell Completions](#shell-completions)
 - [MCP Tools](#mcp-tools)
   - [Execution](#execution)
@@ -838,6 +839,7 @@ capy vault rekey                     # enter the OLD passphrase when prompted
 | `capy doctor`          | Run diagnostics on the installation                                                       |
 | `capy which`           | Print the knowledge base path for the current project                                     |
 | `capy cleanup`         | Remove stale knowledge base entries                                                       |
+| `capy index <path>`    | Index a file or directory as durable knowledge using the selected project's database       |
 | `capy sweep`           | Index past sessions (dry-run by default, `--force` to index, `--reindex` to re-parse all) |
 | `capy checkpoint`      | Flush WAL into main DB file for safe git commits                                          |
 | `capy encrypt`         | Encrypt the knowledge DB or rotate its encryption key                                     |
@@ -848,6 +850,42 @@ capy vault rekey                     # enter the OLD passphrase when prompted
 Global flags: `--project-dir`, `--version`
 
 Cleanup flags: `--dry-run` (default true), `--force`, `--kind` (`ephemeral`/`session`), `--source <label>`, `--vacuum` (reclaim freelist pages), `--optimize` (rebuild FTS indexes + VACUUM to reclaim FTS bloat that `--vacuum` alone cannot — see [ADR-029](docs/adr/029-fts-tombstone-bloat-reclamation.md))
+
+### Knowledge indexing
+
+`capy index <path>` writes the same durable, file-backed sources as the
+`capy_index` MCP tool. Relative inputs resolve against the selected project;
+absolute external inputs still use that project's database, credentials and
+Read policy. Content is available immediately to an MCP server using the same
+project and key. Each invocation closes and checkpoints its store before exit.
+
+```bash
+capy index README.md
+capy index docs --source project-docs --include '**/*.md'
+capy index src --extensions go,md --exclude '**/*_test.go' --max-files 500
+capy index docs --project-dir /path/to/project --follow-symlinks
+```
+
+Directory flags match the [MCP ingestion controls](#knowledge): `--max-depth`
+(0–20, default 5), `--max-files` (1–1,000, default 200), `--extensions`,
+repeatable `--include` and `--exclude`, `--respect-gitignore` (default true;
+disable with `--respect-gitignore=false`), and `--follow-symlinks` (default false).
+Extensions accept comma-separated or repeated values; empty uses the standard
+extension list. Quote glob patterns so your shell passes them unchanged.
+Include/exclude flags preserve commas as literal filename characters.
+
+`--source` names a single file's source or prefixes directory labels such as
+`project-docs:guide/setup.md`; omission uses absolute paths. Repeating a label
+with unchanged content deduplicates. Changing prefixes creates separate sources;
+removed or excluded files require explicit cleanup. Recursive filters apply
+only to directories; explicitly named files keep their direct-path behavior.
+
+Exit **0** means success, including empty/all-filtered/all-denied scans and
+scans stopped by a limit; the summary marks those limits as **incomplete**.
+Exit **1** means invalid input, credential/policy/storage failure, or an
+operational failure/cancellation. A directory **partial error** retains files
+already committed. SIGINT and SIGTERM request cancellation and store cleanup;
+the summary reports retained progress. Output and close failures also return 1.
 
 ### Shell Completions
 
