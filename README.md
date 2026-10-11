@@ -56,6 +56,7 @@
   - [Environment variables](#environment-variables)
 - [CLI Commands](#cli-commands)
   - [Knowledge indexing](#knowledge-indexing)
+  - [Knowledge search](#knowledge-search)
   - [Shell Completions](#shell-completions)
 - [MCP Tools](#mcp-tools)
   - [Execution](#execution)
@@ -840,6 +841,7 @@ capy vault rekey                     # enter the OLD passphrase when prompted
 | `capy which`           | Print the knowledge base path for the current project                                     |
 | `capy cleanup`         | Remove stale knowledge base entries                                                       |
 | `capy index <path>`    | Index a file or directory as durable knowledge using the selected project's database       |
+| `capy search <query...>` | Search knowledge with source, chunk-type, kind and result-limit filters                    |
 | `capy sweep`           | Index past sessions (dry-run by default, `--force` to index, `--reindex` to re-parse all) |
 | `capy checkpoint`      | Flush WAL into main DB file for safe git commits                                          |
 | `capy encrypt`         | Encrypt the knowledge DB or rotate its encryption key                                     |
@@ -886,6 +888,43 @@ Exit **1** means invalid input, credential/policy/storage failure, or an
 operational failure/cancellation. A directory **partial error** retains files
 already committed. SIGINT and SIGTERM request cancellation and store cleanup;
 the summary reports retained progress. Output and close failures also return 1.
+
+### Knowledge search
+
+`capy search <query...>` searches the selected project's encrypted knowledge
+store, including content indexed through MCP. It uses the same project and
+[credential selection](#project-credentials) as `capy index`; positional query
+arguments are joined with spaces.
+
+```bash
+capy search connection pooling
+capy search timeout --source 'project-docs:' --limit 10
+capy search handler --type code
+capy search build --include-kind durable --include-kind ephemeral
+capy search migrations --project-dir /path/to/project
+```
+
+The default kind is `durable`. Repeat `--include-kind` with `durable` and/or
+`ephemeral`; supplied kinds replace the default. A nonempty `--source` matches
+a literal label substring (including literal `%`, `_` and backslash) and bypasses
+kind filtering. `--type code|prose` selects stored chunk classifications;
+omission searches both. This type option is CLI-only ([ADR-012](docs/adr/012-contenttype-internal-only.md)).
+`--limit` accepts 1–100 results, default 3. The normal retrieval ranking and
+per-source diversification apply, without the MCP call throttle.
+
+Each result prints its source, title and a snippet. Snippets show at most 1,500
+UTF-8 bytes from the start of the chunk, including an ellipsis when shortened;
+displayed source/title text is also bounded. Known secret patterns are redacted
+before truncation and terminal controls are removed. No results is a successful
+exit **0**. Invalid arguments, credential/policy/storage errors, cancellation,
+output failures and close failures return **1**.
+
+Each invocation runs the existing bounded stale-file pass using the selected
+project's Read policy, and closes/checkpoints its store. Persisted scheduling
+lets later invocations check later files. Denied, failed or deferred refreshes
+retain cached searchable content; a result does not promise every backing file
+was just validated. This command searches knowledge only; use `capy vault search`
+for archived sessions.
 
 ### Shell Completions
 

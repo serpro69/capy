@@ -171,7 +171,22 @@ Read rules for the selected project. External inputs do not change key or DB
 ownership. The command's context handles SIGINT/SIGTERM; deferred store close
 joins checkpoint errors with the operation result. Directory limits produce
 exit 0 with an incomplete summary; failures/cancellation produce exit 1 while
-retaining committed files. Terminal knowledge search remains Task 15.
+retaining committed files.
+
+`cmd/capy/search.go` exposes `capy search <query...>` directly over the knowledge
+store's context-aware retrieval entry point. It reuses the same target/key
+helpers, installs a prepared Read-policy callback before stale refresh, and
+closes/checkpoints after retrieval and access tracking. Default kinds are
+explicitly durable-only; repeatable durable/ephemeral flags and literal source
+selectors retain backend semantics, including explicit-source kind bypass.
+The command validates limits (1–100) and code/prose chunk types before storage
+access. It formats bounded sanitized UTF-8 prefix snippets and metadata, and
+does not construct an MCP server or access the vault. CLI type selection does
+not add an MCP schema parameter (ADR-012). It enables `SearchOptions.FailOnError`:
+the corpus's optional concurrent error callback collects query/scan/iteration
+failures per search, and the store returns the first after all layer workers join.
+Existing MCP/vault calls retain best-effort behavior. Stale-file admission
+failures remain nonfatal; cached content is retained.
 
 ### Bounded stale refresh
 
@@ -1264,6 +1279,7 @@ against the repository's **main worktree** so all worktrees share one committed 
 | `capy which` | Print knowledge base path |
 | `capy cleanup` | Remove stale entries; `--vacuum` reclaims freelist pages, `--optimize` rebuilds FTS indexes + VACUUM to reclaim FTS tombstone bloat (ADR-029) |
 | `capy index <path>` | Index a file or bounded directory into the selected project's durable knowledge store |
+| `capy search <query...>` | Search the selected project's knowledge with source/type/kind filters and bounded snippets |
 | `capy checkpoint` | Flush WAL into main DB file |
 | `capy encrypt` | Encrypt DB or rotate key |
 | `capy dbsize` | Show DB disk usage |

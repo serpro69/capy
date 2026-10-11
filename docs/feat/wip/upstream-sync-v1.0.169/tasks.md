@@ -398,17 +398,26 @@ finding is fixed and re-reviewed. Task 15's terminal search remains pending.
 
 ## Task 15: Add terminal knowledge search
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 2a, 10, 12a
-- **Size:** S
+- **Size:** M (review required opt-in retrieval error propagation)
 - **Can run in parallel with:** Tasks 1, 6, 8, 9, 11, 13, 16, 17, 18, 19
 - **Docs:** [CLI search](implementation.md#15-cli-knowledge-search)
 
 ### Subtasks
 
-- [ ] 15.1 Add `cmd/capy/search.go` with bounded limit/source/type/kind flags and existing key resolution → verify: MCP→CLI retrieval and meaningful no-result/error exit codes.
-- [ ] 15.2 Install stale-read denies and retain knowledge-only semantics → verify: denied backing files, ephemeral filtering, literal sources and no accidental vault federation.
-- [ ] 15.3 Amend ADR-012 for CLI-only content-type selection → verify: the MCP schema still omits that filter.
+- [x] 15.1 Add `cmd/capy/search.go` with bounded limit/source/type/kind flags and existing key resolution → verify: MCP→CLI retrieval and meaningful no-result/error exit codes.
+- [x] 15.2 Install stale-read denies and retain knowledge-only semantics → verify: denied backing files, ephemeral filtering, literal sources and no accidental vault federation.
+- [x] 15.3 Amend ADR-012 for CLI-only content-type selection → verify: the MCP schema still omits that filter.
+
+Evidence: [verification](verification.md#task-15-terminal-knowledge-search)
+and [isolated review](.reviews/task-15-code-review-2026-10-11.md). `capy search`
+provides knowledge-only filters, bounded snippets, project/key ownership and
+prepared stale-read policy. Full FTS5 tests, affected race checks, vet and build
+pass; all 84 quality metrics are unchanged. Review's P1 query-error finding is
+fixed with CLI-only strict propagation and re-reviewed without findings. PAL's
+external reviewer was unavailable because its configured key was invalid.
+Tasks 16a–20 and D1–D5 remain pending.
 
 ## Task 16a: Renew fetch freshness atomically on successful validation
 
