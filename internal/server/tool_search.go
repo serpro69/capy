@@ -172,7 +172,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		var errs []string
 		var kResults []store.SearchResult
 		if runKnowledgePass {
-			r, sErr := st.SearchWithFallback(q, effectiveLimit, knowledgeOpts)
+			r, sErr := st.SearchWithFallbackContext(ctx, q, effectiveLimit, knowledgeOpts)
 			if sErr != nil {
 				errs = append(errs, fmt.Sprintf("knowledge: %v", sErr))
 			}

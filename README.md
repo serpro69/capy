@@ -948,8 +948,16 @@ File indexing and automatic stale-file refresh enforce `store.max_source_bytes`
 initial size check. They read at most the limit plus one detection byte and
 reject oversized content before sanitization or indexing. An oversized file or
 failed content read during refresh is logged; previously indexed content stays
-searchable. Only
-regular files are admitted; a FIFO cannot block the server waiting for a writer.
+searchable. Only regular files are admitted; a FIFO cannot block the server
+waiting for a writer.
+
+Search checks at most 32 backing files per refresh pass, with a five-second
+cooldown per store instance. Check order persists in the database, so restarting
+the server does not repeatedly favor the first files. Each pass allows at most
+`max(8 MiB, store.max_source_bytes + 1)` raw read bytes and stops admitting files
+after 100 ms of file work; an operation already in progress may finish. Searches
+can therefore return cached content for files awaiting their turn. Failed checks
+also advance through the schedule, while files not attempted stay eligible.
 
 ### Utility
 

@@ -99,7 +99,7 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 			continue
 		}
 
-		results, searchErr := st.SearchWithFallback(query, 3, store.SearchOptions{
+		results, searchErr := st.SearchWithFallbackContext(ctx, query, 3, store.SearchOptions{
 			Source:          sourceLabel,
 			SourceMatchMode: "exact",
 		})

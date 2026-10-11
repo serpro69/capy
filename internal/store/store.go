@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -51,7 +52,6 @@ type ContentStore struct {
 	stmtUpdateSourceAccess    *sql.Stmt
 	stmtUpdateSourceKind      *sql.Stmt
 	stmtUpdateSourceFilePath  *sql.Stmt
-	stmtUpdateSourceIndexedAt *sql.Stmt
 	stmtListFileBackedSources *sql.Stmt
 
 	insertCount atomic.Int64
@@ -67,6 +67,9 @@ type ContentStore struct {
 	// the 5-second cooldown gate.
 	denyChecker     func(string) bool
 	lastRefreshTime atomic.Int64
+	refreshActive   atomic.Bool
+	// Optional clock seam, fixed before concurrent use. Nil uses time.Now.
+	refreshNow func() time.Time
 	// Optional read seam, fixed before first use. Nil uses fileio.ReadAll.
 	readFileContent func(io.Reader, int) ([]byte, error)
 
@@ -210,8 +213,8 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	// --- Indexing ---
 
 	s.stmtInsertSource, err = db.Prepare(`
-		INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, kind, file_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`)
+		INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, kind, file_path, file_check_seq)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -251,7 +254,7 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	}
 
 	s.stmtFindSourceByLabel, err = db.Prepare(`
-		SELECT id, content_hash, kind, file_path FROM sources WHERE label = ?`)
+		SELECT id, content_hash, kind, file_path, file_check_seq FROM sources WHERE label = ?`)
 	if err != nil {
 		return err
 	}
@@ -269,22 +272,12 @@ func (s *ContentStore) prepareStatements(db *sql.DB) error {
 	}
 
 	s.stmtUpdateSourceFilePath, err = db.Prepare(`
-		UPDATE sources SET file_path = ? WHERE id = ?`)
+		UPDATE sources SET file_path = ?, file_check_seq = 0 WHERE id = ?`)
 	if err != nil {
 		return err
 	}
 
-	// Advances indexed_at for a file-backed source confirmed current (touched
-	// on disk but content unchanged) so the mtime fast-path skips it next time.
-	s.stmtUpdateSourceIndexedAt, err = db.Prepare(`
-		UPDATE sources SET indexed_at = datetime('now') WHERE id = ?`)
-	if err != nil {
-		return err
-	}
-
-	s.stmtListFileBackedSources, err = db.Prepare(`
-		SELECT id, label, file_path, content_hash, indexed_at, content_type, kind
-		FROM sources WHERE file_path IS NOT NULL`)
+	s.stmtListFileBackedSources, err = db.Prepare(staleSourcesSQL)
 	if err != nil {
 		return err
 	}
@@ -377,7 +370,7 @@ func (s *ContentStore) Close() error {
 		s.stmtInsertVocab, s.stmtDeleteChunksBySource, s.stmtDeleteTrigramBySource,
 		s.stmtDeleteSource, s.stmtFindSourceByLabel, s.stmtUpdateSourceAccess,
 		s.stmtUpdateSourceKind, s.stmtUpdateSourceFilePath,
-		s.stmtUpdateSourceIndexedAt, s.stmtListFileBackedSources,
+		s.stmtListFileBackedSources,
 		s.stmtFuzzyVocab, s.stmtGetSourceMeta,
 		s.stmtListSources, s.stmtChunksBySource,
 		s.stmtSourceChunkCount, s.stmtChunkContent, s.stmtTrackAccess,

@@ -1,10 +1,12 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -103,6 +105,12 @@ func (s *ContentStore) IndexChunked(transcript, label, contentType string, kind 
 // pieces to store. filePath, when non-empty, marks the source file-backed for
 // stale detection; callers without a backing file pass "".
 func (s *ContentStore) indexPreparedChunks(content, label, contentType string, kind SourceKind, filePath string, chunks []Chunk) (*IndexResult, error) {
+	return s.indexPreparedChunksChecked(s.ctx(), content, label, contentType, kind, filePath, chunks, nil)
+}
+
+// expected guards a refresh against deletion/replacement while its file was
+// read. A nil result with no error means that incarnation no longer exists.
+func (s *ContentStore) indexPreparedChunksChecked(ctx context.Context, content, label, contentType string, kind SourceKind, filePath string, chunks []Chunk, expected *fileSource) (*IndexResult, error) {
 	db, err := s.getDB()
 	if err != nil {
 		return nil, err
@@ -126,13 +134,13 @@ func (s *ContentStore) indexPreparedChunks(content, label, contentType string, k
 	// only takes the write lock on the first write statement — we force that
 	// by executing a no-op DELETE right after opening the tx. Same idiom
 	// used by migrate.go's beginImmediate.
-	tx, err := db.BeginTx(s.ctx(), &sql.TxOptions{})
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec("DELETE FROM sources WHERE 0"); err != nil {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sources WHERE 0"); err != nil {
 		return nil, fmt.Errorf("acquiring write lock: %w", err)
 	}
 
@@ -141,8 +149,21 @@ func (s *ContentStore) indexPreparedChunks(content, label, contentType string, k
 	var existingHash sql.NullString
 	var existingKind SourceKind
 	var existingFilePath sql.NullString
-	err = tx.Stmt(s.stmtFindSourceByLabel).QueryRow(label).Scan(&existingID, &existingHash, &existingKind, &existingFilePath)
+	var existingSeq int64
+	err = tx.StmtContext(ctx, s.stmtFindSourceByLabel).QueryRowContext(ctx, label).Scan(&existingID, &existingHash, &existingKind, &existingFilePath, &existingSeq)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("finding existing source: %w", err)
+	}
+	if expected != nil && (errors.Is(err, sql.ErrNoRows) || existingID != expected.id ||
+		existingHash.String != expected.contentHash || existingKind != expected.kind ||
+		!existingFilePath.Valid || existingFilePath.String != expected.filePath) {
+		return nil, nil
+	}
+	var fileCheckSeq int64
 	if err == nil {
+		if filePath != "" && existingFilePath.Valid && existingFilePath.String == filePath {
+			fileCheckSeq = existingSeq
+		}
 		if existingHash.Valid && existingHash.String == hash {
 			// Same content — promote/demote kind if needed, update access time.
 			if existingKind != kind {
@@ -154,10 +175,10 @@ func (s *ContentStore) indexPreparedChunks(content, label, contentType string, k
 					return nil, fmt.Errorf("updating access time: %w", err)
 				}
 			}
-			// Attach file_path when a source first indexed inline (file_path
-			// NULL) is later re-indexed from a file with identical content.
-			// Without this, stale detection would never activate for it.
-			if filePath != "" && !existingFilePath.Valid {
+			// Attach or change the backing file even for identical content.
+			// A different backing path starts unchecked; the same path keeps
+			// its place in the persistent refresh schedule.
+			if filePath != "" && (!existingFilePath.Valid || existingFilePath.String != filePath) {
 				if _, err := tx.Stmt(s.stmtUpdateSourceFilePath).Exec(filePath, existingID); err != nil {
 					return nil, fmt.Errorf("updating source file_path: %w", err)
 				}
@@ -180,7 +201,7 @@ func (s *ContentStore) indexPreparedChunks(content, label, contentType string, k
 
 	// Insert source and chunks.
 	filePathArg := sql.NullString{String: filePath, Valid: filePath != ""}
-	res, err := tx.Stmt(s.stmtInsertSource).Exec(label, contentType, len(chunks), codeChunks, hash, kind, filePathArg)
+	res, err := tx.Stmt(s.stmtInsertSource).Exec(label, contentType, len(chunks), codeChunks, hash, kind, filePathArg, fileCheckSeq)
 	if err != nil {
 		return nil, fmt.Errorf("inserting source: %w", err)
 	}

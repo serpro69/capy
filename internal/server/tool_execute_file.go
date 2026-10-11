@@ -74,10 +74,10 @@ func (s *Server) handleExecuteFile(ctx context.Context, req mcp.CallToolRequest)
 }
 
 // handleIntentOrReturnWithSource is like handleIntentOrReturn but with explicit source label.
-func (s *Server) handleIntentOrReturnWithSource(_ context.Context, toolName, output string, isError bool, intent, source string) *mcp.CallToolResult {
+func (s *Server) handleIntentOrReturnWithSource(ctx context.Context, toolName, output string, isError bool, intent, source string) *mcp.CallToolResult {
 	if intent != "" && len(output) > intentSearchThreshold {
 		s.stats.AddBytesIndexed(int64(len(output)))
-		text := s.intentSearch(output, intent, source, 5)
+		text := s.intentSearch(ctx, output, intent, source, 5)
 		r := textResult(text)
 		if isError {
 			r.IsError = true

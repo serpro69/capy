@@ -1188,3 +1188,126 @@ decisions are captured here, so no duplicate knowledge note was indexed.
 
 Optional editorial follow-up: `kk:clarify-docs` on `README.md` and
 `docs/architecture.md`; this is not an unfinished Task 12 requirement.
+
+## Task 12a: Bounded persistent stale refresh
+
+Implemented 2026-10-11. Migration 020 adds `sources.file_check_seq` and the
+partial scheduling index after column admission. Refresh now selects at most
+32 oldest-checked rows, closes its cursor, then admits file checks within the
+byte and time bounds. Scheduling survives store/process-like restarts; denied,
+missing and unchanged sources advance, while unattempted sources stay eligible.
+
+### Behavioral evidence
+
+- An encrypted pre-020 database migrates under two concurrent store opens,
+  retains its rows, and reopens idempotently. Injected migration failure rolls
+  back the column and index together. Old-style inserts omitting the column
+  receive zero. This tests schema/SQL compatibility, not a historical binary;
+  the broader old-reader matrix remains Task 20.
+- `EXPLAIN QUERY PLAN` confirms the partial index serves both bounded oldest
+  selection and descending maximum lookup, without a temporary sorting tree.
+  A 70-source fixture progresses across fresh store instances. A separate
+  10,000-real-file fixture visits every source with at most 32 attempts per pass
+  and immediately admits a later-added high-ID source with sequence zero.
+- Maximum possible content plus its detection byte is reserved before open;
+  only actual reads are charged. Changed, unchanged, failed and oversized reads
+  all consume the allowance, including probe bytes. With a 3 MiB source limit,
+  two full reads leave insufficient room for a third reservation and the
+  remaining sources stay unchecked. A configured 9 MiB real file fits as the
+  first attempt. An overflowing detection-byte limit admits no file.
+- Clock seams cover metadata latency outside the 100 ms admission window,
+  stopping new work at the boundary, and a slow read spanning the five-second
+  cooldown. Channels prove the latter cannot admit an overlapping pass in the
+  same store. Cancellation before/during work leaves unprocessed rows eligible;
+  an MCP request cancellation reaches the store and preserves cached chunks.
+- Same-backing-file replacements retain scheduling; different files reset it,
+  even for identical content. Real writes during a read exercise deletion,
+  inline/file replacement, same-hash path/kind changes and unchanged-content
+  completion. Identity guards prevent overwrite, resurrection and advancing a
+  replacement that was never checked. Two stores may both check the same files
+  but allocate independent sequences transactionally.
+- Injected scheduling-write errors and sequence exhaustion stop after the
+  first attempted source, log the cause and leave later rows eligible. Existing
+  Task 12 growth/cached-content and prepared-policy tests continue to pass.
+
+### Verification commands
+
+Commands use `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`. Server/full
+test and quality commands clear inherited `CLAUDE_PROJECT_DIR` and use
+`XDG_CONFIG_HOME=/tmp/capy-task12a-config`. Tests own temporary files, policies
+and encrypted databases. Full and server race suites ran with local socket access.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/store -run 'TestStale\|TestMigrat\|TestIndex'` | Passed, 12.159s. The first compile exposed a still-needed `slog` import after moving refresh code; restored before this run. |
+| `go test -tags fts5 -count=1 ./internal/store ./internal/server -run 'TestStaleSchedule\|TestSearchCancellationSkipsStaleRefresh'` | Passed: store 12.815s, server 0.349s. |
+| `make test` | Every package passed: CLI 252.112s, server 146.487s, store 97.912s, vault 297.268s; some unchanged packages used cache. |
+| `go test -race -tags fts5 -count=1 ./internal/store ./internal/server ./internal/knowledge` | Passed: 123.613s / 150.075s / 3.254s respectively. |
+| `go vet -tags fts5 ./internal/store ./internal/knowledge` | Passed. |
+| Same vet command including `./internal/server` | Only the pre-existing `tool_boolean_test.go:110` mutex-copy warning; follow-up below. |
+| `make build` | Passed. Non-fatal read-only module-stat-cache warning; binary build exited successfully. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task12a-before` before production edits | Passed across store/server/vault. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task12a` | Passed across store/server/vault. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task12a-before.json bench-results/upstream-sync-task12a.json` | Dataset verified; all 84 retrieval/context metrics unchanged. |
+| `git diff --check` | Passed. |
+
+Quality reports are ignored artifacts with HEAD metadata `1f4b90f`; the baseline
+predates production changes and the target includes this working tree. Logs:
+`/tmp/capy-task12a-{existing,focused,full-tests,race,vet,vet-store,build,quality-before,quality,quality-comparison}.log`.
+
+### 10,000-source workload measurements
+
+Ran the same added fixture before production changes and after the reviewed
+implementation using `go test -tags fts5 ./internal/store -run '^$' -bench
+'^BenchmarkStaleRefreshWorkload$' -benchmem -benchtime=1x -count=3`. Fixture setup
+bulk-seeds source/FTS rows and creates 10,000 real backing files outside the timer;
+the timed search uses production refresh, retrieval and writes. The changed tree
+has 128 modified files. Neither measurement overlapped another test/benchmark run.
+
+Three-sample medians on Linux/amd64, Go 1.26.4:
+
+| Tree | Before / after latency | Before / after attempted files | Before / after allocated bytes | Before / after allocations |
+|---|---:|---:|---:|---:|
+| Unchanged | 93.403 / 45.330 ms | 10,000 / 32 | 12,970,136 / 240,080 | 189,997 / 3,647 |
+| 128 changed | 645.022 / 154.885 ms | 10,000 / 14 | 14,535,192 / 365,320 | 226,229 / 5,562 |
+
+Unchanged searches read zero content bytes in both versions. Changed searches
+read 3,712 bytes before and 406 bytes afterward; the remaining changed files await
+later passes. The after-run's 14 attempts reflect the admission deadline. Its
+total search time exceeds 100 ms because the current operation can finish and
+retrieval follows refresh; no total latency bound is claimed.
+
+SQLite `total_changes()` is measured on a single pooled connection before/after
+the timed search. It includes source/FTS maintenance and the normal access update:
+unchanged goes from 1 to 33 changes, exposing the 32 added scheduling writes;
+the changed tree goes from 7,265 to 1,489. These are changed-row events, not disk
+page writes or bytes. Persistent fairness has real write overhead despite the
+bounded work and lower allocations. `benchstat` is unavailable, so the medians
+are descriptive, not statistical claims. Logs:
+`/tmp/capy-task12a-perf-before.log`, `/tmp/capy-task12a-perf-after.log`.
+
+### Review and scope
+
+The [isolated review](.reviews/task-12a-code-review-2026-10-11.md) approved the code
+with no P0–P3 findings. PAL was unavailable; an independent code-reviewer applied
+the Go checklists and inspected tests. The implementing session ran verification
+and wrote the subsequent documentation. No findings or new conventions need
+duplicate knowledge indexing; the decisions and measurements are recorded here.
+
+The plan needed mechanical request-context forwarding so cancellation reaches
+actual MCP searches. Guarding only the scheduling update would have left a stale
+read able to overwrite a newer source, so the indexing transaction also checks
+the selected incarnation. Both implement the specified contracts. The pre-existing
+server-vet warning remains the Task 8/12 follow-up: compare all snapshot counters
+or snapshot pointers instead of copying the mutex-bearing value, then rerun vet;
+preserve the invalid-cleanup assertion. It is outside this scheduling change.
+
+D2 remains deferred. Directory ingestion and CLI commands remain pending; the
+fresh-instance tests exercise their shared store primitive. Task 20 still owns
+the feature-wide `c0bfff2` comparison and combined freshness/scheduling ADR. No
+dependency, vault-schema, generated-artifact or ranking changes were made. CLI
+and CI rubric topics are N/A: no commands, flags or workflows were added.
+
+Optional editorial follow-up: `kk:clarify-docs` on `README.md` and
+`docs/architecture.md`; it is not an unfinished Task 12a requirement.
