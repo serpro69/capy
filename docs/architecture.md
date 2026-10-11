@@ -262,6 +262,19 @@ The `HookAdapter` interface abstracts platform-specific JSON formats. Currently 
 
 The `PolyglotExecutor` runs code in sandboxed subprocesses supporting 11 languages: JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, Elixir.
 
+Every runtime uses the executor's selected project as its process cwd. Absolute
+script paths and `TMPDIR` stay in a per-call temporary workspace; Rust compiles
+there and runs the resulting absolute binary path from the project. Elixir's
+Mix detection and relative build-path discovery use that same project. Direct
+executor `ExecuteFile` calls anchor relative input paths to the project; MCP
+callers continue supplying the already-admitted absolute path.
+
+Go retains `go run <temporary-script>` but now discovers project module/workspace,
+replacement, vendor and toolchain settings from its cwd. `BuildSafeEnv` continues
+stripping inherited `GOFLAGS`. Relative non-shell output files now persist in
+the project unless the snippet explicitly chooses a temporary path. This change
+does not mutate the parent process cwd or environment.
+
 ### Sandbox Protections
 
 - **Process group isolation** (`Setpgid`) — kills entire process tree on cleanup

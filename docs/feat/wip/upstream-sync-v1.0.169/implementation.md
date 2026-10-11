@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6 and 6a complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a and 7 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -262,6 +262,29 @@ the parser for directory options. CLI flags and dependency versions are unchange
 3. Resolve direct executor `ExecuteFile` relative paths against its project rather than process cwd → verify: use different process/project directories without calling `os.Chdir` from concurrent tests.
 
 Run executor tests and the final benchmarks. Add isolated Go fixtures for local imports, `replace`, module/toolchain directives and automatic vendor selection; preserve `GOFLAGS` removal by `BuildSafeEnv`. Check Elixir project detection; do not patch failures by reverting non-shell cwd piecemeal.
+
+Task 7 implementation notes (2026-10-11): ordinary execution and Rust's run phase
+now use `e.projectDir`; Rust compilation and script/TMPDIR allocation stay in the
+temporary workspace. Direct `ExecuteFile` calls anchor relative paths to the
+executor project before making them absolute. The server's admitted absolute
+path handoff remains unchanged. Elixir wrapping already receives `e.projectDir`,
+so aligning process cwd also aligns its relative Mix build-path lookup without
+changing `wrap.go`.
+
+The temporary directory is normalized to an absolute path before deriving child
+script, binary and environment paths. A relative inherited `TMPDIR` otherwise
+resolves differently after the cwd change; a deep-project fixture reproduces
+missing scripts/binaries and verifies the fix for shell, Python and Rust.
+
+The runtime fixture covers relative reads/writes and relative/absolute file
+inputs without changing process cwd. Go fixtures isolate workspace, module
+cache, proxy and toolchain settings, and verify local imports, relative replace,
+automatic vendor mode, go.work discovery and module/toolchain requirements.
+Hostile inherited `GOFLAGS` must be stripped for them to succeed. The compatible
+toolchain fixture uses a version above its `go` directive; an equal redundant
+directive triggered Go's tidy requirement and was corrected in the fixture.
+CLI/CI configuration changes are not applicable to this slice. Per-call cwd
+overrides and the combined cwd/project-identity ADR remain Tasks 8 and 20.
 
 ## 8. Per-call cwd overrides
 

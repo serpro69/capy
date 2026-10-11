@@ -644,3 +644,99 @@ CI change was needed. The core is one parser; the five handler boundaries use
 it before side effects. Future directory booleans remain Task 13. The plan
 required no behavioral deviation, and no new project convention needs separate
 knowledge indexing because the contract is documented here and in the design.
+
+## Task 7: Project cwd for every runtime
+
+Implemented 2026-10-11. Scope: executor default cwd, Rust compile/run separation,
+direct executor file-path anchoring and compatibility documentation.
+
+### Behavior and coverage
+
+- Regression-first fixtures failed on the original executor for relative file
+  inputs, non-shell relative reads/writes, Rust execution cwd and all six Go
+  project-module cases. The corrected executor passes the same assertions.
+- Shell, JavaScript, Python, Go, Rust and Perl ran real project-relative reads
+  and writes, plus `ExecuteFile` with relative and absolute input paths, while
+  the test process stayed outside the selected project. Temporary scripts and
+  compiler artifacts did not appear in the project.
+- A recording shim invokes the real Rust compiler and proves compilation runs
+  in the temporary directory, while the binary's current directory is the
+  project and its executable/TMPDIR remain temporary. Foreground cleanup is
+  verified after exit.
+- A follow-up author check reproduced missing scripts/binaries with a relative
+  inherited `TMPDIR` and a deeper project directory. Normalizing the newly
+  created temporary directory to an absolute path fixes shell, Python and Rust
+  execution and keeps their child `TMPDIR` absolute. The fixture also checks
+  cleanup. The original cleanup defer is installed before normalization, so an
+  absolute-path resolution error still removes the created directory.
+- Offline Go fixtures cover project-local imports, relative `replace`, automatic
+  vendor mode, `go.work` discovery, minimum Go requirements, and project toolchain
+  selection. An invalid inherited `GOFLAGS` must be stripped. A compatible
+  toolchain directive is tested separately from a future toolchain that cannot
+  be downloaded with `GOPROXY=off`.
+- Elixir's Mix marker detection and project isolation pass without a runtime.
+  TypeScript, Ruby, PHP, R and Elixir execution cases are skipped because their
+  runtimes are absent on this host. They remain runnable fixtures; install the
+  corresponding runtime and rerun `TestExecuteProjectCwd` and, for Elixir,
+  `TestExecuteElixirProjectPaths` to close that validation gap. No unsupported
+  runtime is silently treated as tested.
+
+### Verification commands
+
+Commands use `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 ./internal/executor -run 'TestExecute(ProjectCwd\|GoProjectModules\|RustCompileDirectory\|ElixirProjectPaths)\|TestAutoWrapElixir' -v -count=1` | Passed, 0.965s; runtime skips listed above. |
+| `go test -race -tags fts5 -count=1 ./internal/executor/...` | Passed, 4.245s; final temporary-path fix and added fixture also passed, 4.398s. |
+| `go test -race -tags fts5 ./internal/server -run '^TestExecute' -count=1` | Passed after the temporary-path fix, 7.353s. |
+| `env -u CLAUDE_PROJECT_DIR XDG_CONFIG_HOME=/tmp/capy-task7-config make test` | All packages passed with socket access: CLI 231.314s, server 122.258s, executor 3.289s, vault 258.313s; unchanged packages used cached results. |
+| `go vet -tags fts5 ./internal/executor/...` | Passed. |
+| `make build` | Passed before and after the temporary-path follow-up; initial build reported a non-fatal read-only module-stat-cache warning. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task7` | Passed: store 5.703s, server 0.534s, vault 0.554s. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task6a.json bench-results/upstream-sync-task7.json` | Dataset verified; all 84 retrieval/context metrics match. |
+| `gofmt -l internal/executor/executor.go internal/executor/cwd_test.go` and `git diff --check` | Passed; no formatting or whitespace errors. |
+
+The first `make test` ran inside the restricted sandbox and failed existing
+local-socket fixtures (`operation not permitted`) and CLI vault import fixtures
+that inherited a 196,608-byte global minimum-size setting. The rerun uses local
+socket access, clears `CLAUDE_PROJECT_DIR`, and points `XDG_CONFIG_HOME` to an
+empty temporary directory. Executor tests passed in the restricted run.
+Existing CLI fixture dependence on inherited configuration is outside this
+executor slice; a future test-harness fix should set an isolated config directory
+and clear project-selection overrides in the shared CLI launcher itself.
+The full rerun started before the temporary-path follow-up; the final change was
+then verified with the complete executor race suite, server execution race subset,
+vet and build listed above.
+
+Quality reports represent the Task 6a working tree based on `2f74147` and the
+Task 7 working tree based on `62a2c48`. The feature-wide comparison against
+`c0bfff2` remains Task 20.
+
+Executor overhead smoke measurements used
+`go test -tags fts5 ./internal/executor -run '^$' -bench '^BenchmarkExecutorOverhead$/(shell|python)/(executor|direct)$' -benchmem -count=3`
+before and after the production edit. Median shell executor time was
+0.954 → 1.085 ms; Python was 10.140 → 10.965 ms. Direct-process controls also
+slowed (shell 0.763 → 0.811 ms; Python 9.830 → 11.253 ms). Allocations stayed
+near 136/133 KB per execution. The after-run overlapped the full suite and build;
+these three-sample results are a noisy smoke check, not statistically established
+regressions. Task 20 must rerun the planned controlled performance comparison.
+
+### Compatibility and scope
+
+Relative non-shell writes now land in the selected project. Scripts needing
+disposable output must explicitly use a temporary path. Go now honors the
+selected project's module/workspace and toolchain requirements; inherited
+`GOFLAGS` remains stripped. Rust compilation stays temporary. Elixir's wrapper
+already used the selected project, so no wrapper change was necessary.
+
+Per-call cwd overrides remain Task 8; the combined cwd/project-identity ADR
+remains Task 20. No dependency, CLI, CI, database or generated-artifact change
+was required. New conventions are already documented here and need no separate
+knowledge entry.
+
+The [isolated review](.reviews/task-7-code-review-2026-10-11.md) approved the
+initial change and the subsequent absolute-temporary-path fix with no P0–P3
+findings. PAL was unavailable. The author-sourced issue is fixed and documented
+above; no findings require separate knowledge indexing.
