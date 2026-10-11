@@ -23,6 +23,10 @@ func (s *Server) handleExecute(ctx context.Context, req mcp.CallToolRequest) (*m
 	if code == "" {
 		return errorResult("missing required parameter: code"), nil
 	}
+	cwd, err := s.executionCwd(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 
 	// Security check
 	if denied := s.securityCheck(language, code); denied != nil {
@@ -34,6 +38,7 @@ func (s *Server) handleExecute(ctx context.Context, req mcp.CallToolRequest) (*m
 	result, err := s.executor.Execute(ctx, executor.ExecRequest{
 		Language:   language,
 		Code:       code,
+		Cwd:        cwd,
 		TimeoutSec: timeout / 1000,
 		Background: background,
 	})

@@ -886,16 +886,26 @@ values or shortcuts such as `"1"` or `"t"`; use native booleans instead.
 | `capy_execute_file`  | Inject a file into a sandbox variable (`FILE_CONTENT`) and process it with code you write. The raw file never enters context — only your printed summary does.                                                |
 | `capy_batch_execute` | The primary research tool. Runs multiple shell commands, auto-indexes all output as markdown, and searches with multiple queries — all in ONE call.                                                           |
 
-Every runtime executes from the selected project directory. Relative reads and
-writes use that directory; scripts and `TMPDIR` remain in a per-call temporary
-workspace. Rust compiles there, then runs its binary from the project. Relative
-`capy_execute_file(path)` inputs also resolve from the project.
+Every runtime defaults to the selected project directory. Set `cwd` on
+`capy_execute`, `capy_execute_file` or `capy_batch_execute` to use another existing
+directory for that call. Relative values, such as `packages/api`, resolve from
+the selected project; absolute external directories are also accepted. A batch
+uses one cwd for all commands, including parallel workers. Omit `cwd` for the
+default; supplied empty strings, nulls, non-string values and invalid directories
+return errors before execution.
+
+Relative code reads and writes use the execution directory. Scripts and `TMPDIR`
+remain in a per-call temporary workspace; Rust compiles there, then runs its
+binary from the execution directory. The override leaves storage, credentials,
+security policy and vault scope tied to the selected project. Relative
+`capy_execute_file(path)` inputs still resolve from the project, independently
+of `cwd`.
 
 Compatibility: non-shell snippets previously ran from the temporary workspace.
 Use an explicit temporary path for disposable outputs. Go snippets now discover
-the project's module/workspace, local imports, `replace` directives, automatic
+the execution directory's module/workspace, local imports, `replace` directives, automatic
 vendor mode and toolchain requirements. Inherited `GOFLAGS` is still stripped.
-Elixir's existing Mix build-path discovery now runs from the same project it
+Elixir's existing Mix build-path discovery now runs from the same directory it
 inspects.
 
 Batch commands run as submitted, including multiline commands and heredocs.

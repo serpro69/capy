@@ -8,7 +8,7 @@ import (
 )
 
 // autoWrap applies language-specific boilerplate wrapping.
-func autoWrap(lang Language, code, projectDir string) string {
+func autoWrap(lang Language, code, workDir string) string {
 	switch lang {
 	case Go:
 		if !strings.Contains(code, "package ") {
@@ -19,7 +19,7 @@ func autoWrap(lang Language, code, projectDir string) string {
 			return "<?php\n" + code
 		}
 	case Elixir:
-		if mixExists(projectDir) {
+		if mixExists(workDir) {
 			return `Path.wildcard("_build/dev/lib/*/ebin") |> Enum.each(&Code.prepend_path/1)` + "\n" + code
 		}
 	}

@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a and 7 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7 and 8 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -293,6 +293,34 @@ overrides and the combined cwd/project-identity ADR remain Tasks 8 and 20.
 Add one optional cwd field to the execution request and one server-side normalization path. Forward the effective directory into ordinary execution, execute-file execution, both batch workers and language wrappers. Keep execute-file's input path anchored independently to the server project → verify: absolute and relative cwd, missing/non-directory values, two concurrent requests targeting different directories, and no cross-request mutation. Confirm index/search and credential selection still use the original project. Run focused executor/server tests under `-race`.
 
 The implementation slice's substantive work is request normalization and executor semantics; parameter/schema forwarding is mechanical. If runtime-specific work makes it large, split by complete runtime paths before implementation rather than scheduling an L-sized task.
+
+Task 8 implementation notes (2026-10-11): `executor.ResolveCwd` owns directory
+resolution for both server preflight and direct executor calls. It preserves
+symlink-before-`..` semantics by validating the uncleaned path before resolving
+it. The server's shared `executionCwd` boundary accepts only nonempty strings
+when the parameter is present; omission selects the project. There is no tilde,
+environment or shell expansion. Absolute external execution directories remain
+allowed. Invalid requests fail before temporary files, child processes or batch
+indexing.
+
+The resolved path travels in `ExecRequest.Cwd` through all three handlers and
+both batch workers. Each executor call uses its local request value for process
+cwd, Rust's run phase and Elixir wrapping; compilation and temporary scripts
+keep their own workspace. A batch resolves its supplied cwd once and forwards
+the same absolute path to every worker; executor validation still checks each
+call's directory. No server/executor project field, parent cwd or environment is
+mutated. Execute-file input resolution, captured credentials, Read rules and
+knowledge/vault ownership continue to use the selected project.
+
+The expanded runtime matrix tests default, relative and absolute execution cwd
+with both relative and absolute file inputs. New tests cover invalid inputs
+before side effects, overlapping requests and parallel batches, conflicting
+project/override settings and credentials, encrypted reopen, unchanged vault
+scope, Go module selection and Elixir wrapper selection. Real stdio checks
+verify optional string schemas, error results and cwd handling. Tests use short
+distinct batch labels to avoid D3's intentionally deferred identity collision.
+No dependency, CLI, CI or generated-artifact change was needed. The combined
+cwd/project-identity ADR remains Task 20.
 
 ## 9. Bounded background output
 

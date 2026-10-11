@@ -66,27 +66,41 @@ func main() { b, err := os.ReadFile("marker.txt"); if err != nil { panic(err) };
 			require.NoError(t, err)
 			require.NotEqual(t, processDir, e.projectDir)
 			writeCwdFixture(t, e.projectDir, "marker.txt", "project-relative-marker")
-			for _, mode := range []string{"execute", "file-relative", "file-absolute"} {
-				t.Run(mode, func(t *testing.T) {
-					req := ExecRequest{Language: tc.lang, Code: tc.code, TimeoutSec: 60}
-					var result *ExecResult
-					var err error
-					if mode == "execute" {
-						result, err = e.Execute(context.Background(), req)
-					} else {
-						req.Code, req.FilePath = tc.fileCode, "marker.txt"
-						if mode == "file-absolute" {
-							req.FilePath = filepath.Join(e.projectDir, req.FilePath)
-						}
-						result, err = e.ExecuteFile(context.Background(), req)
+			external := t.TempDir()
+			writeCwdFixture(t, external, "marker.txt", "execution-directory-marker")
+			relative, err := filepath.Rel(e.projectDir, external)
+			require.NoError(t, err)
+			for _, location := range []struct{ name, cwd, dir, content string }{
+				{name: "default", cwd: "", dir: e.projectDir, content: "project-relative-marker"},
+				{name: "relative", cwd: relative, dir: external, content: "execution-directory-marker"},
+				{name: "absolute", cwd: external, dir: external, content: "execution-directory-marker"},
+			} {
+				t.Run(location.name, func(t *testing.T) {
+					for _, mode := range []string{"execute", "file-relative", "file-absolute"} {
+						t.Run(mode, func(t *testing.T) {
+							req := ExecRequest{Language: tc.lang, Code: tc.code, Cwd: location.cwd, TimeoutSec: 60}
+							want := location.content
+							var result *ExecResult
+							var err error
+							if mode == "execute" {
+								result, err = e.Execute(context.Background(), req)
+							} else {
+								want = "project-relative-marker"
+								req.Code, req.FilePath = tc.fileCode, "marker.txt"
+								if mode == "file-absolute" {
+									req.FilePath = filepath.Join(e.projectDir, req.FilePath)
+								}
+								result, err = e.ExecuteFile(context.Background(), req)
+							}
+							require.NoError(t, err)
+							require.Equal(t, 0, result.ExitCode, "%+v", result)
+							output := filepath.Join(location.dir, "output.txt")
+							content, err := os.ReadFile(output)
+							require.NoError(t, err)
+							assert.Equal(t, want, string(content))
+							require.NoError(t, os.Remove(output))
+						})
 					}
-					require.NoError(t, err)
-					require.Equal(t, 0, result.ExitCode, "%+v", result)
-					output := filepath.Join(e.projectDir, "output.txt")
-					content, err := os.ReadFile(output)
-					require.NoError(t, err)
-					assert.Equal(t, "project-relative-marker", string(content))
-					require.NoError(t, os.Remove(output))
 				})
 			}
 			entries, err := os.ReadDir(e.projectDir)

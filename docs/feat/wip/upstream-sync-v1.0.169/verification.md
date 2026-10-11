@@ -740,3 +740,91 @@ The [isolated review](.reviews/task-7-code-review-2026-10-11.md) approved the
 initial change and the subsequent absolute-temporary-path fix with no P0–P3
 findings. PAL was unavailable. The author-sourced issue is fixed and documented
 above; no findings require separate knowledge indexing.
+
+## Task 8: Per-call execution cwd
+
+Implemented 2026-10-11. Scope: optional `cwd` on execute, execute-file and batch,
+shared directory validation, request-local executor handling, schemas and docs.
+
+### Behavior and coverage
+
+- Omission preserves the selected project. Supplied empty strings, nulls,
+  numbers, booleans, arrays and objects fail; nonempty paths must name an
+  existing directory. Relative paths anchor to the project. Absolute external
+  directories are accepted. Spaces are literal, and symlink/parent paths retain
+  filesystem semantics instead of being lexically collapsed first. Missing,
+  file, dangling, NUL and file-before-parent inputs fail visibly.
+- Invalid executor calls fail before temporary allocation or Rust compilation.
+  Invalid server requests spawn no marker, initialize neither store nor vault,
+  and do not update stats. Actual stdio calls verify these errors and advertise
+  optional string `cwd` on all three MCP descriptors.
+- The runtime matrix now covers default, relative and absolute cwd with normal
+  execution and both relative/absolute execute-file inputs. A distinct input in
+  the override directory proves `FILE_CONTENT` still comes from the selected
+  project while relative outputs land in the requested directory.
+- Six installed runtimes passed: shell, JavaScript, Python, Go, Rust and Perl.
+  TypeScript, Ruby, PHP, R and Elixir remain unavailable. Their matrix entries
+  are explicit skips; run `TestExecuteProjectCwd` after installing those runtimes.
+  A source-capturing shim separately verifies Elixir Mix wrapping follows the
+  override rather than the selected project. It does not claim real Elixir
+  execution. An offline Go fixture proves module discovery follows the override
+  even when the selected project requires an unavailable newer toolchain.
+- Parallel subtests share an executor/server across different directories and
+  both serial/parallel batch requests. Every output has the expected directory
+  and marker; subsequent omitted-cwd calls return to the project. Parent cwd and
+  environment remain unchanged. Stored chunks prove every batch command uses
+  the requested cwd; short distinct command labels avoid deferred D3 collisions.
+- Conflicting override-directory Read settings and dotenv credentials do not
+  alter the selected policy or captured key. A lazy batch store opens only in
+  the project and reopens with its selected key. Subsequent index/search still
+  use the project; an external cwd does not grant an external execute-file read.
+  A two-project archived vault fixture proves session searches remain scoped to
+  the selected project after execution elsewhere.
+
+### Verification commands
+
+Commands use `GOCACHE=/tmp/capy-go-build`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`. The full
+suite uses socket access, an empty `/tmp/capy-task8-config` as `XDG_CONFIG_HOME`,
+and no inherited `CLAUDE_PROJECT_DIR`, as established in Task 7.
+
+| Command | Result |
+|---|---|
+| `go test -race -tags fts5 ./internal/executor ./internal/server -run 'Test(ExecutionCwd\|ExecuteProjectCwd\|ResolveCwd\|ExecuteCwd)' -count=1` | Passed: executor 2.854s, server 3.896s. |
+| `go test -race -tags fts5 ./internal/executor ./internal/server -run 'Test(Execute\|ExecutionCwd\|ResolveCwd\|BatchExecute\|Search_ProjectOverrideScopes\|VaultSearch_ProjectOverrideScopes)' -count=1` | Passed with the final Go module fixture: executor 4.587s, server 22.701s. |
+| `go test -race -tags fts5 ./cmd/capy -run '^TestMCPStdioExecutionCwd$' -count=1` | Passed, 2.908s; child binary uses the stdio helper's normal FTS5 build. |
+| `env -u CLAUDE_PROJECT_DIR XDG_CONFIG_HOME=/tmp/capy-task8-config make test` | All packages passed: CLI 233.909s, executor 4.840s, server 127.319s, vault 258.887s; unchanged packages used cached results. |
+| `go vet -tags fts5 ./internal/executor/...` | Passed. |
+| `go vet -tags fts5 ./internal/executor/... ./internal/server/...` | Reports an existing lock-copy warning in unchanged `internal/server/tool_boolean_test.go:110`; see follow-up below. |
+| `make build` | Passed with a non-fatal read-only module-stat-cache warning. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task8` | Passed: store 5.954s, server 0.605s, vault 0.596s. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task7.json bench-results/upstream-sync-task8.json` | Dataset verified; all 84 retrieval/context metrics match. |
+| `git diff --check` | Passed. |
+
+Benchmark reports represent the Task 7 working tree based on `62a2c48` and this
+Task 8 working tree based on `0f538b6`. The controlled feature-wide performance
+comparison against `c0bfff2` remains Task 20.
+
+### Recorded follow-up and compatibility
+
+Server-wide vet reports a pre-existing `copylocks` warning: the boolean cleanup
+fixture passes a `SessionStats` snapshot, which contains `sync.Mutex`, by value
+to `assert.Equal`. The same statement exists at `HEAD` before Task 8. This is
+deferred because it belongs to unrelated stats/boolean test code; update that
+fixture to compare snapshot counter fields or snapshot pointers, then rerun
+server vet. Do not remove or weaken its assertion that invalid cleanup leaves
+all statistics unchanged.
+
+Execution cwd is a per-call location, not project selection. Relative
+execute-file inputs remain project-relative. There is no automatic tilde/env
+expansion, project inference from transcripts, extra Read grant, or global cwd
+mutation. The combined cwd/project-identity ADR remains Task 20. No dependency,
+CLI, CI or generated-artifact changes were required, and no new convention
+needs a separate knowledge entry because these contracts are documented here.
+
+The [isolated review](.reviews/task-8-code-review-2026-10-11.md) initially noted
+one P3 about positional string fields in the new runtime matrix. Those three
+literals now use named fields with identical values/assertions; the reviewer
+confirmed the fix and approved with no remaining findings. The matrix was
+rerun under `-race` after that test-only edit. PAL was unavailable. No review
+finding or convention needs separate knowledge indexing.
