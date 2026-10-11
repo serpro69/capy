@@ -1484,3 +1484,85 @@ policy/open handoff and Task 20's feature-wide comparisons/ADRs remain pending.
 
 Optional editorial follow-up: `kk:clarify-docs` on `README.md` and
 `docs/architecture.md`; this is separate from Task 13a completion.
+
+## Task 14: Terminal knowledge indexing
+
+Implemented on 2026-10-11. `capy index <path>` shares the MCP file/directory
+ingester and options, uses existing project/key/store selection, and closes
+through the established checkpoint path. Input location never chooses the DB.
+
+### Behavioral evidence
+
+- Real CLI registration/help and argument validation: positional count, empty
+  paths, integer bounds/types, patterns/extensions and boolean flags fail before
+  credential resolution or storage creation where appropriate. Help requires no
+  key. Repeated include/exclude flags and comma-separated extensions feed the
+  shared option validator.
+- Identity and persistence: environment, dotenv, key-file and linked-worktree
+  owner credentials, with conflicting inherited/non-owner keys. CLI indexing
+  and unchanged reruns close/checkpoint, then real MCP stdio search retrieves
+  the retained marker using the same project/key. Tests run from a different
+  process cwd. External file inputs do not create a database at the input root.
+- Directory controls: depth/file caps report incomplete success, canonical
+  prefixed labels/filters match MCP, and following/Git-ignore flags materially
+  change broken-link/Git-metadata outcomes. Empty/all-filtered/all-denied scans
+  succeed without opening storage; explicit denied files fail. Oversized-file
+  partial errors return exit 1 and retain earlier/later committed files.
+- Credentials/policies: missing keys, invalid selected key files and malformed
+  policy snapshots create no DB directory. A wrong selected key cannot fall
+  back to the correct environment key or damage existing content. Fixtures
+  reject passphrases in stdout/stderr.
+- Cancellation/cleanup: pre-canceled commands create no DB; real SIGTERM during
+  a blocked nested Git lookup exits 1 while retaining/checkpointing the earlier
+  file. File/directory cancellation after the final commit cannot return success.
+  An output writer returning EPIPE still closes/checkpoints and preserves data.
+
+### Verification commands
+
+Commands use `GOCACHE=/tmp/capy-go-cache`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development`, and `CAPY_VAULT_KEY=test-key`.
+Broad/CLI/quality runs clear `CLAUDE_PROJECT_DIR` and use
+`XDG_CONFIG_HOME=/tmp/capy-task14-config`. Full tests enable local Unix/TCP
+sockets for the existing fixtures. New child-process fixtures isolate their
+home/config/data/vault roots and supply only synthetic credentials.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 ./cmd/capy -run 'TestIndex(CLI\|Command)' -count=1` | Passed, 10.317s. |
+| `make test` with local sockets | Every package passed: CLI 253.635s, knowledge 26.249s, server 130.893s, vault 291.069s; other packages may use cache. |
+| `go test -race -tags fts5 ./cmd/capy -run 'TestIndex(CLI\|Command)\|TestMCPStdioDirectoryIndex\|TestKnowledgeStore_KeyFileSnapshot' -count=1` | Passed, 15.372s after test-child cleanup refinement. |
+| `go test -race -tags fts5 ./cmd/capy -run '^TestIndexCommandOutputFailureStillCloses$' -count=1` | Passed, 1.579s. |
+| Final `go test -race -tags fts5 ./cmd/capy -run 'TestIndex(CLI\|Command)' -count=1` | Passed, 13.961s after the review's late-cancellation fix; includes file/directory commit-retention regressions. |
+| Final `go vet -tags fts5 ./cmd/capy` | Passed. |
+| Final `make build` | Passed; nonfatal read-only module-stat-cache warning. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task14` | Passed for store/server/vault. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task14-before.json bench-results/upstream-sync-task14.json` | Dataset verified; all 84 quality/context metrics unchanged. |
+| `git diff --check` | Passed. |
+
+The full suite and quality run preceded the narrow cancellation-return fix;
+the final affected CLI race tests, vet and build cover that final code. The
+quality baseline is the saved Task 13a report (HEAD metadata `bf15083`, including
+its working-tree implementation); the target has HEAD metadata `943dd09` plus
+this task's changes. No retrieval/ingestion algorithm changed, and no timing
+improvement is claimed. Ignored reports live under `bench-results/`; logs are
+`/tmp/capy-task14-{focused,full,race,race-final,output-failure,review-fix,vet,build,quality,quality-comparison}.log`.
+
+### Review and scope
+
+The [isolated review](.reviews/task-14-code-review-2026-10-11.md) approved the
+final code after fixing one P2 late-cancellation finding. PAL's separate Windows
+portability suggestion remains outside the supported scope, with the inaccurate
+proposed replacement documented in the report. No unresolved in-scope findings
+or new conventions require duplicate knowledge indexing.
+
+The CLI remained a thin adapter over existing ownership/admission behavior.
+Signal handling needed the extra final-context check because the existing store
+write/checkpoint path is not command-context-aware. Dependencies were verified
+at their pinned versions without upgrades. CLI help/README document syntax,
+flags, label ownership, output and exit status; CI changes are N/A, inheriting
+the repository's FTS5/synthetic-key conventions. No schema, generated artifact,
+vault, or ranking changes were introduced. Task 15 and feature-wide Task 20
+verification/ADRs remain pending, as does D2.
+
+Optional editorial follow-up: `kk:clarify-docs` on `README.md` and
+`docs/architecture.md`; this is separate from Task 14 completion.
