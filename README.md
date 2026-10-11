@@ -925,7 +925,7 @@ sends SIGTERM to tracked background process groups.
 
 | Tool                   | What It Does                                                                                                                                                                                                                     |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `capy_index`           | Index text, markdown, or a file path into the FTS5 knowledge base for later search. Stored as `durable` (persists across sessions).                                                                                              |
+| `capy_index`           | Index text, markdown, a file, or a directory into the FTS5 knowledge base. Directory scans create one source per file and report their limits. Stored as `durable` (persists across sessions). |
 | `capy_search`          | Search indexed content. Multi-layer search: Porter stemming + trigram substring + fuzzy Levenshtein, fused with Reciprocal Rank Fusion. Defaults to durable + session sources; pass `include_kinds` to search ephemeral content. |
 | `capy_fetch_and_index` | Fetch a URL, convert HTML to markdown, index into the knowledge base, return a ~3 KB preview. Default ephemeral (24h TTL). Git platform issue/PR URLs are blocked with CLI redirect guidance.                                    |
 
@@ -950,6 +950,46 @@ reject oversized content before sanitization or indexing. An oversized file or
 failed content read during refresh is logged; previously indexed content stays
 searchable. Only regular files are admitted; a FIFO cannot block the server
 waiting for a writer.
+
+To index a directory, call `capy_index` with, for example,
+`path: "docs", source: "project-docs", include: ["**/*.md"]`. Relative paths
+resolve from the selected capy project. Sources receive labels such as
+`project-docs:guide/setup.md`; omitting `source` uses each canonical absolute
+file path. The same label and sanitized content deduplicate on reruns. Changing
+the prefix creates separate sources; sharing a prefix across roots can replace
+equal relative paths. Removed or excluded files remain indexed until explicit
+cleanup.
+
+Directory controls are `max_depth` (0–20, default 5; root depth 0), `max_files`
+(1–1,000 eligible open/read attempts, default 200), `extensions`, `include`,
+`exclude`, and `respect_gitignore` (default true). Empty extensions use
+`md, mdx, txt, json, yaml, yml, toml, ts, tsx, js, jsx, py, rs, go, sh`;
+a nonempty list replaces them, case-insensitively with optional leading dots.
+Include/exclude patterns match entire root-relative paths using `/`, `*`, `?`
+and `**`; `**/` also matches zero directories. Absolute paths, `..` components,
+bracket/brace patterns and negation are rejected. Includes cannot override
+mandatory exclusions.
+
+Scans always prune `.git`, `.hg`, `.svn`, `.capy`, `.aws`, `.ssh`, `node_modules`,
+`vendor`, `dist`, `build`, `.next`, `coverage`, `.venv`, `venv`, `__pycache__`,
+`target`, `.cache`, and credential names `.env`, `.env.*`, `*.pem`, `*.key`,
+`id_rsa`, `id_ed25519`, `credentials`. Descendant symlinks and nested Git
+repositories/worktrees/submodules are skipped. An explicitly named root may
+be a symlink; its requested and canonical paths remain subject to Read denies.
+Git ignores come from that root's worktree, including rules for tracked files;
+an external root still uses the selected capy project's database, key and Read
+policy. Non-Git scans report that ignores were not applied. Git lookup failures
+are errors. Direct file inputs retain their existing explicit-path behavior.
+
+Each scan admits at most 20,000 directory entries and reads at most 32 MiB of
+file content, counting unchanged/failed reads and oversize probes. A directory
+must fit wholly in the remaining entry allowance before its entries are
+processed in lexical order; reaching the allowance before proving end-of-directory
+reports an entry limit. Partial file content is never indexed. Limits return a
+successful **incomplete** result; operational failures and cancellation return a
+**partial error**, retaining already committed files. The summary reports counts,
+raw bytes, retained sections and at most ten individual failures. An empty or
+entirely filtered scan succeeds.
 
 Search checks at most 32 backing files per refresh pass, with a five-second
 cooldown per store instance. Check order persists in the database, so restarting

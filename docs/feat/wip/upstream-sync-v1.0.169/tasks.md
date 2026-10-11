@@ -334,7 +334,7 @@ warning and feature-wide Task 20 comparisons remain recorded follow-ups.
 
 ## Task 13: Index directories with explicit traversal limits
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 2a, 6a, 11, 12, 12a
 - **Size:** M
 - **Can run in parallel with:** Tasks 1, 3, 6, 7, 9, 10, 15
@@ -342,10 +342,17 @@ warning and feature-wide Task 20 comparisons remain recorded follow-ups.
 
 ### Subtasks
 
-- [ ] 13.1 Implement default non-following traversal with explicit attempt/raw-read counters and all hard bounds → verify: failed/unchanged/growing files consume actual bytes, no partial file is indexed, and caps/errors have distinct outcomes.
-- [ ] 13.2 Implement pattern/extension controls and canonical explicit-root admission → verify: direct root links versus skipped descendant links, mandatory exclusions and stable label/dedup semantics.
-- [ ] 13.3 Apply the canonical root's Git ignores and prune nested repository/worktree/submodule roots → verify: external/explicit nested roots, negation/tracked rules and visible failures without changing capy policy/key identity.
-- [ ] 13.4 Add dispatch/schema fields using shared boolean validation and prepared rules → verify: colon-label identity, same/different-prefix reruns, bounded stale checks and no implicit deletion.
+- [x] 13.1 Implement default non-following traversal with explicit attempt/raw-read counters and all hard bounds → verify: failed/unchanged/growing files consume actual bytes, no partial file is indexed, and caps/errors have distinct outcomes.
+- [x] 13.2 Implement pattern/extension controls and canonical explicit-root admission → verify: direct root links versus skipped descendant links, mandatory exclusions and stable label/dedup semantics.
+- [x] 13.3 Apply the canonical root's Git ignores and prune nested repository/worktree/submodule roots → verify: external/explicit nested roots, negation/tracked rules and visible failures without changing capy policy/key identity.
+- [x] 13.4 Add dispatch/schema fields using shared boolean validation and prepared rules → verify: colon-label identity, same/different-prefix reruns, bounded stale checks and no implicit deletion.
+
+Evidence: [verification](verification.md#task-13-bounded-directory-ingestion) and
+[isolated review](.reviews/task-13-code-review-2026-10-11.md). Directory scans now
+apply bounded reads/traversal, selection controls and root-worktree Git ignores
+with explicit incomplete/partial outcomes. Full tests, affected race suites and
+the build pass; all 84 quality metrics are unchanged. Both review findings are
+resolved. D2 and Task 13a's opt-in descendant following remain pending.
 
 ## Task 13a: Follow allowed directory symlinks without bypassing filters
 

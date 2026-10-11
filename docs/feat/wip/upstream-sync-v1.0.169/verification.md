@@ -1311,3 +1311,100 @@ and CI rubric topics are N/A: no commands, flags or workflows were added.
 
 Optional editorial follow-up: `kk:clarify-docs` on `README.md` and
 `docs/architecture.md`; it is not an unfinished Task 12a requirement.
+
+## Task 13: Bounded directory ingestion
+
+Implemented 2026-10-11 on `feat/upstream_sync`, starting from `362bc39`.
+`capy_index(path)` now dispatches files or directories through the shared
+knowledge indexer. Directory controls validate before storage side effects;
+inline and explicit-file contracts are preserved. Descendant symlink following
+remains Task 13a.
+
+### Behavioral evidence
+
+- Lexical traversal and limits: fixtures cover depth 0/5/20, file attempts
+  1/200/1,000, and a 20,001-file directory that admits only 20,000 entries and
+  indexes none of that partially enumerated directory. Ignored/denied entries
+  consume traversal work without consuming file attempts. A 1,000-source import
+  followed by search invokes at most 32 stale checks.
+- Read accounting: growth-after-stat, partial I/O failure, store failure,
+  unchanged input, cancellation and remaining-allowance boundaries retain actual
+  read-byte counts. The 32 MiB test rejects incomplete content and reports a
+  request cap separately from per-source size errors. Failed indexing still
+  consumes bytes. Ten retained failure details plus an omitted count bound the
+  diagnostic list; cancellation is counted once.
+- Admission/selection: mandatory exclusions, case-normalized extensions, whole
+  POSIX-path patterns, Unicode/newline filenames, invalid controls, FIFO skips,
+  direct-root aliases, symlink-before-parent resolution and descendant symlink
+  skips. Root-alias child denies are checked through both requested and canonical
+  spellings. Existing direct-file lexical cleaning is preserved even when its
+  physical spelling is absent, a different file or a directory.
+- Git: real Git 2.34.1 fixtures cover the external root's worktree, ancestor and
+  nested ignore rules, negation, deliberately ignored tracked files, bounded
+  batches, inherited Git-variable poisoning, newline/tab/dash filenames, nested
+  repositories, linked worktrees and submodule-style gitfiles. Explicit nested
+  roots select their own worktree. Missing Git/corrupt metadata/check-ignore
+  failures remain visible; non-Git scans work without Git installed.
+- Storage/protocol: colon-prefix labels, same/different-prefix reruns, deliberate
+  cross-root namespace collisions, unchanged stored chunk totals and no deletion
+  of removed/excluded sources. Server tests verify relative Read denies for
+  walking, direct absolute files and stale refresh. A real stdio fixture checks
+  published schemas, strict controls, literal string booleans, incomplete-success
+  status, deduplication and encrypted close/reopen/search with process cwd
+  different from the selected project.
+
+### Verification commands
+
+Commands use `GOCACHE=/tmp/capy-go-cache`, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`.
+Full/server-race/quality commands additionally clear `CLAUDE_PROJECT_DIR` and
+set `XDG_CONFIG_HOME=/tmp/capy-task13-config`. Full and server-race suites require
+local socket access for their existing HTTP fixtures.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 ./internal/knowledge ./internal/server ./cmd/capy -run 'Test(IndexDirectory\|Directory\|MCPStdioDirectory)' -count=1` | Passed: 12.291s / 1.204s / 2.078s. |
+| `make test` with isolated configuration and local sockets | Every package passed: CLI 269.010s, knowledge 19.520s, server 157.317s, vault 315.799s; unchanged packages may use cache. |
+| `go test -race -tags fts5 ./internal/knowledge ./internal/server -count=1` with isolated configuration and local sockets | Passed: 127.346s / 162.553s. |
+| Final `go test -race -tags fts5 ./internal/knowledge -count=1` after review fixes | Passed, 109.732s; includes file-dispatch, cancellation, remaining-byte and 1,000-source stale-check assertions. |
+| Final `go test -tags fts5 ./internal/server ./cmd/capy -run 'TestIndex\|TestMCPStdioDirectory' -count=1` | Passed: 7.741s / 2.393s. |
+| `go vet -tags fts5 ./internal/knowledge` | Passed. |
+| Vet including `./internal/server ./cmd/capy` | Only the pre-existing `tool_boolean_test.go:110` mutex-copy warning documented in Tasks 8/12/12a; no new warning. |
+| Final `make build` | Passed; non-fatal read-only module-stat-cache warning. |
+| `make bench-quality BENCH_BRANCH=upstream-sync-task13` | Passed for store/server/vault. |
+| `go run -tags fts5 ./cmd/qualstat bench-results/upstream-sync-task13-before.json bench-results/upstream-sync-task13.json` | Dataset verified; all 84 quality/context metrics unchanged. |
+| `git diff --check` | Passed. |
+
+The quality baseline is the saved Task 12a final report (HEAD metadata `1f4b90f`,
+including that task's working-tree implementation), copied to
+`upstream-sync-task13-before.json`; the target has HEAD metadata `362bc39` and
+this working tree. These are quality comparisons, not timing/performance claims.
+Ignored reports live in `bench-results/`; logs are
+`/tmp/capy-task13-{focused,full-isolated,race-isolated,knowledge-final,dispatch-final,knowledge-vet,vet,build-final,quality,quality-comparison}.log`.
+
+The first attempt encountered a read-only default Go cache. Later environmental
+failures are retained in `full.log` and `race.log` under the same prefix:
+inherited user configuration changed unrelated vault import thresholds, and
+sandbox HTTP sockets were denied.
+Verification was rerun with the cache/config/socket settings above. An empty
+sandbox-created `/tmp/.git` also exposed an overbroad discovery assumption:
+empty `.git` directories are now treated as nonrepositories, matching Git;
+gitfile/HEAD candidates still require successful Git discovery.
+
+### Review and scope
+
+The [isolated review](.reviews/task-13-code-review-2026-10-11.md) approved the
+final code. Its P2 file-dispatch and P3 duplicate-cancellation findings were
+fixed and re-reviewed, with regression coverage. PAL was unavailable. No
+unresolved findings or new conventions require duplicate knowledge indexing;
+the decisions and evidence are documented here.
+
+Task 13 introduced no module upgrade, store migration, ranking change, vault
+format change or generated artifact change. Git command flags were verified
+against the installed version's manual after Context7 lacked version-specific
+coverage. CLI/CI rubric topics are N/A because no commands, flags or workflows
+were added. D2, opt-in descendant following, terminal commands and the final
+feature-wide benchmark/ADR work remain in their assigned later tasks.
+
+Optional editorial follow-up: `kk:clarify-docs` on `README.md` and
+`docs/architecture.md`; it is not an unfinished Task 13 requirement.
