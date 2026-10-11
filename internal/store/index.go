@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/serpro69/capy/internal/sanitize"
 )
@@ -31,6 +32,22 @@ func (e *SourceTooLargeError) Error() string {
 // and hash) is skipped; changed content replaces the old source.
 // kind must be a valid SourceKind (KindDurable or KindEphemeral).
 func (s *ContentStore) Index(content, label, contentType string, kind SourceKind) (*IndexResult, error) {
+	return s.indexContent(content, label, contentType, kind, "", nil)
+}
+
+// IndexFetched atomically indexes remote content and records when its body was
+// completely read and admitted. The caller captures validatedAt before conversion
+// or queueing; this operation never substitutes the commit time. Unchanged
+// content renews freshness without advancing indexed_at (retention age).
+func (s *ContentStore) IndexFetched(content, label, contentType string, kind SourceKind, validatedAt time.Time) (*IndexResult, error) {
+	validatedAtMS := validatedAt.UnixMilli()
+	if validatedAt.IsZero() || validatedAtMS <= 0 {
+		return nil, fmt.Errorf("invalid fetch validation timestamp")
+	}
+	return s.indexContent(content, label, contentType, kind, "", &validatedAtMS)
+}
+
+func (s *ContentStore) indexContent(content, label, contentType string, kind SourceKind, filePath string, validatedAtMS *int64) (*IndexResult, error) {
 	if !kind.Valid() {
 		return nil, fmt.Errorf("invalid source kind %q", kind)
 	}
@@ -50,7 +67,7 @@ func (s *ContentStore) Index(content, label, contentType string, kind SourceKind
 	// Chunk content before entering the transaction to minimize lock hold time.
 	chunks := chunkContent(content, contentType)
 
-	return s.indexPreparedChunks(content, label, contentType, kind, "", chunks)
+	return s.indexPreparedChunksChecked(s.ctx(), content, label, contentType, kind, filePath, chunks, nil, validatedAtMS)
 }
 
 // IndexWithFilePath indexes content like Index but records filePath in the
@@ -61,26 +78,7 @@ func (s *ContentStore) Index(content, label, contentType string, kind SourceKind
 // path) or already-sanitized content (the refreshStaleSources path) — both are
 // accepted because StripSecrets is idempotent.
 func (s *ContentStore) IndexWithFilePath(content, label, contentType string, kind SourceKind, filePath string) (*IndexResult, error) {
-	if !kind.Valid() {
-		return nil, fmt.Errorf("invalid source kind %q", kind)
-	}
-
-	if len(content) > s.maxSourceBytes {
-		return nil, &SourceTooLargeError{Size: len(content), Limit: s.maxSourceBytes}
-	}
-
-	if contentType == "" {
-		contentType = DetectContentType(content)
-	}
-
-	// Strip secrets before hashing, identical to Index. StripSecrets is
-	// idempotent, so passing already-sanitized content (the auto-refresh path)
-	// is a safe no-op that still produces the post-StripSecrets hash.
-	content = sanitize.StripSecrets(content)
-
-	chunks := chunkContent(content, contentType)
-
-	return s.indexPreparedChunks(content, label, contentType, kind, filePath, chunks)
+	return s.indexContent(content, label, contentType, kind, filePath, nil)
 }
 
 // IndexChunked indexes pre-chunked content into the knowledge base. The caller
@@ -105,12 +103,12 @@ func (s *ContentStore) IndexChunked(transcript, label, contentType string, kind 
 // pieces to store. filePath, when non-empty, marks the source file-backed for
 // stale detection; callers without a backing file pass "".
 func (s *ContentStore) indexPreparedChunks(content, label, contentType string, kind SourceKind, filePath string, chunks []Chunk) (*IndexResult, error) {
-	return s.indexPreparedChunksChecked(s.ctx(), content, label, contentType, kind, filePath, chunks, nil)
+	return s.indexPreparedChunksChecked(s.ctx(), content, label, contentType, kind, filePath, chunks, nil, nil)
 }
 
 // expected guards a refresh against deletion/replacement while its file was
 // read. A nil result with no error means that incarnation no longer exists.
-func (s *ContentStore) indexPreparedChunksChecked(ctx context.Context, content, label, contentType string, kind SourceKind, filePath string, chunks []Chunk, expected *fileSource) (*IndexResult, error) {
+func (s *ContentStore) indexPreparedChunksChecked(ctx context.Context, content, label, contentType string, kind SourceKind, filePath string, chunks []Chunk, expected *fileSource, validatedAtMS *int64) (*IndexResult, error) {
 	db, err := s.getDB()
 	if err != nil {
 		return nil, err
@@ -183,15 +181,27 @@ func (s *ContentStore) indexPreparedChunksChecked(ctx context.Context, content, 
 					return nil, fmt.Errorf("updating source file_path: %w", err)
 				}
 			}
-			if err := tx.Commit(); err != nil {
-				return nil, fmt.Errorf("committing transaction: %w", err)
-			}
-			return &IndexResult{
+			result := &IndexResult{
 				SourceID:       existingID,
 				Label:          label,
 				Kind:           kind,
 				AlreadyIndexed: true,
-			}, nil
+			}
+			if validatedAtMS != nil {
+				// Use retained metadata, not newly prepared chunks: dedup does
+				// not rechunk old content even if the chunker has changed.
+				if err := tx.QueryRowContext(ctx, `SELECT chunk_count, code_chunk_count, content_type FROM sources WHERE id = ?`, existingID).
+					Scan(&result.TotalChunks, &result.CodeChunks, &result.ContentType); err != nil {
+					return nil, fmt.Errorf("reading retained fetch metadata: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE sources SET fetch_validated_at_ms = ? WHERE id = ?`, *validatedAtMS, existingID); err != nil {
+					return nil, fmt.Errorf("renewing fetch validation: %w", err)
+				}
+			}
+			if err := tx.Commit(); err != nil {
+				return nil, fmt.Errorf("committing transaction: %w", err)
+			}
+			return result, nil
 		}
 		// Different content — delete old source + chunks.
 		if err := s.deleteSourceTx(tx, existingID); err != nil {
@@ -201,7 +211,8 @@ func (s *ContentStore) indexPreparedChunksChecked(ctx context.Context, content, 
 
 	// Insert source and chunks.
 	filePathArg := sql.NullString{String: filePath, Valid: filePath != ""}
-	res, err := tx.Stmt(s.stmtInsertSource).Exec(label, contentType, len(chunks), codeChunks, hash, kind, filePathArg, fileCheckSeq)
+	// Generic replacements bind NULL, clearing any previous remote validation.
+	res, err := tx.Stmt(s.stmtInsertSource).Exec(label, contentType, len(chunks), codeChunks, hash, kind, filePathArg, fileCheckSeq, validatedAtMS)
 	if err != nil {
 		return nil, fmt.Errorf("inserting source: %w", err)
 	}

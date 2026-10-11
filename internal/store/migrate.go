@@ -19,6 +19,7 @@ import (
 //   - 019_add_file_path: adds the nullable `file_path` column to the sources
 //     table, used by hash-based stale detection to re-index changed files.
 //   - 020_add_file_check_seq: persistent bounded-refresh scheduling and index.
+//   - 021_add_fetch_validated_at_ms: fetch freshness independent of retention.
 func applyMigrations(db *sql.DB) error {
 	if err := migrate017AddSourceKind(db); err != nil {
 		return fmt.Errorf("migration 017_add_source_kind: %w", err)
@@ -35,7 +36,38 @@ func applyMigrations(db *sql.DB) error {
 	if err := migrate020AddFileCheckSeq(db); err != nil {
 		return fmt.Errorf("migration 020_add_file_check_seq: %w", err)
 	}
+	if err := migrate021AddFetchValidatedAt(db); err != nil {
+		return fmt.Errorf("migration 021_add_fetch_validated_at_ms: %w", err)
+	}
 	return nil
+}
+
+func migrate021AddFetchValidatedAt(db *sql.DB) error {
+	tx, err := sqliteutil.BeginImmediate(db, "sources")
+	if err != nil {
+		return fmt.Errorf("begin immediate: %w", err)
+	}
+	defer tx.Rollback()
+	applied, err := migrationApplied(tx, "021_add_fetch_validated_at_ms")
+	if err != nil {
+		return err
+	}
+	if applied {
+		return tx.Commit()
+	}
+	hasColumn, err := sourcesHasColumn(tx, "fetch_validated_at_ms")
+	if err != nil {
+		return err
+	}
+	if !hasColumn {
+		if _, err := tx.Exec(`ALTER TABLE sources ADD COLUMN fetch_validated_at_ms INTEGER`); err != nil {
+			return fmt.Errorf("add fetch validation timestamp: %w", err)
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO migrations (name) VALUES ('021_add_fetch_validated_at_ms')`); err != nil {
+		return fmt.Errorf("record migration: %w", err)
+	}
+	return tx.Commit()
 }
 
 // The scheduling index belongs here, not schemaSQL: schemaSQL runs before

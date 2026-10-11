@@ -95,6 +95,8 @@ type SourceMeta struct {
 	ChunkCount int
 	IndexedAt  time.Time
 	Kind       SourceKind
+	// Nil for content that has not been validated by a successful fetch.
+	FetchValidatedAtMS *int64
 }
 
 // IndexResult is returned after indexing content.

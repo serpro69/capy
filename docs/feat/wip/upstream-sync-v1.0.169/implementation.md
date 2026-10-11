@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14 and 15 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14, 15 and 16a complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -672,6 +672,31 @@ reach the command rather than merely repeating a credential/open failure.
 Add nullable millisecond metadata and an atomic fetched-index operation. Carry each URL's timestamp from completed/admitted HTTP body read through conversion and serial indexing; generic indexing never renews it → verify: queue/lock delays do not restart freshness, out-of-order commits pair marker with their actual content, and expired/forced unchanged revalidation re-arms caching. Include kind transitions, failed fetch/index, no access renewal and accurate stored chunk counts.
 
 Keep `indexed_at` and retention semantics unchanged for identical content; do not reuse the existing stale-file timestamp updater. Old rows miss conservatively until revalidated → verify: old encrypted schema, repeated migrations, reopen, pre-change binary coexistence/downgrade and source replacement clearing an old marker. Extend ADR-013's freshness rationale. This is a complete default-cache correction before Task 16 adds per-call controls.
+
+Task 16a implementation notes (2026-10-11): migration 021 adds nullable
+`fetch_validated_at_ms`. `IndexFetched` uses the existing transaction and eager
+write lock to pair remote content, kind and its supplied body-validation time.
+New/replaced rows insert the marker; both same-hash branches renew it without
+changing `indexed_at`, and retrieve retained counts/type within that transaction.
+Generic dedup leaves the marker alone; generic replacement binds NULL. The
+common preparation helper preserves sanitization, source limits and chunking.
+
+The single and batch handlers capture time after body admission, before response
+cleanup, conversion and indexing. Their clock seam is fixed before concurrent
+use. A shared millisecond predicate rejects absent, invalid, future and expired
+markers. Unchanged responses report revalidation and retained sections; batch
+summaries count unchanged outcomes separately. HTML conversion failure now
+returns an error, ensuring failed transforms cannot create fresh cache entries.
+
+Tests cover expiry/force renewal, failures, kind transitions, retained metadata,
+out-of-order commits, delayed cleanup/queues, old encrypted schemas, migration
+rollback/concurrent opening, reopen, and actual ephemeral eviction after fresh
+validation. Real stdio checks reopen persisted cache entries. The optional
+`CAPY_TEST_OLD_BINARY` fixture was run against `c5a2f297`, verifying simultaneous
+old/new access, old dedup/replacement and later new validation. CLI and CI changes
+are N/A; tests inherit FTS5, synthetic-key and checkpoint conventions in
+`AGENTS.md`. No dependency upgrade, vault or generated-artifact change is needed.
+Task 16 still owns per-call TTL parsing and typed retry hints; Task 17 owns stats.
 
 ## 16. Fetch TTL and argument normalization
 

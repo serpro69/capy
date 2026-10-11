@@ -198,11 +198,12 @@ func TestMigration018_AddsSessionKindOnFreshDB(t *testing.T) {
 	assert.NoError(t, err, "kind='session' should be accepted after migration")
 
 	// Migrations table should exist with all migrations recorded
-	// (017 retroactively, 018 session kind, 019 file_path, 020 file_check_seq).
+	// (017 retroactively, 018 session kind, 019 file_path, 020 file_check_seq,
+	// 021 fetch_validated_at_ms).
 	var count int
 	err = db.QueryRow(`SELECT COUNT(*) FROM migrations`).Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 4, count, "all migrations should be recorded")
+	assert.Equal(t, 5, count, "all migrations should be recorded")
 }
 
 func TestMigration018_NoOpOnMigratedDB(t *testing.T) {
