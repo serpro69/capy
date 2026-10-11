@@ -929,6 +929,12 @@ sends SIGTERM to tracked background process groups.
 | `capy_search`          | Search indexed content. Multi-layer search: Porter stemming + trigram substring + fuzzy Levenshtein, fused with Reciprocal Rank Fusion. Defaults to durable + session sources; pass `include_kinds` to search ephemeral content. |
 | `capy_fetch_and_index` | Fetch a URL, convert HTML to markdown, index into the knowledge base, return a ~3 KB preview. Default ephemeral (24h TTL). Git platform issue/PR URLs are blocked with CLI redirect guidance.                                    |
 
+The `capy_search` `source` filter matches a literal substring of a knowledge
+label: `%`, `_`, and backslashes match themselves. For example,
+`source: "team_notes"` matches `docs:team_notes` but not `docs:teamXnotes`. An explicit
+source includes matching ephemeral entries and skips vault search. Selectors
+that previously relied on SQL wildcards must use a literal label fragment.
+
 ### Utility
 
 | Tool           | What It Does                                                                                                                                                                                                                       |
