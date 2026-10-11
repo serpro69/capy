@@ -131,6 +131,10 @@ func directoryArgs(args map[string]any) (knowledge.DirectoryOptions, error) {
 		return options, err
 	}
 	options.RespectGitignore = &respect
+	options.FollowSymlinks, err = boolArg(args, "follow_symlinks", false)
+	if err != nil {
+		return options, err
+	}
 	return options, options.Validate()
 }
 

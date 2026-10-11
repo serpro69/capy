@@ -16,11 +16,13 @@ type DirectoryOptions struct {
 	Include          []string
 	Exclude          []string
 	RespectGitignore *bool
+	FollowSymlinks   bool
 }
 
 type directorySelection struct {
 	maxDepth, maxFiles int
 	respectGitignore   bool
+	followSymlinks     bool
 	extensions         map[string]bool
 	include, exclude   []*regexp.Regexp
 }
@@ -32,7 +34,7 @@ func (o DirectoryOptions) Validate() error {
 }
 
 func (o DirectoryOptions) prepare() (directorySelection, error) {
-	s := directorySelection{maxDepth: 5, maxFiles: 200, respectGitignore: true}
+	s := directorySelection{maxDepth: 5, maxFiles: 200, respectGitignore: true, followSymlinks: o.FollowSymlinks}
 	if o.MaxDepth != nil {
 		s.maxDepth = *o.MaxDepth
 	}

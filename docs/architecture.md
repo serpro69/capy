@@ -127,8 +127,9 @@ open; the atomic checked-file handoff remains deferred issue D2.
 
 `IndexPath` dispatches files and directories after validating all traversal
 controls. `directory.go` walks a canonical root in lexical order, preserving the
-requested root spelling for descendant Read-policy checks too. It skips descendant
-symlinks and prunes nested Git roots even when ignores are disabled. Each directory
+requested root spelling for descendant Read-policy checks too. Descendant
+symlinks are skipped unless `follow_symlinks` is enabled; nested Git roots are
+pruned even when ignores are disabled. Each directory
 is incrementally enumerated within the 20,000-entry request allowance before
 sorting; a directory that exhausts the allowance is not partly processed in
 filesystem order. Maximum depth defaults to 5 (root depth 0) and file attempts to
@@ -144,13 +145,25 @@ variables. Empty `.git` directories are not discovery candidates; gitfiles or
 directories containing `HEAD` are, and failed Git calls remain visible errors.
 Worktree discovery never changes capy's selected project, credentials or store.
 
+Opt-in following admits only targets inside the canonical ingestion root. The
+walker checks mandatory exclusions and Read policy on aliases and targets,
+including canonical ancestors that a link would otherwise jump over. Selection
+patterns, labels and file-backed refresh paths use canonical targets. Git sees
+the link entry under its physical parent and the canonical target, never a
+descendant spelling through a directory symlink. Nested Git markers are checked
+before Git queries. Both traversal depth and canonical depth obey the cap.
+Request-local canonical path maps stop cycles and deduplicate file attempts;
+directories denied through one alias can be retried through another admissible
+path, within the shared entry allowance. Dangling/unresolvable links are visible
+operational failures. D2's concurrent replacement limitation remains.
+
 Directory sources use canonical absolute paths or `prefix:relative/path` labels.
 The store's normal label/hash deduplication and stale-refresh scheduling apply;
 there is no implicit deletion of vanished/excluded files. `DirectoryResult`
 separates committed progress, raw reads, attempts, skips/denies, limits and bounded
 failure details. Limits are incomplete successes; operational errors and
-cancellation become tool errors while preserving committed files. Descendant
-symlink following remains Task 13a; terminal entry points remain Tasks 14–15.
+cancellation become tool errors while preserving committed files. Terminal entry
+points remain Tasks 14–15.
 
 ### Bounded stale refresh
 

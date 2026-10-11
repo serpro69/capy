@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a and 13 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13 and 13a complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -544,6 +544,30 @@ admission/freshness ADR and feature-wide performance comparison remain Task 20.
 Add the opt-in path with canonical target selection, cycle/alias dedup and both alias/target mandatory-exclusion and prepared-policy checks → verify: innocent aliases to ignored/denied/credential targets remain excluded, and links stay in the canonical root and its selected worktree.
 
 Git checks a symlink entry itself and canonical target paths, never a path descending lexically through a directory symlink → verify: reproduce Git's `beyond a symbolic link` failure with a raw alias spelling, then prove ingestion uses the canonical path and honors its ignores. Check prefixed labels, overlapping aliases, nested Git targets, dangling links and all inherited budgets. A broken opt-in must not silently downgrade to unfiltered following.
+
+Task 13a implementation notes (2026-10-11): `DirectoryOptions.FollowSymlinks`
+and the MCP `follow_symlinks` boolean enable descendant following; omission
+preserves skipping. The walker carries canonical targets separately from alias
+spellings, including aliases under both the requested and canonical root.
+Canonical ancestors retain mandatory/user exclusions, Read checks and nested
+Git boundaries even when a link jumps directly to a deep file. Both canonical
+and traversal depth obey the existing cap. Git receives physical-parent link
+entries and canonical targets, never directory-link descendant spellings.
+
+Request-local path maps deduplicate file attempts and directory enumeration.
+A directory with alias-specific denies or operational failures remains eligible
+through another path; all repeated enumeration still consumes the shared entry
+budget. A later shallower visit may traverse previously depth-limited descendants.
+Target labels and stored backing paths remain canonical, so unchanged reruns and
+stale refresh keep their existing identity. Broken links are operational partial
+errors; external/nested targets are intentional skips. D2 remains deferred.
+
+Tests reproduce the real Git alias-descendant error and verify ignored/tracked
+targets, canonical selection, root aliases, denied ancestors, cycles, dedup,
+limits, cancellation and strict booleans through real stdio. CLI and CI rubric
+topics are N/A: no commands, flags or workflows change. Task 14 will expose the
+shared option in terminal indexing; build/test conventions remain in `AGENTS.md`.
+No dependency upgrade, migration or generated-artifact change is required.
 
 ## 14. CLI indexing
 
