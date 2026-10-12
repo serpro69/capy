@@ -369,7 +369,20 @@ capy uses TOML configuration with three-level precedence (lowest to highest):
 
 [server]
 # log_level = "info"                # "debug", "info", "warn", "error"
+
+[search]
+# window_ms = 60000                  # integer, 1000–3600000 ms
+# taper_after = 3                    # integer, 1 <= taper_after < block_after
+# block_after = 8                    # integer, <= 10000
 ```
+
+Search fields merge by presence at each configuration layer. Invalid scalar
+values fail in the file that supplies them, even if a later layer overrides
+them; the taper/block relationship is validated after the complete merge.
+The MCP server captures this policy at construction. Its shared `capy_search`
+counter tapers/blocks strictly after the thresholds and resets at or after the
+configured window. A clock seam tests the exact boundary without sleeps.
+See [README configuration](README.md#configuration) for caller-visible behavior.
 
 `store.key_file` is presence-aware: omission inherits; `""` clears a lower layer. Only the path belongs in TOML. Normal knowledge access selects that file, owner dotenv, distinct main-worktree dotenv, then the inherited environment. See [README project credentials](README.md#project-credentials) for exact formats, limits, ownership, and failure behavior, and [migration/rollback](README.md#upgrade-and-credential-migration) before regenerating old wrappers. Configuration errors stop target selection; doctor continues independent diagnostics.
 

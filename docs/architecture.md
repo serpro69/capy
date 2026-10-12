@@ -76,6 +76,18 @@ Both search tools validate `all_projects` before vault access, and knowledge
 search validates it before advancing the throttle, including knowledge-only
 requests and explicit `project: "*"` selectors.
 
+`capy_search` captures `[search]` policy at server construction. Its mutex protects
+reset and increment together, returning one admission-time snapshot for both
+enforcement and every valid response's budget notice. Defaults are a 60,000 ms
+window, taper after 3 calls and block after 8; reset occurs at or after expiry.
+The effective per-query limit is at most two, one after taper and zero when
+blocked. Validation precedes accounting and storage, including supplied array
+types, nonblank queries, selectors and positive integral limits. Invalid calls
+consume no budget; empty/error/partial results from valid requests do.
+All callers of one MCP server share the counter. Per-agent isolation remains
+[D1](feat/wip/upstream-sync-v1.0.169/upstream-audit.md#d1-per-agent-search-budgets).
+Neither the terminal knowledge search nor vault-only MCP search uses this budget.
+
 The retrieval engine is corpus-agnostic (`internal/retrieval`, ADR-028): the same
 two-layer RRF / rerank / entity-boost pipeline runs over any `Corpus` — the knowledge
 store's `chunks`/`chunks_trigram` tables and the vault's `vault_chunks`/`vault_chunks_trigram`

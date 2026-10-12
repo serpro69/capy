@@ -251,11 +251,31 @@ max_output_bytes = 102400  # 100 KB
 [server]
 log_level = "info"
 
+[search]
+window_ms = 60000          # shared MCP search window (1000–3600000 ms)
+taper_after = 3            # later calls return at most one result/query
+block_after = 8            # later calls are blocked until reset
+
 [vault]
 min_session_bytes = 0      # minimum size for new archives; 0 disables
 ```
 
 Configuration files are optional; knowledge access still requires a [credential](#encryption). Invalid configuration stops knowledge commands instead of selecting a default database. `capy doctor` reports the configuration failure and continues independent checks.
+
+The `[search]` integers require `1 <= taper_after < block_after <= 10000`.
+Omitted fields inherit lower-priority settings; explicit zero, wrong types and
+out-of-range values fail loading. Restart the MCP server after changes.
+The budget is shared by every caller of that server, including child agents;
+raising the thresholds does not create separate agent budgets. With defaults,
+calls 1–3 return at most two hits per query, calls 4–8 at most one, and call 9
+onward is blocked until the 60-second window resets. A smaller requested `limit`
+is honored. Every valid response reports its call count, effective limit,
+untapered/unblocked calls left and reset time as measured when admitted, including
+empty, partial and blocked results. Invalid requests consume no budget:
+malformed arrays, blank queries, non-string selectors and nonpositive/fractional
+limits now return errors instead of being coerced or ignored. Serialized string
+arrays and positive integer numeric strings remain accepted. This budget applies
+to `capy_search`; terminal `capy search` and `capy_vault_search` are unaffected.
 
 > **Caution with git and the knowledge DB.** SQLite WAL sidecar files (`.db-wal`, `.db-shm`) are created when the DB is written to during a session. capy flushes the WAL on session close automatically, but the files only get cleaned up if the session actually wrote to the DB. If you see stale WAL files (e.g., after upgrading capy or after an unclean shutdown), run `capy checkpoint` to flush them manually. If you want to commit the DB to git (e.g., to share across machines), run `capy checkpoint` first — it flushes the WAL into the main file and removes the sidecar files.
 

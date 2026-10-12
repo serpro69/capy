@@ -48,6 +48,12 @@ func validate(cfg *Config) error {
 	if cfg.Store.Cleanup.SessionTTLDays < 1 {
 		return fmt.Errorf("[store.cleanup] session_ttl_days must be >= 1 (use capy_cleanup purge_session=true for one-shot aggressive purging)")
 	}
+	if cfg.Search.WindowMS < 1000 || cfg.Search.WindowMS > 3600000 {
+		return fmt.Errorf("[search] window_ms must be between 1000 and 3600000")
+	}
+	if cfg.Search.TaperAfter < 1 || cfg.Search.TaperAfter >= cfg.Search.BlockAfter || cfg.Search.BlockAfter > 10000 {
+		return fmt.Errorf("[search] must satisfy 1 <= taper_after < block_after <= 10000")
+	}
 	return nil
 }
 
@@ -79,6 +85,26 @@ func loadAndMerge(cfg *Config, path string) error {
 	if detect.Store.Cleanup.SessionTTLDays != nil && *detect.Store.Cleanup.SessionTTLDays < 1 {
 		return fmt.Errorf("[store.cleanup] session_ttl_days must be >= 1 (use capy_cleanup purge_session=true for one-shot aggressive purging)")
 	}
+	// Validate each supplied scalar even if a later file would override it.
+	// The relationship between thresholds is checked only after all layers merge.
+	for _, field := range []struct {
+		name      string
+		value     *int
+		target    *int
+		low, high int
+	}{
+		{"window_ms", detect.Search.WindowMS, &cfg.Search.WindowMS, 1000, 3600000},
+		{"taper_after", detect.Search.TaperAfter, &cfg.Search.TaperAfter, 1, 9999},
+		{"block_after", detect.Search.BlockAfter, &cfg.Search.BlockAfter, 2, 10000},
+	} {
+		if field.value == nil {
+			continue
+		}
+		if *field.value < field.low || *field.value > field.high {
+			return fmt.Errorf("[search] %s must be between %d and %d", field.name, field.low, field.high)
+		}
+		*field.target = *field.value
+	}
 
 	mergeConfig(cfg, &overlay)
 	// An explicit empty path clears a lower-priority credential file.
@@ -99,6 +125,11 @@ func loadAndMerge(cfg *Config, path string) error {
 // "user omitted the key", which the zero-value merge in mergeConfig can't do.
 // Keys needing zero-rejection or an explicit zero override appear here.
 type detectionOverlay struct {
+	Search struct {
+		WindowMS   *int `toml:"window_ms"`
+		TaperAfter *int `toml:"taper_after"`
+		BlockAfter *int `toml:"block_after"`
+	} `toml:"search"`
 	Vault struct {
 		MinSessionBytes *int64 `toml:"min_session_bytes"`
 	} `toml:"vault"`

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/store"
@@ -22,20 +21,28 @@ import (
 const federationRRFK = 60.0
 
 const (
-	searchWindowDuration  = 60 * time.Second
-	searchMaxResultsAfter = 3 // after 3 calls: 1 result per query
-	searchBlockAfter      = 8 // after 8 calls: refuse
-	searchMaxTotalBytes   = 40 * 1024
-	searchSnippetMaxLen   = 1500
+	searchMaxTotalBytes = 40 * 1024
+	searchSnippetMaxLen = 1500
 )
 
 func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
+	for _, name := range []string{"query", "source", "project"} {
+		if raw, present := args[name]; present {
+			if _, ok := raw.(string); !ok {
+				return errorResult(fmt.Sprintf("invalid parameter %q: expected a string", name)), nil
+			}
+		}
+	}
 
 	// Normalize: accept both queries (array) and query (string)
 	var queryList []string
 	if raw, ok := args["queries"]; ok {
-		queryList = coerceStringArray(raw)
+		var err error
+		queryList, err = stringArrayArg(raw, "queries")
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
 	}
 	if len(queryList) == 0 {
 		if q := req.GetString("query", ""); q != "" {
@@ -45,11 +52,26 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if len(queryList) == 0 {
 		return errorResult("Error: provide query or queries."), nil
 	}
+	for _, query := range queryList {
+		if strings.TrimSpace(query) == "" {
+			return errorResult("Error: queries must not be blank."), nil
+		}
+	}
 
-	limit := int(req.GetFloat("limit", 3))
+	limit, err := searchLimitArg(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 	source := req.GetString("source", "")
 
-	includeKinds, err := parseIncludeKinds(args["include_kinds"])
+	var kinds []string
+	if raw, present := args["include_kinds"]; present {
+		kinds, err = stringArrayArg(raw, "include_kinds")
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+	}
+	includeKinds, err := parseIncludeKinds(kinds)
 	if err != nil {
 		return errorResult("Error: " + err.Error()), nil
 	}
@@ -58,22 +80,16 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return errorResult(err.Error()), nil
 	}
 
-	// Progressive throttling (atomic check+reset+increment)
-	callNum, windowAge := s.throttle.advance(searchWindowDuration)
-
-	if callNum > searchBlockAfter {
-		text := fmt.Sprintf(
-			"BLOCKED: %d search calls in %ds. You're flooding context. STOP making individual search calls. Use batch_execute(commands, queries) for your next research step.",
-			callNum, int(windowAge.Seconds()),
-		)
-		return s.trackToolResponse("capy_search", errorResult(text)), nil
+	budget := s.throttle.advance(limit)
+	respond := func(text string, isError bool) (*mcp.CallToolResult, error) {
+		result := textResult(text + "\n\n" + budget.notice())
+		result.IsError = isError
+		return s.trackToolResponse("capy_search", result), nil
 	}
-
-	// Determine effective limit based on throttle level
-	effectiveLimit := min(limit, 2)
-	if callNum > searchMaxResultsAfter {
-		effectiveLimit = 1
+	if budget.limit == 0 {
+		return respond("BLOCKED: shared search budget exhausted. Wait for reset or use batch_execute(commands, queries) for your next research step.", true)
 	}
+	effectiveLimit := budget.limit
 
 	st := s.getStore()
 
@@ -127,17 +143,13 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		vaultCanServe, availabilityErr = vlt.HasSessionsInProject(ctx, vaultProject, vaultProjectPath)
 	}
 	if kbEmpty && !vaultCanServe && availabilityErr == nil {
-		return s.trackToolResponse("capy_search", &mcp.CallToolResult{
-			Content: []mcp.Content{mcp.NewTextContent(
-				"The knowledge base is empty — nothing has been indexed yet.\n\n" +
-					"To populate it, use:\n" +
-					"  • capy_batch_execute(commands, queries) — run commands, auto-index output, and search in one call\n" +
-					"  • capy_fetch_and_index(url) — fetch a URL, index it, then search with capy_search\n" +
-					"  • capy_index(content, source) — manually index text content\n\n" +
-					"After indexing, capy_search becomes available for follow-up queries.",
-			)},
-			IsError: true,
-		}), nil
+		return respond(
+			"The knowledge base is empty — nothing has been indexed yet.\n\n"+
+				"To populate it, use:\n"+
+				"  • capy_batch_execute(commands, queries) — run commands, auto-index output, and search in one call\n"+
+				"  • capy_fetch_and_index(url) — fetch a URL, index it, then search with capy_search\n"+
+				"  • capy_index(content, source) — manually index text content\n\n"+
+				"After indexing, capy_search becomes available for follow-up queries.", true)
 	}
 
 	var sections []string
@@ -236,14 +248,6 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 	output := strings.Join(sections, "\n\n---\n\n")
 
-	// Add throttle warning
-	if callNum >= searchMaxResultsAfter {
-		output += fmt.Sprintf(
-			"\n\n⚠ search call #%d/%d in this window. Results limited to %d/query. Batch queries: search(queries: [\"q1\",\"q2\",\"q3\"]) or use batch_execute.",
-			callNum, searchBlockAfter, effectiveLimit,
-		)
-	}
-
 	// Vault session messaging (design §D7, replaces the stale knowledge.db
 	// session-exclusion copy): when a session-scoped search comes back empty,
 	// name the command that makes sessions searchable — CAPY_VAULT_KEY when the
@@ -286,7 +290,7 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 	}
 
-	return s.trackToolResponse("capy_search", textResult(output)), nil
+	return respond(output, false)
 }
 
 // federateHits RRF-merges the knowledge and vault ranked lists for one query

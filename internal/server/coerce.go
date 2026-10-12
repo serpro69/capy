@@ -114,6 +114,66 @@ func coerceStringArray(val any) []string {
 	}
 }
 
+// stringArrayArg preserves serialized-array compatibility without dropping
+// malformed members or treating a supplied null as an omitted parameter.
+func stringArrayArg(raw any, name string) ([]string, error) {
+	invalid := fmt.Errorf("invalid parameter %q: expected an array of strings", name)
+	if encoded, ok := raw.(string); ok {
+		if err := json.Unmarshal([]byte(encoded), &raw); err != nil {
+			return nil, invalid
+		}
+	}
+	switch values := raw.(type) {
+	case []string:
+		return values, nil
+	case []any:
+		valuesOut := make([]string, len(values))
+		for i, value := range values {
+			s, ok := value.(string)
+			if !ok {
+				return nil, invalid
+			}
+			valuesOut[i] = s
+		}
+		return valuesOut, nil
+	default:
+		return nil, invalid
+	}
+}
+
+// searchLimitArg checks before conversion and applies the existing two-hit cap.
+// Numeric strings remain supported, but invalid values cannot consume budget.
+func searchLimitArg(args map[string]any) (int, error) {
+	raw, present := args["limit"]
+	if !present {
+		return 2, nil
+	}
+	invalid := fmt.Errorf("invalid parameter %q: expected a positive integer", "limit")
+	var n float64
+	switch v := raw.(type) {
+	case int:
+		n = float64(v)
+	case int64:
+		n = float64(v)
+	case float64:
+		n = v
+	case json.Number:
+		return searchLimitArg(map[string]any{"limit": string(v)})
+	case string:
+		var err error
+		n, err = strconv.ParseFloat(v, 64)
+		if err != nil {
+			return 0, invalid
+		}
+	default:
+		return 0, invalid
+	}
+	if math.IsNaN(n) || math.IsInf(n, 0) || n < 1 || math.Trunc(n) != n {
+		return 0, invalid
+	}
+	return int(min(n, 2)), nil
+}
+
 // CommandInput represents a single command in a batch_execute request.
 type CommandInput struct {
 	Label   string `json:"label"`
