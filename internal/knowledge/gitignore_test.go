@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -139,7 +140,10 @@ func TestDirectoryGitIgnoreBatches(t *testing.T) {
 	directoryFiles(t, root, map[string]string{".gitignore": "*.md\n"})
 	fixtureGit(t, root, "init", "-q")
 	for n := 0; n < 3*gitBatchSize; n++ {
-		writeFile(t, filepath.Join(root, strings.Repeat("x", n/200+1)+string(rune(0x100+n))+".md"), "ignored")
+		// Unicode case/normalization variants may name the same file on macOS.
+		// A unique ASCII prefix preserves all entries and Unicode path coverage.
+		name := strconv.Itoa(n) + "-" + string(rune(0x100+n)) + ".md"
+		writeFile(t, filepath.Join(root, name), "ignored")
 	}
 	out, err := i.IndexDirectory(t.Context(), root, "", DirectoryOptions{})
 	if err != nil || !out.Complete || out.Attempts != 0 || out.Skipped != 3*gitBatchSize+2 {
