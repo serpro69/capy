@@ -1,33 +1,62 @@
 #!/usr/bin/env bash
 
-# Wrapper that locates and runs the capy binary.
-# Used as a Claude Code hook — hook events must always exit 0 to avoid phantom hook
-# errors. Every other subcommand execs the binary so its real exit code propagates
-# (a pre-commit checkpoint must be able to fail the commit).
-# See: https://github.com/serpro69/claude-toolbox/issues/57
-
+# Go resolves knowledge credentials; vault credentials stay environment-only.
 set -uo pipefail
 
-# Go resolves knowledge credentials for the selected project. Vault credentials
-# must already be present in the launch environment.
+codex_hook=false
+codex_pretool=false
+if [ "${1:-}" = "hook" ]; then
+  previous=""
+  for arg in "$@"; do
+    if [ "$arg" = "--platform=codex" ] || { [ "$previous" = "--platform" ] && [ "$arg" = "codex" ]; }; then codex_hook=true; fi
+    if [ "$arg" = "pretooluse" ]; then codex_pretool=true; fi
+    previous="$arg"
+  done
+fi
 
-for p in "$(command -v capy 2>/dev/null || true)" "$HOME/.local/bin/capy" "/opt/homebrew/bin/capy" "/usr/local/bin/capy" "$HOME/go/bin/capy" "capy"; do
-  if [ -n "$p" ] && [ -x "$p" ]; then
-    # Hook events must always exit 0; every other subcommand execs the binary so
-    # its real exit code reaches the caller.
-    if [ "${1:-}" = "hook" ]; then
-      "$p" "$@" || true
-      exit 0
-    fi
-    exec "$p" "$@"
+p=""
+for candidate in "$(command -v capy 2>/dev/null || true)" "$HOME/.local/bin/capy" "/opt/homebrew/bin/capy" "/usr/local/bin/capy" "$HOME/go/bin/capy" "capy"; do
+  if [ -n "$candidate" ] && [ -f "$candidate" ] && [ -x "$candidate" ]; then
+    p="$candidate"
+    break
   fi
 done
+capy_run() {
+  "$@" <&0 &
+  capy_child=$!
+  trap 'kill -TERM "$capy_child" 2>/dev/null; wait "$capy_child"; exit 143' TERM
+  trap 'kill -INT "$capy_child" 2>/dev/null; wait "$capy_child"; exit 130' INT
+  trap 'kill -HUP "$capy_child" 2>/dev/null; wait "$capy_child"; exit 129' HUP
+  wait "$capy_child"
+  capy_status=$?
+  trap - TERM INT HUP
+  return "$capy_status"
+}
+if [ -n "$p" ]; then
+  if [ "$codex_hook" = true ]; then
+    capy_run "$p" "$@"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      echo "capy: Codex hook binary failed; install/upgrade capy or repair configuration from an external terminal and rerun capy setup --platform codex" >&2
+      if [ "$codex_pretool" = true ]; then exit 2; fi
+    fi
+    exit "$status"
+  fi
+  if [ "${1:-}" = "hook" ]; then
+    "$p" "$@" || true
+    exit 0
+  fi
+  exec "$p" "$@"
+fi
 
-# capy not found. Hook events still exit 0 (deny the tool use); every other
-# subcommand fails loud so callers — the pre-commit hook especially — can react.
+if [ "$codex_hook" = true ]; then
+  echo "capy: Codex hook binary not found; install/upgrade capy from an external terminal and rerun capy setup --platform codex" >&2
+  if [ "$codex_pretool" = true ]; then exit 2; fi
+  exit 127
+fi
 if [ "${1:-}" = "hook" ]; then
   jq -n --arg reason "capy binary not found" \
-  	'{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}'
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}'
   exit 0
 fi
 

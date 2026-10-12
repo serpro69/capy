@@ -474,7 +474,7 @@ func TestSetupCodex(t *testing.T) {
 	configToml, err := os.ReadFile(filepath.Join(dir, ".codex", "config.toml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(configToml), "[mcp_servers.capy]")
-	assert.Contains(t, string(configToml), codexWrapperRelPath)
+	assert.Contains(t, string(configToml), codexLaunchVersion)
 	assert.Contains(t, string(configToml), `env_vars = ["CAPY_DB_KEY", "CAPY_VAULT_KEY"]`)
 
 	// Verify .gitignore has .capy/** and AGENTS.md exception
@@ -531,12 +531,12 @@ func TestMergeCodexMCPServer_NewFile(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
 
-	require.NoError(t, mergeCodexMCPServer(configPath))
+	require.NoError(t, mergeCodexMCPServer(configPath, testCodexOwnerID))
 
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "[mcp_servers.capy]")
-	assert.Contains(t, string(data), codexWrapperRelPath)
+	assert.Contains(t, string(data), codexLaunchVersion)
 	assert.Contains(t, string(data), `env_vars = ["CAPY_DB_KEY", "CAPY_VAULT_KEY"]`)
 }
 
@@ -547,7 +547,7 @@ func TestMergeCodexMCPServer_PreservesExisting(t *testing.T) {
 	existing := "#:schema https://developers.openai.com/codex/config-schema.json\nmodel = \"gpt-5.5\"\n\n[features]\ncodex_hooks = true\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(existing), 0o644))
 
-	require.NoError(t, mergeCodexMCPServer(configPath))
+	require.NoError(t, mergeCodexMCPServer(configPath, testCodexOwnerID))
 
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
@@ -562,10 +562,10 @@ func TestMergeCodexMCPServer_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
 
-	existing := "model = \"gpt-5.5\"\n\n[mcp_servers.capy]\ncommand = \"bash\"\nargs = [\".codex/scripts/capy.sh\", \"serve\"]\nenv_vars = [\"CAPY_DB_KEY\", \"CAPY_VAULT_KEY\"]\n"
+	existing := "model = \"gpt-5.5\"\n\n" + codexMCPBlock(testCodexOwnerID)
 	require.NoError(t, os.WriteFile(configPath, []byte(existing), 0o644))
 
-	require.NoError(t, mergeCodexMCPServer(configPath))
+	require.NoError(t, mergeCodexMCPServer(configPath, testCodexOwnerID))
 
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
@@ -580,7 +580,7 @@ func TestMergeCodexMCPServer_UpdatesStaleBlock(t *testing.T) {
 	stale := "model = \"gpt-5.5\"\n\n[mcp_servers.capy]\ncommand = \"bash\"\nargs = [\".codex/scripts/capy.sh\", \"serve\"]\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(stale), 0o644))
 
-	require.NoError(t, mergeCodexMCPServer(configPath))
+	require.NoError(t, mergeCodexMCPServer(configPath, testCodexOwnerID))
 
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
@@ -598,7 +598,7 @@ func TestMergeCodexMCPServer_UpdatesStaleBlock_PreservesFollowing(t *testing.T) 
 	stale := "[mcp_servers.capy]\ncommand = \"bash\"\nargs = [\".codex/scripts/capy.sh\", \"serve\"]\nenv_vars = [\"CAPY_DB_KEY\"]\n\n[mcp_servers.other]\ncommand = \"node\"\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(stale), 0o644))
 
-	require.NoError(t, mergeCodexMCPServer(configPath))
+	require.NoError(t, mergeCodexMCPServer(configPath, testCodexOwnerID))
 
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
@@ -607,7 +607,7 @@ func TestMergeCodexMCPServer_UpdatesStaleBlock_PreservesFollowing(t *testing.T) 
 	assert.Contains(t, content, "[mcp_servers.other]", "should preserve following section")
 	assert.Contains(t, content, `command = "node"`, "should preserve following section content")
 
-	require.NoError(t, mergeCodexMCPServer(configPath))
+	require.NoError(t, mergeCodexMCPServer(configPath, testCodexOwnerID))
 	data, err = os.ReadFile(configPath)
 	require.NoError(t, err)
 	assert.Equal(t, content, string(data), "should be idempotent after upgrading the env_vars list")
@@ -649,7 +649,7 @@ func TestWriteCapyWrapper(t *testing.T) {
 	assert.Contains(t, content, `"/usr/local/bin/capy"`)
 	assert.Contains(t, content, `"$HOME/go/bin/capy"`)
 	assert.Contains(t, content, "command -v capy", "should use POSIX command -v, not which")
-	assert.Contains(t, content, "capy not found")
+	assert.Contains(t, content, "binary not found")
 	assert.Contains(t, content, "jq -n --arg reason \"capy binary not found\"")
 	assert.Contains(t, content, "{hookSpecificOutput: {hookEventName: \"PreToolUse\", permissionDecision: \"deny\", permissionDecisionReason: $reason}}")
 

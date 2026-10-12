@@ -31,6 +31,7 @@ func main() {
 	root.AddCommand(
 		newServeCmd(),
 		newHookCmd(),
+		newCodexLaunchCmd(),
 		newSetupCmd(),
 		newDoctorCmd(),
 		newCleanupCmd(),

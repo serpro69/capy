@@ -55,9 +55,9 @@ var wholeFileArtifacts = []struct {
 // mergeArtifact is a file `capy setup` merges its entry into rather than
 // overwriting. Re-running merge against the committed file must be a no-op.
 type mergeArtifact struct {
-	path    string           // repo-relative path to the committed artifact
+	path    string             // repo-relative path to the committed artifact
 	merge   func(string) error // the setup function that upserts capy's entry
-	genName string           // merge-function symbol, named in the failure message
+	genName string             // merge-function symbol, named in the failure message
 }
 
 // jsonMergeArtifacts are compared as parsed maps, so key ordering / whitespace
@@ -70,7 +70,7 @@ var jsonMergeArtifacts = []mergeArtifact{
 // textMergeArtifacts preserve surrounding formatting and are a no-op when the
 // committed content already matches the generator, so they are compared byte-wise.
 var textMergeArtifacts = []mergeArtifact{
-	{".codex/config.toml", mergeCodexMCPServer, "mergeCodexMCPServer"},
+	{".codex/config.toml", mergeCommittedCodexMCP, "mergeCodexMCPServer"},
 	{"CLAUDE.md", ensureClaudeMDImport, "ensureClaudeMDImport"},
 }
 
@@ -87,6 +87,11 @@ var exemptSetupPaths = map[string]string{
 
 // TestGeneratedWholeFileArtifacts: committed file must equal its generator output.
 func TestGeneratedWholeFileArtifacts(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRootFromPkg, codexOwnerRelPath))
+	require.NoError(t, err)
+	id, err := parseCodexOwner(data)
+	require.NoError(t, err)
+	assert.Equal(t, codexOwnerContent(id), string(data), "parameterized owner marker drift")
 	for _, a := range wholeFileArtifacts {
 		got, err := os.ReadFile(filepath.Join(repoRootFromPkg, a.path))
 		require.NoError(t, err, "reading committed %s", a.path)
@@ -151,7 +156,7 @@ func TestMergedArtifactsAreIdempotent(t *testing.T) {
 // contributor could add a new generated file and the drift guard would silently
 // fail to cover it — the exact regression these tests exist to prevent.
 func TestDriftGuardCoversEverySetupArtifact(t *testing.T) {
-	covered := map[string]bool{".gitignore": true}
+	covered := map[string]bool{".gitignore": true, codexOwnerRelPath: true}
 	for _, a := range wholeFileArtifacts {
 		covered[a.path] = true
 	}
@@ -258,4 +263,16 @@ func mustReadJSONMap(t *testing.T, path string) map[string]any {
 	var m map[string]any
 	require.NoError(t, json.Unmarshal(data, &m))
 	return m
+}
+
+func mergeCommittedCodexMCP(path string) error {
+	data, err := os.ReadFile(filepath.Join(repoRootFromPkg, codexOwnerRelPath))
+	if err != nil {
+		return err
+	}
+	id, err := parseCodexOwner(data)
+	if err != nil {
+		return err
+	}
+	return mergeCodexMCPServer(path, id)
 }

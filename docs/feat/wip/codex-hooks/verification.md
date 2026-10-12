@@ -1,7 +1,7 @@
 # Codex hooks verification record
 
 > Updated: 2026-10-12
-> Current scope: Task 1 implementation checks; installed/live acceptance remains pending
+> Current scope: Tasks 1–2 implementation checks; live host acceptance remains pending
 > Design: [design.md](design.md) · Dispositions: [review-resolution.md](review-resolution.md)
 
 ## Design-stage evidence
@@ -202,3 +202,61 @@ host approximate-token estimates and model-visible previews.
 - [ ] Both trust gates, actual hook delivery and parent/child observation lifecycle.
 - [ ] Actual mixed-installation startup byte measurements and toolbox follow-up link.
 - [ ] Required FTS5/race/artifact checks and implementation review dispositions.
+
+## Task 2: portable owner and supervised launch
+
+Task 2 adds the versioned `.codex/capy-owner` marker, the common bootstrap and
+`capy codex-launch`. Marker publication uses an exclusive hard link from a
+complete temporary file so concurrent creators cannot observe an empty marker.
+Setup preserves the winning ID and refuses to recreate missing live markers.
+The read-only inspector checks every physical ancestor, beyond Git boundaries,
+and validates decoded hook/inline-hook/MCP-alias bindings against their adjacent
+markers. Duplicate JSON keys, malformed structures, nonregular/symlink inputs,
+oversized files and failed reads are rejected. Configuration JSON preserves
+numeric metadata and bounds nesting to 128 levels.
+
+MCP and synthetic hook bindings resolve the same explicit project owner. The
+bootstrap runs the installed binary before any project wrapper. Shell and Go
+supervision preserve stdin, MCP stdout/status, and signal delivery; Codex
+PreToolUse infrastructure failures block with exit 2 and repair diagnostics.
+Claude's existing hook exit behavior remains covered by its wrapper tests.
+Hook registration itself is Task 3; child events and diagnostics remain pending.
+
+| Check | Result |
+|---|---|
+| Full platform suite, including marker concurrency, decoded/escaped bindings, setup validation and generated-artifact guards | Passed |
+| `TestCodexLaunchLocations` | Passed: root, ordinary subdirectory with unrelated config, paths with spaces, moved tree, sibling linked worktree, non-Git command-only fixture |
+| `TestCodexMCPLaunchLocations` | Passed: initialize, tools/list, shell `pwd`, and harmless indexing with a synthetic key; owner cwd and external configured storage verified for each location |
+| `TestCodexCopiedOwnerMissingMarker` | Passed: same-Git-tree copy with both bindings, either outer binding alone, and escaped equivalent strings; exit 2/diagnostic MCP failure before sentinel wrappers or state changes |
+| `TestCodexOverlappingLaunches` | Passed: distinct/copied IDs, both commands, then missing outer wrapper and marker; no wrapper, observation, or DB side effects |
+| Bootstrap/wrapper failure tests | Passed: missing/older/crashed binaries, missing/symlink/crashed wrapper, outside-tree cwd, invalid owner, successful exit-0 denial |
+| Controlled file-boundary tests | Passed: injected unreadable config/wrapper and wrapper disappearance after readable-regular validation; supervisor observes launch status 127, which the tested pre-tool supervision maps to 2 |
+| Stdin and cancellation | Passed: byte-identical stdin including NUL, serve status 42, outer-bootstrap SIGTERM reaps final process |
+| Focused `-tags fts5 -race -count=1` | Passed for platform/adapter/hook; also passed for Codex CLI/platform launch fixtures |
+| `go vet -tags fts5 ./internal/platform ./cmd/capy` and diff whitespace checks | Passed |
+
+All hook probes use isolated configuration and no database keys. MCP probes use
+synthetic credentials only. These are installed-command subprocess tests, not
+proof of host discovery/trust/event delivery; non-Git automatic discovery remains
+unverified. No search, indexing, chunking or executor implementation changed, so
+quality benchmarks are not required. The TOML merge uses the existing pinned
+parser's [v2.2.4 syntax API](https://github.com/pelletier/go-toml/blob/v2.2.4/unstable/parser.go)
+to preserve unrelated text and avoid confusing table-like strings/comments with
+real table headers; no module versions changed.
+
+The full `go test -tags fts5 -count=1 ./...` run used an empty temporary
+`XDG_CONFIG_HOME`, synthetic keys, and local socket access. Every package passed
+except the same two `TestFetchStatsRejectedURLs` mapped-IPv4 assertions already
+reproduced on the pre-feature baseline in Task 1. This remains a known unrelated
+failure, not a green full-suite claim. The CLI package passed (including its
+existing vault fixtures with isolated global configuration).
+
+The PAL external-review attempt failed because its configured Gemini API key was
+rejected. The independent code-review agent supplies the isolated review.
+
+The isolated review found a process-group cleanup gap after a wrapper exited:
+a descendant could remain running. Completion now cleans the group as well as
+signal/cancellation paths; both successful and failed wrapper exits have a
+regression test. Final focused CLI/platform launch and artifact checks passed
+with `-race`, and the complete platform race suite passed after accepting valid
+empty/comment-only TOML. See the [Task 2 review record](.reviews/task-2-code-review-2026-10-12.md).
