@@ -91,6 +91,57 @@ func TestIndexFileLifecycle(t *testing.T) {
 	}
 }
 
+func TestIndexCancellationAfterCommit(t *testing.T) {
+	for _, mode := range []string{"file", "directory"} {
+		for _, unchanged := range []bool{false, true} {
+			name := mode + "/new"
+			if unchanged {
+				name = mode + "/unchanged"
+			}
+			t.Run(name, func(t *testing.T) {
+				i, st, project := testIndexer(t, 0, "")
+				root := filepath.Join(project, "docs")
+				directoryFiles(t, root, map[string]string{"note.md": "committedmarker survives cancellation"})
+				path, label := filepath.Join(root, "note.md"), "kept"
+				if mode == "directory" {
+					label = "kept:note.md"
+				}
+				if unchanged {
+					if _, err := i.IndexFile(t.Context(), path, label); err != nil {
+						t.Fatal(err)
+					}
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				write := i.indexContent
+				i.indexContent = func(content, source, path string) (*store.IndexResult, error) {
+					result, err := write(content, source, path)
+					cancel() // Deterministic boundary: real store commit has completed.
+					return result, err
+				}
+				if mode == "file" {
+					out, err := i.IndexFile(ctx, path, label)
+					if !errors.Is(err, context.Canceled) || out.Result == nil || out.Result.AlreadyIndexed != unchanged {
+						t.Fatalf("late cancellation lost committed result: %+v, %v", out, err)
+					}
+				} else {
+					out, err := i.IndexDirectory(ctx, root, "kept", DirectoryOptions{})
+					if !errors.Is(err, context.Canceled) || out.Complete || out.Indexed+out.Unchanged != 1 || out.Chunks != 1 || out.Attempts != 1 || out.BytesIndexed == 0 || (out.Unchanged == 1) != unchanged {
+						t.Fatalf("late cancellation lost partial progress: %+v, %v", out, err)
+					}
+				}
+				if err := st.Close(); err != nil {
+					t.Fatal(err)
+				}
+				meta, err := st.GetSourceMeta(label)
+				if err != nil || meta == nil || meta.ChunkCount != 1 {
+					t.Fatalf("committed data not readable after reopen: %+v, %v", meta, err)
+				}
+			})
+		}
+	}
+}
+
 func TestIndexFileAdmission(t *testing.T) {
 	for _, name := range []string{"empty", "limit", "oversize", "missing", "directory", "fifo", "device", "denied", "alias-denied", "nil-policy", "relative-escape", "absolute-external"} {
 		t.Run(name, func(t *testing.T) {

@@ -72,6 +72,7 @@ func TestShellPolicyNestedDenyBeforeSpawn(t *testing.T) {
 		{"newline", "echo ok\nblocked arg"},
 		{"substitution", `echo "$(blocked arg)"`},
 		{"heredoc", "cat <<EOF\n$(blocked arg)\nEOF"},
+		{"array expansion", `values=($(blocked arg))`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			command := ": > " + marker + "; " + tc.command
@@ -85,4 +86,21 @@ func TestShellPolicyNestedDenyBeforeSpawn(t *testing.T) {
 	result := callTool(t, srv, map[string]any{"language": "shell", "code": "cat <<'EOF'\n$(blocked literal)\nEOF"})
 	require.False(t, result.IsError, resultText(result))
 	assert.Contains(t, resultText(result), "$(blocked literal)")
+}
+
+func TestEmbeddedArgvAndArrayDataExecute(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := newTestServer(t, []security.SecurityPolicy{{Deny: []string{"Bash(blocked:*)"}}})
+	result := callTool(t, srv, map[string]any{"language": "shell", "code": `values=(blocked); printf '%s' "${values[0]}"`})
+	require.False(t, result.IsError, resultText(result))
+	assert.Contains(t, resultText(result), "blocked")
+	if srv.executor.Runtimes()["python"] == "" {
+		t.Skip("python runtime unavailable")
+	}
+	result = callTool(t, srv, map[string]any{"language": "python", "code": "import subprocess\nsubprocess.run([\"printf\", \"%s\", \"foo(\"], check=True)"})
+	require.False(t, result.IsError, resultText(result))
+	assert.Contains(t, resultText(result), "foo(")
+	result = callTool(t, srv, map[string]any{"language": "python", "code": "import subprocess\nsubprocess.run([\"bash\", \"-c\", \"blocked arg\"])"})
+	require.True(t, result.IsError)
+	assert.Contains(t, resultText(result), "Bash(blocked:*)")
 }

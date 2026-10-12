@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/serpro69/capy/internal/store"
@@ -246,6 +247,12 @@ func TestSearchCLI(t *testing.T) {
 			path := filepath.Join(project, fmt.Sprintf("note-%03d.md", i))
 			writeCLIKeyFixture(t, path, "refreshedorchard current contents")
 			if _, err := st.IndexWithFilePath("old contents", path, "", store.KindDurable, path); err != nil {
+				t.Fatal(err)
+			}
+			// Ensure this file is newer than its second-resolution indexed_at,
+			// even when a slow/race-enabled seed crosses a second boundary.
+			future := time.Now().Add(time.Minute)
+			if err := os.Chtimes(path, future, future); err != nil {
 				t.Fatal(err)
 			}
 		}

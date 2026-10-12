@@ -62,6 +62,13 @@ func TestFetchFreshnessOldBinaryCompatibility(t *testing.T) {
 	project := stdioProject(t)
 	const key = "synthetic-fetch-old-reader-key-12345"
 	const label = "compatibility|https://example.com/reference"
+	oldCommand := stdioCommand{executable: bin, args: []string{"serve", "--project-dir", project}, dir: t.TempDir(), env: stdioEnv(t, key), secrets: []string{key}}
+	// Create a real pre-migration encrypted database before the new store opens.
+	old := startStdioProcess(t, oldCommand)
+	old.initialize(t)
+	old.tool(t, "capy_index", map[string]any{"content": "quokka compatibility marker", "source": label})
+	old.close(t)
+	stdioCheckpointed(t, project)
 	s := store.NewContentStore(filepath.Join(project, "knowledge.db"), project, 0, 0, store.WithEncryptionKey(key, "test"))
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
@@ -72,7 +79,7 @@ func TestFetchFreshnessOldBinaryCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Keep the new connection open while the old binary reads and writes.
-	p := startStdioProcess(t, stdioCommand{executable: bin, args: []string{"serve", "--project-dir", project}, dir: t.TempDir(), env: stdioEnv(t, key), secrets: []string{key}})
+	p := startStdioProcess(t, oldCommand)
 	p.initialize(t)
 	text := p.tool(t, "capy_search", map[string]any{"queries": []any{"quokka compatibility"}, "source": label})
 	if !strings.Contains(text, "quokka") {
@@ -112,9 +119,13 @@ func TestFetchFreshnessOldBinaryCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A fresh old process can still read the database after the new writer closes.
-	command := stdioCommand{executable: bin, args: []string{"search", "--project-dir", project, "--source", label, "wombat"}, dir: t.TempDir(), env: stdioEnv(t, key)}
-	out, stderr, code := runKnowledgeCLI(t, command)
-	if code != 0 || !strings.Contains(out, "wombat") {
-		t.Fatalf("old reader after reopen: exit %d, %s, %s", code, out, stderr)
+	// Use MCP so this also covers releases from before the knowledge search CLI.
+	old = startStdioProcess(t, oldCommand)
+	old.initialize(t)
+	text = old.tool(t, "capy_search", map[string]any{"queries": []any{"wombat"}, "source": label})
+	if !strings.Contains(text, "wombat") {
+		t.Fatalf("old reader after reopen missed replacement: %s", text)
 	}
+	old.close(t)
+	stdioCheckpointed(t, project)
 }

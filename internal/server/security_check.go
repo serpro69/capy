@@ -26,19 +26,19 @@ func (s *Server) checkDenyPolicy(command string) *mcp.CallToolResult {
 // checkNonShellDenyPolicy extracts shell commands from non-shell code and
 // checks each against deny policies. Scanner failures block execution.
 func (s *Server) checkNonShellDenyPolicy(code, language string) *mcp.CallToolResult {
-	commands := security.ExtractShellCommands(code, language)
+	commands := security.ExtractEmbeddedCommands(code, language)
 	if len(commands) == 0 {
 		return nil
 	}
 	for _, cmd := range commands {
-		decision, err := security.EvaluateCommandDenyOnly(cmd, s.security)
+		decision, err := security.EvaluateEmbeddedCommandDenyOnly(cmd, s.security)
 		if err != nil {
 			return errorResult(fmt.Sprintf("Embedded shell command blocked: %v", err))
 		}
 		if decision.Decision == "deny" {
 			return errorResult(fmt.Sprintf(
-				"Command blocked by security policy: embedded shell command %q matches deny pattern %s",
-				cmd, decision.MatchedPattern,
+				"Command blocked by security policy: embedded shell command matches deny pattern %s",
+				decision.MatchedPattern,
 			))
 		}
 	}

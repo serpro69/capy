@@ -294,8 +294,9 @@ fails; a search does not certify that all backing files were just checked.
 retrieval, and MCP search, batch and intent paths pass their context. The existing
 contextless method remains a wrapper for library callers. Separate processes may
 duplicate a bounded check; the active-pass guard is per store, not cross-process.
-Directory ingestion uses these bounds; terminal knowledge search remains Task 15 in the
-[current sync](feat/wip/upstream-sync-v1.0.169/tasks.md).
+Directory ingestion and terminal knowledge search use these same bounds. See
+[ADR-035](adr/035-fetch-validation-and-bounded-stale-checks.md) for the separate
+validation, retention and scheduling clocks and downgrade behavior.
 
 ### Schema
 
@@ -475,6 +476,9 @@ temporary path. Cwd overrides do not change the selected project's database,
 captured knowledge credential, policy anchors or vault search scope. They never
 mutate the parent process cwd or environment.
 
+[ADR-033](adr/033-execution-cwd-and-project-identity.md) records the execution
+directory/project-identity split and its module-discovery compatibility cost.
+
 ### Sandbox Protections
 
 - **Process group isolation** (`Setpgid`) — kills entire process tree on cleanup
@@ -564,8 +568,9 @@ interpolation and language-specific escaping cannot change the admitted target.
 The server does not reload settings mid-session. Denied or invalid-policy stale
 reads are logged and skipped while preserving cached content. There remains a
 check/open replacement race (feature audit D2); this is not an OS sandbox.
-Hook payload-cwd selection remains pending Task 5 in the
-[current sync](feat/wip/upstream-sync-v1.0.169/tasks.md).
+Hooks select the project before loading settings and use independently validated
+payload cwd for cwd-relative rules. The prepared-policy and explicit-grant rationale is recorded in
+[ADR-034](adr/034-prepared-read-rules-and-execute-file-admission.md).
 
 ### SSRF Protection
 
@@ -1080,7 +1085,7 @@ full selected body; raw view still opens the containing archive. Both build
 variants use the same policy. No stored bytes, schema, reader/index version,
 global FTS output or text/Markdown export changed, so reopening existing archives
 needs no reimport/reindex. Frozen synthetic outputs and the real-corpus digest
-gate establish this compatibility; see the [feature verification](feat/wip/codex-vault-viewer/verification.md).
+gate establish this compatibility; see the [feature verification](feat/done/codex-vault-viewer/verification.md).
 
 A collapsed result renders as a **focusable openable marker**, the same `]`/`[` +
 `enter` mechanism subagent launch points use. Markers are *role-dispatched* at the
@@ -1380,12 +1385,16 @@ Five content types (`markdown`, `json`, `plaintext`, `transcript`, `curated`) wi
 
 ```bash
 make bench                                   # runs both perf and quality
+make bench BENCH_COUNT=1 BENCH_TIME=1x         # one-sample performance smoke + full quality
 make bench-perf                              # testing.B benchmarks → bench-results/{branch}.txt
 make bench-quality                           # quality benchmarks → bench-results/{branch}.json
 make bench-compare BASE=main TARGET=feature  # benchstat + qualstat side by side
 ```
 
 Quality benchmarks skip under `go test ./...` (gated by `CAPY_BENCH_RESULTS` env var).
+Performance defaults remain six samples with a one-second benchmark duration.
+Single-iteration smoke results do not establish statistically significant timing
+changes; use repeated focused samples for comparisons.
 
 ### qualstat
 

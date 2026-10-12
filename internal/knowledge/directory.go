@@ -146,6 +146,12 @@ func (i *Indexer) IndexDirectory(ctx context.Context, path, source string, optio
 		directories: make(map[string]int), files: make(map[string]bool),
 	}
 	w.walk(ctx, root, requested, 0)
+	// Store writes and final metadata reads can finish after cancellation.
+	// Preserve committed progress, but never describe that scan as complete.
+	if err := ctx.Err(); err != nil && !errors.Is(w.err, err) {
+		out.fail(root, err)
+		w.err = errors.Join(w.err, err)
+	}
 	out.Complete = w.err == nil && len(out.Limits) == 0
 	return out, w.err
 }
@@ -477,6 +483,10 @@ func (w *directoryWalk) indexFile(ctx context.Context, path, alias string) {
 	} else {
 		w.out.Indexed++
 		w.out.Chunks += out.Result.TotalChunks
+	}
+	if err := ctx.Err(); err != nil {
+		w.fail(path, err)
+		w.stopped = true
 	}
 }
 

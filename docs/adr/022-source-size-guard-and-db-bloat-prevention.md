@@ -5,6 +5,38 @@
 **Amends:** ADR-011 (conservative cleanup policy), ADR-017 (source-kind separation)
 **Issue:** [#43](https://github.com/serpro69/capy/issues/43)
 
+## Amendment: admission limits versus stored expansion (2026-10-12)
+
+The historical estimates below are not a universal bound on chunk or database
+size. The source limit bounds admitted content, while sanitization, JSON
+escaping/pretty-printing and overlap can expand stored bytes. Plaintext chunking
+now enforces 4,096 bytes on every strategy and fallback, preserving UTF-8 for
+valid input. Markdown paragraphs/fences and structured JSON leaves can still
+exceed it; splitting those representations remains deferred as
+[D4](../feat/wip/upstream-sync-v1.0.169/upstream-audit.md#d4-markdown-and-structured-json-leaf-chunk-limits).
+Same-hash sources are not rechunked automatically; explicit eviction/reindex is
+the repair path. The approximate 8 MB trigram estimate is not a storage ceiling.
+
+Shared file ingestion and stale refresh additionally cap actual raw reads at
+`max_source_bytes + 1`, including growth after stat, before sanitization. The
+extra byte detects overflow; partial/oversized content is never indexed. Directory
+ingestion counts failed/unchanged/probe bytes against a 32 MiB request allowance,
+and bounds entries, depth and file attempts. Refresh has its own smaller bounded
+pass ([ADR-035](035-fetch-validation-and-bounded-stale-checks.md)). These admission
+guards complement the central store gate without replacing it.
+
+Batch provenance is part of the admitted source payload. Its 81,920-byte response
+budget bounds displayed JSON, not stored content; admission errors never silently
+truncate command output. Oversized-source cleanup still measures stored chunk
+bytes, so expansion may make an admitted source eligible for explicit cleanup.
+Vault transcripts remain owned by the separate vault (ADR-027), not the historical
+knowledge-session sweep discussed below.
+
+The original decision follows for historical context; this amendment qualifies
+its per-chunk and worst-case storage claims. Evidence is in the upstream-sync
+[design](../feat/wip/upstream-sync-v1.0.169/design.md#52-plaintext-byte-limits--r2)
+and [verification](../feat/wip/upstream-sync-v1.0.169/verification.md).
+
 ## Context
 
 `knowledge.db` grew to 88 MB with only 125 sources / 1572 chunks. Investigation revealed the bloat came from three compounding factors:

@@ -57,6 +57,8 @@ func TestShellPolicyHookDecisions(t *testing.T) {
 	policies := []security.SecurityPolicy{{Deny: []string{"Bash(blocked:*)"}, Ask: []string{"Bash(confirm:*)"}, Allow: []string{"Bash(echo:*)"}}}
 	for _, tc := range []struct{ name, command, action string }{
 		{"nested deny", `echo "$(blocked arg)"`, "deny"},
+		{"array data passes", `values=(blocked)`, ""},
+		{"array expansion denied", `values=($(blocked arg))`, "deny"},
 		{"heredoc expansion deny", "cat <<EOF\n$(blocked arg)\nEOF", "deny"},
 		{"matched ask", "echo ok; confirm arg", "ask"},
 		{"unmatched ask passes", "echo ok; unknown arg", ""},
@@ -69,6 +71,26 @@ func TestShellPolicyHookDecisions(t *testing.T) {
 				assert.Nil(t, output)
 			} else {
 				assert.Equal(t, tc.action, parseResult(t, output)["action"])
+			}
+		})
+	}
+}
+
+func TestHookEmbeddedArgv(t *testing.T) {
+	for _, tc := range []struct{ name, code, action string }{
+		{"literal", `subprocess.run(["printf", "%s", "foo("])`, ""},
+		{"literal deny", `subprocess.run(["blocked", "foo("])`, "deny"},
+		{"literal ask", `subprocess.run(["confirm", "foo("])`, "ask"},
+		{"actual shell", `subprocess.run(["bash", "-c", "blocked arg"])`, "deny"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policies := []security.SecurityPolicy{{Deny: []string{"Bash(blocked:*)"}, Ask: []string{"Bash(confirm:*)"}}}
+			out, err := checkCodeSecurity(tc.code, "python", policies, &testAdapter{})
+			require.NoError(t, err)
+			if tc.action == "" {
+				assert.Nil(t, out)
+			} else {
+				assert.Equal(t, tc.action, parseResult(t, out)["action"])
 			}
 		})
 	}
