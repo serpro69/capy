@@ -1,26 +1,44 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/scripts/session-start.sh\"",
-            "additionalContextLimit": 10000
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
-        "matcher": "Bash",
         "hooks": [
           {
-            "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/scripts/pretooluse-bash.sh\""
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/scripts/pretooluse-bash.sh\"",
+            "type": "command"
           }
-        ]
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "command": "bash '-c' 'set -uo pipefail\np=\"\"\nfor candidate in \"$(command -v capy 2\u003e/dev/null || true)\" \"$HOME/.local/bin/capy\" \"/opt/homebrew/bin/capy\" \"/usr/local/bin/capy\" \"$HOME/go/bin/capy\" \"capy\"; do\n  if [ -n \"$candidate\" ] \u0026\u0026 [ -f \"$candidate\" ] \u0026\u0026 [ -x \"$candidate\" ]; then\n    p=\"$candidate\"\n    break\n  fi\ndone\ncapy_run() {\n  \"$@\" \u003c\u00260 \u0026\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\nif [ -z \"$p\" ]; then\n  echo \"capy: launcher binary not found; install/upgrade capy from an external terminal, then rerun capy setup --platform codex\" \u003e\u00262\n  status=127\nelse\n  capy_run \"$p\" codex-launch \"$1\" \"$2\" \"$3\"\n  status=$?\nfi\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; repair the reported installation or install/upgrade capy, then rerun capy setup --platform codex from the intended project\" \u003e\u00262\n  if [ \"$2\" = \"hook\" ] \u0026\u0026 [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v1' 'd54275171f475eb00dbb2e4f0bb33489' 'hook' 'pretooluse'",
+            "type": "command"
+          }
+        ],
+        "matcher": "^(Bash|mcp__[^[:space:]]+__capy_(execute|execute_file|batch_execute|fetch_and_index|index|search|vault_search|stats|doctor|cleanup))$"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "additionalContextLimit": 10000,
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/scripts/session-start.sh\"",
+            "type": "command"
+          }
+        ],
+        "matcher": "startup|resume"
+      },
+      {
+        "hooks": [
+          {
+            "command": "bash '-c' 'set -uo pipefail\np=\"\"\nfor candidate in \"$(command -v capy 2\u003e/dev/null || true)\" \"$HOME/.local/bin/capy\" \"/opt/homebrew/bin/capy\" \"/usr/local/bin/capy\" \"$HOME/go/bin/capy\" \"capy\"; do\n  if [ -n \"$candidate\" ] \u0026\u0026 [ -f \"$candidate\" ] \u0026\u0026 [ -x \"$candidate\" ]; then\n    p=\"$candidate\"\n    break\n  fi\ndone\ncapy_run() {\n  \"$@\" \u003c\u00260 \u0026\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\nif [ -z \"$p\" ]; then\n  echo \"capy: launcher binary not found; install/upgrade capy from an external terminal, then rerun capy setup --platform codex\" \u003e\u00262\n  status=127\nelse\n  capy_run \"$p\" codex-launch \"$1\" \"$2\" \"$3\"\n  status=$?\nfi\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; repair the reported installation or install/upgrade capy, then rerun capy setup --platform codex from the intended project\" \u003e\u00262\n  if [ \"$2\" = \"hook\" ] \u0026\u0026 [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v1' 'd54275171f475eb00dbb2e4f0bb33489' 'hook' 'sessionstart'",
+            "type": "command"
+          }
+        ],
+        "matcher": "^.*$"
       }
     ]
   }

@@ -1,7 +1,7 @@
 # Codex hooks verification record
 
 > Updated: 2026-10-12
-> Current scope: Tasks 1–2 implementation checks; live host acceptance remains pending
+> Current scope: Tasks 1–3 implementation checks; live host acceptance remains pending
 > Design: [design.md](design.md) · Dispositions: [review-resolution.md](review-resolution.md)
 
 ## Design-stage evidence
@@ -177,30 +177,30 @@ host approximate-token estimates and model-visible previews.
 
 ## Pending implementation acceptance
 
-- [ ] Stable owner marker, bound hook/MCP argv and shared config/marker preflight
+- [x] Stable owner marker, bound hook/MCP argv and shared config/marker preflight
   before any project wrapper; correct explicit project owner.
-- [ ] Root, ordinary subdirectory, move, spaces and sibling-worktree launches.
-- [ ] Non-Git command resolution labelled separately from unverified host discovery.
-- [ ] Two-owner/copy/missing-owner rejection before policy, evidence or DB effects.
-- [ ] Combined copied-ID/missing-outer-marker fixture within one Git repository,
+- [x] Root, ordinary subdirectory, move, spaces and sibling-worktree launches.
+- [x] Non-Git command resolution labelled separately from unverified host discovery.
+- [x] Two-owner/copy/missing-owner rejection before policy, evidence or DB effects.
+- [x] Combined copied-ID/missing-outer-marker fixture within one Git repository,
   both configs retained: pre-tool exit 2 with repair stderr, MCP diagnostic
   failure with no protocol stdout, neither wrapper invoked, no policy/state/DB
   access. Repeat with only either outer binding and equivalent escaped strings.
 - [ ] Bounded config decoding, invalid/unreadable/symlink input rejection, valid
   unrelated config support and setup/runtime/doctor agreement.
-- [ ] Missing/unreadable/vanished-wrapper and outside-tree bootstrap failures:
+- [x] Missing/unreadable/vanished-wrapper and outside-tree bootstrap failures:
   exit exactly 2 plus nonempty repair text for PreToolUse.
-- [ ] Binary failure/recovery, including a collaborator without capy; exit-0
+- [x] Binary failure/recovery, including a collaborator without capy; exit-0
   structured denials remain distinct from infrastructure failures.
-- [ ] Synthetic-credential MCP initialization, tools/list and harmless call from
+- [x] Synthetic-credential MCP initialization, tools/list and harmless call from
   root and an ordinary subdirectory; hooks separately work without keys.
-- [ ] Launcher preserves event stdin, MCP stdout/status and cancellation/signal
+- [x] Launcher preserves event stdin, MCP stdout/status and cancellation/signal
   delivery without leaving a server process behind.
-- [ ] Ask denial identifies matched pattern/source, preserves later-deny priority
+- [x] Ask denial identifies matched pattern/source, preserves later-deny priority
   and does not turn an unmatched default ask into a denial.
 - [ ] Startup/child context budget, omitted limit fields and live no-spill result.
 - [ ] Both trust gates, actual hook delivery and parent/child observation lifecycle.
-- [ ] Actual mixed-installation startup byte measurements and toolbox follow-up link.
+- [x] Actual mixed-installation startup byte measurements and toolbox follow-up link.
 - [ ] Required FTS5/race/artifact checks and implementation review dispositions.
 
 ## Task 2: portable owner and supervised launch
@@ -260,3 +260,98 @@ signal/cancellation paths; both successful and failed wrapper exits have a
 regression test. Final focused CLI/platform launch and artifact checks passed
 with `-race`, and the complete platform race suite passed after accepting valid
 empty/comment-only TOML. See the [Task 2 review record](.reviews/task-2-code-review-2026-10-12.md).
+
+
+## Task 3: main-session registration and coexistence
+
+`SetupCodex` now installs exactly one owned SessionStart and PreToolUse handler.
+Startup matches every source, including `fork`; the anchored pre-tool matcher
+covers canonical Bash and the ten registered capy tools under alternate MCP
+server aliases. No owned handler sets `additionalContextLimit`. The installed
+MCP tools/list probe also checks every real registered tool against the installed
+matcher. Task 2's launch fixtures now use actual setup-produced hook definitions
+instead of adding synthetic bindings after setup.
+
+The merge validates decoded structure and canonical ownership before writing.
+It preserves unrelated groups, mixed-group siblings, top-level/group metadata,
+large numeric metadata, inline hooks and external scripts; owned duplicates are
+collapsed. An emptied group carrying unknown metadata remains as an empty
+no-op group so that metadata is not discarded. Mismatched IDs, unsupported
+versions, invalid/missing handler types and malformed JSON remain untouched.
+Hooks-file metadata is validated independently of TOML's MCP-server schema.
+Both JSON and TOML mergers reject results exceeding the launch inspector's
+1 MiB read limit before writing.
+
+The mixed inline-TOML fixture found that the pinned parser panics when a populated
+map containing nested array tables is reused for decoding. MCP merge validation
+now uses a fresh map. This is covered by setup with inline hooks and an explicitly
+disabled hooks feature; both remain intact. No dependency was upgraded.
+
+Setup describes registration separately from activation: project-layer trust
+and review/trust of exact definitions in `/hooks` are both required. It retains
+platform defaults, explicit feature settings, and trust records. The wording and
+configuration shape were checked against the
+[official hook reference](https://learn.chatgpt.com/docs/hooks); live host delivery
+and trust verification remain Task 6.
+
+### Measured mixed startup fixture
+
+`TestCodexMixedStartupContext` runs the actual committed toolbox startup script
+and the installed capy hook in an isolated Git project. It includes a synthetic
+`.claude/CLAUDE.extra.md`, verifies provider/extra instructions remain in output,
+and measures decoded UTF-8 `additionalContext` bytes. These are emitted subprocess
+payloads, not host-observed model context or proof of no spilling.
+
+| Content | Startup/resume bytes | Fork bytes |
+|---|---:|---:|
+| Generated `.capy/AGENTS.md` file | 9,500 | Not read by toolbox |
+| Capy content injected by toolbox (trailing newline trimmed by shell) | 9,499 | 0 |
+| Complete toolbox payload, including provider/fixture extras | 9,889 | 0 |
+| Owned capy startup payload | 3,304 | 3,304 |
+| Combined emitted payloads | 13,193 | 3,304 |
+
+The capy-related portion on startup/resume is 12,803 bytes (9,499 + 3,304),
+compared with the design-stage 12,740-byte projection that used the older Claude
+runtime block and untrimmed file size. Capy's own payload remains within 4,096
+bytes. The toolbox handler retains its original matcher and context-limit field.
+This deliberate duplication remains until the
+[claude-toolbox follow-up](implementation.md#claude-toolbox-enhancement-pr).
+No upstream issue/PR exists yet, and this task neither submits that change nor
+claims the duplicate content has been removed.
+
+### Checks
+
+- Full platform tests, including `TestCodexHookMatchers`,
+  `TestCodexHookContextConfiguration`, `TestMergeCodexHooks`,
+  `TestSetupCodexHooks` and all three generated-artifact guards: passed.
+- CLI Codex-only/default-both setup and mixed startup/resume/fork subprocess
+  fixtures: passed, using isolated configuration and no database credentials.
+- Platform/adapter/hook race checks: passed.
+- `go vet -tags fts5 ./cmd/capy ./internal/platform`: passed.
+- Whitespace validation uses
+  `git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab diff --check`:
+  passed. The local `indent-with-non-tab` Git setting flags the generator's
+  existing two-space JSON convention; no global/repository setting was changed.
+
+Child lifecycle, platform doctor changes and live host acceptance remain pending.
+No search/indexing/chunking/executor implementation changed; benchmarks are not
+required for this slice.
+
+The focused Codex CLI/setup/launch suite passed with `-race` (13.948s). The final
+missing-type, owner-binding, and actual MCP-tool matcher checks also passed with
+`-race`. Both independent code reviewers approved without findings; see the
+[Task 3 review record](.reviews/task-3-code-review-2026-10-12.md). PAL was unavailable
+because of its rejected configured key, so a second isolated reviewer completed
+that side of the review. No trust activation or external issue/PR was performed.
+
+Task 3's full `go test -tags fts5 -count=1 ./...` run also completed with the
+isolated configuration and synthetic credentials. Every package passed except
+the same two baseline mapped-IPv4 `TestFetchStatsRejectedURLs` assertions. The
+changed platform/CLI behavior passed its suites and focused final reruns; no
+additional failure appeared. The full suite is therefore still qualified by
+that existing server-fixture issue, rather than reported as fully green.
+
+Tasks 2 and 3 are complete as separate commits. The implementation stayed within
+the plan; additional care was needed for process-group cleanup, empty TOML,
+reused TOML array-table maps and preserving numeric/duplicate-key semantics.
+Those cases now have regression coverage. Tasks 4–6 remain pending.

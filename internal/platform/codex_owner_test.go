@@ -71,7 +71,7 @@ func TestCodexOwnerMarker(t *testing.T) {
 		owners, err := InspectCodexOwners(dir)
 		require.NoError(t, err)
 		require.Len(t, owners, 1)
-		require.Len(t, owners[0].Bindings, 1)
+		require.Len(t, owners[0].Bindings, 1+len(codexHookEvents))
 	})
 }
 

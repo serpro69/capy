@@ -129,7 +129,12 @@ func inspectCodexDirectory(project string, read codexFileReader) (CodexOwner, er
 		if err != nil || root == nil {
 			return owner, fmt.Errorf("invalid %s: expected a configuration object (%v)", path, err)
 		}
-		bindings, err := codexConfigBindings(root, path)
+		var bindings []CodexBinding
+		if name == "hooks.json" {
+			bindings, err = codexHookBindings(root, path)
+		} else {
+			bindings, err = codexConfigBindings(root, path)
+		}
 		if err != nil {
 			return owner, err
 		}
@@ -146,7 +151,7 @@ func inspectCodexDirectory(project string, read codexFileReader) (CodexOwner, er
 	return owner, nil
 }
 
-func codexConfigBindings(root map[string]any, source string) ([]CodexBinding, error) {
+func codexHookBindings(root map[string]any, source string) ([]CodexBinding, error) {
 	var bindings []CodexBinding
 	if raw, exists := root["hooks"]; exists {
 		hooks, ok := raw.(map[string]any)
@@ -177,13 +182,12 @@ func codexConfigBindings(root map[string]any, source string) ([]CodexBinding, er
 					if !ok {
 						return nil, fmt.Errorf("%s: handler must be an object", source)
 					}
-					if rawType, exists := handler["type"]; exists {
-						if _, ok := rawType.(string); !ok {
-							return nil, fmt.Errorf("%s: handler type must be a string", source)
-						}
+					handlerType, ok := handler["type"].(string)
+					if !ok || handlerType == "" {
+						return nil, fmt.Errorf("%s: handler type must be a nonempty string", source)
 					}
 					command, hasCommand := handler["command"]
-					if !hasCommand && handler["type"] != "command" {
+					if !hasCommand && handlerType != "command" {
 						continue
 					}
 					text, ok := command.(string)
@@ -204,6 +208,14 @@ func codexConfigBindings(root map[string]any, source string) ([]CodexBinding, er
 				}
 			}
 		}
+	}
+	return bindings, nil
+}
+
+func codexConfigBindings(root map[string]any, source string) ([]CodexBinding, error) {
+	bindings, err := codexHookBindings(root, source)
+	if err != nil {
+		return nil, err
 	}
 	if raw, exists := root["mcp_servers"]; exists {
 		servers, ok := raw.(map[string]any)
