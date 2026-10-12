@@ -14,6 +14,16 @@ import (
 
 const testCodexOwnerID = "0123456789abcdef0123456789abcdef"
 
+// Codex persists this metadata beside inline hook event arrays in config.toml.
+const codexHookStateFixture = `[hooks.state."/fixture/project/.codex/hooks.json:pre_tool_use:0:0"]
+enabled = true
+trusted_hash = "fixture-trusted-hash"
+
+[hooks.state."capy-codex-launch-v99"]
+enabled = false
+trusted_hash = "opaque-host-metadata"
+`
+
 func writeCodexFixture(t *testing.T, dir, rel, text string) {
 	t.Helper()
 	path := filepath.Join(dir, rel)
@@ -76,8 +86,14 @@ func TestCodexOwnerMarker(t *testing.T) {
 }
 
 func TestCodexOwnerBindings(t *testing.T) {
+	command, err := json.Marshal(codexHookCommand(testCodexOwnerID, "pretooluse"))
+	require.NoError(t, err)
+	inlineHook := "[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype='command'\ncommand=" + string(command) + "\n"
 	for _, tc := range []struct{ name, file, content, want string }{
 		{"MCP", "config.toml", codexMCPBlock(testCodexOwnerID), ""},
+		{"MCP with hook trust state", "config.toml", codexHookStateFixture + codexMCPBlock(testCodexOwnerID), ""},
+		{"inline hook with trust state", "config.toml", codexHookStateFixture + inlineHook, ""},
+		{"invalid inline event with trust state", "config.toml", "[hooks]\nPreToolUse='invalid'\n" + codexHookStateFixture, "groups must be an array"},
 		{"alias", "config.toml", strings.ReplaceAll(codexMCPBlock(testCodexOwnerID), "mcp_servers.capy", "mcp_servers.another"), ""},
 		{"quoted table", "config.toml", strings.ReplaceAll(codexMCPBlock(testCodexOwnerID), "[mcp_servers.capy]", "['mcp_servers'.'capy']"), ""},
 		{"hooks", "hooks.json", codexHookFixture(t, testCodexOwnerID), ""},
@@ -114,6 +130,12 @@ func TestCodexOwnerBindings(t *testing.T) {
 			require.Equal(t, dir, got)
 		})
 	}
+	t.Run("trust state does not hide an unbound inline hook", func(t *testing.T) {
+		dir := t.TempDir()
+		writeCodexFixture(t, dir, ".codex/config.toml", codexHookStateFixture+inlineHook)
+		_, err := InspectCodexOwners(dir)
+		require.ErrorContains(t, err, "no adjacent .codex/capy-owner")
+	})
 	t.Run("marker alone cannot authorize", func(t *testing.T) {
 		dir := t.TempDir()
 		writeCodexFixture(t, dir, codexOwnerRelPath, codexOwnerContent(testCodexOwnerID))
@@ -158,6 +180,52 @@ func TestCodexOwnerBindings(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Join(dir, rel), 0o755))
 			_, err := InspectCodexOwners(dir)
 			require.ErrorContains(t, err, "regular file")
+		})
+	}
+}
+
+func TestCodexHookStateConfiguration(t *testing.T) {
+	for _, location := range []string{"ancestor", "project"} {
+		t.Run(location, func(t *testing.T) {
+			base := t.TempDir()
+			project := filepath.Join(base, "project")
+			cwd := filepath.Join(project, "subdir")
+			require.NoError(t, os.MkdirAll(cwd, 0o755))
+			stateDir := base
+			if location == "project" {
+				stateDir = project
+			}
+			writeCodexFixture(t, stateDir, ".codex/config.toml", codexHookStateFixture)
+			owners, err := InspectCodexOwners(cwd)
+			require.NoError(t, err)
+			require.Empty(t, owners, "trust metadata alone is not an installation")
+
+			require.NoError(t, SetupCodex("capy", project))
+			owners, err = InspectCodexOwners(cwd)
+			require.NoError(t, err)
+			require.Len(t, owners, 1)
+			for _, binding := range owners[0].Bindings {
+				owner, err := ResolveCodexOwner(cwd, binding.ID, binding.Mode, binding.Event)
+				require.NoError(t, err)
+				require.Equal(t, project, owner)
+			}
+			checks := registrationChecks(t, cwd)
+			require.Equal(t, Pass, checks["Codex hooks"].Status, checks)
+			require.Equal(t, Pass, checks["Codex MCP"].Status, checks)
+			require.Contains(t, checks["Codex activation"].Detail, "trust and execution are unverified")
+
+			path := filepath.Join(stateDir, ".codex/config.toml")
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			if location == "ancestor" {
+				require.Equal(t, codexHookStateFixture, string(before), "ancestor config must remain untouched")
+			} else {
+				require.True(t, strings.HasPrefix(string(before), codexHookStateFixture), "project trust metadata must remain byte-identical")
+			}
+			require.NoError(t, SetupCodex("capy", project))
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, before, after, "repeat setup must preserve trust metadata")
 		})
 	}
 }

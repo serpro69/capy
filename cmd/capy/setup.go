@@ -16,6 +16,8 @@ func newSetupCmd() *cobra.Command {
 		Use:   "setup",
 		Short: "Configure capy for the current project",
 		Long: `Configure Claude Code and Codex by default, or select one with --platform.
+The --local and --project flags select only the Claude settings file; they do
+not select a platform. For Claude-only local setup, use --platform claude-code --local.
 Codex setup registers five hooks and an MCP server bound to .codex/capy-owner.
 Commit the marker with its configuration and wrapper; reruns preserve its ID.
 Activation requires project-layer trust and review/trust of the exact definitions
@@ -106,8 +108,8 @@ Stop affected sessions before moving or removing loaded installation artifacts.`
 	}
 	cmd.Flags().String("platform", "", "target platform (claude-code, codex); default: both")
 	cmd.Flags().String("binary", "", "path to capy binary")
-	cmd.Flags().Bool("local", false, "write hooks to .claude/settings.local.json (personal, not committed)")
-	cmd.Flags().Bool("project", false, "write hooks to .claude/settings.json (shared, synced across repos)")
+	cmd.Flags().Bool("local", false, "write Claude hooks to .claude/settings.local.json; does not select a platform")
+	cmd.Flags().Bool("project", false, "write Claude hooks to .claude/settings.json; does not select a platform")
 	cmd.Flags().Bool("db-repo", false, "configure this repository as a knowledge-DB repo (installs a pure-sh guard hook; no MCP, wrapper, or routing)")
 	cmd.MarkFlagsMutuallyExclusive("local", "project")
 	// DB-repo mode installs only the guard hook; it shares nothing with the

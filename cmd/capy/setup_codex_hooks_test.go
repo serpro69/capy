@@ -33,13 +33,21 @@ func readInstalledCodexHooks(t *testing.T, dir string) installedCodexHooks {
 
 func TestSetupCodexHooksCLI(t *testing.T) {
 	bin := buildStdioCapy(t)
-	for _, target := range []string{"codex", "default both"} {
+	for _, target := range []string{"codex", "default both", "default both local"} {
 		t.Run(target, func(t *testing.T) {
-			dir := t.TempDir()
+			ancestor := t.TempDir()
+			dir := filepath.Join(ancestor, "project")
+			require.NoError(t, os.MkdirAll(dir, 0o755))
+			require.NoError(t, os.MkdirAll(filepath.Join(ancestor, ".codex"), 0o755))
+			trustPath := filepath.Join(ancestor, ".codex/config.toml")
+			trustState := []byte("[hooks.state.\"/fixture/project/.codex/hooks.json:pre_tool_use:0:0\"]\nenabled=true\ntrusted_hash='fixture-hash'\n")
+			require.NoError(t, os.WriteFile(trustPath, trustState, 0o600))
 			env := stdioEnv(t, "")
 			args := []string{"setup", "--project-dir", dir}
 			if target == "codex" {
 				args = append(args, "--platform", "codex")
+			} else if target == "default both local" {
+				args = append(args, "--local")
 			} else {
 				args = append(args, "--project")
 			}
@@ -59,8 +67,16 @@ func TestSetupCodexHooksCLI(t *testing.T) {
 				require.NoFileExists(t, filepath.Join(dir, ".mcp.json"))
 			} else {
 				require.FileExists(t, filepath.Join(dir, ".mcp.json"))
-				require.FileExists(t, filepath.Join(dir, ".claude/settings.json"))
+				settings := "settings.json"
+				if target == "default both local" {
+					settings = "settings.local.json"
+					require.NoFileExists(t, filepath.Join(dir, ".claude/settings.json"))
+				}
+				require.FileExists(t, filepath.Join(dir, ".claude", settings))
 			}
+			after, err := os.ReadFile(trustPath)
+			require.NoError(t, err)
+			require.Equal(t, trustState, after, "ancestor trust state must remain untouched")
 		})
 	}
 }
