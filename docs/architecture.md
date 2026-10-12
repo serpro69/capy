@@ -85,7 +85,7 @@ blocked. Validation precedes accounting and storage, including supplied array
 types, nonblank queries, selectors and positive integral limits. Invalid calls
 consume no budget; empty/error/partial results from valid requests do.
 All callers of one MCP server share the counter. Per-agent isolation remains
-[D1](feat/wip/upstream-sync-v1.0.169/upstream-audit.md#d1-per-agent-search-budgets).
+[D1](feat/done/upstream-sync-v1.0.169/upstream-audit.md#d1-per-agent-search-budgets).
 Neither the terminal knowledge search nor vault-only MCP search uses this budget.
 
 The retrieval engine is corpus-agnostic (`internal/retrieval`, ADR-028): the same
@@ -383,8 +383,14 @@ Hooks run as short-lived processes (`capy hook <event>`) invoked by the AI codin
 | `PostToolUse` | Record successful child execute/fetch observations | One-use routing evidence |
 | `PreCompact` | Stub | Future resume snapshot |
 | `SessionStart` | Inject routing block | Teach LLM about capy on session start |
+| `SubagentStart` (Codex) | Inject child routing block | Preserve native child arguments and type |
 | `SessionEnd` | Clear its stable session's observation entries | No database access; WAL checkpoint remains in server Close() |
 | `UserPromptSubmit` | Stub | Future user decision capture |
+
+Claude setup registers six events (all above except SubagentStart). Codex setup
+registers five (all except the PreCompact/UserPromptSubmit stubs). Codex startup
+and child context are each capped at 4,096 UTF-8 bytes; generated handlers omit
+`additionalContextLimit` and retain the host's default spill behavior.
 
 Main-agent Bash HTTP routing rejections use `FormatBlock`: the Claude Code response carries
 `permissionDecision: "deny"` and the capy guidance in `permissionDecisionReason`.
@@ -423,8 +429,8 @@ this includes existing server results marked successful despite partial failures
 Tool input/output content and knowledge/vault database contents are not stored
 in the observation file.
 
-The hook entry point resolves project identity before loading Bash or Read
-policies: explicit flag, environment, payload-anchored discovery, then
+The Claude hook entry point resolves project identity before loading Bash or Read
+policies: explicit flag, `CLAUDE_PROJECT_DIR`, payload-anchored discovery, then
 process-cwd discovery. Relative explicit/environment paths are anchored to process
 cwd; selected directories must exist. Invalid selections produce structured
 PreToolUse denials, or errors without state mutation for other events. Invalid
@@ -448,7 +454,83 @@ Empty IDs do not persist state and continue to receive guidance on every call.
 
 ### Platform Adapter
 
-The `HookAdapter` interface abstracts platform-specific JSON formats. Currently implemented: Claude Code. Tool name aliases map platform-specific names to canonical names (Gemini CLI, OpenCode, Codex, Cursor, VS Code Copilot, Kiro).
+`HookAdapter` separates host JSON parsing/formatting and explicit platform
+identity from the shared router. `capy hook --platform claude-code|codex` defaults
+to Claude Code. Codex accepts canonical Bash payloads (including native
+`exec_command` and code-mode shell calls) and known capy MCP tool names under any
+server alias. Hosted web/search calls are outside the generated matcher. Native
+child launch arguments are untouched; Claude's Agent/Task mutation is unchanged.
+Shared aliases for other platforms do not prove compatible host integration.
+
+Codex preserves the host's session and child IDs, internally prefixing stable
+session identity with `codex:`. It never derives identity from a transcript,
+Claude environment or PID. Without stable identity, observation writes,
+consumption and cleanup are skipped, and guidance remains advisory. Codex owner
+selection is explicit `--project-dir`, validated payload cwd, then process-cwd
+discovery; it ignores `CLAUDE_PROJECT_DIR`. Rule cwd remains separate from owner.
+
+Policies use the existing optional Claude-format settings files in project-local,
+project-shared and global precedence. Command decisions retain exact pattern and
+source-file provenance. Denies/scanner errors take precedence over asks; a matched
+ask returns a Codex denial explaining that hook-initiated approval is unavailable.
+Unmatched default asks pass. No PermissionRequest bridge, bare permission grant,
+input rewriting or native Codex permission emulation is added. Malformed Codex
+PreToolUse input denies before state mutation; Claude behavior is unchanged.
+
+### Codex installation and launch
+
+`SetupCodex` merges only positively recognized owned handlers from the
+`codexHookEvents` catalog into `.codex/hooks.json`. It preserves external groups,
+mixed siblings and metadata, rejects malformed or mismatched bindings, and
+collapses owned duplicates. It leaves inline/global/plugin hooks and host trust
+records alone. Project-layer trust and review of the exact hook definitions are
+separate activation gates. Setup preserves explicit feature overrides.
+
+The committed `.codex/capy-owner` marker contains a version and random 128-bit ID.
+Exclusive publication prevents partial-marker races; upgrades preserve the ID.
+Both hook commands and MCP argv embed it in the generated versioned bootstrap.
+The bootstrap shares binary discovery with both wrappers, then invokes
+`capy codex-launch` before running any project wrapper. The launcher:
+
+1. Inspects every physical cwd ancestor, beyond Git boundaries, using the shared
+   `InspectCodexOwners` reader. Markers are bounded to 80 bytes; hook JSON and
+   config TOML to 1 MiB. Malformed, unreadable, nonregular and symlink inputs fail.
+2. Decodes hook, inline-hook and MCP bindings, validates each against the marker
+   in its own directory, and counts installation directories, never just IDs.
+   Missing live markers, copied-ID overlaps and stale marker-only commands fail
+   before wrapper, policy, observation or database access.
+3. Requires one owner with the invoked mode/event binding, then launches that
+   owner's readable regular wrapper with explicit `--project-dir`. Process cwd
+   and stdin remain intact. Supervision forwards cancellation and reaps children.
+
+PreToolUse infrastructure failures exit exactly 2 with repair-oriented stderr;
+successful structured policy denials exit 0. Other hooks fail diagnostically.
+MCP keeps stdout for its protocol and preserves the started server's status.
+Claude's legacy wrapper handling of a running binary's failure remains unchanged.
+
+Root/subdirectory, move, spaces and sibling-worktree launches have subprocess
+coverage. Nested owners are rejected even across Git boundaries or with copied
+IDs. Command resolution outside Git works, but automatic non-Git host discovery
+is unverified. Stop/reload affected sessions before moving/removing loaded
+artifacts: entirely deleted origin files cannot be recovered from a cached command.
+See [operator repair and rollback](../README.md#codex-hook-recovery).
+
+### Registration diagnostics and verification
+
+`CheckPlatformRegistrations` supplies both CLI and MCP doctor interfaces.
+Platform-labelled checks derive configured platforms from capy artifacts, so a
+Codex-only installation does not fail for missing Claude configuration. Codex
+checks reuse the runtime owner inspector and event catalog for binding, marker,
+matcher, duplicate and wrapper validation. Visible feature disabling and inline
+overlap are reported, while effective trust and execution remain unverified.
+Credential/vault diagnostics stay separate from registration.
+
+Adapter/router tests, installed wrapper/CLI/MCP tests and live host acceptance
+are separate evidence levels in the [verification record](feat/wip/codex-hooks/verification.md).
+Static checks cannot establish host event delivery. Retained toolbox hooks can
+duplicate startup guidance; capy does not mutate them or claim this integration
+captures/budgets ordinary command output. No storage schema or CI/release pipeline
+changes are required; existing FTS5 build, test and distribution conventions apply.
 
 ## Executor
 

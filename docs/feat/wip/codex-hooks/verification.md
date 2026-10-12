@@ -1,7 +1,7 @@
 # Codex hooks verification record
 
 > Updated: 2026-10-12
-> Current scope: Tasks 1–3 implementation checks; live host acceptance remains pending
+> Current scope: Tasks 1–6; live Codex CLI 0.162.1 acceptance recorded below
 > Design: [design.md](design.md) · Dispositions: [review-resolution.md](review-resolution.md)
 
 ## Design-stage evidence
@@ -175,7 +175,7 @@ when created. During implementation, replace the projected sum with measured
 actual startup/resume outputs and preserve the distinction between bytes,
 host approximate-token estimates and model-visible previews.
 
-## Pending implementation acceptance
+## Implementation acceptance
 
 - [x] Stable owner marker, bound hook/MCP argv and shared config/marker preflight
   before any project wrapper; correct explicit project owner.
@@ -186,7 +186,7 @@ host approximate-token estimates and model-visible previews.
   both configs retained: pre-tool exit 2 with repair stderr, MCP diagnostic
   failure with no protocol stdout, neither wrapper invoked, no policy/state/DB
   access. Repeat with only either outer binding and equivalent escaped strings.
-- [ ] Bounded config decoding, invalid/unreadable/symlink input rejection, valid
+- [x] Bounded config decoding, invalid/unreadable/symlink input rejection, valid
   unrelated config support and setup/runtime/doctor agreement.
 - [x] Missing/unreadable/vanished-wrapper and outside-tree bootstrap failures:
   exit exactly 2 plus nonempty repair text for PreToolUse.
@@ -198,10 +198,10 @@ host approximate-token estimates and model-visible previews.
   delivery without leaving a server process behind.
 - [x] Ask denial identifies matched pattern/source, preserves later-deny priority
   and does not turn an unmatched default ask into a denial.
-- [ ] Startup/child context budget, omitted limit fields and live no-spill result.
-- [ ] Both trust gates, actual hook delivery and parent/child observation lifecycle.
+- [x] Startup/child context budget, omitted limit fields and live no-spill result.
+- [x] Both trust gates, actual hook delivery and parent/child observation lifecycle.
 - [x] Actual mixed-installation startup byte measurements and toolbox follow-up link.
-- [ ] Required FTS5/race/artifact checks and implementation review dispositions.
+- [x] Required FTS5/race/artifact checks and implementation review dispositions.
 
 ## Task 2: portable owner and supervised launch
 
@@ -500,3 +500,135 @@ live host acceptance, release documentation and the whole-feature spec review.
 No trust records, external hooks, upstream issues or PRs were changed. The
 diagnostic false-positive fix stayed within Task 5's platform-detection
 requirement; no other plan deviation or new project convention was introduced.
+
+## Task 6: installed runtime and release documentation
+
+### Live acceptance
+
+On 2026-10-12, launched **Codex CLI 0.162.1 on Linux** using the normal TUI,
+`--no-daemon --no-alt-screen --sandbox workspace-write --ask-for-approval on-request`,
+from `/tmp/capy-task6/live project/subdir`. The Git root was
+`/tmp/capy-task6/live project`. Capy was built with `CGO_ENABLED=1 go build -tags fts5`
+from `e1a453e`; the restored build includes this task's help-text changes.
+`capy setup --platform codex --project-dir <root>` installed the real bootstrap,
+owner marker, wrapper, MCP entry and five hook definitions.
+
+The folder-access prompt identified the parent Git root when launched from its
+subdirectory. After project trust, a separate review prompt listed five hooks.
+They were reviewed/trusted through the normal hook browser, which then showed
+active handlers. A fresh conversation established trusted startup delivery.
+No trust files were hand-edited or bypass flags used; setup did not change trust.
+
+The live host retained its existing authentication/trust home, used an empty
+temporary `XDG_CONFIG_HOME`, synthetic `CAPY_DB_KEY`, and **unset `CAPY_VAULT_KEY`**.
+No production capy database/vault credentials were used. Synthetic deny/ask
+rules lived in the disposable `.claude/settings.json`. Unlike the hermetic
+subprocess tests, this interactive run retained the host user's global Claude
+settings location; it was not a fully isolated policy home. Probe commands did
+not read private files, and only fixture markers were executed.
+
+| Actual host observation | Evidence |
+|---|---|
+| Startup guidance | Session `01a1316d-d57f-7f93-89f3-bbb1bf4f8c6a` contains a complete 3,358-byte capy developer-context block inline; no spill preview |
+| Allowed native shell | Code-mode `tools.exec_command({cmd:"printf CAPY_ALLOWED"})` printed the marker and exited 0 |
+| Synthetic deny | `printf CAPY_DENIED` was blocked; reason names `Bash(printf *CAPY_DENIED*)` and the fixture settings path |
+| Synthetic matched ask | `printf CAPY_ASK` was blocked; reason names `Bash(printf *CAPY_ASK*)`, the source path, and the unsupported hook-initiated approval requirement |
+| Initialized MCP from subdirectory | Host discovered all ten capy tools and completed `capy_stats` through the generated installation |
+| Child guidance/evidence | Child `01a1316f-ba3a-7bf3-9925-c6cb40a3d802`, path `/root/capy_child_acceptance`, received an additional inline 3,358-byte block and completed `capy_execute` with `printf CAPY_CHILD_EXEC`; normal one-call MCP approval was retained |
+| Parent/child association | Child rollout metadata identifies the parent above; host event records identify the child thread and usage records retain the parent session ID |
+| One redirect, then fallback | Within 60 seconds of execute success, `python3 -c 'if False: requests.get("https://example.invalid")'` received a capy execute redirect. One identical retry received unverified-tool advisory context and exited 0. The dead branch made no HTTP request. Observation entries were empty after consumption |
+| Mixed external hooks | A second trusted run retained the committed toolbox startup script and an independent synthetic PreToolUse restriction. `CAPY_MIXED_ALLOWED` printed; `CAPY_EXTERNAL_DENIED` was blocked with `Independent fixture restriction retained`; capy's deny still blocked |
+| Actual duplicated startup context | Mixed session `01a13173-f8d7-7352-8c63-a9292319d02d` has separate inline messages of **10,443 bytes** from toolbox and **3,358 bytes** from capy: **13,801 total**. Provider text and `Preserve extra instructions.` survived; neither block was replaced by a spill preview |
+| Infrastructure failure | Replaced only the disposable PATH launcher with a fixture returning 127. The host blocked `printf CAPY_INFRASTRUCTURE_BLOCKED` with bootstrap repair text. This simulates an unavailable launcher; actual missing-file discovery retains subprocess coverage |
+| External-terminal repair | Restored the disposable binary and reran setup without changing trust or bypassing policy; `printf CAPY_REPAIRED` then printed its marker and exited 0 |
+| Resume | Stopped and resumed mixed session `01a13173-f8d7-7352-8c63-a9292319d02d`. Newly appended context at `18:57:25Z` again contains 10,443 toolbox bytes plus 3,358 capy bytes, both inline |
+
+Session IDs identify local rollouts under `~/.codex/sessions/2026/10/12/`.
+Selected results and context measurements are retained in
+[live-acceptance.json](live-acceptance.json), excluding unrelated instructions,
+authentication, encrypted reasoning and account metadata. Agent reports were
+cross-checked against tool-result/context records. Manual stdin replay is not
+counted as host delivery.
+
+SessionEnd deletion/isolation, independent TTLs, contention, failed retries,
+missing identities, signal cleanup, missing/unreadable/vanished binaries and
+wrappers, overlap, moves and worktrees retain Tasks 1–5's installed CLI/unit
+evidence. Live observation consumption was exercised; live SessionEnd cleanup
+with outstanding evidence was not. Non-Git host discovery, other Codex surfaces,
+other versions and Windows remain unverified. Hosted web interception and output
+budgets remain outside scope. The [toolbox follow-up](implementation.md#claude-toolbox-enhancement-pr)
+is a brief, not a published PR; #132 is not closed by this work.
+
+### Release documentation and test correction
+
+Updated README setup, activation, coverage, policy, recovery and rollback;
+architecture adapter/owner/diagnostic mechanisms; CLI help; AGENTS marker,
+generator and wrapper invariants; and ADR-024 with a dated historical clarification.
+Rollback retains the marker while bindings reference it and restores compatible
+MCP/wrapper configuration before binary downgrade. Stop/reload sessions before
+moving/removing loaded artifacts. Infrastructure repair via an external terminal
+or user-controlled `/hooks` is distinguished from bypassing policy denials.
+No generator-owned artifact changed in Task 6.
+
+A copy of the mixed installation also verified the documented partial rollback:
+exactly five known owned handlers were removed while external handlers and group
+metadata remained; MCP binding and marker were unchanged. No live definition
+was removed while its session remained running. Binary downgrade is documented
+but was not exercised against an older release.
+
+The initial full suite reproduced only the known mapped-IPv4 fetch-stat failure.
+Inspection confirmed that valid mapped IPv4 URL syntax is admitted and embedded
+addresses are classified by the SSRF transport. The fixture now checks
+`https://[::ffff:192.0.2.1]/` only in offline syntax coverage, and uses mapped
+loopback for actual single/batch transport rejection. No production admission,
+SSRF protection or cache accounting changed. Focused syntax/rejection/IP-policy
+race checks passed; the earlier fixture follow-up is resolved.
+
+Validation uses synthetic keys, `GOCACHE=/tmp/capy-go-build`, an empty
+`XDG_CONFIG_HOME`, and local socket access for the full suite. Hook subprocess
+fixtures separately clear both database keys.
+
+| Check | Result |
+|---|---|
+| Full `go test -tags fts5 -count=1 ./...` after fixture correction | Passed: every package (CLI 313.288s, server 172.513s, vault 318.217s) |
+| `go test -tags fts5 -race -count=1 ./internal/adapter ./internal/hook ./internal/platform` | Passed |
+| Focused server syntax/rejection/IP-classification tests with `-race` | Passed |
+| Generated equality, merged-artifact idempotency and completeness guards | Passed |
+| `go vet -tags fts5 ./cmd/capy ./internal/platform ./internal/hook ./internal/adapter ./internal/server` | Passed |
+| Built CLI `setup --help` and `hook --help` | Passed |
+| Documentation links, evidence JSON/context bounds, diff whitespace | Passed after repairing four pre-existing README/architecture links to the completed upstream-sync directory |
+| Quality benchmarks | N/A: no search/indexing/chunking/executor implementation changed |
+
+CLI flags, dispatch, exit contracts, configuration precedence, completions and
+distribution remain unchanged; this task updates help text only. CI/publishing
+changes are N/A. The fixture correction is the only code-adjacent addition,
+needed to resolve the known suite failure. Live checks confirm the planned
+integration without adding runtime instrumentation or a new protocol.
+
+All disposable live Codex conversations were stopped normally after verification.
+The feature remains in its existing documentation directory for stable links;
+Task 6 completion does not publish a release or mutate upstream issue/PR tracking.
+
+### Reviews and plan adjustment
+
+The isolated [code review](.reviews/task-6-code-review-2026-10-12.md) approved the
+documentation/help and fixture changes without findings. PAL's external review
+attempt failed at its expert-analysis step because its configured Gemini key
+was rejected; no external-model approval is claimed.
+
+The spec reviewer identified one P2 acceptance-plan deviation: the live run kept
+the host's authentication/trust home instead of an isolated policy home. The
+[acceptance procedure](implementation.md#52-live-acceptance-and-release-checks)
+now explicitly permits that arrangement with synthetic project rules/keys,
+isolated capy config, recorded global-policy inheritance, exact rule/source
+checks and a passing control; hermetic subprocess coverage is retained. This
+test-environment adjustment preserves the normal trust interface and obeys the
+execution environment's constraint against repurposing HOME/CODEX_HOME. It does
+not change production policy behavior. The historical finding and author
+context remain in the spec review record; no user-confirmed deviation indexing
+is claimed. Capy knowledge tools were unavailable, and the relevant decisions
+are already documented here.
+
+The [whole-feature spec review](.reviews/task-6-spec-review-2026-10-12.md) concluded
+**CONFORMANT** after that explicit revision, with no outstanding findings. All
+six tasks are complete; deferred follow-ups retain their separate scope.

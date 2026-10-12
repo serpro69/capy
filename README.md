@@ -68,6 +68,7 @@
 - [Hook System](#hook-system)
   - [What gets intercepted](#what-gets-intercepted)
   - [Platform support](#platform-support)
+  - [Codex hook recovery](#codex-hook-recovery)
 - [Troubleshooting](#troubleshooting)
 - [Acknowledgements](#acknowledgements)
 - [Contributing](#contributing)
@@ -160,10 +161,10 @@ export CAPY_DB_KEY=$(openssl rand -base64 48)
 echo "export CAPY_DB_KEY='$CAPY_DB_KEY'" >> ~/.zshrc  # or ~/.bashrc
 ```
 
-**2. Configure your project** (Claude Code):
+**2. Configure your project** (Claude Code only; omit `--platform` to install both platforms):
 
 ```bash
-capy setup
+capy setup --platform claude-code
 capy doctor   # verify everything is green
 ```
 
@@ -180,10 +181,39 @@ You don't need to call capy tools yourself. The LLM learns the routing from the 
 
 ### Setup (Codex CLI)
 
+Install capy on each collaborator's machine and configure encryption as above,
+then run from the project root:
+
 ```bash
 capy setup --platform codex
 capy doctor
 ```
+
+Setup registers SessionStart, SubagentStart, PreToolUse, PostToolUse and
+SessionEnd in `.codex/hooks.json`, and MCP in `.codex/config.toml`. Commit both
+with `.codex/capy-owner` and `.codex/scripts/capy.sh`. The marker is a portable
+installation ID, not a secret; rerunning setup preserves it. Existing toolbox
+and other external hooks remain installed.
+
+Activate the project `.codex/` layer by trusting the project in Codex, then
+review and trust the exact generated definitions in `/hooks`. These are separate
+gates; changed definitions may need renewed trust. Restart/resume as needed.
+Setup never changes trust records or an explicit hooks feature override.
+See [Codex's hooks reference](https://learn.chatgpt.com/docs/hooks).
+
+Both doctor interfaces check registration on disk and report visible disabling
+or overlap. They cannot verify trust or event delivery. The integration targets
+Codex CLI 0.162.1; the [verification record](docs/feat/wip/codex-hooks/verification.md)
+distinguishes installed-command tests from live acceptance and its remaining
+limits. Other versions and Codex surfaces need their own runtime verification.
+
+Hooks and MCP resolve the same owner when launched from an ordinary project
+subdirectory. Moved trees, paths with spaces and sibling worktrees have
+installed-command coverage. Nested installations are rejected, including copies
+with identical IDs. Non-Git command resolution works, but automatic Codex hook
+discovery outside Git projects remains unverified.
+
+For installation failures or rollback, see [Codex hook recovery](#codex-hook-recovery).
 
 ## How It Works — By Example
 
@@ -868,7 +898,7 @@ capy vault rekey                     # enter the OLD passphrase when prompted
 | `capy encrypt`         | Encrypt the knowledge DB or rotate its encryption key                                     |
 | `capy dbsize`          | Show knowledge DB disk usage                                                              |
 | `capy vault <cmd>`     | Archive, search, restore, and resume past sessions — see [Session Vault](#session-vault)  |
-| `capy hook <event>`    | Handle a hook event (called by the AI tool, not you)                                      |
+| `capy hook <event> [--platform claude-code\|codex]` | Handle a hook event; generated commands select Codex explicitly, default is Claude Code |
 
 Global flags: `--project-dir`, `--version`
 
@@ -1209,9 +1239,9 @@ replacement writes reset new metadata. Vault schemas and credentials are
 unchanged. Reverting the binary also restores old cwd, policy and boolean
 semantics, so scripts relying on the new behavior need adjustment.
 
-The [verification ledger](docs/feat/wip/upstream-sync-v1.0.169/verification.md#task-20-final-verification-and-compatibility)
+The [verification ledger](docs/feat/done/upstream-sync-v1.0.169/verification.md#task-20-final-verification-and-compatibility)
 records tested revisions, commands, benchmarks and platform limits. Deferred
-[D1–D5](docs/feat/wip/upstream-sync-v1.0.169/upstream-audit.md#deferred-work-with-concrete-next-steps)
+[D1–D5](docs/feat/done/upstream-sync-v1.0.169/upstream-audit.md#deferred-work-with-concrete-next-steps)
 remain: per-agent budgets, atomic policy/read handoff, colliding concurrent batch
 labels, structured chunk splitting and authoritative child tool discovery.
 
@@ -1275,7 +1305,7 @@ Missing or unresolvable paths fail before code starts. The executor receives the
 checked physical absolute path, including when process cwd differs from the
 selected project. `capy_index(path)` retains its explicit absolute-file behavior
 subject to Read denies. Concurrent replacement between checking and reading
-remains possible; see [D2](docs/feat/wip/upstream-sync-v1.0.169/upstream-audit.md#d2-filesystem-replacement-between-policy-checks-and-runtime-reads).
+remains possible; see [D2](docs/feat/done/upstream-sync-v1.0.169/upstream-audit.md#d2-filesystem-replacement-between-policy-checks-and-runtime-reads).
 
 ### Sandbox protections
 
@@ -1289,7 +1319,10 @@ remains possible; see [D2](docs/feat/wip/upstream-sync-v1.0.169/upstream-audit.m
 
 ## Hook System
 
-capy uses Claude Code's hook system to intercept tool calls before they execute. After `capy setup`, this works automatically — you don't need to configure anything.
+Capy installs hooks for Claude Code and Codex CLI. Codex activation requires
+the two trust gates described in [setup](#setup-codex-cli). Hooks route supported
+calls and enforce capy's additional policies; ordinary command output is not
+captured or budgeted by this integration.
 
 ### What gets intercepted
 
@@ -1313,19 +1346,35 @@ back to advice; observations do not establish permanent availability.
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `curl`/`wget` in Bash                             | Denied with guidance to use `capy_fetch_and_index` or `capy_execute`; silent/quiet file downloads remain allowed     |
 | `fetch()`, `requests.get()`, `http.get()` in Bash | Denied with guidance to use `capy_execute` or `capy_fetch_and_index`                                                 |
-| `WebFetch` tool                                   | Denied — use `capy_fetch_and_index` instead (git platform URLs get CLI-specific redirect guidance)                  |
-| `Read` tool                                       | One-time advisory: prefer `capy_execute_file` for analysis                                                          |
-| `Grep` tool                                       | One-time advisory: prefer `capy_execute` for large searches                                                         |
-| `Agent`/`Task` tools                              | Routing block injected into subagent prompt; Bash subagents upgraded to general-purpose                             |
+| `WebFetch` tool (Claude Code)                     | Denied — use `capy_fetch_and_index` instead (git platform URLs get CLI-specific redirect guidance)                  |
+| `Read` tool (Claude Code)                         | One-time advisory: prefer `capy_execute_file` for analysis                                                          |
+| `Grep` tool (Claude Code)                         | One-time advisory: prefer `capy_execute` for large searches                                                         |
+| `Agent`/`Task` tools (Claude Code)                | Routing block injected into subagent prompt; Bash subagents upgraded to general-purpose                             |
 | `capy_fetch_and_index`                            | Git platform issue/PR/MR URLs blocked with platform CLI redirect; gist URLs get soft guidance                       |
 | `capy_*` tools (shell)                            | Security policy enforcement on shell code and batch commands                                                        |
 
-Hooks select their project before loading policies: `--project-dir` wins over
+Claude hooks select their project before loading policies: `--project-dir` wins over
 `CLAUDE_PROJECT_DIR`, followed by project detection from a valid payload `cwd`,
 then the process working directory. Invalid explicit/environment selections fail;
 invalid payload directories emit a diagnostic and fall back. Settings and
 guidance state belong to the selected project. Cwd-relative Read rules use the
 validated payload cwd, falling back to the selected project when absent.
+
+Codex normalizes native shell calls, including `exec_command` and code-mode
+shell calls, to canonical Bash. Capy's matcher covers Bash and its ten MCP
+tools under any server alias. Hosted web/search calls are outside that coverage.
+SubagentStart injects child guidance without rewriting launch arguments or types.
+Codex uses the supplied session ID, namespaced internally with `codex:`, and
+the supplied child ID; it ignores Claude identity/project environment variables.
+Generated commands pass the validated owner as `--project-dir`; manual hooks
+fall back to validated payload cwd, then process-cwd project discovery.
+
+Capy reads additional command policies from `.claude/settings.local.json`,
+`.claude/settings.json` and `~/.claude/settings.json`, in that order; Claude
+need not be installed. Denies take precedence. A matched ask rule blocks in
+Codex and names the exact rule and source file, because this hook cannot request
+approval. Unmatched default asks still pass. This does not translate Codex's
+native sandbox or permission rules, which continue to apply independently.
 
 Child observations share one bounded `.capy/tool-observations.json` per project,
 with a separate permanent lock file. SessionEnd removes only its session's
@@ -1334,22 +1383,62 @@ These hooks do not open the knowledge or vault databases.
 
 ### Platform support
 
-`capy setup` generates configuration for Claude Code (default) and Codex CLI (`--platform codex`). Automated setup for other platforms is planned.
+`capy setup` installs both Claude Code and Codex by default; `--platform` selects
+one. Automated setup for other platforms is planned.
 
 Codex setup forwards `CAPY_DB_KEY` and `CAPY_VAULT_KEY` already present in its launch environment through `.codex/config.toml`. Forwarding does not load absent credentials from files. Knowledge can use [project credentials](#project-credentials); the vault requires `CAPY_VAULT_KEY` in the actual launch environment. Existing installations must [regenerate wrappers and restart the launcher](#upgrade-and-credential-migration).
 
-Hooks already recognize tool name aliases for these platforms, so the routing logic works once you wire up the MCP server and hook commands manually:
+The shared router recognizes aliases for other platforms. Aliases alone do not
+establish compatible host payloads, responses, discovery or trust; a manual
+integration must verify those contracts:
 
 | Platform        | Recognized tool aliases                                                                                |
 | --------------- | ------------------------------------------------------------------------------------------------------ |
 | Gemini CLI      | `run_shell_command`, `read_file`, `read_many_files`, `grep_search`, `search_file_content`, `web_fetch` |
 | OpenCode        | `bash`, `view`, `grep`, `fetch`, `agent`                                                               |
-| Codex CLI       | `shell`, `shell_command`, `exec_command`, `container.exec`, `local_shell`, `grep_files`                |
 | Cursor          | `mcp_web_fetch`, `mcp_fetch_tool`, `Shell`                                                             |
 | VS Code Copilot | `run_in_terminal`                                                                                      |
 | Kiro CLI        | `fs_read`, `fs_write`, `execute_bash`                                                                  |
 
-Manual setup: register `capy serve` as an MCP server (stdio transport) and `capy hook <event>` as the hook command in your platform's configuration.
+MCP-only clients can register `capy serve` using stdio. Codex users should use
+the generated installation above.
+
+### Codex hook recovery
+
+Trusted PreToolUse hooks fail closed when capy is missing or incompatible, a
+wrapper cannot launch, or owner/config validation fails. These failures exit 2
+with repair text. Successful policy denials instead exit 0 with denial JSON.
+Claude's legacy wrapper behavior on a running binary's failure is unchanged;
+MCP failures preserve diagnostic stderr and protocol stdout separation.
+
+A collaborator who trusts committed hooks without installing capy can lose
+matched Bash and capy calls. Install/upgrade capy from an **external terminal**,
+repair permissions and rerun `capy setup --platform codex` in the intended root.
+During infrastructure repair, the user can disable the capy-owned entries in
+`/hooks`, then review/re-enable them after repair. Do not disable hooks or switch
+tools to evade a matched policy denial; address that policy with its owner.
+
+Restore a missing or corrupt live `.codex/capy-owner` from committed configuration;
+do not rotate its ID. Each generated binding must match the marker beside it.
+The launcher inspects every physical ancestor, including beyond Git boundaries,
+and rejects unreadable, malformed, oversized or symlinked configuration instead
+of substituting another owner. Even copied IDs in nested directories overlap:
+consolidate to one installation or use a non-overlapping checkout.
+
+**Stop affected sessions before removing or moving a loaded installation**, then
+restart/reload after repair. Cached commands cannot recover their origin once
+all originating artifacts have been deleted. For rollback, remove only capy's
+versioned, owner-bound handlers from `.codex/hooks.json`, preserving external
+handlers and mixed-group metadata. Keep the marker and compatible launcher while
+any hook or MCP binding references them. Before restoring an older binary that
+lacks `codex-launch`, also restore the previous capy MCP entry and wrapper from
+version control. Leave unrelated inline/global/plugin hooks and stored data intact.
+
+Missing trust, disabled hooks, host timeouts or unsupported runtimes can prevent
+hook execution; registration is not proof of enforcement. Retained toolbox
+startup hooks temporarily duplicate capy guidance. Measurements and the separate
+[toolbox follow-up](docs/feat/wip/codex-hooks/implementation.md#claude-toolbox-enhancement-pr)
+are recorded with the feature; routine output budgets remain separate work.
 
 ## Troubleshooting
 

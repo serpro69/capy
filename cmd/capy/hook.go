@@ -11,8 +11,13 @@ import (
 func newHookCmd() *cobra.Command {
 	var platform string
 	cmd := &cobra.Command{
-		Use:       "hook <event>",
-		Short:     "Handle a Claude Code or Codex hook event",
+		Use:   "hook <event>",
+		Short: "Handle a Claude Code or Codex hook event",
+		Long: `Handle one JSON hook event from stdin and write the platform response to stdout.
+The default platform is claude-code. Codex supports sessionstart, subagentstart,
+pretooluse, posttooluse and sessionend; generated commands select it explicitly.
+Hooks do not require database credentials. Use setup to register owner-bound
+Codex commands; direct invocation is intended for controlled manual probes.`,
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []string{"pretooluse", "posttooluse", "precompact", "sessionstart", "subagentstart", "sessionend", "userpromptsubmit"},
 		RunE: func(cmd *cobra.Command, args []string) error {

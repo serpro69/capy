@@ -36,7 +36,7 @@ func TestFetchStatsRejectedURLs(t *testing.T) {
 			{name: "multiple colons", url: "https://example.invalid:80:90/"},
 			{name: "unbracketed IPv6", url: "https://2001:db8::1/"},
 			{name: "invalid IPv6 literal", url: "https://[invalid]/"},
-			{name: "mapped IPv4 rejected by URL parser", url: "https://[::ffff:192.0.2.1]/"},
+			{name: "mapped IPv4 loopback rejected by transport", url: "https://[::ffff:127.0.0.1]:1/"},
 			{name: "IPv6 loopback", url: "http://[::1]:1/"},
 			{name: "git redirect", url: "https://github.com/owner/repo/issues/1"},
 			{name: "loopback", url: "http://127.0.0.1:1"},
@@ -59,6 +59,8 @@ func TestFetchStatsRejectedURLs(t *testing.T) {
 func TestFetchStatsValidURLSyntax(t *testing.T) {
 	for _, tc := range []struct{ name, url string }{
 		{name: "IPv6", url: "https://[2001:db8::1]/reference"},
+		// Mapped IPv4 is valid URL syntax; keep this admission check offline.
+		{name: "mapped IPv4", url: "https://[::ffff:192.0.2.1]/"},
 		{name: "IPv6 with port", url: "https://[2001:db8::1]:443/"},
 		{name: "IPv6 zone", url: "http://[fe80::1%25en0]:80/"},
 		{name: "maximum port", url: "https://example.invalid:65535/"},

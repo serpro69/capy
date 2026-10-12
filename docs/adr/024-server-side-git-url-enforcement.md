@@ -4,6 +4,15 @@
 **Date:** 2026-05-12
 **Amends:** ADR-023 (routing rewrite — extends enforcement from guidance-only to mechanical block).
 
+**Historical clarification (2026-10-12):** The Codex bypass described below was
+the integration state in May 2026. Capy now generates a Codex adapter and five
+owned hooks, including PreToolUse coverage for capy MCP calls, subject to host
+activation and trust. See the [hook architecture](../architecture.md#hook-system)
+and [verification record](../feat/wip/codex-hooks/verification.md). Live release
+acceptance is tracked there separately from installed-command tests. The shared
+server-side enforcement remains necessary for clients without active hooks;
+this clarification does not change the original decision.
+
 ## Context
 
 Issue [#44](https://github.com/serpro69/capy/issues/44) (v0.9.0) established the comprehension-vs-extraction routing principle: git diffs, small commands, and sequential content use direct tools (Bash/Read); large-output extraction uses capy tools.

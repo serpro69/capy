@@ -1,7 +1,7 @@
 # Implementation: capy-owned Codex hooks
 
 > Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
-> Status: Tasks 1–5 complete with verification/review recorded; Task 6 pending
+> Status: done — Tasks 1–6 implemented, verified and reviewed; see [verification limits](verification.md#task-6-installed-runtime-and-release-documentation)
 > Baseline inspected: 2026-10-12, Codex CLI 0.162.1
 > Revisions: [review-resolution.md](review-resolution.md)
 
@@ -15,8 +15,9 @@ small files under the selected project's `.capy/` directory; hooks do not open
 the encrypted knowledge or vault database.
 
 `SetupClaudeCode` and `SetupCodex` live in `internal/platform/setup.go`. The
-Claude installer merges six events; the Codex installer currently installs no
-hooks. `capyWrapperScript` generates both committed wrappers. The artifact
+Claude installer merges six events; the pre-feature Codex installer installed no
+hooks. Tasks 1–5 now install all five Codex events described below.
+`capyWrapperScript` generates both committed wrappers. The artifact
 tests enforce agreement between generators and committed configuration.
 
 Use these existing components:
@@ -316,11 +317,19 @@ slice complete; do not relax evidence or identity requirements.
 
 ### 5.2 Live acceptance and release checks
 
-1. Create a disposable project with an isolated policy home, install the built
-   capy hooks, establish project trust and inspect/trust their definitions
+1. Create a disposable project, install the built capy hooks, establish project
+   trust and inspect/trust their definitions
    through Codex's supported interface. Use
    a pinned recorded Codex version; do not bypass trust or reuse production
-   secrets for the probes. → verify: record visible capy startup guidance and
+   capy credentials for the probes. Prefer an isolated policy home. When the
+   interactive host retains its existing authentication/trust home, use empty
+   temporary capy configuration, synthetic project rules/keys and no vault key;
+   record global-policy inheritance and verify each denial's exact fixture
+   pattern/source plus a successful control. Keep isolated policy-home coverage
+   in the installed-command tests. This explicit Task 6 environment adjustment
+   replaces the original requirement for a fully isolated live policy home;
+   it does not relax policy enforcement or either host trust gate.
+   → verify: record visible capy startup guidance and
    hook delivery, distinct from the toolbox-script test done during research.
    Launch Codex from an ordinary project subdirectory too, initialize MCP and
    make a harmless capy call with synthetic keys; hook delivery alone does not

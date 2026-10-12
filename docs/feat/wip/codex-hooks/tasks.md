@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–5 done; Task 6 pending
+> Status: done — Tasks 1–6 implemented, verified and reviewed
 > Created: 2026-10-12
 > Review dispositions: [review-resolution.md](review-resolution.md)
 > Readiness: [RD-1 correction and re-review](readiness-review.md#resolution-and-re-review)
@@ -104,7 +104,7 @@
 
 ## Task 6: Verify the installed runtime and document the release
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5
 - **Size:** M
 - **Can run in parallel with:** —
@@ -112,11 +112,16 @@
 
 ### Subtasks
 
-- [ ] 6.1 Verify a trusted disposable installation in an actual recorded Codex version, including an ordinary subdirectory host launch and initialized MCP: startup, allowed/denied markers, ask pattern/source, child evidence/redirect/fallback and unrelated hooks → verify: record results/limits in `verification.md`, including actual duplicate context bytes and no spill of capy's compact guidance.
-- [ ] 6.2 Run `$kk:test` for the FTS5 full suite, focused race checks and generated-artifact guards → verify: record results and resolve failures; run quality benchmarks only if implementation touches their required areas.
-- [ ] 6.3 Run `$kk:document` for README, architecture, CLI help, AGENTS.md marker/generator/wrapper invariants and historical ADR clarification. Include collaborator repair via external terminal or `/hooks`, two trust gates, config/marker validation, overlap rules and non-Git discovery limits. Require stopping/reloading affected sessions before removing/moving loaded installations → verify: docs agree with the tested failure/recovery path and retain policy-denial protections.
-- [ ] 6.4 Run `$kk:review-code` with Go input → verify: fix findings or record actionable dispositions durably.
-- [ ] 6.5 Run `$kk:review-spec` against all feature documents → verify: each promised behavior has evidence and no output-budget or toolbox-PR completion is claimed.
+- [x] 6.1 Verify a trusted disposable installation in an actual recorded Codex version, including an ordinary subdirectory host launch and initialized MCP: startup, allowed/denied markers, ask pattern/source, child evidence/redirect/fallback and unrelated hooks → verify: record results/limits in `verification.md`, including actual duplicate context bytes and no spill of capy's compact guidance.
+- [x] 6.2 Run `$kk:test` for the FTS5 full suite, focused race checks and generated-artifact guards → verify: record results and resolve failures; run quality benchmarks only if implementation touches their required areas.
+- [x] 6.3 Run `$kk:document` for README, architecture, CLI help, AGENTS.md marker/generator/wrapper invariants and historical ADR clarification. Include collaborator repair via external terminal or `/hooks`, two trust gates, config/marker validation, overlap rules and non-Git discovery limits. Require stopping/reloading affected sessions before removing/moving loaded installations → verify: docs agree with the tested failure/recovery path and retain policy-denial protections.
+- [x] 6.4 Run `$kk:review-code` with Go input → verify: fix findings or record actionable dispositions durably.
+- [x] 6.5 Run `$kk:review-spec` against all feature documents → verify: each promised behavior has evidence and no output-budget or toolbox-PR completion is claimed.
+
+**Evidence:** [Task 6 verification and limits](verification.md#task-6-installed-runtime-and-release-documentation);
+[retained live host evidence](live-acceptance.json);
+[isolated code review: APPROVE](.reviews/task-6-code-review-2026-10-12.md);
+[whole-feature spec review: CONFORMANT](.reviews/task-6-spec-review-2026-10-12.md).
 
 ## Dependency Graph
 
@@ -132,12 +137,14 @@ authorization to spawn agents or make concurrent overlapping edits.
 
 ## Follow-ups outside feature completion
 
-- [ ] **Mapped-IPv4 fetch-stat fixture:** `TestFetchStatsRejectedURLs` expects
+- [x] **Mapped-IPv4 fetch-stat fixture:** `TestFetchStatsRejectedURLs` expects
   syntax rejection of `https://[::ffff:192.0.2.1]/`, but Go 1.26.4 accepts it and
   the request records a cache miss in both single/batch modes. Reproduced on
   unchanged `66cbecc`; outside Task 1. Confirm the intended admission contract,
   then correct `validateFetchScheme` or the fixture without weakening SSRF
-  protection, and avoid real network attempts in syntax-rejection tests.
+  protection, and avoid real network attempts in syntax-rejection tests. Task 6
+  moves the valid mapped address to offline syntax coverage and uses mapped
+  loopback for transport rejection; production admission/SSRF behavior is unchanged.
 - [ ] **Vault CLI fixture isolation:** isolate `XDG_CONFIG_HOME` in
   `setupCodexVaultEnv`, `setupVaultWithSidecar` and `TestVaultMerge_EndToEnd`;
   personal import-size settings currently exclude their tiny fixtures. This
