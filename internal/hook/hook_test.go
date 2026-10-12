@@ -13,6 +13,8 @@ import (
 // testAdapter is a minimal HookAdapter for testing that returns predictable JSON.
 type testAdapter struct{}
 
+func (a *testAdapter) Platform() adapter.Platform { return adapter.ClaudeCode }
+
 func (a *testAdapter) ParsePreToolUse(input []byte) (*adapter.PreToolUseEvent, error) {
 	var raw struct {
 		ToolName  string         `json:"tool_name"`
@@ -44,7 +46,7 @@ func (a *testAdapter) FormatModify(updatedInput map[string]any) ([]byte, error) 
 	return json.Marshal(map[string]any{"action": "modify", "updatedInput": updatedInput})
 }
 
-func (a *testAdapter) FormatAsk() ([]byte, error) {
+func (a *testAdapter) FormatAsk(_ string) ([]byte, error) {
 	return json.Marshal(map[string]any{"action": "ask"})
 }
 

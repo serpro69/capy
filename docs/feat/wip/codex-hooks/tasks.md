@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: pending — revised after reviews; implementation not started
+> Status: in-progress — Task 1 done; Tasks 2–6 pending
 > Created: 2026-10-12
 > Review dispositions: [review-resolution.md](review-resolution.md)
 > Readiness: [RD-1 correction and re-review](readiness-review.md#resolution-and-re-review)
@@ -10,7 +10,7 @@
 
 ## Task 1: Run main-session Codex hooks through the Go CLI
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** —
@@ -19,11 +19,14 @@
 
 ### Subtasks
 
-- [ ] 1.1 Add `internal/adapter/codex.go` and explicit adapter platform identity; use supplied session/child IDs with a `codex:` session namespace and no Claude/transcript/PID fallback → verify: `TestCodexAdapterIdentity`.
-- [ ] 1.2 Add hook-local `--platform` selection in `cmd/capy/hook.go` and platform-aware `internal/hook/context.go` resolution, retaining Claude defaults and cwd policy anchoring → verify: `TestHookCodexDispatch` and `TestHookContextCodexIgnoresClaudeEnvironment`.
-- [ ] 1.3 Carry source-file metadata through `internal/security/settings.go`, `eval.go` and both command/embedded-command hook paths; pass an ask reason to the adapter, retaining Claude's response shape and deny precedence. Codex denials name the exact pattern and source file; an unmatched default ask still passes → verify: `TestCommandDecisionProvenance`, `TestCodexPolicyResponses`, `TestCodexMalformedPreToolUse` and existing policy tests.
-- [ ] 1.4 Add platform-accurate startup routing through `internal/hook/routing.go`; treat input rewriting as deliberately unused and do not build a PermissionRequest bridge → verify: `TestCodexSessionStartGuidance` asserts supported output and at most 4,096 context bytes, plus a credential-free CLI invocation.
-- [ ] 1.5 Run focused adapter/hook/CLI checks with FTS5 and preserve existing Claude payload/response expectations → verify: no Claude regression and no hook database creation.
+- [x] 1.1 Add `internal/adapter/codex.go` and explicit adapter platform identity; use supplied session/child IDs with a `codex:` session namespace and no Claude/transcript/PID fallback → verify: `TestCodexAdapterIdentity`.
+- [x] 1.2 Add hook-local `--platform` selection in `cmd/capy/hook.go` and platform-aware `internal/hook/context.go` resolution, retaining Claude defaults and cwd policy anchoring → verify: `TestHookCodexDispatch` and `TestHookContextCodexIgnoresClaudeEnvironment`.
+- [x] 1.3 Carry source-file metadata through `internal/security/settings.go`, `eval.go` and both command/embedded-command hook paths; pass an ask reason to the adapter, retaining Claude's response shape and deny precedence. Codex denials name the exact pattern and source file; an unmatched default ask still passes → verify: `TestCommandDecisionProvenance`, `TestCodexPolicyResponses`, `TestCodexMalformedPreToolUse` and existing policy tests.
+- [x] 1.4 Add platform-accurate startup routing through `internal/hook/routing.go`; treat input rewriting as deliberately unused and do not build a PermissionRequest bridge → verify: `TestCodexSessionStartGuidance` asserts supported output and at most 4,096 context bytes, plus a credential-free CLI invocation.
+- [x] 1.5 Run focused adapter/hook/CLI checks with FTS5 and preserve existing Claude payload/response expectations → verify: no Claude regression and no hook database creation.
+
+**Evidence:** [verification and full-suite limitations](verification.md#task-1-main-session-cli);
+[isolated code review: APPROVE](.reviews/task-1-code-review-2026-10-12.md).
 
 ## Task 2: Bind hook and MCP launch to the same portable owner
 
@@ -117,6 +120,17 @@ authorization to spawn agents or make concurrent overlapping edits.
 
 ## Follow-ups outside feature completion
 
+- [ ] **Mapped-IPv4 fetch-stat fixture:** `TestFetchStatsRejectedURLs` expects
+  syntax rejection of `https://[::ffff:192.0.2.1]/`, but Go 1.26.4 accepts it and
+  the request records a cache miss in both single/batch modes. Reproduced on
+  unchanged `66cbecc`; outside Task 1. Confirm the intended admission contract,
+  then correct `validateFetchScheme` or the fixture without weakening SSRF
+  protection, and avoid real network attempts in syntax-rejection tests.
+- [ ] **Vault CLI fixture isolation:** isolate `XDG_CONFIG_HOME` in
+  `setupCodexVaultEnv`, `setupVaultWithSidecar` and `TestVaultMerge_EndToEnd`;
+  personal import-size settings currently exclude their tiny fixtures. This
+  pre-existing harness issue is outside Task 1; all affected cases pass with an
+  empty temporary config home. See [verification](verification.md#task-1-main-session-cli).
 - [ ] **Claude-toolbox enhancement PR:** after capy's integration is verified,
   explain its ownership of instruction injection and supported HTTP routing;
   propose optional cleanup with a migration path for users lacking the new

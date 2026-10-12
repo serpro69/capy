@@ -102,7 +102,11 @@ func TestShellPolicyEveryElementAndPrecedence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			decision, err := EvaluateCommand(tc.command, tc.policies)
 			require.NoError(t, err)
-			assert.Equal(t, CommandDecision{tc.want, tc.pattern}, decision)
+			want := CommandDecision{Decision: tc.want, MatchedPattern: tc.pattern}
+			if tc.pattern != "" {
+				want.SourcePath = "<in-memory>"
+			}
+			assert.Equal(t, want, decision)
 		})
 	}
 }

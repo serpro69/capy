@@ -16,6 +16,9 @@ import (
 func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.SecurityPolicy, projectDir string) ([]byte, error) {
 	event, err := a.ParsePreToolUse(input)
 	if err != nil {
+		if a.Platform() == adapter.Codex {
+			return a.FormatBlock("capy: invalid Codex PreToolUse payload; expected valid hook JSON")
+		}
 		return nil, nil // pass through on parse error — don't block the tool
 	}
 	ctx := hookContext{projectDir: projectDir, workingDir: projectDir}
@@ -29,6 +32,22 @@ func routePreToolUse(event *adapter.PreToolUseEvent, a adapter.HookAdapter, poli
 	toolName := event.ToolName
 	toolInput := event.ToolInput
 	sessionID := event.SessionID
+
+	if a.Platform() == adapter.Codex {
+		if strings.TrimSpace(toolName) == "" || toolInput == nil {
+			return a.FormatBlock("capy: invalid Codex PreToolUse payload; tool_name and object tool_input are required")
+		}
+		if toolName == "Bash" {
+			command, ok := toolInput["command"].(string)
+			if !ok || strings.TrimSpace(command) == "" {
+				return a.FormatBlock("capy: invalid Codex Bash input; command must be a nonempty string")
+			}
+		} else if !isCapyTool(toolName) {
+			// Codex passes canonical Bash/MCP names. Do not apply Claude's
+			// Read/WebFetch guidance or Agent/Task rewriting to other tools.
+			return nil, nil
+		}
+	}
 
 	canonical := canonicalToolName(toolName)
 
@@ -256,20 +275,22 @@ func checkCommandSecurity(command string, policies []security.SecurityPolicy, a 
 }
 
 func checkCommandsSecurity(commands []string, policies []security.SecurityPolicy, a adapter.HookAdapter) ([]byte, error) {
-	ask := false
+	var ask security.CommandDecision
 	for _, command := range commands {
 		result, err := security.EvaluateCommand(command, policies)
 		if err != nil {
 			return a.FormatBlock(fmt.Sprintf("Command blocked: %v", err))
 		}
 		if result.Decision == "deny" {
-			return a.FormatBlock(fmt.Sprintf("Blocked by security policy: matches deny pattern %s", result.MatchedPattern))
+			return formatPolicyDeny(result, a)
 		}
-		ask = ask || result.Decision == "ask" && result.MatchedPattern != ""
+		if ask.MatchedPattern == "" && result.Decision == "ask" && result.MatchedPattern != "" {
+			ask = result
+		}
 	}
 	// A matched ask must not hide a later deny or scanner failure in the request.
-	if ask {
-		return a.FormatAsk()
+	if ask.MatchedPattern != "" {
+		return a.FormatAsk(policyAskReason(ask))
 	}
 	return nil, nil
 }
@@ -278,19 +299,33 @@ func checkCodeSecurity(code, language string, policies []security.SecurityPolicy
 	if language == "shell" {
 		return checkCommandSecurity(code, policies, a)
 	}
-	ask := false
+	var ask security.CommandDecision
 	for _, command := range security.ExtractEmbeddedCommands(code, language) {
 		decision, err := security.EvaluateEmbeddedCommand(command, policies)
 		if err != nil {
 			return a.FormatBlock(fmt.Sprintf("Command blocked: %v", err))
 		}
 		if decision.Decision == "deny" {
-			return a.FormatBlock(fmt.Sprintf("Blocked by security policy: matches deny pattern %s", decision.MatchedPattern))
+			return formatPolicyDeny(decision, a)
 		}
-		ask = ask || decision.Decision == "ask" && decision.MatchedPattern != ""
+		if ask.MatchedPattern == "" && decision.Decision == "ask" && decision.MatchedPattern != "" {
+			ask = decision
+		}
 	}
-	if ask {
-		return a.FormatAsk()
+	if ask.MatchedPattern != "" {
+		return a.FormatAsk(policyAskReason(ask))
 	}
 	return nil, nil
+}
+
+func policyAskReason(decision security.CommandDecision) string {
+	return fmt.Sprintf("Matched approval pattern %q in %q", decision.MatchedPattern, decision.SourcePath)
+}
+
+func formatPolicyDeny(decision security.CommandDecision, a adapter.HookAdapter) ([]byte, error) {
+	reason := fmt.Sprintf("Blocked by security policy: matches deny pattern %s", decision.MatchedPattern)
+	if a.Platform() == adapter.Codex {
+		reason += fmt.Sprintf(" in %q", decision.SourcePath)
+	}
+	return a.FormatBlock(reason)
 }

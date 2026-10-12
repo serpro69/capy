@@ -16,13 +16,18 @@ type hookContext struct {
 	workingDir string
 }
 
-func resolveHookContext(explicitProjectDir *string, event *adapter.PreToolUseEvent) (hookContext, error) {
+func resolveHookContext(platform adapter.Platform, explicitProjectDir *string, event *adapter.PreToolUseEvent) (hookContext, error) {
 	processDir, err := os.Getwd()
 	if err != nil {
 		return hookContext{}, fmt.Errorf("resolve hook process directory: %w", err)
 	}
 	workingDir := validatedPayloadCwd(event)
-	projectDir := os.Getenv("CLAUDE_PROJECT_DIR")
+	var projectDir string
+	if platform == adapter.ClaudeCode {
+		projectDir = os.Getenv("CLAUDE_PROJECT_DIR")
+	} else if platform == adapter.Codex {
+		projectDir = workingDir
+	}
 	if explicitProjectDir != nil {
 		projectDir = *explicitProjectDir
 		if projectDir == "" {

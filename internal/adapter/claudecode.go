@@ -10,6 +10,8 @@ import (
 // ClaudeCodeAdapter implements HookAdapter for the Claude Code platform.
 type ClaudeCodeAdapter struct{}
 
+func (a *ClaudeCodeAdapter) Platform() Platform { return ClaudeCode }
+
 // uuidInTranscriptRe extracts a UUID from a transcript path like ".../<uuid>.jsonl".
 var uuidInTranscriptRe = regexp.MustCompile(`([a-f0-9-]{36})\.jsonl$`)
 
@@ -64,25 +66,11 @@ func resolveSessionID(sessionID, transcriptPath string) (string, bool) {
 }
 
 func (a *ClaudeCodeAdapter) FormatBlock(reason string) ([]byte, error) {
-	return json.Marshal(map[string]any{
-		"hookSpecificOutput": map[string]any{
-			"hookEventName":            "PreToolUse",
-			"permissionDecision":       "deny",
-			"permissionDecisionReason": reason,
-		},
-	})
+	return formatBlock(reason)
 }
 
 func (a *ClaudeCodeAdapter) FormatAllow(guidance string) ([]byte, error) {
-	if guidance == "" {
-		return nil, nil
-	}
-	return json.Marshal(map[string]any{
-		"hookSpecificOutput": map[string]any{
-			"hookEventName":     "PreToolUse",
-			"additionalContext": guidance,
-		},
-	})
+	return formatAllow(guidance)
 }
 
 func (a *ClaudeCodeAdapter) FormatModify(updatedInput map[string]any) ([]byte, error) {
@@ -96,7 +84,7 @@ func (a *ClaudeCodeAdapter) FormatModify(updatedInput map[string]any) ([]byte, e
 	})
 }
 
-func (a *ClaudeCodeAdapter) FormatAsk() ([]byte, error) {
+func (a *ClaudeCodeAdapter) FormatAsk(_ string) ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"hookSpecificOutput": map[string]any{
 			"hookEventName":      "PreToolUse",
@@ -106,12 +94,7 @@ func (a *ClaudeCodeAdapter) FormatAsk() ([]byte, error) {
 }
 
 func (a *ClaudeCodeAdapter) FormatSessionStart(context string) ([]byte, error) {
-	return json.Marshal(map[string]any{
-		"hookSpecificOutput": map[string]any{
-			"hookEventName":     "SessionStart",
-			"additionalContext": context,
-		},
-	})
+	return formatContext("SessionStart", context)
 }
 
 func (a *ClaudeCodeAdapter) Capabilities() PlatformCapabilities {

@@ -46,7 +46,7 @@ func TestResolveHookContext(t *testing.T) {
 				explicit = &tt.explicit
 			}
 			beforeEnv := os.Environ()
-			ctx, err := resolveHookContext(explicit, &adapter.PreToolUseEvent{Cwd: tt.cwd})
+			ctx, err := resolveHookContext(adapter.ClaudeCode, explicit, &adapter.PreToolUseEvent{Cwd: tt.cwd})
 			require.NoError(t, err)
 			wantProject, err := filepath.EvalSymlinks(tt.wantProject)
 			require.NoError(t, err)
@@ -95,7 +95,7 @@ func TestHookContextSymlinkBeforeParent(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(target, "nested"), 0o755))
 	require.NoError(t, os.Symlink(filepath.Join(target, "nested"), filepath.Join(root, "alias")))
 	path := root + "/alias/.." // filepath.Join would erase the alias before resolution
-	ctx, err := resolveHookContext(&path, &adapter.PreToolUseEvent{Cwd: path})
+	ctx, err := resolveHookContext(adapter.ClaudeCode, &path, &adapter.PreToolUseEvent{Cwd: path})
 	require.NoError(t, err)
 	want, err := filepath.EvalSymlinks(target)
 	require.NoError(t, err)

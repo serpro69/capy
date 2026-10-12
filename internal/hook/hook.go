@@ -12,6 +12,9 @@ import (
 // Run dispatches a hook event by reading JSON from stdin, routing to the
 // appropriate handler, and writing the response JSON to stdout.
 func Run(event string, a adapter.HookAdapter, explicitProjectDir *string) error {
+	if err := validateEvent(event, a.Platform()); err != nil {
+		return err
+	}
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return err
@@ -29,11 +32,20 @@ func Run(event string, a adapter.HookAdapter, explicitProjectDir *string) error 
 
 // handleEvent selects one project before loading any policies or mutating state.
 func handleEvent(event string, input []byte, a adapter.HookAdapter, explicitProjectDir *string) ([]byte, error) {
+	if err := validateEvent(event, a.Platform()); err != nil {
+		return nil, err
+	}
 	parsed, parseErr := a.ParsePreToolUse(input)
 	if parseErr != nil {
+		if a.Platform() == adapter.Codex {
+			if event == "pretooluse" {
+				return a.FormatBlock("capy: invalid Codex PreToolUse payload; expected valid hook JSON")
+			}
+			return nil, parseErr
+		}
 		parsed = &adapter.PreToolUseEvent{}
 	}
-	ctx, err := resolveHookContext(explicitProjectDir, parsed)
+	ctx, err := resolveHookContext(a.Platform(), explicitProjectDir, parsed)
 	if err != nil {
 		if event == "pretooluse" {
 			return a.FormatBlock(err.Error())
@@ -61,4 +73,25 @@ func handleEvent(event string, input []byte, a adapter.HookAdapter, explicitProj
 	default:
 		return nil, fmt.Errorf("unknown hook event: %s", event)
 	}
+}
+
+func validateEvent(event string, platform adapter.Platform) error {
+	switch platform {
+	case adapter.ClaudeCode:
+		switch event {
+		case "pretooluse", "posttooluse", "precompact", "sessionstart", "userpromptsubmit", "sessionend":
+			return nil
+		}
+		return fmt.Errorf("unknown hook event: %s", event)
+	case adapter.Codex:
+		switch event {
+		case "pretooluse", "sessionstart":
+			return nil
+		}
+		// TODO(codex-hooks Task 4): dispatch SubagentStart, PostToolUse and
+		// SessionEnd after their Codex lifecycle acceptance tests are added.
+	default:
+		return fmt.Errorf("unknown hook platform %q", platform)
+	}
+	return fmt.Errorf("unsupported hook event %q for platform %q", event, platform)
 }
