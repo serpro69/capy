@@ -1,7 +1,8 @@
 # Codex hooks owned by capy
 
-> Status: draft — user-confirmed direction; pending independent design review
+> Status: revised after two design reviews — implementation pending
 > Created: 2026-10-12
+> Review dispositions: [review-resolution.md](review-resolution.md)
 > Related: [#29](https://github.com/serpro69/capy/issues/29), [#132](https://github.com/serpro69/capy/issues/132)
 > Plan: [implementation.md](implementation.md) · Tasks: [tasks.md](tasks.md)
 
@@ -32,6 +33,9 @@ Success is observable:
    session-cleanup contracts.
 5. CLI and MCP diagnostics identify Codex registration independently of Claude
    registration and distinguish configuration checks from runtime proof.
+6. Hooks and MCP bind to the same installation owner from root, ordinary
+   subdirectories, moved trees and supported worktrees. Ambiguous overlapping
+   installations fail before policies, observations or database access.
 
 This work does not, by itself, fix the output-volume examples in #132. Existing
 routing permits ordinary test/install commands. Bounded routine output and full
@@ -109,6 +113,15 @@ Primary sources, inspected on 2026-10-12:
 - [Pinned startup implementation](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/hooks/src/events/session_start.rs):
   separate `SessionStart` and `SubagentStart` targets; startup sources also
   include `fork`, beyond the public reference's listed examples.
+- [Pinned discovery](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/hooks/src/engine/discovery.rs)
+  and [command runner](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/hooks/src/engine/command_runner.rs):
+  config-layer hooks compose and run from event cwd; regular project hooks do
+  not receive their config-source directory as an owner binding.
+- [Pinned MCP launcher](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/rmcp-client/src/stdio_server_launcher.rs):
+  arguments are passed through and an absent server cwd uses the runtime cwd.
+- [Pinned context spiller](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/hooks/src/output_spill.rs):
+  the default approximate threshold is 2,500 tokens; larger context becomes a
+  saved file and a head/tail preview.
 
 The current session passed a real positive-control command and rejected a
 harmless print command ending in `.csv` through the existing toolbox hook.
@@ -144,6 +157,22 @@ Use `SubagentStart` for child instruction injection. Do not rewrite
 Hosted web/search tools are outside this hook coverage. The injected text and
 shared generated routing instructions must describe that boundary accurately,
 without weakening the existing Claude-specific behavior.
+
+Argument rewriting with `updatedInput` is supported by Codex but deliberately
+unused here: SubagentStart provides child guidance without altering a launch
+request or coupling capy to child-tool arguments. Direct `updatedMCPToolOutput`
+replacement remains unsupported at the verified baseline and is also unused.
+Adapter capability descriptions must distinguish host capability from what this
+integration implements.
+
+Keep each generated SessionStart/SubagentStart `additionalContext` at or below
+**4,096 UTF-8 bytes**, with all essential routing instructions in that payload.
+Assert this bound in both startup tests and check that the default host spiller
+does not replace it during live acceptance. This is a capy byte budget, not a
+claim about exact model token counts. Omit `additionalContextLimit` from every
+generated handler and retain Codex's default; do not uniformly add a field to
+events that cannot emit context. Codex 0.162.1 accepts it on PostToolUse, but
+capy's observation handler emits no context; SessionEnd does not accept it.
 
 ## 5. Adapter, policy and state contracts
 
@@ -189,7 +218,10 @@ rules or approval settings. Codex's own sandbox and permissions still apply.
 - A matching deny or command-scanner failure produces a supported structured
   pre-tool denial with a reason.
 - A matched approval rule produces a supported denial explaining that the rule
-  requires approval which this Codex hook cannot request. It must not suggest
+  requires approval which this Codex hook cannot request. Include the exact
+  matched pattern and the settings-file path that supplied it. Preserve this
+  provenance through loading, evaluation and formatting instead of reducing
+  the result to a boolean. It must not suggest
   disabling safeguards or retrying through a different tool to evade the rule.
 - Ordinary allow/advisory paths return no decision or `additionalContext`;
   they do not grant a host permission or return a bare `allow` decision.
@@ -198,13 +230,29 @@ rules or approval settings. Codex's own sandbox and permissions still apply.
 - Malformed Codex pre-tool payloads, including invalid Bash command input,
   produce a denial before state writes. This is specific to the new adapter;
   retain the existing Claude malformed-input behavior.
-- Unsupported argument/output rewrite paths are not advertised or used by
-  the Codex integration. A mistaken internal attempt must fail explicitly.
+- Argument rewriting is deliberately unused, as explained in §4. A mistaken
+  internal request to that unimplemented adapter path fails explicitly; the
+  message must not claim that Codex lacks input rewriting.
 
 Denies still take precedence over matched asks in a compound request. A returned
 policy message must distinguish an actual deny from an unsupported approval
 requirement. Native host approval cannot substitute for the latter automatically:
 the two systems may evaluate different policies.
+
+`PermissionRequest` cannot bridge these rules: it runs only when Codex is
+already about to request approval, and PreToolUse cannot invoke it. See the
+rejected alternative in §10. An unmatched evaluator default of `ask` with no
+matched pattern remains the existing pass-through case, not a new denial.
+
+Add source-path metadata to `SecurityPolicy` and the returned `CommandDecision`.
+Keep the evaluator's current ordering; retain the first matched ask across
+commands/embedded commands while continuing to look for later denies or scanner
+failures. Pass a formatted reason into the adapter's ask response; Claude can
+ignore it and keep its existing response shape. File-backed rules must retain
+their real path; in-memory test policies use an explicit in-memory label. Do
+not dump command bodies or settings contents to explain a match. Today's deny
+message names only its pattern; source-file provenance is a new requirement,
+not an existing capability to assume.
 
 ### 5.4 Child observations and cleanup
 
@@ -229,26 +277,73 @@ No hook accesses the knowledge or vault database or requires their keys.
 Continue using `.codex/scripts/capy.sh`; do not generate copies of toolbox's
 session-start or pretooluse scripts.
 
-Generated command invocations have a fixed argument order: `hook --platform
-codex <event>`, followed by an explicit project directory. Use a single command
-generator for all events. It locates the installed wrapper by walking upward
-from the hook process's physical working directory to the nearest ancestor
-containing `.codex/scripts/capy.sh`, then passes that directory explicitly.
-This works in ordinary repositories, worktrees and non-Git project directories
-without embedding a machine-specific absolute path. Stop at filesystem root;
-failure to locate the wrapper is explicit. Quote every derived path. Do not
-search unrelated directories, inspect transcripts, or use inherited `GIT_*` or
-`CLAUDE_PROJECT_DIR` values to select the installation.
+**Bind the owner at setup time.** Add a committed `.codex/capy-owner` marker
+containing a version tag and a random 128-bit installation ID, represented as
+32 lowercase hexadecimal characters. This ID is a portable locator, not a
+credential or authorization token. Generate it once using Go's standard
+cryptographic randomness; preserve it on every subsequent setup. Invalid
+existing markers fail rather than being regenerated. Creation must be exclusive
+so concurrent setup cannot silently select two IDs. The marker travels with a
+clone, move or worktree; it contains no absolute path.
+If the marker is missing but existing owned hook/MCP definitions already bind
+an ID, fail with instructions to restore that marker before rerunning setup;
+do not silently rotate the live binding. First migration from today's unbound
+MCP block may create an ID normally.
 
-The supported launch contract is that the hook process starts within its capy
-installation's directory tree. A caller deliberately launching it elsewhere must
-invoke the wrapper with an explicit project directory. Test this boundary rather
-than falling back to a recently used checkout.
+Embed that same ID as a literal argument in every owned hook command and the
+owned MCP server command. It is not sufficient to find whichever wrapper is
+nearest to cwd. Use one generator-owned bootstrap, parameterized by ID, launch
+mode and event, with the same owner-resolution semantics on both paths:
+
+1. Walk physical ancestors of process cwd to filesystem root. Read only the
+   fixed owner-marker path, using a bounded read (at most 80 bytes), strict
+   version/ID validation and no shell sourcing. An unreadable, oversized,
+   malformed or symlink marker fails the launch rather than being skipped.
+2. Require exactly one installation marker on that chain and require its ID
+   to equal the command's embedded ID. No match, an ID mismatch, or multiple
+   markers is an error, even if one wrapper looks usable. Do not select a
+   different marker after discovering a missing/unreadable wrapper.
+3. Use that marker's parent project as the sole owner and require its own
+   `.codex/scripts/capy.sh`. Quote paths and keep event stdin intact. For hooks,
+   invoke `hook --platform codex <event> --project-dir <owner>`; for MCP invoke
+   `serve --project-dir <owner>`. Do not change process cwd merely to hide the
+   original event directory from cwd-relative policy evaluation.
+4. Supervise wrapper launch so failures before or during invocation receive
+   the mode-specific handling in §6.3. Diagnostics go to stderr, never into MCP
+   protocol stdout. Preserve serve's actual exit status after it starts.
+
+The bootstrap is inline generated launch code, so locating a separate bootstrap
+file does not introduce another unresolved relative-path dependency. The MCP
+TOML launches it via `bash` with structured arguments, replacing the existing
+cwd-relative wrapper argv; credential forwarding remains unchanged. Hooks and
+MCP must agree on owner ID and explicit project ownership. Pass parameters as
+data, not interpolated executable text, when generating shell/JSON/TOML forms.
+
+**V1 rejects overlapping installations.** Two markers on the ancestor chain
+(including identical IDs copied into nested directories) cause both handlers
+and the MCP bootstrap to fail before policy, observation or DB access. A root
+policy therefore cannot silently disappear in favor of a nested policy, and
+the same event cannot record or consume evidence twice. Ordinary subdirectories
+without a marker are supported. Setup checks for conflicting ancestor markers;
+runtime checks also catch a nested installation activated after an ancestor was
+set up. It need not recursively scan the whole repository during root setup.
+Physically nested worktrees with an ancestor installation are also rejected;
+ordinary sibling worktrees remain portable. Supporting multiple active capy
+owners and MCP precedence is outside v1, not an implicit policy merge.
+
+The supported command-launch contract is that process cwd is below its owning
+marker. An outside-tree launch fails; an explicit direct CLI invocation remains
+available for controlled manual use. The generated command can resolve an owner
+in a non-Git directory, but **Codex project-hook discovery there is unverified**.
+Do not advertise automatic non-Git host integration based on launcher tests.
 
 ### 6.2 Merge ownership
 
-Recognize owned handlers through the generated capy-wrapper invocation and
-explicit Codex platform/event arguments, not a loose `capy` or `hook` substring.
+Recognize owned handlers through the canonical versioned bootstrap invocation,
+embedded installation ID and explicit mode/event arguments, not a loose `capy`
+or `hook` substring. Cross-check the ID with the owning config directory's
+marker; a copied/mismatched definition is an installation error, not permission
+to adopt another owner's command. Preserve the marker's ID during upgrades.
 Preserve unknown top-level keys, other event groups and non-capy handlers,
 including siblings inside a mixed group. Rewrite/collapse only positively
 identified owned handlers into one canonical entry per supported event.
@@ -264,23 +359,58 @@ hooks, or the toolbox scripts. Codex composes these sources. Additional matching
 hooks may legitimately impose stricter restrictions. Report overlapping sources
 when statically visible; do not try to reconcile their policies.
 
+For this repository, preserving the toolbox startup entry temporarily duplicates
+capy guidance on startup/resume. The measured pre-implementation baseline is
+9,500 bytes from `.capy/AGENTS.md` plus 3,240 bytes from `RoutingBlock()`:
+12,740 UTF-8 bytes before unrelated toolbox text. This is a composition
+projection, not an observed new-hook session. Record actual post-change sizes
+and a link to the toolbox follow-up in `verification.md`; do not silently remove
+provider instructions or pretend that host spilling deduplicates the text.
+
 ### 6.3 Wrapper errors and activation
 
-Keep the shared wrapper's existing Claude-hook behavior and all non-hook exit
-propagation. Add a narrow branch for the generated Codex invocation: if the
-binary is missing or a pre-tool invocation exits unsuccessfully, return Codex's
-blocking exit code 2 with an explanatory stderr message. For other Codex events,
-propagate a nonzero failure for the host to report; do not fabricate a
-`PreToolUse` JSON object for a startup event. A successful structured policy
-denial continues to exit 0. Apply wrapper-generator changes to both committed
-wrapper copies and their tests, as required by AGENTS.md.
+**Fail closed for controllable Codex pre-tool launch failures.** Today's Claude
+wrapper suppresses a running binary's nonzero exit and continues; only the
+missing-binary path emits a denial. Preserve that legacy behavior for Claude.
+For Codex, treating missing and failed enforcement consistently is preferable
+to silently running a command whose hook could not evaluate it.
+
+Both the common bootstrap and shared wrapper enforce the following contract:
+
+| Outcome | Codex PreToolUse | Other hooks / MCP |
+|---|---|---|
+| Owner lookup/validation failure, overlap, outside-tree cwd | Exit **2**, nonempty explanatory stderr | Diagnostic nonzero exit |
+| Missing, unreadable or vanished wrapper; launch exit 126/127 | Exit **2**, nonempty explanatory stderr | Diagnostic nonzero exit |
+| Missing capy binary or unsuccessful Go pre-tool invocation | Exit **2**, nonempty explanatory stderr | Diagnostic nonzero exit; preserve serve status |
+| Successful structured policy denial | Exit **0**, valid denial JSON | Not applicable |
+| Successful pass/advisory | Exit **0**, supported output | Normal event/MCP behavior |
+
+Do not use an unchecked `exec` that lets a lookup/open race escape as 126/127;
+the bootstrap must observe and remap wrapper launch failure. A successful exit-0
+JSON denial must not be relabelled as a crash. Apply wrapper-generator changes
+to both committed wrapper copies and their tests, as required by AGENTS.md.
+
+Every infrastructure-failure reason names the failed boundary and a repair:
+install/upgrade capy for a missing/incompatible binary, or repair permissions
+and rerun `capy setup --platform codex` from the intended project for damaged
+artifacts. Missing/corrupt live owner markers require restoration from the
+committed configuration, rather than arbitrary ID regeneration. A collaborator
+who trusted committed hooks without installing capy can lose all matched
+Bash/capy calls. Explain that repair can be performed from
+an external terminal; the user may disable the capy-owned entries in `/hooks`
+while repairing an unavailable installation. Distinguish this operator recovery
+from policy denials: never recommend disabling hooks to bypass a matched rule.
+Overlap errors identify the conflicting installation directories and require
+consolidation to one owner or a separate non-overlapping checkout, not nearest
+owner substitution. Do not fabricate PreToolUse JSON for another event.
 
 This does not make hooks a security boundary against a host killing/skipping
 them. Missing trust, disabled hooks, host timeouts and unsupported runtime
 versions remain host limitations that diagnostics and activation instructions
 must disclose.
 
-Setup reports **registered; activation requires Codex review/trust**. It never
+Setup reports **registered; activation requires project-layer trust and review
+of the exact hook definitions**. These are two distinct host gates. It never
 edits trust records, bypasses trust, or overrides an explicitly disabled hooks
 feature. Tell users to inspect `/hooks` and restart/resume as needed. A changed
 hook definition can require renewed trust. The existing session's trust is not
@@ -296,8 +426,10 @@ artifacts, not the mere existence of a `.claude` or `.codex` directory; with no
 registration in either platform, retain an actionable setup failure.
 
 Check expected owned events, matchers, wrapper existence and invocation shape.
-Distinguish missing, partial, malformed and duplicate registration. Validate the
-Codex MCP table with the repository's existing TOML dependency. A visible
+Check the marker and consistent hook/MCP owner binding, and report overlapping
+ancestor installations. Distinguish missing, partial, malformed and duplicate
+registration. Validate the Codex MCP table and bootstrap argv, not merely its
+presence, with the repository's existing TOML dependency. A visible
 project-level `features.hooks = false` (or deprecated alias) warrants a warning;
 do not attempt to reproduce all host config precedence or read private trust
 state. Say that trust and actual execution are unverified by the file check.
@@ -308,13 +440,25 @@ Verification has three levels:
    policy decisions, startup formatting, observations and failure paths.
 2. Generated-installation tests that run the actual wrapper/CLI in isolated
    project trees, with unset production credentials and isolated policy homes.
+   Keep hook probes credential-free. For MCP, use synthetic keys and actually
+   initialize the server, list tools and make a harmless capy call; assert that
+   it uses the same execution project as the hook and the storage target
+   configured for that project (which may reside outside the project).
    Include repeat setup, mixed third-party groups, paths containing spaces,
-   subdirectories, moved trees, non-Git roots and worktrees.
+   ordinary subdirectories, moved trees, command-only non-Git fixtures and
+   sibling worktrees. A two-owner fixture has different harmless deny rules and
+   separate state directories: both generated handlers must reject overlap,
+   neither marker may be substituted, and no observation is written/consumed.
+   Also remove one owner's wrapper/marker and verify no fallback to the other.
+   Assert exact exit 2 plus nonempty repair text for pre-wrapper failures,
+   including unreadability and disappearance after lookup.
 3. A recorded live Codex 0.162.1-or-newer session: startup injection, harmless
    allowed/denied commands, a matched approval rule, a child observation and
    redirect/fallback sequence, and unchanged unrelated hooks. Record the exact
    runtime version and which behaviors were observed. Never call configuration
    tests or manual stdin replay proof that the host delivered an event.
+   Include a host launched in an ordinary subdirectory with a working capy MCP
+   call, and record actual capy startup-context bytes from both installed hooks.
 
 Unit tests can supply synthetic deny patterns and commands that only print
 markers. Live probes must not read secrets, make unnecessary HTTP calls or
@@ -327,7 +471,8 @@ cannot be observed live; clearly label that limit.
 |---|---|
 | Codex 0.162.1's documented and pinned fields reach installed hooks | Capture synthetic runtime observations in the live check; adjust the adapter before claiming support |
 | Child tools share their parent's session ID and supply a distinct agent ID | Verify parent/child payload association; do not release cleanup/evidence claims if it differs |
-| Hook processes start inside the configured project tree | Exercise root, nested, moved and worktree launches; fail explicitly outside the supported launch contract |
+| The command's embedded ID has exactly one owning marker above process cwd | Exercise root, ordinary subdirectories, moved trees and sibling worktrees; reject ID mismatch, overlap, copied IDs and outside-tree launches before side effects |
+| Codex loads the intended project layer after project and hook trust | Verify in live Git-worktree sessions; non-Git command resolution alone establishes no host-discovery support |
 | The existing Go router can remain policy owner | Router conformance tests must pass for both adapters; avoid a parallel shell implementation |
 | Existing policy files can be reused as capy's additional restrictions | Show actual sources in docs; do not claim equivalence with Codex native permissions |
 | Independent toolbox hooks may remain installed | Mixed-installation checks preserve their behavior; optional upstream simplification is not required for release |
@@ -346,6 +491,8 @@ cannot be observed live; clearly label that limit.
   or `spawn_agent` rewrites: they provide no supported behavior needed here.
 - Automatic mutation of toolbox/global/plugin hooks or trust decisions: those
   have separate owners.
+- Multiple overlapping capy installations: v1 rejects ambiguous composition
+  rather than merging project policies or recording duplicate evidence.
 - Universal compatibility claims for all Codex versions, desktop/cloud
   orchestration or Windows: advertise only platforms actually verified within
   capy's existing platform constraints.
@@ -356,6 +503,9 @@ cannot be observed live; clearly label that limit.
 |---|---|---|
 | Generate the two toolbox shell scripts as proposed in #29 | Small initial patch using known working scripts | Duplicates routing/security policy and takes ownership of unrelated provider instructions and file restrictions |
 | Register the current Claude adapter unchanged | Fewest code changes | Wrong identity/env assumptions and unsupported approval responses; it can turn an intended approval requirement into execution |
+| Bridge matched asks through `PermissionRequest` | Could reuse the native approval UI if it were triggerable | Fires only for host-initiated approvals; PreToolUse cannot cause it to run, so it cannot implement capy's independent ask rules |
+| Locate the nearest wrapper from cwd | No installation metadata | Loses the defining handler's owner when config layers compose; cannot distinguish a missing owner from a replacement installation |
+| Embed absolute installation paths | Direct source-owner binding | Breaks committed portability across collaborators, moves and worktrees; a persistent marker ID provides a portable binding |
 | Codex adapter over the shared Go router — chosen | One policy implementation with explicit host semantics | Requires adapter/installation tests and deliberate unsupported-operation handling |
 | Introduce a generic new hook framework | Could support more hosts later | Unnecessary abstraction and migration for one additional host |
 
@@ -366,8 +516,10 @@ explains the limitation; implementing a native approval bridge is not assumed.
 ## 11. Rollout and follow-ups
 
 Ship the adapter, setup, committed generated artifacts and diagnostics together.
-Upgrade capy, rerun setup, review/trust new hooks in Codex, and perform the live
-probe. Existing toolbox scripts can remain throughout. Rollback removes only
+Upgrade capy, rerun setup, retain the generated owner marker with its config,
+establish project trust, review/trust new hooks in Codex, and perform the live
+probe. Existing toolbox scripts can remain throughout; record their temporary
+duplicate startup content and the linked follow-up. Rollback removes only
 the newly generated capy hook entries and restores the previous capy binary;
 it does not require reverting toolbox or changing stored data.
 

@@ -3,6 +3,7 @@
 > Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
 > Status: planned; no implementation performed
 > Baseline inspected: 2026-10-12, Codex CLI 0.162.1
+> Revisions: [review-resolution.md](review-resolution.md)
 
 ## 1. Orientation and implementation boundaries
 
@@ -27,16 +28,21 @@ Use these existing components:
 - `internal/hook/{posttooluse,observations,sessionend,guidance}.go`: child
   evidence and session state. Preserve existing caps, locking and expiry.
 - `internal/platform/{setup,doctor}.go`: installation and shared checks.
+- `internal/security/{settings,eval}.go`: policy loading and match results;
+  add rule-source provenance without changing matching precedence.
 - `cmd/capy/{setup,doctor}.go` and `internal/server/tool_doctor.go`: user-facing
   setup and diagnostics; both doctor surfaces must agree.
 - `internal/platform/setup_artifacts_drift_test.go`: mandatory registration of
-  `.codex/hooks.json` as a merged artifact, plus wrapper/routing equality.
+  `.codex/hooks.json` and `.codex/config.toml` as merged artifacts, plus
+  wrapper/routing equality and the new parameterized `.codex/capy-owner` marker.
 
 Implementation code below is described, not supplied. New test names are
 proposed acceptance names. Test packages must use `-tags fts5`; isolate global
 settings and use the synthetic `CAPY_DB_KEY` and `CAPY_VAULT_KEY` required by
 AGENTS.md. Hook-specific subprocess fixtures must also pass with both keys
 unset, proving that the hook path does not initialize a database.
+MCP location probes instead use synthetic keys and an isolated database: a
+successful hook process is not evidence that its suggested MCP tool is usable.
 
 ## 2. Main-session hook path
 
@@ -59,13 +65,23 @@ directly exercises a complete usable Codex path before installation is added.
    precedence. → verify: `TestHookCodexDispatch` and
    `TestHookContextCodexIgnoresClaudeEnvironment` drive the CLI/router with
    different process, explicit-project and payload directories.
-3. Format Codex denials and advisory context in its adapter. Map `FormatAsk`
-   to a supported denial with an approval-required explanation. Keep shared
-   compound-request deny precedence; no Codex response should contain
+3. Preserve provenance in `SecurityPolicy` and `CommandDecision` with a
+   source-file field populated by `readSingleSettings`. Keep the first matched
+   ask result in both `checkCommandsSecurity` and `checkCodeSecurity` while
+   continuing to look for a later deny/scanner error. Change the adapter ask
+   formatter to accept a reason; Claude retains its existing JSON shape, while
+   Codex reports the matched pattern, actual settings path and unsupported
+   approval requirement. Use an explicit in-memory label only for policies
+   without a file source. Keep shared compound-request deny precedence; no
+   Codex response should contain
    `permissionDecision: ask`, a bare permission grant, or an implicit command
-   replacement. Make unsupported rewrite attempts explicit. → verify:
-   `TestCodexPolicyResponses` covers allow, deny, matched ask, later deny after
-   an earlier ask, malformed command input and scanner failure.
+   replacement. Input rewriting is host-supported but deliberately unused;
+   reject accidental use of the unimplemented adapter path without claiming a
+   host limitation. Do not install PermissionRequest as an ask bridge; it cannot
+   be triggered from PreToolUse. → verify: `TestCodexPolicyResponses` and
+   `TestCommandDecisionProvenance` cover all three settings sources, identical
+   patterns in different sources, embedded/compound commands, a later deny,
+   scanner failure and the unmatched default ask that must still pass through.
 4. Adapt the malformed-input dispatch branch for Codex only: pre-tool parse or
    required command-shape errors deny before state mutation. Retain Claude's
    existing malformed-input handling. → verify: `TestCodexMalformedPreToolUse`
@@ -77,7 +93,8 @@ directly exercises a complete usable Codex path before installation is added.
    web calls or child-type rewriting. Keep the old `RoutingBlock` entry point
    as the Claude-compatible surface if extracting common fragments. → verify:
    `TestCodexSessionStartGuidance` checks the event-specific wrapper and actual
-   supported routes, and Claude startup/routing tests remain unchanged.
+   supported routes and asserts at most 4,096 UTF-8 bytes of additionalContext;
+   Claude startup/routing tests remain unchanged.
 
 Run adapter and hook packages plus targeted CLI tests. This slice is complete
 when a synthetic stdin invocation reaches the real CLI and produces supported
@@ -85,53 +102,97 @@ JSON without credentials or a database.
 
 ## 3. Generated installation
 
-**Goal:** setup installs the tested main-session path, preserving all other
-configuration. The next slice extends the same event catalog to children.
+**Goal:** hooks and MCP launch through the same portable owner binding. Split
+this expanded work into Task 2 (launch path) and Task 3 (hook registration),
+then extend the event catalog to children in Task 4.
 
-1. Add Codex-specific event descriptors and merge helpers in
-   `internal/platform/setup_codex_hooks.go`; leave the existing Claude event
-   catalog intact. Start with SessionStart and PreToolUse. Generate anchored
-   regex matchers using the known capy tool names and an explicit Codex
-   platform argument. SessionStart matches every source. → verify:
-   `TestCodexHookMatchers` checks canonical Bash, capy names under multiple
-   server aliases and unrelated MCP names; startup tests include `fork`.
-2. Implement the common generated command's upward wrapper lookup from the
-   hook process's physical cwd. Pass the discovered installation explicitly
-   as project ownership. Bound the walk by filesystem root, quote paths, and
-   report lookup failure without guessing another checkout. → verify:
-   `TestCodexHookCommandLocations` executes generated commands from root,
-   nested, moved and non-Git project trees, including spaces in paths; add a
-   real linked-worktree fixture and an outside-tree failure fixture.
-3. Merge only capy-owned handlers into `.codex/hooks.json`. Recognize the
-   canonical wrapper/platform/event invocation; preserve sibling handlers in
-   mixed groups. Upsert/collapse owned duplicates without replacing unrelated
-   groups. Reject malformed document shapes or ambiguous owned entries before
-   writing. → verify: `TestMergeCodexHooks` covers empty/fresh files, unrelated
-   top-level metadata, mixed groups, owned duplicates, similar-looking external
-   commands, malformed shapes and a second semantically identical run.
-4. Call the merger from `SetupCodex` and report registration plus Codex trust
-   instructions in `cmd/capy/setup.go`. Do not change the existing platform
-   defaults or override disabled hooks, inline hooks, global hooks or trust
-   records. → verify: `TestSetupCodexHooks` checks Codex-only and default-both
-   setup, preservation of MCP configuration, and unchanged invalid hook files
-   when setup reports an error.
-5. Add narrow Codex failure handling to `capyWrapperScript` for the generated
-   `hook --platform codex <event>` prefix. Preserve existing Claude zero-exit
-   behavior and non-hook exit propagation. Codex pre-tool launch failures
-   block using exit 2; non-pre-tool failures retain an appropriate nonzero
-   status. Apply the generator to both wrapper copies. → verify:
-   `TestWrapperCodexHookFailure` uses a controlled fake/missing binary and
-   checks successful JSON denial, subprocess failure, missing binary and
-   startup failure; existing wrapper exit-code tests remain green.
-6. Add the generated entries to committed `.codex/hooks.json` without removing
-   the toolbox entries. Register it in `jsonMergeArtifacts`; synchronize any
-   common generated routing wording with `.capy/AGENTS.md`. → verify:
-   `TestGeneratedWholeFileArtifacts`, `TestMergedArtifactsAreIdempotent` and
-   `TestDriftGuardCoversEverySetupArtifact` all pass without exemptions for the
-   new committed artifact.
+### 3.1 Owner-bound hook and MCP launch
 
-Shell/bootstrap text is one generator-owned implementation reused across event
-descriptors. It must not evolve into a parallel shell policy evaluator.
+1. Add owner-marker helpers and the common launch generator in
+   `internal/platform/setup_codex_launch.go`. `.codex/capy-owner` has the exact
+   format `capy-codex-owner-v1:<32 lowercase hex characters>` followed by one
+   newline. Generate 16 random bytes once with the Go standard library. Reject
+   malformed existing markers; never rotate a valid ID during setup. Use
+   exclusive creation and re-read/validate the winning marker if creation
+   races. If bound hook/MCP definitions already exist but the marker is missing,
+   require restoration instead of assigning a new ID; today's unbound legacy
+   MCP block can migrate normally. → verify: `TestCodexOwnerMarker` covers
+   stable reruns, malformed/symlink/missing-live markers, legacy migration and
+   concurrent creation cases, with a single consistent ID.
+2. Generate one inline bootstrap for hook and serve modes, with the owner ID
+   and mode/event passed as data. Scan physical ancestors for markers to
+   filesystem root with bounded 80-byte reads. Require one marker, matching
+   the embedded ID, and its own readable regular wrapper. Do not source marker
+   contents or choose a nearer/fallback wrapper. Set explicit project ownership
+   while preserving process/event cwd. → verify: `TestCodexLaunchLocations`
+   runs both modes from root, ordinary subdirectories, moved trees, non-Git
+   command-only fixtures, paths with spaces and sibling linked worktrees.
+3. Reject overlapping installations before wrapper invocation. Setup checks
+   conflicting ancestors; runtime checks catch nested descendants when they
+   become ancestors of the launch cwd. Validate both distinct and copied IDs.
+   → verify: `TestCodexOverlappingInstallations` installs different harmless
+   root/nested deny rules and separate state directories, invokes both generated
+   handlers and MCP, and asserts rejection with no policy/state/DB side effects.
+   Remove the root wrapper and then its marker: root's command must never run
+   as the nested owner. Include a copied definition with the wrong owner ID.
+4. Replace `codexMCPBlock`'s cwd-relative wrapper arguments with the same
+   bootstrap and owner ID, preserving credential forwarding and unrelated
+   TOML. Serve receives `--project-dir` for that owner. Keep stdout exclusively
+   for MCP. Update the committed TOML and parameterize pure merge helpers so
+   drift tests use the existing marker rather than generating a new ID in a
+   temporary copy. → verify: `TestCodexMCPLaunchLocations` initializes the actual
+   MCP server, lists tools and makes a harmless capy call from every supported
+   location, using synthetic credentials; assert execution/storage owner and
+   test a visible setup/runtime failure when the expected marker is absent.
+5. Supervise wrapper invocation in the bootstrap, mapping owner/lookup/open/
+   launch failures for PreToolUse to **exit 2 with nonempty repair-oriented
+   stderr**. This includes ordinary subprocess exits 1/126/127 and a wrapper
+   disappearing after validation. Other hooks/MCP fail diagnostically. Add
+   the corresponding narrow Codex branch to `capyWrapperScript` for missing
+   binaries and failed Go hooks; keep legacy Claude behavior and serve exit
+   propagation. → verify: `TestCodexBootstrapFailure` and
+   `TestWrapperCodexHookFailure` assert exact status/text for missing,
+   unreadable, vanished and invalid-owner wrappers, outside-tree launch,
+   missing/incompatible binary, crash, and the successful exit-0 JSON denial.
+   Use controlled readers/launchers or unprivileged fixtures for unreadability
+   and the disappearance race; do not rely on root-user permission tests.
+6. Commit the marker with its generated configuration, update both wrapper
+   copies, and extend artifact tests for a parameterized owner marker. Its
+   serialized form must equal the generator given the preserved ID; fresh-setup
+   tests separately prove creation and propagation. Do not exempt it from
+   completeness coverage or expect independent installations to share a random
+   value. → verify: whole-file, TOML idempotency and completeness guards pass.
+
+### 3.2 Hook registration and coexistence
+
+1. Add Codex event descriptors and merge helpers in
+   `internal/platform/setup_codex_hooks.go`; leave the Claude catalog intact.
+   Start with SessionStart and PreToolUse. Generate anchored regex matchers and
+   owner-bound commands from §3.1; match every startup source. Omit
+   `additionalContextLimit` from all generated handlers. → verify:
+   `TestCodexHookMatchers` covers capy aliases/unrelated tools and `fork`;
+   `TestCodexHookContextConfiguration` checks omitted limit fields.
+2. Merge only positively identified handlers for the current installation ID;
+   preserve unknown metadata, other groups and mixed-group siblings. Collapse
+   owned duplicates; reject copied/mismatched bindings and malformed structures
+   before writing. → verify: `TestMergeCodexHooks` covers those cases and an
+   unchanged second run, including preserved independent toolbox hooks.
+3. Wire the merger into `SetupCodex` and report two activation gates in
+   `cmd/capy/setup.go`: project-layer trust and trust of exact hook definitions.
+   Do not change platform defaults or edit feature overrides, inline/global
+   hooks or trust records. → verify: `TestSetupCodexHooks` covers Codex-only,
+   default-both and partial/invalid installations with a consistent marker/MCP
+   binding; invalid existing files remain intact.
+4. Add committed `.codex/hooks.json` entries without removing toolbox entries,
+   register the merged artifact, and synchronize any shared generated routing
+   wording. Record the temporary duplicate capy context and follow-up in
+   `verification.md`; preserving it is deliberate pending upstream cleanup.
+   → verify: all three drift checks pass; the mixed startup fixture records
+   actual context sizes while retaining provider/extra instructions.
+
+Shell/bootstrap text owns only location and process-failure handling; it must
+not become a second policy evaluator. Non-Git fixture success proves command
+resolution only; automatic Codex discovery there remains unverified.
 
 ## 4. Child guidance, evidence and cleanup
 
@@ -143,7 +204,8 @@ existing observation safeguards.
    needed to emit that event; do not route it through a SessionStart-labelled
    response. Register it for all child types. → verify:
    `TestCodexSubagentStart` checks the event name, child guidance and lack of
-   `updatedInput`, type changes or parent prompt rewriting.
+   `updatedInput`, type changes or parent prompt rewriting, and asserts the
+   4,096-byte context bound without relying on a raised spill limit.
 2. Register PostToolUse for execute/fetch and SessionEnd for all reasons in
    the Codex catalog. Reuse `handlePostToolUse` and `handleSessionEnd` with the
    adapter's namespaced session and unmodified child identity. → verify:
@@ -178,15 +240,17 @@ slice complete; do not relax evidence or identity requirements.
    `internal/platform/doctor_codex.go`, reusing the existing TOML dependency
    and the installed-event catalog. Detect configured platforms by actual
    capy artifacts. Report missing, partial, malformed, duplicate and complete
-   registration; check wrapper/invocation/matcher shape. → verify:
+   registration; check marker validity, source/command owner-ID agreement,
+   wrapper/invocation/matcher shape, MCP bootstrap argv and ancestor overlap.
+   → verify:
    `TestDoctorPlatformRegistrations` covers Claude-only, Codex-only, both,
    neither and incomplete installations.
 2. Inspect statically visible project feature disabling and inline-hook
    overlap without mutating configuration. Report registration independently
    from activation; do not infer runtime trust or reconstruct all Codex
    configuration precedence. → verify: `TestDoctorCodexActivationLimits`
-   ensures a valid file check never says hooks are trusted or observed running,
-   and explicit project disabling is reported.
+   ensures a valid file check never says either project or hook trust is
+   established or that hooks ran, and explicit project disabling is reported.
 3. Wire the shared results into both `cmd/capy/doctor.go` and
    `internal/server/tool_doctor.go`. Keep existing credential/store/vault
    diagnostics intact and separate from registration checks. → verify:
@@ -196,20 +260,29 @@ slice complete; do not relax evidence or identity requirements.
 ### 5.2 Live acceptance and release checks
 
 1. Create a disposable project with an isolated policy home, install the built
-   capy hooks and inspect/trust them through Codex's supported interface. Use
+   capy hooks, establish project trust and inspect/trust their definitions
+   through Codex's supported interface. Use
    a pinned recorded Codex version; do not bypass trust or reuse production
    secrets for the probes. → verify: record visible capy startup guidance and
    hook delivery, distinct from the toolbox-script test done during research.
+   Launch Codex from an ordinary project subdirectory too, initialize MCP and
+   make a harmless capy call with synthetic keys; hook delivery alone does not
+   satisfy the end-to-end launch contract.
 2. Execute a harmless control and a harmless command covered by a synthetic
    deny rule; repeat with a synthetic ask rule. Exercise a tool call nested in
    code mode where available. → verify: the control marker appears; denied
    markers do not; the ask case explains the unsupported approval requirement
-   without emitting `ask` or suggesting an alternate-tool bypass.
+   and identifies its pattern/source file without emitting `ask` or suggesting
+   an alternate-tool bypass. A failed trusted installation must block until
+   operator repair; exercise the missing-binary collaborator recovery flow.
 3. Exercise one child with successful capy execute/fetch evidence followed by
    a suitable native routing probe and then fallback. Preserve unrelated
    hooks in a second mixed-installation run. → verify: observed parent/child
    IDs, one redirect only, and the independent hook's behavior. Use synthetic
    stdin tests for any cleanup path not observable live and label that limit.
+   Record the bytes emitted by both startup hooks on startup/resume, confirm
+   capy's own compact payload is not spilled, and link the outstanding toolbox
+   cleanup. Do not count host truncation as deduplication.
 4. Run the repository-required FTS5 test suite and race checks for adapter,
    hook and platform state paths; run the existing generated-artifact checks.
    No search/indexing/executor changes are planned, so quality benchmarks are
@@ -221,7 +294,12 @@ slice complete; do not relax evidence or identity requirements.
    wrapper exception. Add a historical clarification to ADR-024 if needed:
    its previous Codex bypass description reflected the integration at that
    time. Preserve historical decisions and links. → verify: documentation
-   agrees with actual installed events and does not claim #132 is fixed.
+   agrees with actual installed events and does not claim #132 is fixed. Cover
+   collaborators trusting hooks without installing capy, the deliberate
+   difference from Claude's crash behavior, repair through an external terminal,
+   and user-controlled `/hooks` disabling during infrastructure repair. Distinguish
+   that from bypassing policy denials. Document marker portability, overlap
+   rejection, two trust gates and the non-Git discovery limitation.
 6. Run `$kk:review-code` with Go input and `$kk:review-spec`; resolve or durably
    record findings. → verify: review artifacts and disposition are linked from
    verification/tasks, and each claimed behavior has corresponding evidence.
@@ -230,7 +308,9 @@ slice complete; do not relax evidence or identity requirements.
 
 Document removal of only positively identified capy-owned Codex entries, then
 restoration of the prior binary if needed. Preserve toolbox/global/inline hooks
-and all stored data. No automatic uninstall command or cross-project migration
+and all stored data. Retain the owner marker while any generated hook or MCP
+entry still refers to it; do not rotate IDs or delete a live binding as a repair.
+No automatic uninstall command or cross-project migration
 is introduced by this design. → verify: a fixture removes the owned entries
 without changing external handlers, or record the documented manual procedure
 against the mixed-installation fixture.
@@ -250,6 +330,13 @@ unrelated provider context and file restrictions, and explicitly address users
 without the new capy hooks before proposing removals. Capy setup must not make
 those edits itself. This design neither submits the PR nor asserts those
 upstream behaviors have already been removed.
+
+Until that PR lands, explicitly retain and measure duplicated startup content.
+The current projection is 12,740 capy-related UTF-8 bytes (9,500 static + 3,240
+runtime), excluding toolbox extras. [verification.md](verification.md) records
+that baseline and must gain the actual implemented measurements and upstream
+issue/PR link when one exists. This is accepted temporary overhead, not an
+untracked claim of zero duplication.
 
 ### Issue #132: bounded routine command output
 
