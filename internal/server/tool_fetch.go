@@ -102,6 +102,12 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	if info, ok := giturl.ParsePlatformURL(url); ok {
 		return s.trackToolResponse("capy_fetch_and_index", textResult(gitPlatformRedirectMessage(info))), nil
 	}
+	if err := ctx.Err(); err != nil {
+		return errorResult(fmt.Sprintf("Fetch canceled: %v", err)), nil
+	}
+	outcome := fetchNotAttempted
+	var estimatedBytes int64
+	defer func() { s.stats.recordFetchOutcome(outcome, estimatedBytes) }()
 
 	label := source
 	if label == "" {
@@ -122,7 +128,8 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 		}
 		now := s.fetchTime()
 		if err == nil && fetchCacheFresh(meta, kind, now, ttl) {
-			s.stats.AddCacheHit(int64(meta.ChunkCount) * 1600) // ~1.6KB per chunk estimate
+			outcome = fetchCacheHit
+			estimatedBytes = int64(meta.ChunkCount) * 1600 // ~1.6KB per chunk estimate
 			kindInfo := string(meta.Kind)
 			if meta.Kind == store.KindEphemeral {
 				kindInfo += ", excluded from default search"
@@ -139,7 +146,7 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	}
 
 	// Fetch the remote content (SSRF-safe transport, redirect cap, size limit).
-	content, contentType, validatedAt, fetchErr := s.fetchRemoteContent(ctx, url)
+	content, contentType, validatedAt, outcome, fetchErr := s.fetchRemoteContent(ctx, url)
 	if fetchErr != "" {
 		return errorResult(fetchErr), nil
 	}
@@ -172,13 +179,13 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 
 	// Surface the friendly label rather than the composite cache key (label|url):
 	// the search source filter is LIKE-based, so the short label still matches.
-	outcome := "Fetched and indexed"
+	indexOutcome := "Fetched and indexed"
 	if indexed.AlreadyIndexed {
-		outcome = "Revalidated, unchanged — retained"
+		indexOutcome = "Revalidated, unchanged — retained"
 	}
 	text := fmt.Sprintf(
 		"%s **%d sections** (%sKB) from: %s\n%s\n%s\nUse search(queries: [...], source: %q) for specific lookups.\n\n---\n\n%s",
-		outcome, indexed.TotalChunks, totalKB, label, kindNote, s.fetchFreshnessNote(ttl, force, kind), label, preview,
+		indexOutcome, indexed.TotalChunks, totalKB, label, kindNote, s.fetchFreshnessNote(ttl, force, kind), label, preview,
 	)
 
 	return s.trackToolResponse("capy_fetch_and_index", textResult(text)), nil
@@ -253,14 +260,15 @@ func truncateRunes(s string, n int) string {
 
 // fetchRemoteContent performs the HTTP GET for a single URL using the SSRF-safe
 // transport, redirect cap, and body-size limit, returning the decoded text body
-// and its Content-Type plus the body-admission time. The last return is a non-empty, user-facing error
+// and its Content-Type plus the body-admission time and typed cache outcome.
+// The last return is a non-empty, user-facing error
 // message on any failure (empty means success) — kept as a plain string rather
 // than an error so the pre-formatted messages reach the caller verbatim. Binary
 // and empty responses are rejected here. It performs no store I/O, so callers may
 // invoke it concurrently. The request honors ctx, so a client cancellation aborts
 // the in-flight fetch (in addition to the fetchTimeout ceiling) — important for
 // the batch path, where up to maxFetchBatchRequests fetches may be in flight.
-func (s *Server) fetchRemoteContent(ctx context.Context, url string) (content, contentType string, validatedAt time.Time, errMsg string) {
+func (s *Server) fetchRemoteContent(ctx context.Context, url string) (content, contentType string, validatedAt time.Time, outcome fetchCacheOutcome, errMsg string) {
 	// Fetch with timeout, redirect limit, and SSRF-safe transport. The transport's
 	// DialContext resolves DNS and classifies every IP at connect time, so each
 	// redirect to a new host is re-validated (DNS-rebinding defense).
@@ -277,44 +285,52 @@ func (s *Server) fetchRemoteContent(ctx context.Context, url string) (content, c
 
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return "", "", time.Time{}, fmt.Sprintf("Invalid URL: %v", err)
+		return "", "", time.Time{}, fetchNotAttempted, fmt.Sprintf("Invalid URL: %v", err)
 	}
 	httpReq.Header.Set("User-Agent", fetchUserAgent)
+	if err := ctx.Err(); err != nil {
+		return "", "", time.Time{}, fetchNotAttempted, fmt.Sprintf("Fetch canceled: %v", err)
+	}
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		outcome = fetchCacheMiss
+		var policyError *fetchPolicyError
+		if errors.As(err, &policyError) {
+			outcome = fetchNotAttempted
+		}
 		retryable := transientFetchError(ctx, err)
 		message := fmt.Sprintf("Failed to fetch %s: %v", url, err)
 		if retryable {
 			message += fetchRetryHint
 		}
-		return "", "", time.Time{}, message
+		return "", "", time.Time{}, outcome, message
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "", time.Time{}, fmt.Sprintf("Failed to fetch %s: HTTP %d", url, resp.StatusCode)
+		return "", "", time.Time{}, fetchCacheMiss, fmt.Sprintf("Failed to fetch %s: HTTP %d", url, resp.StatusCode)
 	}
 
 	// Read body with size limit
 	limited := io.LimitReader(resp.Body, fetchMaxBody+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {
-		return "", "", time.Time{}, fmt.Sprintf("Failed to read response from %s: %v", url, err)
+		return "", "", time.Time{}, fetchCacheMiss, fmt.Sprintf("Failed to read response from %s: %v", url, err)
 	}
 	if len(body) > fetchMaxBody {
-		return "", "", time.Time{}, fmt.Sprintf("Response too large (>%dMB)", fetchMaxBody/(1024*1024))
+		return "", "", time.Time{}, fetchCacheMiss, fmt.Sprintf("Response too large (>%dMB)", fetchMaxBody/(1024*1024))
 	}
 	if len(body) == 0 {
-		return "", "", time.Time{}, fmt.Sprintf("Fetched %s but got empty content", url)
+		return "", "", time.Time{}, fetchCacheMiss, fmt.Sprintf("Fetched %s but got empty content", url)
 	}
 
 	ct := resp.Header.Get("Content-Type")
 	if isBinaryContent(ct, body) {
-		return "", "", time.Time{}, fmt.Sprintf("Cannot index binary content from %s (Content-Type: %s)", url, ct)
+		return "", "", time.Time{}, fetchCacheMiss, fmt.Sprintf("Cannot index binary content from %s (Content-Type: %s)", url, ct)
 	}
 
-	return string(body), ct, s.fetchTime(), ""
+	return string(body), ct, s.fetchTime(), fetchCacheMiss, ""
 }
 
 const fetchRetryHint = "\nThis may be a transient network failure. You may retry the same capy_fetch_and_index call once."
@@ -382,6 +398,7 @@ type fetchItemResult struct {
 	content     string
 	contentType string
 	validatedAt time.Time
+	outcome     fetchCacheOutcome
 }
 
 // fetchOne validates, cache-checks, and fetches a single batch request. It only
@@ -409,6 +426,10 @@ func (s *Server) fetchOne(ctx context.Context, st *store.ContentStore, rq fetchR
 		res.redirect = true
 		return res
 	}
+	if err := ctx.Err(); err != nil {
+		res.errMsg = fmt.Sprintf("Fetch canceled: %v", err)
+		return res
+	}
 
 	// TTL cache check, keyed by the same composite as the single-URL path.
 	if !force && ttl > 0 {
@@ -418,11 +439,13 @@ func (s *Server) fetchOne(ctx context.Context, st *store.ContentStore, rq fetchR
 		}
 		if err == nil && fetchCacheFresh(meta, kind, s.fetchTime(), ttl) {
 			res.cacheMeta = meta
+			res.outcome = fetchCacheHit
 			return res
 		}
 	}
 
-	content, contentType, validatedAt, errMsg := s.fetchRemoteContent(ctx, rq.URL)
+	content, contentType, validatedAt, outcome, errMsg := s.fetchRemoteContent(ctx, rq.URL)
+	res.outcome = outcome
 	if errMsg != "" {
 		res.errMsg = errMsg
 		return res
@@ -435,8 +458,9 @@ func (s *Server) fetchOne(ctx context.Context, st *store.ContentStore, rq fetchR
 
 // handleFetchBatch fetches multiple URLs concurrently (bounded by concurrency)
 // and indexes them serially. Per the design: parallel fetches, serial FTS5
-// writes. Stats are also accumulated in the serial phase so SessionStats is never
-// mutated concurrently. ctx is threaded into every fetch so a client cancellation
+// writes. Stats are accumulated once per item in the serial phase; the stats
+// mutex also protects updates from overlapping requests. ctx is threaded into
+// every fetch so a client cancellation
 // aborts in-flight requests instead of leaving up to concurrency goroutines
 // blocked on the network until fetchTimeout.
 func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, kind store.SourceKind, force bool, ttl time.Duration, concurrency int) (*mcp.CallToolResult, error) {
@@ -487,6 +511,11 @@ func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, 
 		freshBytes int
 	)
 	for _, it := range items {
+		var estimatedBytes int64
+		if it.cacheMeta != nil {
+			estimatedBytes = int64(it.cacheMeta.ChunkCount) * 1600 // ~1.6KB per chunk estimate
+		}
+		s.stats.recordFetchOutcome(it.outcome, estimatedBytes)
 		switch {
 		case it.errMsg != "":
 			lines = append(lines, fmt.Sprintf("✗ %s — %s", it.url, it.errMsg))
@@ -495,7 +524,6 @@ func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, 
 			lines = append(lines, fmt.Sprintf("↪ %s — not fetched (git platform issue/PR/MR; use platform CLI or WebSearch)", it.url))
 
 		case it.cacheMeta != nil:
-			s.stats.AddCacheHit(int64(it.cacheMeta.ChunkCount) * 1600) // ~1.6KB per chunk estimate
 			okCount++
 			cachedHits++
 			lines = append(lines, fmt.Sprintf("✓ %s — cache hit (%d chunks)", it.label, it.cacheMeta.ChunkCount))

@@ -128,6 +128,21 @@ hint. Cancellation, permission errors and NXDOMAIN take precedence; ordinary
 policy, certificate, HTTP, body, conversion and indexing errors get no hint.
 There is no automatic retry loop or error-string matching.
 
+Fetch accounting carries a typed hit/attempted-miss/excluded outcome through
+single and batch paths. Transport policy errors remain typed through HTTP
+wrappers, so SSRF rejections do not look like network failures. Missing hosts
+and invalid ports are rejected before cache/network work. A failed eligible
+dispatch or later body/conversion/indexing failure counts once as an attempted
+miss; force and zero TTL follow the same rule. Git-platform redirects and
+pre-dispatch cancellation are excluded. The stats mutex protects hits, misses,
+estimated avoided bytes, snapshots and purge resets together.
+
+The cache report always displays counts and `hits / (hits + attempted misses)`,
+using `n/a` before any eligible outcome. Default freshness comes directly from
+configuration, not uptime. Both savings percentages share a one-decimal formatter
+that reserves `100.0%` for positive processed bytes with zero returned bytes;
+the existing savings formula and source/chunk statistics remain unchanged.
+
 ## Knowledge Base
 
 ### File ingestion

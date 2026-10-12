@@ -1829,3 +1829,117 @@ and retry exclusions. Exact dependency references and lookup limitations are in
 requirements inherit `AGENTS.md`. Tasks 17–20 and deferred D1–D5 remain pending.
 Optional editorial follow-up: `kk:clarify-docs` on `README.md`,
 `docs/architecture.md` and `docs/adr/013-configurable-fetch-ttl.md`.
+
+## Task 17: Cache outcome statistics
+
+Implemented on 2026-10-12. Single and batch fetches carry typed hit, attempted-miss
+or excluded outcomes. The report always shows counts, a zero-safe rate and the
+configured default freshness. Both savings displays share the one-decimal,
+nonzero-return clamp without changing the underlying formula.
+
+### Behavioral coverage
+
+- Cold fetch, cache hit, force, zero TTL, strict subsecond expiry and later
+  request overrides in both modes; unchanged content still counts as a miss
+  when revalidated. A 100-hour session with mixed TTLs still reports its
+  configured seven-hour default and the correct 2/6 hit rate.
+- Real SSRF transport blocks loopback/private/link-local targets without
+  incrementing either counter. Syntax, absent hosts, invalid/out-of-range ports,
+  malformed colon authorities, forbidden schemes and Git-platform redirects are
+  also excluded. Positive syntax fixtures preserve bracketed IPv6, zones and
+  port boundaries; IPv4-mapped bracket literals retain the Go parser's rejection.
+- Typed temporary/permanent DNS, network timeout/unreachable/refused, TLS and
+  permission failures count once per URL. HTTP failures, empty/binary/oversize
+  bodies, read failures, HTML conversion failures and store admission errors
+  also count, retaining the old cached source. Error-text lookalikes cannot
+  masquerade as a policy rejection.
+- Cancellation before dispatch makes no transport call or miss; cancellation
+  after dispatch counts once. Eight overlapping five-URL batches combine cached,
+  successful, failed, redirected and invalid entries with exact totals under
+  `-race`. Stats snapshots retain independent hit/miss values; purge-all clears
+  hits/misses/estimated bytes while preserving the exact session start.
+- Both savings display sites cover 99.888%, near-100% rounding, float precision
+  at `1 << 60` processed bytes, true zero-return, no processed data and ordinary
+  percentages. An unused cache shows `n/a`; all misses show `0.0%`.
+
+### Verification commands
+
+Commands use Go 1.25.2 on Darwin/arm64, `CGO_ENABLED=1`,
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`.
+Race/full-suite/build runs clear `CLAUDE_PROJECT_DIR` and set
+`XDG_CONFIG_HOME=/tmp/capy-task17-config`; fixtures isolate databases and vaults.
+The final runs use canonical `TMPDIR=/private/tmp` after the initial full run
+exposed assumptions about macOS's `/var` → `/private/var` alias.
+The initial sandboxed run could not access the existing Go cache. Approved
+execution with cache/local-listener access resolved that environmental failure.
+An initial compile error from an outcome variable collision was corrected before
+the passing runs.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/server -run 'Test(Fetch\|Stats\|SessionStats\|Snapshot\|AddCache\|Cleanup_PurgeAll\|ValidateFetch\|Classify)'` | Passed, 18.142s. |
+| Same selection with `-race` | Passed, 20.741s, including the final port-range validation. |
+| Same selection with `-race`, extended with `Integration_Fetch` after the review correction | Passed, 21.787s. |
+| `go test -race -tags fts5 -count=1 ./internal/server -run 'TestFetchStats(RejectedURLs\|ValidURLSyntax)'` | Final syntax/rejection table passed, 1.374s. |
+| Initial `make test` | Failed: one stale stats label assertion (fixed), plus pre-existing temporary-path/filename assumptions on macOS. |
+| `TMPDIR=/private/tmp make test` before fixture correction | Every package passed except `internal/knowledge`'s pre-existing `TestDirectoryGitIgnoreBatches`; CLI 237.876s, server 94.594s, vault 147.164s. |
+| `go test -tags fts5 -count=1 ./internal/knowledge -run '^TestDirectoryGitIgnoreBatches$'` on untouched `888ed2a`, canonical TMPDIR | Same failure: 248 skipped entries versus expected 386. |
+| `go test -tags fts5 -count=1 ./internal/security -run 'TestResolveExecuteFileAdmission\|TestReadPolicyLegacyAndSymlinks'` on untouched `888ed2a`, ambient TMPDIR | Reproduced the original `/var` versus `/private/var` failures. |
+| `go test -race -tags fts5 -count=1 ./internal/knowledge -run '^TestDirectoryGitIgnoreBatches$'` after portable filename correction | Passed, 1.380s; original count assertions retained. |
+| Final `TMPDIR=/private/tmp make test` after fixture correction | All packages passed; knowledge 17.591s, server 87.833s, other packages passed or used cache. |
+| `make build` after the final production-code correction | Passed. |
+| `go vet -tags fts5 ./internal/server` | Reports the pre-existing lock-copy warning in `tool_boolean_test.go:110`; no new warning. |
+| `git diff --check` | Passed. |
+
+The vet warning remains outside Task 17: replace the whole `SessionStats`
+`assert.Equal` at `tool_boolean_test.go:110` with field-level assertions in its
+existing test-cleanup follow-up. It predates this diff and was already recorded
+in Tasks 8–16. No search/index/chunk/executor behavior changed, so quality or
+performance benchmarks are not required for this statistics-only slice.
+
+The independent reviewer found a malformed-authority accounting gap. Both
+single/batch regressions first failed with one miss instead of zero; URL
+validation was corrected and independently re-reviewed. A newly added positive
+IPv4-mapped-literal fixture then failed because Go already rejects that form;
+it was moved to rejection coverage without altering production parser behavior.
+
+### Platform verification and remaining follow-up
+
+- `internal/knowledge/gitignore_test.go:136` generates 384 sequential Unicode
+  filenames and expects 386 visited/skipped entries including Git metadata.
+  Only 248 entries survived on this macOS filesystem, on both the working tree
+  and untouched HEAD. A direct filesystem probe confirmed `xĀ.md` and `xā.md`
+  resolve to one file and the second write replaces the first. Linux's usual
+  case-sensitive filesystems retain both, explaining the platform difference.
+  At the user's request this was fixed separately in `ea96dc0`: unique numeric
+  prefixes preserve all 384 Unicode-bearing filenames, multiple batches and
+  the 386-skipped assertion. The independent follow-up review approved the fix.
+  No assertions were weakened or skipped.
+- Several path/Read-policy fixtures assume their temporary root already has
+  its physical spelling. Untouched HEAD reproduces failures under ambient
+  `/var/folders/...`; canonical TMPDIR makes them pass. In the platform-test
+  follow-up, canonicalize fixture roots and expected physical paths explicitly,
+  retaining dedicated lexical/physical alias-policy checks rather than relaxing
+  grants. This task changes neither those policies nor fixtures.
+
+Full-run logs: `/tmp/capy-task17-test.log`,
+`/tmp/capy-task17-test-canonical.log` and `/tmp/capy-task17-test-final.log`.
+Baseline source was extracted with
+`git archive 888ed2a` to `/private/tmp/capy-task17-baseline`; the working tree was
+never reverted. The final full run includes the reviewed production code,
+positive/rejected URL syntax tests and separately committed portable fixture.
+
+### Review and documentation
+
+The [independent review](.reviews/task-17-code-review-2026-10-12.md) approved the
+corrected implementation with no unresolved findings. PAL's expert step failed
+with `API_KEY_INVALID`; no external approval is claimed. The one resolved P2
+and its reproduction are recorded in the review; no knowledge indexing is needed
+for findings or conventions already documented here.
+
+README, architecture and ADR-013 now explain
+outcome accounting, estimates, reset behavior, default freshness and rounding.
+CLI and CI changes are N/A; existing FTS5/key/test conventions inherit `AGENTS.md`.
+No schema, module or generated artifact changed. Tasks 18–20 and D1–D5 remain
+pending. Optional editorial follow-up: `kk:clarify-docs` on `README.md`,
+`docs/architecture.md` and `docs/adr/013-configurable-fetch-ttl.md`.

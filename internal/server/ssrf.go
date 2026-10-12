@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,11 +35,37 @@ func validateFetchScheme(rawURL string) error {
 	}
 	switch parsed.Scheme {
 	case "http", "https":
+		host := parsed.Hostname()
+		if host == "" {
+			return fmt.Errorf("url must have a hostname")
+		}
+		// net/url accepts unbracketed authorities with multiple colons. They
+		// are malformed HTTP hosts, not DNS/network attempts for cache stats.
+		if strings.HasPrefix(parsed.Host, "[") {
+			literal, _, _ := strings.Cut(host, "%") // optional IPv6 zone
+			if !strings.Contains(literal, ":") || net.ParseIP(literal) == nil {
+				return fmt.Errorf("invalid IPv6 URL host")
+			}
+		} else if strings.Contains(host, ":") {
+			return fmt.Errorf("IPv6 URL hosts must be enclosed in brackets")
+		}
+		if port := parsed.Port(); port != "" {
+			if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+				return fmt.Errorf("invalid URL port: %w", err)
+			}
+		}
 		return nil
 	default:
 		return fmt.Errorf("scheme %q is forbidden (only http and https are allowed)", parsed.Scheme)
 	}
 }
+
+// fetchPolicyError marks a transport rejection where no resolved address was
+// eligible to dial. Keep it typed through net/http's wrappers for cache stats.
+type fetchPolicyError struct{ cause error }
+
+func (e *fetchPolicyError) Error() string { return e.cause.Error() }
+func (e *fetchPolicyError) Unwrap() error { return e.cause }
 
 // classifyIP returns an error if rawIP belongs to a forbidden range. It accepts
 // the raw string (not a net.IP) so it can strip RFC 6874 zone identifiers before
@@ -179,7 +206,7 @@ func newSSRFSafeTransport() *http.Transport {
 			return nil, fmt.Errorf("no addresses resolved for %s", host)
 		}
 
-		var lastErr error
+		var lastErr, lastDialErr error
 		for _, ipAddr := range ips {
 			if cerr := classifyParsedIP(ipAddr.IP); cerr != nil {
 				lastErr = cerr
@@ -187,13 +214,17 @@ func newSSRFSafeTransport() *http.Transport {
 			}
 			conn, derr := dialer.DialContext(ctx, network, net.JoinHostPort(ipAddr.IP.String(), port))
 			if derr != nil {
-				lastErr = derr
+				lastDialErr = derr
 				continue
 			}
 			return conn, nil
 		}
 		// Every resolved IP was blocked or undialable — fail closed.
-		return nil, lastErr
+		if lastDialErr != nil {
+			// A later blocked address must not hide an actual network attempt.
+			return nil, lastDialErr
+		}
+		return nil, &fetchPolicyError{cause: lastErr}
 	}
 
 	return transport

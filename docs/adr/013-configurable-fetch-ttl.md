@@ -50,7 +50,7 @@ Existing rows intentionally miss once after upgrade. A binary from `c5a2f297`
 (before this migration) was verified reading/writing the upgraded database while
 a new store was open and after reopen; old replacement writes leave the marker
 NULL. Downgrades retain readable content but lose the new freshness guarantees.
-Per-call controls are recorded below; cache-statistics corrections remain Task 17.
+Per-call controls and cache statistics are recorded below.
 
 ## Amendment: request-scoped fetch freshness (2026-10-11)
 
@@ -75,8 +75,26 @@ errors do not qualify; neither do ordinary TLS/certificate, SSRF, HTTP, body,
 conversion or indexing failures. This keeps guidance actionable without an
 automatic retry, permissive string heuristic or change to security policy.
 
+## Amendment: cache outcome visibility (2026-10-12)
+
+Task 17 counts one hit or attempted miss per eligible URL in both fetch modes.
+Bypasses and failed DNS/network, HTTP, body, conversion or indexing work count
+as attempted misses. Malformed URLs, SSRF policy blocks, Git-platform redirects
+and cancellation before dispatch count as neither. Typed outcomes and transport
+policy errors preserve this distinction before error messages are formatted.
+Counters, estimated avoided bytes, snapshot and reset share the stats mutex;
+`purge_all` preserves the original session start time.
+
+The cache section always reports counts and a hit rate, with `n/a` when unused
+and `0.0%` when every attempt missed. **Default fetch freshness** reports configured
+hours. The former uptime-derived **TTL remaining** was misleading: entries have
+different validation times and requests may choose different TTLs. Both context
+savings displays keep the existing formula but use one decimal, capped at
+`99.9%` when returned bytes are nonzero. Positive processed bytes with no returned
+bytes display `100.0%`; no processed bytes display `0.0%`.
+
 ## Consequences
 
 - `CacheConfig.FetchTTLHours` added to config with default 24
 - TTL cache check in `handleFetchAndIndex` reads from config instead of hardcoded constant
-- Stats report shows TTL remaining based on configured value, not hardcoded 24
+- Stats report shows configured default fetch freshness, hit/miss counts and a zero-safe hit rate; it does not infer any entry's remaining freshness from session uptime
