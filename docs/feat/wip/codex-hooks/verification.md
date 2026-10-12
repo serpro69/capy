@@ -1,7 +1,7 @@
 # Codex hooks verification record
 
 > Updated: 2026-10-12
-> Current scope: design corroboration only; implementation/live acceptance pending
+> Current scope: Task 1 implementation checks; installed/live acceptance remains pending
 > Design: [design.md](design.md) · Dispositions: [review-resolution.md](review-resolution.md)
 
 ## Design-stage evidence
@@ -63,7 +63,8 @@ stdout/status and cancellation requirements. The added subprocess cost and
 conservative rejection of uninspectable ancestor configs are documented trade-offs.
 No independent reviewer was used.
 
-All six implementation tasks remain pending. Task 2.6 adds the combined
+At the design-correction checkpoint, all six implementation tasks were pending.
+Task 2.6 adds the combined
 copied-ID/missing-outer-marker acceptance fixture with sentinel wrappers;
 Tasks 2/5 cover parsing and setup/doctor parity. No Go suite, runtime test or
 benchmark was run for this documentation-only revision. Documentation checks
@@ -71,6 +72,85 @@ passed: **45 local links/anchors across six documents**, all six pending task
 records, 28 sequential subtasks, acyclic dependencies and `git diff --check`.
 The checks read repository files only; no setup, hook activation or trust change
 was performed.
+
+## Task 1: main-session CLI
+
+The direct CLI implements `capy hook --platform codex pretooluse|sessionstart`.
+Claude remains the default. Task 1 adds a Codex adapter with authoritative
+namespaced session identity, platform-aware project selection, shared supported
+JSON responses, denial of matched asks with rule/source provenance, malformed
+pre-tool denials and compact platform-specific startup guidance. Missing session
+identity emits guidance without persisting throttle state. Non-Bash/non-capy
+tools pass through without Claude Agent/Task mutation.
+
+`SourcePath` now survives settings loading and command/embedded-command
+evaluation. First matched asks are retained while later denies and scanner
+errors still win. Claude's ask JSON and legacy policy ordering remain unchanged.
+Shared startup content is factored so Claude retains its original wording.
+
+Verification uses synthetic policy files, isolated homes and project directories.
+The CLI subprocess tests run without knowledge/vault keys and assert no database
+creation. Tests follow the repository's normal FTS5 suite convention so this
+coverage runs without an additional integration tag.
+
+| Check | Result |
+|---|---|
+| Adapter, hook and security package suites, `-tags fts5 -count=1` | Passed |
+| CLI hook tests, including `TestHookCodexDispatch` | Passed |
+| Adapter, hook and security race checks, `-tags fts5 -race -count=1` | Passed |
+| Generated whole-file, merged-artifact idempotency and completeness guards | Passed |
+| Full repository FTS5 suite | Completed with environment failures and a pre-existing fetch-stat assertion; see reruns/baseline below. All other packages passed |
+| Isolated code review | [APPROVE; no findings](.reviews/task-1-code-review-2026-10-12.md). Independent agent completed; PAL/Gemini unavailable because its configured API key was rejected |
+
+An initial combined test run caught a positional `CommandDecision` literal in
+an existing scanner test after the new provenance field was added. The test now
+uses named fields and asserts the expected in-memory provenance; the complete
+security package passed on rerun. No production assertion was relaxed.
+
+The broad command was `go test -tags fts5 -count=1 ./...`, with synthetic
+`CAPY_DB_KEY`/`CAPY_VAULT_KEY` and `GOCACHE=/tmp/capy-go-build`. It exposed two
+test-environment constraints:
+
+- Seven vault CLI tests inherited a 196,608-byte minimum import size, excluding
+  their tiny fixtures. All seven passed when rerun with an empty temporary
+  `XDG_CONFIG_HOME`: the four failing `TestVaultCodex_*` cases (ImportShowRestore,
+  MixedPlatformSummary, ParentChildSurfaces, RestoreDefaultRootIsCodexHome),
+  `TestVaultRestoreToOutputDir`, `TestVaultRestoreDefaultLocationHonorsConfigDir`
+  and `TestVaultMerge_EndToEnd`.
+- `internal/config` and `internal/server` need Unix/local HTTP sockets, which
+  the default sandbox denied. The config package passed outside that sandbox.
+  The complete server package rerun, with socket access and isolated config,
+  passed except for the two mapped-IPv4 subcases below.
+
+**Pre-existing server failure, reproduced on the baseline:**
+`TestFetchStatsRejectedURLs/batch={false,true}/mapped_IPv4_rejected_by_URL_parser`
+asserts zero cache misses but observes one for `https://[::ffff:192.0.2.1]/`.
+The same two assertions fail in a disposable `git archive` of unchanged commit
+`66cbecc`, using Go 1.26.4 and the focused test selector, before any Task 1 edits.
+This is not a green full-suite result. The feature's own checks passed, and no
+Task 1 regression was identified. The follow-up in `tasks.md` requires confirming
+the intended URL-admission contract, then correcting the validator or fixture
+without weakening SSRF protection or depending on a real network timeout.
+
+**Deferred test-fixture isolation follow-up:** `setupCodexVaultEnv` in
+`cmd/capy/vault_codex_test.go`, `setupVaultWithSidecar` and
+`TestVaultMerge_EndToEnd` in `cmd/capy/vault_test.go` do not isolate global capy
+configuration. This predates Task 1 and is outside its implementation scope.
+Add `t.Setenv("XDG_CONFIG_HOME", t.TempDir())` to those fixtures, following
+`setupVaultEnv`, so the vault CLI tests pass regardless of personal import-size
+settings. The isolated test environment is the workaround used here; no vault
+behavior or unrelated test assertion was changed.
+
+Final documentation checks passed for local links/anchors and `git diff --check`.
+No qualifying review finding needed knowledge indexing; the implementation
+decisions and remaining work are already recorded in these feature documents.
+
+Tasks 2–6 remain pending: portable owner bootstrap, installation/registration,
+child event dispatch, diagnostics and live Codex acceptance are not part of this
+task's completed behavior. The guarded event allowlist and adapter capabilities
+carry Task 4 TODOs. This evidence is unit/subprocess verification, not observed
+host delivery. Search/indexing/chunking/executor behavior was not changed, so
+quality benchmarks are not required for this slice.
 
 ## Startup context baseline
 

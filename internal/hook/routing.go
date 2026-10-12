@@ -4,6 +4,30 @@ package hook
 // prompts and session start events. Guides the LLM on when to use capy MCP
 // tools vs direct tools based on comprehension-vs-extraction needs.
 func RoutingBlock() string {
+	return routingBlock("    A Bash-to-general-purpose upgrade does not prove that MCP tools are available.\n", `    Main-agent redirects are enforced below. A child may receive one redirect to a recently
+    successful suitable tool; otherwise it gets discovery/native-tool advice. Security denies
+    and matched asks still apply. Bash HTTP requires observed capy_execute; WebFetch can also
+    use observed capy_fetch_and_index. Git issue/PR/MR comprehension keeps native CLI guidance.
+    - curl/wget in Bash → use capy_fetch_and_index or capy_execute
+    - Inline HTTP in Bash → use capy_execute
+    - WebFetch → for git issues/PRs/MRs: platform CLI (gh issue view) or WebSearch; for large content: capy_fetch_and_index`)
+}
+
+// CodexRoutingBlock shares the core guidance while describing only capy's
+// selected Bash/MCP coverage. Codex child launch arguments are never rewritten.
+func CodexRoutingBlock() string {
+	return routingBlock("", `    Codex shell tools (including exec_command) reach hooks as Bash. Capy handles Bash and
+    capy MCP calls, including calls inside code mode. Hosted web/search tools are not intercepted.
+    - curl/wget in Bash → use capy_fetch_and_index or capy_execute
+    - Inline HTTP in Bash → use capy_execute
+    Silent file downloads are allowed. Security denies still apply. Matched approval rules
+    are denied with their pattern/source because this PreToolUse hook cannot request approval.
+    Child Bash redirects require recent successful capy_execute evidence; otherwise use
+    discovery/native-tool advice. A redirect consumes all alternatives for that child.
+    Child launch arguments are preserved. Git issue/PR/MR comprehension keeps native CLI guidance.`)
+}
+
+func routingBlock(upgradeNote, blocked string) string {
 	return `<context_window_protection>
   <routing_principle>
     Choose tools based on what you need from the output:
@@ -37,17 +61,10 @@ func RoutingBlock() string {
     If the host offers deferred-tool discovery, discover capy schemas once, then use available tools.
     If discovery is unavailable or the tools are absent, use native tools following the
     comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.
-    A Bash-to-general-purpose upgrade does not prove that MCP tools are available.
-  </tool_availability>
+` + upgradeNote + `  </tool_availability>
 
   <blocked>
-    Main-agent redirects are enforced below. A child may receive one redirect to a recently
-    successful suitable tool; otherwise it gets discovery/native-tool advice. Security denies
-    and matched asks still apply. Bash HTTP requires observed capy_execute; WebFetch can also
-    use observed capy_fetch_and_index. Git issue/PR/MR comprehension keeps native CLI guidance.
-    - curl/wget in Bash → use capy_fetch_and_index or capy_execute
-    - Inline HTTP in Bash → use capy_execute
-    - WebFetch → for git issues/PRs/MRs: platform CLI (gh issue view) or WebSearch; for large content: capy_fetch_and_index
+` + blocked + `
   </blocked>
 
   <output_constraints>

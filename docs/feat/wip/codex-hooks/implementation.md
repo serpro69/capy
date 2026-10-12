@@ -1,7 +1,7 @@
 # Implementation: capy-owned Codex hooks
 
 > Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
-> Status: planned; no implementation performed
+> Status: Task 1 complete with verification/review recorded; Tasks 2–6 pending
 > Baseline inspected: 2026-10-12, Codex CLI 0.162.1
 > Revisions: [review-resolution.md](review-resolution.md)
 
@@ -52,6 +52,14 @@ successful hook process is not evidence that its suggested MCP tool is usable.
 
 **Goal:** invoking `capy hook --platform codex pretooluse` or `sessionstart`
 directly exercises a complete usable Codex path before installation is added.
+
+Task 1's direct CLI path now exists. `--platform` is local to `hook` and defaults
+to `claude-code`; Codex currently accepts only `pretooluse` and `sessionstart`.
+Other Codex events fail explicitly until Task 4 adds their dispatch and lifecycle
+checks. Use an explicit `--project-dir` when invoking hooks manually from a
+different directory; otherwise validated payload cwd is the Codex owner, with
+process-cwd project discovery as fallback. No generated installation is claimed
+by this task. Results are tracked in [verification.md](verification.md#task-1-main-session-cli).
 
 1. Add `CodexAdapter` in `internal/adapter/codex.go`. Extend the adapter
    boundary with explicit platform identity; preserve the current default

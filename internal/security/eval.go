@@ -9,6 +9,15 @@ import (
 type CommandDecision struct {
 	Decision       string // "allow", "deny", or "ask"
 	MatchedPattern string
+	SourcePath     string // settings file, or "<in-memory>" for a matched in-memory rule
+}
+
+func matchedDecision(decision, pattern string, policy SecurityPolicy) CommandDecision {
+	source := policy.SourcePath
+	if source == "" {
+		source = "<in-memory>"
+	}
+	return CommandDecision{Decision: decision, MatchedPattern: pattern, SourcePath: source}
 }
 
 // EvaluateCommandDenyOnly evaluates a command against policies, enforcing only
@@ -29,7 +38,7 @@ func evaluateSegmentsDenyOnly(segments []string, policies []SecurityPolicy) Comm
 	for _, segment := range segments {
 		for _, policy := range policies {
 			if match := matchesAnyBashPattern(segment, policy.Deny, false); match != "" {
-				return CommandDecision{Decision: "deny", MatchedPattern: match}
+				return matchedDecision("deny", match, policy)
 			}
 		}
 	}
@@ -55,7 +64,7 @@ func evaluateSegments(segments []string, policies []SecurityPolicy) CommandDecis
 	for _, segment := range segments {
 		for _, policy := range policies {
 			if match := matchesAnyBashPattern(segment, policy.Deny, false); match != "" {
-				return CommandDecision{Decision: "deny", MatchedPattern: match}
+				return matchedDecision("deny", match, policy)
 			}
 		}
 	}
@@ -65,7 +74,7 @@ func evaluateSegments(segments []string, policies []SecurityPolicy) CommandDecis
 	for _, policy := range policies {
 		for _, segment := range segments {
 			if match := matchesAnyBashPattern(segment, policy.Ask, false); match != "" {
-				return CommandDecision{Decision: "ask", MatchedPattern: match}
+				return matchedDecision("ask", match, policy)
 			}
 		}
 		allAllowed := len(segments) > 0
@@ -81,7 +90,7 @@ func evaluateSegments(segments []string, policies []SecurityPolicy) CommandDecis
 			}
 		}
 		if allAllowed {
-			return CommandDecision{Decision: "allow", MatchedPattern: matched}
+			return matchedDecision("allow", matched, policy)
 		}
 	}
 

@@ -11,9 +11,10 @@ import (
 
 // SecurityPolicy holds Bash permission patterns from a single settings file.
 type SecurityPolicy struct {
-	Allow []string
-	Deny  []string
-	Ask   []string
+	SourcePath string // settings file that supplied these patterns; empty for in-memory policies
+	Allow      []string
+	Deny       []string
+	Ask        []string
 }
 
 // settingsFile represents the structure of a Claude settings JSON file.
@@ -45,9 +46,10 @@ func readSingleSettings(path string) *SecurityPolicy {
 	}
 
 	return &SecurityPolicy{
-		Allow: filterBashPatterns(sf.Permissions.Allow),
-		Deny:  filterBashPatterns(sf.Permissions.Deny),
-		Ask:   filterBashPatterns(sf.Permissions.Ask),
+		SourcePath: path,
+		Allow:      filterBashPatterns(sf.Permissions.Allow),
+		Deny:       filterBashPatterns(sf.Permissions.Deny),
+		Ask:        filterBashPatterns(sf.Permissions.Ask),
 	}
 }
 

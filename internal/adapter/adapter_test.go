@@ -193,12 +193,13 @@ func TestFormatModify(t *testing.T) {
 
 func TestFormatAsk(t *testing.T) {
 	a := &ClaudeCodeAdapter{}
-	data, err := a.FormatAsk()
+	data, err := a.FormatAsk("Matched approval pattern in settings.json")
 	require.NoError(t, err)
 
 	hso := getHookOutput(t, data)
 	assert.Equal(t, "PreToolUse", hso["hookEventName"])
 	assert.Equal(t, "ask", hso["permissionDecision"])
+	assert.Len(t, hso, 2, "Claude's response shape must not gain provenance fields")
 }
 
 func TestFormatSessionStart(t *testing.T) {

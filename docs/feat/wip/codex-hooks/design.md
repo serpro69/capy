@@ -1,6 +1,6 @@
 # Codex hooks owned by capy
 
-> Status: revised after reviews and RD-1 readiness correction — implementation pending
+> Status: Task 1 implemented and reviewed; Tasks 2–6 pending
 > Created: 2026-10-12
 > Review dispositions: [review-resolution.md](review-resolution.md)
 > Related: [#29](https://github.com/serpro69/capy/issues/29), [#132](https://github.com/serpro69/capy/issues/132)
