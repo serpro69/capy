@@ -102,18 +102,22 @@ func TestStats_CacheSectionIncluded(t *testing.T) {
 	text := resultText(r)
 	assert.Contains(t, text, "TTL Cache")
 	assert.Contains(t, text, "Cache hits")
-	assert.Contains(t, text, "Data avoided by cache")
+	assert.Contains(t, text, "Estimated data avoided by cache")
 	assert.Contains(t, text, "Network requests saved")
-	assert.Contains(t, text, "TTL remaining")
+	assert.Contains(t, text, "Default fetch freshness")
+	assert.NotContains(t, text, "TTL remaining")
 }
 
-func TestStats_CacheSectionOmittedWhenNoCacheHits(t *testing.T) {
+func TestStats_CacheSectionWithoutAttempts(t *testing.T) {
 	srv := newTestServer(t, nil)
 	srv.stats.TrackResponse("capy_execute", 100)
 
 	r := callStats(t, srv)
 	text := resultText(r)
-	assert.NotContains(t, text, "TTL Cache")
+	assert.Contains(t, text, "TTL Cache")
+	assert.Contains(t, text, "| Cache hits | **0** |")
+	assert.Contains(t, text, "| Attempted misses | **0** |")
+	assert.Contains(t, text, "| Hit rate (hits / (hits + attempted misses)) | **n/a** |")
 }
 
 func TestStats_CacheBytesSavedInSavingsCalc(t *testing.T) {
@@ -684,6 +688,8 @@ func TestCleanup_PurgeAllDryRun(t *testing.T) {
 
 func TestCleanup_PurgeAllResetsKnowledgeBaseAndStats(t *testing.T) {
 	srv := newTestServer(t, nil)
+	srv.stats.AddCacheHit(3200)
+	srv.stats.recordFetchOutcome(fetchCacheMiss, 0)
 
 	callIndex(t, srv, map[string]any{
 		"content": "# Reset target\n\nauthentication middleware validates tokens.",
@@ -718,6 +724,10 @@ func TestCleanup_PurgeAllResetsKnowledgeBaseAndStats(t *testing.T) {
 	assert.Equal(t, int64(0), post.BytesIndexed)
 	assert.Equal(t, 1, post.Calls["capy_cleanup"], "cleanup tracks itself after Reset")
 	assert.False(t, post.SessionStart.IsZero(), "SessionStart must survive a reset")
+	assert.Equal(t, pre.SessionStart, post.SessionStart)
+	assert.Zero(t, post.CacheHits)
+	assert.Zero(t, post.CacheMisses)
+	assert.Zero(t, post.CacheBytesSaved)
 }
 
 // ─── Doctor: vault platform roots (codex-vault-sessions Task 12) ──────────────

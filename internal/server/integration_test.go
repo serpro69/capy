@@ -322,11 +322,14 @@ func TestIntegration_FetchCacheHit_StatsReport(t *testing.T) {
 	text := resultText(r3)
 	assert.Contains(t, text, "TTL Cache")
 	assert.Contains(t, text, "Cache hits")
-	assert.Contains(t, text, "Data avoided by cache")
+	assert.Contains(t, text, "Estimated data avoided by cache")
+	assert.Contains(t, text, "| Attempted misses | **1** |")
+	assert.Contains(t, text, "| Hit rate (hits / (hits + attempted misses)) | **50.0%** |")
 
 	// Step 4: Verify stats snapshot has correct values
 	snap := srv.stats.Snapshot()
 	assert.Equal(t, int64(1), snap.CacheHits)
+	assert.Equal(t, int64(1), snap.CacheMisses)
 	assert.Greater(t, snap.CacheBytesSaved, int64(0))
 }
 

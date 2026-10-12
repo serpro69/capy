@@ -53,7 +53,7 @@ func TestFetchRetryGuidance(t *testing.T) {
 			{name: "network unreachable", err: &net.OpError{Op: "dial", Net: "tcp", Err: &os.SyscallError{Syscall: "connect", Err: syscall.ENETUNREACH}}, wantHint: true},
 			{name: "host unreachable", err: fmt.Errorf("connect: %w", syscall.EHOSTUNREACH), wantHint: true},
 			{name: "canceled", err: fmt.Errorf("request: %w", context.Canceled)},
-			{name: "ssrf", err: blocked},
+			{name: "ssrf", err: &fetchPolicyError{cause: blocked}},
 			{name: "nxdomain", err: &net.DNSError{Err: "no such host", IsNotFound: true}},
 			{name: "nxdomain precedence", err: &net.DNSError{Err: "no such host", IsNotFound: true, IsTimeout: true, IsTemporary: true}},
 			{name: "permanent dns", err: &net.DNSError{Err: "permanent DNS failure"}},
@@ -94,6 +94,13 @@ func TestFetchRetryGuidance(t *testing.T) {
 					assert.NotContains(t, text, fetchRetryHint)
 				}
 				assert.Equal(t, count, attempts.Load(), "no automatic retry")
+				wantMisses := count
+				if tc.name == "ssrf" {
+					wantMisses = 0
+				}
+				snap := srv.stats.Snapshot()
+				assert.Equal(t, wantMisses, snap.CacheMisses)
+				assert.Zero(t, snap.CacheHits)
 				assert.NoFileExists(t, srv.config.Store.Path)
 			})
 		}
@@ -124,6 +131,7 @@ func TestFetchRetryHintExcludesHTTPAndBody(t *testing.T) {
 				r := callFetchAndIndex(t, srv, fetchArgs("https://example.invalid", batch, true))
 				assert.Contains(t, resultText(r), "Failed")
 				assert.NotContains(t, resultText(r), fetchRetryHint)
+				assert.Equal(t, int64(1), srv.stats.Snapshot().CacheMisses)
 			})
 		}
 	}
@@ -152,6 +160,7 @@ func TestFetchRetryHintExcludesParentCancellation(t *testing.T) {
 				r, err := srv.handleFetchAndIndex(ctx, req)
 				require.NoError(t, err)
 				assert.NotContains(t, resultText(r), fetchRetryHint)
+				assert.Zero(t, srv.stats.Snapshot().CacheMisses)
 			})
 		}
 	}

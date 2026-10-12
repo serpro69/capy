@@ -1037,6 +1037,15 @@ Capy does not retry automatically. Cancellation, SSRF blocks, missing DNS names,
 certificate/permission failures and HTTP/body/index errors do not receive that
 hint; the original cause remains visible.
 
+`capy_stats` reports cache hits, attempted misses and their hit rate, including
+failed fetches and `force`/zero-TTL bypasses. Malformed URLs, SSRF blocks,
+Git-platform redirects and cancellation before dispatch count as neither.
+With no eligible outcomes the rate is `n/a`; all misses show `0.0%`. The report
+shows configured **Default fetch freshness**, independent of session uptime
+and individual TTL overrides. Cache byte savings remain an estimate. Context
+savings use one decimal and stay at most `99.9%` whenever any bytes were returned.
+`purge_all` resets these counters while preserving session uptime.
+
 The `capy_search` `source` filter matches a literal substring of a knowledge
 label: `%`, `_`, and backslashes match themselves. For example,
 `source: "team_notes"` matches `docs:team_notes` but not `docs:teamXnotes`. An explicit

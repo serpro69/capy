@@ -132,6 +132,9 @@ func TestFetchFreshnessFailedRevalidation(t *testing.T) {
 				after, err := srv.getStore().GetSourceMeta(key)
 				require.NoError(t, err)
 				assert.Equal(t, before, after)
+				snap := srv.stats.Snapshot()
+				assert.Zero(t, snap.CacheHits)
+				assert.Equal(t, int64(1), snap.CacheMisses, "failed fetch/transform/index work is an attempted miss")
 			})
 		}
 	}
@@ -225,7 +228,8 @@ func TestFetchFreshnessMarkerAdmission(t *testing.T) {
 	srv := newTestServer(t, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, at, errMsg := srv.fetchRemoteContent(ctx, "https://example.com")
+	_, _, at, outcome, errMsg := srv.fetchRemoteContent(ctx, "https://example.com")
+	assert.Equal(t, fetchNotAttempted, outcome)
 	assert.NotEmpty(t, errMsg)
 	assert.True(t, at.IsZero())
 }

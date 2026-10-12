@@ -14,6 +14,7 @@ type SessionStats struct {
 	BytesIndexed    int64
 	BytesSandboxed  int64
 	CacheHits       int64
+	CacheMisses     int64
 	CacheBytesSaved int64
 	mu              sync.Mutex
 }
@@ -51,10 +52,32 @@ func (s *SessionStats) AddBytesSandboxed(n int64) {
 
 // AddCacheHit records a TTL cache hit and its estimated byte savings.
 func (s *SessionStats) AddCacheHit(estimatedBytes int64) {
+	s.recordFetchOutcome(fetchCacheHit, estimatedBytes)
+}
+
+// fetchCacheOutcome survives error formatting and batch queueing. A miss means
+// an attempted remote fetch, including bypasses and failed fetch/index work.
+type fetchCacheOutcome uint8
+
+const (
+	fetchNotAttempted fetchCacheOutcome = iota
+	fetchCacheHit
+	fetchCacheMiss
+)
+
+func (s *SessionStats) recordFetchOutcome(outcome fetchCacheOutcome, estimatedBytes int64) {
+	if outcome == fetchNotAttempted {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.CacheHits++
-	s.CacheBytesSaved += estimatedBytes
+	switch outcome {
+	case fetchCacheHit:
+		s.CacheHits++
+		s.CacheBytesSaved += estimatedBytes
+	case fetchCacheMiss:
+		s.CacheMisses++
+	}
 }
 
 // Reset zeroes all usage counters and re-initializes the maps under the mutex.
@@ -69,6 +92,7 @@ func (s *SessionStats) Reset() {
 	s.BytesIndexed = 0
 	s.BytesSandboxed = 0
 	s.CacheHits = 0
+	s.CacheMisses = 0
 	s.CacheBytesSaved = 0
 }
 
@@ -89,6 +113,7 @@ func (s *SessionStats) Snapshot() SessionStats {
 		BytesIndexed:    s.BytesIndexed,
 		BytesSandboxed:  s.BytesSandboxed,
 		CacheHits:       s.CacheHits,
+		CacheMisses:     s.CacheMisses,
 		CacheBytesSaved: s.CacheBytesSaved,
 	}
 }

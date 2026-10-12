@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14, 15, 16a and 16 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14, 15, 16a, 16 and 17 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -744,11 +744,39 @@ Task 17 still owns cache counters and the uptime-based stats display correction.
 
 ## 17. Cache outcome statistics
 
-**Owners:** `internal/server/stats.go`, `tool_fetch.go`, `tool_stats.go`, stats/fetch tests.
+**Owners:** `internal/server/stats.go`, `tool_fetch.go`, `tool_stats.go`, typed transport-policy errors and URL validation in `ssrf.go`, stats/fetch tests.
 
 Count typed terminal outcomes once per URL, including bypasses and failed network attempts → verify: concurrent batches, zero-count Git-platform redirects/SSRF/syntax rejection, attempted post-fetch failures, and purge-all reset preserving uptime.
 
 Render hit/miss counts and a zero-safe rate even when all attempts missed. Replace uptime-based TTL remaining with configured default freshness; use one shared one-decimal savings formatter with the nonzero-return clamp at both display sites → verify: long uptime plus mixed TTLs, 99.888%, extremely-near-100%, true zero-return and zero-processed fixtures. Preserve existing savings formula and source/chunk statistics. Update ADR-013's obsolete stats consequence. Run focused stats/fetch tests under `-race`.
+
+Task 17 implementation notes (2026-10-12): `fetchCacheOutcome` distinguishes
+excluded requests, hits and attempted misses before formatting failures. The
+single handler records its final outcome on return; batch workers carry outcomes
+to the serial phase, which records each item once even if indexing later fails.
+`CacheMisses` shares the existing mutex, snapshot and reset with hits and estimated
+avoided bytes. `AddCacheHit` remains a compatible wrapper for existing callers.
+
+The transport returns `fetchPolicyError` only when every resolved address was
+blocked. If an eligible address was dialed unsuccessfully, its network error
+takes precedence over later blocked addresses. Missing URL hosts and invalid
+port ranges fail before dispatch. Review also required rejecting malformed
+unbracketed colon-containing hostnames; IPv6 literal/zone and port-boundary
+fixtures protect valid syntax. Already-canceled requests are checked before
+cache lookup and immediately before HTTP dispatch; cancellation after dispatch
+is an attempted miss. SSRF-blocked redirects remain excluded policy outcomes.
+No security range or retry rule is relaxed.
+
+Stats always show the cache denominator, including unused/all-miss sessions,
+configured default hours, and explicitly estimated byte savings. The shared
+formatter preserves the savings formula and clamps nonzero-return percentages
+before rounding to one decimal. README, architecture and ADR-013 describe these
+semantics. CLI and CI changes are N/A; build/test/key requirements inherit
+repository `AGENTS.md`. No module, schema, generator or retrieval change is needed.
+`kk:dependency-handling` found no Go 1.25.2 Context7 coverage; port parsing was
+verified against pinned [strconv source](https://github.com/golang/go/blob/go1.25.2/src/strconv/atoi.go)
+and [URL source](https://github.com/golang/go/blob/go1.25.2/src/net/url/url.go), plus
+the installed Go 1.25.2 source. Tasks 18–20 and D1–D5 remain separate work.
 
 ## 18. Batch search controls and provenance
 

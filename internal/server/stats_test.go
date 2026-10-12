@@ -71,14 +71,17 @@ func TestAddCacheHit(t *testing.T) {
 func TestSnapshot_CacheFields(t *testing.T) {
 	s := NewSessionStats()
 	s.AddCacheHit(1600)
+	s.recordFetchOutcome(fetchCacheMiss, 0)
 
 	snap := s.Snapshot()
 
 	// Mutate original — snapshot should be unaffected
 	s.AddCacheHit(9999)
+	s.recordFetchOutcome(fetchCacheMiss, 0)
 
 	assert.Equal(t, int64(1), snap.CacheHits)
 	assert.Equal(t, int64(1600), snap.CacheBytesSaved)
+	assert.Equal(t, int64(1), snap.CacheMisses)
 }
 
 func TestSessionStats_ThreadSafety(t *testing.T) {
@@ -86,7 +89,7 @@ func TestSessionStats_ThreadSafety(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < 100; i++ {
-		wg.Add(4)
+		wg.Add(5)
 		go func() {
 			defer wg.Done()
 			s.TrackResponse("capy_execute", 10)
@@ -101,6 +104,10 @@ func TestSessionStats_ThreadSafety(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
+			s.recordFetchOutcome(fetchCacheMiss, 0)
+		}()
+		go func() {
+			defer wg.Done()
 			_ = s.Snapshot()
 		}()
 	}
@@ -110,5 +117,6 @@ func TestSessionStats_ThreadSafety(t *testing.T) {
 	assert.Equal(t, int64(1000), s.BytesReturned["capy_execute"])
 	assert.Equal(t, int64(500), s.BytesIndexed)
 	assert.Equal(t, int64(100), s.CacheHits)
+	assert.Equal(t, int64(100), s.CacheMisses)
 	assert.Equal(t, int64(10000), s.CacheBytesSaved)
 }

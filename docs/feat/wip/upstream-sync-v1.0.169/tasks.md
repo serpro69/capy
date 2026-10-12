@@ -469,7 +469,7 @@ reviewer are recorded. Task 17's cache counters and stats display remain pending
 
 ## Task 17: Report cache hits and attempted misses
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 16
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 5, 9, 10, 11, 12, 14, 15, 19
@@ -477,9 +477,20 @@ reviewer are recorded. Task 17's cache counters and stats display remain pending
 
 ### Subtasks
 
-- [ ] 17.1 Count per-URL outcomes consistently in fetch/stats paths and include them in snapshot/reset → verify: concurrent batches and purge-all counters.
-- [ ] 17.2 Replace uptime-based TTL remaining with configured default freshness and show typed hit/miss outcomes → verify: long uptime, mixed TTLs, failed attempts, and zero-count Git redirects/SSRF blocks.
-- [ ] 17.3 Format both savings percentages with one decimal and nonzero-return clamp → verify: 99.888%, near-100%, zero-return/zero-processed cases and amended ADR-013 wording.
+- [x] 17.1 Count per-URL outcomes consistently in fetch/stats paths and include them in snapshot/reset → verify: concurrent batches and purge-all counters.
+- [x] 17.2 Replace uptime-based TTL remaining with configured default freshness and show typed hit/miss outcomes → verify: long uptime, mixed TTLs, failed attempts, and zero-count Git redirects/SSRF blocks.
+- [x] 17.3 Format both savings percentages with one decimal and nonzero-return clamp → verify: 99.888%, near-100%, zero-return/zero-processed cases and amended ADR-013 wording.
+
+Evidence: [verification](verification.md#task-17-cache-outcome-statistics) and
+[isolated review](.reviews/task-17-code-review-2026-10-12.md). Typed per-URL
+outcomes now distinguish cache hits, attempted misses and excluded requests.
+Stats report zero-safe rates, configured default freshness and bounded savings
+percentages. Focused race checks, the complete server suite and build pass.
+The review's malformed-authority finding is fixed. The unrelated macOS
+directory-fixture collision was reproduced on untouched `888ed2a` and fixed
+separately in `ea96dc0`, preserving its Unicode coverage and count assertions.
+Verification records the full-suite result, the existing vet warning and
+unavailable PAL reviewer. Tasks 18–20 remain pending.
 
 ## Task 18: Add batch query scope and bounded provenance
 

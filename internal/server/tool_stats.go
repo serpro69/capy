@@ -28,10 +28,7 @@ func (s *Server) handleStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.C
 	keptOut := snap.BytesIndexed + snap.BytesSandboxed
 	totalProcessed := keptOut + totalBytesReturned + snap.CacheBytesSaved
 	savingsRatio := float64(totalProcessed) / float64(max(totalBytesReturned, 1))
-	reductionPct := 0.0
-	if totalProcessed > 0 {
-		reductionPct = (1 - float64(totalBytesReturned)/float64(totalProcessed)) * 100
-	}
+	reduction := formatSavingsPercent(totalProcessed, totalBytesReturned)
 
 	var lines []string
 	lines = append(lines, fmt.Sprintf("## capy — Session Report (%.1f min)", uptimeMin))
@@ -48,7 +45,7 @@ func (s *Server) handleStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.C
 			fmt.Sprintf("| Kept in sandbox (never entered context) | **%s** |", formatBytes(keptOut)),
 			fmt.Sprintf("| Entered context | %s |", formatBytes(totalBytesReturned)),
 			fmt.Sprintf("| Estimated tokens saved | ~%d |", keptOut/4),
-			fmt.Sprintf("| **Context savings** | **%.1fx (%.0f%% reduction)** |", savingsRatio, reductionPct),
+			fmt.Sprintf("| **Context savings** | **%.1fx (%s reduction)** |", savingsRatio, reduction),
 		)
 
 		// Per-tool breakdown
@@ -83,8 +80,8 @@ func (s *Server) handleStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.C
 
 		if keptOut > 0 {
 			lines = append(lines, "",
-				fmt.Sprintf("Without capy, **%s** of raw output would flood your context window. Instead, **%.0f%%** stayed in sandbox.",
-					formatBytes(totalProcessed), reductionPct))
+				fmt.Sprintf("Without capy, **%s** of raw output would flood your context window. Instead, **%s** stayed in sandbox.",
+					formatBytes(totalProcessed), reduction))
 		}
 	}
 
@@ -186,25 +183,40 @@ func (s *Server) handleStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.C
 		}
 	}
 
-	// TTL cache section
-	if snap.CacheHits > 0 {
-		ttlHours := s.config.Store.Cache.FetchTTLHours
-		ttlHoursLeft := max(0, ttlHours-int(time.Since(snap.SessionStart).Hours()))
-		lines = append(lines, "", "### TTL Cache", "",
-			"| Metric | Value |",
-			"|--------|------:|",
-			fmt.Sprintf("| Cache hits | **%d** |", snap.CacheHits),
-			fmt.Sprintf("| Data avoided by cache | **%s** |", formatBytes(snap.CacheBytesSaved)),
-			fmt.Sprintf("| Network requests saved | **%d** |", snap.CacheHits),
-			fmt.Sprintf("| TTL remaining | **~%dh** |", ttlHoursLeft),
-		)
+	// Always show the denominator, including failed attempts and an unused cache.
+	hitRate := "n/a"
+	if attempts := snap.CacheHits + snap.CacheMisses; attempts > 0 {
+		hitRate = fmt.Sprintf("%.1f%%", 100*float64(snap.CacheHits)/float64(attempts))
 	}
+	lines = append(lines, "", "### TTL Cache", "",
+		"| Metric | Value |",
+		"|--------|------:|",
+		fmt.Sprintf("| Cache hits | **%d** |", snap.CacheHits),
+		fmt.Sprintf("| Attempted misses | **%d** |", snap.CacheMisses),
+		fmt.Sprintf("| Hit rate (hits / (hits + attempted misses)) | **%s** |", hitRate),
+		fmt.Sprintf("| Estimated data avoided by cache | **%s** |", formatBytes(snap.CacheBytesSaved)),
+		fmt.Sprintf("| Network requests saved | **%d** |", snap.CacheHits),
+		fmt.Sprintf("| Default fetch freshness | **%dh** |", s.config.Store.Cache.FetchTTLHours),
+	)
 
 	lines = append(lines, "", "---",
 		"_Display this entire report as-is. Do NOT summarize or collapse any section._")
 
 	text := strings.Join(lines, "\n")
 	return s.trackToolResponse("capy_stats", textResult(text)), nil
+}
+
+// formatSavingsPercent preserves the savings formula without rounding nonzero
+// returned bytes up to a claim of complete exclusion from context.
+func formatSavingsPercent(processed, returned int64) string {
+	percent := 0.0
+	if processed > 0 {
+		percent = (1 - float64(returned)/float64(processed)) * 100
+		if returned > 0 {
+			percent = min(percent, 99.9)
+		}
+	}
+	return fmt.Sprintf("%.1f%%", percent)
 }
 
 // formatBytes formats a byte count as KB or MB.
