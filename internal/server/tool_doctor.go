@@ -42,10 +42,7 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 	results = append(results, platform.CheckConfig(s.projectDir, dbPath))
 
 	// Hook and MCP registration
-	results = append(results,
-		platform.CheckHookRegistration(s.projectDir),
-		platform.CheckMCPRegistration(s.projectDir),
-	)
+	results = append(results, platform.CheckPlatformRegistrations(s.projectDir)...)
 
 	// Knowledge base — use store directly for richer stats
 	results = append(results, s.knowledgeChecks()...)

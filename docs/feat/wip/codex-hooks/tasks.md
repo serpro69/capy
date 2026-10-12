@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–4 done; Tasks 5–6 pending
+> Status: in-progress — Tasks 1–5 done; Task 6 pending
 > Created: 2026-10-12
 > Review dispositions: [review-resolution.md](review-resolution.md)
 > Readiness: [RD-1 correction and re-review](readiness-review.md#resolution-and-re-review)
@@ -87,7 +87,7 @@
 
 ## Task 5: Diagnose Codex registration on both doctor interfaces
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** Task 4
@@ -95,9 +95,12 @@
 
 ### Subtasks
 
-- [ ] 5.1 Add shared platform-labelled checks in `internal/platform/doctor_codex.go` using the runtime owner inspector for hook/MCP binding, adjacent markers and overlap; check wrapper/matchers using the event catalog → verify: `TestDoctorPlatformRegistrations` covers single/dual/no/incomplete/misbound installations and agrees with runtime/setup on copied IDs with a missing outer marker.
-- [ ] 5.2 Report visible feature disabling and inline-source overlap, while explicitly leaving project trust, hook trust and execution unverified → verify: `TestDoctorCodexActivationLimits`.
-- [ ] 5.3 Wire shared results into `cmd/capy/doctor.go` and `internal/server/tool_doctor.go` without changing credential/vault checks → verify: CLI/MCP Codex-only fixtures agree and do not fail for absent Claude configuration.
+- [x] 5.1 Add shared platform-labelled checks in `internal/platform/doctor_codex.go` using the runtime owner inspector for hook/MCP binding, adjacent markers and overlap; check wrapper/matchers using the event catalog → verify: `TestDoctorPlatformRegistrations` covers single/dual/no/incomplete/misbound installations and agrees with runtime/setup on copied IDs with a missing outer marker.
+- [x] 5.2 Report visible feature disabling and inline-source overlap, while explicitly leaving project trust, hook trust and execution unverified → verify: `TestDoctorCodexActivationLimits`.
+- [x] 5.3 Wire shared results into `cmd/capy/doctor.go` and `internal/server/tool_doctor.go` without changing credential/vault checks → verify: CLI/MCP Codex-only fixtures agree and do not fail for absent Claude configuration.
+
+**Evidence:** [Task 5 verification](verification.md#task-5-shared-platform-registration-diagnostics);
+[isolated code review: APPROVE](.reviews/task-5-code-review-2026-10-12.md).
 
 ## Task 6: Verify the installed runtime and document the release
 

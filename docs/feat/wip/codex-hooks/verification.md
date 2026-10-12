@@ -414,3 +414,89 @@ access. The server rerun is tracked separately below; no fully green repository
 suite is claimed. The [independent review](.reviews/task-4-code-review-2026-10-12.md)
 approved without findings; PAL was unavailable because its configured API key
 was rejected.
+
+The Task 4 server rerun with socket access completed: only the two already
+documented mapped-IPv4 assertions in `TestFetchStatsRejectedURLs` failed.
+Config and all other packages passed. Neither socket failure was a code
+regression; both fixtures require socket access denied by the sandbox.
+
+## Task 5: Shared platform registration diagnostics
+
+`CheckPlatformRegistrations` now supplies both CLI and MCP doctor reports.
+Claude and Codex registration are labelled independently. Codex-only setups do
+not produce a missing-Claude failure. Empty platform directories and valid
+unrelated configuration do not count as installations; no registration yields
+an actionable setup failure. Old unbound Codex MCP entries, orphaned wrappers
+and marker-only installations are reported as incomplete.
+
+Codex checks reuse `InspectCodexOwners` and the decoded invocation recognizers,
+including adjacent-marker validation, unsupported invocation shapes and the
+complete ancestor scan. Malformed or unreadable configuration is reported as
+uncertainty that blocks launch, rather than assumed to contain no binding.
+Identical copied owner IDs still identify two physical installations. Tests
+retain only the outer hooks or MCP binding while deleting its marker and
+assert that doctor, runtime and setup all reject the same broken outer owner.
+
+The hook check derives required events and matchers from the installed catalog,
+reports missing/partial and duplicate handlers, and validates canonical matcher
+shape. MCP checks validate owner-bound bootstrap argv and duplicate aliased
+servers. Both report missing, symlink or unreadable wrappers. An ordinary
+subdirectory resolves the same owner as the runtime launcher.
+
+Registration success does not imply activation. A separate warning states that
+project trust, exact hook trust and execution are unverified. It reports visible
+`features.hooks = false`, the deprecated `features.codex_hooks = false` alias,
+and potential overlap with inline handlers for the installed events. It does not
+infer effective flag precedence or inspect host trust records, global/plugin
+configuration or execution receipts. Context7 did not cover the pinned 0.162.1
+version; the hook feature and alias were checked against the
+[pinned feature table](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/features/src/lib.rs)
+and [official hook reference](https://learn.chatgpt.com/docs/hooks#turn-hooks-off).
+
+`TestDoctorCodexPlatformParity` initializes a real MCP server and compares its
+doctor platform findings with the actual CLI for complete, partial, visibly
+disabled and missing-marker fixtures. It uses direct `serve` for the broken
+registration fixture, so the diagnostic can run without claiming the broken
+generated launch command succeeds. Credentials are synthetic, homes/config/data
+are isolated, and vault remains disabled. Existing credential/store/vault
+diagnostics retain their own checks and do not become registration checks.
+
+No CLI flags, input formats, exit codes, command dispatch, credential precedence,
+completion or distribution behavior changed. Existing CLI conventions are
+inherited from `cmd/capy/doctor.go`; the user-visible change is the platform
+checklist entries. CI/publishing changes are N/A for this task. Live host proof
+and release guidance remain Task 6.
+
+Author review caught one adjacent diagnostic defect: Claude event counting used
+only the substring `hook <event>`, which could misclassify an unrelated tool's
+hook as a capy installation and cause a spurious missing-Claude-MCP failure.
+The doctor-only recognizer now accepts the generated wrapper and legacy direct
+capy command forms (including quoted executable paths). It rejects unrelated
+commands and echoed capy mentions. Setup's Claude merger is unchanged. The
+Codex-only fixture includes an unrelated Claude hook to guard this distinction.
+
+Verification, using FTS5, isolated configuration and synthetic keys:
+
+- Full platform suite and final doctor fixtures: passed.
+- CLI/MCP parity subprocess fixture: passed.
+- Adapter/hook/platform race suites: passed.
+- Existing MCP doctor tests with the race detector: passed.
+- `go vet -tags fts5 ./internal/platform ./internal/server ./cmd/capy`: passed.
+
+The implementation followed the existing diagnostic result type and formatter;
+no policy evaluator, state schema or database path was added. No search,
+indexing, chunking or executor code changed; quality benchmarks are N/A.
+
+The full `go test -tags fts5 -count=1 ./...` run with socket access passed every
+package except the same two baseline mapped-IPv4 assertions in
+`TestFetchStatsRejectedURLs`. No new failure appeared. After the final Claude
+recognizer correction, the full platform race suite, all CLI doctor/parity race
+fixtures and vet passed again. Generated-artifact checks are included in the
+platform suite. The [independent review](.reviews/task-5-code-review-2026-10-12.md)
+approved the refreshed patch without outstanding findings.
+
+Tasks 4 and 5 are complete as separate commits. Task 6 remains pending, including
+live host acceptance, release documentation and the whole-feature spec review.
+No trust records, external hooks, upstream issues or PRs were changed. The
+diagnostic false-positive fix stayed within Task 5's platform-detection
+requirement; no other plan deviation or new project convention was introduced.
