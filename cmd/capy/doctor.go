@@ -57,10 +57,9 @@ func newDoctorCmd() *cobra.Command {
 				platform.CheckRuntimes(runtimeStrs, executor.TotalLanguages),
 				platform.CheckFTS5(),
 				configCheck,
-				platform.CheckHookRegistration(projectDir),
-				platform.CheckMCPRegistration(projectDir),
-				platform.CheckSecurity(totalDeny, len(policies)),
 			}
+			results = append(results, platform.CheckPlatformRegistrations(projectDir)...)
+			results = append(results, platform.CheckSecurity(totalDeny, len(policies)))
 			if configErr != nil {
 				results = append(results, platform.CheckKnowledgeBaseSkipped("configuration failed; credential selection was not run"))
 			} else {

@@ -189,11 +189,44 @@ func countCapyHooks(settingsPath string) int {
 	count := 0
 	for _, he := range hookEvents {
 		entries, _ := hooks[he.Event].([]any)
-		if findHookEntry(entries, "hook "+he.CLIArg) >= 0 {
+		if hasClaudeCapyHook(entries, he.CLIArg) {
 			count++
 		}
 	}
 	return count
+}
+
+// Recognize the generated wrapper and legacy direct capy invocations. Matching
+// only "hook <event>" misidentifies unrelated tools as a capy installation.
+// This is a static recognizer, not a shell evaluator.
+func hasClaudeCapyHook(entries []any, event string) bool {
+	for _, entry := range entries {
+		group, _ := entry.(map[string]any)
+		handlers, _ := group["hooks"].([]any)
+		for _, raw := range handlers {
+			handler, _ := raw.(map[string]any)
+			if handler["type"] != "command" {
+				continue
+			}
+			command, _ := handler["command"].(string)
+			prefix, ok := strings.CutSuffix(strings.TrimSpace(command), " hook "+event)
+			if !ok {
+				continue
+			}
+			if prefix == "bash $CLAUDE_PROJECT_DIR/"+capyWrapperRelPath {
+				return true
+			}
+			if len(prefix) >= 2 && prefix[0] == prefix[len(prefix)-1] && (prefix[0] == '\'' || prefix[0] == '"') {
+				prefix = prefix[1 : len(prefix)-1]
+			} else if strings.ContainsAny(prefix, " \t\r\n\"'") {
+				continue
+			}
+			if filepath.Base(prefix) == "capy" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // CheckMCPRegistration verifies that capy is registered as an MCP server in .mcp.json.

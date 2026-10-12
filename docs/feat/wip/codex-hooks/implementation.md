@@ -1,7 +1,7 @@
 # Implementation: capy-owned Codex hooks
 
 > Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
-> Status: Tasks 1–4 complete with verification/review recorded; Tasks 5–6 pending
+> Status: Tasks 1–5 complete with verification/review recorded; Task 6 pending
 > Baseline inspected: 2026-10-12, Codex CLI 0.162.1
 > Revisions: [review-resolution.md](review-resolution.md)
 
