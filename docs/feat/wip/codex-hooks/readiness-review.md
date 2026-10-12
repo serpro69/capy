@@ -1,11 +1,13 @@
 # Codex hooks: fresh implementation-readiness check
 
 > Date: 2026-10-12
-> Scope: fresh read of all five feature documents; no new skills or agents
-> Verdict: **not ready — RD-1 remains partially unresolved**
-> Changes made by this check: this review record only
+> Original scope: fresh read of all five feature documents; no new skills or agents
+> Original verdict: **not ready — RD-1 remained partially unresolved**
+> Current verdict: **design blocker resolved; implementation acceptance pending**
+> Resolution: [revision and re-review below](#resolution-and-re-review), 2026-10-12
 
-The shared Go adapter/router direction, event coverage, policy handling and
+The original assessment is preserved below. The shared Go adapter/router
+direction, event coverage, policy handling and
 task sequencing are coherent. The previous findings have explicit design
 dispositions and acceptance checks. However, the new marker algorithm does not
 fully satisfy its own missing-owner requirement. This supersedes the earlier
@@ -61,9 +63,9 @@ the outer pre-tool handler to reject with exit 2 and a reason before invoking
 the nested wrapper or accessing its policy/state. Apply the same no-substitution
 rule to MCP launch. Update the design, plan and earlier disposition together.
 
-The fix is deferred because this request asks for a readiness assessment, not
-another architecture revision. This concrete acceptance case must be closed
-before treating the complete plan as ready for implementation.
+The fix was deferred in the original assessment because that request asked for
+readiness review, not another architecture revision. The follow-up correction
+below closes this design gap and adds the concrete implementation acceptance case.
 
 ## Status of the other supplied findings
 
@@ -84,3 +86,47 @@ read. The explicit restrictions on overlapping installations and physically
 nested worktrees, and the temporary duplicate startup context, remain design
 trade-offs rather than unrecorded gaps. No Go code, existing design text, staged
 changes, hook configuration, trust state or external resources were modified.
+
+## Resolution and re-review
+
+The follow-up request authorized resolving the issue. Design §6.1,
+implementation §3.1, Tasks 2/5/6 and the RD-1 disposition now agree on a
+config-aware runtime preflight. A small installed Go launcher inspects ancestor
+markers and decoded hook/MCP bindings **before any project wrapper runs**.
+Directories containing retained bindings remain installation candidates after
+their marker disappears; a matching marker in another directory cannot satisfy
+the adjacent-marker check. Installation directories are counted separately even
+when their IDs are identical.
+
+For the original counterexample, `/repo/.codex/hooks.json` and the MCP config
+still bind A, but `/repo/.codex/capy-owner` is absent. Preflight must report that
+broken outer binding. It cannot return the nested wrapper, regardless of which
+of the two generated commands invoked it. Task 2.6 requires exact pre-tool exit
+2, nonempty repair text and a sentinel proving neither wrapper started; MCP
+must fail without protocol output or DB access. The fixture stays within one
+Git repository and also covers retaining only either outer binding.
+
+**Standard kk:review-design assessment: SOUND for the revised design scope;
+no outstanding P0/P1/P2 design finding.** This was an in-session review, not an
+independent or live runtime verification. Checked:
+
+- Full-chain scanning, per-directory binding validation and no early selection.
+- JSON/TOML decoding rather than serialized-text matching; invalid/unreadable/
+  oversized/symlink inputs fail, valid unrelated config remains supported.
+- Shared setup/runtime/doctor inspection and literal versioned invocation
+  recognition, with no config execution or new parser dependency.
+- Failure supervision before the launcher and before the wrapper, MCP stdout/
+  status preservation, unchanged event stdin, and cancellation acceptance.
+- Copied-ID/missing-marker, distinct-ID, partial binding, ordinary subdirectory,
+  move and sibling-worktree cases; original findings RD-2/RD-3 and R2-1–R2-7
+  retain their dispositions and acceptance requirements.
+- Explicit limits: current on-disk generated bindings are required; stop/reload
+  sessions before removing or relocating loaded installations. This does not
+  recover deleted config-source provenance from an old host-cached command.
+- Six pending implementation tasks retain dependencies, scope exclusions and
+  named acceptance checks. No task is marked done by this documentation fix.
+
+The review assessed the written algorithm and implementation plan. Test names
+are future acceptance requirements; no Go launcher, generated installation or
+live Codex execution was introduced or tested by this correction. See
+[verification.md](verification.md#rd-1-readiness-correction) for design-stage checks.

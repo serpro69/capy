@@ -1,7 +1,7 @@
 # Codex hooks: design review corroboration and disposition
 
 > Date: 2026-10-12
-> Scope: the two reviews supplied by the user; documentation revision only
+> Scope: the two supplied reviews and subsequent readiness finding; documentation revision only
 > Updated: [design.md](design.md), [implementation.md](implementation.md), [tasks.md](tasks.md)
 > Evidence record: [verification.md](verification.md)
 
@@ -15,19 +15,37 @@ its findings in the supplied order.
 
 ### RD-1 — Nearest-wrapper lookup loses config ownership
 
-**Valid; fixed in the design.** Pinned discovery appends handlers from every
+**Valid; corrected after the readiness re-review.** Pinned discovery appends handlers from every
 config layer, and command execution uses event cwd. Capy's settings loader
 reads the selected project's policy files, not every ancestor project's files.
 Thus both root and nested handlers would select the same nearest nested wrapper
 under the previous algorithm. This is a corroborated inference from code; the
 unimplemented integration was not tested live.
 
-The revised §6.1 binds each handler and MCP command to a persistent installation
-ID stored in `.codex/capy-owner`. An ancestor scan must find exactly one matching
-owner; overlapping installations are rejected before policy/state/DB effects.
-It never substitutes another wrapper if the named owner is absent. Task 2 now
-requires distinct-rule/two-owner, copied-ID, missing-owner and no-duplicate-
-evidence fixtures. Ordinary subdirectories remain supported.
+The first revision used `.codex/capy-owner` and a marker-only ancestor scan.
+That was insufficient: the [readiness finding](readiness-review.md) demonstrated
+that copied IDs plus a missing outer marker could select the nested owner while
+the outer generated config remained installed. The earlier unqualified "fixed"
+disposition was incorrect.
+
+The corrected §6.1 requires a Go preflight before any project wrapper runs.
+It decodes ancestor hook/MCP configuration as well as markers, counts physical
+installation directories, and validates each binding against its **adjacent**
+marker. Retained outer definitions therefore cause rejection when their marker
+is missing, even if a nested copy has the same ID. The inline bootstrap locates
+and supervises `capy codex-launch`; it never selects a project wrapper first.
+Setup and doctor share the inspector. Pre-tool lookup/config/launcher failures
+retain RD-3's exact exit-2/nonempty-stderr contract; MCP fails diagnostically.
+
+Task 2.6 specifies the combined same-repository/copied-ID/missing-outer-marker
+fixture, with both hook/MCP configs retained, sentinel wrappers and assertions
+that policy/state/DB access never begins. Hook-only/MCP-only retained binding
+variants and decoded escaping prevent a partial or text-grep-based fix. Valid
+unrelated config and normal subdirectory/move/worktree cases remain supported.
+These are design requirements, not passing implementation tests. The contract
+also explicitly requires loaded definitions to remain on disk until host reload:
+an origin deleted entirely while its command is cached cannot be recovered from
+a copied portable ID.
 
 Sources: [discovery](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/hooks/src/engine/discovery.rs),
 [command runner](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/hooks/src/engine/command_runner.rs),
@@ -169,8 +187,9 @@ Sources: `.codex/hooks.json`, `.codex/scripts/session-start.sh`,
 
 ## Result and remaining verification
 
-The design now has six implementation tasks; launch/ownership work was split
-from hook registration to keep each task bounded. No implementation, generated
-configuration, hook trust or external issue/PR was changed. Live capy hook/MCP
-verification remains pending implementation. A focused design re-review should
-assess the new marker binding and bootstrap failure contract before coding.
+The design retains six implementation tasks; Task 2 now includes the shared
+config-binding inspector and pre-wrapper launcher, and Task 5 reuses it for
+diagnostics. No implementation, generated configuration, hook trust or external
+issue/PR was changed. The [focused re-review](readiness-review.md#resolution-and-re-review)
+closes the outstanding design blocker; live capy hook/MCP verification and all
+named acceptance tests remain pending implementation.

@@ -28,6 +28,10 @@ Use these existing components:
 - `internal/hook/{posttooluse,observations,sessionend,guidance}.go`: child
   evidence and session state. Preserve existing caps, locking and expiry.
 - `internal/platform/{setup,doctor}.go`: installation and shared checks.
+- New `internal/platform/codex_owner.go`: bounded, read-only inspection of
+  ancestor markers and decoded hook/MCP bindings, shared by launch/setup/doctor.
+- New `cmd/capy/codex_launch.go`: internal launch command registered in
+  `main.go`; validates ownership before invoking the selected project wrapper.
 - `internal/security/{settings,eval}.go`: policy loading and match results;
   add rule-source provenance without changing matching precedence.
 - `cmd/capy/{setup,doctor}.go` and `internal/server/tool_doctor.go`: user-facing
@@ -119,23 +123,57 @@ then extend the event catalog to children in Task 4.
    MCP block can migrate normally. → verify: `TestCodexOwnerMarker` covers
    stable reruns, malformed/symlink/missing-live markers, legacy migration and
    concurrent creation cases, with a single consistent ID.
-2. Generate one inline bootstrap for hook and serve modes, with the owner ID
-   and mode/event passed as data. Scan physical ancestors for markers to
-   filesystem root with bounded 80-byte reads. Require one marker, matching
-   the embedded ID, and its own readable regular wrapper. Do not source marker
-   contents or choose a nearer/fallback wrapper. Set explicit project ownership
-   while preserving process/event cwd. → verify: `TestCodexLaunchLocations`
+2. Add the shared inspector in `internal/platform/codex_owner.go` and internal
+   `capy codex-launch` entry point in `cmd/capy/codex_launch.go`, registered in
+   `main.go`. Follow design §6.1's complete ancestor scan, including ancestors
+   beyond Git boundaries. Inspect markers (80-byte bound), hooks JSON and config
+   TOML (1 MiB each, with overflow detection), decoding with the standard JSON
+   package and existing TOML dependency. Reject unreadable/malformed/nonregular/
+   symlink inputs and symlink `.codex` directories; distinguish absent files
+   from failed inspection. Collect directories from the **union of markers and
+   generated bindings**, including inline hooks and MCP aliases. Validate each
+   binding against its adjacent marker; never deduplicate directories by ID or
+   return early at a nested match. Require one directory with the requested ID
+   and mode/event binding. Reuse the same decoded canonical-invocation recognizer
+   in setup and doctor; reject recognizable invalid/unsupported invocations.
+   Valid unrelated config does not require a marker. → verify:
+   `TestCodexOwnerBindings` covers JSON escapes/TOML quoting, partial artifacts,
+   marker-only stale commands, malformed/oversized/unreadable/symlink inputs,
+   invalid versions and marker-free unrelated config. Verify no policy, state,
+   credential resolution or DB access and no consumption of event stdin.
+3. Generate one inline bootstrap for hook and serve modes, with the versioned
+   `capy-codex-launch-v1` identifier, owner ID and mode/event passed as data.
+   Extract the existing wrapper binary-search fragment for reuse; the bootstrap
+   locates capy and supervises `codex-launch` without running a project wrapper
+   first. Only after the complete Go preflight succeeds may the launcher invoke
+   the owner's readable regular wrapper with explicit project ownership and
+   unchanged process/event cwd. Missing/older launcher binaries cannot fall
+   back to a nearer wrapper. → verify: `TestCodexLaunchLocations`
    runs both modes from root, ordinary subdirectories, moved trees, non-Git
    command-only fixtures, paths with spaces and sibling linked worktrees.
-3. Reject overlapping installations before wrapper invocation. Setup checks
-   conflicting ancestors; runtime checks catch nested descendants when they
-   become ancestors of the launch cwd. Validate both distinct and copied IDs.
+   Hook fixtures in Task 2 can supply canonical bindings before Task 3 wires
+   hook registration into setup; MCP fixtures use the actual generated table.
+4. Reject overlapping installations before wrapper invocation. Setup checks
+   ancestor bindings as well as markers before creating/adopting an ID; runtime
+   checks catch nested descendants when they become ancestors of launch cwd.
+   Setup may create a genuinely new installation; runtime requires a binding
+   for the invoked mode/event. Validate both distinct and copied IDs.
    → verify: `TestCodexOverlappingInstallations` installs different harmless
    root/nested deny rules and separate state directories, invokes both generated
    handlers and MCP, and asserts rejection with no policy/state/DB side effects.
    Remove the root wrapper and then its marker: root's command must never run
    as the nested owner. Include a copied definition with the wrong owner ID.
-4. Replace `codexMCPBlock`'s cwd-relative wrapper arguments with the same
+   `TestCodexCopiedOwnerMissingMarker` must also copy root's complete `.codex`
+   into `packages/service` **within the same Git repository**, retain both
+   owners' hook and MCP definitions, then delete only the outer marker. Invoke
+   both pre-tool commands from the nested directory: require exact exit 2 and
+   a nonempty reason naming the outer binding, with no wrapper invocation,
+   policy access, observation write/consumption or database open. Both MCP
+   commands must fail with stderr and no protocol stdout. Repeat retaining only
+   the outer hook binding, only the outer MCP binding, and equivalent escaped
+   serialized commands. Run these with a sentinel nested wrapper so rejection
+   by the nested wrapper cannot masquerade as successful preflight enforcement.
+5. Replace `codexMCPBlock`'s cwd-relative wrapper arguments with the same
    bootstrap and owner ID, preserving credential forwarding and unrelated
    TOML. Serve receives `--project-dir` for that owner. Keep stdout exclusively
    for MCP. Update the committed TOML and parameterize pure merge helpers so
@@ -144,8 +182,9 @@ then extend the event catalog to children in Task 4.
    MCP server, lists tools and makes a harmless capy call from every supported
    location, using synthetic credentials; assert execution/storage owner and
    test a visible setup/runtime failure when the expected marker is absent.
-5. Supervise wrapper invocation in the bootstrap, mapping owner/lookup/open/
-   launch failures for PreToolUse to **exit 2 with nonempty repair-oriented
+6. Supervise the Go launcher in the bootstrap and wrapper invocation in the
+   launcher, mapping binary-discovery/config/owner/lookup/open/launch failures
+   for PreToolUse to **exit 2 with nonempty repair-oriented
    stderr**. This includes ordinary subprocess exits 1/126/127 and a wrapper
    disappearing after validation. Other hooks/MCP fail diagnostically. Add
    the corresponding narrow Codex branch to `capyWrapperScript` for missing
@@ -153,10 +192,15 @@ then extend the event catalog to children in Task 4.
    propagation. → verify: `TestCodexBootstrapFailure` and
    `TestWrapperCodexHookFailure` assert exact status/text for missing,
    unreadable, vanished and invalid-owner wrappers, outside-tree launch,
-   missing/incompatible binary, crash, and the successful exit-0 JSON denial.
+   missing/incompatible launcher or hook binary, launcher crash, wrapper crash,
+   and the successful exit-0 JSON denial. Assert event stdin reaches the final
+   handler unchanged and preflight never contaminates MCP stdout. Preserve
+   cancellation/signal delivery to the wrapper and server across the extra
+   launcher process; subprocess checks must not leave a server running after
+   the host terminates its launcher.
    Use controlled readers/launchers or unprivileged fixtures for unreadability
    and the disappearance race; do not rely on root-user permission tests.
-6. Commit the marker with its generated configuration, update both wrapper
+7. Commit the marker with its generated configuration, update both wrapper
    copies, and extend artifact tests for a parameterized owner marker. Its
    serialized form must equal the generator given the preserved ID; fresh-setup
    tests separately prove creation and propagation. Do not exempt it from
@@ -190,8 +234,9 @@ then extend the event catalog to children in Task 4.
    → verify: all three drift checks pass; the mixed startup fixture records
    actual context sizes while retaining provider/extra instructions.
 
-Shell/bootstrap text owns only location and process-failure handling; it must
-not become a second policy evaluator. Non-Git fixture success proves command
+Shell/bootstrap text owns binary discovery and process-failure handling; Go
+owns bounded config/marker inspection before wrapper selection. Neither becomes
+a second policy evaluator. Non-Git fixture success proves command
 resolution only; automatic Codex discovery there remains unverified.
 
 ## 4. Child guidance, evidence and cleanup
@@ -240,11 +285,15 @@ slice complete; do not relax evidence or identity requirements.
    `internal/platform/doctor_codex.go`, reusing the existing TOML dependency
    and the installed-event catalog. Detect configured platforms by actual
    capy artifacts. Report missing, partial, malformed, duplicate and complete
-   registration; check marker validity, source/command owner-ID agreement,
-   wrapper/invocation/matcher shape, MCP bootstrap argv and ancestor overlap.
+   registration; reuse the runtime inspector for marker validity, each binding's
+   adjacent marker and source/command owner-ID agreement. Check wrapper/
+   invocation/matcher shape, MCP bootstrap argv and ancestor overlap. A retained
+   ancestor config with a missing marker is broken registration, even when a
+   nested copy has the same ID.
    → verify:
    `TestDoctorPlatformRegistrations` covers Claude-only, Codex-only, both,
-   neither and incomplete installations.
+   neither, incomplete installations and the copied-ID/missing-outer-marker
+   fixture; setup, doctor and runtime must agree on that failure.
 2. Inspect statically visible project feature disabling and inline-hook
    overlap without mutating configuration. Report registration independently
    from activation; do not infer runtime trust or reconstruct all Codex
@@ -287,8 +336,8 @@ slice complete; do not relax evidence or identity requirements.
    hook and platform state paths; run the existing generated-artifact checks.
    No search/indexing/executor changes are planned, so quality benchmarks are
    not required unless implementation expands into those areas. → verify:
-   record commands and outcomes in a new feature `verification.md`, including
-   genuine blockers or unsupported runtime paths.
+   record commands and outcomes in the existing feature `verification.md`,
+   including genuine blockers or unsupported runtime paths.
 5. Run `$kk:document` to update README installation/activation guidance,
    `docs/architecture.md`, CLI help, and AGENTS.md's generated-artifact list and
    wrapper exception. Add a historical clarification to ADR-024 if needed:
@@ -299,14 +348,18 @@ slice complete; do not relax evidence or identity requirements.
    difference from Claude's crash behavior, repair through an external terminal,
    and user-controlled `/hooks` disabling during infrastructure repair. Distinguish
    that from bypassing policy denials. Document marker portability, overlap
-   rejection, two trust gates and the non-Git discovery limitation.
+   rejection, runtime config-read failures, two trust gates and the non-Git
+   discovery limitation. Require stopping/reloading affected sessions before
+   removing/moving loaded installation artifacts; the launcher cannot recover
+   an origin deleted entirely while the host retains its command in memory.
 6. Run `$kk:review-code` with Go input and `$kk:review-spec`; resolve or durably
    record findings. → verify: review artifacts and disposition are linked from
    verification/tasks, and each claimed behavior has corresponding evidence.
 
 ### 5.3 Rollback
 
-Document removal of only positively identified capy-owned Codex entries, then
+Document stopping affected sessions before removing loaded bindings, removal
+of only positively identified capy-owned Codex entries, then
 restoration of the prior binary if needed. Preserve toolbox/global/inline hooks
 and all stored data. Retain the owner marker while any generated hook or MCP
 entry still refers to it; do not rotate IDs or delete a live binding as a repair.

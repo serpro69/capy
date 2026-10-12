@@ -1,6 +1,6 @@
 # Codex hooks owned by capy
 
-> Status: revised after two design reviews — implementation pending
+> Status: revised after reviews and RD-1 readiness correction — implementation pending
 > Created: 2026-10-12
 > Review dispositions: [review-resolution.md](review-resolution.md)
 > Related: [#29](https://github.com/serpro69/capy/issues/29), [#132](https://github.com/serpro69/capy/issues/132)
@@ -284,7 +284,8 @@ credential or authorization token. Generate it once using Go's standard
 cryptographic randomness; preserve it on every subsequent setup. Invalid
 existing markers fail rather than being regenerated. Creation must be exclusive
 so concurrent setup cannot silently select two IDs. The marker travels with a
-clone, move or worktree; it contains no absolute path.
+clone, move or worktree; it contains no absolute path. Copies retain the same ID,
+so the ID alone cannot identify a physical config-source directory.
 If the marker is missing but existing owned hook/MCP definitions already bind
 an ID, fail with instructions to restore that marker before rerunning setup;
 do not silently rotate the live binding. First migration from today's unbound
@@ -292,39 +293,71 @@ MCP block may create an ID normally.
 
 Embed that same ID as a literal argument in every owned hook command and the
 owned MCP server command. It is not sufficient to find whichever wrapper is
-nearest to cwd. Use one generator-owned bootstrap, parameterized by ID, launch
-mode and event, with the same owner-resolution semantics on both paths:
+nearest to cwd or to count surviving markers. Use one generator-owned inline
+bootstrap, parameterized by ID, launch mode and event. It locates the installed
+capy binary using the wrapper's existing search locations, then calls a narrow
+`capy codex-launch` command. That command performs the following read-only
+preflight **before invoking any project wrapper** on either launch path:
 
-1. Walk physical ancestors of process cwd to filesystem root. Read only the
-   fixed owner-marker path, using a bounded read (at most 80 bytes), strict
-   version/ID validation and no shell sourcing. An unreadable, oversized,
-   malformed or symlink marker fails the launch rather than being skipped.
-2. Require exactly one installation marker on that chain and require its ID
-   to equal the command's embedded ID. No match, an ID mismatch, or multiple
-   markers is an error, even if one wrapper looks usable. Do not select a
-   different marker after discovering a missing/unreadable wrapper.
-3. Use that marker's parent project as the sole owner and require its own
-   `.codex/scripts/capy.sh`. Quote paths and keep event stdin intact. For hooks,
+1. Walk every physical ancestor of process cwd to filesystem root, including
+   ancestors beyond Git boundaries. At each directory inspect the fixed paths
+   `.codex/capy-owner`, `.codex/hooks.json` and `.codex/config.toml`. Read markers
+   with the existing 80-byte limit and strict version/ID validation; bound each
+   config to 1 MiB, detecting overflow rather than accepting a truncated prefix.
+   Missing files are allowed individually. An existing unreadable, oversized,
+   malformed, nonregular or symlink file, or a symlink `.codex` directory, fails
+   the launch. Other inspection errors are not treated as absence.
+2. Parse JSON and TOML in Go, using the standard JSON decoder and existing TOML
+   dependency. Inspect hook command fields in both representations and MCP
+   command/argv fields for capy's canonical versioned invocation (§6.2). A
+   decoded generated binding is evidence of an installation even when its
+   marker is missing. Do not use grep on serialized JSON/TOML, execute config
+   text, or require a new shell-side parser dependency. Valid unrelated config
+   without a capy binding does not require a marker.
+3. Collect **directories**, taking the union of marker locations and generated
+   binding locations; never deduplicate by installation ID. Every binding must
+   have a valid matching marker in its own `.codex` directory. A missing or
+   mismatched adjacent marker is an error even if another directory has that
+   ID. Require exactly one installation directory, with the embedded ID and a
+   binding for the invoked mode/event. A lone marker cannot authorize a stale
+   generated command. Finish the whole ancestor scan before selecting an owner;
+   never return early upon finding a usable nested candidate.
+4. Use the validated config directory's parent project as the sole owner and
+   require its own readable regular `.codex/scripts/capy.sh`. Quote paths and
+   keep event stdin intact. For hooks,
    invoke `hook --platform codex <event> --project-dir <owner>`; for MCP invoke
    `serve --project-dir <owner>`. Do not change process cwd merely to hide the
    original event directory from cwd-relative policy evaluation.
-4. Supervise wrapper launch so failures before or during invocation receive
+5. Supervise wrapper launch so failures before or during invocation receive
    the mode-specific handling in §6.3. Diagnostics go to stderr, never into MCP
    protocol stdout. Preserve serve's actual exit status after it starts.
 
-The bootstrap is inline generated launch code, so locating a separate bootstrap
-file does not introduce another unresolved relative-path dependency. The MCP
-TOML launches it via `bash` with structured arguments, replacing the existing
-cwd-relative wrapper argv; credential forwarding remains unchanged. Hooks and
-MCP must agree on owner ID and explicit project ownership. Pass parameters as
-data, not interpolated executable text, when generating shell/JSON/TOML forms.
+The bootstrap contains binary discovery and failure supervision only; the Go
+preflight owns config decoding and owner validation and opens no policy/state/DB.
+Setup and doctor reuse that inspection logic rather than maintaining a weaker
+marker-only check. A missing or older binary without `codex-launch` fails under
+§6.3; there is no fallback to a project wrapper before preflight. Generate binary
+lookup from the same fragment used by the wrappers to avoid diverging search
+paths. This adds a short-lived launcher process, with no daemon or parser package.
+Validation is conservative: it scans installed artifacts regardless of host
+activation/trust, and malformed ancestor config can block launch even if it
+would contain no capy binding. Repair that config rather than skipping an
+uninspectable potential owner; valid unrelated config remains allowed.
+The MCP TOML launches the inline bootstrap via `bash` with structured arguments,
+replacing cwd-relative wrapper argv; credential forwarding remains unchanged.
+Pass parameters as data, not interpolated executable text, when generating
+shell/JSON/TOML forms. The bootstrap supervises the launcher too, so an early
+CLI error cannot escape the pre-tool exit-2 contract.
 
-**V1 rejects overlapping installations.** Two markers on the ancestor chain
-(including identical IDs copied into nested directories) cause both handlers
-and the MCP bootstrap to fail before policy, observation or DB access. A root
+**V1 rejects overlapping installations.** Two installation directories on the
+ancestor chain cause both handlers and MCP to fail before wrapper invocation,
+policy, observation or DB access. This includes identical IDs copied into
+nested directories with one marker subsequently deleted: the retained outer
+hook/MCP definitions still identify an installation with a broken binding. A root
 policy therefore cannot silently disappear in favor of a nested policy, and
 the same event cannot record or consume evidence twice. Ordinary subdirectories
-without a marker are supported. Setup checks for conflicting ancestor markers;
+without capy installation artifacts are supported, including valid unrelated
+Codex configuration. Setup checks ancestor markers **and config bindings**;
 runtime checks also catch a nested installation activated after an ancestor was
 set up. It need not recursively scan the whole repository during root setup.
 Physically nested worktrees with an ancestor installation are also rejected;
@@ -337,11 +370,27 @@ available for controlled manual use. The generated command can resolve an owner
 in a non-Git directory, but **Codex project-hook discovery there is unverified**.
 Do not advertise automatic non-Git host integration based on launcher tests.
 
+This is validation of generated configuration on disk, not access to the host's
+cached config-source identity or trust state. Keep loaded generated definitions
+in place until the host reloads them; stop/reload affected sessions before
+removing or relocating an installation. If every originating artifact is removed
+while an old command remains cached, a portable copied ID cannot recover that
+lost provenance. Concurrent installation mutation and arbitrary hand-rewritten
+launch commands are outside this contract; detected read/change errors fail
+closed. Do not claim protection against those cases from the missing-marker test.
+
 ### 6.2 Merge ownership
 
 Recognize owned handlers through the canonical versioned bootstrap invocation,
 embedded installation ID and explicit mode/event arguments, not a loose `capy`
-or `hook` substring. Cross-check the ID with the owning config directory's
+or `hook` substring. Give generated invocations a fixed `capy-codex-launch-v1`
+identifier. After JSON/TOML decoding, use a shared recognizer for the generator's
+literal command/argv grammar; validate ID, mode, event and bootstrap shape without
+shell evaluation. A recognizable capy invocation with an unsupported version or
+invalid shape is an installation error, not an unrelated command to skip.
+JSON escaping or TOML quoting changes that decode to the same invocation retain
+the binding. Read inline hooks and aliased MCP entries for binding detection,
+but do not rewrite them. Cross-check the ID with the owning config directory's
 marker; a copied/mismatched definition is an installation error, not permission
 to adopt another owner's command. Preserve the marker's ID during upgrades.
 Preserve unknown top-level keys, other event groups and non-capy handlers,
@@ -375,11 +424,12 @@ missing-binary path emits a denial. Preserve that legacy behavior for Claude.
 For Codex, treating missing and failed enforcement consistently is preferable
 to silently running a command whose hook could not evaluate it.
 
-Both the common bootstrap and shared wrapper enforce the following contract:
+The common bootstrap, Go launcher and shared wrapper enforce this contract:
 
 | Outcome | Codex PreToolUse | Other hooks / MCP |
 |---|---|---|
-| Owner lookup/validation failure, overlap, outside-tree cwd | Exit **2**, nonempty explanatory stderr | Diagnostic nonzero exit |
+| Owner/config validation failure, missing adjacent marker, overlap, outside-tree cwd | Exit **2**, nonempty explanatory stderr | Diagnostic nonzero exit |
+| Missing/incompatible launcher binary or failed launcher invocation | Exit **2**, nonempty explanatory stderr | Diagnostic nonzero exit |
 | Missing, unreadable or vanished wrapper; launch exit 126/127 | Exit **2**, nonempty explanatory stderr | Diagnostic nonzero exit |
 | Missing capy binary or unsuccessful Go pre-tool invocation | Exit **2**, nonempty explanatory stderr | Diagnostic nonzero exit; preserve serve status |
 | Successful structured policy denial | Exit **0**, valid denial JSON | Not applicable |
@@ -426,8 +476,10 @@ artifacts, not the mere existence of a `.claude` or `.codex` directory; with no
 registration in either platform, retain an actionable setup failure.
 
 Check expected owned events, matchers, wrapper existence and invocation shape.
-Check the marker and consistent hook/MCP owner binding, and report overlapping
-ancestor installations. Distinguish missing, partial, malformed and duplicate
+Check the marker and consistent hook/MCP owner binding with the runtime inspector,
+including ancestor generated bindings whose adjacent marker is missing. Report
+overlapping installation directories even when their IDs are identical.
+Distinguish missing, partial, malformed and duplicate
 registration. Validate the Codex MCP table and bootstrap argv, not merely its
 presence, with the repository's existing TOML dependency. A visible
 project-level `features.hooks = false` (or deprecated alias) warrants a warning;
@@ -450,6 +502,13 @@ Verification has three levels:
    separate state directories: both generated handlers must reject overlap,
    neither marker may be substituted, and no observation is written/consumed.
    Also remove one owner's wrapper/marker and verify no fallback to the other.
+   In one Git repository, copy the root `.codex` configuration unchanged into
+   `packages/service`, retain both owners' hook/MCP definitions, and delete only
+   the outer marker. Both pre-tool commands must exit 2 with a reason naming the
+   broken outer binding; MCP must fail diagnostically. Assert that neither
+   wrapper is invoked and neither owner's policy/state/DB is accessed. Repeat
+   with only the outer hook binding retained, only its MCP binding retained,
+   escaped JSON/equivalent TOML strings and unrelated marker-free ancestor config.
    Assert exact exit 2 plus nonempty repair text for pre-wrapper failures,
    including unreadability and disappearance after lookup.
 3. A recorded live Codex 0.162.1-or-newer session: startup injection, harmless
@@ -471,7 +530,8 @@ cannot be observed live; clearly label that limit.
 |---|---|
 | Codex 0.162.1's documented and pinned fields reach installed hooks | Capture synthetic runtime observations in the live check; adjust the adapter before claiming support |
 | Child tools share their parent's session ID and supply a distinct agent ID | Verify parent/child payload association; do not release cleanup/evidence claims if it differs |
-| The command's embedded ID has exactly one owning marker above process cwd | Exercise root, ordinary subdirectories, moved trees and sibling worktrees; reject ID mismatch, overlap, copied IDs and outside-tree launches before side effects |
+| Generated bindings on disk remain present while their host commands are loaded | Stop/reload sessions before removing or moving installations; a cached command after all originating artifacts disappear has no recoverable config-source identity |
+| Exactly one installation directory above process cwd has matching local bindings and marker | Exercise root, ordinary subdirectories, moves and sibling worktrees; reject missing-adjacent-marker/copied-ID combinations, mismatches and overlap before wrapper invocation |
 | Codex loads the intended project layer after project and hook trust | Verify in live Git-worktree sessions; non-Git command resolution alone establishes no host-discovery support |
 | The existing Go router can remain policy owner | Router conformance tests must pass for both adapters; avoid a parallel shell implementation |
 | Existing policy files can be reused as capy's additional restrictions | Show actual sources in docs; do not claim equivalence with Codex native permissions |
@@ -505,7 +565,8 @@ cannot be observed live; clearly label that limit.
 | Register the current Claude adapter unchanged | Fewest code changes | Wrong identity/env assumptions and unsupported approval responses; it can turn an intended approval requirement into execution |
 | Bridge matched asks through `PermissionRequest` | Could reuse the native approval UI if it were triggerable | Fires only for host-initiated approvals; PreToolUse cannot cause it to run, so it cannot implement capy's independent ask rules |
 | Locate the nearest wrapper from cwd | No installation metadata | Loses the defining handler's owner when config layers compose; cannot distinguish a missing owner from a replacement installation |
-| Embed absolute installation paths | Direct source-owner binding | Breaks committed portability across collaborators, moves and worktrees; a persistent marker ID provides a portable binding |
+| Count only matching owner markers | Small bootstrap with bounded reads | A copied nested ID survives deletion of the outer marker; runtime must inspect retained config bindings before selecting a directory |
+| Embed absolute installation paths | Direct source-owner binding | Breaks committed portability across collaborators, moves and worktrees; local config/marker validation preserves portability while definitions remain installed |
 | Codex adapter over the shared Go router — chosen | One policy implementation with explicit host semantics | Requires adapter/installation tests and deliberate unsupported-operation handling |
 | Introduce a generic new hook framework | Could support more hosts later | Unnecessary abstraction and migration for one additional host |
 
@@ -519,7 +580,8 @@ Ship the adapter, setup, committed generated artifacts and diagnostics together.
 Upgrade capy, rerun setup, retain the generated owner marker with its config,
 establish project trust, review/trust new hooks in Codex, and perform the live
 probe. Existing toolbox scripts can remain throughout; record their temporary
-duplicate startup content and the linked follow-up. Rollback removes only
+duplicate startup content and the linked follow-up. Stop affected sessions
+before removing or relocating their loaded installation artifacts. Rollback removes only
 the newly generated capy hook entries and restores the previous capy binary;
 it does not require reverting toolbox or changing stored data.
 

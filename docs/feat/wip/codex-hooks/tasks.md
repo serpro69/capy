@@ -5,6 +5,7 @@
 > Status: pending — revised after reviews; implementation not started
 > Created: 2026-10-12
 > Review dispositions: [review-resolution.md](review-resolution.md)
+> Readiness: [RD-1 correction and re-review](readiness-review.md#resolution-and-re-review)
 > Not Doing: output capture/budgets, native Codex policy emulation, hook trust mutation, toolbox/global/plugin hook migration, overlapping installations, database changes, hosted web interception, child argument rewriting, universal runtime support
 
 ## Task 1: Run main-session Codex hooks through the Go CLI
@@ -34,11 +35,12 @@
 
 ### Subtasks
 
-- [ ] 2.1 Add `internal/platform/setup_codex_launch.go` with a stable versioned `.codex/capy-owner` ID, exclusive creation and the shared hook/serve bootstrap → verify: `TestCodexOwnerMarker` covers concurrent setup, preservation and invalid markers.
-- [ ] 2.2 Resolve exactly one matching owner marker across physical ancestors; never select a nearer wrapper or fallback after failure → verify: `TestCodexLaunchLocations` covers ordinary subdirectories, moves, spaces, sibling worktrees and non-Git command-only cases; `TestCodexOverlappingInstallations` rejects distinct/copied IDs and records/consumes no duplicate evidence or DB data.
+- [ ] 2.1 Add `internal/platform/setup_codex_launch.go` with a stable versioned `.codex/capy-owner` ID and exclusive creation. Add shared bounded config/marker inspection in `internal/platform/codex_owner.go`; decode JSON/TOML and validate each generated binding against its adjacent marker → verify: `TestCodexOwnerMarker` and `TestCodexOwnerBindings` cover concurrent setup, preservation, missing/invalid artifacts, equivalent escaped commands, unsupported invocation versions and valid unrelated configs.
+- [ ] 2.2 Add `cmd/capy/codex_launch.go`, register it in `main.go`, and generate a bootstrap that locates/supervises capy before any project wrapper. Reuse the wrapper's binary-search fragment. Scan all physical ancestors for the union of marker and binding directories; require exactly one valid owner with the invoked mode/event binding → verify: `TestCodexLaunchLocations` covers ordinary subdirectories, moves, spaces, sibling worktrees and non-Git command-only cases; `TestCodexOverlappingInstallations` rejects distinct/copied IDs before policy/state/DB access.
 - [ ] 2.3 Update generated and committed Codex MCP argv to use the same bootstrap/ID and explicit project owner while preserving credential forwarding → verify: `TestCodexMCPLaunchLocations` initializes MCP, lists tools and runs a harmless capy call with synthetic keys at each supported location.
-- [ ] 2.4 Supervise bootstrap lookup/launch and wrapper/binary errors. Codex PreToolUse failures must exit exactly 2 with nonempty repair text; structured denials still exit 0. Preserve Claude behavior and serve status → verify: `TestCodexBootstrapFailure` and `TestWrapperCodexHookFailure` cover missing, unreadable, vanished wrappers, outside-tree cwd, missing binary and crash.
+- [ ] 2.4 Supervise bootstrap/Go-launcher/wrapper errors. Codex PreToolUse failures must exit exactly 2 with nonempty repair text; structured denials still exit 0. Preserve Claude behavior, serve status, stdin and cancellation/signal propagation → verify: `TestCodexBootstrapFailure` and `TestWrapperCodexHookFailure` cover missing, unreadable, vanished wrappers, outside-tree cwd, missing/incompatible launcher binaries and crashes without orphaned servers.
 - [ ] 2.5 Synchronize both wrappers, the owner marker and `.codex/config.toml`; add parameterized marker coverage without rotating IDs in temporary-copy tests → verify: generated-artifact equality, idempotency and completeness checks pass.
+- [ ] 2.6 Add `TestCodexCopiedOwnerMissingMarker`: in one Git repository copy root's `.codex` to `packages/service` with the same ID, retain both hook/MCP definitions and delete only the outer marker. Invoke both pre-tool commands and both MCP commands from the nested cwd → verify: pre-tool exit 2 with nonempty outer-binding repair text; MCP diagnostic failure without stdout; neither wrapper invoked and no policy/state/DB access. Repeat with only the outer hook binding or only its MCP binding retained, and escaped equivalent config strings.
 
 ## Task 3: Register main-session hooks without taking over external hooks
 
@@ -81,7 +83,7 @@
 
 ### Subtasks
 
-- [ ] 5.1 Add shared platform-labelled checks in `internal/platform/doctor_codex.go` for hook/MCP owner binding, marker, wrapper, matchers and overlap, deriving expected events from the catalog → verify: `TestDoctorPlatformRegistrations` covers single/dual/no/incomplete/misbound installations.
+- [ ] 5.1 Add shared platform-labelled checks in `internal/platform/doctor_codex.go` using the runtime owner inspector for hook/MCP binding, adjacent markers and overlap; check wrapper/matchers using the event catalog → verify: `TestDoctorPlatformRegistrations` covers single/dual/no/incomplete/misbound installations and agrees with runtime/setup on copied IDs with a missing outer marker.
 - [ ] 5.2 Report visible feature disabling and inline-source overlap, while explicitly leaving project trust, hook trust and execution unverified → verify: `TestDoctorCodexActivationLimits`.
 - [ ] 5.3 Wire shared results into `cmd/capy/doctor.go` and `internal/server/tool_doctor.go` without changing credential/vault checks → verify: CLI/MCP Codex-only fixtures agree and do not fail for absent Claude configuration.
 
@@ -97,7 +99,7 @@
 
 - [ ] 6.1 Verify a trusted disposable installation in an actual recorded Codex version, including an ordinary subdirectory host launch and initialized MCP: startup, allowed/denied markers, ask pattern/source, child evidence/redirect/fallback and unrelated hooks → verify: record results/limits in `verification.md`, including actual duplicate context bytes and no spill of capy's compact guidance.
 - [ ] 6.2 Run `$kk:test` for the FTS5 full suite, focused race checks and generated-artifact guards → verify: record results and resolve failures; run quality benchmarks only if implementation touches their required areas.
-- [ ] 6.3 Run `$kk:document` for README, architecture, CLI help, AGENTS.md marker/generator/wrapper invariants and historical ADR clarification. Include collaborator repair via external terminal or `/hooks`, two trust gates, marker/overlap rules and non-Git discovery limits → verify: docs agree with the tested failure/recovery path and retain policy-denial protections.
+- [ ] 6.3 Run `$kk:document` for README, architecture, CLI help, AGENTS.md marker/generator/wrapper invariants and historical ADR clarification. Include collaborator repair via external terminal or `/hooks`, two trust gates, config/marker validation, overlap rules and non-Git discovery limits. Require stopping/reloading affected sessions before removing/moving loaded installations → verify: docs agree with the tested failure/recovery path and retain policy-denial protections.
 - [ ] 6.4 Run `$kk:review-code` with Go input → verify: fix findings or record actionable dispositions durably.
 - [ ] 6.5 Run `$kk:review-spec` against all feature documents → verify: each promised behavior has evidence and no output-budget or toolbox-PR completion is claimed.
 
