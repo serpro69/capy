@@ -27,6 +27,21 @@ func TestCodexHookMatchers(t *testing.T) {
 	for _, source := range []string{"startup", "resume", "clear", "compact", "fork", "future-source", ""} {
 		t.Run(source, func(t *testing.T) { require.True(t, startup.MatchString(source)) })
 	}
+	post := regexp.MustCompile(codexHookEvents[3].Matcher)
+	for _, alias := range []string{"capy", "another_server", "my.server-v2"} {
+		for _, tool := range CapyToolNames {
+			require.Equal(t, tool == "capy_execute" || tool == "capy_fetch_and_index", post.MatchString("mcp__"+alias+"__"+tool), tool)
+		}
+	}
+	for _, name := range []string{"capy_execute", "Bash", "mcp____capy_execute", "prefix_mcp__capy__capy_execute", "mcp__capy__capy_execute_extra"} {
+		require.False(t, post.MatchString(name), name)
+	}
+	for _, index := range []int{2, 4} {
+		matcher := regexp.MustCompile(codexHookEvents[index].Matcher)
+		for _, value := range []string{"worker", "explorer", "custom", "other", "clear", ""} {
+			require.True(t, matcher.MatchString(value))
+		}
+	}
 }
 
 func TestCodexHookContextConfiguration(t *testing.T) {
@@ -34,7 +49,7 @@ func TestCodexHookContextConfiguration(t *testing.T) {
 	require.NoError(t, mergeCodexHooks(path, testCodexOwnerID))
 	root := mustReadJSONMap(t, path)
 	hooks := root["hooks"].(map[string]any)
-	require.Len(t, hooks, 2)
+	require.Len(t, hooks, 5)
 	for _, event := range codexHookEvents {
 		groups := hooks[event.Event].([]any)
 		require.Len(t, groups, 1)
@@ -97,7 +112,7 @@ func TestMergeCodexHooks(t *testing.T) {
 		require.Equal(t, "keep duplicate metadata", groups[1].(map[string]any)["note"])
 		bindings, err := codexHookBindings(merged, path)
 		require.NoError(t, err)
-		require.Len(t, bindings, 2)
+		require.Len(t, bindings, 5)
 		last := groups[2].(map[string]any)["hooks"].([]any)[0].(map[string]any)
 		require.NotContains(t, last, "additionalContextLimit")
 		require.NoError(t, mergeCodexHooks(path, testCodexOwnerID))
@@ -156,7 +171,7 @@ func TestSetupCodexHooks(t *testing.T) {
 			owners, err := InspectCodexOwners(dir)
 			require.NoError(t, err)
 			require.Len(t, owners, 1)
-			require.Len(t, owners[0].Bindings, 3)
+			require.Len(t, owners[0].Bindings, 6)
 			before, err := os.ReadFile(filepath.Join(dir, codexHooksRelPath))
 			require.NoError(t, err)
 			require.NoError(t, SetupCodex("capy", dir))

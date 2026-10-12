@@ -80,7 +80,7 @@ func newSetupCmd() *cobra.Command {
 				}
 
 				fmt.Println("capy: Codex setup complete")
-				fmt.Println("  - SessionStart and PreToolUse hooks registered in .codex/hooks.json")
+				fmt.Println("  - SessionStart, SubagentStart, PreToolUse, PostToolUse and SessionEnd hooks registered in .codex/hooks.json")
 				fmt.Println("  - MCP server registered in .codex/config.toml")
 				fmt.Println("  - routing instructions written to .capy/AGENTS.md")
 				fmt.Println("  - wrapper script written to .codex/scripts/capy.sh")

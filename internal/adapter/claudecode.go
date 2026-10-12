@@ -97,6 +97,10 @@ func (a *ClaudeCodeAdapter) FormatSessionStart(context string) ([]byte, error) {
 	return formatContext("SessionStart", context)
 }
 
+func (a *ClaudeCodeAdapter) FormatSubagentStart(context string) ([]byte, error) {
+	return formatContext("SubagentStart", context)
+}
+
 func (a *ClaudeCodeAdapter) Capabilities() PlatformCapabilities {
 	return PlatformCapabilities{
 		PreToolUse:              true,

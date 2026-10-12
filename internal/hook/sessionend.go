@@ -6,7 +6,7 @@ import (
 	"github.com/serpro69/capy/internal/adapter"
 )
 
-// handleSessionEnd runs when a Claude Code session ends.
+// handleSessionEnd runs when a host session ends.
 //
 // WAL checkpointing is NOT done here — the MCP server's own Close() handles
 // that when the process exits (via lifecycle guard). Opening a second DB

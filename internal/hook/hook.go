@@ -65,6 +65,8 @@ func handleEvent(event string, input []byte, a adapter.HookAdapter, explicitProj
 		return handlePreCompact(input, a)
 	case "sessionstart":
 		return handleSessionStart(input, a)
+	case "subagentstart":
+		return a.FormatSubagentStart(CodexRoutingBlock())
 	case "userpromptsubmit":
 		return handleUserPromptSubmit(input, a)
 	case "sessionend":
@@ -85,11 +87,9 @@ func validateEvent(event string, platform adapter.Platform) error {
 		return fmt.Errorf("unknown hook event: %s", event)
 	case adapter.Codex:
 		switch event {
-		case "pretooluse", "sessionstart":
+		case "pretooluse", "sessionstart", "subagentstart", "posttooluse", "sessionend":
 			return nil
 		}
-		// TODO(codex-hooks Task 4): dispatch SubagentStart, PostToolUse and
-		// SessionEnd after their Codex lifecycle acceptance tests are added.
 	default:
 		return fmt.Errorf("unknown hook platform %q", platform)
 	}

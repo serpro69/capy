@@ -24,7 +24,8 @@ func CodexRoutingBlock() string {
     are denied with their pattern/source because this PreToolUse hook cannot request approval.
     Child Bash redirects require recent successful capy_execute evidence; otherwise use
     discovery/native-tool advice. A redirect consumes all alternatives for that child.
-    Child launch arguments are preserved. Git issue/PR/MR comprehension keeps native CLI guidance.`)
+    SubagentStart supplies this guidance to children; child launch arguments are preserved.
+    Git issue/PR/MR comprehension keeps native CLI guidance.`)
 }
 
 func routingBlock(upgradeNote, blocked string) string {

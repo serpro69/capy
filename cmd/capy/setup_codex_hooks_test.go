@@ -51,8 +51,8 @@ func TestSetupCodexHooksCLI(t *testing.T) {
 			require.Contains(t, string(output), "exact hook definitions in /hooks")
 			require.Contains(t, string(output), "feature overrides and trust records unchanged")
 			hooks := readInstalledCodexHooks(t, dir)
-			require.Len(t, hooks.Hooks, 2)
-			for _, event := range []string{"SessionStart", "PreToolUse"} {
+			require.Len(t, hooks.Hooks, 5)
+			for _, event := range []string{"SessionStart", "PreToolUse", "SubagentStart", "PostToolUse", "SessionEnd"} {
 				require.Len(t, hooks.Hooks[event], 1)
 			}
 			if target == "codex" {

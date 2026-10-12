@@ -1,7 +1,7 @@
 # Implementation: capy-owned Codex hooks
 
 > Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
-> Status: Tasks 1–3 complete with verification/review recorded; Tasks 4–6 pending
+> Status: Tasks 1–4 complete with verification/review recorded; Tasks 5–6 pending
 > Baseline inspected: 2026-10-12, Codex CLI 0.162.1
 > Revisions: [review-resolution.md](review-resolution.md)
 
@@ -54,9 +54,9 @@ successful hook process is not evidence that its suggested MCP tool is usable.
 directly exercises a complete usable Codex path before installation is added.
 
 Task 1's direct CLI path now exists. `--platform` is local to `hook` and defaults
-to `claude-code`; Codex currently accepts only `pretooluse` and `sessionstart`.
-Other Codex events fail explicitly until Task 4 adds their dispatch and lifecycle
-checks. Use an explicit `--project-dir` when invoking hooks manually from a
+to `claude-code`; Codex accepts `pretooluse`, `sessionstart`, `subagentstart`, `posttooluse`
+and `sessionend` after Task 4 added the child lifecycle. Unsupported events fail
+explicitly before state or policy access. Use an explicit `--project-dir` when invoking hooks manually from a
 different directory; otherwise validated payload cwd is the Codex owner, with
 process-cwd project discovery as fallback. No generated installation is claimed
 by this task. Results are tracked in [verification.md](verification.md#task-1-main-session-cli).
