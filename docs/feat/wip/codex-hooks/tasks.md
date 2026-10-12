@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–2 done; Tasks 3–6 pending
+> Status: in-progress — Tasks 1–3 done; Tasks 4–6 pending
 > Created: 2026-10-12
 > Review dispositions: [review-resolution.md](review-resolution.md)
 > Readiness: [RD-1 correction and re-review](readiness-review.md#resolution-and-re-review)
@@ -50,7 +50,7 @@
 
 ## Task 3: Register main-session hooks without taking over external hooks
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Size:** M
 - **Can run in parallel with:** —
@@ -58,10 +58,13 @@
 
 ### Subtasks
 
-- [ ] 3.1 Add `internal/platform/setup_codex_hooks.go` with SessionStart/PreToolUse descriptors, anchored matchers and owner-bound commands; omit `additionalContextLimit` → verify: `TestCodexHookMatchers` and `TestCodexHookContextConfiguration`.
-- [ ] 3.2 Merge only this installation's owned handlers, preserving mixed siblings and metadata; reject malformed or mismatched bindings and collapse owned duplicates → verify: `TestMergeCodexHooks` and repeat-setup checks.
-- [ ] 3.3 Wire the merge into setup and explain both project-layer and exact-hook trust gates without changing trust, feature overrides or other hooks → verify: `TestSetupCodexHooks` covers Codex-only/default-both and incomplete installations.
-- [ ] 3.4 Update committed `.codex/hooks.json` and drift coverage, preserve toolbox entries, and record projected/actual duplicate startup bytes with the follow-up link in `verification.md` → verify: all artifact checks and a mixed startup fixture retaining provider/extra instructions.
+- [x] 3.1 Add `internal/platform/setup_codex_hooks.go` with SessionStart/PreToolUse descriptors, anchored matchers and owner-bound commands; omit `additionalContextLimit` → verify: `TestCodexHookMatchers` and `TestCodexHookContextConfiguration`.
+- [x] 3.2 Merge only this installation's owned handlers, preserving mixed siblings and metadata; reject malformed or mismatched bindings and collapse owned duplicates → verify: `TestMergeCodexHooks` and repeat-setup checks.
+- [x] 3.3 Wire the merge into setup and explain both project-layer and exact-hook trust gates without changing trust, feature overrides or other hooks → verify: `TestSetupCodexHooks` covers Codex-only/default-both and incomplete installations.
+- [x] 3.4 Update committed `.codex/hooks.json` and drift coverage, preserve toolbox entries, and record projected/actual duplicate startup bytes with the follow-up link in `verification.md` → verify: all artifact checks and a mixed startup fixture retaining provider/extra instructions.
+
+**Evidence:** [Task 3 verification](verification.md#task-3-main-session-registration-and-coexistence);
+[isolated code review: APPROVE](.reviews/task-3-code-review-2026-10-12.md).
 
 ## Task 4: Complete child guidance and observation lifecycle
 

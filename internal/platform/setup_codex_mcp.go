@@ -87,7 +87,13 @@ func mergeCodexMCPServer(configPath, id string) error {
 		updated = string(data[:start]) + block + string(data[end:])
 	}
 	// Also catch dotted/subtable conflicts before writing; invalid files survive.
-	if err := toml.Unmarshal([]byte(updated), &config); err != nil {
+	if len(updated) > codexConfigLimit {
+		return fmt.Errorf("%s would exceed %d bytes after merging; reduce the configuration before setup", configPath, codexConfigLimit)
+	}
+	// Decode into a fresh map: the pinned parser cannot reuse nested array-table
+	// values (inline hooks) already stored in a map[string]any.
+	var merged map[string]any
+	if err := toml.Unmarshal([]byte(updated), &merged); err != nil {
 		return fmt.Errorf("cannot safely merge %s: %w", configPath, err)
 	}
 	return os.WriteFile(configPath, []byte(updated), 0o644)

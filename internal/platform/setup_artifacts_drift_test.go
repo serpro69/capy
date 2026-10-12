@@ -65,6 +65,7 @@ type mergeArtifact struct {
 var jsonMergeArtifacts = []mergeArtifact{
 	{".mcp.json", mergeMCPServer, "mergeMCPServer"},
 	{".claude/settings.local.json", mergeHooks, "mergeHooks"},
+	{codexHooksRelPath, mergeCommittedCodexHooks, "mergeCodexHooks"},
 }
 
 // textMergeArtifacts preserve surrounding formatting and are a no-op when the
@@ -275,4 +276,16 @@ func mergeCommittedCodexMCP(path string) error {
 		return err
 	}
 	return mergeCodexMCPServer(path, id)
+}
+
+func mergeCommittedCodexHooks(path string) error {
+	data, err := os.ReadFile(filepath.Join(repoRootFromPkg, codexOwnerRelPath))
+	if err != nil {
+		return err
+	}
+	id, err := parseCodexOwner(data)
+	if err != nil {
+		return err
+	}
+	return mergeCodexHooks(path, id)
 }

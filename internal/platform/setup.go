@@ -177,9 +177,8 @@ func SetupClaudeCode(binaryPath, projectDir string, target SettingsTarget) error
 }
 
 // SetupCodex configures capy for a Codex project.
-// It detects the .codex directory, writes the portable wrapper script to
-// .codex/scripts/capy.sh, creates the .capy/ directory, and adds .capy/
-// to .gitignore.
+// It binds MCP and hooks to a portable owner, preserves external hooks, writes
+// the shared wrapper/routing instructions, and adds .capy/ to .gitignore.
 func SetupCodex(binaryPath, projectDir string) error {
 	// Reject broken/overlapping bindings before config permissions or writes.
 	if _, _, err := inspectCodexSetup(projectDir); err != nil {
@@ -230,6 +229,9 @@ func SetupCodex(binaryPath, projectDir string) error {
 	configTomlPath := filepath.Join(projectDir, ".codex", "config.toml")
 	if err := mergeCodexMCPServer(configTomlPath, ownerID); err != nil {
 		return fmt.Errorf("merging Codex MCP config: %w", err)
+	}
+	if err := mergeCodexHooks(filepath.Join(projectDir, codexHooksRelPath), ownerID); err != nil {
+		return fmt.Errorf("merging Codex hooks: %w", err)
 	}
 
 	// 7. Add .capy/** to .gitignore with exception for AGENTS.md

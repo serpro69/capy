@@ -80,10 +80,14 @@ func newSetupCmd() *cobra.Command {
 				}
 
 				fmt.Println("capy: Codex setup complete")
+				fmt.Println("  - SessionStart and PreToolUse hooks registered in .codex/hooks.json")
 				fmt.Println("  - MCP server registered in .codex/config.toml")
 				fmt.Println("  - routing instructions written to .capy/AGENTS.md")
 				fmt.Println("  - wrapper script written to .codex/scripts/capy.sh")
 				fmt.Println("  - .capy/** added to .gitignore")
+				fmt.Println("  - activation requires project-layer trust AND review/trust of the exact hook definitions in /hooks")
+				fmt.Println("    Restart/resume Codex as needed; changed definitions may require renewed trust.")
+				fmt.Println("    Setup leaves hook feature overrides and trust records unchanged.")
 			}
 
 			fmt.Println("\nRun `capy doctor` to verify the installation.")

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -40,8 +41,6 @@ func installCodexLaunch(t *testing.T, bin, dir string) ([]string, []string) {
 	}
 	require.NoError(t, toml.Unmarshal(data, &config))
 	args := config.Servers["capy"].Args
-	// Task 2 supplies canonical hook bindings before setup registers them in Task 3.
-	writeLaunchHooks(t, dir, args)
 	return args, env
 }
 
@@ -53,17 +52,6 @@ func launchHookCommand(args []string, event string) string {
 		command += " '" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
 	}
 	return command
-}
-
-func writeLaunchHooks(t *testing.T, dir string, args []string) {
-	t.Helper()
-	hooks := make(map[string]any)
-	for _, event := range []string{"PreToolUse", "SessionStart"} {
-		hooks[event] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": launchHookCommand(args, strings.ToLower(event))}}}}
-	}
-	data, err := json.Marshal(map[string]any{"hooks": hooks})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".codex/hooks.json"), data, 0o600))
 }
 
 func runLaunch(t *testing.T, cwd string, env, args []string, input string) (int, string, string) {
@@ -166,6 +154,11 @@ func TestCodexMCPLaunchLocations(t *testing.T) {
 			}
 			require.NoError(t, p.request("tools/list", map[string]any{}, &result))
 			require.Len(t, result.Tools, 10)
+			installed := readInstalledCodexHooks(t, owner)
+			matcher := regexp.MustCompile(installed.Hooks["PreToolUse"][0].Matcher)
+			for _, tool := range result.Tools {
+				require.True(t, matcher.MatchString("mcp__alternate_server__"+tool.Name), "unmatched registered tool: %s", tool.Name)
+			}
 			output := p.tool(t, "capy_execute", map[string]any{"language": "shell", "code": "pwd"})
 			require.Contains(t, output, owner)
 			p.tool(t, "capy_index", map[string]any{"source": "launch-fixture", "content": "portable owner binding sentinel"})
