@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// CodexAdapter implements the main-session Codex CLI hook transport.
+// CodexAdapter implements the Codex CLI hook transport.
 // Wire baseline: Codex CLI 0.162.1, https://learn.chatgpt.com/docs/hooks.
 type CodexAdapter struct{}
 
@@ -14,7 +14,7 @@ var _ HookAdapter = (*CodexAdapter)(nil)
 func (a *CodexAdapter) Platform() Platform { return Codex }
 
 func (a *CodexAdapter) ParsePreToolUse(input []byte) (*PreToolUseEvent, error) {
-	// The dispatcher also uses this parser for common SessionStart metadata.
+	// The dispatcher also uses this parser for common lifecycle metadata.
 	// Required pre-tool fields are checked before routing that event.
 	var raw *struct {
 		ToolName  string          `json:"tool_name"`
@@ -68,10 +68,13 @@ func (a *CodexAdapter) FormatSessionStart(context string) ([]byte, error) {
 	return formatContext("SessionStart", context)
 }
 
+func (a *CodexAdapter) FormatSubagentStart(context string) ([]byte, error) {
+	return formatContext("SubagentStart", context)
+}
+
 func (a *CodexAdapter) Capabilities() PlatformCapabilities {
 	return PlatformCapabilities{
-		PreToolUse: true, SessionStart: true, CanInjectSessionContext: true,
+		PreToolUse: true, PostToolUse: true, SessionStart: true, CanInjectSessionContext: true,
 		// Input rewriting is host-supported but deliberately unused by capy.
-		// TODO(codex-hooks Task 4): enable the child observation event path.
 	}
 }

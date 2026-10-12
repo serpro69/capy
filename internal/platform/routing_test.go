@@ -71,7 +71,7 @@ func TestRoutingBlockWebComprehension(t *testing.T) {
 }
 
 func TestRoutingToolDiscoveryFallback(t *testing.T) {
-	for _, text := range []string{GenerateRoutingInstructions(), hook.RoutingBlock()} {
+	for _, text := range []string{GenerateRoutingInstructions(), hook.RoutingBlock(), hook.CodexRoutingBlock()} {
 		assert.Contains(t, text, "If the host offers deferred-tool discovery")
 		assert.Contains(t, text, "capy schemas once")
 		assert.Contains(t, text, "discovery is unavailable or the tools are absent")
@@ -80,6 +80,13 @@ func TestRoutingToolDiscoveryFallback(t *testing.T) {
 		assert.Contains(t, text, "60 seconds")
 		assert.Contains(t, text, "independently")
 		assert.Contains(t, text, "native fallback")
+	}
+}
+
+func TestRoutingPlatformCoverage(t *testing.T) {
+	text := GenerateRoutingInstructions()
+	for _, want := range []string{"Codex hooks cover canonical Bash", "hosted web/search tools are not intercepted", "WebFetch — BLOCKED in Claude Code", "In Claude Code, when spawning", "In Codex, SubagentStart", "Child launch arguments and agent types are preserved"} {
+		assert.Contains(t, text, want)
 	}
 }
 

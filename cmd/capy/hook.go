@@ -14,7 +14,7 @@ func newHookCmd() *cobra.Command {
 		Use:       "hook <event>",
 		Short:     "Handle a Claude Code or Codex hook event",
 		Args:      cobra.ExactArgs(1),
-		ValidArgs: []string{"pretooluse", "posttooluse", "precompact", "sessionstart", "sessionend", "userpromptsubmit"},
+		ValidArgs: []string{"pretooluse", "posttooluse", "precompact", "sessionstart", "subagentstart", "sessionend", "userpromptsubmit"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectDir, _ := cmd.Flags().GetString("project-dir")
 			var explicitProjectDir *string

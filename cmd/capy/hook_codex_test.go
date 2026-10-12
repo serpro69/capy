@@ -18,7 +18,7 @@ func TestHookCodexDispatch(t *testing.T) {
 	bin := buildStdioCapy(t)
 	for _, name := range []string{
 		"startup", "guidance", "local ask", "shared ask", "global ask", "deny",
-		"malformed", "invalid platform", "invalid event", "child event pending",
+		"malformed", "invalid platform", "invalid event", "child startup",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -58,8 +58,9 @@ func TestHookCodexDispatch(t *testing.T) {
 				args[3], wantError = "other", true
 			case "invalid event":
 				args[1], wantError = "unknown", true
-			case "child event pending":
-				args[1], wantError = "subagentstart", true
+			case "child startup":
+				args[1] = "subagentstart"
+				metadata["agent_id"] = "child"
 			}
 			input, err := json.Marshal(metadata)
 			require.NoError(t, err)
@@ -95,6 +96,10 @@ func TestHookCodexDispatch(t *testing.T) {
 					assert.NotEmpty(t, guidance)
 					if name == "startup" {
 						assert.Equal(t, "SessionStart", response.Output["hookEventName"])
+						assert.LessOrEqual(t, len(guidance), 4096)
+					}
+					if name == "child startup" {
+						assert.Equal(t, "SubagentStart", response.Output["hookEventName"])
 						assert.LessOrEqual(t, len(guidance), 4096)
 					}
 				} else {

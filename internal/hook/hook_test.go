@@ -54,6 +54,10 @@ func (a *testAdapter) FormatSessionStart(ctx string) ([]byte, error) {
 	return json.Marshal(map[string]any{"action": "sessionstart", "context": ctx})
 }
 
+func (a *testAdapter) FormatSubagentStart(ctx string) ([]byte, error) {
+	return json.Marshal(map[string]any{"action": "subagentstart", "context": ctx})
+}
+
 func (a *testAdapter) Capabilities() adapter.PlatformCapabilities {
 	return adapter.PlatformCapabilities{PreToolUse: true}
 }

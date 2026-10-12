@@ -56,6 +56,7 @@ func TestCodexAdapterResponses(t *testing.T) {
 		{"ask denied", func() ([]byte, error) { return a.FormatAsk("Matched approval pattern") }, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Matched approval pattern; this rule requires approval, which capy's Codex PreToolUse hook cannot request"}}`},
 		{"guidance", func() ([]byte, error) { return a.FormatAllow("guidance") }, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"guidance"}}`},
 		{"startup", func() ([]byte, error) { return a.FormatSessionStart("routing") }, `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"routing"}}`},
+		{"child startup", func() ([]byte, error) { return a.FormatSubagentStart("routing") }, `{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"routing"}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			output, err := tc.call()
@@ -72,6 +73,7 @@ func TestCodexAdapterResponses(t *testing.T) {
 	assert.Equal(t, Codex, a.Platform())
 	assert.False(t, a.Capabilities().CanModifyArgs)
 	assert.False(t, a.Capabilities().CanModifyOutput)
+	assert.True(t, a.Capabilities().PostToolUse)
 }
 
 func TestCodexAdapterMalformedMetadata(t *testing.T) {

@@ -19,6 +19,9 @@ var codexHookEvents = []codexHookEvent{
 	{Event: "PreToolUse", CLIArg: "pretooluse", Matcher: "^(Bash|mcp__[^[:space:]]+__capy_(" +
 		"execute|execute_file|batch_execute|fetch_and_index|index|search|vault_search|stats|doctor|cleanup" +
 		"))$"},
+	{Event: "SubagentStart", CLIArg: "subagentstart", Matcher: "^.*$"},
+	{Event: "PostToolUse", CLIArg: "posttooluse", Matcher: "^mcp__[^[:space:]]+__capy_(execute|fetch_and_index)$"},
+	{Event: "SessionEnd", CLIArg: "sessionend", Matcher: "^.*$"},
 }
 
 // mergeCodexHooks only rewrites positively recognized commands for this ID.

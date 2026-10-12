@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–3 done; Tasks 4–6 pending
+> Status: in-progress — Tasks 1–4 done; Tasks 5–6 pending
 > Created: 2026-10-12
 > Review dispositions: [review-resolution.md](review-resolution.md)
 > Readiness: [RD-1 correction and re-review](readiness-review.md#resolution-and-re-review)
@@ -68,7 +68,7 @@
 
 ## Task 4: Complete child guidance and observation lifecycle
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** Task 5
@@ -76,11 +76,14 @@
 
 ### Subtasks
 
-- [ ] 4.1 Add SubagentStart dispatch and correct event-specific context formatting; register all child types → verify: `TestCodexSubagentStart` includes the 4,096-byte context bound.
-- [ ] 4.2 Register PostToolUse and SessionEnd and reuse shared evidence/cleanup with namespaced parent identity → verify: `TestCodexChildObservationLifecycle` drives the installed CLI and removes only its session's entries.
-- [ ] 4.3 Add Codex success/failure/identity fixtures without weakening TTL, caps, lock or one-use consumption → verify: `TestCodexObservationPayloads` and existing observation race/expiry/contention tests.
-- [ ] 4.4 Preserve native child arguments; describe Bash/MCP coverage accurately across runtime and generated instructions → verify: `TestCodexNoAgentArgumentRewrite`, routing tests and generated-artifact checks.
-- [ ] 4.5 Synchronize the complete five-event catalog with committed `.codex/hooks.json` → verify: repeated setup preserves external entries and exactly one owned handler per event.
+- [x] 4.1 Add SubagentStart dispatch and correct event-specific context formatting; register all child types → verify: `TestCodexSubagentStart` includes the 4,096-byte context bound.
+- [x] 4.2 Register PostToolUse and SessionEnd and reuse shared evidence/cleanup with namespaced parent identity → verify: `TestCodexChildObservationLifecycle` drives the installed CLI and removes only its session's entries.
+- [x] 4.3 Add Codex success/failure/identity fixtures without weakening TTL, caps, lock or one-use consumption → verify: `TestCodexObservationPayloads` and existing observation race/expiry/contention tests.
+- [x] 4.4 Preserve native child arguments; describe Bash/MCP coverage accurately across runtime and generated instructions → verify: `TestCodexNoAgentArgumentRewrite`, routing tests and generated-artifact checks.
+- [x] 4.5 Synchronize the complete five-event catalog with committed `.codex/hooks.json` → verify: repeated setup preserves external entries and exactly one owned handler per event.
+
+**Evidence:** [Task 4 verification](verification.md#task-4-child-guidance-and-observation-lifecycle);
+[isolated code review: APPROVE](.reviews/task-4-code-review-2026-10-12.md).
 
 ## Task 5: Diagnose Codex registration on both doctor interfaces
 

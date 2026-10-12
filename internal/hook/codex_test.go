@@ -111,7 +111,7 @@ func TestCodexSessionStartGuidance(t *testing.T) {
 			require.True(t, ok)
 			assert.LessOrEqual(t, len(context), 4096)
 			assert.Contains(t, context, "Hosted web/search tools are not intercepted")
-			assert.Contains(t, context, "Child launch arguments are preserved")
+			assert.Contains(t, context, "child launch arguments are preserved")
 			assert.Contains(t, context, "Comprehension")
 			assert.Contains(t, context, "Extraction")
 			assert.NotContains(t, context, "Bash-to-general-purpose upgrade")

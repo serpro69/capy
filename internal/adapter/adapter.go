@@ -17,6 +17,7 @@ type HookAdapter interface {
 	FormatModify(updatedInput map[string]any) ([]byte, error)
 	FormatAsk(reason string) ([]byte, error)
 	FormatSessionStart(context string) ([]byte, error)
+	FormatSubagentStart(context string) ([]byte, error)
 	Capabilities() PlatformCapabilities
 }
 

@@ -355,3 +355,62 @@ Tasks 2 and 3 are complete as separate commits. The implementation stayed within
 the plan; additional care was needed for process-group cleanup, empty TOML,
 reused TOML array-table maps and preserving numeric/duplicate-key semantics.
 Those cases now have regression coverage. Tasks 4–6 remain pending.
+
+## Task 4: Child guidance and observation lifecycle
+
+The generated catalog now installs all five planned events. SubagentStart emits
+its own event name with the compact Codex routing context. PostToolUse and
+SessionEnd reuse the existing observation/cleanup handlers with the adapter's
+namespaced parent session and unmodified child identity. The observation
+algorithm, expiry, caps and permanent lock are unchanged. Claude retains its
+Agent/Task prompt injection; Codex launch arguments and types remain untouched.
+Both generated routing surfaces and the committed hooks were synchronized,
+preserving the external toolbox handlers and their context limits.
+
+`TestCodexChildObservationLifecycle` replays synthetic host payloads through
+setup's generated command, bootstrap, owner inspector, wrapper and real CLI from
+an ordinary project subdirectory. With database credentials empty, it verifies
+child guidance, fetch-only advisory fallback, one execute redirect consuming
+both alternatives, failed-retry fallback, sibling/parent isolation and root
+cleanup. A Claude session with the same raw parent ID survives, as does the
+lock inode. No project knowledge or vault database is created. This is installed
+command evidence, not proof of live host event delivery; Task 6 retains that
+acceptance obligation.
+
+`TestCodexObservationPayloads` covers successful, failed and serialized MCP
+results, null/different child transcript paths, root/missing/type-only identity,
+interruption and excluded tools. `TestCodexNoAgentArgumentRewrite` checks native
+and namespaced launch names. Matcher, repeat-setup and all generated-artifact
+guards cover the complete catalog.
+
+The updated mixed-startup fixture emits 10,054 bytes from the static routing
+file, 10,443 bytes from the retained toolbox payload (including its provider and
+extra instructions), and 3,358 bytes from capy's own payload. Startup/resume
+therefore totals 13,801 bytes in this fixture; fork emits only capy's 3,358.
+SubagentStart uses the same 3,358-byte context, below 4,096. These are synthetic
+payload measurements; host spilling and trust activation remain Task 6 checks.
+The [toolbox follow-up](implementation.md#claude-toolbox-enhancement-pr) remains
+pending; no upstream issue/PR was opened.
+
+Verification uses `GOCACHE=/tmp/capy-go-build`, an empty temporary
+`XDG_CONFIG_HOME`, and synthetic `CAPY_DB_KEY`/`CAPY_VAULT_KEY` for Go suites;
+hook subprocess fixtures explicitly clear the keys:
+
+- Adapter, hook and platform FTS5 suites, including generated artifacts: passed.
+- `go test -tags fts5 -race -count=1 ./internal/adapter ./internal/hook ./internal/platform`: passed.
+- Focused CLI lifecycle, dispatch and mixed-startup fixtures with `-race`: passed.
+- `go vet -tags fts5 ./internal/adapter ./internal/hook ./internal/platform ./cmd/capy`: passed.
+
+No search, indexing, chunking or executor implementation changed, so quality
+benchmarks are not required. The existing state and formatter seams kept the
+implementation small; most additions are acceptance fixtures. No new project
+convention required knowledge indexing (capy MCP is unavailable in this session).
+
+The complete affected-package run (adapter, hook, platform and CLI) passed; the
+CLI suite took 316.7 seconds. The broad `go test -tags fts5 -count=1 ./...` run
+passed all packages except config and server, whose Unix/TCP socket fixtures
+were blocked by the sandbox. Config passed immediately when rerun with socket
+access. The server rerun is tracked separately below; no fully green repository
+suite is claimed. The [independent review](.reviews/task-4-code-review-2026-10-12.md)
+approved without findings; PAL was unavailable because its configured API key
+was rejected.
