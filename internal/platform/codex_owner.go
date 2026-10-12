@@ -213,7 +213,21 @@ func codexHookBindings(root map[string]any, source string) ([]CodexBinding, erro
 }
 
 func codexConfigBindings(root map[string]any, source string) ([]CodexBinding, error) {
-	bindings, err := codexHookBindings(root, source)
+	// Inline TOML includes Codex-owned hooks.state trust metadata alongside
+	// event arrays. It contains no executable bindings. Exclude only that
+	// reserved field without mutating the config the MCP merger must preserve.
+	// hooks.json continues to use the strict event-only parser above.
+	hookRoot := root
+	if hooks, ok := root["hooks"].(map[string]any); ok {
+		events := make(map[string]any, len(hooks))
+		for event, groups := range hooks {
+			if event != "state" {
+				events[event] = groups
+			}
+		}
+		hookRoot = map[string]any{"hooks": events}
+	}
+	bindings, err := codexHookBindings(hookRoot, source)
 	if err != nil {
 		return nil, err
 	}

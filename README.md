@@ -168,6 +168,14 @@ capy setup --platform claude-code
 capy doctor   # verify everything is green
 ```
 
+Use `capy setup --platform claude-code --local` to write Claude hooks to
+`.claude/settings.local.json`. The `--local`/`--project` flags select the Claude
+settings file only; without `--platform`, setup still configures both platforms.
+Codex's read-only owner checks inspect ancestor `.codex` configurations,
+including the home directory when it is an ancestor, to detect conflicting
+installations. Codex-generated `hooks.state` trust metadata is preserved and
+does not count as an executable hook or a capy installation.
+
 **3. Use normally.** Start using Claude Code — capy works automatically:
 
 - **Bash commands** producing large output are nudged toward the sandbox
