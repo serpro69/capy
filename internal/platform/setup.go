@@ -17,41 +17,49 @@ const capyWrapperRelPath = ".claude/scripts/capy.sh"
 // codexWrapperRelPath is the project-relative path to the capy wrapper for Codex.
 const codexWrapperRelPath = ".codex/scripts/capy.sh"
 
-// capyWrapperScript is the content of the portable wrapper script.
-// It searches known installation paths for the capy binary and execs the first
-// one found, making configs portable across machines and platforms.
-// Paths are quoted to handle spaces (e.g. WSL home dirs like /c/Users/John Doe).
-// Uses `command -v` instead of `which` for POSIX compliance.
+// capyWrapperScript preserves Claude's legacy hook behavior; Codex failures
+// remain diagnostic and PreToolUse failures always block with exit 2.
 const capyWrapperScript = `#!/usr/bin/env bash
 
-# Wrapper that locates and runs the capy binary.
-# Used as a Claude Code hook — hook events must always exit 0 to avoid phantom hook
-# errors. Every other subcommand execs the binary so its real exit code propagates
-# (a pre-commit checkpoint must be able to fail the commit).
-# See: https://github.com/serpro69/claude-toolbox/issues/57
-
+# Go resolves knowledge credentials; vault credentials stay environment-only.
 set -uo pipefail
 
-# Go resolves knowledge credentials for the selected project. Vault credentials
-# must already be present in the launch environment.
+codex_hook=false
+codex_pretool=false
+if [ "${1:-}" = "hook" ]; then
+  previous=""
+  for arg in "$@"; do
+    if [ "$arg" = "--platform=codex" ] || { [ "$previous" = "--platform" ] && [ "$arg" = "codex" ]; }; then codex_hook=true; fi
+    if [ "$arg" = "pretooluse" ]; then codex_pretool=true; fi
+    previous="$arg"
+  done
+fi
 
-for p in "$(command -v capy 2>/dev/null || true)" "$HOME/.local/bin/capy" "/opt/homebrew/bin/capy" "/usr/local/bin/capy" "$HOME/go/bin/capy" "capy"; do
-  if [ -n "$p" ] && [ -x "$p" ]; then
-    # Hook events must always exit 0; every other subcommand execs the binary so
-    # its real exit code reaches the caller.
-    if [ "${1:-}" = "hook" ]; then
-      "$p" "$@" || true
-      exit 0
+` + capyBinarySearch + capySuperviseShell + `if [ -n "$p" ]; then
+  if [ "$codex_hook" = true ]; then
+    capy_run "$p" "$@"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      echo "capy: Codex hook binary failed; install/upgrade capy or repair configuration from an external terminal and rerun capy setup --platform codex" >&2
+      if [ "$codex_pretool" = true ]; then exit 2; fi
     fi
-    exec "$p" "$@"
+    exit "$status"
   fi
-done
+  if [ "${1:-}" = "hook" ]; then
+    "$p" "$@" || true
+    exit 0
+  fi
+  exec "$p" "$@"
+fi
 
-# capy not found. Hook events still exit 0 (deny the tool use); every other
-# subcommand fails loud so callers — the pre-commit hook especially — can react.
+if [ "$codex_hook" = true ]; then
+  echo "capy: Codex hook binary not found; install/upgrade capy from an external terminal and rerun capy setup --platform codex" >&2
+  if [ "$codex_pretool" = true ]; then exit 2; fi
+  exit 127
+fi
 if [ "${1:-}" = "hook" ]; then
   jq -n --arg reason "capy binary not found" \
-  	'{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}'
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}'
   exit 0
 fi
 
@@ -173,7 +181,15 @@ func SetupClaudeCode(binaryPath, projectDir string, target SettingsTarget) error
 // .codex/scripts/capy.sh, creates the .capy/ directory, and adds .capy/
 // to .gitignore.
 func SetupCodex(binaryPath, projectDir string) error {
+	// Reject broken/overlapping bindings before config permissions or writes.
+	if _, _, err := inspectCodexSetup(projectDir); err != nil {
+		return err
+	}
 	if err := ensureStoreKeyFilePermissions(projectDir); err != nil {
+		return err
+	}
+	ownerID, err := ensureCodexOwner(projectDir)
+	if err != nil {
 		return err
 	}
 	// 1. Resolve binary path (validation only — configs use the portable wrapper)
@@ -212,7 +228,7 @@ func SetupCodex(binaryPath, projectDir string) error {
 
 	// 6. Merge MCP server into .codex/config.toml
 	configTomlPath := filepath.Join(projectDir, ".codex", "config.toml")
-	if err := mergeCodexMCPServer(configTomlPath); err != nil {
+	if err := mergeCodexMCPServer(configTomlPath, ownerID); err != nil {
 		return fmt.Errorf("merging Codex MCP config: %w", err)
 	}
 
@@ -523,81 +539,6 @@ func mergeMCPServer(mcpPath string) error {
 
 // codexMCPMarker is the TOML table header that indicates capy is registered as an MCP server.
 const codexMCPMarker = "[mcp_servers.capy]"
-
-// codexMCPBlock is the TOML block appended to config.toml to register capy.
-// env_vars forwards CAPY_DB_KEY and CAPY_VAULT_KEY from the local environment
-// so the MCP server can decrypt the knowledge database and session vault.
-const codexMCPBlock = `[mcp_servers.capy]
-command = "bash"
-args = ["` + codexWrapperRelPath + `", "serve"]
-env_vars = ["CAPY_DB_KEY", "CAPY_VAULT_KEY"]
-`
-
-// mergeCodexMCPServer ensures .codex/config.toml has an up-to-date [mcp_servers.capy] entry.
-// If the block exists but is stale (e.g. missing env_vars), it is replaced in-place.
-// Uses string-based detection to preserve existing formatting and comments.
-func mergeCodexMCPServer(configPath string) error {
-	content, err := os.ReadFile(configPath)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	text := string(content)
-
-	if strings.Contains(text, codexMCPMarker) {
-		updated, changed := replaceCodexMCPBlock(text)
-		if !changed {
-			return nil
-		}
-		return os.WriteFile(configPath, []byte(updated), 0o644)
-	}
-
-	f, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	if len(content) > 0 && !strings.HasSuffix(text, "\n") {
-		fmt.Fprint(f, "\n")
-	}
-	if len(content) > 0 && !strings.HasSuffix(text, "\n\n") {
-		fmt.Fprint(f, "\n")
-	}
-
-	_, err = fmt.Fprint(f, codexMCPBlock)
-	return err
-}
-
-// replaceCodexMCPBlock replaces the [mcp_servers.capy] TOML table in text with
-// codexMCPBlock if they differ. Returns the updated text and whether a change
-// was made. A TOML table runs from its header to the next table header or EOF.
-func replaceCodexMCPBlock(text string) (string, bool) {
-	markerIdx := strings.Index(text, codexMCPMarker)
-	if markerIdx < 0 {
-		return text, false
-	}
-
-	afterMarker := text[markerIdx+len(codexMCPMarker):]
-	blockEndRel := len(afterMarker)
-	if pos := strings.Index(afterMarker, "\n["); pos >= 0 {
-		blockEndRel = pos + 1
-	}
-	blockEnd := markerIdx + len(codexMCPMarker) + blockEndRel
-
-	existing := text[markerIdx:blockEnd]
-
-	if strings.TrimRight(existing, " \t\n\r") == strings.TrimRight(codexMCPBlock, " \t\n\r") {
-		return text, false
-	}
-
-	replacement := codexMCPBlock
-	if blockEnd < len(text) && !strings.HasSuffix(codexMCPBlock, "\n\n") {
-		replacement = strings.TrimRight(replacement, "\n") + "\n\n"
-	}
-
-	return text[:markerIdx] + replacement + text[blockEnd:], true
-}
 
 // agentsRelPath is the platform-neutral path to generated routing instructions.
 const agentsRelPath = ".capy/AGENTS.md"

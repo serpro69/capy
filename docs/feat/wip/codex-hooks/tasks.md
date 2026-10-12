@@ -2,7 +2,7 @@
 
 > Design: [design.md](design.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Task 1 done; Tasks 2–6 pending
+> Status: in-progress — Tasks 1–2 done; Tasks 3–6 pending
 > Created: 2026-10-12
 > Review dispositions: [review-resolution.md](review-resolution.md)
 > Readiness: [RD-1 correction and re-review](readiness-review.md#resolution-and-re-review)
@@ -30,7 +30,7 @@
 
 ## Task 2: Bind hook and MCP launch to the same portable owner
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Can run in parallel with:** —
@@ -38,12 +38,15 @@
 
 ### Subtasks
 
-- [ ] 2.1 Add `internal/platform/setup_codex_launch.go` with a stable versioned `.codex/capy-owner` ID and exclusive creation. Add shared bounded config/marker inspection in `internal/platform/codex_owner.go`; decode JSON/TOML and validate each generated binding against its adjacent marker → verify: `TestCodexOwnerMarker` and `TestCodexOwnerBindings` cover concurrent setup, preservation, missing/invalid artifacts, equivalent escaped commands, unsupported invocation versions and valid unrelated configs.
-- [ ] 2.2 Add `cmd/capy/codex_launch.go`, register it in `main.go`, and generate a bootstrap that locates/supervises capy before any project wrapper. Reuse the wrapper's binary-search fragment. Scan all physical ancestors for the union of marker and binding directories; require exactly one valid owner with the invoked mode/event binding → verify: `TestCodexLaunchLocations` covers ordinary subdirectories, moves, spaces, sibling worktrees and non-Git command-only cases; `TestCodexOverlappingInstallations` rejects distinct/copied IDs before policy/state/DB access.
-- [ ] 2.3 Update generated and committed Codex MCP argv to use the same bootstrap/ID and explicit project owner while preserving credential forwarding → verify: `TestCodexMCPLaunchLocations` initializes MCP, lists tools and runs a harmless capy call with synthetic keys at each supported location.
-- [ ] 2.4 Supervise bootstrap/Go-launcher/wrapper errors. Codex PreToolUse failures must exit exactly 2 with nonempty repair text; structured denials still exit 0. Preserve Claude behavior, serve status, stdin and cancellation/signal propagation → verify: `TestCodexBootstrapFailure` and `TestWrapperCodexHookFailure` cover missing, unreadable, vanished wrappers, outside-tree cwd, missing/incompatible launcher binaries and crashes without orphaned servers.
-- [ ] 2.5 Synchronize both wrappers, the owner marker and `.codex/config.toml`; add parameterized marker coverage without rotating IDs in temporary-copy tests → verify: generated-artifact equality, idempotency and completeness checks pass.
-- [ ] 2.6 Add `TestCodexCopiedOwnerMissingMarker`: in one Git repository copy root's `.codex` to `packages/service` with the same ID, retain both hook/MCP definitions and delete only the outer marker. Invoke both pre-tool commands and both MCP commands from the nested cwd → verify: pre-tool exit 2 with nonempty outer-binding repair text; MCP diagnostic failure without stdout; neither wrapper invoked and no policy/state/DB access. Repeat with only the outer hook binding or only its MCP binding retained, and escaped equivalent config strings.
+- [x] 2.1 Add `internal/platform/setup_codex_launch.go` with a stable versioned `.codex/capy-owner` ID and exclusive creation. Add shared bounded config/marker inspection in `internal/platform/codex_owner.go`; decode JSON/TOML and validate each generated binding against its adjacent marker → verify: `TestCodexOwnerMarker` and `TestCodexOwnerBindings` cover concurrent setup, preservation, missing/invalid artifacts, equivalent escaped commands, unsupported invocation versions and valid unrelated configs.
+- [x] 2.2 Add `cmd/capy/codex_launch.go`, register it in `main.go`, and generate a bootstrap that locates/supervises capy before any project wrapper. Reuse the wrapper's binary-search fragment. Scan all physical ancestors for the union of marker and binding directories; require exactly one valid owner with the invoked mode/event binding → verify: `TestCodexLaunchLocations` covers ordinary subdirectories, moves, spaces, sibling worktrees and non-Git command-only cases; `TestCodexOverlappingInstallations` rejects distinct/copied IDs before policy/state/DB access.
+- [x] 2.3 Update generated and committed Codex MCP argv to use the same bootstrap/ID and explicit project owner while preserving credential forwarding → verify: `TestCodexMCPLaunchLocations` initializes MCP, lists tools and runs a harmless capy call with synthetic keys at each supported location.
+- [x] 2.4 Supervise bootstrap/Go-launcher/wrapper errors. Codex PreToolUse failures must exit exactly 2 with nonempty repair text; structured denials still exit 0. Preserve Claude behavior, serve status, stdin and cancellation/signal propagation → verify: `TestCodexBootstrapFailure` and `TestWrapperCodexHookFailure` cover missing, unreadable, vanished wrappers, outside-tree cwd, missing/incompatible launcher binaries and crashes without orphaned servers.
+- [x] 2.5 Synchronize both wrappers, the owner marker and `.codex/config.toml`; add parameterized marker coverage without rotating IDs in temporary-copy tests → verify: generated-artifact equality, idempotency and completeness checks pass.
+- [x] 2.6 Add `TestCodexCopiedOwnerMissingMarker`: in one Git repository copy root's `.codex` to `packages/service` with the same ID, retain both hook/MCP definitions and delete only the outer marker. Invoke both pre-tool commands and both MCP commands from the nested cwd → verify: pre-tool exit 2 with nonempty outer-binding repair text; MCP diagnostic failure without stdout; neither wrapper invoked and no policy/state/DB access. Repeat with only the outer hook binding or only its MCP binding retained, and escaped equivalent config strings.
+
+**Evidence:** [Task 2 verification](verification.md#task-2-portable-owner-and-supervised-launch);
+[isolated code review: APPROVE](.reviews/task-2-code-review-2026-10-12.md).
 
 ## Task 3: Register main-session hooks without taking over external hooks
 
