@@ -1,6 +1,6 @@
 # Codex hooks owned by capy
 
-> Status: Tasks 1–5 implemented and reviewed; Task 6 pending
+> Status: done — Tasks 1–6 implemented, verified and reviewed; see [verification limits](verification.md#task-6-installed-runtime-and-release-documentation)
 > Created: 2026-10-12
 > Review dispositions: [review-resolution.md](review-resolution.md)
 > Related: [#29](https://github.com/serpro69/capy/issues/29), [#132](https://github.com/serpro69/capy/issues/132)
@@ -8,8 +8,8 @@
 
 ## 1. Problem and intended outcome
 
-Developers using capy with Codex currently get an MCP server, binary wrapper, and
-generated routing instructions from `capy setup`. They do not get capy's hook
+Before this feature, developers using capy with Codex got an MCP server, binary wrapper, and
+generated routing instructions from `capy setup`. They did not get capy's hook
 integration. This repository happens to have working Codex hooks imported from
 the claude-toolbox template. Those scripts load capy's instructions when present
 and implement a separate shell policy; they do not invoke capy's Go hook pipeline.
@@ -75,6 +75,9 @@ explicitly excluded introducing a Codex hook adapter. The gap is unfinished
 integration, not evidence that this repository lacked all Codex hook support.
 
 ### 3.2 Existing seams
+
+This table records the pre-feature baseline and planned changes; current
+implementation and acceptance evidence are tracked in [verification.md](verification.md).
 
 | Component | Current behavior | Intended extension |
 |---|---|---|

@@ -15,6 +15,16 @@ func newSetupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Configure capy for the current project",
+		Long: `Configure Claude Code and Codex by default, or select one with --platform.
+Codex setup registers five hooks and an MCP server bound to .codex/capy-owner.
+Commit the marker with its configuration and wrapper; reruns preserve its ID.
+Activation requires project-layer trust and review/trust of the exact definitions
+in /hooks. Setup does not change trust records or hook feature overrides.
+
+If a trusted installation cannot launch capy, repair it from an external terminal
+and rerun setup. Individual capy entries may be disabled in /hooks during
+infrastructure repair; this is not a way to bypass a matched policy denial.
+Stop affected sessions before moving or removing loaded installation artifacts.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectDir, _ := cmd.Flags().GetString("project-dir")
 			if projectDir == "" {

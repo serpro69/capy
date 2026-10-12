@@ -17,7 +17,7 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture docum
 ```
 cmd/capy/           CLI entry points (cobra commands)
 internal/
-  adapter/          Platform adapter interface (HookAdapter) + Claude Code implementation
+  adapter/          Platform adapter interface (HookAdapter) + Claude Code and Codex implementations
   config/           TOML config loading with 3-level precedence, project root detection, DB path resolution
   executor/         Polyglot code executor (11 languages), process group isolation, output truncation
   giturl/           Git platform URL detection (GitHub/GitLab/Bitbucket/Gitea)
@@ -44,12 +44,17 @@ internal/
 - **Vault blob `encoding` column is authoritative.** Compressed (`'zstd'`) vs raw (`'raw'`/`NULL`-legacy) blobs are distinguished by the per-row `encoding` column, never magic-byte detection (sidecars hold arbitrary bytes). Compressed writes require reader version 2; platform-aware writes can require version 3. Each write stamps the version it needs in `vault_meta.min_reader_version`; `openDB` refuses a vault whose marker exceeds `supportedReaderVersion` (3). `content_hash`/`size_bytes`/FTS are always computed on **uncompressed** bytes.
 - **Vault rekey uses the backup-API, not PRAGMA rekey.** `sqliteutil.Rekey` writes a fresh new-key file (open old → checkpoint → backup-copy → swap+verify), sidestepping the WAL/PRAGMA-rekey incompatibility above. Shared by `capy vault rekey` and `capy encrypt`.
 - **Hooks are short-lived processes.** Each hook invocation is a separate `capy hook <event>` process. State persists via `.capy/guidance-<sessionID>.json` files.
+- **Codex hooks and MCP share one portable owner.** Commit `.codex/capy-owner` with its generated bindings; preserve its ID during setup. The bootstrap calls `capy codex-launch` before any project wrapper. The shared inspector checks all physical ancestors for markers and decoded hook/MCP bindings, validates each adjacent marker, and rejects overlap even for copied IDs. Missing live markers must be restored, never regenerated. Stop/reload affected sessions before moving or removing loaded artifacts; cached commands cannot recover entirely deleted provenance.
+- **Codex PreToolUse launch failures exit 2 with repair diagnostics.** Successful structured denials exit 0. Preserve Claude's legacy wrapper crash behavior and MCP status/stdout. Setup registers hooks but never changes project trust, exact-hook trust or feature overrides. Matched asks deny with the exact rule/source because this Codex hook cannot request approval. Hooks remain credential-free; static doctor checks cannot prove activation.
 - **Child tool observations are one-use evidence.** `.capy/tool-observations.json` is capped at 64 KiB/128 entries; execute/fetch timestamps expire independently after 60 seconds. All alternatives for a child must be consumed atomically before a routing denial. Serialize updates with the separate permanent `tool-observations.lock` (20 ms maximum lock wait); never unlink or replace that lock file. SessionEnd removes only its stable session's entries and never opens a database.
 - **`capy setup` generates artifacts in two places — keep the generator and this repo's committed copies in sync.** Everything `capy setup` writes (`internal/platform/setup.go` + `routing.go`) has a committed counterpart in this repo. A fix applied to the committed file but NOT the generator (or vice versa) works here but ships stale to every consumer that re-runs `capy setup`. This has already bitten us more than once (PR #93 wrapper fix; commit `8d5f2a2` routing wording). The generator is the source of truth; the committed files must be reproducible from it. Any fix MUST edit BOTH sides. The generated artifacts and their generators:
   - `.claude/scripts/capy.sh`, `.codex/scripts/capy.sh` ← `capyWrapperScript` (whole file)
   - `.capy/AGENTS.md` ← `GenerateRoutingInstructions()` (whole file)
   - `.mcp.json` capy server ← `mergeMCPServer`; `.claude/settings*.json` capy hooks ← `mergeHooks`
-  - `.codex/config.toml` `[mcp_servers.capy]` ← `mergeCodexMCPServer`; root `CLAUDE.md` import ← `ensureClaudeMDImport`; `.gitignore` capy entries ← `ensureGitignoreEntry`
+  - `.codex/hooks.json` capy handlers ← `mergeCodexHooks` + `codexHookEvents`; preserve external handlers
+  - `.codex/capy-owner` ← `codexOwnerContent` with the preserved installation ID (creation: `ensureCodexOwner`); parameterized whole-file coverage
+  - `.codex/config.toml` `[mcp_servers.capy]` ← `mergeCodexMCPServer`; hook commands and MCP argv ← `codexHookCommand` / `codexLaunchArgs` in `setup_codex_launch.go`
+  - root `CLAUDE.md` import ← `ensureClaudeMDImport`; `.gitignore` capy entries ← `ensureGitignoreEntry`
   - `TestGeneratedWholeFileArtifacts` and `TestMergedArtifactsAreIdempotent` (`internal/platform/`) enforce this. Never "fix" a failure by editing just one side.
 
   `capy setup --db-repo` (`SetupDBRepo`) is the exception: its two outputs have **no committed counterpart in this repo**, so the sync rule above does not apply to them. The guard hook is an uncommitted git hook (written into the target repo's `.git/hooks/`, never tracked anywhere), and the `*.db-wal`/`*.db-shm` `.gitignore` entries land in the *separate DB repo*, not here. It is drift-guarded by its own generator tests instead — `TestSetupDBRepo_WritesOnlyGitignoreAndHook`, `TestPreCommitHookBlockDBRepo_Content`, and the `TestDriftGuardCoversEverySetupArtifact` DB-repo case.

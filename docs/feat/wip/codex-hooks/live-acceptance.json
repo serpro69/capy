@@ -1,0 +1,339 @@
+{
+  "codex_version": "0.162.1",
+  "date": "2026-10-12",
+  "kind": "selected actual host rollout evidence, not synthetic stdin replay",
+  "notes": [
+    "Only fixture-related context measurements and tool results are retained.",
+    "Child full-history fork includes an inherited parent routing block before its new child block.",
+    "Mixed session was resumed once; repeated context records retain their own timestamps.",
+    "Live host retained its authentication/trust HOME; XDG_CONFIG_HOME was empty, capy key synthetic, vault key unset.",
+    "Unavailable-launcher probe used a fixture returning 127; missing-file discovery is subprocess evidence."
+  ],
+  "sessions": [
+    {
+      "id": "01a1316d-d57f-7f93-89f3-bbb1bf4f8c6a",
+      "cwd": "/tmp/capy-task6/live project/subdir",
+      "source": "cli",
+      "contexts": [
+        {
+          "timestamp": "2026-10-12T18:44:29.229Z",
+          "ordinal": 8,
+          "producer": "capy",
+          "utf8_bytes": 3358,
+          "sha256": "b9732360be388f66f565621210ff7bed97e8f2e51b0f7555f4aab4645ae9d952",
+          "inline": true,
+          "has_fixture_extra": false
+        }
+      ],
+      "calls": [
+        {
+          "timestamp": "2026-10-12T18:44:33.058Z",
+          "ordinal": 13,
+          "call_id": "call_4c7251e369ed4ed3bd1c8141cc09d81c",
+          "input": "text(await tools.exec_command({cmd:\"printf CAPY_ALLOWED\",max_output_tokens:1000}));\n"
+        },
+        {
+          "timestamp": "2026-10-12T18:44:35.704Z",
+          "ordinal": 19,
+          "call_id": "call_63c4370e529a419db7e22e1e26d37e51",
+          "input": "text(await tools.exec_command({cmd:\"printf CAPY_DENIED\",max_output_tokens:1000}));\n"
+        },
+        {
+          "timestamp": "2026-10-12T18:44:38.446Z",
+          "ordinal": 23,
+          "call_id": "call_e6f0142f7e294447a7e35fc01a5f36db",
+          "input": "text(await tools.exec_command({cmd:\"printf CAPY_ASK\",max_output_tokens:1000}));\n"
+        },
+        {
+          "timestamp": "2026-10-12T18:44:44.042Z",
+          "ordinal": 31,
+          "call_id": "call_03df3fe4f27943b6bb0b116316ac843b",
+          "input": "const result = await tools.mcp__capy__capy_stats({});\nfor (const item of result.content ?? []) { if (item.type === \"text\") text(item.text); }\n"
+        }
+      ],
+      "results": [
+        {
+          "timestamp": "2026-10-12T18:44:33.482Z",
+          "ordinal": 17,
+          "call_id": "call_4c7251e369ed4ed3bd1c8141cc09d81c",
+          "output": "Script completed\nWall time 0.4 seconds\nOutput:\n\n{\"chunk_id\":\"396a7f\",\"wall_time_seconds\":0.04741745,\"exit_code\":0,\"original_token_count\":3,\"output\":\"CAPY_ALLOWED\"}"
+        },
+        {
+          "timestamp": "2026-10-12T18:44:35.836Z",
+          "ordinal": 21,
+          "call_id": "call_63c4370e529a419db7e22e1e26d37e51",
+          "output": "Script failed\nWall time 0.1 seconds\nOutput:\n\nScript error:\nCommand blocked by PreToolUse hook: Blocked by security policy: matches deny pattern Bash(printf *CAPY_DENIED*) in \"/tmp/capy-task6/live project/.claude/settings.json\". Command: printf CAPY_DENIED"
+        },
+        {
+          "timestamp": "2026-10-12T18:44:38.579Z",
+          "ordinal": 25,
+          "call_id": "call_e6f0142f7e294447a7e35fc01a5f36db",
+          "output": "Script failed\nWall time 0.1 seconds\nOutput:\n\nScript error:\nCommand blocked by PreToolUse hook: Matched approval pattern \"Bash(printf *CAPY_ASK*)\" in \"/tmp/capy-task6/live project/.claude/settings.json\"; this rule requires approval, which capy's Codex PreToolUse hook cannot request. Command: printf CAPY_ASK"
+        },
+        {
+          "timestamp": "2026-10-12T18:44:44.179Z",
+          "ordinal": 34,
+          "call_id": "call_03df3fe4f27943b6bb0b116316ac843b",
+          "output": "Script completed\nWall time 0.1 seconds\nOutput:\n\n## capy — Session Report (0.7 min)\n\n### Context Window Protection\n\nNo capy tool calls yet. Use `batch_execute`, `execute`, or `fetch_and_index` to keep raw output out of your context window.\n\n### TTL Cache\n\n| Metric | Value |\n|--------|------:|\n| Cache hits | **0** |\n| Attempted misses | **0** |\n| Hit rate (hits / (hits + attempted misses)) | **n/a** |\n| Estimated data avoided by cache | **0.0KB** |\n| Network requests saved | **0** |\n| Default fetch freshness | **24h** |\n\n---\n_Display this entire report as-is. Do NOT summarize or collapse any section._"
+        }
+      ],
+      "mcp_events": [
+        {
+          "timestamp": "2026-10-12T18:44:44.176Z",
+          "ordinal": 33,
+          "thread_id": "01a1316d-d57f-7f93-89f3-bbb1bf4f8c6a",
+          "tool": "capy_stats",
+          "arguments": {},
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "## capy — Session Report (0.7 min)\n\n### Context Window Protection\n\nNo capy tool calls yet. Use `batch_execute`, `execute`, or `fetch_and_index` to keep raw output out of your context window.\n\n### TTL Cache\n\n| Metric | Value |\n|--------|------:|\n| Cache hits | **0** |\n| Attempted misses | **0** |\n| Hit rate (hits / (hits + attempted misses)) | **n/a** |\n| Estimated data avoided by cache | **0.0KB** |\n| Network requests saved | **0** |\n| Default fetch freshness | **24h** |\n\n---\n_Display this entire report as-is. Do NOT summarize or collapse any section._"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "01a1316f-ba3a-7bf3-9925-c6cb40a3d802",
+      "cwd": "/tmp/capy-task6/live project/subdir",
+      "source": {
+        "subagent": {
+          "thread_spawn": {
+            "parent_thread_id": "01a1316d-d57f-7f93-89f3-bbb1bf4f8c6a",
+            "depth": 1,
+            "agent_path": "/root/capy_child_acceptance",
+            "agent_nickname": "Hegel",
+            "agent_role": null
+          }
+        }
+      },
+      "contexts": [
+        {
+          "timestamp": "2026-10-12T18:46:08.193Z",
+          "ordinal": 7,
+          "producer": "capy",
+          "utf8_bytes": 3358,
+          "sha256": "b9732360be388f66f565621210ff7bed97e8f2e51b0f7555f4aab4645ae9d952",
+          "inline": true,
+          "has_fixture_extra": false
+        },
+        {
+          "timestamp": "2026-10-12T18:46:09.796Z",
+          "ordinal": 21,
+          "producer": "capy",
+          "utf8_bytes": 3358,
+          "sha256": "b9732360be388f66f565621210ff7bed97e8f2e51b0f7555f4aab4645ae9d952",
+          "inline": true,
+          "has_fixture_extra": false
+        }
+      ],
+      "calls": [
+        {
+          "timestamp": "2026-10-12T18:46:20.899Z",
+          "ordinal": 32,
+          "call_id": "call_c2bac2ddfc794f3da6fea6d39fcc7c50",
+          "input": "const result = await tools.mcp__capy__capy_execute({language: \"shell\", code: \"printf CAPY_CHILD_EXEC\"}); text(result);\n"
+        },
+        {
+          "timestamp": "2026-10-12T18:48:05.245Z",
+          "ordinal": 43,
+          "call_id": "call_32ae99fc61974e63b21ebf43c61a5083",
+          "input": "text(await tools.exec_command({cmd: \"python3 -c 'if False: requests.get(\\\"https://example.invalid\\\")'\", max_output_tokens: 2000}));\n"
+        },
+        {
+          "timestamp": "2026-10-12T18:48:09.179Z",
+          "ordinal": 47,
+          "call_id": "call_efc1eb20107044b89e9f0018bb36c61c",
+          "input": "text(await tools.exec_command({cmd: \"python3 -c 'if False: requests.get(\\\"https://example.invalid\\\")'\", max_output_tokens: 2000}));\n"
+        }
+      ],
+      "results": [
+        {
+          "timestamp": "2026-10-12T18:47:55.854Z",
+          "ordinal": 34,
+          "call_id": "call_c2bac2ddfc794f3da6fea6d39fcc7c50",
+          "output": "Script running with cell ID 2\nWall time 31.0 seconds\nOutput:\n"
+        },
+        {
+          "timestamp": "2026-10-12T18:48:02.101Z",
+          "ordinal": 41,
+          "call_id": "call_c458d765f8054bd583953806d3d66e91",
+          "output": "Script completed\nWall time 0.0 seconds\nOutput:\n\n{\"content\":[{\"type\":\"text\",\"text\":\"CAPY_CHILD_EXEC\"}]}"
+        },
+        {
+          "timestamp": "2026-10-12T18:48:05.382Z",
+          "ordinal": 45,
+          "call_id": "call_32ae99fc61974e63b21ebf43c61a5083",
+          "output": "Script failed\nWall time 0.1 seconds\nOutput:\n\nScript error:\nCommand blocked by PreToolUse hook: capy: Use capy_execute(language, code) for this HTTP call. If that call fails or the tool is unavailable, retry the native tool.. Command: python3 -c 'if False: requests.get(\"https://example.invalid\")'"
+        },
+        {
+          "timestamp": "2026-10-12T18:48:09.559Z",
+          "ordinal": 51,
+          "call_id": "call_efc1eb20107044b89e9f0018bb36c61c",
+          "output": "Script completed\nWall time 0.4 seconds\nOutput:\n\n{\"chunk_id\":\"ab6068\",\"wall_time_seconds\":0.084234868,\"exit_code\":0,\"original_token_count\":0,\"output\":\"\"}"
+        }
+      ],
+      "mcp_events": [
+        {
+          "timestamp": "2026-10-12T18:47:55.857Z",
+          "ordinal": 36,
+          "thread_id": "01a1316f-ba3a-7bf3-9925-c6cb40a3d802",
+          "tool": "capy_execute",
+          "arguments": {
+            "language": "shell",
+            "code": "printf CAPY_CHILD_EXEC"
+          },
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "CAPY_CHILD_EXEC"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "01a13173-f8d7-7352-8c63-a9292319d02d",
+      "cwd": "/tmp/capy-task6/live project/subdir",
+      "source": "cli",
+      "contexts": [
+        {
+          "timestamp": "2026-10-12T18:51:15.702Z",
+          "ordinal": 8,
+          "producer": "toolbox",
+          "utf8_bytes": 10443,
+          "sha256": "87d85d8e10729aefe35d54916556737cdb79aa2d46fafc3705d951a3467fe1d6",
+          "inline": true,
+          "has_fixture_extra": true
+        },
+        {
+          "timestamp": "2026-10-12T18:51:15.702Z",
+          "ordinal": 9,
+          "producer": "capy",
+          "utf8_bytes": 3358,
+          "sha256": "b9732360be388f66f565621210ff7bed97e8f2e51b0f7555f4aab4645ae9d952",
+          "inline": true,
+          "has_fixture_extra": false
+        },
+        {
+          "timestamp": "2026-10-12T18:57:25.059Z",
+          "ordinal": 79,
+          "producer": "toolbox",
+          "utf8_bytes": 10443,
+          "sha256": "87d85d8e10729aefe35d54916556737cdb79aa2d46fafc3705d951a3467fe1d6",
+          "inline": true,
+          "has_fixture_extra": true
+        },
+        {
+          "timestamp": "2026-10-12T18:57:25.059Z",
+          "ordinal": 80,
+          "producer": "capy",
+          "utf8_bytes": 3358,
+          "sha256": "b9732360be388f66f565621210ff7bed97e8f2e51b0f7555f4aab4645ae9d952",
+          "inline": true,
+          "has_fixture_extra": false
+        }
+      ],
+      "calls": [
+        {
+          "timestamp": "2026-10-12T18:51:19.725Z",
+          "ordinal": 14,
+          "call_id": "call_44c724e5317c4997bb972540f0090b41",
+          "input": "text(ALL_TOOLS.filter(x => /capy_stats$/.test(x.name)));\ntext(await tools.exec_command({cmd:\"printf CAPY_MIXED_ALLOWED\",max_output_tokens:1000}));\n"
+        },
+        {
+          "timestamp": "2026-10-12T18:51:22.786Z",
+          "ordinal": 20,
+          "call_id": "call_894bca373c1f4d10ab460d698c4c77bc",
+          "input": "text(await tools.exec_command({cmd:\"printf CAPY_EXTERNAL_DENIED\",max_output_tokens:1000}));\n"
+        },
+        {
+          "timestamp": "2026-10-12T18:51:25.287Z",
+          "ordinal": 24,
+          "call_id": "call_38adeaa5a1324be983078a07c8349daf",
+          "input": "text(await tools.exec_command({cmd:\"printf CAPY_DENIED\",max_output_tokens:1000}));\n"
+        },
+        {
+          "timestamp": "2026-10-12T18:51:28.259Z",
+          "ordinal": 30,
+          "call_id": "call_b755a3c479ec49138e32120188a186b6",
+          "input": "const result = await tools.mcp__capy__capy_stats({});\nfor (const item of result.content ?? []) {\n  if (item.type === \"text\") text(item.text);\n}\n"
+        },
+        {
+          "timestamp": "2026-10-12T18:52:33.104Z",
+          "ordinal": 49,
+          "call_id": "call_d42a2a7cd2ef457b9e4b07c5ce824dae",
+          "input": "text(await tools.exec_command({cmd:\"printf CAPY_INFRASTRUCTURE_BLOCKED\",max_output_tokens:1000}));\n"
+        },
+        {
+          "timestamp": "2026-10-12T18:54:11.979Z",
+          "ordinal": 65,
+          "call_id": "call_988ec600a1844c8c998b9d4da4714558",
+          "input": "text(await tools.exec_command({cmd:\"printf CAPY_REPAIRED\",max_output_tokens:1000}));\n"
+        }
+      ],
+      "results": [
+        {
+          "timestamp": "2026-10-12T18:51:20.118Z",
+          "ordinal": 18,
+          "call_id": "call_44c724e5317c4997bb972540f0090b41",
+          "output": "Script completed\nWall time 0.4 seconds\nOutput:\n\n{\"chunk_id\":\"e3f4e3\",\"wall_time_seconds\":0.063680946,\"exit_code\":0,\"original_token_count\":5,\"output\":\"CAPY_MIXED_ALLOWED\"}"
+        },
+        {
+          "timestamp": "2026-10-12T18:51:22.946Z",
+          "ordinal": 22,
+          "call_id": "call_894bca373c1f4d10ab460d698c4c77bc",
+          "output": "Script failed\nWall time 0.2 seconds\nOutput:\n\nScript error:\nCommand blocked by PreToolUse hook: Independent fixture restriction retained. Command: printf CAPY_EXTERNAL_DENIED"
+        },
+        {
+          "timestamp": "2026-10-12T18:51:25.428Z",
+          "ordinal": 26,
+          "call_id": "call_38adeaa5a1324be983078a07c8349daf",
+          "output": "Script failed\nWall time 0.1 seconds\nOutput:\n\nScript error:\nCommand blocked by PreToolUse hook: Blocked by security policy: matches deny pattern Bash(printf *CAPY_DENIED*) in \"/tmp/capy-task6/live project/.claude/settings.json\". Command: printf CAPY_DENIED"
+        },
+        {
+          "timestamp": "2026-10-12T18:51:28.399Z",
+          "ordinal": 33,
+          "call_id": "call_b755a3c479ec49138e32120188a186b6",
+          "output": "Script completed\nWall time 0.1 seconds\nOutput:\n\n## capy — Session Report (0.7 min)\n\n### Context Window Protection\n\nNo capy tool calls yet. Use `batch_execute`, `execute`, or `fetch_and_index` to keep raw output out of your context window.\n\n### TTL Cache\n\n| Metric | Value |\n|--------|------:|\n| Cache hits | **0** |\n| Attempted misses | **0** |\n| Hit rate (hits / (hits + attempted misses)) | **n/a** |\n| Estimated data avoided by cache | **0.0KB** |\n| Network requests saved | **0** |\n| Default fetch freshness | **24h** |\n\n---\n_Display this entire report as-is. Do NOT summarize or collapse any section._"
+        },
+        {
+          "timestamp": "2026-10-12T18:52:33.251Z",
+          "ordinal": 51,
+          "call_id": "call_d42a2a7cd2ef457b9e4b07c5ce824dae",
+          "output": "Script failed\nWall time 0.1 seconds\nOutput:\n\nScript error:\nCommand blocked by PreToolUse hook: capy acceptance fixture: launcher unavailable (simulated exit 127)\ncapy: Codex launch failed; repair the reported installation or install/upgrade capy, then rerun capy setup --platform codex from the intended project. Command: printf CAPY_INFRASTRUCTURE_BLOCKED"
+        },
+        {
+          "timestamp": "2026-10-12T18:54:12.340Z",
+          "ordinal": 68,
+          "call_id": "call_988ec600a1844c8c998b9d4da4714558",
+          "output": "Script completed\nWall time 0.3 seconds\nOutput:\n\n{\"chunk_id\":\"5015d1\",\"wall_time_seconds\":0.04326464,\"exit_code\":0,\"original_token_count\":4,\"output\":\"CAPY_REPAIRED\"}"
+        }
+      ],
+      "mcp_events": [
+        {
+          "timestamp": "2026-10-12T18:51:28.397Z",
+          "ordinal": 32,
+          "thread_id": "01a13173-f8d7-7352-8c63-a9292319d02d",
+          "tool": "capy_stats",
+          "arguments": {},
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "## capy — Session Report (0.7 min)\n\n### Context Window Protection\n\nNo capy tool calls yet. Use `batch_execute`, `execute`, or `fetch_and_index` to keep raw output out of your context window.\n\n### TTL Cache\n\n| Metric | Value |\n|--------|------:|\n| Cache hits | **0** |\n| Attempted misses | **0** |\n| Hit rate (hits / (hits + attempted misses)) | **n/a** |\n| Estimated data avoided by cache | **0.0KB** |\n| Network requests saved | **0** |\n| Default fetch freshness | **24h** |\n\n---\n_Display this entire report as-is. Do NOT summarize or collapse any section._"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
