@@ -518,7 +518,7 @@ warning are recorded. Tasks 19–20 and D1–D5 remain separate work.
 
 ## Task 19: Configure and report the shared search budget
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 5, 9, 12, 14, 15, 17
@@ -526,9 +526,18 @@ warning are recorded. Tasks 19–20 and D1–D5 remain separate work.
 
 ### Subtasks
 
-- [ ] 19.1 Add `[search]` settings/defaults with presence-aware merge and validation → verify: explicit-zero/type/range/relationship errors and global/project precedence.
-- [ ] 19.2 Use effective values in throttle decisions/notices for every valid path → verify: default and overridden boundaries, exact reset, empty/partial results and concurrent calls using a clock seam.
-- [ ] 19.3 Record shared-server scope/D1 and update ADR-008 → verify: tunability is not claimed as per-agent isolation and invalid calls consume no budget.
+- [x] 19.1 Add `[search]` settings/defaults with presence-aware merge and validation → verify: explicit-zero/type/range/relationship errors and global/project precedence.
+- [x] 19.2 Use effective values in throttle decisions/notices for every valid path → verify: default and overridden boundaries, exact reset, empty/partial results and concurrent calls using a clock seam.
+- [x] 19.3 Record shared-server scope/D1 and update ADR-008 → verify: tunability is not claimed as per-agent isolation and invalid calls consume no budget.
+
+Evidence: [verification](verification.md#task-19-configurable-shared-search-budget)
+and [isolated review](.reviews/task-19-code-review-2026-10-12.md). Presence-aware
+configuration now controls the captured shared-server budget; every valid
+response reports its admission snapshot. Invalid calls consume no budget.
+Full tests, affected race/stdio checks and build pass; all 84 quality metrics
+are unchanged. Independent review approved without findings. The pre-existing
+server-vet warning and unavailable PAL reviewer are recorded. Task 20 and D1–D5
+remain pending.
 
 ## Task 20: Verify the complete sync and document compatibility
 

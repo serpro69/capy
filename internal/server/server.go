@@ -20,29 +20,56 @@ import (
 	"github.com/serpro69/capy/internal/version"
 )
 
-// searchThrottle tracks progressive search throttling per session.
+// searchThrottle owns the budget shared by all callers of this MCP server.
+// D1 (docs/feat/wip/upstream-sync-v1.0.169/upstream-audit.md#d1-per-agent-search-budgets):
+// establish a reliable per-agent request identity before introducing separate budgets.
 type searchThrottle struct {
 	mu          sync.Mutex
 	count       int
 	windowStart time.Time
+	policy      config.SearchConfig // captured at construction; immutable
+	now         func() time.Time    // fixed before concurrent use; nil uses time.Now
 }
 
-// advance increments the call count and returns the new count and window age.
-// If the window has expired, it resets the window atomically before incrementing.
-// Combined into a single lock acquisition to avoid TOCTOU between separate
-// increment/age/reset calls.
-func (t *searchThrottle) advance(window time.Duration) (int, time.Duration) {
+type searchBudget struct {
+	count, limit int
+	policy       config.SearchConfig
+	remaining    time.Duration
+}
+
+// advance returns one coherent enforcement/notice snapshot under the same lock
+// as reset and increment. No filesystem or retrieval work holds this lock.
+func (t *searchThrottle) advance(limit int) searchBudget {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	age := time.Since(t.windowStart)
-	if age > window {
+	now := time.Now()
+	if t.now != nil {
+		now = t.now()
+	}
+	window := time.Duration(t.policy.WindowMS) * time.Millisecond
+	age := now.Sub(t.windowStart)
+	if t.windowStart.IsZero() || age >= window || age < 0 {
 		t.count = 0
-		t.windowStart = time.Now()
+		t.windowStart = now
 		age = 0
 	}
 	t.count++
-	return t.count, age
+	limit = min(limit, 2)
+	if t.count > t.policy.TaperAfter {
+		limit = min(limit, 1)
+	}
+	if t.count > t.policy.BlockAfter {
+		limit = 0
+	}
+	return searchBudget{count: t.count, limit: limit, policy: t.policy, remaining: window - age}
+}
+
+func (b searchBudget) notice() string {
+	// Round up so a still-blocked request never advertises a zero wait.
+	remainingMS := (b.remaining + time.Millisecond - 1) / time.Millisecond
+	return fmt.Sprintf("Shared MCP server search budget: search call #%d/%d in this window. Results limited to %d/query. Untapered calls left: %d; calls before block: %d; resets in %d ms (window %d ms; taper after %d; block after %d). Batch queries with search(queries: [\"q1\",\"q2\"]) or use batch_execute.",
+		b.count, b.policy.BlockAfter, b.limit, max(0, b.policy.TaperAfter-b.count), max(0, b.policy.BlockAfter-b.count), remainingMS, b.policy.WindowMS, b.policy.TaperAfter, b.policy.BlockAfter)
 }
 
 // Server is the capy MCP server.
@@ -97,7 +124,7 @@ func NewServer(
 		security:        policies,
 		executor:        exec,
 		stats:           NewSessionStats(),
-		throttle:        &searchThrottle{windowStart: time.Now()},
+		throttle:        &searchThrottle{windowStart: time.Now(), policy: cfg.Search},
 		projectDir:      projectDir,
 		knowledgeKey:    store.EncryptionKeyFromEnv(),
 		knowledgeSource: config.KeySource{Kind: config.KeySourceEnvironment},

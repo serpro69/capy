@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14, 15, 16a, 16, 17 and 18 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14, 15, 16a, 16, 17, 18 and 19 complete; Task 20 pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -832,6 +832,31 @@ Task 19's throttle policy and Task 20's feature-wide verification remain pending
 Add the three `[search]` settings with omission-aware merging, explicit-zero/type/range validation and post-merge taper/block validation. Capture the resulting policy per server and return a coherent snapshot from atomic advance → verify: global/project precedence, defaults, invalid settings, changed thresholds, exact window boundary, empty/partial-result paths, and concurrent calls. Use a clock seam rather than minute-long sleeps; invalid requests remain outside accounting.
 
 The notice states the actual effective limit and shared-server scope. Add an actionable code comment referencing [D1](upstream-audit.md#d1-per-agent-search-budgets) beside `searchThrottle`; do not add a per-agent map without verified request identity. Run server search/federation/vault-search tests under `-race` and retain current source-kind behavior.
+
+Task 19 implementation notes (2026-10-12): `SearchConfig` defaults to
+60000/3/8. Pointer detection merges supplied fields and rejects invalid scalars
+per layer; threshold ordering is checked after all layers merge. `searchThrottle`
+captures policy by value, then resets/increments and computes limits/time under
+one mutex. Notices use this admission snapshot on all valid response paths,
+including blocked, empty and degraded results, and count toward returned bytes.
+The reset comparison includes equality; displayed milliseconds round upward.
+
+Preflight now rejects malformed query/kind arrays, blank queries, non-string
+selectors and nonpositive/fractional/nonfinite limits before storage or budget
+use. Serialized arrays and positive integer numeric strings remain supported.
+The strict array parser is shared with batch preflight without changing batch
+semantics. This closes formerly permissive validation paths required by the
+invalid-calls-consume-no-budget contract. README records the compatibility change.
+
+Clock-controlled tests cover thresholds, exact expiry, coherent concurrent calls
+and construction-time capture. Real stdio checks verify configured behavior and
+validation before storage. ADR-008 records tunability and the shared-server/D1
+limitation. No module, schema or generated artifact changes are needed. CLI and
+CI changes are N/A; stdio uses the existing serve command and tests inherit
+FTS5/synthetic-key conventions from repository `AGENTS.md`. Dependency lookup
+returned main-branch Go examples despite the requested 1.25.2 Context7 ID;
+`strconv.ParseFloat` special-value/error semantics were verified against the
+installed Go 1.25.2 source after the pinned web fallback failed.
 
 ## 20. Final verification and documentation
 

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -99,28 +98,8 @@ func batchSearchArgs(args map[string]any) ([]string, string, error) {
 	if !present {
 		return nil, scope, nil
 	}
-	invalid := fmt.Errorf("invalid parameter %q: expected an array of strings", "queries")
-	if encoded, ok := raw.(string); ok {
-		if err := json.Unmarshal([]byte(encoded), &raw); err != nil {
-			return nil, "", invalid
-		}
-	}
-	switch values := raw.(type) {
-	case []string:
-		return values, scope, nil
-	case []any:
-		queries := make([]string, len(values))
-		for i, value := range values {
-			query, ok := value.(string)
-			if !ok {
-				return nil, "", invalid
-			}
-			queries[i] = query
-		}
-		return queries, scope, nil
-	default:
-		return nil, "", invalid
-	}
+	queries, err := stringArrayArg(raw, "queries")
+	return queries, scope, err
 }
 
 type batchCommandOutput struct {

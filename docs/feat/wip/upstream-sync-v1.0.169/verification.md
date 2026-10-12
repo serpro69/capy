@@ -1740,6 +1740,77 @@ needed. Task 16's per-call TTL and typed retry hints, Tasks 17–20 and D1–D5 
 pending. Optional editorial follow-up: `kk:clarify-docs` on `README.md`,
 `docs/architecture.md` and `docs/adr/013-configurable-fetch-ttl.md`.
 
+## Task 19: Configurable shared search budget
+
+Implemented 2026-10-12. `[search] window_ms`, `taper_after` and `block_after`
+default to 60000/3/8. Each supplied TOML integer is range-checked before merging;
+the final taper/block relationship is checked after all three layers. Explicit
+zero and malformed types fail, including invalid lower layers hidden by an
+otherwise valid override.
+
+The server captures policy by value and advances its shared counter under one
+mutex. The resulting snapshot supplies both enforcement and the notice on every
+valid response, including first-call, empty, failed/partial and blocked results.
+The reset comparison includes equality. Invalid queries, arrays, selectors,
+kinds, limits and booleans do not initialize storage or consume call statistics
+or search budget. Existing serialized arrays and integer numeric strings remain
+accepted. Strict batch-array parsing moved to the shared coercion helper without
+changing batch behavior. Per-agent identity remains D1.
+
+### Behavioral evidence
+
+- Config fixtures cover omission, empty tables, all three precedence layers,
+  separately supplied thresholds, exact bounds, explicit zero, type/overflow
+  failures, invalid lower layers and invalid merged ordering.
+- Clock-controlled search fixtures assert actual result counts before/after
+  default and overridden thresholds, smaller requested limits, repeated blocked
+  calls, one nanosecond before reset and equality at reset.
+- Thirty-two concurrent requests at expiry each receive a unique, coherent
+  count/limit/time snapshot. Configuration mutation after construction cannot
+  alter the captured policy.
+- Response fixtures cover empty, no-hit, hit, partial and failed searches and
+  include the notice in returned-byte statistics. Invalid input leaves the
+  store/vault unopened; the next valid request is call one.
+- A real encrypted stdio fixture loads custom thresholds, accepts serialized
+  queries, rejects malformed inputs before creating storage, and reports the
+  correct empty/tapered/blocked responses.
+
+### Verification commands
+
+Go 1.25.2, Darwin/arm64; `CGO_ENABLED=1`, `-tags fts5`, synthetic
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`,
+`GOCACHE=/private/tmp/capy-go-cache`, canonical `TMPDIR=/private/tmp`, isolated
+`XDG_CONFIG_HOME=/private/tmp/capy-task19-config`, no `CLAUDE_PROJECT_DIR`.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/config ./internal/server ./cmd/capy -run 'Test(SearchConfig\|SearchBudget\|Search_\|BatchExecute_InvalidSearch)'` | Passed: config 0.248s, server 19.457s, stdio/CLI 2.564s. |
+| `go test -race -tags fts5 -count=1 ./internal/config ./internal/server ./cmd/capy -run 'Test(SearchBudget\|SearchConfig\|Search_\|VaultSearch\|Federat\|BatchExecute_InvalidSearch\|Boolean)'` | Passed with local socket permission: config 1.232s, server 29.088s, stdio/CLI 3.738s. |
+| `go test -race -tags fts5 -count=1 ./cmd/capy -run '^TestSearchCLI/fresh_processes_advance_bounded_stale_checks$'` | Passed, 4.484s. An initial broader race selection run alongside the full suite/benchmarks hit a non-reproducing progress assertion in this existing fixture; no code or assertion was changed. |
+| `make test` | Passed with local socket permission; server 98.034s, all packages passed or used cache. The first sandboxed run passed CLI (260.637s) and vault (149.151s) but blocked existing config Unix-socket and server HTTP fixtures. |
+| `make build` | Passed. Go reported a nonfatal module-stat cache write denial under the read-only module cache. |
+| `make bench-quality` | Passed for store, server and vault. |
+| `make bench-compare BASE=master TARGET=feat-upstream_sync` | All 84 metrics unchanged; dataset hash verified against saved baseline `397ecfd`. `benchstat` unavailable, so no performance comparison is claimed. Task 20 retains the feature-wide `c0bfff2` comparison. |
+| `go vet -tags fts5 ./internal/config ./cmd/capy` | Passed. Including server reports only the pre-existing lock-copy warning at `tool_boolean_test.go:110`. |
+| `git diff --check` | Passed. |
+
+Logs: `/private/tmp/capy-task19-{focused,race-final,cli-refresh,full,full-final,build,quality,quality-comparison,vet,vet-final}.log`.
+
+README, CONTRIBUTING, architecture, tool descriptions and ADR-008 explain
+configuration, validation compatibility, restart requirements and shared scope.
+No module, schema or generated-artifact changes were needed; full-suite platform
+tests protect committed generators/copies. CLI and CI changes are N/A: the
+transport fixture uses the existing serve command, and verification follows
+repository `AGENTS.md`. Optional editorial follow-up: `kk:clarify-docs` on
+`README.md`, `CONTRIBUTING.md`, `docs/architecture.md` and
+`docs/adr/008-own-config-system.md`.
+
+The [isolated review](.reviews/task-19-code-review-2026-10-12.md) approved Task 19
+without findings. PAL's expert continuation failed with `API_KEY_INVALID`, so
+only the independent sub-agent supplied review findings. No findings or new
+conventions require knowledge indexing; the relevant behavior is documented
+here and in ADR-008. Task 20 and deferred D1–D5 remain pending.
+
 ## Task 18: Batch query scope and bounded provenance
 
 Implemented 2026-10-12. Scope: batch preflight/execution records, response

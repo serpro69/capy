@@ -5,6 +5,7 @@ type Config struct {
 	Store    StoreConfig    `toml:"store"`
 	Executor ExecutorConfig `toml:"executor"`
 	Server   ServerConfig   `toml:"server"`
+	Search   SearchConfig   `toml:"search"`
 	Vault    VaultConfig    `toml:"vault"`
 }
 
@@ -54,6 +55,13 @@ type ServerConfig struct {
 	LogLevel string `toml:"log_level"`
 }
 
+// SearchConfig controls the capy_search budget shared by an MCP server.
+type SearchConfig struct {
+	WindowMS   int `toml:"window_ms"`
+	TaperAfter int `toml:"taper_after"`
+	BlockAfter int `toml:"block_after"`
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -76,6 +84,11 @@ func DefaultConfig() *Config {
 		},
 		Server: ServerConfig{
 			LogLevel: "info",
+		},
+		Search: SearchConfig{
+			WindowMS:   60000,
+			TaperAfter: 3,
+			BlockAfter: 8,
 		},
 	}
 }
