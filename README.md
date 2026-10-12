@@ -62,6 +62,7 @@
   - [Execution](#execution)
   - [Knowledge](#knowledge)
   - [Utility](#utility)
+- [Upstream sync compatibility notes](#upstream-sync-compatibility-notes)
 - [Security](#security)
   - [Sandbox protections](#sandbox-protections)
 - [Hook System](#hook-system)
@@ -1177,11 +1178,50 @@ also advance through the schedule, while files not attempted stay eligible.
 | `capy_doctor`  | Diagnostics: version, available runtimes, FTS5 status, config, knowledge base status, hook registration, MCP registration, security policies.                                                                                      |
 | `capy_cleanup` | Remove evictable knowledge base entries via four paths: oversized source eviction, retention-score eviction (durable), TTL eviction (ephemeral), TTL eviction (session). Pass `purge_ephemeral=true` for a one-shot scratch clear, `optimize=true` to reclaim FTS bloat (rebuild FTS + VACUUM; mirrors `capy cleanup --optimize`), or `vacuum=true` for a plain VACUUM. |
 
+## Upstream sync compatibility notes
+
+This selective sync covers context-mode `f8d4639..0dfbe8d` (the target includes
+commits after tag v1.0.169). Existing Claude Code and Codex MCP integrations keep
+their encrypted knowledge/vault ownership. After upgrading, run `capy setup`
+for the platform you use and restart its MCP server to load the updated routing,
+schemas, configuration and Read-policy snapshot.
+
+| Area | Changed behavior and migration |
+| --- | --- |
+| Shell policies | Every executable element, including substitutions and unquoted-heredoc expansions, is checked. Literal quoted data stays data. Inputs over 1 MiB, 64 scanner frames, 4,096 elements or `8 × input bytes + 4,096` visits fail before execution. Malformed syntax and unsupported ANSI-C/localized heredoc delimiters fail closed; use ordinary quoted delimiters. Denies win; unmatched hook asks retain their old behavior. |
+| Execution directories | All runtimes run in the selected project by default; optional `cwd` changes only that call's execution directory. Relative non-shell writes now land there. Use explicit temporary paths for disposable output. Go discovers that directory's module/workspace, replace, vendor and toolchain settings; inherited `GOFLAGS` remains stripped. |
+| Read policies | Rules retain settings origins and root/home/source/cwd anchors. Invalid or unsupported rules block file admission. Single-slash denies conservatively match both their source anchor and legacy absolute path; migrate absolute rules to `//`. Allows never inherit that legacy interpretation. |
+| Execute-file admission | External paths require one explicit Read allow covering both requested and physical paths; denies still win. `cwd` does not re-anchor `path`, policies, keys, databases or vault scope. Direct absolute `capy_index` inputs retain deny-only admission. |
+| Hook routing | Main-agent HTTP redirects are direct denials with guidance. Children without recent usable tool observations receive discovery/native fallback; one successful observation permits one redirect within 60 seconds. First-call flood prevention and permanent availability are not guaranteed. |
+| Batch output | Commands, including heredocs, execute unchanged. Indexed output presents stdout then stderr, without interleaving. Queries are optional; `global` searches durable+ephemeral knowledge only. Stored bounded command previews count toward source admission. The complete serialized result is capped at 81,920 bytes with omission counts and a source selector; admitted stored output is retained. |
+| Supplied booleans | Native booleans and trimmed case-insensitive `"true"`/`"false"` work. **`dry_run: "false"` now performs requested eviction.** Null, numbers, collections and other strings fail before work; numeric/shortcut `all_projects` coercion is removed. Omitted defaults stay the same. |
+| Source selectors | `%`, `_` and backslash are literal label characters, no longer SQL wildcard syntax. Use a literal label fragment. Explicit sources still include matching ephemeral knowledge and bypass vault federation. |
+| Fetch cache | Legacy rows miss once until successfully revalidated. Optional `ttl` uses milliseconds; zero/force bypass. Unchanged validation renews freshness, preserves retention age and reports retained sections. Failed conversion is an error instead of a raw-HTML cache entry. Retry hints are limited to selected typed transient failures; no automatic retry occurs. |
+| File ingestion and refresh | Raw reads enforce the source-size limit plus one detection byte. Directory scans have explicit file/depth/entry/byte bounds and complete/incomplete/partial outcomes. Automatic refresh checks at most 32 files per pass with persisted order and byte/time admission limits; returned cached content may await a later check. |
+| Plaintext chunks | New/changed plaintext, including malformed-JSON fallback, is capped at 4,096 bytes per chunk. Same-hash sources keep their old chunks; explicitly evict/reindex to repair them. Markdown/structured JSON remain outside this cap. |
+| Background processes | Captured output is returned once; subsequent output drains without retention. Write persistent logs to a file. Temporary workspace cleanup follows process exit. |
+| Search and statistics | `[search]` configures a shared-server budget with visible limits/reset time; malformed queries, kinds, selectors and limits fail without consuming it. Terminal `capy search` is knowledge-only and unthrottled. Stats show hit/attempted-miss rates and default freshness, replacing uptime-based TTL remaining. |
+
+Knowledge migrations 020/021 add scheduling and validation metadata without
+changing ciphertext, existing timestamp formats or source kinds. Downgrading
+keeps content readable but loses bounded-refresh/freshness guarantees; old
+replacement writes reset new metadata. Vault schemas and credentials are
+unchanged. Reverting the binary also restores old cwd, policy and boolean
+semantics, so scripts relying on the new behavior need adjustment.
+
+The [verification ledger](docs/feat/wip/upstream-sync-v1.0.169/verification.md#task-20-final-verification-and-compatibility)
+records tested revisions, commands, benchmarks and platform limits. Deferred
+[D1–D5](docs/feat/wip/upstream-sync-v1.0.169/upstream-audit.md#deferred-work-with-concrete-next-steps)
+remain: per-agent budgets, atomic policy/read handoff, colliding concurrent batch
+labels, structured chunk splitting and authoritative child tool discovery.
+
 ## Security
 
 capy enforces the same permission rules you already use — but extends them to the MCP sandbox. If you block `sudo` in Claude Code settings, it's also blocked inside `capy_execute`, `capy_execute_file`, and `capy_batch_execute`.
 
-**Zero setup required.** If you haven't configured any permissions, nothing changes.
+Configured deny rules apply automatically. Even with no permission rules,
+shell scanner limits and execute-file project containment apply; external
+execute-file inputs need an explicit Read allow as described below.
 
 ```json
 {

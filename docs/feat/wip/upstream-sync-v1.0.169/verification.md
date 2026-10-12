@@ -1740,6 +1740,229 @@ needed. Task 16's per-call TTL and typed retry hints, Tasks 17–20 and D1–D5 
 pending. Optional editorial follow-up: `kk:clarify-docs` on `README.md`,
 `docs/architecture.md` and `docs/adr/013-configurable-fetch-ttl.md`.
 
+## Task 20: Final verification and compatibility
+
+Final verification started 2026-10-12 on Darwin/arm64 with Go 1.25.2. The
+implementation base is `880f13d` plus the Task 20 working tree; comparison baseline
+is exactly `c0bfff2800614b47a163949eef34645f854fff3a`, extracted with `git archive`
+into `/private/tmp/capy-task20-baseline`. No existing checkout was reverted.
+
+Commands use `CGO_ENABLED=1`, FTS5 tags, synthetic
+`CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`, canonical
+`TMPDIR=/private/tmp`, isolated `XDG_CONFIG_HOME=/private/tmp/capy-task20-config`,
+and clear `CLAUDE_PROJECT_DIR`. CLI/MCP fixtures create private homes, config,
+credentials and databases. The existing optional vault canaries separately read
+the local real corpus; they do not mutate it. The initial sandbox attempt was
+blocked by Go cache permissions; subsequent runs used approved cache/listener
+access. No real credentials are used for test databases.
+
+### Review corrections and behavioral evidence
+
+The isolated feature-wide review identified three P2 issues, with no P0/P1:
+
+- Direct Python argv data was flattened into shell syntax. The typed extraction
+  path now retains direct-argument provenance, matches existing raw deny/ask
+  spellings and bounds-scans a quoted representation. Actual shell-source
+  arguments remain separately inspected. Regression fixtures cover literal
+  parentheses/separators/substitutions, exact argument denies/asks, shell flags,
+  nested keyword expressions, kwargs/continuations, and shell `-c` options.
+- Bash array values were treated as subshell commands. Array data now preserves
+  literals while scanning command/process substitutions, quotes and comments
+  under the same byte/frame/element/visit bounds. Hook and actual execution
+  fixtures distinguish literal `values=(blocked)` from executable substitutions.
+- Cancellation during a final ingestion write could report complete success.
+  Shared ingestion now returns cancellation after preserving committed file,
+  unchanged, section and byte counters. Deterministic fixtures cancel after a
+  real commit, assert partial outcomes and reopen the encrypted database.
+
+The existing direct-JavaScript benchmark used `node -c` on inline code; it now
+uses `-e` in both measurement trees, retaining its failure assertion. Public
+stats fields replace whole-struct equality in the cleanup fixture, eliminating
+the previously recorded mutex-copy vet warning. The CLI refresh fairness fixture
+now sets known-newer file mtimes after indexing; slow/race-enabled setup could
+otherwise cross a second boundary and make one backing file appear older than
+its stored `indexed_at`. Positive progress, the 32-file ceiling and high-ID
+eventual coverage assertions are unchanged.
+
+Actual old-reader compatibility uses a binary built from `c0bfff2`. It creates
+an encrypted pre-migration database, then the new store migrates/validates it.
+An old MCP process reads and performs dedup/replacement while the new store is
+open; old replacement clears validation, new validation restores it, and a fresh
+old process reads after checkpoint/reopen. MCP is used because that baseline
+predates terminal knowledge search. Synthetic migration tests separately cover
+020/021 rollback, concurrent opens, index plans, NULL/default metadata and reopen.
+The normal CLI/MCP suite verifies both indexing directions, selected-project and
+crossed credentials, worktrees, vault ownership and shutdown checkpoints.
+
+### Commands and results
+
+| Command | Result |
+| --- | --- |
+| `GOFLAGS=-count=1 make test` | All packages passed before review corrections; CLI 249.466s, server 102.547s, store 58.056s, vault 149.849s. |
+| `make build` | Passed. |
+| `go test -tags fts5,glamour -count=1 ./internal/vault/tui/...` | Passed, 22.191s. |
+| `go vet -tags fts5 ./...` | Passed after the stats-fixture correction; the previously recorded warning is resolved. |
+| `go test -tags fts5 -count=1 ./internal/platform -run 'TestGeneratedWholeFileArtifacts\|TestMergedArtifactsAreIdempotent\|TestDriftGuardCoversEverySetupArtifact'` | Passed, 0.298s. |
+| `CAPY_TEST_OLD_BINARY=/private/tmp/capy-task20-old-c0bfff2 go test -tags fts5 -count=1 ./cmd/capy -run '^TestFetchFreshnessOldBinaryCompatibility$'` | Passed, 1.740s. |
+| Initial `GOFLAGS=-count=1 make test-race` | No data race reported; failed the CLI timestamp assumption above and the unchanged real-corpus `TestCodexCanary` exceeded the default ten-minute timeout while decoding. |
+| `go test -race -tags fts5 -count=1 ./cmd/capy -run '^TestSearchCLI$/^fresh_processes_advance_bounded_stale_checks$'` | Passed, 4.567s after deterministic mtimes; original assertions retained. |
+| Focused final `go test -race -tags fts5 -count=1` over security/hook/knowledge/server review regressions, including existing byte/error fixtures | Passed: security 2.904s, hook 5.194s, knowledge 88.109s, server 2.172s. |
+| `go test -tags fts5 ./internal/security -run '^$' -fuzz '^FuzzSplitChainedCommands$' -fuzztime=5s` | Passed, 1,384,580 executions; 6.339s including startup/shutdown. |
+| Final `CAPY_TEST_OLD_BINARY=/private/tmp/capy-task20-old-c0bfff2 GOFLAGS=-timeout=30m make test-race` | **All packages passed** on the reviewed code, including real CLI/stdio and old-reader fixtures: CLI 248.329s, knowledge 110.349s, server 115.062s, store 80.100s, vault 728.017s, TUI 39.112s. The previously timed-out `TestCodexCanary` ran; no race finding. |
+| Final `make build` and `go vet -tags fts5 ./...` | Both passed after the full race suite; sequential verification script exited 0. |
+| Final `git diff --check` and local documentation-link/whitespace checks | Passed, including newly created ADR/review files. |
+
+The intermediate cancellation seam initially captured the constructor's store,
+bypassing two existing tests that inject a failing store before use. Their
+unchanged byte/failure assertions caught this; the seam now uses the indexer's
+current store. An initial scanner compile error was also corrected before the
+focused passing checks. These failures are recorded, not treated as passing runs.
+The extended intermediate full race run passed the vault canary in 718.744s but
+still contained that seam defect; the final full race command above passed after
+its correction. The longer timeout accommodates existing real-corpus work without
+weakening or skipping its assertions. All required verification is complete.
+
+Logs use `/private/tmp/capy-task20-*.log`. In particular `test-final.log`,
+`race.log`, `race-final.log`, `review-fixes-final.log`, `stale-cli.log`,
+`old-reader.log`, `build.log`, `glamour.log`, `vet.log` and `artifacts.log`
+distinguish each command. Benchmark raw artifacts remain under ignored
+`bench-results/`; durable measurements and comparison provenance belong here.
+Final green results are `race-reviewed.log`, `build-final.log`, `vet-final.log`
+and `finish.log`; the earlier failed/interrupted runs remain separately named.
+
+### Baseline quality and performance comparison
+
+Both revisions passed `make bench BENCH_COUNT=1 BENCH_TIME=1x` with
+`GOFLAGS='-run=^$ -timeout=30m'` and `.SHELLFLAGS='-ec -o pipefail'` so a failed
+benchmark cannot be hidden by `tee`. Every performance case ran once, including
+all content types at 100/1,000/10,000 sources, plus the complete quality suite.
+The performance store package took 122.959s baseline / 124.284s current; quality
+store/server/vault packages all passed. These single-iteration timings are smoke
+measurements, not regression significance tests.
+
+The initial six-sample run was deliberately stopped during expensive corpus
+setup. A subsequent single-sample run confirmed the cause: setup repeatedly
+compacted the entire growing FTS index. The benchmark-only fix preserves every
+normal source admission, chunk and vocabulary write, defers periodic compaction,
+then checks optimization of both indexes once before search timing. This changed
+the 10,000-Markdown-source setup from over ten minutes to about twenty seconds.
+Identical benchmark files and sampling controls were applied to both revisions;
+production optimization, timed indexing and quality assertions are unchanged.
+The harness change was independently reviewed.
+
+`make bench-compare BASE=task20-baseline-c0bfff2 TARGET=task20-current` verified
+dataset hash `sha256:7d45338724b05181ebc92bd0b74eb7708bdd4fba27a8d6830b54a127f2b6ba2d`:
+**all 84 quality/context metrics are unchanged**. Because the baseline is a
+`git archive` extraction, its JSON metadata says `unknown`; the explicit artifact
+label and archive command identify `c0bfff2`. Target metadata is `880f13d` plus
+this working tree. No detached `HEAD` artifact is mislabeled as master.
+
+Repeated samples used the same Apple M4 Pro / Go 1.25.2 and synthetic keys,
+sequentially with no overlapping verification jobs:
+
+```sh
+go test -tags fts5 -run '^$' -bench '^(BenchmarkIndex|BenchmarkSearchByTier|BenchmarkExecutorOverhead|BenchmarkExecutorOverheadParallel|BenchmarkExecutorScaling|BenchmarkSafeEnv|BenchmarkProcessGroupKill)$' -benchmem -benchtime=1s -count=6 -timeout=15m ./internal/store ./internal/executor
+go test -tags fts5 -run '^$' -bench '^BenchmarkStaleRefreshWorkload$' -benchmem -benchtime=1x -count=6 -timeout=10m ./internal/store
+```
+
+Six-sample medians in milliseconds (baseline → current):
+
+| Workload | Baseline | Current | Change |
+| --- | ---: | ---: | ---: |
+| Index Markdown | 4.095 | 4.159 | +1.6% |
+| Index JSON | 4.503 | 4.521 | +0.4% |
+| Index plaintext | 2.201 | 2.121 | −3.6% |
+| Index transcript | 2.839 | 2.803 | −1.3% |
+| Index curated | 4.851 | 4.884 | +0.7% |
+| Porter search | 1.371 | 1.452 | +5.9% |
+| Trigram search | 0.801 | 0.771 | −3.8% |
+| RRF search | 1.296 | 1.351 | +4.2% |
+| Fuzzy + RRF search | 0.999 | 1.085 | +8.6% |
+| Shell executor | 4.114 | 4.175 | +1.5% |
+| JavaScript executor | 18.649 | 19.264 | +3.3% |
+| Python executor | 16.152 | 16.611 | +2.8% |
+| Parallel shell executor | 0.798 | 0.894 | +11.9% |
+| Parallel JavaScript executor | 2.221 | 2.379 | +7.2% |
+| Parallel Python executor | 1.991 | 2.163 | +8.6% |
+| Shell output 1 KiB | 6.574 | 7.363 | +12.0% |
+| Shell output 10 KiB | 6.885 | 7.280 | +5.7% |
+| Shell output 100 KiB | 11.589 | 11.824 | +2.0% |
+| Shell output 1 MiB | 54.580 | 55.757 | +2.2% |
+
+`benchstat` is unavailable, so these are descriptive medians, not statistically
+significant regression/speedup claims. Unchanged controls also shifted: direct
+shell +5.9%, direct JavaScript/Python +2.3%, environment construction +7.2%, and
+process-group kill +7.8%. Exact timing deltas cannot all be attributed to the
+feature. The largest executor increases are about 0.096 ms (parallel shell) and
+0.789 ms (1 KiB output). Executor allocation counts rise by 6–10 and roughly
+1.1–1.4 KiB per operation, consistent with explicit pipe readers and synchronized
+exit/reap ownership required by ADR-005; background retention is now bounded.
+Search-tier calls add two allocations with near-flat byte totals, alongside the
+new context/strict-error plumbing. No ranking or correctness assertion was
+weakened to improve these measurements.
+
+The same 10,000-real-file stale fixture was copied onto `c0bfff2`. Its only
+baseline production overlay is a read-counting seam around the existing
+**unbounded** `io.ReadAll`; it does not import the new bounded reader or scheduler.
+The fixture bulk-seeds identical source/FTS rows outside the timer, measures one
+normal search and pins SQLite `total_changes()` to one pooled connection.
+`/private/tmp/capy-task20-baseline-overlay.patch` records all harness overlays.
+
+| Tree | Baseline → current latency | Attempted files | Bytes allocated | Allocations |
+| --- | ---: | ---: | ---: | ---: |
+| Unchanged | 168.764 → 48.800 ms | 10,000 → 32 | 13,308,088 → 213,440 | 190,000 → 3,573 |
+| 128 changed | 680.508 → 163.232 ms | 10,000 → 14 | 14,838,120 → 329,716 | 226,088 → 5,556 |
+
+Unchanged trees read zero content bytes in both versions; their SQLite row-change
+count rises from **1 to 33**, exposing the 32 added scheduling writes. Changed
+trees read **3,712 → 406 bytes**, with **7,265 → 1,489 SQLite row changes**; remaining
+files await later passes. These count changed rows, not disk pages or write bytes.
+The current pass's 14 attempts reflect the admission clock; 163 ms total search
+latency includes completing an admitted operation and retrieval, so it does not
+violate or imply a 100 ms total-query deadline.
+
+The 32-row partial-index query-plan tests, 10,000-file eventual-progress fixture,
+late/high-ID coverage and repeated real CLI processes remain intact. Together
+with measured work/allocation counts, they establish bounded passes without a
+hidden all-source snapshot or restart starvation. This is a deliberate tradeoff:
+persistent scheduling writes and potentially deferred freshness buy bounded work.
+
+Raw smoke/quality artifacts are `bench-results/task20-{baseline-c0bfff2,current}.{txt,json}`;
+repeated outputs are `/private/tmp/capy-task20-{focused,stale}-{baseline,current}.txt`.
+The parsed medians are `/private/tmp/capy-task20-performance-summary.json`, and
+the quality comparison is `/private/tmp/capy-task20-bench-compare.log`.
+
+### Documentation and review scope
+
+README's compatibility table enumerates all design §10 behavior changes and
+rollback implications, linking the retained D1–D5 follow-ups. Proposed ADR-033,
+ADR-034 and ADR-035 record cwd/project identity, prepared admission and independent
+freshness/retention/scheduling. ADR-022 corrects historical universal chunk/DB-size
+claims. ADR-005/008/012/013 already contain the applicable feature amendments.
+Architecture no longer calls implemented hook cwd or terminal search pending.
+No generated artifact changed in Task 20; their existing drift checks passed.
+
+CLI syntax/flags/defaults/exit codes remain documented in README. CI changes are
+N/A: no workflow is introduced; build tags, credentials and test conventions are
+inherited from repository `AGENTS.md` and `CONTRIBUTING.md`. The timestamp fixture
+adds only the standard `time` import; Context7's pinned Go 1.25.2 example verifies
+`time.Now().Add`/`os.Chtimes`. No module version changes are needed.
+
+Code review covers the full feature runtime since `c0bfff2` and the Task 20
+supplement, using the Go profile and independent bounded reviewers. PAL's external
+continuation failed with `API_KEY_INVALID`, so no external approval is claimed.
+The [code review](.reviews/task-20-code-review-2026-10-12.md) approved all corrected
+findings and the benchmark setup supplement; the
+[spec review](.reviews/task-20-spec-review-2026-10-12.md) found full conformance,
+with pending measurements explicitly excluded from that static assessment.
+The measurements and final runtime checks above subsequently completed; every
+implementation and verification task is now done. ADRs retain proposed status
+and D1–D5 remain separate follow-ups; neither task completion nor passing tests
+claims a release, new architecture acceptance or live-host verification.
+No systemic P0/P1 or
+undocumented project convention requires knowledge indexing. Optional editorial
+follow-up: `kk:clarify-docs` on README, architecture and ADR-033 through ADR-035.
+
 ## Task 19: Configurable shared search budget
 
 Implemented 2026-10-12. `[search] window_ms`, `taper_after` and `block_after`

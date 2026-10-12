@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14, 15, 16a, 16, 17, 18 and 19 complete; Task 20 pending)
+> Status: done — all tasks complete; D1–D5 remain deferred
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -870,6 +870,64 @@ Depends on every implementation slice, including Tasks 2a, 5a, 6a, 12a, 13a and 
 6. Run `kk:review-code` with Go input, then `kk:review-spec` against all feature artifacts → verify: fix actionable findings or record each unresolved item durably with a reason and next step. Mark implementation tasks done only with evidence.
 
 Do not remove deferred D1–D5 merely because the suite passes. Both supplied independent reviews have been reconciled; the reconciliation is an author response, not a new independent approval.
+
+Task 20 implementation notes (2026-10-12): the final feature review required
+three bounded corrections. Python list-form subprocess extraction now preserves
+direct argv provenance through both policy evaluators; bounded scanning quotes
+literal data while deny/ask matching retains the original flattened spelling.
+Actual shell-source arguments (`shell=True`, conservatively dynamic shell flags,
+and recognized shell `-c` forms) remain separately inspected. Trailing-call
+inspection accounts for nested keyword expressions, quotes and comments. This
+is still static extraction, not full Python evaluation or arbitrary wrapper
+resolution. Bash compound-array values likewise remain data while their command
+and process substitutions are scanned under the same resource bounds.
+
+Shared file/directory ingestion now reports cancellation after the final store
+write or metadata step while retaining committed new/unchanged/chunk counters.
+Deterministic tests cancel immediately after a real commit and verify partial
+outcomes and encrypted reopen. CLI's existing late-cancellation handling remains.
+
+Verification also fixes two previously recorded fixture issues: direct Node
+benchmarks execute inline code with `-e`, and cleanup assertions compare public
+stats fields without copying a mutex. The CLI refresh fixture explicitly sets
+file mtimes newer than second-resolution indexing time, preserving its exact
+positive-progress/32-file/fairness assertions. The old-binary fixture now starts
+with an actual pre-sync encrypted database and uses MCP after reopen, so it can
+test `c0bfff2` as well as pre-021 binaries that already have the search CLI.
+
+Performance sampling is configurable through `BENCH_COUNT` and `BENCH_TIME`,
+retaining the six-sample/one-second defaults and unchanged quality assertions.
+Task 20 uses a complete one-iteration smoke run plus repeated focused comparisons
+to avoid rebuilding each large search corpus six times. Baseline and current
+trees receive identical fixture/sampling changes; measured setup limitations
+and descriptive-versus-statistical claims are explicit in verification.
+Search fixture seeding also defers periodic FTS optimization until the corpus is
+complete, retaining every production admission/chunk/vocabulary write and checked
+final optimization of both indexes. Both revisions use that same benchmark-only
+setup; timed indexing and quality fixtures keep their existing behavior.
+
+README consolidates every design §10 compatibility change. Proposed ADR-033,
+ADR-034 and ADR-035 record cwd/project identity, prepared admission, and independent
+freshness/retention/scheduling respectively. ADR-005/008/012/013 already contain
+their relevant amendments; ADR-022 now qualifies historical chunk/database-size
+claims and records raw-read and response-versus-storage bounds. Their proposed
+status does not assert new decision acceptance. Existing CLI usage, build/key
+requirements and CI are inherited from README, CONTRIBUTING and AGENTS.md; no
+module, vault schema or generated artifact changes are added by Task 20.
+
+The timestamp fixture's standard-library lookup followed `kk:dependency-handling`:
+Context7 returned the pinned Go 1.25.2 `test_cache_inputs.txt` example using
+`time.Now().Add` and `os.Chtimes`. No dependency upgrade is needed. Commands,
+results, benchmark provenance and environment limitations are recorded in
+[final verification](verification.md#task-20-final-verification-and-compatibility).
+
+Final reflection: the sync preserves the selected architecture and all 84 quality
+metrics. Final review required small runtime corrections for literal argv/array
+data and late cancellation; those exposed why policy parsing and committed
+progress need explicit representations. The most time-consuming verification
+surprises were the real-corpus race canary and repeated FTS compaction during
+benchmark setup. Their timeout/setup fixes leave correctness assertions intact.
+No additional design deviation or undocumented convention needs knowledge indexing.
 
 ## Verification status at design time
 

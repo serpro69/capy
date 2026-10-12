@@ -5,7 +5,7 @@
 > Audit: [upstream-audit.md](upstream-audit.md)
 > Reconciliation: [.reviews/reconciliation-2026-10-10.md](.reviews/reconciliation-2026-10-10.md)
 > Readiness: [.reviews/readiness-2026-10-10.md](.reviews/readiness-2026-10-10.md)
-> Status: in-progress
+> Status: done
 > Created: 2026-10-10
 > Not Doing: CI/bundle/docs-only ports, unsupported platforms, hosted analytics/pricing, event/directive replay, new Codex hooks, new runtimes, transcript-based cwd guessing, vault schema/key changes, ranking rewrites, unconditional source echoes, OS sandboxing
 > Deferred follow-ups: per-agent throttle identity (D1), atomic checked-file handoff (D2), colliding concurrent batch labels (D3), structured chunk splitting (D4), authoritative child tool-pool discovery (D5); see audit.
@@ -541,7 +541,7 @@ remain pending.
 
 ## Task 20: Verify the complete sync and document compatibility
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Tasks 1–19, 2a, 5a, 6a, 12a, 13a, 16a
 - **Size:** M
 - **Can run in parallel with:** —
@@ -549,11 +549,21 @@ remain pending.
 
 ### Subtasks
 
-- [ ] 20.1 Run `kk:test`, full FTS5/race suites, default build and glamour TUI subset → verify: record commands/results in `verification.md`.
-- [ ] 20.2 Run encrypted CLI/MCP round trips, additive migration/old-reader cases and artifact checks → verify: same project/key/content and close/reopen behavior.
-- [ ] 20.3 Run quality/performance plus 10,000-file stale-work benchmarks against `c0bfff2` → verify: bounded work/progress, explain regressions and keep assertions intact.
-- [ ] 20.4 Run `kk:document`, record the named cwd/admission/freshness ADRs and amend existing decisions; publish all compatibility changes from design §10 → verify: generators/copies and contract descriptions agree.
-- [ ] 20.5 Run `kk:review-code` with Go input, then `kk:review-spec` → verify: resolve findings or record actionable deferrals; retain D1–D5 until actually addressed.
+- [x] 20.1 Run `kk:test`, full FTS5/race suites, default build and glamour TUI subset → verify: record commands/results in `verification.md`.
+- [x] 20.2 Run encrypted CLI/MCP round trips, additive migration/old-reader cases and artifact checks → verify: same project/key/content and close/reopen behavior.
+- [x] 20.3 Run quality/performance plus 10,000-file stale-work benchmarks against `c0bfff2` → verify: bounded work/progress, explain regressions and keep assertions intact.
+- [x] 20.4 Run `kk:document`, record the named cwd/admission/freshness ADRs and amend existing decisions; publish all compatibility changes from design §10 → verify: generators/copies and contract descriptions agree.
+- [x] 20.5 Run `kk:review-code` with Go input, then `kk:review-spec` → verify: resolve findings or record actionable deferrals; retain D1–D5 until actually addressed.
+
+Evidence: [final verification](verification.md#task-20-final-verification-and-compatibility),
+[isolated code review](.reviews/task-20-code-review-2026-10-12.md) and
+[isolated spec review](.reviews/task-20-spec-review-2026-10-12.md). Final full race,
+build and vet checks pass; the full FTS5 suite, glamour, encrypted old-reader/stdio
+and artifact checks pass. All 84 quality metrics match `c0bfff2`; repeated
+performance measurements record bounded stale work and its write cost. Review's
+three P2 findings are corrected and independently approved. Compatibility notes
+and proposed ADR-033/034/035 are complete. D1–D5 remain explicit follow-ups; PAL's
+unavailable external reviewer and descriptive timing limits are recorded.
 
 ## Dependency Graph
 

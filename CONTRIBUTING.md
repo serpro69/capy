@@ -157,6 +157,16 @@ make bench-compare BASE=main TARGET=feat-my-thing
 
 Branch names with `/` are converted to `-` in filenames (e.g., `feat/bench` → `feat-bench`).
 
+Performance defaults are `BENCH_COUNT=6` and `BENCH_TIME=1s`. For a complete
+single-sample smoke run with expensive corpus setup, use
+`make bench BENCH_COUNT=1 BENCH_TIME=1x`; quality assertions still run in full.
+Use the same settings on both revisions and repeated focused samples before
+interpreting timing differences. A smoke sample alone is not statistical evidence.
+Search-corpus setup uses the normal admission, chunking and vocabulary writes,
+but defers repeated FTS optimization until the entire fixture is loaded; both
+indexes are optimized once before search timing. Index-throughput benchmarks
+retain normal periodic optimization.
+
 **Reading results:**
 
 ```bash

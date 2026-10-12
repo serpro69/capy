@@ -42,8 +42,12 @@ func BenchmarkExecutorOverhead(b *testing.B) {
 			if err != nil {
 				b.Skipf("%s not available", bl.bin)
 			}
+			inlineFlag := "-c"
+			if bl.lang == JavaScript {
+				inlineFlag = "-e" // node -c checks a file; -e executes inline code.
+			}
 			for b.Loop() {
-				cmd := exec.Command(bin, "-c", bl.code)
+				cmd := exec.Command(bin, inlineFlag, bl.code)
 				if out, err := cmd.CombinedOutput(); err != nil {
 					b.Fatalf("direct exec failed: %v: %s", err, out)
 				}

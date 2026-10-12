@@ -22,14 +22,18 @@ func EvaluateCommandDenyOnly(command string, policies []SecurityPolicy) (Command
 	if err != nil {
 		return CommandDecision{}, err
 	}
+	return evaluateSegmentsDenyOnly(segments, policies), nil
+}
+
+func evaluateSegmentsDenyOnly(segments []string, policies []SecurityPolicy) CommandDecision {
 	for _, segment := range segments {
 		for _, policy := range policies {
 			if match := matchesAnyBashPattern(segment, policy.Deny, false); match != "" {
-				return CommandDecision{Decision: "deny", MatchedPattern: match}, nil
+				return CommandDecision{Decision: "deny", MatchedPattern: match}
 			}
 		}
 	}
-	return CommandDecision{Decision: "allow"}, nil
+	return CommandDecision{Decision: "allow"}
 }
 
 // EvaluateCommand evaluates a command against policies with full deny > ask > allow logic.
@@ -44,10 +48,14 @@ func EvaluateCommand(command string, policies []SecurityPolicy) (CommandDecision
 	if err != nil {
 		return CommandDecision{}, err
 	}
+	return evaluateSegments(segments, policies), nil
+}
+
+func evaluateSegments(segments []string, policies []SecurityPolicy) CommandDecision {
 	for _, segment := range segments {
 		for _, policy := range policies {
 			if match := matchesAnyBashPattern(segment, policy.Deny, false); match != "" {
-				return CommandDecision{Decision: "deny", MatchedPattern: match}, nil
+				return CommandDecision{Decision: "deny", MatchedPattern: match}
 			}
 		}
 	}
@@ -57,7 +65,7 @@ func EvaluateCommand(command string, policies []SecurityPolicy) (CommandDecision
 	for _, policy := range policies {
 		for _, segment := range segments {
 			if match := matchesAnyBashPattern(segment, policy.Ask, false); match != "" {
-				return CommandDecision{Decision: "ask", MatchedPattern: match}, nil
+				return CommandDecision{Decision: "ask", MatchedPattern: match}
 			}
 		}
 		allAllowed := len(segments) > 0
@@ -73,11 +81,42 @@ func EvaluateCommand(command string, policies []SecurityPolicy) (CommandDecision
 			}
 		}
 		if allAllowed {
-			return CommandDecision{Decision: "allow", MatchedPattern: matched}, nil
+			return CommandDecision{Decision: "allow", MatchedPattern: matched}
 		}
 	}
 
-	return CommandDecision{Decision: "ask"}, nil
+	return CommandDecision{Decision: "ask"}
+}
+
+func embeddedSegments(command EmbeddedCommand) ([]string, error) {
+	if command.argv == nil {
+		return SplitChainedCommands(command.text)
+	}
+	// Quote only for bounded scanning. Policy matching keeps the established
+	// raw argv spelling, so adding literal safety cannot weaken deny/ask rules.
+	if _, err := SplitChainedCommands(joinArgs(command.argv)); err != nil {
+		return nil, err
+	}
+	return []string{command.text}, nil
+}
+
+// EvaluateEmbeddedCommand applies hook deny/ask/allow rules without treating
+// direct argv data as shell syntax.
+func EvaluateEmbeddedCommand(command EmbeddedCommand, policies []SecurityPolicy) (CommandDecision, error) {
+	segments, err := embeddedSegments(command)
+	if err != nil {
+		return CommandDecision{}, err
+	}
+	return evaluateSegments(segments, policies), nil
+}
+
+// EvaluateEmbeddedCommandDenyOnly is the MCP deny-only counterpart.
+func EvaluateEmbeddedCommandDenyOnly(command EmbeddedCommand, policies []SecurityPolicy) (CommandDecision, error) {
+	segments, err := embeddedSegments(command)
+	if err != nil {
+		return CommandDecision{}, err
+	}
+	return evaluateSegmentsDenyOnly(segments, policies), nil
 }
 
 // EvaluateFilePath checks if a file path should be denied based on deny globs.

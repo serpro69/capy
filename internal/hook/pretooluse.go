@@ -278,5 +278,19 @@ func checkCodeSecurity(code, language string, policies []security.SecurityPolicy
 	if language == "shell" {
 		return checkCommandSecurity(code, policies, a)
 	}
-	return checkCommandsSecurity(security.ExtractShellCommands(code, language), policies, a)
+	ask := false
+	for _, command := range security.ExtractEmbeddedCommands(code, language) {
+		decision, err := security.EvaluateEmbeddedCommand(command, policies)
+		if err != nil {
+			return a.FormatBlock(fmt.Sprintf("Command blocked: %v", err))
+		}
+		if decision.Decision == "deny" {
+			return a.FormatBlock(fmt.Sprintf("Blocked by security policy: matches deny pattern %s", decision.MatchedPattern))
+		}
+		ask = ask || decision.Decision == "ask" && decision.MatchedPattern != ""
+	}
+	if ask {
+		return a.FormatAsk()
+	}
+	return nil, nil
 }

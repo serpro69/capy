@@ -35,6 +35,8 @@ type Indexer struct {
 	store          *store.ContentStore
 	// Set before first use; the seam allows deterministic growth/read failures.
 	readContent func(io.Reader, int) ([]byte, error)
+	// Set before first use, like readContent; permits commit-boundary tests.
+	indexContent func(content, label, path string) (*store.IndexResult, error)
 }
 
 // NewIndexer uses the same size default as ContentStore. The prepared policy
@@ -43,10 +45,14 @@ func NewIndexer(projectDir string, maxSourceBytes int, policy *security.FilePoli
 	if maxSourceBytes <= 0 {
 		maxSourceBytes = store.DefaultMaxSourceBytes
 	}
-	return &Indexer{
+	indexer := &Indexer{
 		projectDir: projectDir, maxSourceBytes: maxSourceBytes,
 		policy: policy, store: st, readContent: fileio.ReadAll,
 	}
+	indexer.indexContent = func(content, label, path string) (*store.IndexResult, error) {
+		return indexer.store.IndexWithFilePath(content, label, "", store.KindDurable, path)
+	}
+	return indexer
 }
 
 // IndexFile indexes one durable, file-backed source. Relative inputs retain
@@ -81,7 +87,8 @@ func (i *Indexer) IndexFile(ctx context.Context, path, source string) (FileResul
 	if err := i.policy.Check(path); err != nil {
 		return out, fmt.Errorf("file access blocked by security policy: %w", err)
 	}
-	return i.indexAdmittedFile(ctx, path, source, 0, false)
+	out, err = i.indexAdmittedFile(ctx, path, source, 0, false)
+	return out, errors.Join(err, ctx.Err())
 }
 
 // indexAdmittedFile shares descriptor-bound reads with the directory walker.
@@ -137,7 +144,7 @@ func (i *Indexer) indexAdmittedFile(ctx context.Context, path, source string, al
 		source = path
 	}
 	out.BytesIndexed = int64(len(data))
-	out.Result, err = i.store.IndexWithFilePath(string(data), source, "", store.KindDurable, path)
+	out.Result, err = i.indexContent(string(data), source, path)
 	if err != nil {
 		return out, fmt.Errorf("index file: %w", err)
 	}

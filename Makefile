@@ -7,6 +7,8 @@ VERSION         ?= $(shell git describe --tags --always --dirty 2>/dev/null || e
 LDFLAGS         := -ldflags "-X $(MODULE)/internal/version.Version=$(VERSION)"
 BUILD_TAGS      := -tags "fts5"
 BENCH_BRANCH    := $(shell git rev-parse --abbrev-ref HEAD | tr '/' '-')
+BENCH_COUNT     ?= 6
+BENCH_TIME      ?= 1s
 TOOLBOX_VERSION := latest # also accepts other refs like branch names ('master', 'feat/...'), or tags ('v1.2.3')
 
 .PHONY: help build build-glamour test test-race fmt vet clean bench bench-perf bench-quality bench-compare sync
@@ -42,7 +44,7 @@ bench: bench-perf bench-quality
 
 bench-perf: ## Run performance benchmarks
 	mkdir -p bench-results
-	CGO_ENABLED=1 go test $(BUILD_TAGS) -bench=. -benchmem -count=6 \
+	CGO_ENABLED=1 go test $(BUILD_TAGS) -bench=. -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) \
 	  ./internal/store/ ./internal/executor/ \
 	  | tee bench-results/$(BENCH_BRANCH).txt
 

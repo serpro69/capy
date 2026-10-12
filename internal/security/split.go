@@ -171,11 +171,22 @@ func (s *shellScanner) commands(start, end int, stop byte, depth int) (int, erro
 			continue
 		}
 		if ch == '(' {
+			array, err := s.arrayAssignment(i)
+			if err != nil {
+				return i, err
+			}
+			if array {
+				next, err := s.arrayData(i+1, end, depth+len(pending)+1)
+				if err != nil {
+					return i, err
+				}
+				i = next
+				continue
+			}
 			if err := s.emit(segment, i); err != nil {
 				return i, err
 			}
 			var next int
-			var err error
 			if i+1 < end && s.text[i+1] == '(' {
 				next, err = s.arithmetic(i+2, end, depth+len(pending)+1)
 			} else {
@@ -216,6 +227,105 @@ func (s *shellScanner) commands(start, end int, stop byte, depth int) (int, erro
 		return end, fmt.Errorf("unterminated shell substitution or group")
 	}
 	return end, s.emit(segment, end)
+}
+
+// A compound array assignment contains literal words, with executable
+// expansions, rather than a subshell command list. Recognize a plain shell
+// identifier immediately before =( or +=(; do not reinterpret arbitrary words.
+func (s *shellScanner) arrayAssignment(paren int) (bool, error) {
+	if paren < 2 || s.text[paren-1] != '=' {
+		return false, nil
+	}
+	i := paren - 2
+	if s.text[i] == '+' {
+		i--
+	}
+	end := i + 1
+	for i >= 0 {
+		ch := s.text[i]
+		if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_') {
+			break
+		}
+		if err := s.visit(1); err != nil {
+			return false, err
+		}
+		i--
+	}
+	if i+1 == end || s.text[i+1] >= '0' && s.text[i+1] <= '9' {
+		return false, nil
+	}
+	return i < 0 || strings.ContainsRune(" \t\r\n;|&(", rune(s.text[i])), nil
+}
+
+func (s *shellScanner) arrayData(start, end, depth int) (int, error) {
+	if err := s.frame(depth); err != nil {
+		return start, err
+	}
+	atWordStart := true
+	for i := start; i < end; {
+		if err := s.visit(1); err != nil {
+			return i, err
+		}
+		ch := s.text[i]
+		wasWordStart := atWordStart
+		atWordStart = strings.ContainsRune(" \t\r\n", rune(ch))
+		if ch == ')' {
+			return i + 1, nil
+		}
+		if ch == '\\' {
+			if i+1 < end && s.text[i+1] == '\n' {
+				atWordStart = wasWordStart
+			}
+			i += min(2, end-i)
+			continue
+		}
+		if ch == '#' && wasWordStart {
+			for i < end && s.text[i] != '\n' && s.text[i] != '\r' {
+				if err := s.visit(1); err != nil {
+					return i, err
+				}
+				i++
+			}
+			continue
+		}
+		ansi := ch == '$' && i+1 < end && s.text[i+1] == '\''
+		if ch == '\'' || ch == '"' || ansi {
+			if ansi {
+				i++
+			}
+			next, err := s.quote(i, end, depth+1, ansi)
+			if err != nil {
+				return i, err
+			}
+			i = next
+			continue
+		}
+		if next, ok, err := s.expansion(i, end, depth, false); ok {
+			if err != nil {
+				return i, err
+			}
+			i = next
+			continue
+		}
+		if (ch == '<' || ch == '>') && i+1 < end && s.text[i+1] == '(' {
+			next, err := s.commands(i+2, end, ')', depth+1)
+			if err != nil {
+				return i, err
+			}
+			i = next
+			continue
+		}
+		if ch == '(' { // e.g. extglob alternatives remain data.
+			next, err := s.arrayData(i+1, end, depth+1)
+			if err != nil {
+				return i, err
+			}
+			i = next
+			continue
+		}
+		i++
+	}
+	return end, fmt.Errorf("unterminated shell array assignment")
 }
 
 func (s *shellScanner) quote(start, end, depth int, ansi bool) (int, error) {

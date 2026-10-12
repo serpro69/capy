@@ -119,6 +119,11 @@ func BenchmarkSearchByTier(b *testing.B) {
 // seedCorpus seeds a store with n synthetic entries derived from fixtures.
 func seedCorpus(tb testing.TB, s *ContentStore, entries []benchEntry, ct string, n int) {
 	tb.Helper()
+	// Fixture setup is outside the timed search. Re-optimizing the growing FTS
+	// indexes every 50 chunks makes large corpus setup quadratic. Keep all
+	// production admission/chunk/vocabulary writes, then normalize once below.
+	s.insertCount.Store(-1 << 60)
+	defer s.insertCount.Store(0)
 	for i := range n {
 		src := entries[i%len(entries)]
 		label := fmt.Sprintf("corpus-%s-%d", ct, i)
@@ -144,6 +149,18 @@ func seedCorpus(tb testing.TB, s *ContentStore, entries []benchEntry, ct string,
 		}
 		if err != nil {
 			tb.Fatalf("seeding corpus entry %d: %v", i, err)
+		}
+	}
+	db, err := s.getDB()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	for _, query := range []string{
+		"INSERT INTO chunks(chunks) VALUES ('optimize')",
+		"INSERT INTO chunks_trigram(chunks_trigram) VALUES ('optimize')",
+	} {
+		if _, err := db.Exec(query); err != nil {
+			tb.Fatalf("normalizing search corpus: %v", err)
 		}
 	}
 }
