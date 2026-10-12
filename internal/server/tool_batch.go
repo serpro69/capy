@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -17,134 +18,136 @@ const maxBatchOutput = 80 * 1024 // 80 KB total output cap
 // maxBatchConcurrency caps the parallel worker pool for capy_batch_execute.
 const maxBatchConcurrency = 8
 
-func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest) (response *mcp.CallToolResult, err error) {
+	// Bound every exit, including validation/policy errors. Preserve the existing
+	// stats contract: only admitted calls count as tool responses.
+	trackResponse := false
+	defer func() {
+		if response != nil {
+			response = boundBatchResult(response)
+			if trackResponse {
+				response = s.trackToolResponse("capy_batch_execute", response)
+			}
+		}
+	}()
 	args := req.GetArguments()
-
 	commands := coerceCommandsArray(args["commands"])
-	queries := coerceStringArray(args["queries"])
+	queries, scope, err := batchSearchArgs(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 	timeout := int(req.GetFloat("timeout", 60000))
 	concurrency := int(req.GetFloat("concurrency", 1))
-
 	if len(commands) == 0 {
 		return errorResult("missing required parameter: commands"), nil
-	}
-	if len(queries) == 0 {
-		return errorResult("missing required parameter: queries"), nil
 	}
 	cwd, err := s.executionCwd(args)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
-
-	// Security: check each command individually
 	for _, cmd := range commands {
 		if denied := s.checkDenyPolicy(cmd.Command); denied != nil {
 			return denied, nil
 		}
 	}
-
-	// Clamp concurrency to [1, min(maxBatchConcurrency, len(commands))] — never
-	// spawn more workers than there are commands.
+	trackResponse = true
 	concurrency = max(1, min(concurrency, maxBatchConcurrency, len(commands)))
-
-	// Execute commands. Serial preserves the shared-timeout-budget semantics with
-	// cascading skip-on-timeout; parallel gives each command the full timeout and
-	// runs them concurrently. Indexing and search downstream operate on the same
-	// per-command output slice regardless of which path produced it.
-	var perCommandOutputs []string
+	var outputs []batchCommandOutput
 	if concurrency <= 1 {
-		perCommandOutputs = executeBatchSerial(ctx, commands, timeout, s.executor, cwd)
+		outputs = executeBatchSerial(ctx, commands, timeout, s.executor, cwd)
 	} else {
-		perCommandOutputs = executeBatchParallel(ctx, commands, timeout, concurrency, s.executor, cwd)
+		outputs = executeBatchParallel(ctx, commands, timeout, concurrency, s.executor, cwd)
 	}
-
-	combinedOutput := strings.Join(perCommandOutputs, "\n")
-	totalBytes := len(combinedOutput)
-	totalLines := strings.Count(combinedOutput, "\n") + 1
-
-	// Track sandboxed bytes
-	s.stats.AddBytesSandboxed(int64(totalBytes))
-	s.stats.AddBytesIndexed(int64(totalBytes))
-
-	// Index combined output as markdown
+	var combined strings.Builder
+	var rawBytes, skipped int
+	for i, output := range outputs {
+		if i > 0 {
+			combined.WriteByte('\n')
+		}
+		combined.WriteString(output.section)
+		rawBytes += output.rawBytes
+		if output.skipped {
+			skipped++
+		}
+	}
+	s.stats.AddBytesSandboxed(int64(rawBytes))
+	// This counts the complete payload offered to indexing, including provenance,
+	// even on deduplication or admission failure, like other indexing tools.
+	s.stats.AddBytesIndexed(int64(combined.Len()))
 	st := s.getStore()
 	sourceLabel := "batch:" + truncateLabel(commands)
-	indexed, err := st.Index(combinedOutput, sourceLabel, "markdown", store.KindEphemeral)
+	indexed, err := st.Index(combined.String(), sourceLabel, "markdown", store.KindEphemeral)
 	if err != nil {
-		return s.trackToolResponse("capy_batch_execute",
-			errorResult(fmt.Sprintf("indexing error: %v", err))), nil
+		return errorResult(fmt.Sprintf("indexing error: %v", err)), nil
 	}
+	return s.batchResponse(ctx, commands, outputs, queries, scope, sourceLabel, indexed, rawBytes, skipped), nil
+}
 
-	// Build section inventory
-	allSections, secErr := st.GetChunksBySource(indexed.SourceID)
-	var inventory []string
-	inventory = append(inventory, "## Indexed Sections", "")
-	if secErr != nil {
-		inventory = append(inventory, fmt.Sprintf("- (inventory unavailable: %v)", secErr))
-	} else {
-		for _, sec := range allSections {
-			kb := fmt.Sprintf("%.1f", float64(len(sec.Content))/1024)
-			inventory = append(inventory, fmt.Sprintf("- %s (%sKB)", sec.Title, kb))
+// batchSearchArgs distinguishes omitted/empty queries from malformed input.
+// Serialized arrays remain accepted, but null and non-string members never
+// silently turn a search request into an indexing-only operation.
+func batchSearchArgs(args map[string]any) ([]string, string, error) {
+	scope := "batch"
+	if raw, present := args["query_scope"]; present {
+		var ok bool
+		scope, ok = raw.(string)
+		if !ok || (scope != "batch" && scope != "global") {
+			return nil, "", fmt.Errorf("invalid parameter %q: expected batch or global", "query_scope")
 		}
 	}
-
-	// Search each query against batch output
-	var queryResults []string
-	outputSize := 0
-
-	for _, query := range queries {
-		if outputSize > maxBatchOutput {
-			queryResults = append(queryResults,
-				fmt.Sprintf("## %s\n(output cap reached — use search(queries: [%q]) for details)\n", query, query))
-			continue
+	raw, present := args["queries"]
+	if !present {
+		return nil, scope, nil
+	}
+	invalid := fmt.Errorf("invalid parameter %q: expected an array of strings", "queries")
+	if encoded, ok := raw.(string); ok {
+		if err := json.Unmarshal([]byte(encoded), &raw); err != nil {
+			return nil, "", invalid
 		}
-
-		results, searchErr := st.SearchWithFallbackContext(ctx, query, 3, store.SearchOptions{
-			Source:          sourceLabel,
-			SourceMatchMode: "exact",
-		})
-
-		queryResults = append(queryResults, fmt.Sprintf("## %s", query), "")
-
-		if searchErr != nil {
-			queryResults = append(queryResults, fmt.Sprintf("(search error: %v)", searchErr), "")
-		} else if len(results) > 0 {
-			for _, r := range results {
-				snippet := ExtractSnippet(r.Content, query, 3000, r.Highlighted)
-				queryResults = append(queryResults,
-					fmt.Sprintf("### %s", r.Title),
-					snippet, "")
-				outputSize += len(snippet) + len(r.Title)
+	}
+	switch values := raw.(type) {
+	case []string:
+		return values, scope, nil
+	case []any:
+		queries := make([]string, len(values))
+		for i, value := range values {
+			query, ok := value.(string)
+			if !ok {
+				return nil, "", invalid
 			}
-		} else {
-			queryResults = append(queryResults, "No matching sections found.", "")
+			queries[i] = query
 		}
+		return queries, scope, nil
+	default:
+		return nil, "", invalid
 	}
+}
 
-	// Distinctive terms
-	terms, _ := st.GetDistinctiveTerms(indexed.SourceID, 40)
+type batchCommandOutput struct {
+	section  string
+	rawBytes int
+	skipped  bool
+}
 
-	// Build final output
-	var out strings.Builder
-	fmt.Fprintf(&out, "Executed %d commands (%d lines, %.1fKB). Indexed %d sections. Searched %d queries.\n\n",
-		len(commands), totalLines, float64(totalBytes)/1024, indexed.TotalChunks, len(queries))
-	out.WriteString(strings.Join(inventory, "\n"))
-	out.WriteString("\n\n")
-	out.WriteString(strings.Join(queryResults, "\n"))
-	out.WriteString("\n💡 To search across ALL indexed content (not just this batch), use capy_search(queries: [...])\n")
-	if len(terms) > 0 {
-		fmt.Fprintf(&out, "\nSearchable terms for follow-up: %s", strings.Join(terms, ", "))
+func batchOutput(cmd CommandInput, output string, rawBytes int, skipped bool) batchCommandOutput {
+	state := "Command"
+	if skipped {
+		state = "Command (not executed)"
 	}
-
-	return s.trackToolResponse("capy_batch_execute", textResult(out.String())), nil
+	return batchCommandOutput{
+		section: fmt.Sprintf("# %s\n\n%s: %s\n\n%s\n",
+			batchDisplay(cmd.Label, 160), state, batchDisplay(cmd.Command, 500), output),
+		rawBytes: rawBytes,
+		skipped:  skipped,
+	}
 }
 
 // executeBatchSerial runs commands one at a time, sharing a single timeout
 // budget across the whole batch. When the budget is exhausted, or a command
 // times out, the remaining commands are recorded as skipped. This is the
 // pre-concurrency behavior, preserved unchanged for concurrency <= 1.
-func executeBatchSerial(ctx context.Context, commands []CommandInput, timeout int, exec *executor.PolyglotExecutor, cwd string) []string {
-	outputs := make([]string, 0, len(commands))
+func executeBatchSerial(ctx context.Context, commands []CommandInput, timeout int, exec *executor.PolyglotExecutor, cwd string) []batchCommandOutput {
+	outputs := make([]batchCommandOutput, 0, len(commands))
 	startTime := time.Now()
 
 	for i, cmd := range commands {
@@ -154,7 +157,7 @@ func executeBatchSerial(ctx context.Context, commands []CommandInput, timeout in
 		if remainingSec <= 0 {
 			for j := i; j < len(commands); j++ {
 				outputs = append(outputs,
-					fmt.Sprintf("# %s\n\n(skipped — batch timeout exceeded)\n", commands[j].Label))
+					batchOutput(commands[j], "(skipped — batch timeout exceeded)", 0, true))
 			}
 			break
 		}
@@ -167,19 +170,19 @@ func executeBatchSerial(ctx context.Context, commands []CommandInput, timeout in
 		})
 		if err != nil {
 			outputs = append(outputs,
-				fmt.Sprintf("# %s\n\n(error: %v)\n", cmd.Label, err))
+				batchOutput(cmd, fmt.Sprintf("(error: %v)", err), 0, false))
 			continue
 		}
 
 		output := batchCapturedOutput(result.Stdout, result.Stderr)
 		outputs = append(outputs,
-			fmt.Sprintf("# %s\n\n%s\n", cmd.Label, output))
+			batchOutput(cmd, output, len(result.Stdout)+len(result.Stderr), false))
 
 		if result.TimedOut {
 			// Mark remaining commands as skipped
 			for j := i + 1; j < len(commands); j++ {
 				outputs = append(outputs,
-					fmt.Sprintf("# %s\n\n(skipped — batch timeout exceeded)\n", commands[j].Label))
+					batchOutput(commands[j], "(skipped — batch timeout exceeded)", 0, true))
 			}
 			break
 		}
@@ -194,8 +197,8 @@ func executeBatchSerial(ctx context.Context, commands []CommandInput, timeout in
 // failing or timed-out command never affects its siblings. The executor is
 // safe for concurrent use (sync.Once detection, per-call temp dirs, a mutex
 // over background PIDs).
-func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout, concurrency int, exec *executor.PolyglotExecutor, cwd string) []string {
-	results := make([]string, len(commands))
+func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout, concurrency int, exec *executor.PolyglotExecutor, cwd string) []batchCommandOutput {
+	results := make([]batchCommandOutput, len(commands))
 	// Each command gets the full timeout. Guard the sub-second case: truncating
 	// ms→s would yield 0, which the executor reads as "no timeout → 30s default",
 	// silently extending a tight batch budget. The serial path avoids this via
@@ -220,7 +223,7 @@ func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout,
 				TimeoutSec: timeoutSec,
 			})
 			if err != nil {
-				results[i] = fmt.Sprintf("# %s\n\n(error: %v)\n", cmd.Label, err)
+				results[i] = batchOutput(cmd, fmt.Sprintf("(error: %v)", err), 0, false)
 				return nil
 			}
 
@@ -228,7 +231,7 @@ func executeBatchParallel(ctx context.Context, commands []CommandInput, timeout,
 			if result.TimedOut {
 				output += "\n(timed out)"
 			}
-			results[i] = fmt.Sprintf("# %s\n\n%s\n", cmd.Label, output)
+			results[i] = batchOutput(cmd, output, len(result.Stdout)+len(result.Stderr), false)
 			return nil
 		})
 	}
@@ -254,14 +257,17 @@ func batchCapturedOutput(stdout, stderr string) string {
 	return stdout + stderr
 }
 
-// truncateLabel builds a source label from command labels, truncated to 80 chars.
+// truncateLabel builds a source label from command labels, truncated to 80 bytes.
+// D3: concurrent batches with the same truncated label can replace each other.
+// See docs/feat/wip/upstream-sync-v1.0.169/upstream-audit.md#d3-concurrent-batch-source-label-collisions.
+// Exact-source scope does not provide request isolation; unique identity is deferred.
 // Command labels are user-supplied and may contain multibyte UTF-8, so the cap
 // goes through truncateRunes — a raw joined[:80] byte slice can split a rune and
 // emit an invalid sequence into the indexed source label.
 func truncateLabel(commands []CommandInput) string {
 	var labels []string
 	for _, c := range commands {
-		labels = append(labels, c.Label)
+		labels = append(labels, batchOneLine(c.Label))
 	}
 	joined := strings.Join(labels, ",")
 	if len(joined) > 80 {

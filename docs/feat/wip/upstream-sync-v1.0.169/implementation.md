@@ -1,6 +1,6 @@
 # Implementation: Upstream sync through context-mode 0dfbe8d
 
-> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14, 15, 16a, 16 and 17 complete; remaining tasks pending)
+> Status: in-progress (Tasks 1, 2a, 2, 3, 4, 5, 5a, 6, 6a, 7, 8, 9, 10, 11, 12, 12a, 13, 13a, 14, 15, 16a, 16, 17 and 18 complete; remaining tasks pending)
 > Design: [design.md](design.md)
 > Provenance and exclusions: [upstream-audit.md](upstream-audit.md)
 > Execution checklist: [tasks.md](tasks.md)
@@ -789,6 +789,41 @@ the installed Go 1.25.2 source. Tasks 18–20 and D1–D5 remain separate work.
 5. Handle `AlreadyIndexed` as an unchanged outcome and read its stored total before summary/omission arithmetic → verify: repeated identical batches report retained sections rather than zero, and omitted inventory counts reflect the stored source.
 
 Preserve serial/parallel timeout semantics from Task 6. Existing label-based batch dedup remains; do not claim isolation for simultaneous batches using the same truncated label (follow-up in design risk notes). Run batch and federation suites, then the quality benchmarks.
+
+Task 18 implementation notes (2026-10-12): `batchSearchArgs` validates supplied
+arrays and exact `batch`/`global` scopes before security checks or execution.
+Serialized arrays remain supported; omission and valid empty arrays skip retrieval.
+Global search explicitly selects durable+ephemeral knowledge and never opens the
+vault. Result records preserve command order, serial skip/parallel timeout behavior,
+and separate raw captured bytes from formatted indexing payloads.
+
+`batch_response.go` owns sanitized, normalized and escaped previews, bounded
+inventories, source-attributed hits and JSON-aware response accounting. Previews
+are capped after escaping, including their ellipsis. Source labels retain the
+80-byte label-derived identity, with secret stripping/whitespace normalization
+before truncation. Complete commands execute, and full captured output is passed
+to store admission with provenance; admission failures never truncate output to
+make room. D3 remains documented beside the label builder.
+
+`GetSectionInventory` reads stored totals, at most 40 title prefixes and byte
+lengths by source ID. No chunk bodies enter Go for inventory formatting. SQL
+bounds title bytes before UTF-8-safe 160-byte truncation. Unchanged batches use
+the persisted total. The formatter budgets serialized JSON escaping, separately
+caps both inventories and reserves one aggregate query-omission notice. A final
+guard covers early errors too; rejected preflight calls remain outside call
+statistics. The exact source selector uses JSON quoting, including control-bearing
+labels. Returned counters keep the established complete
+text-byte units; indexed counters include the payload offered on unchanged and
+failed admissions, consistent with other tools.
+
+No module, schema, vault or generated artifact changes are needed. The dependency
+lookup used Context7, then pinned installed `mcp-go v0.46.0` source because its
+Context7 examples were from main; Go serialization was checked against
+[Go 1.25.2 encoding/json](https://pkg.go.dev/encoding/json@go1.25.2#Marshal), and
+bounded metadata functions against [SQLite's scalar reference](https://www.sqlite.org/lang_corefunc.html).
+CLI and CI changes are N/A; stdio tests use the existing serve command and inherit
+FTS5/synthetic-key/checkpoint requirements from repository `AGENTS.md`.
+Task 19's throttle policy and Task 20's feature-wide verification remain pending.
 
 ## 19. Search throttle visibility
 
