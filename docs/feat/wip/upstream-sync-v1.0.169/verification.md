@@ -1740,6 +1740,100 @@ needed. Task 16's per-call TTL and typed retry hints, Tasks 17–20 and D1–D5 
 pending. Optional editorial follow-up: `kk:clarify-docs` on `README.md`,
 `docs/architecture.md` and `docs/adr/013-configurable-fetch-ttl.md`.
 
+## Task 18: Batch query scope and bounded provenance
+
+Implemented 2026-10-12. Scope: batch preflight/execution records, response
+formatting, bounded store section metadata and the MCP descriptor. Tasks 19–20
+and deferred D1–D5 remain separate work.
+
+### Behavior and coverage
+
+- Omitted and empty query arrays execute/index without retrieval. Serialized
+  arrays remain accepted; nulls, malformed arrays, non-string members and invalid
+  scopes fail before child, database or call-stat effects.
+- Default scope stays exact-source. Global scope explicitly includes durable and
+  ephemeral knowledge, excludes legacy session-kind rows and never initializes
+  the vault. Equal-titled hits retain distinct source labels.
+- Sanitized, normalized and Markdown-escaped previews are stored under command
+  sections and are capped at 500 UTF-8 bytes including the ellipsis. Fixtures
+  cover secrets, heredocs, injected headings/fences, Unicode and later provenance
+  retrieval with the vault disabled. A tail marker proves the full command still
+  executes after its preview is truncated.
+- Both execution paths retain command order, captured stdout-then-stderr and
+  timeout semantics. Skipped commands are explicitly not executed. Captured
+  bytes exclude provenance, separators and no-output placeholders; indexing
+  counters include the entire payload offered to the store. Source-size rejection
+  does not silently discard output or metadata to fit.
+- The 8,000-heading fixture produces 8,001 stored sections including its command
+  preview. New and repeated unchanged batches report the stored total and 7,961
+  omitted inventory entries; the final heading remains searchable. This fixture
+  deliberately configures a 1 MiB executor capture limit, because the existing
+  100 KiB default independently truncates its larger output before indexing.
+- Store tests verify at most 40 returned metadata rows, ordered bounded title
+  prefixes, UTF-8 boundaries, byte lengths including NUL tails, unchanged totals,
+  cancellation and missing-source errors. No chunk body is returned for inventory
+  formatting.
+- Whole-result tests measure actual serialized JSON, including escaping, long
+  labels/queries/terms, command/section omission counts and large policy errors.
+  The limit is 81,920 bytes; normal responses retain the exact source selector and
+  one aggregate query-omission notice. JSON-decoding a control-bearing source
+  selector reproduces the exact label and retrieves its content.
+- Real stdio verifies optional schemas, malformed-input rejection, no-query
+  indexing, global source attribution, unchanged counts, serialized result size,
+  encrypted shutdown/reopen and later provenance retrieval.
+
+### Verification commands
+
+Commands use Go 1.25.2 on Darwin/arm64, `CGO_ENABLED=1`, synthetic
+`CAPY_DB_KEY=test-key-for-development` / `CAPY_VAULT_KEY=test-key`,
+`GOCACHE=/private/tmp/capy-go-cache`, canonical `TMPDIR=/private/tmp`, an empty
+`XDG_CONFIG_HOME=/private/tmp/capy-task18-config`, and no `CLAUDE_PROJECT_DIR`.
+
+| Command | Result |
+|---|---|
+| `go test -tags fts5 ./internal/server ./internal/store ./cmd/capy -run 'Test(Batch\|ExecuteBatch\|TruncateLabel\|GetSectionInventory\|MCPStdioBatch)' -count=1` | Passed: server 16.305s, store 1.327s, CLI/stdin transport 3.088s. |
+| `go test -race -tags fts5 -count=1 ./internal/server ./internal/store -run 'Test(Batch\|ExecuteBatch\|TruncateLabel\|GetSectionInventory\|Search.*Federation\|Federation\|Search_.*)'` | Passed: server 42.053s, store 10.549s; includes the federation fixtures. |
+| `go test -race -tags fts5 ./internal/server -run 'TestBatchExecute_(SourceSelectorJSON\|LongDistinctiveTerms\|LargePolicyErrorBudget\|SerializedResponseBudget)' -count=1` | Passed, 3.810s. |
+| `go test -race -tags fts5 ./internal/server -run 'Test(ExecutionCwdInvalidBeforeSideEffects\|BatchExecute_InvalidSearchBeforeExecution\|Integration_Batch\|BatchExecute_SourceSelectorJSON)' -count=1` | Passed after accounting/heading corrections, 2.466s. |
+| `go test -race -tags fts5 -count=1 ./cmd/capy -run '^TestMCPStdioBatchControls$'` | Passed, 3.955s; actual serve binary built with FTS5. |
+| `make test` | Passed after final corrections: server 90.881s; all other packages passed or used cache. |
+| `make build` | Passed after final production corrections; nonfatal module-stat cache permission warning recorded below. |
+| `make bench-quality` | Passed for knowledge, server threshold and vault quality fixtures. |
+| `make bench-compare BASE=master TARGET=feat-upstream_sync` | All 84 quality metrics unchanged against saved `master.json` baseline `397ecfd`; dataset hash verified. `benchstat` unavailable, so no performance comparison is claimed. Task 20 still owns the feature-wide `c0bfff2` comparison. |
+| `go vet -tags fts5 ./internal/store ./cmd/capy` | Passed. Server vet reports only the pre-existing lock-copy warning at `tool_boolean_test.go:110`, already recorded in Tasks 8–17. |
+| `git diff --check` | Passed. |
+
+The initial default Go cache was unwritable; the temporary cache resolved that.
+The first full run also encountered sandbox-denied Unix/loopback socket fixtures;
+the final full run has the required local socket permission. Two integration
+assertions exposed an unnecessary query-heading wording change, which was
+reverted. The next full run exposed preflight errors entering call statistics;
+tracking now starts only after successful preflight, preserving the existing
+contract. Original assertions remain intact. The build succeeds despite Go's
+nonfatal inability to write self-module version information into the external
+module cache.
+
+Logs are `/private/tmp/capy-task18-focused.log`, `capy-task18-race.log`,
+`capy-task18-edge-final.log`, `capy-task18-compat-final.log`,
+`capy-task18-stdio-race.log`, `capy-task18-full-verified.log`,
+`capy-task18-build-final.log`, `capy-task18-quality.log` and
+`capy-task18-compare.log` under the same directory.
+
+### Review and documentation
+
+The independent code reviewer approved the initial implementation and separately
+approved the final accounting and JSON-source-quoting corrections, with no
+remaining findings. The [review record](.reviews/task-18-code-review-2026-10-12.md)
+states the read-only evidence limit. PAL's expert step failed with
+`API_KEY_INVALID`; no PAL approval is claimed. No findings or conventions need
+knowledge indexing because the relevant behavior is documented here.
+
+README, architecture and implementation notes describe the new options, budgets,
+provenance and D3 limitation. CLI and CI changes are N/A; tests inherit repository
+FTS5/key/checkpoint conventions. No module, schema or generated artifact changed.
+Optional editorial follow-up: `kk:clarify-docs` on `README.md`,
+`docs/architecture.md` and this feature's `implementation.md`.
+
 ### Review
 
 The [independent code review](.reviews/task-16a-code-review-2026-10-11.md)

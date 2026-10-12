@@ -991,6 +991,30 @@ separating newline when needed; it does not preserve stream interleaving. Serial
 batches share a timeout budget and skip remaining commands after a timeout.
 Parallel batches give each command its own timeout and retain command order.
 
+Batch `queries` are optional: omit them or pass `[]` to execute and index without
+searching. Supplied queries must be an array of strings (serialized JSON arrays
+also work); malformed values fail before execution. `query_scope: "batch"` is
+the default and searches the exact batch source. Choose `query_scope: "global"`
+to search durable and ephemeral knowledge in the selected database, including
+the new batch. Global batch search does not query vault sessions. Every hit names
+its source, and the response includes an exact source selector for follow-up.
+
+Each indexed command section stores a sanitized, whitespace-normalized command
+preview of at most 500 UTF-8 bytes; skipped commands are marked not executed.
+Previews are searchable later without the vault. Complete admitted output stays
+indexed, subject to the existing executor capture and store source-size limits;
+the added provenance counts toward source admission. Unchanged batches report
+their retained section count. The complete serialized MCP result is capped at
+81,920 bytes, including JSON escaping. Command inventories use at most 4,096
+bytes; section inventories show at most 40 entries with 160-byte titles within
+8,192 bytes. Omitted counts identify what the response leaves out. Sandbox byte
+statistics count captured stdout/stderr; indexing statistics count the complete
+payload offered to the store, including provenance.
+
+Batch source labels still derive from truncated command labels. Concurrent
+batches with identical resulting labels can replace each other's content; exact
+batch scope does not guarantee isolation between those requests.
+
 With `capy_execute(background: true)`, a process that outlasts its timeout returns
 its PID and partial output while continuing to run. Later stdout/stderr are drained
 and discarded, so they no longer accumulate in server memory. Write logs to an

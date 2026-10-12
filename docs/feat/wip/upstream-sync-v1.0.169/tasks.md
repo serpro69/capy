@@ -494,7 +494,7 @@ unavailable PAL reviewer. Tasks 18–20 remain pending.
 
 ## Task 18: Add batch query scope and bounded provenance
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 6
 - **Size:** M
 - **Can run in parallel with:** Tasks 3, 5, 9, 12, 14, 15, 17
@@ -502,10 +502,19 @@ unavailable PAL reviewer. Tasks 18–20 remain pending.
 
 ### Subtasks
 
-- [ ] 18.1 Make queries optional and implement validated batch/global scope → verify: no-query indexing and durable+ephemeral knowledge-only global results.
-- [ ] 18.2 Persist sanitized bounded per-command provenance and label every global hit by source → verify: later knowledge-only retrieval and equal-titled sources remain attributable.
-- [ ] 18.3 Bound the entire serialized result and section metadata; use stored totals for unchanged batches → verify: 8,000 sections, repeated batches, omission counts, escaping and Unicode stay within 81,920 bytes without losing indexed content.
-- [ ] 18.4 Preserve raw/output accounting and execution semantics; record D3 at the existing label builder → verify: batch/federation suites and final benchmark comparison.
+- [x] 18.1 Make queries optional and implement validated batch/global scope → verify: no-query indexing and durable+ephemeral knowledge-only global results.
+- [x] 18.2 Persist sanitized bounded per-command provenance and label every global hit by source → verify: later knowledge-only retrieval and equal-titled sources remain attributable.
+- [x] 18.3 Bound the entire serialized result and section metadata; use stored totals for unchanged batches → verify: 8,000 sections, repeated batches, omission counts, escaping and Unicode stay within 81,920 bytes without losing indexed content.
+- [x] 18.4 Preserve raw/output accounting and execution semantics; record D3 at the existing label builder → verify: batch/federation suites and final benchmark comparison.
+
+Evidence: [verification](verification.md#task-18-batch-query-scope-and-bounded-provenance)
+and [isolated review](.reviews/task-18-code-review-2026-10-12.md). Optional queries
+and explicit batch/global knowledge scopes now retain attributable command
+previews and bound the complete serialized result. Stored metadata supplies
+unchanged totals and bounded inventories. Full tests, focused race/stdio checks
+and build pass; all 84 quality metrics remain unchanged. Independent review
+approved the final corrections. PAL's invalid key and the existing server-vet
+warning are recorded. Tasks 19–20 and D1–D5 remain separate work.
 
 ## Task 19: Configure and report the shared search budget
 

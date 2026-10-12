@@ -102,7 +102,10 @@ func TestBatchExecute_CapturedStreams(t *testing.T) {
 			for i, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
 					assert.Equal(t, tt.name, chunks[i].Title)
-					assert.Equal(t, tt.want, chunks[i].Content)
+					parts := strings.SplitN(chunks[i].Content, "\n\n", 2)
+					require.Len(t, parts, 2)
+					assert.True(t, strings.HasPrefix(parts[0], "Command: "))
+					assert.Equal(t, tt.want, parts[1])
 				})
 			}
 		})
@@ -138,11 +141,12 @@ func TestBatchExecute_TimeoutCapturedStreams(t *testing.T) {
 			assert.Equal(t, "slow", chunks[0].Title)
 			assert.Equal(t, "after", chunks[1].Title)
 			if mode.concurrency == 1 {
-				assert.Equal(t, "partial stdout\npartial stderr", chunks[0].Content)
-				assert.Equal(t, "(skipped — batch timeout exceeded)", chunks[1].Content)
+				assert.True(t, strings.HasSuffix(chunks[0].Content, "\n\npartial stdout\npartial stderr"))
+				assert.Contains(t, chunks[1].Content, "Command (not executed):")
+				assert.True(t, strings.HasSuffix(chunks[1].Content, "\n\n(skipped — batch timeout exceeded)"))
 			} else {
-				assert.Equal(t, "partial stdout\npartial stderr\n(timed out)", chunks[0].Content)
-				assert.Equal(t, "sibling marker", chunks[1].Content)
+				assert.True(t, strings.HasSuffix(chunks[0].Content, "\n\npartial stdout\npartial stderr\n(timed out)"))
+				assert.True(t, strings.HasSuffix(chunks[1].Content, "\n\nsibling marker"))
 			}
 		})
 	}
@@ -178,7 +182,7 @@ func TestBatchExecute_Timeout(t *testing.T) {
 	elapsed := time.Since(start)
 	assert.False(t, r.IsError)
 	text := resultText(r)
-	assert.Contains(t, text, "Executed 2 commands")
+	assert.Contains(t, text, "Executed 1 commands; skipped 1")
 	assert.Contains(t, text, "Slow")
 	assert.Contains(t, text, "After")
 	// Should complete much faster than 30s (the sleep duration)
@@ -349,12 +353,12 @@ func TestExecuteBatchParallel_OrderPreserved(t *testing.T) {
 	out := executeBatchParallel(context.Background(), commands, 30000, 3, exec, "")
 	require.Len(t, out, 3)
 	// "second" completes first but must remain in slot 1.
-	assert.Contains(t, out[0], "first")
-	assert.Contains(t, out[0], "ALPHA")
-	assert.Contains(t, out[1], "second")
-	assert.Contains(t, out[1], "BRAVO")
-	assert.Contains(t, out[2], "third")
-	assert.Contains(t, out[2], "CHARLIE")
+	assert.Contains(t, out[0].section, "first")
+	assert.Contains(t, out[0].section, "ALPHA")
+	assert.Contains(t, out[1].section, "second")
+	assert.Contains(t, out[1].section, "BRAVO")
+	assert.Contains(t, out[2].section, "third")
+	assert.Contains(t, out[2].section, "CHARLIE")
 }
 
 // TestExecuteBatchParallel_ErrorIsolation verifies a failing command lands its
@@ -368,11 +372,11 @@ func TestExecuteBatchParallel_ErrorIsolation(t *testing.T) {
 	}
 	out := executeBatchParallel(context.Background(), commands, 30000, 3, exec, "")
 	require.Len(t, out, 3)
-	assert.Contains(t, out[0], "HELLO")
-	assert.Contains(t, out[2], "WORLD")
+	assert.Contains(t, out[0].section, "HELLO")
+	assert.Contains(t, out[2].section, "WORLD")
 	// The failing command's captured stderr lands in its own slot.
-	assert.Contains(t, out[1], "broken")
-	assert.Contains(t, strings.ToLower(out[1]), "no such file")
+	assert.Contains(t, out[1].section, "broken")
+	assert.Contains(t, strings.ToLower(out[1].section), "no such file")
 }
 
 // TestExecuteBatchParallel_TimeoutIsolated verifies a timed-out command records
@@ -388,8 +392,8 @@ func TestExecuteBatchParallel_TimeoutIsolated(t *testing.T) {
 	elapsed := time.Since(start)
 
 	require.Len(t, out, 2)
-	assert.Contains(t, out[0], "(timed out)")
-	assert.Contains(t, out[1], "QUICK")
+	assert.Contains(t, out[0].section, "(timed out)")
+	assert.Contains(t, out[1].section, "QUICK")
 	assert.Less(t, elapsed, 10*time.Second, "fast command must not wait for the slow command's full sleep")
 }
 
@@ -407,6 +411,6 @@ func TestExecuteBatchParallel_SubSecondTimeout(t *testing.T) {
 	elapsed := time.Since(start)
 
 	require.Len(t, out, 1)
-	assert.Contains(t, out[0], "(timed out)")
+	assert.Contains(t, out[0].section, "(timed out)")
 	assert.Less(t, elapsed, 4*time.Second, "sub-second timeout must clamp to 1s, not the 30s executor default")
 }

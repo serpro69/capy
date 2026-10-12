@@ -145,6 +145,29 @@ the existing savings formula and source/chunk statistics remain unchanged.
 
 ## Knowledge Base
 
+### Batch provenance and response bounds
+
+Batch preflight validates optional queries and batch/global scope before spawning.
+Both worker paths return ordered output records carrying formatted sections,
+captured-stream byte counts and skipped status. Each section includes a sanitized,
+normalized, Markdown-escaped command preview capped at 500 bytes. The raw command
+still reaches the executor unchanged. Store admission applies to the complete
+output-plus-provenance payload; no response budget truncates stored content.
+
+Batch scope selects the exact source label. Global scope calls the knowledge
+store with explicit durable+ephemeral kinds, bypassing vault federation. Every
+hit displays its own source. Label-based deduplication and its concurrent-label
+collision limitation remain unchanged (sync audit D3).
+
+`GetSectionInventory` obtains the stored chunk total by source ID, then selects
+at most 40 title prefixes and byte lengths without transferring chunk bodies to
+Go. Titles are bounded in SQL and capped to 160 UTF-8 bytes. The renderer budgets
+escaped JSON fragments against the entire 81,920-byte tool result, with separate
+4,096/8,192-byte inventory limits and reserved omission notices. The exact source
+selector precedes optional content. A final serialized-result guard also bounds
+early policy/validation/indexing errors. Returned-byte statistics retain their
+existing text-byte units and include the entire formatted text.
+
 ### File ingestion
 
 `internal/knowledge.Indexer` owns file/directory path admission, descriptor-bound
