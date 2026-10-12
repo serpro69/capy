@@ -3,16 +3,23 @@
 > Status: proposed — implementation pending
 > Created: 2026-10-12
 > Design: [design-v2.md](design-v2.md) · Tasks: [tasks-v2.md](tasks-v2.md)
-> Baseline: capy `ac60b81` (same source tree as comparison commit `a58f90d`); follow the `-v2` documents, not the completed v1 task list
+> Baseline: capy `112f2c8` (includes the Codex `hooks.state` parser fix); follow the `-v2` documents, not the completed v1 task list
 
 ## 1. Orientation and boundaries
 
-The generated hook path is host → inline bootstrap → `capy codex-launch` →
+The current hook path is host → inline bootstrap → `capy codex-launch` →
 owner's `.codex/scripts/capy.sh` → `capy hook --platform codex <event>`.
 `internal/platform/codex_owner.go` validates every ancestor's owner/binding
 before any project wrapper runs. `cmd/capy/hook.go` selects the adapter;
 `internal/hook/hook.go` reads stdin, resolves project/cwd, and dispatches.
 The Codex adapter supplies stable namespaced identity and supported responses.
+
+Task 1 replaces that path with a compact hook supervisor and one PATH-resolved
+capy process that validates the owner and dispatches internally. MCP directly
+launches the same Go entry without a shell. Stop generating/requiring the Codex
+project wrapper. The earlier launch format is an unpublished iteration of this
+same PR: replace it outright, with no backward-compatible parser or automatic
+conversion. The `.codex/capy-owner` ID itself remains stable.
 
 Hooks are separate processes. State coordination must work across OS processes,
 not just goroutines. Existing child observations in `observations.go` already
@@ -22,19 +29,102 @@ consumption. Guidance is currently an unprotected per-session JSON map.
 The user selected root advisory fallback when availability is unknown. Do not
 implement server heartbeats, enumerate global sentinels, or make root HTTP
 denials conditional on process liveness. Main observations are written by the
-existing PostToolUse hook, with no MCP-server code changes.
+existing PostToolUse hook; availability needs no server-side producer.
+The launch foundation factors/reuses serve initialization and existing lifecycle
+cleanup; it does not add server-side availability state or change storage rules.
 
 Use the Go module's existing dependencies and runtime facilities. Do not add a
 dependency or config option merely to implement these helpers. If a new API
 becomes necessary, follow `kk:dependency-handling` before adopting it and update
 the design. The relevant Go deadline caveat and pinned references are in
-[design §4.3](design-v2.md#43-reader-lifecycle).
+[design §5.3](design-v2.md#53-reader-lifecycle).
 
 V1 documents and verification are historical. New implementation evidence goes
 to `verification-v2.md`; review records should carry `-v2` in their names. Those
 files are created during implementation, not treated as pre-existing proof.
 
-## 2. Task 1 — bounded Codex input through the installed CLI
+## 2. Task 1 — direct launch with an explicit PATH prerequisite
+
+### Files and seams
+
+- `cmd/capy/codex_launch.go`: final four-argument protocol, metadata-only probe,
+  owner validation and direct hook/serve dispatch; remove the wrapper subprocess.
+- `cmd/capy/serve.go` and existing knowledge-target helpers: one reusable serve
+  entry accepting the selected owner/context; preserve key/config/lifecycle code.
+- `internal/server/server.go` and its lifecycle integration: propagate cancellation
+  before background-work joins on direct MCP shutdown, using the existing guard
+  rather than adding a second signal/parent monitor.
+- `internal/platform/setup_codex_launch.go`, `codex_owner.go` and
+  `setup_codex_mcp.go`: one final hook-supervisor/direct-MCP grammar and strict
+  recognition. Do not retain or recognize the old bootstrap as a supported form.
+- `cmd/capy/setup.go` and `internal/platform/setup.go`: prerequisite validation,
+  explicit `--binary` semantics and removal of Codex wrapper generation; retain
+  Claude-only and DB-repo setup behavior.
+- `internal/platform/doctor_codex.go`, generated-artifact guards, committed
+  `.codex/hooks.json`, `.codex/config.toml`, `.claude/scripts/capy.sh` and AGENTS:
+  synchronize the final topology; remove committed `.codex/scripts/capy.sh`.
+
+### Execution and verification
+
+1. Replace the launch grammar and recognizers together. Hook shell arguments
+   and direct MCP argv carry the final protocol identifier, owner ID, mode and
+   event as data; keep all-ancestor inspection and adjacent-marker validation.
+   Ignore opaque `hooks.state` only as already fixed in the baseline. → verify:
+   `TestCodexFinalLaunchBindings` covers final hook/direct-MCP forms, alternate
+   aliases, equivalent JSON/TOML serialization, invalid identifier/ID/mode/event,
+   missing markers, copied IDs and overlaps. Obsolete commands return an
+   actionable unsupported-format error, never an automatic conversion or a
+   fallback to another owner.
+2. Dispatch hooks in process through the existing adapter/router. Extract a
+   common serve entry used by both `serve` and validated `codex-launch`, with
+   explicit owner/context and no second command/process. → verify:
+   `TestCodexDirectDispatch` proves hook output/identity/cwd/policy behavior and
+   real MCP initialize/list/harmless-call behavior from root and subdirectories,
+   including external configured storage. A sentinel project wrapper is never
+   invoked; absent/unreadable/symlink wrapper paths cannot become launch gates.
+   Hook probes use no DB keys and create no DB.
+3. Add the exact side-effect-free protocol check and bounded PATH prerequisite
+   from design §4.3. Resolve once before writes in CLI setup including default-
+   both mode; share that validated result with the setup writer, while direct
+   `SetupCodex` calls also validate. Use an explicit test seam, not a global
+   cached result. → verify: `TestCodexSetupPathPrerequisite` covers missing,
+   nonexecutable, incompatible, timed-out, oversized-output and wrong-response
+   candidates; no generated file, permission or owner-marker change occurs on
+   failure. Match/mismatch cases for `--binary` are tested. Claude-only/DB-repo
+   modes do not acquire the Codex prerequisite.
+4. Generate the compact hook supervisor with PATH-only external execution and
+   direct MCP argv. Preserve stdin, failure codes, stderr/protocol separation
+   and cancellation; reuse the server's existing lifecycle guard and executor
+   cleanup rather than adding another guard. → verify:
+   `TestCodexLaunchFailureAndCancellation` covers missing/older/crashed binaries,
+   owner failure, exit-0 structured denial, byte-identical input and failed serve
+   status. Signal the outer hook and the direct MCP process, and close MCP stdin:
+   no Go/server/executor process should remain beyond the existing bounded
+   cleanup contract. Do not substitute a wrapper-only sentinel for real server
+   lifecycle evidence.
+5. Stop writing/using the Codex wrapper and remove Codex-only branches from the
+   shared wrapper generator. Update setup output, doctor and artifact inventory;
+   regenerate both final Codex registrations and the remaining Claude wrapper.
+   → verify: generated whole-file/merge/completeness guards match the new output
+   set without a Codex-wrapper exemption. Fresh/final-format repeat setup retains
+   owner ID, external handlers and trust metadata. Doctor validates final bindings
+   without requiring a wrapper; leftover wrapper-only files are not a capy
+   registration. Existing Claude wrapper results remain unchanged.
+6. Rebase existing location, ownership and failure fixtures onto the final
+   topology. Remove obsolete wrapper-execution expectations rather than adding
+   v1 compatibility fixtures. → verify: `TestCodexLaunchLocations`,
+   `TestCodexMCPLaunchLocations`, copied-ID/missing-marker and overlap fixtures
+   still pass. Keep separate tests proving that generated event commands are
+   shorter in structure (no fallback search or wrapper dispatch), and that
+   PATH candidates used by setup and runtime agree in the fixture environment.
+
+The core changes are launcher dispatch, binding grammar and prerequisite
+validation; doctor/catalog/artifact updates are consequences of those changes.
+Do not expand this slice into a new installer, PATH editor or migration service.
+Native Codex discovery and re-trust of changed definitions are verified in the
+final task, not inferred from configuration-only tests.
+
+## 3. Task 2 — bounded Codex input through the installed CLI
 
 ### Files and seams
 
@@ -42,9 +132,10 @@ files are created during implementation, not treated as pre-existing proof.
   separate from JSON payload validation and policy decisions.
 - Update `internal/hook/hook.go:Run` to select the guarded reader only for Codex,
   after platform/event validation and before `handleEvent`.
-- Update `cmd/capy/hook.go` to map typed Codex PreToolUse input failures to
-  `exitError{code: 2}` and suppress usage text for those failures. Reuse the
-  existing root exit handling; other errors/platforms retain their contracts.
+- Update the shared CLI hook error mapping used by `cmd/capy/hook.go` and direct
+  `codex-launch` dispatch to map typed Codex PreToolUse input failures to
+  `exitError{code: 2}` and suppress usage text. Other errors/platforms retain
+  their contracts.
 - Extend CLI/generated-launch tests in `cmd/capy/hook_codex_test.go` and
   `cmd/capy/codex_launch_test.go`, or add `hook_input_test.go` beside them.
 
@@ -58,7 +149,7 @@ files are created during implementation, not treated as pre-existing proof.
    limitation. → verify: `TestCodexHookInputDescriptors` covers anonymous pipe,
    closed pipe, regular file and unsupported descriptor/guard setup; a subprocess
    with an open writer exits on its own, without a test harness kill.
-2. Apply the exact idle/absolute/byte budgets from design §4.1, with a short
+2. Apply the exact idle/absolute/byte budgets from design §5.1, with a short
    SessionEnd profile. Reset idle only on nonzero reads; require EOF and reject
    the first excess byte rather than parsing a prefix. → verify:
    `TestCodexHookInputBudgets` covers empty/partial idle, empty EOF, valid JSON
@@ -69,8 +160,8 @@ files are created during implementation, not treated as pre-existing proof.
    handler, select/load policies, or create guidance/observation/DB files.
    → verify: `TestCodexHookInputNoSideEffects` uses temporary owners and sentinels;
    test a complete invalid payload separately to retain the v1 parse-denial path.
-4. Map typed transport failures at the CLI boundary and retain wrapper/launcher
-   supervision. Do not emit pre-tool JSON for another event. → verify:
+4. Map typed transport failures at both CLI entry paths and retain the compact
+   hook supervisor's failure contract. Do not emit pre-tool JSON for another event. → verify:
    `TestCodexHookInputExitCodes` drives direct and setup-generated commands with
    unset keys: PreToolUse exit 2 + nonempty stderr + empty stdout; other events
    diagnostic nonzero + empty stdout; complete malformed PreToolUse exit 0 with
@@ -85,11 +176,12 @@ files are created during implementation, not treated as pre-existing proof.
    descriptors are reaped/closed. Record Linux results and macOS coverage/limits.
 
 Do not add a timeout override to generated hooks to conceal a failing reader.
-V1 command grammar, owner IDs and wrapper generation should remain unchanged.
+Use the final launch grammar established in Task 1; do not add another launch
+layer or reintroduce project wrappers. Owner IDs remain unchanged.
 Host timeout/kill can still precede the reader when a user sets a shorter host
 deadline or startup/preflight stalls; document rather than claim that case away.
 
-## 3. Task 2 — atomic once-per-session guidance
+## 4. Task 3 — atomic once-per-session guidance
 
 ### Files and seams
 
@@ -134,7 +226,7 @@ introduced. A killed winner can leave a valid empty claim; subsequent calls
 suppress that optional advisory. Include that outcome as a test and documented
 at-most-once-claim limitation, rather than implementing an acknowledgment system.
 
-## 4. Task 3 — one main-agent HTTP redirect per observed success
+## 5. Task 4 — one main-agent HTTP redirect per observed success
 
 ### Files and seams
 
@@ -205,7 +297,7 @@ at-most-once-claim limitation, rather than implementing an acknowledgment system
 Synthetic installed-command coverage does not establish actual host delivery.
 The live main-session sequence belongs to the final verification task below.
 
-## 5. Task 4 — release verification and documentation
+## 6. Task 5 — release verification and documentation
 
 1. Run `kk:test` over the resulting implementation using FTS5 and synthetic
    `CAPY_DB_KEY`/`CAPY_VAULT_KEY`, with an empty temporary capy config home.
@@ -229,18 +321,22 @@ The live main-session sequence belongs to the final verification task below.
    fixture rule/source, both before and after main evidence exists; child
    evidence stays isolated; MCP remains usable from the subdirectory. Check
    compact startup payload/no spill and unchanged unrelated-hook behavior.
+   Also confirm that the actual host inherits the intended PATH and that changed
+   generated definitions pass normal hook review/re-trust. Setup success in a
+   different terminal does not prove this host environment is configured.
 4. Validate transport and cleanup limitations separately. → verify: stalled
    generated input produces exit 2 in a subprocess; EOF framing, size bounds
    and SessionEnd short deadline are recorded as controlled probes. Host
    delivery uses complete input, so do not manufacture a claim of a naturally
    stalled live host. Record any untested platform, kernel-I/O limitation and
    unavailable live cleanup path explicitly. Stop disposable sessions normally.
-5. Run `kk:document` for README routing/repair/limits, `docs/architecture.md`,
-   AGENTS guidance-marker/main-observation invariants and hook CLI help where
-   user-facing constraints need explanation. → verify: docs distinguish routing
+5. Run `kk:document` for README PATH/setup/routing/repair/limits,
+   `docs/architecture.md`, AGENTS artifact/state invariants and setup/hook help.
+   → verify: docs distinguish routing
    fallback from policy denial, disclose the first/unobserved-call behavior,
-   document legacy marker compatibility and mixed-version limitations, and make
-   no output-budget or continuity claims. Update both sides of any generated
+   document older shared-guidance state, the final launch prerequisite, normal
+   re-trust and unsupported interim PR formats, and make no output-budget or
+   continuity claims. Update both sides of any generated
    artifact change. Do not alter v1's completed task statuses or evidence.
 6. Run isolated `kk:review-code` with Go input and isolated `kk:review-spec`
    explicitly against `design-v2.md`, `implementation-v2.md` and `tasks-v2.md`,
@@ -252,18 +348,20 @@ The live main-session sequence belongs to the final verification task below.
    implementation evidence is complete. No release publishing, issue mutation
    or commit is implied by this design task.
 
-## 6. Test matrix and implementation cautions
+## 7. Test matrix and implementation cautions
 
 | Concern | Required negative/control cases |
 |---|---|
+| Launch | one final grammar; no project wrapper; PATH missing/incompatible/changed; bounded side-effect-free probe; setup failure before writes; `--binary` match/mismatch; same owner/cwd/storage |
+| Launch lifecycle | pre-tool exit 2; structured denial exit 0; MCP stdout/status; outer hook signals; direct MCP EOF/signals/initialization failure; no orphaned server/executor |
 | Reader bounds | no bytes/open pipe; partial/open; valid JSON/open; slow trickle; cap/cap+one; empty EOF; read failure; unsupported guard; complete invalid JSON |
 | Hook effects | invalid input leaves policy/state/DB untouched; PreToolUse exact exit 2 versus structured-denial exit 0; other events no fabricated pre-tool output; Claude input unchanged |
 | Guidance | 32-process single winner; multiple types/sessions; valid legacy claims; killed winner; false-value legacy membership; corrupt/oversized/symlink state; quiescent reset |
 | Main evidence | successful execute only; unknown/missing/failure states; TTL boundary; write failure; lock contention; two simultaneous candidates; no accumulated credits |
 | Isolation | main/child; root/type-only; sibling session; separate owner/worktree; Codex/Claude raw-ID collision; no cross-file migration |
-| Enforcement | deny/ask/scanner precedence; no evidence consumption on policy block/safe download; owner overlap and broken bindings fail before wrapper/state |
+| Enforcement | deny/ask/scanner precedence; no evidence consumption on policy block/safe download; owner overlap and broken bindings fail before handler/state/DB |
 | Cleanup | root-only Codex end; no key/DB access; independent scope failures; stable lock files; absent state creates nothing |
-| Installed operation | setup twice; generated commands; root/subdirectory MCP; compact guidance; external handlers; full suite/race/drift; live main round trip |
+| Installed operation | fresh/final-format setup twice; stable marker; trust-state preservation; regenerated commands and normal re-trust; root/subdirectory MCP; compact guidance; external handlers; full suite/race/drift; live main round trip |
 
 Avoid timing-only race tests: synchronize worker start and observe persisted
 claims/decisions. Inject clocks for TTL/budget boundary unit tests, and use a
@@ -272,7 +370,7 @@ not contact public HTTP endpoints or depend on installed production credentials.
 Do not replace an exact behavioral assertion with a broad substring merely to
 make a platform fixture pass.
 
-## 7. Follow-ups outside v2
+## 8. Follow-ups outside v2
 
 The v1 deferred toolbox enhancement, #132 output policy, non-Git discovery and
 authoritative host capability feed remain separate work. The user's selection

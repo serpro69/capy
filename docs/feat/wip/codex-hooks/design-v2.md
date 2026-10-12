@@ -1,19 +1,21 @@
-# Codex hooks v2: bounded input and evidence-based routing
+# Codex hooks v2: simpler launch, bounded input and evidence-based routing
 
 > Status: proposed — design drafted; implementation pending
 > Created: 2026-10-12
-> Baseline: capy `ac60b81` (same source tree as comparison commit `a58f90d`); Codex CLI 0.162.1
+> Baseline: capy `112f2c8` (includes the Codex `hooks.state` parser fix); Codex CLI 0.162.1
 > Prior feature: [design.md](design.md) · [completed tasks](tasks.md) · [v1 verification](verification.md)
 > Next: [implementation-v2.md](implementation-v2.md) · [tasks-v2.md](tasks-v2.md)
 
 ## 1. Purpose and scope
 
-This amendment improves three mechanisms inside capy's existing hooks:
+This amendment covers four changes inside capy's existing integration:
 
-1. Bound Codex hook stdin reads so a writer holding the pipe open cannot leave
+1. Dispatch from the validated Go launcher directly and require `capy` on PATH,
+   eliminating the project-wrapper round trip and fallback-location search.
+2. Bound Codex hook stdin reads so a writer holding the pipe open cannot leave
    enforcement waiting indefinitely.
-2. Make the existing once-per-session guidance claim atomic across processes.
-3. Apply recent-success, one-use HTTP routing evidence to the Codex main agent,
+3. Make the existing once-per-session guidance claim atomic across processes.
+4. Apply recent-success, one-use HTTP routing evidence to the Codex main agent,
    extending the approach already used for children.
 
 The intended users are developers running the installed capy Codex hooks,
@@ -22,9 +24,12 @@ tool. The five-event catalog remains unchanged. This is an amendment to v1,
 not a replacement for its portable owner, policy, trust or child contracts.
 The unsuffixed design/implementation/tasks and their completed evidence remain
 historical v1 artifacts. V2 implementation follows the `-v2` documents explicitly.
-Where the documents differ, v2 supersedes v1 only for Codex input admission,
-shared guidance persistence and Codex main-session HTTP routing/evidence. All
-other v1 requirements remain inherited acceptance criteria.
+Where the documents differ, v2 supersedes v1 for Codex launch/configuration,
+input admission, shared guidance persistence and main-session HTTP routing.
+Owner validation, policy precedence and other unchanged v1 requirements remain
+inherited acceptance criteria. Both iterations belong to the same PR: **there
+is no backward-compatibility requirement for the interim v1 launch format**.
+Implement only the final format; do not add a v1 parser or automatic migration.
 
 The user selected the main-agent behavior: **allow with guidance while tool
 availability is unverified; after a suitable capy tool succeeds, permit one
@@ -36,11 +41,15 @@ Atomic guidance is shared with Claude because the existing helper is shared;
 its advisory semantics stay the same. New stdin limits and new main-agent
 availability behavior apply to Codex only. Claude's input handling, main-agent
 HTTP enforcement, approval response, and existing child behavior are retained.
+Existing shared guidance JSON predates this Codex PR; its read-only recognition
+below preserves that older functionality, not an interim Codex launch contract.
 
 ## 2. Starting point and evidence
 
 | Current mechanism | Evidence at the baseline | V2 change |
 |---|---|---|
+| `setup_codex_launch.go` / `cmd/capy/codex_launch.go` | Inline discovery/supervision launches Go, which launches a project wrapper that discovers/launches Go again | One PATH-resolved Go process dispatches after owner validation; only hooks retain a small outer failure supervisor |
+| `cmd/capy/setup.go` / `SetupCodex` | Binary fallback locations and `--binary` validation can mask the environment the host will use | Explicit PATH/protocol prerequisite, checked before setup writes |
 | `internal/hook/hook.go:Run` | Reads stdin with `io.ReadAll` before parsing, policy loading or state access | A bounded Codex reader before `handleEvent` |
 | `internal/hook/guidance.go` | Reads a session JSON map, changes it, then writes without a cross-process claim | Exclusive per-type markers, with legacy JSON recognition |
 | `internal/hook/pretooluse.go:routeBash` | Checks security first; main HTTP routes deny unconditionally; children consume suitable observations | Codex main HTTP routes use their own observations |
@@ -74,6 +83,13 @@ a host killing a hook will receive capy's diagnostic.
 
 ## 3. Success criteria
 
+- Generated Codex hooks start one capy process after the compact shell
+  supervisor; MCP starts that process directly. Neither path executes a project
+  wrapper or performs a second binary search.
+- Setup fails before writes when the PATH candidate is absent or cannot support
+  the final launch protocol. Owner IDs remain stable across valid repeat setup.
+- Missing/incompatible binaries and pre-tool dispatch failures still block with
+  exit 2; MCP keeps protocol stdout clean and retains its execution status.
 - For a supported pipe, idle input terminates within the configured internal
   idle budget; continuing trickles cannot extend the absolute budget. Normal
   EOF-complete input incurs no artificial wait.
@@ -95,9 +111,125 @@ a host killing a hook will receive capy's diagnostic.
 - Security deny/ask/scanner and installation-failure tests pass in every
   availability state. All five installed events remain credential-free.
 
-## 4. Bounded Codex stdin
+## 4. Simpler owner-bound launch
 
-### 4.1 Budgets and scope
+### 4.1 Final execution paths
+
+| Surface | Final path |
+|---|---|
+| Codex hook | host → compact Bash supervisor → PATH `capy codex-launch` → owner preflight → hook handler in the same Go process |
+| Codex MCP | host → PATH `capy codex-launch` → owner preflight → existing serve entry in the same Go process |
+| Claude hooks/MCP | Existing Claude project wrapper and its lookup/exit behavior |
+
+The launcher invokes `hook.Run` with the explicit Codex adapter and validated
+owner for hook mode. For serve mode, factor the existing serve entry so it can
+accept that owner and a context without constructing another Cobra command or
+duplicating config/credential/executor/server initialization. Preserve execution
+cwd; validated owner and event cwd still serve different purposes. Owner
+inspection must precede stdin consumption, policies, observation state and
+credential/database access. Hooks remain credential-free.
+
+The launcher does not spawn a wrapper, another copy of capy or a project-defined
+executable. `.codex/scripts/capy.sh` is removed from this repo's generated
+artifacts and no longer written or required by setup/doctor. An unused copy in
+a development checkout is not an executable binding and must not be run or
+used as a registration signal. Do not automatically delete unrelated scripts.
+Remove Codex-only branches from the shared wrapper generator and regenerate
+`.claude/scripts/capy.sh`, retaining Claude's established behavior.
+
+### 4.2 One final invocation grammar
+
+Use one literal protocol identifier, `capy-codex-launch-v2`, in the final
+generated form. The hidden Go command accepts four positional data arguments:
+protocol identifier, owner ID, mode, event. Hook mode has one existing event;
+serve mode has an empty event. Reject the old unversioned argument shape.
+
+Hook definitions launch `bash -c` with one fixed compact supervisor; its `$0`
+is the protocol identifier and its remaining arguments carry owner/mode/event.
+It invokes external `capy` through PATH, passing those four values as data.
+There is no fallback-location list, inline policy/config parser or project
+script lookup. Keep the minimum supervision needed to retain stdin, forward
+INT/TERM/HUP, wait/reap the child and remap unsuccessful PreToolUse launches to
+exit 2 with repair text. A bare `exec` cannot perform that remapping after capy
+fails. Interrupted hooks retain the established signal outcome rather than
+being presented as successful policy decisions.
+
+MCP uses `command = "capy"` and structured argv beginning with `codex-launch`
+and the protocol identifier. It needs no shell: a missing MCP executable is a
+host launch failure, not a pre-tool permission decision. Preserve the existing
+environment forwarding and explicit storage/execution-owner separation.
+
+`codex_owner.go` recognizes only these two final generated forms. Replace the
+old recognizer rather than retaining both. Keep strict ID/mode/event validation,
+JSON/TOML decoding and equivalent serialization support; preserve opaque TOML
+`hooks.state`. Continue inspecting all physical ancestors, adjacent markers,
+aliases and inline hooks. Removing a wrapper requirement must not remove owner,
+missing-marker or overlap validation. The marker's existing format and random
+ID remain unchanged; no ID rotation is needed for a different command string.
+
+### 4.3 PATH prerequisite and setup diagnostics
+
+Codex installations require a compatible external `capy` executable on the
+PATH inherited by Codex. No implicit search of `~/.local/bin`, Homebrew paths,
+`~/go/bin` or the current directory remains in the Codex launch path. Those
+locations work when explicitly included in PATH. Claude retains its fallback
+search; `--local` still selects the Claude settings destination, not platforms.
+
+Before any writes in a setup invocation that includes Codex, resolve `capy` on
+the setup process's PATH and perform one bounded, side-effect-free protocol
+probe: `capy codex-launch --check-protocol capy-codex-launch-v2`. The candidate
+must exit 0 and print exactly that identifier plus a newline. Unsupported
+identifiers exit nonzero. The probe must not read stdin, resolve an owner,
+load project configuration, open a database or create state. Bound it to two
+seconds and 4 KiB combined captured output; timeout, overflow or unexpected
+output is a prerequisite failure. Do not perform this probe on every hook call.
+
+Check this prerequisite before Claude setup as well when the default both-
+platform mode is selected, so a known PATH failure cannot leave that invocation
+half-configured. `SetupCodex` must also enforce it when called independently.
+Keep its test seam explicit; do not make tests depend on a developer's installed
+binary. For Codex, an explicit `--binary` must identify the same executable as
+the PATH candidate; otherwise report that it cannot override the generated
+PATH-based launch. Claude-only setup and DB-repo mode retain their contracts.
+
+Running `./capy setup` is permitted, but the local executable alone does not
+satisfy this prerequisite. Explain how to put the intended binary on PATH and
+restart Codex so it inherits that environment. Do not edit shell profiles or
+PATH automatically. Setup validates its own environment, not the environment
+of every collaborator or an already-running desktop/CLI host.
+
+### 4.4 Failure, cancellation and generated artifacts
+
+Preserve successful structured denials as exit 0. Owner, input and hook-dispatch
+errors reach the existing CLI exit handling; the small hook supervisor also
+catches missing/older/crashed binaries before they can evaluate the event.
+PreToolUse failures exit 2 with nonempty stderr and no fabricated success.
+Other hook failures remain diagnostic nonzero exits. Serve mode preserves errors
+and normal exit outcomes, with diagnostics confined to stderr.
+
+Removing the wrapper supervisor removes an intermediate process group, not the
+cleanup obligations. The hook shell must forward signals to and reap its one Go
+child. Direct MCP dispatch reuses server lifecycle/parent monitoring and executor
+cleanup, with context propagation into the shared serve entry. Do not add a
+second competing lifecycle guard or lose cleanup on stdin EOF, cancellation,
+signals or initialization failure. Cancel the shared serve context before
+joining background work; the existing signal path currently calls shutdown
+without first canceling the startup sweep. Keep the existing 30-second parent-
+death polling interval rather than claiming immediate detection. Test actual
+server/executor descendants,
+not only wrapper sentinels that no longer represent the execution topology.
+
+Update generators and committed `.codex/hooks.json`, `.codex/config.toml` and
+`.claude/scripts/capy.sh` together; remove the committed Codex wrapper and its
+generation/drift-list entry. Update setup output, doctor checks, AGENTS artifact
+inventory and relevant CLI help. A missing Codex wrapper is now normal. The
+five-event catalog, matchers and context-limit rules stay unchanged. Existing
+external hook handlers, unrelated config, trust state and owner marker content
+must remain intact. Changed hook command text requires normal host review/trust.
+
+## 5. Bounded Codex stdin
+
+### 5.1 Budgets and scope
 
 The proposed v2 defaults are named internal constants, not new config keys,
 environment variables or CLI flags. Tests inject smaller limits through an
@@ -125,7 +257,7 @@ does not change those scanner limits. An oversized PostToolUse can lose an
 availability observation; it cannot authorize a redirect. The smaller SessionEnd
 budget is for lifecycle metadata, not a transcript body.
 
-### 4.2 Framing and failure contract
+### 5.2 Framing and failure contract
 
 EOF remains the framing boundary. A complete-looking JSON object on an open
 pipe is not enough: trailing bytes may still arrive. Do not parse a prefix on
@@ -140,15 +272,15 @@ idle, repair malformed JSON, or turn an empty stalled pipe into a pass.
 | Size overflow or read error | Same transport failure | Same diagnostic failure |
 | Unsupported input descriptor/guard setup failure | Same transport failure | Same diagnostic failure |
 
-Reader failures carry a typed classification to `cmd/capy/hook.go`; the command
-maps Codex pre-tool input failures to the existing CLI `exitError` mechanism.
-Do not call `os.Exit` in the hook package. Existing wrapper/launcher supervision
-continues to map failures to exit 2. Successful policy denials remain exit 0.
+Reader failures carry a typed classification to both direct hook and
+`codex-launch` entry paths, which use the same CLI error mapping. Do not call
+`os.Exit` in the hook package. The launcher and compact outer hook supervisor
+continue to map failures to exit 2. Successful policy denials remain exit 0.
 Suppress usage text for these operational input errors; diagnostics describe
 the boundary and suggest inspecting the hook launcher/input producer. They
 must not include input content, command bodies, keys or a permission-bypass tip.
 
-### 4.3 Reader lifecycle
+### 5.3 Reader lifecycle
 
 The production reader owns a single CLI stdin read path. For pipes, use
 deadline-capable file I/O; never merely select a timer around an indefinitely
@@ -174,9 +306,9 @@ Use existing Go/Unix facilities; no new module dependency is planned. Linux
 anonymous-pipe probes are required; macOS behavior must be verified or recorded
 as unverified before expanding compatibility claims.
 
-## 5. Atomic guidance claims
+## 6. Atomic guidance claims
 
-### 5.1 Representation and claiming
+### 6.1 Representation and claiming
 
 Keep `sessionIDComponent` unchanged, including the Codex namespace before hashing.
 Replace new JSON read–modify–writes with one empty regular marker per supported
@@ -203,21 +335,22 @@ delivery to the model. A process can die after creating the marker but before
 writing stdout. Losing one optional advisory is preferable to inventing a
 delivery/acknowledgment protocol. Policy decisions never depend on this marker.
 
-### 5.2 Upgrade, errors and reset
+### 6.2 Upgrade, errors and reset
 
 Before creating a new marker, recognize existing
 `.capy/guidance-<component>.json` state read-only. Bound the read to 4 KiB and
 require a regular non-symlink file containing one complete boolean-map JSON
 object. Preserve the old membership semantics for known keys, including a
-present false value, because v1 suppressed on key presence. Ignore unrelated
+present false value, because the existing helper suppresses on key presence. Ignore unrelated
 keys; malformed/oversized/unreadable legacy state is not a successful claim.
 Do not rewrite, delete or eagerly migrate old files during normal hook calls.
 
 Concurrent v2 invocations are safe because each final marker has one creator.
-Concurrent old/new binaries are not a supported upgrade mode: an old writer
-cannot participate in the new atomic protocol. After upgrading, restart affected
-launchers. On downgrade, v1 may show an extra advisory because it does not read
-the new markers; policy behavior is unaffected.
+An older shared-guidance JSON writer cannot participate in the new atomic
+claim protocol. Restart affected launchers across binary changes. A released
+binary using the older shared-guidance representation may show another advisory
+because it does not read the new markers; policy behavior is unaffected. This
+state-format consideration does not require support for the interim Codex launch.
 
 On invalid or unwritable state, return the normal advisory without persisting a
 claim and report a bounded warning. This preserves best-effort guidance. The
@@ -231,9 +364,9 @@ continues to leave guidance state alone. Storage remains one legacy file plus
 at most three v2 markers per stable session; v2 does not add automatic retention
 or a session-directory sweep. Existing `.capy/**` ignore rules already cover them.
 
-## 6. Main-agent availability through observed success
+## 7. Main-agent availability through observed success
 
-### 6.1 What evidence means
+### 7.1 What evidence means
 
 No process probe, heartbeat, trust record or MCP registration flag is used.
 A PostToolUse success proves only that a suitable tool completed for the
@@ -262,7 +395,7 @@ does not mint or renew positive evidence; it also does not classify the server
 as unavailable. An earlier unconsumed success expires normally. After a
 redirect consumes it, a failed retry cannot recreate it.
 
-### 6.2 State identity and isolation
+### 7.2 State identity and isolation
 
 Introduce a separate Codex-main observation scope using:
 
@@ -295,7 +428,7 @@ reads/writes result in advisory fallback. Positive records create state;
 unobserved fallback and cleanup of absent state create nothing. Store only safe
 identity components and success timestamps, never inputs, outputs or credentials.
 
-### 6.3 Routing order and consumption
+### 7.3 Routing order and consumption
 
 The installed owner preflight remains first. After complete input admission,
 parsing, identity/project validation and command scanning:
@@ -323,7 +456,7 @@ new success arriving after consumption can legitimately enable another redirect.
 No evidence is consumed for a safe download, ordinary Bash command, direct capy
 MCP call, or policy denial.
 
-### 6.4 Cleanup and presentation
+### 7.4 Cleanup and presentation
 
 On root Codex SessionEnd, independently remove that stable session from main
 and child scopes. Acquire/release their locks separately; never nest locks.
@@ -337,26 +470,33 @@ Update runtime Codex guidance and generated `.capy/AGENTS.md` to distinguish
 main/child evidence from Claude main enforcement. Preserve the 4,096-byte
 SessionStart/SubagentStart payload bound and unrelated toolbox text. Keep the
 five-event catalog, anchored matchers, owner IDs, hook trust handling and
-`additionalContextLimit` omission unchanged. No new server lifecycle code,
-MCP tool, readiness daemon or credential-resolution path is needed.
+`additionalContextLimit` omission unchanged. The launch work integrates the
+existing server lifecycle; it adds no MCP tool, readiness daemon or new
+credential-resolution semantics.
 
-## 7. Compatibility, rollout and rollback
+## 8. Rollout and development checkouts
 
-- Install one v2 binary consistently for a project, rerun setup for generated
-  routing text, and restart affected sessions/launchers. Do not rotate the
-  owner marker. V1 guidance/evidence files remain readable under their old rules.
-- Update the runtime routing generator and committed counterpart together.
-  If implementation changes any generated wrapper or registration despite this
-  plan, update both sides and revalidate exact-hook trust implications; do not
-  silently change generated launch grammar.
-- Downgrading restores unconditional Codex main HTTP routing and may repeat
-  advisory messages. It does not turn a policy deny/ask into an allow. V1 ignores
-  the separate main observation file, so no child-state migration is required.
-- All v1 owner overlap, missing-marker, setup idempotency, startup context and
-  Claude regression acceptance remains mandatory. Non-Git host discovery and
-  universal runtime/platform support remain unclaimed.
+- This PR ships one final launch format. No v1 compatibility parser, automatic
+  conversion, dual-format tests or compatibility wrapper is required.
+- Stop affected sessions before replacing loaded commands. Update the binary
+  available on PATH and regenerate/review the final configuration, then restart
+  and trust changed hooks through the normal host interface. Preserve the owner
+  marker's ID when it already exists.
+- A checkout containing artifacts from an earlier iteration of this same PR
+  must replace/remove those obsolete capy bindings before setup can inspect the
+  final format. Restore the updated committed artifacts or remove only the
+  obsolete capy entries from an external terminal, preserving unrelated handlers
+  and the owner marker, then rerun setup. Do not introduce permissive substring
+  adoption or a legacy parser merely to automate this development cleanup.
+- Fresh setup and repeated final-format setup are the supported installation
+  paths. Reverting a development checkout restores its binary and generated
+  files together after stopping sessions; mixed interim formats are unsupported.
+- Owner overlap, missing-marker, setup idempotency, startup context and Claude
+  acceptance remain mandatory. Wrapper-execution/missing-wrapper assertions
+  are replaced with direct-dispatch/no-wrapper assertions. Non-Git host discovery
+  and universal runtime/platform support remain unclaimed.
 
-## 8. Diagnostics, performance and verification
+## 9. Diagnostics, performance and verification
 
 Use existing stderr/slog conventions. Input failures report a stable reason
 (idle, absolute deadline, too large, read/guard failure) and bounded numeric
@@ -368,11 +508,17 @@ add a user-visible progress stream.
 New metrics, tracing, dashboards, alerts, profiling endpoints and RUM are
 **N/A**: these short-lived local hooks add no telemetry service. Operational
 evidence is returned decisions, bounded stderr, process outcomes and test/live
-records. Database/gRPC profile topics are **N/A**: hooks remain database-free
-and no network API is added. Existing encryption and vault contracts are inherited
-unchanged from [v1](design.md#5-adapter-policy-and-state-contracts).
+records. Database access is **N/A for hooks**; direct serve dispatch inherits
+the existing driver, queries, transactions, pool ownership and encryption from
+the [knowledge credential flow](../../../architecture.md#knowledge-credential-flow)
+and [WAL close contract](../../../adr/016-wal-mode-and-checkpoint-strategy.md).
+Capture credentials once, preserve store/vault ownership, and close pools before
+checkpointing. No SQL/schema/migration changes are introduced. gRPC is **N/A**:
+no new network API is added.
 
-The additional work is bounded file I/O: a guidance legacy lookup plus exclusive
+Launch removes the redundant wrapper and binary lookup; the PATH capability
+probe runs only at setup. The remaining additional work is bounded file I/O: a
+guidance legacy lookup plus exclusive
 claim, and one main observation transaction only for relevant success/HTTP paths.
 No server process scan, DB access or subprocess version probe enters PreToolUse.
 Measure warm installed-hook latency before/after and investigate material
@@ -380,7 +526,9 @@ regressions; do not invent a machine-independent latency target. Quality
 benchmarks are unnecessary unless implementation expands into their required
 search/indexing/chunking/executor areas.
 
-Tests must include real pipes held open, trickle input, exact size boundaries,
+Tests must include PATH/protocol failures before setup writes, direct hook/MCP
+dispatch without a project wrapper, owner preservation and signal/EOF cleanup,
+real pipes held open, trickle input, exact size boundaries,
 direct and generated exit codes, cross-process guidance races, legacy state,
 main/child cross-consumption negatives, owner/session separation, failed writes,
 TTL/cap/lock contention and policy precedence. Live verification must exercise
@@ -389,28 +537,29 @@ from a project subdirectory, and keep raw keys out of evidence. Synthetic stdin
 tests are not proof of live host delivery. Detailed steps are in the
 [implementation plan](implementation-v2.md).
 
-## 9. Assumptions and readiness
+## 10. Assumptions and readiness
 
 | Assumption | Required verification / response if false |
 |---|---|
+| Codex inherits a PATH containing a compatible capy executable | Setup probes its own PATH; live host tests verify the actual launch environment and document that each collaborator must configure it |
 | The pinned Codex runtime delivers complete hook JSON promptly over a pipe | Capture timing and run large/slow-chunk fixtures; revise the proposed constants before release if normal input exceeds them |
 | Pollable inherited pipes can be guarded on supported Unix targets | Prove cancellation/deadline behavior with the actual compiled CLI; do not substitute a timer around an unbounded read |
 | Main PostToolUse supplies stable session identity and explicit success metadata | Root live execute round trip must produce a root-only entry; otherwise do not claim root evidence support |
 | Empty child ID denotes the main caller, as already used by v1 | Verify root/type-only/child payloads; never manufacture an agent ID or infer it from transcripts |
 | Local exclusive creation and observation locking have their normal semantics | Run multiple processes on supported local filesystems; network filesystems and hostile concurrent directory replacement are outside this guarantee |
-| Sessions are restarted across binary upgrades/downgrades | Document the mixed-version limitation; do not claim atomic coordination with old JSON writers |
+| Sessions are stopped while generated launch definitions are replaced | Live regeneration/re-trust checks; mixed interim PR launch formats are unsupported |
 
 These are proposed contracts backed by source inspection, v1 evidence and the
 user's availability-policy choice. V2 is not implemented or independently
 reviewed yet. The optional review recommendations do not themselves establish
 readiness or test results.
 
-## 10. Not doing
+## 11. Not doing
 
 - New hook events or session continuity — the user limited this amendment to
   existing-hook behavior.
 - Noisy-build routing, routine output budgets, external-MCP guidance or trivial
-  command exemptions — separate choices from the three selected changes.
+  command exemptions — separate from the selected launch and hook changes.
 - Machine-wide readiness sentinels, heartbeat/PID discovery or host trust-state
   mutation — none proves this agent can call a tool.
 - Confirmed-negative availability or per-request MCP identity protocols — the
@@ -419,13 +568,20 @@ readiness or test results.
   hooks — preserve existing ownership and encryption invariants.
 - New runtime config knobs, module upgrades, a general state framework or a
   broad cleanup/retention redesign — unnecessary for these bounded contracts.
+- Backward compatibility with the interim v1 launch form, automatic conversion
+  of its artifacts or a retained Codex wrapper — both iterations ship in this PR.
 - Hosted web interception, command rewriting, native permission emulation,
   universal platform support or overlapping installations — preserve v1 scope.
 
-## 11. Rejected alternatives
+## 12. Rejected alternatives
 
 | Alternative | Reason rejected |
 |---|---|
+| Retain Go → project wrapper → Go | Repeats binary discovery and supervision after the owner is already validated |
+| Keep Codex fallback install-directory searches | Obscures the launch environment and inflates every hook; this amendment explicitly requires PATH |
+| Move the whole bootstrap into a project script | Still needs a trustworthy locator and missing-script failure handling; direct Go dispatch removes the extra dependency |
+| Support both interim launch grammars or migrate v1 automatically | Unnecessary release machinery for two iterations of the same PR |
+| Use bare `exec` for PreToolUse | Cannot remap a subsequently failed/missing/incompatible executable to the required exit 2 |
 | Depend only on host timeout | Can delay the decision and loses capy's own failure classification; host termination is not an exit-2 response |
 | Parse buffered JSON on idle or accept a prefix | Cannot prove framing/trailing-data validity and may silently truncate input |
 | Unbounded read goroutine plus a timer | Returns control without reliably terminating the blocked reader |
@@ -433,6 +589,6 @@ readiness or test results.
 | Delete legacy guidance state on upgrade | Repeats existing advisories and needlessly mutates historical state |
 | Any live MCP sentinel means tools are available | Cross-project/process liveness is not session-scoped tool availability |
 | Keep denying main HTTP with no evidence | Conflicts with the user's selected unknown-state fallback and can route into an unavailable tool |
-| Invent a reserved child ID for the main agent in the existing file | Can collide with a host-supplied child identity and couples migration to the v1 schema |
+| Invent a reserved child ID for the main agent in the existing file | Can collide with a host-supplied child identity and couples unrelated caller scopes |
 | Persist a permanent ready flag or accumulate redirect credits | A past success does not guarantee later availability and can cause repeated dead ends |
 | Treat every tool error as confirmed unavailability | Execution/domain errors do not prove the tool disappeared; transport failures may produce no PostToolUse at all |
