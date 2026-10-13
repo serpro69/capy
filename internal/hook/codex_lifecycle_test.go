@@ -46,13 +46,14 @@ func TestCodexObservationPayloads(t *testing.T) {
 		metadata map[string]any
 		tool     string
 		observed bool
+		main     bool
 	}{
 		{name: "MCP success", observed: true},
 		{name: "aliased fetch", tool: "mcp__another_server__capy_fetch_and_index", observed: true},
 		{name: "serialized success", metadata: map[string]any{"tool_response": `{"isError":false,"content":[{"type":"text","text":"error is discussed here"}]}`}, observed: true},
 		{name: "child transcript UUID is not parent", metadata: map[string]any{"transcript_path": "/rollout-a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl"}, observed: true},
-		{name: "root", metadata: map[string]any{"agent_id": ""}},
-		{name: "type alone", metadata: map[string]any{"agent_id": "", "agent_type": "worker"}},
+		{name: "root", metadata: map[string]any{"agent_id": ""}, main: true},
+		{name: "type alone", metadata: map[string]any{"agent_id": "", "agent_type": "worker"}, main: true},
 		{name: "no session", metadata: map[string]any{"session_id": "", "transcript_path": "/rollout-a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl"}},
 		{name: "MCP failure", metadata: map[string]any{"tool_response": map[string]any{"isError": true}}},
 		{name: "serialized failure", metadata: map[string]any{"tool_response": `{"isError":true,"content":[]}`}},
@@ -81,12 +82,17 @@ func TestCodexObservationPayloads(t *testing.T) {
 			output, err := handleEvent("posttooluse", input, &adapter.CodexAdapter{}, &project)
 			require.NoError(t, err)
 			assert.Empty(t, output)
+			if tc.main {
+				assert.NoFileExists(t, filepath.Join(project, ".capy", "tool-observations.json"))
+				assert.FileExists(t, filepath.Join(project, ".capy", "codex-main-observations.json"))
+				return
+			}
 			if !tc.observed {
 				assert.NoDirExists(t, filepath.Join(project, ".capy"))
 				return
 			}
 			store := newObservationStore(project)
-			state, err := readObservations(observationFile(store), time.Now().UnixMilli())
+			state, err := readObservations(observationFile(store), time.Now().UnixMilli(), childObservationScope)
 			require.NoError(t, err)
 			require.Len(t, state.Entries, 1)
 			assert.Equal(t, sessionIDComponent("codex:parent"), state.Entries[0].Session)

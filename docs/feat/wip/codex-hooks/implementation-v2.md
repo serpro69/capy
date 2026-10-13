@@ -1,6 +1,6 @@
 # Implementation: Codex hooks v2
 
-> Status: in-progress — Tasks 1–3 direct launch, bounded input and atomic guidance implemented; Tasks 4–5 pending
+> Status: in-progress — Tasks 1–4 implemented, verified and reviewed; Task 5 live/release acceptance pending
 > Created: 2026-10-12
 > Design: [design-v2.md](design-v2.md) · Tasks: [tasks-v2.md](tasks-v2.md)
 > Baseline: capy `112f2c8` (includes the Codex `hooks.state` parser fix); follow the `-v2` documents, not the completed v1 task list

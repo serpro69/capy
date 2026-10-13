@@ -28,7 +28,7 @@ func observationFixture(t *testing.T) (observationStore, *time.Time) {
 }
 
 func observationFile(s observationStore) string {
-	return filepath.Join(s.dir, "tool-observations.json")
+	return filepath.Join(s.dir, s.scope.stem()+".json")
 }
 
 func TestObservationsExpiryAndConsumption(t *testing.T) {
@@ -73,7 +73,7 @@ func TestObservationsCapsAndIdentity(t *testing.T) {
 	data, err := os.ReadFile(observationFile(s))
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len(data), maxObservationBytes)
-	state, err := readObservations(observationFile(s), now.UnixMilli())
+	state, err := readObservations(observationFile(s), now.UnixMilli(), childObservationScope)
 	require.NoError(t, err)
 	require.Len(t, state.Entries, maxObservationEntries)
 	assert.Equal(t, fmt.Sprintf("%0128d", 2), state.Entries[0].Session, "oldest entries are evicted first")
@@ -85,7 +85,7 @@ func TestObservationsCapsAndIdentity(t *testing.T) {
 	for _, agent := range []string{"a/b", `a\b`, "a_b", "a\x00b", strings.Repeat("long", 100)} {
 		require.NoError(t, s.record("session/../one", agent, observedFetch))
 	}
-	state, err = readObservations(observationFile(s), now.UnixMilli())
+	state, err = readObservations(observationFile(s), now.UnixMilli(), childObservationScope)
 	require.NoError(t, err)
 	require.Len(t, state.Entries, 5, "expired entries are removed before admission")
 	seen := make(map[string]bool)
@@ -226,7 +226,7 @@ func TestObservationsConcurrentUpdatesAndConsume(t *testing.T) {
 			require.ErrorIs(t, err, errObservationLockTimeout)
 		}
 	}
-	state, err := readObservations(observationFile(s), now.UnixMilli())
+	state, err := readObservations(observationFile(s), now.UnixMilli(), childObservationScope)
 	require.NoError(t, err)
 	assert.Len(t, state.Entries, successes, "every committed update must survive")
 

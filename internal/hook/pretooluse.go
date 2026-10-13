@@ -128,6 +128,9 @@ func routeBash(event *adapter.PreToolUseEvent, a adapter.HookAdapter, policies [
 				}
 				return a.FormatAllow(childToolGuidance)
 			}
+			if a.Platform() == adapter.Codex {
+				return routeCodexMainHTTP(event, a, ctx)
+			}
 			return a.FormatBlock("capy: curl/wget blocked (stdout flood risk). " +
 				"Use capy_fetch_and_index(url, source) to fetch URLs, or capy_execute(language, code) to run HTTP calls in sandbox. " +
 				"Silent file downloads with -o/--output (curl) or -O/--output-document (wget) are allowed.")
@@ -144,6 +147,9 @@ func routeBash(event *adapter.PreToolUseEvent, a adapter.HookAdapter, policies [
 			}
 			return a.FormatAllow(childToolGuidance)
 		}
+		if a.Platform() == adapter.Codex {
+			return routeCodexMainHTTP(event, a, ctx)
+		}
 		return a.FormatBlock("capy: Inline HTTP blocked. " +
 			"Use capy_execute(language, code) to run HTTP calls in sandbox, or capy_fetch_and_index(url, source) for web pages. " +
 			"Do NOT retry with Bash.")
@@ -151,6 +157,20 @@ func routeBash(event *adapter.PreToolUseEvent, a adapter.HookAdapter, policies [
 
 	// Allow, but inject routing nudge (once per session)
 	return guidanceOnce("bash", BASH_GUIDANCE, a, ctx.projectDir, event.SessionID)
+}
+
+// Only reached for root Codex HTTP candidates after security and safe-download
+// checks. An observation must be durably consumed before publishing a redirect.
+func routeCodexMainHTTP(event *adapter.PreToolUseEvent, a adapter.HookAdapter, ctx hookContext) ([]byte, error) {
+	if event.SessionIDStable && event.SessionID != "" {
+		tool, err := newCodexMainObservationStore(ctx.projectDir).consume(event.SessionID, "", false)
+		if err != nil {
+			slog.Warn("could not consume Codex main tool observation")
+		} else if tool != "" {
+			return a.FormatBlock("capy: Use " + tool + "(language, code) for this HTTP call. If that call fails or the tool is unavailable, retry the native tool.")
+		}
+	}
+	return a.FormatAllow(codexMainToolGuidance)
 }
 
 func consumeChildObservation(event *adapter.PreToolUseEvent, ctx hookContext, allowFetch bool) string {

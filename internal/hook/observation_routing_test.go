@@ -110,7 +110,7 @@ func TestObservationErrorsAndOtherToolsDoNotRenew(t *testing.T) {
 		assert.Equal(t, before, after, "other tools must not renew execute")
 	}
 	observeSuccess(t, project, observedFetch)
-	state, err := readObservations(observationFile(s), time.Now().UnixMilli())
+	state, err := readObservations(observationFile(s), time.Now().UnixMilli(), childObservationScope)
 	require.NoError(t, err)
 	require.Len(t, state.Entries, 1)
 	assert.Equal(t, old.UnixMilli(), state.Entries[0].Tools[observedExecute])

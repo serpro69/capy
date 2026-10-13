@@ -392,11 +392,14 @@ registers five (all except the PreCompact/UserPromptSubmit stubs). Codex startup
 and child context are each capped at 4,096 UTF-8 bytes; generated handlers omit
 `additionalContextLimit` and retain the host's default spill behavior.
 
-Main-agent Bash HTTP routing rejections use `FormatBlock`: the Claude Code response carries
-`permissionDecision: "deny"` and the capy guidance in `permissionDecisionReason`.
-It contains no replacement command. Security denies and matched asks run first;
-the existing silent/quiet file-download exceptions still apply. `FormatModify`
-remains in use for Agent/Task prompt injection, preserving other input fields.
+Bash HTTP routing rejections use `FormatBlock`, carrying `permissionDecision:
+"deny"` and guidance in `permissionDecisionReason`, without a replacement command.
+Claude main-agent HTTP redirects remain enforced. A Codex main session receives
+advisory context while tool availability is unverified; one recent successful
+`capy_execute` call permits one redirect within 60 seconds. Fetch, batch and
+other tools cannot supply that evidence. Security denies and matched asks run
+first, and existing silent/quiet file-download exceptions still apply.
+`FormatModify` remains in use for Claude Agent/Task prompt injection.
 
 The adapter preserves `agent_id`, `agent_type` and payload `cwd`. Only a nonempty
 agent ID selects child routing; a type alone does not. Children with unverified
@@ -412,18 +415,28 @@ tool; Git issue/PR/MR comprehension keeps native advice without consumption.
 Failed retries cannot renew evidence; state failures also preserve advisory
 fallback. A child's first native call can therefore remain unblocked.
 
-`observations.go` stores at most 128 stable session/agent pairs in one serialized
-file capped at 64 KiB. Only safe ID components, known tool names and timestamps
+`observations.go` shares one transaction algorithm between two isolated scopes:
+child evidence in `.capy/tool-observations.json`, and Codex main evidence in
+`.capy/codex-main-observations.json`. Explicit platform and nonempty/empty child
+identity select the scope; a synthetic agent name or session prefix never does.
+Main records require an empty `agent` field and execute-only tools. Each scope
+stores at most 128 entries in a file capped at 64 KiB (256 entries/128 KiB combined).
+Only safe ID components, known tool names and timestamps
 are stored; PID-fallback identities are excluded. Reads are bounded and reject
 malformed, future-dated, oversized or non-regular state. Updates expire stale
 observations before admission and evict oldest entries to enforce both limits.
-A separate permanent lock file serializes read/modify/atomic replacement, using
+A separate permanent lock per scope serializes read/modify/atomic replacement, using
 nonblocking `flock` with at most 20 ms of contention waiting. The fixed staging
 filename bounds leftovers after a killed writer. A failed consumption write
-cannot authorize a redirect. Cleanup never unlinks or replaces the shared lock.
+cannot authorize a redirect. Cleanup never unlinks or replaces either lock.
+Main consumption uses the same 60-second expiry and commits removal before
+returning a denial. An absent store creates no state on advisory fallback.
 
-SessionEnd best-effort removes only its stable session's entries, retaining
-sibling sessions. Expiry and caps bound state if SessionEnd is missed. Hooks
+Root Codex SessionEnd best-effort removes its stable session from both scopes
+in independent transactions, retaining sibling sessions. Failure in one cleanup
+does not skip the other; locks are never nested. Child-labelled Codex end events
+clear neither scope. Claude keeps its existing child-store cleanup. Expiry and
+caps bound state if SessionEnd is missed. Hooks
 judge success from host/MCP status flags, not prose inside the returned content;
 this includes existing server results marked successful despite partial failures.
 Tool input/output content and knowledge/vault database contents are not stored

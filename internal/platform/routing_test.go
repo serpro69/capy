@@ -31,7 +31,7 @@ func TestGenerateRoutingInstructions(t *testing.T) {
 	assert.Contains(t, instructions, "Decision principle")
 	assert.Contains(t, instructions, "When to use direct tools")
 	assert.Contains(t, instructions, "When to use capy tools")
-	assert.Contains(t, instructions, "Blocked commands")
+	assert.Contains(t, instructions, "HTTP routing and enforced policy")
 	assert.Contains(t, instructions, "Source kinds")
 	assert.Contains(t, instructions, "Subagent routing")
 	assert.Contains(t, instructions, "Output constraints")
@@ -88,6 +88,11 @@ func TestRoutingPlatformCoverage(t *testing.T) {
 	for _, want := range []string{"Codex hooks cover canonical Bash", "hosted web/search tools are not intercepted", "WebFetch — BLOCKED in Claude Code", "In Claude Code, when spawning", "In Codex, SubagentStart", "Child launch arguments and agent types are preserved"} {
 		assert.Contains(t, text, want)
 	}
+	for _, want := range []string{"Security denies and matched asks always apply before routing", "Claude main-agent HTTP redirects remain enforced", "Codex main sessions receive advisory", "permits one HTTP redirect within 60 seconds", "Main and child evidence are isolated", "Root SessionEnd independently clears"} {
+		assert.Contains(t, text, want)
+	}
+	assert.Contains(t, hook.CodexRoutingBlock(), "Main and child HTTP redirects each require their own capy_execute success")
+	assert.LessOrEqual(t, len(hook.CodexRoutingBlock()), 4096)
 }
 
 func TestCapyToolNamesComplete(t *testing.T) {

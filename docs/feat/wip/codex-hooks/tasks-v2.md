@@ -2,7 +2,7 @@
 
 > Design: [design-v2.md](design-v2.md)
 > Implementation: [implementation-v2.md](implementation-v2.md)
-> Status: in-progress — Tasks 1–3 done, verified and reviewed; Tasks 4–5 pending
+> Status: in-progress — Tasks 1–4 done, verified and reviewed; Task 5 pending
 > Created: 2026-10-12
 > Baseline: capy `112f2c8` (includes the Codex `hooks.state` parser fix); v1 [tasks](tasks.md) remain done
 > Confirmed choices: direct owner-validated dispatch; compatible capy on PATH; one final launch format with no v1 backward compatibility; unverified main-session HTTP availability allows advisory fallback and recent suitable success permits one redirect
@@ -78,7 +78,7 @@ a killed winner is not guaranteed. Final live host acceptance remains Task 5.
 
 ## Task 4: Apply observed-success HTTP routing to Codex main sessions
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3
 - **Size:** M
 - **Can run in parallel with:** —
@@ -86,11 +86,17 @@ a killed winner is not guaranteed. Final live host acceptance remains Task 5.
 
 ### Subtasks
 
-- [ ] 4.1 Parameterize `internal/hook/observations.go` narrowly for the separate Codex-main file/lock, reusing the existing bounded transaction algorithm while retaining child format and validation → verify: `TestCodexMainObservationStore`, existing child expiry/cap/contention tests, and independent 128-entry/64-KiB bounds per scope.
-- [ ] 4.2 Thread explicit platform identity to PostToolUse and record only stable root Codex `capy_execute` successes → verify: `TestCodexMainObservationPayloads` covers aliases, serialization, failure/cancellation, missing/type-only/child identities, fetch/other-tool exclusions and Claude root no-op.
-- [ ] 4.3 Update `routeBash` after security and safe-download checks to consume root evidence once, otherwise return discovery/native advisory; preserve child/Claude handling → verify: `TestCodexMainRoutingEvidence`, `TestCodexMainRoutingSecurityPrecedence`, `TestCodexMainConcurrentRedirect` and `TestCodexMainChildIsolation` cover the complete root lifecycle, race/failure paths and unchanged policy provenance.
-- [ ] 4.4 Extend root Codex SessionEnd for independent cleanup of both scopes, preserving permanent locks and database-free behavior → verify: `TestCodexMainSessionEnd` covers sibling retention, one-scope failure, child-labelled end, absent state and missing identity.
-- [ ] 4.5 Synchronize `internal/hook/routing.go`, `internal/platform/routing.go` and committed `.capy/AGENTS.md`, then drive setup's generated commands from a subdirectory → verify: `TestCodexMainObservationLifecycle`, existing child/MCP/owner fixtures, 4,096-byte context bounds and all generated-artifact guards.
+- [x] 4.1 Parameterize `internal/hook/observations.go` narrowly for the separate Codex-main file/lock, reusing the existing bounded transaction algorithm while retaining child format and validation → verify: `TestCodexMainObservationStore`, existing child expiry/cap/contention tests, and independent 128-entry/64-KiB bounds per scope.
+- [x] 4.2 Thread explicit platform identity to PostToolUse and record only stable root Codex `capy_execute` successes → verify: `TestCodexMainObservationPayloads` covers aliases, serialization, failure/cancellation, missing/type-only/child identities, fetch/other-tool exclusions and Claude root no-op.
+- [x] 4.3 Update `routeBash` after security and safe-download checks to consume root evidence once, otherwise return discovery/native advisory; preserve child/Claude handling → verify: `TestCodexMainRoutingEvidence`, `TestCodexMainRoutingSecurityPrecedence`, `TestCodexMainConcurrentRedirect` and `TestCodexMainChildIsolation` cover the complete root lifecycle, race/failure paths and unchanged policy provenance.
+- [x] 4.4 Extend root Codex SessionEnd for independent cleanup of both scopes, preserving permanent locks and database-free behavior → verify: `TestCodexMainSessionEnd` covers sibling retention, one-scope failure, child-labelled end, absent state and missing identity.
+- [x] 4.5 Synchronize `internal/hook/routing.go`, `internal/platform/routing.go` and committed `.capy/AGENTS.md`, then drive setup's generated commands from a subdirectory → verify: `TestCodexMainObservationLifecycle`, existing child/MCP/owner fixtures, 4,096-byte context bounds and all generated-artifact guards.
+
+**Evidence:** [Task 4 verification](verification-v2.md#task-4-acceptance-evidence);
+[isolated code review: APPROVE](.reviews/task-4-v2-code-review-2026-10-13.md).
+Full suite, package and actual CLI races, vet, context bounds and artifact guards
+pass. Installed-command replay proves the root lifecycle and isolation with
+synthetic payloads; actual live Codex delivery/trust acceptance remains Task 5.
 
 Task 4 integrates routing after the final launch, transport and shared-guidance
 contracts are established. The store and its producer/consumer are one complete
