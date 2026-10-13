@@ -12,7 +12,7 @@ import (
 )
 
 // Replay host payloads through setup's actual bootstrap, owner preflight,
-// wrapper and CLI. No MCP execution, network request or host delivery is claimed.
+// direct Go dispatch. No MCP execution, network request or host delivery is claimed.
 func TestCodexChildObservationLifecycle(t *testing.T) {
 	bin := buildStdioCapy(t)
 	owner := stdioProject(t)

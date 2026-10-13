@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
 	"github.com/serpro69/capy/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,7 +72,27 @@ func wrapperGit(t *testing.T, project string, env []string, args ...string) stri
 	return strings.TrimSpace(out)
 }
 
-func TestGeneratedWrapperProjectCredentials(t *testing.T) {
+// Codex credentials run through its installed direct argv, while Claude keeps
+// the portable wrapper's additional CLI shapes.
+func installedCredentialCommand(t *testing.T, bin, project, platform string) (string, []string) {
+	t.Helper()
+	if platform == ".claude" {
+		return "bash", []string{filepath.Join(project, platform, "scripts/capy.sh"), "serve"}
+	}
+	data, err := os.ReadFile(filepath.Join(project, ".codex/config.toml"))
+	require.NoError(t, err)
+	var cfg struct {
+		Servers map[string]struct {
+			Command string   `toml:"command"`
+			Args    []string `toml:"args"`
+		} `toml:"mcp_servers"`
+	}
+	require.NoError(t, toml.Unmarshal(data, &cfg))
+	require.Equal(t, "capy", cfg.Servers["capy"].Command)
+	return bin, cfg.Servers["capy"].Args
+}
+
+func TestGeneratedLaunchProjectCredentials(t *testing.T) {
 	bin := buildStdioCapy(t)
 	const wrongKey = "synthetic-wrong-inherited-wrapper-key-12345"
 	secrets := []string{projectFileTestKey, wrongKey}
@@ -87,6 +108,11 @@ func TestGeneratedWrapperProjectCredentials(t *testing.T) {
 				{name: "leading project flag", source: "key file", args: []string{"--project-dir", "PROJECT", "serve"}},
 				{name: "environment-only rollback launch", inherited: projectFileTestKey, args: []string{"serve"}},
 			} {
+				// Bare/explicit-owner wrapper CLI variants apply only to Claude.
+				// Codex exercises its one installed grammar from a subdirectory.
+				if platform == ".codex" && (tc.name == "bare" || tc.name == "leading project flag") {
+					continue
+				}
 				t.Run(tc.name, func(t *testing.T) {
 					project := stdioProject(t)
 					if tc.source != "" {
@@ -99,19 +125,30 @@ func TestGeneratedWrapperProjectCredentials(t *testing.T) {
 					}
 					setupWrapperProject(t, bin, project, env)
 					wrapper := filepath.Join(project, platform, "scripts", "capy.sh")
-					before, err := os.ReadFile(wrapper)
+					artifact := wrapper
+					if platform == ".codex" {
+						artifact = filepath.Join(project, ".codex/config.toml")
+					}
+					before, err := os.ReadFile(artifact)
 					require.NoError(t, err)
 					setupWrapperProject(t, bin, project, env)
-					after, err := os.ReadFile(wrapper)
+					after, err := os.ReadFile(artifact)
 					require.NoError(t, err)
-					assert.Equal(t, before, after, "repeated setup must keep wrappers identical")
+					assert.Equal(t, before, after, "repeated setup must keep launch artifacts identical")
+					executable := "bash"
 					args := append([]string{wrapper}, tc.args...)
 					cwd := project
 					if tc.name == "leading project flag" {
 						args[2], cwd = project, stdioProject(t)
 					}
+					if platform == ".codex" {
+						executable, args = installedCredentialCommand(t, bin, project, platform)
+						cwd = filepath.Join(project, "subdirectory")
+						require.NoError(t, os.MkdirAll(cwd, 0o755))
+						require.NoFileExists(t, wrapper)
+					}
 					for _, reopen := range []bool{false, true} {
-						p := startStdioProcess(t, stdioCommand{executable: "bash", args: args, dir: cwd, env: env, secrets: secrets})
+						p := startStdioProcess(t, stdioCommand{executable: executable, args: args, dir: cwd, env: env, secrets: secrets})
 						p.initialize(t)
 						if !reopen {
 							stdioIndex(t, p, "silvercapybara")
@@ -121,9 +158,11 @@ func TestGeneratedWrapperProjectCredentials(t *testing.T) {
 						p.close(t)
 						stdioCheckpointed(t, project)
 					}
-					out, err := runWrapperCommand(t, stdioCommand{
-						executable: "bash", args: []string{wrapper, "dbsize", "--project-dir", project}, dir: cwd, env: env, secrets: secrets,
-					})
+					dbExecutable, dbArgs := "bash", []string{wrapper, "dbsize", "--project-dir", project}
+					if platform == ".codex" {
+						dbExecutable, dbArgs = bin, dbArgs[1:]
+					}
+					out, err := runWrapperCommand(t, stdioCommand{executable: dbExecutable, args: dbArgs, dir: cwd, env: env, secrets: secrets})
 					require.NoError(t, err, out)
 					assert.Contains(t, out, filepath.Join(project, "knowledge.db"))
 					assert.Contains(t, out, "stdio-fixture")
@@ -135,11 +174,22 @@ func TestGeneratedWrapperProjectCredentials(t *testing.T) {
 				setupWrapperProject(t, bin, project, env)
 				wrapper := filepath.Join(project, platform, "scripts", "capy.sh")
 				for _, event := range []string{"pretooluse", "invalid-fixture-event"} {
+					args := []string{wrapper, "hook", event}
+					if platform == ".codex" {
+						command := launchHookCommand(t, project, "PreToolUse")
+						command = strings.ReplaceAll(command, "'pretooluse'", "'"+event+"'")
+						args = []string{"-c", command}
+					}
 					out, err := runWrapperCommand(t, stdioCommand{
-						executable: "bash", args: []string{wrapper, "hook", event}, dir: project, env: env,
+						executable: "bash", args: args, dir: project, env: env,
 					})
-					require.NoError(t, err, out)
-					if event == "invalid-fixture-event" {
+					if platform == ".codex" && event == "invalid-fixture-event" {
+						require.Error(t, err)
+						assert.Contains(t, out, "invalid Codex launch mode/event")
+					} else {
+						require.NoError(t, err, out)
+					}
+					if platform == ".claude" && event == "invalid-fixture-event" {
 						assert.Contains(t, out, "unknown hook event", "must reach the candidate and mask its hook failure")
 					}
 					assert.NotContains(t, out, "CAPY_DB_KEY")
@@ -150,7 +200,7 @@ func TestGeneratedWrapperProjectCredentials(t *testing.T) {
 	}
 }
 
-func TestGeneratedWrapperVaultMigration(t *testing.T) {
+func TestGeneratedLaunchVaultMigration(t *testing.T) {
 	bin := buildStdioCapy(t)
 	const vaultKey = "synthetic-wrapper-vault-environment-key-12345"
 	const ignoredVaultKey = "synthetic-dotenv-vault-key-must-not-override"
@@ -193,8 +243,9 @@ func TestGeneratedWrapperVaultMigration(t *testing.T) {
 					childEnv, dotenvKey = enabledEnv, ignoredVaultKey
 				}
 				writeCLIKeyFixture(t, filepath.Join(mainDir, ".env"), "CAPY_DB_KEY='"+projectFileTestKey+"'\nCAPY_VAULT_KEY='"+dotenvKey+"'\n")
+				executable, args := installedCredentialCommand(t, bin, linked, platform)
 				p := startStdioProcess(t, stdioCommand{
-					executable: "bash", args: []string{filepath.Join(linked, platform, "scripts", "capy.sh"), "serve"},
+					executable: executable, args: args,
 					dir: linked, env: childEnv, secrets: secrets,
 				})
 				p.initialize(t)

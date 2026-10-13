@@ -278,17 +278,24 @@ func codexConfigBindings(root map[string]any, source string) ([]CodexBinding, er
 
 func recognizeCodexInvocation(command string, args []string) (CodexBinding, bool, error) {
 	var b CodexBinding
-	recognizable := strings.Contains(command, "capy-codex-launch-")
+	recognizable := strings.Contains(command, "capy-codex-launch-") || (command == "capy" && len(args) > 0 && args[0] == "codex-launch")
 	for _, arg := range args {
 		recognizable = recognizable || strings.Contains(arg, "capy-codex-launch-")
+		// Reject the obsolete project-script binding without interpreting or
+		// converting its grammar. Unused files at that path remain irrelevant.
+		recognizable = recognizable || strings.Contains(arg, ".codex/scripts/capy.sh")
 	}
 	if !recognizable {
 		return b, false, nil
 	}
-	if command != "bash" || len(args) != 6 || args[0] != "-c" || args[1] != codexBootstrap || args[2] != codexLaunchVersion {
-		return b, true, errors.New("invalid or unsupported capy-codex-launch invocation; restore generated configuration or upgrade capy")
+	switch {
+	case command == "capy" && len(args) == 5 && args[0] == "codex-launch" && args[1] == codexLaunchVersion && args[3] == "serve":
+		b = CodexBinding{ID: args[2], Mode: args[3], Event: args[4]}
+	case command == "bash" && len(args) == 6 && args[0] == "-c" && args[1] == codexBootstrap && args[2] == codexLaunchVersion && args[4] == "hook":
+		b = CodexBinding{ID: args[3], Mode: args[4], Event: args[5]}
+	default:
+		return b, true, errors.New("invalid or unsupported capy-codex-launch invocation; stop affected sessions, restore final generated configuration and use compatible capy on PATH")
 	}
-	b = CodexBinding{ID: args[3], Mode: args[4], Event: args[5]}
 	if err := validateCodexLaunch(b.ID, b.Mode, b.Event); err != nil {
 		return b, true, err
 	}

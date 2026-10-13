@@ -21,6 +21,6 @@ whimsy = false  # this is just bad... plus it creates weird flickering artifacts
 animations = false  # even better, disable all animations to be sure no future "fancy feature" introduces weird behaviors in the terminal
 
 [mcp_servers.capy]
-command = "bash"
-args = [".codex/scripts/capy.sh", "serve"]
+command = "capy"
+args = ["codex-launch","capy-codex-launch-v2","d54275171f475eb00dbb2e4f0bb33489","serve",""]
 env_vars = ["CAPY_DB_KEY", "CAPY_VAULT_KEY"]

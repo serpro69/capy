@@ -488,9 +488,12 @@ separate activation gates. Setup preserves explicit feature overrides.
 
 The committed `.codex/capy-owner` marker contains a version and random 128-bit ID.
 Exclusive publication prevents partial-marker races; upgrades preserve the ID.
-Both hook commands and MCP argv embed it in the generated versioned bootstrap.
-The bootstrap shares binary discovery with both wrappers, then invokes
-`capy codex-launch` before running any project wrapper. The launcher:
+Both hook commands and MCP argv embed it with `capy-codex-launch-v2`. Hooks use
+a compact Bash signal/failure supervisor; MCP directly invokes PATH `capy`.
+Setup probes that candidate before writes, including Claude writes in a combined
+setup: two-second timeout, 4 KiB combined output limit, exact protocol response.
+An explicit `--binary` must identify the same executable. The metadata-only probe
+never reads stdin or accesses project/configuration/database state. The launcher:
 
 1. Inspects every physical cwd ancestor, beyond Git boundaries, using the shared
    `InspectCodexOwners` reader. Markers are bounded to 80 bytes; hook JSON and
@@ -498,10 +501,23 @@ The bootstrap shares binary discovery with both wrappers, then invokes
 2. Decodes hook, inline-hook and MCP bindings, validates each against the marker
    in its own directory, and counts installation directories, never just IDs.
    Missing live markers, copied-ID overlaps and stale marker-only commands fail
-   before wrapper, policy, observation or database access.
-3. Requires one owner with the invoked mode/event binding, then launches that
-   owner's readable regular wrapper with explicit `--project-dir`. Process cwd
-   and stdin remain intact. Supervision forwards cancellation and reaps children.
+   before stdin, policy, observation or database access.
+3. Requires one owner with the invoked mode/event binding, then calls `hook.Run`
+   with the Codex adapter or the shared `serveProject` initialization in the same
+   Go process. Process cwd and stdin remain intact; the owner selects policy and
+   executor/storage scope. Hooks remain credential-free.
+
+Codex does not generate, inspect or execute `.codex/scripts/capy.sh`. Claude
+retains its wrapper and fallback search. Obsolete launch formats are rejected;
+development checkouts must restore final bindings after stopping affected
+sessions. Owner IDs and external handlers/trust metadata remain unchanged.
+
+Direct MCP uses the existing signal/parent lifecycle guard (30-second parent
+polling). Signals, EOF and read/write failures cancel the serve context before
+tool workers and the startup sweep are joined; shutdown then cleans executor
+work and closes database handles. The guard handles SIGPIPE so a closed host
+output cannot skip cleanup, and transport failures retain a diagnostic nonzero
+exit. No second lifecycle guard is installed.
 
 PreToolUse infrastructure failures exit exactly 2 with repair-oriented stderr;
 successful structured policy denials exit 0. Other hooks fail diagnostically.
@@ -521,12 +537,14 @@ See [operator repair and rollback](../README.md#codex-hook-recovery).
 Platform-labelled checks derive configured platforms from capy artifacts, so a
 Codex-only installation does not fail for missing Claude configuration. Codex
 checks reuse the runtime owner inspector and event catalog for binding, marker,
-matcher, duplicate and wrapper validation. Visible feature disabling and inline
+matcher and duplicate validation. Unused Codex wrappers do not count as a
+registration. Visible feature disabling and inline
 overlap are reported, while effective trust and execution remain unverified.
 Credential/vault diagnostics stay separate from registration.
 
-Adapter/router tests, installed wrapper/CLI/MCP tests and live host acceptance
-are separate evidence levels in the [verification record](feat/wip/codex-hooks/verification.md).
+Adapter/router tests, installed CLI/MCP tests and live host acceptance are
+separate evidence levels in [v2 verification](feat/wip/codex-hooks/verification-v2.md);
+the [v1 record](feat/wip/codex-hooks/verification.md) remains historical.
 Static checks cannot establish host event delivery. Retained toolbox hooks can
 duplicate startup guidance; capy does not mutate them or claim this integration
 captures/budgets ordinary command output. No storage schema or CI/release pipeline

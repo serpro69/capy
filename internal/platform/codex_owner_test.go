@@ -74,14 +74,15 @@ func TestCodexOwnerMarker(t *testing.T) {
 		require.ErrorContains(t, err, "restore the marker")
 		require.NoFileExists(t, filepath.Join(dir, codexOwnerRelPath))
 	})
-	t.Run("legacy unbound MCP migrates", func(t *testing.T) {
+	t.Run("obsolete launch rejected without conversion", func(t *testing.T) {
 		dir := t.TempDir()
-		writeCodexFixture(t, dir, ".codex/config.toml", "[mcp_servers.capy]\ncommand='bash'\nargs=['.codex/scripts/capy.sh','serve']\n")
-		require.NoError(t, SetupCodex("capy", dir))
-		owners, err := InspectCodexOwners(dir)
+		content := strings.ReplaceAll(codexMCPBlock(testCodexOwnerID), codexLaunchVersion, "capy-codex-launch-v1")
+		writeCodexFixture(t, dir, ".codex/config.toml", content)
+		require.ErrorContains(t, setupCodex(dir), "unsupported")
+		data, err := os.ReadFile(filepath.Join(dir, ".codex/config.toml"))
 		require.NoError(t, err)
-		require.Len(t, owners, 1)
-		require.Len(t, owners[0].Bindings, 1+len(codexHookEvents))
+		require.Equal(t, content, string(data))
+		require.NoFileExists(t, filepath.Join(dir, codexOwnerRelPath))
 	})
 }
 
@@ -109,7 +110,7 @@ func TestCodexOwnerBindings(t *testing.T) {
 		{"wrong MCP args", "config.toml", "[mcp_servers.other]\nargs='capy-codex-launch-v1'\n", "args must"},
 		{"invalid toml", "config.toml", "[", "invalid"},
 		{"oversize", "hooks.json", strings.Repeat(" ", codexConfigLimit+1), "exceeds"},
-		{"unsupported version", "config.toml", strings.ReplaceAll(codexMCPBlock(testCodexOwnerID), codexLaunchVersion, "capy-codex-launch-v2"), "unsupported"},
+		{"unsupported version", "config.toml", strings.ReplaceAll(codexMCPBlock(testCodexOwnerID), codexLaunchVersion, "capy-codex-launch-v999"), "unsupported"},
 		{"wrong ID", "config.toml", codexMCPBlock(strings.Repeat("a", 32)), "disagrees"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -200,7 +201,7 @@ func TestCodexHookStateConfiguration(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, owners, "trust metadata alone is not an installation")
 
-			require.NoError(t, SetupCodex("capy", project))
+			require.NoError(t, setupCodex(project))
 			owners, err = InspectCodexOwners(cwd)
 			require.NoError(t, err)
 			require.Len(t, owners, 1)
@@ -222,7 +223,7 @@ func TestCodexHookStateConfiguration(t *testing.T) {
 			} else {
 				require.True(t, strings.HasPrefix(string(before), codexHookStateFixture), "project trust metadata must remain byte-identical")
 			}
-			require.NoError(t, SetupCodex("capy", project))
+			require.NoError(t, setupCodex(project))
 			after, err := os.ReadFile(path)
 			require.NoError(t, err)
 			require.Equal(t, before, after, "repeat setup must preserve trust metadata")

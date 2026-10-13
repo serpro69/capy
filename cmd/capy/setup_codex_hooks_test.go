@@ -43,6 +43,7 @@ func TestSetupCodexHooksCLI(t *testing.T) {
 			trustState := []byte("[hooks.state.\"/fixture/project/.codex/hooks.json:pre_tool_use:0:0\"]\nenabled=true\ntrusted_hash='fixture-hash'\n")
 			require.NoError(t, os.WriteFile(trustPath, trustState, 0o600))
 			env := stdioEnv(t, "")
+			env[0] = "PATH=" + filepath.Dir(bin) + string(os.PathListSeparator) + os.Getenv("PATH")
 			args := []string{"setup", "--project-dir", dir}
 			if target == "codex" {
 				args = append(args, "--platform", "codex")

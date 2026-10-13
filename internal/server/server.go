@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"os"
@@ -211,6 +213,8 @@ func (s *Server) sessionTTL() time.Duration {
 
 // Serve starts the MCP server on stdio and blocks until shutdown.
 func (s *Server) Serve(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	// Unhandled panic recovery
 	defer func() {
 		if r := recover(); r != nil {
@@ -241,19 +245,70 @@ func (s *Server) Serve(ctx context.Context) error {
 		s.vaultSweep(sweepCtx)
 	}()
 
-	// Ensure cleanup runs on all exit paths (normal return, signals, parent death).
-	defer s.shutdown()
-
-	// Lifecycle guard: shutdown on parent death or signals
-	stopGuard := StartLifecycleGuard(func() {
-		s.shutdown()
-		os.Exit(0)
-	})
+	// Keep the guard active through cleanup, including SIGPIPE handling when a
+	// departing host has closed stdout/stderr. Deferred cleanup must still run.
+	stopGuard := StartLifecycleGuard(cancel)
 	defer stopGuard()
+
+	// Ensure cleanup runs on all exit paths (normal return, signals, parent death).
+	defer func() {
+		cancel()
+		s.shutdown()
+	}()
 
 	stdio := mcpserver.NewStdioServer(s.mcpServer)
 	stdio.SetErrorLogger(log.New(os.Stderr, "capy: ", log.LstdFlags))
-	return stdio.Listen(ctx, os.Stdin, os.Stdout)
+	transport := &cancelingStdio{input: os.Stdin, output: os.Stdout, cancel: cancel}
+	err := stdio.Listen(ctx, transport, transport)
+	if transportErr := transport.Err(); transportErr != nil {
+		return fmt.Errorf("MCP stdio: %w", transportErr)
+	}
+	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		return nil // signals and parent death retain their normal shutdown status
+	}
+	return err
+}
+
+// Listen joins tool workers before returning. Cancel on EOF or either I/O
+// failure before that join, and preserve the first failure even if Listen
+// reports cancellation instead. Its reader and tool writers run concurrently.
+type cancelingStdio struct {
+	input  io.Reader
+	output io.Writer
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	err    error
+}
+
+func (s *cancelingStdio) Read(p []byte) (int, error) {
+	n, err := s.input.Read(p)
+	if err != nil {
+		s.fail(err)
+	}
+	return n, err
+}
+
+func (s *cancelingStdio) Write(p []byte) (int, error) {
+	n, err := s.output.Write(p)
+	if err != nil {
+		s.fail(err)
+	}
+	return n, err
+}
+
+func (s *cancelingStdio) fail(err error) {
+	s.mu.Lock()
+	if s.err == nil && !errors.Is(err, io.EOF) {
+		s.err = err
+	}
+	s.mu.Unlock()
+	s.cancel()
+}
+
+func (s *cancelingStdio) Err() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
 }
 
 // shutdown cleans up resources. Waits for background goroutines to finish

@@ -19,7 +19,10 @@ func newSetupCmd() *cobra.Command {
 The --local and --project flags select only the Claude settings file; they do
 not select a platform. For Claude-only local setup, use --platform claude-code --local.
 Codex setup registers five hooks and an MCP server bound to .codex/capy-owner.
-Commit the marker with its configuration and wrapper; reruns preserve its ID.
+Commit the marker with its configuration; reruns preserve its ID.
+Codex requires compatible capy on its inherited PATH. Setup checks its own PATH
+before writing either platform. --binary must match that PATH executable.
+Add the intended binary's directory to PATH and restart Codex to inherit it.
 Activation requires project-layer trust and review/trust of the exact definitions
 in /hooks. Setup does not change trust records or hook feature overrides.
 
@@ -63,6 +66,14 @@ Stop affected sessions before moving or removing loaded installation artifacts.`
 			if !setupClaude && !setupCodex {
 				return fmt.Errorf("unsupported platform: %s (supported: claude-code, codex)", p)
 			}
+			var codexSetup *platform.CodexSetup
+			if setupCodex {
+				var err error
+				codexSetup, err = platform.PrepareCodexSetup(cmd.Context(), binaryPath)
+				if err != nil {
+					return err
+				}
+			}
 
 			fmt.Printf("capy: setting up for project %s\n", projectDir)
 
@@ -87,7 +98,7 @@ Stop affected sessions before moving or removing loaded installation artifacts.`
 			}
 
 			if setupCodex {
-				if err := platform.SetupCodex(binaryPath, projectDir); err != nil {
+				if err := codexSetup.Apply(projectDir); err != nil {
 					return fmt.Errorf("Codex setup failed: %w", err)
 				}
 
@@ -95,7 +106,7 @@ Stop affected sessions before moving or removing loaded installation artifacts.`
 				fmt.Println("  - SessionStart, SubagentStart, PreToolUse, PostToolUse and SessionEnd hooks registered in .codex/hooks.json")
 				fmt.Println("  - MCP server registered in .codex/config.toml")
 				fmt.Println("  - routing instructions written to .capy/AGENTS.md")
-				fmt.Println("  - wrapper script written to .codex/scripts/capy.sh")
+				fmt.Println("  - direct owner-validated launch through capy on PATH (no project wrapper)")
 				fmt.Println("  - .capy/** added to .gitignore")
 				fmt.Println("  - activation requires project-layer trust AND review/trust of the exact hook definitions in /hooks")
 				fmt.Println("    Restart/resume Codex as needed; changed definitions may require renewed trust.")
@@ -107,7 +118,7 @@ Stop affected sessions before moving or removing loaded installation artifacts.`
 		},
 	}
 	cmd.Flags().String("platform", "", "target platform (claude-code, codex); default: both")
-	cmd.Flags().String("binary", "", "path to capy binary")
+	cmd.Flags().String("binary", "", "path to capy binary; Codex requires the same executable on PATH")
 	cmd.Flags().Bool("local", false, "write Claude hooks to .claude/settings.local.json; does not select a platform")
 	cmd.Flags().Bool("project", false, "write Claude hooks to .claude/settings.json; does not select a platform")
 	cmd.Flags().Bool("db-repo", false, "configure this repository as a knowledge-DB repo (installs a pure-sh guard hook; no MCP, wrapper, or routing)")

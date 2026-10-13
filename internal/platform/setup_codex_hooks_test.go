@@ -167,14 +167,14 @@ func TestSetupCodexHooks(t *testing.T) {
 			if partial == "hooks only" {
 				writeCodexFixture(t, dir, codexHooksRelPath, codexHookFixture(t, testCodexOwnerID))
 			}
-			require.NoError(t, SetupCodex("capy", dir))
+			require.NoError(t, setupCodex(dir))
 			owners, err := InspectCodexOwners(dir)
 			require.NoError(t, err)
 			require.Len(t, owners, 1)
 			require.Len(t, owners[0].Bindings, 6)
 			before, err := os.ReadFile(filepath.Join(dir, codexHooksRelPath))
 			require.NoError(t, err)
-			require.NoError(t, SetupCodex("capy", dir))
+			require.NoError(t, setupCodex(dir))
 			after, err := os.ReadFile(filepath.Join(dir, codexHooksRelPath))
 			require.NoError(t, err)
 			require.Equal(t, before, after)
@@ -186,7 +186,7 @@ func TestSetupCodexHooks(t *testing.T) {
 		prefix := "[features]\nhooks=false\n[[hooks.SessionStart]]\nmatcher='.*'\n[[hooks.SessionStart.hooks]]\ntype='command'\ncommand='echo independent inline'\n"
 		writeCodexFixture(t, dir, ".codex/config.toml", prefix)
 		writeCodexFixture(t, dir, ".codex/scripts/session-start.sh", "echo keep external\n")
-		require.NoError(t, SetupCodex("capy", dir))
+		require.NoError(t, setupCodex(dir))
 		config, err := os.ReadFile(filepath.Join(dir, ".codex/config.toml"))
 		require.NoError(t, err)
 		require.True(t, strings.HasPrefix(string(config), prefix))
@@ -197,7 +197,7 @@ func TestSetupCodexHooks(t *testing.T) {
 	t.Run("invalid existing hook file remains intact", func(t *testing.T) {
 		dir := t.TempDir()
 		writeCodexFixture(t, dir, codexHooksRelPath, `{"hooks":false}`)
-		require.Error(t, SetupCodex("capy", dir))
+		require.Error(t, setupCodex(dir))
 		data, err := os.ReadFile(filepath.Join(dir, codexHooksRelPath))
 		require.NoError(t, err)
 		require.Equal(t, `{"hooks":false}`, string(data))

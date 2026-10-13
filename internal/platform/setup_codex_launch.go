@@ -12,9 +12,12 @@ import (
 
 const codexOwnerRelPath = ".codex/capy-owner"
 const codexOwnerPrefix = "capy-codex-owner-v1:"
-const codexLaunchVersion = "capy-codex-launch-v1"
 
-// Shared by the wrapper and bootstrap. Discovery never executes a project file.
+// CodexLaunchProtocol identifies the only supported installed launch grammar.
+const CodexLaunchProtocol = "capy-codex-launch-v2"
+const codexLaunchVersion = CodexLaunchProtocol
+
+// Claude's portable wrapper retains its established fallback search.
 const capyBinarySearch = `p=""
 for candidate in "$(command -v capy 2>/dev/null || true)" "$HOME/.local/bin/capy" "/opt/homebrew/bin/capy" "/usr/local/bin/capy" "$HOME/go/bin/capy" "capy"; do
   if [ -n "$candidate" ] && [ -f "$candidate" ] && [ -x "$candidate" ]; then
@@ -24,7 +27,7 @@ for candidate in "$(command -v capy 2>/dev/null || true)" "$HOME/.local/bin/capy
 done
 `
 
-// Backgrounding with an explicit stdin preserves event/MCP input while allowing
+// Backgrounding with an explicit stdin preserves hook input while allowing
 // bash to forward signals immediately instead of deferring traps during wait.
 const capySuperviseShell = `capy_run() {
   "$@" <&0 &
@@ -40,21 +43,19 @@ const capySuperviseShell = `capy_run() {
 `
 
 const codexBootstrap = `set -uo pipefail
-` + capyBinarySearch + capySuperviseShell + `if [ -z "$p" ]; then
-  echo "capy: launcher binary not found; install/upgrade capy from an external terminal, then rerun capy setup --platform codex" >&2
-  status=127
-else
-  capy_run "$p" codex-launch "$1" "$2" "$3"
-  status=$?
-fi
+` + capySuperviseShell + `capy_run command capy codex-launch "$0" "$1" "$2" "$3"
+status=$?
 if [ "$status" -ne 0 ]; then
-  echo "capy: Codex launch failed; repair the reported installation or install/upgrade capy, then rerun capy setup --platform codex from the intended project" >&2
+  echo "capy: Codex launch failed; install/upgrade capy on PATH or repair configuration from an external terminal, then rerun capy setup --platform codex and restart Codex" >&2
   if [ "$2" = "hook" ] && [ "$3" = "pretooluse" ]; then exit 2; fi
 fi
 exit "$status"
 `
 
 func codexLaunchArgs(id, mode, event string) []string {
+	if mode == "serve" {
+		return []string{"codex-launch", codexLaunchVersion, id, mode, event}
+	}
 	return []string{"-c", codexBootstrap, codexLaunchVersion, id, mode, event}
 }
 

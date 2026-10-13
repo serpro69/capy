@@ -94,6 +94,8 @@ func TestHookRequiresEventArg(t *testing.T) {
 func TestSetupSubcommand(t *testing.T) {
 	// Setup can repair an absolute key file inherited from global config.
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	bin := buildStdioCapy(t)
+	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	dir := t.TempDir()
 	stdout, _, code := capy(t, "setup", "--project-dir", dir, "--project")
 	assert.Equal(t, 0, code)

@@ -189,8 +189,8 @@ You don't need to call capy tools yourself. The LLM learns the routing from the 
 
 ### Setup (Codex CLI)
 
-Install capy on each collaborator's machine and configure encryption as above,
-then run from the project root:
+Install a compatible capy executable on each collaborator's PATH and configure
+encryption as above, then run from the project root:
 
 ```bash
 capy setup --platform codex
@@ -199,9 +199,22 @@ capy doctor
 
 Setup registers SessionStart, SubagentStart, PreToolUse, PostToolUse and
 SessionEnd in `.codex/hooks.json`, and MCP in `.codex/config.toml`. Commit both
-with `.codex/capy-owner` and `.codex/scripts/capy.sh`. The marker is a portable
+with `.codex/capy-owner`. The marker is a portable
 installation ID, not a secret; rerunning setup preserves it. Existing toolbox
 and other external hooks remain installed.
+
+Hooks call `capy codex-launch` through a compact shell supervisor; MCP calls it
+directly. Both validate the owner and dispatch in Go without a project wrapper.
+Setup checks its PATH candidate with a bounded protocol probe before writing
+either platform. `./capy setup` alone does not make that binary available on
+PATH; `--binary` must identify the same executable found there. Add the intended
+binary's directory to PATH and restart Codex so it inherits that environment.
+Claude-only and DB-repo setup do not require the Codex PATH probe.
+
+Only the final `capy-codex-launch-v2` format is supported. For a checkout with
+earlier artifacts from this PR, stop affected sessions and restore the updated
+committed bindings, or remove only obsolete capy entries from an external
+terminal before rerunning setup. Preserve external hooks and the owner marker.
 
 Activate the project `.codex/` layer by trusting the project in Codex, then
 review and trust the exact generated definitions in `/hooks`. These are separate
@@ -211,9 +224,10 @@ See [Codex's hooks reference](https://learn.chatgpt.com/docs/hooks).
 
 Both doctor interfaces check registration on disk and report visible disabling
 or overlap. They cannot verify trust or event delivery. The integration targets
-Codex CLI 0.162.1; the [verification record](docs/feat/wip/codex-hooks/verification.md)
-distinguishes installed-command tests from live acceptance and its remaining
-limits. Other versions and Codex surfaces need their own runtime verification.
+Codex CLI 0.162.1. The [v1 verification record](docs/feat/wip/codex-hooks/verification.md)
+is historical; [v2 verification](docs/feat/wip/codex-hooks/verification-v2.md)
+records direct-launch tests and the pending v2 host acceptance. Other versions
+and Codex surfaces need their own runtime verification.
 
 Hooks and MCP resolve the same owner when launched from an ordinary project
 subdirectory. Moved trees, paths with spaces and sibling worktrees have
@@ -375,7 +389,8 @@ CLI `capy doctor` reports unsafe key-file permissions as a failed credential che
 
 **Key-file permission enforcement:** existing `store.key_file` credentials with broader permissions now block normal access and MCP startup. Run project `capy setup` or set the target file to `0600` before restarting. Existing `0400` files remain supported.
 
-Upgrade the binary, then invoke it **directly** in each project to regenerate every installed platform's wrappers:
+Upgrade the binary, then invoke it **directly** in each project to regenerate
+Claude wrappers and Codex bindings. Codex also requires that binary on PATH:
 
 ```bash
 capy setup --platform claude-code --project # use --local if that is your existing hook target
@@ -1413,15 +1428,16 @@ the generated installation above.
 
 ### Codex hook recovery
 
-Trusted PreToolUse hooks fail closed when capy is missing or incompatible, a
-wrapper cannot launch, or owner/config validation fails. These failures exit 2
+Trusted PreToolUse hooks fail closed when PATH capy is missing or incompatible,
+or owner/config validation fails. These failures exit 2
 with repair text. Successful policy denials instead exit 0 with denial JSON.
 Claude's legacy wrapper behavior on a running binary's failure is unchanged;
 MCP failures preserve diagnostic stderr and protocol stdout separation.
 
 A collaborator who trusts committed hooks without installing capy can lose
-matched Bash and capy calls. Install/upgrade capy from an **external terminal**,
-repair permissions and rerun `capy setup --platform codex` in the intended root.
+matched Bash and capy calls. Install/upgrade capy on PATH from an **external
+terminal**, repair permissions and rerun `capy setup --platform codex` in the
+intended root. Restart Codex to inherit the corrected PATH.
 During infrastructure repair, the user can disable the capy-owned entries in
 `/hooks`, then review/re-enable them after repair. Do not disable hooks or switch
 tools to evade a matched policy denial; address that policy with its owner.
@@ -1439,8 +1455,9 @@ all originating artifacts have been deleted. For rollback, remove only capy's
 versioned, owner-bound handlers from `.codex/hooks.json`, preserving external
 handlers and mixed-group metadata. Keep the marker and compatible launcher while
 any hook or MCP binding references them. Before restoring an older binary that
-lacks `codex-launch`, also restore the previous capy MCP entry and wrapper from
-version control. Leave unrelated inline/global/plugin hooks and stored data intact.
+lacks the final protocol, restore its matching configuration from version control
+as well. Mixed interim PR formats are unsupported. Leave unrelated
+inline/global/plugin hooks and stored data intact.
 
 Missing trust, disabled hooks, host timeouts or unsupported runtimes can prevent
 hook execution; registration is not proof of enforcement. Retained toolbox

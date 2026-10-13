@@ -34,6 +34,10 @@ func loadKnowledgeTarget(cmd *cobra.Command) (*knowledgeTarget, error) {
 	if err != nil {
 		return nil, err
 	}
+	return loadProjectKnowledgeTarget(projectDir)
+}
+
+func loadProjectKnowledgeTarget(projectDir string) (*knowledgeTarget, error) {
 	cfg, err := config.Load(projectDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading configuration: %w", err)

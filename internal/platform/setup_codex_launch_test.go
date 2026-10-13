@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWrapperCodexHookFailure(t *testing.T) {
+func TestCodexHookSupervisorFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, event string
 		want              int
@@ -24,14 +24,10 @@ func TestWrapperCodexHookFailure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			wrapper := filepath.Join(dir, "wrapper.sh")
-			require.NoError(t, os.WriteFile(wrapper, []byte(capyWrapperScript), 0o700))
 			if tc.body != "" {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "capy"), []byte("#!/bin/sh\n"+tc.body+"\n"), 0o700))
-			} else if isExecutableFile("/opt/homebrew/bin/capy") || isExecutableFile("/usr/local/bin/capy") {
-				t.Skip("capy exists in a fixed fallback location")
 			}
-			cmd := exec.Command("bash", wrapper, "hook", "--platform", "codex", tc.event)
+			cmd := exec.Command("bash", codexLaunchArgs(testCodexOwnerID, "hook", tc.event)...)
 			cmd.Dir, cmd.Env = dir, []string{"PATH=" + dir, "HOME=" + dir}
 			out, _ := cmd.CombinedOutput()
 			require.Equal(t, tc.want, cmd.ProcessState.ExitCode(), "%s", out)
@@ -61,7 +57,7 @@ func TestCodexOwnerInlineBindings(t *testing.T) {
 func TestMergeCodexMCPDecodedTableBoundaries(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	unrelated := "# [mcp_servers.capy] in a comment\nmessage='''\n[mcp_servers.capy]\nnot a real table\n'''\n"
-	stale := "['mcp_servers'.'capy']\ncommand='bash'\nargs=['.codex/scripts/capy.sh','serve']\n"
+	stale := strings.ReplaceAll(codexMCPBlock(testCodexOwnerID), "[mcp_servers.capy]", "['mcp_servers'.'capy']")
 	suffix := "[mcp_servers.other]\ncommand='other'\n"
 	require.NoError(t, os.WriteFile(path, []byte(unrelated+stale+suffix), 0o600))
 	require.NoError(t, mergeCodexMCPServer(path, testCodexOwnerID))

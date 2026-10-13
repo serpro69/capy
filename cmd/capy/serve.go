@@ -20,7 +20,15 @@ func newServeCmd() *cobra.Command {
 }
 
 func serveRunE(cmd *cobra.Command, _ []string) error {
-	target, err := loadKnowledgeTarget(cmd)
+	projectDir, err := commandProjectDir(cmd)
+	if err != nil {
+		return fmt.Errorf("capy serve: %w", err)
+	}
+	return serveProject(cmd.Context(), projectDir)
+}
+
+func serveProject(ctx context.Context, owner string) error {
+	target, err := loadProjectKnowledgeTarget(owner)
 	if err != nil {
 		return fmt.Errorf("capy serve: %w", err)
 	}
@@ -37,5 +45,5 @@ func serveRunE(cmd *cobra.Command, _ []string) error {
 	exec := executor.NewExecutor(projectDir, cfg.Executor.MaxOutputBytes)
 
 	srv := server.NewServer(cfg, policies, exec, projectDir, server.WithKnowledgeCredentials(key, source))
-	return srv.Serve(context.Background())
+	return srv.Serve(ctx)
 }

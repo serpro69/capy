@@ -38,15 +38,15 @@ func CheckPlatformRegistrations(projectDir string) []CheckResult {
 	if len(owners) == 1 {
 		return append(results, checkCodexRegistration(owners[0])...)
 	}
-	// Old unbound MCP registrations and orphaned wrappers are incomplete
-	// installations too. A .codex directory or unrelated config alone is not.
+	// An unbound named MCP registration is incomplete. An unused wrapper or
+	// unrelated .codex configuration does not establish an executable binding.
 	config, err := readDoctorCodexConfig(projectDir)
 	if err != nil {
 		return append(results, codexRegistrationFailure(err)...)
 	}
 	servers, _ := config["mcp_servers"].(map[string]any)
 	_, legacyMCP := servers["capy"]
-	if legacyMCP || registrationArtifactExists(filepath.Join(projectDir, ".codex/scripts/capy.sh")) {
+	if legacyMCP {
 		return append(results, codexRegistrationFailure(errors.New("incomplete Codex registration: missing owner binding; run capy setup --platform codex"))...)
 	}
 	if len(results) == 0 {
@@ -98,18 +98,6 @@ func checkCodexRegistration(owner CodexOwner) []CheckResult {
 		return codexRegistrationFailure(err)
 	}
 	checks := []CheckResult{checkCodexHooks(owner, config), checkCodexMCP(owner)}
-	wrapper := filepath.Join(owner.ProjectDir, ".codex/scripts/capy.sh")
-	_, exists, err := readCodexFile(wrapper, codexConfigLimit)
-	if err != nil || !exists {
-		detail := fmt.Sprintf("wrapper %s missing; run capy setup --platform codex", wrapper)
-		if err != nil {
-			detail = fmt.Sprintf("wrapper: %v; repair permissions and rerun capy setup --platform codex", err)
-		}
-		for i := range checks {
-			checks[i].Status = Fail
-			checks[i].Detail += "; " + detail
-		}
-	}
 	return append(checks, checkCodexActivation(owner.ProjectDir, config))
 }
 
@@ -227,7 +215,7 @@ func checkCodexMCP(owner CodexOwner) CheckResult {
 		result.Detail = "missing owner-bound MCP invocation; run capy setup --platform codex"
 	case 1:
 		result.Status = Pass
-		result.Detail = fmt.Sprintf("registered in %s (owner %s); bootstrap argv validated", filepath.Join(owner.ProjectDir, ".codex/config.toml"), owner.ID)
+		result.Detail = fmt.Sprintf("registered in %s (owner %s); direct PATH argv validated", filepath.Join(owner.ProjectDir, ".codex/config.toml"), owner.ID)
 	default:
 		result.Detail = fmt.Sprintf("duplicate owner-bound MCP registrations (%d); retain one generated server entry in .codex/config.toml", count)
 	}

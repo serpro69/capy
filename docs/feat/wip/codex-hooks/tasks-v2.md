@@ -2,7 +2,7 @@
 
 > Design: [design-v2.md](design-v2.md)
 > Implementation: [implementation-v2.md](implementation-v2.md)
-> Status: pending — design drafted; implementation and independent review pending
+> Status: in-progress — Task 1 done, verified and reviewed; Tasks 2–5 pending
 > Created: 2026-10-12
 > Baseline: capy `112f2c8` (includes the Codex `hooks.state` parser fix); v1 [tasks](tasks.md) remain done
 > Confirmed choices: direct owner-validated dispatch; compatible capy on PATH; one final launch format with no v1 backward compatibility; unverified main-session HTTP availability allows advisory fallback and recent suitable success permits one redirect
@@ -11,7 +11,7 @@
 
 ## Task 1: Simplify the installed Codex launch path
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** —
@@ -20,12 +20,17 @@
 
 ### Subtasks
 
-- [ ] 1.1 Replace the generated/recognized launch grammar in `setup_codex_launch.go`, `setup_codex_mcp.go` and `codex_owner.go` with the single final hook-supervisor/direct-MCP form → verify: `TestCodexFinalLaunchBindings` covers strict invocation fields, equivalent serialization, opaque trust state, adjacent markers and overlaps; obsolete forms fail diagnostically without compatibility parsing or conversion.
-- [ ] 1.2 Change `cmd/capy/codex_launch.go` to invoke the hook handler directly and share serve initialization with `cmd/capy/serve.go`, passing the validated owner/context and preserving cwd → verify: `TestCodexDirectDispatch` exercises actual hook and initialized MCP paths from root/subdirectories, external storage, no hook credentials/DB, and a never-invoked sentinel project wrapper.
-- [ ] 1.3 Add the bounded metadata-only protocol probe and PATH prerequisite before setup writes, including default-both setup; enforce the stated `--binary` match rule → verify: `TestCodexSetupPathPrerequisite` covers missing/invalid/timeout/overflow candidates, no partial setup on prerequisite failure and unaffected Claude-only/DB-repo modes.
-- [ ] 1.4 Keep a compact hook failure/signal supervisor and direct MCP launch; integrate existing server lifecycle/context/executor cleanup without a second guard → verify: `TestCodexLaunchFailureAndCancellation` checks exit 2, exit-0 denials, stdin, MCP stdout/status and signal/EOF cleanup of actual Go/server/executor processes.
-- [ ] 1.5 Remove Codex wrapper generation/requirements and Codex-only branches from the shared wrapper generator; update doctor/setup output and committed/generated artifacts together → verify: final-format setup is idempotent with the same owner ID, unrelated handlers/trust survive, absent Codex wrapper is normal, Claude behavior and all drift guards pass.
-- [ ] 1.6 Rebase location, copied-ID/missing-marker and overlap fixtures onto the final execution path → verify: existing portability/owner protections still pass; replace obsolete wrapper-execution expectations with direct-dispatch assertions, with no v1 compatibility fixture set.
+- [x] 1.1 Replace the generated/recognized launch grammar in `setup_codex_launch.go`, `setup_codex_mcp.go` and `codex_owner.go` with the single final hook-supervisor/direct-MCP form → verify: `TestCodexFinalLaunchBindings` covers strict invocation fields, equivalent serialization, opaque trust state, adjacent markers and overlaps; obsolete forms fail diagnostically without compatibility parsing or conversion.
+- [x] 1.2 Change `cmd/capy/codex_launch.go` to invoke the hook handler directly and share serve initialization with `cmd/capy/serve.go`, passing the validated owner/context and preserving cwd → verify: `TestCodexDirectDispatch` exercises actual hook and initialized MCP paths from root/subdirectories, external storage, no hook credentials/DB, and a never-invoked sentinel project wrapper.
+- [x] 1.3 Add the bounded metadata-only protocol probe and PATH prerequisite before setup writes, including default-both setup; enforce the stated `--binary` match rule → verify: `TestCodexSetupPathPrerequisite` covers missing/invalid/timeout/overflow candidates, no partial setup on prerequisite failure and unaffected Claude-only/DB-repo modes.
+- [x] 1.4 Keep a compact hook failure/signal supervisor and direct MCP launch; integrate existing server lifecycle/context/executor cleanup without a second guard → verify: `TestCodexLaunchFailureAndCancellation` checks exit 2, exit-0 denials, stdin, MCP stdout/status and signal/EOF cleanup of actual Go/server/executor processes.
+- [x] 1.5 Remove Codex wrapper generation/requirements and Codex-only branches from the shared wrapper generator; update doctor/setup output and committed/generated artifacts together → verify: final-format setup is idempotent with the same owner ID, unrelated handlers/trust survive, absent Codex wrapper is normal, Claude behavior and all drift guards pass.
+- [x] 1.6 Rebase location, copied-ID/missing-marker and overlap fixtures onto the final execution path → verify: existing portability/owner protections still pass; replace obsolete wrapper-execution expectations with direct-dispatch assertions, with no v1 compatibility fixture set.
+
+**Evidence:** [Task 1 verification](verification-v2.md#task-1-acceptance-evidence);
+[isolated code review: APPROVE](.reviews/task-1-v2-code-review-2026-10-13.md).
+Both initial lifecycle findings were reproduced and fixed; final package/race/vet
+and artifact checks pass. Live v2 host acceptance remains Task 5.
 
 ## Task 2: Bound Codex stdin through the direct and generated hook paths
 
@@ -102,5 +107,6 @@ Task 1 --> Task 3 --> Task 4
 ```
 
 Parallel markers describe dependency independence, not permission to spawn
-agents or make overlapping edits. This design invocation produces documents
-only; it does not start Task 1, run independent review, or publish a release.
+agents or make overlapping edits. The original design invocation produced
+documents only; subsequent implementation and review are recorded above.
+No release publishing or commit is implied.

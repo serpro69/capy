@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,37 +15,13 @@ import (
 // capyWrapperRelPath is the project-relative path to the portable capy wrapper script.
 const capyWrapperRelPath = ".claude/scripts/capy.sh"
 
-// codexWrapperRelPath is the project-relative path to the capy wrapper for Codex.
-const codexWrapperRelPath = ".codex/scripts/capy.sh"
-
-// capyWrapperScript preserves Claude's legacy hook behavior; Codex failures
-// remain diagnostic and PreToolUse failures always block with exit 2.
+// capyWrapperScript preserves Claude's portable lookup and legacy hook behavior.
 const capyWrapperScript = `#!/usr/bin/env bash
 
 # Go resolves knowledge credentials; vault credentials stay environment-only.
 set -uo pipefail
 
-codex_hook=false
-codex_pretool=false
-if [ "${1:-}" = "hook" ]; then
-  previous=""
-  for arg in "$@"; do
-    if [ "$arg" = "--platform=codex" ] || { [ "$previous" = "--platform" ] && [ "$arg" = "codex" ]; }; then codex_hook=true; fi
-    if [ "$arg" = "pretooluse" ]; then codex_pretool=true; fi
-    previous="$arg"
-  done
-fi
-
-` + capyBinarySearch + capySuperviseShell + `if [ -n "$p" ]; then
-  if [ "$codex_hook" = true ]; then
-    capy_run "$p" "$@"
-    status=$?
-    if [ "$status" -ne 0 ]; then
-      echo "capy: Codex hook binary failed; install/upgrade capy or repair configuration from an external terminal and rerun capy setup --platform codex" >&2
-      if [ "$codex_pretool" = true ]; then exit 2; fi
-    fi
-    exit "$status"
-  fi
+` + capyBinarySearch + `if [ -n "$p" ]; then
   if [ "${1:-}" = "hook" ]; then
     "$p" "$@" || true
     exit 0
@@ -52,11 +29,6 @@ fi
   exec "$p" "$@"
 fi
 
-if [ "$codex_hook" = true ]; then
-  echo "capy: Codex hook binary not found; install/upgrade capy from an external terminal and rerun capy setup --platform codex" >&2
-  if [ "$codex_pretool" = true ]; then exit 2; fi
-  exit 127
-fi
 if [ "${1:-}" = "hook" ]; then
   jq -n --arg reason "capy binary not found" \
     '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}'
@@ -178,8 +150,17 @@ func SetupClaudeCode(binaryPath, projectDir string, target SettingsTarget) error
 
 // SetupCodex configures capy for a Codex project.
 // It binds MCP and hooks to a portable owner, preserves external hooks, writes
-// the shared wrapper/routing instructions, and adds .capy/ to .gitignore.
+// shared routing instructions, and adds .capy/ to .gitignore.
 func SetupCodex(binaryPath, projectDir string) error {
+	setup, err := PrepareCodexSetup(context.Background(), binaryPath)
+	if err != nil {
+		return err
+	}
+	return setup.Apply(projectDir)
+}
+
+// setupCodex is the writer seam; callers must validate the PATH prerequisite first.
+func setupCodex(projectDir string) error {
 	// Reject broken/overlapping bindings before config permissions or writes.
 	if _, _, err := inspectCodexSetup(projectDir); err != nil {
 		return err
@@ -191,18 +172,6 @@ func SetupCodex(binaryPath, projectDir string) error {
 	if err != nil {
 		return err
 	}
-	// 1. Resolve binary path (validation only — configs use the portable wrapper)
-	if binaryPath == "" {
-		var err error
-		binaryPath, err = exec.LookPath("capy")
-		if err != nil {
-			binaryPath, err = os.Executable()
-			if err != nil {
-				return fmt.Errorf("capy binary not found in PATH; use --binary to specify location")
-			}
-		}
-	}
-
 	// 2. Create .codex/ directory
 	codexDir := filepath.Join(projectDir, ".codex")
 	if err := os.MkdirAll(codexDir, 0o755); err != nil {
@@ -218,11 +187,6 @@ func SetupCodex(binaryPath, projectDir string) error {
 	// 4. Write routing instructions to .capy/AGENTS.md
 	if err := writeAgentsFile(projectDir); err != nil {
 		return fmt.Errorf("writing routing instructions: %w", err)
-	}
-
-	// 5. Write portable wrapper script (.codex/scripts/capy.sh)
-	if err := writeWrapperScript(projectDir, codexWrapperRelPath); err != nil {
-		return fmt.Errorf("writing wrapper script: %w", err)
 	}
 
 	// 6. Merge MCP server into .codex/config.toml
