@@ -2,7 +2,7 @@
 
 > Design: [design-v2.md](design-v2.md)
 > Implementation: [implementation-v2.md](implementation-v2.md)
-> Status: in-progress — Tasks 1–2 done, verified and reviewed; Tasks 3–5 pending
+> Status: in-progress — Tasks 1–3 done, verified and reviewed; Tasks 4–5 pending
 > Created: 2026-10-12
 > Baseline: capy `112f2c8` (includes the Codex `hooks.state` parser fix); v1 [tasks](tasks.md) remain done
 > Confirmed choices: direct owner-validated dispatch; compatible capy on PATH; one final launch format with no v1 backward compatibility; unverified main-session HTTP availability allows advisory fallback and recent suitable success permits one redirect
@@ -56,7 +56,7 @@ macOS runtime and final live host acceptance remain unclaimed.
 
 ## Task 3: Atomically claim existing session guidance
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Can run in parallel with:** Task 2
@@ -64,10 +64,17 @@ macOS runtime and final live host acceptance remain unclaimed.
 
 ### Subtasks
 
-- [ ] 3.1 Replace new JSON read–modify–writes in `internal/hook/guidance.go` with exclusive zero-byte markers for the three fixed types, preserving `sessionIDComponent` → verify: `TestGuidanceAtomicClaim` and all existing traversal/component isolation cases.
-- [ ] 3.2 Recognize bounded regular older shared-guidance JSON read-only, retaining known-key membership behavior; validate existing markers and keep advisory fallback on state errors → verify: `TestGuidanceLegacyState` and `TestGuidanceStateFailureFallback`, including false values, symlinks, oversized/corrupt files and missing identity.
-- [ ] 3.3 Update `ResetGuidanceFile` for exact legacy/new paths without touching other sessions or observation locks → verify: `TestGuidanceResetIsolation` and killed-winner behavior; remove only the expected fixture paths.
-- [ ] 3.4 Add synchronized process-level coverage for Codex and regression coverage for shared Claude advisories → verify: `TestCodexGuidanceConcurrentCLI` yields exactly one advisory from 32 healthy contenders and one per independent type/session pair.
+- [x] 3.1 Replace new JSON read–modify–writes in `internal/hook/guidance.go` with exclusive zero-byte markers for the three fixed types, preserving `sessionIDComponent` → verify: `TestGuidanceAtomicClaim` and all existing traversal/component isolation cases.
+- [x] 3.2 Recognize bounded regular older shared-guidance JSON read-only, retaining known-key membership behavior; validate existing markers and keep advisory fallback on state errors → verify: `TestGuidanceLegacyState` and `TestGuidanceStateFailureFallback`, including false values, symlinks, oversized/corrupt files and missing identity.
+- [x] 3.3 Update `ResetGuidanceFile` for exact legacy/new paths without touching other sessions or observation locks → verify: `TestGuidanceResetIsolation` and killed-winner behavior; remove only the expected fixture paths.
+- [x] 3.4 Add synchronized process-level coverage for Codex and regression coverage for shared Claude advisories → verify: `TestCodexGuidanceConcurrentCLI` yields exactly one advisory from 32 healthy contenders and one per independent type/session pair.
+
+**Evidence:** [Task 3 verification](verification-v2.md#task-3-acceptance-evidence);
+[isolated code review: APPROVE](.reviews/task-3-v2-code-review-2026-10-13.md).
+Full suite, focused package and actual CLI races, vet and artifact guards pass.
+The process fixture proves one advisory among 32 healthy contenders and one per
+independent type/session/platform pair. Claims are at-most-once; delivery after
+a killed winner is not guaranteed. Final live host acceptance remains Task 5.
 
 ## Task 4: Apply observed-success HTTP routing to Codex main sessions
 

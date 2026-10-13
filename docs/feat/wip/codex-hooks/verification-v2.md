@@ -4,9 +4,10 @@
 
 Task 1 covers direct owner-validated launch, final invocation grammar, PATH
 prerequisites, failure/cancellation behavior, generated artifacts and diagnostics.
-Task 2 adds bounded hook stdin; its evidence and limits are recorded separately
-below. Atomic guidance, main-session evidence and final live host acceptance
-remain Tasks 3–5. Historical v1 results remain in [verification.md](verification.md).
+Task 2 adds bounded hook stdin; Task 3 adds atomic shared guidance claims. Their
+evidence and limits are recorded separately below. Main-session evidence and
+final live host acceptance remain Tasks 4–5. Historical v1 results remain in
+[verification.md](verification.md).
 
 Checked 2026-10-13 on Linux/amd64, Go 1.26.4, against starting commit `0c3f921`.
 Every build/test used `-tags fts5`. Tests used synthetic `CAPY_DB_KEY` and
@@ -108,8 +109,8 @@ are recorded here and in the review, so no duplicate knowledge note was indexed.
   stop affected sessions before replacing loaded definitions, restart and review
   changed hooks through normal host controls. Setup does not edit PATH or trust.
 - Task 1 did not establish input deadlines, guidance markers or main-session
-  observation behavior. Task 2's input evidence follows below; Tasks 3–4 remain
-  pending.
+  observation behavior. Tasks 2–3's input/guidance evidence follows below;
+  Task 4 remains pending.
 
 The main implementation surprise was mcp-go joining workers before returning
 from `Listen`: cancellation must happen at either transport failure boundary,
@@ -203,3 +204,79 @@ external review could not run because its configured API key was rejected.
   through a pipe or regular file; `/dev/null` is an unsupported device.
 - Search, indexing, chunking and executor code did not change, so quality
   benchmarks do not apply. Final live v2 host acceptance remains Task 5.
+
+## Task 3 acceptance evidence
+
+Shared guidance now uses exclusive, zero-byte 0600 markers for the three fixed
+types (`bash`, `read`, `grep`). Serialization precedes claiming. With healthy
+local state, one concurrent caller wins each session/type pair; a valid existing
+marker suppresses the rest. Existing `sessionIDComponent` behavior and Codex's
+namespaced identity are unchanged.
+
+Legacy boolean-map JSON is recognized read-only within 4 KiB. Known-key presence
+still suppresses guidance when the value is false. Invalid/unavailable state
+produces the ordinary advisory and a fixed warning without creating a new claim;
+warnings omit paths, session IDs and payload content. Missing identity persists
+nothing. Reset removes exactly the session's old JSON and three known markers,
+preserving other sessions and observation files/locks. SessionEnd remains
+unchanged and leaves guidance state alone.
+
+| Contract | Evidence |
+|---|---|
+| Atomic publication | `TestGuidanceAtomicClaim`: 32 simultaneous callers, one winner, independent types, empty regular 0600 markers, directory mode preserved, arbitrary types cannot create state |
+| Legacy recognition | `TestGuidanceLegacyState`: all three keys, false values, unrelated keys, empty object, exact 4-KiB boundary, corrupt/empty/trailing/oversized/non-object/non-boolean/null data; legacy bytes stay identical |
+| Invalid state remains advisory | `TestGuidanceStateFailureFallback`: directory/legacy/marker symlinks, dangling links, directories, FIFOs, nonempty markers, invalid types, unwritable directory and unreadable legacy file; repeated advisory with bounded payload-free warnings and no outside writes |
+| No premature or anonymous claims | `TestGuidanceFormatBeforeClaim`, `TestGuidanceEmptySessionDoesNotPersist`, `TestGuidanceMissingProject`: formatting failures and missing identity cannot create suppression state |
+| Exact reset and identity safety | `TestGuidanceResetIsolation` plus existing filename/session tests: exact legacy/three-marker removal, similar-looking IDs, malicious/long/Unicode IDs, empty-ID sentinels, unrelated types, symlink directory and stable observation lock inode |
+| Real concurrent hooks | `TestCodexGuidanceConcurrentCLI`: synchronized 32-process waves through final setup-generated Codex commands from a subdirectory. One advisory for a shared session; mixed Codex/Claude sessions and all shared guidance types each have one winner. Second waves produce none; all nine claims survive |
+| Claim without delivery | `TestGuidanceKilledWinner`: a real subprocess claims, signals readiness without writing its advisory, is killed and reaped; the next caller stays suppressed until explicit test reset |
+| Inherited behavior | Existing Claude guidance, owner/cwd, Codex namespace, security, input, child observation, launch and generated-artifact tests pass with updated exact marker-path assertions |
+
+### Task 3 verification results
+
+Checked 2026-10-13 on Linux/amd64, Go 1.26.4, starting commit `a4130a5`.
+Builds/tests used FTS5, the existing `/tmp/capy-v2-go-cache` and empty config home,
+and synthetic knowledge/vault keys. Hook subprocesses used isolated fixture
+environments with both keys unset. Permission-failure fixtures ran unprivileged.
+The process barrier sits outside the hook to avoid consuming Task 2's stdin
+budget while starting contenders; children enter the actual hook with complete
+EOF-framed payloads. All processes are joined and all pipe endpoints closed.
+
+| Check | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/hook` | Passed, 0.633s |
+| `go test -tags fts5 -count=1 ./cmd/capy -run 'TestCodexGuidanceConcurrentCLI\|TestHookContextCLI'` | Passed, 2.650s |
+| `go test -tags fts5 -race -count=1 ./internal/adapter ./internal/hook ./internal/platform` | Passed, 1.012s / 9.024s / 3.798s, including all generated-artifact guards |
+| `GOFLAGS=-race GORACE=atexit_sleep_ms=0 go test -tags fts5 -race -count=1 ./cmd/capy -run 'TestCodexGuidanceConcurrentCLI\|TestHookContextCLI'` | Passed, 6.255s; actual CLI fixture builds inherit race instrumentation |
+| Final `go test -tags fts5 -race -count=1 ./internal/hook` after additional identity/type/symlink fixtures | Passed, 7.815s |
+| Full `go test -tags fts5 -count=1 -timeout 15m ./...` with local socket access | All packages passed; CLI 323.594s, server 163.625s, vault 310.168s |
+| `go vet -tags fts5 ./...`, gofmt and Git whitespace checks | Passed |
+
+[Isolated code review](.reviews/task-3-v2-code-review-2026-10-13.md): **APPROVE**,
+with no findings. PAL's external review failed because its configured API key
+was rejected. Architecture and root AGENTS guidance invariants now describe the
+marker/legacy layout. No generated artifact, dependency, database or retention
+policy changed; quality benchmarks do not apply to this scope.
+
+### Task 3 limits and reflection
+
+- Claiming is at-most-once with healthy local state. A killed winner can leave
+  an advisory undelivered and suppressed; no acknowledgment protocol is added.
+- Invalid or inaccessible state can repeat advisories. It cannot grant or deny
+  permissions. Diagnostics are intentionally fixed rather than exposing state
+  paths or JSON decoder details.
+- Older shared-guidance JSON writers do not participate in atomic marker claims.
+  Restart affected launchers across binary changes. No eager migration or
+  automatic marker cleanup is introduced.
+- Linux process/filesystem behavior is verified. macOS, network filesystem
+  coordination and hostile concurrent directory replacement are unverified or
+  outside the guarantee. Controlled subprocess tests do not establish live host
+  delivery; that remains Task 5.
+
+Implementation followed the plan. The notable test detail was placing the
+process barrier before hook startup so synchronization cannot exhaust the
+already-enforced stdin idle budget. Existing traversal and owner fixtures now
+assert exact per-type marker names instead of weakening their isolation checks.
+
+Optional editorial follow-up: `kk:clarify-docs` on this verification record and
+the architecture guidance section.

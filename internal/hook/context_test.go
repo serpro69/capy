@@ -143,7 +143,7 @@ func TestHookReadPolicyWorkingDirectory(t *testing.T) {
 	output, err = handleEvent("pretooluse", hookInput(t, "Read", nil, map[string]any{"cwd": cwd}), ccAdapter(), &project)
 	require.NoError(t, err)
 	require.NotEmpty(t, output)
-	assert.FileExists(t, filepath.Join(project, ".capy", "guidance-context-session.json"))
+	assert.FileExists(t, filepath.Join(project, ".capy", "guidance-context-session-read.once"))
 	assert.NoDirExists(t, filepath.Join(cwd, ".capy"))
 }
 

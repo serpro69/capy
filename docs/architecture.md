@@ -445,12 +445,35 @@ the same selected project. Hooks do not resolve database keys or open a store.
 
 ### Guidance System
 
-One-time advisories (Read, Grep, Bash) shown once per session. State persisted to
-`.capy/guidance-<session-component>.json` since hooks are separate processes.
+Read, Grep and Bash advisories share an atomic per-session claim across hook
+processes. After serializing an advisory, its winner exclusively creates an
+empty 0600 `.capy/guidance-<session-component>-<type>.once` marker, where type is
+one of `read`, `grep` or `bash`. A valid empty regular marker suppresses later
+advisories of that type. Concurrent types and sessions have independent markers.
+The `.capy` directory and state files must not be symlinks; existing directory
+permissions are preserved. Invalid or unavailable state produces a bounded
+warning and the normal advisory without a new claim, never a permission denial.
+
+Older `.capy/guidance-<session-component>.json` files are recognized read-only
+when they are regular non-symlink files containing one complete boolean-map
+object within 4 KiB. Known-key presence suppresses that type even when its value
+is false; unrelated keys are ignored. Hook calls never rewrite or eagerly migrate
+this older state. Restart affected launchers when changing binaries: older JSON
+writers cannot coordinate with marker claims and do not recognize new markers.
+
 Creation and reset share a stable component mapping: IDs of 1–128 ASCII letters,
-digits, dots, underscores or hyphens keep their existing filenames; other
+digits, dots, underscores or hyphens keep that component unchanged; other
 nonempty IDs use `sha256-` followed by the full hexadecimal SHA-256 digest.
-Empty IDs do not persist state and continue to receive guidance on every call.
+Codex's `codex:` namespace is included before hashing. Missing project/session
+identity does not persist state and continues to receive guidance on every call.
+
+This guarantees at-most-once claiming with healthy local state, not delivery:
+a process killed after claiming can leave its optional advisory suppressed.
+SessionEnd does not remove guidance. `ResetGuidanceFile` is a quiescent test
+helper that removes only the exact session's legacy file and three known markers,
+preserving neighboring sessions and observation locks. No automatic retention
+sweep is introduced; hostile concurrent directory replacement and network
+filesystem coordination are outside this guarantee.
 
 ### Platform Adapter
 
