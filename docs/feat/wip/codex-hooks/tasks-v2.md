@@ -2,7 +2,7 @@
 
 > Design: [design-v2.md](design-v2.md)
 > Implementation: [implementation-v2.md](implementation-v2.md)
-> Status: in-progress — Task 1 done, verified and reviewed; Tasks 2–5 pending
+> Status: in-progress — Tasks 1–2 done, verified and reviewed; Tasks 3–5 pending
 > Created: 2026-10-12
 > Baseline: capy `112f2c8` (includes the Codex `hooks.state` parser fix); v1 [tasks](tasks.md) remain done
 > Confirmed choices: direct owner-validated dispatch; compatible capy on PATH; one final launch format with no v1 backward compatibility; unverified main-session HTTP availability allows advisory fallback and recent suitable success permits one redirect
@@ -34,7 +34,7 @@ and artifact checks pass. Live v2 host acceptance remains Task 5.
 
 ## Task 2: Bound Codex stdin through the direct and generated hook paths
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Can run in parallel with:** Task 3
@@ -42,10 +42,17 @@ and artifact checks pass. Live v2 host acceptance remains Task 5.
 
 ### Subtasks
 
-- [ ] 2.1 Add `internal/hook/input.go` with named ordinary/SessionEnd idle, total and byte budgets, owned deadline-capable pipe reads, and bounded regular-file support → verify: `TestCodexHookInputDescriptors` proves actual pipe behavior and closes all owned descriptors without a lingering read goroutine.
-- [ ] 2.2 Wire Codex-only admission into `internal/hook/hook.go:Run` before handlers; require EOF, reject overflow/stall, and preserve Claude input handling → verify: `TestCodexHookInputBudgets` and `TestCodexHookInputNoSideEffects` cover boundaries, trickle input, complete invalid JSON and no policy/state/DB access on transport failure.
-- [ ] 2.3 Map typed input failures through shared error handling for direct `hook` and `codex-launch`, preserving the final supervisor and structured-denial contracts → verify: `TestCodexHookInputExitCodes` checks direct/generated pre-tool exit 2 + stderr + empty stdout, other event errors and valid/invalid completed payloads.
-- [ ] 2.4 Exercise production budgets through the final installed path and document descriptor/platform limits → verify: ordinary idle/trickle and short SessionEnd subprocess probes terminate with their writers open; normal EOF has no artificial delay; direct launch/signal/Claude fixtures pass.
+- [x] 2.1 Add `internal/hook/input.go` with named ordinary/SessionEnd idle, total and byte budgets, owned deadline-capable pipe reads, and bounded regular-file support → verify: `TestCodexHookInputDescriptors` proves actual pipe behavior and closes all owned descriptors without a lingering read goroutine.
+- [x] 2.2 Wire Codex-only admission into `internal/hook/hook.go:Run` before handlers; require EOF, reject overflow/stall, and preserve Claude input handling → verify: `TestCodexHookInputBudgets` and `TestCodexHookInputNoSideEffects` cover boundaries, trickle input, complete invalid JSON and no policy/state/DB access on transport failure.
+- [x] 2.3 Map typed input failures through shared error handling for direct `hook` and `codex-launch`, preserving the final supervisor and structured-denial contracts → verify: `TestCodexHookInputExitCodes` checks direct/generated pre-tool exit 2 + stderr + empty stdout, other event errors and valid/invalid completed payloads.
+- [x] 2.4 Exercise production budgets through the final installed path and document descriptor/platform limits → verify: ordinary idle/trickle and short SessionEnd subprocess probes terminate with their writers open; normal EOF has no artificial delay; direct launch/signal/Claude fixtures pass.
+
+**Evidence:** [Task 2 verification](verification-v2.md#task-2-acceptance-evidence);
+[isolated code review: APPROVE](.reviews/task-2-v2-code-review-2026-10-13.md).
+Full-suite package coverage passes after an empty-EOF fixture correction and
+socket-enabled config/server reruns. Focused races (including actual CLI child
+instrumentation), vet and artifact guards pass. Linux timing is verified;
+macOS runtime and final live host acceptance remain unclaimed.
 
 ## Task 3: Atomically claim existing session guidance
 
