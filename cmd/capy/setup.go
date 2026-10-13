@@ -25,6 +25,8 @@ before writing either platform. --binary must match that PATH executable.
 Add the intended binary's directory to PATH and restart Codex to inherit it.
 Activation requires project-layer trust and review/trust of the exact definitions
 in /hooks. Setup does not change trust records or hook feature overrides.
+Only the final capy-codex-launch-v2 format is supported. After binary or hook
+changes, restart affected sessions and review changed definitions normally.
 
 If a trusted installation cannot launch capy, repair it from an external terminal
 and rerun setup. Individual capy entries may be disabled in /hooks during

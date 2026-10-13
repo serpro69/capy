@@ -2,7 +2,7 @@
 
 > Design: [design-v2.md](design-v2.md)
 > Implementation: [implementation-v2.md](implementation-v2.md)
-> Status: in-progress — Tasks 1–4 done, verified and reviewed; Task 5 pending
+> Status: done — Tasks 1–5 implemented, verified and independently reviewed
 > Created: 2026-10-12
 > Baseline: capy `112f2c8` (includes the Codex `hooks.state` parser fix); v1 [tasks](tasks.md) remain done
 > Confirmed choices: direct owner-validated dispatch; compatible capy on PATH; one final launch format with no v1 backward compatibility; unverified main-session HTTP availability allows advisory fallback and recent suitable success permits one redirect
@@ -105,7 +105,7 @@ child validation as a shortcut.
 
 ## Task 5: Verify and document v2 as an installed integration
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4
 - **Size:** M
 - **Can run in parallel with:** —
@@ -113,11 +113,20 @@ child validation as a shortcut.
 
 ### Subtasks
 
-- [ ] 5.1 Run `kk:test` with FTS5, synthetic keys and isolated capy configuration → verify: full suite, focused adapter/hook/platform/CLI races, vet and artifact guards pass; document actual limits in `verification-v2.md`; benchmark only if required implementation areas changed.
-- [ ] 5.2 Exercise the final PATH-based installation and normal review/re-trust in a disposable recorded Codex runtime from a subdirectory → verify: direct hook/MCP launch, actual main advisory → successful execute → one redirect → advisory sequence, policy deny/ask controls, child isolation and compact guidance. Retain selected host evidence with a `-v2` filename and distinguish controlled transport probes from host delivery.
-- [ ] 5.3 Run `kk:document` for README, architecture, AGENTS artifact/state invariants and relevant CLI help → verify: PATH prerequisites, single final format, first/unobserved-call behavior, security precedence, older shared-guidance JSON, restart/re-trust and platform limitations agree with evidence; generators and committed artifacts match; historical v1 records remain intact.
-- [ ] 5.4 Run isolated `kk:review-code` with Go input → verify: findings fixed or durably dispositioned in a v2-named review record and linked from `verification-v2.md`.
-- [ ] 5.5 Run isolated `kk:review-spec` explicitly against all three `-v2` documents, with v1 as historical/inherited context where unchanged → verify: every claimed behavior has evidence, no interim compatibility or deferred functionality is claimed complete, and only then mark these tasks done.
+- [x] 5.1 Run `kk:test` with FTS5, synthetic keys and isolated capy configuration → verify: full suite, focused adapter/hook/platform/CLI races, vet and artifact guards pass; document actual limits in `verification-v2.md`; benchmark only if required implementation areas changed.
+- [x] 5.2 Exercise the final PATH-based installation and normal review/re-trust in a disposable recorded Codex runtime from a subdirectory → verify: direct hook/MCP launch, actual main advisory → successful execute → one redirect → advisory sequence, policy deny/ask controls, child isolation and compact guidance. Retain selected host evidence with a `-v2` filename and distinguish controlled transport probes from host delivery.
+- [x] 5.3 Run `kk:document` for README, architecture, AGENTS artifact/state invariants and relevant CLI help → verify: PATH prerequisites, single final format, first/unobserved-call behavior, security precedence, older shared-guidance JSON, restart/re-trust and platform limitations agree with evidence; generators and committed artifacts match; historical v1 records remain intact.
+- [x] 5.4 Run isolated `kk:review-code` with Go input → verify: findings fixed or durably dispositioned in a v2-named review record and linked from `verification-v2.md`.
+- [x] 5.5 Run isolated `kk:review-spec` explicitly against all three `-v2` documents, with v1 as historical/inherited context where unchanged → verify: every claimed behavior has evidence, no interim compatibility or deferred functionality is claimed complete, and only then mark these tasks done.
+
+**Evidence:** [Final verification](verification-v2.md#task-5-final-installed-acceptance),
+[selected actual host records](live-acceptance-v2.json),
+[code review: APPROVE](.reviews/task-5-v2-code-review-2026-10-13.md), and
+[whole-feature spec review: CONFORMANT](.reviews/task-5-v2-spec-review-2026-10-13.md).
+Full suite, focused races, vet, generated artifacts and help checks pass. Live
+Linux Codex CLI 0.162.1 verified normal trust, main/child routing and isolation,
+policy controls, compact context and SessionEnd cleanup. One stale README launch
+description was corrected and rechecked; no unresolved findings remain.
 
 ## Dependency Graph
 

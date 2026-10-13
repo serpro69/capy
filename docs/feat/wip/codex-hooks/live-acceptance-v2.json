@@ -1,0 +1,1075 @@
+{
+  "codex_version": "0.162.1",
+  "date": "2026-10-13",
+  "capy_starting_commit": "dac9fd9",
+  "kind": "selected actual host rollout evidence, not synthetic stdin replay",
+  "notes": [
+    "Normal project trust and exact hook review were used in a disposable Git project launched from its subdirectory.",
+    "Only fixture-related context measurements, calls and actual tool results are retained; no account/authentication/base-instruction/reasoning records.",
+    "The host kept its existing authentication/trust home and global Claude policy location; capy configuration was isolated, the knowledge key synthetic, and the vault key unset.",
+    "HTTP-shaped commands contain an unexecuted dead branch and made no HTTP request.",
+    "The two independent fixture hooks only emit startup context or deny the synthetic external marker.",
+    "The child full-history fork includes inherited parent context before an additional 3532-byte capy child block.",
+    "An initial parent-evidence check expired during ordinary approval delay. The later A/B handoffs verified both isolation directions within 60 seconds without changing the TTL.",
+    "The cleanup receipt described child completion as unverified, but its retained actual McpToolCall completed result and populated child observation independently prove the execute succeeded.",
+    "The live binary contains dac9fd9 runtime code; Task 5 changes only help text/documentation, validated with a separate final build."
+  ],
+  "sessions": [
+    {
+      "id": "01a13511-5934-7353-9ed4-71db3bee11b2",
+      "cwd": "/tmp/capy-v2-live-rhhlmk5u/project/subdir",
+      "source": "cli",
+      "contexts": [
+        {
+          "timestamp": "2026-10-13T11:42:17.429Z",
+          "ordinal": 9,
+          "producer": "independent fixture",
+          "utf8_bytes": 64,
+          "sha256": "8a146b63884ad5c49cb676792b20161d40e40a45c47674348921bb1256616127",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:42:17.429Z",
+          "ordinal": 10,
+          "producer": "capy",
+          "utf8_bytes": 3532,
+          "sha256": "66cfc385a0f58dd11b1c4ceafd9f0663baf06f5b6e8d40f37ac332a30f1016f2",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:42:31.467Z",
+          "ordinal": 23,
+          "producer": "availability advisory",
+          "utf8_bytes": 436,
+          "text": "capy: This main session's capy_execute availability is unverified.\nIf the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.\nIf discovery is unavailable or the tool is absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.\nFor git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:44:03.529Z",
+          "ordinal": 32,
+          "producer": "availability advisory",
+          "utf8_bytes": 436,
+          "text": "capy: This main session's capy_execute availability is unverified.\nIf the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.\nIf discovery is unavailable or the tool is absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.\nFor git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:52:23.649Z",
+          "ordinal": 151,
+          "producer": "availability advisory",
+          "utf8_bytes": 436,
+          "text": "capy: This main session's capy_execute availability is unverified.\nIf the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.\nIf discovery is unavailable or the tool is absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.\nFor git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:52:23.990Z",
+          "ordinal": 153,
+          "producer": "availability advisory",
+          "utf8_bytes": 436,
+          "text": "capy: This main session's capy_execute availability is unverified.\nIf the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.\nIf discovery is unavailable or the tool is absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.\nFor git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:57:29.142Z",
+          "ordinal": 229,
+          "producer": "availability advisory",
+          "utf8_bytes": 436,
+          "text": "capy: This main session's capy_execute availability is unverified.\nIf the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.\nIf discovery is unavailable or the tool is absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.\nFor git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.",
+          "inline": true
+        }
+      ],
+      "calls": [
+        {
+          "timestamp": "2026-10-13T11:42:23.066Z",
+          "ordinal": 15,
+          "call_id": "call_NuTgDWQPeft0nJ3YnQ28cC4A",
+          "name": "exec",
+          "input": "const capy = ALL_TOOLS.filter(x => /capy_execute$|capy_stats$/.test(x.name));\ntext(capy);\nstore(\"capy_probe_tools\", capy);\ntext(await tools.exec_command({cmd:\"printf CAPY_V2_CONTROL\",max_output_tokens:1000}));\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:42:31.318Z",
+          "ordinal": 21,
+          "call_id": "call_S72lze8FmcrTl0j2AnuA01fZ",
+          "name": "exec",
+          "input": "const records = [];\nasync function probe(label, command) {\n  try {\n    const result = await tools.exec_command({cmd:command,max_output_tokens:1600});\n    records.push({label,result});\n    text({label,result});\n  } catch (error) {\n    const failure = {label,error:String(error)};\n    records.push(failure);\n    text(failure);\n  }\n}\nawait probe(\"1. Dead branch before\", `python3 -c 'if False: requests.get(\"https://example.invalid\")'`);\nawait probe(\"2a. DENY_BEFORE\", \"printf CAPY_V2_DENY_BEFORE\");\nawait probe(\"2b. ASK_BEFORE\", \"printf CAPY_V2_ASK_BEFORE\");\nawait probe(\"2c. EXTERNAL_DENY\", \"printf CAPY_V2_EXTERNAL_DENY\");\nstore(\"capy_probe_before\", records);\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:42:42.566Z",
+          "ordinal": 27,
+          "call_id": "call_sFV9Z394fUvHspLO5JQSBa3f",
+          "name": "exec",
+          "input": "const records = [];\nconst result = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"printf CAPY_V2_MAIN_EXEC\"});\nrecords.push({label:\"3. Actual capy_execute\",result});\ntext({label:\"3. Actual capy_execute\",result});\nconst output = JSON.stringify(result);\nif (result.isError || !output.includes(\"CAPY_V2_MAIN_EXEC\")) {\n  store(\"capy_probe_after\", records);\n  text(\"Stopped: capy_execute did not demonstrate successful execution.\");\n  exit();\n}\nasync function probe(label, command) {\n  try {\n    const result = await tools.exec_command({cmd:command,max_output_tokens:1800});\n    records.push({label,result});\n    text({label,result});\n  } catch (error) {\n    const failure = {label,error:String(error)};\n    records.push(failure);\n    text(failure);\n  }\n}\nawait probe(\"4a. DENY_AFTER\", \"printf CAPY_V2_DENY_AFTER\");\nawait probe(\"4b. ASK_AFTER\", \"printf CAPY_V2_ASK_AFTER\");\nawait probe(\"5. Dead branch first repeat\", `python3 -c 'if False: requests.get(\"https://example.invalid\")'`);\nawait probe(\"6. Dead branch second repeat\", `python3 -c 'if False: requests.get(\"https://example.invalid\")'`);\nstore(\"capy_probe_after\", records);\ntext({label:\"7. Actual capy_stats\",result:await tools.mcp__capy__capy_stats({})});\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:44:07.901Z",
+          "ordinal": 37,
+          "call_id": "call_afmJ0K6RYZBINARBJygtqCO2",
+          "name": "wait",
+          "input": "{\"cell_id\":\"3\",\"max_tokens\":6500,\"yield_time_ms\":1000}"
+        },
+        {
+          "timestamp": "2026-10-13T11:48:13.061Z",
+          "ordinal": 69,
+          "call_id": "call_nJd7bKwzbFoSk0eXmMhGFvY1",
+          "name": "exec",
+          "input": "const result = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"printf CAPY_V2_PARENT_EVIDENCE\"});\nstore(\"capy_parent_evidence_completed_ms\",Date.now());\ntext(result);\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:49:54.770Z",
+          "ordinal": 74,
+          "call_id": "call_IRKeBGqZWMrzpjDzFZlF9ZgN",
+          "name": "wait",
+          "input": "{\"cell_id\":\"4\",\"max_tokens\":1000,\"yield_time_ms\":1}"
+        },
+        {
+          "timestamp": "2026-10-13T11:52:23.520Z",
+          "ordinal": 149,
+          "call_id": "call_4f1090f6d83145deb5d092c28617e976",
+          "name": "exec",
+          "input": "text({parent_id:\"/root\",evidence_age_seconds:(Date.now()-load(\"capy_parent_evidence_completed_ms\"))/1000});\nfor (const label of [\"Parent first native probe\",\"Parent second native probe\"]) {\n  try {\n    text({label,result:await tools.exec_command({cmd:`python3 -c 'if False: requests.get(\"https://example.invalid\")'`,max_output_tokens:1500})});\n  } catch (error) {\n    text({label,error:String(error)});\n  }\n}\nconst closeControls = ALL_TOOLS.filter(x => /close.*agent|agent.*close|stop.*agent|agent.*stop/.test(x.name));\ntext({available_agent_close_controls:closeControls.map(x=>({name:x.name,description:x.description}))});\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:55:23.874Z",
+          "ordinal": 171,
+          "call_id": "call_c46737f64bf64fa49648ee84ba6351fa",
+          "name": "exec",
+          "input": "const result = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"printf CAPY_V2_PARENT_ISOLATION\"});\nstore(\"capy_isolation_a_parent_completed_ms\",Date.now());\ntext(result);\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:56:13.268Z",
+          "ordinal": 176,
+          "call_id": "call_ad05425208a547a781d6e59aca683b71",
+          "name": "wait",
+          "input": "{\"cell_id\":\"6\",\"max_tokens\":1000,\"yield_time_ms\":1}"
+        },
+        {
+          "timestamp": "2026-10-13T11:56:32.487Z",
+          "ordinal": 193,
+          "call_id": "call_dc27c65d39d149f29f88e8662be92059",
+          "name": "exec",
+          "input": "text({probe:\"A parent\",age_seconds:(Date.now()-load(\"capy_isolation_a_parent_completed_ms\"))/1000});\ntry {\n  text(await tools.exec_command({cmd:`python3 -c 'if False: requests.get(\"https://example.invalid\")'`,max_output_tokens:1500}));\n} catch(error) {text({error:String(error)});}\nstore(\"capy_isolation_b_handoff_start_ms\",Date.now());\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:57:29.006Z",
+          "ordinal": 227,
+          "call_id": "call_a7b0a5c4c83a40c7a7b18c57ebd731ad",
+          "name": "exec",
+          "input": "try {\n  text({probe:\"B parent\",result:await tools.exec_command({cmd:`python3 -c 'if False: requests.get(\"https://example.invalid\")'`,max_output_tokens:1500})});\n} catch(error) {text({probe:\"B parent\",error:String(error)});}\n"
+        },
+        {
+          "timestamp": "2026-10-13T12:03:08.697Z",
+          "ordinal": 302,
+          "call_id": "call_52b7ff25245f43439bc96c54dbec46d6",
+          "name": "exec",
+          "input": "// @exec: {\"yield_time_ms\": 120000, \"max_output_tokens\": 1500}\nconst result = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"command -v capy; printf CAPY_V2_MAIN_END\"});\nfor (const item of result.content ?? []) {\n  if (item.type === \"text\") text(item.text);\n}\ntext({isError:result.isError === true});\n"
+        }
+      ],
+      "results": [
+        {
+          "timestamp": "2026-10-13T11:42:23.439Z",
+          "ordinal": 19,
+          "call_id": "call_NuTgDWQPeft0nJ3YnQ28cC4A",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 0.4 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "[{\"name\":\"mcp__capy__capy_execute\",\"description\":\"Execute code in a sandboxed subprocess for large-output extraction. Only stdout enters context — raw data stays in the subprocess. Available: [go, javascript, perl, python, rust, shell]. Best for: API calls, broad searches (rg, grep), log analysis, data processing, and commands producing hundreds+ lines where you only need extracted facts. NOT for: git commands (use Bash), small-output commands (<50 lines, use Bash), content you need to comprehend fully (use Read/Bash).\\n\\nexec tool declaration:\\n```ts\\ndeclare const tools: { mcp__capy__capy_execute(args: {\\n  // Keep process running after timeout (for servers/daemons). Returns partial output without killing the process.\\n  background?: boolean;\\n  // Source code to execute. Use print/echo/console.log to output a summary to context.\\n  code: string;\\n  // Execution directory for this call. Omitted: selected project. Must be a nonempty existing directory; relative paths resolve from the project. Changes execution location only, not storage, credentials or policy.\\n  cwd?: string;\\n  // What you're looking for in the output. When provided and output is large (>5KB), indexes output and returns section titles + previews instead of full content. Use search() to retrieve specific sections.\\n  intent?: string;\\n  // Runtime language\\n  language: \\\"javascript\\\" | \\\"typescript\\\" | \\\"python\\\" | \\\"shell\\\" | \\\"ruby\\\" | \\\"go\\\" | \\\"rust\\\" | \\\"php\\\" | \\\"perl\\\" | \\\"r\\\" | \\\"elixir\\\";\\n  // Max execution time in ms (default: 30000)\\n  timeout?: number;\\n}): Promise<CallToolResult>; };\\n```\"},{\"name\":\"mcp__capy__capy_stats\",\"description\":\"Returns context consumption statistics for the current session. Shows total bytes returned to context, breakdown by tool, call counts, estimated token usage, and context savings ratio.\\n\\nexec tool declaration:\\n```ts\\ndeclare const tools: { mcp__capy__capy_stats(args: { [key: string]: unknown; }): Promise<CallToolResult>; };\\n```\"}]"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"chunk_id\":\"0387c5\",\"wall_time_seconds\":0.042697169,\"exit_code\":0,\"original_token_count\":4,\"output\":\"CAPY_V2_CONTROL\"}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T11:42:32.077Z",
+          "ordinal": 25,
+          "call_id": "call_S72lze8FmcrTl0j2AnuA01fZ",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 0.7 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"1. Dead branch before\",\"result\":{\"chunk_id\":\"de2419\",\"wall_time_seconds\":0.065608541,\"exit_code\":0,\"original_token_count\":0,\"output\":\"\"}}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"2a. DENY_BEFORE\",\"error\":\"Command blocked by PreToolUse hook: Blocked by security policy: matches deny pattern Bash(printf *CAPY_V2_DENY*) in \\\"/tmp/capy-v2-live-rhhlmk5u/project/.claude/settings.json\\\". Command: printf CAPY_V2_DENY_BEFORE\"}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"2b. ASK_BEFORE\",\"error\":\"Command blocked by PreToolUse hook: Matched approval pattern \\\"Bash(printf *CAPY_V2_ASK*)\\\" in \\\"/tmp/capy-v2-live-rhhlmk5u/project/.claude/settings.json\\\"; this rule requires approval, which capy's Codex PreToolUse hook cannot request. Command: printf CAPY_V2_ASK_BEFORE\"}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"2c. EXTERNAL_DENY\",\"error\":\"Command blocked by PreToolUse hook: Independent v2 fixture restriction retained. Command: printf CAPY_V2_EXTERNAL_DENY\"}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T11:44:02.876Z",
+          "ordinal": 29,
+          "call_id": "call_sFV9Z394fUvHspLO5JQSBa3f",
+          "output": "Script running with cell ID 3\nWall time 31.0 seconds\nOutput:\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:44:08.045Z",
+          "ordinal": 39,
+          "call_id": "call_afmJ0K6RYZBINARBJygtqCO2",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"3. Actual capy_execute\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"CAPY_V2_MAIN_EXEC\"}]}}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"4a. DENY_AFTER\",\"error\":\"Command blocked by PreToolUse hook: Blocked by security policy: matches deny pattern Bash(printf *CAPY_V2_DENY*) in \\\"/tmp/capy-v2-live-rhhlmk5u/project/.claude/settings.json\\\". Command: printf CAPY_V2_DENY_AFTER\"}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"4b. ASK_AFTER\",\"error\":\"Command blocked by PreToolUse hook: Matched approval pattern \\\"Bash(printf *CAPY_V2_ASK*)\\\" in \\\"/tmp/capy-v2-live-rhhlmk5u/project/.claude/settings.json\\\"; this rule requires approval, which capy's Codex PreToolUse hook cannot request. Command: printf CAPY_V2_ASK_AFTER\"}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"5. Dead branch first repeat\",\"error\":\"Command blocked by PreToolUse hook: capy: Use capy_execute(language, code) for this HTTP call. If that call fails or the tool is unavailable, retry the native tool.. Command: python3 -c 'if False: requests.get(\\\"https://example.invalid\\\")'\"}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"6. Dead branch second repeat\",\"result\":{\"chunk_id\":\"f399fa\",\"wall_time_seconds\":0.071491774,\"exit_code\":0,\"original_token_count\":0,\"output\":\"\"}}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"7. Actual capy_stats\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"## capy — Session Report (2.5 min)\\n\\n### Context Window Protection\\n\\n| Metric | Value |\\n|--------|------:|\\n| Total data processed | **0.0KB** |\\n| Kept in sandbox (never entered context) | **0.0KB** |\\n| Entered context | 0.0KB |\\n| Estimated tokens saved | ~4 |\\n| **Context savings** | **2.0x (50.0% reduction)** |\\n\\n| Tool | Calls | Context | Tokens |\\n|------|------:|--------:|-------:|\\n| capy_execute | 1 | 0.0KB | ~4 |\\n| **Total** | **1** | **0.0KB** | **~4** |\\n\\nWithout capy, **0.0KB** of raw output would flood your context window. Instead, **50.0%** stayed in sandbox.\\n\\n### TTL Cache\\n\\n| Metric | Value |\\n|--------|------:|\\n| Cache hits | **0** |\\n| Attempted misses | **0** |\\n| Hit rate (hits / (hits + attempted misses)) | **n/a** |\\n| Estimated data avoided by cache | **0.0KB** |\\n| Network requests saved | **0** |\\n| Default fetch freshness | **24h** |\\n\\n---\\n_Display this entire report as-is. Do NOT summarize or collapse any section._\"}]}}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T11:49:51.040Z",
+          "ordinal": 71,
+          "call_id": "call_nJd7bKwzbFoSk0eXmMhGFvY1",
+          "output": "Script running with cell ID 4\nWall time 31.0 seconds\nOutput:\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:49:54.950Z",
+          "ordinal": 76,
+          "call_id": "call_IRKeBGqZWMrzpjDzFZlF9ZgN",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"content\":[{\"type\":\"text\",\"text\":\"CAPY_V2_PARENT_EVIDENCE\"}]}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T11:52:24.207Z",
+          "ordinal": 155,
+          "call_id": "call_4f1090f6d83145deb5d092c28617e976",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 0.7 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"parent_id\":\"/root\",\"evidence_age_seconds\":152.371}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"Parent first native probe\",\"result\":{\"chunk_id\":\"27b71e\",\"wall_time_seconds\":0.059984214,\"exit_code\":0,\"original_token_count\":0,\"output\":\"\"}}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"label\":\"Parent second native probe\",\"result\":{\"chunk_id\":\"e08555\",\"wall_time_seconds\":0.056927733,\"exit_code\":0,\"original_token_count\":0,\"output\":\"\"}}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"available_agent_close_controls\":[]}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T11:56:10.591Z",
+          "ordinal": 173,
+          "call_id": "call_c46737f64bf64fa49648ee84ba6351fa",
+          "output": "Script running with cell ID 6\nWall time 31.0 seconds\nOutput:\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:56:13.337Z",
+          "ordinal": 178,
+          "call_id": "call_ad05425208a547a781d6e59aca683b71",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"content\":[{\"type\":\"text\",\"text\":\"CAPY_V2_PARENT_ISOLATION\"}]}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T11:56:32.719Z",
+          "ordinal": 195,
+          "call_id": "call_dc27c65d39d149f29f88e8662be92059",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"probe\":\"A parent\",\"age_seconds\":21.758}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"error\":\"Command blocked by PreToolUse hook: capy: Use capy_execute(language, code) for this HTTP call. If that call fails or the tool is unavailable, retry the native tool.. Command: python3 -c 'if False: requests.get(\\\"https://example.invalid\\\")'\"}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T11:57:29.355Z",
+          "ordinal": 231,
+          "call_id": "call_a7b0a5c4c83a40c7a7b18c57ebd731ad",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 0.3 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"probe\":\"B parent\",\"result\":{\"chunk_id\":\"042556\",\"wall_time_seconds\":0.053609547,\"exit_code\":0,\"original_token_count\":0,\"output\":\"\"}}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T12:03:51.117Z",
+          "ordinal": 305,
+          "call_id": "call_52b7ff25245f43439bc96c54dbec46d6",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 42.4 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "/tmp/capy-v2-live-rhhlmk5u/bin/capy\nCAPY_V2_MAIN_END"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"isError\":false}"
+            }
+          ]
+        }
+      ],
+      "host_items": [
+        {
+          "timestamp": "2026-10-13T11:42:23.436Z",
+          "ordinal": 18,
+          "type": "CommandExecution",
+          "id": "exec-4b571e7c-affa-4781-ae3b-699005483dce",
+          "command": [
+            "/usr/bin/zsh",
+            "-lc",
+            "printf CAPY_V2_CONTROL"
+          ],
+          "cwd": "file:///tmp/capy-v2-live-rhhlmk5u/project/subdir",
+          "status": "completed",
+          "aggregated_output": "CAPY_V2_CONTROL",
+          "exit_code": 0,
+          "duration": {
+            "secs": 0,
+            "nanos": 42598191
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:42:31.690Z",
+          "ordinal": 24,
+          "type": "CommandExecution",
+          "id": "exec-38680162-95d0-4171-b0dc-a0739d28345f",
+          "command": [
+            "/usr/bin/zsh",
+            "-lc",
+            "python3 -c 'if False: requests.get(\"https://example.invalid\")'"
+          ],
+          "cwd": "file:///tmp/capy-v2-live-rhhlmk5u/project/subdir",
+          "status": "completed",
+          "aggregated_output": "",
+          "exit_code": 0,
+          "duration": {
+            "secs": 0,
+            "nanos": 65590699
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:44:02.878Z",
+          "ordinal": 31,
+          "type": "McpToolCall",
+          "id": "exec-fd52ee65-0030-4512-83a6-0ec5181106ac",
+          "server": "capy",
+          "tool": "capy_execute",
+          "arguments": {
+            "language": "shell",
+            "code": "printf CAPY_V2_MAIN_EXEC"
+          },
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "CAPY_V2_MAIN_EXEC"
+              }
+            ]
+          },
+          "duration": {
+            "secs": 0,
+            "nanos": 2601183
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:44:03.756Z",
+          "ordinal": 33,
+          "type": "CommandExecution",
+          "id": "exec-7a0cf14b-ad68-4137-a135-14b0308dae84",
+          "command": [
+            "/usr/bin/zsh",
+            "-lc",
+            "python3 -c 'if False: requests.get(\"https://example.invalid\")'"
+          ],
+          "cwd": "file:///tmp/capy-v2-live-rhhlmk5u/project/subdir",
+          "status": "completed",
+          "aggregated_output": "",
+          "exit_code": 0,
+          "duration": {
+            "secs": 0,
+            "nanos": 71452435
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:44:03.879Z",
+          "ordinal": 34,
+          "type": "McpToolCall",
+          "id": "exec-04fc00af-65e7-4571-8dba-e26d8cc07231",
+          "server": "capy",
+          "tool": "capy_stats",
+          "arguments": {},
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "## capy — Session Report (2.5 min)\n\n### Context Window Protection\n\n| Metric | Value |\n|--------|------:|\n| Total data processed | **0.0KB** |\n| Kept in sandbox (never entered context) | **0.0KB** |\n| Entered context | 0.0KB |\n| Estimated tokens saved | ~4 |\n| **Context savings** | **2.0x (50.0% reduction)** |\n\n| Tool | Calls | Context | Tokens |\n|------|------:|--------:|-------:|\n| capy_execute | 1 | 0.0KB | ~4 |\n| **Total** | **1** | **0.0KB** | **~4** |\n\nWithout capy, **0.0KB** of raw output would flood your context window. Instead, **50.0%** stayed in sandbox.\n\n### TTL Cache\n\n| Metric | Value |\n|--------|------:|\n| Cache hits | **0** |\n| Attempted misses | **0** |\n| Hit rate (hits / (hits + attempted misses)) | **n/a** |\n| Estimated data avoided by cache | **0.0KB** |\n| Network requests saved | **0** |\n| Default fetch freshness | **24h** |\n\n---\n_Display this entire report as-is. Do NOT summarize or collapse any section._"
+              }
+            ]
+          },
+          "duration": {
+            "secs": 0,
+            "nanos": 529232
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:49:51.042Z",
+          "ordinal": 73,
+          "type": "McpToolCall",
+          "id": "exec-66414cb2-c5a7-49b4-8855-96e21b3cee49",
+          "server": "capy",
+          "tool": "capy_execute",
+          "arguments": {
+            "language": "shell",
+            "code": "printf CAPY_V2_PARENT_EVIDENCE"
+          },
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "CAPY_V2_PARENT_EVIDENCE"
+              }
+            ]
+          },
+          "duration": {
+            "secs": 0,
+            "nanos": 1930474
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:52:23.865Z",
+          "ordinal": 152,
+          "type": "CommandExecution",
+          "id": "exec-0777fc2f-7355-49c7-b26a-36dfe3aa4519",
+          "command": [
+            "/usr/bin/zsh",
+            "-lc",
+            "python3 -c 'if False: requests.get(\"https://example.invalid\")'"
+          ],
+          "cwd": "file:///tmp/capy-v2-live-rhhlmk5u/project/subdir",
+          "status": "completed",
+          "aggregated_output": "",
+          "exit_code": 0,
+          "duration": {
+            "secs": 0,
+            "nanos": 59986676
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:52:24.205Z",
+          "ordinal": 154,
+          "type": "CommandExecution",
+          "id": "exec-3ab774e1-f9fa-4361-bbdf-5e4beb242f0a",
+          "command": [
+            "/usr/bin/zsh",
+            "-lc",
+            "python3 -c 'if False: requests.get(\"https://example.invalid\")'"
+          ],
+          "cwd": "file:///tmp/capy-v2-live-rhhlmk5u/project/subdir",
+          "status": "completed",
+          "aggregated_output": "",
+          "exit_code": 0,
+          "duration": {
+            "secs": 0,
+            "nanos": 56902914
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:56:10.594Z",
+          "ordinal": 175,
+          "type": "McpToolCall",
+          "id": "exec-591835cd-e358-403f-bbf0-d96cd7a30efb",
+          "server": "capy",
+          "tool": "capy_execute",
+          "arguments": {
+            "language": "shell",
+            "code": "printf CAPY_V2_PARENT_ISOLATION"
+          },
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "CAPY_V2_PARENT_ISOLATION"
+              }
+            ]
+          },
+          "duration": {
+            "secs": 0,
+            "nanos": 2864926
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:57:29.352Z",
+          "ordinal": 230,
+          "type": "CommandExecution",
+          "id": "exec-8b1eb7d1-b594-403a-a8dd-bc627c691640",
+          "command": [
+            "/usr/bin/zsh",
+            "-lc",
+            "python3 -c 'if False: requests.get(\"https://example.invalid\")'"
+          ],
+          "cwd": "file:///tmp/capy-v2-live-rhhlmk5u/project/subdir",
+          "status": "completed",
+          "aggregated_output": "",
+          "exit_code": 0,
+          "duration": {
+            "secs": 0,
+            "nanos": 53597924
+          }
+        },
+        {
+          "timestamp": "2026-10-13T12:03:51.004Z",
+          "ordinal": 304,
+          "type": "McpToolCall",
+          "id": "exec-ed827935-58fe-47ea-875e-6893466706db",
+          "server": "capy",
+          "tool": "capy_execute",
+          "arguments": {
+            "language": "shell",
+            "code": "command -v capy; printf CAPY_V2_MAIN_END"
+          },
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "/tmp/capy-v2-live-rhhlmk5u/bin/capy\nCAPY_V2_MAIN_END"
+              }
+            ]
+          },
+          "duration": {
+            "secs": 0,
+            "nanos": 1969519
+          }
+        }
+      ]
+    },
+    {
+      "id": "01a13517-52a3-7d01-98dd-4ab301978257",
+      "cwd": "/tmp/capy-v2-live-rhhlmk5u/project/subdir",
+      "source": {
+        "subagent": {
+          "thread_spawn": {
+            "parent_thread_id": "01a13511-5934-7353-9ed4-71db3bee11b2",
+            "depth": 1,
+            "agent_path": "/root/capy_child_probe",
+            "agent_nickname": "Socrates",
+            "agent_role": null
+          }
+        }
+      },
+      "contexts": [
+        {
+          "timestamp": "2026-10-13T11:48:03.369Z",
+          "ordinal": 8,
+          "producer": "independent fixture",
+          "utf8_bytes": 64,
+          "sha256": "8a146b63884ad5c49cb676792b20161d40e40a45c47674348921bb1256616127",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:48:03.369Z",
+          "ordinal": 9,
+          "producer": "capy",
+          "utf8_bytes": 3532,
+          "sha256": "66cfc385a0f58dd11b1c4ceafd9f0663baf06f5b6e8d40f37ac332a30f1016f2",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:48:03.369Z",
+          "ordinal": 12,
+          "producer": "availability advisory",
+          "utf8_bytes": 436,
+          "text": "capy: This main session's capy_execute availability is unverified.\nIf the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.\nIf discovery is unavailable or the tool is absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.\nFor git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:48:03.369Z",
+          "ordinal": 13,
+          "producer": "availability advisory",
+          "utf8_bytes": 436,
+          "text": "capy: This main session's capy_execute availability is unverified.\nIf the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.\nIf discovery is unavailable or the tool is absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.\nFor git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:48:05.329Z",
+          "ordinal": 25,
+          "producer": "capy",
+          "utf8_bytes": 3532,
+          "sha256": "66cfc385a0f58dd11b1c4ceafd9f0663baf06f5b6e8d40f37ac332a30f1016f2",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:50:13.828Z",
+          "ordinal": 39,
+          "producer": "availability advisory",
+          "utf8_bytes": 428,
+          "text": "capy: This child's capy tool availability is unverified.\nIf the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.\nIf discovery is unavailable or the tools are absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.\nFor git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:52:01.143Z",
+          "ordinal": 44,
+          "producer": "availability advisory",
+          "utf8_bytes": 428,
+          "text": "capy: This child's capy tool availability is unverified.\nIf the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.\nIf discovery is unavailable or the tools are absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.\nFor git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:56:24.598Z",
+          "ordinal": 61,
+          "producer": "availability advisory",
+          "utf8_bytes": 428,
+          "text": "capy: This child's capy tool availability is unverified.\nIf the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.\nIf discovery is unavailable or the tools are absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.\nFor git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.",
+          "inline": true
+        },
+        {
+          "timestamp": "2026-10-13T11:57:44.529Z",
+          "ordinal": 96,
+          "producer": "availability advisory",
+          "utf8_bytes": 428,
+          "text": "capy: This child's capy tool availability is unverified.\nIf the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.\nIf discovery is unavailable or the tools are absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.\nFor git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.",
+          "inline": true
+        }
+      ],
+      "calls": [
+        {
+          "timestamp": "2026-10-13T11:50:13.676Z",
+          "ordinal": 37,
+          "call_id": "call_575320b22b404bc2acb9faa8c8dd46f6",
+          "name": "exec",
+          "input": "const cmd = `python3 -c 'if False: requests.get(\"https://example.invalid\")'`;\nconst first = await tools.exec_command({cmd,max_output_tokens:1200});\ntext({probe:\"child-before\",result:first});\nconst execution = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"printf CAPY_V2_CHILD_EXEC\"});\ntext({probe:\"child-execute\",result:execution});\ntry { text({probe:\"child-after-1\",result:await tools.exec_command({cmd,max_output_tokens:1200})}); } catch (error) { text({probe:\"child-after-1\",error:String(error)}); }\ntry { text({probe:\"child-after-2\",result:await tools.exec_command({cmd,max_output_tokens:1200})}); } catch (error) { text({probe:\"child-after-2\",error:String(error)}); }\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:56:24.460Z",
+          "ordinal": 59,
+          "call_id": "call_61208ad908e1489fb544bf01adbfd88f",
+          "name": "exec",
+          "input": "try {\ntext(await tools.exec_command({cmd:`python3 -c 'if False: requests.get(\"https://example.invalid\")'`,max_output_tokens:1000}));\n} catch(error) {\ntext(String(error));\n}\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:56:43.806Z",
+          "ordinal": 74,
+          "call_id": "call_0e920d5259624602bc14c331a87a4d5a",
+          "name": "exec",
+          "input": "const result = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"printf CAPY_V2_CHILD_ISOLATION\"});\nstore(\"capy_isolation_b_child_completed_ms\",Date.now());\ntext(result);\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:57:19.312Z",
+          "ordinal": 81,
+          "call_id": "call_02e55c3731c54f94a7acbb8c79031e3c",
+          "name": "wait",
+          "input": "{\"cell_id\":\"3\",\"max_tokens\":1000,\"yield_time_ms\":1}"
+        },
+        {
+          "timestamp": "2026-10-13T11:57:44.266Z",
+          "ordinal": 94,
+          "call_id": "call_f2554f4ebb9c48c8a61858ac6015cdf2",
+          "name": "exec",
+          "input": "text({evidence_age_seconds:(Date.now()-load(\"capy_isolation_b_child_completed_ms\"))/1000});\nconst cmd=`python3 -c 'if False: requests.get(\"https://example.invalid\")'`;\ntry { text({probe:1,result:await tools.exec_command({cmd,max_output_tokens:1500})}); } catch(error) { text({probe:1,error:String(error)}); }\ntry { text({probe:2,result:await tools.exec_command({cmd,max_output_tokens:1500})}); } catch(error) { text({probe:2,error:String(error)}); }\n"
+        },
+        {
+          "timestamp": "2026-10-13T12:01:37.941Z",
+          "ordinal": 109,
+          "call_id": "call_19592e1c316246dbb2ab590942a57ef7",
+          "name": "exec",
+          "input": "const result = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"printf CAPY_V2_CHILD_END\"});\ntext(result);\n"
+        }
+      ],
+      "results": [
+        {
+          "timestamp": "2026-10-13T11:52:00.779Z",
+          "ordinal": 41,
+          "call_id": "call_575320b22b404bc2acb9faa8c8dd46f6",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script running with cell ID 1\nWall time 31.0 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"probe\":\"child-before\",\"result\":{\"chunk_id\":\"83b353\",\"wall_time_seconds\":0.05629094,\"exit_code\":0,\"original_token_count\":0,\"output\":\"\"}}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T11:56:24.824Z",
+          "ordinal": 63,
+          "call_id": "call_61208ad908e1489fb544bf01adbfd88f",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 0.4 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"chunk_id\":\"8f83ab\",\"wall_time_seconds\":0.067996698,\"exit_code\":0,\"original_token_count\":0,\"output\":\"\"}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T11:57:14.829Z",
+          "ordinal": 77,
+          "call_id": "call_0e920d5259624602bc14c331a87a4d5a",
+          "output": "Script running with cell ID 3\nWall time 31.0 seconds\nOutput:\n"
+        },
+        {
+          "timestamp": "2026-10-13T11:57:19.410Z",
+          "ordinal": 83,
+          "call_id": "call_02e55c3731c54f94a7acbb8c79031e3c",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"content\":[{\"type\":\"text\",\"text\":\"CAPY_V2_CHILD_ISOLATION\"}]}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T11:57:44.774Z",
+          "ordinal": 98,
+          "call_id": "call_f2554f4ebb9c48c8a61858ac6015cdf2",
+          "output": [
+            {
+              "type": "input_text",
+              "text": "Script completed\nWall time 0.5 seconds\nOutput:\n"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"evidence_age_seconds\":29.41}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"probe\":1,\"error\":\"Command blocked by PreToolUse hook: capy: Use capy_execute(language, code) for this HTTP call. If that call fails or the tool is unavailable, retry the native tool.. Command: python3 -c 'if False: requests.get(\\\"https://example.invalid\\\")'\"}"
+            },
+            {
+              "type": "input_text",
+              "text": "{\"probe\":2,\"result\":{\"chunk_id\":\"c0883d\",\"wall_time_seconds\":0.086605142,\"exit_code\":0,\"original_token_count\":0,\"output\":\"\"}}"
+            }
+          ]
+        },
+        {
+          "timestamp": "2026-10-13T12:02:31.958Z",
+          "ordinal": 111,
+          "call_id": "call_19592e1c316246dbb2ab590942a57ef7",
+          "output": "Script running with cell ID 5\nWall time 31.0 seconds\nOutput:\n"
+        }
+      ],
+      "host_items": [
+        {
+          "timestamp": "2026-10-13T11:50:14.040Z",
+          "ordinal": 40,
+          "type": "CommandExecution",
+          "id": "exec-8c0311d3-29f5-4229-9cbf-6207de14ff8f",
+          "command": [
+            "/usr/bin/zsh",
+            "-lc",
+            "python3 -c 'if False: requests.get(\"https://example.invalid\")'"
+          ],
+          "cwd": "file:///tmp/capy-v2-live-rhhlmk5u/project/subdir",
+          "status": "completed",
+          "aggregated_output": "",
+          "exit_code": 0,
+          "duration": {
+            "secs": 0,
+            "nanos": 56298038
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:52:00.781Z",
+          "ordinal": 43,
+          "type": "McpToolCall",
+          "id": "exec-3502ae69-498e-439d-a5e6-f9315def10aa",
+          "server": "capy",
+          "tool": "capy_execute",
+          "arguments": {
+            "language": "shell",
+            "code": "printf CAPY_V2_CHILD_EXEC"
+          },
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "CAPY_V2_CHILD_EXEC"
+              }
+            ]
+          },
+          "duration": {
+            "secs": 0,
+            "nanos": 2532030
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:52:01.356Z",
+          "ordinal": 45,
+          "type": "CommandExecution",
+          "id": "exec-c907ddf3-e363-4932-ab56-455cd9941a82",
+          "command": [
+            "/usr/bin/zsh",
+            "-lc",
+            "python3 -c 'if False: requests.get(\"https://example.invalid\")'"
+          ],
+          "cwd": "file:///tmp/capy-v2-live-rhhlmk5u/project/subdir",
+          "status": "completed",
+          "aggregated_output": "",
+          "exit_code": 0,
+          "duration": {
+            "secs": 0,
+            "nanos": 57039518
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:56:24.822Z",
+          "ordinal": 62,
+          "type": "CommandExecution",
+          "id": "exec-05e25fc0-e1f1-4479-828c-90ec4cd9ec6e",
+          "command": [
+            "/usr/bin/zsh",
+            "-lc",
+            "python3 -c 'if False: requests.get(\"https://example.invalid\")'"
+          ],
+          "cwd": "file:///tmp/capy-v2-live-rhhlmk5u/project/subdir",
+          "status": "completed",
+          "aggregated_output": "",
+          "exit_code": 0,
+          "duration": {
+            "secs": 0,
+            "nanos": 67951218
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:57:14.752Z",
+          "ordinal": 76,
+          "type": "McpToolCall",
+          "id": "exec-1b44b88b-5da2-42c7-bfd1-324649dabedb",
+          "server": "capy",
+          "tool": "capy_execute",
+          "arguments": {
+            "language": "shell",
+            "code": "printf CAPY_V2_CHILD_ISOLATION"
+          },
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "CAPY_V2_CHILD_ISOLATION"
+              }
+            ]
+          },
+          "duration": {
+            "secs": 0,
+            "nanos": 2356055
+          }
+        },
+        {
+          "timestamp": "2026-10-13T11:57:44.771Z",
+          "ordinal": 97,
+          "type": "CommandExecution",
+          "id": "exec-287db707-5eaa-4166-834e-7d4f4a52f0d2",
+          "command": [
+            "/usr/bin/zsh",
+            "-lc",
+            "python3 -c 'if False: requests.get(\"https://example.invalid\")'"
+          ],
+          "cwd": "file:///tmp/capy-v2-live-rhhlmk5u/project/subdir",
+          "status": "completed",
+          "aggregated_output": "",
+          "exit_code": 0,
+          "duration": {
+            "secs": 0,
+            "nanos": 86577559
+          }
+        },
+        {
+          "timestamp": "2026-10-13T12:02:31.960Z",
+          "ordinal": 113,
+          "type": "McpToolCall",
+          "id": "exec-efb1abdc-8f15-4b36-9ad8-f1d3dc66a282",
+          "server": "capy",
+          "tool": "capy_execute",
+          "arguments": {
+            "language": "shell",
+            "code": "printf CAPY_V2_CHILD_END"
+          },
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "CAPY_V2_CHILD_END"
+              }
+            ]
+          },
+          "duration": {
+            "secs": 0,
+            "nanos": 2065195
+          }
+        }
+      ],
+      "parent_thread_id": "01a13511-5934-7353-9ed4-71db3bee11b2"
+    }
+  ],
+  "installation": {
+    "project": "/tmp/capy-v2-live-rhhlmk5u/project",
+    "launch_cwd": "/tmp/capy-v2-live-rhhlmk5u/project/subdir",
+    "codex_version": "0.162.1",
+    "starting_commit": "dac9fd9",
+    "normal_cli_flags": [
+      "--no-daemon",
+      "--no-alt-screen",
+      "--sandbox",
+      "workspace-write",
+      "--ask-for-approval",
+      "on-request"
+    ],
+    "project_trust": "normal Codex folder UI, parent Git root identified",
+    "exact_hook_trust": "normal /hooks review; five generated capy definitions and two inspected stdin/stdout-only fixture definitions",
+    "global_policy_home_retained": true,
+    "capy_config_isolated": true,
+    "knowledge_key": "synthetic, value intentionally omitted",
+    "vault_key": "unset",
+    "policy_fixture": {
+      "permissions": {
+        "deny": [
+          "Bash(printf *CAPY_V2_DENY*)"
+        ],
+        "ask": [
+          "Bash(printf *CAPY_V2_ASK*)"
+        ]
+      }
+    },
+    "binary_sha256": "66d8e9fd73cc13cd0157cb45a3551cff53991573e8057a037e9100ec401339c5",
+    "normal_exit_code": 0
+  },
+  "live_session_end": {
+    "before": {
+      "timestamp": "2026-10-13T12:03:52.384145+00:00",
+      "stores": {
+        "codex-main-observations": {
+          "state": {
+            "entries": [
+              {
+                "session": "sha256-13f14dfb890e29208da40f367e2a791ee13f7453a29b2bd251489a146e742d1e",
+                "agent": "",
+                "tools": {
+                  "capy_execute": 1791893031116
+                }
+              }
+            ]
+          },
+          "lock_device": 66306,
+          "lock_inode": 2400732
+        },
+        "tool-observations": {
+          "state": {
+            "entries": [
+              {
+                "session": "sha256-13f14dfb890e29208da40f367e2a791ee13f7453a29b2bd251489a146e742d1e",
+                "agent": "01a13517-52a3-7d01-98dd-4ab301978257",
+                "tools": {
+                  "capy_execute": 1791892952072
+                }
+              }
+            ]
+          },
+          "lock_device": 66306,
+          "lock_inode": 2400850
+        }
+      }
+    },
+    "after": {
+      "timestamp": "2026-10-13T12:05:21.053117+00:00",
+      "stores": {
+        "codex-main-observations": {
+          "state": {
+            "entries": []
+          },
+          "lock_device": 66306,
+          "lock_inode": 2400732
+        },
+        "tool-observations": {
+          "state": {
+            "entries": []
+          },
+          "lock_device": 66306,
+          "lock_inode": 2400850
+        }
+      }
+    },
+    "trigger": "normal /quit of the root live CLI; no manual observation writes or hook replay"
+  }
+}

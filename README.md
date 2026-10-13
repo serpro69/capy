@@ -226,7 +226,7 @@ Both doctor interfaces check registration on disk and report visible disabling
 or overlap. They cannot verify trust or event delivery. The integration targets
 Codex CLI 0.162.1. The [v1 verification record](docs/feat/wip/codex-hooks/verification.md)
 is historical; [v2 verification](docs/feat/wip/codex-hooks/verification-v2.md)
-records direct-launch tests and the pending v2 host acceptance. Other versions
+records controlled tests and selected live CLI evidence. Other versions
 and Codex surfaces need their own runtime verification.
 
 Hooks and MCP resolve the same owner when launched from an ordinary project
@@ -1398,8 +1398,8 @@ tools under any server alias. Hosted web/search calls are outside that coverage.
 SubagentStart injects child guidance without rewriting launch arguments or types.
 Codex uses the supplied session ID, namespaced internally with `codex:`, and
 the supplied child ID; it ignores Claude identity/project environment variables.
-Generated commands pass the validated owner as `--project-dir`; manual hooks
-fall back to validated payload cwd, then process-cwd project discovery.
+Generated launchers pass the validated owner directly to the handler. Manual
+hooks use `--project-dir`, then validated payload cwd, then process-cwd discovery.
 
 Capy reads additional command policies from `.claude/settings.local.json`,
 `.claude/settings.json` and `~/.claude/settings.json`, in that order; Claude
@@ -1417,6 +1417,34 @@ clears its session from both stores independently, retaining siblings and lock
 files; child-labelled end events clear neither. Claude retains child-store
 cleanup. Missing SessionEnd events are bounded by expiry and storage caps.
 These hooks do not open the knowledge or vault databases.
+
+### Input bounds and guidance state
+
+Codex hooks require EOF before handling an event. PreToolUse, PostToolUse,
+SessionStart and SubagentStart allow 2 seconds of idle input, 10 seconds total
+read time and at most 8 MiB of serialized JSON. SessionEnd allows 100 ms idle,
+250 ms total and 64 KiB. Positive reads renew only the idle deadline; a complete
+JSON object on an open pipe is still incomplete transport. Over-limit, stalled,
+unreadable or unsupported input never reaches policy or state handling.
+
+PreToolUse transport failures exit 2 with diagnostic stderr and empty stdout;
+other events return a diagnostic nonzero exit. EOF-complete malformed PreToolUse
+JSON retains its exit-0 structured denial. Supported pipes have deadline-capable
+reads; regular files have byte limits and deadline checks between reads, which
+cannot interrupt blocked filesystem/kernel I/O. Terminal and device stdin,
+including `/dev/null`, are unsupported. Budgets begin after owner preflight and
+descriptor setup, so a shorter host timeout or stalled startup may win. Claude
+input handling is unchanged.
+
+Once-per-session Bash/Read/Grep guidance uses empty, exclusive 0600
+`.capy/guidance-<session-component>-<type>.once` markers. Older regular,
+non-symlink JSON guidance files remain readable within 4 KiB; a known key still
+counts as shown when its value is false. Invalid or unavailable state repeats
+the ordinary advisory with a bounded warning. Missing identity creates no state.
+This is at-most-once claiming: a process killed after claiming can leave its
+optional advisory undelivered. SessionEnd leaves guidance markers alone, and no
+automatic migration or retention sweep is added. Restart affected launchers
+across binary changes because older JSON writers do not coordinate with markers.
 
 ### Platform support
 

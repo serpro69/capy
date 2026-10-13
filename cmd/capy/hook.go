@@ -18,7 +18,13 @@ func newHookCmd() *cobra.Command {
 The default platform is claude-code. Codex supports sessionstart, subagentstart,
 pretooluse, posttooluse and sessionend; generated commands select it explicitly.
 Hooks do not require database credentials. Use setup to register owner-bound
-Codex commands; direct invocation is intended for controlled manual probes.`,
+Codex commands; direct invocation is intended for controlled manual probes.
+Codex input requires EOF: ordinary events allow 2s idle, 10s total and 8 MiB;
+sessionend allows 100ms idle, 250ms total and 64 KiB. Pipe stalls are bounded;
+regular files have checks between reads. Transport failures use stderr and no
+stdout (pretooluse exits 2); completed malformed pretooluse JSON denies at exit 0.
+Codex main HTTP routing is advisory without recent successful capy_execute
+evidence; one success permits one redirect within 60s. Security checks run first.`,
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []string{"pretooluse", "posttooluse", "precompact", "sessionstart", "subagentstart", "sessionend", "userpromptsubmit"},
 		RunE: func(cmd *cobra.Command, args []string) error {
