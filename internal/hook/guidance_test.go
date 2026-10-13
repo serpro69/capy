@@ -80,17 +80,20 @@ func TestGuidanceSessionFilenames(t *testing.T) {
 			stateDir := filepath.Join(project, ".capy")
 			entries, err := os.ReadDir(stateDir)
 			require.NoError(t, err)
-			require.Len(t, entries, 1, "ID must produce one bounded filename, without nested directories")
-			assert.False(t, entries[0].IsDir())
-			assert.Equal(t, "guidance-"+tt.component+".json", entries[0].Name())
-			stateFile := filepath.Join(stateDir, entries[0].Name())
-			data, err := os.ReadFile(stateFile)
-			require.NoError(t, err)
-			assert.JSONEq(t, `{"read":true,"grep":true}`, string(data))
+			require.Len(t, entries, 2, "ID must produce bounded per-type filenames, without nested directories")
+			for i, guidanceType := range []string{"grep", "read"} {
+				assert.False(t, entries[i].IsDir())
+				assert.Equal(t, "guidance-"+tt.component+"-"+guidanceType+".once", entries[i].Name())
+				data, err := os.ReadFile(filepath.Join(stateDir, entries[i].Name()))
+				require.NoError(t, err)
+				assert.Empty(t, data)
+			}
 
 			ResetGuidanceFile(project, tt.id)
-			_, err = os.Stat(stateFile)
-			assert.ErrorIs(t, err, os.ErrNotExist)
+			for _, entry := range entries {
+				_, err = os.Stat(filepath.Join(stateDir, entry.Name()))
+				assert.ErrorIs(t, err, os.ErrNotExist)
+			}
 			assert.NotEmpty(t, guidanceHookCall(t, project, tt.id, "Read"), "reset should allow guidance again")
 			ResetGuidanceFile(project, tt.id)
 			entries, err = os.ReadDir(stateDir)

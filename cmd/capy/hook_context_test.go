@@ -100,7 +100,7 @@ func TestHookContextCLI(t *testing.T) {
 				}
 			}
 			for label, project := range projects {
-				stateFile := filepath.Join(project, ".capy", "guidance-cli-context.json")
+				stateFile := filepath.Join(project, ".capy", "guidance-cli-context-bash.once")
 				if label == wantStateProject {
 					assert.FileExists(t, stateFile)
 				} else {

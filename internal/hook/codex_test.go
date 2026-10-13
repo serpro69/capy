@@ -209,7 +209,7 @@ func TestCodexPolicyWorkingDirectoryAndGuidanceIdentity(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, output)
 	}
-	assert.FileExists(t, filepath.Join(project, ".capy", "guidance-context-session.json"))
-	assert.FileExists(t, filepath.Join(project, ".capy", "guidance-"+sessionIDComponent("codex:context-session")+".json"))
+	assert.FileExists(t, filepath.Join(project, ".capy", "guidance-context-session-bash.once"))
+	assert.FileExists(t, filepath.Join(project, ".capy", "guidance-"+sessionIDComponent("codex:context-session")+"-bash.once"))
 	assert.NoDirExists(t, filepath.Join(cwd, ".capy"))
 }
