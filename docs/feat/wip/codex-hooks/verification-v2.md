@@ -2,11 +2,11 @@
 
 ## Scope and environment
 
-Task 1 only: direct owner-validated launch, final invocation grammar, PATH
-prerequisite, failure/cancellation behavior, generated artifacts and diagnostics.
-Tasks 2–5 remain pending, including bounded hook stdin, atomic guidance,
-main-session evidence and final live host acceptance. Historical v1 results
-remain in [verification.md](verification.md).
+Task 1 covers direct owner-validated launch, final invocation grammar, PATH
+prerequisites, failure/cancellation behavior, generated artifacts and diagnostics.
+Task 2 adds bounded hook stdin; its evidence and limits are recorded separately
+below. Atomic guidance, main-session evidence and final live host acceptance
+remain Tasks 3–5. Historical v1 results remain in [verification.md](verification.md).
 
 Checked 2026-10-13 on Linux/amd64, Go 1.26.4, against starting commit `0c3f921`.
 Every build/test used `-tags fts5`. Tests used synthetic `CAPY_DB_KEY` and
@@ -90,7 +90,7 @@ These local measurements indicate approximately 50% lower median launch cost.
 Other verification ran on the same machine, so this is an indicative regression
 check, not a portable latency target or controlled performance guarantee.
 
-## Review and remaining limits
+## Task 1 review and limits
 
 [Isolated code review](.reviews/task-1-v2-code-review-2026-10-13.md): **APPROVE**
 on re-review. Both initial P1 output/cancellation findings reproduced and were
@@ -107,8 +107,9 @@ are recorded here and in the review, so no duplicate knowledge note was indexed.
 - Runtime PATH belongs to the host environment. Install the final binary there,
   stop affected sessions before replacing loaded definitions, restart and review
   changed hooks through normal host controls. Setup does not edit PATH or trust.
-- Input deadlines, guidance markers and main-session observation behavior are
-  still pending Tasks 2–4, not partially claimed by this launch slice.
+- Task 1 did not establish input deadlines, guidance markers or main-session
+  observation behavior. Task 2's input evidence follows below; Tasks 3–4 remain
+  pending.
 
 The main implementation surprise was mcp-go joining workers before returning
 from `Listen`: cancellation must happen at either transport failure boundary,
@@ -117,3 +118,88 @@ contract without changing the executor or adding another lifecycle supervisor.
 
 Optional editorial follow-up: `kk:clarify-docs` on this record and the updated
 README/architecture launch sections; it is not required for Task 1 acceptance.
+
+## Task 2 acceptance evidence
+
+Codex hook input now requires EOF within a time and serialized-byte budget
+before reaching parsing, context resolution, policies or event handlers.
+Ordinary events use 2-second idle / 10-second absolute / 8-MiB limits;
+SessionEnd uses 100-ms idle / 250-ms absolute / 64-KiB limits. Only a positive
+read resets idle time. Complete malformed PreToolUse input still returns an
+exit-0 structured denial; transport failures return exit 2, diagnostic stderr
+and empty stdout. Other events return diagnostic exit 1 on transport failure.
+Claude retains its existing reader, and MCP never uses this admission path.
+
+| Contract | Evidence |
+|---|---|
+| Owned, deadline-capable pipe input | `TestCodexHookInputDescriptors`: inherited-style blocking anonymous pipe, empty/partial/complete-looking input held open, closed writer, regular file, directory/device/closed descriptor rejection and unreadable file. After closing the borrowed original, a writer gets EPIPE, proving no duplicate reader remains |
+| Framing, timing and bytes | `TestCodexHookInputBudgets`: exact cap/cap-plus-one across read chunks, raw UTF-8 and escaped JSON sizes, empty EOF, deterministic zero-read idle expiry, trickle absolute expiry, late positive reads, guard failure before read, and sanitized typed read failure |
+| Admission before side effects | `TestCodexHookInputNoSideEffects`: every event rejects overflow before even calling the adapter parser and leaves an isolated owner empty |
+| Both CLI paths | `TestCodexHookInputExitCodes`: direct `hook --platform codex` and final setup-generated commands, all five events, from a subdirectory with keys unset. Regular-file overflow and unsupported descriptors produce the required exit/stderr/empty-stdout result without usage text; completed valid/malformed/empty payloads keep their handler contracts |
+| Actual production timing | `TestCodexHookInputProductionDeadlines`: ordinary idle, continuously trickling input, short SessionEnd idle/absolute profiles and prompt EOF through real inherited pipes. Writers remain open until the hook exits itself; test watchdogs do not terminate successful probes; EPIPE checks rule out leftover stdin readers |
+
+The reader duplicates stdin, marks the duplicate close-on-exec, sets pipe
+nonblocking mode before `os.NewFile`, and verifies `SetReadDeadline` support.
+It closes its owned duplicate on return and creates no read goroutine. The
+duplicate shares descriptor flags with stdin, so this is the CLI's sole read
+path; neither file's `Fd()` may be called during reading. The Go module floor
+remains 1.25.2. Context7 returned master-linked API excerpts, so the descriptor
+contract was checked against the pinned
+[file API](https://github.com/golang/go/blob/go1.25.2/src/os/file.go) and
+[Unix implementation](https://github.com/golang/go/blob/go1.25.2/src/os/file_unix.go).
+
+### Task 2 controlled timing results
+
+Linux/amd64, Go 1.26.4, 2026-10-13, starting commit `b0c6aab`; same isolated
+cache/config and synthetic test keys as Task 1. The installed hook subprocesses
+clear both keys. Representative
+wall times include process startup and owner validation:
+
+| Probe | Observed time |
+|---|---:|
+| Direct ordinary empty/partial idle | 2.005 / 2.012 seconds |
+| Generated ordinary empty/complete-looking JSON idle | 2.014 / 2.011 seconds |
+| Generated ordinary trickle, writer open | 10.008 seconds |
+| Direct/generated SessionEnd idle | 105 / 107 ms |
+| Generated SessionEnd trickle, writer open | 258 ms |
+| Generated normal EOF | 5 ms |
+
+These are controlled input-producer tests, not evidence of naturally stalled
+live host delivery. No launcher timeout override or generated-artifact change
+was needed. The existing final supervisor, owner ID and trust state are retained.
+
+### Task 2 verification and limits
+
+| Check | Result |
+|---|---|
+| `go test -tags fts5 ./internal/hook -run TestCodexHookInput -count=1` | Passed, 0.142s |
+| `go test -tags fts5 ./cmd/capy -run '^TestCodexHookInput' -count=1 -v` | Passed, 12.713s |
+| `go test -tags fts5 -race -count=1 ./internal/adapter ./internal/hook ./internal/platform` | Passed, 1.042s / 8.323s / 3.825s, including generated-artifact guards |
+| `GOFLAGS=-race GORACE=atexit_sleep_ms=0 go test -tags fts5 -race -count=1 ./cmd/capy -run '^TestCodexHookInput'` | Passed, 18.540s; fixture builds inherit race instrumentation, and hook fixtures disable the race runtime's exit sleep for timing assertions |
+| `go vet -tags fts5 ./...` | Passed |
+| Full `go test -tags fts5 -count=1 -timeout 15m ./...` | All packages except CLI/config/server passed. CLI had one fixture supplying unsupported device stdin; config/server required local sockets denied by the sandbox |
+| `go test -tags fts5 -count=1 ./cmd/capy -run '^TestGeneratedLaunch(ProjectCredentials\|VaultMigration)$'` | Passed, 16.506s, after supplying empty-pipe EOF in the credential fixture |
+| `go test -tags fts5 -count=1 ./cmd/capy -run '^TestGeneratedPreCommitProjectCredentials$'` | Passed, 14.726s; completes verification of every test using the changed helper |
+| `go test -tags fts5 -count=1 -timeout 15m ./internal/config ./internal/server` with local socket access | Passed, 0.073s / 154.625s |
+
+Together with the unchanged-package and other CLI results from the full run,
+these targeted reruns complete passing coverage of every package and affected
+fixture. No assertion was weakened for sandbox restrictions. Final vet, gofmt
+and Git whitespace checks pass. No generator or committed generated artifact
+changed in this task.
+
+The independent [Task 2 code review](.reviews/task-2-v2-code-review-2026-10-13.md)
+approved the implementation and fixture correction with no findings. PAL's
+external review could not run because its configured API key was rejected.
+
+- Supported anonymous-pipe behavior is verified on Linux. macOS runtime behavior
+  remains unverified; no broader platform claim is made.
+- Regular redirected files have size limits and time checks between reads.
+  Deadline checks cannot interrupt blocked filesystem/kernel I/O.
+- Budgets cover input reading after descriptor setup and owner preflight, not
+  the entire hook process. An earlier host timeout or stalled startup can still
+  prevent delivery of capy's diagnostic.
+- Terminal, directory and device stdin are rejected. Empty EOF is supported
+  through a pipe or regular file; `/dev/null` is an unsupported device.
+- Search, indexing, chunking and executor code did not change, so quality
+  benchmarks do not apply. Final live v2 host acceptance remains Task 5.

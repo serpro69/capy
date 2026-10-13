@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/serpro69/capy/internal/adapter"
@@ -37,9 +38,22 @@ Codex commands; direct invocation is intended for controlled manual probes.`,
 				return fmt.Errorf("unknown hook platform %q: use claude-code or codex", platform)
 			}
 
-			return hook.Run(args[0], a, explicitProjectDir)
+			return hookCommandError(cmd, args[0], a.Platform(), hook.Run(args[0], a, explicitProjectDir))
 		},
 	}
 	cmd.Flags().StringVar(&platform, "platform", string(adapter.ClaudeCode), "hook platform: claude-code or codex")
 	return cmd
+}
+
+// Both entry paths classify transport errors identically. The launch command
+// additionally maps owner/bootstrap failures to the established pre-tool exit 2.
+func hookCommandError(cmd *cobra.Command, event string, platform adapter.Platform, err error) error {
+	var inputErr *hook.InputError
+	if platform == adapter.Codex && errors.As(err, &inputErr) {
+		cmd.SilenceUsage = true
+		if event == "pretooluse" {
+			return &exitError{code: 2, err: err}
+		}
+	}
+	return err
 }

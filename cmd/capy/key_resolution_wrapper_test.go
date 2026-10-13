@@ -43,6 +43,9 @@ func runWrapperCommand(t *testing.T, command stdioCommand) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, command.executable, command.args...)
 	cmd.Dir, cmd.Env = command.dir, command.env
+	// Model host EOF with an empty pipe. nil stdin uses /dev/null, which is
+	// device input and deliberately unsupported by Codex's input guard.
+	cmd.Stdin = strings.NewReader("")
 	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.CombinedOutput()
 	for _, secret := range command.secrets {

@@ -15,7 +15,13 @@ func Run(event string, a adapter.HookAdapter, explicitProjectDir *string) error 
 	if err := validateEvent(event, a.Platform()); err != nil {
 		return err
 	}
-	input, err := io.ReadAll(os.Stdin)
+	var input []byte
+	var err error
+	if a.Platform() == adapter.Codex {
+		input, err = readCodexInput(os.Stdin, codexInputBudgets(event))
+	} else {
+		input, err = io.ReadAll(os.Stdin)
+	}
 	if err != nil {
 		return err
 	}

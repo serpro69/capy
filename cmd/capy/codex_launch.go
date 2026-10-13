@@ -31,6 +31,9 @@ func newCodexLaunchCmd() *cobra.Command {
 				return fmt.Errorf("unsupported Codex launch format; stop affected sessions and restore final generated configuration with compatible capy on PATH")
 			}
 			err := runCodexLaunch(cmd.Context(), args[1], args[2], args[3])
+			if args[2] == "hook" {
+				err = hookCommandError(cmd, args[3], adapter.Codex, err)
+			}
 			if err != nil && args[2] == "hook" && args[3] == "pretooluse" {
 				return &exitError{code: 2, err: err}
 			}

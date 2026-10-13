@@ -1,6 +1,6 @@
 # Codex hooks v2: simpler launch, bounded input and evidence-based routing
 
-> Status: in-progress — Task 1 direct launch implemented; Tasks 2–5 pending
+> Status: in-progress — Tasks 1–2 direct launch and bounded input implemented; Tasks 3–5 pending
 > Created: 2026-10-12
 > Baseline: capy `112f2c8` (includes the Codex `hooks.state` parser fix); Codex CLI 0.162.1
 > Prior feature: [design.md](design.md) · [completed tasks](tasks.md) · [v1 verification](verification.md)
@@ -550,10 +550,10 @@ tests are not proof of live host delivery. Detailed steps are in the
 | Sessions are stopped while generated launch definitions are replaced | Live regeneration/re-trust checks; mixed interim PR launch formats are unsupported |
 
 These contracts are backed by source inspection, v1 evidence and the user's
-availability-policy choice. Task 1 direct launch is implemented and independently
-reviewed; [v2 verification](verification-v2.md) records its evidence and limits.
-Tasks 2–5 remain pending. Their proposed behavior and final live acceptance are
-not established by Task 1's checks.
+availability-policy choice. Tasks 1–2 direct launch and bounded input are
+implemented and independently reviewed; [v2 verification](verification-v2.md)
+records their evidence and limits. Tasks 3–5 remain pending. Their proposed
+behavior and final live acceptance are not established by Tasks 1–2's checks.
 
 ## 11. Not doing
 
