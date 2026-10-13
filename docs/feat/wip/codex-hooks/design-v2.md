@@ -1,6 +1,6 @@
 # Codex hooks v2: simpler launch, bounded input and evidence-based routing
 
-> Status: in-progress — Tasks 1–4 implemented, verified and reviewed; Task 5 live/release acceptance pending
+> Status: implemented and verified — all v2 acceptance and review gates complete
 > Created: 2026-10-12
 > Baseline: capy `112f2c8` (includes the Codex `hooks.state` parser fix); Codex CLI 0.162.1
 > Prior feature: [design.md](design.md) · [completed tasks](tasks.md) · [v1 verification](verification.md)
@@ -553,8 +553,9 @@ These contracts are backed by source inspection, v1 evidence and the user's
 availability-policy choice. Tasks 1–4 direct launch, bounded input, atomic
 guidance and main-session routing are implemented and independently reviewed;
 [v2 verification](verification-v2.md) records their evidence and limits.
-Task 5 remains pending. Final live host delivery, trust activation and release
-acceptance are not established by Tasks 1–4's controlled checks.
+Task 5's live host delivery, normal trust activation, final code review and
+conformant whole-feature spec review are recorded in the verification evidence.
+All five v2 tasks are complete within the documented runtime/platform limits.
 
 ## 11. Not doing
 

@@ -375,6 +375,22 @@ Wrappers only discover and dispatch the binary; they never source dotenv. Claude
 
 Hooks run as short-lived processes (`capy hook <event>`) invoked by the AI coding tool's hook system. Each invocation reads JSON from stdin, dispatches to the appropriate handler, and writes JSON to stdout.
 
+Codex admits input before parsing, context selection or handler side effects.
+Ordinary events require EOF within 2 seconds idle / 10 seconds total and 8 MiB;
+SessionEnd uses 100 ms / 250 ms and 64 KiB. Positive reads reset only idle time.
+`input.go` duplicates stdin, sets pipe nonblocking mode before constructing a
+pollable file, verifies deadlines and closes the owned descriptor on return.
+It creates no read goroutine. Regular-file redirection uses bounded reads and
+deadline checks between them, without claiming to interrupt blocked kernel I/O.
+Terminal/device input is rejected; Claude and MCP retain their separate readers.
+
+Transport failures return a typed error before policy/state handling. Both CLI
+entry paths map Codex PreToolUse input failures to exit 2 with bounded stderr
+and empty stdout, while EOF-complete malformed JSON remains an exit-0 structured
+denial. Other events fail diagnostically without fabricated pre-tool output.
+These are read budgets after owner preflight/descriptor setup, not whole-process
+deadlines; shorter host timeouts or blocked startup can still terminate first.
+
 ### Hook Events
 
 | Event | Handler | Purpose |

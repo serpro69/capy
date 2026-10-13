@@ -6,8 +6,8 @@ Task 1 covers direct owner-validated launch, final invocation grammar, PATH
 prerequisites, failure/cancellation behavior, generated artifacts and diagnostics.
 Task 2 adds bounded hook stdin; Task 3 adds atomic shared guidance claims;
 Task 4 adds observed-success HTTP routing for Codex main sessions. Their
-evidence and limits are recorded separately below. Final live host acceptance
-remains Task 5. Historical v1 results remain in
+evidence and limits are recorded separately below. Task 5 records final live
+host acceptance and release checks. Historical v1 results remain in
 [verification.md](verification.md).
 
 Checked 2026-10-13 on Linux/amd64, Go 1.26.4, against starting commit `0c3f921`.
@@ -359,3 +359,139 @@ instead of simply dropping their former no-state checks.
 
 Optional editorial follow-up: `kk:clarify-docs` on this record and the updated
 README/architecture HTTP routing sections.
+
+## Task 5: final installed acceptance
+
+### Live environment and trust
+
+On 2026-10-13, ran **Codex CLI 0.162.1 on Linux/amd64** from
+`/tmp/capy-v2-live-rhhlmk5u/project/subdir`, inside a disposable Git root at
+`/tmp/capy-v2-live-rhhlmk5u/project`. The live capy binary was built with
+`CGO_ENABLED=1 go build -tags fts5` from the `dac9fd9` runtime implementation.
+Task 5 changes only CLI help and documentation; a separate final build checked
+the updated help. The live binary's SHA-256 is retained in the evidence file.
+
+The launch used `--no-daemon --no-alt-screen --sandbox workspace-write
+--ask-for-approval on-request` and a PATH beginning with the disposable `bin/`.
+No model, agent-type, trust-bypass or hook-feature override was used. Existing
+host authentication/trust home and global Claude policy location were retained
+under the [explicit acceptance allowance](implementation.md#52-live-acceptance-and-release-checks).
+Capy configuration was isolated, the knowledge key synthetic, and the vault key
+unset. No authentication, account, environment-secret or reasoning records are
+included in the selected evidence.
+
+Setup installed the five final capy hooks and direct MCP binding, then preserved
+two independent fixture hooks on repeat setup: a fixed startup context and a
+synthetic PreToolUse restriction. Codex's normal folder prompt identified the
+parent Git root. The exact hook definitions were inspected/trusted in its hook
+browser, which showed all seven active. The initial compound input for selecting
+and trusting a neighboring fixture was rejected by automatic approval review;
+after inspecting the exact selected command and its stdin/stdout-only script,
+the normal trust UI accepted it. No trust file was hand-edited or bypass used.
+This follows the [official hook review flow](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks).
+A new conversation after trust established startup delivery.
+
+### Actual host results
+
+Root session: `01a13511-5934-7353-9ed4-71db3bee11b2`.
+Child: `01a13517-52a3-7d01-98dd-4ab301978257`, path `/root/capy_child_probe`.
+Selected context, call, result and completed-host-item records are retained in
+[live-acceptance-v2.json](live-acceptance-v2.json). Raw rollouts are local under
+`~/.codex/sessions/2026/10/13/`; the artifact deliberately excludes unrelated
+instructions and account data. Results below were checked against actual tool
+records, not only agent summaries.
+
+| Live contract | Evidence |
+|---|---|
+| Compact startup and unrelated context | Root received capy's complete **3,532-byte** XML block inline plus the independent **64-byte** fixture context. Child retained inherited parent context and received an additional 3,532-byte capy block; no capy spill preview |
+| Allowed native control | `printf CAPY_V2_CONTROL` completed with exit 0 |
+| Unobserved main fallback | A native Python dead branch containing an HTTP-shaped call completed with exit 0 and the 436-byte main advisory; no request was executed |
+| Policy before evidence | Synthetic deny and matched-ask markers were blocked with exact `Bash(printf *CAPY_V2_DENY*)` / `Bash(printf *CAPY_V2_ASK*)` rules and the fixture settings path; the external marker was blocked by `Independent v2 fixture restriction retained` |
+| Real main success → one redirect → fallback | Actual `capy_execute` printed `CAPY_V2_MAIN_EXEC`. Policy deny/ask controls still blocked without consuming evidence. Within the same sequential probe, one native dead branch received the execute redirect and the next completed with advisory/exit 0 |
+| MCP from subdirectory | Actual `capy_stats` completed, and a later actual execute resolved `capy` to `/tmp/capy-v2-live-rhhlmk5u/bin/capy` |
+| Real child lifecycle | Child first received advisory despite fresh parent success; actual child execute printed `CAPY_V2_CHILD_EXEC`, then its first native probe was redirected and its next completed with advisory |
+| Parent evidence stays separate | Short handoff A: child native probe remained advisory after parent success, then parent received its own redirect at about **21.8 seconds**; the child's call did not consume parent evidence |
+| Child evidence stays separate | Short handoff B: after child execute success, parent native probe remained advisory; child then received its own redirect at about **29.4 seconds**, followed by fallback |
+| Live SessionEnd | Actual parent/child execute calls populated both stores. Before normal `/quit`, each contained one entry. After exit 0, both entry lists were empty and both permanent lock device/inode pairs were unchanged |
+
+All HTTP-shaped native probes used an unexecuted Python branch; no HTTP request
+was made. Actual denied marker commands have no completed native execution
+record. Normal one-call MCP approval prompts were retained. One initial isolation
+round outlasted the parent's 60-second TTL during approval/coordination; its
+result was recorded as expiry rather than preservation. The later short A/B
+handoffs independently verified both directions within the unchanged TTL.
+
+The cleanup agent receipt described child completion as unverified. Its actual
+completed MCP result (`CAPY_V2_CHILD_END`) and populated child observation prove
+success independently. The evidence retains the before/after state snapshots;
+no observation file was manually changed. The root CLI exited normally, ending
+the disposable live session and its child. No installed production binary or
+repository trust configuration was replaced.
+
+### Final verification and documentation
+
+Commands used Go 1.26.4, `-tags fts5`, synthetic `CAPY_DB_KEY`/`CAPY_VAULT_KEY`,
+`GOCACHE=/tmp/capy-v2-go-cache` and an empty temporary `XDG_CONFIG_HOME`.
+Hook subprocess fixtures separately clear credentials. Existing socket fixtures
+received local socket access for the full suite.
+
+| Check | Result |
+|---|---|
+| Full `go test -tags fts5 -count=1 -timeout 15m ./...` | All packages passed: CLI 330.762s, server 163.586s, vault 316.553s |
+| `go test -tags fts5 -race -count=1 ./internal/adapter ./internal/hook ./internal/platform` | Passed, 1.013s / 9.486s / 3.895s, including all generated-artifact guards |
+| `GOFLAGS=-race GORACE=atexit_sleep_ms=0 go test -tags fts5 -race -count=1 ./cmd/capy -run '^TestCodex(HookInput.*\|GuidanceConcurrentCLI\|MainObservationLifecycle\|DirectDispatch\|LaunchFailureAndCancellation\|MCPClosedOutputCleanup)$'` | Passed, 96.853s; actual fixture binaries were race-instrumented |
+| `go vet -tags fts5 ./...` | Passed |
+| Final FTS5 build, `hook --help`, `setup --help` | Passed; input budgets, failure/framing and final-format/restart guidance are visible |
+| gofmt, whitespace, relative links and selected evidence checks | Passed; capy context ≤4,096 bytes and no denied native marker execution |
+| Quality benchmarks | N/A: no search, indexing, chunking or executor production change |
+
+Task 5 documents input bounds, descriptor limits, shared marker/legacy behavior
+and the verified live scope in README, architecture and root AGENTS, and updates
+CLI help. No flags, command dispatch, configuration precedence, exit behavior,
+completion, dependency or distribution contract changed. Existing CI/distribution
+conventions are inherited; new pipeline/publishing work is N/A. No generated
+artifact changed in this task. Historical v1 documents/evidence remain intact.
+
+### Remaining limits and reflection
+
+- Live acceptance covers this Linux CLI version with normal trust and the
+  existing authentication/global-policy home. It does not establish all Codex
+  surfaces, versions, macOS/Windows or automatic non-Git host discovery.
+- Stalled-writer deadlines, exact byte boundaries and signal/EOF cleanup are
+  controlled subprocess evidence. Normal host delivery used completed payloads;
+  no naturally stalled live host is claimed.
+- Regular-file kernel I/O cannot be interrupted by between-read checks. A
+  shorter host deadline or blocked startup can still prevent a diagnostic.
+- Parent-death monitoring retains its existing 30-second polling interval.
+  Guidance claims do not guarantee delivery after a killed winner, and no
+  guidance retention sweep or session continuity is added.
+- This mixed live run used an independent fixture hook, not the toolbox plugin.
+  Historical toolbox duplication measurements and its separate follow-up remain
+  in v1 evidence; generated coexistence tests retain the toolbox definitions.
+
+Implementation followed the v2 plan. Normal approval latency demonstrated why
+expiry must be measured from successful completion and why live isolation probes
+need short handoffs. Read-only host receipts and state snapshots resolved the
+model's uncertain cleanup summary without inventing delivery evidence. No new
+project convention remains undocumented or needs duplicate knowledge indexing.
+
+### Final review gates
+
+[Task 5 isolated code review](.reviews/task-5-v2-code-review-2026-10-13.md):
+**APPROVE**, with no findings. It checked source/help contracts and the retained
+actual host records. PAL's external expert step could not run because its
+configured API key was rejected.
+
+[Final isolated spec review](.reviews/task-5-v2-spec-review-2026-10-13.md):
+**CONFORMANT**, with no unresolved findings across Tasks 1–5. It found one P3
+outdated README statement about generated `--project-dir` argument passing;
+the corrected text describes direct handler dispatch, and the reviewer verified
+the resolution. No intentional deviation requires indexing.
+
+All v2 tasks are complete. The documents stay in their existing directory to
+preserve historical and README links; no release publishing or commit is implied.
+Every retained live capy context hash also matches the separately built final
+binary's 3,532-byte routing output. Historical v1 statuses/evidence are unchanged.
+
+Optional editorial follow-up: `kk:clarify-docs` on the final README, architecture
+and verification sections.
