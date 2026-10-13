@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -33,9 +34,55 @@ type observationState struct {
 	Entries []toolObservation `json:"entries"`
 }
 
+// The two scopes share transactions and budgets, but never evidence or locks.
+// The zero value retains the established child store and its validation.
+type observationScope uint8
+
+const (
+	childObservationScope observationScope = iota
+	codexMainObservationScope
+)
+
+func (scope observationScope) stem() string {
+	if scope == codexMainObservationScope {
+		return "codex-main-observations"
+	}
+	return "tool-observations"
+}
+
+func (scope observationScope) validAgent(agent string) bool {
+	if scope == codexMainObservationScope {
+		return agent == ""
+	}
+	return agent != ""
+}
+
+func (scope observationScope) validTool(tool string) bool {
+	if scope == codexMainObservationScope {
+		return tool == observedExecute
+	}
+	return isObservedTool(tool)
+}
+
 type observationStore struct {
-	dir string
-	now func() time.Time
+	dir   string
+	now   func() time.Time
+	scope observationScope
+}
+
+// Callers select this scope from explicit platform and caller identity. The
+// namespace check below validates its input; it never selects the platform.
+func newCodexMainObservationStore(projectDir string) observationStore {
+	store := newObservationStore(projectDir)
+	store.scope = codexMainObservationScope
+	return store
+}
+
+func (s observationStore) validSession(session string) bool {
+	if s.scope == codexMainObservationScope {
+		return strings.HasPrefix(session, "codex:") && len(session) > len("codex:")
+	}
+	return session != ""
 }
 
 func newObservationStore(projectDir string) observationStore {
@@ -47,7 +94,7 @@ func newObservationStore(projectDir string) observationStore {
 }
 
 func (s observationStore) record(session, agent, tool string) error {
-	if session == "" || agent == "" || !isObservedTool(tool) {
+	if !s.validSession(session) || !s.scope.validAgent(agent) || !s.scope.validTool(tool) {
 		return nil
 	}
 	session, agent = sessionIDComponent(session), sessionIDComponent(agent)
@@ -67,10 +114,10 @@ func (s observationStore) record(session, agent, tool string) error {
 	})
 }
 
-// consume commits removal of ALL alternatives for the child before returning a
+// consume commits removal of ALL alternatives for the caller before returning a
 // suitable tool. An unsuitable observation remains available for another route.
 func (s observationStore) consume(session, agent string, allowFetch bool) (string, error) {
-	if session == "" || agent == "" {
+	if !s.validSession(session) || !s.scope.validAgent(agent) {
 		return "", nil
 	}
 	session, agent = sessionIDComponent(session), sessionIDComponent(agent)
@@ -100,7 +147,7 @@ func (s observationStore) consume(session, agent string, allowFetch bool) (strin
 }
 
 func (s observationStore) removeSession(session string) error {
-	if session == "" {
+	if !s.validSession(session) {
 		return nil
 	}
 	session = sessionIDComponent(session)
@@ -121,7 +168,7 @@ func (s observationStore) update(create bool, mutate func(*observationState, int
 	if s.dir == "" {
 		return nil
 	}
-	path := filepath.Join(s.dir, "tool-observations.json")
+	path := filepath.Join(s.dir, s.scope.stem()+".json")
 	if !create {
 		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 			return nil // native fallback/SessionEnd must not create unused state
@@ -138,7 +185,7 @@ func (s observationStore) update(create bool, mutate func(*observationState, int
 	if !info.IsDir() {
 		return fmt.Errorf("tool observation directory is not a regular directory")
 	}
-	lock, err := lockObservations(filepath.Join(s.dir, "tool-observations.lock"))
+	lock, err := lockObservations(filepath.Join(s.dir, s.scope.stem()+".lock"))
 	if err != nil {
 		return err
 	}
@@ -147,7 +194,7 @@ func (s observationStore) update(create bool, mutate func(*observationState, int
 	if now <= 0 {
 		return fmt.Errorf("invalid tool observation clock")
 	}
-	state, err := readObservations(path, now)
+	state, err := readObservations(path, now, s.scope)
 	if err != nil {
 		return err
 	}
@@ -192,7 +239,7 @@ func lockObservations(path string) (*os.File, error) {
 	return nil, errObservationLockTimeout
 }
 
-func readObservations(path string, now int64) (observationState, error) {
+func readObservations(path string, now int64, scope observationScope) (observationState, error) {
 	state := observationState{Entries: []toolObservation{}}
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, os.ErrNotExist) {
@@ -231,14 +278,14 @@ func readObservations(path string, now int64) (observationState, error) {
 	seen := make(map[[2]string]bool, len(state.Entries))
 	for _, entry := range state.Entries {
 		pair := [2]string{entry.Session, entry.Agent}
-		if entry.Session == "" || entry.Agent == "" || seen[pair] ||
+		if entry.Session == "" || !scope.validAgent(entry.Agent) || seen[pair] ||
 			sessionIDComponent(entry.Session) != entry.Session || sessionIDComponent(entry.Agent) != entry.Agent ||
 			len(entry.Tools) == 0 || len(entry.Tools) > 2 {
 			return state, fmt.Errorf("invalid tool observation identity or tools")
 		}
 		seen[pair] = true
 		for tool, timestamp := range entry.Tools {
-			if !isObservedTool(tool) || timestamp <= 0 || timestamp > now {
+			if !scope.validTool(tool) || timestamp <= 0 || timestamp > now {
 				return state, fmt.Errorf("invalid tool observation timestamp or tool")
 			}
 		}

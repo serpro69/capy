@@ -4,9 +4,10 @@
 
 Task 1 covers direct owner-validated launch, final invocation grammar, PATH
 prerequisites, failure/cancellation behavior, generated artifacts and diagnostics.
-Task 2 adds bounded hook stdin; Task 3 adds atomic shared guidance claims. Their
-evidence and limits are recorded separately below. Main-session evidence and
-final live host acceptance remain Tasks 4–5. Historical v1 results remain in
+Task 2 adds bounded hook stdin; Task 3 adds atomic shared guidance claims;
+Task 4 adds observed-success HTTP routing for Codex main sessions. Their
+evidence and limits are recorded separately below. Final live host acceptance
+remains Task 5. Historical v1 results remain in
 [verification.md](verification.md).
 
 Checked 2026-10-13 on Linux/amd64, Go 1.26.4, against starting commit `0c3f921`.
@@ -109,8 +110,7 @@ are recorded here and in the review, so no duplicate knowledge note was indexed.
   stop affected sessions before replacing loaded definitions, restart and review
   changed hooks through normal host controls. Setup does not edit PATH or trust.
 - Task 1 did not establish input deadlines, guidance markers or main-session
-  observation behavior. Tasks 2–3's input/guidance evidence follows below;
-  Task 4 remains pending.
+  observation behavior. Tasks 2–4's evidence follows below.
 
 The main implementation surprise was mcp-go joining workers before returning
 from `Listen`: cancellation must happen at either transport failure boundary,
@@ -280,3 +280,82 @@ assert exact per-type marker names instead of weakening their isolation checks.
 
 Optional editorial follow-up: `kk:clarify-docs` on this verification record and
 the architecture guidance section.
+
+## Task 4 acceptance evidence
+
+Codex main-session HTTP routing now uses recent, one-use execute evidence.
+Without a matching successful root `capy_execute` observation, the hook returns
+advisory discovery/native-tool context with no permission grant. A success
+permits one HTTP redirect within 60 seconds, after atomic consumption commits.
+A failed retry cannot renew consumed evidence; a later success can renew it.
+Security denies, matched asks and scanner failures precede this decision and
+leave evidence untouched. Safe downloads, ordinary commands and direct MCP
+calls do not consume it.
+
+The main scope uses `.capy/codex-main-observations.json` and its permanent
+`.lock`, with empty `agent` and execute-only tools. It shares the child store's
+transaction algorithm while retaining independent 128-entry/64-KiB bounds,
+60-second TTL and 20-ms lock wait. Explicit platform identity selects the scope;
+the raw `codex:` check validates an already-selected main caller rather than
+inferring platform. Child schema and Claude main behavior remain unchanged.
+
+| Contract | Evidence |
+|---|---|
+| Separate bounded storage | `TestCodexMainObservationStore`: absent-state no-op, identity/tool admission, timestamp replacement, exact TTL boundary, independent main/child caps and locks, oldest eviction, stable lock inode, malformed/trailing/oversized/unknown/future/duplicate state, invalid agent/tools and nonregular/symlink rejection |
+| Root execute-only producer | `TestCodexMainObservationPayloads`: root/type-only identities, aliases, serialized/array results, transcript independence, actual children, missing session, Claude namespace collision, failure/cancellation/ambiguous flags, fetch/batch/execute-file/other tools; ineligible calls neither create nor renew main state |
+| One-use routing | `TestCodexMainRoutingEvidence`: no state → advice → success → one redirect → advice → failed retry → advice → new success → redirect; expiry, missing identity, download/ordinary/MCP controls and inline HTTP |
+| Policy precedence | `TestCodexMainRoutingSecurityPrecedence`: deny, ask, later compound deny and scanner limits under absent/fresh/expired/corrupt/locked evidence; exact rule/source retained and state bytes unchanged |
+| Consumption failures | `TestCodexMainRoutingStateFailures`: held lock, failed staging write and corrupt state yield advice with unchanged evidence, never an uncommitted denial |
+| Concurrent consumption | `TestCodexMainConcurrentRedirect`: 16 synchronized callers produce exactly one redirect and advisory responses for the rest |
+| Isolation | `TestCodexMainChildIsolation`: root, child, child sibling, session sibling, another owner and a Claude raw-ID collision cannot consume each other's evidence |
+| Cleanup | `TestCodexMainSessionEnd`: root-only cleanup, both scopes, missing identity, child-labelled end, sibling retention, independent failures, unchanged permanent lock inodes, absent-state no-op, Claude/main isolation and no database files |
+| Installed operation | `TestCodexMainObservationLifecycle`: temporary Git installation, final setup-generated commands from a subdirectory, compact startup/child guidance, full root lifecycle, deny/ask controls before and after evidence, child isolation and root/child-labelled SessionEnd |
+| Inherited contracts | Existing child store/lifecycle, launch/location/owner/credential/input/guidance tests and generated-artifact guards remain passing; root/type-only v1 fixtures now explicitly assert main state and absent child state |
+
+### Task 4 verification results
+
+Checked 2026-10-13 on Linux/amd64, Go 1.26.4, starting commit `805ec1d`, using
+FTS5, synthetic knowledge/vault keys and the same isolated config/cache paths
+as earlier tasks. Installed-hook fixtures clear both keys and never issue an
+HTTP request; the payload commands are inspected by hooks, not executed.
+
+| Check | Result |
+|---|---|
+| `go test -tags fts5 -count=1 ./internal/hook ./internal/platform` | Passed, 0.693s / 2.288s, including context limits and artifact guards |
+| `go test -tags fts5 -count=1 ./cmd/capy -run 'TestCodex(MainObservationLifecycle\|ChildObservationLifecycle\|LaunchLocations\|DirectDispatch)$'` | Passed, 5.038s |
+| `go test -tags fts5 -race -count=1 ./internal/adapter ./internal/hook ./internal/platform` | Passed, 1.015s / 9.798s / 3.820s |
+| `GOFLAGS=-race GORACE=atexit_sleep_ms=0 go test -tags fts5 -race -count=1 ./cmd/capy -run '^TestCodexMainObservationLifecycle$'` | Passed, 4.828s; actual CLI fixture builds inherit race instrumentation |
+| `go vet -tags fts5 ./...` | Passed |
+| Full `go test -tags fts5 -count=1 -timeout 15m ./...` with local socket access | All packages passed; CLI 331.930s, server 165.512s, vault 318.510s |
+| gofmt and Git whitespace checks | Passed |
+
+[Isolated code review](.reviews/task-4-v2-code-review-2026-10-13.md): **APPROVE**,
+with no findings. PAL's external expert step failed because its configured API
+key was rejected. Runtime guidance, the routing generator and committed
+`.capy/AGENTS.md` changed together; README, architecture and root AGENTS describe
+the resulting behavior. No dependency, database, matcher/event catalog, owner
+marker, host trust state or executor behavior changed. Quality benchmarks do
+not apply to this scope.
+
+### Task 4 limits and reflection
+
+- Evidence proves a suitable tool succeeded recently for one caller in one
+  owner context, not permanent availability. Unknown/unobserved calls can run
+  natively after the existing security checks; no host permission is granted.
+- Tests replay synthetic complete host payloads through installed commands.
+  Actual live Codex observation delivery and the full main-session round trip
+  under normal host trust remain Task 5.
+- Linux storage/process behavior is verified. macOS and other host runtimes
+  remain unverified; no universal runtime guarantee is added.
+- Root SessionEnd retains separate permanent locks and never accesses either
+  database. A failed scope cleanup does not prevent the other; TTL and caps
+  bound evidence when cleanup is unavailable.
+
+Implementation followed the plan with one internal scope selector and shared
+transactions. The raw session namespace check is an additional admission guard;
+platform selection still comes from the adapter. Existing child fixtures retain
+their behavioral assertions, and the updated root fixtures assert separation
+instead of simply dropping their former no-state checks.
+
+Optional editorial follow-up: `kk:clarify-docs` on this record and the updated
+README/architecture HTTP routing sections.

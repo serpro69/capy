@@ -18,12 +18,13 @@ func RoutingBlock() string {
 func CodexRoutingBlock() string {
 	return routingBlock("", `    Codex shell tools (including exec_command) reach hooks as Bash. Capy handles Bash and
     capy MCP calls, including calls inside code mode. Hosted web/search tools are not intercepted.
-    - curl/wget in Bash → use capy_fetch_and_index or capy_execute
-    - Inline HTTP in Bash → use capy_execute
+    - curl/wget or inline HTTP in Bash → capy_execute when recently observed for this caller
     Silent file downloads are allowed. Security denies still apply. Matched approval rules
     are denied with their pattern/source because this PreToolUse hook cannot request approval.
-    Child Bash redirects require recent successful capy_execute evidence; otherwise use
-    discovery/native-tool advice. A redirect consumes all alternatives for that child.
+    Main and child HTTP redirects each require their own capy_execute success within 60 seconds.
+    One success permits one redirect; without it, availability is unverified and native tools
+    receive advisory guidance. Fetch alone cannot justify a Bash HTTP redirect.
+    Main and child evidence are isolated; a child redirect consumes all that child's alternatives.
     SubagentStart supplies this guidance to children; child launch arguments are preserved.
     Git issue/PR/MR comprehension keeps native CLI guidance.`)
 }
@@ -89,6 +90,11 @@ func routingBlock(upgradeNote, blocked string) string {
 const childToolGuidance = `capy: This child's capy tool availability is unverified.
 If the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.
 If discovery is unavailable or the tools are absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.
+For git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.`
+
+const codexMainToolGuidance = `capy: This main session's capy_execute availability is unverified.
+If the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.
+If discovery is unavailable or the tool is absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery.
 For git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehension.`
 
 // READ_GUIDANCE is the one-time advisory shown when Read is used.

@@ -21,12 +21,12 @@ func TestHandleSessionEnd_StableSessionOnly(t *testing.T) {
 	require.NoError(t, s.record("live-session", "sibling", observedFetch))
 	before, err := os.ReadFile(observationFile(s))
 	require.NoError(t, err)
-	handleSessionEnd(project, &adapter.PreToolUseEvent{SessionID: "ending/session"})
+	handleSessionEnd(project, &adapter.PreToolUseEvent{SessionID: "ending/session"}, adapter.ClaudeCode)
 	unchanged, err := os.ReadFile(observationFile(s))
 	require.NoError(t, err)
 	assert.Equal(t, before, unchanged, "unstable identities must not delete observations")
-	handleSessionEnd(project, &adapter.PreToolUseEvent{SessionID: "ending/session", SessionIDStable: true})
-	state, err := readObservations(observationFile(s), now.UnixMilli())
+	handleSessionEnd(project, &adapter.PreToolUseEvent{SessionID: "ending/session", SessionIDStable: true}, adapter.ClaudeCode)
+	state, err := readObservations(observationFile(s), now.UnixMilli(), childObservationScope)
 	require.NoError(t, err)
 	require.Len(t, state.Entries, 1)
 	assert.Equal(t, "live-session", state.Entries[0].Session)
@@ -39,8 +39,8 @@ func TestHandleSessionEnd_StableSessionOnly(t *testing.T) {
 func TestHandleSessionEnd_MissingState(t *testing.T) {
 	project := t.TempDir()
 	event := &adapter.PreToolUseEvent{SessionID: "session", SessionIDStable: true}
-	handleSessionEnd("", event)
-	handleSessionEnd("/nonexistent/path", event)
-	handleSessionEnd(project, event)
+	handleSessionEnd("", event, adapter.ClaudeCode)
+	handleSessionEnd("/nonexistent/path", event, adapter.ClaudeCode)
+	handleSessionEnd(project, event, adapter.ClaudeCode)
 	assert.NoDirExists(t, filepath.Join(project, ".capy"))
 }

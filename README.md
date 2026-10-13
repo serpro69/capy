@@ -1245,7 +1245,7 @@ schemas, configuration and Read-policy snapshot.
 | Execution directories | All runtimes run in the selected project by default; optional `cwd` changes only that call's execution directory. Relative non-shell writes now land there. Use explicit temporary paths for disposable output. Go discovers that directory's module/workspace, replace, vendor and toolchain settings; inherited `GOFLAGS` remains stripped. |
 | Read policies | Rules retain settings origins and root/home/source/cwd anchors. Invalid or unsupported rules block file admission. Single-slash denies conservatively match both their source anchor and legacy absolute path; migrate absolute rules to `//`. Allows never inherit that legacy interpretation. |
 | Execute-file admission | External paths require one explicit Read allow covering both requested and physical paths; denies still win. `cwd` does not re-anchor `path`, policies, keys, databases or vault scope. Direct absolute `capy_index` inputs retain deny-only admission. |
-| Hook routing | Main-agent HTTP redirects are direct denials with guidance. Children without recent usable tool observations receive discovery/native fallback; one successful observation permits one redirect within 60 seconds. First-call flood prevention and permanent availability are not guaranteed. |
+| Hook routing | Claude main HTTP redirects are enforced. Codex main sessions and children receive discovery/native advice without their own recent suitable success; one success permits one redirect within 60 seconds. Security denies and matched asks still apply. First-call flood prevention and permanent availability are not guaranteed. |
 | Batch output | Commands, including heredocs, execute unchanged. Indexed output presents stdout then stderr, without interleaving. Queries are optional; `global` searches durable+ephemeral knowledge only. Stored bounded command previews count toward source admission. The complete serialized result is capped at 81,920 bytes with omission counts and a source selector; admitted stored output is retained. |
 | Supplied booleans | Native booleans and trimmed case-insensitive `"true"`/`"false"` work. **`dry_run: "false"` now performs requested eviction.** Null, numbers, collections and other strings fail before work; numeric/shortcut `all_projects` coercion is removed. Omitted defaults stay the same. |
 | Source selectors | `%`, `_` and backslash are literal label characters, no longer SQL wildcard syntax. Use a literal label fragment. Explicit sources still include matching ephemeral knowledge and bypass vault federation. |
@@ -1349,13 +1349,22 @@ captured or budgeted by this integration.
 
 ### What gets intercepted
 
-The HTTP routing denials below apply to the main agent. Calls with a nonempty
-child `agent_id` receive advisory guidance while their capy tools are unverified:
+Claude main-agent HTTP routing denials remain enforced. Codex main sessions
+receive advisory guidance while tool availability is unverified; a successful
+`capy_execute` call in that session permits one HTTP routing redirect within
+60 seconds. Fetch, batch and other tool successes cannot authorize that redirect.
+The observation is consumed before denying; a subsequent attempt returns to
+advisory guidance unless a later success renews the evidence. No registration,
+trust record or process-liveness check establishes tool availability.
+
+Calls with a nonempty child `agent_id` receive advisory guidance while their
+own capy tools are unverified:
 discover deferred capy schemas once if the host supports discovery, then use
 available tools; otherwise use native tools with bounded extraction output.
 An agent type or local definition alone cannot establish tool availability.
-Security denies and matched asks still apply. This fallback can permit a child's
-first native call even when it ultimately has capy tools.
+Security denies and matched asks still apply before routing and do not consume
+evidence. This fallback can permit a Codex main session's or child's first native
+HTTP call even when it ultimately has capy tools; the hook never grants permission.
 
 A successful child `capy_execute` or `capy_fetch_and_index` call provides evidence
 for one suitable redirect during the next 60 seconds. Bash HTTP requires execute
@@ -1367,9 +1376,9 @@ back to advice; observations do not establish permanent availability.
 
 | Pattern                                           | What happens                                                                                                        |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `curl`/`wget` in Bash                             | Denied with guidance to use `capy_fetch_and_index` or `capy_execute`; silent/quiet file downloads remain allowed     |
-| `fetch()`, `requests.get()`, `http.get()` in Bash | Denied with guidance to use `capy_execute` or `capy_fetch_and_index`                                                 |
-| `WebFetch` tool (Claude Code)                     | Denied — use `capy_fetch_and_index` instead (git platform URLs get CLI-specific redirect guidance)                  |
+| `curl`/`wget` in Bash                             | Caller-specific HTTP routing above; silent/quiet file downloads remain allowed without consuming evidence          |
+| `fetch()`, `requests.get()`, `http.get()` in Bash | Claude main: routing denial; Codex main and children: one redirect with execute evidence, otherwise advisory        |
+| `WebFetch` tool (Claude Code)                     | Main: denial with extraction/CLI guidance; children: one suitable observed-tool redirect, otherwise advisory        |
 | `Read` tool (Claude Code)                         | One-time advisory: prefer `capy_execute_file` for analysis                                                          |
 | `Grep` tool (Claude Code)                         | One-time advisory: prefer `capy_execute` for large searches                                                         |
 | `Agent`/`Task` tools (Claude Code)                | Routing block injected into subagent prompt; Bash subagents upgraded to general-purpose                             |
@@ -1399,9 +1408,14 @@ Codex and names the exact rule and source file, because this hook cannot request
 approval. Unmatched default asks still pass. This does not translate Codex's
 native sandbox or permission rules, which continue to apply independently.
 
-Child observations share one bounded `.capy/tool-observations.json` per project,
-with a separate permanent lock file. SessionEnd removes only its session's
-entries; missing SessionEnd events are handled by expiry and fixed storage caps.
+Child observations use `.capy/tool-observations.json`; Codex main observations
+use a separate `.capy/codex-main-observations.json`, scoped to the selected owner
+and namespaced session. Each has its own permanent `.lock` file, a 20-ms lock
+wait, and independent 128-entry/64-KiB bounds. Main, child, sibling-session and
+different-owner evidence cannot authorize one another. Root Codex SessionEnd
+clears its session from both stores independently, retaining siblings and lock
+files; child-labelled end events clear neither. Claude retains child-store
+cleanup. Missing SessionEnd events are bounded by expiry and storage caps.
 These hooks do not open the knowledge or vault databases.
 
 ### Platform support

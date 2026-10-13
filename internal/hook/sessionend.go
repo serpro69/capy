@@ -14,11 +14,20 @@ import (
 // from getting exclusive WAL access, resulting in incomplete checkpoints.
 //
 // Cleanup affects only this stable session's observation entries. It never
-// removes the shared lock file or opens a knowledge/vault database (ADR-016).
-func handleSessionEnd(projectDir string, event *adapter.PreToolUseEvent) {
+// removes either permanent lock or opens a knowledge/vault database (ADR-016).
+func handleSessionEnd(projectDir string, event *adapter.PreToolUseEvent, platform adapter.Platform) {
 	if !event.SessionIDStable || event.SessionID == "" {
 		return
 	}
+	if platform == adapter.Codex {
+		if event.AgentID != "" {
+			return // a child's end cannot clear the root session's evidence
+		}
+		if err := newCodexMainObservationStore(projectDir).removeSession(event.SessionID); err != nil {
+			slog.Warn("could not clear Codex main tool observations")
+		}
+	}
+	// Independent transactions: a main-store failure must not skip child cleanup.
 	if err := newObservationStore(projectDir).removeSession(event.SessionID); err != nil {
 		slog.Warn("could not clear session tool observations", "error", err)
 	}

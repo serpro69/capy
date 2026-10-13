@@ -8,9 +8,17 @@ import (
 	"github.com/serpro69/capy/internal/adapter"
 )
 
-func handlePostToolUse(input []byte, event *adapter.PreToolUseEvent, ctx hookContext) ([]byte, error) {
+func handlePostToolUse(input []byte, event *adapter.PreToolUseEvent, ctx hookContext, platform adapter.Platform) ([]byte, error) {
 	tool := observationToolName(event.ToolName)
-	if !event.SessionIDStable || event.SessionID == "" || event.AgentID == "" || tool == "" || !successfulPostToolUse(input) {
+	if !event.SessionIDStable || event.SessionID == "" || tool == "" || !successfulPostToolUse(input) {
+		return nil, nil
+	}
+	if event.AgentID == "" {
+		if platform == adapter.Codex && tool == observedExecute {
+			if err := newCodexMainObservationStore(ctx.projectDir).record(event.SessionID, "", tool); err != nil {
+				slog.Warn("could not record Codex main tool observation")
+			}
+		}
 		return nil, nil
 	}
 	if err := newObservationStore(ctx.projectDir).record(event.SessionID, event.AgentID, tool); err != nil {
