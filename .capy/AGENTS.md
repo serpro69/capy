@@ -31,8 +31,6 @@ For both search tools, an explicit `project` matches the session's custom projec
 
 ## Blocked commands — enforced by hooks
 
-Claude Code hooks cover Bash, WebFetch, file guidance and Agent/Task injection. Codex hooks cover canonical Bash (including exec_command and code-mode shell calls) and capy MCP calls; hosted web/search tools are not intercepted. Registration requires host activation and trust.
-
 The redirects below apply to the main agent. A child may receive one redirect to a suitable capy tool that succeeded for that child within 60 seconds; otherwise it receives discovery/native-tool advice. Security denies and matched asks still apply. Bash HTTP requires a recent capy_execute success; WebFetch can also use capy_fetch_and_index. Git issue/PR/MR comprehension keeps native CLI guidance.
 
 ### curl / wget — BLOCKED
@@ -46,7 +44,7 @@ Any Bash command containing `fetch('http`, `requests.get(`, `requests.post(`, `h
 Instead use:
 - `capy_execute(language, code)` to run HTTP calls in sandbox — only stdout enters context
 
-### WebFetch — BLOCKED in Claude Code
+### WebFetch — BLOCKED
 WebFetch calls are denied entirely. Instead use:
 - For git platform issues/PRs/MRs: platform CLI (e.g., `gh issue view N`) or `WebSearch` for full comprehension
 - For other small pages needing comprehension: `WebSearch` or other runtime web tools
@@ -93,9 +91,7 @@ Every indexed entry has a **kind** that controls its lifecycle and search visibi
 
 ## Subagent routing
 
-In Claude Code, when spawning subagents (Agent/Task tool), the routing block is automatically injected into their prompt. Bash-type subagents are upgraded to general-purpose; that type change does not prove MCP tools are available.
-
-In Codex, SubagentStart supplies child guidance. Child launch arguments and agent types are preserved. PostToolUse records successful child capy_execute/capy_fetch_and_index calls; SessionEnd clears only that parent's namespaced observations.
+When spawning subagents (Agent/Task tool), the routing block is automatically injected into their prompt. Bash-type subagents are upgraded to general-purpose; that type change does not prove MCP tools are available.
 
 If the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools. If discovery is unavailable or the tools are absent, use native tools following the comprehension/extraction principle and keep extracted output bounded. Do not loop on discovery. Agent type or a local definition alone does not establish the effective tool pool.
 
