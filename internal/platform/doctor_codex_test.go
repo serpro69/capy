@@ -38,7 +38,7 @@ func TestDoctorPlatformRegistrations(t *testing.T) {
 				require.NoError(t, SetupClaudeCode("capy", dir, SettingsProject))
 			}
 			if tc.codex {
-				require.NoError(t, SetupCodex("capy", dir))
+				require.NoError(t, setupCodex(dir))
 			}
 			checks := registrationChecks(t, dir)
 			for _, name := range []string{"Claude Code hooks", "Claude Code MCP"} {
@@ -78,8 +78,8 @@ func TestDoctorPlatformRegistrations(t *testing.T) {
 		{name: "missing MCP", hookStatus: Pass, mcpStatus: Fail, mcpDetail: "missing owner-bound", mutate: func(t *testing.T, dir string) {
 			require.NoError(t, os.Remove(filepath.Join(dir, ".codex/config.toml")))
 		}},
-		{name: "missing wrapper", hookStatus: Fail, mcpStatus: Fail, hookDetail: "wrapper", mutate: func(t *testing.T, dir string) {
-			require.NoError(t, os.Remove(filepath.Join(dir, ".codex/scripts/capy.sh")))
+		{name: "absent wrapper", hookStatus: Pass, mcpStatus: Pass, mutate: func(t *testing.T, dir string) {
+			require.NoFileExists(t, filepath.Join(dir, ".codex/scripts/capy.sh"))
 		}},
 		{name: "missing marker", hookStatus: Fail, mcpStatus: Fail, hookDetail: "no adjacent", mutate: func(t *testing.T, dir string) {
 			require.NoError(t, os.Remove(filepath.Join(dir, codexOwnerRelPath)))
@@ -100,7 +100,7 @@ func TestDoctorPlatformRegistrations(t *testing.T) {
 			writeCodexFixture(t, dir, ".codex/config.toml", "[")
 		}},
 		{name: "invalid bootstrap argv", hookStatus: Fail, mcpStatus: Fail, mcpDetail: "unsupported", mutate: func(t *testing.T, dir string) {
-			replaceDoctorConfig(t, dir, `command = "bash"`, `command = "sh"`)
+			replaceDoctorConfig(t, dir, `command = "capy"`, `command = "sh"`)
 		}},
 		{name: "wrong matcher", hookStatus: Fail, mcpStatus: Pass, hookDetail: "invalid matcher", mutate: func(t *testing.T, dir string) {
 			mutateDoctorHooks(t, dir, func(hooks map[string]any) {
@@ -122,9 +122,9 @@ func TestDoctorPlatformRegistrations(t *testing.T) {
 			require.NoError(t, err)
 			writeCodexFixture(t, dir, ".codex/config.toml", string(data)+"\n"+strings.ReplaceAll(string(data), "[mcp_servers.capy]", "[mcp_servers.copy]"))
 		}},
-		{name: "symlink wrapper", hookStatus: Fail, mcpStatus: Fail, hookDetail: "regular file", mutate: func(t *testing.T, dir string) {
+		{name: "unused symlink wrapper", hookStatus: Pass, mcpStatus: Pass, mutate: func(t *testing.T, dir string) {
 			path := filepath.Join(dir, ".codex/scripts/capy.sh")
-			require.NoError(t, os.Rename(path, path+".real"))
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 			require.NoError(t, os.Symlink(path+".real", path))
 		}},
 		{name: "symlink hook config", hookStatus: Fail, mcpStatus: Fail, hookDetail: "regular file", mutate: func(t *testing.T, dir string) {
@@ -138,7 +138,7 @@ func TestDoctorPlatformRegistrations(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			require.NoError(t, SetupCodex("capy", dir))
+			require.NoError(t, setupCodex(dir))
 			tc.mutate(t, dir)
 			checks := registrationChecks(t, dir)
 			require.Equal(t, tc.hookStatus, checks["Codex hooks"].Status, checks)
@@ -170,7 +170,7 @@ func TestDoctorCodexOverlappingRegistrations(t *testing.T) {
 	for _, outer := range []string{"complete", "missing marker", "only hooks without marker", "only MCP without marker"} {
 		t.Run(outer, func(t *testing.T) {
 			root := t.TempDir()
-			require.NoError(t, SetupCodex("capy", root))
+			require.NoError(t, setupCodex(root))
 			nested := filepath.Join(root, "packages/service")
 			require.NoError(t, os.MkdirAll(nested, 0o755))
 			require.NoError(t, os.CopyFS(filepath.Join(nested, ".codex"), os.DirFS(filepath.Join(root, ".codex"))))
@@ -195,7 +195,7 @@ func TestDoctorCodexOverlappingRegistrations(t *testing.T) {
 			_, runtimeErr := ResolveCodexOwner(nested, id, "hook", "pretooluse")
 			require.Error(t, runtimeErr)
 			require.Contains(t, runtimeErr.Error(), root)
-			require.Error(t, SetupCodex("capy", nested))
+			require.Error(t, setupCodex(nested))
 		})
 	}
 }
@@ -206,7 +206,7 @@ func TestDoctorCodexActivationLimits(t *testing.T) {
 			dir := t.TempDir()
 			inline := "[[hooks.PreToolUse]]\nmatcher='^Bash$'\n[[hooks.PreToolUse.hooks]]\ntype='command'\ncommand='echo external'\n"
 			writeCodexFixture(t, dir, ".codex/config.toml", setting+inline)
-			require.NoError(t, SetupCodex("capy", dir))
+			require.NoError(t, setupCodex(dir))
 			before, err := os.ReadFile(filepath.Join(dir, ".codex/config.toml"))
 			require.NoError(t, err)
 			checks := registrationChecks(t, dir)
@@ -227,7 +227,7 @@ func TestDoctorCodexActivationLimits(t *testing.T) {
 	}
 	t.Run("owned inline duplicate", func(t *testing.T) {
 		dir := t.TempDir()
-		require.NoError(t, SetupCodex("capy", dir))
+		require.NoError(t, setupCodex(dir))
 		owners, err := InspectCodexOwners(dir)
 		require.NoError(t, err)
 		command, err := json.Marshal(codexHookCommand(owners[0].ID, "pretooluse"))
@@ -243,12 +243,19 @@ func TestDoctorCodexActivationLimits(t *testing.T) {
 }
 
 func TestDoctorPartialPlatformArtifacts(t *testing.T) {
+	t.Run("unused wrapper is not registration", func(t *testing.T) {
+		dir := t.TempDir()
+		writeCodexFixture(t, dir, ".codex/scripts/capy.sh", "#!/bin/sh\nexit 99\n")
+		checks := registrationChecks(t, dir)
+		require.NotContains(t, checks, "Codex hooks")
+		require.NotContains(t, checks, "Codex MCP")
+		require.Contains(t, checks, "Platform registration")
+	})
 	for _, tc := range []struct {
 		name, path, content, platform string
 	}{
 		{"marker only", codexOwnerRelPath, codexOwnerContent(testCodexOwnerID), "Codex"},
 		{"old MCP only", ".codex/config.toml", "[mcp_servers.capy]\ncommand='bash'\nargs=['.codex/scripts/capy.sh','serve']\n", "Codex"},
-		{"orphan wrapper", ".codex/scripts/capy.sh", "#!/bin/sh\n", "Codex"},
 		{"Claude MCP only", ".mcp.json", `{"mcpServers":{"capy":{"command":"bash"}}}`, "Claude Code"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -262,7 +269,7 @@ func TestDoctorPartialPlatformArtifacts(t *testing.T) {
 	}
 	t.Run("ordinary subdirectory finds owner", func(t *testing.T) {
 		root := t.TempDir()
-		require.NoError(t, SetupCodex("capy", root))
+		require.NoError(t, setupCodex(root))
 		nested := filepath.Join(root, "packages/service")
 		writeCodexFixture(t, nested, ".codex/config.toml", "model='unrelated'\n")
 		checks := registrationChecks(t, nested)

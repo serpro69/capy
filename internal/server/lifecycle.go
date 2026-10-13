@@ -21,20 +21,26 @@ func StartLifecycleGuard(onShutdown func()) func() {
 
 	// Parent PID polling (every 30s) — detect orphaned server
 	ticker := time.NewTicker(30 * time.Second)
+	done := make(chan struct{})
 	go func() {
-		for range ticker.C {
-			ppid := os.Getppid()
-			if ppid != originalPpid || ppid == 0 || ppid == 1 {
-				shutdown()
+		for {
+			select {
+			case <-ticker.C:
+				ppid := os.Getppid()
+				if ppid != originalPpid || ppid == 0 || ppid == 1 {
+					shutdown()
+					return
+				}
+			case <-done:
 				return
 			}
 		}
 	}()
 
-	// OS signals
+	// SIGPIPE must be handled too: Go otherwise exits on broken fd 1/2 writes
+	// without running deferred executor/database cleanup when the host departs.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	done := make(chan struct{})
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGPIPE)
 	go func() {
 		select {
 		case <-sigCh:

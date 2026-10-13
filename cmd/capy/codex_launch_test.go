@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -44,21 +42,33 @@ func installCodexLaunch(t *testing.T, bin, dir string) ([]string, []string) {
 	return args, env
 }
 
-func launchHookCommand(args []string, event string) string {
-	hookArgs := append([]string(nil), args...)
-	hookArgs[4], hookArgs[5] = "hook", event
-	command := "bash"
-	for _, arg := range hookArgs {
-		command += " '" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+func launchHookCommand(t *testing.T, owner, event string) string {
+	t.Helper()
+	for _, group := range readInstalledCodexHooks(t, owner).Hooks[event] {
+		for _, handler := range group.Hooks {
+			if strings.Contains(handler.Command, "capy-codex-launch-v2") {
+				return handler.Command
+			}
+		}
 	}
-	return command
+	t.Fatalf("no installed command for %s", event)
+	return ""
 }
 
 func runLaunch(t *testing.T, cwd string, env, args []string, input string) (int, string, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", args...)
+	executable := "bash"
+	if len(args) > 0 && args[0] == "codex-launch" {
+		// Resolve using the fixture environment, never the developer's PATH.
+		for _, entry := range env {
+			if path, ok := strings.CutPrefix(entry, "PATH="); ok {
+				executable = filepath.Join(strings.Split(path, string(os.PathListSeparator))[0], "capy")
+			}
+		}
+	}
+	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Dir, cmd.Env, cmd.Stdin = cwd, env, strings.NewReader(input)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
@@ -116,16 +126,16 @@ func TestCodexLaunchLocations(t *testing.T) {
 	bin := buildStdioCapy(t)
 	for _, location := range []string{"root", "subdirectory", "moved", "sibling worktree", "non-Git"} {
 		t.Run(location, func(t *testing.T) {
-			owner, cwd, args, env := prepareLaunchLocation(t, bin, location)
+			owner, cwd, _, env := prepareLaunchLocation(t, bin, location)
 			require.NoError(t, os.MkdirAll(filepath.Join(owner, ".claude"), 0o755))
 			require.NoError(t, os.WriteFile(filepath.Join(owner, ".claude/settings.json"), []byte(`{"permissions":{"deny":["Bash(echo owner-denied)"]}}`), 0o600))
 			input, err := json.Marshal(map[string]any{"session_id": "launch-fixture", "cwd": cwd, "tool_name": "Bash", "tool_input": map[string]string{"command": "echo owner-denied"}})
 			require.NoError(t, err)
-			code, out, stderr := runLaunch(t, cwd, env, []string{"-c", launchHookCommand(args, "pretooluse")}, string(input))
+			code, out, stderr := runLaunch(t, cwd, env, []string{"-c", launchHookCommand(t, owner, "PreToolUse")}, string(input))
 			require.Equal(t, 0, code, "%s", stderr)
 			require.Contains(t, out, `"permissionDecision":"deny"`)
 			require.Contains(t, out, filepath.Join(owner, ".claude/settings.json"))
-			code, out, stderr = runLaunch(t, cwd, env, []string{"-c", launchHookCommand(args, "sessionstart")}, string(input))
+			code, out, stderr = runLaunch(t, cwd, env, []string{"-c", launchHookCommand(t, owner, "SessionStart")}, string(input))
 			require.Equal(t, 0, code, "%s", stderr)
 			require.Contains(t, out, "SessionStart")
 			require.NoFileExists(t, filepath.Join(owner, ".capy/knowledge.db"))
@@ -145,7 +155,7 @@ func TestCodexMCPLaunchLocations(t *testing.T) {
 					env[i] = "CAPY_DB_KEY=synthetic-codex-launch-key"
 				}
 			}
-			p := startStdioProcess(t, stdioCommand{executable: "bash", args: args, dir: cwd, env: env})
+			p := startStdioProcess(t, stdioCommand{executable: bin, args: args, dir: cwd, env: env})
 			p.initialize(t)
 			var result struct {
 				Tools []struct {
@@ -180,7 +190,9 @@ func TestCodexCopiedOwnerMissingMarker(t *testing.T) {
 			nested := filepath.Join(root, "packages/service")
 			require.NoError(t, os.MkdirAll(nested, 0o755))
 			require.NoError(t, os.CopyFS(filepath.Join(nested, ".codex"), os.DirFS(filepath.Join(root, ".codex"))))
+			commands := []string{launchHookCommand(t, root, "PreToolUse"), launchHookCommand(t, nested, "PreToolUse")}
 			for _, dir := range []string{root, nested} {
+				require.NoError(t, os.MkdirAll(filepath.Join(dir, ".codex/scripts"), 0o755))
 				require.NoError(t, os.WriteFile(filepath.Join(dir, ".codex/scripts/capy.sh"), []byte("#!/bin/bash\necho invoked > '"+dir+"/wrapper-invoked'\nexit 99\n"), 0o755))
 				require.NoError(t, os.MkdirAll(filepath.Join(dir, ".capy"), 0o755))
 				require.NoError(t, os.WriteFile(filepath.Join(dir, ".capy/tool-observations.json"), []byte("unchanged sentinel"), 0o600))
@@ -197,13 +209,13 @@ func TestCodexCopiedOwnerMissingMarker(t *testing.T) {
 					path := filepath.Join(root, ".codex", file)
 					data, err := os.ReadFile(path)
 					require.NoError(t, err)
-					require.NoError(t, os.WriteFile(path, []byte(strings.ReplaceAll(string(data), "capy-codex-launch-v1", `\u0063apy-codex-launch-v1`)), 0o600))
+					require.NoError(t, os.WriteFile(path, []byte(strings.ReplaceAll(string(data), "capy-codex-launch-v2", `\u0063apy-codex-launch-v2`)), 0o600))
 				}
 			}
 			// Both copied commands have identical IDs/argv but distinct definitions.
-			for _, origin := range []string{"outer", "nested"} {
+			for i, origin := range []string{"outer", "nested"} {
 				t.Run(origin, func(t *testing.T) {
-					code, out, stderr := runLaunch(t, nested, env, []string{"-c", launchHookCommand(args, "pretooluse")}, `{"session_id":"fixture","tool_name":"Bash","tool_input":{"command":"echo sentinel"}}`)
+					code, out, stderr := runLaunch(t, nested, env, []string{"-c", commands[i]}, `{"session_id":"fixture","tool_name":"Bash","tool_input":{"command":"echo sentinel"}}`)
 					require.Equal(t, 2, code)
 					require.Empty(t, out)
 					require.Contains(t, stderr, root+"/.codex/")
@@ -227,20 +239,12 @@ func TestCodexCopiedOwnerMissingMarker(t *testing.T) {
 
 func TestCodexBootstrapFailure(t *testing.T) {
 	bin := buildStdioCapy(t)
-	for _, failure := range []string{"missing wrapper", "symlink wrapper", "wrapper crash", "outside tree", "invalid owner", "old binary", "binary crash", "missing binary"} {
+	for _, failure := range []string{"outside tree", "invalid owner", "old binary", "binary crash", "missing binary"} {
 		t.Run(failure, func(t *testing.T) {
 			root := t.TempDir()
-			args, env := installCodexLaunch(t, bin, root)
+			_, env := installCodexLaunch(t, bin, root)
 			cwd := root
-			wrapper := filepath.Join(root, ".codex/scripts/capy.sh")
 			switch failure {
-			case "missing wrapper":
-				require.NoError(t, os.Remove(wrapper))
-			case "symlink wrapper":
-				require.NoError(t, os.Remove(wrapper))
-				require.NoError(t, os.Symlink("missing", wrapper))
-			case "wrapper crash":
-				require.NoError(t, os.WriteFile(wrapper, []byte("exit 126\n"), 0o600))
 			case "outside tree":
 				cwd = t.TempDir()
 			case "invalid owner":
@@ -263,103 +267,10 @@ func TestCodexBootstrapFailure(t *testing.T) {
 					}
 				}
 			}
-			code, out, stderr := runLaunch(t, cwd, env, []string{"-c", launchHookCommand(args, "pretooluse")}, "stdin sentinel")
+			code, out, stderr := runLaunch(t, cwd, env, []string{"-c", launchHookCommand(t, root, "PreToolUse")}, "stdin sentinel")
 			require.Equal(t, 2, code, "%s", stderr)
 			require.Empty(t, out)
 			require.Contains(t, stderr, "capy setup --platform codex")
-		})
-	}
-}
-
-func TestCodexLauncherStdinAndSignals(t *testing.T) {
-	bin := buildStdioCapy(t)
-	root := t.TempDir()
-	args, env := installCodexLaunch(t, bin, root)
-	wrapper := filepath.Join(root, ".codex/scripts/capy.sh")
-	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/bash\ncat\nexit 42\n"), 0o600))
-	code, out, _ := runLaunch(t, root, env, args, "event bytes\n\x00sentinel\n")
-	require.Equal(t, 42, code)
-	require.Equal(t, "event bytes\n\x00sentinel\n", out)
-	// Long-running final process records its PID. Terminate the outer bootstrap,
-	// then prove the final process has been reaped (not simply stdout closed).
-	pidFile := filepath.Join(root, "server.pid")
-	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/bash\necho $$ > '"+pidFile+"'\nexec sleep 120\n"), 0o600))
-	cmd := exec.Command("bash", args...)
-	cmd.Dir, cmd.Env = root, env
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() { cmd.Process.Kill() })
-	var pid int
-	require.Eventually(t, func() bool {
-		data, err := os.ReadFile(pidFile)
-		if err != nil {
-			return false
-		}
-		_, err = fmt.Sscan(string(data), &pid)
-		return err == nil && pid > 0
-	}, 5*time.Second, 10*time.Millisecond)
-	t.Cleanup(func() { syscall.Kill(pid, syscall.SIGKILL) })
-	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("launcher failed to stop")
-	}
-	require.Eventually(t, func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH }, 3*time.Second, 10*time.Millisecond, "%s", stderr.String())
-}
-
-func TestCodexWrapperOpenFailures(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "wrapper.sh")
-	require.NoError(t, os.WriteFile(path, []byte("exit 0\n"), 0o600))
-	err := inspectCodexWrapper(path, func(path string) (*os.File, error) {
-		return nil, &os.PathError{Op: "open", Path: path, Err: os.ErrPermission}
-	})
-	require.ErrorIs(t, err, os.ErrPermission)
-	// Controlled disappearance after the readable-regular check: the supervisor
-	// must observe bash's launch failure rather than replacing itself with exec.
-	require.NoError(t, checkCodexWrapper(path))
-	require.NoError(t, os.Remove(path))
-	cmd := exec.Command("bash", path)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err = superviseCodexProcess(context.Background(), cmd)
-	var exit *exec.ExitError
-	require.True(t, errors.As(err, &exit))
-	require.Equal(t, 127, exit.ExitCode())
-	require.NotEmpty(t, stderr.String())
-}
-
-func TestCodexWrapperExitCleansDescendants(t *testing.T) {
-	for _, status := range []string{"0", "42"} {
-		t.Run(status, func(t *testing.T) {
-			pidFile := filepath.Join(t.TempDir(), "descendant.pid")
-			cmd := exec.Command("bash", "-c", `sleep 120 & echo $! > "$1"; exit "$2"`, "wrapper", pidFile, status)
-			err := superviseCodexProcess(context.Background(), cmd)
-			if status == "0" {
-				require.NoError(t, err)
-			} else {
-				var exit *exec.ExitError
-				require.ErrorAs(t, err, &exit)
-				require.Equal(t, 42, exit.ExitCode())
-			}
-			data, err := os.ReadFile(pidFile)
-			require.NoError(t, err)
-			var pid int
-			_, err = fmt.Sscan(string(data), &pid)
-			require.NoError(t, err)
-			t.Cleanup(func() { syscall.Kill(pid, syscall.SIGKILL) })
-			require.Eventually(t, func() bool {
-				if syscall.Kill(pid, 0) == syscall.ESRCH {
-					return true
-				}
-				// A reparented grandchild can await the host init's reap after exit;
-				// a zombie is no longer a running server or holder of inherited FDs.
-				state, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-				return err == nil && strings.Contains(string(state), ") Z ")
-			}, 3*time.Second, 10*time.Millisecond, "wrapper descendant remains running")
 		})
 	}
 }
@@ -378,6 +289,7 @@ func TestCodexOverlappingLaunches(t *testing.T) {
 			}
 			require.NoError(t, os.CopyFS(filepath.Join(nested, ".codex"), os.DirFS(filepath.Join(nestedSource, ".codex"))))
 			for _, owner := range []string{root, nested} {
+				require.NoError(t, os.MkdirAll(filepath.Join(owner, ".codex/scripts"), 0o755))
 				require.NoError(t, os.MkdirAll(filepath.Join(owner, ".claude"), 0o755))
 				policy := `{"permissions":{"deny":["Bash(echo ` + filepath.Base(owner) + `)"]}}`
 				require.NoError(t, os.WriteFile(filepath.Join(owner, ".claude/settings.json"), []byte(policy), 0o600))
@@ -392,8 +304,9 @@ func TestCodexOverlappingLaunches(t *testing.T) {
 				if removed == "marker" {
 					require.NoError(t, os.Remove(filepath.Join(root, ".codex/capy-owner")))
 				}
-				for _, args := range [][]string{outerArgs, nestedArgs} {
-					code, out, stderr := runLaunch(t, nested, env, []string{"-c", launchHookCommand(args, "pretooluse")}, "{}")
+				for i, args := range [][]string{outerArgs, nestedArgs} {
+					owner := []string{root, nested}[i]
+					code, out, stderr := runLaunch(t, nested, env, []string{"-c", launchHookCommand(t, owner, "PreToolUse")}, "{}")
 					require.Equal(t, 2, code, "%s", stderr)
 					require.Empty(t, out)
 					require.Contains(t, stderr, root)

@@ -1,13 +1,13 @@
 # Implementation: Codex hooks v2
 
-> Status: proposed — implementation pending
+> Status: in-progress — Task 1 direct launch implemented; Tasks 2–5 pending
 > Created: 2026-10-12
 > Design: [design-v2.md](design-v2.md) · Tasks: [tasks-v2.md](tasks-v2.md)
 > Baseline: capy `112f2c8` (includes the Codex `hooks.state` parser fix); follow the `-v2` documents, not the completed v1 task list
 
 ## 1. Orientation and boundaries
 
-The current hook path is host → inline bootstrap → `capy codex-launch` →
+At the v1 baseline, the hook path was host → inline bootstrap → `capy codex-launch` →
 owner's `.codex/scripts/capy.sh` → `capy hook --platform codex <event>`.
 `internal/platform/codex_owner.go` validates every ancestor's owner/binding
 before any project wrapper runs. `cmd/capy/hook.go` selects the adapter;

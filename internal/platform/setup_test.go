@@ -443,9 +443,8 @@ func TestSetupMigratesStaleHeading(t *testing.T) {
 
 func TestSetupCodex(t *testing.T) {
 	dir := t.TempDir()
-	binaryPath := "/usr/local/bin/capy"
 
-	err := SetupCodex(binaryPath, dir)
+	err := setupCodex(dir)
 	require.NoError(t, err)
 
 	// Verify .capy/ directory created
@@ -453,16 +452,7 @@ func TestSetupCodex(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
 
-	// Verify wrapper script created at .codex/scripts/capy.sh
-	wrapperPath := filepath.Join(dir, codexWrapperRelPath)
-	wrapperData, err := os.ReadFile(wrapperPath)
-	require.NoError(t, err)
-	assert.Contains(t, string(wrapperData), "#!/usr/bin/env bash")
-	assert.Contains(t, string(wrapperData), "\"$p\" \"$@\" || true")
-
-	wrapperInfo, err := os.Stat(wrapperPath)
-	require.NoError(t, err)
-	assert.NotZero(t, wrapperInfo.Mode()&0o111, "wrapper script should be executable")
+	require.NoDirExists(t, filepath.Join(dir, ".codex/scripts"))
 
 	// Verify .capy/AGENTS.md has routing instructions
 	agentsMD, err := os.ReadFile(filepath.Join(dir, agentsRelPath))
@@ -486,10 +476,9 @@ func TestSetupCodex(t *testing.T) {
 
 func TestSetupCodex_CreatesCodexDir(t *testing.T) {
 	dir := t.TempDir()
-	binaryPath := "/usr/local/bin/capy"
 
 	// .codex doesn't exist yet — setup should create it
-	err := SetupCodex(binaryPath, dir)
+	err := setupCodex(dir)
 	require.NoError(t, err)
 
 	info, err := os.Stat(filepath.Join(dir, ".codex"))
@@ -499,15 +488,11 @@ func TestSetupCodex_CreatesCodexDir(t *testing.T) {
 
 func TestSetupCodex_Idempotent(t *testing.T) {
 	dir := t.TempDir()
-	binaryPath := "/usr/local/bin/capy"
 
-	require.NoError(t, SetupCodex(binaryPath, dir))
-	require.NoError(t, SetupCodex(binaryPath, dir))
+	require.NoError(t, setupCodex(dir))
+	require.NoError(t, setupCodex(dir))
 
-	// Wrapper should still be valid
-	wrapperData, err := os.ReadFile(filepath.Join(dir, codexWrapperRelPath))
-	require.NoError(t, err)
-	assert.Contains(t, string(wrapperData), "#!/usr/bin/env bash")
+	require.NoDirExists(t, filepath.Join(dir, ".codex/scripts"))
 
 	// .gitignore should not have duplicate entries
 	gitignore, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
@@ -577,7 +562,7 @@ func TestMergeCodexMCPServer_UpdatesStaleBlock(t *testing.T) {
 	configPath := filepath.Join(dir, "config.toml")
 
 	// Old block without env_vars
-	stale := "model = \"gpt-5.5\"\n\n[mcp_servers.capy]\ncommand = \"bash\"\nargs = [\".codex/scripts/capy.sh\", \"serve\"]\n"
+	stale := "model = \"gpt-5.5\"\n\n" + strings.ReplaceAll(codexMCPBlock(testCodexOwnerID), "env_vars = [\"CAPY_DB_KEY\", \"CAPY_VAULT_KEY\"]\n", "")
 	require.NoError(t, os.WriteFile(configPath, []byte(stale), 0o644))
 
 	require.NoError(t, mergeCodexMCPServer(configPath, testCodexOwnerID))
@@ -595,7 +580,7 @@ func TestMergeCodexMCPServer_UpdatesStaleBlock_PreservesFollowing(t *testing.T) 
 	configPath := filepath.Join(dir, "config.toml")
 
 	// Old block forwards only the knowledge key, followed by another section.
-	stale := "[mcp_servers.capy]\ncommand = \"bash\"\nargs = [\".codex/scripts/capy.sh\", \"serve\"]\nenv_vars = [\"CAPY_DB_KEY\"]\n\n[mcp_servers.other]\ncommand = \"node\"\n"
+	stale := strings.ReplaceAll(codexMCPBlock(testCodexOwnerID), `env_vars = ["CAPY_DB_KEY", "CAPY_VAULT_KEY"]`, `env_vars = ["CAPY_DB_KEY"]`) + "\n[mcp_servers.other]\ncommand = \"node\"\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(stale), 0o644))
 
 	require.NoError(t, mergeCodexMCPServer(configPath, testCodexOwnerID))
@@ -613,22 +598,19 @@ func TestMergeCodexMCPServer_UpdatesStaleBlock_PreservesFollowing(t *testing.T) 
 	assert.Equal(t, content, string(data), "should be idempotent after upgrading the env_vars list")
 }
 
-func TestSetupCodex_WrapperMatchesClaudeCode(t *testing.T) {
+func TestSetupCodex_OnlyClaudeUsesWrapper(t *testing.T) {
 	dir := t.TempDir()
 	binaryPath := "/usr/local/bin/capy"
 
 	// Setup both platforms
-	require.NoError(t, SetupCodex(binaryPath, dir))
+	require.NoError(t, setupCodex(dir))
 	require.NoError(t, SetupClaudeCode(binaryPath, dir, SettingsProject))
 
-	// Both wrapper scripts should have identical content
-	codexWrapper, err := os.ReadFile(filepath.Join(dir, codexWrapperRelPath))
-	require.NoError(t, err)
+	require.NoFileExists(t, filepath.Join(dir, ".codex/scripts/capy.sh"))
 	claudeWrapper, err := os.ReadFile(filepath.Join(dir, capyWrapperRelPath))
 	require.NoError(t, err)
 
-	assert.Equal(t, string(claudeWrapper), string(codexWrapper),
-		"Codex and Claude Code wrapper scripts should be identical")
+	assert.Equal(t, capyWrapperScript, string(claudeWrapper))
 }
 
 func TestWriteCapyWrapper(t *testing.T) {

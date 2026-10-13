@@ -55,6 +55,8 @@ func TestCommandsRejectUnsafeKeyFilePermissions(t *testing.T) {
 }
 
 func TestSetupRepairsKeyFilePermissions(t *testing.T) {
+	bin := buildStdioCapy(t)
+	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	dir, _ := newCLIProject(t)
 	writeCLIKeyFixture(t, filepath.Join(dir, ".capy.toml"), "[store]\npath = 'knowledge.db'\nkey_file = 'db.key'\n")
 	path := filepath.Join(dir, "db.key")

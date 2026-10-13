@@ -49,7 +49,7 @@ func TestSetupKeyFilePermissions(t *testing.T) {
 					if platform == "claude-code" {
 						err = SetupClaudeCode("/synthetic/capy", dir, SettingsProject)
 					} else {
-						err = SetupCodex("/synthetic/capy", dir)
+						err = setupCodex(dir)
 					}
 					if state == "invalid_config" || state == "nonregular" || state == "invalid_parent" {
 						require.Error(t, err)

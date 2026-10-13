@@ -48,7 +48,6 @@ var wholeFileArtifacts = []struct {
 	genName string // generator symbol, named in the failure message
 }{
 	{capyWrapperRelPath, capyWrapperScript, "capyWrapperScript"},
-	{codexWrapperRelPath, capyWrapperScript, "capyWrapperScript"},
 	{agentsRelPath, GenerateRoutingInstructions(), "GenerateRoutingInstructions()"},
 }
 
@@ -174,7 +173,7 @@ func TestDriftGuardCoversEverySetupArtifact(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o755))
 
 	require.NoError(t, SetupClaudeCode("/usr/local/bin/capy", dir, SettingsProject))
-	require.NoError(t, SetupCodex("/usr/local/bin/capy", dir))
+	require.NoError(t, setupCodex(dir))
 
 	var uncovered []string
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {

@@ -13,7 +13,7 @@ import (
 
 func codexMCPBlock(id string) string {
 	args, _ := json.Marshal(codexLaunchArgs(id, "serve", "")) // strings only
-	return codexMCPMarker + "\ncommand = \"bash\"\nargs = " + string(args) + "\nenv_vars = [\"CAPY_DB_KEY\", \"CAPY_VAULT_KEY\"]\n"
+	return codexMCPMarker + "\ncommand = \"capy\"\nargs = " + string(args) + "\nenv_vars = [\"CAPY_DB_KEY\", \"CAPY_VAULT_KEY\"]\n"
 }
 
 // Preserve unrelated TOML bytes, including comments and multiline strings.
