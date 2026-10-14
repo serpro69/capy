@@ -50,7 +50,7 @@ brew install serpro69/tap/capy
 curl -sSfL https://raw.githubusercontent.com/serpro69/capy/master/install.sh | sh
 ```
 
-Or [build from source](CONTRIBUTING.md#clone-and-build) with Go 1.25.2+ and a C compiler. Put the resulting `capy` binary on your `PATH`.
+Or [build from source](CONTRIBUTING.md#clone-and-build) with Go 1.27.2+ and a C compiler. Put the resulting `capy` binary on your `PATH`.
 
 ### Set an encryption key
 

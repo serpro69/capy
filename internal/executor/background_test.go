@@ -147,15 +147,14 @@ func TestExitedLeaderRetainsGroupOwnership(t *testing.T) {
 			e := newTestExecutor(t)
 			t.Cleanup(e.CleanupBackgrounded)
 			workspace := t.TempDir()
-			code := "sleep 3 & exit 0"
+			code := "(sleep 3; touch descendant-survived) & exit 0"
 			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
 			if mode == "hard cap" {
 				cancel()
 				ctx = context.Background()
-				code = "(dd if=/dev/zero bs=1048576 count=101 2>/dev/null; sleep 3) & exit 0"
+				code = "(dd if=/dev/zero bs=1048576 count=101 2>/dev/null; sleep 3; touch descendant-survived) & exit 0"
 			}
-			start := time.Now()
 			result, err := e.runProcess(ctx, e.Runtimes()[Shell], []string{"-c", code}, e.projectDir, workspace,
 				ExecRequest{Background: mode == "shutdown"})
 			require.NoError(t, err)
@@ -177,7 +176,12 @@ func TestExitedLeaderRetainsGroupOwnership(t *testing.T) {
 			} else {
 				assert.True(t, result.TimedOut)
 			}
-			assert.Less(t, time.Since(start), 2*time.Second, "descendant must be terminated instead of waiting for its 3-second sleep")
+			// Completion waits for the descendant's output pipes to close. If
+			// group termination fails, it reaches touch before those pipes close.
+			// A wall-clock bound also measures copying 101 MiB under -race and
+			// can fail on loaded CI runners even when termination works.
+			assert.NoFileExists(t, filepath.Join(e.projectDir, "descendant-survived"),
+				"descendant must be terminated instead of completing its sleep")
 		})
 	}
 }
