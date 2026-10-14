@@ -150,11 +150,13 @@ authorization to spawn agents or make concurrent overlapping edits.
   personal import-size settings currently exclude their tiny fixtures. This
   pre-existing harness issue is outside Task 1; all affected cases pass with an
   empty temporary config home. See [verification](verification.md#task-1-main-session-cli).
-- [ ] **Claude-toolbox enhancement PR:** after capy's integration is verified,
-  explain its ownership of instruction injection and supported HTTP routing;
-  propose optional cleanup with a migration path for users lacking the new
-  hooks. Preserve unrelated provider instructions and file restrictions. See
-  [the follow-up brief](implementation.md#claude-toolbox-enhancement-pr) and
+- [x] **Claude-toolbox enhancement follow-up:** opened
+  [claude-toolbox #170](https://github.com/serpro69/claude-toolbox/issues/170)
+  on 2026-10-14. The user chose an issue instead of a PR. It explains capy's
+  ownership, optional migration, preservation requirements and release gate;
+  upstream implementation remains pending. See
+  [the follow-up disposition](implementation.md#claude-toolbox-enhancement-pr),
+  [the issue description](toolbox-enhancement-issue.md) and
   [the measured duplication baseline](verification.md#startup-context-baseline).
 - [ ] **#132 output policy:** separately reproduce and measure routine command
   output, exit status and full-log recovery before changing guidance/capture.

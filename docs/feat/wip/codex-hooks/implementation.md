@@ -389,24 +389,29 @@ against the mixed-installation fixture.
 
 ### Claude-toolbox enhancement PR
 
-**Deferred until the capy integration is implemented and its activation path is
-verified.** The user agreed that an enhancement PR should explain that capy now
-owns its instruction injection and supported HTTP routing.
+**Follow-up filed on 2026-10-14:** at the user's request, opened
+[claude-toolbox #170](https://github.com/serpro69/claude-toolbox/issues/170)
+instead of an enhancement PR. The [saved issue description](toolbox-enhancement-issue.md)
+explains duplicate instruction injection and how toolbox's standalone HTTP
+denials mask capy's observed-success routing and advisory fallback.
 
-Prepare that PR in the claude-toolbox repository, citing the released capy
-version and setup/activation instructions. Explain the optional conditional
-read of `.capy/AGENTS.md` and the standalone HTTP-routing block, preserve
-unrelated provider context and file restrictions, and explicitly address users
-without the new capy hooks before proposing removals. Capy setup must not make
-those edits itself. This design neither submits the PR nor asserts those
-upstream behaviors have already been removed.
+The issue proposes optional cleanup after activation verification, preserving
+provider instructions, `.claude/CLAUDE.*.md` extras, file restrictions and
+unrelated hooks. Projects without the new hooks retain legacy behavior; static
+registration or marker presence cannot prove activation. Capy setup must not
+edit toolbox scripts. No upstream implementation was changed by this follow-up.
 
-Until that PR lands, explicitly retain and measure duplicated startup content.
-The current projection is 12,740 capy-related UTF-8 bytes (9,500 static + 3,240
-runtime), excluding toolbox extras. [verification.md](verification.md) records
-that baseline and must gain the actual implemented measurements and upstream
-issue/PR link when one exists. This is accepted temporary overhead, not an
-untracked claim of zero duplication.
+**Release and implementation remain pending upstream.** Capy PR #135 is open
+and the latest release, v0.17.0, does not contain the integration. Issue #170
+requires identifying the first compatible release, documenting setup/trust and
+rollback, implementing explicit opt-in, and verifying both legacy and migrated
+installations. This completes the requested issue handoff, not that cleanup.
+
+Until cleanup lands and a project opts in, duplicate startup content remains.
+[verification.md](verification.md#startup-context-baseline) retains the original
+12,740-byte projection and the later actual mixed-run measurement of 13,801
+bytes, including toolbox provider/extras. The final v2 capy block is 3,532 bytes;
+its live run used independent fixture hooks, so it is not a new toolbox total.
 
 ### Issue #132: bounded routine command output
 
