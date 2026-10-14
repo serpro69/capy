@@ -109,11 +109,20 @@ func TestClassifyIP_AllowedPublic(t *testing.T) {
 // dial when the resolved address is forbidden — the core DNS-rebinding defense.
 func TestSSRFTransport_BlocksLoopbackDial(t *testing.T) {
 	tr := newSSRFSafeTransport()
+	t.Cleanup(tr.CloseIdleConnections)
 	require.NotNil(t, tr.DialContext)
 
-	_, err := tr.DialContext(context.Background(), "tcp", "127.0.0.1:80")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "loopback")
+	// Dial directly to exercise connect-time policy for both ordinary IPv4
+	// and mapped literals independently of URL syntax validation.
+	for _, addr := range []string{"127.0.0.1:80", "[::ffff:127.0.0.1]:80", "[::ffff:7f00:1]:80"} {
+		t.Run(addr, func(t *testing.T) {
+			_, err := tr.DialContext(context.Background(), "tcp", addr)
+			require.Error(t, err)
+			var policyErr *fetchPolicyError
+			assert.ErrorAs(t, err, &policyErr)
+			assert.Contains(t, err.Error(), "loopback")
+		})
+	}
 }
 
 func TestSSRFTransport_BlocksLinkLocalDial(t *testing.T) {

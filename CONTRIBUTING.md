@@ -4,7 +4,7 @@
 
 ### Prerequisites
 
-- **Go 1.25+** ([install](https://go.dev/dl/))
+- **Go 1.27.2+** ([install](https://go.dev/dl/)) — CI and release builds select this minimum from `go.mod`. This also includes the `net/url` fix for valid IPv4-mapped IPv6 URLs ([Go issue #75832](https://go.dev/issue/75832)).
 - **C compiler** — required for CGO (SQLite FTS5 + sqlite3mc encryption):
   - macOS: `xcode-select --install`
   - Debian/Ubuntu: `sudo apt install build-essential`
@@ -86,6 +86,7 @@ go test -tags fts5 -count=1 -v ./internal/hook/...  # verbose
 Top gotchas:
 - Without `-tags fts5` you'll get cryptic `no such module: fts5` errors from SQLite.
 - Without `CAPY_DB_KEY` you'll get `CAPY_DB_KEY environment variable is required` errors from store tests.
+- On macOS, run `TMPDIR=/private/tmp make test-race` (or `make test`) to avoid `/var` versus `/private/var` mismatches in fixtures that compare physical paths. TODO: canonicalize ordinary temporary-root helpers with `filepath.EvalSymlinks`, preserving deliberate symlink fixtures; that cross-package fixture cleanup is deferred from the Go toolchain update.
 - Credential tests must use temporary project/config/data/vault paths. Never use real credential files or databases. For an isolated full-suite run, use a temporary child home, clear inherited project and Claude/Codex discovery overrides, and preserve Go cache/module paths explicitly. Do not set one shared `CLAUDE_CONFIG_DIR`: existing fixtures set their own home or discovery roots.
 
 CI runs FTS5-tagged tests with both synthetic keys and the race detector; see [.github/workflows/ci.yml](.github/workflows/ci.yml). Credential resolution changes do not alter retrieval algorithms and do not require quality benchmarks unless search, indexing, chunking, or executor behavior also changes.

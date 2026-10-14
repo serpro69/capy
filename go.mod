@@ -1,6 +1,6 @@
 module github.com/serpro69/capy
 
-go 1.25.2
+go 1.27.2
 
 replace github.com/mattn/go-sqlite3 => github.com/jgiannuzzi/go-sqlite3 v1.14.35-0.20260227142656-2c447b9a2806
 

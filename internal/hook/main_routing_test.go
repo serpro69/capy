@@ -81,6 +81,8 @@ func TestCodexMainRoutingEvidence(t *testing.T) {
 
 func TestCodexMainRoutingSecurityPrecedence(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	// Settings provenance may contain macOS's /private path component.
+	const privateArgument = "private-command-argument"
 	for _, evidence := range []string{"absent", "fresh", "expired", "corrupt", "locked"} {
 		t.Run(evidence, func(t *testing.T) {
 			project := t.TempDir()
@@ -109,9 +111,12 @@ func TestCodexMainRoutingSecurityPrecedence(t *testing.T) {
 			source := filepath.Join(project, ".claude", "settings.json")
 			require.NoError(t, os.WriteFile(source, []byte(`{"permissions":{"deny":["Bash(blocked:*)"],"ask":["Bash(confirm:*)"]}}`), 0o600))
 			for _, tc := range []struct{ name, command, pattern string }{
-				{"deny", "blocked private; curl https://example.invalid", "Bash(blocked:*)"},
-				{"ask", "confirm private; curl https://example.invalid", "Bash(confirm:*)"},
-				{"later deny", "confirm private; curl https://example.invalid; blocked private", "Bash(blocked:*)"},
+				{"deny", "blocked " + privateArgument + "; curl https://example.invalid", "Bash(blocked:*)"},
+				{"ask", "confirm " + privateArgument + "; curl https://example.invalid", "Bash(confirm:*)"},
+				{
+					"later deny", "confirm " + privateArgument + "; curl https://example.invalid; blocked " + privateArgument,
+					"Bash(blocked:*)",
+				},
 				{"scanner", "curl https://example.invalid; " + strings.Repeat(":;", 4097), "limit exceeded"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
@@ -121,7 +126,7 @@ func TestCodexMainRoutingSecurityPrecedence(t *testing.T) {
 					if tc.name != "scanner" {
 						require.Contains(t, response["permissionDecisionReason"], source)
 					}
-					require.NotContains(t, response["permissionDecisionReason"], "private")
+					require.NotContains(t, response["permissionDecisionReason"], privateArgument)
 					if evidence == "absent" {
 						require.NoDirExists(t, s.dir)
 					} else {

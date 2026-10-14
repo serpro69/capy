@@ -59,8 +59,10 @@ func TestFetchStatsRejectedURLs(t *testing.T) {
 func TestFetchStatsValidURLSyntax(t *testing.T) {
 	for _, tc := range []struct{ name, url string }{
 		{name: "IPv6", url: "https://[2001:db8::1]/reference"},
-		// Mapped IPv4 is valid URL syntax; keep this admission check offline.
+		// Go 1.25.4 fixes net/url's mapped-literal regression (go.dev/issue/75832).
+		// Keep these syntax checks offline; the transport enforces IP policy.
 		{name: "mapped IPv4", url: "https://[::ffff:192.0.2.1]/"},
+		{name: "mapped IPv4 hex with port", url: "https://[::ffff:c000:201]:443/"},
 		{name: "IPv6 with port", url: "https://[2001:db8::1]:443/"},
 		{name: "IPv6 zone", url: "http://[fe80::1%25en0]:80/"},
 		{name: "maximum port", url: "https://example.invalid:65535/"},

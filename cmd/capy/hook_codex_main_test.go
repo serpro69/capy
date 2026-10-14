@@ -94,12 +94,15 @@ func TestCodexMainObservationLifecycle(t *testing.T) {
 	require.NoError(t, os.WriteFile(settings, []byte(`{"permissions":{"deny":["Bash(deny-marker:*)"],"ask":["Bash(ask-marker:*)"]}}`), 0o600))
 	policyControls := func() {
 		t.Helper()
+		// Keep the argument distinct from macOS's /private temporary paths,
+		// which legitimately appear in the settings-file provenance.
+		const privateArgument = "private-command-argument"
 		for _, marker := range []string{"deny-marker", "ask-marker"} {
-			response := pre("main", "", marker+" private; "+httpCommand)
+			response := pre("main", "", marker+" "+privateArgument+"; "+httpCommand)
 			require.Equal(t, "deny", response["permissionDecision"])
 			require.Contains(t, response["permissionDecisionReason"], "Bash("+marker+":*)")
 			require.Contains(t, response["permissionDecisionReason"], settings)
-			require.NotContains(t, response["permissionDecisionReason"], "private")
+			require.NotContains(t, response["permissionDecisionReason"], privateArgument)
 		}
 	}
 	policyControls()
