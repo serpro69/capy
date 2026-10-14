@@ -170,10 +170,17 @@ duplicate instructions from different hooks.
 
 **Accepted temporary overhead:** preserve the external loader until the
 [claude-toolbox enhancement follow-up](implementation.md#claude-toolbox-enhancement-pr)
-is ready. A published upstream issue/PR link does not exist yet; add it here
-when created. During implementation, replace the projected sum with measured
-actual startup/resume outputs and preserve the distinction between bytes,
-host approximate-token estimates and model-visible previews.
+is implemented and the project opts in. On 2026-10-14, the user chose an issue
+instead of a PR; [claude-toolbox #170](https://github.com/serpro69/claude-toolbox/issues/170)
+now tracks optional cleanup, release/activation prerequisites and preservation
+of legacy behavior. No toolbox script was changed by that handoff.
+
+The table above remains the historical projection. [Task 6](#task-6-installed-runtime-and-release-documentation)
+later measured 13,801 actual startup/resume bytes, including provider/extras.
+The [final v2 acceptance](verification-v2.md#task-5-final-installed-acceptance)
+measured a 3,532-byte capy block with independent fixture hooks, not a new
+toolbox total. Bytes, host approximate-token estimates and model-visible
+previews remain distinct; no reduction is claimed before upstream cleanup.
 
 ## Implementation acceptance
 
@@ -557,7 +564,9 @@ evidence. Live observation consumption was exercised; live SessionEnd cleanup
 with outstanding evidence was not. Non-Git host discovery, other Codex surfaces,
 other versions and Windows remain unverified. Hosted web interception and output
 budgets remain outside scope. The [toolbox follow-up](implementation.md#claude-toolbox-enhancement-pr)
-is a brief, not a published PR; #132 is not closed by this work.
+was subsequently filed as [claude-toolbox #170](https://github.com/serpro69/claude-toolbox/issues/170)
+on 2026-10-14 at the user's request; cleanup remains pending and #132 is not
+closed by this work.
 
 ### Release documentation and test correction
 
