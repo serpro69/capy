@@ -20,7 +20,7 @@ terminal_title = ["project", "git-branch", "status", "thread", "task-progress"]
 whimsy = false  # this is just bad... plus it creates weird flickering artifacts in tmux
 animations = false  # even better, disable all animations to be sure no future "fancy feature" introduces weird behaviors in the terminal
 
-[mcp_servers."capy"]
+[mcp_servers.capy]
 command = "capy"
-args = ["codex-launch", "capy-codex-launch-v2", "d54275171f475eb00dbb2e4f0bb33489", "serve", ""]
+args = ["codex-launch","capy-codex-launch-v2","0f381d66569446c4e989a69d9971a683","serve",""]
 env_vars = ["CAPY_DB_KEY", "CAPY_VAULT_KEY"]

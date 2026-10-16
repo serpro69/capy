@@ -1,62 +1,62 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/scripts/session-start.sh\"",
-            "additionalContextLimit": 10000
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "command": "bash '-c' 'set -uo pipefail\ncapy_run() {\n  \"$@\" <&0 &\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\ncapy_run command capy codex-launch \"$0\" \"$1\" \"$2\" \"$3\"\nstatus=$?\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; install/upgrade capy on PATH or repair configuration from an external terminal, then rerun capy setup --platform codex and restart Codex\" >&2\n  if [ \"$2\" = \"hook\" ] && [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v2' 'd54275171f475eb00dbb2e4f0bb33489' 'hook' 'sessionstart'",
-            "type": "command"
-          }
-        ],
-        "matcher": "^.*$"
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/scripts/pretooluse-bash.sh\""
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "command": "bash '-c' 'set -uo pipefail\ncapy_run() {\n  \"$@\" <&0 &\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\ncapy_run command capy codex-launch \"$0\" \"$1\" \"$2\" \"$3\"\nstatus=$?\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; install/upgrade capy on PATH or repair configuration from an external terminal, then rerun capy setup --platform codex and restart Codex\" >&2\n  if [ \"$2\" = \"hook\" ] && [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v2' 'd54275171f475eb00dbb2e4f0bb33489' 'hook' 'pretooluse'",
-            "type": "command"
-          }
-        ],
-        "matcher": "^(Bash|mcp__[^[:space:]]+__capy_(execute|execute_file|batch_execute|fetch_and_index|index|search|vault_search|stats|doctor|cleanup))$"
-      }
-    ],
     "PostToolUse": [
       {
         "hooks": [
           {
-            "command": "bash '-c' 'set -uo pipefail\ncapy_run() {\n  \"$@\" <&0 &\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\ncapy_run command capy codex-launch \"$0\" \"$1\" \"$2\" \"$3\"\nstatus=$?\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; install/upgrade capy on PATH or repair configuration from an external terminal, then rerun capy setup --platform codex and restart Codex\" >&2\n  if [ \"$2\" = \"hook\" ] && [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v2' 'd54275171f475eb00dbb2e4f0bb33489' 'hook' 'posttooluse'",
+            "command": "bash '-c' 'set -uo pipefail\ncapy_run() {\n  \"$@\" \u003c\u00260 \u0026\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\ncapy_run command capy codex-launch \"$0\" \"$1\" \"$2\" \"$3\"\nstatus=$?\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; install/upgrade capy on PATH or repair configuration from an external terminal, then rerun capy setup --platform codex and restart Codex\" \u003e\u00262\n  if [ \"$2\" = \"hook\" ] \u0026\u0026 [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v2' '0f381d66569446c4e989a69d9971a683' 'hook' 'posttooluse'",
             "type": "command"
           }
         ],
         "matcher": "^mcp__[^[:space:]]+__capy_(execute|fetch_and_index)$"
       }
     ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/scripts/pretooluse-bash.sh\"",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "command": "bash '-c' 'set -uo pipefail\ncapy_run() {\n  \"$@\" \u003c\u00260 \u0026\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\ncapy_run command capy codex-launch \"$0\" \"$1\" \"$2\" \"$3\"\nstatus=$?\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; install/upgrade capy on PATH or repair configuration from an external terminal, then rerun capy setup --platform codex and restart Codex\" \u003e\u00262\n  if [ \"$2\" = \"hook\" ] \u0026\u0026 [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v2' '0f381d66569446c4e989a69d9971a683' 'hook' 'pretooluse'",
+            "type": "command"
+          }
+        ],
+        "matcher": "^(Bash|mcp__[^[:space:]]+__capy_(execute|execute_file|batch_execute|fetch_and_index|index|search|vault_search|stats|doctor|cleanup))$"
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [
           {
-            "command": "bash '-c' 'set -uo pipefail\ncapy_run() {\n  \"$@\" <&0 &\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\ncapy_run command capy codex-launch \"$0\" \"$1\" \"$2\" \"$3\"\nstatus=$?\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; install/upgrade capy on PATH or repair configuration from an external terminal, then rerun capy setup --platform codex and restart Codex\" >&2\n  if [ \"$2\" = \"hook\" ] && [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v2' 'd54275171f475eb00dbb2e4f0bb33489' 'hook' 'sessionend'",
+            "command": "bash '-c' 'set -uo pipefail\ncapy_run() {\n  \"$@\" \u003c\u00260 \u0026\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\ncapy_run command capy codex-launch \"$0\" \"$1\" \"$2\" \"$3\"\nstatus=$?\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; install/upgrade capy on PATH or repair configuration from an external terminal, then rerun capy setup --platform codex and restart Codex\" \u003e\u00262\n  if [ \"$2\" = \"hook\" ] \u0026\u0026 [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v2' '0f381d66569446c4e989a69d9971a683' 'hook' 'sessionend'",
+            "type": "command"
+          }
+        ],
+        "matcher": "^.*$"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "additionalContextLimit": 10000,
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/scripts/session-start.sh\"",
+            "type": "command"
+          }
+        ],
+        "matcher": "startup|resume"
+      },
+      {
+        "hooks": [
+          {
+            "command": "bash '-c' 'set -uo pipefail\ncapy_run() {\n  \"$@\" \u003c\u00260 \u0026\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\ncapy_run command capy codex-launch \"$0\" \"$1\" \"$2\" \"$3\"\nstatus=$?\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; install/upgrade capy on PATH or repair configuration from an external terminal, then rerun capy setup --platform codex and restart Codex\" \u003e\u00262\n  if [ \"$2\" = \"hook\" ] \u0026\u0026 [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v2' '0f381d66569446c4e989a69d9971a683' 'hook' 'sessionstart'",
             "type": "command"
           }
         ],
@@ -67,7 +67,7 @@
       {
         "hooks": [
           {
-            "command": "bash '-c' 'set -uo pipefail\ncapy_run() {\n  \"$@\" <&0 &\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2>/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\ncapy_run command capy codex-launch \"$0\" \"$1\" \"$2\" \"$3\"\nstatus=$?\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; install/upgrade capy on PATH or repair configuration from an external terminal, then rerun capy setup --platform codex and restart Codex\" >&2\n  if [ \"$2\" = \"hook\" ] && [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v2' 'd54275171f475eb00dbb2e4f0bb33489' 'hook' 'subagentstart'",
+            "command": "bash '-c' 'set -uo pipefail\ncapy_run() {\n  \"$@\" \u003c\u00260 \u0026\n  capy_child=$!\n  trap '\\''kill -TERM \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 143'\\'' TERM\n  trap '\\''kill -INT \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 130'\\'' INT\n  trap '\\''kill -HUP \"$capy_child\" 2\u003e/dev/null; wait \"$capy_child\"; exit 129'\\'' HUP\n  wait \"$capy_child\"\n  capy_status=$?\n  trap - TERM INT HUP\n  return \"$capy_status\"\n}\ncapy_run command capy codex-launch \"$0\" \"$1\" \"$2\" \"$3\"\nstatus=$?\nif [ \"$status\" -ne 0 ]; then\n  echo \"capy: Codex launch failed; install/upgrade capy on PATH or repair configuration from an external terminal, then rerun capy setup --platform codex and restart Codex\" \u003e\u00262\n  if [ \"$2\" = \"hook\" ] \u0026\u0026 [ \"$3\" = \"pretooluse\" ]; then exit 2; fi\nfi\nexit \"$status\"\n' 'capy-codex-launch-v2' '0f381d66569446c4e989a69d9971a683' 'hook' 'subagentstart'",
             "type": "command"
           }
         ],
