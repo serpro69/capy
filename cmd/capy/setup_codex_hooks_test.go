@@ -96,9 +96,10 @@ func TestCodexMixedStartupContext(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".codex/scripts/session-start.sh"), script, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".claude/CLAUDE.extra.md"), []byte("# Extra fixture\nPreserve extra instructions.\n"), 0o600))
 	externalCommand := `bash "$(git rev-parse --show-toplevel)/.codex/scripts/session-start.sh"`
-	config := map[string]any{"hooks": map[string]any{"SessionStart": []any{map[string]any{
+	externalHandlers := []any{map[string]any{
 		"matcher": "startup|resume", "hooks": []any{map[string]any{"type": "command", "command": externalCommand, "additionalContextLimit": 10000}},
-	}}}}
+	}}
+	config := map[string]any{"hooks": map[string]any{"SessionStart": externalHandlers}}
 	data, err := json.Marshal(config)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".codex/hooks.json"), data, 0o600))
@@ -110,7 +111,7 @@ func TestCodexMixedStartupContext(t *testing.T) {
 	require.Len(t, hooks.Hooks["SessionStart"], 2)
 	static, err := os.ReadFile(filepath.Join(dir, ".capy/AGENTS.md"))
 	require.NoError(t, err)
-	contextFrom := func(command, source string) string {
+	contextFrom := func(t *testing.T, command, source string) string {
 		t.Helper()
 		input, err := json.Marshal(map[string]string{"session_id": "mixed-startup", "source": source, "cwd": dir})
 		require.NoError(t, err)
@@ -134,12 +135,16 @@ func TestCodexMixedStartupContext(t *testing.T) {
 					continue
 				}
 				for _, handler := range group.Hooks {
-					text := contextFrom(handler.Command, source)
+					text := contextFrom(t, handler.Command, source)
 					if handler.Command == externalCommand {
 						require.Contains(t, text, "Provider: Codex (OpenAI).")
 						require.Contains(t, text, "Preserve extra instructions.")
-						require.Contains(t, text, strings.TrimRight(string(static), "\n"))
+						// The toolbox defers routing guidance to the registered capy hook.
+						require.Contains(t, text, "Capy guidance and HTTP routing are delivered by the capy hooks registered in .codex/hooks.json.")
+						require.NotContains(t, text, "# capy — context-window routing")
+						require.NotContains(t, text, strings.TrimRight(string(static), "\n"))
 						require.NotNil(t, handler.AdditionalContextLimit)
+						require.Equal(t, 10000, *handler.AdditionalContextLimit)
 						externalBytes = len([]byte(text))
 					} else {
 						require.Nil(t, handler.AdditionalContextLimit)
@@ -158,4 +163,28 @@ func TestCodexMixedStartupContext(t *testing.T) {
 			t.Logf("UTF-8 context bytes: static file=%d, toolbox payload=%d, capy payload=%d, combined=%d", len(static), externalBytes, capyBytes, externalBytes+capyBytes)
 		})
 	}
+	t.Run("legacy fallback without capy SessionStart", func(t *testing.T) {
+		// Keep the other capy events registered: delegation is per event.
+		path := filepath.Join(dir, ".codex/hooks.json")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		var config struct {
+			Hooks map[string]json.RawMessage `json:"hooks"`
+		}
+		require.NoError(t, json.Unmarshal(data, &config))
+		config.Hooks["SessionStart"], err = json.Marshal(externalHandlers)
+		require.NoError(t, err)
+		data, err = json.Marshal(config)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, data, 0o600))
+		for _, source := range []string{"startup", "resume"} {
+			t.Run(source, func(t *testing.T) {
+				text := contextFrom(t, externalCommand, source)
+				require.Contains(t, text, "Provider: Codex (OpenAI).")
+				require.Contains(t, text, "Preserve extra instructions.")
+				require.Contains(t, text, strings.TrimRight(string(static), "\n"))
+				require.NotContains(t, text, "This hook does not inject .capy/AGENTS.md.")
+			})
+		}
+	})
 }

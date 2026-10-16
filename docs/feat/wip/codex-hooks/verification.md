@@ -303,6 +303,38 @@ and trust verification remain Task 6.
 
 ### Measured mixed startup fixture
 
+**2026-10-16 update:** The toolbox sync in `7d443c8` removed the duplicate
+injection when capy's SessionStart hook is registered. The original measurements
+below are historical. `TestCodexMixedStartupContext` now checks the toolbox's
+delegation notice, preserved provider/extra instructions and 10,000-byte context
+limit, and absence of static routing text. It still checks capy's own guidance
+and 4,096-byte ceiling on startup, resume and fork. Removing only capy's
+SessionStart registration restores full static routing on startup/resume even
+while its other events remain registered.
+
+The updated race-enabled fixture passes. Current decoded payloads are **536
+bytes** from toolbox and **3,532 bytes** from capy (**4,068 combined**) on
+startup/resume; fork emits only capy's **3,532 bytes**. The generated static file
+is **11,075 bytes**. These remain subprocess measurements, not live-host evidence.
+`go vet -tags fts5 ./...` passes, and independent code review reported no
+findings. The second external reviewer was unavailable because its provider
+rejected the configured API key.
+
+The full race run also reproduced seven vault CLI failures from the personal
+192 KiB import minimum already recorded in ADR-036. All seven pass when rerun
+with `XDG_CONFIG_HOME` pointing to an empty temporary directory. This separate
+fixture-isolation issue is deferred from the startup assertion fix: isolate
+configuration in `setupCodexVaultEnv` and the standalone restore/merge fixtures
+so local import policy cannot exclude their synthetic transcripts.
+The same run hit the default ten-minute package timeout in `TestCodexCanary`
+while scanning the real local Codex corpus through `ScanTranscript` and
+`sanitize.StripSecrets`. CI has no such corpus and skips this canary. Canary
+runtime tuning is outside this assertion fix; investigate corpus size and
+sanitization cost separately if the local canary needs to fit that timeout.
+The vault package passes on rerun with `-tags fts5 -race -count=1
+-skip '^TestCodexCanary'`; all other packages passed in the full run except
+the seven CLI fixtures whose isolated rerun is recorded above.
+
 `TestCodexMixedStartupContext` runs the actual committed toolbox startup script
 and the installed capy hook in an isolated Git project. It includes a synthetic
 `.claude/CLAUDE.extra.md`, verifies provider/extra instructions remain in output,

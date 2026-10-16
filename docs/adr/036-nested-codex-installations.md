@@ -68,12 +68,13 @@ rerun also passes. `go vet -tags fts5 ./...`, `make build` and an independent
 code review completed successfully. The second, external review was unavailable
 because the configured provider rejected its API key.
 
-The full suite is not green. The following unrelated failures were reproduced
-at the unchanged `7d443c8` baseline and left outside this ownership change:
+At the time of the ownership change, the full suite was not green. The following
+unrelated failures were reproduced at the unchanged `7d443c8` baseline and left
+outside that change; subsequent resolutions are noted below:
 
 | Failure | Follow-up |
 | --- | --- |
-| `TestCodexMixedStartupContext` expects the external toolbox hook to inject the full routing file | Update the fixture for the existing slim toolbox payload while retaining the separate capy-hook assertions. |
+| `TestCodexMixedStartupContext` expects the external toolbox hook to inject the full routing file | Resolved 2026-10-16: assert the toolbox delegation notice and absence of duplicate routing, retain separate capy-hook assertions, and cover legacy fallback when its SessionStart registration is absent. See [updated fixture evidence](../feat/wip/codex-hooks/verification.md#measured-mixed-startup-fixture). |
 | `TestMergedArtifactsAreIdempotent/.codex/config.toml` | Reconcile the committed MCP registration (currently nested under `[tui]`) with `mergeCodexMCPServer`, preserving the owner ID and unrelated settings. |
 | Vault CLI import/restore/merge fixtures inherit a 196,608-byte minimum and exclude their tiny transcripts | Isolate invocation project/configuration in those fixtures so personal import policy cannot affect them. |
 
