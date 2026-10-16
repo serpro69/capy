@@ -1,303 +1,261 @@
 # Implementation: routine command capture
 
 > Status: planned — implementation has not started
-> Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
-> Created: 2026-10-16
+> Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
+> Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
-## 1. Orientation and sequencing
+## Orientation
 
-Capy is a Go CLI and MCP server. `cmd/capy` owns Cobra commands and credential /
-project resolution; `internal/server` adapts MCP requests; `internal/executor`
-owns child execution; `internal/security` owns shared policy scanning. The
-knowledge database and session vault are independent encrypted stores. This
-feature adds a third, temporary run store rather than a fourth knowledge kind.
+Read AGENTS.md and ADR-016/020/028/032/036 before changing lifecycle, storage,
+retrieval or owner selection. All builds/tests use FTS5 and synthetic keys; tests
+isolate configuration/data/cache homes. No dependency upgrade, persistent daemon
+or public HTTP service is proposed. New dependencies/APIs require version-matched
+lookup. Existing mcp-go request cancellation and stdio behavior must be tested
+through the actual pinned transport.
 
-The first-time contributor should read AGENTS.md, architecture sections on
-execution/security/credential flow, ADR-016 (close/checkpoint), ADR-020 (rekey),
-ADR-028 (retrieval corpus), ADR-032 (credentials) and ADR-036 (nested Codex owners).
-Use existing encrypted SQLite and process-group conventions; this plan introduces
-no dependency upgrade, public HTTP server or persistent daemon.
+The design defines topology; contracts.md owns inputs/results/defaults. This plan
+names integration seams and verification without duplicating those definitions.
+The final feature needs all slices; partial feature commits are not release
+readiness and must not enable the routine gate early.
 
-The design's user decisions are settled; numeric defaults and detailed contracts
-are proposals pending design review. All implementation tasks remain pending.
-Do not enable strict routing while any supported execution interface can still
-discard output silently or lacks retrieval. Tasks 1–9 establish capture paths;
-Tasks 10–11 enable routing; Tasks 12–13 complete recovery and release verification.
-
-## 2. Module boundaries and public surfaces
-
-| Component | Responsibility |
+| Package / command | Responsibility |
 | --- | --- |
-| `internal/executor` | Runtime selection, spawn/wait, ordered output-event delivery, cancellation and group reaping; no SQLite dependency |
-| New `internal/execution` | Shared request validation/admission, active-run ownership, capture writer coordination, deadlines, bounded result assembly |
-| New `internal/runstore` | Encrypted run/event metadata, raw bytes, optional derived FTS, cleanup, quota and owner reconciliation |
-| `internal/server/tool_execute*.go`, `tool_batch.go`, new `tool_runs.go` | MCP adapters; do not duplicate lifecycle or formatter policy |
-| New `cmd/capy/execute.go`, `runs.go` | CLI adapters, JSON/text rendering and exit mapping; do not construct an MCP server |
-| `internal/hook` + `internal/platform` | Credential-free routine recognition/denial, instructions and generated-artifact parity |
+| `internal/executor` | Runtime/process groups, pipes, phase capture and wait/reap |
+| New `internal/execution` | Admission, supervisor control, handoff, owner capacity and result assembly |
+| New `internal/runstore` | Encrypted runs, projection/checkpoints, policy/owners, quota and lazy FTS |
+| `internal/sanitize` | Streaming redaction without changing existing whole-string callers |
+| `internal/server/tool_execute*.go`, `tool_batch.go`, new `tool_runs.go` | MCP adapters using shared contracts |
+| New `cmd/capy/{execute,runs,execute_supervisor}.go` | CLI adapters and hidden private helper; no MCP server construction |
+| `internal/hook`, `internal/platform` | Credential-free recognition/denial, instructions and generated parity |
 
-Expose the design's result envelope as a transport-neutral Go type. MCP wrappers
-measure the fully serialized tool result because `structuredContent` and text
-both cost bytes. CLI rendering measures its own total output. Do not use MCP's
-JSON-fallback helper if it repeats the full result in both channels. Invocation
-previews are redacted and bounded; full admitted program metadata stays encrypted.
+## Task 1: Prove supervisor ownership and lease transfer
 
-Use the existing checked `cwd` and execute-file admission paths. CLI implicit
-project selection must use the nearest validated Codex owner when installed
-bindings are present, preserving the owner/ambiguity rules; otherwise use normal
-CLI project discovery. An explicit project is honored according to the existing
-CLI contract, never changed by `cwd`. Test ordinary subdirectories, nested owners,
-worktrees, symlinks and an unrelated process cwd. Do not resolve a different run
-store merely because `store.path` points to a separate database repository.
+Risk-first proof before storage/control interfaces are frozen.
 
-## 3. Task 1 — prove owner-bound execution and capture delivery
+- Add a bounded event sink/control seam to executor types and a hidden supervisor
+  entry point in the same executable. Transfer synthetic credentials/control and
+  test leases only through deliberate private FDs → verify: command children
+  inherit none of them; malformed/oversized/private-protocol input cannot spawn.
+- Prove early/late output, parent liveness EOF, deadline/cancel and real process
+  group retirement, including compiler phases → verify: all owned descendants
+  and pipe readers terminate without stale-PID signalling.
+- Retain inherited owner/lifecycle lock references in the helper through drain,
+  persistence acknowledgement, reap and close → verify: owner SIGKILL with delayed
+  helper cleanup cannot allow concurrent reset or generation reuse.
+- Exercise broken IPC, partial startup, helper failure and forced process-tree
+  loss; record supported OS mechanisms and any explicitly bounded failure limit
+  → verify: no unknown cleanup outcome is reported as safe quiescence. This gate
+  must pass before Task 2; do not replace it with a direct executor unit test.
 
-This is a risk-first vertical fixture: a command emits an early marker, continues
-after a short response wait, emits a late marker and exits. Exercise real
-subprocess ownership before committing to storage/transport internals.
+## Task 2: Capture and recover one synchronous MCP run
 
-- Add an output-event sink seam in `internal/executor/types.go` and
-  `executor.go`, with bounded block ownership and per-stream byte order. Keep
-  legacy callers working during migration → verify: existing executor tests plus
-  `TestStreamedExecutionCapturesLateOutput`.
-- Separate a response wait from command lifetime in a minimal execution-owner
-  harness. No released endpoint may claim capture guarantees from this harness
-  alone → verify: the late marker appears after the wait has returned.
-- Prove owner shutdown, parent loss, explicit cancellation, deadlines and SIGKILL
-  behavior with descendants holding stdout open. Reuse wait/reap safeguards in
-  `wait_linux.go`, `wait_darwin.go`, `background_test.go` → verify:
-  `TestOwnedExecutionLifecycle` observes every descendant exit and no PID reuse
-  signalling. If the existing guard fails abrupt-owner-death cases, implement a
-  per-run supervisor/liveness pipe and rerun this gate before Task 5. Record the
-  actual mechanism and supported OSes in the design; do not waive this check.
-- Preserve bounded cleanup even when a descendant never closes a pipe → verify:
-  fixture teardown completes under a test deadline with no abandoned reader.
+- Add minimal encrypted run/event metadata and schema version in runstore using
+  sqliteutil. Resolve the selected owner/key without opening knowledge/vault →
+  verify: empty/wrong credentials and bad storage fail before command side effects;
+  invalid selected credentials cause no filesystem side effects.
+- Add shared admission and supervisor startup with committed metadata/write probe;
+  helper captures/finalizes one small run → verify: real MCP execution retains
+  exact stdout/stderr bytes, actual status and one execution counter.
+- Register initial capy_runs status and explicit raw read, with contracts' versioned
+  envelope. Until Task 4, default text views return unavailable projection rather
+  than exposing raw output → verify: recovery by ID and safe incomplete states.
+- Resolve owner-local paths/config defaults and full-chain validation → verify:
+  nested/subdirectory/worktree selection and sandboxed storage-admission harness.
 
-## 4. Task 2 — capture and recover one synchronous MCP run
+## Task 3: Bound capture, results and failure outcomes
 
-- Add `internal/runstore/store.go` with a reviewed minimal schema for versioned
-  metadata/events and encrypted opening through `sqliteutil`. Reuse captured
-  credentials; do not initialize knowledge/vault → verify:
-  `TestRunStoreEncryptedAdmission` proves a wrong/empty key cannot spawn a marker
-  command or create plaintext files.
-- Add `internal/execution/execute.go` to validate inputs, admit storage, commit
-  initial metadata, spawn, consume output events, drain and finalize → verify:
-  `TestExecuteRunRoundTrip` compares raw stdout/stderr hashes and explicit status.
-- Adapt `handleExecute`, register initial `capy_runs` status/read actions and
-  update the tool inventory → verify: a real MCP client executes a small command
-  and reads it by run ID without querying or writing `knowledge.db`.
-- Add `[runs]` config resolution/defaults and anchored cache paths; preserve
-  existing strict precedence and selected-key failure semantics → verify:
-  configuration layering and project/cwd/key-source fixtures.
+- Stream bounded events/queues/write batches and record per-stream byte order and
+  observed merged order → verify: binary, UTF-8 split, stderr-only, giant-line and
+  middle-marker fixtures beyond the old truncation boundary.
+- Add a shared final response budgeter and explicit execution/capture state
+  mapping → verify: encoded metadata/errors fit the contract on every return;
+  exit 1, spawn failure, compiler failure, timeout and signal are distinct.
+- Inject capture/write/finalization/queue failure after spawn → verify: the final
+  command marker still occurs, pipes drain, memory/output remain bounded, retained
+  prefixes are exact and terminal_persisted is truthful.
 
-## 5. Task 3 — bounded large output and failure semantics
+## Task 4: Recover sanitized output across arbitrary boundaries
 
-- Implement sequenced bounded buffering/writing and append accounting; retain
-  exact emitted bytes before view filtering. Include compiler diagnostics and
-  start errors in the execution result path → verify:
-  `TestRunCaptureBytesAndOrdering` for alternating streams, stderr-only output,
-  split UTF-8, binary bytes, huge lines and a marker in the middle of a 2-MiB log.
-- Add one response budgeter for every result branch. Essential status/cursor
-  fields survive truncation; all budgets count encoded output → verify:
-  `TestExecutionResponseBudget` includes JSON escapes, giant input previews,
-  missing intent, timeout, start error and metadata-only errors.
-- Replace soft-failure inference for migrated execution with explicit terminal
-  states and nullable child status → verify: exit 1 with stdout and stderr,
-  signals, timeout and pipeline exit semantics remain distinguishable.
-- Inject append failure, full queue, byte-limit exhaustion and finalization
-  failure. Continue draining and execution after capture failure → verify:
-  `TestCaptureFailureDoesNotKillCommand` observes the final side-effect marker,
-  incomplete state, bounded memory and no full-output fallback.
-- Keep raw capture successful if FTS is unavailable → verify: raw reads work and
-  search/index status reports the specific failure rather than empty success.
+- Add the bounded per-stream recognizer to internal/sanitize and persist encrypted
+  projection/checkpoints/raw anchors through runstore → verify: every partition
+  of synthetic secret/private patterns is suppressed with bounded state.
+- Cover long values/whitespace, unfinished blocks, UTF-8 and conservative EOF /
+  overflow → verify: raw hashes are unchanged and no prefix leaks into views.
+- Implement raw versus projection cursors and merged coverage barriers from the
+  contracts → verify: pages beginning in protected spans, one pending stream with
+  another advancing, huge lines, reset/version-stale cursors and pagination progress.
+- Expose default text previews/reads only from projection; failed redaction returns
+  metadata/error, not a newly sanitized tail → verify: diagnostic, page and future
+  FTS consumers cannot bypass that boundary.
 
-## 6. Task 4 — CLI execution and retrieval parity
+## Task 5: Expose shared CLI execution and retrieval
 
-- Add `cmd/capy/execute.go` and `runs.go`, registering them in `main.go`. Use
-  common request/result types and core admission; CLI remains attached to its
-  running process → verify: CLI-produced runs are readable over MCP and vice versa.
-- Resolve projects/keys without knowledge DB creation, validate checked code
-  files, and apply CLI matched-ask diagnostics as specified → verify: no CLI
-  fallback bypasses a denied command or matched ask; unmatched default ask passes.
-- Implement text/JSON and typed exit errors, preserving child failure while
-  making capture-only failure nonzero → verify: an exit-code matrix covers
-  success, exit 1/74/124, signal, start failure, timeout and failed capture.
-- Expose bounded read/status/list. Explicit binary reads are base64 and paginated;
-  default views sanitize secrets and terminal controls → verify: concatenated
-  raw pages match source bytes and line/event anchors remain tied to raw data.
+- Add execute/runs Cobra commands with contracts' exact flags, selected-owner
+  resolution, checked code-file input and CLI matched-ask handling → verify: no
+  interface switch bypasses denied/approval-required code or file admission.
+- Use shared execution/status/read/list and JSON/text renderers; CLI stays attached
+  and rejects unsupported background/wait flags → verify: child/wrapper exit-code
+  matrix, bounded responses and cross-interface reads.
+- Exercise actual workspace-write CLI capture with home-cache writes unavailable
+  → verify: owner-local success, excluded-owner pre-spawn failure, nested/worktree
+  parity and no implicit alternate database.
 
-## 7. Task 5 — long-running MCP jobs and owner recovery
+## Task 6: Yield and cancel MCP runs through the real transport
 
-- Add active-run management in `internal/execution` using an owner lifetime
-  context, execution deadline and independent response wait → verify: a command
-  lasting over 30 seconds returns `running` early, completes once, and retains
-  output emitted after that response.
-- Add own-run cancellation to `capy_runs`; status/read across other owners remain
-  supported, cancellation across owners returns a specific error → verify:
-  `TestRunCancellationOwnership` cannot signal another process from persisted PID.
-- Migrate legacy `background` to continued capture, with explicit argument
-  conflict validation. Normal yielding does not inherit daemon-mode behavior →
-  verify: `TestExecuteBackgroundCompatibility` distinguishes wait, deadline and
-  owner shutdown while preserving late output.
-- Add service owner locks and interrupted-state recovery. Integrate shutdown
-  order in `server.go` / `lifecycle.go` and CLI signal handling → verify:
-  active independent owners are never marked interrupted; dead owners are never
-  automatically resumed; the Task 1 lifecycle matrix passes through installed
-  MCP and CLI paths, not only a direct executor call.
+- Implement contracts' atomic attached-to-owner handoff before handler return;
+  detach the request-cancellation observer under the same control latch → verify:
+  mcp-go's ordinary deferred request cancellation does not kill a yielded run.
+- Test explicit cancellation on both sides of handoff, serialization failure,
+  response-write failure and natural completion races → verify: one control
+  outcome, correct owner cancellation and no inference of client receipt.
+- Wire exact timeout/wait precedence and legacy MCP background mode, retaining
+  capture after return; add own-run cancellation and standalone active slots →
+  verify: a run longer than the old default retains its tail, capacity errors
+  expose recovery, and status/read/cancel do not require execution slots.
 
-## 8. Task 6 — retention and quota during real execution
+## Task 7: Reopen safely after owner crashes
 
-- Implement transactionally checked logical accounting and active-run admission
-  in `runstore`; expose the proposed limits through config → verify: concurrent
-  independent CLI/MCP writers cannot both spend the same remaining quota.
-- Evict expired terminal runs, then oldest completed runs under pressure, never
-  active runs. Appends that cannot continue mark capture incomplete → verify:
-  `TestRunQuotaPressure` covers active-only pressure, early eviction, quota races
-  and complete isolation from durable knowledge/vault data.
-- Enforce terminal-time TTL during reads and bounded maintenance at admission,
-  periodic activity and shutdown → verify: an injected clock proves reads cannot
-  refresh TTL; crash/restart and idle reopen remove overdue data without relying
-  on SessionEnd.
-- Checkpoint/reclaim under the documented quiescence rules and report logical
-  versus physical usage → verify: deletion makes pages reusable, no active writer
-  loses its WAL, and wrong-key/corruption never triggers automatic replacement.
+- Integrate fixed owner slots/generations and shared lifecycle leases with the
+  supervisor proof and real DB handles → verify: no premature reset/reuse while
+  a cleanup helper remains alive; owner-file count is bounded under churn.
+- Add bounded all-slot reconciliation at open/maintenance, not only allocation →
+  verify: never-reused stale high slots become interrupted and receive recorded
+  TTLs, while live replacement generations remain untouched.
+- Reconcile abandoned index/work claims by the same generation proof and retain
+  explicit errors for unproven cleanup → verify: no adoption/resume/PID signalling
+  and no stale claim permanently preventing later access.
 
-## 9. Task 7 — run-scoped search and useful previews
+## Task 8: Make store policy consistent across processes
 
-- Add bounded line/event windows and Porter/trigram FTS in `runstore`. Store
-  sanitized searchable text with raw anchors and an explicit indexed high-water
-  mark; append durability does not depend on index success → verify:
-  `TestRunSearchAnchors` retrieves the middle failure and reads its original span.
-- Register only the new fixed table names in `internal/retrieval/retrieval.go`;
-  use `CorpusConfig.OnError` so search failures are not represented as no hits →
-  verify: retrieval allowlist tests and error injection retain knowledge/vault
-  behavior.
-- Add MCP/CLI search actions requiring a run ID. Use intent/default failure terms
-  for previews after capture; hard status data always remains → verify: exhausted
-  `capy_search` budget cannot prevent run reads/search, and no matching query
-  still returns a recoverable run reference.
-- Validate bounded work for huge/no-newline/binary logs and concurrent paging →
-  verify: chunk sizes, cursor progression and source-byte recovery remain correct.
+- Persist authoritative policy revision/accounting mode and make every writer
+  consume it → verify: old-config MCP/new-config CLI cannot apply different
+  project limits concurrently.
+- Implement quiescent policy-change admission via close/release/exclusive retry,
+  with bounded contention handling; do not depend on atomic flock conversion →
+  verify: live owners/helpers block changes and concurrent reopen/reset is safe.
+- Snapshot each run's TTL/revision at admission; keep completed expiry immutable
+  → verify: new policy affects new runs, not previous expiry or active-generation
+  recovery; exact duration/presence/overflow validation matches contracts.
 
-## 10. Task 8 — execute-file capture
+## Task 9: Retain, evict and explicitly reset runs
 
-- Route `tool_execute_file.go` through the shared capture service without changing
-  project containment, external allow handling or `FILE_CONTENT` admission →
-  verify: execute-file policy tests plus a complete captured file-analysis run.
-- Remove new intent-generated knowledge writes from this path; retain old source
-  lookup compatibility → verify: new runs are read through run retrieval, while
-  pre-existing `file:*` rows remain unchanged.
-- Cover runtime failures and compilation diagnostics → verify: result bounds,
-  explicit status and full recovery are the same as ordinary execution.
+- Add transactional quota accounting, expired/old-completed eviction and append
+  checks under the authoritative policy → verify: independent writers cannot
+  spend the same capacity; active runs remain protected and mid-run exhaustion
+  produces incomplete capture without killing execution.
+- Enforce expiry at read time and bounded admission/periodic/shutdown maintenance;
+  checkpoint/reclaim under documented quiescence → verify: no read refreshes TTL,
+  idle reopen handles overdue logs and busy WALs are not lost.
+- Add keyless CLI reset --discard under exclusive lifecycle ownership, deleting
+  only known DB/sidecars while preserving locks → verify: wrong-key recovery,
+  active-helper/reader refusal, symlink rejection, stale cursors and new-key capture.
 
-## 11. Task 9 — batch capture and bounded recovery
+## Task 10: Search run output lazily
 
-- Replace knowledge-store aggregation with a batch record and child run IDs,
-  keeping security admission over all commands before any execution → verify:
-  a denied last command prevents every earlier side-effect marker.
-- Preserve serial shared deadlines/skips and parallel independent deadlines/input
-  ordering → verify: existing scheduling tests adapted to run envelopes, plus
-  mixed successful/failed/incomplete child captures.
-- Support a response-wait boundary for the live batch while keeping scheduling
-  and child capture owned by the service → verify: polling a yielded batch
-  distinguishes running, pending and skipped children and retains their late output.
-- Adapt `batch_response.go`: paginate inventories, bound the complete serialized
-  response, scope default searches to batch run IDs, and keep explicit global
-  knowledge results visibly separate → verify: large batches cannot overflow the
-  budget or lose status/recovery references for omitted children.
-- Keep the migration explicit in tool descriptions and integration tests →
-  verify: no new `batch:*` knowledge sources and no silent source-selector alias.
+- Add bounded sanitized windows and dual FTS with raw anchors; extend retrieval's
+  fixed allowlist and collect layer errors → verify: no unsearched no-intent run
+  creates FTS rows, and middle failures map to exact readable spans.
+- Add resumable per-run indexing/coverage claims and measured/conservative quota
+  debit; roll back optional index batches that exceed quota → verify: both
+  accounting modes, claimant death, partial/building/error responses and no raw
+  log eviction solely for indexing.
+- Add run/batch search adapters following contracts; previews use finalized
+  projection → verify: exhausted knowledge-search budget cannot block recovery,
+  and first/repeat search performance is measured under concurrent capture.
 
-## 12. Task 10 — routine recognition and captured-program admission
+## Task 11: Capture execute-file runs with the shared lifetime
 
-- Add `internal/hook/routine.go` with the design catalogue and bounded wrapper
-  parsing based on the shared shell scanner. Keep the gate disabled until Task
-  11 → verify: table tests for literal commands, chain/substitution boundaries,
-  quoted mentions, comments, heredocs, dynamic executables and scan overflow.
-- Add exact capture-CLI argument recognition; inspect its code for command policy
-  before granting the output-routing exemption → verify: captured command plus
-  an uncaptured sibling denies before either executes, and malformed/lookalike
-  CLI commands do not become exemptions.
-- Add operator-controlled routing configuration and native exceptions → verify:
-  exceptions skip output routing only; security deny/ask precedence is retained.
-- Include the exact #132 shapes as named fixtures → verify:
-  `TestRoutineIssue132Commands` covers `mise exec ... && mise run test`, a virtualenv
-  Python pip install, pytest, make, and every published catalogue family.
+- Move execute-file to shared admission/supervision without weakening checked path
+  or FILE_CONTENT behavior → verify: existing file-policy fixtures plus complete
+  capture, compiler/runtime diagnostics and explicit status.
+- Add wait_ms schema/help and continuation → verify: late output, cancellation,
+  deadline and pagination behave like ordinary runs.
+- Stop new file:* knowledge writes while preserving old rows/selectors → verify:
+  only new run storage changes and all responses remain bounded.
 
-## 13. Task 11 — strict Codex routing and generated instructions
+## Task 12: Recover a serial batch through MCP
 
-- Integrate the routine classifier after security and existing HTTP routing, with
-  an explicit default policy for recognized routine commands → verify: native
-  routine execution is denied before side effects even when MCP is unavailable;
-  the denial explains MCP and CLI choices without pretending availability.
-- Keep the existing HTTP observation/one-use contracts isolated from this new
-  requirement → verify: all main/child HTTP fallback tests still pass, and a
-  failed routine capture never grants a native retry.
-- Update `internal/hook/routing.go`, `internal/platform/routing.go`, tool
-  descriptions and generated/committed artifacts together. Remove the blanket
-  instruction that routine test logs always use native tools → verify:
-  `TestGeneratedWholeFileArtifacts`, `TestMergedArtifactsAreIdempotent` and the
-  complete setup drift guard; provider/external instructions and owner IDs survive.
-- Update known-tool matchers/counts for `capy_runs`, without treating read/search
-  as execution-success evidence → verify: installed handler and doctor fixtures,
-  including nested installations and different MCP aliases.
+- Add batch/child metadata, all-command preflight and serial child capture through
+  the shared execution service → verify: a denied final command prevents every
+  side effect; serial admission-time deadline and skipped children are correct.
+- Expose batch status/list/read/search addressing, aggregate results, query recovery
+  instructions and yielding → verify: late recovery shows every ordinal/state,
+  including failures omitted from the bounded immediate result; child-log eviction
+  retains manifest status with output_available=false until manifest expiry.
+- Keep parallel migration as Task 13's required completion before releasing the
+  batch replacement or enabling routing. This slice's real MCP fixtures prove
+  the serial path without presenting partial migration as feature completion.
 
-## 14. Task 12 — diagnostics, compatibility and operator recovery
+## Task 13: Schedule parallel batches within owner capacity
 
-- Extend existing stats/doctor with capture/result bytes, store usage, limits and
-  safe error sources. Static checks must not create storage or claim activation →
-  verify: CLI/MCP parity, credential-free hooks and secret-free diagnostics.
-- Document and test timeout/result/source-selector changes and legacy background
-  behavior → verify: published examples execute through both interfaces and
-  default/explicit config precedence is unambiguous.
-- Document quiescent cache rekey/removal using existing primitives and release
-  rollback order. Do not add a second independent rekey implementation → verify:
-  a fixture retains or explicitly discards old-key logs without automatic deletion,
-  and disabling routine routing before downgrade restores the prior host path.
-- Update README, architecture, CLI help, AGENTS.md generator/invariant notes and
-  the predecessor #132 disposition → verify: docs distinguish shipping behavior,
-  targeted coverage, logical quota, host limits and accepted failure semantics.
+- Integrate bounded pending inventory and fair owner-wide scheduling, reporting
+  requested/effective/current concurrency → verify: eight children alongside two
+  standalone jobs respect max_active=4 and no admission bypasses the ceiling.
+- Preserve serial behavior while adding parallel spawn deadlines/dispatch cutoff
+  and pending cancellation → verify: full-queue rejection is atomic, cancelled
+  pending children never spawn, and ineligible children do not reserve free slots.
+- Complete batch replacement, bounded inventories, lazy scoped/global queries and
+  source migration → verify: all batch paths use runs rather than new batch:*
+  knowledge sources, with explicit provenance and recoverable statuses.
 
-## 15. Task 13 — installed acceptance and release verification
+## Task 14: Recognize routine commands and captured programs
 
-- Record an actual trusted Codex version and compatible installed capy binary.
-  Verify startup/child guidance, native denial, MCP execution, CLI fallback,
-  strict unavailability, policy denial, exceptions and unrelated hooks → verify:
-  side-effect counters demonstrate one execution; all failure messages are visible.
-- Run deterministic command fixtures corresponding to issue #132 without real
-  package downloads. Include a passing test-style log, failure in the middle,
-  stderr-only output, installation-like progress and a long-running command →
-  verify: raw/captured/returned bytes, exit status, recovery hashes and cleanup
-  are recorded in `verification.md`. Add a real project test command for host
-  acceptance; an install fixture is not presented as a real network install.
-- Run `$kk:test` with both synthetic keys, isolated config/data/cache homes and
-  `-tags fts5`; include focused race and subprocess lifecycle suites → verify:
-  no unexplained failure, leaked descendant, plaintext spool or active-run eviction.
-- Run executor/store/retrieval performance checks and `make bench-quality`, then
-  compare a baseline as required by AGENTS.md → verify: record output size,
-  memory/throughput and retrieval-quality changes; fix or explicitly disposition
-  regressions before release.
-- Run `$kk:document`, `$kk:review-code` with Go input, and `$kk:review-spec` against
-  this whole directory → verify: findings resolved or written as actionable tasks;
-  no claim that drafting or hook registration alone closes #132.
+- Add bounded literal catalogue/wrapper parsing on the existing shell scanner,
+  initially without enabling the gate → verify: exact issue #132 commands,
+  quoted mentions/heredocs, dynamic forms, operator exceptions and scanner limits.
+- Recognize actual capture-CLI arguments and inspect underlying program policy
+  → verify: lookalikes and captured siblings cannot exempt uncaptured routines
+  or bypass deny/matched ask rules.
 
-## 16. Deferred and independent work
+## Task 15: Enable strict Codex routing and synchronize artifacts
 
-- **Vault fixture isolation:** remains in
-  [codex-hooks/tasks.md](../codex-hooks/tasks.md#follow-ups-outside-feature-completion).
-  It is pre-existing and independent; isolate `XDG_CONFIG_HOME` in the three
-  named fixtures when that task is taken. New tests here must isolate homes now.
-- **Historical tracking:** PR #135 merged and toolbox #170 closed after the
-  predecessor notes were written. Reconcile that historical text and #29 closure
-  when maintaining tracking; this design makes no external issue changes. The
-  predecessor's implementation/task documents also link to the absent
-  `toolbox-enhancement-issue.md`; restore that saved artifact or replace those
-  historical links with issue #170 during that tracking correction. This
-  pre-existing link problem does not affect the new #132 design links.
-- **Hard physical disk quota:** logical accounting plus explicit disk-full
-  behavior is proposed here. If review requires an exact filesystem-byte ceiling,
-  revisit storage segmentation/reservation before implementation rather than
-  disguising SQLite/WAL allocation as a strict disk bound.
+- Enforce whole-request security → mandatory routine capture → HTTP-only routing
+  → verify: root/child mixed HTTP/routine cases with present/absent/expired/broken
+  evidence cannot allow or suggest native fallback; routine denial consumes none.
+- Preserve HTTP-only contracts and define healthy-running execute evidence exactly
+  as designed → verify: unstarted/failure states and polling cannot create/refresh
+  observations, and root/child identity/TTL behavior remains correct.
+- Synchronize tool catalogue/counts, hook/runtime guidance, generators and committed
+  artifacts; Claude wording stays guidance-only → verify: equality/idempotency /
+  drift guards, nested owners, aliases and external-hook preservation.
 
-PTY interaction, daemon survival, cross-owner job cancellation and arbitrary
-shell interpretation are excluded by the design, not unfinished tasks hidden
-behind this implementation plan.
+## Task 16: Document and diagnose the complete operator workflow
+
+- Extend stats/doctor with safe statuses, policy/capacity and accounted/physical
+  usage without creating a store or claiming activation → verify: CLI/MCP parity,
+  secret-free output and bounded recovery information.
+- Update README, architecture, CLI help, AGENTS and predecessor follow-up pointers;
+  name reset/data loss before and after knowledge rotation → verify: every
+  published operation exists, no unsupported run-rekey promise remains, and
+  version reload/rollback/owner-policy changes have runnable instructions.
+
+## Task 17: Verify installed acceptance and release readiness
+
+- Record trusted actual Codex/MCP/sandboxed-CLI behavior and Claude guidance-only
+  scope → verify: one execution, mixed-policy denial, owner/worktree selection,
+  unavailable paths, exceptions and external hooks.
+- Record synthetic issue-like logs plus a real project test run, not pretend
+  network installs → verify: returned/captured/raw bytes, statuses, hashes,
+  recovery/expiry and all handoff/supervisor/policy race cases.
+- Run $kk:test with FTS5, synthetic keys and isolated homes; focused race and
+  subprocess checks → verify: full suite passes without leaked descendants,
+  plaintext spools or unexplained failures.
+- Run executor/retrieval performance checks and make bench-quality with baseline
+  comparison → verify: redaction/capture memory, no-search and first/repeat search
+  CPU/storage/latency, index/WAL growth and retrieval quality are recorded.
+- Run $kk:document, $kk:review-code with Go input and $kk:review-spec against the
+  whole feature → verify: findings resolved or written as actionable dispositions;
+  neither drafting nor hook registration alone closes #132.
+
+## Independent follow-ups
+
+Vault fixture isolation remains in [codex-hooks tasks](../codex-hooks/tasks.md#follow-ups-outside-feature-completion):
+isolate XDG_CONFIG_HOME in the three named fixtures when taken. New fixtures here
+must isolate homes now. Historical PR #135 / toolbox #170 / #29 tracking and the
+predecessor's absent toolbox-enhancement-issue.md link remain independent; restore
+that artifact or use the actual issue link during that tracking correction.
+
+A hard physical disk ceiling would require a separate storage decision; current
+contracts explicitly bound accounted data and handle disk-full failures. PTY,
+cross-owner job control, persistent jobs and run-log-preserving rekey are excluded,
+not unfinished features hidden behind the final documentation task.
