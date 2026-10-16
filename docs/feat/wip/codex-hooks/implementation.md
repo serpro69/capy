@@ -423,6 +423,14 @@ measure model-visible output, exit-status preservation and log recovery.
 Then design or implement the smallest guidance/capture change supported by that
 evidence. Do not close #132 just because hooks are registered.
 
+**Design follow-up, 2026-10-16:** the agreed direction is now captured in
+[routine-command-capture/design.md](../routine-command-capture/design.md), with
+[implementation steps](../routine-command-capture/implementation.md) and
+[pending tasks](../routine-command-capture/tasks.md). It separates encrypted run
+storage from knowledge, shares MCP/CLI execution, and adds targeted strict routine
+routing. This is a draft design handoff; implementation and live measurement are
+still pending.
+
 ### Issue #29 tracking
 
 Its closure by PR #30 did not represent completion of hook support. Link this

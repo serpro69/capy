@@ -160,7 +160,10 @@ authorization to spawn agents or make concurrent overlapping edits.
   [the measured duplication baseline](verification.md#startup-context-baseline).
 - [ ] **#132 output policy:** separately reproduce and measure routine command
   output, exit status and full-log recovery before changing guidance/capture.
-  Hook support alone is not a closing condition for #132.
+  Hook support alone is not a closing condition for #132. The 2026-10-16
+  [routine-command-capture design](../routine-command-capture/design.md) and
+  [task list](../routine-command-capture/tasks.md) now own this follow-up;
+  design review, implementation and installed acceptance remain pending.
 - [ ] **#29 tracking:** reopen or supersede the incorrectly closed hook issue
   and link the completed design/implementation when updating GitHub tracking.
   No external issue or PR was changed during design.
