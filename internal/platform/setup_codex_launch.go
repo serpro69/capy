@@ -117,7 +117,7 @@ func inspectCodexSetup(projectDir string) (string, []CodexOwner, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	owners, err := InspectCodexOwners(projectDir)
+	owners, err := inspectCodexOwners(projectDir, projectDir)
 	if err != nil {
 		return "", nil, err
 	}

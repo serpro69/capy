@@ -103,6 +103,10 @@ The DB-repository pre-commit guard is a shell script requiring neither capy nor 
 
 Run the new binary's setup directly for each installed platform, then restart the agent/MCP. Keep Claude's existing local/shared settings target. Updating only the binary can leave obsolete wrappers and routing in place. The README covers [credential migration and rollback](../../README.md#upgrade-and-credential-migration).
 
+**Codex MCP entries from before v0.17:** setup upgrades the generated `[mcp_servers.capy]` entry with `command = "bash"` and `args = [".codex/scripts/capy.sh", "serve"]` to owner-bound launch. Stop affected Codex sessions, install the updated capy on `PATH`, then run `capy setup --platform codex` (or `capy setup --local` for both platforms). Setup creates the previously absent owner marker or preserves an existing valid ID, keeps unrelated hooks/settings, and neither executes nor deletes the old wrapper. Restart Codex and review/trust the generated hooks.
+
+If setup reports `invalid or unsupported capy-codex-launch invocation` for that exact old entry, the binary predates this migration fix. Upgrade it rather than deleting configuration or inventing an owner ID. For nested installations, upgrade ancestors first: setup migrates only its selected project. Missing markers for already owner-bound commands still require restoration; modified/aliased wrapper commands and obsolete versioned launch formats are not automatically migrated.
+
 The following caller changes accompanied the selective context-mode sync from `f8d4639` through `0dfbe8d` (including commits after upstream v1.0.169):
 
 | Area | Action or compatibility consequence |

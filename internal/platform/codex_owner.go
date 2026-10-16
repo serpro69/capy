@@ -65,6 +65,12 @@ func readCodexFile(path string, limit int64) ([]byte, bool, error) {
 // InspectCodexOwners is shared by setup, runtime and registration diagnostics.
 // It is read-only and deliberately knows nothing about policies or databases.
 func InspectCodexOwners(cwd string) ([]CodexOwner, error) {
+	return inspectCodexOwners(cwd, "")
+}
+
+// legacyMCPDir is set only by setup, to the physical project being upgraded.
+// Ancestors and all runtime/doctor inspection retain strict launch validation.
+func inspectCodexOwners(cwd, legacyMCPDir string) ([]CodexOwner, error) {
 	dir, err := filepath.Abs(cwd)
 	if err != nil {
 		return nil, err
@@ -75,7 +81,7 @@ func InspectCodexOwners(cwd string) ([]CodexOwner, error) {
 	}
 	var owners []CodexOwner
 	for {
-		owner, err := inspectCodexDirectory(dir, readCodexFile)
+		owner, err := inspectCodexDirectory(dir, readCodexFile, dir == legacyMCPDir)
 		if err != nil {
 			return nil, fmt.Errorf("Codex installation at %s: %w; repair permissions/configuration and rerun capy setup --platform codex from the intended project", dir, err)
 		}
@@ -102,7 +108,7 @@ func InspectCodexOwners(cwd string) ([]CodexOwner, error) {
 
 type codexFileReader func(string, int64) ([]byte, bool, error)
 
-func inspectCodexDirectory(project string, read codexFileReader) (CodexOwner, error) {
+func inspectCodexDirectory(project string, read codexFileReader, allowLegacyMCP bool) (CodexOwner, error) {
 	owner := CodexOwner{ProjectDir: project}
 	dir := filepath.Join(project, ".codex")
 	info, err := os.Lstat(dir)
@@ -147,7 +153,7 @@ func inspectCodexDirectory(project string, read codexFileReader) (CodexOwner, er
 		if name == "hooks.json" {
 			bindings, err = codexHookBindings(root, path)
 		} else {
-			bindings, err = codexConfigBindings(root, path)
+			bindings, err = codexConfigBindingsWithLegacyMCP(root, path, allowLegacyMCP)
 		}
 		if err != nil {
 			return owner, err
@@ -227,6 +233,10 @@ func codexHookBindings(root map[string]any, source string) ([]CodexBinding, erro
 }
 
 func codexConfigBindings(root map[string]any, source string) ([]CodexBinding, error) {
+	return codexConfigBindingsWithLegacyMCP(root, source, false)
+}
+
+func codexConfigBindingsWithLegacyMCP(root map[string]any, source string, allowLegacyMCP bool) ([]CodexBinding, error) {
 	// Inline TOML includes Codex-owned hooks.state trust metadata alongside
 	// event arrays. It contains no executable bindings. Exclude only that
 	// reserved field without mutating the config the MCP merger must preserve.
@@ -273,6 +283,11 @@ func codexConfigBindings(root map[string]any, source string) ([]CodexBinding, er
 					return nil, fmt.Errorf("%s: MCP arguments must be strings", source)
 				}
 				args = append(args, arg)
+			}
+			// The pre-owner setup format has no ID to restore. Only setup may
+			// replace this exact named entry; it never authorizes runtime launch.
+			if allowLegacyMCP && alias == "capy" && isLegacyCodexMCP(command, args) {
+				continue
 			}
 			binding, owned, err := recognizeCodexInvocation(command, args)
 			if err != nil {

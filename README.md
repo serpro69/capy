@@ -376,6 +376,7 @@ Run `capy doctor` from the project and `capy_doctor` through your agent to compa
 | --- | --- |
 | Hooks or MCP are not registered | Rerun `capy setup --platform claude-code` or `capy setup --platform codex` in the project, then restart the agent. |
 | Codex setup cannot find a compatible binary | Install capy on `PATH`; `./capy setup` alone does not put it there. `--binary` must match the PATH executable. |
+| Setup rejects an old `.codex/scripts/capy.sh` MCP entry | Install an updated capy on `PATH` and rerun setup; see [Codex upgrade migration](docs/reference/operations.md#upgrades-and-compatibility). |
 | Nested Codex setup fails | Upgrade capy on `PATH`; nested installations need distinct owner IDs. See [nested setup](#overlapping-codex-installations). |
 | Knowledge credential is missing | Configure a private key file or supply `CAPY_DB_KEY` in the launch environment. |
 | Wrong passphrase | Check doctor's selected credential source and restore the existing passphrase there. Restart MCP; do not delete the database. |

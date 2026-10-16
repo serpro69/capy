@@ -564,9 +564,13 @@ never reads stdin or accesses project/configuration/database state. The launcher
    [ADR-036](adr/036-nested-codex-installations.md).
 
 Codex does not generate, inspect or execute `.codex/scripts/capy.sh`. Claude
-retains its wrapper and fallback search. Obsolete launch formats are rejected;
-development checkouts must restore final bindings after stopping affected
-sessions. Owner IDs and external handlers/trust metadata remain unchanged.
+retains its wrapper and fallback search. Setup alone accepts the exact pre-owner
+MCP registration (`capy` alias, `bash`, `.codex/scripts/capy.sh`, `serve`) in its
+selected project and replaces it with the current generated block. This entry
+has no owner ID to restore; other bindings still require their adjacent markers.
+Ancestors, runtime and doctor retain strict validation until migration completes.
+Obsolete versioned launch formats remain rejected. Owner IDs and external
+handlers/trust metadata remain unchanged. See [upgrade migration](reference/operations.md#upgrades-and-compatibility).
 
 Direct MCP uses the existing signal/parent lifecycle guard (30-second parent
 polling). Signals, EOF and read/write failures cancel the serve context before

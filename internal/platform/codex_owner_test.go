@@ -172,7 +172,7 @@ func TestCodexOwnerBindings(t *testing.T) {
 		require.NoError(t, os.Mkdir(filepath.Join(dir, ".codex"), 0o755))
 		_, err := inspectCodexDirectory(dir, func(path string, limit int64) ([]byte, bool, error) {
 			return nil, true, &os.PathError{Op: "open", Path: path, Err: os.ErrPermission}
-		})
+		}, false)
 		require.True(t, errors.Is(err, os.ErrPermission))
 	})
 	for _, rel := range []string{codexOwnerRelPath, ".codex/hooks.json", ".codex/config.toml"} {

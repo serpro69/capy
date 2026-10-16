@@ -16,6 +16,15 @@ func codexMCPBlock(id string) string {
 	return codexMCPMarker + "\ncommand = \"capy\"\nargs = " + string(args) + "\nenv_vars = [\"CAPY_DB_KEY\", \"CAPY_VAULT_KEY\"]\n"
 }
 
+// isLegacyCodexMCP recognizes the exact wrapper argv emitted before owner-bound
+// launch. Setup replaces its registration without reading or running the script.
+func isLegacyCodexMCP(command string, args []string) bool {
+	if command != "bash" || len(args) != 2 {
+		return false
+	}
+	return args[0] == ".codex/scripts/capy.sh" && args[1] == "serve"
+}
+
 // Preserve unrelated TOML bytes, including comments and multiline strings.
 // The existing pinned parser finds real table boundaries; string searches can
 // mistake a header inside a string/comment for the registration to replace.
@@ -28,7 +37,7 @@ func mergeCodexMCPServer(configPath, id string) error {
 	if err := toml.Unmarshal(data, &config); err != nil {
 		return fmt.Errorf("parse %s: %w", configPath, err)
 	}
-	bindings, err := codexConfigBindings(config, configPath)
+	bindings, err := codexConfigBindingsWithLegacyMCP(config, configPath, true)
 	if err != nil {
 		return err
 	}
