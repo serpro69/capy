@@ -554,10 +554,14 @@ never reads stdin or accesses project/configuration/database state. The launcher
    in its own directory, and counts installation directories, never just IDs.
    Missing live markers, copied-ID overlaps and stale marker-only commands fail
    before stdin, policy, observation or database access.
-3. Requires one owner with the invoked mode/event binding, then calls `hook.Run`
-   with the Codex adapter or the shared `serveProject` initialization in the same
-   Go process. Process cwd and stdin remain intact; the owner selects policy and
-   executor/storage scope. Hooks remain credential-free.
+3. Validates the invoked owner's mode/event binding and selects the nearest
+   installation. Distinct nested owners are supported: ancestor hooks exit
+   successfully without handling the event, while ancestor MCP commands fail
+   with a reload diagnostic. A missing nearest binding fails rather than falling
+   back. The selected hook calls `hook.Run` with the Codex adapter; MCP calls
+   `serveProject`. The owner selects policy and executor/storage scope, separately
+   from process/event cwd. Hooks remain credential-free. See
+   [ADR-036](adr/036-nested-codex-installations.md).
 
 Codex does not generate, inspect or execute `.codex/scripts/capy.sh`. Claude
 retains its wrapper and fallback search. Obsolete launch formats are rejected;
@@ -577,8 +581,9 @@ MCP keeps stdout for its protocol and preserves the started server's status.
 Claude's legacy wrapper handling of a running binary's failure remains unchanged.
 
 Root/subdirectory, move, spaces and sibling-worktree launches have subprocess
-coverage. Nested owners are rejected even across Git boundaries or with copied
-IDs. Command resolution outside Git works, but automatic non-Git host discovery
+coverage. Copied owner IDs on the same ancestor chain remain ambiguous and are
+rejected; distinct nested IDs are supported even across Git boundaries.
+Command resolution outside Git works, but automatic non-Git host discovery
 is unverified. Stop/reload affected sessions before moving/removing loaded
 artifacts: entirely deleted origin files cannot be recovered from a cached command.
 See [operator repair and rollback](../README.md#codex-hook-recovery).

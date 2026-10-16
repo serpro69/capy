@@ -304,6 +304,11 @@ func TestCodexOverlappingLaunches(t *testing.T) {
 				if removed == "marker" {
 					require.NoError(t, os.Remove(filepath.Join(root, ".codex/capy-owner")))
 				}
+				// Distinct, intact nested owners are covered by TestCodexNestedLaunches.
+				// Both IDs must still reject a retained ancestor binding without its marker.
+				if !copied && removed != "marker" {
+					continue
+				}
 				for i, args := range [][]string{outerArgs, nestedArgs} {
 					owner := []string{root, nested}[i]
 					code, out, stderr := runLaunch(t, nested, env, []string{"-c", launchHookCommand(t, owner, "PreToolUse")}, "{}")

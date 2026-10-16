@@ -13,6 +13,10 @@ import (
 
 const codexConfigLimit = 1 << 20
 
+// ErrCodexHookShadowed means a validated ancestor hook must leave the event to
+// the nearer installation. It must not run policy or mutate either owner's state.
+var ErrCodexHookShadowed = errors.New("Codex hook belongs to a shadowed ancestor installation")
+
 // CodexBinding is a decoded generated invocation, not a shell interpretation.
 type CodexBinding struct {
 	ID, Mode, Event, Source string
@@ -80,10 +84,20 @@ func InspectCodexOwners(cwd string) ([]CodexOwner, error) {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return owners, nil
+			break
 		}
 		dir = parent
 	}
+	// Different owners may nest, but copied IDs cannot identify which physical
+	// definition launched us. Finish validating all adjacent bindings first.
+	seen := make(map[string]string, len(owners))
+	for _, owner := range owners {
+		if previous, exists := seen[owner.ID]; exists {
+			return nil, fmt.Errorf("overlapping Codex installations share owner ID at %s and %s; restore distinct installation configurations or use a non-overlapping checkout", previous, owner.ProjectDir)
+		}
+		seen[owner.ID] = owner.ProjectDir
+	}
+	return owners, nil
 }
 
 type codexFileReader func(string, int64) ([]byte, bool, error)
@@ -337,7 +351,9 @@ func validateCodexLaunch(id, mode, event string) error {
 	return errors.New("invalid Codex launch mode/event; rerun capy setup --platform codex")
 }
 
-// ResolveCodexOwner requires the specific invoked binding, not merely a marker.
+// ResolveCodexOwner validates the invoked binding before selecting the nearest
+// owner. Ancestor hooks are suppressed; ancestor MCP commands fail rather than
+// silently opening either the ancestor's database or a different owner's database.
 func ResolveCodexOwner(cwd, id, mode, event string) (string, error) {
 	if err := validateCodexLaunch(id, mode, event); err != nil {
 		return "", err
@@ -346,19 +362,30 @@ func ResolveCodexOwner(cwd, id, mode, event string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(owners) > 1 {
-		var dirs []string
-		for _, owner := range owners {
-			dirs = append(dirs, owner.ProjectDir)
+	for _, owner := range owners {
+		if owner.ID != id || !owner.hasBinding(mode, event) {
+			continue
 		}
-		return "", fmt.Errorf("overlapping Codex installations: %s; consolidate to one owner or use a non-overlapping checkout", strings.Join(dirs, ", "))
-	}
-	if len(owners) == 1 && owners[0].ID == id {
-		for _, binding := range owners[0].Bindings {
-			if binding.Mode == mode && binding.Event == event {
-				return owners[0].ProjectDir, nil
-			}
+		nearest := owners[0]
+		if !nearest.hasBinding(mode, event) {
+			return "", fmt.Errorf("nearest Codex installation at %s has no %s/%s binding; rerun capy setup --platform codex there and reload Codex", nearest.ProjectDir, mode, event)
 		}
+		if owner.ProjectDir == nearest.ProjectDir {
+			return owner.ProjectDir, nil
+		}
+		if mode == "hook" {
+			return "", ErrCodexHookShadowed
+		}
+		return "", fmt.Errorf("Codex MCP binding belongs to %s but nearer installation %s owns this directory; reload Codex with the nearer project's MCP registration", owner.ProjectDir, nearest.ProjectDir)
 	}
 	return "", errors.New("no matching Codex owner and mode/event binding above cwd; restore committed configuration and launch inside the intended project")
+}
+
+func (o CodexOwner) hasBinding(mode, event string) bool {
+	for _, binding := range o.Bindings {
+		if binding.Mode == mode && binding.Event == event {
+			return true
+		}
+	}
+	return false
 }

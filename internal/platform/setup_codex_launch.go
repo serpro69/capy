@@ -100,8 +100,10 @@ func ensureCodexOwner(projectDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(owners) == 1 {
-		return owners[0].ID, nil
+	for _, owner := range owners {
+		if owner.ProjectDir == projectDir {
+			return owner.ID, nil
+		}
 	}
 	return createCodexOwner(projectDir)
 }
@@ -118,11 +120,6 @@ func inspectCodexSetup(projectDir string) (string, []CodexOwner, error) {
 	owners, err := InspectCodexOwners(projectDir)
 	if err != nil {
 		return "", nil, err
-	}
-	for _, owner := range owners {
-		if owner.ProjectDir != projectDir {
-			return "", nil, fmt.Errorf("overlapping Codex installations: %s and %s; consolidate to one owner or use a non-overlapping checkout", projectDir, owner.ProjectDir)
-		}
 	}
 	return projectDir, owners, nil
 }

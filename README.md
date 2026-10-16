@@ -376,6 +376,7 @@ Run `capy doctor` from the project and `capy_doctor` through your agent to compa
 | --- | --- |
 | Hooks or MCP are not registered | Rerun `capy setup --platform claude-code` or `capy setup --platform codex` in the project, then restart the agent. |
 | Codex setup cannot find a compatible binary | Install capy on `PATH`; `./capy setup` alone does not put it there. `--binary` must match the PATH executable. |
+| Nested Codex setup fails | Upgrade capy on `PATH`; nested installations need distinct owner IDs. See [nested setup](#overlapping-codex-installations). |
 | Knowledge credential is missing | Configure a private key file or supply `CAPY_DB_KEY` in the launch environment. |
 | Wrong passphrase | Check doctor's selected credential source and restore the existing passphrase there. Restart MCP; do not delete the database. |
 | Key-file permissions rejected | Run project setup or set the key file's target to `0600`. |
@@ -390,9 +391,19 @@ Run `capy doctor` from the project and `capy_doctor` through your agent to compa
 
 Trusted hooks can block matched calls when capy is missing, incompatible, or its installation configuration is invalid. Repair infrastructure failures from an **external terminal**: install the compatible binary, correct PATH or permissions, rerun `capy setup --platform codex`, and restart Codex. Individual capy entries can be disabled in `/hooks` during repair and reviewed/re-enabled afterward. A matched policy denial needs a policy change by its owner, not an installation workaround.
 
-Restore a missing or corrupt `.codex/capy-owner` from committed configuration; do not generate a new ID for existing bindings. Nested installations conflict even if their IDs match: consolidate them or use a non-overlapping checkout.
+Restore a missing or corrupt `.codex/capy-owner` from committed configuration; do not generate a new ID for existing bindings.
 
 Stop affected sessions before moving or removing loaded artifacts. On rollback, restore matching binary and configuration versions. Preserve external hooks and their metadata; keep the owner marker and compatible capy while any hook or MCP entry references them.
+
+### Overlapping Codex installations
+
+Parent and child projects can each have capy. Run `capy setup --platform codex --project-dir <project>` for each; use `--project-dir .` from a child inside the same Git repository to override Git-root discovery. Reruns preserve each installation's owner ID. A session opened in the child uses the child's capy rules, settings and knowledge database. Ancestor capy hooks do nothing there. A parent MCP command launched inside the child fails with a reload diagnostic instead of opening the wrong database. Global rules and unrelated hooks still apply.
+
+Use setup to create a distinct `.codex/capy-owner` in each project; copying the parent's installation into the child produces ambiguous IDs and is rejected. All ancestor bindings must retain their matching markers, even across Git boundaries. Restart affected Codex sessions after setup and review/trust each project's generated definitions. Doctor checks registration, not activation.
+
+Older capy versions reject all nested installations: upgrade the binary on `PATH` and rerun setup in the child without removing the parent. `--local` still targets both platforms; for Claude-only setup, use `capy setup --platform claude-code --local`. Successful Claude changes remain if the subsequent Codex setup fails.
+
+To intentionally remove an installation, stop affected sessions, remove its capy hook entries (including inline hooks) and MCP registrations, then remove its owner marker. Preserve unrelated configuration. Deleting just the marker leaves broken bindings.
 
 ## CLI Commands
 

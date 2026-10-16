@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -57,6 +58,9 @@ func runCodexLaunch(ctx context.Context, id, mode, event string) error {
 		return fmt.Errorf("Codex launch cwd: %w; restore the working directory", err)
 	}
 	owner, err := platform.ResolveCodexOwner(cwd, id, mode, event)
+	if errors.Is(err, platform.ErrCodexHookShadowed) {
+		return hook.DiscardCodexInput(event)
+	}
 	if err != nil {
 		return err
 	}

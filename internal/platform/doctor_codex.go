@@ -27,15 +27,7 @@ func CheckPlatformRegistrations(projectDir string) []CheckResult {
 	if err != nil {
 		return append(results, codexRegistrationFailure(err)...)
 	}
-	if len(owners) > 1 {
-		dirs := make([]string, 0, len(owners))
-		for _, owner := range owners {
-			dirs = append(dirs, owner.ProjectDir)
-		}
-		err := fmt.Errorf("overlapping Codex installations: %s; consolidate to one owner or use a non-overlapping checkout", strings.Join(dirs, ", "))
-		return append(results, codexRegistrationFailure(err)...)
-	}
-	if len(owners) == 1 {
+	if len(owners) > 0 {
 		return append(results, checkCodexRegistration(owners[0])...)
 	}
 	// An unbound named MCP registration is incomplete. An unused wrapper or

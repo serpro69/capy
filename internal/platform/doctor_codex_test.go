@@ -166,7 +166,7 @@ func replaceDoctorConfig(t *testing.T, dir, from, to string) {
 	require.NoError(t, os.WriteFile(path, []byte(strings.ReplaceAll(string(data), from, to)), 0o600))
 }
 
-func TestDoctorCodexOverlappingRegistrations(t *testing.T) {
+func TestDoctorCodexCopiedRegistrations(t *testing.T) {
 	for _, outer := range []string{"complete", "missing marker", "only hooks without marker", "only MCP without marker"} {
 		t.Run(outer, func(t *testing.T) {
 			root := t.TempDir()
@@ -198,6 +198,25 @@ func TestDoctorCodexOverlappingRegistrations(t *testing.T) {
 			require.Error(t, setupCodex(nested))
 		})
 	}
+}
+
+func TestDoctorCodexNestedRegistrations(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "nested")
+	require.NoError(t, os.Mkdir(nested, 0o755))
+	require.NoError(t, setupCodex(root))
+	require.NoError(t, setupCodex(nested))
+	for _, dir := range []string{root, nested} {
+		checks := registrationChecks(t, dir)
+		require.Equal(t, Pass, checks["Codex hooks"].Status, checks)
+		require.Equal(t, Pass, checks["Codex MCP"].Status, checks)
+		require.Contains(t, checks["Codex hooks"].Detail, filepath.Join(dir, codexHooksRelPath))
+	}
+	// An incomplete child must not be reported healthy using the parent's MCP.
+	require.NoError(t, os.Remove(filepath.Join(nested, ".codex/config.toml")))
+	checks := registrationChecks(t, nested)
+	require.Equal(t, Fail, checks["Codex MCP"].Status)
+	require.Contains(t, checks["Codex MCP"].Detail, "missing owner-bound")
 }
 
 func TestDoctorCodexActivationLimits(t *testing.T) {

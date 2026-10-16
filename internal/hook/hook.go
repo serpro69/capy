@@ -36,6 +36,17 @@ func Run(event string, a adapter.HookAdapter, explicitProjectDir *string) error 
 	return err
 }
 
+// DiscardCodexInput accepts a shadowed hook's transport without parsing or
+// handling the event. Reading to bounded EOF lets the host finish writing even
+// when the payload exceeds the pipe buffer; exiting early can break that write.
+func DiscardCodexInput(event string) error {
+	if err := validateEvent(event, adapter.Codex); err != nil {
+		return err
+	}
+	_, err := readCodexInput(os.Stdin, codexInputBudgets(event))
+	return err
+}
+
 // handleEvent selects one project before loading any policies or mutating state.
 func handleEvent(event string, input []byte, a adapter.HookAdapter, explicitProjectDir *string) ([]byte, error) {
 	if err := validateEvent(event, a.Platform()); err != nil {

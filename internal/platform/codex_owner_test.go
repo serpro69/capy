@@ -231,25 +231,106 @@ func TestCodexHookStateConfiguration(t *testing.T) {
 	}
 }
 
-func TestCodexOverlappingInstallations(t *testing.T) {
+func TestCodexNestedOwnerResolution(t *testing.T) {
 	for _, id := range []string{testCodexOwnerID, strings.Repeat("b", 32)} {
 		t.Run(id, func(t *testing.T) {
 			root := t.TempDir()
 			nested := filepath.Join(root, "nested")
 			writeCodexFixture(t, root, codexOwnerRelPath, codexOwnerContent(testCodexOwnerID))
 			writeCodexFixture(t, root, ".codex/config.toml", codexMCPBlock(testCodexOwnerID))
+			writeCodexFixture(t, root, codexHooksRelPath, codexHookFixture(t, testCodexOwnerID))
 			require.NoError(t, os.Mkdir(nested, 0o755))
 			_, err := ensureCodexOwner(nested)
-			require.ErrorContains(t, err, "overlapping")
+			require.NoError(t, err)
 			writeCodexFixture(t, nested, codexOwnerRelPath, codexOwnerContent(id))
 			writeCodexFixture(t, nested, ".codex/config.toml", codexMCPBlock(id))
-			_, err = ResolveCodexOwner(nested, id, "serve", "")
-			require.ErrorContains(t, err, "overlapping")
+			writeCodexFixture(t, nested, codexHooksRelPath, codexHookFixture(t, id))
+			owner, err := ResolveCodexOwner(nested, id, "serve", "")
+			if id == testCodexOwnerID {
+				require.ErrorContains(t, err, "share owner ID")
+				_, err = ensureCodexOwner(nested)
+				require.ErrorContains(t, err, "share owner ID")
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, nested, owner)
+				owner, err = ResolveCodexOwner(nested, id, "hook", "pretooluse")
+				require.NoError(t, err)
+				require.Equal(t, nested, owner)
+				_, err = ResolveCodexOwner(nested, testCodexOwnerID, "hook", "pretooluse")
+				require.ErrorIs(t, err, ErrCodexHookShadowed)
+				_, err = ResolveCodexOwner(nested, testCodexOwnerID, "serve", "")
+				require.ErrorContains(t, err, "nearer installation")
+				owner, err = ResolveCodexOwner(root, testCodexOwnerID, "serve", "")
+				require.NoError(t, err)
+				require.Equal(t, root, owner)
+			}
 			require.NoError(t, os.Remove(filepath.Join(root, codexOwnerRelPath)))
 			_, err = ResolveCodexOwner(nested, id, "serve", "")
-			require.ErrorContains(t, err, filepath.Join(root, ".codex/config.toml"))
+			require.ErrorContains(t, err, filepath.Join(root, codexHooksRelPath))
 			_, err = ensureCodexOwner(nested)
 			require.ErrorContains(t, err, "restore the marker")
+		})
+	}
+}
+
+func TestCodexShadowedHookRequiresBothBindings(t *testing.T) {
+	for _, missing := range []string{"ancestor binding", "nearest binding", "unknown ID"} {
+		t.Run(missing, func(t *testing.T) {
+			root := t.TempDir()
+			nested := filepath.Join(root, "nested")
+			childID := strings.Repeat("b", 32)
+			writeCodexFixture(t, root, codexOwnerRelPath, codexOwnerContent(testCodexOwnerID))
+			writeCodexFixture(t, nested, codexOwnerRelPath, codexOwnerContent(childID))
+			if missing != "ancestor binding" {
+				writeCodexFixture(t, root, codexHooksRelPath, codexHookFixture(t, testCodexOwnerID))
+			}
+			if missing != "nearest binding" {
+				writeCodexFixture(t, nested, codexHooksRelPath, codexHookFixture(t, childID))
+			}
+			id := testCodexOwnerID
+			if missing == "unknown ID" {
+				id = strings.Repeat("c", 32)
+			}
+			_, err := ResolveCodexOwner(nested, id, "hook", "pretooluse")
+			require.Error(t, err)
+			require.NotErrorIs(t, err, ErrCodexHookShadowed)
+		})
+	}
+}
+
+func TestSetupCodexNested(t *testing.T) {
+	for _, order := range []string{"parent first", "child first"} {
+		t.Run(order, func(t *testing.T) {
+			root := t.TempDir()
+			nested := filepath.Join(root, "nested")
+			require.NoError(t, os.Mkdir(nested, 0o755))
+			dirs := []string{root, nested}
+			if order == "child first" {
+				dirs = []string{nested, root}
+			}
+			for _, dir := range dirs {
+				require.NoError(t, setupCodex(dir))
+			}
+			owners, err := InspectCodexOwners(nested)
+			require.NoError(t, err)
+			require.Len(t, owners, 2)
+			require.NotEqual(t, owners[0].ID, owners[1].ID)
+			before := make(map[string][]byte)
+			for _, dir := range dirs {
+				for _, rel := range []string{codexOwnerRelPath, codexHooksRelPath, ".codex/config.toml"} {
+					path := filepath.Join(dir, rel)
+					before[path], err = os.ReadFile(path)
+					require.NoError(t, err)
+				}
+			}
+			for _, dir := range dirs {
+				require.NoError(t, setupCodex(dir))
+			}
+			for path, expected := range before {
+				actual, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.Equal(t, expected, actual, path)
+			}
 		})
 	}
 }

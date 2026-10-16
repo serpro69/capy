@@ -161,7 +161,7 @@ func SetupCodex(binaryPath, projectDir string) error {
 
 // setupCodex is the writer seam; callers must validate the PATH prerequisite first.
 func setupCodex(projectDir string) error {
-	// Reject broken/overlapping bindings before config permissions or writes.
+	// Reject broken bindings and ambiguous copied IDs before permissions or writes.
 	if _, _, err := inspectCodexSetup(projectDir); err != nil {
 		return err
 	}
