@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,6 +141,117 @@ func TestCapturedCredentialSnapshotAndEmptyOverride(t *testing.T) {
 			st, err := runstore.Open(t.Context(), path, key, false)
 			require.NoError(t, err)
 			require.NoError(t, st.Close())
+		})
+	}
+}
+
+func assertRunBudget(t *testing.T, r *mcp.CallToolResult, limit int) {
+	t.Helper()
+	b, err := json.Marshal(r)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(b), limit, string(b))
+}
+
+func TestCapturedResponseBudgetsAndLargeRawRecovery(t *testing.T) {
+	srv := newTestServer(t, nil)
+	srv.config.Runs.MaxResponseBytes = 2048
+	// Over the old 100 KiB boundary: binary, split multibyte sequences and one
+	// giant line. Pace blocks so this fixture tests complete recovery, not overload.
+	code := `import os,time
+for i in range(24):
+ os.write(1,bytes(range(256))*32)
+ time.sleep(.01)
+os.write(1,b'MIDDLE_MARKER')
+os.write(2,'stderr-only-\u20ac'.encode())
+for i in range(24):
+ os.write(1,bytes(range(256))*32)
+ time.sleep(.01)
+`
+	r := callTool(t, srv, map[string]any{"language": "python", "code": code})
+	assertRunBudget(t, r, 2048)
+	run := capturedResult(t, r)
+	require.False(t, r.IsError, resultText(r))
+	block := make([]byte, 256)
+	for i := range block {
+		block[i] = byte(i)
+	}
+	want := bytes.Repeat(block, 32*24)
+	want = append(want, []byte("MIDDLE_MARKER")...)
+	want = append(want, bytes.Repeat(block, 32*24)...)
+	var got []byte
+	cursor := ""
+	for pages := 0; pages < 4000; pages++ {
+		pageResult := callRuns(t, srv, map[string]any{"action": "read", "run_id": *run.RunID, "raw": true, "stream": "stdout", "cursor": cursor, "max_bytes": 65536})
+		assertRunBudget(t, pageResult, 2048)
+		require.False(t, pageResult.IsError, resultText(pageResult))
+		page := pageResult.StructuredContent.(runstore.ReadPage)
+		for _, f := range page.Fragments {
+			got = append(got, f.Data...)
+		}
+		if page.EOF {
+			break
+		}
+		require.NotNil(t, page.NextCursor)
+		require.NotEqual(t, cursor, *page.NextCursor)
+		cursor = *page.NextCursor
+	}
+	require.Equal(t, want, got)
+	require.Equal(t, "stderr-only-€", capturedOutput(t, srv, r, "stderr"))
+	for _, tc := range []struct {
+		name, code, state string
+		timeout           int
+		exit              int
+	}{
+		{"exit one", "printf stdout; printf stderr >&2; exit 1", "exited", 1000, 1},
+		{"deadline", "sleep 10", "timed_out", 1500, -1},
+		{"signal", "kill -TERM $$", "exited", 1000, -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := callTool(t, srv, map[string]any{"language": "shell", "code": tc.code, "timeout": tc.timeout})
+			assertRunBudget(t, r, 2048)
+			require.True(t, r.IsError)
+			run := capturedResult(t, r)
+			require.Equal(t, tc.state, run.State)
+			if tc.exit >= 0 {
+				require.Equal(t, tc.exit, *run.ExitCode)
+			} else {
+				require.NotNil(t, run.Signal)
+			}
+			status := callRuns(t, srv, map[string]any{"action": "status", "run_id": *run.RunID})
+			assertRunBudget(t, status, 2048)
+			require.False(t, status.IsError)
+		})
+	}
+	rejection := srv.runResult(runstore.Rejection("invalid_argument", strings.Repeat("\"\n€", 10000)))
+	assertRunBudget(t, rejection, 2048)
+	require.Nil(t, capturedResult(t, rejection).RunID)
+}
+
+func TestCapturedSpawnAndCompilerFailuresAreBounded(t *testing.T) {
+	for _, mode := range []string{"missing runtime", "compiler failure"} {
+		t.Run(mode, func(t *testing.T) {
+			srv := newTestServer(t, nil)
+			srv.config.Runs.MaxResponseBytes = 2048
+			bin := t.TempDir()
+			if mode == "compiler failure" {
+				require.NoError(t, os.WriteFile(filepath.Join(bin, "rustc"), []byte("#!/bin/sh\nprintf compiler-failed >&2\nexit 23\n"), 0700))
+			}
+			t.Setenv("PATH", bin)
+			r := callTool(t, srv, map[string]any{"language": "rust", "code": "synthetic compiler input"})
+			assertRunBudget(t, r, 2048)
+			require.True(t, r.IsError)
+			run := capturedResult(t, r)
+			require.NotNil(t, run.RunID)
+			if mode == "missing runtime" {
+				require.Equal(t, "start_failed", run.State)
+				require.Nil(t, run.ExitCode)
+				require.Equal(t, "spawn_failed", *run.Reason)
+				require.Equal(t, "not_started", run.Capture.State)
+			} else {
+				require.Equal(t, "exited", run.State)
+				require.Equal(t, 23, *run.ExitCode)
+				require.Equal(t, "compiler-failed", capturedOutput(t, srv, r, "stderr"))
+			}
 		})
 	}
 }

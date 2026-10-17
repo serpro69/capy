@@ -32,6 +32,7 @@ type StreamResult struct {
 	Signal        int    `json:"signal,omitempty"`
 	Phase         string `json:"phase,omitempty"`
 	Retired       bool   `json:"retired"`
+	CaptureReason string `json:"capture_reason,omitempty"`
 	CaptureLost   bool   `json:"capture_lost"`
 	ObservedBytes int64  `json:"observed_bytes"`
 	ElapsedMS     int64  `json:"elapsed_ms"`

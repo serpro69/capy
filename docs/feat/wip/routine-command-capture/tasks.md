@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–2 done; Tasks 3–17 pending
+> Status: in-progress — Tasks 1–3 done; Tasks 4–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -54,7 +54,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 3: Bound capture, results and failure outcomes
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Size:** M
 - **Can run in parallel with:** —
@@ -62,9 +62,11 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 3.1 Implement bounded blocks/queues/writes and byte/order metadata → verify: binary, UTF-8, stderr-only, giant-line and middle-marker fixtures.
-- [ ] 3.2 Budget complete serialized responses and map command/capture states → verify: every error/timeout/start/compile path, exact exit 1 and null-ID rejection.
-- [ ] 3.3 Inject append/queue/finalization failure after spawn → verify: execution finishes, pipes drain, memory stays bounded and retained-prefix/final-state claims are truthful.
+- [x] 3.1 Implement bounded blocks/queues/writes and byte/order metadata → verify: binary, UTF-8, stderr-only, giant-line and middle-marker fixtures.
+- [x] 3.2 Budget complete serialized responses and map command/capture states → verify: every error/timeout/start/compile path, exact exit 1 and null-ID rejection.
+- [x] 3.3 Inject append/queue/finalization failure after spawn → verify: execution finishes, pipes drain, memory stays bounded and retained-prefix/final-state claims are truthful.
+
+**Evidence:** [Task 3 verification](task3-verification.md) · [isolated review](task3-code-review.md). Full FTS5 suite, focused race/integration checks, vet and quality comparison pass.
 
 ## Task 4: Recover sanitized output across arbitrary boundaries
 

@@ -75,7 +75,19 @@ func (s *storedCapture) Append(e executor.OutputEvent) error {
 }
 func (s *storedCapture) Finish(ctx context.Context, out Outcome) error {
 	return s.store.Finish(ctx, s.id, runstore.Completion{Started: out.Result.Started, Retired: out.Result.Retired,
-		CaptureLost: out.Result.CaptureLost, ExitCode: out.Result.ExitCode, Signal: out.Result.Signal, Reason: out.Reason,
+		CaptureLost: out.Result.CaptureLost, CaptureReason: out.Result.CaptureReason, ExitCode: out.Result.ExitCode, Signal: out.Result.Signal, Reason: out.Reason,
 		ObservedBytes: out.Result.ObservedBytes, ElapsedMS: out.Result.ElapsedMS})
 }
 func (s *storedCapture) Close() error { return s.store.Close() }
+
+func (s *storedCapture) AppendBatch(events []executor.OutputEvent) error {
+	ctx, cancel := context.WithTimeout(context.Background(), runstore.WriteTimeout)
+	defer cancel()
+	return s.store.AppendBatch(ctx, s.id, events)
+}
+
+func (s *storedCapture) CaptureFailed(reason string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), runstore.WriteTimeout)
+	defer cancel()
+	return s.store.CaptureFailed(ctx, s.id, reason)
+}

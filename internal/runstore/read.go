@@ -123,3 +123,12 @@ WHERE run_id=? AND seq>=? AND (?='merged' OR stream=?) ORDER BY seq LIMIT 64`, i
 	}
 	return page, nil
 }
+
+// CommittedCursor locates the byte immediately after an acknowledged prefix.
+func (s *Store) CommittedCursor(run string, lastSequence uint64) *string {
+	if lastSequence == 0 {
+		return nil
+	}
+	cursor := s.cursor(run, "merged", lastSequence+1, 0)
+	return &cursor
+}

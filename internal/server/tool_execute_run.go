@@ -12,7 +12,6 @@ import (
 	"github.com/serpro69/capy/internal/execution"
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/runstore"
-	"github.com/serpro69/capy/internal/sanitize"
 )
 
 func (s *Server) executionService() *execution.Service {
@@ -118,26 +117,33 @@ func integerArg(args map[string]any, name string, fallback, low, high int64) (in
 }
 
 func (s *Server) runResult(result runstore.Result) *mcp.CallToolResult {
-	if result.Error != nil {
-		safe := *result.Error
-		safe.Message = sanitize.StripSecrets(safe.Message)
-		result.Error = &safe
-	}
-	text := "Execution rejected before admission."
-	if result.RunID != nil {
-		text = fmt.Sprintf("Run %s: %s.", *result.RunID, result.State)
-		if result.ExitCode != nil {
-			text += fmt.Sprintf(" Exit code: %d.", *result.ExitCode)
+	r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(allowance int) (*mcp.CallToolResult, error) {
+		bounded := execution.BoundResult(result, allowance)
+		text := "Execution rejected before admission."
+		if result.RunID != nil {
+			text = fmt.Sprintf("Run %s: %s. Recover with capy_runs; do not repeat execution.", *result.RunID, result.State)
+			if result.ExitCode != nil {
+				text += fmt.Sprintf(" Exit code: %d.", *result.ExitCode)
+			}
 		}
-		text += " Output projection unavailable; recover status or explicitly request unsanitized raw output with capy_runs. Do not repeat this execution to retrieve its output."
+		if bounded.Error != nil {
+			text += " " + bounded.Error.Message
+		}
+		r := mcp.NewToolResultStructured(bounded, text)
+		r.IsError = execution.ExecutionFailed(result)
+		return r, nil
+	}, nil)
+	if err != nil {
+		r = boundedRunError("response_unavailable", "Run response unavailable; list existing runs before retrying execution.")
 	}
-	if result.Error != nil {
-		text += " " + result.Error.Message
-	}
-	r := mcp.NewToolResultStructured(result, text)
-	r.IsError = result.State != "exited" || result.ExitCode == nil || *result.ExitCode != 0 || result.Signal != nil || result.Capture.State != "complete"
 	if result.RunID == nil {
 		return r
 	}
 	return s.trackToolResponse("capy_execute", r)
+}
+
+func boundedRunError(code, message string) *mcp.CallToolResult {
+	r := mcp.NewToolResultStructured(map[string]any{"version": 1, "kind": "query", "error": runstore.Error{Code: code, Message: message}}, "Run operation failed.")
+	r.IsError = true
+	return r
 }

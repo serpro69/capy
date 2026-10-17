@@ -101,49 +101,72 @@ func (s *Store) Started(ctx context.Context, id string) error {
 			row.Result.StartedAt = &now
 		}
 		row.Result.State = "running"
-		row.Result.Capture.State = "recording"
+		if row.Result.Capture.State != "incomplete" {
+			row.Result.Capture.State = "recording"
+		}
 		return nil
 	})
 }
 
 func (s *Store) Append(ctx context.Context, id string, event executor.OutputEvent) error {
-	if len(event.Data) == 0 || len(event.Data) > executor.EventBlockBytes || event.Sequence == 0 {
+	return s.AppendBatch(ctx, id, []executor.OutputEvent{event})
+}
+
+// AppendBatch commits a bounded contiguous prefix atomically. A failed batch
+// cannot leave a hole followed by later output.
+func (s *Store) AppendBatch(ctx context.Context, id string, events []executor.OutputEvent) error {
+	if len(events) == 0 || len(events) > 16 {
 		return storageError()
 	}
+	for _, event := range events {
+		if len(event.Data) == 0 || len(event.Data) > executor.EventBlockBytes || event.Sequence == 0 {
+			return storageError()
+		}
+	}
 	return s.update(ctx, id, func(tx *sql.Tx, row *Admitted) error {
-		if row.Cleanup != "pending" || row.Result.State != "running" {
+		var last uint64
+		if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq),0) FROM run_events WHERE run_id=?", id).Scan(&last); err != nil {
 			return storageError()
 		}
-		if int64(len(event.Data)) > row.Program.MaxRunBytes-row.Result.Capture.CapturedBytes {
-			return failure("capture_limit", "run capture limit reached")
+		for _, event := range events {
+			if event.Sequence != last+1 {
+				return storageError()
+			}
+			if row.Cleanup != "pending" || row.Result.State != "running" {
+				return storageError()
+			}
+			if int64(len(event.Data)) > row.Program.MaxRunBytes-row.Result.Capture.CapturedBytes {
+				return failure("capture_limit", "run capture limit reached")
+			}
+			var outBytes, errBytes, outLines, errLines int64
+			if err := tx.QueryRowContext(ctx, "SELECT stdout_bytes,stderr_bytes,stdout_lines,stderr_lines FROM runs WHERE id=?", id).Scan(&outBytes, &errBytes, &outLines, &errLines); err != nil {
+				return storageError()
+			}
+			offset, line := outBytes, outLines
+			switch event.Stream {
+			case "stdout":
+				outBytes += int64(len(event.Data))
+				outLines += int64(bytes.Count(event.Data, []byte{'\n'}))
+			case "stderr":
+				offset, line = errBytes, errLines
+				errBytes += int64(len(event.Data))
+				errLines += int64(bytes.Count(event.Data, []byte{'\n'}))
+			default:
+				return storageError()
+			}
+			_, err := tx.ExecContext(ctx, "INSERT INTO run_events(run_id,seq,phase,stream,data,byte_offset,start_line) VALUES(?,?,?,?,?,?,?)", id, event.Sequence, event.Phase, event.Stream, event.Data, offset, line)
+			if err != nil {
+				return storageError()
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE runs SET stdout_bytes=?,stderr_bytes=?,stdout_lines=?,stderr_lines=? WHERE id=?", outBytes, errBytes, outLines, errLines, id); err != nil {
+				return storageError()
+			}
+			row.Result.Capture.CapturedBytes += int64(len(event.Data))
+			row.Result.Capture.ObservedBytes = row.Result.Capture.CapturedBytes
+			cursor := s.cursor(id, "merged", event.Sequence+1, 0)
+			row.Result.Capture.LastCommittedCursor = &cursor
+			last = event.Sequence
 		}
-		var outBytes, errBytes, outLines, errLines int64
-		if err := tx.QueryRowContext(ctx, "SELECT stdout_bytes,stderr_bytes,stdout_lines,stderr_lines FROM runs WHERE id=?", id).Scan(&outBytes, &errBytes, &outLines, &errLines); err != nil {
-			return storageError()
-		}
-		offset, line := outBytes, outLines
-		switch event.Stream {
-		case "stdout":
-			outBytes += int64(len(event.Data))
-			outLines += int64(bytes.Count(event.Data, []byte{'\n'}))
-		case "stderr":
-			offset, line = errBytes, errLines
-			errBytes += int64(len(event.Data))
-			errLines += int64(bytes.Count(event.Data, []byte{'\n'}))
-		default:
-			return storageError()
-		}
-		_, err := tx.ExecContext(ctx, "INSERT INTO run_events(run_id,seq,phase,stream,data,byte_offset,start_line) VALUES(?,?,?,?,?,?,?)", id, event.Sequence, event.Phase, event.Stream, event.Data, offset, line)
-		if err != nil {
-			return storageError()
-		}
-		if _, err := tx.ExecContext(ctx, "UPDATE runs SET stdout_bytes=?,stderr_bytes=?,stdout_lines=?,stderr_lines=? WHERE id=?", outBytes, errBytes, outLines, errLines, id); err != nil {
-			return storageError()
-		}
-		row.Result.Capture.CapturedBytes += int64(len(event.Data))
-		row.Result.Capture.ObservedBytes = row.Result.Capture.CapturedBytes
-		cursor := s.cursor(id, "merged", event.Sequence+1, 0)
-		row.Result.Capture.LastCommittedCursor = &cursor
 		return nil
 	})
 }
@@ -155,29 +178,8 @@ func (s *Store) Finish(ctx context.Context, id string, c Completion) error {
 		result.CompletedAt = &now
 		expires := now.Add(time.Duration(row.Program.TTLHours) * time.Hour)
 		result.ExpiresAt = &expires
-		result.ElapsedMS = c.ElapsedMS
-		result.ExitCode = c.ExitCode
-		result.Signal = nil
-		if c.Signal > 0 {
-			result.Signal = &c.Signal
-			result.ExitCode = nil
-		}
-		result.State = "exited"
-		switch {
-		case !c.Retired:
-			result.State = "interrupted"
-		case c.Reason == "deadline":
-			result.State = "timed_out"
-		case c.Reason == "owner_lost" || c.Reason == "control_failed":
-			result.State = "interrupted"
-		case c.Reason == "cancelled":
-			result.State = "cancelled"
-		case !c.Started:
-			result.State = "start_failed"
-		}
-		if c.Reason != "" {
-			result.Reason = &c.Reason
-		}
+		ApplyOutcome(result, c)
+
 		result.Capture.ObservedBytes = c.ObservedBytes
 		result.Capture.TerminalPersisted = true
 		switch {
@@ -185,7 +187,10 @@ func (s *Store) Finish(ctx context.Context, id string, c Completion) error {
 			result.Capture.State = "not_started"
 		case c.CaptureLost || !c.Retired:
 			result.Capture.State = "incomplete"
-			reason := "capture_failed"
+			reason := c.CaptureReason
+			if reason == "" {
+				reason = "capture_failed"
+			}
 			result.Capture.Reason = &reason
 		default:
 			result.Capture.State = "complete"
@@ -231,4 +236,42 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 		return storageError()
 	}
 	return nil
+}
+
+// ApplyOutcome maps known process status independently of persistence success.
+func ApplyOutcome(result *Result, c Completion) {
+	result.ExitCode = c.ExitCode
+	result.Signal = nil
+	if c.Signal > 0 {
+		result.Signal = &c.Signal
+		result.ExitCode = nil
+	}
+	result.State = "exited"
+	switch {
+	case !c.Retired:
+		result.State = "interrupted"
+	case !c.Started:
+		result.State = "start_failed"
+	case c.Reason == "deadline":
+		result.State = "timed_out"
+	case c.Reason == "owner_lost" || c.Reason == "control_failed":
+		result.State = "interrupted"
+	case c.Reason == "cancelled":
+		result.State = "cancelled"
+	}
+	result.Reason = nil
+	if c.Reason != "" {
+		reason := c.Reason
+		result.Reason = &reason
+	}
+	result.ElapsedMS = c.ElapsedMS
+	result.Capture.ObservedBytes = c.ObservedBytes
+}
+
+func (s *Store) CaptureFailed(ctx context.Context, id, reason string) error {
+	return s.update(ctx, id, func(_ *sql.Tx, row *Admitted) error {
+		row.Result.Capture.State = "incomplete"
+		row.Result.Capture.Reason = &reason
+		return nil
+	})
 }

@@ -194,17 +194,13 @@ func (s *Service) Execute(ctx context.Context, request executor.ExecRequest, int
 	result.Capture.State = "incomplete"
 	result.Capture.TerminalPersisted = false
 	if waitErr == nil {
-		result.ExitCode = outcome.Result.ExitCode
-		if outcome.Result.Signal > 0 {
-			result.Signal = &outcome.Result.Signal
-			result.ExitCode = nil
-		}
-		result.Capture.ObservedBytes = outcome.Result.ObservedBytes
-		result.ElapsedMS = outcome.Result.ElapsedMS
+		result = knownOutcome(result, outcome, st.CommittedCursor(row.ID, outcome.LastSequence))
+	} else {
+		reason := "terminal_unavailable"
+		result.Reason = &reason
+		result.Error = &runstore.Error{Code: "storage_unavailable", Message: "terminal outcome is unknown; recover this run before any retry"}
 	}
-	reason := "terminal_unavailable"
-	result.Reason = &reason
-	result.Error = &runstore.Error{Code: "storage_unavailable", Message: "terminal outcome was not durably recorded; recover this run before any retry"}
+
 	if quarantineErr != nil {
 		result.Error.Message += "; admission quarantine could not be persisted"
 	}
@@ -294,4 +290,36 @@ func (s *Service) Close() error {
 	s.closeErr = err
 	close(s.closeDone)
 	return err
+}
+
+// knownOutcome preserves an authenticated helper acknowledgement even when the
+// subsequent metadata refresh fails. Query failure is not finalization failure.
+func knownOutcome(result runstore.Result, outcome Outcome, cursor *string) runstore.Result {
+	runstore.ApplyOutcome(&result, runstore.Completion{Started: outcome.Result.Started, Retired: outcome.Result.Retired,
+		ExitCode: outcome.Result.ExitCode, Signal: outcome.Result.Signal, Reason: outcome.Reason,
+		ObservedBytes: outcome.Result.ObservedBytes, ElapsedMS: outcome.Result.ElapsedMS})
+	result.Capture.CapturedBytes = outcome.CapturedBytes
+	result.Capture.LastCommittedCursor = cursor
+	result.Capture.TerminalPersisted = outcome.TerminalPersisted
+	result.Capture.State = "incomplete"
+	reason := "finalization_failed"
+	if outcome.TerminalPersisted {
+		result.Capture.State = "complete"
+		switch {
+		case !outcome.Result.Started:
+			result.Capture.State = "not_started"
+		case outcome.Result.CaptureLost || !outcome.Result.Retired:
+			result.Capture.State = "incomplete"
+		}
+		result.Capture.Reason = nil
+		if outcome.Result.CaptureReason != "" {
+			reason = outcome.Result.CaptureReason
+			result.Capture.Reason = &reason
+		}
+		result.Error = &runstore.Error{Code: "storage_unavailable", Message: "terminal outcome was recorded but metadata refresh failed; recover this run before any retry"}
+	} else {
+		result.Capture.Reason = &reason
+		result.Error = &runstore.Error{Code: "storage_unavailable", Message: "terminal outcome was not durably recorded; recover this run before any retry"}
+	}
+	return result
 }
