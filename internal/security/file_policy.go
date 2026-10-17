@@ -416,3 +416,27 @@ func readGlobExpression(glob string) (expression, literal string, err error) {
 	}
 	return result.String(), strings.Join(prefix, "/"), nil
 }
+
+// ResolveCLIProgramFile retains execute-file admission and additionally rejects
+// exact matched Read asks, since the CLI has no interactive approval channel.
+func (p *FilePolicy) ResolveCLIProgramFile(path string) (string, error) {
+	physical, err := p.ResolveExecuteFile(path)
+	if err != nil {
+		return "", err
+	}
+	candidates, err := p.checkedCandidates(path)
+	if err != nil {
+		return "", err
+	}
+	for _, rule := range p.rules {
+		if rule.action != "ask" {
+			continue
+		}
+		for _, candidate := range candidates {
+			if rule.matches(candidate) {
+				return "", fmt.Errorf("CLI cannot request approval: matched Read ask rule %q from %q", rule.pattern, rule.source)
+			}
+		}
+	}
+	return physical, nil
+}

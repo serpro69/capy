@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–4 done; Tasks 5–17 pending
+> Status: in-progress — Tasks 1–5 done; Tasks 6–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -86,7 +86,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 5: Expose shared CLI execution and retrieval
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 4
 - **Size:** M
 - **Can run in parallel with:** Task 6
@@ -94,9 +94,11 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 5.1 Add CLI execute/runs using shared contracts, owner selection and checked inputs → verify: cross-interface parity and exact deny/matched-ask behavior.
-- [ ] 5.2 Implement bounded text/JSON and exit mapping; reject unsupported CLI wait/background flags → verify: child/capture/signal/timeout matrix and attached ownership.
-- [ ] 5.3 Run CLI in actual workspace-write confinement → verify: no home-cache dependency, excluded-owner rejection and nested/worktree store parity.
+- [x] 5.1 Add CLI execute/runs using shared contracts, owner selection and checked inputs → verify: cross-interface parity and exact deny/matched-ask behavior.
+- [x] 5.2 Implement bounded text/JSON and exit mapping; reject unsupported CLI wait/background flags → verify: child/capture/signal/timeout matrix and attached ownership.
+- [x] 5.3 Run CLI in actual workspace-write confinement → verify: no home-cache dependency, excluded-owner rejection and nested/worktree store parity.
+
+**Evidence:** [Task 5 verification](task5-verification.md) · [isolated review](task5-code-review.md). Full FTS5 suite, focused race checks, actual workspace-write confinement, vet and quality comparison pass.
 
 ## Task 6: Yield and cancel MCP runs through the real transport
 

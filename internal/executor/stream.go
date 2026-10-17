@@ -27,6 +27,7 @@ type EventSink func(OutputEvent) error
 // StreamResult separates process retirement from command and capture outcomes.
 // Retired is a local process proof, never an acknowledgement of durable storage.
 type StreamResult struct {
+	SpawnCode     int    `json:"spawn_code,omitempty"`
 	Started       bool   `json:"started"`
 	ExitCode      *int   `json:"exit_code"`
 	Signal        int    `json:"signal,omitempty"`
@@ -80,6 +81,10 @@ func (e *PolyglotExecutor) ExecuteStreamWithStart(ctx context.Context, req ExecR
 	}
 	p, err := e.prepare(req)
 	if err != nil {
+		result.SpawnCode = 126
+		if errors.Is(err, ErrRuntimeUnavailable) {
+			result.SpawnCode = 127
+		}
 		return result, err
 	}
 	defer os.RemoveAll(p.tmpDir)

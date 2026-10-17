@@ -68,6 +68,10 @@ func runStreamPhase(ctx context.Context, bin string, args []string, cwd, tmpDir 
 	defer errW.Close()
 	cmd.Stdout, cmd.Stderr = outW, errW
 	if err := cmd.Start(); err != nil {
+		result.SpawnCode = 126
+		if os.IsNotExist(err) {
+			result.SpawnCode = 127
+		}
 		return result, errors.New("starting supervised process")
 	}
 	result.Started, result.Retired = true, false

@@ -74,7 +74,7 @@ func (s *storedCapture) Append(e executor.OutputEvent) error {
 	return s.store.Append(ctx, s.id, e)
 }
 func (s *storedCapture) Finish(ctx context.Context, out Outcome) error {
-	return s.store.Finish(ctx, s.id, runstore.Completion{Started: out.Result.Started, Retired: out.Result.Retired,
+	return s.store.Finish(ctx, s.id, runstore.Completion{SpawnCode: out.Result.SpawnCode, Started: out.Result.Started, Retired: out.Result.Retired,
 		CaptureLost: out.Result.CaptureLost, CaptureReason: out.Result.CaptureReason, ExitCode: out.Result.ExitCode, Signal: out.Result.Signal, Reason: out.Reason,
 		ObservedBytes: out.Result.ObservedBytes, ElapsedMS: out.Result.ElapsedMS})
 }

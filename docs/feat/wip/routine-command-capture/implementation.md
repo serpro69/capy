@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–4 complete and verified; Tasks 5–17 pending
+> Status: Tasks 1–5 complete and verified; Tasks 6–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -98,6 +98,8 @@ Evidence: [verification](task4-verification.md) · [isolated review](task4-code-
   FTS consumers cannot bypass that boundary.
 
 ## Task 5: Expose shared CLI execution and retrieval
+
+Evidence: [verification](task5-verification.md) · [isolated review](task5-code-review.md).
 
 - Add execute/runs Cobra commands with contracts' exact flags, selected-owner
   resolution, checked code-file input and CLI matched-ask handling → verify: no

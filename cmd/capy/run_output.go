@@ -1,0 +1,179 @@
+package main
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"unicode"
+
+	"github.com/serpro69/capy/internal/execution"
+	"github.com/serpro69/capy/internal/platform"
+	"github.com/serpro69/capy/internal/runstore"
+	"github.com/spf13/cobra"
+)
+
+type runQueryResult struct {
+	Version int              `json:"version"`
+	Kind    string           `json:"kind"`
+	Run     *runstore.Result `json:"run,omitempty"`
+	Error   *runstore.Error  `json:"error,omitempty"`
+}
+
+func runTarget(cmd *cobra.Command) (*knowledgeTarget, error) {
+	explicit, err := cmd.Flags().GetString("project-dir")
+	if err != nil {
+		return nil, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	owner, err := platform.ResolveRunOwner(cwd, explicit)
+	if err != nil {
+		return nil, err
+	}
+	return loadProjectKnowledgeTarget(owner)
+}
+
+func commandRunError(err error) *runstore.Error {
+	var typed *runstore.Error
+	if errors.As(err, &typed) {
+		copy := *typed
+		return &copy
+	}
+	return &runstore.Error{Code: "storage_unavailable", Message: err.Error()}
+}
+func runExit(code int) error {
+	if code == 0 {
+		return nil
+	}
+	return &exitError{code: code, err: errors.New("captured run command failed")}
+}
+func terminalText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+			return '�'
+		}
+		return r
+	}, s)
+}
+func runText(result runstore.Result) string {
+	var b strings.Builder
+	if result.RunID == nil {
+		b.WriteString("Execution not started.\n")
+	} else {
+		fmt.Fprintf(&b, "Run %s: %s; capture %s (%d/%d bytes).\n", *result.RunID, result.State, result.Capture.State, result.Capture.CapturedBytes, result.Capture.ObservedBytes)
+	}
+	if result.ExitCode != nil {
+		fmt.Fprintf(&b, "Exit code: %d.\n", *result.ExitCode)
+	}
+	if result.Signal != nil {
+		fmt.Fprintf(&b, "Signal: %d.\n", *result.Signal)
+	}
+	if result.Error != nil {
+		fmt.Fprintf(&b, "%s: %s\n", result.Error.Code, terminalText(result.Error.Message))
+	}
+	if result.Preview != "" {
+		b.WriteString(terminalText(result.Preview))
+		b.WriteByte('\n')
+	}
+	if result.RunID != nil {
+		fmt.Fprintf(&b, "Recover: capy runs status --run-id %s; capy runs read --run-id %s. Do not repeat execution to recover output.\n", *result.RunID, *result.RunID)
+	}
+	return b.String()
+}
+func encodeRunText(value any) ([]byte, error) {
+	var b strings.Builder
+	switch v := value.(type) {
+	case runstore.Result:
+		b.WriteString(runText(v))
+	case runQueryResult:
+		if v.Run != nil {
+			b.WriteString(runText(*v.Run))
+		}
+		if v.Error != nil {
+			fmt.Fprintf(&b, "%s: %s\n", v.Error.Code, terminalText(v.Error.Message))
+		}
+	case runstore.ReadPage:
+		fmt.Fprintf(&b, "Run %s: %s; capture %s.\n", v.RunID, v.Run.State, v.Run.Capture.State)
+		if v.Raw {
+			b.WriteString("Unsanitized raw bytes (base64).\n")
+		}
+		for _, f := range v.Fragments {
+			fmt.Fprintf(&b, "[%s byte %d line %d] ", f.Stream, f.ByteOffset, f.StartLine)
+			if v.Raw {
+				b.WriteString(base64.StdEncoding.EncodeToString(f.Data))
+			} else {
+				b.WriteString(terminalText(f.Text))
+			}
+			b.WriteByte('\n')
+		}
+		if v.RedactionPending {
+			b.WriteString("Redaction pending; poll this cursor or read an independent stream.\n")
+		}
+		if v.NextCursor != nil {
+			fmt.Fprintf(&b, "next_cursor: %s\n", *v.NextCursor)
+		}
+		fmt.Fprintf(&b, "end_of_available=%t eof=%t\n", v.EndOfAvailable, v.EOF)
+	case runstore.ListPage:
+		for _, entry := range v.Entries {
+			fmt.Fprintf(&b, "%s %s capture=%s owner=%s\n", entry.RunID, entry.State, entry.CaptureState, entry.OwnerType)
+		}
+		if len(v.Entries) == 0 {
+			b.WriteString("No matching runs.\n")
+		}
+		if v.NextCursor != nil {
+			fmt.Fprintf(&b, "next_cursor: %s\n", *v.NextCursor)
+		}
+	default:
+		return nil, errors.New("unknown run response")
+	}
+	return []byte(b.String()), nil
+}
+
+func encodeRunJSON(value any) ([]byte, error) {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
+}
+
+// Render before writing once. The final byte budget includes the JSON newline,
+// text diagnostics and recovery cursor, using the same budgeter as MCP.
+func writeRunResponse(cmd *cobra.Command, limit int, jsonOutput bool, code int, build func(int) (any, error)) error {
+	encode := encodeRunText
+	if jsonOutput {
+		encode = encodeRunJSON
+	}
+	value, err := execution.Budget(limit, build, encode)
+	if err != nil {
+		code = 1
+		value = runQueryResult{Version: 1, Kind: "query", Error: &runstore.Error{Code: "response_unavailable", Message: "result unavailable; recover existing runs before retrying execution"}}
+	}
+	b, err := encode(value)
+	if err != nil {
+		return runExit(74)
+	}
+	n, err := cmd.OutOrStdout().Write(b)
+	if err != nil || n != len(b) {
+		return &exitError{code: 74, err: io.ErrShortWrite}
+	}
+	return runExit(code)
+}
+func writeExecutionRejection(cmd *cobra.Command, jsonOutput bool, limit, exit int, code, message string) error {
+	result := runstore.Rejection(code, message)
+	return writeRunResponse(cmd, limit, jsonOutput, exit, func(n int) (any, error) { return execution.BoundResult(result, n), nil })
+}
+func writeQueryFailure(cmd *cobra.Command, jsonOutput bool, limit, exit int, err error) error {
+	failure := commandRunError(err)
+	return writeRunResponse(cmd, limit, jsonOutput, exit, func(n int) (any, error) {
+		safe := *failure
+		safe.Message = execution.SafeMessage(safe.Message, n)
+		return runQueryResult{Version: 1, Kind: "query", Error: &safe}, nil
+	})
+}

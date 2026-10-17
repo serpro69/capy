@@ -19,7 +19,14 @@ func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admit
 		return Admitted{}, err
 	}
 	id := uuid.NewString()
-	result := Result{Version: 1, Kind: "run", RunID: &id, OwnerID: owner.ID, OwnerType: "mcp", State: "admitted",
+	ownerType := program.OwnerType
+	if ownerType == "" {
+		ownerType = "mcp"
+	}
+	if ownerType != "mcp" && ownerType != "cli" {
+		return Admitted{}, failure("invalid_argument", "invalid execution owner type")
+	}
+	result := Result{Version: 1, Kind: "run", RunID: &id, OwnerID: owner.ID, OwnerType: ownerType, State: "admitted",
 		Capture: Capture{State: "not_started"}, Redaction: Projection{Version: sanitize.StreamVersion, State: "ready"}, Index: Index{State: "not_requested"}}
 	if program.Intent != "" {
 		result.Index = Index{State: "failed", Error: &Error{Code: "index_unavailable", Message: "run search is currently unavailable"}}
@@ -48,7 +55,14 @@ func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admit
 	if err := tx.QueryRowContext(ctx, "SELECT generation FROM run_owners WHERE slot=?", owner.Slot).Scan(&generation); err != nil || generation != owner.ID {
 		return Admitted{}, storageError()
 	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO runs(id,generation,slot,program,result,cleanup) VALUES(?,?,?,?,?,'not_spawned')", id, owner.ID, owner.Slot, encodedProgram, encodedResult)
+	if _, err := tx.ExecContext(ctx, "UPDATE run_meta SET last_created=max(last_created+1,?) WHERE singleton=1", time.Now().UTC().UnixNano()); err != nil {
+		return Admitted{}, storageError()
+	}
+	var createdAt int64
+	if err := tx.QueryRowContext(ctx, "SELECT last_created FROM run_meta WHERE singleton=1").Scan(&createdAt); err != nil {
+		return Admitted{}, storageError()
+	}
+	_, err = tx.ExecContext(ctx, "INSERT INTO runs(id,generation,slot,program,result,cleanup,created_at) VALUES(?,?,?,?,?,'not_spawned',?)", id, owner.ID, owner.Slot, encodedProgram, encodedResult, createdAt)
 	if err != nil {
 		return Admitted{}, storageError()
 	}
@@ -281,6 +295,10 @@ func ApplyOutcome(result *Result, c Completion) {
 		result.State = "interrupted"
 	case !c.Started:
 		result.State = "start_failed"
+		result.Error = &Error{Code: "spawn_failed", Message: "execution process could not start"}
+		if c.SpawnCode == 127 {
+			result.Error = &Error{Code: "runtime_unavailable", Message: "execution runtime was not found"}
+		}
 	case c.Reason == "deadline":
 		result.State = "timed_out"
 	case c.Reason == "owner_lost" || c.Reason == "control_failed":

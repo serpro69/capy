@@ -1,10 +1,13 @@
 package executor
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+var ErrRuntimeUnavailable = errors.New("execution runtime unavailable")
 
 type preparedExecution struct {
 	workDir, tmpDir, runtime, scriptPath, bin string
@@ -21,7 +24,7 @@ func (e *PolyglotExecutor) prepare(req ExecRequest) (p preparedExecution, err er
 	var ok bool
 	p.runtime, ok = e.Runtimes()[req.Language]
 	if !ok {
-		return p, fmt.Errorf("no runtime found for language %q", req.Language)
+		return p, fmt.Errorf("%w for language %q", ErrRuntimeUnavailable, req.Language)
 	}
 	p.tmpDir, err = os.MkdirTemp("", "capy-exec-*")
 	if err != nil {
