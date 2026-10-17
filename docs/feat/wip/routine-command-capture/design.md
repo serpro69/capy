@@ -469,6 +469,7 @@ capture, not expired/evicted, caller-filtered or lost-after-failure bytes.
 Task 1's bounded Linux supervisor/lease proof and Task 2's synchronous encrypted
 capture/recovery are complete; see the [supervisor proof](supervisor-proof.md)
 and [capture verification](task2-verification.md). Task 3 bounded capture/results
-are verified in [Task 3 evidence](task3-verification.md). Tasks 4–17 remain pending.
+are verified in [Task 3 evidence](task3-verification.md). Task 4 projection and
+paging are verified in [Task 4 evidence](task4-verification.md). Tasks 5–17 remain pending.
 These slices do not substitute for installed acceptance or independent
 design/code/spec review of the remaining feature.

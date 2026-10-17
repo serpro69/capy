@@ -37,6 +37,7 @@ type Index struct {
 }
 
 type Result struct {
+	Preview         string     `json:"preview,omitempty"`
 	MetadataOmitted bool       `json:"metadata_omitted,omitempty"`
 	Version         int        `json:"version"`
 	Kind            string     `json:"kind"`
@@ -93,18 +94,23 @@ type Fragment struct {
 	Stream     string `json:"stream"`
 	ByteOffset int64  `json:"byte_offset"`
 	StartLine  int64  `json:"start_line"`
-	Data       []byte `json:"data"`
+	Data       []byte `json:"data,omitempty"`
+	Text       string `json:"text,omitempty"`
+	RawEnd     int64  `json:"raw_end,omitempty"`
+	Redacted   bool   `json:"redacted,omitempty"`
+	Continued  bool   `json:"continued,omitempty"`
 }
 
 type ReadPage struct {
-	Version        int        `json:"version"`
-	Kind           string     `json:"kind"`
-	RunID          string     `json:"run_id"`
-	Raw            bool       `json:"raw"`
-	Encoding       string     `json:"encoding"`
-	Fragments      []Fragment `json:"fragments"`
-	NextCursor     *string    `json:"next_cursor"`
-	EndOfAvailable bool       `json:"end_of_available"`
-	EOF            bool       `json:"eof"`
-	Run            Result     `json:"run"`
+	RedactionPending bool       `json:"redaction_pending,omitempty"`
+	Version          int        `json:"version"`
+	Kind             string     `json:"kind"`
+	RunID            string     `json:"run_id"`
+	Raw              bool       `json:"raw"`
+	Encoding         string     `json:"encoding"`
+	Fragments        []Fragment `json:"fragments"`
+	NextCursor       *string    `json:"next_cursor"`
+	EndOfAvailable   bool       `json:"end_of_available"`
+	EOF              bool       `json:"eof"`
+	Run              Result     `json:"run"`
 }

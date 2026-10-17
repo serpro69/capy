@@ -36,6 +36,7 @@ func (s *Store) decodeCursor(encoded, run, stream string) (rawCursor, error) {
 	if err != nil {
 		return c, failure("cursor_invalid", "invalid run cursor")
 	}
+	c = rawCursor{}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
 	if d.Decode(&c) != nil || d.Decode(new(any)) != io.EOF || c.Version != 1 || c.Sequence == 0 || c.Sequence > 1<<62 || c.Offset < 0 || c.Offset >= 16384 || c.View != "raw" {

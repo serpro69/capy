@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/serpro69/capy/internal/executor"
+	"github.com/serpro69/capy/internal/sanitize"
 	"github.com/serpro69/capy/internal/sqliteutil"
 )
 
@@ -19,7 +20,7 @@ func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admit
 	}
 	id := uuid.NewString()
 	result := Result{Version: 1, Kind: "run", RunID: &id, OwnerID: owner.ID, OwnerType: "mcp", State: "admitted",
-		Capture: Capture{State: "not_started"}, Redaction: Projection{Version: 1, State: "unavailable"}, Index: Index{State: "not_requested"}}
+		Capture: Capture{State: "not_started"}, Redaction: Projection{Version: sanitize.StreamVersion, State: "ready"}, Index: Index{State: "not_requested"}}
 	if program.Intent != "" {
 		result.Index = Index{State: "failed", Error: &Error{Code: "index_unavailable", Message: "run search is currently unavailable"}}
 	}
@@ -51,6 +52,15 @@ func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admit
 	if err != nil {
 		return Admitted{}, storageError()
 	}
+	checkpoint, err := sanitize.NewStream().Checkpoint()
+	if err != nil {
+		return Admitted{}, storageError()
+	}
+	for _, stream := range []string{"stdout", "stderr"} {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO run_streams(run_id,stream,checkpoint) VALUES(?,?,?)", id, stream, checkpoint); err != nil {
+			return Admitted{}, storageError()
+		}
+	}
 	// The admission commit is the write probe. No subprocess is authorized until
 	// it succeeds and the helper authenticates/reloads this exact admitted row.
 	if err := tx.Commit(); err != nil {
@@ -59,11 +69,19 @@ func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admit
 	return Admitted{ID: id, Generation: owner.ID, Slot: owner.Slot, Program: program, Result: result, Cleanup: "not_spawned"}, nil
 }
 
+type runQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 func (s *Store) Load(ctx context.Context, id string) (Admitted, error) {
+	return loadRun(ctx, s.db, id)
+}
+
+func loadRun(ctx context.Context, query runQuerier, id string) (Admitted, error) {
 	var row Admitted
 	row.ID = id
 	var program, result []byte
-	err := s.db.QueryRowContext(ctx, "SELECT generation,slot,program,result,cleanup FROM runs WHERE id=?", id).Scan(&row.Generation, &row.Slot, &program, &result, &row.Cleanup)
+	err := query.QueryRowContext(ctx, "SELECT generation,slot,program,result,cleanup FROM runs WHERE id=?", id).Scan(&row.Generation, &row.Slot, &program, &result, &row.Cleanup)
 	if errors.Is(err, sql.ErrNoRows) {
 		return row, failure("run_unavailable", "run is unavailable in this owner's store")
 	}
@@ -161,18 +179,29 @@ func (s *Store) AppendBatch(ctx context.Context, id string, events []executor.Ou
 			if _, err := tx.ExecContext(ctx, "UPDATE runs SET stdout_bytes=?,stderr_bytes=?,stdout_lines=?,stderr_lines=? WHERE id=?", outBytes, errBytes, outLines, errLines, id); err != nil {
 				return storageError()
 			}
+			if err := s.project(ctx, tx, row, event.Stream, event.Data, false); err != nil {
+				return err
+			}
 			row.Result.Capture.CapturedBytes += int64(len(event.Data))
 			row.Result.Capture.ObservedBytes = row.Result.Capture.CapturedBytes
 			cursor := s.cursor(id, "merged", event.Sequence+1, 0)
 			row.Result.Capture.LastCommittedCursor = &cursor
 			last = event.Sequence
 		}
-		return nil
+		return s.projectionState(ctx, tx, row)
 	})
 }
 
 func (s *Store) Finish(ctx context.Context, id string, c Completion) error {
 	return s.update(ctx, id, func(tx *sql.Tx, row *Admitted) error {
+		for _, stream := range []string{"stdout", "stderr"} {
+			if err := s.project(ctx, tx, row, stream, nil, true); err != nil {
+				return err
+			}
+		}
+		if err := s.projectionState(ctx, tx, row); err != nil {
+			return err
+		}
 		result := &row.Result
 		now := time.Now().UTC()
 		result.CompletedAt = &now

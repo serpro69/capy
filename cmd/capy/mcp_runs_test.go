@@ -95,21 +95,21 @@ func TestMCPRunCaptureRecovery(t *testing.T) {
 	require.True(t, run.Capture.TerminalPersisted)
 	encoded, err := json.Marshal(result)
 	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "failure diagnostic")
-	require.NotContains(t, string(encoded), "first")
+	require.Contains(t, string(encoded), "first")
+	require.Equal(t, "ready", run.Redaction.State)
 	want := append([]byte("first"), 0, 255)
 	want = append(want, []byte("last\n")...)
 	require.Equal(t, want, p.rawRun(t, *run.RunID, "stdout"))
 	require.Equal(t, []byte("failure diagnostic"), p.rawRun(t, *run.RunID, "stderr"))
 	var defaultRead struct {
-		IsError    bool `json:"isError"`
-		Structured struct {
-			Error runstore.Error `json:"error"`
-		} `json:"structuredContent"`
+		IsError    bool              `json:"isError"`
+		Structured runstore.ReadPage `json:"structuredContent"`
 	}
 	require.NoError(t, p.request("tools/call", map[string]any{"name": "capy_runs", "arguments": map[string]any{"action": "read", "run_id": *run.RunID}}, &defaultRead))
-	require.True(t, defaultRead.IsError)
-	require.Equal(t, "redaction_unavailable", defaultRead.Structured.Error.Code)
+	require.False(t, defaultRead.IsError)
+	require.Equal(t, "text", defaultRead.Structured.Encoding)
+	require.NotEmpty(t, defaultRead.Structured.Fragments)
+
 	p.close(t)
 	dbPath := filepath.Join(project, ".capy", "runs", "runs.db")
 	before, err := os.ReadFile(dbPath)

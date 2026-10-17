@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–3 complete and verified; Tasks 4–17 pending
+> Status: Tasks 1–4 complete and verified; Tasks 5–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -82,6 +82,8 @@ Evidence: [verification](task3-verification.md) · [isolated review](task3-code-
   prefixes are exact and terminal_persisted is truthful.
 
 ## Task 4: Recover sanitized output across arbitrary boundaries
+
+Evidence: [verification](task4-verification.md) · [isolated review](task4-code-review.md).
 
 - Add the bounded per-stream recognizer to internal/sanitize and persist encrypted
   projection/checkpoints/raw anchors through runstore → verify: every partition
