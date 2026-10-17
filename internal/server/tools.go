@@ -10,12 +10,13 @@ import (
 	"github.com/serpro69/capy/internal/executor"
 )
 
-// registerTools registers all 10 capy MCP tools on the server.
+// registerTools registers all 11 capy MCP tools on the server.
 func (s *Server) registerTools() {
 	runtimes := s.executor.Runtimes()
 	langList := formatRuntimeList(runtimes)
 
 	s.mcpServer.AddTools(
+		mcpserver.ServerTool{Tool: toolRuns(), Handler: s.handleRuns},
 		mcpserver.ServerTool{
 			Tool:    toolExecute(langList),
 			Handler: s.handleExecute,
@@ -122,7 +123,7 @@ func toolExecute(langList string) mcp.Tool {
 	return mcp.NewTool("capy_execute",
 		mcp.WithToolAnnotation(annotationExecute),
 		mcp.WithDescription(fmt.Sprintf(
-			"Execute code in a sandboxed subprocess for large-output extraction. Only stdout enters context — raw data stays in the subprocess. Available: [%s]. Best for: API calls, broad searches (rg, grep), log analysis, data processing, and commands producing hundreds+ lines where you only need extracted facts. NOT for: git commands (use Bash), small-output commands (<50 lines, use Bash), content you need to comprehend fully (use Read/Bash).",
+			"Execute code once and capture stdout/stderr in an encrypted owner-local run store. Available: [%s]. Synchronous calls return a run ID and status. Sanitized output projection is not yet available; recover bytes with capy_runs action=read and explicit raw=true. Do not repeat commands to recover output. Background mode retains the legacy execution path until captured yielding is integrated.",
 			langList,
 		)),
 		mcp.WithString("language",
@@ -138,13 +139,13 @@ func toolExecute(langList string) mcp.Tool {
 			mcp.Description("Execution directory for this call. Omitted: selected project. Must be a nonempty existing directory; relative paths resolve from the project. Changes execution location only, not storage, credentials or policy."),
 		),
 		mcp.WithNumber("timeout",
-			mcp.Description("Max execution time in ms (default: 30000)"),
+			mcp.Description("Positive integer execution deadline in ms; synchronous default is executor.timeout (300 seconds). Legacy background default remains 30000ms."),
 		),
 		mcp.WithBoolean("background",
 			mcp.Description("Keep process running after timeout (for servers/daemons). Returns partial output without killing the process."),
 		),
 		mcp.WithString("intent",
-			mcp.Description("What you're looking for in the output. When provided and output is large (>5KB), indexes output and returns section titles + previews instead of full content. Use search() to retrieve specific sections."),
+			mcp.Description("Optional search intent, retained with the run. Run indexing is not yet available; synchronous output is never written into knowledge storage."),
 		),
 	)
 }

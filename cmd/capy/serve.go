@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/serpro69/capy/internal/executor"
+	"github.com/serpro69/capy/internal/platform"
 	"github.com/serpro69/capy/internal/security"
 	"github.com/serpro69/capy/internal/server"
 	"github.com/serpro69/capy/internal/store"
@@ -20,7 +22,15 @@ func newServeCmd() *cobra.Command {
 }
 
 func serveRunE(cmd *cobra.Command, _ []string) error {
-	projectDir, err := commandProjectDir(cmd)
+	explicit, err := cmd.Flags().GetString("project-dir")
+	if err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	projectDir, err := platform.ResolveRunOwner(cwd, explicit)
 	if err != nil {
 		return fmt.Errorf("capy serve: %w", err)
 	}

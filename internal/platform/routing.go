@@ -12,6 +12,7 @@ var CapyToolNames = []string{
 	"capy_stats",
 	"capy_doctor",
 	"capy_cleanup",
+	"capy_runs",
 }
 
 // GenerateRoutingInstructions returns the CLAUDE.md routing block that instructs

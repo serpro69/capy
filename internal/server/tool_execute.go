@@ -2,13 +2,15 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/executor"
 )
 
-func (s *Server) handleExecute(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+// Background execution remains on the legacy path until Task 6 adds yielding.
+func (s *Server) handleLegacyExecute(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 
 	language := executor.Language(req.GetString("language", ""))
@@ -104,6 +106,14 @@ func (s *Server) securityCheck(language executor.Language, code string) *mcp.Cal
 
 // trackToolResponse tracks stats and returns the result.
 func (s *Server) trackToolResponse(toolName string, r *mcp.CallToolResult) *mcp.CallToolResult {
+	if r.StructuredContent != nil {
+		encoded, err := json.Marshal(r)
+		if err != nil {
+			return errorResult("could not serialize structured tool result")
+		}
+		s.stats.TrackResponse(toolName, int64(len(encoded)))
+		return r
+	}
 	var bytes int64
 	for _, c := range r.Content {
 		if tc, ok := c.(mcp.TextContent); ok {

@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: pending — review corrections and reslicing complete; re-review pending
+> Status: in-progress — Tasks 1–2 done; Tasks 3–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -11,7 +11,7 @@
 
 ## Task 1: Prove supervisor ownership and lease transfer
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** —
@@ -20,13 +20,20 @@
 
 ### Subtasks
 
-- [ ] 1.1 Add the private supervisor/event/control seams in executor, execution and the hidden CLI helper → verify: real early/late output, protocol bounds and no private FD inheritance by commands.
-- [ ] 1.2 Prove group retirement and retained owner/lifecycle leases through owner SIGKILL and delayed cleanup → verify: concurrent reset/reuse cannot proceed early; compiler phases follow the same lifecycle.
-- [ ] 1.3 Exercise IPC/startup/helper failures and record supported cleanup proofs before Task 2 → verify: no unknown outcome is certified as quiescence.
+- [x] 1.1 Add the private supervisor/event/control seams in executor, execution and the hidden CLI helper → verify: real early/late output, protocol bounds and no private FD inheritance by commands.
+- [x] 1.2 Prove group retirement and retained owner/lifecycle leases through owner SIGKILL and delayed cleanup → verify: concurrent reset/reuse cannot proceed early; compiler phases follow the same lifecycle.
+- [x] 1.3 Exercise IPC/startup/helper failures and record supported cleanup proofs before Task 2 → verify: no unknown outcome is certified as quiescence.
+
+**Evidence:** [supervisor proof, support limits and checks](supervisor-proof.md) ·
+[isolated review and resolved findings](task1-code-review.md). Linux helper and
+synthetic persistence proof passed; production storage/public execution remains
+pending. Full FTS5 suite passed across the initial run and two socket-enabled
+package reruns; focused integration/race checks, build, vet and quality comparison
+passed. The independent code reviewer approved; external review was unavailable.
 
 ## Task 2: Capture and recover one synchronous MCP run
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Can run in parallel with:** —
@@ -34,9 +41,16 @@
 
 ### Subtasks
 
-- [ ] 2.1 Add encrypted run metadata/events and selected-owner/key admission in runstore/execution → verify: no knowledge/vault writes or pre-spawn side effects on invalid credentials/storage.
-- [ ] 2.2 Adapt ordinary execution and initial run status/raw-read MCP actions → verify: exact bytes, child status, one execution and recovery by ID.
-- [ ] 2.3 Add strict config/path resolution and safe unavailable default projection until Task 4 → verify: nested/worktree identity and sandboxed admission harness.
+- [x] 2.1 Add encrypted run metadata/events and selected-owner/key admission in runstore/execution → verify: no knowledge/vault writes or pre-spawn side effects on invalid credentials/storage.
+- [x] 2.2 Adapt ordinary execution and initial run status/raw-read MCP actions → verify: exact bytes, child status, one execution and recovery by ID.
+- [x] 2.3 Add strict config/path resolution and safe unavailable default projection until Task 4 → verify: nested/worktree identity and sandboxed admission harness.
+
+**Evidence:** [Task 2 verification and limits](task2-verification.md) ·
+[isolated code review](task2-code-review.md). Real MCP restart/exact-byte/status
+recovery and native sandbox admission passed. The full FTS5 run plus corrected
+focused reruns, race/build/vet, generated-artifact checks and baseline quality
+comparison passed. Independent review approved; external review was unavailable.
+Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 3: Bound capture, results and failure outcomes
 

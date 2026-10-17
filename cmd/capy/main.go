@@ -32,6 +32,7 @@ func main() {
 		newServeCmd(),
 		newHookCmd(),
 		newCodexLaunchCmd(),
+		newExecuteSupervisorCmd(),
 		newSetupCmd(),
 		newDoctorCmd(),
 		newCleanupCmd(),
