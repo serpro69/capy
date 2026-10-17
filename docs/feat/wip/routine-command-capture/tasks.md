@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: pending — review corrections and reslicing complete; re-review pending
+> Status: in-progress — Task 1 done; Tasks 2–17 pending; later-task design re-review pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -11,7 +11,7 @@
 
 ## Task 1: Prove supervisor ownership and lease transfer
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** —
@@ -20,9 +20,16 @@
 
 ### Subtasks
 
-- [ ] 1.1 Add the private supervisor/event/control seams in executor, execution and the hidden CLI helper → verify: real early/late output, protocol bounds and no private FD inheritance by commands.
-- [ ] 1.2 Prove group retirement and retained owner/lifecycle leases through owner SIGKILL and delayed cleanup → verify: concurrent reset/reuse cannot proceed early; compiler phases follow the same lifecycle.
-- [ ] 1.3 Exercise IPC/startup/helper failures and record supported cleanup proofs before Task 2 → verify: no unknown outcome is certified as quiescence.
+- [x] 1.1 Add the private supervisor/event/control seams in executor, execution and the hidden CLI helper → verify: real early/late output, protocol bounds and no private FD inheritance by commands.
+- [x] 1.2 Prove group retirement and retained owner/lifecycle leases through owner SIGKILL and delayed cleanup → verify: concurrent reset/reuse cannot proceed early; compiler phases follow the same lifecycle.
+- [x] 1.3 Exercise IPC/startup/helper failures and record supported cleanup proofs before Task 2 → verify: no unknown outcome is certified as quiescence.
+
+**Evidence:** [supervisor proof, support limits and checks](supervisor-proof.md) ·
+[isolated review and resolved findings](task1-code-review.md). Linux helper and
+synthetic persistence proof passed; production storage/public execution remains
+pending. Full FTS5 suite passed across the initial run and two socket-enabled
+package reruns; focused integration/race checks, build, vet and quality comparison
+passed. The independent code reviewer approved; external review was unavailable.
 
 ## Task 2: Capture and recover one synchronous MCP run
 

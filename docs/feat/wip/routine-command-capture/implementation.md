@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: planned — implementation has not started
+> Status: Task 1 complete and verified; Tasks 2–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -31,6 +31,8 @@ readiness and must not enable the routine gate early.
 ## Task 1: Prove supervisor ownership and lease transfer
 
 Risk-first proof before storage/control interfaces are frozen.
+
+Implementation evidence and supported-platform limits: [supervisor proof](supervisor-proof.md).
 
 - Add a bounded event sink/control seam to executor types and a hidden supervisor
   entry point in the same executable. Transfer synthetic credentials/control and
