@@ -1,0 +1,297 @@
+package execution
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/serpro69/capy/internal/config"
+	"github.com/serpro69/capy/internal/executor"
+	"github.com/serpro69/capy/internal/runstore"
+	"github.com/serpro69/capy/internal/sanitize"
+)
+
+// Service owns attached synchronous runs and joins every helper before closing
+// database/lease handles. Request-to-owner yielding is deliberately a later task.
+type Service struct {
+	mu                   sync.Mutex
+	closed               bool
+	unverified           bool
+	jobs                 map[*serviceCall]context.CancelFunc
+	active               int
+	wg                   sync.WaitGroup
+	store                *runstore.Store
+	owner                *runstore.Owner
+	project, key, binary string
+	policy               config.RunsConfig
+	closeDone            chan struct{}
+	closeErr             error
+}
+type serviceCall struct{ marker byte }
+
+func NewService(project, key string, policy config.RunsConfig) *Service {
+	return &Service{project: project, key: key, policy: policy, jobs: make(map[*serviceCall]context.CancelFunc), closeDone: make(chan struct{})}
+}
+
+func (s *Service) begin(ctx context.Context, execute bool) (context.Context, func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, nil, &runstore.Error{Code: "storage_unavailable", Message: "execution owner is shutting down"}
+	}
+	if execute && s.unverified {
+		return nil, nil, &runstore.Error{Code: "cleanup_unverified", Message: "this owner has unverified run cleanup; stop execution groups and recover before admitting more work"}
+	}
+	if execute && s.active >= s.policy.MaxActive {
+		return nil, nil, &runstore.Error{Code: "capacity_exhausted", Message: "execution owner is at capacity; recover existing runs before retrying"}
+	}
+	job := new(serviceCall)
+	ctx, cancel := context.WithCancel(ctx)
+	s.jobs[job] = cancel
+	if execute {
+		s.active++
+	}
+	s.wg.Add(1)
+	return ctx, func() {
+		cancel()
+		s.mu.Lock()
+		delete(s.jobs, job)
+		if execute {
+			s.active--
+		}
+		s.mu.Unlock()
+		s.wg.Done()
+	}, nil
+}
+
+func (s *Service) attached(ctx context.Context, create bool) (*runstore.Store, *runstore.Owner, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, nil, &runstore.Error{Code: "storage_unavailable", Message: "execution owner is shutting down"}
+	}
+	if err := ValidateCredentialTransfer(s.key); err != nil {
+		return nil, nil, err
+	}
+	if s.store == nil {
+		path, err := config.ResolveRunDBPath(s.project)
+		if err != nil {
+			return nil, nil, &runstore.Error{Code: "storage_unavailable", Message: "selected run owner is unavailable"}
+		}
+		st, err := runstore.Open(ctx, path, s.key, create)
+		if err != nil {
+			var typed *runstore.Error
+			if errors.As(err, &typed) {
+				copy := *typed
+				copy.Message += "; selected path: " + sanitize.StripSecrets(path)
+				err = &copy
+			}
+			return nil, nil, err
+		}
+		s.store = st
+	}
+	if create && s.owner == nil {
+		owner, err := s.store.ClaimOwner(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		s.owner = owner
+	}
+	return s.store, s.owner, nil
+}
+
+func (s *Service) Execute(ctx context.Context, request executor.ExecRequest, intent string, timeout time.Duration) runstore.Result {
+	if err := Supported(); err != nil {
+		return reject(err)
+	}
+	if err := ValidateCredentialTransfer(s.key); err != nil {
+		return reject(err)
+	}
+	ctx, done, err := s.begin(ctx, true)
+	if err != nil {
+		return reject(err)
+	}
+	defer done()
+	if timeout <= 0 {
+		return runstore.Rejection("invalid_argument", "execution timeout must be positive")
+	}
+	cwd, err := executor.ResolveCwd(s.project, request.Cwd)
+	if err != nil {
+		return runstore.Rejection("invalid_argument", "execution cwd is unavailable")
+	}
+	request.Cwd = cwd
+	if request.Code == "" || request.Background {
+		return runstore.Rejection("invalid_argument", "captured execution requires nonempty synchronous code")
+	}
+	st, owner, err := s.attached(ctx, true)
+	if err != nil {
+		return reject(err)
+	}
+	physical := filepath.Dir(filepath.Dir(filepath.Dir(st.Path())))
+	program := runstore.Program{Owner: physical, Request: request, Intent: intent, Deadline: time.Now().Add(timeout), TTLHours: s.policy.TTLHours, MaxRunBytes: s.policy.MaxRunBytes}
+	admissionCtx, cancelAdmission := context.WithTimeout(ctx, 3*time.Second)
+	row, err := st.Admit(admissionCtx, owner, program)
+	cancelAdmission()
+	if err != nil {
+		return reject(err)
+	}
+	binary := s.binary
+	if binary == "" {
+		binary, err = os.Executable()
+	}
+	if err != nil {
+		return s.startFailure(st, row)
+	}
+	h, launchErr := Launch(ctx, binary, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: st.Path(), Deadline: program.Deadline}, s.key, Leases{Owner: owner.Lease, Lifecycle: st.LifecycleLease()})
+	if launchErr != nil {
+		if h == nil {
+			return s.startFailure(st, row)
+		}
+		quarantineErr := s.quarantine(st)
+		// Launch remains bounded even for a stopped helper. Retain this call's
+		// lifecycle ownership in a separate join; Close still waits for it.
+		s.wg.Add(1)
+		go func() { defer s.wg.Done(); h.Wait() }()
+		result := row.Result
+		result.State = "interrupted"
+		reason := "supervisor_startup_failed"
+		result.Reason = &reason
+		result.Error = &runstore.Error{Code: "cleanup_unverified", Message: "supervisor startup outcome is unknown; inspect this run before retrying"}
+		if quarantineErr != nil {
+			result.Error.Message += "; admission quarantine could not be persisted"
+		}
+		return result
+	}
+	stop := context.AfterFunc(ctx, func() { h.Cancel() })
+	outcome, waitErr := h.Wait()
+	stop()
+	queryCtx, cancelQuery := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancelQuery()
+	latest, readErr := st.Load(queryCtx, row.ID)
+	var quarantineErr error
+	if waitErr != nil || !outcome.Result.Retired {
+		if readErr != nil || latest.Cleanup == "pending" {
+			quarantineErr = s.quarantine(st)
+		}
+		if readErr == nil && latest.Cleanup == "not_spawned" {
+			return s.startFailure(st, row)
+		}
+	}
+	if readErr == nil && latest.Result.Capture.TerminalPersisted {
+		if quarantineErr != nil {
+			latest.Result.Error = &runstore.Error{Code: "cleanup_unverified", Message: "process cleanup is unverified and admission quarantine could not be persisted"}
+		}
+		return latest.Result
+	}
+	result := row.Result
+	if readErr == nil {
+		result = latest.Result
+	}
+	result.State = "interrupted"
+	result.Capture.State = "incomplete"
+	result.Capture.TerminalPersisted = false
+	if waitErr == nil {
+		result.ExitCode = outcome.Result.ExitCode
+		if outcome.Result.Signal > 0 {
+			result.Signal = &outcome.Result.Signal
+			result.ExitCode = nil
+		}
+		result.Capture.ObservedBytes = outcome.Result.ObservedBytes
+		result.ElapsedMS = outcome.Result.ElapsedMS
+	}
+	reason := "terminal_unavailable"
+	result.Reason = &reason
+	result.Error = &runstore.Error{Code: "storage_unavailable", Message: "terminal outcome was not durably recorded; recover this run before any retry"}
+	if quarantineErr != nil {
+		result.Error.Message += "; admission quarantine could not be persisted"
+	}
+	return result
+}
+
+func (s *Service) startFailure(st *runstore.Store, row runstore.Admitted) runstore.Result {
+	ctx, cancel := context.WithTimeout(context.Background(), runstore.WriteTimeout)
+	defer cancel()
+	if err := st.Finish(ctx, row.ID, runstore.Completion{Retired: true, Reason: "spawn_failed"}); err == nil {
+		if latest, err := st.Load(ctx, row.ID); err == nil {
+			return latest.Result
+		}
+	}
+	result := row.Result
+	result.State = "start_failed"
+	result.Error = &runstore.Error{Code: "storage_unavailable", Message: "supervisor could not start; finalization was unavailable"}
+	return result
+}
+
+func reject(err error) runstore.Result {
+	var e *runstore.Error
+	if errors.As(err, &e) {
+		return runstore.Rejection(e.Code, e.Message)
+	}
+	return runstore.Rejection("storage_unavailable", "run admission failed before execution")
+}
+
+func (s *Service) quarantine(st *runstore.Store) error {
+	s.mu.Lock()
+	s.unverified = true
+	s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), runstore.WriteTimeout)
+	defer cancel()
+	// Pending rows and retained leases remain the fallback proof if this write
+	// fails; all future calls through this owner are blocked in memory as well.
+	return st.Quarantine(ctx)
+}
+
+func (s *Service) Status(ctx context.Context, id string) (runstore.Result, error) {
+	ctx, done, err := s.begin(ctx, false)
+	if err != nil {
+		return runstore.Result{}, err
+	}
+	defer done()
+	st, _, err := s.attached(ctx, false)
+	if err != nil {
+		return runstore.Result{}, err
+	}
+	row, err := st.Load(ctx, id)
+	return row.Result, err
+}
+
+func (s *Service) ReadRaw(ctx context.Context, id, stream, cursor string, maxBytes int) (runstore.ReadPage, error) {
+	ctx, done, err := s.begin(ctx, false)
+	if err != nil {
+		return runstore.ReadPage{}, err
+	}
+	defer done()
+	st, _, err := s.attached(ctx, false)
+	if err != nil {
+		return runstore.ReadPage{}, err
+	}
+	return st.ReadRaw(ctx, id, stream, cursor, maxBytes)
+}
+
+func (s *Service) Close() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		<-s.closeDone
+		return s.closeErr
+	}
+	s.closed = true
+	for _, cancel := range s.jobs {
+		cancel()
+	}
+	s.mu.Unlock()
+	s.wg.Wait()
+	var err error
+	if s.owner != nil {
+		err = s.owner.Lease.Close()
+	}
+	if s.store != nil {
+		err = errors.Join(err, s.store.Close())
+	}
+	s.closeErr = err
+	close(s.closeDone)
+	return err
+}

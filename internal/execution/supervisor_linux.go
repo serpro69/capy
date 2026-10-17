@@ -63,10 +63,12 @@ func ServeInherited(ctx context.Context, open OpenRun) (retErr error) {
 	if err := start.validate(); err != nil {
 		return err
 	}
-	var key string
-	if err := readFrame(credential, &key); err != nil {
+	var credentialBytes []byte
+	if err := readFrameLimit(credential, &credentialBytes, maxCredentialFrameBytes); err != nil {
 		return err
 	}
+	key := string(credentialBytes)
+	clear(credentialBytes)
 	if key == "" {
 		return errors.New("missing supervisor credential")
 	}
@@ -78,7 +80,7 @@ func ServeInherited(ctx context.Context, open OpenRun) (retErr error) {
 		return err
 	}
 	admitCtx, stopAdmission := context.WithDeadline(ctx, deadline)
-	run, err := open(admitCtx, start, key)
+	run, err := open(admitCtx, start, key, Leases{Owner: owner, Lifecycle: lifecycle})
 	stopAdmission()
 	key = ""
 	if err != nil {
@@ -136,7 +138,9 @@ func ServeInherited(ctx context.Context, open OpenRun) (retErr error) {
 	if err != nil {
 		return errors.New("persisting supervisor pending proof")
 	}
-	result, execErr := run.Executor.ExecuteStream(jobCtx, run.Request, run.Store.Append)
+	began := time.Now()
+	result, execErr := run.Executor.ExecuteStreamWithStart(jobCtx, run.Request, run.Store.Append, run.Started)
+	result.ElapsedMS = time.Since(began).Milliseconds()
 	outcome := Outcome{Result: result}
 	if jobCtx.Err() != nil {
 		if errors.Is(jobCtx.Err(), context.DeadlineExceeded) {

@@ -76,7 +76,12 @@ func TestMCPStdioExecutionCwd(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.tool, func(t *testing.T) {
 			tc.args["cwd"] = "work dir"
-			output := p.tool(t, tc.tool, tc.args)
+			var output string
+			if tc.tool == "capy_execute" {
+				output = p.executeOutput(t, tc.args)
+			} else {
+				output = p.tool(t, tc.tool, tc.args)
+			}
 			canonical, err := filepath.EvalSymlinks(workDir)
 			require.NoError(t, err)
 			assert.Contains(t, output, canonical)
@@ -88,11 +93,11 @@ func TestMCPStdioExecutionCwd(t *testing.T) {
 	}
 	// Explicit absolute external cwd remains allowed and does not persist.
 	external := t.TempDir()
-	output := p.tool(t, "capy_execute", map[string]any{"language": "shell", "code": "pwd", "cwd": external})
+	output := p.executeOutput(t, map[string]any{"language": "shell", "code": "pwd", "cwd": external})
 	canonical, err := filepath.EvalSymlinks(external)
 	require.NoError(t, err)
 	assert.Contains(t, output, canonical)
-	output = p.tool(t, "capy_execute", map[string]any{"language": "shell", "code": "pwd"})
+	output = p.executeOutput(t, map[string]any{"language": "shell", "code": "pwd"})
 	canonical, err = filepath.EvalSymlinks(project)
 	require.NoError(t, err)
 	assert.Contains(t, output, canonical)

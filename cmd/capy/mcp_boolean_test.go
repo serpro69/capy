@@ -113,11 +113,12 @@ func TestMCPStdioBooleanArgs(t *testing.T) {
 			want  string
 		}{
 			{value: " TrUe ", want: "process backgrounded"},
-			{value: " FaLsE ", want: "timed out after"},
+			{value: " FaLsE ", want: "timed_out"},
 		} {
-			text := p.tool(t, "capy_execute", map[string]any{
+			isError, text := stdioBooleanCall(t, p, "capy_execute", map[string]any{
 				"language": "shell", "code": "printf started; sleep 30", "timeout": 1000, "background": tc.value,
 			})
+			require.Equal(t, tc.value == " FaLsE ", isError)
 			assert.Contains(t, text, tc.want)
 		}
 

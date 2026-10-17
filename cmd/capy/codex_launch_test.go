@@ -163,13 +163,13 @@ func TestCodexMCPLaunchLocations(t *testing.T) {
 				} `json:"tools"`
 			}
 			require.NoError(t, p.request("tools/list", map[string]any{}, &result))
-			require.Len(t, result.Tools, 10)
+			require.Len(t, result.Tools, 11)
 			installed := readInstalledCodexHooks(t, owner)
 			matcher := regexp.MustCompile(installed.Hooks["PreToolUse"][0].Matcher)
 			for _, tool := range result.Tools {
 				require.True(t, matcher.MatchString("mcp__alternate_server__"+tool.Name), "unmatched registered tool: %s", tool.Name)
 			}
-			output := p.tool(t, "capy_execute", map[string]any{"language": "shell", "code": "pwd"})
+			output := p.executeOutput(t, map[string]any{"language": "shell", "code": "pwd"})
 			require.Contains(t, output, owner)
 			p.tool(t, "capy_index", map[string]any{"source": "launch-fixture", "content": "portable owner binding sentinel"})
 			p.close(t)

@@ -52,8 +52,11 @@ func TestBench5000ByteThreshold(t *testing.T) {
 			elapsed := time.Since(start)
 			require.False(t, r.IsError)
 
-			text := resultText(r)
-			wasIndexed := strings.Contains(text, "Indexed") || strings.Contains(text, "knowledge base")
+			encoded, err := json.Marshal(r)
+			require.NoError(t, err)
+			text := string(encoded)
+			wasIndexed := false // new synchronous runs never create knowledge FTS rows
+			require.Nil(t, srv.store)
 
 			tr := thresholdResult{
 				SizeBytes:  sz,

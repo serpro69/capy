@@ -12,9 +12,7 @@ func newExecuteSupervisorCmd() *cobra.Command {
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// Task 2 supplies the authenticated runstore opener. Until then this
-			// entry validates private descriptors and fails before any spawn.
-			return execution.ServeInherited(cmd.Context(), nil)
+			return execution.ServeInherited(cmd.Context(), execution.OpenStoredRun)
 		},
 	}
 }

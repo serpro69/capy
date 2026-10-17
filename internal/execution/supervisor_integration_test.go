@@ -101,7 +101,7 @@ func writeProof(dir, state string) error {
 	return f.Sync()
 }
 
-func openFixture(ctx context.Context, start Startup, key string) (*Run, error) {
+func openFixture(ctx context.Context, start Startup, key string, _ Leases) (*Run, error) {
 	if key != fixtureKey || start.RunID != fixtureRun {
 		return nil, errors.New("fixture admission mismatch")
 	}
@@ -555,7 +555,7 @@ func TestSupervisorRejectsPrivateAdmission(t *testing.T) {
 			default:
 				writeFrame(channels[1], start)
 			}
-			writeFrame(channels[3], key)
+			writeFrame(channels[3], []byte(key))
 			channels[3].Close()
 			if mode == "no_authorization" {
 				var ready notice
@@ -866,7 +866,7 @@ func TestSupervisorLossNeverCertifiesQuiescence(t *testing.T) {
 	assertProof(t, dir, "pending")
 	// Free locks alone cannot authorize reset/reuse: a new opener must inspect
 	// durable pending evidence. This fixture backend refuses to reopen it.
-	if _, err := openFixture(context.Background(), fixtureStartup(dir), fixtureKey); err == nil {
+	if _, err := openFixture(context.Background(), fixtureStartup(dir), fixtureKey, Leases{}); err == nil {
 		t.Fatal("pending generation reused after helper loss")
 	}
 	if err := unix.Kill(leader, 0); err != nil {

@@ -107,6 +107,7 @@ func TestCapyToolNamesComplete(t *testing.T) {
 		"capy_stats",
 		"capy_doctor",
 		"capy_cleanup",
+		"capy_runs",
 	}
 	assert.Equal(t, expected, CapyToolNames)
 }

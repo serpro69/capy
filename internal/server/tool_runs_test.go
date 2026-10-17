@@ -1,0 +1,144 @@
+package server
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/config"
+	"github.com/serpro69/capy/internal/executor"
+	"github.com/serpro69/capy/internal/runstore"
+	"github.com/stretchr/testify/require"
+)
+
+func capturedResult(t *testing.T, r *mcp.CallToolResult) runstore.Result {
+	t.Helper()
+	result, ok := r.StructuredContent.(runstore.Result)
+	require.True(t, ok, "missing run envelope: %s", resultText(r))
+	return result
+}
+
+func callRuns(t *testing.T, s *Server, args map[string]any) *mcp.CallToolResult {
+	t.Helper()
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = args
+	r, err := s.handleRuns(context.Background(), req)
+	require.NoError(t, err)
+	return r
+}
+
+func capturedOutput(t *testing.T, s *Server, r *mcp.CallToolResult, stream string) string {
+	t.Helper()
+	run := capturedResult(t, r)
+	require.NotNil(t, run.RunID)
+	var b strings.Builder
+	cursor := ""
+	for {
+		args := map[string]any{"action": "read", "run_id": *run.RunID, "raw": true, "stream": stream, "max_bytes": 4096}
+		if cursor != "" {
+			args["cursor"] = cursor
+		}
+		r := callRuns(t, s, args)
+		require.False(t, r.IsError, resultText(r))
+		page, ok := r.StructuredContent.(runstore.ReadPage)
+		require.True(t, ok)
+		for _, fragment := range page.Fragments {
+			b.Write(fragment.Data)
+		}
+		if page.EOF {
+			break
+		}
+		require.NotNil(t, page.NextCursor)
+		cursor = *page.NextCursor
+	}
+	return b.String()
+}
+
+func TestCapturedRunRecoveryAndSafeDefault(t *testing.T) {
+	srv := newTestServer(t, nil)
+	r := callTool(t, srv, map[string]any{"language": "shell", "code": "printf stdout-marker; printf stderr-marker >&2; printf x >> executed-once; exit 7"})
+	require.True(t, r.IsError)
+	run := capturedResult(t, r)
+	require.Equal(t, "exited", run.State)
+	require.Equal(t, 7, *run.ExitCode)
+	require.Equal(t, "complete", run.Capture.State)
+	require.Equal(t, "unavailable", run.Redaction.State)
+	require.NotContains(t, resultText(r), "stdout-marker")
+	require.NotContains(t, resultText(r), "stderr-marker")
+	status := callRuns(t, srv, map[string]any{"action": "status", "run_id": *run.RunID})
+	require.False(t, status.IsError, resultText(status))
+	for _, args := range []map[string]any{
+		{"action": "read", "run_id": *run.RunID},
+		{"action": "read", "run_id": *run.RunID, "encoding": "base64"},
+		{"action": "read", "run_id": *run.RunID, "raw": true, "encoding": "text"},
+		{"action": "read", "run_id": *run.RunID, "raw": true, "max_bytes": 1.5},
+		{"action": "status", "run_id": *run.RunID, "raw": true},
+	} {
+		result := callRuns(t, srv, args)
+		require.True(t, result.IsError)
+		require.NotContains(t, resultText(result), "stdout-marker")
+	}
+	require.Equal(t, "stdout-marker", capturedOutput(t, srv, r, "stdout"))
+	require.Equal(t, "stderr-marker", capturedOutput(t, srv, r, "stderr"))
+	b, err := os.ReadFile(filepath.Join(srv.projectDir, "executed-once"))
+	require.NoError(t, err)
+	require.Equal(t, "x", string(b))
+	require.Nil(t, srv.store, "ordinary execution must not open knowledge storage")
+	require.NoFileExists(t, srv.config.Store.Path)
+	require.NoFileExists(t, os.Getenv("CAPY_VAULT_PATH"))
+}
+
+func TestCapturedAdmissionRejectsBeforeSpawn(t *testing.T) {
+	for _, input := range []map[string]any{
+		{"language": "shell", "code": "touch must-not-spawn", "timeout": 0},
+		{"language": "shell", "code": "touch must-not-spawn", "timeout": 1.2},
+		{"language": "shell", "code": "touch must-not-spawn", "timeout": "10"},
+		{"language": "shell", "code": "touch must-not-spawn", "timeout": 1e30},
+		{"language": "shell", "code": "touch must-not-spawn", "background": "not-a-boolean"},
+	} {
+		srv := newTestServer(t, nil)
+		r := callTool(t, srv, input)
+		require.True(t, r.IsError)
+		run := capturedResult(t, r)
+		require.Nil(t, run.RunID)
+		require.Equal(t, "not_started", run.State)
+		require.NoFileExists(t, filepath.Join(srv.projectDir, "must-not-spawn"))
+		require.NoDirExists(t, filepath.Join(srv.projectDir, ".capy", "runs"))
+	}
+}
+
+func TestCapturedCredentialSnapshotAndEmptyOverride(t *testing.T) {
+	for _, mode := range []string{"empty", "long binary"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			cfg := config.DefaultConfig()
+			cfg.Store.Path = filepath.Join(root, "knowledge.db")
+			key := ""
+			if mode == "long binary" {
+				key = strings.Repeat("synthetic-key-", 6000) + string([]byte{255})
+			}
+			srv := NewServer(cfg, nil, executor.NewExecutor(root, 0), root, WithKnowledgeCredentials(key, config.KeySource{}))
+			t.Cleanup(srv.shutdown)
+			t.Setenv("CAPY_DB_KEY", "changed-inherited-key")
+			r := callTool(t, srv, map[string]any{"language": "shell", "code": "printf retained; touch executed"})
+			if mode == "empty" {
+				require.True(t, r.IsError)
+				require.Nil(t, capturedResult(t, r).RunID)
+				require.NoDirExists(t, filepath.Join(root, ".capy"))
+				require.NoFileExists(t, filepath.Join(root, "executed"))
+				return
+			}
+			require.False(t, r.IsError, resultText(r))
+			require.Equal(t, "retained", capturedOutput(t, srv, r, "stdout"))
+			srv.shutdown()
+			path, err := config.ResolveRunDBPath(root)
+			require.NoError(t, err)
+			st, err := runstore.Open(t.Context(), path, key, false)
+			require.NoError(t, err)
+			require.NoError(t, st.Close())
+		})
+	}
+}

@@ -99,7 +99,11 @@ func TestExecutionCwdLocationsAndFileAnchor(t *testing.T) {
 					require.False(t, result.IsError, resultText(result))
 					want, err := filepath.EvalSymlinks(tc.dir)
 					require.NoError(t, err)
-					assert.Contains(t, resultText(result), "cwdmarker"+want)
+					output := resultText(result)
+					if tool == "execute" {
+						output = capturedOutput(t, srv, result, "stdout")
+					}
+					assert.Contains(t, output, "cwdmarker"+want)
 					if tool == "execute-file" {
 						assert.Contains(t, resultText(result), "project-input")
 						assert.NotContains(t, resultText(result), "wrong-cwd-input")
@@ -140,10 +144,14 @@ func TestExecutionCwdConcurrentRequests(t *testing.T) {
 					// collision behavior while exercising one shared executor/store.
 					result := callCwdTool(t, srv, tool, dir, "printf "+marker+"; cat marker; pwd")
 					require.False(t, result.IsError, resultText(result))
-					assert.Contains(t, resultText(result), marker)
+					output := resultText(result)
+					if tool == "execute" {
+						output = capturedOutput(t, srv, result, "stdout")
+					}
+					assert.Contains(t, output, marker)
 					want, err := filepath.EvalSymlinks(dir)
 					require.NoError(t, err)
-					assert.Contains(t, resultText(result), want)
+					assert.Contains(t, output, want)
 				})
 			}
 		}
@@ -152,7 +160,7 @@ func TestExecutionCwdConcurrentRequests(t *testing.T) {
 	require.False(t, result.IsError, resultText(result))
 	want, err := filepath.EvalSymlinks(srv.projectDir)
 	require.NoError(t, err)
-	assert.Equal(t, want, strings.TrimSpace(resultText(result)))
+	assert.Equal(t, want, strings.TrimSpace(capturedOutput(t, srv, result, "stdout")))
 	after, err := os.Getwd()
 	require.NoError(t, err)
 	assert.Equal(t, processDir, after)

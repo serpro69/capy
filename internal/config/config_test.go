@@ -12,7 +12,7 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	assert.Equal(t, 30, cfg.Executor.Timeout)
+	assert.Equal(t, 300, cfg.Executor.Timeout)
 	assert.Equal(t, 102400, cfg.Executor.MaxOutputBytes)
 	assert.Equal(t, 2.0, cfg.Store.TitleWeight)
 	assert.Equal(t, 30, cfg.Store.Cleanup.ColdThresholdDays)
@@ -156,7 +156,7 @@ func TestLoadMissingFiles(t *testing.T) {
 	cfg, err := Load(dir)
 	require.NoError(t, err)
 	// All defaults.
-	assert.Equal(t, 30, cfg.Executor.Timeout)
+	assert.Equal(t, 300, cfg.Executor.Timeout)
 	assert.Equal(t, "info", cfg.Server.LogLevel)
 }
 

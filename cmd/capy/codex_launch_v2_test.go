@@ -65,8 +65,8 @@ func TestCodexDirectDispatch(t *testing.T) {
 				p.initialize(t)
 				var listed map[string]any
 				require.NoError(t, p.request("tools/list", map[string]any{}, &listed))
-				require.Len(t, listed["tools"], 10)
-				require.Contains(t, p.tool(t, "capy_execute", map[string]any{"language": "shell", "code": "pwd"}), owner)
+				require.Len(t, listed["tools"], 11)
+				require.Contains(t, p.executeOutput(t, map[string]any{"language": "shell", "code": "pwd"}), owner)
 				p.close(t)
 				require.NoFileExists(t, filepath.Join(owner, "wrapper-invoked"))
 			}
