@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–3 done; Tasks 4–17 pending
+> Status: in-progress — Tasks 1–4 done; Tasks 5–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -70,7 +70,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 4: Recover sanitized output across arbitrary boundaries
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** —
@@ -78,9 +78,11 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 4.1 Add bounded streaming redaction and encrypted projection/checkpoints/raw anchors → verify: all synthetic token/tag splits and unchanged raw hashes.
-- [ ] 4.2 Handle overflow, unfinished private blocks, EOF and state/version failure conservatively → verify: no default-surface prefix or diagnostic-tail leak.
-- [ ] 4.3 Implement projection/raw cursors and merged pending-coverage barriers → verify: arbitrary protected-span pages, independent stream progress, huge lines and stale cursors.
+- [x] 4.1 Add bounded streaming redaction and encrypted projection/checkpoints/raw anchors → verify: all synthetic token/tag splits and unchanged raw hashes.
+- [x] 4.2 Handle overflow, unfinished private blocks, EOF and state/version failure conservatively → verify: no default-surface prefix or diagnostic-tail leak.
+- [x] 4.3 Implement projection/raw cursors and merged pending-coverage barriers → verify: arbitrary protected-span pages, independent stream progress, huge lines and stale cursors.
+
+**Evidence:** [Task 4 verification](task4-verification.md) · [isolated review](task4-code-review.md). Full FTS5 suite, final focused race/subprocess checks, vet and quality comparison pass.
 
 ## Task 5: Expose shared CLI execution and retrieval
 

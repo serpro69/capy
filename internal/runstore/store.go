@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 const OwnerSlots = 64
 const WriteTimeout = 250 * time.Millisecond
 
@@ -259,4 +259,22 @@ CREATE TABLE run_events(
  PRIMARY KEY(run_id,seq)
 );
 CREATE INDEX run_events_stream ON run_events(run_id,stream,seq);
+CREATE INDEX run_events_offsets ON run_events(run_id,stream,byte_offset);
+CREATE INDEX run_events_lines ON run_events(run_id,stream,start_line,seq);
+CREATE TABLE run_streams(
+ run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+ stream TEXT NOT NULL CHECK(stream IN ('stdout','stderr')),
+ checkpoint BLOB NOT NULL CHECK(length(checkpoint)<=4096),
+ covered INTEGER NOT NULL DEFAULT 0, observed INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(run_id,stream)
+);
+CREATE TABLE run_projection(
+ run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+ stream TEXT NOT NULL, raw_start INTEGER NOT NULL, raw_end INTEGER NOT NULL,
+ seq INTEGER NOT NULL, phase TEXT NOT NULL, start_line INTEGER NOT NULL,
+ text TEXT NOT NULL, redacted INTEGER NOT NULL,
+ PRIMARY KEY(run_id,stream,raw_start), CHECK(raw_end>raw_start)
+);
+CREATE INDEX run_projection_order ON run_projection(run_id,seq,raw_start);
+
 `

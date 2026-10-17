@@ -39,7 +39,7 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	}
 	allowed := map[string]bool{"action": true, "run_id": true}
 	if action == "read" {
-		for _, name := range []string{"raw", "encoding", "stream", "cursor", "max_bytes"} {
+		for _, name := range []string{"raw", "encoding", "stream", "cursor", "max_bytes", "start_line"} {
 			allowed[name] = true
 		}
 	}
@@ -99,16 +99,27 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	if err != nil {
 		return fail("invalid_argument", err.Error())
 	}
-	if !raw {
-		return fail("redaction_unavailable", "sanitized output projection is unavailable; raw output requires explicit raw=true")
+	var startLine int64
+	if _, present := args["start_line"]; present {
+		startLine, err = integerArg(args, "start_line", 0, 1, 1<<53-1)
+		if err != nil {
+			return fail("invalid_argument", err.Error())
+		}
+		if cursor != "" || stream == "merged" {
+			return fail("invalid_argument", "start_line requires an explicit single stream and no cursor")
+		}
 	}
 	r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
-		page, err := s.executionService().ReadRaw(ctx, id, stream, cursor, min(int(maxBytes), max(1, n)))
+		fallback := "Sanitized output from the persisted projection."
+		if raw {
+			fallback = "Unsanitized raw output: base64 event fragments."
+		}
+		page, err := s.executionService().Read(ctx, id, runstore.ReadOptions{Stream: stream, Cursor: cursor, StartLine: startLine, MaxBytes: min(int(maxBytes), max(1, n)), Raw: raw})
 		if err != nil {
 			return nil, err
 		}
 		page.Run = execution.BoundResult(page.Run, n)
-		return mcp.NewToolResultStructured(page, "Unsanitized raw output: base64 event fragments."), nil
+		return mcp.NewToolResultStructured(page, fallback), nil
 	}, nil)
 	if err != nil {
 		return operationError(err)
@@ -118,13 +129,14 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 
 func toolRuns() mcp.Tool {
 	return mcp.NewTool("capy_runs", mcp.WithToolAnnotation(annotationCleanup),
-		mcp.WithDescription("Recover a captured run without executing it again. Supports status and explicit raw reads; sanitized output and other actions are currently unavailable."),
+		mcp.WithDescription("Recover a captured run without executing it again. Supports status, sanitized reads and explicit raw reads. Other actions are currently unavailable."),
 		mcp.WithString("action", mcp.Required(), mcp.Enum("status", "read")),
 		mcp.WithString("run_id", mcp.Required(), mcp.Description("Captured run UUID in this owner's run store")),
 		mcp.WithBoolean("raw", mcp.Description("Explicitly request unsanitized bytes (default false)")),
 		mcp.WithString("encoding", mcp.Enum("text", "base64")),
 		mcp.WithString("stream", mcp.Enum("stdout", "stderr", "merged")),
-		mcp.WithString("cursor", mcp.Description("Opaque continuation returned by the previous raw read")),
+		mcp.WithString("cursor", mcp.Description("Opaque continuation returned by the previous read")),
+		mcp.WithNumber("start_line", mcp.Min(1), mcp.Description("Raw line number; requires stdout or stderr and no cursor")),
 		mcp.WithNumber("max_bytes", mcp.Min(1), mcp.Max(65536)),
 	)
 }

@@ -9,11 +9,14 @@ import (
 )
 
 const captureQueueBlocks = (1 << 20) / executor.EventBlockBytes
-const captureBatchBlocks = 16
+
+// Keep CPU-heavy binary projection within the same 250 ms write deadline,
+// including race-instrumented builds. Store admission still caps batches at 16.
+const captureBatchBlocks = 2
 
 // captureQueue decouples pipe draining from bounded storage writes. There is one
 // producer (executor's sequencer), one writer, and at most 1 MiB queued plus a
-// 256 KiB in-flight batch. The first lost block ends capture permanently.
+// 32 KiB in-flight batch. The first lost block ends capture permanently.
 type captureQueue struct {
 	events       chan executor.OutputEvent
 	done         chan struct{}

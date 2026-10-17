@@ -184,7 +184,7 @@ func (s *Service) Execute(ctx context.Context, request executor.ExecRequest, int
 		if quarantineErr != nil {
 			latest.Result.Error = &runstore.Error{Code: "cleanup_unverified", Message: "process cleanup is unverified and admission quarantine could not be persisted"}
 		}
-		return latest.Result
+		return s.withPreview(queryCtx, st, latest.Result)
 	}
 	result := row.Result
 	if readErr == nil {
@@ -322,4 +322,46 @@ func knownOutcome(result runstore.Result, outcome Outcome, cursor *string) runst
 		result.Error = &runstore.Error{Code: "storage_unavailable", Message: "terminal outcome was not durably recorded; recover this run before any retry"}
 	}
 	return result
+}
+
+func (s *Service) ReadProjection(ctx context.Context, id, stream, cursor string, maxBytes int) (runstore.ReadPage, error) {
+	ctx, done, err := s.begin(ctx, false)
+	if err != nil {
+		return runstore.ReadPage{}, err
+	}
+	defer done()
+	st, _, err := s.attached(ctx, false)
+	if err != nil {
+		return runstore.ReadPage{}, err
+	}
+	return st.ReadProjection(ctx, id, stream, cursor, maxBytes)
+}
+
+func (s *Service) withPreview(ctx context.Context, st *runstore.Store, result runstore.Result) runstore.Result {
+	if result.RunID == nil || result.Redaction.State == "unavailable" {
+		return result
+	}
+	page, err := st.ReadProjection(ctx, *result.RunID, "merged", "", min(2048, s.policy.MaxResponseBytes/4))
+	if err != nil {
+		result.Redaction.State = "unavailable"
+		result.Redaction.CoverageCursor = nil
+		return result
+	}
+	for _, fragment := range page.Fragments {
+		result.Preview += "[" + fragment.Stream + "] " + fragment.Text
+	}
+	return result
+}
+
+func (s *Service) Read(ctx context.Context, id string, options runstore.ReadOptions) (runstore.ReadPage, error) {
+	ctx, done, err := s.begin(ctx, false)
+	if err != nil {
+		return runstore.ReadPage{}, err
+	}
+	defer done()
+	st, _, err := s.attached(ctx, false)
+	if err != nil {
+		return runstore.ReadPage{}, err
+	}
+	return st.Read(ctx, id, options)
 }

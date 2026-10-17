@@ -52,6 +52,14 @@ func SafeMessage(message string, allowance int) string {
 }
 
 func BoundResult(result runstore.Result, allowance int) runstore.Result {
+	if len(result.Preview) > allowance {
+		end := allowance
+		for end > 0 && !utf8.RuneStart(result.Preview[end]) {
+			end--
+		}
+		result.Preview = result.Preview[:end]
+		result.MetadataOmitted = true
+	}
 	if result.Error != nil {
 		safe := *result.Error
 		safe.Message = SafeMessage(safe.Message, allowance)

@@ -253,7 +253,11 @@ evicted rows can disappear. There is no long-lived database snapshot.
 Raw read continuation uses event sequence and byte offset. Default text reads
 use finalized projection segments and raw anchors; they never sanitize slices
 independently. `next_cursor` advances only over returned or explicitly redacted
-coverage. Long lines may continue across pages with explicit continuation flags.
+coverage. Long lines may continue across pages with explicit continuation flags. Text pages
+keep UTF-8 code points atomic: when max_bytes is smaller than the next code point,
+a page may return that one code point (at most four UTF-8 bytes). The complete
+serialized response budget remains strict; raw reads retain the exact max_bytes
+limit. A code point split between raw events belongs to its first-byte event.
 `end_of_available=true` means no more current bytes, whereas `eof=true` also
 requires a terminal run and finalized coverage.
 

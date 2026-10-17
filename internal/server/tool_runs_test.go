@@ -67,13 +67,12 @@ func TestCapturedRunRecoveryAndSafeDefault(t *testing.T) {
 	require.Equal(t, "exited", run.State)
 	require.Equal(t, 7, *run.ExitCode)
 	require.Equal(t, "complete", run.Capture.State)
-	require.Equal(t, "unavailable", run.Redaction.State)
+	require.Equal(t, "ready", run.Redaction.State)
 	require.NotContains(t, resultText(r), "stdout-marker")
 	require.NotContains(t, resultText(r), "stderr-marker")
 	status := callRuns(t, srv, map[string]any{"action": "status", "run_id": *run.RunID})
 	require.False(t, status.IsError, resultText(status))
 	for _, args := range []map[string]any{
-		{"action": "read", "run_id": *run.RunID},
 		{"action": "read", "run_id": *run.RunID, "encoding": "base64"},
 		{"action": "read", "run_id": *run.RunID, "raw": true, "encoding": "text"},
 		{"action": "read", "run_id": *run.RunID, "raw": true, "max_bytes": 1.5},
@@ -170,7 +169,7 @@ for i in range(24):
 	r := callTool(t, srv, map[string]any{"language": "python", "code": code})
 	assertRunBudget(t, r, 2048)
 	run := capturedResult(t, r)
-	require.False(t, r.IsError, resultText(r))
+	require.False(t, r.IsError, "capture=%+v error=%+v", run.Capture, run.Error)
 	block := make([]byte, 256)
 	for i := range block {
 		block[i] = byte(i)
@@ -254,4 +253,28 @@ func TestCapturedSpawnAndCompilerFailuresAreBounded(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCapturedDefaultProjectionSuppressesSecrets(t *testing.T) {
+	srv := newTestServer(t, nil)
+	srv.config.Runs.MaxResponseBytes = 2048
+	secret := "sk-" + strings.Repeat("A", 30)
+	code := "printf 'safe!\n" + secret + "\n<private>hidden\nprivate tail'"
+	r := callTool(t, srv, map[string]any{"language": "shell", "code": code})
+	assertRunBudget(t, r, 2048)
+	run := capturedResult(t, r)
+	require.Contains(t, run.Preview, "safe!")
+	encoded, err := json.Marshal(r)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), secret)
+	require.NotContains(t, string(encoded), "private tail")
+	result := callRuns(t, srv, map[string]any{"action": "read", "run_id": *run.RunID, "stream": "stdout", "start_line": 4, "max_bytes": 65536})
+	require.False(t, result.IsError, resultText(result))
+	assertRunBudget(t, result, 2048)
+	page := result.StructuredContent.(runstore.ReadPage)
+	for _, f := range page.Fragments {
+		require.NotContains(t, f.Text, "private tail")
+		require.Empty(t, f.Data)
+	}
+	require.Contains(t, capturedOutput(t, srv, r, "stdout"), secret)
 }
