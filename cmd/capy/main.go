@@ -33,6 +33,8 @@ func main() {
 		newHookCmd(),
 		newCodexLaunchCmd(),
 		newExecuteSupervisorCmd(),
+		newExecuteCmd(),
+		newRunsCmd(),
 		newSetupCmd(),
 		newDoctorCmd(),
 		newCleanupCmd(),

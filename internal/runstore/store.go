@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 const OwnerSlots = 64
 const WriteTimeout = 250 * time.Millisecond
 
@@ -240,16 +240,18 @@ func (s *Store) Close() error {
 }
 
 const schema = `
-CREATE TABLE run_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, store_id TEXT NOT NULL, owner TEXT NOT NULL, admission_blocked INTEGER NOT NULL DEFAULT 0 CHECK(admission_blocked IN (0,1)));
+CREATE TABLE run_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, store_id TEXT NOT NULL, owner TEXT NOT NULL, admission_blocked INTEGER NOT NULL DEFAULT 0 CHECK(admission_blocked IN (0,1)), last_created INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE run_owners(slot INTEGER PRIMARY KEY CHECK(slot>=0 AND slot<64), generation TEXT NOT NULL UNIQUE);
 CREATE TABLE runs(
  id TEXT PRIMARY KEY, generation TEXT NOT NULL, slot INTEGER NOT NULL CHECK(slot>=0 AND slot<64),
+ created_at INTEGER NOT NULL,
  program BLOB NOT NULL, result BLOB NOT NULL,
  cleanup TEXT NOT NULL CHECK(cleanup IN ('not_spawned','pending','retired')),
  terminal INTEGER NOT NULL DEFAULT 0 CHECK(terminal IN (0,1)),
  stdout_bytes INTEGER NOT NULL DEFAULT 0, stderr_bytes INTEGER NOT NULL DEFAULT 0,
  stdout_lines INTEGER NOT NULL DEFAULT 1, stderr_lines INTEGER NOT NULL DEFAULT 1
 );
+CREATE INDEX runs_created ON runs(created_at,id);
 CREATE INDEX runs_owner ON runs(slot,generation,terminal);
 CREATE TABLE run_events(
  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,

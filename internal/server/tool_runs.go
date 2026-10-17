@@ -30,8 +30,61 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		return fail("storage_unavailable", "run query failed")
 	}
 	action, ok := args["action"].(string)
-	if !ok || (action != "status" && action != "read") {
-		return fail("invalid_argument", "action must be status or read")
+	if !ok || (action != "status" && action != "read" && action != "list") {
+		return fail("invalid_argument", "action must be status, read or list")
+	}
+	if action == "list" {
+		for name := range args {
+			if name != "action" && name != "states" && name != "cursor" && name != "limit" {
+				return fail("invalid_argument", "unsupported argument for list")
+			}
+		}
+		limit, err := integerArg(args, "limit", 16, 1, 64)
+		if err != nil {
+			return fail("invalid_argument", err.Error())
+		}
+		cursor := ""
+		if value, present := args["cursor"]; present {
+			var ok bool
+			cursor, ok = value.(string)
+			if !ok || len(cursor) > 1024 {
+				return fail("cursor_invalid", "invalid list cursor")
+			}
+		}
+		var states []string
+		if value, present := args["states"]; present {
+			switch values := value.(type) {
+			case []string:
+				if len(values) > 11 {
+					return fail("invalid_argument", "too many state filters")
+				}
+				states = values
+			case []any:
+				if len(values) > 11 {
+					return fail("invalid_argument", "too many state filters")
+				}
+				for _, v := range values {
+					state, ok := v.(string)
+					if !ok {
+						return fail("invalid_argument", "states must contain strings")
+					}
+					states = append(states, state)
+				}
+			default:
+				return fail("invalid_argument", "states must be an array")
+			}
+		}
+		r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
+			page, err := s.executionService().List(ctx, runstore.ListOptions{States: states, Cursor: cursor, Limit: min(int(limit), max(1, n/256))})
+			if err != nil {
+				return nil, err
+			}
+			return mcp.NewToolResultStructured(page, "Captured run summaries; use status or read by run_id."), nil
+		}, nil)
+		if err != nil {
+			return operationError(err)
+		}
+		return s.trackToolResponse("capy_runs", r), nil
 	}
 	id, ok := args["run_id"].(string)
 	if !ok || uuid.Validate(id) != nil {
@@ -129,13 +182,15 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 
 func toolRuns() mcp.Tool {
 	return mcp.NewTool("capy_runs", mcp.WithToolAnnotation(annotationCleanup),
-		mcp.WithDescription("Recover a captured run without executing it again. Supports status, sanitized reads and explicit raw reads. Other actions are currently unavailable."),
-		mcp.WithString("action", mcp.Required(), mcp.Enum("status", "read")),
-		mcp.WithString("run_id", mcp.Required(), mcp.Description("Captured run UUID in this owner's run store")),
+		mcp.WithDescription("Recover a captured run without executing it again. Supports status, list, sanitized reads and explicit raw reads. Other actions are currently unavailable."),
+		mcp.WithString("action", mcp.Required(), mcp.Enum("status", "read", "list")),
+		mcp.WithString("run_id", mcp.Description("Captured run UUID in this owner's run store")),
 		mcp.WithBoolean("raw", mcp.Description("Explicitly request unsanitized bytes (default false)")),
 		mcp.WithString("encoding", mcp.Enum("text", "base64")),
 		mcp.WithString("stream", mcp.Enum("stdout", "stderr", "merged")),
 		mcp.WithString("cursor", mcp.Description("Opaque continuation returned by the previous read")),
+		mcp.WithArray("states", mcp.Items(map[string]any{"type": "string"})),
+		mcp.WithNumber("limit", mcp.Min(1), mcp.Max(64)),
 		mcp.WithNumber("start_line", mcp.Min(1), mcp.Description("Raw line number; requires stdout or stderr and no cursor")),
 		mcp.WithNumber("max_bytes", mcp.Min(1), mcp.Max(65536)),
 	)

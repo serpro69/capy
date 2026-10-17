@@ -26,6 +26,7 @@ type Service struct {
 	store                *runstore.Store
 	owner                *runstore.Owner
 	project, key, binary string
+	ownerType            string
 	policy               config.RunsConfig
 	closeDone            chan struct{}
 	closeErr             error
@@ -131,7 +132,7 @@ func (s *Service) Execute(ctx context.Context, request executor.ExecRequest, int
 		return reject(err)
 	}
 	physical := filepath.Dir(filepath.Dir(filepath.Dir(st.Path())))
-	program := runstore.Program{Owner: physical, Request: request, Intent: intent, Deadline: time.Now().Add(timeout), TTLHours: s.policy.TTLHours, MaxRunBytes: s.policy.MaxRunBytes}
+	program := runstore.Program{Owner: physical, OwnerType: s.ownerType, Request: request, Intent: intent, Deadline: time.Now().Add(timeout), TTLHours: s.policy.TTLHours, MaxRunBytes: s.policy.MaxRunBytes}
 	admissionCtx, cancelAdmission := context.WithTimeout(ctx, 3*time.Second)
 	row, err := st.Admit(admissionCtx, owner, program)
 	cancelAdmission()
@@ -295,7 +296,7 @@ func (s *Service) Close() error {
 // knownOutcome preserves an authenticated helper acknowledgement even when the
 // subsequent metadata refresh fails. Query failure is not finalization failure.
 func knownOutcome(result runstore.Result, outcome Outcome, cursor *string) runstore.Result {
-	runstore.ApplyOutcome(&result, runstore.Completion{Started: outcome.Result.Started, Retired: outcome.Result.Retired,
+	runstore.ApplyOutcome(&result, runstore.Completion{SpawnCode: outcome.Result.SpawnCode, Started: outcome.Result.Started, Retired: outcome.Result.Retired,
 		ExitCode: outcome.Result.ExitCode, Signal: outcome.Result.Signal, Reason: outcome.Reason,
 		ObservedBytes: outcome.Result.ObservedBytes, ElapsedMS: outcome.Result.ElapsedMS})
 	result.Capture.CapturedBytes = outcome.CapturedBytes
@@ -364,4 +365,23 @@ func (s *Service) Read(ctx context.Context, id string, options runstore.ReadOpti
 		return runstore.ReadPage{}, err
 	}
 	return st.Read(ctx, id, options)
+}
+
+func NewCLIService(project, key string, policy config.RunsConfig) *Service {
+	s := NewService(project, key, policy)
+	s.ownerType = "cli"
+	return s
+}
+
+func (s *Service) List(ctx context.Context, options runstore.ListOptions) (runstore.ListPage, error) {
+	ctx, done, err := s.begin(ctx, false)
+	if err != nil {
+		return runstore.ListPage{}, err
+	}
+	defer done()
+	st, _, err := s.attached(ctx, false)
+	if err != nil {
+		return runstore.ListPage{}, err
+	}
+	return st.List(ctx, options)
 }

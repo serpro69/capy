@@ -64,6 +64,7 @@ func Rejection(code, message string) Result {
 }
 
 type Program struct {
+	OwnerType   string               `json:"owner_type,omitempty"`
 	Owner       string               `json:"owner"`
 	Request     executor.ExecRequest `json:"request"`
 	Intent      string               `json:"intent"`
@@ -81,6 +82,7 @@ type Admitted struct {
 }
 
 type Completion struct {
+	SpawnCode                     int
 	Started, Retired, CaptureLost bool
 	ExitCode                      *int
 	Signal                        int

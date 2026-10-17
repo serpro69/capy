@@ -29,7 +29,9 @@ as truthy. All numeric conversions are checked; omission differs from explicit z
 
 CLI `capy execute` accepts `--language`, exactly one of `--code`/`--code-file`,
 `--cwd`, `--timeout-ms`, `--intent`, and `--json`, plus inherited `--project-dir`.
-Code-file input follows checked file admission. It waits for completion and
+Code-file input follows checked file admission, including matched Read asks.
+CLI programs and code files are limited to 1 MiB, matching the bounded shell
+scanner input ceiling. It waits for completion and
 remains the process owner; the host can yield/poll that CLI process. CLI does not
 accept `--background` or `--wait-ms` in v1: those are MCP response controls, not a
 request to start a daemon. Both interfaces call the same execution service.
