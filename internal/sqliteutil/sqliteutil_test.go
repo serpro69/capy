@@ -220,6 +220,7 @@ func Test_uriEscapePassphrase(t *testing.T) {
 }
 
 func TestEncryptedDSN(t *testing.T) {
+	assert.Equal(t, "file:/tmp/owner%252Fname/test.db?cipher=sqlcipher&legacy=4&key=key", EncryptedDSN("/tmp/owner%2Fname/test.db", "key"))
 	assert.Equal(t,
 		"file:/tmp/test.db?cipher=sqlcipher&legacy=4&key=my%20passphrase",
 		EncryptedDSN("/tmp/test.db", "my passphrase"))

@@ -61,7 +61,8 @@ func TestExecute_Shell_Success(t *testing.T) {
 		"code":     "echo hello world",
 	})
 	assert.False(t, r.IsError)
-	assert.Contains(t, resultText(r), "hello world")
+	assert.NotContains(t, resultText(r), "hello world")
+	assert.Contains(t, capturedOutput(t, srv, r, "stdout"), "hello world")
 }
 
 func TestExecute_Python_Success(t *testing.T) {
@@ -71,7 +72,7 @@ func TestExecute_Python_Success(t *testing.T) {
 		"code":     "print('hello from python')",
 	})
 	assert.False(t, r.IsError)
-	assert.Contains(t, resultText(r), "hello from python")
+	assert.Contains(t, capturedOutput(t, srv, r, "stdout"), "hello from python")
 }
 
 func TestExecute_SecurityDeny_Shell(t *testing.T) {
@@ -111,15 +112,15 @@ func TestExecute_NonZeroExit(t *testing.T) {
 	assert.Contains(t, resultText(r), "Exit code: 2")
 }
 
-func TestExecute_SoftFail_GrepNoMatch(t *testing.T) {
+func TestExecute_ExitOneRetainsFailure(t *testing.T) {
 	srv := newTestServer(t, nil)
 	r := callTool(t, srv, map[string]any{
 		"language": "shell",
 		"code":     "echo 'some output'; exit 1",
 	})
-	// Shell exit 1 with stdout is soft fail
-	assert.False(t, r.IsError)
-	assert.Contains(t, resultText(r), "some output")
+	assert.True(t, r.IsError)
+	assert.Equal(t, 1, *capturedResult(t, r).ExitCode)
+	assert.Contains(t, capturedOutput(t, srv, r, "stdout"), "some output")
 }
 
 func TestExecute_MissingCode(t *testing.T) {
@@ -141,10 +142,9 @@ func TestExecute_IntentSearch(t *testing.T) {
 		"intent":   "test output",
 	})
 	assert.False(t, r.IsError)
-	text := resultText(r)
-	// Should have been indexed, not returned raw
-	assert.Contains(t, text, "Indexed")
-	assert.Contains(t, text, "knowledge base")
+	assert.Equal(t, "failed", capturedResult(t, r).Index.State, "run indexing is deferred to Task 10")
+	assert.Contains(t, capturedOutput(t, srv, r, "stdout"), bigOutput)
+	assert.Nil(t, srv.store, "intent must not write new execute sources into knowledge storage")
 }
 
 func TestIntentSearch_IndexErrorTruncates(t *testing.T) {

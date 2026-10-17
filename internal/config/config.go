@@ -7,6 +7,19 @@ type Config struct {
 	Server   ServerConfig   `toml:"server"`
 	Search   SearchConfig   `toml:"search"`
 	Vault    VaultConfig    `toml:"vault"`
+	Runs     RunsConfig     `toml:"runs"`
+}
+
+// RunsConfig controls owner-local run capture. Retention maintenance, yielding,
+// and lazy indexes are integrated by later routine-command-capture tasks.
+type RunsConfig struct {
+	WaitMS           int   `toml:"wait_ms"`
+	MaxResponseBytes int   `toml:"max_response_bytes"`
+	MaxActive        int   `toml:"max_active"`
+	MaxPending       int   `toml:"max_pending"`
+	TTLHours         int   `toml:"ttl_hours"`
+	MaxRunBytes      int64 `toml:"max_run_bytes"`
+	MaxRetainedBytes int64 `toml:"max_retained_bytes"`
 }
 
 // VaultConfig controls admission of new sessions to the archive.
@@ -47,7 +60,7 @@ type CleanupConfig struct {
 // ExecutorConfig controls the polyglot executor.
 type ExecutorConfig struct {
 	Timeout        int `toml:"timeout"`          // seconds
-	MaxOutputBytes int `toml:"max_output_bytes"` // hard cap on captured output
+	MaxOutputBytes int `toml:"max_output_bytes"` // legacy output cap; never discards stored run bytes
 }
 
 // ServerConfig controls the MCP server.
@@ -79,7 +92,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Executor: ExecutorConfig{
-			Timeout:        30,
+			Timeout:        300,
 			MaxOutputBytes: 102400,
 		},
 		Server: ServerConfig{
@@ -90,5 +103,7 @@ func DefaultConfig() *Config {
 			TaperAfter: 3,
 			BlockAfter: 8,
 		},
+		Runs: RunsConfig{WaitMS: 25000, MaxResponseBytes: 8192, MaxActive: 4, MaxPending: 64,
+			TTLHours: 24, MaxRunBytes: 64 << 20, MaxRetainedBytes: 512 << 20},
 	}
 }

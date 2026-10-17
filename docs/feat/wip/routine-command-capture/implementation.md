@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Task 1 complete and verified; Tasks 2–17 pending
+> Status: Tasks 1–2 complete and verified; Tasks 3–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -50,6 +50,9 @@ Implementation evidence and supported-platform limits: [supervisor proof](superv
   must pass before Task 2; do not replace it with a direct executor unit test.
 
 ## Task 2: Capture and recover one synchronous MCP run
+
+Implementation boundaries and evidence: [Task 2 verification](task2-verification.md)
+and [isolated code review](task2-code-review.md).
 
 - Add minimal encrypted run/event metadata and schema version in runstore using
   sqliteutil. Resolve the selected owner/key without opening knowledge/vault →

@@ -24,11 +24,11 @@ import (
 // indexing → search retrieval, verifying that the components work together
 // end-to-end rather than in isolation.
 
-func TestIntegration_ExecuteWithIntent_AutoIndexAndSearch(t *testing.T) {
+func TestIntegration_ExecuteWithIntent_CaptureWithoutKnowledgeWrites(t *testing.T) {
 	srv := newTestServer(t, nil)
 
 	// Execute a command that produces >5KB output with an intent
-	// The intent search mechanism should auto-index and return section titles
+	// Ordinary execution now retains bytes separately; run search is Task 10.
 	lines := strings.Repeat("important data: configuration loaded successfully\n", 150) // ~7.5KB
 	r := callTool(t, srv, map[string]any{
 		"language": "shell",
@@ -36,19 +36,10 @@ func TestIntegration_ExecuteWithIntent_AutoIndexAndSearch(t *testing.T) {
 		"intent":   "configuration loaded",
 	})
 	require.False(t, r.IsError)
-	text := resultText(r)
-
-	// Should have been auto-indexed (not raw output)
-	assert.Contains(t, text, "Indexed")
-	assert.Contains(t, text, "knowledge base")
-
-	// Now search the knowledge base for the auto-indexed content
-	r2 := callSearch(t, srv, map[string]any{
-		"queries": []any{"configuration loaded"},
-	})
-	require.False(t, r2.IsError)
-	text2 := resultText(r2)
-	assert.Contains(t, text2, "configuration")
+	assert.NotContains(t, resultText(r), "configuration loaded")
+	assert.Contains(t, capturedOutput(t, srv, r, "stdout"), lines)
+	assert.Nil(t, srv.store)
+	assert.NoFileExists(t, srv.config.Store.Path)
 }
 
 func TestIntegration_BatchExecute_MultiCommandSearchRoundTrip(t *testing.T) {
@@ -219,7 +210,7 @@ func TestIntegration_CleanupAfterIndex(t *testing.T) {
 	_ = text
 }
 
-// ─── 16.3 Full pipeline: execute → auto-index → search → retrieve ─────────────
+// ─── 16.3 Full pipeline: execute → explicit raw read → index → search ─────────
 
 func TestIntegration_FullPipeline_ExecuteIndexSearchRetrieve(t *testing.T) {
 	srv := newTestServer(t, nil)
@@ -231,8 +222,9 @@ func TestIntegration_FullPipeline_ExecuteIndexSearchRetrieve(t *testing.T) {
 	})
 	require.False(t, execResult.IsError)
 
-	// Step 2: Index the output
-	output := resultText(execResult)
+	// Step 2: Explicitly recover and index the output. Run previews are private
+	// until the sanitized projection exists; indexing is a separate user action.
+	output := capturedOutput(t, srv, execResult, "stdout")
 	indexResult := callIndex(t, srv, map[string]any{
 		"content": output,
 		"source":  "system-report",

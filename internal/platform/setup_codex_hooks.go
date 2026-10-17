@@ -17,7 +17,7 @@ type codexHookEvent struct {
 var codexHookEvents = []codexHookEvent{
 	{Event: "SessionStart", CLIArg: "sessionstart", Matcher: "^.*$"},
 	{Event: "PreToolUse", CLIArg: "pretooluse", Matcher: "^(Bash|mcp__[^[:space:]]+__capy_(" +
-		"execute|execute_file|batch_execute|fetch_and_index|index|search|vault_search|stats|doctor|cleanup" +
+		"execute|execute_file|batch_execute|fetch_and_index|index|search|vault_search|stats|doctor|cleanup|runs" +
 		"))$"},
 	{Event: "SubagentStart", CLIArg: "subagentstart", Matcher: "^.*$"},
 	{Event: "PostToolUse", CLIArg: "posttooluse", Matcher: "^mcp__[^[:space:]]+__capy_(execute|fetch_and_index)$"},

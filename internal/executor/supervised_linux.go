@@ -71,6 +71,9 @@ func runStreamPhase(ctx context.Context, bin string, args []string, cwd, tmpDir 
 		return result, errors.New("starting supervised process")
 	}
 	result.Started, result.Retired = true, false
+	if w.started != nil && w.err == nil {
+		w.err = w.started(phase)
+	}
 	outW.Close()
 	errW.Close()
 	drained := make(chan error, 2)
