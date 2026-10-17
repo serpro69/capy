@@ -37,23 +37,24 @@ type Index struct {
 }
 
 type Result struct {
-	Version     int        `json:"version"`
-	Kind        string     `json:"kind"`
-	RunID       *string    `json:"run_id"`
-	OwnerID     string     `json:"owner_id,omitempty"`
-	OwnerType   string     `json:"owner_type,omitempty"`
-	State       string     `json:"state"`
-	ExitCode    *int       `json:"exit_code"`
-	Signal      *int       `json:"signal"`
-	Reason      *string    `json:"reason"`
-	StartedAt   *time.Time `json:"started_at"`
-	CompletedAt *time.Time `json:"completed_at"`
-	ElapsedMS   int64      `json:"elapsed_ms"`
-	Capture     Capture    `json:"capture"`
-	Redaction   Projection `json:"redaction"`
-	Index       Index      `json:"index"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	Error       *Error     `json:"error"`
+	MetadataOmitted bool       `json:"metadata_omitted,omitempty"`
+	Version         int        `json:"version"`
+	Kind            string     `json:"kind"`
+	RunID           *string    `json:"run_id"`
+	OwnerID         string     `json:"owner_id,omitempty"`
+	OwnerType       string     `json:"owner_type,omitempty"`
+	State           string     `json:"state"`
+	ExitCode        *int       `json:"exit_code"`
+	Signal          *int       `json:"signal"`
+	Reason          *string    `json:"reason"`
+	StartedAt       *time.Time `json:"started_at"`
+	CompletedAt     *time.Time `json:"completed_at"`
+	ElapsedMS       int64      `json:"elapsed_ms"`
+	Capture         Capture    `json:"capture"`
+	Redaction       Projection `json:"redaction"`
+	Index           Index      `json:"index"`
+	ExpiresAt       *time.Time `json:"expires_at"`
+	Error           *Error     `json:"error"`
 }
 
 func Rejection(code, message string) Result {
@@ -82,7 +83,7 @@ type Completion struct {
 	Started, Retired, CaptureLost bool
 	ExitCode                      *int
 	Signal                        int
-	Reason                        string
+	Reason, CaptureReason         string
 	ObservedBytes, ElapsedMS      int64
 }
 

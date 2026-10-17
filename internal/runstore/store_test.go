@@ -165,3 +165,29 @@ func TestLiteralPercentOwnerPath(t *testing.T) {
 	require.FileExists(t, path)
 	require.NoDirExists(t, filepath.Join(filepath.Dir(root), "owner"))
 }
+
+func TestAppendBatchRollbackPreservesExactPrefix(t *testing.T) {
+	path, err := config.ResolveRunDBPath(t.TempDir())
+	require.NoError(t, err)
+	st, err := Open(t.Context(), path, testKey, true)
+	require.NoError(t, err)
+	defer st.Close()
+	owner, err := st.ClaimOwner(t.Context())
+	require.NoError(t, err)
+	defer owner.Lease.Close()
+	row, err := st.Admit(t.Context(), owner, Program{TTLHours: 24, MaxRunBytes: 20})
+	require.NoError(t, err)
+	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID))
+	require.NoError(t, st.Started(t.Context(), row.ID))
+	event := func(seq uint64, data string) executor.OutputEvent {
+		return executor.OutputEvent{Sequence: seq, Phase: "run", Stream: "stdout", Data: []byte(data)}
+	}
+	require.NoError(t, st.Append(t.Context(), row.ID, event(1, "prefix")))
+	require.Error(t, st.AppendBatch(t.Context(), row.ID, []executor.OutputEvent{event(2, "rollback"), event(3, "over capture limit")}))
+	require.Error(t, st.Append(t.Context(), row.ID, event(4, "hole")))
+	page, err := st.ReadRaw(t.Context(), row.ID, "merged", "", 100)
+	require.NoError(t, err)
+	require.Len(t, page.Fragments, 1)
+	require.Equal(t, "prefix", string(page.Fragments[0].Data))
+	require.EqualValues(t, 6, page.Run.Capture.CapturedBytes)
+}

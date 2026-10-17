@@ -139,7 +139,8 @@ func ServeInherited(ctx context.Context, open OpenRun) (retErr error) {
 		return errors.New("persisting supervisor pending proof")
 	}
 	began := time.Now()
-	result, execErr := run.Executor.ExecuteStreamWithStart(jobCtx, run.Request, run.Store.Append, run.Started)
+	queue := newCaptureQueue(run.Store)
+	result, execErr := run.Executor.ExecuteStreamWithStart(jobCtx, run.Request, queue.append, run.Started)
 	result.ElapsedMS = time.Since(began).Milliseconds()
 	outcome := Outcome{Result: result}
 	if jobCtx.Err() != nil {
@@ -150,17 +151,26 @@ func ServeInherited(ctx context.Context, open OpenRun) (retErr error) {
 		}
 	} else if execErr != nil {
 		outcome.Reason = "execution_failed"
+		if !result.Started {
+			outcome.Reason = "spawn_failed"
+		}
 	}
 	if !result.Retired {
 		outcome.Reason = "cleanup_unverified"
 	}
+	// Freeze execution outcome before storage-only draining: a later deadline
+	// cannot retroactively terminate a command that has already retired.
+	if reason := queue.close(); reason != "" {
+		outcome.Result.CaptureLost = true
+		outcome.Result.CaptureReason = reason
+	}
+	outcome.CapturedBytes = queue.captured
+	outcome.LastSequence = queue.lastSequence
 	finishCtx, stopFinish := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	err = run.Store.Finish(finishCtx, outcome)
 	stopFinish()
 	outcome.TerminalPersisted = err == nil
-	if err != nil {
-		outcome.Reason = "finalization_failed"
-	}
+
 	if !result.Retired {
 		outcome.Reason = "cleanup_unverified"
 	}

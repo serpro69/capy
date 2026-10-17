@@ -33,6 +33,7 @@ type fixtureConfig struct {
 	Generation                                     string
 	PendingFail, AppendFail, FinishFail, HoldClose bool
 	HoldOpen                                       bool
+	AppendDelay                                    time.Duration
 }
 
 // These files contain synthetic fixture data only. Production uses the injected
@@ -53,6 +54,9 @@ func (s *fixtureStore) Pending(ctx context.Context) error {
 	return writeProof(s.dir, "pending")
 }
 func (s *fixtureStore) Append(event executor.OutputEvent) error {
+	if s.cfg.AppendDelay > 0 {
+		time.Sleep(s.cfg.AppendDelay)
+	}
 	if s.cfg.AppendFail {
 		return errors.New("synthetic append failure")
 	}
@@ -712,9 +716,13 @@ exit 0`})
 }
 
 func TestSupervisorCaptureAndPersistenceFailures(t *testing.T) {
-	for _, mode := range []string{"append", "finish", "pending"} {
+	for _, mode := range []string{"append", "finish", "pending", "queue"} {
 		t.Run(mode, func(t *testing.T) {
-			dir := fixture(t, fixtureConfig{Code: `printf output; printf final > command-finished`, AppendFail: mode == "append", FinishFail: mode == "finish", PendingFail: mode == "pending"})
+			code := `printf output; printf final > command-finished`
+			if mode == "queue" {
+				code = `head -c 4194304 /dev/zero; printf final > command-finished`
+			}
+			dir := fixture(t, fixtureConfig{Code: code, AppendDelay: map[bool]time.Duration{true: 100 * time.Millisecond}[mode == "queue"], AppendFail: mode == "append", FinishFail: mode == "finish", PendingFail: mode == "pending"})
 			h, _ := startFixture(t, dir, fixtureStartup(dir))
 			outcome, err := waitResult(t, h)
 			if mode == "pending" {
@@ -731,7 +739,7 @@ func TestSupervisorCaptureAndPersistenceFailures(t *testing.T) {
 				t.Fatalf("outcome: %+v, %v", outcome, err)
 			}
 			waitFile(t, filepath.Join(dir, "command-finished"))
-			if mode == "append" {
+			if mode == "append" || mode == "queue" {
 				if !outcome.Result.CaptureLost {
 					t.Fatal("capture loss hidden")
 				}
@@ -922,5 +930,19 @@ func TestSupervisorCompilerPhases(t *testing.T) {
 			}
 			assertProof(t, dir, "retired")
 		})
+	}
+}
+
+func TestSupervisorDeadlineDuringCaptureFlushPreservesExit(t *testing.T) {
+	dir := fixture(t, fixtureConfig{Code: `printf finished; printf final > command-finished`, AppendDelay: 1500 * time.Millisecond})
+	start := fixtureStartup(dir)
+	start.Deadline = time.Now().Add(time.Second)
+	h, _ := startFixture(t, dir, start)
+	outcome, err := waitResult(t, h)
+	if err != nil || outcome.Reason != "" || outcome.Result.ExitCode == nil || *outcome.Result.ExitCode != 0 {
+		t.Fatalf("storage flush changed execution outcome: %+v %v", outcome, err)
+	}
+	if !outcome.TerminalPersisted {
+		t.Fatal("terminal was not persisted")
 	}
 }

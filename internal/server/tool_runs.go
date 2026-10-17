@@ -7,14 +7,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/execution"
 	"github.com/serpro69/capy/internal/runstore"
 )
 
 func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 	fail := func(code, message string) (*mcp.CallToolResult, error) {
-		r := mcp.NewToolResultStructured(map[string]any{"version": 1, "kind": "query", "error": runstore.Error{Code: code, Message: message}}, message)
-		r.IsError = true
+		r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
+			return boundedRunError(code, execution.SafeMessage(message, n)), nil
+		}, nil)
+		if err != nil {
+			r = boundedRunError("response_unavailable", "Run query response unavailable.")
+		}
 		return s.trackToolResponse("capy_runs", r), nil
 	}
 	operationError := func(err error) (*mcp.CallToolResult, error) {
@@ -48,7 +53,12 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		if err != nil {
 			return operationError(err)
 		}
-		r := mcp.NewToolResultStructured(map[string]any{"version": 1, "kind": "query", "run": result}, fmt.Sprintf("Run %s: %s; capture %s.", id, result.State, result.Capture.State))
+		r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultStructured(map[string]any{"version": 1, "kind": "query", "run": execution.BoundResult(result, n)}, fmt.Sprintf("Run %s: %s; capture %s.", id, result.State, result.Capture.State)), nil
+		}, nil)
+		if err != nil {
+			return fail("response_unavailable", "Run status response unavailable.")
+		}
 		return s.trackToolResponse("capy_runs", r), nil
 	}
 	raw, err := boolArg(args, "raw", false)
@@ -92,11 +102,17 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	if !raw {
 		return fail("redaction_unavailable", "sanitized output projection is unavailable; raw output requires explicit raw=true")
 	}
-	page, err := s.executionService().ReadRaw(ctx, id, stream, cursor, int(maxBytes))
+	r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
+		page, err := s.executionService().ReadRaw(ctx, id, stream, cursor, min(int(maxBytes), max(1, n)))
+		if err != nil {
+			return nil, err
+		}
+		page.Run = execution.BoundResult(page.Run, n)
+		return mcp.NewToolResultStructured(page, "Unsanitized raw output: base64 event fragments."), nil
+	}, nil)
 	if err != nil {
 		return operationError(err)
 	}
-	r := mcp.NewToolResultStructured(page, "Unsanitized raw output is provided as base64 event fragments in structured content.")
 	return s.trackToolResponse("capy_runs", r), nil
 }
 

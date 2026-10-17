@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–2 complete and verified; Tasks 3–17 pending
+> Status: Tasks 1–3 complete and verified; Tasks 4–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -68,6 +68,8 @@ and [isolated code review](task2-code-review.md).
   nested/subdirectory/worktree selection and sandboxed storage-admission harness.
 
 ## Task 3: Bound capture, results and failure outcomes
+
+Evidence: [verification](task3-verification.md) · [isolated review](task3-code-review.md).
 
 - Stream bounded events/queues/write batches and record per-stream byte order and
   observed merged order → verify: binary, UTF-8 split, stderr-only, giant-line and

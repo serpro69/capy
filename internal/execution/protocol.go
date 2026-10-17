@@ -57,6 +57,8 @@ func validID(s string) bool {
 // Outcome's retirement proof is independent of command status and capture loss.
 // A missing terminal message always means an unknown outcome to the coordinator.
 type Outcome struct {
+	CapturedBytes     int64                 `json:"captured_bytes"`
+	LastSequence      uint64                `json:"last_sequence"`
 	Result            executor.StreamResult `json:"result"`
 	Reason            string                `json:"reason,omitempty"`
 	TerminalPersisted bool                  `json:"terminal_persisted"`
