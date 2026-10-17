@@ -562,29 +562,22 @@ func TestSearch_ZeroResultsNamesRecoveryPaths(t *testing.T) {
 	assert.Contains(t, text, "ephemeral source(s) present but excluded")
 }
 
-// Session-recovery journey: capy_execute writes ephemeral content via intent
-// search; default capy_search excludes it; include_kinds: ["ephemeral"] recovers it.
-func TestSearch_SessionRecoveryJourney(t *testing.T) {
+// Previously captured execute:* rows retain their old knowledge selectors even
+// though new ordinary executions now write only to the separate run store.
+func TestSearch_LegacyExecutionRecoveryJourney(t *testing.T) {
 	srv := newTestServer(t, nil)
 
-	// Generate >5KB of output containing the searchable phrase so intent search
-	// triggers and writes the content to the store as ephemeral.
-	code := `for i in $(seq 1 200); do echo "line ${i} contains kryptonite-marker payload data here"; done`
-	r := callTool(t, srv, map[string]any{
-		"language": "shell",
-		"code":     code,
-		"intent":   "kryptonite-marker payload",
-	})
-	require.False(t, r.IsError, "execute should succeed: %s", resultText(r))
+	_, err := srv.getStore().Index(strings.Repeat("kryptonite-marker payload data here\n", 200), "execute:shell", "", store.KindEphemeral)
+	require.NoError(t, err)
 
 	// Assert on observable store state rather than intent-path output text —
 	// avoids coupling to the intent-search threshold or its output format.
 	ephemeralCount, err := srv.getStore().CountSourcesByKind(store.KindEphemeral)
 	require.NoError(t, err)
-	require.Greater(t, ephemeralCount, 0, "intent path must have indexed ephemeral content")
+	require.Greater(t, ephemeralCount, 0, "legacy fixture must retain ephemeral content")
 
 	// Default search excludes ephemeral — must return zero results AND name both recovery paths.
-	r = callSearch(t, srv, map[string]any{
+	r := callSearch(t, srv, map[string]any{
 		"queries": []any{"kryptonite-marker payload"},
 	})
 	assert.False(t, r.IsError)

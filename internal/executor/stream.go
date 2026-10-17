@@ -27,12 +27,14 @@ type EventSink func(OutputEvent) error
 // StreamResult separates process retirement from command and capture outcomes.
 // Retired is a local process proof, never an acknowledgement of durable storage.
 type StreamResult struct {
-	Started     bool   `json:"started"`
-	ExitCode    *int   `json:"exit_code"`
-	Signal      int    `json:"signal,omitempty"`
-	Phase       string `json:"phase,omitempty"`
-	Retired     bool   `json:"retired"`
-	CaptureLost bool   `json:"capture_lost"`
+	Started       bool   `json:"started"`
+	ExitCode      *int   `json:"exit_code"`
+	Signal        int    `json:"signal,omitempty"`
+	Phase         string `json:"phase,omitempty"`
+	Retired       bool   `json:"retired"`
+	CaptureLost   bool   `json:"capture_lost"`
+	ObservedBytes int64  `json:"observed_bytes"`
+	ElapsedMS     int64  `json:"elapsed_ms"`
 }
 
 type eventWriter struct {
@@ -40,12 +42,15 @@ type eventWriter struct {
 	sequence uint64
 	sink     EventSink
 	err      error
+	observed int64
+	started  func(string) error
 }
 
 func (w *eventWriter) write(phase, stream string, data []byte) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.sequence++
+	w.observed += int64(len(data))
 	if w.err == nil {
 		w.err = w.sink(OutputEvent{Sequence: w.sequence, Phase: phase, Stream: stream, Data: append([]byte(nil), data...)})
 	}
@@ -55,6 +60,13 @@ func (w *eventWriter) write(phase, stream string, data []byte) {
 // PrepareSupervisor must succeed first. It does not detach jobs or impose the
 // legacy output cap; the caller supplies execution cancellation and persistence.
 func (e *PolyglotExecutor) ExecuteStream(ctx context.Context, req ExecRequest, sink EventSink) (StreamResult, error) {
+	return e.ExecuteStreamWithStart(ctx, req, sink, nil)
+}
+
+// ExecuteStreamWithStart reports the first real spawn, including a compiler,
+// before its output. A failed persistence callback loses capture but still drains
+// and executes the already-started command under its normal lifetime.
+func (e *PolyglotExecutor) ExecuteStreamWithStart(ctx context.Context, req ExecRequest, sink EventSink, started func(string) error) (StreamResult, error) {
 	result := StreamResult{Retired: true}
 	if req.Background || sink == nil {
 		return result, errors.New("stream execution requires an attached sink")
@@ -70,13 +82,14 @@ func (e *PolyglotExecutor) ExecuteStream(ctx context.Context, req ExecRequest, s
 		return result, err
 	}
 	defer os.RemoveAll(p.tmpDir)
-	w := &eventWriter{sink: sink}
+	w := &eventWriter{sink: sink, started: started}
 	compiled := false
 	if req.Language == Rust {
 		binary := filepath.Join(p.tmpDir, "main")
 		result, err = runStreamPhase(ctx, p.runtime, []string{p.scriptPath, "-o", binary}, p.tmpDir, p.tmpDir, req, "compile", w)
 		if err != nil || !result.Retired || result.ExitCode == nil || *result.ExitCode != 0 || result.Signal != 0 || ctx.Err() != nil {
 			result.CaptureLost = w.err != nil
+			result.ObservedBytes = w.observed
 			return result, err
 		}
 		p.bin, p.args = binary, nil
@@ -85,5 +98,6 @@ func (e *PolyglotExecutor) ExecuteStream(ctx context.Context, req ExecRequest, s
 	result, err = runStreamPhase(ctx, p.bin, p.args, p.workDir, p.tmpDir, req, "run", w)
 	result.Started = result.Started || compiled
 	result.CaptureLost = w.err != nil
+	result.ObservedBytes = w.observed
 	return result, err
 }

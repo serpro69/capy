@@ -1,5 +1,8 @@
 # Task 1: supervisor ownership proof
 
+This record describes the Task 1 baseline. [Task 2](task2-verification.md) adds the
+production encrypted backend and synchronous MCP wiring to the seams proved here.
+
 Task 1 adds a private, dormant supervision path. Public MCP execution still uses
 the existing executor. `execute-supervisor` is hidden and rejects execution until
 Task 2 supplies an authenticated `OpenRun` backend. The subprocess fixtures

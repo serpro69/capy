@@ -13,8 +13,6 @@ import (
 // Leases are borrowed open-file descriptions. Launch never unlocks or closes
 // them. The owner must release them by closing, not flock(LOCK_UN), because the
 // supervisor's inherited references protect exactly the same lock descriptions.
-type Leases struct{ Owner, Lifecycle *os.File }
-
 // Supervisor owns the child handle and private channels, not store/owner leases.
 // Wait must be called exactly once. Cancel is safe concurrently with Wait.
 type Supervisor struct {
@@ -33,7 +31,7 @@ func Launch(ctx context.Context, executable string, start Startup, key string, l
 	if err := start.validate(); err != nil {
 		return nil, err
 	}
-	if key == "" || len(key) > 4096 || leases.Owner == nil || leases.Lifecycle == nil {
+	if ValidateCredentialTransfer(key) != nil || leases.Owner == nil || leases.Lifecycle == nil {
 		return nil, errors.New("invalid supervisor launch inputs")
 	}
 	if err := ctx.Err(); err != nil {
@@ -93,7 +91,7 @@ func Launch(ctx context.Context, executable string, start Startup, key string, l
 	if err := writeFrame(inputW, start); err != nil {
 		return failed()
 	}
-	if err := writeFrame(keyW, key); err != nil {
+	if err := writeFrameLimit(keyW, []byte(key), maxCredentialFrameBytes); err != nil {
 		return failed()
 	}
 	keyW.Close()

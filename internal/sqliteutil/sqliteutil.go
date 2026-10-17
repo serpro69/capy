@@ -312,9 +312,10 @@ func uriEscapePassphrase(s string) string {
 }
 
 // uriEscapePath escapes a file path for use in a SQLite URI by percent-encoding
-// ? and # which have special meaning in URIs.
+// %, ? and # which have special meaning in URIs. A literal percent sequence in
+// an owner path must never select a different decoded filesystem path.
 func uriEscapePath(s string) string {
-	return strings.NewReplacer("?", "%3F", "#", "%23").Replace(s)
+	return strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(s)
 }
 
 // RekeyResult reports the outcome of a successful Rekey. BackupPath is the

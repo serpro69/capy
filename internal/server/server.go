@@ -15,6 +15,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/serpro69/capy/internal/config"
+	"github.com/serpro69/capy/internal/execution"
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/security"
 	"github.com/serpro69/capy/internal/store"
@@ -97,6 +98,8 @@ type Server struct {
 	// environment during this server's lifetime.
 	knowledgeKey    string
 	knowledgeSource config.KeySource
+	runsMu          sync.Mutex
+	runs            *execution.Service
 }
 
 // Option configures a Server before its first use.
@@ -314,6 +317,14 @@ func (s *cancelingStdio) Err() error {
 // shutdown cleans up resources. Waits for background goroutines to finish
 // before closing the store to avoid operating on a closed database.
 func (s *Server) shutdown() {
+	s.runsMu.Lock()
+	runs := s.runs
+	s.runsMu.Unlock()
+	if runs != nil {
+		if err := runs.Close(); err != nil {
+			slog.Warn("closing run store", "error", err)
+		}
+	}
 	if s.executor != nil {
 		s.executor.CleanupBackgrounded()
 	}

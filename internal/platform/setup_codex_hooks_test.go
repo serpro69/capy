@@ -13,7 +13,7 @@ import (
 
 func TestCodexHookMatchers(t *testing.T) {
 	pre := regexp.MustCompile(codexHookEvents[1].Matcher)
-	for _, tool := range []string{"execute", "execute_file", "batch_execute", "fetch_and_index", "index", "search", "vault_search", "stats", "doctor", "cleanup"} {
+	for _, tool := range []string{"execute", "execute_file", "batch_execute", "fetch_and_index", "index", "search", "vault_search", "stats", "doctor", "cleanup", "runs"} {
 		for _, alias := range []string{"capy", "another_server", "my.server-v2"} {
 			name := "mcp__" + alias + "__capy_" + tool
 			t.Run(name, func(t *testing.T) { require.True(t, pre.MatchString(name)) })

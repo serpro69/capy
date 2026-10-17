@@ -175,14 +175,18 @@ func TestBooleanArgs_ExecuteBackgroundStrings(t *testing.T) {
 		want  string
 	}{
 		{name: "true detaches", value: " TrUe ", want: "process backgrounded"},
-		{name: "false times out", value: " FaLsE ", want: "timed out after"},
+		{name: "false times out", value: " FaLsE ", want: "timed_out"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := newTestServer(t, nil)
 			r := callTool(t, srv, map[string]any{
 				"language": "shell", "code": "printf started; sleep 30", "timeout": 1000, "background": tt.value,
 			})
-			require.False(t, r.IsError, resultText(r))
+			if tt.name == "false times out" {
+				require.True(t, r.IsError, resultText(r))
+			} else {
+				require.False(t, r.IsError, resultText(r))
+			}
 			assert.Contains(t, resultText(r), tt.want)
 		})
 	}

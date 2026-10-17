@@ -72,7 +72,7 @@ func TestSetupCodexLegacyMCPCLI(t *testing.T) {
 				env: stdioEnv(t, "synthetic-legacy-migration-key"),
 			})
 			p.initialize(t)
-			require.Contains(t, p.tool(t, "capy_execute", map[string]any{"language": "shell", "code": "pwd"}), dir+"\n")
+			require.Contains(t, p.executeOutput(t, map[string]any{"language": "shell", "code": "pwd"}), dir+"\n")
 			p.close(t)
 			require.NoFileExists(t, filepath.Join(dir, "wrapper-invoked"))
 			data, err := os.ReadFile(wrapper)

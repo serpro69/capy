@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -20,8 +21,12 @@ const (
 	SupervisorCommand = "execute-supervisor"
 	protocolVersion   = 1
 	maxFrameBytes     = 16 * 1024
-	startupTimeout    = 3 * time.Second
-	writeTimeout      = 250 * time.Millisecond
+	// Base64 preserves non-UTF-8 credential bytes. This exceeds Linux's maximum
+	// single environment string, including JSON expansion, without changing the
+	// resolver's environment-key contract or weakening the control frame limit.
+	maxCredentialFrameBytes = 1 << 20
+	startupTimeout          = 3 * time.Second
+	writeTimeout            = 250 * time.Millisecond
 )
 
 // Startup contains locators only, never source code or credentials. OpenRun must
@@ -72,9 +77,12 @@ type Run struct {
 	Executor *executor.PolyglotExecutor
 	Request  executor.ExecRequest
 	Store    CaptureStore
+	Started  func(string) error
 }
 
-type OpenRun func(context.Context, Startup, string) (*Run, error)
+type Leases struct{ Owner, Lifecycle *os.File }
+
+type OpenRun func(context.Context, Startup, string, Leases) (*Run, error)
 
 type notice struct {
 	Version int      `json:"version"`
@@ -87,12 +95,16 @@ type control struct {
 }
 
 func readFrame(r io.Reader, value any) error {
+	return readFrameLimit(r, value, maxFrameBytes)
+}
+
+func readFrameLimit(r io.Reader, value any, limit uint32) error {
 	var header [4]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {
 		return errors.New("supervisor channel closed")
 	}
 	size := binary.BigEndian.Uint32(header[:])
-	if size == 0 || size > maxFrameBytes {
+	if size == 0 || size > limit {
 		return errors.New("invalid supervisor frame length")
 	}
 	b := make([]byte, int(size))
@@ -111,8 +123,12 @@ func readFrame(r io.Reader, value any) error {
 }
 
 func writeFrame(w io.Writer, value any) error {
+	return writeFrameLimit(w, value, maxFrameBytes)
+}
+
+func writeFrameLimit(w io.Writer, value any, limit int) error {
 	b, err := json.Marshal(value)
-	if err != nil || len(b) > maxFrameBytes {
+	if err != nil || len(b) > limit {
 		return errors.New("invalid supervisor response")
 	}
 	var header [4]byte

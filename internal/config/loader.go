@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
 )
@@ -39,6 +41,12 @@ func Load(projectDir string) (*Config, error) {
 
 // validate enforces invariants on the merged configuration.
 func validate(cfg *Config) error {
+	if cfg.Executor.Timeout < 1 || int64(cfg.Executor.Timeout) > math.MaxInt64/int64(time.Second) {
+		return fmt.Errorf("[executor] timeout must be positive integral seconds within duration range")
+	}
+	if err := validateRuns(cfg.Runs); err != nil {
+		return err
+	}
 	if cfg.Vault.MinSessionBytes < 0 {
 		return fmt.Errorf("[vault] min_session_bytes must be >= 0 (0 disables size filtering)")
 	}
@@ -77,6 +85,16 @@ func loadAndMerge(cfg *Config, path string) error {
 	// from "unset". Pointer-based detection catches user-written 0s.
 	var detect detectionOverlay
 	if err := toml.Unmarshal(data, &detect); err != nil {
+		return err
+	}
+	if detect.Executor.Timeout != nil {
+		value := *detect.Executor.Timeout
+		if value < 1 || int64(value) > math.MaxInt64/int64(time.Second) {
+			return fmt.Errorf("[executor] timeout must be positive integral seconds within duration range")
+		}
+		cfg.Executor.Timeout = value
+	}
+	if err := mergeRuns(&cfg.Runs, detect.Runs); err != nil {
 		return err
 	}
 	if detect.Store.Cleanup.EphemeralTTLHours != nil && *detect.Store.Cleanup.EphemeralTTLHours < 1 {
@@ -125,6 +143,10 @@ func loadAndMerge(cfg *Config, path string) error {
 // "user omitted the key", which the zero-value merge in mergeConfig can't do.
 // Keys needing zero-rejection or an explicit zero override appear here.
 type detectionOverlay struct {
+	Executor struct {
+		Timeout *int `toml:"timeout"`
+	} `toml:"executor"`
+	Runs   runsOverlay `toml:"runs"`
 	Search struct {
 		WindowMS   *int `toml:"window_ms"`
 		TaperAfter *int `toml:"taper_after"`

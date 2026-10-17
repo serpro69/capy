@@ -86,8 +86,10 @@ func TestCodexNestedLaunches(t *testing.T) {
 			require.NotContains(t, parentResult, "childtangerine")
 			require.Contains(t, childResult, "childtangerine")
 			require.NotContains(t, childResult, "parentquartz")
-			require.Contains(t, parent.tool(t, "capy_execute", map[string]any{"language": "shell", "code": "pwd"}), root+"\n")
-			require.Contains(t, child.tool(t, "capy_execute", map[string]any{"language": "shell", "code": "pwd"}), nested+"\n")
+			require.Contains(t, parent.executeOutput(t, map[string]any{"language": "shell", "code": "pwd"}), root+"\n")
+			require.Contains(t, child.executeOutput(t, map[string]any{"language": "shell", "code": "pwd"}), nested+"\n")
+			require.FileExists(t, filepath.Join(root, ".capy", "runs", "runs.db"))
+			require.FileExists(t, filepath.Join(nested, ".capy", "runs", "runs.db"))
 			child.close(t)
 			parent.close(t)
 			for _, dir := range []string{root, nested} {
