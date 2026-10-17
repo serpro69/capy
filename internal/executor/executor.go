@@ -56,16 +56,11 @@ func (e *PolyglotExecutor) Runtimes() map[Language]string {
 
 // Execute runs code in a sandboxed subprocess.
 func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecResult, error) {
-	workDir, err := ResolveCwd(e.projectDir, req.Cwd)
+	p, err := e.prepare(req)
 	if err != nil {
 		return nil, err
 	}
-	req.Cwd = workDir
-	runtimes := e.Runtimes()
-	rt, ok := runtimes[req.Language]
-	if !ok {
-		return nil, fmt.Errorf("no runtime found for language %q", req.Language)
-	}
+	req.Cwd = p.workDir
 
 	// Timeout.
 	timeout := time.Duration(req.TimeoutSec) * time.Second
@@ -75,49 +70,16 @@ func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecR
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Temp directory.
-	tmpDir, err := os.MkdirTemp("", "capy-exec-*")
-	if err != nil {
-		return nil, fmt.Errorf("creating temp dir: %w", err)
-	}
 	cleanupTmp := true
 	defer func() {
 		if cleanupTmp {
-			os.RemoveAll(tmpDir)
+			os.RemoveAll(p.tmpDir)
 		}
 	}()
-	// TMPDIR may be relative to the parent process. Child cwd changes must not
-	// reinterpret the script, compiled binary or temporary environment paths.
-	absTmpDir, err := filepath.Abs(tmpDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolving temp dir: %w", err)
-	}
-	tmpDir = absTmpDir
-
-	// Apply auto-wrapping.
-	code := autoWrap(req.Language, req.Code, workDir)
-
-	// Write script file.
-	filename := scriptFilenames[req.Language]
-	scriptPath := filepath.Join(tmpDir, filename)
-	perm := os.FileMode(0o644)
-	if req.Language == Shell {
-		perm = 0o700
-		// Shell startup files (.bashrc/.zshrc/.profile) sourced by the
-		// subprocess can clobber PATH and hide tools the MCP process had
-		// available. Restore the inherited PATH at the top of the script.
-		code = buildShellScript(code, os.Getenv("PATH"))
-	}
-	if err := os.WriteFile(scriptPath, []byte(code), perm); err != nil {
-		return nil, fmt.Errorf("writing script: %w", err)
-	}
-
-	// Build command.
-	bin, args := buildCommand(req.Language, rt, scriptPath)
 
 	// Rust special case: compile then run.
-	if bin == "__rust_compile_run__" {
-		result, err := e.executeRust(ctx, rt, scriptPath, tmpDir, req)
+	if p.bin == "__rust_compile_run__" {
+		result, err := e.executeRust(ctx, p.runtime, p.scriptPath, p.tmpDir, req)
 		if result != nil && result.Backgrounded {
 			cleanupTmp = false
 		}
@@ -126,7 +88,7 @@ func (e *PolyglotExecutor) Execute(ctx context.Context, req ExecRequest) (*ExecR
 
 	// Scripts and TMPDIR stay isolated; relative user I/O and runtime project
 	// discovery use the request's execution directory for every language.
-	result, err := e.runProcess(ctx, bin, args, workDir, tmpDir, req)
+	result, err := e.runProcess(ctx, p.bin, p.args, p.workDir, p.tmpDir, req)
 	if result != nil && result.Backgrounded {
 		cleanupTmp = false
 	}
