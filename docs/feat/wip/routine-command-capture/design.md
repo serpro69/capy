@@ -466,6 +466,7 @@ capture, not expired/evicted, caller-filtered or lost-after-failure bytes.
   focused race/subprocess tests, full FTS5 suite and required quality/performance
   comparisons pass. Record actual host versions and returned bytes, not UI folding.
 
-All implementation tasks remain pending. The first risk proof is deliberately
-bounded; no author review or document check substitutes for installed acceptance
-or independent design/code/spec review.
+Task 1's bounded Linux supervisor/lease proof is complete; see its
+[evidence and limits](supervisor-proof.md). Tasks 2–17 remain pending. This proof
+does not substitute for installed acceptance or independent design/code/spec
+review of the remaining feature.
