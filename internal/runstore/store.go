@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const schemaVersion = 4
+const schemaVersion = 5
 const OwnerSlots = 64
 const WriteTimeout = 250 * time.Millisecond
 
@@ -22,6 +22,7 @@ type Store struct {
 	db                   *sql.DB
 	path, key, id, owner string
 	lifecycle            *os.File
+	policy               Policy
 	closeOnce            sync.Once
 	closeErr             error
 	maintenanceCancel    context.CancelFunc
@@ -37,6 +38,20 @@ func (s *Store) LifecycleLease() *os.File { return s.lifecycle }
 // Missing credentials always fail before filesystem side effects. create=false
 // is used by recovery queries and supervisors and never initializes a cache.
 func Open(ctx context.Context, path, key string, create bool) (*Store, error) {
+	return open(ctx, path, key, create, nil)
+}
+
+// OpenWithPolicy attaches only to matching configured store-wide settings.
+// A mismatch can publish a revision only after all handles/helpers are gone.
+// Open without configuration (used by supervisors) consumes the stored policy.
+func OpenWithPolicy(ctx context.Context, path, key string, create bool, settings PolicyConfig) (*Store, error) {
+	if err := settings.validate(); err != nil {
+		return nil, err
+	}
+	return open(ctx, path, key, create, &settings)
+}
+
+func open(ctx context.Context, path, key string, create bool, desired *PolicyConfig) (*Store, error) {
 	if key == "" {
 		return nil, failure("storage_unavailable", "selected run credential is empty")
 	}
@@ -58,18 +73,84 @@ func Open(ctx context.Context, path, key string, create bool) (*Store, error) {
 	if !exists && !create {
 		return nil, failure("run_unavailable", "run store does not exist for this owner")
 	}
-	if !exists {
-		if err := initialize(ctx, path, key, owner); err != nil {
+	settings := defaultPolicyConfig()
+	if desired != nil {
+		settings = *desired
+	}
+	// Every retry starts with a new shared lease and revalidates the identity
+	// and policy. A reset or another opener may win either unlocked interval.
+	for range 3 {
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		exists, err = inspectStore(path)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			if !create {
+				return nil, failure("run_unavailable", "run store does not exist for this owner")
+			}
+			if err := initialize(ctx, path, key, owner, settings); err != nil {
+				return nil, err
+			}
+		}
+		s, err := openAttached(ctx, path, key, owner, unix.LOCK_SH)
+		if err != nil {
+			return nil, err
+		}
+		if desired == nil || *desired == s.policy.PolicyConfig {
+			if _, err := s.Reconcile(ctx); err != nil {
+				s.closeHandles()
+				return nil, err
+			}
+			s.startMaintenance()
+			return s, nil
+		}
+		revision := s.policy.Revision
+		if err := s.closeHandles(); err != nil {
+			return nil, err
+		}
+		// No shared DB handle or lease survives this point. Nonblocking exclusive
+		// acquisition refuses live readers, owners and inherited helper leases.
+		s, err = openAttached(ctx, path, key, owner, unix.LOCK_EX)
+		if err != nil {
+			if errors.Is(err, unix.EWOULDBLOCK) {
+				return nil, policyMismatch(revision)
+			}
+			return nil, err
+		}
+		err = s.changePolicy(ctx, *desired)
+		closeErr := s.closeHandles()
+		if err != nil || closeErr != nil {
+			return nil, errors.Join(err, closeErr)
+		}
 	}
+	return nil, failure("policy_mismatch", "run store policy changed repeatedly during attachment; stop competing owners and reload with matching configuration")
+}
+
+// openAttached returns an authenticated, policy-validated handle without a
+// maintenance worker. The caller closes all handles before releasing its lease.
+func openAttached(ctx context.Context, path, key, owner string, lock int) (*Store, error) {
 	life, err := openRegular(filepath.Join(filepath.Dir(path), "lifecycle.lock"), false)
 	if err != nil {
 		return nil, storageError()
 	}
-	if err := unix.Flock(int(life.Fd()), unix.LOCK_SH|unix.LOCK_NB); err != nil {
+	if err := unix.Flock(int(life.Fd()), lock|unix.LOCK_NB); err != nil {
 		life.Close()
+		if lock == unix.LOCK_EX && errors.Is(err, unix.EWOULDBLOCK) {
+			return nil, err
+		}
 		return nil, failure("storage_unavailable", "run store lifecycle is busy")
+	}
+	// Recheck after locking: a reset may have removed/replaced storage between
+	// the initial inspection and lease acquisition. Never recreate it with rw.
+	if exists, err := inspectStore(path); err != nil || !exists {
+		life.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, failure("run_unavailable", "run store changed during attachment; retry")
 	}
 	s := &Store{path: path, key: key, owner: owner, lifecycle: life}
 	// Read-only authentication avoids creating new locks/rows on a wrong key.
@@ -81,11 +162,20 @@ func Open(ctx context.Context, path, key string, create bool) (*Store, error) {
 	var version int
 	var recordedOwner string
 	err = probe.QueryRowContext(ctx, "SELECT version, store_id, owner FROM run_meta WHERE singleton=1").Scan(&version, &s.id, &recordedOwner)
+	if err == nil && version == schemaVersion && uuid.Validate(s.id) == nil {
+		s.policy, err = readPolicy(ctx, probe)
+	}
 	closeErr := probe.Close()
 	// A moved tree may retain historical provenance; the current selected path
 	// remains authoritative. The persisted owner never supplies a filesystem target.
 	if err != nil || closeErr != nil || version != schemaVersion || uuid.Validate(s.id) != nil {
 		life.Close()
+		if err != nil {
+			var typed *Error
+			if errors.As(err, &typed) {
+				return nil, err
+			}
+		}
 		return nil, storageError()
 	}
 	s.db, err = sqliteutil.OpenWithCanary(ctx, sqliteutil.EncryptedDSN(path, key)+"&mode=rw&_busy_timeout=100&_foreign_keys=on", path, "selected run credential")
@@ -100,14 +190,16 @@ func Open(ctx context.Context, path, key string, create bool) (*Store, error) {
 		life.Close()
 		return nil, err
 	}
-	// Authentication precedes creation of the fixed registry. Never recreate
-	// a missing live marker/lock behind a cooperating owner: initialization
-	// creates the complete set, and existing stores require every lock to exist.
-	if _, err := s.Reconcile(ctx); err != nil {
-		s.db.Close()
-		life.Close()
-		return nil, err
-	}
+	return s, nil
+}
+
+func (s *Store) closeHandles() error {
+	// Keep lifecycle ownership until database/sql has closed every connection.
+	err := s.db.Close()
+	return errors.Join(err, s.lifecycle.Close())
+}
+
+func (s *Store) startMaintenance() {
 	maintenanceCtx, stop := context.WithCancel(context.Background())
 	s.maintenanceCancel, s.maintenanceDone = stop, make(chan struct{})
 	go func() {
@@ -115,7 +207,6 @@ func Open(ctx context.Context, path, key string, create bool) (*Store, error) {
 		defer ticker.Stop()
 		s.maintenance(maintenanceCtx, ticker.C)
 	}()
-	return s, nil
 }
 
 func storageError() error {
@@ -180,7 +271,7 @@ func openRegular(path string, create bool) (*os.File, error) {
 	return f, nil
 }
 
-func initialize(ctx context.Context, path, key, owner string) error {
+func initialize(ctx context.Context, path, key, owner string, settings PolicyConfig) error {
 	root := filepath.Dir(path)
 	for _, dir := range []string{filepath.Dir(root), root, filepath.Join(root, "locks")} {
 		if err := os.Mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
@@ -233,16 +324,27 @@ func initialize(ctx context.Context, path, key, owner string) error {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
+	available, err := dbstatAvailable(ctx, db)
+	if err != nil {
+		return err
+	}
+	mode := "conservative"
+	if available {
+		mode = "dbstat"
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return storageError()
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schema); err != nil {
+	if _, err := tx.ExecContext(ctx, schema+policySchema); err != nil {
 		return storageError()
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO run_meta(singleton,version,store_id,owner) VALUES(1,?,?,?)", schemaVersion, uuid.NewString(), owner); err != nil {
 		return storageError()
+	}
+	if err := insertPolicy(ctx, tx, settings, mode); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return storageError()

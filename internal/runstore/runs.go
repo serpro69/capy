@@ -15,6 +15,11 @@ import (
 )
 
 func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admitted, error) {
+	// The attached store is authoritative. Callers cannot select a different
+	// TTL or capture ceiling through per-program metadata.
+	program.PolicyRevision = s.policy.Revision
+	program.TTLHours = s.policy.TTLHours
+	program.MaxRunBytes = s.policy.MaxRunBytes
 	ctx, cancel := context.WithTimeout(ctx, recoveryTimeout)
 	defer cancel()
 	registry, err := s.recoveryLease(ctx)

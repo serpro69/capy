@@ -172,7 +172,7 @@ func TestLiteralPercentOwnerPath(t *testing.T) {
 func TestAppendBatchRollbackPreservesExactPrefix(t *testing.T) {
 	path, err := config.ResolveRunDBPath(t.TempDir())
 	require.NoError(t, err)
-	st, err := Open(t.Context(), path, testKey, true)
+	st, err := OpenWithPolicy(t.Context(), path, testKey, true, PolicyConfig{TTLHours: 24, MaxRunBytes: 20, MaxRetainedBytes: 512 << 20})
 	require.NoError(t, err)
 	defer st.Close()
 	owner, err := st.ClaimOwner(t.Context())

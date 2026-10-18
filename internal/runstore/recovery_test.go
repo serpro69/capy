@@ -25,7 +25,7 @@ func recoveryStore(t *testing.T) *Store {
 	t.Setenv("CAPY_VAULT_KEY", "synthetic-vault-key")
 	path, err := config.ResolveRunDBPath(root)
 	require.NoError(t, err)
-	st, err := Open(t.Context(), path, testKey, true)
+	st, err := OpenWithPolicy(t.Context(), path, testKey, true, PolicyConfig{TTLHours: 7, MaxRunBytes: 1 << 20, MaxRetainedBytes: 512 << 20})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	return st

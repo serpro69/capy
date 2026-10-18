@@ -484,6 +484,7 @@ paging are verified in [Task 4 evidence](task4-verification.md). Task 5 CLI and
 shared retrieval are verified in [Task 5 evidence](task5-verification.md).
 Task 6 handoff and owner cancellation are verified in [Task 6 evidence](task6-verification.md).
 Task 7 owner-crash recovery and lease safety are verified in [Task 7 evidence](task7-verification.md).
-Tasks 8–17 remain pending.
+Task 8 store-policy authority and quiescent changes are verified in [Task 8 evidence](task8-verification.md).
+Tasks 9–17 remain pending, including quota maintenance during policy changes.
 These slices do not substitute for installed acceptance or independent
 design/code/spec review of the remaining feature.
