@@ -38,13 +38,13 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		if err != nil {
 			return fail("invalid_argument", err.Error())
 		}
-		page, err := s.executionService().Search(ctx, options)
+		page, err := s.searchRuns(ctx, options)
 		if err != nil {
 			return operationError(err)
 		}
 		r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
 			result := mcp.NewToolResultStructured(execution.BoundSearch(page, n), "Search covers only the reported sanitized prefix; repeat search to resume indexing. Use hit read_cursor with the same run_id and stream.")
-			result.IsError = page.Error != nil
+			result.IsError = page.Error != nil || page.KnowledgeError != nil
 			return result, nil
 		}, nil)
 		if err != nil {

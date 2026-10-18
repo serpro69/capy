@@ -15,9 +15,8 @@ type batchCall struct {
 	result  runstore.BatchResult
 }
 
-// ExecuteBatchResponse owns a serial coordinator separately from active child
-// slots. Task 13 adds fair parallel dispatch; this path never uses the legacy
-// executor or knowledge-store output pipeline.
+// ExecuteBatchResponse owns a coordinator separately from active child slots.
+// Admission reserves the full inventory and one slot before any child can spawn.
 func (s *Service) ExecuteBatchResponse(ctx context.Context, input runstore.BatchInput, timeout, wait time.Duration, prepare func(runstore.BatchResult) error) (runstore.BatchResult, error) {
 	if err := input.Validate(); err != nil {
 		return runstore.BatchResult{}, err
@@ -51,7 +50,7 @@ func (s *Service) ExecuteBatchResponse(ctx context.Context, input runstore.Batch
 		err = &runstore.Error{Code: "cleanup_unverified", Message: "execution owner has unverified cleanup"}
 	case len(input.Commands) > s.policy.MaxPending-s.pending:
 		err = &runstore.Error{Code: "pending_capacity_exhausted", Message: "batch inventory exceeds pending capacity; recover existing batches before retrying"}
-	case s.active >= s.policy.MaxActive:
+	case s.active >= s.policy.MaxActive || s.eligibleBatchLocked(time.Now()):
 		err = &runstore.Error{Code: "capacity_exhausted", Message: "batch requires one dispatchable slot; recover existing work before retrying"}
 	default:
 		s.active++
@@ -61,10 +60,13 @@ func (s *Service) ExecuteBatchResponse(ctx context.Context, input runstore.Batch
 	if err != nil {
 		cancel()
 		release()
-		return runstore.BatchResult{}, err
+		result := batchRejection(err)
+		result.Capacity = s.capacity()
+		return result, prepare(result)
 	}
 	control := &runCall{cancel: cancel, reservedAt: time.Now()}
 	input.Deadline = control.reservedAt.Add(timeout)
+	input.EffectiveConcurrency = min(input.Concurrency, s.policy.MaxActive, len(input.Commands))
 	control.stopRequest = context.AfterFunc(ctx, control.cancelAttached)
 	if ctx.Err() != nil {
 		control.cancelAttached()
@@ -73,7 +75,7 @@ func (s *Service) ExecuteBatchResponse(ctx context.Context, input runstore.Batch
 	go func() {
 		defer release()
 		defer cancel()
-		call.result = s.runBatch(jobCtx, input, call)
+		call.result = s.runBatch(jobCtx, input, timeout, call)
 		control.mu.Lock()
 		control.finished = true
 		control.stopRequest()
@@ -119,16 +121,16 @@ func (s *Service) ExecuteBatchResponse(ctx context.Context, input runstore.Batch
 	return current, nil
 }
 
-func (s *Service) runBatch(ctx context.Context, input runstore.BatchInput, call *batchCall) runstore.BatchResult {
-	remaining := len(input.Commands)
-	reserved := true
+func (s *Service) runBatch(ctx context.Context, input runstore.BatchInput, timeout time.Duration, call *batchCall) runstore.BatchResult {
+	registered := false
 	defer func() {
-		s.mu.Lock()
-		s.pending -= remaining
-		if reserved {
+		if !registered {
+			s.mu.Lock()
+			s.pending -= len(input.Commands)
 			s.active--
+			s.dispatchLocked(time.Now())
+			s.mu.Unlock()
 		}
-		s.mu.Unlock()
 	}()
 	st, owner, err := s.attached(ctx, true)
 	if err != nil {
@@ -136,18 +138,23 @@ func (s *Service) runBatch(ctx context.Context, input runstore.BatchInput, call 
 	}
 	s.admissionMu.Lock()
 	result, rows, err := st.AdmitBatch(ctx, owner, input)
-	children := make([]*runCall, len(rows))
-	contexts := make([]context.Context, len(rows))
+	queue := &batchQueue{cutoff: input.Deadline, timeout: timeout, parallel: input.Concurrency > 1,
+		ceiling: input.EffectiveConcurrency, work: make(chan batchWork, len(rows))}
 	if err == nil {
 		s.mu.Lock()
 		s.batches[result.BatchID] = call
-		for i, row := range rows {
+		for _, row := range rows {
 			childCtx, cancel := context.WithCancel(ctx)
-			contexts[i] = childCtx
-			child := &runCall{cancel: cancel, ready: make(chan runstore.Result, 1), reservedAt: time.Now(), deadline: input.Deadline}
-			children[i] = child
+			child := &runCall{cancel: cancel, ready: make(chan runstore.Result, 1)}
+			queue.children = append(queue.children, batchChild{ctx: childCtx, row: row, call: child})
 			s.running[row.ID] = child
 		}
+		// Convert the admission reservation into the first child reservation.
+		// Existing eligible batches have already had priority at admission.
+		s.active--
+		s.queue = append(s.queue, queue)
+		s.dispatchLocked(time.Now())
+		registered = true
 		s.mu.Unlock()
 	}
 	s.admissionMu.Unlock()
@@ -155,53 +162,57 @@ func (s *Service) runBatch(ctx context.Context, input runstore.BatchInput, call 
 		return batchRejection(err)
 	}
 	call.ready <- result
-	stopped := false
-	for i, row := range rows {
-		child := children[i]
-		childCtx := contexts[i]
-		reason := ""
-		if childCtx.Err() != nil {
-			reason = "cancelled"
-		} else if !time.Now().Before(input.Deadline) {
-			reason = "queue_timeout"
-		} else if stopped {
-			reason = "batch_stopped"
-		}
-		if reason == "" && !reserved {
-			reason = s.reserveBatchChild(childCtx, input.Deadline)
-			reserved = reason == ""
-		}
-		s.mu.Lock()
-		s.pending--
-		s.mu.Unlock()
-		remaining--
-		var outcome runstore.Result
-		if reason != "" {
-			outcome = s.finishUnstarted(st, row, reason)
-		} else {
-			outcome = s.executeAdmitted(childCtx, st, owner, row, child)
-		}
-		child.mu.Lock()
-		child.result = outcome
-		child.finished = true
-		child.mu.Unlock()
-		child.cancel()
-		if child.cleanup != nil {
-			<-child.cleanup
-		}
-		s.mu.Lock()
-		delete(s.running, row.ID)
-		if reserved {
-			s.active--
-			reserved = false
-		}
-		stopped = stopped || s.unverified
-		s.mu.Unlock()
-		if !outcome.Capture.TerminalPersisted {
-			result.Error = &runstore.Error{Code: "storage_unavailable", Message: "a child terminal outcome could not be persisted; recover batch status before any retry"}
-			stopped = true
+	// A single bounded coordinator handles skipped children. Only reserved
+	// active children get workers; every worker is joined before owner release.
+	finished := make(chan runstore.Result, len(rows))
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for completed := 0; completed < len(rows); {
+		select {
+		case work := <-queue.work:
+			child := queue.children[work.ordinal]
+			if work.reason != "" {
+				outcome := s.finishUnstarted(st, child.row, work.reason)
+				s.finishBatchChild(queue, child, outcome, false)
+				finished <- outcome
+				continue
+			}
+			go func() {
+				row := child.row
+				row.Program.Deadline = work.deadline
+				var outcome runstore.Result
+				if child.ctx.Err() != nil {
+					outcome = s.finishUnstarted(st, row, "cancelled")
+				} else if err := st.Dispatch(child.ctx, row.ID, owner.ID, work.deadline); err != nil {
+					outcome = s.finishUnstarted(st, row, "spawn_failed")
+				} else {
+					outcome = s.executeAdmitted(child.ctx, st, owner, row, child.call)
+				}
+				if child.call.cleanup != nil {
+					<-child.call.cleanup
+				}
+				s.finishBatchChild(queue, child, outcome, true)
+				finished <- outcome
+			}()
+		case outcome := <-finished:
+			completed++
+			if !outcome.Capture.TerminalPersisted {
+				result.Error = &runstore.Error{Code: "storage_unavailable", Message: "a child terminal outcome could not be persisted; recover batch status before any retry"}
+			}
+		case <-ticker.C:
+			s.mu.Lock()
+			s.dispatchLocked(time.Now())
+			s.mu.Unlock()
 		}
 	}
+	s.mu.Lock()
+	for i, candidate := range s.queue {
+		if candidate == queue {
+			s.queue = append(s.queue[:i], s.queue[i+1:]...)
+			break
+		}
+	}
+	s.mu.Unlock()
 	queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 	latest, err := st.BatchStatus(queryCtx, result.BatchID)
@@ -215,38 +226,27 @@ func (s *Service) runBatch(ctx context.Context, input runstore.BatchInput, call 
 	return result
 }
 
+func (s *Service) finishBatchChild(queue *batchQueue, child batchChild, outcome runstore.Result, active bool) {
+	child.call.mu.Lock()
+	child.call.result, child.call.finished = outcome, true
+	child.call.mu.Unlock()
+	child.call.cancel()
+	s.mu.Lock()
+	delete(s.running, child.row.ID)
+	if active {
+		s.active--
+		queue.active--
+	}
+	if !outcome.Capture.TerminalPersisted {
+		queue.stopped = true
+	}
+	s.dispatchLocked(time.Now())
+	s.mu.Unlock()
+}
+
 func batchRejection(err error) runstore.BatchResult {
 	r := reject(err)
 	return runstore.BatchResult{Version: 1, Kind: "rejection", State: "not_started", Error: r.Error}
-}
-
-func (s *Service) reserveBatchChild(ctx context.Context, deadline time.Time) string {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if ctx.Err() != nil {
-			return "cancelled"
-		}
-		if !time.Now().Before(deadline) {
-			return "queue_timeout"
-		}
-		s.mu.Lock()
-		if s.unverified {
-			s.mu.Unlock()
-			return "batch_stopped"
-		}
-		if s.active < s.policy.MaxActive {
-			s.active++
-			s.mu.Unlock()
-			return ""
-		}
-		s.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return "cancelled"
-		case <-ticker.C:
-		}
-	}
 }
 
 func (s *Service) BatchStatus(ctx context.Context, id string) (runstore.BatchResult, error) {
@@ -289,9 +289,12 @@ func (s *Service) CancelBatch(ctx context.Context, id string) (runstore.BatchRes
 }
 
 func BatchFailed(result runstore.BatchResult) bool {
-	return result.Error != nil || result.FailedCount > 0 || result.IncompleteCount > 0 || result.Kind == "rejection"
+	return (result.Search != nil && (result.Search.Error != nil || result.Search.KnowledgeError != nil)) || result.Error != nil || result.FailedCount > 0 || result.IncompleteCount > 0 || result.Kind == "rejection"
 }
 func BoundBatch(result runstore.BatchResult, n int) runstore.BatchResult {
+	if result.Capacity != nil {
+		result.Capacity = BoundResult(runstore.Result{Capacity: result.Capacity}, n).Capacity
+	}
 	if result.Error != nil {
 		e := *result.Error
 		e.Message = SafeMessage(e.Message, n)

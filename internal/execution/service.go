@@ -26,6 +26,7 @@ type Service struct {
 	active               int
 	pending              int
 	batches              map[string]*batchCall
+	queue                []*batchQueue
 	wg                   sync.WaitGroup
 	store                *runstore.Store
 	owner                *runstore.Owner
@@ -50,6 +51,9 @@ func (s *Service) begin(ctx context.Context, execute bool) (context.Context, fun
 	if execute && s.unverified {
 		return nil, nil, &runstore.Error{Code: "cleanup_unverified", Message: "this owner has unverified run cleanup; stop execution groups and recover before admitting more work"}
 	}
+	if execute {
+		s.dispatchLocked(time.Now())
+	}
 	if execute && s.active >= s.policy.MaxActive {
 		return nil, nil, &runstore.Error{Code: "capacity_exhausted", Message: "execution owner is at capacity; recover existing runs before retrying"}
 	}
@@ -66,6 +70,7 @@ func (s *Service) begin(ctx context.Context, execute bool) (context.Context, fun
 		delete(s.jobs, job)
 		if execute {
 			s.active--
+			s.dispatchLocked(time.Now())
 		}
 		s.mu.Unlock()
 		s.wg.Done()
@@ -177,6 +182,31 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 			}
 			return s.startFailure(st, row)
 		}
+		if row.Result.BatchID != "" && ctx.Err() != nil {
+			// The batch coordinator already joins all children before completing.
+			// Retain its slot/leases while resolving cancellation during startup;
+			// a joined helper and durable not_spawned proof permit finalization.
+			h.Wait()
+			queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			latest, err := st.Load(queryCtx, row.ID)
+			cancel()
+			if err == nil && latest.Cleanup == "not_spawned" {
+				return s.finishUnstarted(st, row, "cancelled")
+			}
+			if err == nil && latest.Cleanup == "retired" && latest.Result.Capture.TerminalPersisted {
+				return latest.Result
+			}
+			// Unknown proof still quarantines; this helper has already been joined.
+			result := row.Result
+			result.State = "interrupted"
+			reason := "supervisor_startup_failed"
+			result.Reason = &reason
+			result.Error = &runstore.Error{Code: "cleanup_unverified", Message: "cancelled helper cleanup could not be verified; recover batch status before retrying"}
+			if err := s.quarantine(st); err != nil {
+				result.Error.Message += "; admission quarantine could not be persisted"
+			}
+			return result
+		}
 		quarantineErr := s.quarantine(st)
 		// Report the startup failure promptly, but retain this worker's active
 		// slot and lifecycle ownership until even a stopped helper is joined.
@@ -205,6 +235,9 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 			quarantineErr = s.quarantine(st)
 		}
 		if readErr == nil && latest.Cleanup == "not_spawned" {
+			if ctx.Err() != nil {
+				return s.finishUnstarted(st, row, "cancelled")
+			}
 			return s.startFailure(st, row)
 		}
 	}

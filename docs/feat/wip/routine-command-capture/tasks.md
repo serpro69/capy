@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–12 done; Tasks 13–17 pending
+> Status: in-progress — Tasks 1–13 done; Tasks 14–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -179,7 +179,7 @@ Default output projection and later run actions remain explicitly unavailable.
 - [x] 10.2 Add resumable coverage/claims and measured/conservative quota rollback → verify: claimant death, partial results and no raw eviction solely for indexes.
   - Integrate FTS posting/shadow debit and resumable index deletion with Task 9's eviction tombstones; optional index writes must not use capture's eviction-to-make-room path. Schema 6 currently accounts raw/projection/metadata only because this task introduces the first indexes.
 - [x] 10.3 Expose run/batch search and intent previews → verify: knowledge-search throttling cannot block recovery; first/repeat cost is measured under capture load.
-  - Run search and intent previews are available through MCP/CLI. Task 12 now provides batch manifests and scoped results; global federation remains Task 13.
+  - Run search and intent previews are available through MCP/CLI. Task 12 provides batch manifests and scoped results; Task 13 adds global federation.
 
 **Evidence:** [Task 10 verification](task10-verification.md) · [isolated review](task10-code-review.md). Lazy sanitized search, exact read anchors, resumable claims, quota rollback, bounded eviction and both accounting modes pass. Full FTS5 coverage passes across the sandbox run and socket-enabled config/server rerun; final store/execution integration race, compiled CLI/MCP race, build, vet and quality comparison pass. Independent review approved after correcting release retry, physical-debit refresh and projection keyset scans; external review was unavailable. Task 11 is next.
 
@@ -217,7 +217,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 13: Schedule parallel batches within owner capacity
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 12
 - **Size:** M
 - **Can run in parallel with:** Task 14
@@ -225,9 +225,11 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 13.1 Apply bounded pending inventory and fair shared scheduling → verify: eight children plus two standalone jobs respect max_active=4 and report effective/current counts.
-- [ ] 13.2 Add parallel spawn deadlines/dispatch cutoff and pending cancellation while retaining serial behavior → verify: atomic rejection and no spawn after cancellation.
-- [ ] 13.3 Complete batch replacement and scoped/global query recovery → verify: all batch paths use run storage, preserve provenance and obey complete-response bounds.
+- [x] 13.1 Apply bounded pending inventory and fair shared scheduling → verify: eight children plus two standalone jobs respect max_active=4 and report effective/current counts.
+- [x] 13.2 Add parallel spawn deadlines/dispatch cutoff and pending cancellation while retaining serial behavior → verify: atomic rejection and no spawn after cancellation.
+- [x] 13.3 Complete batch replacement and scoped/global query recovery → verify: all batch paths use run storage, preserve provenance and obey complete-response bounds.
+
+**Evidence:** [Task 13 verification](task13-verification.md) · [isolated review](task13-code-review.md). Shared capacity, fair scheduling, atomic pending admission, parallel deadlines/cancellation, complete batch capture and scoped/global MCP/CLI recovery pass. Full functional coverage is complete across the broad run and corrected focused reruns; final server/store and compiled-transport races, complete execution integration race, both accounting builds, build and vet pass. Quality metrics match the accepted Task 12 report. Independent review approved after startup-cancellation and CLI text corrections; external review was unavailable. Task 14 is next.
 
 ## Task 14: Recognize routine commands and captured programs
 

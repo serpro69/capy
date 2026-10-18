@@ -27,12 +27,6 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 	if err != nil {
 		return reject(err)
 	}
-	if concurrency > 1 {
-		if _, present := args["wait_ms"]; present {
-			return reject(fmt.Errorf("parallel batch continuation is not available until the parallel capture migration"))
-		}
-		return s.handleLegacyBatchExecute(ctx, req)
-	}
 	for name := range args {
 		switch name {
 		case "commands", "queries", "query_scope", "concurrency", "cwd", "timeout", "wait_ms":
@@ -48,12 +42,9 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 	if err != nil {
 		return reject(err)
 	}
-	input := runstore.BatchInput{Commands: commands, Queries: queries, QueryScope: scope, Concurrency: 1}
+	input := runstore.BatchInput{Commands: commands, Queries: queries, QueryScope: scope, Concurrency: int(concurrency)}
 	if err = input.Validate(); err != nil {
 		return reject(err)
-	}
-	if scope == "global" {
-		return reject(fmt.Errorf("global batch federation is pending the parallel capture migration; use query_scope=batch"))
 	}
 	millis, err := integerArg(args, "timeout", int64(s.config.Executor.Timeout)*1000, 1, math.MaxInt64/int64(time.Millisecond))
 	if err != nil {
@@ -86,7 +77,7 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 		result.Error = &runstore.Error{Code: "response_unavailable", Message: "batch response preparation failed; recover batch status before retrying"}
 	}
 	if len(queries) > 0 && result.BatchID != "" && err == nil {
-		page, searchErr := s.executionService().Search(ctx, runstore.SearchOptions{BatchID: result.BatchID, Queries: queries, QueryScope: scope, Limit: 5})
+		page, searchErr := s.searchRuns(ctx, runstore.SearchOptions{BatchID: result.BatchID, Queries: queries, QueryScope: scope, Limit: 5})
 		if searchErr == nil {
 			result.Search = &page
 		} else {

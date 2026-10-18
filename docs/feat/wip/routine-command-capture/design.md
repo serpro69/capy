@@ -491,6 +491,8 @@ accounting and resumable recovery are verified in [Task 10 evidence](task10-veri
 Task 11 execute-file capture, shared lifetime and exact physical-path persistence
 are verified in [Task 11 evidence](task11-verification.md).
 Task 12 serial batch capture, retained manifests and bounded recovery are verified
-in [Task 12 evidence](task12-verification.md). Tasks 13–17 remain pending.
+in [Task 12 evidence](task12-verification.md). Task 13 parallel scheduling, complete
+batch migration and global query recovery are verified in
+[Task 13 evidence](task13-verification.md). Tasks 14–17 remain pending.
 These slices do not substitute for installed acceptance or independent
 design/code/spec review of the remaining feature.

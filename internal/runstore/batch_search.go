@@ -29,9 +29,7 @@ func (s *Store) searchBatch(ctx context.Context, owner *Owner, o SearchOptions) 
 	if len(o.Queries) == 0 {
 		return page, failure("invalid_argument", "batch has no stored queries; supply queries")
 	}
-	if page.QueryScope == "global" {
-		return page, failure("invalid_argument", "global batch federation requires the parallel batch migration; use query_scope=batch")
-	}
+	page.Queries = append([]string(nil), o.Queries...)
 	// Snapshot only bounded identities; close rows before using the one-connection
 	// pool for indexing. Results remain live retained coverage, not a DB snapshot.
 	rows, err := s.db.QueryContext(ctx, "SELECT run_id FROM run_batch_children WHERE batch_id=? ORDER BY ordinal", o.BatchID)

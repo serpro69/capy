@@ -53,6 +53,11 @@ func batchChildren(t *testing.T, s *Server, id string) []runstore.Summary {
 func waitBatch(t *testing.T, s *Server, id string) runstore.BatchResult {
 	t.Helper()
 	var b runstore.BatchResult
+	defer func() {
+		if t.Failed() {
+			t.Logf("last batch status: %+v", b)
+		}
+	}()
 	require.Eventually(t, func() bool {
 		var err error
 		b, err = s.executionService().BatchStatus(t.Context(), id)
@@ -61,7 +66,7 @@ func waitBatch(t *testing.T, s *Server, id string) runstore.BatchResult {
 	return b
 }
 func TestCapturedBatchInventoryPreflight(t *testing.T) {
-	for _, name := range []string{"deny final", "bad final", "empty final", "huge input", "fraction timeout", "fraction concurrency", "background", "pending capacity", "global"} {
+	for _, name := range []string{"deny final", "bad final", "empty final", "huge input", "fraction timeout", "fraction concurrency", "background", "pending capacity"} {
 		t.Run(name, func(t *testing.T) {
 			s := newHandoffServer(t, "")
 			s.security = []security.SecurityPolicy{{Deny: []string{"Bash(touch forbidden)"}}}
@@ -83,8 +88,6 @@ func TestCapturedBatchInventoryPreflight(t *testing.T) {
 				args["background"] = false
 			case "pending capacity":
 				s.config.Runs.MaxPending = 1
-			case "global":
-				args["query_scope"] = "global"
 			}
 			result := callCapturedBatch(t, s, args)
 			require.True(t, result.IsError, resultText(result))

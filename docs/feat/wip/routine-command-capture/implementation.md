@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–12 complete and verified; Tasks 13–17 pending
+> Status: Tasks 1–13 complete and verified; Tasks 14–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -183,7 +183,7 @@ Implementation and verification: [Task 10 evidence](task10-verification.md) ·
 [isolated review](task10-code-review.md). Schema 7 adds bounded sanitized windows,
 dual FTS, per-stream progress and allocated-page debit. Run search and intent
 previews are available; batch selectors are validated without widening scope,
-and await Task 12 manifests / Task 13 global federation. Failed local claim
+with Task 12 manifests and Task 13 global federation. Failed local claim
 releases retry before later work; eviction refreshes debit between victims;
 projection windows resume with indexed keyset seeks.
 
@@ -218,7 +218,7 @@ them with a different filename. New file output uses run storage exclusively.
 
 Evidence: [Task 12 verification](task12-verification.md) · [isolated review](task12-code-review.md).
 Serial calls now use atomic run/manifest admission, shared supervision and bounded
-MCP/CLI recovery. Parallel capture and global federation remain Task 13.
+MCP/CLI recovery. Task 13 completes parallel capture and global federation.
 
 - Add batch/child metadata, all-command preflight and serial child capture through
   the shared execution service → verify: a denied final command prevents every
@@ -232,6 +232,10 @@ MCP/CLI recovery. Parallel capture and global federation remain Task 13.
   the serial path without presenting partial migration as feature completion.
 
 ## Task 13: Schedule parallel batches within owner capacity
+
+Evidence: [Task 13 verification](task13-verification.md) · [isolated review](task13-code-review.md).
+Parallel and serial paths share owner scheduling and captured run storage. Global
+queries add separately labelled knowledge results through MCP and CLI.
 
 - Integrate bounded pending inventory and fair owner-wide scheduling, reporting
   requested/effective/current concurrency → verify: eight children alongside two

@@ -3,6 +3,8 @@ package main
 import (
 	"github.com/serpro69/capy/internal/execution"
 	"github.com/serpro69/capy/internal/runstore"
+	"github.com/serpro69/capy/internal/security"
+	"github.com/serpro69/capy/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -29,12 +31,27 @@ func newRunsSearchCmd() *cobra.Command {
 			return writeQueryFailure(cmd, jsonOutput, 2048, 1, err)
 		}
 		limit := target.cfg.Runs.MaxResponseBytes
-		key, _, err := resolveKnowledgeKey(target)
+		key, source, err := resolveKnowledgeKey(target)
 		if err != nil {
 			return writeQueryFailure(cmd, jsonOutput, limit, 1, err)
 		}
 		service := execution.NewCLIService(target.projectDir, key, target.cfg.Runs)
 		page, err := service.Search(cmd.Context(), options)
+		if err == nil && page.QueryScope == "global" {
+			policy, policyErr := security.LoadReadPolicy(security.FilePolicyContext{ProjectDir: target.projectDir})
+			if policyErr != nil {
+				page.Partial = true
+				page.KnowledgeError = &runstore.Error{Code: "knowledge_unavailable", Message: "knowledge Read policy unavailable; run results remain available"}
+			} else {
+				st := newKnowledgeStore(target, key, source.String())
+				st.SetDenyChecker(func(path string) bool { return policy.Check(path) != nil })
+				page = execution.AddKnowledge(cmd.Context(), page, options.Limit, func() *store.ContentStore { return st })
+				if closeErr := st.Close(); closeErr != nil {
+					page.Partial = true
+					page.KnowledgeError = &runstore.Error{Code: "knowledge_unavailable", Message: "knowledge store close failed; run results remain available"}
+				}
+			}
+		}
 		closeErr := service.Close()
 		if err != nil {
 			return writeQueryFailure(cmd, jsonOutput, limit, 1, err)
@@ -43,7 +60,7 @@ func newRunsSearchCmd() *cobra.Command {
 			return writeQueryFailure(cmd, jsonOutput, limit, 1, closeErr)
 		}
 		code := 0
-		if page.Error != nil {
+		if page.Error != nil || page.KnowledgeError != nil {
 			code = 1
 		}
 		return writeRunResponse(cmd, limit, jsonOutput, code, func(n int) (any, error) { return execution.BoundSearch(page, n), nil })
