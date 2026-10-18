@@ -81,6 +81,14 @@ func (e *PolyglotExecutor) ExecuteStreamWithStart(ctx context.Context, req ExecR
 		result.StopReason = streamStopReason(ctx)
 		return result, err
 	}
+	if req.FilePath != "" {
+		if !filepath.IsAbs(req.FilePath) {
+			return result, errors.New("stream execution requires an admitted absolute file path")
+		}
+		// Preserve the admitted program in storage. Inject the existing runtime
+		// boilerplate only here; the checked path travels in the child environment.
+		req.Code = injectFileContent(req.Language, req.Code)
+	}
 	p, err := e.prepare(req)
 	if err != nil {
 		result.SpawnCode = 126

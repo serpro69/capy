@@ -100,13 +100,13 @@ func TestExecutionCwdLocationsAndFileAnchor(t *testing.T) {
 					want, err := filepath.EvalSymlinks(tc.dir)
 					require.NoError(t, err)
 					output := resultText(result)
-					if tool == "execute" {
+					if tool == "execute" || tool == "execute-file" {
 						output = capturedOutput(t, srv, result, "stdout")
 					}
 					assert.Contains(t, output, "cwdmarker"+want)
 					if tool == "execute-file" {
-						assert.Contains(t, resultText(result), "project-input")
-						assert.NotContains(t, resultText(result), "wrong-cwd-input")
+						assert.Contains(t, output, "project-input")
+						assert.NotContains(t, output, "wrong-cwd-input")
 					}
 					if strings.Contains(tool, "batch") {
 						sources, err := srv.getStore().ListSources()
@@ -145,7 +145,7 @@ func TestExecutionCwdConcurrentRequests(t *testing.T) {
 					result := callCwdTool(t, srv, tool, dir, "printf "+marker+"; cat marker; pwd")
 					require.False(t, result.IsError, resultText(result))
 					output := resultText(result)
-					if tool == "execute" {
+					if tool == "execute" || tool == "execute-file" {
 						output = capturedOutput(t, srv, result, "stdout")
 					}
 					assert.Contains(t, output, marker)

@@ -79,6 +79,12 @@ func TestMCPStdioExecutionCwd(t *testing.T) {
 			var output string
 			if tc.tool == "capy_execute" {
 				output = p.executeOutput(t, tc.args)
+			} else if tc.tool == "capy_execute_file" {
+				var result stdioRunResponse
+				require.NoError(t, p.request("tools/call", map[string]any{"name": tc.tool, "arguments": tc.args}, &result))
+				require.False(t, result.IsError)
+				require.NotNil(t, result.Structured.RunID)
+				output = string(p.rawRun(t, *result.Structured.RunID, "stdout"))
 			} else {
 				output = p.tool(t, tc.tool, tc.args)
 			}

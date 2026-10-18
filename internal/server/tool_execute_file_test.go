@@ -39,7 +39,7 @@ func TestExecuteFile_Success(t *testing.T) {
 	})
 	// The shell code uses FILE_CONTENT which contains the file content
 	assert.False(t, r.IsError)
-	assert.Contains(t, resultText(r), "hello from file")
+	assert.Contains(t, capturedOutput(t, srv, r, "stdout"), "hello from file")
 }
 
 func TestExecuteFile_FilePathDeny(t *testing.T) {
@@ -120,7 +120,7 @@ func TestExecuteFile_CheckedPathHandoff(t *testing.T) {
 				"path": tc.path, "language": "shell", "code": `printf '%s' "$FILE_CONTENT"`,
 			})
 			require.False(t, result.IsError, resultText(result))
-			assert.Equal(t, tc.content, resultText(result))
+			assert.Equal(t, tc.content, capturedOutput(t, srv, result, "stdout"))
 		})
 	}
 	after, err := os.Getwd()
@@ -213,9 +213,10 @@ func TestExecuteFile_LiteralPhysicalPath(t *testing.T) {
 						"path": "input.txt", "language": string(tc.language), "code": tc.code,
 					})
 					require.False(t, result.IsError, resultText(result))
-					assert.Contains(t, resultText(result), "admitted literal content")
-					assert.NotContains(t, resultText(result), "wrong file")
-					assert.NotContains(t, resultText(result), "denied file")
+					output := capturedOutput(t, srv, result, "stdout")
+					assert.Contains(t, output, "admitted literal content")
+					assert.NotContains(t, output, "wrong file")
+					assert.NotContains(t, output, "denied file")
 					assert.Equal(t, "/inherited/decoy", os.Getenv("CAPY_FILE_CONTENT_PATH"))
 				})
 			}
