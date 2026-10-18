@@ -363,6 +363,25 @@ func (s *Service) withPreview(ctx context.Context, st *runstore.Store, result ru
 	if result.RunID == nil || result.Redaction.State == "unavailable" {
 		return result
 	}
+	row, loadErr := st.Load(ctx, *result.RunID)
+	if loadErr == nil && row.Program.Intent != "" {
+		page, err := s.Search(ctx, runstore.SearchOptions{RunID: *result.RunID, Queries: []string{row.Program.Intent}, Limit: 3})
+		if err == nil {
+			result.Index = page.Index
+			for _, group := range page.Results {
+				for _, hit := range group.Hits {
+					result.Preview += "[" + hit.Stream + "] " + hit.Text
+				}
+			}
+			result = BoundResult(result, min(2048, s.policy.MaxResponseBytes/4))
+		} else {
+			result.Index.State = "failed"
+			result.Index.Error = &runstore.Error{Code: "index_failed", Message: "intent search unavailable; recover this run with read or search"}
+		}
+		if result.Preview != "" {
+			return result
+		}
+	}
 	page, err := st.ReadProjection(ctx, *result.RunID, "merged", "", min(2048, s.policy.MaxResponseBytes/4))
 	if err != nil {
 		result.Redaction.State = "unavailable"

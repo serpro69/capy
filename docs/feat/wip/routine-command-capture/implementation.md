@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–9 complete and verified; Tasks 10–17 pending
+> Status: Tasks 1–10 complete and verified; Tasks 11–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -178,6 +178,14 @@ prefixes while committing cleanup progress independently of a rejected retry.
   active-helper/reader refusal, symlink rejection, stale cursors and new-key capture.
 
 ## Task 10: Search run output lazily
+
+Implementation and verification: [Task 10 evidence](task10-verification.md) ·
+[isolated review](task10-code-review.md). Schema 7 adds bounded sanitized windows,
+dual FTS, per-stream progress and allocated-page debit. Run search and intent
+previews are available; batch selectors are validated without widening scope,
+and await Task 12 manifests / Task 13 global federation. Failed local claim
+releases retry before later work; eviction refreshes debit between victims;
+projection windows resume with indexed keyset seeks.
 
 - Add bounded sanitized windows and dual FTS with raw anchors; extend retrieval's
   fixed allowlist and collect layer errors → verify: no unsearched no-intent run

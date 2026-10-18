@@ -67,6 +67,8 @@ var tableAllowlist = map[string]bool{
 	"chunks_trigram":       true,
 	"vault_chunks":         true,
 	"vault_chunks_trigram": true,
+	"run_search_fts":       true,
+	"run_search_trigram":   true,
 }
 
 // CorpusConfig supplies the corpus-specific pieces of a search, consumed by

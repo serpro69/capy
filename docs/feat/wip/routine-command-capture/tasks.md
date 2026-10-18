@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–9 done; Tasks 10–17 pending
+> Status: in-progress — Tasks 1–10 done; Tasks 11–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -167,7 +167,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 10: Search run output lazily
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 9
 - **Size:** M
 - **Can run in parallel with:** Task 14
@@ -175,10 +175,13 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 10.1 Add sanitized dual-FTS windows/raw anchors and strict retrieval errors → verify: no-search paths create no FTS rows and middle failures are readable.
-- [ ] 10.2 Add resumable coverage/claims and measured/conservative quota rollback → verify: claimant death, partial results and no raw eviction solely for indexes.
+- [x] 10.1 Add sanitized dual-FTS windows/raw anchors and strict retrieval errors → verify: no-search paths create no FTS rows and middle failures are readable.
+- [x] 10.2 Add resumable coverage/claims and measured/conservative quota rollback → verify: claimant death, partial results and no raw eviction solely for indexes.
   - Integrate FTS posting/shadow debit and resumable index deletion with Task 9's eviction tombstones; optional index writes must not use capture's eviction-to-make-room path. Schema 6 currently accounts raw/projection/metadata only because this task introduces the first indexes.
-- [ ] 10.3 Expose run/batch search and intent previews → verify: knowledge-search throttling cannot block recovery; first/repeat cost is measured under capture load.
+- [x] 10.3 Expose run/batch search and intent previews → verify: knowledge-search throttling cannot block recovery; first/repeat cost is measured under capture load.
+  - Run search and intent previews are available through MCP/CLI. Batch selector/scope validation is shared; actual batch results remain `batch_unavailable` until Task 12 introduces manifests, with global federation in Task 13.
+
+**Evidence:** [Task 10 verification](task10-verification.md) · [isolated review](task10-code-review.md). Lazy sanitized search, exact read anchors, resumable claims, quota rollback, bounded eviction and both accounting modes pass. Full FTS5 coverage passes across the sandbox run and socket-enabled config/server rerun; final store/execution integration race, compiled CLI/MCP race, build, vet and quality comparison pass. Independent review approved after correcting release retry, physical-debit refresh and projection keyset scans; external review was unavailable. Task 11 is next.
 
 ## Task 11: Capture execute-file runs with the shared lifetime
 

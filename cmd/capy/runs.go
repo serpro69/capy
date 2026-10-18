@@ -13,7 +13,7 @@ func newRunsCmd() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{Use: "runs", Short: "Recover captured runs without executing them again", SilenceErrors: true, SilenceUsage: true}
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		return writeQueryFailure(cmd, jsonOutput, 2048, 2, &runstore.Error{Code: "invalid_argument", Message: "choose runs status, read, list or reset --discard"})
+		return writeQueryFailure(cmd, jsonOutput, 2048, 2, &runstore.Error{Code: "invalid_argument", Message: "choose runs status, read, list, search or reset --discard"})
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit a versioned JSON error for an invalid operation")
 	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, _ error) error {
@@ -23,6 +23,7 @@ func newRunsCmd() *cobra.Command {
 		cmd.AddCommand(newRunQueryCmd(action))
 	}
 	cmd.AddCommand(newRunsResetCmd())
+	cmd.AddCommand(newRunsSearchCmd())
 	return cmd
 }
 func newRunQueryCmd(action string) *cobra.Command {

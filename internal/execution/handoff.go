@@ -2,8 +2,10 @@ package execution
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/runstore"
@@ -70,6 +72,11 @@ func (s *Service) ExecuteResponse(ctx context.Context, request executor.ExecRequ
 func (s *Service) executeResponse(ctx context.Context, request executor.ExecRequest, intent string, timeout, wait time.Duration, prepare func(runstore.Result) error) (runstore.Result, error) {
 	if prepare == nil {
 		prepare = func(runstore.Result) error { return nil }
+	}
+	intent = strings.TrimSpace(intent)
+	if len(intent) > 512 || !utf8.ValidString(intent) {
+		result := runstore.Rejection("invalid_argument", "intent must be valid UTF-8 of at most 512 bytes")
+		return result, prepare(result)
 	}
 	ownerCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	jobCtx, release, err := s.begin(ownerCtx, true)
@@ -140,10 +147,16 @@ func (s *Service) executeResponse(ctx context.Context, request executor.ExecRequ
 	}
 	queryCtx, stopQuery := context.WithTimeout(jobCtx, 3*time.Second)
 	latest, statusErr := s.Status(queryCtx, *current.RunID)
-	stopQuery()
 	if statusErr == nil {
 		current = latest
+		if intent != "" {
+			s.mu.Lock()
+			st := s.store
+			s.mu.Unlock()
+			current = s.withPreview(queryCtx, st, current)
+		}
 	}
+	stopQuery()
 	if err := prepare(current); err != nil {
 		call.cancelAttached()
 		<-call.done

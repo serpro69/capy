@@ -16,7 +16,7 @@ implementation plan names code seams and tests.
 | `code` | Nonempty program, passed unchanged to the selected runtime; mutually exclusive with CLI code-file input |
 | `cwd` | Optional existing execution directory; relative to selected project; never selects the run store |
 | `timeout` | Positive integer milliseconds on MCP; explicit request value overrides configured seconds; zero, negative, fractional and overflow values are errors |
-| `intent` | Optional nonblank search intent; requests lazy indexing/preview selection, never controls whether capture or output bounds apply |
+| `intent` | Optional nonblank UTF-8 search intent, at most 512 bytes; requests lazy indexing/preview selection, never controls whether capture or output bounds apply |
 | `wait_ms` | MCP response-wait budget, 0–30,000; independent of execution deadline |
 | `background` | Legacy MCP execute mode only; false by default; true makes timeout the initial response wait and leaves execution owner-bound without a deadline |
 
@@ -278,6 +278,13 @@ required in v1: result limits apply to ranked hits, and exact recovery uses read
 `index_quota_blocked` is explicit, with raw/default reads still available when
 their respective coverage is usable. No failed/partial query implies zero
 matches in unsearched output.
+
+Run search envelopes report `index`, `partial`, `searched_bytes` (raw per-stream
+prefix positions), and `results` grouped by zero-based input query ordinal.
+Each hit identifies its run, stream, phase, raw byte/line anchors, sanitized text,
+match layer and `read_cursor`; pass the cursor to a sanitized read with the same
+run and stream. Query strings are not echoed. Budget-driven shortening or omission
+sets `results_omitted=true`; response formatting never repeats indexing work.
 
 ## 6. Complete response budgets
 
