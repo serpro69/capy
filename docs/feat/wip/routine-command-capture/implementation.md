@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–14 complete and verified; Tasks 15–17 pending
+> Status: Tasks 1–15 complete and verified; Tasks 16–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -262,6 +262,12 @@ Task 15 supplies its production hook integration.
   or bypass deny/matched ask rules.
 
 ## Task 15: Enable strict Codex routing and synchronize artifacts
+
+Evidence: [Task 15 verification](task15-verification.md) · [isolated review](task15-code-review.md).
+Codex now applies security, mandatory routine capture and HTTP-only routing in
+that order. Captured CLI code-file inspection shares the CLI reader and owner
+resolver; modern availability observations and generated/runtime instructions
+follow the capture contract. Claude routine enforcement remains out of scope.
 
 - Enforce whole-request security → mandatory routine capture → HTTP-only routing
   → verify: root/child mixed HTTP/routine cases with present/absent/expired/broken

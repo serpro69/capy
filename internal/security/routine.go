@@ -10,9 +10,9 @@ import (
 // ReadCodeFile must perform checked, bounded file admission using the selected
 // CLI owner (including ProjectDir), and enforce matched Read asks. A nil reader
 // rejects code-file inspection; it never certifies an unchecked program.
-// Code-file calls in compound requests, shell/mise or directory-changing
-// wrappers, or another captured program are rejected: their launch owner needs
-// runtime shell state (including shell startup and mise directory options).
+// Code-file calls in compound requests, assignment/env/shell/mise wrappers, or
+// another captured program are rejected: their owner/policies need runtime shell
+// state (including environment overrides, shell startup and directory options).
 type RoutineOptions struct {
 	NativeAllow  []string
 	Policies     []SecurityPolicy
@@ -23,9 +23,21 @@ type RoutineOptions struct {
 // Callers must handle errors and Security before consulting Required. Task 15
 // wires this into Codex routing; neither this API nor config enables a hook gate.
 type RoutineInspection struct {
-	Required []string
-	Captures []CaptureInvocation
-	Security CommandDecision
+	Required       []string
+	Captures       []CaptureInvocation
+	NativeCommands []string // executable leaves outside captured programs, for later HTTP-only routing
+	Security       CommandDecision
+}
+
+// RequiresCapture applies validated output exceptions after security evaluation.
+// It never exempts a sibling merely because another element matched an exception.
+func (r RoutineInspection) RequiresCapture(nativeAllow []string) bool {
+	for _, command := range r.Required {
+		if matchesAnyBashPattern(command, nativeAllow, false) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateRoutineNativeAllow accepts only the existing Bash(pattern) grammar.
@@ -113,6 +125,9 @@ func (i *routineInspector) command(element string, words []shellWord, captured b
 			return err
 		}
 		if !words[0].literal {
+			if !captured {
+				i.result.NativeCommands = append(i.result.NativeCommands, element)
+			}
 			return nil
 		}
 		// Keep every wrapper spelling as a policy candidate, as well as the
@@ -123,6 +138,7 @@ func (i *routineInspector) command(element string, words []shellWord, captured b
 		}
 		i.policy = append(i.policy, suffix)
 		if words[0].assignment {
+			i.directoryUncertain = true // Environment can select a different CLI owner/policy.
 			words = words[1:]
 			depth++
 			continue
@@ -130,9 +146,15 @@ func (i *routineInspector) command(element string, words []shellWord, captured b
 		name := filepath.Base(words[0].value)
 		switch name {
 		case "env":
+			i.directoryUncertain = true // Includes -i/-u and HOME/CLAUDE_PROJECT_DIR changes.
 			var changesDirectory bool
 			words, changesDirectory = envCommand(words[1:])
 			i.directoryUncertain = i.directoryUncertain || changesDirectory
+			if len(words) == 0 && !captured {
+				// Unsupported/dynamic env forms are not capture exemptions and
+				// must retain the prior HTTP-only inspection of the native text.
+				i.result.NativeCommands = append(i.result.NativeCommands, element)
+			}
 			depth++
 			continue
 		case "command":
@@ -149,6 +171,9 @@ func (i *routineInspector) command(element string, words []shellWord, captured b
 			if len(words) > 2 && literalValue(words[1], "exec", "x") {
 				for n := 2; n < len(words); n++ {
 					if !words[n].literal {
+						if !captured {
+							i.result.NativeCommands = append(i.result.NativeCommands, element)
+						}
 						return nil
 					}
 					if words[n].value == "--" {
@@ -177,11 +202,23 @@ func (i *routineInspector) command(element string, words []shellWord, captured b
 		}
 		if script, ok := literalShellScript(words); ok {
 			i.directoryUncertain = true
-			return i.shell(script, captured, depth+1)
+			nativeStart, captureStart := len(i.result.NativeCommands), len(i.result.Captures)
+			if err := i.shell(script, captured, depth+1); err != nil {
+				return err
+			}
+			if !captured && len(i.result.Captures) == captureStart {
+				// With no captured program to remove, retain the HTTP recognizer's
+				// existing wrapper spelling/coverage, including outer redirections.
+				i.result.NativeCommands = append(i.result.NativeCommands[:nativeStart], element)
+			}
+			return nil
 		}
 		if name == "capy" {
 			invocation, ok, err := parseCaptureInvocation(words)
 			if err != nil || !ok {
+				if err == nil && !captured {
+					i.result.NativeCommands = append(i.result.NativeCommands, element)
+				}
 				return err
 			}
 			i.result.Captures = append(i.result.Captures, invocation)
@@ -228,8 +265,13 @@ func (i *routineInspector) command(element string, words []shellWord, captured b
 			}
 			return nil
 		}
-		if !captured && routineCatalogue(name, words[1:]) && matchesAnyBashPattern(suffix, i.options.NativeAllow, false) == "" {
-			i.result.Required = append(i.result.Required, suffix)
+		if !captured {
+			// HTTP checks need redirections too, including those preceding argv.
+			// Keep their full spelling independent of the routine/policy suffix.
+			i.result.NativeCommands = append(i.result.NativeCommands, element)
+			if routineCatalogue(name, words[1:]) && matchesAnyBashPattern(suffix, i.options.NativeAllow, false) == "" {
+				i.result.Required = append(i.result.Required, suffix)
+			}
 		}
 		return nil
 	}

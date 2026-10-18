@@ -26,7 +26,7 @@ internal/
   retrieval/        Corpus-agnostic FTS5 retrieval core: RRF two-layer fusion, rerank, entity boosting, query sanitization — shared by store (knowledge) and vault (session chunks) via the Corpus interface (ADR-028)
   sanitize/         Secret stripping (regex-based redaction of API keys, tokens, credentials)
   security/         Settings parsing, glob matching, command splitting, shell-escape detection
-  server/           MCP server, 10 tool handlers, stats tracking, lifecycle guard, intent search, cross-corpus vault federation
+  server/           MCP server, 11 tool handlers, stats tracking, lifecycle guard, intent search, cross-corpus vault federation
   sqliteutil/       Shared SQLite open/recovery: canary query, corruption classification, backup
   store/            SQLite FTS5 knowledge base: schema, indexing, search, cleanup, encryption, migration
   vault/            Session vault: verbatim archival, FTS5 search (per-line + chunk), discovery, import, cross-machine merge; sole session store (ADR-027)
