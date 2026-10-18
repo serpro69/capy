@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const schemaVersion = 6
+const schemaVersion = 7
 const OwnerSlots = 64
 const WriteTimeout = 250 * time.Millisecond
 
@@ -29,6 +29,8 @@ type Store struct {
 	maintenanceCancel    context.CancelFunc
 	maintenanceDone      chan struct{}
 	maintenanceErr       error // worker-owned; Close reads only after joining it
+	indexReleaseMu       sync.Mutex
+	pendingIndexReleases map[string]Owner // only workers that have already returned
 }
 
 func (s *Store) ID() string               { return s.id }
@@ -345,7 +347,7 @@ func initialize(ctx context.Context, path, key, owner string, settings PolicyCon
 		return storageError()
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schema+policySchema); err != nil {
+	if _, err := tx.ExecContext(ctx, schema+policySchema+searchSchema); err != nil {
 		return storageError()
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO run_meta(singleton,version,store_id,owner) VALUES(1,?,?,?)", schemaVersion, uuid.NewString(), owner); err != nil {
@@ -422,7 +424,7 @@ func (s *Store) Close() error {
 }
 
 const schema = `
-CREATE TABLE run_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, store_id TEXT NOT NULL, owner TEXT NOT NULL, admission_blocked INTEGER NOT NULL DEFAULT 0 CHECK(admission_blocked IN (0,1)), last_created INTEGER NOT NULL DEFAULT 0, accounted_bytes INTEGER NOT NULL DEFAULT 0 CHECK(accounted_bytes>=0));
+CREATE TABLE run_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, store_id TEXT NOT NULL, owner TEXT NOT NULL, admission_blocked INTEGER NOT NULL DEFAULT 0 CHECK(admission_blocked IN (0,1)), last_created INTEGER NOT NULL DEFAULT 0, accounted_bytes INTEGER NOT NULL DEFAULT 0 CHECK(accounted_bytes>=0), index_bytes INTEGER NOT NULL DEFAULT 0 CHECK(index_bytes>=0), index_enabled INTEGER NOT NULL DEFAULT 0 CHECK(index_enabled IN (0,1)));
 CREATE TABLE run_owners(slot INTEGER PRIMARY KEY CHECK(slot>=0 AND slot<64), generation TEXT NOT NULL UNIQUE, cleanup_unverified INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_unverified IN (0,1)));
 CREATE TABLE runs(
  id TEXT PRIMARY KEY, generation TEXT NOT NULL, slot INTEGER NOT NULL CHECK(slot>=0 AND slot<64),

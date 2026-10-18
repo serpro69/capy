@@ -77,6 +77,12 @@ func runText(result runstore.Result) string {
 	if result.Error != nil {
 		fmt.Fprintf(&b, "%s: %s\n", result.Error.Code, terminalText(result.Error.Message))
 	}
+	if result.Index.State != "" && result.Index.State != "not_requested" {
+		fmt.Fprintf(&b, "Index: %s.\n", result.Index.State)
+		if result.Index.Error != nil {
+			fmt.Fprintf(&b, "%s: %s\n", result.Index.Error.Code, terminalText(result.Index.Error.Message))
+		}
+	}
 	if result.Preview != "" {
 		b.WriteString(terminalText(result.Preview))
 		b.WriteByte('\n')
@@ -128,6 +134,22 @@ func encodeRunText(value any) ([]byte, error) {
 		}
 		if v.NextCursor != nil {
 			fmt.Fprintf(&b, "next_cursor: %s\n", *v.NextCursor)
+		}
+	case runstore.SearchPage:
+		fmt.Fprintf(&b, "Run %s: index=%s partial=%t; searched stdout=%d stderr=%d raw bytes.\n", v.RunID, v.Index.State, v.Partial, v.Coverage["stdout"], v.Coverage["stderr"])
+		if v.Error != nil {
+			fmt.Fprintf(&b, "%s: %s\n", v.Error.Code, terminalText(v.Error.Message))
+		}
+		for _, group := range v.Results {
+			for _, hit := range group.Hits {
+				fmt.Fprintf(&b, "[query %d %s bytes %d–%d line %d] %s\nread_cursor: %s\n", group.Query, hit.Stream, hit.RawStart, hit.RawEnd, hit.StartLine, terminalText(hit.Text), hit.ReadCursor)
+			}
+		}
+		if v.Omitted {
+			b.WriteString("Results shortened to the response budget; use read_cursor with the same run and stream.\n")
+		}
+		if v.Partial {
+			b.WriteString("Only the reported prefix was searched; repeat search to resume indexing, or read retained output.\n")
 		}
 	default:
 		return nil, errors.New("unknown run response")

@@ -44,7 +44,7 @@ func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admit
 	result := Result{Version: 1, Kind: "run", RunID: &id, OwnerID: owner.ID, OwnerType: ownerType, State: "admitted",
 		Capture: Capture{State: "not_started"}, Redaction: Projection{Version: sanitize.StreamVersion, State: "ready"}, Index: Index{State: "not_requested"}}
 	if program.Intent != "" {
-		result.Index = Index{State: "failed", Error: &Error{Code: "index_unavailable", Message: "run search is currently unavailable"}}
+		result.Index.State = "building"
 	}
 	encodedProgram, err := json.Marshal(program)
 	if err != nil {
@@ -334,9 +334,9 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 		return storageError()
 	}
 	if row.chargeBytes > 0 {
-		var used int64
-		if err := tx.QueryRowContext(ctx, "SELECT accounted_bytes FROM run_meta WHERE singleton=1").Scan(&used); err != nil {
-			return storageError()
+		used, err := refreshIndexDebit(ctx, tx)
+		if err != nil {
+			return err
 		}
 		if row.chargeBytes > s.policy.MaxRetainedBytes {
 			return quotaError()
@@ -372,6 +372,9 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,cleanup=?,terminal=?,completed_at=?,expires_at=? WHERE id=?", encoded, row.Cleanup, terminal, completed, expires, id); err != nil {
 		return storageError()
+	}
+	if _, err := refreshIndexDebit(ctx, tx); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return storageError()

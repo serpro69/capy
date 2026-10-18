@@ -30,8 +30,27 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		return fail("storage_unavailable", "run query failed")
 	}
 	action, ok := args["action"].(string)
-	if !ok || (action != "status" && action != "read" && action != "list" && action != "cancel") {
-		return fail("invalid_argument", "action must be status, read, list or cancel")
+	if !ok || (action != "status" && action != "read" && action != "list" && action != "cancel" && action != "search") {
+		return fail("invalid_argument", "action must be status, read, list, search or cancel")
+	}
+	if action == "search" {
+		options, err := runSearchOptions(args)
+		if err != nil {
+			return fail("invalid_argument", err.Error())
+		}
+		page, err := s.executionService().Search(ctx, options)
+		if err != nil {
+			return operationError(err)
+		}
+		r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
+			result := mcp.NewToolResultStructured(execution.BoundSearch(page, n), "Search covers only the reported sanitized prefix; repeat search to resume indexing. Use hit read_cursor with the same run_id and stream.")
+			result.IsError = page.Error != nil
+			return result, nil
+		}, nil)
+		if err != nil {
+			return fail("response_unavailable", "Run search response unavailable.")
+		}
+		return s.trackToolResponse("capy_runs", r), nil
 	}
 	if action == "list" {
 		for name := range args {
@@ -193,9 +212,12 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 
 func toolRuns() mcp.Tool {
 	return mcp.NewTool("capy_runs", mcp.WithToolAnnotation(annotationCleanup),
-		mcp.WithDescription("Recover captured runs with status, list, sanitized reads or explicit raw reads; cancel requests termination of this MCP owner's runs. Poll status for completion. Search and batch actions are currently unavailable."),
-		mcp.WithString("action", mcp.Required(), mcp.Enum("status", "read", "list", "cancel")),
+		mcp.WithDescription("Recover captured runs with status, list, sanitized/raw reads and lazy sanitized search independent of the knowledge-search budget. Search reports coverage; repeat to resume bounded indexing. Cancel requests termination of this MCP owner's runs; poll status. Batch manifests are not yet available."),
+		mcp.WithString("action", mcp.Required(), mcp.Enum("status", "read", "list", "search", "cancel")),
 		mcp.WithString("run_id", mcp.Description("Captured run UUID in this owner's run store")),
+		mcp.WithString("batch_id", mcp.Description("Batch selector for search; mutually exclusive with run_id")),
+		mcp.WithArray("queries", mcp.Items(map[string]any{"type": "string"}), mcp.Description("Search: 1–8 nonblank queries, at most 512 UTF-8 bytes each")),
+		mcp.WithString("query_scope", mcp.Enum("batch", "global"), mcp.Description("Batch search only")),
 		mcp.WithBoolean("raw", mcp.Description("Explicitly request unsanitized bytes (default false)")),
 		mcp.WithString("encoding", mcp.Enum("text", "base64")),
 		mcp.WithString("stream", mcp.Enum("stdout", "stderr", "merged")),

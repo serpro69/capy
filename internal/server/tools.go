@@ -123,7 +123,7 @@ func toolExecute(langList string) mcp.Tool {
 	return mcp.NewTool("capy_execute",
 		mcp.WithToolAnnotation(annotationExecute),
 		mcp.WithDescription(fmt.Sprintf(
-			"Execute code once and capture stdout/stderr in an encrypted owner-local run store. Available: [%s]. Synchronous calls return a run ID and status. Sanitized output projection is not yet available; recover bytes with capy_runs action=read and explicit raw=true. Do not repeat commands to recover output. Background mode retains the legacy execution path until captured yielding is integrated.",
+			"Execute code once and capture stdout/stderr in an encrypted owner-local run store. Available: [%s]. Returns bounded sanitized output, a run ID and status. Recover output with capy_runs read or search; raw=true explicitly requests unsanitized bytes. Do not repeat commands to recover output. Yielded/background runs remain captured and bound to this server's lifetime.",
 			langList,
 		)),
 		mcp.WithString("language",
@@ -147,7 +147,7 @@ func toolExecute(langList string) mcp.Tool {
 			mcp.Description("Legacy mode: timeout is the response wait, with no execution deadline. Capture continues until completion, explicit cancellation or owner shutdown; not a persistent daemon."),
 		),
 		mcp.WithString("intent",
-			mcp.Description("Optional search intent, retained with the run. Run indexing is not yet available; synchronous output is never written into knowledge storage."),
+			mcp.Description("Optional search intent, at most 512 UTF-8 bytes. Selects sanitized previews using bounded lazy indexing; capy_runs search resumes partial coverage. Run output never enters knowledge storage."),
 		),
 	)
 }

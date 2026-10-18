@@ -142,7 +142,8 @@ func TestExecute_IntentSearch(t *testing.T) {
 		"intent":   "test output",
 	})
 	assert.False(t, r.IsError)
-	assert.Equal(t, "failed", capturedResult(t, r).Index.State, "run indexing is deferred to Task 10")
+	assert.Equal(t, "ready", capturedResult(t, r).Index.State)
+	assert.Contains(t, capturedResult(t, r).Preview, "test output")
 	assert.Contains(t, capturedOutput(t, srv, r, "stdout"), bigOutput)
 	assert.Nil(t, srv.store, "intent must not write new execute sources into knowledge storage")
 }

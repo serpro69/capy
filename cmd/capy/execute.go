@@ -96,7 +96,7 @@ func newExecuteCmd() *cobra.Command {
 	flags.StringVar(&codeFile, "code-file", "", "checked program file, relative to the selected owner (maximum 1 MiB)")
 	flags.StringVar(&cwd, "cwd", "", "execution directory, relative to the selected owner")
 	flags.Int64Var(&timeoutMS, "timeout-ms", 0, "execution deadline in milliseconds (default: configured executor.timeout)")
-	flags.StringVar(&intent, "intent", "", "optional search intent (indexing is currently unavailable)")
+	flags.StringVar(&intent, "intent", "", "optional sanitized search preview (at most 512 UTF-8 bytes); indexing resumes with runs search")
 	flags.BoolVar(&jsonOutput, "json", false, "emit the shared versioned JSON envelope")
 	cmd.Long = "Execute a program once and retain encrypted output under the selected owner's .capy/runs. Waits attached until completion; --background and --wait-ms are not supported. Default output is sanitized. Recover retained output with capy runs; do not repeat execution to retrieve it."
 	return cmd

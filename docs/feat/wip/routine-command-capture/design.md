@@ -486,6 +486,8 @@ Task 6 handoff and owner cancellation are verified in [Task 6 evidence](task6-ve
 Task 7 owner-crash recovery and lease safety are verified in [Task 7 evidence](task7-verification.md).
 Task 8 store-policy authority and quiescent changes are verified in [Task 8 evidence](task8-verification.md).
 Task 9 quota/retention/reset and policy-change maintenance are verified in
-[Task 9 evidence](task9-verification.md). Tasks 10–17 remain pending.
+[Task 9 evidence](task9-verification.md). Task 10 lazy sanitized search, quota
+accounting and resumable recovery are verified in [Task 10 evidence](task10-verification.md).
+Tasks 11–17 remain pending.
 These slices do not substitute for installed acceptance or independent
 design/code/spec review of the remaining feature.

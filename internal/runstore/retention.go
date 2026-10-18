@@ -39,8 +39,10 @@ func quotaError() error {
 // when a lowered policy leaves a large backlog; later maintenance resumes it.
 func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (RetentionReport, error) {
 	var report RetentionReport
-	if err := tx.QueryRowContext(ctx, "SELECT accounted_bytes FROM run_meta WHERE singleton=1").Scan(&report.AccountedBytes); err != nil {
-		return report, storageError()
+	var err error
+	report.AccountedBytes, err = refreshIndexDebit(ctx, tx)
+	if err != nil {
+		return report, err
 	}
 	if needed < 0 || needed > limit {
 		return report, quotaError()
@@ -76,7 +78,12 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 		if _, err := tx.ExecContext(ctx, "UPDATE runs SET evicting=1 WHERE id=? AND terminal=1", id); err != nil {
 			return report, storageError()
 		}
-		pending := false
+		deleted, pending, err := deleteIndexWindows(ctx, tx, id, remainingRows)
+		if err != nil {
+			return report, err
+		}
+		report.DeletedRows += deleted
+		remainingRows -= int(deleted)
 		// Fixed internal table names only. The primary-key prefixes bound each
 		// rowid selection to this run; parent CASCADE is used only when empty.
 		for _, table := range []string{"run_projection", "run_events"} {
@@ -100,13 +107,19 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 			report.PendingDeletion = true
 			break
 		}
-		// At most two checkpoints and one claim remain. Task 10 must add its
-		// FTS shadow-page debit/deletion to this bounded cleanup protocol.
+		// Only bounded checkpoints, index progress and one claim remain.
 		if _, err := tx.ExecContext(ctx, "DELETE FROM runs WHERE id=? AND terminal=1", id); err != nil {
 			return report, storageError()
 		}
 		report.AccountedBytes -= charged
 		retiredBytes += charged
+		if _, err := tx.ExecContext(ctx, "UPDATE run_meta SET accounted_bytes=? WHERE singleton=1", report.AccountedBytes); err != nil {
+			return report, storageError()
+		}
+		report.AccountedBytes, err = refreshIndexDebit(ctx, tx)
+		if err != nil {
+			return report, err
+		}
 		if expiry <= now {
 			report.Expired++
 		} else {
@@ -119,6 +132,10 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE run_meta SET accounted_bytes=? WHERE singleton=1", report.AccountedBytes); err != nil {
 		return report, storageError()
+	}
+	report.AccountedBytes, err = refreshIndexDebit(ctx, tx)
+	if err != nil {
+		return report, err
 	}
 	report.More = report.AccountedBytes > limit-needed
 	return report, nil
@@ -147,6 +164,13 @@ func charge(ctx context.Context, tx *sql.Tx, id string, amount, limit int64, exp
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE runs SET accounted_bytes=accounted_bytes+? WHERE id=?", amount, id); err != nil {
 		return storageError()
+	}
+	used, err := refreshIndexDebit(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if used > limit {
+		return quotaError()
 	}
 	return nil
 }

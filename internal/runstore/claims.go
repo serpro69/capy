@@ -9,8 +9,7 @@ import (
 )
 
 // ClaimIndex reserves bounded indexing work for a live owner generation. The
-// caller retains Owner.Lease through the work and release. Task 10 supplies the
-// actual index worker; the claim/recovery substrate introduces no FTS writes.
+// caller retains Owner.Lease through the work and release.
 func (s *Store) ClaimIndex(ctx context.Context, owner *Owner, id string) (bool, error) {
 	if owner == nil || owner.Lease == nil {
 		return false, storageError()
@@ -72,6 +71,34 @@ func (s *Store) ReleaseIndex(ctx context.Context, owner *Owner, id string) error
 		return storageError()
 	}
 	return nil
+}
+
+// retryIndexRelease only clears locally abandoned claims, never a concurrent
+// live worker. Keep the mutex through DELETE/removal: two retries must not both
+// delete by generation after the first has allowed a new same-owner claim.
+func (s *Store) retryIndexRelease(ctx context.Context, id string) error {
+	s.indexReleaseMu.Lock()
+	defer s.indexReleaseMu.Unlock()
+	owner, pending := s.pendingIndexReleases[id]
+	if !pending {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, WriteTimeout)
+	defer cancel()
+	if err := s.ReleaseIndex(ctx, &owner, id); err != nil {
+		return err
+	}
+	delete(s.pendingIndexReleases, id)
+	return nil
+}
+
+func (s *Store) rememberIndexRelease(owner *Owner, id string) {
+	s.indexReleaseMu.Lock()
+	defer s.indexReleaseMu.Unlock()
+	if s.pendingIndexReleases == nil {
+		s.pendingIndexReleases = make(map[string]Owner)
+	}
+	s.pendingIndexReleases[id] = Owner{ID: owner.ID, Slot: owner.Slot}
 }
 
 func (s *Store) recoverClaim(ctx context.Context, tx *sql.Tx, id string, slot int, generation string) error {
