@@ -37,6 +37,7 @@ type Index struct {
 }
 
 type Result struct {
+	BatchID         string     `json:"batch_id,omitempty"`
 	Capacity        *Capacity  `json:"capacity,omitempty"`
 	Preview         string     `json:"preview,omitempty"`
 	MetadataOmitted bool       `json:"metadata_omitted,omitempty"`

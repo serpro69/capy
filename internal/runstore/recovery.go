@@ -258,7 +258,7 @@ func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
 	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,terminal=1,completed_at=?,expires_at=? WHERE id=?", encoded, row.Result.CompletedAt.UnixNano(), row.Result.ExpiresAt.UnixMilli()+1, id); err != nil {
 		return storageError()
 	}
-	return nil
+	return syncBatchChild(ctx, tx, row.Result, true)
 }
 
 func (s *Store) maintenance(ctx context.Context, ticks <-chan time.Time) {

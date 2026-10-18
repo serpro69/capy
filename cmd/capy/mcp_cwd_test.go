@@ -64,6 +64,7 @@ func TestMCPStdioExecutionCwd(t *testing.T) {
 				args["code"] = "printf spawned > invalid-cwd-spawn"
 				if tc.tool == "capy_batch_execute" {
 					args["commands"] = []any{map[string]any{"label": "must not run", "command": "printf spawned > invalid-cwd-spawn"}}
+					delete(args, "code")
 				}
 				isError, output := stdioBooleanCall(t, p, tc.tool, args)
 				require.True(t, isError, output)
@@ -86,7 +87,10 @@ func TestMCPStdioExecutionCwd(t *testing.T) {
 				require.NotNil(t, result.Structured.RunID)
 				output = string(p.rawRun(t, *result.Structured.RunID, "stdout"))
 			} else {
-				output = p.tool(t, tc.tool, tc.args)
+				r := p.capturedBatch(t, tc.args)
+				require.False(t, r.IsError)
+				entries := p.batchChildren(t, r.Structured.BatchID)
+				output = string(p.rawRun(t, entries[0].RunID, "stdout"))
 			}
 			canonical, err := filepath.EvalSymlinks(workDir)
 			require.NoError(t, err)
@@ -110,5 +114,5 @@ func TestMCPStdioExecutionCwd(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(workDir, "knowledge.db"))
 	assert.NoFileExists(t, filepath.Join(external, "knowledge.db"))
 	p.close(t)
-	stdioCheckpointed(t, project)
+	require.NoFileExists(t, filepath.Join(project, "knowledge.db"))
 }

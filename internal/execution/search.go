@@ -38,6 +38,12 @@ func (s *Service) Search(ctx context.Context, options runstore.SearchOptions) (r
 // never perform more indexing, alter coverage, or spend a knowledge-search slot.
 func BoundSearch(page runstore.SearchPage, allowance int) runstore.SearchPage {
 	bounded := page
+	// Keep most optional space for matches; a large manifest must not spend
+	// the whole budget on coverage metadata and permanently hide every hit.
+	count := min(len(page.Children), allowance/(4*512))
+	bounded.Children = page.Children[:count]
+	bounded.CoverageOmitted = count < len(page.Children)
+	allowance -= count * 512
 	bounded.Results = make([]runstore.QueryHits, len(page.Results))
 	for i, group := range page.Results {
 		bounded.Results[i] = runstore.QueryHits{Query: group.Query, Hits: []runstore.SearchHit{}}

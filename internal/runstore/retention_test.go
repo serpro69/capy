@@ -59,7 +59,7 @@ func retentionRun(t *testing.T, s *Store, o *Owner, data string, terminal bool) 
 func accounted(t *testing.T, s *Store) int64 {
 	t.Helper()
 	var total, sum int64
-	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT accounted_bytes,index_bytes+(SELECT COALESCE(sum(accounted_bytes),0) FROM runs) FROM run_meta").Scan(&total, &sum))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT accounted_bytes,index_bytes+(SELECT COALESCE(sum(accounted_bytes),0) FROM runs)+(SELECT COALESCE(sum(accounted_bytes),0) FROM run_batches) FROM run_meta").Scan(&total, &sum))
 	require.Equal(t, sum, total, "global debit must equal retained per-run debits plus allocated index pages")
 	return total
 }

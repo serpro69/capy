@@ -33,26 +33,9 @@ func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admit
 	if err := s.checkQuarantine(ctx); err != nil {
 		return Admitted{}, err
 	}
-	id := uuid.NewString()
-	ownerType := program.OwnerType
-	if ownerType == "" {
-		ownerType = "mcp"
-	}
-	if ownerType != "mcp" && ownerType != "cli" {
-		return Admitted{}, failure("invalid_argument", "invalid execution owner type")
-	}
-	result := Result{Version: 1, Kind: "run", RunID: &id, OwnerID: owner.ID, OwnerType: ownerType, State: "admitted",
-		Capture: Capture{State: "not_started"}, Redaction: Projection{Version: sanitize.StreamVersion, State: "ready"}, Index: Index{State: "not_requested"}}
-	if program.Intent != "" {
-		result.Index.State = "building"
-	}
-	encodedProgram, err := json.Marshal(program)
+	row, encodedProgram, encodedResult, err := s.prepareRun(owner, program)
 	if err != nil {
-		return Admitted{}, storageError()
-	}
-	encodedResult, err := json.Marshal(result)
-	if err != nil {
-		return Admitted{}, storageError()
+		return Admitted{}, err
 	}
 	if err := s.prepareCapacity(ctx, int64(len(encodedProgram))+runReserve); err != nil {
 		return Admitted{}, err
@@ -73,35 +56,18 @@ func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admit
 	if err := tx.QueryRowContext(ctx, "SELECT generation FROM run_owners WHERE slot=?", owner.Slot).Scan(&generation); err != nil || generation != owner.ID {
 		return Admitted{}, storageError()
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE run_meta SET last_created=max(last_created+1,?) WHERE singleton=1", time.Now().UTC().UnixNano()); err != nil {
-		return Admitted{}, storageError()
-	}
-	var createdAt int64
-	if err := tx.QueryRowContext(ctx, "SELECT last_created FROM run_meta WHERE singleton=1").Scan(&createdAt); err != nil {
-		return Admitted{}, storageError()
-	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO runs(id,generation,slot,program,result,cleanup,created_at) VALUES(?,?,?,?,?,'not_spawned',?)", id, owner.ID, owner.Slot, encodedProgram, encodedResult, createdAt)
-	if err != nil {
-		return Admitted{}, storageError()
-	}
-	checkpoint, err := sanitize.NewStream().Checkpoint()
-	if err != nil {
-		return Admitted{}, storageError()
-	}
-	for _, stream := range []string{"stdout", "stderr"} {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO run_streams(run_id,stream,checkpoint) VALUES(?,?,?)", id, stream, checkpoint); err != nil {
-			return Admitted{}, storageError()
-		}
+	if err := insertRun(ctx, tx, row, encodedProgram, encodedResult); err != nil {
+		return Admitted{}, err
 	}
 	// The admission commit is the write probe. No subprocess is authorized until
 	// it succeeds and the helper authenticates/reloads this exact admitted row.
-	if err := charge(ctx, tx, id, int64(len(encodedProgram))+runReserve, s.policy.MaxRetainedBytes, true); err != nil {
+	if err := charge(ctx, tx, row.ID, int64(len(encodedProgram))+runReserve, s.policy.MaxRetainedBytes, true); err != nil {
 		return Admitted{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Admitted{}, storageError()
 	}
-	return Admitted{ID: id, Generation: owner.ID, Slot: owner.Slot, Program: program, Result: result, Cleanup: "not_spawned"}, nil
+	return row, nil
 }
 
 type runQuerier interface {
@@ -373,6 +339,9 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,cleanup=?,terminal=?,completed_at=?,expires_at=? WHERE id=?", encoded, row.Cleanup, terminal, completed, expires, id); err != nil {
 		return storageError()
 	}
+	if err := syncBatchChild(ctx, tx, row.Result, terminal); err != nil {
+		return err
+	}
 	if _, err := refreshIndexDebit(ctx, tx); err != nil {
 		return err
 	}
@@ -394,6 +363,8 @@ func ApplyOutcome(result *Result, c Completion) {
 	switch {
 	case !c.Retired:
 		result.State = "interrupted"
+	case !c.Started && (c.Reason == "queue_timeout" || c.Reason == "batch_stopped"):
+		result.State = "skipped"
 	case c.Reason == "cancelled":
 		result.State = "cancelled"
 	case !c.Started:
@@ -422,4 +393,58 @@ func (s *Store) CaptureFailed(ctx context.Context, id, reason string) error {
 		row.Result.Capture.Reason = &reason
 		return nil
 	})
+}
+
+// prepareRun and insertRun are shared by single-run and atomic batch admission.
+func (s *Store) prepareRun(owner *Owner, program Program) (Admitted, []byte, []byte, error) {
+	program.PolicyRevision = s.policy.Revision
+	program.TTLHours = s.policy.TTLHours
+	program.MaxRunBytes = s.policy.MaxRunBytes
+	id := uuid.NewString()
+	ownerType := program.OwnerType
+	if ownerType == "" {
+		ownerType = "mcp"
+	}
+	if ownerType != "mcp" && ownerType != "cli" {
+		return Admitted{}, nil, nil, failure("invalid_argument", "invalid execution owner type")
+	}
+	result := Result{Version: 1, Kind: "run", RunID: &id, OwnerID: owner.ID, OwnerType: ownerType, State: "admitted",
+		Capture: Capture{State: "not_started"}, Redaction: Projection{Version: sanitize.StreamVersion, State: "ready"}, Index: Index{State: "not_requested"}}
+	if program.Intent != "" {
+		result.Index.State = "building"
+	}
+	encodedProgram, err := json.Marshal(program)
+	if err != nil {
+		return Admitted{}, nil, nil, storageError()
+	}
+	encodedResult, err := json.Marshal(result)
+	if err != nil {
+		return Admitted{}, nil, nil, storageError()
+	}
+
+	return Admitted{ID: id, Generation: owner.ID, Slot: owner.Slot, Program: program, Result: result, Cleanup: "not_spawned"}, encodedProgram, encodedResult, nil
+}
+func insertRun(ctx context.Context, tx *sql.Tx, row Admitted, encodedProgram, encodedResult []byte) error {
+	if _, err := tx.ExecContext(ctx, "UPDATE run_meta SET last_created=max(last_created+1,?) WHERE singleton=1", time.Now().UTC().UnixNano()); err != nil {
+		return storageError()
+	}
+	var createdAt int64
+	if err := tx.QueryRowContext(ctx, "SELECT last_created FROM run_meta WHERE singleton=1").Scan(&createdAt); err != nil {
+		return storageError()
+	}
+	_, err := tx.ExecContext(ctx, "INSERT INTO runs(id,generation,slot,program,result,cleanup,created_at) VALUES(?,?,?,?,?,'not_spawned',?)", row.ID, row.Generation, row.Slot, encodedProgram, encodedResult, createdAt)
+	if err != nil {
+		return storageError()
+	}
+	checkpoint, err := sanitize.NewStream().Checkpoint()
+	if err != nil {
+		return storageError()
+	}
+	for _, stream := range []string{"stdout", "stderr"} {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO run_streams(run_id,stream,checkpoint) VALUES(?,?,?)", row.ID, stream, checkpoint); err != nil {
+			return storageError()
+		}
+	}
+
+	return nil
 }

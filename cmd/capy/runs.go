@@ -27,7 +27,7 @@ func newRunsCmd() *cobra.Command {
 	return cmd
 }
 func newRunQueryCmd(action string) *cobra.Command {
-	var id, cursor, stream, encoding string
+	var id, batchID, cursor, stream, encoding string
 	var states []string
 	var limit, maxBytes int
 	var startLine int64
@@ -47,8 +47,11 @@ func newRunQueryCmd(action string) *cobra.Command {
 		if action == "list" && (limit < 1 || limit > 64) {
 			return invalid(cmd, "limit must be between 1 and 64")
 		}
-		if action != "list" && uuid.Validate(id) != nil {
+		if action != "list" && batchID == "" && uuid.Validate(id) != nil {
 			return invalid(cmd, "run-id must be a UUID")
+		}
+		if batchID != "" && (uuid.Validate(batchID) != nil || id != "") {
+			return invalid(cmd, "batch-id must be a UUID and cannot be combined with run-id")
 		}
 		if len(cursor) > 1024 {
 			return invalid(cmd, "cursor exceeds its limit")
@@ -88,7 +91,12 @@ func newRunQueryCmd(action string) *cobra.Command {
 			encode = encodeRunJSON
 		}
 		value, err = execution.Budget(target.cfg.Runs.MaxResponseBytes, func(n int) (any, error) {
-			return runQuery(ctx, service, action, id, runstore.ReadOptions{Stream: stream, Cursor: cursor, StartLine: startLine, MaxBytes: min(maxBytes, max(1, n)), Raw: raw}, runstore.ListOptions{States: states, Cursor: cursor, Limit: min(limit, max(1, n/256))}, n)
+			if action == "status" && batchID != "" {
+				result, err := service.BatchStatus(ctx, batchID)
+				bounded := execution.BoundBatch(result, n)
+				return runQueryResult{Version: 1, Kind: "query", Batch: &bounded}, err
+			}
+			return runQuery(ctx, service, action, id, runstore.ReadOptions{Stream: stream, Cursor: cursor, StartLine: startLine, MaxBytes: min(maxBytes, max(1, n)), Raw: raw}, runstore.ListOptions{BatchID: batchID, States: states, Cursor: cursor, Limit: min(limit, max(1, n/256))}, n)
 		}, encode)
 		closeErr := service.Close()
 		if err != nil {
@@ -103,6 +111,9 @@ func newRunQueryCmd(action string) *cobra.Command {
 	flags.BoolVar(&jsonOutput, "json", false, "emit the shared versioned JSON envelope")
 	if action != "list" {
 		flags.StringVar(&id, "run-id", "", "captured run UUID")
+	}
+	if action != "read" {
+		flags.StringVar(&batchID, "batch-id", "", "serial batch UUID")
 	}
 	if action == "read" {
 		flags.StringVar(&stream, "stream", "merged", "stdout, stderr or merged")

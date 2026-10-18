@@ -46,7 +46,7 @@ func TestIntegration_BatchExecute_MultiCommandSearchRoundTrip(t *testing.T) {
 	srv := newTestServer(t, nil)
 
 	// Batch execute: multiple commands producing distinct content, then search
-	r := callBatch(t, srv, map[string]any{
+	r := callCapturedBatch(t, srv, map[string]any{
 		"commands": []any{
 			map[string]any{"label": "Go Version", "command": "go version"},
 			map[string]any{"label": "Env Vars", "command": "echo 'DATABASE_URL=postgres://localhost:5432/mydb\nREDIS_URL=redis://localhost:6379'"},
@@ -54,16 +54,14 @@ func TestIntegration_BatchExecute_MultiCommandSearchRoundTrip(t *testing.T) {
 		"queries": []any{"go version", "database connection"},
 	})
 	require.False(t, r.IsError)
-	text := resultText(r)
+	b := batchResult(t, r)
+	require.Equal(t, "completed", b.State)
+	require.Len(t, batchChildren(t, srv, b.BatchID), 2)
+	require.NotNil(t, b.Search)
+	require.Len(t, b.Search.Results, 2)
+	require.NotEmpty(t, b.Search.Results[0].Hits, "%+v", b.Search)
+	require.Contains(t, b.Search.Results[0].Hits[0].Text, "go version")
 
-	// Should show execution summary
-	assert.Contains(t, text, "Executed 2 commands")
-	assert.Contains(t, text, "Indexed")
-
-	// Should contain search results for both queries
-	assert.Contains(t, text, "go version")
-	assert.Contains(t, text, "## go version")
-	assert.Contains(t, text, "## database connection")
 }
 
 func TestIntegration_IndexAndSearchRoundTrip(t *testing.T) {
@@ -255,7 +253,7 @@ func TestIntegration_BatchPipeline_ExecuteAndQueryInOneCall(t *testing.T) {
 	srv := newTestServer(t, nil)
 
 	// Single batch_execute call: executes commands AND searches results
-	r := callBatch(t, srv, map[string]any{
+	r := callCapturedBatch(t, srv, map[string]any{
 		"commands": []any{
 			map[string]any{
 				"label":   "Git Log",
@@ -269,21 +267,17 @@ func TestIntegration_BatchPipeline_ExecuteAndQueryInOneCall(t *testing.T) {
 		"queries": []any{"feature commit", "failed test"},
 	})
 	require.False(t, r.IsError)
-	text := resultText(r)
-
-	// Should have executed both commands
-	assert.Contains(t, text, "Executed 2 commands")
-
-	// Should have search results for both queries
-	assert.Contains(t, text, "## feature commit")
-	assert.Contains(t, text, "## failed test")
-
-	// Verify the indexed content is also searchable via standalone search
-	r2 := callSearch(t, srv, map[string]any{
-		"queries": []any{"Refactor Z"},
-	})
+	b := batchResult(t, r)
+	require.Equal(t, "completed", b.State)
+	require.NotNil(t, b.Search)
+	require.Len(t, b.Search.Results, 2)
+	r2 := callRuns(t, srv, map[string]any{"action": "search", "batch_id": b.BatchID, "queries": []any{"Refactor Z"}})
 	require.False(t, r2.IsError)
-	assert.Contains(t, resultText(r2), "Refactor")
+	encoded, err := json.Marshal(r2.StructuredContent)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), "Refactor")
+	assert.Nil(t, srv.store)
+
 }
 
 // ─── 16.3b TTL cache → stats pipeline ─────────────────────────────────────────
@@ -464,15 +458,17 @@ func TestIntegration_Performance_BatchExecuteWithSearch(t *testing.T) {
 	}
 
 	start := time.Now()
-	r := callBatch(t, srv, map[string]any{
+	r := callCapturedBatch(t, srv, map[string]any{
 		"commands": commands,
 		"queries":  []any{"data_0 status", "data_3 value", "Command 4 output"},
 	})
 	elapsed := time.Since(start)
-	require.False(t, r.IsError)
+	require.False(t, r.IsError, "%+v", batchResult(t, r))
 	t.Logf("Batch execute+search time: %v", elapsed)
 
-	text := resultText(r)
-	assert.Contains(t, text, "Executed 5 commands")
-	assert.Contains(t, text, "Indexed")
+	b := batchResult(t, r)
+	require.Equal(t, "completed", b.State)
+	require.Len(t, batchChildren(t, srv, b.BatchID), 5)
+	require.NotNil(t, b.Search)
+
 }

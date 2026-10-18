@@ -8,7 +8,9 @@ import (
 	"github.com/serpro69/capy/internal/runstore"
 )
 
-const captureQueueBlocks = (1 << 20) / executor.EventBlockBytes
+const captureQueueBytes = 1 << 20
+const captureQueueBlocks = captureQueueBytes / executor.EventBlockBytes
+const captureQueueEvents = 4096 // also bound metadata for very small pipe reads
 
 // Keep CPU-heavy binary projection within the same 250 ms write deadline,
 // including race-instrumented builds. Store admission still caps batches at 16.
@@ -18,6 +20,7 @@ const captureBatchBlocks = 2
 // producer (executor's sequencer), one writer, and at most 1 MiB queued plus a
 // 32 KiB in-flight batch. The first lost block ends capture permanently.
 type captureQueue struct {
+	queuedBytes  atomic.Int64
 	events       chan executor.OutputEvent
 	done         chan struct{}
 	failed       atomic.Bool
@@ -33,12 +36,13 @@ type batchAppender interface {
 }
 
 func newCaptureQueue(store CaptureStore) *captureQueue {
-	q := &captureQueue{events: make(chan executor.OutputEvent, captureQueueBlocks), done: make(chan struct{})}
+	q := &captureQueue{events: make(chan executor.OutputEvent, captureQueueEvents), done: make(chan struct{})}
 	go func() {
 		defer close(q.done)
 		writeFailed := false
 		lossRecorded := false
 		for event := range q.events {
+			q.queuedBytes.Add(-int64(len(event.Data)))
 			batch := []executor.OutputEvent{event}
 		collect:
 			for len(batch) < captureBatchBlocks {
@@ -47,6 +51,7 @@ func newCaptureQueue(store CaptureStore) *captureQueue {
 					if !ok {
 						break collect
 					}
+					q.queuedBytes.Add(-int64(len(next.Data)))
 					batch = append(batch, next)
 				default:
 					break collect
@@ -107,10 +112,16 @@ func (q *captureQueue) append(e executor.OutputEvent) error {
 	if q.failed.Load() {
 		return errors.New("capture stopped")
 	}
+	if q.queuedBytes.Add(int64(len(e.Data))) > captureQueueBytes {
+		q.queuedBytes.Add(-int64(len(e.Data)))
+		q.lose("queue_saturated")
+		return errors.New("capture queue saturated")
+	}
 	select {
 	case q.events <- e:
 		return nil
 	default:
+		q.queuedBytes.Add(-int64(len(e.Data)))
 		q.lose("queue_saturated")
 		return errors.New("capture queue saturated")
 	}

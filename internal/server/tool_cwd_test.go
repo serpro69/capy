@@ -35,7 +35,9 @@ func callCwdTool(t *testing.T, srv *Server, tool string, cwd any, code string) *
 		}
 		args["queries"] = []any{"cwdmarker"}
 		args["concurrency"] = concurrency
-		return callBatch(t, srv, args)
+		delete(args, "language")
+		delete(args, "code")
+		return callCapturedBatch(t, srv, args)
 	}
 }
 
@@ -100,6 +102,15 @@ func TestExecutionCwdLocationsAndFileAnchor(t *testing.T) {
 					want, err := filepath.EvalSymlinks(tc.dir)
 					require.NoError(t, err)
 					output := resultText(result)
+					if tool == "serial batch" {
+						entries := batchChildren(t, srv, batchResult(t, result).BatchID)
+						page, err := srv.executionService().ReadRaw(t.Context(), entries[0].RunID, "stdout", "", 4096)
+						require.NoError(t, err)
+						output = ""
+						for _, f := range page.Fragments {
+							output += string(f.Data)
+						}
+					}
 					if tool == "execute" || tool == "execute-file" {
 						output = capturedOutput(t, srv, result, "stdout")
 					}
@@ -108,7 +119,7 @@ func TestExecutionCwdLocationsAndFileAnchor(t *testing.T) {
 						assert.Contains(t, output, "project-input")
 						assert.NotContains(t, output, "wrong-cwd-input")
 					}
-					if strings.Contains(tool, "batch") {
+					if tool == "parallel batch" {
 						sources, err := srv.getStore().ListSources()
 						require.NoError(t, err)
 						require.Len(t, sources, 1)
@@ -128,6 +139,7 @@ func TestExecutionCwdLocationsAndFileAnchor(t *testing.T) {
 func TestExecutionCwdConcurrentRequests(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	srv := newTestServer(t, nil)
+	srv.config.Runs.MaxActive = 8
 	processDir, err := os.Getwd()
 	require.NoError(t, err)
 	originalEnv := os.Environ()
@@ -145,6 +157,15 @@ func TestExecutionCwdConcurrentRequests(t *testing.T) {
 					result := callCwdTool(t, srv, tool, dir, "printf "+marker+"; cat marker; pwd")
 					require.False(t, result.IsError, resultText(result))
 					output := resultText(result)
+					if tool == "serial batch" {
+						entries := batchChildren(t, srv, batchResult(t, result).BatchID)
+						page, err := srv.executionService().ReadRaw(t.Context(), entries[0].RunID, "stdout", "", 4096)
+						require.NoError(t, err)
+						output = ""
+						for _, f := range page.Fragments {
+							output += string(f.Data)
+						}
+					}
 					if tool == "execute" || tool == "execute-file" {
 						output = capturedOutput(t, srv, result, "stdout")
 					}

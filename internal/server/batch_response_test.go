@@ -26,7 +26,7 @@ func assertBatchBudget(t *testing.T, result *mcp.CallToolResult) {
 	assert.NotContains(t, resultText(result), "batch response truncated", "normal formatting must reserve its own notices")
 }
 
-func TestBatchExecute_OptionalQueries(t *testing.T) {
+func TestLegacyBatchExecute_OptionalQueries(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args map[string]any
@@ -40,7 +40,7 @@ func TestBatchExecute_OptionalQueries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := newTestServer(t, nil)
 			tc.args["commands"] = []any{"printf marker"}
-			r := callBatch(t, srv, tc.args)
+			r := callLegacyBatch(t, srv, tc.args)
 			require.False(t, r.IsError, resultText(r))
 			assertBatchBudget(t, r)
 			assert.Contains(t, resultText(r), "Batch source: \"batch:cmd_1\"")
@@ -57,7 +57,7 @@ func TestBatchExecute_OptionalQueries(t *testing.T) {
 	}
 }
 
-func TestBatchExecute_InvalidSearchBeforeExecution(t *testing.T) {
+func TestLegacyBatchExecute_InvalidSearchBeforeExecution(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		field string
@@ -73,7 +73,7 @@ func TestBatchExecute_InvalidSearchBeforeExecution(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := newTestServer(t, nil)
-			r := callBatch(t, srv, map[string]any{
+			r := callLegacyBatch(t, srv, map[string]any{
 				"commands": []any{"printf bad > spawned"}, tc.field: tc.value,
 			})
 			require.True(t, r.IsError)
@@ -87,7 +87,7 @@ func TestBatchExecute_InvalidSearchBeforeExecution(t *testing.T) {
 	}
 }
 
-func TestBatchExecute_GlobalKnowledgeScope(t *testing.T) {
+func TestLegacyBatchExecute_GlobalKnowledgeScope(t *testing.T) {
 	srv := newTestServer(t, nil)
 	for _, fixture := range []struct {
 		label string
@@ -100,7 +100,7 @@ func TestBatchExecute_GlobalKnowledgeScope(t *testing.T) {
 		_, err := srv.getStore().Index("# Equal title\n\nprovenancemarker shared evidence", fixture.label, "markdown", fixture.kind)
 		require.NoError(t, err)
 	}
-	r := callBatch(t, srv, map[string]any{
+	r := callLegacyBatch(t, srv, map[string]any{
 		"commands": []any{map[string]any{"label": "Equal title", "command": "printf 'provenancemarker current output'"}},
 		"queries":  []any{"provenancemarker"}, "query_scope": "global",
 	})
@@ -116,7 +116,7 @@ func TestBatchExecute_GlobalKnowledgeScope(t *testing.T) {
 	assertBatchBudget(t, r)
 }
 
-func TestBatchExecute_ProvenanceAndAccounting(t *testing.T) {
+func TestLegacyBatchExecute_ProvenanceAndAccounting(t *testing.T) {
 	for _, concurrency := range []int{1, 2} {
 		t.Run(fmt.Sprintf("workers%d", concurrency), func(t *testing.T) {
 			srv := newTestServer(t, nil)
@@ -125,7 +125,7 @@ func TestBatchExecute_ProvenanceAndAccounting(t *testing.T) {
 			command := "cat <<'EOF'\nactualoutput\nEOF\n# provenanceunique " + secret + " ``` # Fake\n" +
 				"# " + strings.Repeat("界", 250) + "\nprintf tailmarker > complete-command\nprintf err >&2"
 			commands := []any{map[string]any{"label": "Safe\n# Injected", "command": command}, "true"}
-			r := callBatch(t, srv, map[string]any{"commands": commands, "concurrency": concurrency})
+			r := callLegacyBatch(t, srv, map[string]any{"commands": commands, "concurrency": concurrency})
 			require.False(t, r.IsError, resultText(r))
 			assertBatchBudget(t, r)
 			assert.NotContains(t, resultText(r), secret)
@@ -159,7 +159,7 @@ func TestBatchExecute_ProvenanceAndAccounting(t *testing.T) {
 	}
 }
 
-func TestBatchExecute_LargeInventoryUnchanged(t *testing.T) {
+func TestLegacyBatchExecute_LargeInventoryUnchanged(t *testing.T) {
 	srv := newTestServer(t, nil)
 	// Admit all 8,000 headings through the existing configurable capture limit;
 	// otherwise the executor's independent 100 KiB head/tail cap fires first.
@@ -175,7 +175,7 @@ func TestBatchExecute_LargeInventoryUnchanged(t *testing.T) {
 			if query {
 				args["queries"] = []any{"sectionmarker7999"}
 			}
-			r := callBatch(t, srv, args)
+			r := callLegacyBatch(t, srv, args)
 			require.False(t, r.IsError, resultText(r))
 			assertBatchBudget(t, r)
 			if query || repeat {
@@ -192,7 +192,7 @@ func TestBatchExecute_LargeInventoryUnchanged(t *testing.T) {
 	}
 }
 
-func TestBatchExecute_SerializedResponseBudget(t *testing.T) {
+func TestLegacyBatchExecute_SerializedResponseBudget(t *testing.T) {
 	srv := newTestServer(t, nil)
 	content := "# " + strings.Repeat("<&界", 200) + "\n\nneedle " + strings.Repeat("<&\\\"界", 12000)
 	require.NoError(t, os.WriteFile(filepath.Join(srv.projectDir, "output.md"), []byte(content), 0o600))
@@ -208,7 +208,7 @@ func TestBatchExecute_SerializedResponseBudget(t *testing.T) {
 	for i := range queries {
 		queries[i] = "needle"
 	}
-	r := callBatch(t, srv, map[string]any{"commands": commands, "queries": queries})
+	r := callLegacyBatch(t, srv, map[string]any{"commands": commands, "queries": queries})
 	require.False(t, r.IsError, resultText(r))
 	assertBatchBudget(t, r)
 	assert.Contains(t, resultText(r), "Query outputs omitted:")
@@ -220,15 +220,15 @@ func TestBatchExecute_SerializedResponseBudget(t *testing.T) {
 	sectionInventory := strings.SplitN(strings.SplitN(text, "## Indexed Sections", 2)[1], "## needle", 2)[0]
 	assert.LessOrEqual(t, jsonTextBytes("## Indexed Sections"+sectionInventory), 8192)
 	// Oversized queries also have bounded display text, including no-hit paths.
-	r = callBatch(t, srv, map[string]any{"commands": []any{"true"}, "queries": []any{strings.Repeat("<&\\\"界", 10000)}})
+	r = callLegacyBatch(t, srv, map[string]any{"commands": []any{"true"}, "queries": []any{strings.Repeat("<&\\\"界", 10000)}})
 	require.False(t, r.IsError)
 	assertBatchBudget(t, r)
 }
 
-func TestBatchExecute_ProvenanceCountsTowardSourceLimit(t *testing.T) {
+func TestLegacyBatchExecute_ProvenanceCountsTowardSourceLimit(t *testing.T) {
 	srv := newTestServer(t, nil)
 	srv.config.Store.MaxSourceBytes = 100
-	r := callBatch(t, srv, map[string]any{"commands": []any{"printf output # " + strings.Repeat("x", 200)}})
+	r := callLegacyBatch(t, srv, map[string]any{"commands": []any{"printf output # " + strings.Repeat("x", 200)}})
 	require.True(t, r.IsError)
 	assert.Contains(t, resultText(r), "source too large")
 	stats := srv.stats.Snapshot()
@@ -239,10 +239,10 @@ func TestBatchExecute_ProvenanceCountsTowardSourceLimit(t *testing.T) {
 	assert.Empty(t, sources, "never silently drop output to accommodate provenance")
 }
 
-func TestBatchExecute_LargePolicyErrorBudget(t *testing.T) {
+func TestLegacyBatchExecute_LargePolicyErrorBudget(t *testing.T) {
 	pattern := "Bash(" + strings.Repeat("<", 90000) + ")"
 	srv := newTestServer(t, []security.SecurityPolicy{{Deny: []string{pattern}}})
-	r := callBatch(t, srv, map[string]any{"commands": []any{strings.Repeat("<", 90000)}})
+	r := callLegacyBatch(t, srv, map[string]any{"commands": []any{strings.Repeat("<", 90000)}})
 	require.True(t, r.IsError)
 	assert.Contains(t, resultText(r), "matches deny pattern")
 	assert.Contains(t, resultText(r), "batch response truncated")
@@ -252,13 +252,13 @@ func TestBatchExecute_LargePolicyErrorBudget(t *testing.T) {
 	assert.Zero(t, srv.stats.Snapshot().BytesSandboxed)
 }
 
-func TestBatchExecute_LongDistinctiveTerms(t *testing.T) {
+func TestLegacyBatchExecute_LongDistinctiveTerms(t *testing.T) {
 	srv := newTestServer(t, nil)
 	term := "distinctiveidentifier" + strings.Repeat("x", 4000)
 	content := "# First\n\n" + term + "\n\n# Second\n\n" + term +
 		"\n\n# Third\n\nother content\n\n# Fourth\n\nmore content\n"
 	require.NoError(t, os.WriteFile(filepath.Join(srv.projectDir, "terms.md"), []byte(content), 0o600))
-	r := callBatch(t, srv, map[string]any{"commands": []any{"cat terms.md"}})
+	r := callLegacyBatch(t, srv, map[string]any{"commands": []any{"cat terms.md"}})
 	require.False(t, r.IsError, resultText(r))
 	assertBatchBudget(t, r)
 	assert.Contains(t, resultText(r), "Searchable terms for follow-up:")
@@ -270,10 +270,10 @@ func TestBatchExecute_LongDistinctiveTerms(t *testing.T) {
 	assert.Contains(t, hits[0].Content, term, "only display text may truncate the identifier")
 }
 
-func TestBatchExecute_SourceSelectorJSON(t *testing.T) {
+func TestLegacyBatchExecute_SourceSelectorJSON(t *testing.T) {
 	srv := newTestServer(t, nil)
 	label := "control\x00quote\"slash\\界<&"
-	r := callBatch(t, srv, map[string]any{
+	r := callLegacyBatch(t, srv, map[string]any{
 		"commands": []any{map[string]any{"label": label, "command": "printf selectorcontent"}},
 	})
 	require.False(t, r.IsError, resultText(r))

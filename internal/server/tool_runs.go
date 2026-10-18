@@ -52,10 +52,46 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		}
 		return s.trackToolResponse("capy_runs", r), nil
 	}
+	if batch, present := args["batch_id"]; present && (action == "status" || action == "cancel") {
+		id, ok := batch.(string)
+		if !ok || uuid.Validate(id) != nil || len(args) != 2 {
+			return fail("invalid_argument", "batch status/cancel requires only action and a batch_id UUID")
+		}
+		var result runstore.BatchResult
+		var requested bool
+		var err error
+		if action == "cancel" {
+			result, requested, err = s.executionService().CancelBatch(ctx, id)
+		} else {
+			result, err = s.executionService().BatchStatus(ctx, id)
+		}
+		if err != nil {
+			return operationError(err)
+		}
+		response, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
+			body := map[string]any{"version": 1, "kind": "query", "batch": execution.BoundBatch(result, n)}
+			if action == "cancel" {
+				body["cancel_requested"] = requested
+			}
+			return mcp.NewToolResultStructured(body, "Batch status; list children by batch_id and read each run_id."), nil
+		}, nil)
+		if err != nil {
+			return operationError(err)
+		}
+		return s.trackToolResponse("capy_runs", response), nil
+	}
 	if action == "list" {
 		for name := range args {
-			if name != "action" && name != "states" && name != "cursor" && name != "limit" {
+			if name != "action" && name != "states" && name != "cursor" && name != "limit" && name != "batch_id" {
 				return fail("invalid_argument", "unsupported argument for list")
+			}
+		}
+		batchID := ""
+		if value, present := args["batch_id"]; present {
+			var ok bool
+			batchID, ok = value.(string)
+			if !ok || uuid.Validate(batchID) != nil {
+				return fail("invalid_argument", "batch_id must be a UUID")
 			}
 		}
 		limit, err := integerArg(args, "limit", 16, 1, 64)
@@ -94,7 +130,7 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 			}
 		}
 		r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
-			page, err := s.executionService().List(ctx, runstore.ListOptions{States: states, Cursor: cursor, Limit: min(int(limit), max(1, n/256))})
+			page, err := s.executionService().List(ctx, runstore.ListOptions{BatchID: batchID, States: states, Cursor: cursor, Limit: min(int(limit), max(1, n/256))})
 			if err != nil {
 				return nil, err
 			}
@@ -212,10 +248,10 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 
 func toolRuns() mcp.Tool {
 	return mcp.NewTool("capy_runs", mcp.WithToolAnnotation(annotationCleanup),
-		mcp.WithDescription("Recover captured runs with status, list, sanitized/raw reads and lazy sanitized search independent of the knowledge-search budget. Search reports coverage; repeat to resume bounded indexing. Cancel requests termination of this MCP owner's runs; poll status. Batch manifests are not yet available."),
+		mcp.WithDescription("Recover captured runs with status, list, sanitized/raw reads and lazy sanitized search independent of the knowledge-search budget. Search reports coverage; repeat to resume bounded indexing. Cancel requests termination of this MCP owner's runs; poll status. Serial batch status/list/search/cancel use batch_id; list yields child run_id values for reads."),
 		mcp.WithString("action", mcp.Required(), mcp.Enum("status", "read", "list", "search", "cancel")),
 		mcp.WithString("run_id", mcp.Description("Captured run UUID in this owner's run store")),
-		mcp.WithString("batch_id", mcp.Description("Batch selector for search; mutually exclusive with run_id")),
+		mcp.WithString("batch_id", mcp.Description("Batch UUID for status/list/search/cancel; mutually exclusive with run_id")),
 		mcp.WithArray("queries", mcp.Items(map[string]any{"type": "string"}), mcp.Description("Search: 1–8 nonblank queries, at most 512 UTF-8 bytes each")),
 		mcp.WithString("query_scope", mcp.Enum("batch", "global"), mcp.Description("Batch search only")),
 		mcp.WithBoolean("raw", mcp.Description("Explicitly request unsanitized bytes (default false)")),

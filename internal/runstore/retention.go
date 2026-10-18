@@ -51,13 +51,45 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 	var retiredBytes int64
 	for range retentionBatch {
 		pressure := report.AccountedBytes > limit-needed
+		// A deferred expired manifest still precedes live logs. Finish this
+		// pass and let the caller resume with a fresh deletion budget.
+		if remainingRows < 257 {
+			var expiredManifest bool
+			if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_batches WHERE completed_at IS NOT NULL AND expires_at<=?)", time.Now().UTC().UnixMilli()).Scan(&expiredManifest); err != nil {
+				return report, storageError()
+			}
+			if expiredManifest {
+				break
+			}
+		}
+		// Expired manifests are cheap, bounded victims and precede live logs.
+		removed, debit, deleted, err := retainBatch(ctx, tx, false, expire || pressure, remainingRows)
+		if err != nil {
+			return report, err
+		}
+		if removed {
+			report.AccountedBytes -= debit
+			report.Expired++
+			report.DeletedRows += deleted
+			remainingRows -= int(deleted)
+			retiredBytes += debit
+			report.AccountedBytes, err = refreshIndexDebit(ctx, tx)
+			if err != nil {
+				return report, err
+			}
+			if remainingRows <= 0 || retiredBytes >= 4<<20 {
+				break
+			}
+			continue
+		}
+
 		var id string
 		var charged, expiry int64
 		// Only proven terminal records are evictable. Unverified cleanup remains
 		// evidence even when the result blob contains a historical expiry.
 		now := time.Now().UTC().UnixMilli()
 		// Resume already-hidden victims even if current pressure disappeared.
-		err := tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE evicting=1 ORDER BY id LIMIT 1").Scan(&id, &charged, &expiry)
+		err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE evicting=1 ORDER BY id LIMIT 1").Scan(&id, &charged, &expiry)
 		if errors.Is(err, sql.ErrNoRows) && !expire && !pressure {
 			break
 		}
@@ -68,6 +100,25 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 			err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE terminal=1 ORDER BY completed_at,id LIMIT 1").Scan(&id, &charged, &expiry)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
+			removed, debit, deleted, err := retainBatch(ctx, tx, pressure, expire, remainingRows)
+			if err != nil {
+				return report, err
+			}
+			if removed {
+				report.AccountedBytes -= debit
+				report.Evicted++
+				report.DeletedRows += deleted
+				remainingRows -= int(deleted)
+				retiredBytes += debit
+				report.AccountedBytes, err = refreshIndexDebit(ctx, tx)
+				if err != nil {
+					return report, err
+				}
+				if remainingRows <= 0 || retiredBytes >= 4<<20 {
+					break
+				}
+				continue
+			}
 			break
 		}
 		if err != nil || charged < 0 || charged > report.AccountedBytes {

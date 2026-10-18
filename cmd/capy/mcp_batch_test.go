@@ -11,7 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMCPStdioBatchControls(t *testing.T) {
+// Legacy parallel contract remains until Task 13. Serial transport has separate captured fixtures.
+func TestMCPStdioLegacyParallelBatchControls(t *testing.T) {
 	bin := buildStdioCapy(t)
 	project := stdioProject(t)
 	const key = "synthetic-stdio-batch-key-123456789"
@@ -49,11 +50,11 @@ func TestMCPStdioBatchControls(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(project, "invalid-spawn"))
 	assert.NoFileExists(t, filepath.Join(project, "knowledge.db"))
 	batch := []any{map[string]any{"label": "stdio provenance", "command": "printf batchmarker # producingcommand"}}
-	output := p.tool(t, "capy_batch_execute", map[string]any{"commands": batch})
+	output := p.tool(t, "capy_batch_execute", map[string]any{"commands": batch, "concurrency": 2})
 	assert.Contains(t, output, "Searched 0 queries")
 	assert.Contains(t, output, `source: "batch:stdio provenance"`)
 	p.tool(t, "capy_index", map[string]any{"source": "earlier durable", "content": "# shared\n\nbatchmarker prior evidence"})
-	output = p.tool(t, "capy_batch_execute", map[string]any{"commands": batch, "queries": `["batchmarker"]`, "query_scope": "global"})
+	output = p.tool(t, "capy_batch_execute", map[string]any{"commands": batch, "concurrency": 2, "queries": `["batchmarker"]`, "query_scope": "global"})
 	assert.Contains(t, output, "Unchanged; retained 1 sections")
 	assert.Contains(t, output, "Source: earlier durable")
 	assert.Contains(t, output, "Source: batch:stdio provenance")
@@ -65,7 +66,7 @@ func TestMCPStdioBatchControls(t *testing.T) {
 		queries[i] = "needle"
 	}
 	require.NoError(t, p.request("tools/call", map[string]any{"name": "capy_batch_execute", "arguments": map[string]any{
-		"commands": []any{"cat escaped.md"}, "queries": queries,
+		"commands": []any{"cat escaped.md"}, "concurrency": 2, "queries": queries,
 	}}, &raw))
 	assert.LessOrEqual(t, len(raw), 81920)
 	assert.Contains(t, string(raw), "Query outputs omitted:")
