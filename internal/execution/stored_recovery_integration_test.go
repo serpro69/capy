@@ -51,6 +51,23 @@ func openStoredFixture(ctx context.Context, start Startup, key string, leases Le
 	if err != nil {
 		return nil, err
 	}
+	if os.Getenv("CAPY_STORED_MODE") == "hold startup" {
+		dir := os.Getenv("CAPY_STORED_FIXTURE")
+		if err := os.WriteFile(filepath.Join(dir, "opening"), nil, 0600); err != nil {
+			run.Store.Close()
+			return nil, err
+		}
+		for {
+			if _, err := os.Stat(filepath.Join(dir, "release-open")); err == nil {
+				break
+			}
+			if err := ctx.Err(); err != nil {
+				run.Store.Close()
+				return nil, err
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
 	if os.Getenv("CAPY_STORED_MODE") == "delayed cleanup" {
 		run.Store = &gatedStoredCapture{CaptureStore: run.Store, dir: os.Getenv("CAPY_STORED_FIXTURE")}
 	}

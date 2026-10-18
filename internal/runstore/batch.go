@@ -41,17 +41,18 @@ type BatchCommand struct {
 	Command string `json:"command"`
 }
 type BatchInput struct {
-	Commands    []BatchCommand
-	Queries     []string
-	QueryScope  string
-	Cwd         string
-	Deadline    time.Time
-	Concurrency int
+	Commands             []BatchCommand
+	Queries              []string
+	QueryScope           string
+	Cwd                  string
+	Deadline             time.Time
+	Concurrency          int
+	EffectiveConcurrency int
 }
 
 func (b BatchInput) Validate() error {
-	if len(b.Commands) == 0 || len(b.Commands) > 256 || b.Concurrency != 1 {
-		return failure("invalid_argument", "serial capture requires 1–256 commands and concurrency=1")
+	if len(b.Commands) == 0 || len(b.Commands) > 256 || (b.Concurrency < 1 || b.Concurrency > 8) {
+		return failure("invalid_argument", "capture requires 1–256 commands and concurrency between 1 and 8")
 	}
 	size := 0
 	for _, c := range b.Commands {
@@ -67,6 +68,7 @@ func (b BatchInput) Validate() error {
 }
 
 type BatchResult struct {
+	Capacity             *Capacity           `json:"capacity,omitempty"`
 	Version              int                 `json:"version"`
 	Kind                 string              `json:"kind"`
 	BatchID              string              `json:"batch_id"`
@@ -94,10 +96,35 @@ type BatchSearchRequest struct {
 	QueryScope string `json:"query_scope"`
 }
 
+// Dispatch persists the spawn-reservation deadline before helper authorization.
+// Its bounded change fits the mutable metadata reservation paid at admission.
+func (s *Store) Dispatch(ctx context.Context, id, generation string, deadline time.Time) error {
+	return s.update(ctx, id, func(tx *sql.Tx, row *Admitted) error {
+		if row.Result.OwnerID != generation || row.Cleanup != "not_spawned" || row.Result.State != "queued" {
+			return storageError()
+		}
+		row.Program.Deadline = deadline
+		encoded, err := json.Marshal(row.Program)
+		if err != nil {
+			return storageError()
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE runs SET program=? WHERE id=?", encoded, id); err != nil {
+			return storageError()
+		}
+		return nil
+	})
+}
+
 // AdmitBatch commits the entire inventory, quota reservation and manifest before
 // authorizing any child. Every ordinal has a run ID even if it never starts.
 func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, input BatchInput) (BatchResult, []Admitted, error) {
 	var empty BatchResult
+	if input.EffectiveConcurrency == 0 {
+		input.EffectiveConcurrency = min(input.Concurrency, len(input.Commands))
+	}
+	if input.EffectiveConcurrency < 1 || input.EffectiveConcurrency > min(input.Concurrency, len(input.Commands)) {
+		return empty, nil, failure("invalid_argument", "invalid effective concurrency")
+	}
 	if err := input.Validate(); err != nil {
 		return empty, nil, err
 	}
@@ -173,7 +200,7 @@ func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, input BatchInput) 
 	if scope == "" {
 		scope = "batch"
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO run_batches(id,generation,slot,created_at,ttl_hours,policy_revision,queries,query_scope,requested,effective,accounted_bytes) VALUES(?,?,?,?,?,?,?,?,1,1,?)`, id, owner.ID, owner.Slot, time.Now().UTC().UnixNano(), s.policy.TTLHours, s.policy.Revision, queries, scope, manifestCharge)
+	_, err = tx.ExecContext(ctx, `INSERT INTO run_batches(id,generation,slot,created_at,ttl_hours,policy_revision,queries,query_scope,requested,effective,accounted_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, owner.ID, owner.Slot, time.Now().UTC().UnixNano(), s.policy.TTLHours, s.policy.Revision, queries, scope, input.Concurrency, input.EffectiveConcurrency, manifestCharge)
 	if err != nil {
 		return empty, nil, storageError()
 	}
@@ -204,7 +231,7 @@ func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, input BatchInput) 
 	}
 	// Construct from committed admission; a post-commit read failure must never
 	// misreport this non-idempotent admission as an unstarted rejection.
-	result := BatchResult{Version: 1, Kind: "batch", BatchID: id, OwnerID: owner.ID, OwnerType: "mcp", State: "queued", RequestedConcurrency: 1, EffectiveConcurrency: 1, Counts: map[string]int{"queued": len(rows)}, ChildrenAction: "capy_runs(action=list,batch_id=" + id + ")"}
+	result := BatchResult{Version: 1, Kind: "batch", BatchID: id, OwnerID: owner.ID, OwnerType: "mcp", State: "queued", RequestedConcurrency: input.Concurrency, EffectiveConcurrency: input.EffectiveConcurrency, Counts: map[string]int{"queued": len(rows)}, ChildrenAction: "capy_runs(action=list,batch_id=" + id + ")"}
 	if len(input.Queries) > 0 {
 		result.SearchAction = &BatchSearchRequest{Action: "search", BatchID: id, QueryScope: scope}
 	}

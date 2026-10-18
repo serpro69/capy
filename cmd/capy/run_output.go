@@ -159,6 +159,14 @@ func encodeRunText(value any) ([]byte, error) {
 				fmt.Fprintf(&b, "[query %d run %s %s bytes %d–%d line %d] %s\nread_cursor: %s\n", group.Query, hit.RunID, hit.Stream, hit.RawStart, hit.RawEnd, hit.StartLine, terminalText(hit.Text), hit.ReadCursor)
 			}
 		}
+		for _, group := range v.Knowledge {
+			for _, hit := range group.Hits {
+				fmt.Fprintf(&b, "[query %d knowledge source %s] %s\n%s\n", group.Query, terminalText(hit.Source), terminalText(hit.Title), terminalText(hit.Text))
+			}
+		}
+		if v.KnowledgeError != nil {
+			fmt.Fprintf(&b, "%s: %s\n", v.KnowledgeError.Code, terminalText(v.KnowledgeError.Message))
+		}
 		if v.Omitted {
 			b.WriteString("Results shortened to the response budget; use read_cursor with the same run and stream.\n")
 		}

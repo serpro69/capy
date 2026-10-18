@@ -249,3 +249,22 @@ func TestBatchSearchProjectionFailureKeepsRawAvailability(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "retained raw", string(raw.Fragments[0].Data))
 }
+
+func TestBatchDispatchDeadlineAndOwner(t *testing.T) {
+	s, o := retentionStore(t, 4<<20)
+	admitted := time.Now().UTC().Add(time.Minute)
+	b, children, err := s.AdmitBatch(t.Context(), o, BatchInput{Concurrency: 8, EffectiveConcurrency: 2, Deadline: admitted, Commands: []BatchCommand{{Command: "one"}, {Command: "two"}}})
+	require.NoError(t, err)
+	require.Equal(t, 8, b.RequestedConcurrency)
+	require.Equal(t, 2, b.EffectiveConcurrency)
+	err = s.Dispatch(t.Context(), children[0].ID, uuid.NewString(), admitted.Add(time.Second))
+	require.Error(t, err)
+	deadline := admitted.Add(2 * time.Second)
+	require.NoError(t, s.Dispatch(t.Context(), children[0].ID, o.ID, deadline))
+	row, err := s.Load(t.Context(), children[0].ID)
+	require.NoError(t, err)
+	require.True(t, deadline.Equal(row.Program.Deadline))
+	require.Equal(t, "queued", row.Result.State)
+	require.NoError(t, s.Pending(t.Context(), row.ID, o.ID))
+	require.Error(t, s.Dispatch(t.Context(), row.ID, o.ID, admitted))
+}

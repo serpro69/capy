@@ -58,7 +58,20 @@ type QueryHits struct {
 	Hits  []SearchHit `json:"hits"`
 }
 
+type KnowledgeHit struct {
+	Source string `json:"source"`
+	Title  string `json:"title"`
+	Text   string `json:"text"`
+}
+type KnowledgeHits struct {
+	Query int            `json:"query"`
+	Hits  []KnowledgeHit `json:"hits"`
+}
 type SearchPage struct {
+	Queries        []string        `json:"-"` // internal batch query recovery; never echoed
+	Knowledge      []KnowledgeHits `json:"knowledge_results,omitempty"`
+	KnowledgeError *Error          `json:"knowledge_error,omitempty"`
+
 	BatchID         string           `json:"batch_id,omitempty"`
 	QueryScope      string           `json:"query_scope,omitempty"`
 	Children        []SearchCoverage `json:"children,omitempty"`

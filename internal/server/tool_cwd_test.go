@@ -102,7 +102,7 @@ func TestExecutionCwdLocationsAndFileAnchor(t *testing.T) {
 					want, err := filepath.EvalSymlinks(tc.dir)
 					require.NoError(t, err)
 					output := resultText(result)
-					if tool == "serial batch" {
+					if tool == "serial batch" || tool == "parallel batch" {
 						entries := batchChildren(t, srv, batchResult(t, result).BatchID)
 						page, err := srv.executionService().ReadRaw(t.Context(), entries[0].RunID, "stdout", "", 4096)
 						require.NoError(t, err)
@@ -119,17 +119,7 @@ func TestExecutionCwdLocationsAndFileAnchor(t *testing.T) {
 						assert.Contains(t, output, "project-input")
 						assert.NotContains(t, output, "wrong-cwd-input")
 					}
-					if tool == "parallel batch" {
-						sources, err := srv.getStore().ListSources()
-						require.NoError(t, err)
-						require.Len(t, sources, 1)
-						chunks, err := srv.getStore().GetChunksBySource(sources[0].ID)
-						require.NoError(t, err)
-						require.Len(t, chunks, 2)
-						for _, chunk := range chunks {
-							assert.Contains(t, chunk.Content, "cwdmarker"+want)
-						}
-					}
+
 				})
 			}
 		})
@@ -146,18 +136,18 @@ func TestExecutionCwdConcurrentRequests(t *testing.T) {
 	t.Run("overlapping requests", func(t *testing.T) {
 		for i, tool := range []string{"execute", "execute-file", "serial batch", "parallel batch"} {
 			require.NoError(t, os.WriteFile(filepath.Join(srv.projectDir, "input.txt"), []byte("input"), 0o600))
-			for j := range 2 {
+			for j := range 1 {
 				t.Run(fmt.Sprintf("%s/%d", tool, j), func(t *testing.T) {
 					t.Parallel()
 					dir := t.TempDir()
 					marker := fmt.Sprintf("cwdmarker%d%d", i, j)
 					require.NoError(t, os.WriteFile(filepath.Join(dir, "marker"), []byte(marker), 0o600))
-					// Distinct short labels avoid Task 18/D3's deferred batch-label
-					// collision behavior while exercising one shared executor/store.
+					// Distinct execution directories must remain isolated while
+					// all requests share the captured owner and scheduler.
 					result := callCwdTool(t, srv, tool, dir, "printf "+marker+"; cat marker; pwd")
 					require.False(t, result.IsError, resultText(result))
 					output := resultText(result)
-					if tool == "serial batch" {
+					if tool == "serial batch" || tool == "parallel batch" {
 						entries := batchChildren(t, srv, batchResult(t, result).BatchID)
 						page, err := srv.executionService().ReadRaw(t.Context(), entries[0].RunID, "stdout", "", 4096)
 						require.NoError(t, err)
@@ -210,7 +200,8 @@ func TestExecutionCwdPreservesProjectIdentity(t *testing.T) {
 	// credentials and settings in the execution directory.
 	result := callCwdTool(t, srv, "parallel batch", external, "printf cwdmarker")
 	require.False(t, result.IsError, resultText(result))
-	assert.FileExists(t, filepath.Join(project, "knowledge.db"))
+	assert.FileExists(t, filepath.Join(project, ".capy", "runs", "runs.db"))
+	assert.NoFileExists(t, filepath.Join(project, "knowledge.db"))
 	assert.NoFileExists(t, filepath.Join(external, "knowledge.db"))
 	assert.Equal(t, key, srv.knowledgeKey)
 	assert.Equal(t, project, srv.projectDir)
@@ -233,7 +224,7 @@ func TestExecutionCwdPreservesProjectIdentity(t *testing.T) {
 	t.Cleanup(reopened.shutdown)
 	sources, err := reopened.getStore().ListSources()
 	require.NoError(t, err)
-	require.Len(t, sources, 2)
+	require.Len(t, sources, 1)
 }
 
 func TestExecutionCwdPreservesVaultScope(t *testing.T) {

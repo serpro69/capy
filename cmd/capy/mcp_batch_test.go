@@ -3,79 +3,72 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
+	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/serpro69/capy/internal/runstore"
 	"github.com/stretchr/testify/require"
 )
 
-// Legacy parallel contract remains until Task 13. Serial transport has separate captured fixtures.
-func TestMCPStdioLegacyParallelBatchControls(t *testing.T) {
+func TestMCPParallelBatchControls(t *testing.T) {
 	bin := buildStdioCapy(t)
 	project := stdioProject(t)
-	const key = "synthetic-stdio-batch-key-123456789"
-	command := stdioCommand{executable: bin, args: []string{"serve", "--project-dir", project},
-		dir: t.TempDir(), env: stdioEnv(t, key), secrets: []string{key}}
-	p := startStdioProcess(t, command)
-	p.initialize(t)
-	var descriptors struct {
-		Tools []struct {
-			Name        string `json:"name"`
-			InputSchema struct {
-				Required   []string                  `json:"required"`
-				Properties map[string]map[string]any `json:"properties"`
-			} `json:"inputSchema"`
-		} `json:"tools"`
+	env := stdioEnv(t, "synthetic-parallel-batch-key-123456789")
+	launch := func() *stdioProcess {
+		p := startStdioProcess(t, stdioCommand{executable: bin, args: []string{"serve", "--project-dir", project}, dir: project, env: env})
+		p.initialize(t)
+		return p
 	}
-	require.NoError(t, p.request("tools/list", map[string]any{}, &descriptors))
-	found := false
-	for _, tool := range descriptors.Tools {
-		if tool.Name == "capy_batch_execute" {
-			found = true
-			assert.NotContains(t, tool.InputSchema.Required, "queries")
-			assert.NotContains(t, tool.InputSchema.Required, "query_scope")
-			assert.Equal(t, []any{"batch", "global"}, tool.InputSchema.Properties["query_scope"]["enum"])
-		}
+	p := launch()
+	for _, args := range []map[string]any{{"queries": nil}, {"queries": `["valid",null]`}, {"query_scope": "vault"}, {"concurrency": 1.5}} {
+		args["commands"] = []any{"touch invalid-spawn"}
+		bad := p.capturedBatch(t, args)
+		require.True(t, bad.IsError)
 	}
-	require.True(t, found)
-	for _, args := range []map[string]any{
-		{"queries": nil}, {"queries": `["valid",null]`}, {"query_scope": "vault"},
-	} {
-		args["commands"] = []any{"printf bad > invalid-spawn"}
-		isError, output := stdioBooleanCall(t, p, "capy_batch_execute", args)
-		require.True(t, isError, output)
+	require.NoFileExists(t, filepath.Join(project, "invalid-spawn"))
+	commands := []any{"touch first; while [ ! -e release ]; do sleep .01; done; printf sharedneedle", "touch second; while [ ! -e release ]; do sleep .01; done; printf late >&2; exit 7", "printf sharedneedle"}
+	r := p.capturedBatch(t, map[string]any{"commands": commands, "concurrency": 2, "wait_ms": 0, "queries": []any{"sharedneedle"}, "query_scope": "global"})
+	require.False(t, r.IsError)
+	id := r.Structured.BatchID
+	require.NotEmpty(t, id)
+	require.Equal(t, 2, r.Structured.EffectiveConcurrency)
+	require.Equal(t, "global", r.Structured.SearchAction.QueryScope)
+	for _, name := range []string{"first", "second"} {
+		require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(project, name)); return err == nil }, 10*time.Second, 10*time.Millisecond)
 	}
-	assert.NoFileExists(t, filepath.Join(project, "invalid-spawn"))
-	assert.NoFileExists(t, filepath.Join(project, "knowledge.db"))
-	batch := []any{map[string]any{"label": "stdio provenance", "command": "printf batchmarker # producingcommand"}}
-	output := p.tool(t, "capy_batch_execute", map[string]any{"commands": batch, "concurrency": 2})
-	assert.Contains(t, output, "Searched 0 queries")
-	assert.Contains(t, output, `source: "batch:stdio provenance"`)
-	p.tool(t, "capy_index", map[string]any{"source": "earlier durable", "content": "# shared\n\nbatchmarker prior evidence"})
-	output = p.tool(t, "capy_batch_execute", map[string]any{"commands": batch, "concurrency": 2, "queries": `["batchmarker"]`, "query_scope": "global"})
-	assert.Contains(t, output, "Unchanged; retained 1 sections")
-	assert.Contains(t, output, "Source: earlier durable")
-	assert.Contains(t, output, "Source: batch:stdio provenance")
-	// Measure the actual result JSON read from stdio, excluding the RPC envelope.
-	require.NoError(t, os.WriteFile(filepath.Join(project, "escaped.md"), []byte("# escaped\n\nneedle "+strings.Repeat("<&\\\"界", 10000)), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(project, "release"), nil, 0600))
+	final := p.awaitBatch(t, id)
+	require.Equal(t, 1, final.FailedCount)
+	children := p.batchChildren(t, id)
+	require.Len(t, children, 3)
+	require.Equal(t, []byte("late"), p.rawRun(t, children[1].RunID, "stderr"))
+	p.tool(t, "capy_index", map[string]any{"source": "earlier durable", "content": "# shared\n\nsharedneedle reference"})
 	var raw json.RawMessage
-	queries := make([]string, 100)
-	for i := range queries {
-		queries[i] = "needle"
-	}
-	require.NoError(t, p.request("tools/call", map[string]any{"name": "capy_batch_execute", "arguments": map[string]any{
-		"commands": []any{"cat escaped.md"}, "concurrency": 2, "queries": queries,
-	}}, &raw))
-	assert.LessOrEqual(t, len(raw), 81920)
-	assert.Contains(t, string(raw), "Query outputs omitted:")
+	require.NoError(t, p.request("tools/call", map[string]any{"name": "capy_runs", "arguments": map[string]any{"action": "search", "batch_id": id, "query_scope": "global"}}, &raw))
+	require.LessOrEqual(t, len(raw), 8192)
+	require.Contains(t, string(raw), "earlier durable")
+	require.Contains(t, string(raw), "knowledge_results")
+	require.NotContains(t, string(raw), "batch:cmd")
 	p.close(t)
-	stdioCheckpointed(t, project)
-	p = startStdioProcess(t, command)
-	p.initialize(t)
-	output = p.tool(t, "capy_search", map[string]any{"queries": []any{"producingcommand"}, "source": "batch:stdio provenance", "include_kinds": []any{"ephemeral"}})
-	assert.Contains(t, output, "Command:")
-	assert.Contains(t, output, "producingcommand")
+	p = launch()
+	require.Equal(t, children, p.batchChildren(t, id))
 	p.close(t)
+	cmd := exec.Command(bin, "runs", "search", "--batch-id", id, "--query-scope", "global", "--project-dir", project, "--json")
+	cmd.Env = env
+	cmd.Dir = project
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.LessOrEqual(t, len(output), 8192)
+	var page runstore.SearchPage
+	require.NoError(t, json.Unmarshal(output, &page), string(output))
+	require.NotEmpty(t, page.Results[0].Hits)
+	require.Equal(t, "earlier durable", page.Knowledge[0].Hits[0].Source)
+	cmd = exec.Command(bin, "runs", "search", "--batch-id", id, "--query-scope", "global", "--project-dir", project)
+	cmd.Env, cmd.Dir = env, project
+	output, err = cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.Contains(t, string(output), "knowledge source earlier durable")
+	require.Contains(t, string(output), children[0].RunID)
 }

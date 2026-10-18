@@ -215,6 +215,9 @@ func (s *Service) capacity() *runstore.Capacity {
 		info.CancelAction = "interrupt the attached CLI process"
 	}
 	for id, call := range s.running {
+		if call.reservedAt.IsZero() {
+			continue
+		} // queued children consume no active slot
 		entry := runstore.ActiveRun{RunID: id, AgeMS: max(0, time.Since(call.reservedAt).Milliseconds())}
 		if !call.deadline.IsZero() {
 			remaining := max(0, time.Until(call.deadline).Milliseconds())

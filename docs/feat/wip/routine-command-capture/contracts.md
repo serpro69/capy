@@ -287,6 +287,13 @@ match layer and `read_cursor`; pass the cursor to a sanitized read with the same
 run and stream. Query strings are not echoed. Budget-driven shortening or omission
 sets `results_omitted=true`; response formatting never repeats indexing work.
 
+Global batch search adds `knowledge_results`, grouped by query ordinal, with
+`source`, `title` and sanitized `text` per hit. These results remain separate from
+run hits and their read anchors. `knowledge_error` reports unavailable knowledge
+retrieval and sets `partial` without discarding run results or changing run index
+state. Knowledge errors make the query operation unsuccessful; available run
+coverage remains usable through search/read.
+
 ## 6. Complete response budgets
 
 Apply max_response_bytes to the serialized MCP result, including structured
