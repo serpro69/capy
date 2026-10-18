@@ -3,6 +3,7 @@ package runstore
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -59,16 +60,21 @@ func (s *Store) ReadRaw(ctx context.Context, id, stream, encoded string, maxByte
 	if maxBytes < 1 || maxBytes > 65536 {
 		return page, failure("invalid_argument", "max_bytes must be between 1 and 65536")
 	}
-	row, err := s.Load(ctx, id)
-	if err != nil {
-		return page, err
-	}
-	page.Run = row.Result
 	cursor, err := s.decodeCursor(encoded, id, stream)
 	if err != nil {
 		return page, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT seq,phase,stream,data,byte_offset,start_line FROM run_events
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return page, storageError()
+	}
+	defer tx.Rollback()
+	row, err := loadRun(ctx, tx, id)
+	if err != nil {
+		return page, err
+	}
+	page.Run = row.Result
+	rows, err := tx.QueryContext(ctx, `SELECT seq,phase,stream,data,byte_offset,start_line FROM run_events
 WHERE run_id=? AND seq>=? AND (?='merged' OR stream=?) ORDER BY seq LIMIT 64`, id, cursor.Sequence, stream, stream)
 	if err != nil {
 		return page, storageError()
@@ -113,7 +119,7 @@ WHERE run_id=? AND seq>=? AND (?='merged' OR stream=?) ORDER BY seq LIMIT 64`, i
 		return page, storageError()
 	}
 	var more bool
-	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_events WHERE run_id=? AND seq>=? AND (?='merged' OR stream=?))", id, nextSeq, stream, stream).Scan(&more); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_events WHERE run_id=? AND seq>=? AND (?='merged' OR stream=?))", id, nextSeq, stream, stream).Scan(&more); err != nil {
 		return page, storageError()
 	}
 	page.EndOfAvailable = !more

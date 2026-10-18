@@ -388,6 +388,14 @@ append and index writes. Optional index work rolls back on quota exhaustion
 without deleting raw logs to make room. Capture exhaustion after spawn marks
 capture incomplete while the command continues draining/executing.
 
+Capture accounting reserves 64 KiB per admitted run for bounded mutable metadata,
+checkpoints and EOF projection, in addition to encoded program bytes. It charges
+raw event bytes plus 96 bytes per event and finalized projection text bytes plus
+128 bytes per anchored row. Reservations remain charged until eviction; tiny
+quotas may reject admission even for commands producing no output. Eviction can hide a terminal run and
+delete its payload in bounded transactions; its debit is released only after
+complete deletion. Once hidden, public reads/list treat it as unavailable.
+
 Physical main/WAL allocation is reported separately; this quota is not an exact
 filesystem-byte limit. Checkpoint regularly and reclaim pages under quiescence.
 Changing store policy requires all handles/supervisors to release lifecycle

@@ -75,7 +75,7 @@ func newCaptureQueue(store CaptureStore) *captureQueue {
 				writeFailed = true
 				reason := "append_failed"
 				var typed *runstore.Error
-				if errors.As(err, &typed) && typed.Code == "capture_limit" {
+				if errors.As(err, &typed) && (typed.Code == "capture_limit" || typed.Code == "quota_exhausted") {
 					reason = typed.Code
 				}
 				q.lose(reason)

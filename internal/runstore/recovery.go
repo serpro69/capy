@@ -230,6 +230,9 @@ func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
 	if err := s.projectionState(ctx, tx, &row); err != nil {
 		return err
 	}
+	if row.chargeBytes > runReserve/2 {
+		return storageError()
+	}
 	reason := "owner_lost"
 	row.Result.State, row.Result.Reason = "interrupted", &reason
 	row.Result.ExitCode, row.Result.Signal = nil, nil
@@ -252,7 +255,7 @@ func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
 	if err != nil {
 		return storageError()
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,terminal=1 WHERE id=?", encoded, id); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,terminal=1,completed_at=?,expires_at=? WHERE id=?", encoded, row.Result.CompletedAt.UnixNano(), row.Result.ExpiresAt.UnixMilli()+1, id); err != nil {
 		return storageError()
 	}
 	return nil
@@ -269,6 +272,9 @@ func (s *Store) maintenance(ctx context.Context, ticks <-chan time.Time) {
 				// The caller owns diagnostics and its response budget. Keep one
 				// error for Close to return after joining this worker, rather than
 				// writing unbudgeted recurring stderr from a long CLI invocation.
+				s.maintenanceErr = err
+			}
+			if _, err := s.Maintain(ctx); err != nil && ctx.Err() == nil {
 				s.maintenanceErr = err
 			}
 		}

@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–8 done; Tasks 9–17 pending
+> Status: in-progress — Tasks 1–9 done; Tasks 10–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -150,7 +150,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 9: Retain, evict and explicitly reset runs
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 8
 - **Size:** M
 - **Can run in parallel with:** Task 14
@@ -158,10 +158,12 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 9.1 Add transactional quota admission/append accounting and terminal eviction → verify: independent writers, protected active runs and continued execution after capture exhaustion.
-- [ ] 9.2 Add expiry-on-read and bounded maintenance/checkpoint/reclaim → verify: reads do not renew TTL and active WALs survive concurrent owners.
+- [x] 9.1 Add transactional quota admission/append accounting and terminal eviction → verify: independent writers, protected active runs and continued execution after capture exhaustion.
+- [x] 9.2 Add expiry-on-read and bounded maintenance/checkpoint/reclaim → verify: reads do not renew TTL and active WALs survive concurrent owners.
   - Integrate quota maintenance into Task 8's exclusive policy-change phase; policy publication alone does not evict completed logs or enforce retained capacity.
-- [ ] 9.3 Implement keyless reset --discard under exclusive lifecycle protection → verify: explicit rotation recovery, live-helper refusal, preserved locks/unrelated data and stale cursors.
+- [x] 9.3 Implement keyless reset --discard under exclusive lifecycle protection → verify: explicit rotation recovery, live-helper refusal, preserved locks/unrelated data and stale cursors.
+
+**Evidence:** [Task 9 verification](task9-verification.md) · [isolated review](task9-code-review.md). Transactional quota, resumable eviction, read-time expiry, periodic/shutdown maintenance, busy WAL snapshots, page reclamation, keyless reset and inherited helper refusal pass. Full FTS5 coverage passes across the initial run and isolated/socket-enabled affected-package reruns; final store/execution integration race, compiled CLI race, both accounting-capability builds, build, vet and quality comparison pass. Independent review approved after fixing bounded cleanup progress; external review was unavailable. Task 10 is next.
 
 ## Task 10: Search run output lazily
 
@@ -175,6 +177,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 - [ ] 10.1 Add sanitized dual-FTS windows/raw anchors and strict retrieval errors → verify: no-search paths create no FTS rows and middle failures are readable.
 - [ ] 10.2 Add resumable coverage/claims and measured/conservative quota rollback → verify: claimant death, partial results and no raw eviction solely for indexes.
+  - Integrate FTS posting/shadow debit and resumable index deletion with Task 9's eviction tombstones; optional index writes must not use capture's eviction-to-make-room path. Schema 6 currently accounts raw/projection/metadata only because this task introduces the first indexes.
 - [ ] 10.3 Expose run/batch search and intent previews → verify: knowledge-search throttling cannot block recovery; first/repeat cost is measured under capture load.
 
 ## Task 11: Capture execute-file runs with the shared lifetime

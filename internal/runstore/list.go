@@ -89,11 +89,14 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListPage, error)
 		cursor = listCursor{}
 		d := json.NewDecoder(bytes.NewReader(b))
 		d.DisallowUnknownFields()
-		if d.Decode(&cursor) != nil || d.Decode(new(any)) != io.EOF || cursor.Version != 1 || cursor.Operation != "list" || cursor.Cutoff <= 0 || cursor.Cutoff > cutoff || cursor.Created <= 0 || cursor.Created > cursor.Cutoff || uuid.Validate(cursor.ID) != nil {
+		if d.Decode(&cursor) != nil || d.Decode(new(any)) != io.EOF || cursor.Version != 1 || cursor.Operation != "list" || cursor.Cutoff <= 0 || cursor.Created <= 0 || cursor.Created > cursor.Cutoff || uuid.Validate(cursor.ID) != nil {
 			return page, failure("cursor_invalid", "invalid list cursor")
 		}
 		if cursor.Store != s.id {
 			return page, failure("cursor_stale", "list cursor belongs to another store")
+		}
+		if cursor.Cutoff > cutoff {
+			return page, failure("cursor_invalid", "list cursor cutoff exceeds this store's creation sequence")
 		}
 		embedded, err := validateStates(cursor.States)
 		if err != nil || !slices.Equal(embedded, cursor.States) || len(states) > 0 && !slices.Equal(states, embedded) {
@@ -103,7 +106,7 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListPage, error)
 	}
 	query := `SELECT id,created_at,result,terminal,
 EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation AND o.cleanup_unverified=1)
-FROM runs WHERE created_at<=? AND (created_at>? OR (created_at=? AND id>?))`
+FROM runs WHERE evicting=0 AND created_at<=? AND (created_at>? OR (created_at=? AND id>?))`
 	args := []any{cursor.Cutoff, cursor.Created, cursor.Created, cursor.ID}
 	if len(states) > 0 {
 		query += ` AND json_extract(CAST(result AS TEXT),'$.state') IN (` + strings.TrimSuffix(strings.Repeat("?,", len(states)), ",") + `)`

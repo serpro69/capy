@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,7 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const schemaVersion = 5
+const schemaVersion = 6
 const OwnerSlots = 64
 const WriteTimeout = 250 * time.Millisecond
 
@@ -104,6 +105,10 @@ func open(ctx context.Context, path, key string, create bool, desired *PolicyCon
 				s.closeHandles()
 				return nil, err
 			}
+			if _, err := s.Maintain(ctx); err != nil {
+				s.closeHandles()
+				return nil, err
+			}
 			s.startMaintenance()
 			return s, nil
 		}
@@ -157,7 +162,7 @@ func openAttached(ctx context.Context, path, key, owner string, lock int) (*Stor
 	probe, err := sqliteutil.OpenWithCanary(ctx, sqliteutil.EncryptedDSN(path, key)+"&mode=ro&_busy_timeout=100", path, "selected run credential")
 	if err != nil {
 		life.Close()
-		return nil, openError(err)
+		return nil, openError(err, path)
 	}
 	var version int
 	var recordedOwner string
@@ -181,7 +186,7 @@ func openAttached(ctx context.Context, path, key, owner string, lock int) (*Stor
 	s.db, err = sqliteutil.OpenWithCanary(ctx, sqliteutil.EncryptedDSN(path, key)+"&mode=rw&_busy_timeout=100&_foreign_keys=on", path, "selected run credential")
 	if err != nil {
 		life.Close()
-		return nil, openError(err)
+		return nil, openError(err, path)
 	}
 	s.db.SetMaxOpenConns(1)
 	s.db.SetMaxIdleConns(1)
@@ -212,9 +217,9 @@ func (s *Store) startMaintenance() {
 func storageError() error {
 	return failure("storage_unavailable", "run storage is unavailable; check the selected owner's .capy/runs path and permissions")
 }
-func openError(err error) error {
+func openError(err error, path string) error {
 	if sqliteutil.IsWrongPassphrase(err) || sqliteutil.IsSQLiteCorruption(err) {
-		return failure("wrong_key", "run store cannot be authenticated with the selected credential; restore that credential; no data was discarded")
+		return failure("wrong_key", fmt.Sprintf("run store %s cannot be authenticated; restore the selected credential or, after stopping owners and old execution groups, explicitly run capy runs reset --discard for this project (permanently deletes its run logs); no data was discarded", path))
 	}
 	return storageError()
 }
@@ -320,10 +325,13 @@ func initialize(ctx context.Context, path, key, owner string, settings PolicyCon
 	}
 	db, err := sqliteutil.OpenWithCanary(ctx, sqliteutil.EncryptedDSN(path, key)+"&mode=rw&_busy_timeout=100&_foreign_keys=on", path, "selected run credential")
 	if err != nil {
-		return openError(err)
+		return openError(err, path)
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(ctx, "PRAGMA auto_vacuum=INCREMENTAL"); err != nil {
+		return storageError()
+	}
 	available, err := dbstatAvailable(ctx, db)
 	if err != nil {
 		return err
@@ -361,9 +369,18 @@ func (s *Store) Close() error {
 		<-s.maintenanceDone
 		ctx, cancel := context.WithTimeout(context.Background(), recoveryTimeout)
 		_, recoveryErr := s.Reconcile(ctx)
+		_, retentionErr := s.Maintain(ctx)
+		if recoveryErr != nil {
+			recoveryErr = fmt.Errorf("reconcile runs on close: %w", recoveryErr)
+		}
+		if retentionErr != nil {
+			retentionErr = fmt.Errorf("maintain runs on close: %w", retentionErr)
+		}
+		var freePages int64
+		reclaimCheckErr := s.db.QueryRowContext(ctx, "PRAGMA freelist_count").Scan(&freePages)
 		cancel()
 		// The pool must close before opening the final checkpoint connection.
-		s.closeErr = errors.Join(s.maintenanceErr, recoveryErr, s.db.Close())
+		s.closeErr = errors.Join(s.maintenanceErr, recoveryErr, retentionErr, reclaimCheckErr, s.db.Close())
 		// Closing authenticates a fresh encrypted connection as well as running
 		// the checkpoint. It is not an append/finalization write; allow the same
 		// bounded budget as recovery so CPU contention during key derivation does
@@ -378,15 +395,34 @@ func (s *Store) Close() error {
 			err = errors.Join(err, db.Close())
 		}
 		if err != nil {
-			s.closeErr = errors.Join(s.closeErr, storageError())
+			s.closeErr = errors.Join(s.closeErr, fmt.Errorf("checkpoint runs on close: %w", storageError()))
 		}
 		s.closeErr = errors.Join(s.closeErr, s.lifecycle.Close())
+		if freePages == 0 {
+			return
+		}
+		// No lock conversion: another opener/reset may win this interval. Only
+		// reclaim the same authenticated store if a fresh exclusive lease wins.
+		probe, openErr := openAttached(ctx, s.path, s.key, s.owner, unix.LOCK_EX)
+		if openErr == nil {
+			if probe.id == s.id {
+				s.closeErr = errors.Join(s.closeErr, probe.reclaim(ctx))
+			}
+			s.closeErr = errors.Join(s.closeErr, probe.closeHandles())
+		} else if !errors.Is(openErr, unix.EWOULDBLOCK) {
+			var typed *Error
+			// A replacement or now-incompatible policy is outside this closed
+			// handle's lifetime; skip its optional reclamation without touching it.
+			if !errors.As(openErr, &typed) || (typed.Code != "run_unavailable" && typed.Code != "wrong_key" && typed.Code != "policy_mismatch") {
+				s.closeErr = errors.Join(s.closeErr, openErr)
+			}
+		}
 	})
 	return s.closeErr
 }
 
 const schema = `
-CREATE TABLE run_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, store_id TEXT NOT NULL, owner TEXT NOT NULL, admission_blocked INTEGER NOT NULL DEFAULT 0 CHECK(admission_blocked IN (0,1)), last_created INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE run_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, store_id TEXT NOT NULL, owner TEXT NOT NULL, admission_blocked INTEGER NOT NULL DEFAULT 0 CHECK(admission_blocked IN (0,1)), last_created INTEGER NOT NULL DEFAULT 0, accounted_bytes INTEGER NOT NULL DEFAULT 0 CHECK(accounted_bytes>=0));
 CREATE TABLE run_owners(slot INTEGER PRIMARY KEY CHECK(slot>=0 AND slot<64), generation TEXT NOT NULL UNIQUE, cleanup_unverified INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_unverified IN (0,1)));
 CREATE TABLE runs(
  id TEXT PRIMARY KEY, generation TEXT NOT NULL, slot INTEGER NOT NULL CHECK(slot>=0 AND slot<64),
@@ -394,12 +430,18 @@ CREATE TABLE runs(
  program BLOB NOT NULL, result BLOB NOT NULL,
  cleanup TEXT NOT NULL CHECK(cleanup IN ('not_spawned','pending','retired')),
  terminal INTEGER NOT NULL DEFAULT 0 CHECK(terminal IN (0,1)),
+ accounted_bytes INTEGER NOT NULL DEFAULT 0 CHECK(accounted_bytes>=0),
+ evicting INTEGER NOT NULL DEFAULT 0 CHECK(evicting IN (0,1)),
+ expires_at INTEGER, completed_at INTEGER,
  stdout_bytes INTEGER NOT NULL DEFAULT 0, stderr_bytes INTEGER NOT NULL DEFAULT 0,
  stdout_lines INTEGER NOT NULL DEFAULT 1, stderr_lines INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX runs_created ON runs(created_at,id);
 CREATE INDEX runs_owner ON runs(slot,generation,terminal,id);
 CREATE INDEX runs_unfinished ON runs(slot,generation,id) WHERE terminal=0;
+CREATE INDEX runs_expiry ON runs(expires_at,id) WHERE terminal=1;
+CREATE INDEX runs_completed ON runs(completed_at,id) WHERE terminal=1;
+CREATE INDEX runs_evicting ON runs(id) WHERE evicting=1;
 CREATE TABLE run_work_claims(
  run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
  slot INTEGER NOT NULL CHECK(slot>=0 AND slot<64), generation TEXT NOT NULL
