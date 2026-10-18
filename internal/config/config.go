@@ -8,6 +8,18 @@ type Config struct {
 	Search   SearchConfig   `toml:"search"`
 	Vault    VaultConfig    `toml:"vault"`
 	Runs     RunsConfig     `toml:"runs"`
+	Routing  RoutingConfig  `toml:"routing"`
+}
+
+// RoutingConfig describes output policy, independently of security permissions.
+// The routine classifier is available before the Codex gate is installed.
+type RoutingConfig struct {
+	Routine RoutineRoutingConfig `toml:"routine"`
+}
+
+type RoutineRoutingConfig struct {
+	Enabled     bool     `toml:"enabled"`
+	NativeAllow []string `toml:"native_allow"`
 }
 
 // RunsConfig controls owner-local run capture. Retention maintenance, yielding,
@@ -105,5 +117,6 @@ func DefaultConfig() *Config {
 		},
 		Runs: RunsConfig{WaitMS: 25000, MaxResponseBytes: 8192, MaxActive: 4, MaxPending: 64,
 			TTLHours: 24, MaxRunBytes: 64 << 20, MaxRetainedBytes: 512 << 20},
+		Routing: RoutingConfig{Routine: RoutineRoutingConfig{Enabled: true}},
 	}
 }

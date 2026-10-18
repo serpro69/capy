@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–13 done; Tasks 14–17 pending
+> Status: in-progress — Tasks 1–14 done; Tasks 15–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -233,7 +233,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 14: Recognize routine commands and captured programs
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 5
 - **Size:** M
 - **Can run in parallel with:** Task 6, Task 7, Task 8, Task 9, Task 10, Task 11, Task 12, Task 13
@@ -241,8 +241,10 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 14.1 Add bounded catalogue/wrapper parsing with the gate inactive → verify: issue #132 shapes, quoted/heredoc/dynamic negatives, exceptions and scanner bounds.
-- [ ] 14.2 Parse actual capture-CLI arguments and underlying policy → verify: lookalikes/captured siblings cannot exempt uncaptured routines or bypass deny/ask.
+- [x] 14.1 Add bounded catalogue/wrapper parsing with the gate inactive → verify: issue #132 shapes, quoted/heredoc/dynamic negatives, exceptions and scanner bounds.
+- [x] 14.2 Parse actual capture-CLI arguments and underlying policy → verify: lookalikes/captured siblings cannot exempt uncaptured routines or bypass deny/ask.
+
+**Evidence:** [Task 14 verification](task14-verification.md) · [isolated review](task14-code-review.md). Literal catalogue/wrapper recognition, capture CLI flag parity, underlying deny/ask provenance, per-element exceptions, config layering and scanner bounds pass. Full FTS5 coverage is complete across the broad run and isolated rerun of two server timing/persistence failures; affected-package races, final parser/Cobra races, two fuzz runs, build and vet pass. Independent review approved after fixing array-data classification and ambiguous code-file launch context. The routine gate remains inactive; Task 15 supplies production wiring and the checked owner-aware code-file reader. External review was unavailable.
 
 ## Task 15: Enable strict Codex routing and synchronize artifacts
 
