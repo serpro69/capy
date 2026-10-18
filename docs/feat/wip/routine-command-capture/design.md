@@ -493,6 +493,8 @@ are verified in [Task 11 evidence](task11-verification.md).
 Task 12 serial batch capture, retained manifests and bounded recovery are verified
 in [Task 12 evidence](task12-verification.md). Task 13 parallel scheduling, complete
 batch migration and global query recovery are verified in
-[Task 13 evidence](task13-verification.md). Tasks 14–17 remain pending.
+[Task 13 evidence](task13-verification.md). Task 14 literal routine/capture
+recognition and policy inspection are verified in
+[Task 14 evidence](task14-verification.md). Tasks 15–17 remain pending.
 These slices do not substitute for installed acceptance or independent
 design/code/spec review of the remaining feature.

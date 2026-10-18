@@ -8,6 +8,7 @@ import (
 	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
+	"github.com/serpro69/capy/internal/security"
 )
 
 // Load reads configuration with three-level precedence (lowest to highest):
@@ -41,6 +42,9 @@ func Load(projectDir string) (*Config, error) {
 
 // validate enforces invariants on the merged configuration.
 func validate(cfg *Config) error {
+	if err := security.ValidateRoutineNativeAllow(cfg.Routing.Routine.NativeAllow); err != nil {
+		return err
+	}
 	if cfg.Executor.Timeout < 1 || int64(cfg.Executor.Timeout) > math.MaxInt64/int64(time.Second) {
 		return fmt.Errorf("[executor] timeout must be positive integral seconds within duration range")
 	}
@@ -97,6 +101,15 @@ func loadAndMerge(cfg *Config, path string) error {
 	if err := mergeRuns(&cfg.Runs, detect.Runs); err != nil {
 		return err
 	}
+	if detect.Routing.Routine.Enabled != nil {
+		cfg.Routing.Routine.Enabled = *detect.Routing.Routine.Enabled
+	}
+	if detect.Routing.Routine.NativeAllow != nil {
+		if err := security.ValidateRoutineNativeAllow(*detect.Routing.Routine.NativeAllow); err != nil {
+			return err
+		}
+		cfg.Routing.Routine.NativeAllow = *detect.Routing.Routine.NativeAllow
+	}
 	if detect.Store.Cleanup.EphemeralTTLHours != nil && *detect.Store.Cleanup.EphemeralTTLHours < 1 {
 		return fmt.Errorf("[store.cleanup] ephemeral_ttl_hours must be >= 1 (use capy_cleanup purge_ephemeral=true for one-shot aggressive purging)")
 	}
@@ -143,6 +156,12 @@ func loadAndMerge(cfg *Config, path string) error {
 // "user omitted the key", which the zero-value merge in mergeConfig can't do.
 // Keys needing zero-rejection or an explicit zero override appear here.
 type detectionOverlay struct {
+	Routing struct {
+		Routine struct {
+			Enabled     *bool     `toml:"enabled"`
+			NativeAllow *[]string `toml:"native_allow"`
+		} `toml:"routine"`
+	} `toml:"routing"`
 	Executor struct {
 		Timeout *int `toml:"timeout"`
 	} `toml:"executor"`

@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–13 complete and verified; Tasks 14–17 pending
+> Status: Tasks 1–14 complete and verified; Tasks 15–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -248,6 +248,11 @@ queries add separately labelled knowledge results through MCP and CLI.
   knowledge sources, with explicit provenance and recoverable statuses.
 
 ## Task 14: Recognize routine commands and captured programs
+
+Evidence: [Task 14 verification](task14-verification.md) · [isolated review](task14-code-review.md).
+The classifier/config are implemented with the gate inactive. Code-file inspection
+requires a checked owner-aware reader and rejects ambiguous launch contexts;
+Task 15 supplies its production hook integration.
 
 - Add bounded literal catalogue/wrapper parsing on the existing shell scanner,
   initially without enabling the gate → verify: exact issue #132 commands,
