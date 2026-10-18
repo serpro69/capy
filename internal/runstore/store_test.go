@@ -79,6 +79,7 @@ func TestAdmissionFailuresHaveNoEffects(t *testing.T) {
 			key := testKey
 			create := true
 			var before []byte
+			var beforeLocks []os.DirEntry
 			switch mode {
 			case "empty":
 				key = ""
@@ -87,6 +88,8 @@ func TestAdmissionFailuresHaveNoEffects(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, st.Close())
 				before, err = os.ReadFile(path)
+				require.NoError(t, err)
+				beforeLocks, err = os.ReadDir(filepath.Join(filepath.Dir(path), "locks"))
 				require.NoError(t, err)
 				key = "wrong-synthetic-credential"
 			case "symlink directory":
@@ -117,7 +120,7 @@ func TestAdmissionFailuresHaveNoEffects(t *testing.T) {
 				require.True(t, bytes.Equal(before, after))
 				entries, err := os.ReadDir(filepath.Join(filepath.Dir(path), "locks"))
 				require.NoError(t, err)
-				require.Empty(t, entries)
+				require.Equal(t, beforeLocks, entries, "wrong-key access must not alter the fixed lock registry")
 			}
 		})
 	}

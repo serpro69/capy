@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–6 complete and verified; Tasks 7–17 pending
+> Status: Tasks 1–7 complete and verified; Tasks 8–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -127,6 +127,11 @@ Evidence: [verification](task6-verification.md) · [isolated review](task6-code-
   expose recovery, and status/read/cancel do not require execution slots.
 
 ## Task 7: Reopen safely after owner crashes
+
+The reviewed implementation adds one fixed recovery.lock around scanning,
+generation publication and admission, preventing concurrent scanners from treating
+temporary scan leases as live-owner evidence. See [verification](task7-verification.md)
+and [review corrections](task7-code-review.md).
 
 - Integrate fixed owner slots/generations and shared lifecycle leases with the
   supervisor proof and real DB handles → verify: no premature reset/reuse while
