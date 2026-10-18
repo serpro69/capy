@@ -80,3 +80,54 @@ func TestKnownOutcomeSeparatesRefreshAndFinalizationFailure(t *testing.T) {
 		})
 	}
 }
+
+// Many short writes must consume byte capacity, not 64 whole-block slots.
+func TestCaptureQueueSmallEventsUseByteBudget(t *testing.T) {
+	st := &gatedCapture{entered: make(chan struct{}), release: make(chan struct{})}
+	q := newCaptureQueue(st)
+	require.NoError(t, q.append(executor.OutputEvent{Sequence: 1, Stream: "stdout", Phase: "run", Data: []byte("first")}))
+	<-st.entered
+	for i := 2; i <= 1000; i++ {
+		require.NoError(t, q.append(executor.OutputEvent{Sequence: uint64(i), Stream: "stdout", Phase: "run", Data: []byte("line\n")}))
+	}
+	close(st.release)
+	require.Empty(t, q.close())
+	require.Len(t, st.events, 1000)
+	require.Zero(t, q.queuedBytes.Load())
+	for i, event := range st.events {
+		require.EqualValues(t, i+1, event.Sequence)
+	}
+}
+
+type acknowledgedCapture struct{ through chan uint64 }
+
+func (s *acknowledgedCapture) Pending(context.Context) error         { return nil }
+func (s *acknowledgedCapture) Finish(context.Context, Outcome) error { return nil }
+func (s *acknowledgedCapture) Close() error                          { return nil }
+func (s *acknowledgedCapture) Append(e executor.OutputEvent) error {
+	s.through <- e.Sequence
+	return nil
+}
+func (s *acknowledgedCapture) AppendBatch(events []executor.OutputEvent) error {
+	s.through <- events[len(events)-1].Sequence
+	return nil
+}
+func TestCaptureQueueReleasesBytesAcrossBatches(t *testing.T) {
+	st := &acknowledgedCapture{through: make(chan uint64, 32)}
+	q := newCaptureQueue(st)
+	var sequence uint64
+	for range 16 {
+		for range 32 {
+			sequence++
+			require.NoError(t, q.append(executor.OutputEvent{Sequence: sequence, Phase: "run", Stream: "stdout", Data: make([]byte, executor.EventBlockBytes)}))
+		}
+		for {
+			if <-st.through == sequence {
+				break
+			}
+		}
+	}
+	require.Empty(t, q.close())
+	require.EqualValues(t, 8<<20, q.captured)
+	require.Zero(t, q.queuedBytes.Load())
+}

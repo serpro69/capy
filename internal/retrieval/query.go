@@ -47,8 +47,8 @@ func filterQueryTerms(query string) []string {
 
 // SanitizePorterQuery cleans a query for the Porter FTS5 table. When
 // expandSyns is true, each term is expanded via the synonym map into an OR
-// group. Mode controls how groups are joined: "AND" uses space (implicit AND
-// in FTS5), "OR" uses " OR ".
+// group. AND between parenthesized groups must be explicit in FTS5;
+// ungrouped terms can use implicit AND. OR mode joins terms with " OR ".
 // Note: quoted phrase preservation is not yet implemented — all FTS5 special
 // characters (including quotes) are stripped before tokenization.
 func SanitizePorterQuery(query, mode string, expandSyns bool) string {
@@ -75,6 +75,12 @@ func SanitizePorterQuery(query, mode string, expandSyns bool) string {
 		return ""
 	}
 	sep := " "
+	for _, group := range groups {
+		if strings.HasPrefix(group, "(") {
+			sep = " AND "
+			break
+		}
+	}
 	if mode == "OR" {
 		sep = " OR "
 	}
@@ -121,6 +127,12 @@ func SanitizeTrigramQuery(query, mode string, expandSyns bool) string {
 		return ""
 	}
 	sep := " "
+	for _, group := range groups {
+		if strings.HasPrefix(group, "(") {
+			sep = " AND "
+			break
+		}
+	}
 	if mode == "OR" {
 		sep = " OR "
 	}

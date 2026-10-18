@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const schemaVersion = 7
+const schemaVersion = 8
 const OwnerSlots = 64
 const WriteTimeout = 250 * time.Millisecond
 
@@ -347,7 +347,7 @@ func initialize(ctx context.Context, path, key, owner string, settings PolicyCon
 		return storageError()
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schema+policySchema+searchSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, schema+policySchema+searchSchema+batchSchema); err != nil {
 		return storageError()
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO run_meta(singleton,version,store_id,owner) VALUES(1,?,?,?)", schemaVersion, uuid.NewString(), owner); err != nil {

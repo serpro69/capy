@@ -17,10 +17,11 @@ import (
 )
 
 type runQueryResult struct {
-	Version int              `json:"version"`
-	Kind    string           `json:"kind"`
-	Run     *runstore.Result `json:"run,omitempty"`
-	Error   *runstore.Error  `json:"error,omitempty"`
+	Version int                   `json:"version"`
+	Kind    string                `json:"kind"`
+	Batch   *runstore.BatchResult `json:"batch,omitempty"`
+	Run     *runstore.Result      `json:"run,omitempty"`
+	Error   *runstore.Error       `json:"error,omitempty"`
 }
 
 func runTarget(cmd *cobra.Command) (*knowledgeTarget, error) {
@@ -98,6 +99,12 @@ func encodeRunText(value any) ([]byte, error) {
 	case runstore.Result:
 		b.WriteString(runText(v))
 	case runQueryResult:
+		if v.Batch != nil {
+			fmt.Fprintf(&b, "Batch %s: %s; failures=%d incomplete=%d. Recover: capy runs list --batch-id %s.\n", v.Batch.BatchID, v.Batch.State, v.Batch.FailedCount, v.Batch.IncompleteCount, v.Batch.BatchID)
+			if v.Batch.Error != nil {
+				fmt.Fprintf(&b, "%s: %s\n", v.Batch.Error.Code, terminalText(v.Batch.Error.Message))
+			}
+		}
 		if v.Run != nil {
 			b.WriteString(runText(*v.Run))
 		}
@@ -127,7 +134,10 @@ func encodeRunText(value any) ([]byte, error) {
 		fmt.Fprintf(&b, "end_of_available=%t eof=%t\n", v.EndOfAvailable, v.EOF)
 	case runstore.ListPage:
 		for _, entry := range v.Entries {
-			fmt.Fprintf(&b, "%s %s capture=%s owner=%s\n", entry.RunID, entry.State, entry.CaptureState, entry.OwnerType)
+			fmt.Fprintf(&b, "%s %s capture=%s owner=%s output_available=%t\n", entry.RunID, entry.State, entry.CaptureState, entry.OwnerType, entry.OutputAvailable)
+			if entry.Ordinal != nil {
+				fmt.Fprintf(&b, "  ordinal=%d label=%s\n", *entry.Ordinal, terminalText(entry.Label))
+			}
 		}
 		if len(v.Entries) == 0 {
 			b.WriteString("No matching runs.\n")
@@ -136,13 +146,17 @@ func encodeRunText(value any) ([]byte, error) {
 			fmt.Fprintf(&b, "next_cursor: %s\n", *v.NextCursor)
 		}
 	case runstore.SearchPage:
-		fmt.Fprintf(&b, "Run %s: index=%s partial=%t; searched stdout=%d stderr=%d raw bytes.\n", v.RunID, v.Index.State, v.Partial, v.Coverage["stdout"], v.Coverage["stderr"])
+		selector := v.RunID
+		if v.BatchID != "" {
+			selector = v.BatchID
+		}
+		fmt.Fprintf(&b, "Run/batch %s: index=%s partial=%t; searched stdout=%d stderr=%d raw bytes.\n", selector, v.Index.State, v.Partial, v.Coverage["stdout"], v.Coverage["stderr"])
 		if v.Error != nil {
 			fmt.Fprintf(&b, "%s: %s\n", v.Error.Code, terminalText(v.Error.Message))
 		}
 		for _, group := range v.Results {
 			for _, hit := range group.Hits {
-				fmt.Fprintf(&b, "[query %d %s bytes %d–%d line %d] %s\nread_cursor: %s\n", group.Query, hit.Stream, hit.RawStart, hit.RawEnd, hit.StartLine, terminalText(hit.Text), hit.ReadCursor)
+				fmt.Fprintf(&b, "[query %d run %s %s bytes %d–%d line %d] %s\nread_cursor: %s\n", group.Query, hit.RunID, hit.Stream, hit.RawStart, hit.RawEnd, hit.StartLine, terminalText(hit.Text), hit.ReadCursor)
 			}
 		}
 		if v.Omitted {

@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–11 done; Tasks 12–17 pending
+> Status: in-progress — Tasks 1–12 done; Tasks 13–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -179,7 +179,7 @@ Default output projection and later run actions remain explicitly unavailable.
 - [x] 10.2 Add resumable coverage/claims and measured/conservative quota rollback → verify: claimant death, partial results and no raw eviction solely for indexes.
   - Integrate FTS posting/shadow debit and resumable index deletion with Task 9's eviction tombstones; optional index writes must not use capture's eviction-to-make-room path. Schema 6 currently accounts raw/projection/metadata only because this task introduces the first indexes.
 - [x] 10.3 Expose run/batch search and intent previews → verify: knowledge-search throttling cannot block recovery; first/repeat cost is measured under capture load.
-  - Run search and intent previews are available through MCP/CLI. Batch selector/scope validation is shared; actual batch results remain `batch_unavailable` until Task 12 introduces manifests, with global federation in Task 13.
+  - Run search and intent previews are available through MCP/CLI. Task 12 now provides batch manifests and scoped results; global federation remains Task 13.
 
 **Evidence:** [Task 10 verification](task10-verification.md) · [isolated review](task10-code-review.md). Lazy sanitized search, exact read anchors, resumable claims, quota rollback, bounded eviction and both accounting modes pass. Full FTS5 coverage passes across the sandbox run and socket-enabled config/server rerun; final store/execution integration race, compiled CLI/MCP race, build, vet and quality comparison pass. Independent review approved after correcting release retry, physical-debit refresh and projection keyset scans; external review was unavailable. Task 11 is next.
 
@@ -201,7 +201,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 12: Recover a serial batch through MCP
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 10
 - **Size:** M
 - **Can run in parallel with:** Task 11, Task 14
@@ -209,9 +209,11 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 12.1 Add batch/child identities, all-command preflight and serial captured execution → verify: denied final input prevents all effects; shared deadline/skipped ordinals are correct.
-- [ ] 12.2 Expose aggregate status, paginated children, explicit batch search and yielding recovery → verify: every child status remains recoverable beyond the preview and independently of child-log eviction until manifest expiry.
-- [ ] 12.3 Keep full batch replacement/routing gated on Task 13 → verify: serial MCP fixtures do not claim parallel migration complete.
+- [x] 12.1 Add batch/child identities, all-command preflight and serial captured execution → verify: denied final input prevents all effects; shared deadline/skipped ordinals are correct.
+- [x] 12.2 Expose aggregate status, paginated children, explicit batch search and yielding recovery → verify: every child status remains recoverable beyond the preview and independently of child-log eviction until manifest expiry.
+- [x] 12.3 Keep full batch replacement/routing gated on Task 13 → verify: serial MCP fixtures do not claim parallel migration complete.
+
+**Evidence:** [Task 12 verification](task12-verification.md) · [isolated review](task12-code-review.md). Atomic serial admission, exact capture, shared deadlines/cancellation, bounded MCP/CLI recovery, independent manifests and lazy batch search pass. Full functional coverage is complete across the broad run and corrected package/focused reruns; final targeted races, compiled transport races, build, vet and both accounting modes pass. The broader concurrent-search race fixture reproduces on unchanged `d74bd0a`. Quality benchmarks pass with six documented match-layer expectation changes after the valid-AND fix; recall/ranking do not regress. Independent review approved; external review was unavailable. Task 13 is next.
 
 ## Task 13: Schedule parallel batches within owner capacity
 

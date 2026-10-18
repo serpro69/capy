@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–11 complete and verified; Tasks 12–17 pending
+> Status: Tasks 1–12 complete and verified; Tasks 13–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -215,6 +215,10 @@ them with a different filename. New file output uses run storage exclusively.
   only new run storage changes and all responses remain bounded.
 
 ## Task 12: Recover a serial batch through MCP
+
+Evidence: [Task 12 verification](task12-verification.md) · [isolated review](task12-code-review.md).
+Serial calls now use atomic run/manifest admission, shared supervision and bounded
+MCP/CLI recovery. Parallel capture and global federation remain Task 13.
 
 - Add batch/child metadata, all-command preflight and serial child capture through
   the shared execution service → verify: a denied final command prevents every

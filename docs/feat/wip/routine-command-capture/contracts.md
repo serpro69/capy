@@ -47,7 +47,8 @@ MCP batch inputs retain `commands` (nonempty array of label/command objects),
 `queries` (omitted/empty means no search), `concurrency` (default 1, range 1–8),
 `query_scope` (batch/global, default batch), `cwd` and `timeout`, and add `wait_ms`.
 Labels are display metadata, not unique identities; ordinals and run IDs identify
-children. Validate the whole inventory and its pending-capacity limit before
+children. Labels are UTF-8 strings of at most 512 bytes; commands and labels
+together are limited to 1 MiB per batch. Validate the whole inventory and its pending-capacity limit before
 admission. Existing bounded shell scanning applies to every command. Nonempty
 queries use the same length/count constraints as run search.
 

@@ -28,18 +28,18 @@ func TestTruncateLabel_RuneSafe(t *testing.T) {
 	assert.Equal(t, strings.Repeat("世", 26), got)
 }
 
-func callBatch(t *testing.T, srv *Server, args map[string]any) *mcp.CallToolResult {
+func callLegacyBatch(t *testing.T, srv *Server, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = args
-	result, err := srv.handleBatchExecute(context.Background(), req)
+	result, err := srv.handleLegacyBatchExecute(context.Background(), req)
 	require.NoError(t, err)
 	return result
 }
 
-func TestBatchExecute_BasicSearch(t *testing.T) {
+func TestLegacyBatchExecute_BasicSearch(t *testing.T) {
 	srv := newTestServer(t, nil)
-	r := callBatch(t, srv, map[string]any{
+	r := callLegacyBatch(t, srv, map[string]any{
 		"commands": []any{
 			map[string]any{"label": "OS Info", "command": "uname -a"},
 			map[string]any{"label": "Date", "command": "date"},
@@ -53,7 +53,7 @@ func TestBatchExecute_BasicSearch(t *testing.T) {
 	assert.Contains(t, text, "OS Info")
 }
 
-func TestBatchExecute_CapturedStreams(t *testing.T) {
+func TestLegacyBatchExecute_CapturedStreams(t *testing.T) {
 	tests := []struct {
 		name    string
 		command string
@@ -85,7 +85,7 @@ func TestBatchExecute_CapturedStreams(t *testing.T) {
 			for _, tt := range tests {
 				commands = append(commands, map[string]any{"label": tt.name, "command": tt.command})
 			}
-			r := callBatch(t, srv, map[string]any{
+			r := callLegacyBatch(t, srv, map[string]any{
 				"commands": commands, "queries": []any{"stderr marker"}, "concurrency": mode.concurrency,
 			})
 			require.False(t, r.IsError, resultText(r))
@@ -112,7 +112,7 @@ func TestBatchExecute_CapturedStreams(t *testing.T) {
 	}
 }
 
-func TestBatchExecute_TimeoutCapturedStreams(t *testing.T) {
+func TestLegacyBatchExecute_TimeoutCapturedStreams(t *testing.T) {
 	for _, mode := range []struct {
 		name        string
 		concurrency float64
@@ -124,7 +124,7 @@ func TestBatchExecute_TimeoutCapturedStreams(t *testing.T) {
 			srv := newTestServer(t, nil)
 			// Warm detection before starting the shared serial timeout budget.
 			srv.executor.Runtimes()
-			r := callBatch(t, srv, map[string]any{
+			r := callLegacyBatch(t, srv, map[string]any{
 				"commands": []any{
 					map[string]any{"label": "slow", "command": "printf 'partial stdout'; printf 'partial stderr' >&2; sleep 30"},
 					map[string]any{"label": "after", "command": "printf 'sibling marker'"},
@@ -152,12 +152,12 @@ func TestBatchExecute_TimeoutCapturedStreams(t *testing.T) {
 	}
 }
 
-func TestBatchExecute_SecurityDeny(t *testing.T) {
+func TestLegacyBatchExecute_SecurityDeny(t *testing.T) {
 	policies := []security.SecurityPolicy{
 		{Deny: []string{"Bash(sudo *)"}},
 	}
 	srv := newTestServer(t, policies)
-	r := callBatch(t, srv, map[string]any{
+	r := callLegacyBatch(t, srv, map[string]any{
 		"commands": []any{
 			map[string]any{"label": "Safe", "command": "echo ok"},
 			map[string]any{"label": "Bad", "command": "sudo rm -rf /"},
@@ -168,10 +168,10 @@ func TestBatchExecute_SecurityDeny(t *testing.T) {
 	assert.Contains(t, resultText(r), "blocked by security policy")
 }
 
-func TestBatchExecute_Timeout(t *testing.T) {
+func TestLegacyBatchExecute_Timeout(t *testing.T) {
 	srv := newTestServer(t, nil)
 	start := time.Now()
-	r := callBatch(t, srv, map[string]any{
+	r := callLegacyBatch(t, srv, map[string]any{
 		"commands": []any{
 			map[string]any{"label": "Slow", "command": "sleep 30"},
 			map[string]any{"label": "After", "command": "echo never"},
@@ -189,10 +189,10 @@ func TestBatchExecute_Timeout(t *testing.T) {
 	assert.Less(t, elapsed, 10*time.Second, "batch should not wait for full sleep")
 }
 
-func TestBatchExecute_InputCoercion(t *testing.T) {
+func TestLegacyBatchExecute_InputCoercion(t *testing.T) {
 	srv := newTestServer(t, nil)
 	// String commands should be coerced to {label, command} objects
-	r := callBatch(t, srv, map[string]any{
+	r := callLegacyBatch(t, srv, map[string]any{
 		"commands": []any{"echo hello", "echo world"},
 		"queries":  []any{"hello"},
 	})
@@ -201,7 +201,7 @@ func TestBatchExecute_InputCoercion(t *testing.T) {
 	assert.Contains(t, text, "Executed 2 commands")
 }
 
-func TestBatchExecute_ExactSourceScoping(t *testing.T) {
+func TestLegacyBatchExecute_ExactSourceScoping(t *testing.T) {
 	srv := newTestServer(t, nil)
 
 	// Pre-index content with a label that partially matches "batch:*"
@@ -212,7 +212,7 @@ func TestBatchExecute_ExactSourceScoping(t *testing.T) {
 	})
 
 	// Run a batch that produces output NOT containing "supercalifragilistic"
-	r := callBatch(t, srv, map[string]any{
+	r := callLegacyBatch(t, srv, map[string]any{
 		"commands": []any{
 			map[string]any{"label": "Echo Test", "command": "echo hello world"},
 		},
@@ -279,9 +279,9 @@ func TestCoerceCommandsArray(t *testing.T) {
 
 // TestBatchExecute_ConcurrencySerialDefault verifies that concurrency=1 (the
 // default) routes through the serial path and behaves like the legacy handler.
-func TestBatchExecute_ConcurrencySerialDefault(t *testing.T) {
+func TestLegacyBatchExecute_ConcurrencySerialDefault(t *testing.T) {
 	srv := newTestServer(t, nil)
-	r := callBatch(t, srv, map[string]any{
+	r := callLegacyBatch(t, srv, map[string]any{
 		"commands": []any{
 			map[string]any{"label": "One", "command": "echo aaa"},
 			map[string]any{"label": "Two", "command": "echo bbb"},
@@ -298,9 +298,9 @@ func TestBatchExecute_ConcurrencySerialDefault(t *testing.T) {
 
 // TestBatchExecute_ConcurrencyParallel exercises the parallel path end-to-end
 // through the handler and confirms the [1, len(commands)] clamp (4 → 3).
-func TestBatchExecute_ConcurrencyParallel(t *testing.T) {
+func TestLegacyBatchExecute_ConcurrencyParallel(t *testing.T) {
 	srv := newTestServer(t, nil)
-	r := callBatch(t, srv, map[string]any{
+	r := callLegacyBatch(t, srv, map[string]any{
 		"commands": []any{
 			map[string]any{"label": "One", "command": "echo aaa"},
 			map[string]any{"label": "Two", "command": "echo bbb"},

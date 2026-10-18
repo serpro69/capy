@@ -490,6 +490,7 @@ Task 9 quota/retention/reset and policy-change maintenance are verified in
 accounting and resumable recovery are verified in [Task 10 evidence](task10-verification.md).
 Task 11 execute-file capture, shared lifetime and exact physical-path persistence
 are verified in [Task 11 evidence](task11-verification.md).
-Tasks 12–17 remain pending.
+Task 12 serial batch capture, retained manifests and bounded recovery are verified
+in [Task 12 evidence](task12-verification.md). Tasks 13–17 remain pending.
 These slices do not substitute for installed acceptance or independent
 design/code/spec review of the remaining feature.

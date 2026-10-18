@@ -59,15 +59,19 @@ type QueryHits struct {
 }
 
 type SearchPage struct {
-	Version  int              `json:"version"`
-	Kind     string           `json:"kind"`
-	RunID    string           `json:"run_id,omitempty"`
-	Index    Index            `json:"index"`
-	Coverage map[string]int64 `json:"searched_bytes"` // raw per-stream prefix positions
-	Partial  bool             `json:"partial"`
-	Results  []QueryHits      `json:"results"`
-	Omitted  bool             `json:"results_omitted,omitempty"`
-	Error    *Error           `json:"error,omitempty"`
+	BatchID         string           `json:"batch_id,omitempty"`
+	QueryScope      string           `json:"query_scope,omitempty"`
+	Children        []SearchCoverage `json:"children,omitempty"`
+	CoverageOmitted bool             `json:"coverage_omitted,omitempty"`
+	Version         int              `json:"version"`
+	Kind            string           `json:"kind"`
+	RunID           string           `json:"run_id,omitempty"`
+	Index           Index            `json:"index"`
+	Coverage        map[string]int64 `json:"searched_bytes"` // raw per-stream prefix positions
+	Partial         bool             `json:"partial"`
+	Results         []QueryHits      `json:"results"`
+	Omitted         bool             `json:"results_omitted,omitempty"`
+	Error           *Error           `json:"error,omitempty"`
 }
 
 // Search performs one bounded index batch, then ranks retained coverage. An
@@ -79,9 +83,7 @@ func (s *Store) Search(ctx context.Context, owner *Owner, options SearchOptions)
 		return page, err
 	}
 	if options.BatchID != "" {
-		// Batch manifests are introduced by Task 12. Never treat a batch UUID
-		// as a run or widen it to unscoped knowledge/run search.
-		return page, failure("batch_unavailable", "batch output is unavailable in this owner's store")
+		return s.searchBatch(ctx, owner, options)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()

@@ -151,7 +151,7 @@ func TestSanitizePorterQueryWithSynonyms(t *testing.T) {
 	result2 := SanitizePorterQuery("widget", "AND", true)
 	assert.Equal(t, `"widget"`, result2)
 
-	// Multi-term AND: space between groups = implicit AND.
+	// Multi-term AND: parenthesized synonym groups require explicit AND.
 	result3 := SanitizePorterQuery("db perf", "AND", true)
 	assert.Contains(t, result3, `("db"`)
 	assert.Contains(t, result3, `("perf"`)

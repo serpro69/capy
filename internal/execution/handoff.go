@@ -210,7 +210,7 @@ func isTerminal(state string) bool {
 func (s *Service) capacity() *runstore.Capacity {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	info := &runstore.Capacity{MaxActive: s.policy.MaxActive, ActiveCount: s.active, ListAction: "capy_runs(action=list)", CancelAction: "capy_runs(action=cancel,run_id=...)"}
+	info := &runstore.Capacity{MaxActive: s.policy.MaxActive, ActiveCount: s.active, PendingCount: s.pending, ListAction: "capy_runs(action=list)", CancelAction: "capy_runs(action=cancel,run_id=...)"}
 	if s.ownerType == "cli" {
 		info.CancelAction = "interrupt the attached CLI process"
 	}

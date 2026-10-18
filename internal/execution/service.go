@@ -24,6 +24,8 @@ type Service struct {
 	jobs                 map[*serviceCall]context.CancelFunc
 	running              map[string]*runCall
 	active               int
+	pending              int
+	batches              map[string]*batchCall
 	wg                   sync.WaitGroup
 	store                *runstore.Store
 	owner                *runstore.Owner
@@ -36,7 +38,7 @@ type Service struct {
 type serviceCall struct{ marker byte }
 
 func NewService(project, key string, policy config.RunsConfig) *Service {
-	return &Service{project: project, key: key, policy: policy, jobs: make(map[*serviceCall]context.CancelFunc), running: make(map[string]*runCall), closeDone: make(chan struct{})}
+	return &Service{project: project, key: key, policy: policy, jobs: make(map[*serviceCall]context.CancelFunc), running: make(map[string]*runCall), batches: make(map[string]*batchCall), closeDone: make(chan struct{})}
 }
 
 func (s *Service) begin(ctx context.Context, execute bool) (context.Context, func(), error) {
@@ -152,6 +154,14 @@ func (s *Service) execute(ctx context.Context, request executor.ExecRequest, int
 	if err != nil {
 		return reject(err)
 	}
+	return s.executeAdmitted(ctx, st, owner, row, call)
+}
+
+func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner *runstore.Owner, row runstore.Admitted, call *runCall) runstore.Result {
+	if ctx.Err() != nil {
+		return s.finishUnstarted(st, row, "cancelled")
+	}
+	var err error
 	binary := s.binary
 	if binary == "" {
 		binary, err = os.Executable()
@@ -159,7 +169,7 @@ func (s *Service) execute(ctx context.Context, request executor.ExecRequest, int
 	if err != nil {
 		return s.startFailure(st, row)
 	}
-	h, launchErr := Launch(ctx, binary, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: st.Path(), Deadline: program.Deadline}, s.key, Leases{Owner: owner.Lease, Lifecycle: st.LifecycleLease()})
+	h, launchErr := Launch(ctx, binary, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: st.Path(), Deadline: row.Program.Deadline}, s.key, Leases{Owner: owner.Lease, Lifecycle: st.LifecycleLease()})
 	if launchErr != nil {
 		if h == nil {
 			if ctx.Err() != nil {

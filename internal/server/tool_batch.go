@@ -17,7 +17,8 @@ const maxBatchOutput = 80 * 1024 // 80 KB total output cap
 // maxBatchConcurrency caps the parallel worker pool for capy_batch_execute.
 const maxBatchConcurrency = 8
 
-func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest) (response *mcp.CallToolResult, err error) {
+// handleLegacyBatchExecute remains only for concurrency > 1 until Task 13.
+func (s *Server) handleLegacyBatchExecute(ctx context.Context, req mcp.CallToolRequest) (response *mcp.CallToolResult, err error) {
 	// Bound every exit, including validation/policy errors. Preserve the existing
 	// stats contract: only admitted calls count as tool responses.
 	trackResponse := false
