@@ -143,12 +143,8 @@ func ServeInherited(ctx context.Context, open OpenRun) (retErr error) {
 	result, execErr := run.Executor.ExecuteStreamWithStart(jobCtx, run.Request, queue.append, run.Started)
 	result.ElapsedMS = time.Since(began).Milliseconds()
 	outcome := Outcome{Result: result}
-	if jobCtx.Err() != nil {
-		if errors.Is(jobCtx.Err(), context.DeadlineExceeded) {
-			outcome.Reason = "deadline"
-		} else {
-			outcome.Reason = context.Cause(jobCtx).Error()
-		}
+	if result.StopReason != "" {
+		outcome.Reason = result.StopReason
 	} else if execErr != nil {
 		outcome.Reason = "execution_failed"
 		if !result.Started {

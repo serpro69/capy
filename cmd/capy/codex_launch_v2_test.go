@@ -167,7 +167,7 @@ func TestCodexLaunchFailureAndCancellation(t *testing.T) {
 			p.initialize(t)
 			// An actual executor group, with a sleeping descendant, survives the call.
 			result := p.tool(t, "capy_execute", map[string]any{"language": "shell", "code": "echo $$ > executor.pid; sleep 120 & echo $! > descendant.pid; echo ready; wait", "timeout": 1000, "background": true})
-			require.Contains(t, result, "backgrounded")
+			require.Contains(t, result, "running")
 			pids := []int{readFixturePID(t, filepath.Join(owner, "executor.pid")), readFixturePID(t, filepath.Join(owner, "descendant.pid"))}
 			for _, pid := range pids {
 				t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })

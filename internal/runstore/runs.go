@@ -293,6 +293,8 @@ func ApplyOutcome(result *Result, c Completion) {
 	switch {
 	case !c.Retired:
 		result.State = "interrupted"
+	case c.Reason == "cancelled":
+		result.State = "cancelled"
 	case !c.Started:
 		result.State = "start_failed"
 		result.Error = &Error{Code: "spawn_failed", Message: "execution process could not start"}
@@ -303,8 +305,6 @@ func ApplyOutcome(result *Result, c Completion) {
 		result.State = "timed_out"
 	case c.Reason == "owner_lost" || c.Reason == "control_failed":
 		result.State = "interrupted"
-	case c.Reason == "cancelled":
-		result.State = "cancelled"
 	}
 	result.Reason = nil
 	if c.Reason != "" {

@@ -45,6 +45,7 @@ func checkSupervisor() error {
 func runStreamPhase(ctx context.Context, bin string, args []string, cwd, tmpDir string, req ExecRequest, phase string, w *eventWriter) (StreamResult, error) {
 	result := StreamResult{Retired: true, Phase: phase}
 	if err := ctx.Err(); err != nil {
+		result.StopReason = streamStopReason(ctx)
 		return result, err
 	}
 	cmd := exec.Command(bin, args...)
@@ -122,6 +123,7 @@ func runStreamPhase(ctx context.Context, bin string, args []string, cwd, tmpDir 
 			break
 		}
 		if ctx.Err() != nil && cleanupBy.IsZero() {
+			result.StopReason = streamStopReason(ctx)
 			cleanupBy = time.Now().Add(retirementTimeout)
 			if err := unix.Kill(-cmd.Process.Pid, unix.SIGKILL); err != nil && err != unix.ESRCH {
 				cleanupErr = errors.New("supervisor group cancellation failed")

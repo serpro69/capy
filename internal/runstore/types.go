@@ -37,6 +37,7 @@ type Index struct {
 }
 
 type Result struct {
+	Capacity        *Capacity  `json:"capacity,omitempty"`
 	Preview         string     `json:"preview,omitempty"`
 	MetadataOmitted bool       `json:"metadata_omitted,omitempty"`
 	Version         int        `json:"version"`
@@ -56,6 +57,22 @@ type Result struct {
 	Index           Index      `json:"index"`
 	ExpiresAt       *time.Time `json:"expires_at"`
 	Error           *Error     `json:"error"`
+}
+
+type ActiveRun struct {
+	RunID       string `json:"run_id"`
+	AgeMS       int64  `json:"age_ms"`
+	RemainingMS *int64 `json:"remaining_ms"`
+}
+
+type Capacity struct {
+	MaxActive    int         `json:"max_active"`
+	ActiveCount  int         `json:"active_count"`
+	PendingCount int         `json:"pending_count"`
+	Runs         []ActiveRun `json:"runs"`
+	Omitted      bool        `json:"omitted,omitempty"`
+	ListAction   string      `json:"list_action"`
+	CancelAction string      `json:"cancel_action"`
 }
 
 func Rejection(code, message string) Result {

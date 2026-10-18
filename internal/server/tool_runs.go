@@ -30,8 +30,8 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		return fail("storage_unavailable", "run query failed")
 	}
 	action, ok := args["action"].(string)
-	if !ok || (action != "status" && action != "read" && action != "list") {
-		return fail("invalid_argument", "action must be status, read or list")
+	if !ok || (action != "status" && action != "read" && action != "list" && action != "cancel") {
+		return fail("invalid_argument", "action must be status, read, list or cancel")
 	}
 	if action == "list" {
 		for name := range args {
@@ -101,13 +101,24 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 			return fail("invalid_argument", "unsupported argument for this run operation")
 		}
 	}
-	if action == "status" {
-		result, err := s.executionService().Status(ctx, id)
+	if action == "status" || action == "cancel" {
+		var result runstore.Result
+		var requested bool
+		var err error
+		if action == "cancel" {
+			result, requested, err = s.executionService().Cancel(ctx, id)
+		} else {
+			result, err = s.executionService().Status(ctx, id)
+		}
 		if err != nil {
 			return operationError(err)
 		}
 		r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
-			return mcp.NewToolResultStructured(map[string]any{"version": 1, "kind": "query", "run": execution.BoundResult(result, n)}, fmt.Sprintf("Run %s: %s; capture %s.", id, result.State, result.Capture.State)), nil
+			body := map[string]any{"version": 1, "kind": "query", "run": execution.BoundResult(result, n)}
+			if action == "cancel" {
+				body["cancel_requested"] = requested
+			}
+			return mcp.NewToolResultStructured(body, fmt.Sprintf("Run %s: %s; capture %s.", id, result.State, result.Capture.State)), nil
 		}, nil)
 		if err != nil {
 			return fail("response_unavailable", "Run status response unavailable.")
@@ -182,8 +193,8 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 
 func toolRuns() mcp.Tool {
 	return mcp.NewTool("capy_runs", mcp.WithToolAnnotation(annotationCleanup),
-		mcp.WithDescription("Recover a captured run without executing it again. Supports status, list, sanitized reads and explicit raw reads. Other actions are currently unavailable."),
-		mcp.WithString("action", mcp.Required(), mcp.Enum("status", "read", "list")),
+		mcp.WithDescription("Recover captured runs with status, list, sanitized reads or explicit raw reads; cancel requests termination of this MCP owner's runs. Poll status for completion. Search and batch actions are currently unavailable."),
+		mcp.WithString("action", mcp.Required(), mcp.Enum("status", "read", "list", "cancel")),
 		mcp.WithString("run_id", mcp.Description("Captured run UUID in this owner's run store")),
 		mcp.WithBoolean("raw", mcp.Description("Explicitly request unsanitized bytes (default false)")),
 		mcp.WithString("encoding", mcp.Enum("text", "base64")),

@@ -27,6 +27,7 @@ type EventSink func(OutputEvent) error
 // StreamResult separates process retirement from command and capture outcomes.
 // Retired is a local process proof, never an acknowledgement of durable storage.
 type StreamResult struct {
+	StopReason    string `json:"stop_reason,omitempty"`
 	SpawnCode     int    `json:"spawn_code,omitempty"`
 	Started       bool   `json:"started"`
 	ExitCode      *int   `json:"exit_code"`
@@ -77,6 +78,7 @@ func (e *PolyglotExecutor) ExecuteStreamWithStart(ctx context.Context, req ExecR
 		return result, err
 	}
 	if err := ctx.Err(); err != nil {
+		result.StopReason = streamStopReason(ctx)
 		return result, err
 	}
 	p, err := e.prepare(req)
@@ -94,6 +96,9 @@ func (e *PolyglotExecutor) ExecuteStreamWithStart(ctx context.Context, req ExecR
 		binary := filepath.Join(p.tmpDir, "main")
 		result, err = runStreamPhase(ctx, p.runtime, []string{p.scriptPath, "-o", binary}, p.tmpDir, p.tmpDir, req, "compile", w)
 		if err != nil || !result.Retired || result.ExitCode == nil || *result.ExitCode != 0 || result.Signal != 0 || ctx.Err() != nil {
+			if result.StopReason == "" && err == nil && result.ExitCode != nil && *result.ExitCode == 0 && ctx.Err() != nil {
+				result.StopReason = streamStopReason(ctx)
+			}
 			result.CaptureLost = w.err != nil
 			result.ObservedBytes = w.observed
 			return result, err
@@ -106,4 +111,19 @@ func (e *PolyglotExecutor) ExecuteStreamWithStart(ctx context.Context, req ExecR
 	result.CaptureLost = w.err != nil
 	result.ObservedBytes = w.observed
 	return result, err
+}
+
+// Freeze the control outcome at the execution boundary. A later cancellation
+// during pipe draining or persistence cannot rewrite an observed natural exit.
+func streamStopReason(ctx context.Context) string {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "deadline"
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		switch cause.Error() {
+		case "owner_lost", "control_failed":
+			return cause.Error()
+		}
+	}
+	return "cancelled"
 }

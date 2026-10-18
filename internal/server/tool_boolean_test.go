@@ -174,7 +174,7 @@ func TestBooleanArgs_ExecuteBackgroundStrings(t *testing.T) {
 		value string
 		want  string
 	}{
-		{name: "true detaches", value: " TrUe ", want: "process backgrounded"},
+		{name: "true detaches", value: " TrUe ", want: "running"},
 		{name: "false times out", value: " FaLsE ", want: "timed_out"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

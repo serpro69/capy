@@ -260,6 +260,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	}()
 
 	stdio := mcpserver.NewStdioServer(s.mcpServer)
+	// Attached execution calls occupy transport workers too. Reserve headroom
+	// for recovery/cancel even with the maximum configured active runs attached.
+	mcpserver.WithWorkerPoolSize(s.config.Runs.MaxActive + 2)(stdio)
 	stdio.SetErrorLogger(log.New(os.Stderr, "capy: ", log.LstdFlags))
 	transport := &cancelingStdio{input: os.Stdin, output: os.Stdout, cancel: cancel}
 	err := stdio.Listen(ctx, transport, transport)

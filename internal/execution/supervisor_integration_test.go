@@ -33,6 +33,7 @@ type fixtureConfig struct {
 	Generation                                     string
 	PendingFail, AppendFail, FinishFail, HoldClose bool
 	HoldOpen                                       bool
+	HoldStarted                                    bool
 	AppendDelay                                    time.Duration
 }
 
@@ -142,11 +143,24 @@ func openFixture(ctx context.Context, start Startup, key string, _ Leases) (*Run
 	if err != nil {
 		return nil, err
 	}
-	return &Run{
+	run := &Run{
 		Executor: executor.NewExecutor(start.StorePath, 0),
 		Request:  executor.ExecRequest{Language: cfg.Language, Code: cfg.Code},
 		Store:    &fixtureStore{dir: start.StorePath, cfg: cfg, events: events},
-	}, nil
+	}
+	if cfg.HoldStarted {
+		run.Started = func(string) error {
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(filepath.Join(start.StorePath, "release-started")); err == nil {
+					return nil
+				}
+				time.Sleep(time.Millisecond)
+			}
+			return errors.New("fixture started gate timed out")
+		}
+	}
+	return run, nil
 }
 
 func TestMain(m *testing.M) {
@@ -944,5 +958,24 @@ func TestSupervisorDeadlineDuringCaptureFlushPreservesExit(t *testing.T) {
 	}
 	if !outcome.TerminalPersisted {
 		t.Fatal("terminal was not persisted")
+	}
+}
+
+func TestSupervisorNaturalExitWinsLateCancellation(t *testing.T) {
+	// Hold the post-spawn callback until the command has exited, then send
+	// cancellation before Waitid can observe that already-finished process.
+	dir := fixture(t, fixtureConfig{Code: `printf final > command-finished; exit 7`, HoldStarted: true})
+	h, _ := startFixture(t, dir, fixtureStartup(dir))
+	waitFile(t, filepath.Join(dir, "command-finished"))
+	if err := h.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(dir, "release-started"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := waitResult(t, h)
+	if err != nil || outcome.Reason != "" || outcome.Result.ExitCode == nil || *outcome.Result.ExitCode != 7 {
+		t.Fatalf("late cancellation rewrote natural exit: %+v %v", outcome, err)
 	}
 }
