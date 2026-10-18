@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–5 complete and verified; Tasks 6–17 pending
+> Status: Tasks 1–6 complete and verified; Tasks 7–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -112,6 +112,8 @@ Evidence: [verification](task5-verification.md) · [isolated review](task5-code-
   parity and no implicit alternate database.
 
 ## Task 6: Yield and cancel MCP runs through the real transport
+
+Evidence: [verification](task6-verification.md) · [isolated review](task6-code-review.md).
 
 - Implement contracts' atomic attached-to-owner handoff before handler return;
   detach the request-cancellation observer under the same control latch → verify:

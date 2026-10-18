@@ -112,7 +112,7 @@ func TestMCPStdioBooleanArgs(t *testing.T) {
 			value string
 			want  string
 		}{
-			{value: " TrUe ", want: "process backgrounded"},
+			{value: " TrUe ", want: "running"},
 			{value: " FaLsE ", want: "timed_out"},
 		} {
 			isError, text := stdioBooleanCall(t, p, "capy_execute", map[string]any{

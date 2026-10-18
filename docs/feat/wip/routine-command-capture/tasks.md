@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–5 done; Tasks 6–17 pending
+> Status: in-progress — Tasks 1–6 done; Tasks 7–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -102,7 +102,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 6: Yield and cancel MCP runs through the real transport
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 4
 - **Size:** M
 - **Can run in parallel with:** Task 5, Task 14
@@ -110,9 +110,11 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 6.1 Implement atomic request-to-owner handoff before handler return → verify: ordinary mcp-go request-context cleanup preserves yielded jobs.
-- [ ] 6.2 Exercise before/after-handoff cancellation, serialization/write failure and natural completion races → verify: one control outcome and no false receipt guarantee.
-- [ ] 6.3 Wire duration/wait/background contracts, own-run cancel and standalone active slots → verify: late output and recovery actions remain available under capacity exhaustion.
+- [x] 6.1 Implement atomic request-to-owner handoff before handler return → verify: ordinary mcp-go request-context cleanup preserves yielded jobs.
+- [x] 6.2 Exercise before/after-handoff cancellation, serialization/write failure and natural completion races → verify: one control outcome and no false receipt guarantee.
+- [x] 6.3 Wire duration/wait/background contracts, own-run cancel and standalone active slots → verify: late output and recovery actions remain available under capacity exhaustion.
+
+**Evidence:** [Task 6 verification](task6-verification.md) · [isolated review](task6-code-review.md). Real stdio handoff/cancellation/write-failure recovery, 31-second tail capture and eight-attached-run recovery pass. Full FTS5 suite passes across the sandbox run and socket-enabled config/server reruns; focused race/integration checks, build, vet and quality comparison pass. Independent re-review approved after fixing transport worker starvation; external review was unavailable.
 
 ## Task 7: Reopen safely after owner crashes
 
@@ -250,6 +252,7 @@ Default output projection and later run actions remain explicitly unavailable.
 ### Subtasks
 
 - [ ] 16.1 Extend safe bounded diagnostics/stats without creating stores or claiming activation → verify: CLI/MCP parity, capacity/policy visibility and secret-free output.
+  - Aggregate yielded-run bytes through owner completion without double-counting response-time samples; Task 6 currently records response-time bytes only. Per-run capture metadata already exposes later bytes.
 - [ ] 16.2 Update README, architecture, help, AGENTS and predecessor pointers; publish reset-only v1 rotation/rollback → verify: every documented operator action exists and unsupported preservation promises are removed.
 
 ## Task 17: Verify installed acceptance and release readiness

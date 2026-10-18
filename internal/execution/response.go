@@ -52,6 +52,13 @@ func SafeMessage(message string, allowance int) string {
 }
 
 func BoundResult(result runstore.Result, allowance int) runstore.Result {
+	if result.Capacity != nil {
+		capacity := *result.Capacity
+		count := min(len(capacity.Runs), allowance/128)
+		capacity.Runs = capacity.Runs[:count]
+		capacity.Omitted = count < len(result.Capacity.Runs)
+		result.Capacity = &capacity
+	}
 	if len(result.Preview) > allowance {
 		end := allowance
 		for end > 0 && !utf8.RuneStart(result.Preview[end]) {

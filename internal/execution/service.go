@@ -14,13 +14,15 @@ import (
 	"github.com/serpro69/capy/internal/sanitize"
 )
 
-// Service owns attached synchronous runs and joins every helper before closing
-// database/lease handles. Request-to-owner yielding is deliberately a later task.
+// Service owns runs independently of transport requests and joins every helper
+// before closing database/lease handles.
 type Service struct {
 	mu                   sync.Mutex
+	admissionMu          sync.Mutex // publishes metadata and its control handle together
 	closed               bool
 	unverified           bool
 	jobs                 map[*serviceCall]context.CancelFunc
+	running              map[string]*runCall
 	active               int
 	wg                   sync.WaitGroup
 	store                *runstore.Store
@@ -34,7 +36,7 @@ type Service struct {
 type serviceCall struct{ marker byte }
 
 func NewService(project, key string, policy config.RunsConfig) *Service {
-	return &Service{project: project, key: key, policy: policy, jobs: make(map[*serviceCall]context.CancelFunc), closeDone: make(chan struct{})}
+	return &Service{project: project, key: key, policy: policy, jobs: make(map[*serviceCall]context.CancelFunc), running: make(map[string]*runCall), closeDone: make(chan struct{})}
 }
 
 func (s *Service) begin(ctx context.Context, execute bool) (context.Context, func(), error) {
@@ -105,19 +107,21 @@ func (s *Service) attached(ctx context.Context, create bool) (*runstore.Store, *
 }
 
 func (s *Service) Execute(ctx context.Context, request executor.ExecRequest, intent string, timeout time.Duration) runstore.Result {
+	if timeout <= 0 {
+		return runstore.Rejection("invalid_argument", "execution timeout must be positive")
+	}
+	result, _ := s.executeResponse(ctx, request, intent, timeout, -1, nil)
+	return result
+}
+
+// execute runs on an owner-managed worker. Request cancellation is forwarded
+// through runCall, never inherited directly by this context.
+func (s *Service) execute(ctx context.Context, request executor.ExecRequest, intent string, deadline time.Time, call *runCall) runstore.Result {
 	if err := Supported(); err != nil {
 		return reject(err)
 	}
 	if err := ValidateCredentialTransfer(s.key); err != nil {
 		return reject(err)
-	}
-	ctx, done, err := s.begin(ctx, true)
-	if err != nil {
-		return reject(err)
-	}
-	defer done()
-	if timeout <= 0 {
-		return runstore.Rejection("invalid_argument", "execution timeout must be positive")
 	}
 	cwd, err := executor.ResolveCwd(s.project, request.Cwd)
 	if err != nil {
@@ -132,10 +136,17 @@ func (s *Service) Execute(ctx context.Context, request executor.ExecRequest, int
 		return reject(err)
 	}
 	physical := filepath.Dir(filepath.Dir(filepath.Dir(st.Path())))
-	program := runstore.Program{Owner: physical, OwnerType: s.ownerType, Request: request, Intent: intent, Deadline: time.Now().Add(timeout), TTLHours: s.policy.TTLHours, MaxRunBytes: s.policy.MaxRunBytes}
+	program := runstore.Program{Owner: physical, OwnerType: s.ownerType, Request: request, Intent: intent, Deadline: deadline, TTLHours: s.policy.TTLHours, MaxRunBytes: s.policy.MaxRunBytes}
 	admissionCtx, cancelAdmission := context.WithTimeout(ctx, 3*time.Second)
+	s.admissionMu.Lock()
 	row, err := st.Admit(admissionCtx, owner, program)
 	cancelAdmission()
+	if err == nil {
+		s.mu.Lock()
+		s.running[row.ID] = call
+		s.mu.Unlock()
+	}
+	s.admissionMu.Unlock()
 	if err != nil {
 		return reject(err)
 	}
@@ -149,13 +160,16 @@ func (s *Service) Execute(ctx context.Context, request executor.ExecRequest, int
 	h, launchErr := Launch(ctx, binary, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: st.Path(), Deadline: program.Deadline}, s.key, Leases{Owner: owner.Lease, Lifecycle: st.LifecycleLease()})
 	if launchErr != nil {
 		if h == nil {
+			if ctx.Err() != nil {
+				return s.finishUnstarted(st, row, "cancelled")
+			}
 			return s.startFailure(st, row)
 		}
 		quarantineErr := s.quarantine(st)
-		// Launch remains bounded even for a stopped helper. Retain this call's
-		// lifecycle ownership in a separate join; Close still waits for it.
-		s.wg.Add(1)
-		go func() { defer s.wg.Done(); h.Wait() }()
+		// Report the startup failure promptly, but retain this worker's active
+		// slot and lifecycle ownership until even a stopped helper is joined.
+		call.cleanup = make(chan struct{})
+		go func() { h.Wait(); close(call.cleanup) }()
 		result := row.Result
 		result.State = "interrupted"
 		reason := "supervisor_startup_failed"
@@ -167,6 +181,7 @@ func (s *Service) Execute(ctx context.Context, request executor.ExecRequest, int
 		return result
 	}
 	stop := context.AfterFunc(ctx, func() { h.Cancel() })
+	call.ready <- row.Result
 	outcome, waitErr := h.Wait()
 	stop()
 	queryCtx, cancelQuery := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
@@ -209,16 +224,20 @@ func (s *Service) Execute(ctx context.Context, request executor.ExecRequest, int
 }
 
 func (s *Service) startFailure(st *runstore.Store, row runstore.Admitted) runstore.Result {
+	return s.finishUnstarted(st, row, "spawn_failed")
+}
+
+func (s *Service) finishUnstarted(st *runstore.Store, row runstore.Admitted, reason string) runstore.Result {
 	ctx, cancel := context.WithTimeout(context.Background(), runstore.WriteTimeout)
 	defer cancel()
-	if err := st.Finish(ctx, row.ID, runstore.Completion{Retired: true, Reason: "spawn_failed"}); err == nil {
+	if err := st.Finish(ctx, row.ID, runstore.Completion{Retired: true, Reason: reason}); err == nil {
 		if latest, err := st.Load(ctx, row.ID); err == nil {
 			return latest.Result
 		}
 	}
 	result := row.Result
-	result.State = "start_failed"
-	result.Error = &runstore.Error{Code: "storage_unavailable", Message: "supervisor could not start; finalization was unavailable"}
+	runstore.ApplyOutcome(&result, runstore.Completion{Retired: true, Reason: reason})
+	result.Error = &runstore.Error{Code: "storage_unavailable", Message: "supervisor did not start; finalization was unavailable"}
 	return result
 }
 

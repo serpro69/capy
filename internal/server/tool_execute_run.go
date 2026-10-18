@@ -32,11 +32,8 @@ func (s *Server) handleExecute(ctx context.Context, req mcp.CallToolRequest) (*m
 	if err != nil {
 		return reject(err.Error())
 	}
-	if _, present := args["wait_ms"]; present {
-		return reject("wait_ms is currently unsupported; synchronous calls wait for completion")
-	}
-	if background {
-		return s.handleLegacyExecute(ctx, req)
+	if _, present := args["wait_ms"]; present && background {
+		return reject("background and wait_ms cannot be combined")
 	}
 	code, ok := args["code"].(string)
 	if !ok || code == "" {
@@ -66,6 +63,16 @@ func (s *Server) handleExecute(ctx context.Context, req mcp.CallToolRequest) (*m
 	if err != nil {
 		return reject(err.Error())
 	}
+	waitMS, err := integerArg(args, "wait_ms", int64(s.config.Runs.WaitMS), 0, 30000)
+	if err != nil {
+		return reject(err.Error())
+	}
+	timeout := time.Duration(millis) * time.Millisecond
+	wait := time.Duration(waitMS) * time.Millisecond
+	if background {
+		wait = timeout
+		timeout = 0
+	}
 	cwd, err := s.executionCwd(args)
 	if err != nil {
 		return reject(err.Error())
@@ -80,9 +87,18 @@ func (s *Server) handleExecute(ctx context.Context, req mcp.CallToolRequest) (*m
 		}
 		return s.runResult(runstore.Rejection("permission_denied", message)), nil
 	}
-	result := s.executionService().Execute(ctx, executor.ExecRequest{Language: language, Code: code, Cwd: cwd}, intent, time.Duration(millis)*time.Millisecond)
+	var response *mcp.CallToolResult
+	result, err := s.executionService().ExecuteResponse(ctx, executor.ExecRequest{Language: language, Code: code, Cwd: cwd}, intent, timeout, wait, func(result runstore.Result) error {
+		var err error
+		response, err = s.buildRunResult(result)
+		return err
+	})
 	s.stats.AddBytesSandboxed(result.Capture.ObservedBytes)
-	return s.runResult(result), nil
+	if err != nil {
+		result.Error = &runstore.Error{Code: "response_unavailable", Message: "Response preparation failed; attached execution was cancelled. Recover this run before retrying."}
+		return s.runResult(result), nil
+	}
+	return s.trackToolResponse("capy_execute", response), nil
 }
 
 func integerArg(args map[string]any, name string, fallback, low, high int64) (int64, error) {
@@ -117,7 +133,18 @@ func integerArg(args map[string]any, name string, fallback, low, high int64) (in
 }
 
 func (s *Server) runResult(result runstore.Result) *mcp.CallToolResult {
-	r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(allowance int) (*mcp.CallToolResult, error) {
+	r, err := s.buildRunResult(result)
+	if err != nil {
+		r = boundedRunError("response_unavailable", "Run response unavailable; list existing runs before retrying execution.")
+	}
+	if result.RunID == nil {
+		return r
+	}
+	return s.trackToolResponse("capy_execute", r)
+}
+
+func (s *Server) buildRunResult(result runstore.Result) (*mcp.CallToolResult, error) {
+	return execution.Budget(s.config.Runs.MaxResponseBytes, func(allowance int) (*mcp.CallToolResult, error) {
 		bounded := execution.BoundResult(result, allowance)
 		text := "Execution rejected before admission."
 		if result.RunID != nil {
@@ -133,13 +160,6 @@ func (s *Server) runResult(result runstore.Result) *mcp.CallToolResult {
 		r.IsError = execution.ExecutionFailed(result)
 		return r, nil
 	}, nil)
-	if err != nil {
-		r = boundedRunError("response_unavailable", "Run response unavailable; list existing runs before retrying execution.")
-	}
-	if result.RunID == nil {
-		return r
-	}
-	return s.trackToolResponse("capy_execute", r)
 }
 
 func boundedRunError(code, message string) *mcp.CallToolResult {
