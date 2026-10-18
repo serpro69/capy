@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–14 done; Tasks 15–17 pending
+> Status: in-progress — Tasks 1–15 done; Tasks 16–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -248,7 +248,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 15: Enable strict Codex routing and synchronize artifacts
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 11, Task 13, Task 14
 - **Size:** M
 - **Can run in parallel with:** —
@@ -256,9 +256,11 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 15.1 Enforce security → mandatory routine capture → HTTP-only routing → verify: root/child mixed cases and every evidence state, with no routine fallback or evidence consumption.
-- [ ] 15.2 Implement healthy-running availability observation rules → verify: failure/unstarted/polling cannot create or refresh evidence.
-- [ ] 15.3 Synchronize catalogues, runtime/generated/committed guidance and platform scope → verify: drift/idempotency, Claude guidance-only behavior, nested owners, aliases and external hooks.
+- [x] 15.1 Enforce security → mandatory routine capture → HTTP-only routing → verify: root/child mixed cases and every evidence state, with no routine fallback or evidence consumption.
+- [x] 15.2 Implement healthy-running availability observation rules → verify: failure/unstarted/polling cannot create or refresh evidence.
+- [x] 15.3 Synchronize catalogues, runtime/generated/committed guidance and platform scope → verify: drift/idempotency, Claude guidance-only behavior, nested owners, aliases and external hooks.
+
+**Evidence:** [Task 15 verification](task15-verification.md) · [isolated review](task15-code-review.md). Strict Codex ordering, credential-free code-file inspection, modern execute observations, HTTP compatibility and generated/runtime guidance pass. The full FTS5 suite passed; final complete hook/security/platform races, race-instrumented compiled CLI/MCP fixtures, build, vet and artifact drift checks pass. Independent review approved after correcting native HTTP wrapper/boundary/redirection preservation. Claude remains guidance-only for routines. External review was unavailable. Task 16 is next; final installed acceptance remains Task 17.
 
 ## Task 16: Document and diagnose the complete operator workflow
 

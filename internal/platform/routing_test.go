@@ -1,15 +1,16 @@
-package platform
+package platform_test
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/serpro69/capy/internal/hook"
+	"github.com/serpro69/capy/internal/platform"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestGenerateRoutingInstructions(t *testing.T) {
-	instructions := GenerateRoutingInstructions()
+	instructions := platform.GenerateRoutingInstructions()
 
 	// Must contain the primary tools used in routing
 	routingTools := []string{
@@ -71,7 +72,7 @@ func TestRoutingBlockWebComprehension(t *testing.T) {
 }
 
 func TestRoutingToolDiscoveryFallback(t *testing.T) {
-	for _, text := range []string{GenerateRoutingInstructions(), hook.RoutingBlock(), hook.CodexRoutingBlock()} {
+	for _, text := range []string{platform.GenerateRoutingInstructions(), hook.RoutingBlock(), hook.CodexRoutingBlock()} {
 		assert.Contains(t, text, "If the host offers deferred-tool discovery")
 		assert.Contains(t, text, "capy schemas once")
 		assert.Contains(t, text, "discovery is unavailable or the tools are absent")
@@ -84,7 +85,7 @@ func TestRoutingToolDiscoveryFallback(t *testing.T) {
 }
 
 func TestRoutingPlatformCoverage(t *testing.T) {
-	text := GenerateRoutingInstructions()
+	text := platform.GenerateRoutingInstructions()
 	for _, want := range []string{"Codex hooks cover canonical Bash", "hosted web/search tools are not intercepted", "WebFetch — BLOCKED in Claude Code", "In Claude Code, when spawning", "In Codex, SubagentStart", "Child launch arguments and agent types are preserved"} {
 		assert.Contains(t, text, want)
 	}
@@ -109,12 +110,12 @@ func TestCapyToolNamesComplete(t *testing.T) {
 		"capy_cleanup",
 		"capy_runs",
 	}
-	assert.Equal(t, expected, CapyToolNames)
+	assert.Equal(t, expected, platform.CapyToolNames)
 }
 
 func TestPreToolUseMatcherPattern(t *testing.T) {
 	// The matcher pattern should include all key tool names
-	parts := strings.Split(PreToolUseMatcherPattern, "|")
+	parts := strings.Split(platform.PreToolUseMatcherPattern, "|")
 	assert.Contains(t, parts, "Bash")
 	assert.Contains(t, parts, "WebFetch")
 	assert.Contains(t, parts, "Read")

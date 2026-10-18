@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"math"
 	"os"
 	"os/signal"
@@ -11,7 +11,6 @@ import (
 
 	"github.com/serpro69/capy/internal/execution"
 	"github.com/serpro69/capy/internal/executor"
-	"github.com/serpro69/capy/internal/fileio"
 	"github.com/serpro69/capy/internal/runstore"
 	"github.com/serpro69/capy/internal/security"
 	"github.com/spf13/cobra"
@@ -103,26 +102,10 @@ func newExecuteCmd() *cobra.Command {
 }
 
 func readCLIProgram(project, path string) (string, error) {
-	policy, err := security.LoadReadPolicy(security.FilePolicyContext{ProjectDir: project})
-	if err != nil {
-		return "", &runstore.Error{Code: "permission_denied", Message: err.Error()}
+	code, err := security.ReadCLIProgram(project, path)
+	var admission *security.ProgramFileError
+	if errors.As(err, &admission) {
+		return "", &runstore.Error{Code: admission.Code, Message: admission.Error()}
 	}
-	physical, err := policy.ResolveCLIProgramFile(path)
-	if err != nil {
-		return "", &runstore.Error{Code: "permission_denied", Message: err.Error()}
-	}
-	f, err := os.OpenFile(physical, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return "", &runstore.Error{Code: "invalid_argument", Message: "code-file cannot be opened as a regular file"}
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() > security.MaxShellInputBytes {
-		return "", &runstore.Error{Code: "invalid_argument", Message: "code-file must be a regular file of at most 1 MiB"}
-	}
-	data, err := fileio.ReadAll(f, security.MaxShellInputBytes)
-	if err != nil {
-		return "", fmt.Errorf("read checked code-file: %w", err)
-	}
-	return string(data), nil
+	return code, err
 }

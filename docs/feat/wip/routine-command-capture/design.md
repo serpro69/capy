@@ -495,6 +495,8 @@ in [Task 12 evidence](task12-verification.md). Task 13 parallel scheduling, comp
 batch migration and global query recovery are verified in
 [Task 13 evidence](task13-verification.md). Task 14 literal routine/capture
 recognition and policy inspection are verified in
-[Task 14 evidence](task14-verification.md). Tasks 15–17 remain pending.
+[Task 14 evidence](task14-verification.md). Task 15 strict Codex routing, availability
+observations and synchronized guidance are verified in
+[Task 15 evidence](task15-verification.md). Tasks 16–17 remain pending.
 These slices do not substitute for installed acceptance or independent
 design/code/spec review of the remaining feature.

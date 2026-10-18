@@ -178,6 +178,9 @@ func TestCaptureCodeFileInspection(t *testing.T) {
 	require.ErrorIs(t, err, denied)
 	require.Empty(t, got)
 	for _, command := range []string{
+		`CLAUDE_PROJECT_DIR=/other capy execute --code-file program.sh`,
+		`env CLAUDE_PROJECT_DIR=/other capy execute --code-file program.sh`,
+		`env -u CLAUDE_PROJECT_DIR capy execute --code-file program.sh`,
 		`env -C /other capy execute --code-file program.sh`,
 		`env --chdir=/other bash -c 'capy execute --code-file program.sh'`,
 		`mise exec -C /other -- capy execute --code-file program.sh`,

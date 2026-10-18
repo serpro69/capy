@@ -100,13 +100,18 @@ func routePreToolUse(event *adapter.PreToolUseEvent, a adapter.HookAdapter, poli
 // routeBash handles Bash tool routing: security check, curl/wget, HTTP, build tools, guidance.
 func routeBash(event *adapter.PreToolUseEvent, a adapter.HookAdapter, policies []security.SecurityPolicy, ctx hookContext) ([]byte, error) {
 	command, _ := event.ToolInput["command"].(string)
-	// Stage 1: Security check (full evaluateCommand with ask support)
+	// Codex inspects captured CLI programs before any routing branch. Claude
+	// retains its existing ask/security behavior and guidance-only routine scope.
+	if a.Platform() == adapter.Codex {
+		return routeCodexBash(command, event, policies, ctx, a)
+	}
 	if result, err := checkCommandSecurity(command, policies, a); result != nil || err != nil {
 		return result, err
 	}
+	return routeBashOutput(command, event, a, ctx)
+}
 
-	// Stage 2: Context-mode routing
-
+func routeBashOutput(command string, event *adapter.PreToolUseEvent, a adapter.HookAdapter, ctx hookContext) ([]byte, error) {
 	// curl/wget detection (strip quoted content to avoid false positives)
 	// Return routing guidance as a denial reason, without approving a replacement
 	// command. FormatModify is reserved for actual Agent/Task input edits.

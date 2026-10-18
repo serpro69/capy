@@ -117,13 +117,14 @@ Terminal `capy search` searches knowledge only. Use `capy vault search` for conv
 
 ## MCP Tools
 
-Your agent receives the argument schemas when it connects. The ten tools are:
+Your agent receives the argument schemas when it connects. The eleven tools are:
 
 | Tool | Purpose |
 | --- | --- |
-| `capy_execute` | Run code and return its printed output; use `intent` to retrieve relevant sections from large output. |
+| `capy_execute` | Execute once with encrypted run capture and bounded output; optional `intent` selects relevant excerpts. |
 | `capy_execute_file` | Process a file through `FILE_CONTENT` without putting the raw file in context. |
-| `capy_batch_execute` | Run several shell commands, index their output, and optionally search it. |
+| `capy_batch_execute` | Capture several shell commands and optionally search their retained output. |
+| `capy_runs` | Recover run/batch status, list, read or search output, and cancel work owned by this server. |
 | `capy_index` | Save text, a file, or a directory as durable knowledge. |
 | `capy_search` | Search project knowledge and archived conversations together. |
 | `capy_vault_search` | Search archived conversations only, with project and date filters. |
@@ -134,7 +135,7 @@ Your agent receives the argument schemas when it connects. The ten tools are:
 
 Execution supports JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, and Elixir, using runtimes installed on your machine. Commands run from the selected project by default; optional `cwd` changes the execution directory for that call. It does not change the database, credentials, or the base for an `execute_file` input path.
 
-With `intent`, execution output over 5,000 bytes is indexed and searched instead of returned in full. Batch output is indexed whether or not queries are supplied. Capture and source-size limits still apply. See the [tool reference](docs/reference/tools.md) for background processes, argument validation, batch scope, and cleanup behavior.
+Execution output is captured in a separate encrypted run store and bounded responses apply with or without `intent`. Run indexing is lazy on search, intent, or batch queries. Use `capy_runs` or `capy runs` to recover retained output instead of repeating execution; new execution logs are not knowledge sources. See the [execution contracts](docs/feat/wip/routine-command-capture/contracts.md) for response, retention and recovery limits.
 
 ### Finding earlier results
 
