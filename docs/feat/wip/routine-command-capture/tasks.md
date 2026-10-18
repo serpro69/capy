@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–6 done; Tasks 7–17 pending
+> Status: in-progress — Tasks 1–7 done; Tasks 8–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -118,7 +118,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 7: Reopen safely after owner crashes
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 5, Task 6
 - **Size:** M
 - **Can run in parallel with:** Task 14
@@ -126,9 +126,11 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 7.1 Integrate fixed slots/generations and supervisor-held lifecycle leases with real stores → verify: delayed cleanup blocks reset/reuse and file growth stays bounded.
-- [ ] 7.2 Scan all slots during bounded opening/maintenance → verify: never-reused stale high slots recover and live replacement generations stay untouched.
-- [ ] 7.3 Apply the same owner proof to abandoned work claims → verify: no adoption, stale-PID signalling or permanent claim blockage.
+- [x] 7.1 Integrate fixed slots/generations and supervisor-held lifecycle leases with real stores → verify: delayed cleanup blocks reset/reuse and file growth stays bounded.
+- [x] 7.2 Scan all slots during bounded opening/maintenance → verify: never-reused stale high slots recover and live replacement generations stay untouched.
+- [x] 7.3 Apply the same owner proof to abandoned work claims → verify: no adoption, stale-PID signalling or permanent claim blockage.
+
+**Evidence:** [Task 7 verification](task7-verification.md) · [isolated review](task7-code-review.md). Encrypted-store crash/lease proofs, all-slot and periodic recovery, bounded registry churn, mixed proof/claim recovery, and scanner/admission races pass. Full FTS5 coverage passes across the initial run and corrected affected-package reruns; complete focused race/integration suites, build, vet and quality comparison pass. Independent review approved the recovery-lock and indexing corrections. Task 8 is next.
 
 ## Task 8: Make store policy consistent across processes
 

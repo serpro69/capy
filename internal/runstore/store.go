@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 const OwnerSlots = 64
 const WriteTimeout = 250 * time.Millisecond
 
@@ -24,6 +24,9 @@ type Store struct {
 	lifecycle            *os.File
 	closeOnce            sync.Once
 	closeErr             error
+	maintenanceCancel    context.CancelFunc
+	maintenanceDone      chan struct{}
+	maintenanceErr       error // worker-owned; Close reads only after joining it
 }
 
 func (s *Store) ID() string               { return s.id }
@@ -97,6 +100,21 @@ func Open(ctx context.Context, path, key string, create bool) (*Store, error) {
 		life.Close()
 		return nil, err
 	}
+	// Authentication precedes creation of the fixed registry. Never recreate
+	// a missing live marker/lock behind a cooperating owner: initialization
+	// creates the complete set, and existing stores require every lock to exist.
+	if _, err := s.Reconcile(ctx); err != nil {
+		s.db.Close()
+		life.Close()
+		return nil, err
+	}
+	maintenanceCtx, stop := context.WithCancel(context.Background())
+	s.maintenanceCancel, s.maintenanceDone = stop, make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(maintenanceInterval)
+		defer ticker.Stop()
+		s.maintenance(maintenanceCtx, ticker.C)
+	}()
 	return s, nil
 }
 
@@ -185,6 +203,23 @@ func initialize(ctx context.Context, path, key, owner string) error {
 	} else if exists {
 		return nil
 	}
+	registry, err := openRegular(filepath.Join(root, "recovery.lock"), true)
+	if err != nil {
+		return storageError()
+	}
+	if err := registry.Close(); err != nil {
+		return storageError()
+	}
+	for slot := 0; slot < OwnerSlots; slot++ {
+		registry := &Store{path: path}
+		lock, err := openRegular(registry.OwnerLeasePath(slot), true)
+		if err != nil {
+			return storageError()
+		}
+		if err := lock.Close(); err != nil {
+			return storageError()
+		}
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if err != nil {
 		return storageError()
@@ -220,9 +255,18 @@ func initialize(ctx context.Context, path, key, owner string) error {
 
 func (s *Store) Close() error {
 	s.closeOnce.Do(func() {
+		s.maintenanceCancel()
+		<-s.maintenanceDone
+		ctx, cancel := context.WithTimeout(context.Background(), recoveryTimeout)
+		_, recoveryErr := s.Reconcile(ctx)
+		cancel()
 		// The pool must close before opening the final checkpoint connection.
-		s.closeErr = s.db.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), WriteTimeout)
+		s.closeErr = errors.Join(s.maintenanceErr, recoveryErr, s.db.Close())
+		// Closing authenticates a fresh encrypted connection as well as running
+		// the checkpoint. It is not an append/finalization write; allow the same
+		// bounded budget as recovery so CPU contention during key derivation does
+		// not turn a successful capture into a spurious close failure.
+		ctx, cancel = context.WithTimeout(context.Background(), recoveryTimeout)
 		defer cancel()
 		db, err := sqliteutil.OpenWithCanary(ctx, sqliteutil.EncryptedDSN(s.path, s.key)+"&mode=rw&_busy_timeout=25", s.path, "selected run credential")
 		if err == nil {
@@ -241,7 +285,7 @@ func (s *Store) Close() error {
 
 const schema = `
 CREATE TABLE run_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, store_id TEXT NOT NULL, owner TEXT NOT NULL, admission_blocked INTEGER NOT NULL DEFAULT 0 CHECK(admission_blocked IN (0,1)), last_created INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE run_owners(slot INTEGER PRIMARY KEY CHECK(slot>=0 AND slot<64), generation TEXT NOT NULL UNIQUE);
+CREATE TABLE run_owners(slot INTEGER PRIMARY KEY CHECK(slot>=0 AND slot<64), generation TEXT NOT NULL UNIQUE, cleanup_unverified INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_unverified IN (0,1)));
 CREATE TABLE runs(
  id TEXT PRIMARY KEY, generation TEXT NOT NULL, slot INTEGER NOT NULL CHECK(slot>=0 AND slot<64),
  created_at INTEGER NOT NULL,
@@ -252,7 +296,13 @@ CREATE TABLE runs(
  stdout_lines INTEGER NOT NULL DEFAULT 1, stderr_lines INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX runs_created ON runs(created_at,id);
-CREATE INDEX runs_owner ON runs(slot,generation,terminal);
+CREATE INDEX runs_owner ON runs(slot,generation,terminal,id);
+CREATE INDEX runs_unfinished ON runs(slot,generation,id) WHERE terminal=0;
+CREATE TABLE run_work_claims(
+ run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+ slot INTEGER NOT NULL CHECK(slot>=0 AND slot<64), generation TEXT NOT NULL
+);
+CREATE INDEX run_work_owner ON run_work_claims(slot,generation,run_id);
 CREATE TABLE run_events(
  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
  seq INTEGER NOT NULL CHECK(seq>0), phase TEXT NOT NULL CHECK(phase IN ('compile','run')),

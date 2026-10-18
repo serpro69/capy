@@ -256,10 +256,20 @@ keys, DSNs, raw programs or raw output. No plaintext run-log spool is introduced
 ### Owner registry and abandoned runs
 
 Use 64 permanent `locks/owner-00.lock` through `owner-63.lock` files plus a permanent
-lifecycle.lock. Random generation IDs live in metadata, never filenames. Every
+lifecycle.lock and recovery.lock. Random generation IDs live in metadata, never
+filenames. Every
 store-holding process/helper retains shared lifecycle protection; reset takes it
 exclusively. Claim a fixed owner slot exclusively and hold it through cleanup.
 If all slots are occupied, return a bounded owner_slots_exhausted diagnostic.
+
+Task 7 adds recovery.lock to serialize registry scans, owner-generation publication
+and execution admission through its metadata commit. A temporary scanner-held
+owner lock must never be mistaken for a live owner by another scanner/admitter.
+Acquire shared lifecycle protection, then the exclusive recovery lock, then
+nonblocking owner-slot locks; capture writes do not take the recovery lock.
+Recovery-lock contention is context-bounded. This extra fixed lock closes the
+scanner/admission race found by independent implementation review; it is never
+unlinked/replaced and is preserved by reset with all other permanent locks.
 
 On each store open and bounded periodic maintenance, scan the entire fixed slot
 set nonblockingly, not merely the next slot chosen for allocation. For each free
@@ -473,6 +483,7 @@ are verified in [Task 3 evidence](task3-verification.md). Task 4 projection and
 paging are verified in [Task 4 evidence](task4-verification.md). Task 5 CLI and
 shared retrieval are verified in [Task 5 evidence](task5-verification.md).
 Task 6 handoff and owner cancellation are verified in [Task 6 evidence](task6-verification.md).
-Tasks 7–17 remain pending.
+Task 7 owner-crash recovery and lease safety are verified in [Task 7 evidence](task7-verification.md).
+Tasks 8–17 remain pending.
 These slices do not substitute for installed acceptance or independent
 design/code/spec review of the remaining feature.

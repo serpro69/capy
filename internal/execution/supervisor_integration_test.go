@@ -165,7 +165,11 @@ func openFixture(ctx context.Context, start Startup, key string, _ Leases) (*Run
 
 func TestMain(m *testing.M) {
 	if len(os.Args) == 2 && os.Args[1] == SupervisorCommand {
-		if err := ServeInherited(context.Background(), openFixture); err != nil {
+		open := openFixture
+		if os.Getenv("CAPY_STORED_FIXTURE") != "" {
+			open = openStoredFixture
+		}
+		if err := ServeInherited(context.Background(), open); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -173,6 +177,9 @@ func TestMain(m *testing.M) {
 	}
 	if len(os.Args) == 2 && os.Args[1] == "fixture-owner" {
 		os.Exit(runFixtureOwner())
+	}
+	if len(os.Args) == 2 && os.Args[1] == "stored-fixture-owner" {
+		os.Exit(runStoredFixtureOwner())
 	}
 	// Adopt intentionally orphaned helpers in crash fixtures so the tests, even
 	// in containers with an unreaping PID 1, leave no zombie processes behind.

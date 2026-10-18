@@ -19,6 +19,7 @@ type ListOptions struct {
 	Cursor string
 }
 type Summary struct {
+	Error           *Error    `json:"error,omitempty"`
 	RunID           string    `json:"run_id"`
 	OwnerID         string    `json:"owner_id"`
 	OwnerType       string    `json:"owner_type"`
@@ -100,7 +101,9 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListPage, error)
 		}
 		states = embedded
 	}
-	query := `SELECT id,created_at,result FROM runs WHERE created_at<=? AND (created_at>? OR (created_at=? AND id>?))`
+	query := `SELECT id,created_at,result,terminal,
+EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation AND o.cleanup_unverified=1)
+FROM runs WHERE created_at<=? AND (created_at>? OR (created_at=? AND id>?))`
 	args := []any{cursor.Cutoff, cursor.Created, cursor.Created, cursor.ID}
 	if len(states) > 0 {
 		query += ` AND json_extract(CAST(result AS TEXT),'$.state') IN (` + strings.TrimSuffix(strings.Repeat("?,", len(states)), ",") + `)`
@@ -125,7 +128,8 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListPage, error)
 		var id string
 		var created int64
 		var encoded []byte
-		if err := rows.Scan(&id, &created, &encoded); err != nil {
+		var terminal, unverified bool
+		if err := rows.Scan(&id, &created, &encoded, &terminal, &unverified); err != nil {
 			return page, storageError()
 		}
 		var result Result
@@ -134,10 +138,17 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListPage, error)
 		}
 		cursor.Created, cursor.ID = created, id
 		examined++
+		if unverified && !terminal {
+			markUnverified(&result)
+		}
 		if result.ExpiresAt != nil && !time.Now().Before(*result.ExpiresAt) {
 			continue
 		}
-		page.Entries = append(page.Entries, Summary{RunID: id, OwnerID: result.OwnerID, OwnerType: result.OwnerType, State: result.State, ExitCode: result.ExitCode, Signal: result.Signal, CaptureState: result.Capture.State, CapturedBytes: result.Capture.CapturedBytes, CreatedAt: time.Unix(0, created).UTC(), OutputAvailable: true})
+		var recoveryError *Error
+		if unverified && !terminal {
+			recoveryError = result.Error
+		}
+		page.Entries = append(page.Entries, Summary{RunID: id, OwnerID: result.OwnerID, OwnerType: result.OwnerType, State: result.State, ExitCode: result.ExitCode, Signal: result.Signal, CaptureState: result.Capture.State, CapturedBytes: result.Capture.CapturedBytes, CreatedAt: time.Unix(0, created).UTC(), OutputAvailable: true, Error: recoveryError})
 	}
 	if err := rows.Err(); err != nil {
 		return page, storageError()

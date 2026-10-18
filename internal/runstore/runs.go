@@ -15,7 +15,17 @@ import (
 )
 
 func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admitted, error) {
-	if err := s.GuardAdmission(ctx); err != nil {
+	ctx, cancel := context.WithTimeout(ctx, recoveryTimeout)
+	defer cancel()
+	registry, err := s.recoveryLease(ctx)
+	if err != nil {
+		return Admitted{}, err
+	}
+	defer registry.Close()
+	if _, err := s.reconcile(ctx); err != nil {
+		return Admitted{}, err
+	}
+	if err := s.checkQuarantine(ctx); err != nil {
 		return Admitted{}, err
 	}
 	id := uuid.NewString()
@@ -95,7 +105,10 @@ func loadRun(ctx context.Context, query runQuerier, id string) (Admitted, error)
 	var row Admitted
 	row.ID = id
 	var program, result []byte
-	err := query.QueryRowContext(ctx, "SELECT generation,slot,program,result,cleanup FROM runs WHERE id=?", id).Scan(&row.Generation, &row.Slot, &program, &result, &row.Cleanup)
+	var terminal, unverified bool
+	err := query.QueryRowContext(ctx, `SELECT generation,slot,program,result,cleanup,terminal,
+EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation AND o.cleanup_unverified=1)
+FROM runs WHERE id=?`, id).Scan(&row.Generation, &row.Slot, &program, &result, &row.Cleanup, &terminal, &unverified)
 	if errors.Is(err, sql.ErrNoRows) {
 		return row, failure("run_unavailable", "run is unavailable in this owner's store")
 	}
@@ -105,10 +118,24 @@ func loadRun(ctx context.Context, query runQuerier, id string) (Admitted, error)
 	if json.Unmarshal(program, &row.Program) != nil || json.Unmarshal(result, &row.Result) != nil {
 		return row, storageError()
 	}
-	if row.Result.ExpiresAt != nil && !time.Now().Before(*row.Result.ExpiresAt) {
+	if unverified && !terminal {
+		// Preserve the last recorded state as evidence, not a fresh assertion of
+		// liveness. Unknown cleanup never expires away or becomes safe reuse.
+		markUnverified(&row.Result)
+	} else if row.Result.ExpiresAt != nil && !time.Now().Before(*row.Result.ExpiresAt) {
 		return Admitted{}, failure("run_unavailable", "run is unavailable in this owner's store")
 	}
 	return row, nil
+}
+
+func markUnverified(result *Result) {
+	result.Error = &Error{Code: "cleanup_unverified", Message: "last recorded state; owner cleanup is unverified and execution may still exist; stop old execution groups before explicit operator reset"}
+	result.ExpiresAt = nil
+	if result.Capture.State != "not_started" {
+		result.Capture.State = "incomplete"
+		reason := "cleanup_unverified"
+		result.Capture.Reason = &reason
+	}
 }
 
 func (s *Store) Pending(ctx context.Context, id, generation string) error {
