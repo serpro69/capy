@@ -24,9 +24,26 @@ func (s *Server) executionService() *execution.Service {
 }
 
 func (s *Server) handleExecute(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.handleCapturedExecute(ctx, req, "capy_execute")
+}
+
+// handleCapturedExecute shares validation, response preparation and the atomic
+// request handoff for ordinary and file-backed runs.
+func (s *Server) handleCapturedExecute(ctx context.Context, req mcp.CallToolRequest, toolName string) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 	reject := func(message string) (*mcp.CallToolResult, error) {
-		return s.runResult(runstore.Rejection("invalid_argument", message)), nil
+		return s.runResultForTool(toolName, runstore.Rejection("invalid_argument", message)), nil
+	}
+	filePath := ""
+	if toolName == "capy_execute_file" {
+		if _, present := args["background"]; present {
+			return reject("background is not supported by capy_execute_file; use wait_ms for continuation")
+		}
+		var ok bool
+		filePath, ok = args["path"].(string)
+		if !ok || filePath == "" {
+			return reject("missing required parameter: path (nonempty string)")
+		}
 	}
 	background, err := boolArg(args, "background", false)
 	if err != nil {
@@ -77,6 +94,14 @@ func (s *Server) handleExecute(ctx context.Context, req mcp.CallToolRequest) (*m
 	if err != nil {
 		return reject(err.Error())
 	}
+	if filePath != "" {
+		// Admit once, relative to the selected project rather than execution cwd.
+		// The supervisor receives this same checked physical path as data.
+		filePath, err = s.resolveExecuteFilePath(filePath)
+		if err != nil {
+			return s.runResultForTool(toolName, runstore.Rejection("permission_denied", fmt.Sprintf("File access blocked by security policy: %v", err))), nil
+		}
+	}
 	if denied := s.securityCheck(language, code); denied != nil {
 		message := "blocked by security policy"
 		for _, content := range denied.Content {
@@ -85,10 +110,10 @@ func (s *Server) handleExecute(ctx context.Context, req mcp.CallToolRequest) (*m
 				break
 			}
 		}
-		return s.runResult(runstore.Rejection("permission_denied", message)), nil
+		return s.runResultForTool(toolName, runstore.Rejection("permission_denied", message)), nil
 	}
 	var response *mcp.CallToolResult
-	result, err := s.executionService().ExecuteResponse(ctx, executor.ExecRequest{Language: language, Code: code, Cwd: cwd}, intent, timeout, wait, func(result runstore.Result) error {
+	result, err := s.executionService().ExecuteResponse(ctx, executor.ExecRequest{Language: language, Code: code, Cwd: cwd, FilePath: filePath}, intent, timeout, wait, func(result runstore.Result) error {
 		var err error
 		response, err = s.buildRunResult(result)
 		return err
@@ -96,9 +121,9 @@ func (s *Server) handleExecute(ctx context.Context, req mcp.CallToolRequest) (*m
 	s.stats.AddBytesSandboxed(result.Capture.ObservedBytes)
 	if err != nil {
 		result.Error = &runstore.Error{Code: "response_unavailable", Message: "Response preparation failed; attached execution was cancelled. Recover this run before retrying."}
-		return s.runResult(result), nil
+		return s.runResultForTool(toolName, result), nil
 	}
-	return s.trackToolResponse("capy_execute", response), nil
+	return s.trackToolResponse(toolName, response), nil
 }
 
 func integerArg(args map[string]any, name string, fallback, low, high int64) (int64, error) {
@@ -133,6 +158,10 @@ func integerArg(args map[string]any, name string, fallback, low, high int64) (in
 }
 
 func (s *Server) runResult(result runstore.Result) *mcp.CallToolResult {
+	return s.runResultForTool("capy_execute", result)
+}
+
+func (s *Server) runResultForTool(toolName string, result runstore.Result) *mcp.CallToolResult {
 	r, err := s.buildRunResult(result)
 	if err != nil {
 		r = boundedRunError("response_unavailable", "Run response unavailable; list existing runs before retrying execution.")
@@ -140,7 +169,7 @@ func (s *Server) runResult(result runstore.Result) *mcp.CallToolResult {
 	if result.RunID == nil {
 		return r
 	}
-	return s.trackToolResponse("capy_execute", r)
+	return s.trackToolResponse(toolName, r)
 }
 
 func (s *Server) buildRunResult(result runstore.Result) (*mcp.CallToolResult, error) {

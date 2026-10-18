@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–10 done; Tasks 11–17 pending
+> Status: in-progress — Tasks 1–11 done; Tasks 12–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -185,7 +185,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 11: Capture execute-file runs with the shared lifetime
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 10
 - **Size:** M
 - **Can run in parallel with:** Task 12, Task 14
@@ -193,9 +193,11 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 11.1 Migrate execute-file through shared admission/supervision, preserving path/FILE_CONTENT policy → verify: complete bytes, compiler/runtime status and policy fixtures.
-- [ ] 11.2 Add wait_ms schema/help and continuation → verify: late output, deadline, cancellation and paging parity.
-- [ ] 11.3 Stop new file:* knowledge writes without migrating old rows → verify: storage isolation and bounded results.
+- [x] 11.1 Migrate execute-file through shared admission/supervision, preserving path/FILE_CONTENT policy → verify: complete bytes, compiler/runtime status and policy fixtures.
+- [x] 11.2 Add wait_ms schema/help and continuation → verify: late output, deadline, cancellation and paging parity.
+- [x] 11.3 Stop new file:* knowledge writes without migrating old rows → verify: storage isolation and bounded results.
+
+**Evidence:** [Task 11 verification](task11-verification.md) · [isolated review](task11-code-review.md). Complete captured output, existing file-policy/language fixtures, compiler/runtime status, bounded recovery and real MCP continuation/cancellation pass. Independent review approved after preserving non-UTF-8 physical paths across JSON persistence. Full FTS5 coverage passes across the sandbox run and socket-enabled config/server rerun; final focused server/compiled-MCP race checks, executor/execution integration race, build, vet and quality comparison pass. The broader runstore race suite's concurrent-search failure reproduces on unchanged `d2e5f32` and is recorded separately. External review was unavailable. Task 12 is next.
 
 ## Task 12: Recover a serial batch through MCP
 

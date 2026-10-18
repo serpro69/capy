@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–10 complete and verified; Tasks 11–17 pending
+> Status: Tasks 1–11 complete and verified; Tasks 12–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -199,6 +199,12 @@ projection windows resume with indexed keyset seeks.
   and first/repeat search performance is measured under concurrent capture.
 
 ## Task 11: Capture execute-file runs with the shared lifetime
+
+Evidence: [Task 11 verification](task11-verification.md) · [isolated review](task11-code-review.md).
+Both execute adapters now share validation, bounded response preparation and
+owner handoff. The supervisor applies existing file boilerplate after admission;
+request serialization preserves non-UTF-8 physical-path bytes instead of replacing
+them with a different filename. New file output uses run storage exclusively.
 
 - Move execute-file to shared admission/supervision without weakening checked path
   or FILE_CONTENT behavior → verify: existing file-policy fixtures plus complete

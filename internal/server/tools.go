@@ -156,7 +156,7 @@ func toolExecuteFile(langList string) mcp.Tool {
 	return mcp.NewTool("capy_execute_file",
 		mcp.WithToolAnnotation(annotationExecute),
 		mcp.WithDescription(fmt.Sprintf(
-			"Read a file and process it without loading contents into context. The file is read into a FILE_CONTENT variable inside the sandbox. Only your printed summary enters context. Available: [%s]. Best for large files (10k+ lines) where you only need derived answers (counts, patterns, structural summary). Read is correct when you need to understand or edit the file.",
+			"Read a checked file into FILE_CONTENT inside the sandbox and execute once, capturing stdout/stderr in the encrypted owner-local run store. Returns bounded sanitized output, a run ID and status; recover with capy_runs read or search without repeating execution. Yielded runs remain captured and bound to this server's lifetime. Available: [%s]. Best for large files (10k+ lines) where you only need derived answers (counts, patterns, structural summary). Read is correct when you need to understand or edit the file.",
 			langList,
 		)),
 		mcp.WithString("path",
@@ -176,10 +176,13 @@ func toolExecuteFile(langList string) mcp.Tool {
 			mcp.Description("Execution directory for this call. Omitted: selected project. Must be a nonempty existing directory; relative paths resolve from the project. The input path, storage, credentials and policy remain anchored to the selected project."),
 		),
 		mcp.WithNumber("timeout",
-			mcp.Description("Max execution time in ms (default: 30000)"),
+			mcp.Description("Positive integer execution deadline in milliseconds; overrides executor.timeout (default 300 seconds). Independent of response wait."),
+		),
+		mcp.WithNumber("wait_ms", mcp.Min(0), mcp.Max(30000),
+			mcp.Description("Response wait in milliseconds (default runs.wait_ms, 25000). Yielded runs remain owned and captured; poll capy_runs. Independent of execution timeout. Background mode is not supported."),
 		),
 		mcp.WithString("intent",
-			mcp.Description("What you're looking for in the output. When provided and output is large (>5KB), returns only matching sections via BM25 search."),
+			mcp.Description("Optional search intent, at most 512 UTF-8 bytes. Selects sanitized previews using bounded lazy indexing; capy_runs search resumes partial coverage. Run output never enters knowledge storage."),
 		),
 	)
 }

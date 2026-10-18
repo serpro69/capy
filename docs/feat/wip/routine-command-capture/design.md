@@ -488,6 +488,8 @@ Task 8 store-policy authority and quiescent changes are verified in [Task 8 evid
 Task 9 quota/retention/reset and policy-change maintenance are verified in
 [Task 9 evidence](task9-verification.md). Task 10 lazy sanitized search, quota
 accounting and resumable recovery are verified in [Task 10 evidence](task10-verification.md).
-Tasks 11–17 remain pending.
+Task 11 execute-file capture, shared lifetime and exact physical-path persistence
+are verified in [Task 11 evidence](task11-verification.md).
+Tasks 12–17 remain pending.
 These slices do not substitute for installed acceptance or independent
 design/code/spec review of the remaining feature.
