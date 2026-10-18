@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–7 done; Tasks 8–17 pending
+> Status: in-progress — Tasks 1–8 done; Tasks 9–17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -130,11 +130,11 @@ Default output projection and later run actions remain explicitly unavailable.
 - [x] 7.2 Scan all slots during bounded opening/maintenance → verify: never-reused stale high slots recover and live replacement generations stay untouched.
 - [x] 7.3 Apply the same owner proof to abandoned work claims → verify: no adoption, stale-PID signalling or permanent claim blockage.
 
-**Evidence:** [Task 7 verification](task7-verification.md) · [isolated review](task7-code-review.md). Encrypted-store crash/lease proofs, all-slot and periodic recovery, bounded registry churn, mixed proof/claim recovery, and scanner/admission races pass. Full FTS5 coverage passes across the initial run and corrected affected-package reruns; complete focused race/integration suites, build, vet and quality comparison pass. Independent review approved the recovery-lock and indexing corrections. Task 8 is next.
+**Evidence:** [Task 7 verification](task7-verification.md) · [isolated review](task7-code-review.md). Encrypted-store crash/lease proofs, all-slot and periodic recovery, bounded registry churn, mixed proof/claim recovery, and scanner/admission races pass. Full FTS5 coverage passes across the initial run and corrected affected-package reruns; complete focused race/integration suites, build, vet and quality comparison pass. Independent review approved the recovery-lock and indexing corrections.
 
 ## Task 8: Make store policy consistent across processes
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 7
 - **Size:** M
 - **Can run in parallel with:** Task 14
@@ -142,9 +142,11 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 8.1 Persist authoritative store policy/revision and require matching attached writers → verify: old-config MCP/new-config CLI cannot enforce conflicting limits.
-- [ ] 8.2 Implement quiescent close/release/exclusive-update/reopen validation with bounded retries → verify: helpers/live handles block changes and reset races are safe.
-- [ ] 8.3 Record per-run TTL/revision and immutable terminal expiry → verify: non-retroactive TTL, lower-quota restart and exact config validation.
+- [x] 8.1 Persist authoritative store policy/revision and require matching attached writers → verify: old-config MCP/new-config CLI cannot enforce conflicting limits.
+- [x] 8.2 Implement quiescent close/release/exclusive-update/reopen validation with bounded retries → verify: helpers/live handles block changes and reset races are safe.
+- [x] 8.3 Record per-run TTL/revision and immutable terminal expiry → verify: non-retroactive TTL, lower-quota restart and exact config validation.
+
+**Evidence:** [Task 8 verification](task8-verification.md) · [isolated review](task8-code-review.md). Real old-config MCP/new-config CLI admission, quiescent policy publication, inherited helper leases after SIGKILL, immutable expiry, failure rollback, concurrent openers and exact config bounds pass. Full FTS5 coverage passes across the initial sandbox run and socket-enabled config/server reruns; focused race/integration suites, both accounting-capability builds, build, vet and quality comparison pass. Independent review approved; external review was unavailable. Task 9 is next, including quota maintenance after policy changes.
 
 ## Task 9: Retain, evict and explicitly reset runs
 
@@ -158,6 +160,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 - [ ] 9.1 Add transactional quota admission/append accounting and terminal eviction → verify: independent writers, protected active runs and continued execution after capture exhaustion.
 - [ ] 9.2 Add expiry-on-read and bounded maintenance/checkpoint/reclaim → verify: reads do not renew TTL and active WALs survive concurrent owners.
+  - Integrate quota maintenance into Task 8's exclusive policy-change phase; policy publication alone does not evict completed logs or enforce retained capacity.
 - [ ] 9.3 Implement keyless reset --discard under exclusive lifecycle protection → verify: explicit rotation recovery, live-helper refusal, preserved locks/unrelated data and stale cursors.
 
 ## Task 10: Search run output lazily

@@ -1,9 +1,12 @@
 package config
 
 import (
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -38,6 +41,50 @@ func TestRunsConfiguration(t *testing.T) {
 			}
 			require.Equal(t, 300, cfg.Executor.Timeout)
 			require.Equal(t, int64(64<<20), cfg.Runs.MaxRunBytes)
+		})
+	}
+}
+
+func TestRunPolicyConfigLayeringAndExactBounds(t *testing.T) {
+	maxHours := int64(math.MaxInt64 / int64(time.Hour))
+	maxSeconds := int64(math.MaxInt64 / int64(time.Second))
+	for _, tc := range []struct {
+		name, global, project string
+		valid                 bool
+	}{
+		{"omission inherits", "[runs]\nttl_hours=7\nmax_run_bytes=32\nmax_retained_bytes=64\n", "[runs]\nwait_ms=0\n", true},
+		{"upper duration bounds", fmt.Sprintf("[runs]\nttl_hours=%d\n[executor]\ntimeout=%d\n", maxHours, maxSeconds), "", true},
+		{"ttl just overflows", fmt.Sprintf("[runs]\nttl_hours=%d\n", maxHours+1), "", false},
+		{"timeout just overflows", fmt.Sprintf("[executor]\ntimeout=%d\n", maxSeconds+1), "", false},
+		{"largest byte limits", "[runs]\nmax_run_bytes=9223372036854775807\nmax_retained_bytes=9223372036854775807\n", "", true},
+		{"byte overflow", "[runs]\nmax_retained_bytes=9223372036854775808\n", "", false},
+		{"fractional ttl", "[runs]\nttl_hours=1.5\n", "", false},
+		{"fractional byte limit", "[runs]\nmax_run_bytes=1.5\n", "", false},
+		{"zero capture", "", "[runs]\nmax_run_bytes=0\n", false},
+		{"negative retained", "", "[runs]\nmax_retained_bytes=-1\n", false},
+		{"invalid lower layer remains invalid", "[runs]\nttl_hours=0\n", "[runs]\nttl_hours=1\n", false},
+		{"relationship validated after merging", "[runs]\nmax_retained_bytes=1024\n", "[runs]\nmax_run_bytes=1024\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, project := t.TempDir(), t.TempDir()
+			for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
+				t.Setenv(name, root)
+			}
+			require.NoError(t, os.Mkdir(filepath.Join(root, "capy"), 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "capy", "config.toml"), []byte(tc.global), 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(project, ".capy.toml"), []byte(tc.project), 0600))
+			cfg, err := Load(project)
+			if !tc.valid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			if tc.name == "omission inherits" {
+				require.Equal(t, 7, cfg.Runs.TTLHours)
+				require.EqualValues(t, 32, cfg.Runs.MaxRunBytes)
+				require.EqualValues(t, 64, cfg.Runs.MaxRetainedBytes)
+				require.Zero(t, cfg.Runs.WaitMS)
+			}
 		})
 	}
 }

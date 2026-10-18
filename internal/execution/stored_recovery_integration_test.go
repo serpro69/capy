@@ -63,7 +63,7 @@ func runStoredFixtureOwner() int {
 	if err != nil {
 		return 1
 	}
-	st, err := runstore.Open(context.Background(), path, storedFixtureKey, true)
+	st, err := runstore.OpenWithPolicy(context.Background(), path, storedFixtureKey, true, runstore.PolicyConfig{TTLHours: 9, MaxRunBytes: 1 << 20, MaxRetainedBytes: 512 << 20})
 	if err != nil {
 		return 1
 	}
@@ -194,6 +194,9 @@ func TestStoredOwnerSIGKILLRetainsLeasesUntilHelperClose(t *testing.T) {
 	require.Error(t, owner.Wait())
 	root := filepath.Join(dir, ".capy", "runs")
 	probeLease(t, root, "lifecycle.lock", true)
+	changed := runstore.PolicyConfig{TTLHours: 1, MaxRunBytes: 1 << 20, MaxRetainedBytes: 256 << 20}
+	_, err := runstore.OpenWithPolicy(t.Context(), filepath.Join(root, "runs.db"), storedFixtureKey, false, changed)
+	require.ErrorContains(t, err, "stop", "the stopped helper's inherited lease blocks a policy update after coordinator death")
 	st := openStoredObserver(t, dir)
 	row, err := st.Load(t.Context(), identity.ID)
 	require.NoError(t, err)
@@ -218,12 +221,20 @@ func TestStoredOwnerSIGKILLRetainsLeasesUntilHelperClose(t *testing.T) {
 	require.Equal(t, "interrupted", row.Result.State)
 	require.True(t, row.Result.Capture.TerminalPersisted)
 	require.NoError(t, observer.Close())
+	_, err = runstore.OpenWithPolicy(t.Context(), filepath.Join(root, "runs.db"), storedFixtureKey, false, changed)
+	require.ErrorContains(t, err, "stop", "terminal persistence does not release helper policy protection before DB close")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "release-close"), nil, 0600))
 	reapOrphan(t, helperPID)
 	reaped = true
 	probeLease(t, root, "lifecycle.lock", false)
 	probeLease(t, root, filepath.Join("locks", "owner-00.lock"), false)
-	final := openStoredObserver(t, dir)
+	final, err := runstore.OpenWithPolicy(t.Context(), filepath.Join(root, "runs.db"), storedFixtureKey, false, changed)
+	require.NoError(t, err)
+	defer final.Close()
+	require.EqualValues(t, 2, final.Policy().Revision)
+	recovered, err := final.Load(t.Context(), identity.ID)
+	require.NoError(t, err)
+	require.Equal(t, 9*time.Hour, recovered.Result.ExpiresAt.Sub(*recovered.Result.CompletedAt))
 	last, err := final.ClaimOwner(t.Context())
 	require.NoError(t, err)
 	defer last.Lease.Close()

@@ -84,7 +84,9 @@ func (s *Service) attached(ctx context.Context, create bool) (*runstore.Store, *
 		if err != nil {
 			return nil, nil, &runstore.Error{Code: "storage_unavailable", Message: "selected run owner is unavailable"}
 		}
-		st, err := runstore.Open(ctx, path, s.key, create)
+		st, err := runstore.OpenWithPolicy(ctx, path, s.key, create, runstore.PolicyConfig{
+			TTLHours: s.policy.TTLHours, MaxRunBytes: s.policy.MaxRunBytes, MaxRetainedBytes: s.policy.MaxRetainedBytes,
+		})
 		if err != nil {
 			var typed *runstore.Error
 			if errors.As(err, &typed) {
@@ -136,7 +138,7 @@ func (s *Service) execute(ctx context.Context, request executor.ExecRequest, int
 		return reject(err)
 	}
 	physical := filepath.Dir(filepath.Dir(filepath.Dir(st.Path())))
-	program := runstore.Program{Owner: physical, OwnerType: s.ownerType, Request: request, Intent: intent, Deadline: deadline, TTLHours: s.policy.TTLHours, MaxRunBytes: s.policy.MaxRunBytes}
+	program := runstore.Program{Owner: physical, OwnerType: s.ownerType, Request: request, Intent: intent, Deadline: deadline}
 	admissionCtx, cancelAdmission := context.WithTimeout(ctx, 3*time.Second)
 	s.admissionMu.Lock()
 	row, err := st.Admit(admissionCtx, owner, program)

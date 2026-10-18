@@ -81,13 +81,14 @@ func Rejection(code, message string) Result {
 }
 
 type Program struct {
-	OwnerType   string               `json:"owner_type,omitempty"`
-	Owner       string               `json:"owner"`
-	Request     executor.ExecRequest `json:"request"`
-	Intent      string               `json:"intent"`
-	Deadline    time.Time            `json:"deadline"`
-	TTLHours    int                  `json:"ttl_hours"`
-	MaxRunBytes int64                `json:"max_run_bytes"`
+	PolicyRevision int64                `json:"policy_revision"`
+	OwnerType      string               `json:"owner_type,omitempty"`
+	Owner          string               `json:"owner"`
+	Request        executor.ExecRequest `json:"request"`
+	Intent         string               `json:"intent"`
+	Deadline       time.Time            `json:"deadline"`
+	TTLHours       int                  `json:"ttl_hours"`
+	MaxRunBytes    int64                `json:"max_run_bytes"`
 }
 
 type Admitted struct {

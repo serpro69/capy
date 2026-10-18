@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–7 complete and verified; Tasks 8–17 pending
+> Status: Tasks 1–8 complete and verified; Tasks 9–17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -144,6 +144,10 @@ and [review corrections](task7-code-review.md).
   and no stale claim permanently preventing later access.
 
 ## Task 8: Make store policy consistent across processes
+
+Evidence: [verification](task8-verification.md) · [isolated review](task8-code-review.md).
+This slice publishes authoritative lower limits; Task 9 integrates quota
+accounting and bounded eviction into the exclusive policy-change phase.
 
 - Persist authoritative policy revision/accounting mode and make every writer
   consume it → verify: old-config MCP/new-config CLI cannot apply different

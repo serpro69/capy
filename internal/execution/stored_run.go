@@ -45,6 +45,10 @@ func OpenStoredRun(ctx context.Context, start Startup, key string, leases Leases
 	if row.Generation != start.Generation || row.Cleanup != "not_spawned" || row.Result.State != "admitted" || !row.Program.Deadline.Equal(start.Deadline) {
 		return nil, errors.New("admitted run generation or state does not match")
 	}
+	policy := st.Policy()
+	if row.Program.PolicyRevision != policy.Revision || row.Program.TTLHours != policy.TTLHours || row.Program.MaxRunBytes != policy.MaxRunBytes {
+		return nil, &runstore.Error{Code: "policy_mismatch", Message: "admitted run does not match the attached store policy"}
+	}
 	if err := st.ValidateLeaseBinding(row.Slot, leases.Owner, leases.Lifecycle); err != nil {
 		return nil, err
 	}
