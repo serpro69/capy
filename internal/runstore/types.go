@@ -92,6 +92,7 @@ type Program struct {
 }
 
 type Admitted struct {
+	chargeBytes    int64 // transaction-local payload growth; never serialized
 	ID, Generation string
 	Slot           int
 	Program        Program

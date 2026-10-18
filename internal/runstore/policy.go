@@ -132,10 +132,13 @@ func (s *Store) changePolicy(ctx context.Context, settings PolicyConfig) error {
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
 		return storageError()
 	}
+	if _, err := retain(ctx, tx, settings.MaxRetainedBytes, 0, true); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return storageError()
 	}
-	return nil
+	return s.reclaim(ctx)
 }
 
 const policySchema = `CREATE TABLE run_policy(

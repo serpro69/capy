@@ -54,6 +54,9 @@ func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admit
 	if err != nil {
 		return Admitted{}, storageError()
 	}
+	if err := s.prepareCapacity(ctx, int64(len(encodedProgram))+runReserve); err != nil {
+		return Admitted{}, err
+	}
 	tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
 	if err != nil {
 		return Admitted{}, storageError()
@@ -92,6 +95,9 @@ func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admit
 	}
 	// The admission commit is the write probe. No subprocess is authorized until
 	// it succeeds and the helper authenticates/reloads this exact admitted row.
+	if err := charge(ctx, tx, id, int64(len(encodedProgram))+runReserve, s.policy.MaxRetainedBytes, true); err != nil {
+		return Admitted{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return Admitted{}, storageError()
 	}
@@ -113,7 +119,7 @@ func loadRun(ctx context.Context, query runQuerier, id string) (Admitted, error)
 	var terminal, unverified bool
 	err := query.QueryRowContext(ctx, `SELECT generation,slot,program,result,cleanup,terminal,
 EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation AND o.cleanup_unverified=1)
-FROM runs WHERE id=?`, id).Scan(&row.Generation, &row.Slot, &program, &result, &row.Cleanup, &terminal, &unverified)
+FROM runs WHERE id=? AND evicting=0`, id).Scan(&row.Generation, &row.Slot, &program, &result, &row.Cleanup, &terminal, &unverified)
 	if errors.Is(err, sql.ErrNoRows) {
 		return row, failure("run_unavailable", "run is unavailable in this owner's store")
 	}
@@ -187,6 +193,20 @@ func (s *Store) AppendBatch(ctx context.Context, id string, events []executor.Ou
 			return storageError()
 		}
 	}
+	ctx, cancel := context.WithTimeout(ctx, WriteTimeout)
+	defer cancel()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := s.appendBatch(ctx, id, events)
+		if !errors.Is(err, retryCapture) {
+			return err
+		}
+	}
+}
+
+func (s *Store) appendBatch(ctx context.Context, id string, events []executor.OutputEvent) error {
 	return s.update(ctx, id, func(tx *sql.Tx, row *Admitted) error {
 		var last uint64
 		if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq),0) FROM run_events WHERE run_id=?", id).Scan(&last); err != nil {
@@ -229,6 +249,7 @@ func (s *Store) AppendBatch(ctx context.Context, id string, events []executor.Ou
 				return err
 			}
 			row.Result.Capture.CapturedBytes += int64(len(event.Data))
+			row.chargeBytes += int64(len(event.Data)) + eventOverhead
 			row.Result.Capture.ObservedBytes = row.Result.Capture.CapturedBytes
 			cursor := s.cursor(id, "merged", event.Sequence+1, 0)
 			row.Result.Capture.LastCommittedCursor = &cursor
@@ -248,6 +269,12 @@ func (s *Store) Finish(ctx context.Context, id string, c Completion) error {
 		if err := s.projectionState(ctx, tx, row); err != nil {
 			return err
 		}
+		// EOF projection is paid by the admission reservation. The streaming
+		// recognizer can emit only two markers over at most 128 anchors here.
+		if row.chargeBytes > runReserve/2 {
+			return storageError()
+		}
+		row.chargeBytes = 0
 		result := &row.Result
 		now := time.Now().UTC()
 		result.CompletedAt = &now
@@ -296,15 +323,54 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 	if row.Result.CompletedAt != nil {
 		return failure("run_unavailable", "run is already terminal")
 	}
+	if _, err := tx.ExecContext(ctx, "SAVEPOINT capture_payload"); err != nil {
+		return storageError()
+	}
 	if err := fn(tx, &row); err != nil {
 		return err
 	}
 	encoded, err := json.Marshal(row.Result)
-	if err != nil {
+	if err != nil || len(encoded) > 8192 {
 		return storageError()
 	}
+	if row.chargeBytes > 0 {
+		var used int64
+		if err := tx.QueryRowContext(ctx, "SELECT accounted_bytes FROM run_meta WHERE singleton=1").Scan(&used); err != nil {
+			return storageError()
+		}
+		if row.chargeBytes > s.policy.MaxRetainedBytes {
+			return quotaError()
+		}
+		if used > s.policy.MaxRetainedBytes-row.chargeBytes {
+			// Compute the exact projection debit first, then discard tentative
+			// payload before committing bounded eviction progress. If this call
+			// runs out of time, future maintenance can resume the tombstone even
+			// though the failed append never increased retained usage above quota.
+			if _, err := tx.ExecContext(ctx, "ROLLBACK TO capture_payload"); err != nil {
+				return storageError()
+			}
+			report, err := retain(ctx, tx, s.policy.MaxRetainedBytes, row.chargeBytes, false)
+			if err != nil {
+				return err
+			}
+			if err := tx.Commit(); err != nil {
+				return storageError()
+			}
+			if report.More && report.Expired+report.Evicted == 0 && report.DeletedRows == 0 {
+				return quotaError()
+			}
+			return retryCapture
+		}
+		if err := charge(ctx, tx, id, row.chargeBytes, s.policy.MaxRetainedBytes, false); err != nil {
+			return err
+		}
+	}
 	terminal := row.Result.CompletedAt != nil && row.Cleanup == "retired"
-	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,cleanup=?,terminal=? WHERE id=?", encoded, row.Cleanup, terminal, id); err != nil {
+	var completed, expires any
+	if terminal {
+		completed, expires = row.Result.CompletedAt.UnixNano(), row.Result.ExpiresAt.UnixMilli()+1
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,cleanup=?,terminal=?,completed_at=?,expires_at=? WHERE id=?", encoded, row.Cleanup, terminal, completed, expires, id); err != nil {
 		return storageError()
 	}
 	if err := tx.Commit(); err != nil {

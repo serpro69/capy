@@ -64,6 +64,10 @@ func (s *Store) ReadProjection(ctx context.Context, id, stream, encoded string, 
 	if maxBytes < 1 || maxBytes > 65536 {
 		return page, failure("invalid_argument", "max_bytes must be between 1 and 65536")
 	}
+	cursor, err := s.decodeProjectionCursor(encoded, id, stream)
+	if err != nil {
+		return page, err
+	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return page, storageError()
@@ -76,10 +80,6 @@ func (s *Store) ReadProjection(ctx context.Context, id, stream, encoded string, 
 	page.Run = row.Result
 	if row.Result.Redaction.State == "unavailable" || row.Result.Redaction.Version != sanitize.StreamVersion {
 		return page, failure("redaction_unavailable", "sanitized projection is unavailable; raw bytes require an explicit raw request")
-	}
-	cursor, err := s.decodeProjectionCursor(encoded, id, stream)
-	if err != nil {
-		return page, err
 	}
 	var barrier sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `SELECT MIN(e.seq) FROM run_events e JOIN run_streams s ON s.run_id=e.run_id AND s.stream=e.stream

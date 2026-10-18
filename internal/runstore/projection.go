@@ -30,7 +30,7 @@ func (s *Store) project(ctx context.Context, tx *sql.Tx, row *Admitted, stream s
 		row.Result.Redaction.CoverageCursor = nil
 		return nil
 	}
-	if err := s.persistSpans(ctx, tx, row.ID, stream, spans); err != nil {
+	if err := s.persistSpans(ctx, tx, row, stream, spans); err != nil {
 		return err
 	}
 
@@ -71,7 +71,8 @@ WHERE e.run_id=? AND e.byte_offset+length(e.data)>s.covered`, row.ID, row.ID).Sc
 // A resolved prefix can start in an earlier raw event. Split its projection at
 // the original event boundaries rather than moving later bytes ahead of another
 // stream. A Unicode code point belongs atomically to the event of its first byte.
-func (s *Store) persistSpans(ctx context.Context, tx *sql.Tx, id, stream string, spans []sanitize.Span) error {
+func (s *Store) persistSpans(ctx context.Context, tx *sql.Tx, row *Admitted, stream string, spans []sanitize.Span) error {
+	id := row.ID
 	if len(spans) == 0 {
 		return nil
 	}
@@ -131,6 +132,7 @@ WHERE run_id=? AND stream=? AND byte_offset<? AND byte_offset+length(data)>? ORD
 			}
 			line := a.line + int64(bytes.Count(a.data[:position-a.offset], []byte{'\n'}))
 			values = append(values, id, stream, position, end, a.seq, a.phase, line, text, span.Redacted)
+			row.chargeBytes += int64(len(text)) + projectionOverhead
 			if len(values) == cap(values) {
 				if err := flush(); err != nil {
 					return err

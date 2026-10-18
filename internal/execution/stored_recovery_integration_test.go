@@ -194,6 +194,7 @@ func TestStoredOwnerSIGKILLRetainsLeasesUntilHelperClose(t *testing.T) {
 	require.Error(t, owner.Wait())
 	root := filepath.Join(dir, ".capy", "runs")
 	probeLease(t, root, "lifecycle.lock", true)
+	require.ErrorContains(t, runstore.Reset(t.Context(), filepath.Join(root, "runs.db")), "reset refused", "owner SIGKILL cannot release the helper's reset protection")
 	changed := runstore.PolicyConfig{TTLHours: 1, MaxRunBytes: 1 << 20, MaxRetainedBytes: 256 << 20}
 	_, err := runstore.OpenWithPolicy(t.Context(), filepath.Join(root, "runs.db"), storedFixtureKey, false, changed)
 	require.ErrorContains(t, err, "stop", "the stopped helper's inherited lease blocks a policy update after coordinator death")
@@ -221,6 +222,7 @@ func TestStoredOwnerSIGKILLRetainsLeasesUntilHelperClose(t *testing.T) {
 	require.Equal(t, "interrupted", row.Result.State)
 	require.True(t, row.Result.Capture.TerminalPersisted)
 	require.NoError(t, observer.Close())
+	require.ErrorContains(t, runstore.Reset(t.Context(), filepath.Join(root, "runs.db")), "reset refused", "retired metadata alone cannot permit reset before helper close")
 	_, err = runstore.OpenWithPolicy(t.Context(), filepath.Join(root, "runs.db"), storedFixtureKey, false, changed)
 	require.ErrorContains(t, err, "stop", "terminal persistence does not release helper policy protection before DB close")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "release-close"), nil, 0600))
@@ -239,6 +241,10 @@ func TestStoredOwnerSIGKILLRetainsLeasesUntilHelperClose(t *testing.T) {
 	require.NoError(t, err)
 	defer last.Lease.Close()
 	require.Equal(t, identity.Slot, last.Slot)
+	require.NoError(t, last.Lease.Close())
+	require.NoError(t, final.Close())
+	require.NoError(t, runstore.Reset(t.Context(), filepath.Join(root, "runs.db")))
+	require.NoFileExists(t, filepath.Join(root, "runs.db"))
 }
 
 func TestStoredHelperLossQuarantinesWithoutSignallingMetadata(t *testing.T) {
