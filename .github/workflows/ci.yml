@@ -18,7 +18,9 @@ jobs:
 
       - run: go vet -tags fts5 ./...
 
-      - run: CGO_ENABLED=1 go test -tags fts5 -race ./...
+      # CLI integration tests include real process deadlines and encrypted
+      # database setup; the full package can exceed Go's default ten minutes.
+      - run: CGO_ENABLED=1 go test -tags fts5 -race -timeout 20m ./...
         env:
           CAPY_DB_KEY: ci-test-key-at-least-32-characters-long!!
           CAPY_VAULT_KEY: ci-vault-key-at-least-32-characters-long!!
