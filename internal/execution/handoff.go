@@ -99,6 +99,7 @@ func (s *Service) executeResponse(ctx context.Context, request executor.ExecRequ
 	}
 	go func() {
 		result := s.execute(jobCtx, request, intent, call.deadline, call)
+		s.observeCompletion(result)
 		call.mu.Lock()
 		call.result = result
 		call.finished = true

@@ -79,8 +79,8 @@ short tests and leaves headroom beneath a 30-second client timeout. That is a
 default rationale, not a claim about every host: live acceptance measures the
 actual host limit and configures a smaller wait if necessary.
 
-Currently `executor.timeout` is loaded but not consumed: execute/file hardcode
-30,000 ms and batch 60,000 ms. The new service wires it for the first time:
+Before captured execution, `executor.timeout` was loaded but not consumed:
+execute/file hardcoded 30,000 ms and batch 60,000 ms. The shared service now uses:
 explicit per-call milliseconds → configured seconds × 1,000 → default above.
 This changes existing effective behavior and must be documented. Presence-aware
 config validation rejects explicit zero even though the old merger ignored it.

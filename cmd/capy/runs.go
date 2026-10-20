@@ -12,6 +12,7 @@ import (
 func newRunsCmd() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{Use: "runs", Short: "Recover captured runs without executing them again", SilenceErrors: true, SilenceUsage: true}
+	cmd.Long = "Inspect retained output with status, list, read and search. Logs live in the selected owner's .capy/runs and expire or may be evicted under quota pressure. Default reads are sanitized; --raw returns unsanitized base64. Cancel MCP-owned runs through their original MCP owner; interrupt an attached CLI process to cancel it. After a credential change, stop owners and old execution groups before reset --discard, which permanently deletes this owner's run logs. V1 has no runs rekey."
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		return writeQueryFailure(cmd, jsonOutput, 2048, 2, &runstore.Error{Code: "invalid_argument", Message: "choose runs status, read, list, search or reset --discard"})
 	}

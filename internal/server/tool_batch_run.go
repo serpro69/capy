@@ -85,7 +85,6 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 		}
 	}
 	if result.BatchID != "" {
-		s.stats.AddBytesSandboxed(result.ObservedBytes)
 		response, err = s.buildBatchRunResult(result)
 		if err != nil {
 			return boundedRunError("response_unavailable", "Recover batch with capy_runs list before retrying."), nil

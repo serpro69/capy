@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–15 complete and verified; Tasks 16–17 pending
+> Status: Tasks 1–16 complete and verified; Task 17 pending
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -280,6 +280,13 @@ follow the capture contract. Claude routine enforcement remains out of scope.
   drift guards, nested owners, aliases and external-hook preservation.
 
 ## Task 16: Document and diagnose the complete operator workflow
+
+Evidence: [Task 16 verification](task16-verification.md) · [isolated review](task16-code-review.md).
+Read-only inspection is shared by CLI/MCP diagnostics; session bytes are counted
+once at owner completion. The durable [run guide](../../../reference/runs.md)
+owns runnable recovery, policy, rotation and rollback instructions. Review also
+corrected the documented legacy preview limit so both execution adapters apply it
+without restricting capture or explicit retrieval.
 
 - Extend stats/doctor with safe statuses, policy/capacity and accounted/physical
   usage without creating a store or claiming activation → verify: CLI/MCP parity,

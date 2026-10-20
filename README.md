@@ -97,7 +97,7 @@ Once setup is active, use your agent normally. The routing instructions help it 
 
 > Use capy to find the most frequent errors in the application log, then show the relevant examples.
 
-The agent can process the log with `capy_execute_file` and return only the counts and matching lines. For several commands, `capy_batch_execute` indexes their output and searches it in one call.
+The agent can process the log with `capy_execute_file` and return only the counts and matching lines. For several commands, `capy_batch_execute` captures their output and optionally searches it in one call.
 
 Use native tools when the agent needs the full content: reading a file before editing, reviewing a Git diff, or understanding a short issue description. capy is most useful when you need specific facts from a large body of data.
 
@@ -137,15 +137,23 @@ Execution supports JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, P
 
 Execution output is captured in a separate encrypted run store and bounded responses apply with or without `intent`. Run indexing is lazy on search, intent, or batch queries. Use `capy_runs` or `capy runs` to recover retained output instead of repeating execution; new execution logs are not knowledge sources. See the [execution contracts](docs/feat/wip/routine-command-capture/contracts.md) for response, retention and recovery limits.
 
+From a terminal, use `capy execute --code 'go test -tags fts5 ./...' --json`,
+then `capy runs list --json` and `capy runs read --run-id <returned-id> --json`.
+The CLI stays attached; MCP can yield with `wait_ms` while capture continues.
+The [run operations guide](docs/reference/runs.md) covers pagination, batches,
+cancellation, quotas, owner selection and rotation. Captured execution currently
+requires Linux; the final installed acceptance gate remains Task 17.
+
 ### Finding earlier results
 
 | Content | Retention | Included in default `capy_search`? |
 | --- | --- | --- |
 | Indexed notes and files (`durable`) | Retention-based cleanup | Yes |
-| Command output and fetched pages (`ephemeral`) | 24 hours by default | No |
+| Captured command output (run store) | 24 hours by default; completed logs may be evicted earlier | No; use `capy_runs` / `capy runs` |
+| Fetched pages and legacy command sources (`ephemeral`) | 24 hours by default | No |
 | Archived conversations (`session`) | Kept until explicitly deleted from the vault | Yes, with `CAPY_VAULT_KEY` |
 
-To recover command output or fetched pages, use `include_kinds: ["durable", "ephemeral"]` or a `source` filter. Source filters match literal label substrings, include matching ephemeral knowledge, and skip vault search. Fetch reference material with `kind: "durable"` when it should persist across sessions.
+To recover fetched pages or legacy command sources, use `include_kinds: ["durable", "ephemeral"]` or a `source` filter. Source filters match literal label substrings, include matching ephemeral knowledge, and skip vault search. New captured output is addressed by run/batch ID. Fetch reference material with `kind: "durable"` when it should persist across sessions.
 
 MCP session searches default to the current project. Use `all_projects: true` or `project: "*"` to widen them. An explicit `project` matches a custom session project label, falling back to its imported path. Default scoping still uses the imported path: naming a worktree session does not associate it with a different checkout. These selectors affect sessions only.
 
@@ -271,8 +279,21 @@ ephemeral_ttl_hours = 24
 fetch_ttl_hours = 24
 
 [executor]
-timeout = 30                # seconds
-max_output_bytes = 102400    # 100 KiB captured output
+timeout = 300               # seconds; explicit execution timeout overrides it
+max_output_bytes = 102400    # deprecated preview limit, not a capture limit
+
+[runs]
+wait_ms = 25000             # MCP response wait, not execution deadline
+max_response_bytes = 8192   # complete serialized result
+max_active = 4              # per owner, shared by standalone and batch children
+max_pending = 64            # per owner, batch children
+ttl_hours = 24
+max_run_bytes = 67108864
+max_retained_bytes = 536870912
+
+[routing.routine]
+enabled = true              # Codex-only mandatory routine capture
+native_allow = []           # explicit Bash(pattern) output-policy exceptions
 
 [search]
 window_ms = 60000
@@ -301,7 +322,7 @@ For Git-based sync, keep databases in a separate private repository to avoid gro
 
 ## Encryption
 
-Both databases are encrypted at rest. The knowledge database uses the credential below; the vault always requires `CAPY_VAULT_KEY` in the actual launch environment. Keep keys private and backed up, and keep passphrases out of tracked configuration.
+Knowledge, run storage and the vault are encrypted at rest. Knowledge and runs use the selected credential below; the vault always requires `CAPY_VAULT_KEY` in the actual launch environment. Keep keys private and backed up, and keep passphrases out of tracked configuration.
 
 ### Project credentials
 
@@ -354,13 +375,19 @@ capy encrypt
 
 Enter the old passphrase when prompted, or press Enter for an unencrypted database. The new key comes from `CAPY_DB_KEY`, or a confirmed prompt when unset. Project credential files supply neither input and are not rewritten: update them and persist the new key before restarting. The original database remains as `<path>.bak`: plaintext for initial encryption, or readable with the old key after rotation. This command does not rotate the vault key.
 
+Run logs are not rekeyed. Stop all affected run owners and old execution groups
+before rotation; after updating the selected credential, explicitly run
+`capy runs reset --discard --project-dir <owner>` for each affected owner.
+**This permanently deletes that owner's run logs.** V1 has no run-log-preserving
+rekey. See the [complete rotation and rollback workflow](docs/reference/runs.md#key-rotation-and-explicit-data-loss).
+
 ## Hooks and Permissions
 
 Hooks guide large-output work toward capy and enforce additional command policies. They do not automatically capture or reduce the output of every native tool call.
 
 - **Claude Code:** main-agent HTTP calls through Bash or WebFetch are redirected to capy or the platform CLI. Read/Grep guidance is advisory; subagents receive routing instructions.
-- **Codex CLI:** native shell calls and capy tools are covered; hosted web/search tools are outside that coverage. Main-session HTTP routing is advisory until that session successfully uses `capy_execute`; that success allows one redirect within 60 seconds.
-- **Subagents:** routing depends on their own recent successful capy use. Without evidence of an available tool, guidance permits native fallback. This does not grant permission or bypass security rules.
+- **Codex CLI:** recognized routine tests/builds/installs require capture through MCP or `capy execute`, including mixed HTTP/routine requests. This applies before HTTP routing regardless of availability evidence. Hosted web/search tools are outside shell-hook coverage. HTTP-only main routing is advisory until a healthy running or successful complete `capy_execute` response; that evidence allows one redirect within 60 seconds.
+- **Subagents:** Codex routine capture is mandatory for children too. HTTP-only routing depends on each child's recent successful execute/fetch evidence and permits advisory native fallback when evidence is absent. This does not grant permission or bypass security rules.
 - **Downloads:** silent file downloads remain allowed by the HTTP routing rules, subject to permissions.
 
 Capy reads additional Bash and Read rules from `.claude/settings.local.json`, `.claude/settings.json`, and `~/.claude/settings.json`, even for Codex. Denies win over allows. In Codex, a matched ask rule blocks with the rule and source named, because the hook cannot request approval. Codex's own sandbox and permission rules continue to apply independently.
@@ -372,6 +399,11 @@ Execution has timeouts, output limits, process-group cleanup, environment saniti
 ## Troubleshooting
 
 Run `capy doctor` from the project and `capy_doctor` through your agent to compare the terminal and running-server environments.
+
+Both show the run path, policy, capacity, accounted/physical usage and a bounded
+recent-state sample without creating run storage. `capy_stats` also counts late
+yielded output once at owner completion. Doctor cannot prove activation or sandbox
+writability; see [run diagnostics and recovery](docs/reference/runs.md#storage-policy-and-diagnostics).
 
 | Problem | Action |
 | --- | --- |
@@ -416,6 +448,9 @@ Use `capy <command> --help` for flags and examples.
 | `capy` / `capy serve` | Start the MCP server over stdio. |
 | `capy setup` | Configure project integrations. |
 | `capy doctor` | Diagnose the installation. |
+| `capy execute` | Run once with encrypted capture and a bounded result. |
+| `capy runs status/read/list/search` | Recover retained runs or batch children by ID. |
+| `capy runs reset --discard` | Explicitly discard selected-owner run logs after stopping owners and execution groups. |
 | `capy index <path>` | Index a file or directory as durable knowledge. |
 | `capy search <query...>` | Search knowledge from the terminal. |
 | `capy which` / `capy dbsize` | Show the knowledge database's path or disk usage. |

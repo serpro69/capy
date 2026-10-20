@@ -35,11 +35,46 @@ type Service struct {
 	policy               config.RunsConfig
 	closeDone            chan struct{}
 	closeErr             error
+	onCompletion         func(runstore.Result)
+	previewLimit         int
 }
 type serviceCall struct{ marker byte }
 
-func NewService(project, key string, policy config.RunsConfig) *Service {
-	return &Service{project: project, key: key, policy: policy, jobs: make(map[*serviceCall]context.CancelFunc), running: make(map[string]*runCall), batches: make(map[string]*batchCall), closeDone: make(chan struct{})}
+type ServiceOption func(*Service)
+
+// WithPreviewLimit applies the legacy executor setting only to optional preview
+// text. Nonpositive values retain the shared response budget's default behavior.
+func WithPreviewLimit(bytes int) ServiceOption {
+	return func(s *Service) { s.previewLimit = bytes }
+}
+
+// WithCompletionObserver installs a synchronous observer before any work starts.
+// It receives each admitted standalone/child outcome once, including after
+// handoff. The observer must be concurrency-safe and must not block on the owner.
+func WithCompletionObserver(observer func(runstore.Result)) ServiceOption {
+	return func(s *Service) { s.onCompletion = observer }
+}
+
+func NewService(project, key string, policy config.RunsConfig, options ...ServiceOption) *Service {
+	s := &Service{project: project, key: key, policy: policy, jobs: make(map[*serviceCall]context.CancelFunc), running: make(map[string]*runCall), batches: make(map[string]*batchCall), closeDone: make(chan struct{})}
+	for _, option := range options {
+		option(s)
+	}
+	return s
+}
+
+func (s *Service) observeCompletion(result runstore.Result) {
+	if result.RunID != nil && s.onCompletion != nil {
+		s.onCompletion(result)
+	}
+}
+
+// WorkCounts reports only this owner's live reservations, including finalizers.
+// It never opens storage or treats persisted metadata as live process evidence.
+func (s *Service) WorkCounts() (active, pending int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active, s.pending
 }
 
 func (s *Service) begin(ctx context.Context, execute bool) (context.Context, func(), error) {
@@ -402,7 +437,12 @@ func (s *Service) ReadProjection(ctx context.Context, id, stream, cursor string,
 	return st.ReadProjection(ctx, id, stream, cursor, maxBytes)
 }
 
-func (s *Service) withPreview(ctx context.Context, st *runstore.Store, result runstore.Result) runstore.Result {
+func (s *Service) withPreview(ctx context.Context, st *runstore.Store, result runstore.Result) (previewed runstore.Result) {
+	defer func() {
+		if s.previewLimit > 0 {
+			previewed = boundPreview(previewed, s.previewLimit)
+		}
+	}()
 	if result.RunID == nil || result.Redaction.State == "unavailable" {
 		return result
 	}
@@ -450,8 +490,8 @@ func (s *Service) Read(ctx context.Context, id string, options runstore.ReadOpti
 	return st.Read(ctx, id, options)
 }
 
-func NewCLIService(project, key string, policy config.RunsConfig) *Service {
-	s := NewService(project, key, policy)
+func NewCLIService(project, key string, policy config.RunsConfig, options ...ServiceOption) *Service {
+	s := NewService(project, key, policy, options...)
 	s.ownerType = "cli"
 	return s
 }
