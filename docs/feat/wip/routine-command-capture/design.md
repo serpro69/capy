@@ -1,6 +1,6 @@
 # Routine command capture and recovery
 
-> Status: revised draft — review corrections incorporated; independent re-review pending
+> Status: implemented and verified — Tasks 1–17 complete; final independent review conformant
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Public contracts: [contracts.md](contracts.md)
@@ -499,6 +499,8 @@ recognition and policy inspection are verified in
 observations and synchronized guidance are verified in
 [Task 15 evidence](task15-verification.md). Task 16 diagnostics, completion
 accounting and operator documentation are verified in
-[Task 16 evidence](task16-verification.md). Task 17 remains pending.
-These slices do not substitute for installed acceptance or independent
-design/code/spec review of the remaining feature.
+[Task 16 evidence](task16-verification.md). Task 17 automated verification and
+independent code/spec re-reviews are recorded in [Task 17 evidence](task17-verification.md);
+live trusted-host acceptance and the conformant final evidence review are
+recorded there. Implementation and verification are complete for the recorded
+Linux/host versions, with coverage and measurement limits retained in that report.

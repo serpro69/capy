@@ -1,6 +1,6 @@
 # Execution and run-store contracts
 
-> Status: proposed v1 contract — incorporates validated review corrections
+> Status: implemented v1 contract — verified through Task 17
 > Architecture: [design.md](design.md) · Plan: [implementation.md](implementation.md) · Tasks: [tasks.md](tasks.md)
 
 This file is authoritative for public inputs/results, state transitions,

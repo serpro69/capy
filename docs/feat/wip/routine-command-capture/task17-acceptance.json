@@ -1,0 +1,131 @@
+{
+  "source_commit": "3dc03a267c0acd3e6ccbc5b21b50b672ca97d3f5",
+  "binary_sha256": "798ea1cce2b019a12779a37a30f730d585daf7c59f51d18bb470e1bc6431e049",
+  "scope": "real stdio MCP and workspace-confined CLI; no trusted model-host acceptance",
+  "fixtures": [
+    {
+      "name": "passing-tests",
+      "run_id": "d5fcef9d-017a-46ae-8d75-1738edb39bcf",
+      "exit_code": 0,
+      "capture": "complete",
+      "raw_bytes": 180000,
+      "result_bytes": 2905,
+      "jsonrpc_bytes": 2939,
+      "initial_latency_seconds": 1.0149,
+      "stdout_sha256": "de2e06b83c324d66da6641cf812c88a5adb789c3c9d0a0a2c6431e185b1c2608",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_matches_expected": true,
+      "initial_index": "not_requested"
+    },
+    {
+      "name": "middle-failure",
+      "run_id": "276fdbaa-beba-4463-94d7-a1c9e40c778f",
+      "exit_code": 1,
+      "capture": "complete",
+      "raw_bytes": 260035,
+      "result_bytes": 2989,
+      "jsonrpc_bytes": 3024,
+      "initial_latency_seconds": 0.6352,
+      "stdout_sha256": "5694ca258e376100063068d74cf7b47eac2c5c71fac24e1d23199cad4014592b",
+      "stderr_sha256": "190294c5de4db98937ef4ccf00ee65cb3774e8c1395ca435688a9773b6c61403",
+      "raw_matches_expected": true,
+      "initial_index": "not_requested",
+      "first_repeat_search_seconds": [
+        0.25,
+        0.0268
+      ]
+    },
+    {
+      "name": "install-shaped-synthetic",
+      "run_id": "10e95c50-19db-4b27-a38b-17eafd3b61e6",
+      "exit_code": 7,
+      "capture": "complete",
+      "raw_bytes": 168030,
+      "result_bytes": 2925,
+      "jsonrpc_bytes": 2961,
+      "initial_latency_seconds": 0.5398,
+      "stdout_sha256": "c8f460d9859c006ae61b277728fcd8b6bbd9932a4634cb8266b2f010f06350ff",
+      "stderr_sha256": "ef14bc15b6fc3f82ba3c7f551d573bd8d0973b3a568c075b03ac883c4d53787a",
+      "raw_matches_expected": true,
+      "initial_index": "not_requested"
+    },
+    {
+      "name": "stderr-only",
+      "run_id": "7422b7ca-3382-4584-81c4-d23744d34571",
+      "exit_code": 1,
+      "capture": "complete",
+      "raw_bytes": 144000,
+      "result_bytes": 2928,
+      "jsonrpc_bytes": 2964,
+      "initial_latency_seconds": 0.5378,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "3055bc4dd2ee37a15b13a321e1066cf8d72b06b7fc8fd64cd685a3c396d70815",
+      "raw_matches_expected": true,
+      "initial_index": "not_requested"
+    },
+    {
+      "name": "binary-long-line",
+      "run_id": "07757126-b7c5-4836-86ab-d3d1cf29767f",
+      "exit_code": 0,
+      "capture": "complete",
+      "raw_bytes": 150920,
+      "result_bytes": 2860,
+      "jsonrpc_bytes": 2896,
+      "initial_latency_seconds": 0.532,
+      "stdout_sha256": "4a240c5387d1a9d7f98146c13ec2ea9f64e8f6b5af881ffd70ec7778c1700d1f",
+      "stderr_sha256": "74787de9053952a6af2b539d73a2f60e2825972531303d696c381ce043360d3b",
+      "raw_matches_expected": true,
+      "initial_index": "not_requested"
+    },
+    {
+      "name": "redaction",
+      "run_id": "777847f7-04f2-4786-8e62-8a628cc6845e",
+      "exit_code": 0,
+      "capture": "complete",
+      "raw_bytes": 115,
+      "result_bytes": 1350,
+      "jsonrpc_bytes": 1386,
+      "initial_latency_seconds": 0.4899,
+      "stdout_sha256": "0dcbefe46ead5df7ddbc6dcd1f8c05d9653cac96d325dffdb0a31d0053ac5f92",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_matches_expected": true,
+      "initial_index": "not_requested"
+    }
+  ],
+  "tools": [
+    "capy_batch_execute",
+    "capy_cleanup",
+    "capy_doctor",
+    "capy_execute",
+    "capy_execute_file",
+    "capy_fetch_and_index",
+    "capy_index",
+    "capy_runs",
+    "capy_search",
+    "capy_stats",
+    "capy_vault_search"
+  ],
+  "max_mcp_result_bytes": 7141,
+  "cli_recovery_bytes": 1920,
+  "persisted_files_contain_no_fixture_plaintext": true,
+  "run_db_bytes_after_close": 4452352,
+  "all_execution_markers_once_after_restart": true,
+  "candidate_includes_task17_working_changes": true,
+  "real_project_test": {
+    "run_id": "3d98b926-c27a-4036-80f2-633193c711e3",
+    "exit_code": 0,
+    "capture": {
+      "state": "complete",
+      "observed_bytes": 1211,
+      "captured_bytes": 1211,
+      "reason": null,
+      "last_committed_cursor": "eyJ2IjoxLCJzdG9yZSI6IjhiNmI0YTRjLTYwMjctNDdmZi04YjFkLWU1ODA2NTkyYjcwMyIsInJ1biI6IjNkOThiOTI2LWMyN2EtNDAzNi04MGYyLTYzMzE5M2M3MTFlMyIsInZpZXciOiJyYXciLCJzdHJlYW0iOiJtZXJnZWQiLCJzZXEiOjQsIm9mZnNldCI6MH0",
+      "terminal_persisted": true
+    },
+    "response_bytes": 2400,
+    "stdout_bytes": 1211,
+    "stdout_sha256": "18c252b0aa428ae981d75b089ab5525afadaa77ef4072031ac3f4304be1f2274",
+    "stderr_bytes": 0,
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

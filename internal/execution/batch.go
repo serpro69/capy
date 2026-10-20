@@ -184,7 +184,11 @@ func (s *Service) runBatch(ctx context.Context, input runstore.BatchInput, timeo
 				if child.ctx.Err() != nil {
 					outcome = s.finishUnstarted(st, row, "cancelled")
 				} else if err := st.Dispatch(child.ctx, row.ID, owner.ID, work.deadline); err != nil {
-					outcome = s.finishUnstarted(st, row, "spawn_failed")
+					reason := "spawn_failed"
+					if child.ctx.Err() != nil {
+						reason = "cancelled"
+					}
+					outcome = s.finishUnstarted(st, row, reason)
 				} else {
 					outcome = s.executeAdmitted(child.ctx, st, owner, row, child.call)
 				}

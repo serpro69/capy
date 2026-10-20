@@ -148,6 +148,7 @@ FROM runs WHERE evicting=0 AND created_at<=? AND (created_at>? OR (created_at=? 
 		if json.Unmarshal(encoded, &result) != nil {
 			return page, storageError()
 		}
+		unverified = unverified || (!terminal && result.CompletedAt != nil)
 		cursor.Created, cursor.ID = created, id
 		examined++
 		if unverified && !terminal {

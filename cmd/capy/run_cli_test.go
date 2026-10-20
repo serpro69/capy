@@ -251,6 +251,63 @@ func TestRunCLICodeFileAndSpawnFailures(t *testing.T) {
 	}
 }
 
+func TestRunCLIPreservesProgramAndCwdBytes(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux supervisor required")
+	}
+	bin := buildStdioCapy(t)
+	project := filepath.Join(cliProject(t, ""), "owner-\xff")
+	require.NoError(t, os.Mkdir(project, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(project, ".capy.toml"), []byte("[runs]\nmax_response_bytes=2048\n"), 0600))
+	env := stdioEnv(t, "synthetic-cli-byte-request-key-long-enough")
+	dir := filepath.Join(project, "work-\xff")
+	require.NoError(t, os.Mkdir(dir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "identity"), []byte("correct-directory"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(project, "program.sh"), []byte("cat identity; printf '\xff'"), 0600))
+	out, diag, status := capturedCLI(t, bin, project, env, "execute", "--json",
+		"--project-dir", project, "--code-file", "program.sh", "--cwd", dir)
+	require.Zero(t, status, string(out))
+	require.Empty(t, diag)
+	var result runstore.Result
+	require.NoError(t, json.Unmarshal(out, &result))
+	require.NotNil(t, result.RunID)
+	out, diag, status = capturedCLI(t, bin, project, env, "runs", "read", "--json",
+		"--project-dir", project, "--run-id", *result.RunID, "--stream", "stdout", "--raw")
+	require.Zero(t, status, string(out))
+	require.Empty(t, diag)
+	var page runstore.ReadPage
+	require.NoError(t, json.Unmarshal(out, &page))
+	var raw []byte
+	for _, f := range page.Fragments {
+		raw = append(raw, f.Data...)
+	}
+	require.Equal(t, []byte("correct-directory\xff"), raw)
+}
+
+func TestRunCLINestedCaptureRetainsOuterPolicy(t *testing.T) {
+	bin := buildStdioCapy(t)
+	for _, kind := range []string{"deny", "ask"} {
+		t.Run(kind, func(t *testing.T) {
+			project := cliProject(t, "")
+			other := cliProject(t, "")
+			env := stdioEnv(t, "synthetic-cli-nested-policy-key-long-enough")
+			require.NoError(t, os.MkdirAll(filepath.Join(project, ".claude"), 0700))
+			source := filepath.Join(project, ".claude", "settings.json")
+			require.NoError(t, os.WriteFile(source, []byte(`{"permissions":{"`+kind+`":["Bash(touch:*)"]}}`), 0600))
+			code := "capy --project-dir '" + other + "' execute --code 'touch forbidden'"
+			out, _, status := capturedCLI(t, bin, project, env, "execute", "--json", "--code", code)
+			require.NotZero(t, status)
+			var result runstore.Result
+			require.NoError(t, json.Unmarshal(out, &result))
+			require.Nil(t, result.RunID)
+			require.Contains(t, result.Error.Message, source)
+			require.Contains(t, result.Error.Message, "Bash(touch:*)")
+			require.NoDirExists(t, filepath.Join(project, ".capy", "runs"))
+			require.NoFileExists(t, filepath.Join(other, "forbidden"))
+		})
+	}
+}
+
 func TestRunCLINestedAndWorktreeOwners(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux supervisor required")
