@@ -307,6 +307,57 @@ Validation:
 Host-test isolation follow-up, outside this CI timing fix: `setupCodexVaultEnv`
 and the ad hoc restore/merge CLI fixtures still inherit personal import policy.
 Give those fixtures an empty `XDG_CONFIG_HOME`, as `setupVaultEnv` already does.
-For CI-equivalent local validation, also use empty `CODEX_HOME` and
-`CLAUDE_CONFIG_DIR` directories; run real-corpus canaries separately with a time
-budget appropriate to the local corpus.
+For local validation, also use an empty `CODEX_HOME`. Limit a shared empty
+`CLAUDE_CONFIG_DIR` to the vault package's real-corpus isolation; leave it unset
+for config/server tests that create their own Claude roots under temporary
+homes. Run real-corpus canaries separately with a time budget appropriate to the
+local corpus.
+
+## Remaining CI timing failures (2026-10-20)
+
+[CI run 39435211513](https://github.com/serpro69/capy/actions/runs/39435211513)
+on `819d133` exposed the same startup assumptions in two additional transport
+fixtures: `TestMCPStdioBooleanArgs/background_and_force_strings` expected
+`running` from an initial `admitted` response, and
+`TestMCPExecuteFileCapturedLifetime/configured_deadline_and_explicit_override`
+expected `timed_out` after a one-second deadline produced `start_failed`.
+The run also exhausted Go's default ten-minute **package** timeout in
+`cmd/capy`; the active spawn-failure subtest had only just started. The server
+package passed in 597.986 seconds, leaving almost no timeout margin there either.
+
+The stdio boolean test now checks structured state, polls background startup
+after a one-millisecond response wait, and gives the foreground command five
+seconds to start and time out. The execute-file fixture uses a five-second
+configured deadline, requires `StartedAt`, and runs its override command for
+5.2 seconds under an explicit ten-second deadline. Its exact output, complete
+capture and forbidden-marker assertions remain in place. The CI race invocation
+now specifies `-timeout 20m` per package; per-operation test deadlines and
+production behavior are unchanged.
+
+Validation:
+
+- Three repetitions of the original focused fixtures passed locally (26.097 s);
+  the CI failures were load-sensitive and were not reproduced in that run.
+- Three repetitions of the repaired fixtures passed with `GOMAXPROCS=2` and
+  `GOFLAGS=-race`, instrumenting both tests and subprocesses (80.374 s).
+- `go vet -tags fts5 ./...` and Go formatting checks passed.
+- Full `go test -tags fts5 -race -timeout 20m -count=1 ./...` validation passed
+  `cmd/capy` (523.074 s) and every package except config/server. The invocation's
+  shared `CLAUDE_CONFIG_DIR` overrode fixtures' temporary `HOME` roots, breaking
+  session-directory resolution and sharing synthetic sessions across tests.
+  This was a validation-environment error; that override is absent in CI.
+- With `CLAUDE_CONFIG_DIR` unset, every failing config/server test and neighboring
+  source-resolution/sweep tests passed (1.021/9.261 s). The race rerun used
+  `-run 'TestResolveSourceProject|TestSearch_ProjectOverrideScopes|TestVaultSearch_ProjectOverrideScopes|TestVaultSweep_'`
+  against `./internal/config ./internal/server`, with fresh XDG/Codex roots and
+  the same synthetic keys. The full suite was not rerun a second time.
+- Independent code review approved the three changed test/CI files with no
+  actionable findings. The external PAL review could not run because the Gemini
+  API rejected its configured API key; it supplies no review evidence.
+
+Fixture-isolation follow-up, outside this CI repair: config's session-directory
+tests and server's `setupVaultSweepProject`, `setupVaultSweepMultiProject` and
+`setupCodexSweepEnv` rely on an unset inherited `CLAUDE_CONFIG_DIR`. Clear that
+variable inside the fixtures so their temporary `HOME` owns discovery even when
+a developer exports a custom Claude root. The validation invocation above
+unsets it without changing production configuration.

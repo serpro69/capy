@@ -109,17 +109,36 @@ func TestMCPStdioBooleanArgs(t *testing.T) {
 		project := stdioProject(t)
 		p := launch(t, project, stdioEnv(t, key))
 		for _, tc := range []struct {
-			value string
-			want  string
+			value   string
+			timeout int
+			want    string
 		}{
-			{value: " TrUe ", want: "running"},
-			{value: " FaLsE ", want: "timed_out"},
+			{value: " TrUe ", timeout: 1, want: "running"},
+			// Foreground deadlines include encrypted storage and supervisor startup.
+			{value: " FaLsE ", timeout: 5000, want: "timed_out"},
 		} {
-			isError, text := stdioBooleanCall(t, p, "capy_execute", map[string]any{
-				"language": "shell", "code": "printf started; sleep 30", "timeout": 1000, "background": tc.value,
+			response := p.capturedRun(t, map[string]any{
+				"language": "shell", "code": "printf started; sleep 30", "timeout": tc.timeout, "background": tc.value,
 			})
-			require.Equal(t, tc.value == " FaLsE ", isError)
-			assert.Contains(t, text, tc.want)
+			run := response.Structured
+			require.NotNil(t, run.RunID)
+			if tc.value == " FaLsE " {
+				require.True(t, response.IsError)
+				require.NotNil(t, run.StartedAt, "the fixture must start before its execution deadline")
+			} else {
+				require.False(t, response.IsError)
+				require.Nil(t, run.CompletedAt)
+				id := *run.RunID
+				// Background handoff may return admitted before spawn. The
+				// one-millisecond wait must not become an execution deadline.
+				require.Eventually(t, func() bool {
+					status := p.runQuery(t, "status", id)
+					require.False(t, status.IsError)
+					run = status.Structured.Run
+					return run.State == tc.want
+				}, 5*time.Second, 20*time.Millisecond)
+			}
+			require.Equal(t, tc.want, run.State)
 		}
 
 		// Seed a validated durable cache entry for a loopback URL. Generic
