@@ -270,3 +270,43 @@ The shared capture architecture and public contracts otherwise followed the plan
 
 Optional editorial follow-up:
 `kk:clarify-docs docs/feat/wip/routine-command-capture/task17-verification.md`.
+
+## CI timing follow-up (2026-10-20)
+
+[CI run 39427079593](https://github.com/serpro69/capy/actions/runs/39427079593)
+failed the Codex MCP shutdown and background-boolean tests.
+[The preceding run](https://github.com/serpro69/capy/actions/runs/39426874651)
+also failed closed-output cleanup and the configured-deadline transport test.
+The fixtures assumed that encrypted-store initialization and supervisor startup
+would finish within one second. Background handoff can instead return an
+`admitted` run before PID files exist; a foreground deadline can expire before
+the first process starts, producing `start_failed` rather than `timed_out`.
+
+The shutdown fixtures now request a one-millisecond background response wait and
+wait, within a bounded interval, for complete positive PID values before closing
+the transport or signalling its owner. The boolean fixture checks structured run
+state and polls until the handed-off background run reaches `running`.
+Foreground timeout fixtures use a five-second execution budget and explicitly
+require a recorded start before asserting `timed_out`. The override fixture
+runs longer than that configured default and must finish under its explicit
+ten-second timeout. Production deadlines and lifecycle behavior are unchanged.
+
+Validation:
+
+- Five repetitions of the affected race tests passed with `GOMAXPROCS=2`.
+- `go vet -tags fts5 ./...`, formatting, and whitespace checks passed.
+- Independent code review found no actionable issues.
+- The full `go test -tags fts5 -race ./...` run passed the repaired tests and
+  every package except `cmd/capy` and `internal/vault`. The unrelated CLI vault
+  failures inherited a personal 192-KiB minimum import size and all passed when
+  rerun with an empty `XDG_CONFIG_HOME`. The vault package reached the ten-minute
+  limit in `TestCodexCanary`, which scans the real local Codex corpus and skips
+  when that corpus is absent in CI. The entire vault package passed with
+  isolated session roots (`go test -tags fts5 -race ./internal/vault`, 177.5 s).
+
+Host-test isolation follow-up, outside this CI timing fix: `setupCodexVaultEnv`
+and the ad hoc restore/merge CLI fixtures still inherit personal import policy.
+Give those fixtures an empty `XDG_CONFIG_HOME`, as `setupVaultEnv` already does.
+For CI-equivalent local validation, also use empty `CODEX_HOME` and
+`CLAUDE_CONFIG_DIR` directories; run real-corpus canaries separately with a time
+budget appropriate to the local corpus.

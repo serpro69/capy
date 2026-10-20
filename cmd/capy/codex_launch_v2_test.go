@@ -165,9 +165,12 @@ func TestCodexLaunchFailureAndCancellation(t *testing.T) {
 			}
 			p := startStdioProcess(t, stdioCommand{executable: bin, args: args, dir: owner, env: env})
 			p.initialize(t)
-			// An actual executor group, with a sleeping descendant, survives the call.
-			result := p.tool(t, "capy_execute", map[string]any{"language": "shell", "code": "echo $$ > executor.pid; sleep 120 & echo $! > descendant.pid; echo ready; wait", "timeout": 1000, "background": true})
-			require.Contains(t, result, "running")
+			// A background response can still be admitted. Wait for both real
+			// processes before exercising owner shutdown.
+			result := p.capturedRun(t, map[string]any{"language": "shell", "code": "echo $$ > executor.pid; sleep 120 & echo $! > descendant.pid; echo ready; wait", "timeout": 1, "background": true})
+			require.False(t, result.IsError)
+			require.NotNil(t, result.Structured.RunID)
+			require.Nil(t, result.Structured.CompletedAt)
 			pids := []int{readFixturePID(t, filepath.Join(owner, "executor.pid")), readFixturePID(t, filepath.Join(owner, "descendant.pid"))}
 			for _, pid := range pids {
 				t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
@@ -257,17 +260,15 @@ func TestCodexMCPClosedOutputCleanup(t *testing.T) {
 			env = replaceWrapperEnv(env, "CAPY_DB_KEY", "synthetic-closed-output-key")
 			p := startStdioProcess(t, stdioCommand{executable: bin, args: args, dir: owner, env: env})
 			p.initialize(t)
-			p.tool(t, "capy_execute", map[string]any{"language": "shell", "code": "echo $$ > detached.pid; echo detached; sleep 120", "timeout": 1000, "background": true})
+			result := p.capturedRun(t, map[string]any{"language": "shell", "code": "echo $$ > detached.pid; echo detached; sleep 120", "timeout": 1, "background": true})
+			require.False(t, result.IsError)
+			require.NotNil(t, result.Structured.RunID)
 			detached := readFixturePID(t, filepath.Join(owner, "detached.pid"))
 			t.Cleanup(func() { _ = syscall.Kill(-detached, syscall.SIGKILL) })
 			require.NoError(t, p.write(map[string]any{
 				"jsonrpc": "2.0", "id": 100, "method": "tools/call",
 				"params": map[string]any{"name": "capy_execute", "arguments": map[string]any{"language": "shell", "code": "echo $$ > active.pid; sleep 120", "timeout": 60000}},
 			}, time.Now().Add(time.Second)))
-			require.Eventually(t, func() bool {
-				info, err := os.Stat(filepath.Join(owner, "active.pid"))
-				return err == nil && info.Size() > 0
-			}, 3*time.Second, 10*time.Millisecond)
 			active := readFixturePID(t, filepath.Join(owner, "active.pid"))
 			t.Cleanup(func() { _ = syscall.Kill(-active, syscall.SIGKILL) })
 			require.NoError(t, p.stdout.Close())
@@ -295,11 +296,17 @@ func TestCodexMCPClosedOutputCleanup(t *testing.T) {
 
 func readFixturePID(t *testing.T, path string) int {
 	t.Helper()
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	require.NoError(t, err)
-	require.Positive(t, pid)
+	var pid int
+	// The shell may not have started at response handoff, and a newly created
+	// PID file can be observed before its contents have been written.
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		pid, err = strconv.Atoi(strings.TrimSpace(string(data)))
+		return err == nil && pid > 0
+	}, 5*time.Second, 10*time.Millisecond, "waiting for a valid PID in %s", path)
 	return pid
 }
 
