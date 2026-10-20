@@ -163,7 +163,11 @@ authorization to spawn agents or make concurrent overlapping edits.
   Hook support alone is not a closing condition for #132. The 2026-10-16
   [routine-command-capture design](../routine-command-capture/design.md) and
   [task list](../routine-command-capture/tasks.md) now own this follow-up;
-  design review, implementation and installed acceptance remain pending.
+  Tasks 1–15 implement captured execution and strict Codex routine routing;
+  Task 16 documents/diagnoses the operator workflow. The runnable
+  [run operations guide](../../../reference/runs.md) replaces the historical
+  output-policy guidance. Installed acceptance and release readiness remain
+  Task 17; this follow-up stays open until that evidence is recorded.
 - [ ] **#29 tracking:** reopen or supersede the incorrectly closed hook issue
   and link the completed design/implementation when updating GitHub tracking.
   No external issue or PR was changed during design.

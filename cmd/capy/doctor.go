@@ -66,6 +66,7 @@ func newDoctorCmd() *cobra.Command {
 				results = append(results, knowledgeBaseChecks(target)...)
 			}
 			results = append(results, vaultChecks(cmd.Context())...)
+			results = append(results, runChecks(cmd)...)
 			results = append(results,
 				platform.CheckResult{Name: "Project", Status: platform.Pass, Detail: projectDir},
 			)
@@ -74,6 +75,19 @@ func newDoctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func runChecks(cmd *cobra.Command) []platform.CheckResult {
+	target, err := runTarget(cmd)
+	if err != nil {
+		return []platform.CheckResult{{Name: "Run store", Status: platform.Fail,
+			Detail: "cannot resolve run owner/configuration; check installation bindings and --project-dir; no fallback store was inspected"}}
+	}
+	key, _, err := resolveKnowledgeKey(target)
+	if err != nil {
+		key = ""
+	}
+	return platform.CheckRuns(cmd.Context(), target.projectDir, key, target.cfg.Runs)
 }
 
 // knowledgeBaseChecks mirrors the capy_doctor MCP tool's knowledge-base

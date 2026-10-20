@@ -227,6 +227,7 @@ func (s *Service) runBatch(ctx context.Context, input runstore.BatchInput, timeo
 }
 
 func (s *Service) finishBatchChild(queue *batchQueue, child batchChild, outcome runstore.Result, active bool) {
+	s.observeCompletion(outcome)
 	child.call.mu.Lock()
 	child.call.result, child.call.finished = outcome, true
 	child.call.mu.Unlock()

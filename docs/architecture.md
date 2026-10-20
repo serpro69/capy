@@ -2,7 +2,11 @@
 
 ## Overview
 
-capy is an MCP (Model Context Protocol) server that reduces LLM context window consumption by ~98%. It intercepts data-heavy tool calls, executes them in sandboxed subprocesses, indexes the output into a persistent SQLite FTS5 knowledge base, and returns only concise summaries to the LLM context.
+capy is an MCP server and CLI that bounds returned execution output while keeping
+retained logs recoverable. Captured commands use a separate encrypted owner-local
+run store, with lazy sanitized search. Durable knowledge/fetched content and the
+session vault retain their own storage and lifecycle. Context savings depend on
+the workload and returned bytes, not a universal fixed percentage.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -15,7 +19,7 @@ capy is an MCP (Model Context Protocol) server that reduces LLM context window c
 │  capy MCP Server  (internal/server)                                     │
 │                                                                         │
 │  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
-│  │  10 Tool     │  │  Stats       │  │  Search      │  │  Lifecycle │  │
+│  │  11 Tool     │  │  Stats       │  │  Search      │  │  Lifecycle │  │
 │  │  Handlers    │  │  Tracker     │  │  Throttle    │  │  Guard     │  │
 │  └──────┬──────┘  └──────────────┘  └──────────────┘  └────────────┘  │
 │         │                                                               │
@@ -29,7 +33,7 @@ capy is an MCP (Model Context Protocol) server that reduces LLM context window c
 │  Hook System  (internal/hook)                                           │
 │  Runs as short-lived processes: `capy hook <event>`                     │
 │                                                                         │
-│  PreToolUse:  curl/wget → block, WebFetch → deny, Bash → guidance,     │
+│  PreToolUse:  security → Codex routine capture → HTTP routing,        │
 │               Agent/Task → inject routing, capy_* → security check      │
 │  SessionStart: inject routing block                                     │
 │  PostToolUse: record successful child execute/fetch observations       │
@@ -53,20 +57,27 @@ capy is an MCP (Model Context Protocol) server that reduces LLM context window c
 
 ### Tool Execution (capy_execute / capy_batch_execute)
 
-1. LLM calls capy tool via MCP
-2. Server runs security check against deny policies
-3. Executor spawns sandboxed subprocess (process group isolation, env sanitization)
-4. Raw stdout captured in subprocess — never enters LLM context
-5. If output > 5KB and `intent` provided: auto-index into FTS5, search with intent, return matching sections
-6. Otherwise: return truncated stdout (configurable max_output_bytes, default 100KB)
-7. Stats tracked for the session
+1. MCP execute/file/batch or CLI execute validates inputs and security policies.
+2. `internal/execution` admits encrypted metadata and a write probe before spawn.
+3. A per-run supervisor owns executor phases, pipes and process-group cleanup.
+4. `internal/runstore` persists exact raw streams plus streaming sanitized
+   projection/checkpoints, using bounded queues and writes.
+5. The adapter returns a version-1 result within the complete serialized response
+   budget (8,192 bytes by default), regardless of intent.
+6. Intent/search/batch queries lazily build FTS from finalized projection only.
+7. `capy_runs` / CLI runs recover retained status, pages and matches by ID.
 
-Batch execution passes each submitted shell command unchanged to the executor.
-After capture, the server combines stdout followed by stderr, inserting a newline
-only when the streams need separation, then indexes the command sections in input
-order. This preserves terminal heredocs and stderr-only/partial output without
-claiming stream interleaving. Serial batches retain their shared timeout budget
-and cascading skips; parallel workers retain independent per-command timeouts.
+MCP response handoff atomically detaches request cancellation; owner shutdown,
+execution deadlines and same-owner explicit cancellation remain effective. A lost
+response cannot prove receipt or authorize a rerun. CLI stays attached. Each
+standalone/child outcome contributes session observed/captured bytes exactly once
+at owner completion, including output produced after handoff.
+
+Batch preflight is atomic for the whole inventory. Unique batch/child IDs retain
+ordinals and skipped/failed states independently of response omission. One owner
+scheduler shares active/finalizing capacity across standalone and batch work,
+with bounded pending inventory and fair dispatch. Serial deadlines include queue
+time; parallel children have dispatch deadlines and a queue cutoff.
 
 MCP boolean inputs share a presence-aware parser in `internal/server/coerce.go`.
 It accepts native booleans and trimmed, case-insensitive true/false strings;
@@ -159,26 +170,65 @@ the existing savings formula and source/chunk statistics remain unchanged.
 
 ### Batch provenance and response bounds
 
-Batch preflight validates optional queries and batch/global scope before spawning.
-Both worker paths return ordered output records carrying formatted sections,
-captured-stream byte counts and skipped status. Each section includes a sanitized,
-normalized, Markdown-escaped command preview capped at 500 bytes. The raw command
-still reaches the executor unchanged. Store admission applies to the complete
-output-plus-provenance payload; no response budget truncates stored content.
+New execute/file/batch output is not stored in knowledge. Historical ephemeral
+sources remain searchable until normal cleanup. Captured batch scope uses child
+run IDs; global search adds labelled durable/ephemeral knowledge results without
+vault federation. A retained manifest preserves terminal child summaries after
+individual log eviction, with `output_available=false`.
 
-Batch scope selects the exact source label. Global scope calls the knowledge
-store with explicit durable+ephemeral kinds, bypassing vault federation. Every
-hit displays its own source. Label-based deduplication and its concurrent-label
-collision limitation remain unchanged (sync audit D3).
+The shared execution response budget includes structured content, fallback text,
+metadata, escaping and errors. Optional content is shortened with omission flags;
+IDs, states and recovery remain available. Run responses count serialized result
+bytes; older knowledge/fetch text responses retain their text-byte accounting.
 
-`GetSectionInventory` obtains the stored chunk total by source ID, then selects
-at most 40 title prefixes and byte lengths without transferring chunk bodies to
-Go. Titles are bounded in SQL and capped to 160 UTF-8 bytes. The renderer budgets
-escaped JSON fragments against the entire 81,920-byte tool result, with separate
-4,096/8,192-byte inventory limits and reserved omission notices. The exact source
-selector precedes optional content. A final serialized-result guard also bounds
-early policy/validation/indexing errors. Returned-byte statistics retain their
-existing text-byte units and include the entire formatted text.
+## Run storage and diagnostics
+
+`internal/runstore` owns schema 8 in `<selected-owner>/.capy/runs/runs.db`.
+It shares sqliteutil and corpus-independent retrieval without importing server
+or changing knowledge/vault source kinds. The physical selected owner determines
+the path; execution cwd and knowledge worktree sharing do not relocate it.
+Credential resolution follows ADR-032 once per service; supervisors receive that
+captured key through a private descriptor, never argv or a disk manifest.
+
+Raw events (16 KiB blocks), projection/checkpoints and anchors are committed
+together. A bounded 1 MiB queue and 250 ms write budget limit capture pressure.
+Loss marks capture incomplete while draining and execution continue. Projection
+state failures close default text/search access; explicit raw reads remain
+unsanitized base64. Per-stream order is exact; merged order is observed order.
+
+Permanent lifecycle/recovery and 64 owner-slot locks protect reset, admission
+and generation recovery. The Linux supervisor retains inherited leases through
+group retirement, drain, persistence, reap and close, including coordinator
+death. Recovery never signals stored PIDs. Unproven cleanup quarantines admission;
+operators must stop old execution groups before explicit reset. The Linux proof
+and forced-helper-loss limits are recorded in the
+[supervisor evidence](feat/wip/routine-command-capture/supervisor-proof.md).
+
+Store-authoritative TTL/quota/version/accounting policy can change only after
+all handles/helpers release lifecycle ownership. Opens close/release and retry
+under exclusive ownership, never upgrade a shared flock in place. Admission
+records TTL/revision; terminal expiry is immutable. Expired and old completed
+logs can be evicted in bounded work; active runs are protected. Accounting includes
+raw/projection/metadata reservations and lazy FTS debit (dbstat or conservative
+used-page accounting). Physical main/WAL sizes are distinct from quota.
+
+`runstore.Inspect` authenticates read-only under an existing shared lifecycle
+lease, with a two-second context. It creates no store/locks, owner generation,
+reconciliation, maintenance, policy revision or index. Shared platform formatting
+serves CLI doctor, MCP doctor and MCP stats: safe path/capacity/policy/usage plus
+at most eight recent status/expiry/byte summaries. No program, output or stored
+error text is displayed. Saved unfinished rows are not liveness evidence;
+`Service.WorkCounts` reports only the receiving MCP owner's reservations.
+
+Run reset is CLI-only, keyless and explicitly destructive. It requires exclusive
+lifecycle ownership and removes only the DB/known sidecars, retaining permanent
+locks. `capy encrypt` rotates knowledge only and warns before/after: changing
+the selected credential requires explicit per-owner run discard in v1.
+There is no run-rekey preservation path. See the runnable
+[operator workflow](reference/runs.md) and normative
+[execution contracts](feat/wip/routine-command-capture/contracts.md).
+
+## Knowledge ingestion
 
 ### File ingestion
 
@@ -644,14 +694,14 @@ directory/project-identity split and its module-discovery compatibility cost.
 
 - **Process group isolation** (`Setpgid`) — kills entire process tree on cleanup
 - **Environment sanitization** — ~50 dangerous env vars stripped (LD_PRELOAD, NODE_OPTIONS, etc.)
-- **Output hard cap** — process killed if stdout+stderr exceeds 100MB
-- **Timeout enforcement** — configurable per-call, default 30s
+- **Captured output** — bounded queues and per-run/store quotas; exhaustion marks capture incomplete and continues draining without killing execution
+- **Timeout enforcement** — captured calls consume configured seconds (default 300) unless explicit per-call milliseconds override them
 - **Shell-escape detection** — non-shell languages scanned for embedded shell commands
-- **Background mode** — process survives timeout; captured output is snapshotted,
-  then stdout/stderr are drained and discarded without retaining later bytes.
-  The single process waiter removes detached temporary files and retires its
-  background entry on exit; shutdown sends SIGTERM to tracked groups. See
-  [ADR-005](adr/005-background-mode-output-streams.md).
+- **MCP continuation** — `wait_ms` yields while capture continues; legacy
+  execute-only background uses timeout as initial wait without an execution
+  deadline. Both remain owner-bound and are cancelled on shutdown. The historical
+  direct executor API retains ADR-005 behavior for its remaining callers; public
+  captured execution uses the supervisor stream path.
 
 The executor owns stdout/stderr read ends and drains both before reaping the
 leader. A non-reaping exit observer (`waitid` on Linux, `kqueue` on Darwin) keeps
@@ -1516,6 +1566,9 @@ against the repository's **main worktree** so all worktrees share one committed 
 | `capy` / `capy serve` | Start MCP server (stdio transport) |
 | `capy setup` | Configure capy for current project (Claude Code or Codex) |
 | `capy doctor` | Run diagnostics |
+| `capy execute` | Attached command execution with encrypted run capture |
+| `capy runs status/read/list/search` | Bounded recovery by run/batch identity |
+| `capy runs reset --discard` | Explicit keyless run-cache discard after operator quiescence |
 | `capy which` | Print knowledge base path |
 | `capy cleanup` | Remove stale entries; `--vacuum` reclaims freelist pages, `--optimize` rebuilds FTS indexes + VACUUM to reclaim FTS tombstone bloat (ADR-029) |
 | `capy index <path>` | Index a file or bounded directory into the selected project's durable knowledge store |

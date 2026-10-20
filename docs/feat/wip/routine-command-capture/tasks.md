@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–15 done; Tasks 16–17 pending
+> Status: in-progress — Tasks 1–16 done; Task 17 pending
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -264,7 +264,7 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ## Task 16: Document and diagnose the complete operator workflow
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 15
 - **Size:** M
 - **Can run in parallel with:** —
@@ -272,9 +272,18 @@ Default output projection and later run actions remain explicitly unavailable.
 
 ### Subtasks
 
-- [ ] 16.1 Extend safe bounded diagnostics/stats without creating stores or claiming activation → verify: CLI/MCP parity, capacity/policy visibility and secret-free output.
-  - Aggregate yielded-run bytes through owner completion without double-counting response-time samples; Task 6 currently records response-time bytes only. Per-run capture metadata already exposes later bytes.
-- [ ] 16.2 Update README, architecture, help, AGENTS and predecessor pointers; publish reset-only v1 rotation/rollback → verify: every documented operator action exists and unsupported preservation promises are removed.
+- [x] 16.1 Extend safe bounded diagnostics/stats without creating stores or claiming activation → verify: CLI/MCP parity, capacity/policy visibility and secret-free output.
+  - Yielded-run bytes now aggregate once through owner completion, including each batch child; response-time samples and recovery queries do not recount them.
+- [x] 16.2 Update README, architecture, help, AGENTS and predecessor pointers; publish reset-only v1 rotation/rollback → verify: every documented operator action exists and unsupported preservation promises are removed.
+
+**Evidence:** [Task 16 verification](task16-verification.md) · [isolated review](task16-code-review.md).
+Read-only bounded diagnostics, policy/capacity/usage visibility, completion byte
+accounting and reset/rotation guidance pass. Full FTS5 coverage passes across the
+initial sandbox run and socket-enabled config/server reruns. Final focused races,
+race-instrumented compiled CLI/MCP checks, artifact drift guards, build and vet
+pass. Independent review approved after wiring the documented legacy preview
+limit without restricting capture. External review was unavailable. Task 17
+installed acceptance and final feature readiness remain pending.
 
 ## Task 17: Verify installed acceptance and release readiness
 

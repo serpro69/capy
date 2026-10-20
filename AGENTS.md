@@ -20,10 +20,12 @@ internal/
   adapter/          Platform adapter interface (HookAdapter) + Claude Code and Codex implementations
   config/           TOML config loading with 3-level precedence, project root detection, DB path resolution
   executor/         Polyglot code executor (11 languages), process group isolation, output truncation
+  execution/        Shared MCP/CLI admission, Linux per-run supervisor, owner scheduling and bounded responses
   giturl/           Git platform URL detection (GitHub/GitLab/Bitbucket/Gitea)
   hook/             Hook event dispatch: PreToolUse routing, guidance, security, subagent injection
   platform/         Setup command (writes hooks/MCP config), doctor diagnostics, routing instructions
   retrieval/        Corpus-agnostic FTS5 retrieval core: RRF two-layer fusion, rerank, entity boosting, query sanitization — shared by store (knowledge) and vault (session chunks) via the Corpus interface (ADR-028)
+  runstore/         Separate encrypted owner-local run capture/projection, lazy FTS, leases, quota and read-only diagnostics
   sanitize/         Secret stripping (regex-based redaction of API keys, tokens, credentials)
   security/         Settings parsing, glob matching, command splitting, shell-escape detection
   server/           MCP server, 11 tool handlers, stats tracking, lifecycle guard, intent search, cross-corpus vault federation
@@ -36,6 +38,9 @@ internal/
 
 ### Critical Invariants
 
+- **Captured commands use run storage.** MCP execute/file/batch and CLI execute share `internal/execution`; new output never becomes knowledge sources. Runs live at `<selected-owner>/.capy/runs/runs.db`, even when worktrees share a knowledge DB. Capture admission precedes spawn; mid-run capture failure drains without killing execution. Default text/search use persisted sanitized projection; raw reads require explicit unsanitized base64. Jobs remain owner-bound; logs survive restart subject to TTL/quota. See [operator workflow](docs/reference/runs.md).
+- **Run diagnostics do not perform recovery.** `runstore.Inspect` uses read-only authentication under an existing lifecycle lease, never initializes storage/locks, claims owners, reconciles, maintains or changes policy. Its recent-state sample is bounded and excludes programs/output/stored error strings. Unfinished metadata is not proof of live work. Byte totals are counted once at owner completion, including yielded runs and batch children; response-time samples and later reads must not count again.
+- **Run rotation is explicit discard in v1.** `capy encrypt` rotates knowledge only and warns before/after rotation. Stop all owners and old execution groups, update the selected credential, then explicitly `capy runs reset --discard` per affected owner; no run-rekey or preservation promise. Reset requires exclusive lifecycle ownership, deletes only the known DB/sidecars, and preserves permanent locks. Never reset automatically after `wrong_key` or `cleanup_unverified`.
 - **Encryption is mandatory.** Normal knowledge access resolves `store.key_file` → database-owner `.env` → distinct main-worktree `.env` → inherited `CAPY_DB_KEY` (ADR-032). Invalid selected credentials fail without fallback. Store/server instances capture one key for all connections; an explicit empty key fails before filesystem side effects. Vault credentials remain environment-only via `CAPY_VAULT_KEY`; wrappers never source `.env`. Tests require both synthetic environment keys. `capy encrypt` keeps its separate prompted-old / environment-or-prompted-new key contract.
 - **FTS5 build tag required.** All builds and tests must use `-tags fts5`. The Makefile handles this.
 - **WAL checkpoint on close.** The connection pool must be closed before checkpointing (see `store.go:Close()` and ADR-016).

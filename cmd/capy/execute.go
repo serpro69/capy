@@ -78,7 +78,7 @@ func newExecuteCmd() *cobra.Command {
 		}
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		service := execution.NewCLIService(target.projectDir, key, target.cfg.Runs)
+		service := execution.NewCLIService(target.projectDir, key, target.cfg.Runs, execution.WithPreviewLimit(target.cfg.Executor.MaxOutputBytes))
 		result := service.Execute(ctx, executor.ExecRequest{Language: executor.Language(language), Code: code, Cwd: cwd}, strings.TrimSpace(intent), time.Duration(timeoutMS)*time.Millisecond)
 		exit := execution.CLIExitCode(result)
 		if err := service.Close(); err != nil {

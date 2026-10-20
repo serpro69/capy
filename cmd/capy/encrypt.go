@@ -23,6 +23,10 @@ already-encrypted one.
 
 Before running, stop all servers and other processes using the target database.
 This command does not stop them automatically.
+Also stop run owners and their execution groups. This rotates knowledge only:
+existing run logs remain encrypted with the old key. After updating the selected
+credential, explicitly run capy runs reset --discard for each affected owner.
+Reset permanently deletes that owner's run logs; v1 has no run-log rekey.
 
 Initial encryption:
   1. Set CAPY_DB_KEY in your shell profile (32+ chars recommended).
@@ -66,6 +70,9 @@ func runEncryptWithPrompts(cmd *cobra.Command, readPassphrase, confirmPassphrase
 	}
 	dbPath = resolveDBSymlink(dbPath)
 
+	if _, err := fmt.Fprintln(cmd.ErrOrStderr(), runRotationWarning); err != nil {
+		return fmt.Errorf("writing run-cache rotation warning: %w", err)
+	}
 	oldKey, err := readPassphrase("Current DB passphrase (empty if unencrypted): ")
 	if err != nil {
 		return fmt.Errorf("reading current passphrase: %w", err)
@@ -91,6 +98,8 @@ func runEncryptWithPrompts(cmd *cobra.Command, readPassphrase, confirmPassphrase
 	}
 	return rekeyEncrypted(dbPath, oldKey, newKey)
 }
+
+const runRotationWarning = "capy encrypt: knowledge only; run logs are not rekeyed. Stop all affected run owners and old execution groups. After updating the selected credential, explicitly run capy runs reset --discard for each affected owner (permanently deletes its run logs). V1 has no run-log-preserving rekey."
 
 // resolveDBSymlink resolves dbPath through any symlinks so the swap in
 // sqliteutil.SwapAndVerify renames the real file rather than replacing the
@@ -179,6 +188,7 @@ func printRekeyDone(dbPath, bakPath string) {
 	fmt.Printf("capy encrypt: backup at %s\n", bakPath)
 	fmt.Println("capy encrypt: update any project credential (store.key_file or CAPY_DB_KEY in .env) " +
 		"to the new passphrase before restarting servers or other database users.")
+	fmt.Println(runRotationWarning)
 }
 
 func openUnencrypted(dbPath string) (*sql.DB, error) {

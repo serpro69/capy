@@ -497,6 +497,8 @@ batch migration and global query recovery are verified in
 recognition and policy inspection are verified in
 [Task 14 evidence](task14-verification.md). Task 15 strict Codex routing, availability
 observations and synchronized guidance are verified in
-[Task 15 evidence](task15-verification.md). Tasks 16–17 remain pending.
+[Task 15 evidence](task15-verification.md). Task 16 diagnostics, completion
+accounting and operator documentation are verified in
+[Task 16 evidence](task16-verification.md). Task 17 remains pending.
 These slices do not substitute for installed acceptance or independent
 design/code/spec review of the remaining feature.

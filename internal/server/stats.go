@@ -4,19 +4,25 @@ import (
 	"maps"
 	"sync"
 	"time"
+
+	"github.com/serpro69/capy/internal/runstore"
 )
 
 // SessionStats tracks per-session usage metrics for the MCP server.
 type SessionStats struct {
-	SessionStart    time.Time
-	Calls           map[string]int
-	BytesReturned   map[string]int64
-	BytesIndexed    int64
-	BytesSandboxed  int64
-	CacheHits       int64
-	CacheMisses     int64
-	CacheBytesSaved int64
-	mu              sync.Mutex
+	SessionStart     time.Time
+	Calls            map[string]int
+	BytesReturned    map[string]int64
+	BytesIndexed     int64
+	BytesSandboxed   int64
+	CacheHits        int64
+	CacheMisses      int64
+	CacheBytesSaved  int64
+	RunObservedBytes int64
+	RunCapturedBytes int64
+	RunsCompleted    int64
+	RunsIncomplete   int64
+	mu               sync.Mutex
 }
 
 // NewSessionStats creates a new SessionStats with initialized maps.
@@ -48,6 +54,20 @@ func (s *SessionStats) AddBytesSandboxed(n int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.BytesSandboxed += n
+}
+
+// RecordRunCompletion counts owner outcomes, never response-time samples or
+// query reads. Batch children use the same path; the batch aggregate is not added.
+func (s *SessionStats) RecordRunCompletion(result runstore.Result) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.RunsCompleted++
+	s.RunObservedBytes += result.Capture.ObservedBytes
+	s.RunCapturedBytes += result.Capture.CapturedBytes
+	s.BytesSandboxed += result.Capture.ObservedBytes
+	if result.Capture.State == "incomplete" || !result.Capture.TerminalPersisted {
+		s.RunsIncomplete++
+	}
 }
 
 // AddCacheHit records a TTL cache hit and its estimated byte savings.
@@ -94,6 +114,10 @@ func (s *SessionStats) Reset() {
 	s.CacheHits = 0
 	s.CacheMisses = 0
 	s.CacheBytesSaved = 0
+	s.RunObservedBytes = 0
+	s.RunCapturedBytes = 0
+	s.RunsCompleted = 0
+	s.RunsIncomplete = 0
 }
 
 // Snapshot returns a copy of the current stats, safe for concurrent reads.
@@ -107,13 +131,17 @@ func (s *SessionStats) Snapshot() SessionStats {
 	maps.Copy(bytesReturned, s.BytesReturned)
 
 	return SessionStats{
-		SessionStart:    s.SessionStart,
-		Calls:           calls,
-		BytesReturned:   bytesReturned,
-		BytesIndexed:    s.BytesIndexed,
-		BytesSandboxed:  s.BytesSandboxed,
-		CacheHits:       s.CacheHits,
-		CacheMisses:     s.CacheMisses,
-		CacheBytesSaved: s.CacheBytesSaved,
+		SessionStart:     s.SessionStart,
+		Calls:            calls,
+		BytesReturned:    bytesReturned,
+		BytesIndexed:     s.BytesIndexed,
+		BytesSandboxed:   s.BytesSandboxed,
+		CacheHits:        s.CacheHits,
+		CacheMisses:      s.CacheMisses,
+		CacheBytesSaved:  s.CacheBytesSaved,
+		RunObservedBytes: s.RunObservedBytes,
+		RunCapturedBytes: s.RunCapturedBytes,
+		RunsCompleted:    s.RunsCompleted,
+		RunsIncomplete:   s.RunsIncomplete,
 	}
 }

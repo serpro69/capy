@@ -375,8 +375,21 @@ capy uses TOML configuration with three-level precedence (lowest to highest):
 # fetch_ttl_hours = 24              # skip re-fetch within this window
 
 [executor]
-# timeout = 30                      # seconds per execution
-# max_output_bytes = 102400         # 100 KB output cap
+# timeout = 300                     # positive seconds per captured execution
+# max_output_bytes = 102400         # deprecated optional preview limit
+
+[runs]
+# wait_ms = 25000                   # MCP only; 0–30000
+# max_response_bytes = 8192         # serialized response; 2048–65536
+# max_active = 4                    # per owner; 1–8
+# max_pending = 64                  # per owner batch inventory; 1–256
+# ttl_hours = 24                    # recorded at admission
+# max_run_bytes = 67108864          # raw capture limit
+# max_retained_bytes = 536870912    # accounted quota, not physical disk cap
+
+[routing.routine]
+# enabled = true                   # Codex routine gate; Claude guidance only
+# native_allow = []                 # Bash(pattern) output-policy exceptions
 
 [server]
 # log_level = "info"                # "debug", "info", "warn", "error"

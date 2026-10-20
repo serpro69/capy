@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,9 +99,12 @@ func TestRunEncrypt_ProjectCredentialsDoNotSelectRotationKeys(t *testing.T) {
 
 					cmd := newEncryptCmd()
 					cmd.Flags().String("project-dir", project, "")
+					var warnings bytes.Buffer
+					cmd.SetErr(&warnings)
 					prompts := []string{}
 					stdout, err := captureEncryptOutput(t, func() error {
 						return runEncryptWithPrompts(cmd, func(prompt string) (string, error) {
+							assert.Contains(t, warnings.String(), runRotationWarning, "data loss warning must precede prompts and rotation")
 							assert.Contains(t, prompt, "Current DB passphrase")
 							prompts = append(prompts, "old")
 							return projectFileTestKey, nil
@@ -117,6 +121,7 @@ func TestRunEncrypt_ProjectCredentialsDoNotSelectRotationKeys(t *testing.T) {
 					}
 					assert.Equal(t, wantPrompts, prompts)
 					assert.Contains(t, stdout, "capy encrypt: done.")
+					assert.Contains(t, stdout, runRotationWarning)
 					assert.Contains(t, stdout, "update any project credential (store.key_file or CAPY_DB_KEY in .env)")
 					assert.Contains(t, stdout, "before restarting servers or other database users")
 					for _, secret := range []string{projectFileTestKey, newKey, vaultKey, "unused-project-vault-key", "cipher=", "key="} {

@@ -18,24 +18,46 @@ Relative code reads and writes use that directory. Script files and `TMPDIR` sta
 
 Non-shell snippets no longer default to a disposable directory. Use an explicit temporary path for outputs you do not intend to leave in the project. Per-call MCP `timeout` uses milliseconds; the TOML executor timeout uses seconds.
 
-With `background: true`, a process that outlasts its timeout returns a PID and partial output while continuing to run. Subsequent stdout/stderr are drained and discarded. **Write continuing logs to an explicit file.** Temporary scripts and `TMPDIR` survive until process exit; server shutdown sends SIGTERM to tracked background process groups. The [executor architecture](../architecture.md#executor) describes cleanup and its limits.
+All execution adapters capture into encrypted owner-local run storage before
+returning bounded version-1 results. The configured deadline defaults to 300
+seconds; `wait_ms` defaults to 25,000 ms and can yield earlier without cancelling
+execution. Recover retained output using `capy_runs` or `capy runs`, independently
+of the knowledge-search budget. CLI execution stays attached.
+
+With legacy execute-only `background: true`, `timeout` becomes the initial wait
+and execution has no deadline; output continues to be captured. It cannot be
+combined with `wait_ms`. Server shutdown cancels its jobs; logs survive restart,
+jobs do not. [Run operations](runs.md) describe cancellation, paging, raw reads,
+retention and the Linux supervisor boundary.
 
 ## Batches
 
-Commands run as submitted, including multiline commands and heredocs. Indexed sections contain stdout followed by stderr, with separation when needed; they do not preserve stream interleaving. Serial batches share a timeout budget and skip remaining commands after timeout. Parallel commands have independent timeouts, with results retained in input order.
+Commands run as submitted, including multiline commands and heredocs. The entire
+inventory is validated before spawn. Each child has a unique run ID and ordinal;
+exact stdout/stderr bytes are stored separately, with merged observation order.
+Serial deadlines include queue time. Parallel children have dispatch-time
+deadlines and an admission-time cutoff for undispatched work. All share owner
+active/pending capacity.
 
-Omit `queries` or supply `[]` to execute and index without searching. Supplied queries must be string arrays; serialized arrays also work.
+Omit `queries` or supply `[]` to capture without indexing/searching. Supplied
+queries must be string arrays; serialized arrays also work.
 
 | `query_scope` | Corpus |
 | --- | --- |
-| `"batch"` (default) | The exact source label generated for this batch. |
-| `"global"` | Durable and ephemeral knowledge in the selected database, including this batch; no vault sessions. |
+| `"batch"` (default) | Available captured output of this batch's child run IDs. |
+| `"global"` | Batch run hits plus separately labelled durable/ephemeral knowledge; no vault sessions. |
 
-Every hit names its source, and responses give a source selector for follow-up searches. **Concurrent batches with identical generated labels can replace each other's content.** Batch scope does not make those labels unique.
+Run hits carry stream/raw anchors and read cursors. Recover all ordinals with
+`capy_runs(action=list,batch_id=...)`, then read each run. A manifest retains child
+terminal status independently of log eviction until its own expiry. Duplicate
+labels are display metadata and do not replace other runs.
 
-Each command section stores a sanitized, normalized preview of at most 500 UTF-8 bytes; skipped commands are marked not executed. Previews count toward source-size admission. Unchanged batches report the retained section count. Captured output remains indexed within executor/source limits even when response inventories omit entries.
-
-The complete serialized result, including JSON escaping, is capped at 81,920 bytes. Command inventories have a 4,096-byte budget; section inventories have an 8,192-byte budget with at most 40 entries and 160-byte titles. Omission counts explain missing inventory items. Execution statistics count captured streams; indexing statistics count the payload including command previews. See [batch implementation](../architecture.md#batch-provenance-and-response-bounds).
+The complete result defaults to 8,192 serialized bytes, including structured
+content, fallback text, metadata and escaping. State and recovery IDs remain
+available when optional content is omitted. `capy_runs` status/read/search are
+successful queries even when the nested command failed. See the
+[public contract](../feat/wip/routine-command-capture/contracts.md) for selectors,
+error states and bounds.
 
 ## File and directory indexing
 

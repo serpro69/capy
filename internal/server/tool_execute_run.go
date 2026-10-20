@@ -18,7 +18,9 @@ func (s *Server) executionService() *execution.Service {
 	s.runsMu.Lock()
 	defer s.runsMu.Unlock()
 	if s.runs == nil {
-		s.runs = execution.NewService(s.projectDir, s.knowledgeKey, s.config.Runs)
+		s.runs = execution.NewService(s.projectDir, s.knowledgeKey, s.config.Runs,
+			execution.WithCompletionObserver(s.stats.RecordRunCompletion),
+			execution.WithPreviewLimit(s.config.Executor.MaxOutputBytes))
 	}
 	return s.runs
 }
@@ -118,7 +120,6 @@ func (s *Server) handleCapturedExecute(ctx context.Context, req mcp.CallToolRequ
 		response, err = s.buildRunResult(result)
 		return err
 	})
-	s.stats.AddBytesSandboxed(result.Capture.ObservedBytes)
 	if err != nil {
 		result.Error = &runstore.Error{Code: "response_unavailable", Message: "Response preparation failed; attached execution was cancelled. Recover this run before retrying."}
 		return s.runResultForTool(toolName, result), nil

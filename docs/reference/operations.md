@@ -17,8 +17,17 @@ Files merge from global `~/.config/capy/config.toml` (or `XDG_CONFIG_HOME`) thro
 | `store.cleanup.session_ttl_days` | `60` | Legacy session sources in the knowledge store; minimum 1. Does not expire vault archives. |
 | `store.cleanup.auto_prune` | `false` | Reserved configuration; automatic durable pruning is not implemented. |
 | `store.cache.fetch_ttl_hours` | `24` | Default remote freshness, independent of retention. |
-| `executor.timeout` | `30` | Seconds per execution. |
-| `executor.max_output_bytes` | `102400` | Captured-output limit in bytes. |
+| `executor.timeout` | `300` | Positive integral seconds; explicit MCP/CLI milliseconds override it. |
+| `executor.max_output_bytes` | `102400` | Deprecated optional preview limit; does not discard captured output. |
+| `runs.wait_ms` | `25000` | MCP response wait, 0–30,000 ms; independent of execution deadline. |
+| `runs.max_response_bytes` | `8192` | Complete serialized run/query response, 2,048–65,536 bytes. |
+| `runs.max_active` | `4` | Per-owner active/finalizing standalone and batch children, 1–8. |
+| `runs.max_pending` | `64` | Per-owner pending batch inventory, 1–256. |
+| `runs.ttl_hours` | `24` | Positive admission-time TTL; terminal expiry is immutable. |
+| `runs.max_run_bytes` | `67108864` | Positive raw capture limit; no larger than retained quota. |
+| `runs.max_retained_bytes` | `536870912` | Positive accounted quota, not an exact physical disk ceiling. |
+| `routing.routine.enabled` | `true` | Mandatory capture for recognized native Codex routines; false explicitly disables it. |
+| `routing.routine.native_allow` | `[]` | Per-element `Bash(pattern)` output-policy exceptions; never bypass security. |
 | `server.log_level` | `"info"` | Log verbosity. |
 | `search.window_ms` | `60000` | Shared MCP search window; 1,000–3,600,000 ms. |
 | `search.taper_after` | `3` | Later calls return at most one hit per query. |
@@ -26,6 +35,10 @@ Files merge from global `~/.config/capy/config.toml` (or `XDG_CONFIG_HOME`) thro
 | `vault.min_session_bytes` | `0` | Minimum size for new archives; zero disables. |
 
 Search fields merge by presence. Zero, wrong types, and out-of-range values fail; the merged thresholds require `1 <= taper_after < block_after <= 10000`. Restart MCP to load changes. Other fields have their own merge rules; do not assume zero clears an inherited value. See [configuration internals](../architecture.md#configuration).
+
+Run fields also merge by presence; explicit zero is accepted only for `wait_ms`.
+Store-wide policy changes require quiescence across owners, readers and supervisors.
+See [run operations](runs.md) for capture, diagnostics, rotation and rollout.
 
 ## Permission rules
 
@@ -115,8 +128,8 @@ The following caller changes accompanied the selective context-mode sync from `f
 | Shell and Read policies | Malformed/unsupported syntax fails closed. Use ordinary quoted heredoc delimiters, `//` for absolute Read patterns, and an explicit Read allow for external execute-file paths. |
 | Boolean arguments | Strings now take effect: `dry_run: "false"` applies eviction. Numeric/abbreviated truth values are rejected. |
 | Search inputs and source selectors | Invalid inputs fail before spending budget. Percent, underscore, and backslash in source selectors are literal rather than SQL wildcards. |
-| Batches | Queries are optional; global scope searches knowledge only. Results are bounded, and stdout/stderr are stored sequentially. Identical generated labels can collide. |
-| Background output | Output after detachment is discarded. Write persistent logs to a file. |
+| Batches | Historical sync used knowledge labels and sequential stdout/stderr sections. Captured runs supersede that path with unique batch/child IDs, exact per-stream bytes, optional lazy search and global knowledge results labelled separately. |
+| Background output | Historical sync discarded output after detachment. Captured execution now retains later bytes; jobs remain owner-bound. Prefer an execution deadline with `wait_ms`. |
 | Fetch caching | Legacy entries revalidate once. Successful unchanged fetches renew freshness but not retention. Conversion failures keep the old entry and return an error. |
 | File refresh | Checks have persisted order and per-pass limits; results may still contain cached content. |
 | Plaintext chunks | Same-hash legacy content is not rechunked; use the [explicit repair procedure](tools.md#cleanup-and-older-chunks). |
@@ -129,6 +142,13 @@ v0.16.4 ignores `store.key_file` while retaining `store.path`; before downgradin
 Verification provenance and unresolved implementation work remain in the [upstream acceptance record](../feat/done/upstream-sync-v1.0.169/verification.md#task-20-final-verification-and-compatibility) and [deferred-work record](../feat/done/upstream-sync-v1.0.169/upstream-audit.md#deferred-work-with-concrete-next-steps). These retain the tested scope and next steps for per-agent budgets, atomic policy/read handoff, colliding batch labels, structured chunk limits, and tool discovery.
 
 ## Doctor and integration diagnostics
+
+Run inspection is shared by CLI/MCP doctor and MCP stats, never creates a run
+store, and does not reconcile or apply policy. It reports existing policy/usage
+and up to eight recent states; live capacity is available only for the receiving
+MCP owner. Missing credentials, wrong keys, incompatible policy and busy storage
+have bounded repair messages. [Run diagnostics](runs.md#storage-policy-and-diagnostics)
+explain byte totals and why inspection cannot prove hook activation.
 
 Normal knowledge access uses the selected project's merged configuration even when the main worktree owns its database. `capy which` resolves the path without reading credentials; checkpointing a missing database is a keyless no-op. Help, setup, version, and hook dispatch do not require a knowledge key. See [credential ownership and connection lifetime](../architecture.md#knowledge-credential-flow).
 

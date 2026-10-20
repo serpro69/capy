@@ -85,6 +85,15 @@ func (s *Server) handleStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.C
 		}
 	}
 
+	lines = append(lines, "", "### Captured runs", "",
+		fmt.Sprintf("Completed owner outcomes: %d; incomplete/unpersisted capture: %d.", snap.RunsCompleted, snap.RunsIncomplete),
+		fmt.Sprintf("Observed output: %d bytes; captured output: %d bytes. Totals are recorded once at owner completion, including yielded runs and each batch child. Active-run bytes appear in status. Captured totals are historical, not current retained storage.", snap.RunObservedBytes, snap.RunCapturedBytes),
+		"Run returned bytes measure serialized results, including metadata; older text tools count text bytes. Neither measures host framing.",
+	)
+	for _, check := range s.runChecks(ctx) {
+		lines = append(lines, check.String())
+	}
+
 	// Knowledge base stats (only if store was initialized)
 	if s.store != nil {
 		kbStats, err := s.store.Stats(s.ephemeralTTL(), s.sessionTTL())

@@ -46,6 +46,7 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 
 	// Knowledge base — use store directly for richer stats
 	results = append(results, s.knowledgeChecks()...)
+	results = append(results, s.runChecks(ctx)...)
 
 	// Vault — opt-in session archive. When enabled, surface the reindex backlog
 	// loudly (design vault-session-search D4: the chunk backfill is manual via
@@ -62,6 +63,19 @@ func (s *Server) handleDoctor(ctx context.Context, _ mcp.CallToolRequest) (*mcp.
 
 	text := platform.FormatDiagnostics(results)
 	return s.trackToolResponse("capy_doctor", textResult(text)), nil
+}
+
+func (s *Server) runChecks(ctx context.Context) []platform.CheckResult {
+	results := platform.CheckRuns(ctx, s.projectDir, s.knowledgeKey, s.config.Runs)
+	s.runsMu.Lock()
+	runs := s.runs
+	s.runsMu.Unlock()
+	active, pending := 0, 0
+	if runs != nil {
+		active, pending = runs.WorkCounts()
+	}
+	return append(results, platform.CheckResult{Name: "Run owner", Status: platform.Pass,
+		Detail: fmt.Sprintf("this MCP owner: active=%d pending=%d; cancel through this owner with capy_runs(action=cancel,run_id=...) or batch_id", active, pending)})
 }
 
 // knowledgeChecks uses the server's snapshot, without re-reading credentials.

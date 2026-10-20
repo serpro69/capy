@@ -592,3 +592,9 @@ The [implementation follow-ups](implementation.md#6-follow-ups) record the
 proposed claude-toolbox enhancement and remaining #132 output-policy work. Do
 not close #132 solely on completion of this feature or describe the upstream
 cleanup as already shipped.
+
+The successor [routine-command-capture tasks](../routine-command-capture/tasks.md)
+now implement the routine gate and recoverable output. Use the
+[run operations guide](../../../reference/runs.md) for current behavior,
+rotation and rollback; disable the routine gate before downgrading. Its final
+installed acceptance remains Task 17, separate from this predecessor's evidence.
