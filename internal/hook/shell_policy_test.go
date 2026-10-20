@@ -61,6 +61,8 @@ func TestShellPolicyHookDecisions(t *testing.T) {
 		{"array expansion denied", `values=($(blocked arg))`, "deny"},
 		{"heredoc expansion deny", "cat <<EOF\n$(blocked arg)\nEOF", "deny"},
 		{"matched ask", "echo ok; confirm arg", "ask"},
+		{"capture deny", `capy --project-dir /other execute --code 'blocked arg'`, "deny"},
+		{"capture ask", `capy execute --code 'confirm arg'`, "ask"},
 		{"unmatched ask passes", "echo ok; unknown arg", ""},
 		{"literal passes", "cat <<'EOF'\n$(blocked literal)\nEOF", ""},
 	} {
@@ -82,6 +84,7 @@ func TestHookEmbeddedArgv(t *testing.T) {
 		{"literal deny", `subprocess.run(["blocked", "foo("])`, "deny"},
 		{"literal ask", `subprocess.run(["confirm", "foo("])`, "ask"},
 		{"actual shell", `subprocess.run(["bash", "-c", "blocked arg"])`, "deny"},
+		{"actual capture", `subprocess.run(["capy", "execute", "--code", "blocked arg"])`, "deny"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			policies := []security.SecurityPolicy{{Deny: []string{"Bash(blocked:*)"}, Ask: []string{"Bash(confirm:*)"}}}

@@ -10,7 +10,7 @@ import (
 // checkDenyPolicy checks a shell command against deny policies.
 // Returns an error result if denied or scanning fails, nil if allowed.
 func (s *Server) checkDenyPolicy(command string) *mcp.CallToolResult {
-	decision, err := security.EvaluateCommandDenyOnly(command, s.security)
+	decision, err := security.EvaluateProgram(command, "shell", s.security, true)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Command blocked: %v", err))
 	}
@@ -26,21 +26,15 @@ func (s *Server) checkDenyPolicy(command string) *mcp.CallToolResult {
 // checkNonShellDenyPolicy extracts shell commands from non-shell code and
 // checks each against deny policies. Scanner failures block execution.
 func (s *Server) checkNonShellDenyPolicy(code, language string) *mcp.CallToolResult {
-	commands := security.ExtractEmbeddedCommands(code, language)
-	if len(commands) == 0 {
-		return nil
+	decision, err := security.EvaluateProgram(code, language, s.security, true)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Embedded shell command blocked: %v", err))
 	}
-	for _, cmd := range commands {
-		decision, err := security.EvaluateEmbeddedCommandDenyOnly(cmd, s.security)
-		if err != nil {
-			return errorResult(fmt.Sprintf("Embedded shell command blocked: %v", err))
-		}
-		if decision.Decision == "deny" {
-			return errorResult(fmt.Sprintf(
-				"Command blocked by security policy: embedded shell command matches deny pattern %s",
-				decision.MatchedPattern,
-			))
-		}
+	if decision.Decision == "deny" {
+		return errorResult(fmt.Sprintf(
+			"Command blocked by security policy: embedded shell command matches deny pattern %s",
+			decision.MatchedPattern,
+		))
 	}
 	return nil
 }

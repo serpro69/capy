@@ -1,6 +1,6 @@
 # Implementation: routine command capture
 
-> Status: Tasks 1–16 complete and verified; Task 17 pending
+> Status: Tasks 1–17 complete and verified
 > Architecture: [design.md](design.md) · Contract: [contracts.md](contracts.md) · Tasks: [tasks.md](tasks.md)
 > Reviews: [first dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
 
@@ -297,6 +297,10 @@ without restricting capture or explicit retrieval.
   version reload/rollback/owner-policy changes have runnable instructions.
 
 ## Task 17: Verify installed acceptance and release readiness
+
+Current evidence: [verification](task17-verification.md),
+[isolated code review](task17-code-review.md), and
+[isolated specification review](task17-spec-review.md).
 
 - Record trusted actual Codex/MCP/sandboxed-CLI behavior and Claude guidance-only
   scope → verify: one execution, mixed-policy denial, owner/worktree selection,

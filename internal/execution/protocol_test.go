@@ -72,3 +72,22 @@ func TestStartupValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestStartupBytePathPreservesStrictProtocol(t *testing.T) {
+	start := Startup{Version: 1, RunID: "11111111-1111-4111-8111-111111111111", Generation: "22222222-2222-4222-8222-222222222222", StorePath: "/owner-\xff/runs.db"}
+	var frame bytes.Buffer
+	if err := writeFrame(&frame, start); err != nil {
+		t.Fatal(err)
+	}
+	var decoded Startup
+	if err := readFrame(&frame, &decoded); err != nil || decoded != start {
+		t.Fatalf("byte path round trip: %+v, %v", decoded, err)
+	}
+	frame.Reset()
+	if err := writeFrame(&frame, map[string]any{"version": 1, "store_path": "/test", "unexpected": true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := readFrame(&frame, &decoded); err == nil {
+		t.Fatal("custom startup decoder accepted an unknown field")
+	}
+}

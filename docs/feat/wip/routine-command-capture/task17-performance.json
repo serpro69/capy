@@ -1,0 +1,243 @@
+{
+  "baseline_commit": "595018f",
+  "candidate_base_commit": "3dc03a2",
+  "candidate_includes_task17_working_changes": true,
+  "method": "6 samples x 3 benchmark iterations; other validation running; descriptive medians, not statistical proof",
+  "benchmarks": {
+    "BenchmarkExecutorOverhead/shell/executor-16": {
+      "baseline": {
+        "samples": 6,
+        "ns/op": 1210064.0,
+        "B/op": 193578.5,
+        "allocs/op": 909.0
+      },
+      "candidate": {
+        "samples": 6,
+        "ns/op": 1203512.0,
+        "B/op": 193413.0,
+        "allocs/op": 909.5
+      },
+      "latency_percent_change": -0.54
+    },
+    "BenchmarkExecutorOverhead/shell/direct-16": {
+      "baseline": {
+        "samples": 6,
+        "ns/op": 802687.0,
+        "B/op": 29850.0,
+        "allocs/op": 45.5
+      },
+      "candidate": {
+        "samples": 6,
+        "ns/op": 870381.5,
+        "B/op": 29690.0,
+        "allocs/op": 45.0
+      },
+      "latency_percent_change": 8.43
+    },
+    "BenchmarkExecutorOverhead/javascript/executor-16": {
+      "baseline": {
+        "samples": 6,
+        "ns/op": 20517255.0,
+        "B/op": 189379.5,
+        "allocs/op": 901.0
+      },
+      "candidate": {
+        "samples": 6,
+        "ns/op": 21388643.5,
+        "B/op": 190738.0,
+        "allocs/op": 902.0
+      },
+      "latency_percent_change": 4.25
+    },
+    "BenchmarkExecutorOverhead/javascript/direct-16": {
+      "baseline": {
+        "samples": 6,
+        "ns/op": 19563229.5,
+        "B/op": 29706.0,
+        "allocs/op": 45.0
+      },
+      "candidate": {
+        "samples": 6,
+        "ns/op": 20367418.5,
+        "B/op": 29706.0,
+        "allocs/op": 45.0
+      },
+      "latency_percent_change": 4.11
+    },
+    "BenchmarkExecutorOverhead/python/executor-16": {
+      "baseline": {
+        "samples": 6,
+        "ns/op": 11260618.5,
+        "B/op": 187890.5,
+        "allocs/op": 901.0
+      },
+      "candidate": {
+        "samples": 6,
+        "ns/op": 11507311.5,
+        "B/op": 191125.0,
+        "allocs/op": 901.5
+      },
+      "latency_percent_change": 2.19
+    },
+    "BenchmarkExecutorOverhead/python/direct-16": {
+      "baseline": {
+        "samples": 6,
+        "ns/op": 10565714.0,
+        "B/op": 29634.0,
+        "allocs/op": 45.0
+      },
+      "candidate": {
+        "samples": 6,
+        "ns/op": 11944578.0,
+        "B/op": 29634.0,
+        "allocs/op": 45.0
+      },
+      "latency_percent_change": 13.05
+    },
+    "BenchmarkSearchByTier/fuzzy+rrf(porter+trigram)-16": {
+      "baseline": {
+        "samples": 6,
+        "ns/op": 1628717.0,
+        "B/op": 85507.5,
+        "allocs/op": 956.5
+      },
+      "candidate": {
+        "samples": 6,
+        "ns/op": 1366146.5,
+        "B/op": 78375.5,
+        "allocs/op": 946.5
+      },
+      "latency_percent_change": -16.12
+    },
+    "BenchmarkSearchByTier/porter-16": {
+      "baseline": {
+        "samples": 6,
+        "ns/op": 2089970.0,
+        "B/op": 106402.0,
+        "allocs/op": 1177.0
+      },
+      "candidate": {
+        "samples": 6,
+        "ns/op": 1703359.0,
+        "B/op": 113370.5,
+        "allocs/op": 1179.5
+      },
+      "latency_percent_change": -18.5
+    },
+    "BenchmarkSearchByTier/rrf(porter+trigram)-16": {
+      "baseline": {
+        "samples": 6,
+        "ns/op": 2003975.5,
+        "B/op": 157392.0,
+        "allocs/op": 1524.0
+      }
+    },
+    "BenchmarkSearchByTier/trigram-16": {
+      "baseline": {
+        "samples": 6,
+        "ns/op": 913721.0,
+        "B/op": 19327.5,
+        "allocs/op": 415.0
+      },
+      "candidate": {
+        "samples": 6,
+        "ns/op": 935629.5,
+        "B/op": 25591.5,
+        "allocs/op": 416.0
+      },
+      "latency_percent_change": 2.4
+    },
+    "BenchmarkRunSearch/capture_only-16": {
+      "candidate": {
+        "samples": 6,
+        "ns/op": 24500395.0,
+        "accounted_bytes": 344071.0,
+        "index_bytes": 0.0,
+        "wal_bytes": 927032.0,
+        "B/op": 1541568.0,
+        "allocs/op": 6236.5
+      }
+    },
+    "BenchmarkRunSearch/first_search-16": {
+      "candidate": {
+        "samples": 6,
+        "ns/op": 20185663.0,
+        "accounted_bytes": 1413127.0,
+        "index_bytes": 1069056.0,
+        "wal_bytes": 1977632.0,
+        "B/op": 2027909.0,
+        "allocs/op": 13229.0
+      }
+    },
+    "BenchmarkRunSearch/repeat_search-16": {
+      "candidate": {
+        "samples": 6,
+        "ns/op": 2549751.5,
+        "accounted_bytes": 1413127.0,
+        "index_bytes": 1069056.0,
+        "wal_bytes": 2010592.0,
+        "B/op": 82055.5,
+        "allocs/op": 1194.0
+      }
+    },
+    "BenchmarkRunSearch/fragmented_search-16": {
+      "candidate": {
+        "samples": 6,
+        "ns/op": 258764812.5,
+        "accounted_bytes": 2978159.0,
+        "index_bytes": 1839104.0,
+        "wal_bytes": 4124152.0,
+        "B/op": 14113353.0,
+        "allocs/op": 217303.5
+      }
+    },
+    "BenchmarkStream/plain-16": {
+      "candidate": {
+        "samples": 6,
+        "ns/op": 1082620.0,
+        "MB/s": 15.135,
+        "checkpoint_B": 119.0,
+        "B/op": 63290.0,
+        "allocs/op": 18.0
+      }
+    },
+    "BenchmarkStream/secret-16": {
+      "candidate": {
+        "samples": 6,
+        "ns/op": 210614.0,
+        "MB/s": 78.2,
+        "checkpoint_B": 119.0,
+        "B/op": 320.0,
+        "allocs/op": 1.0
+      }
+    },
+    "BenchmarkStream/private-16": {
+      "candidate": {
+        "samples": 6,
+        "ns/op": 96318.5,
+        "MB/s": 170.165,
+        "checkpoint_B": 121.0,
+        "B/op": 320.0,
+        "allocs/op": 1.0
+      }
+    }
+  },
+  "memory_probes": [
+    {
+      "size": "1m",
+      "maximum_rss_kib": 29312,
+      "captured_bytes": 1048576,
+      "capture": "complete",
+      "exit_code": 0,
+      "elapsed_ms": 661
+    },
+    {
+      "size": "16m",
+      "maximum_rss_kib": 32316,
+      "captured_bytes": 16777216,
+      "capture": "complete",
+      "exit_code": 0,
+      "elapsed_ms": 10342
+    }
+  ]
+}

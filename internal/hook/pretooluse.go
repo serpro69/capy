@@ -277,7 +277,9 @@ func routeCapyTool(toolName string, toolInput map[string]any, policies []securit
 			}
 			commands = append(commands, command)
 		}
-		return checkCommandsSecurity(commands, policies, a)
+		return checkCommandsWithEvaluator(commands, policies, a, func(code string, policies []security.SecurityPolicy) (security.CommandDecision, error) {
+			return security.EvaluateProgram(code, "shell", policies, false)
+		})
 	}
 
 	// Git platform URL enforcement for fetch_and_index (fires every call)
@@ -300,9 +302,13 @@ func checkCommandSecurity(command string, policies []security.SecurityPolicy, a 
 }
 
 func checkCommandsSecurity(commands []string, policies []security.SecurityPolicy, a adapter.HookAdapter) ([]byte, error) {
+	return checkCommandsWithEvaluator(commands, policies, a, security.EvaluateCommand)
+}
+
+func checkCommandsWithEvaluator(commands []string, policies []security.SecurityPolicy, a adapter.HookAdapter, evaluate func(string, []security.SecurityPolicy) (security.CommandDecision, error)) ([]byte, error) {
 	var ask security.CommandDecision
 	for _, command := range commands {
-		result, err := security.EvaluateCommand(command, policies)
+		result, err := evaluate(command, policies)
 		if err != nil {
 			return a.FormatBlock(fmt.Sprintf("Command blocked: %v", err))
 		}
@@ -321,26 +327,9 @@ func checkCommandsSecurity(commands []string, policies []security.SecurityPolicy
 }
 
 func checkCodeSecurity(code, language string, policies []security.SecurityPolicy, a adapter.HookAdapter) ([]byte, error) {
-	if language == "shell" {
-		return checkCommandSecurity(code, policies, a)
-	}
-	var ask security.CommandDecision
-	for _, command := range security.ExtractEmbeddedCommands(code, language) {
-		decision, err := security.EvaluateEmbeddedCommand(command, policies)
-		if err != nil {
-			return a.FormatBlock(fmt.Sprintf("Command blocked: %v", err))
-		}
-		if decision.Decision == "deny" {
-			return formatPolicyDeny(decision, a)
-		}
-		if ask.MatchedPattern == "" && decision.Decision == "ask" && decision.MatchedPattern != "" {
-			ask = decision
-		}
-	}
-	if ask.MatchedPattern != "" {
-		return a.FormatAsk(policyAskReason(ask))
-	}
-	return nil, nil
+	return checkCommandsWithEvaluator([]string{code}, policies, a, func(code string, policies []security.SecurityPolicy) (security.CommandDecision, error) {
+		return security.EvaluateProgram(code, language, policies, false)
+	})
 }
 
 func policyAskReason(decision security.CommandDecision) string {

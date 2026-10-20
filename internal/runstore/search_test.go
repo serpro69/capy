@@ -267,9 +267,15 @@ func TestRunSearchConcurrentCapture(t *testing.T) {
 	defer wo.Lease.Close()
 	active := retentionRun(t, writer, wo, "", false)
 	done := make(chan error, 1)
+	started := make(chan struct{})
+	block := strings.Repeat("capture ", 500) + "\n"
 	go func() {
 		for i := 1; i <= 40; i++ {
-			if err := writer.Append(t.Context(), active.ID, executor.OutputEvent{Sequence: uint64(i), Phase: "run", Stream: "stdout", Data: []byte(strings.Repeat("capture ", 500) + "\n")}); err != nil {
+			err := writer.Append(t.Context(), active.ID, executor.OutputEvent{Sequence: uint64(i), Phase: "run", Stream: "stdout", Data: []byte(block)})
+			if i == 1 {
+				close(started)
+			}
+			if err != nil {
 				done <- err
 				return
 			}
@@ -277,20 +283,55 @@ func TestRunSearchConcurrentCapture(t *testing.T) {
 		}
 		done <- nil
 	}()
+	<-started
 	start := time.Now()
+	// Capture has priority over optional indexing. Under contention a bounded
+	// search may explicitly fail; it must retain coverage and recover later.
+	attempt, attemptErr := s.Search(t.Context(), o, SearchOptions{RunID: searchRun.ID, Queries: []string{"diagnostic"}, Limit: 5})
+	concurrent := time.Since(start)
+	writeErr := <-done // Always join before assertions can abort the fixture.
+	require.NoError(t, writeErr)
+	require.NoError(t, attemptErr)
+	if attempt.Error != nil {
+		require.Equal(t, "index_failed", attempt.Error.Code)
+		require.True(t, attempt.Partial)
+		require.Equal(t, "failed", attempt.Index.State)
+		require.Equal(t, attempt.Error, attempt.Index.Error)
+	}
+	finishSearchRun(t, writer, active.ID, 40*len(block))
+	start = time.Now()
 	page := searchToReady(t, s, o, searchRun.ID, "diagnostic")
 	first := time.Since(start)
 	start = time.Now()
 	searchToReady(t, s, o, searchRun.ID, "diagnostic")
 	repeated := time.Since(start)
-	require.NoError(t, <-done)
-	finishSearchRun(t, writer, active.ID, 40*4001)
+	require.Equal(t, "ready", page.Index.State)
+	require.False(t, page.Partial)
+	require.EqualValues(t, 6000*26, page.Coverage["stdout"])
 	require.NotEmpty(t, page.Results[0].Hits)
+	var claims int
+	require.NoError(t, s.db.QueryRow("SELECT count(*) FROM run_work_claims WHERE run_id=?", searchRun.ID).Scan(&claims))
+	require.Zero(t, claims)
+	var captured bytes.Buffer
+	cursor := ""
+	for {
+		raw, err := writer.ReadRaw(t.Context(), active.ID, "stdout", cursor, 65536)
+		require.NoError(t, err)
+		for _, fragment := range raw.Fragments {
+			captured.Write(fragment.Data)
+		}
+		if raw.EOF {
+			break
+		}
+		require.NotNil(t, raw.NextCursor)
+		cursor = *raw.NextCursor
+	}
+	require.Equal(t, strings.Repeat(block, 40), captured.String())
 	var indexBytes int64
 	require.NoError(t, s.db.QueryRow("SELECT index_bytes FROM run_meta").Scan(&indexBytes))
 	info, err := os.Stat(s.path + "-wal")
 	require.NoError(t, err)
-	t.Logf("concurrent capture: initial=%s repeat=%s accounted=%d index_debit=%d wal=%d mode=%s", first, repeated, accounted(t, s), indexBytes, info.Size(), s.policy.AccountingMode)
+	t.Logf("concurrent capture: attempt=%s post-capture=%s repeat=%s accounted=%d index_debit=%d wal=%d mode=%s", concurrent, first, repeated, accounted(t, s), indexBytes, info.Size(), s.policy.AccountingMode)
 }
 
 func TestRunSearchOptionalBatchRollbackKeepsPreviousCoverage(t *testing.T) {

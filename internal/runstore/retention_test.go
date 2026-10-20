@@ -64,6 +64,54 @@ func accounted(t *testing.T, s *Store) int64 {
 	return total
 }
 
+func TestCaptureEvictsForConservativePageGrowth(t *testing.T) {
+	s, o := retentionStore(t, 8<<20)
+	if s.policy.AccountingMode != "conservative" {
+		t.Skip("requires conservative allocated-page accounting")
+	}
+	old := retentionRun(t, s, o, "old diagnostic marker\n", true)
+	active := retentionRun(t, s, o, "", false)
+	searchToReady(t, s, o, old.ID, "diagnostic")
+	data := []byte(strings.Repeat("x", executor.EventBlockBytes))
+	logical := int64(2*len(data) + eventOverhead + projectionOverhead)
+	// Leave exactly enough logical room. Once indexing exists, conservative
+	// accounting also charges the new payload's allocated SQLite pages.
+	s.policy.MaxRetainedBytes = accounted(t, s) + logical
+	require.NoError(t, s.Append(t.Context(), active.ID, executor.OutputEvent{
+		Sequence: 1, Phase: "run", Stream: "stdout", Data: data,
+	}))
+	_, err := s.Load(t.Context(), old.ID)
+	requireErrorCode(t, err, "run_unavailable")
+	page, err := s.ReadRaw(t.Context(), active.ID, "stdout", "", len(data))
+	require.NoError(t, err)
+	require.Len(t, page.Fragments, 1)
+	require.Equal(t, data, page.Fragments[0].Data)
+	require.LessOrEqual(t, accounted(t, s), s.policy.MaxRetainedBytes)
+}
+
+func TestLiveOwnerUnverifiedCleanupDoesNotExpire(t *testing.T) {
+	s, o := retentionStore(t, 8<<20)
+	row := retentionRun(t, s, o, "recovery evidence\n", false)
+	require.NoError(t, s.Finish(t.Context(), row.ID, Completion{Started: true, Retired: false}))
+	require.NoError(t, s.Quarantine(t.Context()))
+	expireRun(t, s, row.ID)
+	// Keep the owner lease held: a scanner cannot publish the registry flag.
+	report, err := s.Reconcile(t.Context())
+	require.NoError(t, err)
+	require.Zero(t, report.UnverifiedSlots)
+	loaded, err := s.Load(t.Context(), row.ID)
+	require.NoError(t, err)
+	require.Nil(t, loaded.Result.ExpiresAt)
+	require.Equal(t, "cleanup_unverified", loaded.Result.Error.Code)
+	list, err := s.List(t.Context(), ListOptions{Limit: 16})
+	require.NoError(t, err)
+	require.Len(t, list.Entries, 1)
+	require.Equal(t, row.ID, list.Entries[0].RunID)
+	page, err := s.ReadRaw(t.Context(), row.ID, "stdout", "", 100)
+	require.NoError(t, err)
+	require.Equal(t, []byte("recovery evidence\n"), page.Fragments[0].Data)
+}
+
 func expireRun(t *testing.T, s *Store, id string) {
 	t.Helper()
 	r, err := s.Load(t.Context(), id)

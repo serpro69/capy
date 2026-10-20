@@ -11,35 +11,21 @@ import (
 // CheckCLIProgram enforces explicit denies and matched asks before admission.
 // An unmatched default ask remains allowed, following the capture CLI contract.
 func CheckCLIProgram(language executor.Language, code string, policies []security.SecurityPolicy) error {
-	decisions := []security.CommandDecision{}
-	if language == executor.Shell {
-		decision, err := security.EvaluateCommand(code, policies)
-		if err != nil {
-			return &runstore.Error{Code: "permission_denied", Message: "program cannot be checked by the bounded shell policy scanner"}
-		}
-		decisions = append(decisions, decision)
-	} else {
-		for _, command := range security.ExtractEmbeddedCommands(code, string(language)) {
-			decision, err := security.EvaluateEmbeddedCommand(command, policies)
-			if err != nil {
-				return &runstore.Error{Code: "permission_denied", Message: "embedded shell command cannot be checked by the bounded policy scanner"}
-			}
-			decisions = append(decisions, decision)
-		}
+	decision, err := security.EvaluateProgram(code, string(language), policies, false)
+	if err != nil {
+		return &runstore.Error{Code: "permission_denied", Message: "program cannot be checked by the bounded shell policy scanner"}
 	}
 	for _, kind := range []string{"deny", "ask"} {
-		for _, decision := range decisions {
-			if decision.Decision != kind || decision.MatchedPattern == "" {
-				continue
-			}
-			code := "permission_denied"
-			message := "blocked by security policy"
-			if kind == "ask" {
-				code = "approval_required"
-				message = "CLI cannot request approval"
-			}
-			return &runstore.Error{Code: code, Message: fmt.Sprintf("%s: matched %s rule %q from %q", message, kind, decision.MatchedPattern, decision.SourcePath)}
+		if decision.Decision != kind || decision.MatchedPattern == "" {
+			continue
 		}
+		code := "permission_denied"
+		message := "blocked by security policy"
+		if kind == "ask" {
+			code = "approval_required"
+			message = "CLI cannot request approval"
+		}
+		return &runstore.Error{Code: code, Message: fmt.Sprintf("%s: matched %s rule %q from %q", message, kind, decision.MatchedPattern, decision.SourcePath)}
 	}
 	return nil
 }

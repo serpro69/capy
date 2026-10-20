@@ -465,7 +465,8 @@ func (s *Service) withPreview(ctx context.Context, st *runstore.Store, result ru
 			return result
 		}
 	}
-	page, err := st.ReadProjection(ctx, *result.RunID, "merged", "", min(2048, s.policy.MaxResponseBytes/4))
+	budget := min(2048, s.policy.MaxResponseBytes/4)
+	page, err := st.ReadProjection(ctx, *result.RunID, "merged", "", budget/2)
 	if err != nil {
 		result.Redaction.State = "unavailable"
 		result.Redaction.CoverageCursor = nil
@@ -473,6 +474,17 @@ func (s *Service) withPreview(ctx context.Context, st *runstore.Store, result ru
 	}
 	for _, fragment := range page.Fragments {
 		result.Preview += "[" + fragment.Stream + "] " + fragment.Text
+	}
+	if !page.EOF {
+		for _, stream := range []string{"stdout", "stderr"} {
+			tail, err := st.ReadProjectionTail(ctx, *result.RunID, stream, budget/4)
+			if err != nil {
+				continue // The validated head remains a safe diagnostic hint.
+			}
+			for _, fragment := range tail.Fragments {
+				result.Preview += "[" + stream + " tail] " + fragment.Text
+			}
+		}
 	}
 	return result
 }

@@ -95,6 +95,9 @@ FROM runs WHERE id=? AND evicting=0`, id).Scan(&row.Generation, &row.Slot, &prog
 	if json.Unmarshal(program, &row.Program) != nil || json.Unmarshal(result, &row.Result) != nil {
 		return row, storageError()
 	}
+	// A completed result without terminal cleanup is already evidence of
+	// unverified retirement, even while its owner lease prevents reconciliation.
+	unverified = unverified || (!terminal && row.Result.CompletedAt != nil)
 	if unverified && !terminal {
 		// Preserve the last recorded state as evidence, not a fresh assertion of
 		// liveness. Unknown cleanup never expires away or becomes safe reuse.
@@ -315,7 +318,18 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 			if _, err := tx.ExecContext(ctx, "ROLLBACK TO capture_payload"); err != nil {
 				return storageError()
 			}
-			report, err := retain(ctx, tx, s.policy.MaxRetainedBytes, row.chargeBytes, false)
+			before, err := refreshIndexDebit(ctx, tx)
+			if err != nil {
+				return err
+			}
+			// Conservative accounting also charges pages allocated by capture
+			// after the first index exists. Rollback removes that debit, but
+			// eviction must still reserve it or the retry makes no progress.
+			pageGrowth := max(0, used-before)
+			if pageGrowth > s.policy.MaxRetainedBytes-row.chargeBytes {
+				return quotaError()
+			}
+			report, err := retain(ctx, tx, s.policy.MaxRetainedBytes, row.chargeBytes+pageGrowth, false)
 			if err != nil {
 				return err
 			}

@@ -3,7 +3,7 @@
 > Architecture: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress — Tasks 1–16 done; Task 17 pending
+> Status: done — Tasks 1–17 complete and verified
 > Created: 2026-10-16
 > Issue: [#132](https://github.com/serpro69/capy/issues/132)
 > Reviews: [original dispositions](review-resolution.md) · [readiness corrections](readiness-review.md)
@@ -287,7 +287,7 @@ installed acceptance and final feature readiness remain pending.
 
 ## Task 17: Verify installed acceptance and release readiness
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6, Task 7, Task 8, Task 9, Task 10, Task 11, Task 12, Task 13, Task 14, Task 15, Task 16
 - **Size:** S
 - **Can run in parallel with:** —
@@ -295,11 +295,26 @@ installed acceptance and final feature readiness remain pending.
 
 ### Subtasks
 
-- [ ] 17.1 Record live trusted Codex/MCP/sandboxed-CLI and Claude guidance-only acceptance → verify: one execution, policy composition, owner/worktree parity, exceptions and unavailable paths.
-- [ ] 17.2 Record issue-like fixtures plus a real project test run → verify: byte/status/hash recovery, redaction, expiry, handoff, supervisor and policy-change cases.
-- [ ] 17.3 Run $kk:test with FTS5, synthetic keys and isolated homes, including race/subprocess checks → verify: full suite and no orphaned descendants/plaintext spools.
-- [ ] 17.4 Run executor/retrieval performance and make bench-quality with baseline comparison → verify: memory, no-search/first/repeat cost, WAL/index growth and quality regressions dispositioned.
-- [ ] 17.5 Run $kk:document, $kk:review-code with Go input and $kk:review-spec for the whole feature → verify: findings resolved/recorded before claiming #132 complete.
+- [x] 17.1 Record live trusted Codex/MCP/sandboxed-CLI and Claude guidance-only acceptance → verify: one execution, policy composition, owner/worktree parity, exceptions and unavailable paths.
+- [x] 17.2 Record issue-like fixtures plus a real project test run → verify: byte/status/hash recovery, redaction, expiry, handoff, supervisor and policy-change cases.
+- [x] 17.3 Run $kk:test with FTS5, synthetic keys and isolated homes, including race/subprocess checks → verify: full suite and no orphaned descendants/plaintext spools.
+- [x] 17.4 Run executor/retrieval performance and make bench-quality with baseline comparison → verify: memory, no-search/first/repeat cost, WAL/index growth and quality regressions dispositioned.
+- [x] 17.5 Run $kk:document, $kk:review-code with Go input and $kk:review-spec for the whole feature → verify: findings resolved/recorded before claiming #132 complete.
+
+**Evidence:** [Task 17 verification](task17-verification.md),
+[byte/status/hash measurements](task17-acceptance.json),
+[performance measurements](task17-performance.json),
+[isolated code review](task17-code-review.md), and
+[isolated specification review](task17-spec-review.md).
+Six reviewed production corrections and the concurrent-search fixture correction
+pass the full FTS5 suite and final race/subprocess checks. Fresh baseline quality
+comparison retains the documented Task 12 match-layer disposition; comparison
+with the accepted Task 13 report passes. Actual OS confinement passes.
+Live trusted Codex/Claude acceptance, including the default 25-second attached
+wait, is recorded in [selected host evidence](task17-live-acceptance.json).
+Only user-approved disposable-fixture trust was changed through normal host UIs.
+The final independent evidence re-review is conformant with no remaining findings.
+Task 17 and the feature are complete within the recorded Linux/host scope.
 
 ## Dependency Graph
 

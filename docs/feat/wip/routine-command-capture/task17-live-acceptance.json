@@ -1,0 +1,1683 @@
+{
+  "date": "2026-10-20",
+  "binary": {
+    "path": "/tmp/capy-task17/final-bin/capy",
+    "sha256": "798ea1cce2b019a12779a37a30f730d585daf7c59f51d18bb470e1bc6431e049"
+  },
+  "trust": {
+    "user_authorized_fixture_only": true,
+    "project": "/tmp/capy-task17/host-owner",
+    "codex_normal_folder_prompt": true,
+    "codex_normal_hook_browser_active_trusted_count": 5,
+    "claude_normal_folder_prompt": true,
+    "claude_project_mcp_selected": "capy only",
+    "bypass_flags_used": false,
+    "persistent_broad_tool_allow_used": false,
+    "codex_sandbox": "workspace-write",
+    "codex_approval_policy": "on-request",
+    "claude_permission_mode": "default/manual"
+  },
+  "measurement_note": "MCP byte counts reserialize selected observed result objects, excluding host/code-mode framing; not every intermediate result is printed by code mode.",
+  "codex": {
+    "version": "0.163.0",
+    "sessions": [
+      {
+        "id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "agent_path": null,
+        "source_rollout": "rollout-2026-10-20T13-35-29-01a15918-540a-7a52-baa8-e69ec6d74665.jsonl",
+        "capy_guidance_bytes": 3809
+      },
+      {
+        "id": "01a15926-71b1-7491-801b-34492a9e1af7",
+        "agent_path": "/root/task17_child_acceptance",
+        "source_rollout": "rollout-2026-10-20T13-50-54-01a15926-71b1-7491-801b-34492a9e1af7.jsonl",
+        "capy_guidance_bytes": 3809
+      }
+    ],
+    "native_calls": [
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:36:27.708Z",
+        "command": "printf x > native-before; make test",
+        "workdir": null,
+        "sandbox_permissions": "use_default",
+        "output_excerpt": "Command blocked by PreToolUse hook: capy: Routine command capture is required. Nothing in this request ran. Use capy_execute(language, code) or capy_batch_execute; capy execute --code '<program>' is a CLI capture alternative. Availability is not assumed. If capture cannot start, stop and repair it; do not run the command natively. If execution may have started, recover with capy_runs or capy runs before any retry. Only explicit routing.routine operator exceptions permit native routine execution.. Command: printf x > native-before; make test"
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:36:30.142Z",
+        "command": "curl https://example.invalid; make test",
+        "workdir": null,
+        "sandbox_permissions": "use_default",
+        "output_excerpt": "Command blocked by PreToolUse hook: capy: Routine command capture is required. Nothing in this request ran. Use capy_execute(language, code) or capy_batch_execute; capy execute --code '<program>' is a CLI capture alternative. Availability is not assumed. If capture cannot start, stop and repair it; do not run the command natively. If execution may have started, recover with capy_runs or capy runs before any retry. Only explicit routing.routine operator exceptions permit native routine execution.. Command: curl https://example.invalid; make test"
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:54:06.402Z",
+        "command": "make -n test",
+        "workdir": "/tmp/capy-task17/host-owner",
+        "sandbox_permissions": "use_default",
+        "output_excerpt": "Chunk ID: 2382f5\nWall time: 0.0440 seconds\nProcess exited with code 0\nOriginal token count: 23\nOutput:\nprintf x >> executions\npython3 -c 'print(\"PASS synthetic host fixture\\n\" * 8000, end=\"\")'\n"
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:54:09.159Z",
+        "command": "printf TASK17_POLICY_DENY; make -n test",
+        "workdir": "/tmp/capy-task17/host-owner",
+        "sandbox_permissions": "use_default",
+        "output_excerpt": "Command blocked by PreToolUse hook: Blocked by security policy: matches deny pattern Bash(printf *TASK17_POLICY_DENY*) in \"/tmp/capy-task17/host-owner/.claude/settings.json\". Command: printf TASK17_POLICY_DENY; make -n test"
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:54:12.902Z",
+        "command": "printf TASK17_POLICY_ASK; make -n test",
+        "workdir": "/tmp/capy-task17/host-owner",
+        "sandbox_permissions": "use_default",
+        "output_excerpt": "Command blocked by PreToolUse hook: Matched approval pattern \"Bash(printf *TASK17_POLICY_ASK*)\" in \"/tmp/capy-task17/host-owner/.claude/settings.json\"; this rule requires approval, which capy's Codex PreToolUse hook cannot request. Command: printf TASK17_POLICY_ASK; make -n test"
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:54:17.452Z",
+        "command": "capy execute --json --code 'printf TASK17_CLI_SUBDIR'",
+        "workdir": "/tmp/capy-task17/host-owner/subdir",
+        "sandbox_permissions": "use_default",
+        "output_excerpt": "Chunk ID: 078c68\nWall time: 0.8926 seconds\nProcess exited with code 0\nOriginal token count: 278\nOutput:\n{\"preview\":\"[stdout] TASK17_CLI_SUBDIR\",\"version\":1,\"kind\":\"run\",\"run_id\":\"ff00a60c-0d40-4f9e-8f14-ac1a2ae71907\",\"owner_id\":\"d2ccf855-cca5-4b9e-a92a-808fc36a3030\",\"owner_type\":\"cli\",\"state\":\"exited\",\"exit_code\":0,\"signal\":null,\"reason\":null,\"started_at\":\"2026-10-20T11:54:17.1612105Z\",\"completed_at\":\"2026-10-20T11:54:17.173029132Z\",\"elapsed_ms\":12,\"capture\":{\"state\":\"complete\",\"observed_bytes\":17,\"captured_bytes\":17,\"reason\":null,\"last_committed_cursor\":\"eyJ2IjoxLCJzdG9yZSI6ImQyZmFjYjk1LWQ4ZjctNGNiZi1iMGViLTBmZTYxNWQ4Yjc0YiIsInJ1biI6ImZmMDBhNjBjLTBkNDAtNGY5ZS04ZjE0LWFjMWEyYWU3MTkwNyIsInZpZXciOiJyYXciLCJzdHJlYW0iOiJtZXJnZWQiLCJzZXEiOjIsIm9mZnNldCI6MH0\",\"terminal_persisted\":true},\"redaction\":{\"version\":1,\"state\":\"ready\",\"coverage_cursor\":\"eyJ2IjoxLCJzdG9yZSI6ImQyZmFjYjk1LWQ4ZjctNGNiZi1iMGViLTBmZTYxNWQ4Yjc0YiIsInJ1biI6ImZmMDBhNjBjLTBkNDAtNGY5ZS04ZjE0LWFjMWEyYWU3MTkwNyIsInZpZXciOiJwcm9qZWN0aW9uIiwic3RyZWFtIjoibWVyZ2VkIiwicmVkYWN0aW9uIjoxLCJzZXEiOjIsInJhd19zdGFydCI6MCwib2Zmc2V0IjowfQ\"},\"index\":{\"state\":\"not_requested\",\"coverage_cursor\":null},\"expires_at\":\"2026-10-21T11:54:17.173029132Z\",\"error\":null}\n"
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:59:29.338Z",
+        "command": "capy execute --project-dir /tmp/capy-task17/host-owner/linked --json --code 'printf TASK17_LINKED_OWNER'",
+        "workdir": "/tmp/capy-task17/host-owner",
+        "sandbox_permissions": "use_default",
+        "output_excerpt": "Chunk ID: 1be783\nWall time: 1.0743 seconds\nProcess exited with code 0\nOriginal token count: 279\nOutput:\n{\"preview\":\"[stdout] TASK17_LINKED_OWNER\",\"version\":1,\"kind\":\"run\",\"run_id\":\"a0d94e21-8ed8-4cf6-9c32-491c051c37ba\",\"owner_id\":\"207f416b-d0ca-4d5e-ad43-4339ecfe7f3e\",\"owner_type\":\"cli\",\"state\":\"exited\",\"exit_code\":0,\"signal\":null,\"reason\":null,\"started_at\":\"2026-10-20T11:59:29.051154033Z\",\"completed_at\":\"2026-10-20T11:59:29.062203674Z\",\"elapsed_ms\":13,\"capture\":{\"state\":\"complete\",\"observed_bytes\":19,\"captured_bytes\":19,\"reason\":null,\"last_committed_cursor\":\"eyJ2IjoxLCJzdG9yZSI6ImRiNmJlNDI0LTEzNDktNDM2Yy1iMDVmLWZlNDExMzk2ZWY3MCIsInJ1biI6ImEwZDk0ZTIxLThlZDgtNGNmNi05YzMyLTQ5MWMwNTFjMzdiYSIsInZpZXciOiJyYXciLCJzdHJlYW0iOiJtZXJnZWQiLCJzZXEiOjIsIm9mZnNldCI6MH0\",\"terminal_persisted\":true},\"redaction\":{\"version\":1,\"state\":\"ready\",\"coverage_cursor\":\"eyJ2IjoxLCJzdG9yZSI6ImRiNmJlNDI0LTEzNDktNDM2Yy1iMDVmLWZlNDExMzk2ZWY3MCIsInJ1biI6ImEwZDk0ZTIxLThlZDgtNGNmNi05YzMyLTQ5MWMwNTFjMzdiYSIsInZpZXciOiJwcm9qZWN0aW9uIiwic3RyZWFtIjoibWVyZ2VkIiwicmVkYWN0aW9uIjoxLCJzZXEiOjIsInJhd19zdGFydCI6MCwib2Zmc2V0IjowfQ\"},\"index\":{\"state\":\"not_requested\",\"coverage_cursor\":null},\"expires_at\":\"2026-10-21T11:59:29.062203674Z\",\"error\":null}\n"
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:59:37.148Z",
+        "command": "capy runs status --help",
+        "workdir": "/tmp/capy-task17/host-owner",
+        "sandbox_permissions": "use_default",
+        "output_excerpt": "Chunk ID: 7b1ee1\nWall time: 0.0469 seconds\nProcess exited with code 0\nOriginal token count: 83\nOutput:\nstatus retained runs\n\nUsage:\n  capy runs status [flags]\n\nFlags:\n      --batch-id string   serial batch UUID\n  -h, --help              help for status\n      --json              emit the shared versioned JSON envelope\n      --run-id string     captured run UUID\n\nGlobal Flags:\n      --project-dir string   override project directory\n"
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:59:41.239Z",
+        "command": "capy runs status --project-dir /tmp/capy-task17/host-owner/linked --json --run-id a0d94e21-8ed8-4cf6-9c32-491c051c37ba",
+        "workdir": "/tmp/capy-task17/host-owner",
+        "sandbox_permissions": "use_default",
+        "output_excerpt": "Chunk ID: ecaf4a\nWall time: 0.4318 seconds\nProcess exited with code 0\nOriginal token count: 278\nOutput:\n{\"version\":1,\"kind\":\"query\",\"run\":{\"version\":1,\"kind\":\"run\",\"run_id\":\"a0d94e21-8ed8-4cf6-9c32-491c051c37ba\",\"owner_id\":\"207f416b-d0ca-4d5e-ad43-4339ecfe7f3e\",\"owner_type\":\"cli\",\"state\":\"exited\",\"exit_code\":0,\"signal\":null,\"reason\":null,\"started_at\":\"2026-10-20T11:59:29.051154033Z\",\"completed_at\":\"2026-10-20T11:59:29.062203674Z\",\"elapsed_ms\":13,\"capture\":{\"state\":\"complete\",\"observed_bytes\":19,\"captured_bytes\":19,\"reason\":null,\"last_committed_cursor\":\"eyJ2IjoxLCJzdG9yZSI6ImRiNmJlNDI0LTEzNDktNDM2Yy1iMDVmLWZlNDExMzk2ZWY3MCIsInJ1biI6ImEwZDk0ZTIxLThlZDgtNGNmNi05YzMyLTQ5MWMwNTFjMzdiYSIsInZpZXciOiJyYXciLCJzdHJlYW0iOiJtZXJnZWQiLCJzZXEiOjIsIm9mZnNldCI6MH0\",\"terminal_persisted\":true},\"redaction\":{\"version\":1,\"state\":\"ready\",\"coverage_cursor\":\"eyJ2IjoxLCJzdG9yZSI6ImRiNmJlNDI0LTEzNDktNDM2Yy1iMDVmLWZlNDExMzk2ZWY3MCIsInJ1biI6ImEwZDk0ZTIxLThlZDgtNGNmNi05YzMyLTQ5MWMwNTFjMzdiYSIsInZpZXciOiJwcm9qZWN0aW9uIiwic3RyZWFtIjoibWVyZ2VkIiwicmVkYWN0aW9uIjoxLCJzZXEiOjIsInJhd19zdGFydCI6MCwib2Zmc2V0IjowfQ\"},\"index\":{\"state\":\"not_requested\",\"coverage_cursor\":null},\"expires_at\":\"2026-10-21T11:59:29.062203674Z\",\"error\":null}}\n"
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:59:46.917Z",
+        "command": "capy execute --project-dir /proc --json --code 'printf x > /tmp/capy-task17/host-owner/unavailable-spawn'",
+        "workdir": "/tmp/capy-task17/host-owner",
+        "sandbox_permissions": "use_default",
+        "output_excerpt": "Chunk ID: 4421fe\nWall time: 0.0479 seconds\nProcess exited with code 1\nOriginal token count: 159\nOutput:\n{\"version\":1,\"kind\":\"rejection\",\"run_id\":null,\"state\":\"not_started\",\"exit_code\":null,\"signal\":null,\"reason\":null,\"started_at\":null,\"completed_at\":null,\"elapsed_ms\":0,\"capture\":{\"state\":\"not_started\",\"observed_bytes\":0,\"captured_bytes\":0,\"reason\":null,\"last_committed_cursor\":null,\"terminal_persisted\":false},\"redaction\":{\"version\":1,\"state\":\"unavailable\",\"coverage_cursor\":null},\"index\":{\"state\":\"not_requested\",\"coverage_cursor\":null},\"expires_at\":null,\"error\":{\"code\":\"storage_unavailable\",\"message\":\"run storage is unavailable; check the selected owner's .capy/runs path and permissions; selected path: /proc/.capy/runs/runs.db\"}}\n"
+      },
+      {
+        "session_id": "01a15926-71b1-7491-801b-34492a9e1af7",
+        "timestamp": "2026-10-20T11:51:00.794Z",
+        "command": "make test",
+        "workdir": "/tmp/capy-task17/host-owner",
+        "sandbox_permissions": "use_default",
+        "output_excerpt": "Command blocked by PreToolUse hook: capy: Routine command capture is required. Nothing in this request ran. Use capy_execute(language, code) or capy_batch_execute; capy execute --code '<program>' is a CLI capture alternative. Availability is not assumed. If capture cannot start, stop and repair it; do not run the command natively. If execution may have started, recover with capy_runs or capy runs before any retry. Only explicit routing.routine operator exceptions permit native routine execution.. Command: make test"
+      }
+    ],
+    "mcp_results": [
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:41:02.953Z",
+        "mcp_call_code": "const result = await tools.mcp__capy__capy_execute({language:\"shell\", code:\"make test\", wait_ms:30000, cwd:\"/tmp/capy-task17/host-owner\"});\nstore(\"task17_make_test\", result);\ntext(result);\n",
+        "observed_result_json_bytes": 2883,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "run",
+          "run_id": "06176237-5d3d-4d67-b39a-9f1c05197bc3",
+          "owner_id": "8b66f31b-9bf6-4f2b-bfdb-bbba87ebc2c2",
+          "owner_type": "mcp",
+          "state": "exited",
+          "exit_code": 0,
+          "signal": null,
+          "reason": null,
+          "started_at": "2026-10-20T11:41:00.339821331Z",
+          "completed_at": "2026-10-20T11:41:00.386352137Z",
+          "elapsed_ms": 22,
+          "expires_at": "2026-10-21T11:41:00.386352137Z",
+          "error": null,
+          "capture": {
+            "state": "complete",
+            "observed_bytes": 224000,
+            "captured_bytes": 224000,
+            "reason": null,
+            "terminal_persisted": true
+          },
+          "redaction": {
+            "version": 1,
+            "state": "ready"
+          },
+          "index": {
+            "state": "not_requested"
+          },
+          "preview_excerpt": "[stdout] PASS synthetic host fixture\nPASS synthetic host fixture\nPASS synthetic host fixture\nPASS synthetic host fixture"
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:41:59.104Z",
+        "mcp_call_code": "const status = await tools.mcp__capy__capy_runs({action:\"status\",run_id:\"06176237-5d3d-4d67-b39a-9f1c05197bc3\"});\nstore(\"task17_make_test_status\", status);\ntext(status);\nconst read = await tools.mcp__capy__capy_runs({action:\"read\",run_id:\"06176237-5d3d-4d67-b39a-9f1c05197bc3\",max_bytes:1024});\nstore(\"task17_make_test_read\", read);\ntext(read);\n",
+        "observed_result_json_bytes": 1246,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "06176237-5d3d-4d67-b39a-9f1c05197bc3",
+            "owner_id": "8b66f31b-9bf6-4f2b-bfdb-bbba87ebc2c2",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:41:00.339821331Z",
+            "completed_at": "2026-10-20T11:41:00.386352137Z",
+            "elapsed_ms": 22,
+            "expires_at": "2026-10-21T11:41:00.386352137Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 224000,
+              "captured_bytes": 224000,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          }
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:42:02.321Z",
+        "mcp_call_code": "const status = await tools.mcp__capy__capy_runs({action:\"status\",run_id:\"06176237-5d3d-4d67-b39a-9f1c05197bc3\"});\nstore(\"task17_make_test_status\", status);\ntext(status);\nconst read = await tools.mcp__capy__capy_runs({action:\"read\",run_id:\"06176237-5d3d-4d67-b39a-9f1c05197bc3\",max_bytes:1024});\nstore(\"task17_make_test_read\", read);\ntext(read);\n",
+        "observed_result_json_bytes": 2803,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run_id": "06176237-5d3d-4d67-b39a-9f1c05197bc3",
+          "eof": false,
+          "end_of_available": false,
+          "raw": false,
+          "encoding": "text",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "06176237-5d3d-4d67-b39a-9f1c05197bc3",
+            "owner_id": "8b66f31b-9bf6-4f2b-bfdb-bbba87ebc2c2",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:41:00.339821331Z",
+            "completed_at": "2026-10-20T11:41:00.386352137Z",
+            "elapsed_ms": 22,
+            "expires_at": "2026-10-21T11:41:00.386352137Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 224000,
+              "captured_bytes": 224000,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          },
+          "returned_text_bytes": 1024,
+          "text_markers": []
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:43:07.101Z",
+        "mcp_call_code": "const result = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"make fail\",wait_ms:30000,cwd:\"/tmp/capy-task17/host-owner\"});\nstore(\"task17_make_fail\",result);\ntext(result);\n",
+        "observed_result_json_bytes": 3023,
+        "is_error": true,
+        "data": {
+          "version": 1,
+          "kind": "run",
+          "run_id": "e9f384c8-a095-4f16-864b-e6464f798ed4",
+          "owner_id": "8b66f31b-9bf6-4f2b-bfdb-bbba87ebc2c2",
+          "owner_type": "mcp",
+          "state": "exited",
+          "exit_code": 2,
+          "signal": null,
+          "reason": null,
+          "started_at": "2026-10-20T11:43:05.550977326Z",
+          "completed_at": "2026-10-20T11:43:05.601092973Z",
+          "elapsed_ms": 21,
+          "expires_at": "2026-10-21T11:43:05.601092973Z",
+          "error": null,
+          "capture": {
+            "state": "complete",
+            "observed_bytes": 240059,
+            "captured_bytes": 240059,
+            "reason": null,
+            "terminal_persisted": true
+          },
+          "redaction": {
+            "version": 1,
+            "state": "ready"
+          },
+          "index": {
+            "state": "not_requested"
+          },
+          "preview_excerpt": "[stdout] PASS prefix\nPASS prefix\nPASS prefix\nPASS prefix\nPASS prefix\nPASS prefix\nPASS prefix\nPASS prefix\nPASS prefix\nPAS"
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:44:37.240Z",
+        "mcp_call_code": "const result = await tools.mcp__capy__capy_runs({action:\"search\",run_id:\"e9f384c8-a095-4f16-864b-e6464f798ed4\",queries:[\"TASK17_MIDDLE_FAILURE\"]});\nstore(\"task17_make_fail_search\",result);\ntext(result);\n",
+        "observed_result_json_bytes": 623,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run_id": "e9f384c8-a095-4f16-864b-e6464f798ed4",
+          "partial": true,
+          "searched_bytes": {
+            "stderr": 37,
+            "stdout": 29184
+          },
+          "index": {
+            "state": "building"
+          },
+          "hits": []
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:47:08.064Z",
+        "mcp_call_code": "const searches = [load(\"task17_make_fail_search\")];\nfor (let i = 0; i < 12; i++) {\n  const result = await tools.mcp__capy__capy_runs({action:\"search\",run_id:\"e9f384c8-a095-4f16-864b-e6464f798ed4\",queries:[\"TASK17_MIDDLE_FAILURE\"]});\n  searches.push(result);\n  store(\"task17_make_fail_searches\", searches);\n  const data = result.structuredContent;\n  const hits = data?.results?.flatMap(r => r.hits ?? []) ?? [];\n  text(hits.length || !data?.partial ? result : {search_attempt:searches.length,partial:data.partial,searched_bytes:data.searched_bytes});\n  if (hits.length || !data?.partial) break;\n}\n",
+        "observed_result_json_bytes": 4979,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run_id": "e9f384c8-a095-4f16-864b-e6464f798ed4",
+          "partial": true,
+          "searched_bytes": {
+            "stderr": 37,
+            "stdout": 143872
+          },
+          "index": {
+            "state": "building"
+          },
+          "hits": [
+            {
+              "run_id": "e9f384c8-a095-4f16-864b-e6464f798ed4",
+              "stream": "stdout",
+              "raw_start": 118272,
+              "raw_end": 122368,
+              "start_line": 9857,
+              "read_cursor": "eyJ2IjoxLCJzdG9yZSI6ImQyZmFjYjk1LWQ4ZjctNGNiZi1iMGViLTBmZTYxNWQ4Yjc0YiIsInJ1biI6ImU5ZjM4NGM4LWEwOTUtNGYxNi04NjRiLWU2NDY0Zjc5OGVkNCIsInZpZXciOiJwcm9qZWN0aW9uIiwic3RyZWFtIjoic3Rkb3V0IiwicmVkYWN0aW9uIjoxLCJzZXEiOjgsInJhd19zdGFydCI6MTE4MjcyLCJvZmZzZXQiOjB9",
+              "contains_failure_marker": true
+            }
+          ]
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:48:01.760Z",
+        "mcp_call_code": "const searches = load(\"task17_make_fail_searches\");\nconst hit = searches.at(-1).structuredContent.results[0].hits[0];\nstore(\"task17_make_fail_anchor\",hit.read_cursor);\nconst result = await tools.mcp__capy__capy_runs({action:\"read\",run_id:hit.run_id,stream:hit.stream,cursor:hit.read_cursor,max_bytes:4096});\nstore(\"task17_make_fail_anchor_read\",result);\ntext(result);\n",
+        "observed_result_json_bytes": 6394,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run_id": "e9f384c8-a095-4f16-864b-e6464f798ed4",
+          "eof": false,
+          "end_of_available": false,
+          "raw": false,
+          "encoding": "text",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "e9f384c8-a095-4f16-864b-e6464f798ed4",
+            "owner_id": "8b66f31b-9bf6-4f2b-bfdb-bbba87ebc2c2",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 2,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:43:05.550977326Z",
+            "completed_at": "2026-10-20T11:43:05.601092973Z",
+            "elapsed_ms": 21,
+            "expires_at": "2026-10-21T11:43:05.601092973Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 240059,
+              "captured_bytes": 240059,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "building"
+            }
+          },
+          "returned_text_bytes": 4096,
+          "text_markers": [
+            "TASK17_MIDDLE_FAILURE"
+          ]
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:49:30.849Z",
+        "mcp_call_code": "const result = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"printf TASK17_EARLY; sleep 2; printf TASK17_LATE\",wait_ms:0,timeout:10000,cwd:\"/tmp/capy-task17/host-owner\"});\nstore(\"task17_early_late\",result);\ntext(result);\n",
+        "observed_result_json_bytes": 715,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "run",
+          "run_id": "eaa86e6e-0781-4deb-8e16-183a04a74fed",
+          "owner_id": "8b66f31b-9bf6-4f2b-bfdb-bbba87ebc2c2",
+          "owner_type": "mcp",
+          "state": "admitted",
+          "exit_code": null,
+          "signal": null,
+          "reason": null,
+          "started_at": null,
+          "completed_at": null,
+          "elapsed_ms": 0,
+          "expires_at": null,
+          "error": null,
+          "capture": {
+            "state": "not_started",
+            "observed_bytes": 0,
+            "captured_bytes": 0,
+            "reason": null,
+            "terminal_persisted": false
+          },
+          "redaction": {
+            "version": 1,
+            "state": "ready"
+          },
+          "index": {
+            "state": "not_requested"
+          }
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:50:39.119Z",
+        "mcp_call_code": "const result = await tools.mcp__capy__capy_runs({action:\"status\",run_id:\"eaa86e6e-0781-4deb-8e16-183a04a74fed\"});\nstore(\"task17_early_late_status\",result);\ntext(result);\nconst read = await tools.mcp__capy__capy_runs({action:\"read\",run_id:\"eaa86e6e-0781-4deb-8e16-183a04a74fed\",max_bytes:1024});\nstore(\"task17_early_late_read\",read);\ntext(read);\n",
+        "observed_result_json_bytes": 1238,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "eaa86e6e-0781-4deb-8e16-183a04a74fed",
+            "owner_id": "8b66f31b-9bf6-4f2b-bfdb-bbba87ebc2c2",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:49:26.964909734Z",
+            "completed_at": "2026-10-20T11:49:28.977376144Z",
+            "elapsed_ms": 2012,
+            "expires_at": "2026-10-21T11:49:28.977376144Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 23,
+              "captured_bytes": 23,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          }
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:50:42.754Z",
+        "mcp_call_code": "const result = await tools.mcp__capy__capy_runs({action:\"status\",run_id:\"eaa86e6e-0781-4deb-8e16-183a04a74fed\"});\nstore(\"task17_early_late_status\",result);\ntext(result);\nconst read = await tools.mcp__capy__capy_runs({action:\"read\",run_id:\"eaa86e6e-0781-4deb-8e16-183a04a74fed\",max_bytes:1024});\nstore(\"task17_early_late_read\",read);\ntext(read);\n",
+        "observed_result_json_bytes": 1624,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run_id": "eaa86e6e-0781-4deb-8e16-183a04a74fed",
+          "eof": true,
+          "end_of_available": true,
+          "raw": false,
+          "encoding": "text",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "eaa86e6e-0781-4deb-8e16-183a04a74fed",
+            "owner_id": "8b66f31b-9bf6-4f2b-bfdb-bbba87ebc2c2",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:49:26.964909734Z",
+            "completed_at": "2026-10-20T11:49:28.977376144Z",
+            "elapsed_ms": 2012,
+            "expires_at": "2026-10-21T11:49:28.977376144Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 23,
+              "captured_bytes": 23,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          },
+          "returned_text_bytes": 23,
+          "text_markers": [
+            "TASK17_EARLY",
+            "TASK17_LATE"
+          ]
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:55:29.372Z",
+        "observed_result_json_bytes": 1234,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "ff00a60c-0d40-4f9e-8f14-ac1a2ae71907",
+            "owner_id": "d2ccf855-cca5-4b9e-a92a-808fc36a3030",
+            "owner_type": "cli",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:54:17.1612105Z",
+            "completed_at": "2026-10-20T11:54:17.173029132Z",
+            "elapsed_ms": 12,
+            "expires_at": "2026-10-21T11:54:17.173029132Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 17,
+              "captured_bytes": 17,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          }
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:55:31.855Z",
+        "observed_result_json_bytes": 1495,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run_id": "ff00a60c-0d40-4f9e-8f14-ac1a2ae71907",
+          "eof": true,
+          "end_of_available": true,
+          "raw": false,
+          "encoding": "text",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "ff00a60c-0d40-4f9e-8f14-ac1a2ae71907",
+            "owner_id": "d2ccf855-cca5-4b9e-a92a-808fc36a3030",
+            "owner_type": "cli",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:54:17.1612105Z",
+            "completed_at": "2026-10-20T11:54:17.173029132Z",
+            "elapsed_ms": 12,
+            "expires_at": "2026-10-21T11:54:17.173029132Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 17,
+              "captured_bytes": 17,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          },
+          "returned_text_bytes": 17,
+          "text_markers": [
+            "TASK17_CLI_SUBDIR"
+          ]
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:57:57.357Z",
+        "mcp_call_code": "const result = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"printf TASK17_MCP_WORKTREE\",cwd:\"/tmp/capy-task17/host-owner/linked\",wait_ms:30000});\nstore(\"task17_mcp_worktree\",result);\ntext(result);\n",
+        "observed_result_json_bytes": 1287,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "run",
+          "run_id": "0cdbfd46-d1c2-4e85-86d1-42b7bc062725",
+          "owner_id": "8b66f31b-9bf6-4f2b-bfdb-bbba87ebc2c2",
+          "owner_type": "mcp",
+          "state": "exited",
+          "exit_code": 0,
+          "signal": null,
+          "reason": null,
+          "started_at": "2026-10-20T11:57:54.405595616Z",
+          "completed_at": "2026-10-20T11:57:54.417339371Z",
+          "elapsed_ms": 13,
+          "expires_at": "2026-10-21T11:57:54.417339371Z",
+          "error": null,
+          "capture": {
+            "state": "complete",
+            "observed_bytes": 19,
+            "captured_bytes": 19,
+            "reason": null,
+            "terminal_persisted": true
+          },
+          "redaction": {
+            "version": 1,
+            "state": "ready"
+          },
+          "index": {
+            "state": "not_requested"
+          },
+          "preview_excerpt": "[stdout] TASK17_MCP_WORKTREE"
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:59:19.225Z",
+        "mcp_call_code": "const status = await tools.mcp__capy__capy_runs({action:\"status\",run_id:\"0cdbfd46-d1c2-4e85-86d1-42b7bc062725\"});\nstore(\"task17_mcp_worktree_status\",status);\ntext(status);\nconst read = await tools.mcp__capy__capy_runs({action:\"read\",run_id:\"0cdbfd46-d1c2-4e85-86d1-42b7bc062725\",max_bytes:1024});\nstore(\"task17_mcp_worktree_read\",read);\ntext(read);\n",
+        "observed_result_json_bytes": 1236,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "0cdbfd46-d1c2-4e85-86d1-42b7bc062725",
+            "owner_id": "8b66f31b-9bf6-4f2b-bfdb-bbba87ebc2c2",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:57:54.405595616Z",
+            "completed_at": "2026-10-20T11:57:54.417339371Z",
+            "elapsed_ms": 13,
+            "expires_at": "2026-10-21T11:57:54.417339371Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 19,
+              "captured_bytes": 19,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          }
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T11:59:24.869Z",
+        "mcp_call_code": "const status = await tools.mcp__capy__capy_runs({action:\"status\",run_id:\"0cdbfd46-d1c2-4e85-86d1-42b7bc062725\"});\nstore(\"task17_mcp_worktree_status\",status);\ntext(status);\nconst read = await tools.mcp__capy__capy_runs({action:\"read\",run_id:\"0cdbfd46-d1c2-4e85-86d1-42b7bc062725\",max_bytes:1024});\nstore(\"task17_mcp_worktree_read\",read);\ntext(read);\n",
+        "observed_result_json_bytes": 1499,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run_id": "0cdbfd46-d1c2-4e85-86d1-42b7bc062725",
+          "eof": true,
+          "end_of_available": true,
+          "raw": false,
+          "encoding": "text",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "0cdbfd46-d1c2-4e85-86d1-42b7bc062725",
+            "owner_id": "8b66f31b-9bf6-4f2b-bfdb-bbba87ebc2c2",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:57:54.405595616Z",
+            "completed_at": "2026-10-20T11:57:54.417339371Z",
+            "elapsed_ms": 13,
+            "expires_at": "2026-10-21T11:57:54.417339371Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 19,
+              "captured_bytes": 19,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          },
+          "returned_text_bytes": 19,
+          "text_markers": [
+            "TASK17_MCP_WORKTREE"
+          ]
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T12:12:58.909Z",
+        "mcp_call_code": "const started = Date.now();\nconst result = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"printf TASK17_CODEX_WAIT_START; sleep 27; printf TASK17_CODEX_WAIT_END\",wait_ms:25000,timeout:40000});\nstore(\"task17_host_wait_initial\",result);\nstore(\"task17_host_wait_response_ms\",Date.now()-started);\ntext({attached_response_elapsed_ms:Date.now()-started,result});\n",
+        "observed_result_json_bytes": 1184,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "run",
+          "run_id": "70ec2b9a-37e3-4dcc-9651-c34fe0c764a5",
+          "owner_id": "b6eb13e1-3961-44dd-bf85-733f142d0ead",
+          "owner_type": "mcp",
+          "state": "running",
+          "exit_code": null,
+          "signal": null,
+          "reason": null,
+          "started_at": "2026-10-20T12:12:34.266510967Z",
+          "completed_at": null,
+          "elapsed_ms": 0,
+          "expires_at": null,
+          "error": null,
+          "capture": {
+            "state": "recording",
+            "observed_bytes": 23,
+            "captured_bytes": 23,
+            "reason": null,
+            "terminal_persisted": false
+          },
+          "redaction": {
+            "version": 1,
+            "state": "pending"
+          },
+          "index": {
+            "state": "not_requested"
+          }
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T12:14:17.272Z",
+        "mcp_call_code": "const results = await Promise.allSettled([\n  tools.mcp__capy__capy_runs({action:\"status\",run_id:\"70ec2b9a-37e3-4dcc-9651-c34fe0c764a5\"}),\n  tools.mcp__capy__capy_runs({action:\"read\",run_id:\"70ec2b9a-37e3-4dcc-9651-c34fe0c764a5\",max_bytes:1024})\n]);\nstore(\"task17_host_wait_recovery\",results);\nfor (let i=0;i<results.length;i++) text({action:i===0?\"status\":\"read\",...results[i]});\n",
+        "observed_result_json_bytes": 1239,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "70ec2b9a-37e3-4dcc-9651-c34fe0c764a5",
+            "owner_id": "b6eb13e1-3961-44dd-bf85-733f142d0ead",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T12:12:34.266510967Z",
+            "completed_at": "2026-10-20T12:13:01.277668472Z",
+            "elapsed_ms": 27011,
+            "expires_at": "2026-10-21T12:13:01.277668472Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 44,
+              "captured_bytes": 44,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          }
+        }
+      },
+      {
+        "session_id": "01a15918-540a-7a52-baa8-e69ec6d74665",
+        "timestamp": "2026-10-20T12:14:17.272Z",
+        "mcp_call_code": "const results = await Promise.allSettled([\n  tools.mcp__capy__capy_runs({action:\"status\",run_id:\"70ec2b9a-37e3-4dcc-9651-c34fe0c764a5\"}),\n  tools.mcp__capy__capy_runs({action:\"read\",run_id:\"70ec2b9a-37e3-4dcc-9651-c34fe0c764a5\",max_bytes:1024})\n]);\nstore(\"task17_host_wait_recovery\",results);\nfor (let i=0;i<results.length;i++) text({action:i===0?\"status\":\"read\",...results[i]});\n",
+        "observed_result_json_bytes": 1765,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run_id": "70ec2b9a-37e3-4dcc-9651-c34fe0c764a5",
+          "eof": true,
+          "end_of_available": true,
+          "raw": false,
+          "encoding": "text",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "70ec2b9a-37e3-4dcc-9651-c34fe0c764a5",
+            "owner_id": "b6eb13e1-3961-44dd-bf85-733f142d0ead",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T12:12:34.266510967Z",
+            "completed_at": "2026-10-20T12:13:01.277668472Z",
+            "elapsed_ms": 27011,
+            "expires_at": "2026-10-21T12:13:01.277668472Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 44,
+              "captured_bytes": 44,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          },
+          "returned_text_bytes": 44,
+          "text_markers": [
+            "TASK17_CODEX_WAIT_START",
+            "TASK17_CODEX_WAIT_END"
+          ]
+        }
+      },
+      {
+        "session_id": "01a15926-71b1-7491-801b-34492a9e1af7",
+        "timestamp": "2026-10-20T11:51:26.880Z",
+        "mcp_call_code": "const result = await tools.mcp__capy__capy_execute({language:\"shell\",code:\"printf TASK17_CHILD_CAPTURE\",cwd:\"/tmp/capy-task17/host-owner\",wait_ms:30000}); text(result);\n",
+        "observed_result_json_bytes": 1288,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "run",
+          "run_id": "25e04661-a157-4488-9464-144550b7be2e",
+          "owner_id": "e320f953-05e4-4f98-927c-660556ec206d",
+          "owner_type": "mcp",
+          "state": "exited",
+          "exit_code": 0,
+          "signal": null,
+          "reason": null,
+          "started_at": "2026-10-20T11:51:26.612259127Z",
+          "completed_at": "2026-10-20T11:51:26.623538499Z",
+          "elapsed_ms": 12,
+          "expires_at": "2026-10-21T11:51:26.623538499Z",
+          "error": null,
+          "capture": {
+            "state": "complete",
+            "observed_bytes": 20,
+            "captured_bytes": 20,
+            "reason": null,
+            "terminal_persisted": true
+          },
+          "redaction": {
+            "version": 1,
+            "state": "ready"
+          },
+          "index": {
+            "state": "not_requested"
+          },
+          "preview_excerpt": "[stdout] TASK17_CHILD_CAPTURE"
+        }
+      },
+      {
+        "session_id": "01a15926-71b1-7491-801b-34492a9e1af7",
+        "timestamp": "2026-10-20T11:52:46.363Z",
+        "mcp_call_code": "const results = await Promise.allSettled([\n  tools.mcp__capy__capy_runs({action:\"status\",run_id:\"25e04661-a157-4488-9464-144550b7be2e\"}),\n  tools.mcp__capy__capy_runs({action:\"read\",run_id:\"25e04661-a157-4488-9464-144550b7be2e\",max_bytes:2048})\n]); for (let i=0;i<results.length;i++) text({action:i===0?\"status\":\"read\",result:results[i]});\n",
+        "observed_result_json_bytes": 1236,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "25e04661-a157-4488-9464-144550b7be2e",
+            "owner_id": "e320f953-05e4-4f98-927c-660556ec206d",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:51:26.612259127Z",
+            "completed_at": "2026-10-20T11:51:26.623538499Z",
+            "elapsed_ms": 12,
+            "expires_at": "2026-10-21T11:51:26.623538499Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 20,
+              "captured_bytes": 20,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          }
+        }
+      },
+      {
+        "session_id": "01a15926-71b1-7491-801b-34492a9e1af7",
+        "timestamp": "2026-10-20T11:52:46.363Z",
+        "mcp_call_code": "const results = await Promise.allSettled([\n  tools.mcp__capy__capy_runs({action:\"status\",run_id:\"25e04661-a157-4488-9464-144550b7be2e\"}),\n  tools.mcp__capy__capy_runs({action:\"read\",run_id:\"25e04661-a157-4488-9464-144550b7be2e\",max_bytes:2048})\n]); for (let i=0;i<results.length;i++) text({action:i===0?\"status\":\"read\",result:results[i]});\n",
+        "observed_result_json_bytes": 1500,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run_id": "25e04661-a157-4488-9464-144550b7be2e",
+          "eof": true,
+          "end_of_available": true,
+          "raw": false,
+          "encoding": "text",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "25e04661-a157-4488-9464-144550b7be2e",
+            "owner_id": "e320f953-05e4-4f98-927c-660556ec206d",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:51:26.612259127Z",
+            "completed_at": "2026-10-20T11:51:26.623538499Z",
+            "elapsed_ms": 12,
+            "expires_at": "2026-10-21T11:51:26.623538499Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 20,
+              "captured_bytes": 20,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          },
+          "returned_text_bytes": 20,
+          "text_markers": [
+            "TASK17_CHILD_CAPTURE"
+          ]
+        }
+      }
+    ],
+    "agent_report": {
+      "task": 17,
+      "date": "2026-10-20",
+      "fixture": "/tmp/capy-task17/host-owner",
+      "result": "All requested acceptance checks passed.",
+      "execution_retries": 0,
+      "settings_changed": false,
+      "broader_permissions_requested": false,
+      "native_probes": [
+        {
+          "command": "printf x > native-before; make test",
+          "attempts": 1,
+          "result": "PreToolUse hook denied the whole request: routine command capture required; nothing ran."
+        },
+        {
+          "command": "curl https://example.invalid; make test",
+          "attempts": 1,
+          "result": "PreToolUse hook denied the whole request: routine command capture required; nothing ran."
+        }
+      ],
+      "discovery": {
+        "tool_search": "Unavailable: unsupported call: tool_searchtool_search_tool",
+        "successful_method": "Read actual MCP names and schemas from functions.exec ALL_TOOLS.",
+        "tools_used": [
+          "mcp__capy__capy_execute",
+          "mcp__capy__capy_runs"
+        ],
+        "required_capy_capabilities_missing": []
+      },
+      "make_test": {
+        "code": "make test",
+        "language": "shell",
+        "wait_ms": 30000,
+        "executions": 1,
+        "run_id": "06176237-5d3d-4d67-b39a-9f1c05197bc3",
+        "state": "exited",
+        "exit_code": 0,
+        "capture_state": "complete",
+        "captured_bytes": 224000,
+        "recovery": "capy_runs status and read",
+        "read_sample_bytes": 1024,
+        "recovered_sample": "PASS synthetic host fixture",
+        "entire_output_read": false
+      },
+      "make_fail": {
+        "code": "make fail",
+        "language": "shell",
+        "wait_ms": 30000,
+        "executions": 1,
+        "run_id": "e9f384c8-a095-4f16-864b-e6464f798ed4",
+        "state": "exited",
+        "exit_code": 2,
+        "tool_is_error": true,
+        "recipe_error_reported_in_stderr": 7,
+        "capture_state": "complete",
+        "captured_bytes": 240059,
+        "search_query": "TASK17_MIDDLE_FAILURE",
+        "search_calls": 5,
+        "search_index_partial_at_hit": true,
+        "returned_anchor_stream": "stdout",
+        "returned_anchor_start_line": 9857,
+        "returned_anchor_raw_start": 118272,
+        "returned_read_cursor_used": true,
+        "anchor_read_max_bytes": 4096,
+        "anchor_read_contains": "TASK17_MIDDLE_FAILURE",
+        "anchor_read_preserved_exit_code": 2
+      },
+      "early_late": {
+        "code": "printf TASK17_EARLY; sleep 2; printf TASK17_LATE",
+        "language": "shell",
+        "wait_ms": 0,
+        "timeout": 10000,
+        "executions": 1,
+        "run_id": "eaa86e6e-0781-4deb-8e16-183a04a74fed",
+        "initial_state": "admitted",
+        "terminal_state": "exited",
+        "exit_code": 0,
+        "elapsed_ms": 2012,
+        "capture_state": "complete",
+        "captured_bytes": 23,
+        "recovery": "capy_runs status and read",
+        "recovered_output": "TASK17_EARLYTASK17_LATE",
+        "eof": true
+      },
+      "child": {
+        "agents_spawned": 1,
+        "task_name": "/root/task17_child_acceptance",
+        "native_command": "make test",
+        "native_attempts": 1,
+        "native_result": "PreToolUse hook denied the request: routine command capture required; nothing ran.",
+        "capture_code": "printf TASK17_CHILD_CAPTURE",
+        "capture_executions": 1,
+        "run_id": "25e04661-a157-4488-9464-144550b7be2e",
+        "state": "exited",
+        "exit_code": 0,
+        "capture_state": "complete",
+        "captured_bytes": 20,
+        "terminal_persisted": true,
+        "recovery": "Child confirmed capy_runs status and read.",
+        "recovered_output": "TASK17_CHILD_CAPTURE",
+        "eof": true,
+        "settings_changed": false,
+        "missing_capabilities": []
+      },
+      "final_marker_checks": {
+        "native-before": {
+          "exists": false
+        },
+        "executions": {
+          "bytes": 1,
+          "content": "x",
+          "exactly_x": true
+        },
+        "failures": {
+          "bytes": 1,
+          "content": "x",
+          "exactly_x": true
+        }
+      },
+      "capy_on_path": {
+        "check": "command -v capy",
+        "path": "/tmp/capy-task17/final-bin/capy",
+        "exit_code": 0
+      }
+    },
+    "agent_report_scope": "Original capture/policy sequence; later checks and wait probes are independently recorded from tool records."
+  },
+  "claude": {
+    "version": "2.1.296",
+    "session_id": "6992a39a-2706-41dc-9549-344400663199",
+    "native_calls": [
+      {
+        "timestamp": "2026-10-20T11:38:03.846Z",
+        "command": "make -n test",
+        "is_error": false,
+        "output": "printf x >> executions\npython3 -c 'print(\"PASS synthetic host fixture\\n\" * 8000, end=\"\")'"
+      },
+      {
+        "timestamp": "2026-10-20T11:39:41.214Z",
+        "command": "command -v capy; ls -la executions failures 2>&1",
+        "is_error": true,
+        "output": "Exit code 2\n/tmp/capy-task17/final-bin/capy\nls: cannot access 'executions': No such file or directory\nls: cannot access 'failures': No such file or directory"
+      },
+      {
+        "timestamp": "2026-10-20T11:45:13.669Z",
+        "command": "printf TASK17_POLICY_DENY",
+        "is_error": true,
+        "output": "PreToolUse:Bash hook error: Blocked by security policy: matches deny pattern Bash(printf *TASK17_POLICY_DENY*)"
+      },
+      {
+        "timestamp": "2026-10-20T11:46:40.524Z",
+        "command": "printf TASK17_POLICY_ASK",
+        "is_error": false,
+        "output": "TASK17_POLICY_ASK"
+      }
+    ],
+    "mcp_results": [
+      {
+        "timestamp": "2026-10-20T11:41:08.595Z",
+        "tool": "mcp__capy__capy_execute",
+        "input": {
+          "language": "shell",
+          "code": "printf TASK17_CLAUDE_CAPTURE",
+          "wait_ms": 30000
+        },
+        "observed_result_json_bytes": 1139,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "run",
+          "run_id": "33e66413-5383-48d1-b1fa-6823e0fc9cb6",
+          "owner_id": "6ad93067-c7b8-4807-a06f-7c871547b89a",
+          "owner_type": "mcp",
+          "state": "exited",
+          "exit_code": 0,
+          "signal": null,
+          "reason": null,
+          "started_at": "2026-10-20T11:41:08.395004365Z",
+          "completed_at": "2026-10-20T11:41:08.406480011Z",
+          "elapsed_ms": 12,
+          "expires_at": "2026-10-21T11:41:08.406480011Z",
+          "error": null,
+          "capture": {
+            "state": "complete",
+            "observed_bytes": 21,
+            "captured_bytes": 21,
+            "reason": null,
+            "terminal_persisted": true
+          },
+          "redaction": {
+            "version": 1,
+            "state": "ready"
+          },
+          "index": {
+            "state": "not_requested"
+          },
+          "preview_excerpt": "[stdout] TASK17_CLAUDE_CAPTURE"
+        }
+      },
+      {
+        "timestamp": "2026-10-20T11:41:50.451Z",
+        "tool": "mcp__capy__capy_runs",
+        "input": {
+          "action": "status",
+          "run_id": "33e66413-5383-48d1-b1fa-6823e0fc9cb6"
+        },
+        "observed_result_json_bytes": 1131,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "33e66413-5383-48d1-b1fa-6823e0fc9cb6",
+            "owner_id": "6ad93067-c7b8-4807-a06f-7c871547b89a",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:41:08.395004365Z",
+            "completed_at": "2026-10-20T11:41:08.406480011Z",
+            "elapsed_ms": 12,
+            "expires_at": "2026-10-21T11:41:08.406480011Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 21,
+              "captured_bytes": 21,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          }
+        }
+      },
+      {
+        "timestamp": "2026-10-20T11:42:02.461Z",
+        "tool": "mcp__capy__capy_runs",
+        "input": {
+          "action": "read",
+          "run_id": "33e66413-5383-48d1-b1fa-6823e0fc9cb6",
+          "stream": "merged"
+        },
+        "observed_result_json_bytes": 1416,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run_id": "33e66413-5383-48d1-b1fa-6823e0fc9cb6",
+          "eof": true,
+          "end_of_available": true,
+          "raw": false,
+          "encoding": "text",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "33e66413-5383-48d1-b1fa-6823e0fc9cb6",
+            "owner_id": "6ad93067-c7b8-4807-a06f-7c871547b89a",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T11:41:08.395004365Z",
+            "completed_at": "2026-10-20T11:41:08.406480011Z",
+            "elapsed_ms": 12,
+            "expires_at": "2026-10-21T11:41:08.406480011Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 21,
+              "captured_bytes": 21,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          },
+          "returned_text_bytes": 21,
+          "text_markers": [
+            "TASK17_CLAUDE_CAPTURE"
+          ]
+        }
+      },
+      {
+        "timestamp": "2026-10-20T12:13:01.949Z",
+        "tool": "mcp__capy__capy_execute",
+        "input": {
+          "language": "shell",
+          "code": "printf TASK17_CLAUDE_WAIT_START; sleep 27; printf TASK17_CLAUDE_WAIT_END",
+          "wait_ms": 25000,
+          "timeout": 40000
+        },
+        "observed_result_json_bytes": 1047,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "run",
+          "run_id": "34426298-5d84-42cf-9194-43c9bfe057a4",
+          "owner_id": "800412f1-3005-4277-abc8-68f3acc83c67",
+          "owner_type": "mcp",
+          "state": "running",
+          "exit_code": null,
+          "signal": null,
+          "reason": null,
+          "started_at": "2026-10-20T12:12:37.465233242Z",
+          "completed_at": null,
+          "elapsed_ms": 0,
+          "expires_at": null,
+          "error": null,
+          "capture": {
+            "state": "recording",
+            "observed_bytes": 24,
+            "captured_bytes": 24,
+            "reason": null,
+            "terminal_persisted": false
+          },
+          "redaction": {
+            "version": 1,
+            "state": "pending"
+          },
+          "index": {
+            "state": "not_requested"
+          }
+        }
+      },
+      {
+        "timestamp": "2026-10-20T12:14:08.298Z",
+        "tool": "mcp__capy__capy_runs",
+        "input": {
+          "action": "status",
+          "run_id": "34426298-5d84-42cf-9194-43c9bfe057a4"
+        },
+        "observed_result_json_bytes": 1134,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "34426298-5d84-42cf-9194-43c9bfe057a4",
+            "owner_id": "800412f1-3005-4277-abc8-68f3acc83c67",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T12:12:37.465233242Z",
+            "completed_at": "2026-10-20T12:13:04.487884396Z",
+            "elapsed_ms": 27012,
+            "expires_at": "2026-10-21T12:13:04.487884396Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 46,
+              "captured_bytes": 46,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          }
+        }
+      },
+      {
+        "timestamp": "2026-10-20T12:14:19.973Z",
+        "tool": "mcp__capy__capy_runs",
+        "input": {
+          "action": "read",
+          "run_id": "34426298-5d84-42cf-9194-43c9bfe057a4",
+          "stream": "merged"
+        },
+        "observed_result_json_bytes": 1682,
+        "is_error": false,
+        "data": {
+          "version": 1,
+          "kind": "query",
+          "run_id": "34426298-5d84-42cf-9194-43c9bfe057a4",
+          "eof": true,
+          "end_of_available": true,
+          "raw": false,
+          "encoding": "text",
+          "run": {
+            "version": 1,
+            "kind": "run",
+            "run_id": "34426298-5d84-42cf-9194-43c9bfe057a4",
+            "owner_id": "800412f1-3005-4277-abc8-68f3acc83c67",
+            "owner_type": "mcp",
+            "state": "exited",
+            "exit_code": 0,
+            "signal": null,
+            "reason": null,
+            "started_at": "2026-10-20T12:12:37.465233242Z",
+            "completed_at": "2026-10-20T12:13:04.487884396Z",
+            "elapsed_ms": 27012,
+            "expires_at": "2026-10-21T12:13:04.487884396Z",
+            "error": null,
+            "capture": {
+              "state": "complete",
+              "observed_bytes": 46,
+              "captured_bytes": 46,
+              "reason": null,
+              "terminal_persisted": true
+            },
+            "redaction": {
+              "version": 1,
+              "state": "ready"
+            },
+            "index": {
+              "state": "not_requested"
+            }
+          },
+          "returned_text_bytes": 46,
+          "text_markers": [
+            "TASK17_CLAUDE_WAIT_START",
+            "TASK17_CLAUDE_WAIT_END"
+          ]
+        }
+      }
+    ],
+    "agent_report": {
+      "task": "task17-claude-live-acceptance",
+      "host": "claude-code",
+      "date": "2026-10-20",
+      "observations": {
+        "native_make_dry_run": {
+          "command": "make -n test",
+          "allowed": true,
+          "exit_code": 0,
+          "hook_behavior": "PreToolUse hook returned guidance-only context (prefer capy_execute for routine runs); no block",
+          "side_effects": "none; executions and failures files absent after dry run",
+          "printed_recipe": [
+            "printf x >> executions",
+            "python3 -c 'print(\"PASS synthetic host fixture\\n\" * 8000, end=\"\")'"
+          ]
+        },
+        "capy_cli_path": "/tmp/capy-task17/final-bin/capy",
+        "make_test_run": false,
+        "make_fail_run": false,
+        "agents_launched": false,
+        "network_used": false
+      },
+      "tool_availability": {
+        "discovery": "deferred-tool discovery via ToolSearch, performed once",
+        "capy_mcp_tools_listed": [
+          "capy_batch_execute",
+          "capy_cleanup",
+          "capy_doctor",
+          "capy_execute",
+          "capy_execute_file",
+          "capy_fetch_and_index",
+          "capy_index",
+          "capy_runs",
+          "capy_search",
+          "capy_stats",
+          "capy_vault_search"
+        ],
+        "tools_loaded_and_used": [
+          "capy_execute",
+          "capy_runs"
+        ],
+        "capy_execute_languages": [
+          "go",
+          "javascript",
+          "perl",
+          "python",
+          "rust",
+          "shell"
+        ]
+      },
+      "capture": {
+        "tool": "capy_execute",
+        "language": "shell",
+        "code": "printf TASK17_CLAUDE_CAPTURE",
+        "wait_ms": 30000,
+        "run_id": "33e66413-5383-48d1-b1fa-6823e0fc9cb6",
+        "owner_id": "6ad93067-c7b8-4807-a06f-7c871547b89a",
+        "owner_type": "mcp",
+        "state": "exited",
+        "exit_code": 0,
+        "signal": null,
+        "elapsed_ms": 12,
+        "started_at": "2026-10-20T11:41:08.395004365Z",
+        "completed_at": "2026-10-20T11:41:08.406480011Z",
+        "expires_at": "2026-10-21T11:41:08.406480011Z",
+        "capture_state": "complete",
+        "observed_bytes": 21,
+        "captured_bytes": 21,
+        "terminal_persisted": true,
+        "redaction_state": "ready",
+        "index_state": "not_requested"
+      },
+      "recovery": {
+        "capy_runs_status": {
+          "state": "exited",
+          "exit_code": 0,
+          "capture_state": "complete"
+        },
+        "capy_runs_read": {
+          "stream": "merged",
+          "raw": false,
+          "fragments": 1,
+          "stdout_text": "TASK17_CLAUDE_CAPTURE",
+          "eof": true,
+          "end_of_available": true
+        },
+        "matches_preview": true
+      },
+      "policy_probes": {
+        "settings_altered": false,
+        "prompts_bypassed": false,
+        "deny": {
+          "command": "printf TASK17_POLICY_DENY",
+          "attempts": 1,
+          "outcome": "blocked",
+          "executed": false,
+          "hook": "PreToolUse:Bash",
+          "hook_error": "Blocked by security policy: matches deny pattern Bash(printf *TASK17_POLICY_DENY*)",
+          "matched_rule": "Bash(printf *TASK17_POLICY_DENY*)",
+          "reason": "security deny applied before routing"
+        },
+        "ask": {
+          "command": "printf TASK17_POLICY_ASK",
+          "attempts": 1,
+          "outcome": "executed after approval flow",
+          "executed": true,
+          "stdout": "TASK17_POLICY_ASK",
+          "exit_code": 0,
+          "matched_rule": "Bash(printf *TASK17_POLICY_ASK*)",
+          "hook": "PreToolUse:Bash",
+          "hook_block": false,
+          "hook_additional_context": false,
+          "note": "The approval prompt itself is not visible to the agent. The command was not blocked and ran once, consistent with a matched ask resolved by one-call approval. Tool result contained output only."
+        }
+      }
+    },
+    "agent_report_scope": "Original capture/policy sequence; later checks and wait probes are independently recorded from tool records."
+  },
+  "operator_observed_claude_matched_ask": {
+    "command": "printf TASK17_POLICY_ASK",
+    "displayed_rule": "Bash(printf *TASK17_POLICY_ASK*)",
+    "choice": "Yes (one call)",
+    "completed_stdout": "TASK17_POLICY_ASK"
+  },
+  "markers": {
+    "executions": {
+      "exists": true,
+      "bytes": 1
+    },
+    "failures": {
+      "exists": true,
+      "bytes": 1
+    },
+    "native-before": {
+      "exists": false,
+      "bytes": 0
+    },
+    "unavailable-spawn": {
+      "exists": false,
+      "bytes": 0
+    }
+  },
+  "stores": {
+    "parent": true,
+    "explicit_linked_owner": true
+  },
+  "shutdown": {
+    "codex_exit_code": 0,
+    "claude_exit_code": 0,
+    "unfinished_parent_runs_before_shutdown": 0,
+    "codex_final_report_generation_interrupted_after_completed_probes": true,
+    "observations": {
+      "codex-main-observations": {
+        "entries_before_exit": 1,
+        "entries_after_exit": 0,
+        "permanent_lock_inode_unchanged": true
+      },
+      "tool-observations": {
+        "entries_before_exit": 1,
+        "entries_after_exit": 0,
+        "permanent_lock_inode_unchanged": true
+      }
+    }
+  },
+  "persisted_output_plaintext_scan": {
+    "passed": true,
+    "files": [
+      {
+        "owner": "/tmp/capy-task17/host-owner",
+        "file": "runs.db",
+        "bytes": 1789952,
+        "mode": "0o600"
+      },
+      {
+        "owner": "/tmp/capy-task17/host-owner/linked",
+        "file": "runs.db",
+        "bytes": 204800,
+        "mode": "0o600"
+      }
+    ]
+  },
+  "default_wait_probes": [
+    {
+      "host": "codex",
+      "run_id": "70ec2b9a-37e3-4dcc-9651-c34fe0c764a5",
+      "wait_ms": 25000,
+      "timeout_ms": 40000,
+      "initial_state": "running",
+      "initial_result_timestamp": "2026-10-20T12:12:58.909Z",
+      "started_at": "2026-10-20T12:12:34.266510967Z",
+      "initial_captured_bytes": 23,
+      "terminal_state": "exited",
+      "exit_code": 0,
+      "completed_at": "2026-10-20T12:13:01.277668472Z",
+      "elapsed_ms": 27011,
+      "captured_bytes": 44,
+      "recovered_markers": [
+        "TASK17_CODEX_WAIT_START",
+        "TASK17_CODEX_WAIT_END"
+      ],
+      "host_timeout": false,
+      "execution_attempts": 1,
+      "admitted_at": "2026-10-20T12:12:33.9853191Z"
+    },
+    {
+      "host": "claude",
+      "run_id": "34426298-5d84-42cf-9194-43c9bfe057a4",
+      "wait_ms": 25000,
+      "timeout_ms": 40000,
+      "initial_state": "running",
+      "initial_result_timestamp": "2026-10-20T12:13:01.949Z",
+      "started_at": "2026-10-20T12:12:37.465233242Z",
+      "initial_captured_bytes": 24,
+      "terminal_state": "exited",
+      "exit_code": 0,
+      "completed_at": "2026-10-20T12:13:04.487884396Z",
+      "elapsed_ms": 27012,
+      "captured_bytes": 46,
+      "recovered_markers": [
+        "TASK17_CLAUDE_WAIT_START",
+        "TASK17_CLAUDE_WAIT_END"
+      ],
+      "host_timeout": false,
+      "execution_attempts": 1,
+      "admitted_at": "2026-10-20T12:12:37.174667715Z"
+    }
+  ],
+  "wait_probe_shutdown": {
+    "codex_exit_code": 0,
+    "claude_exit_code": 0,
+    "observations": {
+      "codex-main-observations": {
+        "entries_before_exit": 1,
+        "entries_after_exit": 0,
+        "permanent_lock_inode_unchanged": true
+      },
+      "tool-observations": {
+        "entries_before_exit": 0,
+        "entries_after_exit": 0,
+        "permanent_lock_inode_unchanged": true
+      }
+    }
+  }
+}

@@ -40,3 +40,26 @@ func TestExecRequestJSONPreservesFilePathBytes(t *testing.T) {
 		})
 	}
 }
+
+func TestExecRequestJSONPreservesCodeAndCwdBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code string
+		cwd  string
+	}{
+		{"code", "printf '\xff'", "/tmp"},
+		{"cwd", "pwd", "/tmp/work-\xff"},
+		{"both", "printf '\xff'", "/tmp/work-\xff"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := ExecRequest{Language: Shell, Code: tc.code, Cwd: tc.cwd}
+			data, err := json.Marshal(request)
+			require.NoError(t, err)
+			var decoded ExecRequest
+			require.NoError(t, json.Unmarshal(data, &decoded))
+			require.Equal(t, request, decoded)
+			var old requestFields
+			require.Error(t, json.Unmarshal(data, &old), "old readers must reject byte objects")
+		})
+	}
+}

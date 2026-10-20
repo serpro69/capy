@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,8 @@ func TestShellPolicyNestedDenyBeforeSpawn(t *testing.T) {
 		{"substitution", `echo "$(blocked arg)"`},
 		{"heredoc", "cat <<EOF\n$(blocked arg)\nEOF"},
 		{"array expansion", `values=($(blocked arg))`},
+		{"capture owner override", `capy --project-dir /other execute --code 'blocked arg'`},
+		{"nested capture", `capy execute --code "capy execute --code 'blocked arg'"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			command := ": > " + marker + "; " + tc.command
@@ -103,4 +106,17 @@ func TestEmbeddedArgvAndArrayDataExecute(t *testing.T) {
 	result = callTool(t, srv, map[string]any{"language": "python", "code": "import subprocess\nsubprocess.run([\"bash\", \"-c\", \"blocked arg\"])"})
 	require.True(t, result.IsError)
 	assert.Contains(t, resultText(result), "Bash(blocked:*)")
+}
+
+func TestExecuteHeadTailPreview(t *testing.T) {
+	srv := newTestServer(t, nil)
+	result := callTool(t, srv, map[string]any{
+		"language": "shell",
+		"code":     "printf 'HEAD_MARKER\\n'; head -c 150000 /dev/zero | tr '\\000' x; printf 'TAIL_FAILURE\\n' >&2; exit 1",
+	})
+	require.True(t, result.IsError)
+	encoded, err := json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), "HEAD_MARKER")
+	require.Contains(t, string(encoded), "TAIL_FAILURE")
 }
