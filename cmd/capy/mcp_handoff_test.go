@@ -145,13 +145,17 @@ func TestMCPRunHandoffTransport(t *testing.T) {
 	})
 	t.Run("configured deadline and explicit override", func(t *testing.T) {
 		project := stdioProject(t)
-		require.NoError(t, os.WriteFile(filepath.Join(project, ".capy.toml"), []byte("[executor]\ntimeout=1\n[runs]\nwait_ms=0\n"), 0600))
+		// Include cold encrypted-store and supervisor startup in the budget,
+		// then keep the command alive long enough to exercise a running timeout.
+		require.NoError(t, os.WriteFile(filepath.Join(project, ".capy.toml"), []byte("[executor]\ntimeout=5\n[runs]\nwait_ms=0\n"), 0600))
 		p := launch(t, project)
-		deadline := p.capturedRun(t, map[string]any{"language": "shell", "code": "sleep 10"})
+		deadline := p.capturedRun(t, map[string]any{"language": "shell", "code": "sleep 30"})
 		require.False(t, deadline.IsError)
 		require.Nil(t, deadline.Structured.CompletedAt)
-		require.Equal(t, "timed_out", p.awaitRun(t, *deadline.Structured.RunID).State)
-		override := p.capturedRun(t, map[string]any{"language": "shell", "code": "sleep 1.2; printf override-tail", "timeout": 5000, "wait_ms": 30000})
+		terminal := p.awaitRun(t, *deadline.Structured.RunID)
+		require.NotNil(t, terminal.StartedAt, "the fixture must start before its execution deadline")
+		require.Equal(t, "timed_out", terminal.State)
+		override := p.capturedRun(t, map[string]any{"language": "shell", "code": "sleep 5.2; printf override-tail", "timeout": 10000, "wait_ms": 30000})
 		require.False(t, override.IsError)
 		require.Equal(t, "exited", override.Structured.State)
 		require.Equal(t, []byte("override-tail"), p.rawRun(t, *override.Structured.RunID, "stdout"))

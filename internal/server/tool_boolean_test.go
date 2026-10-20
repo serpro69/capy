@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
@@ -170,24 +171,37 @@ func TestBooleanArgs_CleanupStringValues(t *testing.T) {
 
 func TestBooleanArgs_ExecuteBackgroundStrings(t *testing.T) {
 	for _, tt := range []struct {
-		name  string
-		value string
-		want  string
+		name    string
+		value   string
+		timeout int
+		want    string
 	}{
-		{name: "true detaches", value: " TrUe ", want: "running"},
-		{name: "false times out", value: " FaLsE ", want: "timed_out"},
+		{name: "true detaches", value: " TrUe ", timeout: 1, want: "running"},
+		// Execution deadlines include encrypted storage and supervisor startup.
+		{name: "false times out", value: " FaLsE ", timeout: 5000, want: "timed_out"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := newTestServer(t, nil)
 			r := callTool(t, srv, map[string]any{
-				"language": "shell", "code": "printf started; sleep 30", "timeout": 1000, "background": tt.value,
+				"language": "shell", "code": "printf started; sleep 30", "timeout": tt.timeout, "background": tt.value,
 			})
+			run := capturedResult(t, r)
+			require.NotNil(t, run.RunID)
 			if tt.name == "false times out" {
 				require.True(t, r.IsError, resultText(r))
+				require.NotNil(t, run.StartedAt, "the fixture must start before its execution deadline")
 			} else {
 				require.False(t, r.IsError, resultText(r))
+				id := *run.RunID
+				// Handoff may precede spawn; prove the background run reaches
+				// running after the one-millisecond response wait expires.
+				require.Eventually(t, func() bool {
+					var err error
+					run, err = srv.executionService().Status(t.Context(), id)
+					return err == nil && run.State == tt.want
+				}, 5*time.Second, 10*time.Millisecond)
 			}
-			assert.Contains(t, resultText(r), tt.want)
+			assert.Equal(t, tt.want, run.State)
 		})
 	}
 }
