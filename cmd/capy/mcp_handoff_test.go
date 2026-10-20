@@ -117,31 +117,66 @@ func TestMCPRunHandoffTransport(t *testing.T) {
 		p.close(t)
 	})
 	t.Run("response write failure cancels owner", func(t *testing.T) {
-		project := stdioProject(t)
-		p := launch(t, project)
-		// Keep input open. Only the response writer fails after the handoff;
-		// no receipt can be inferred, so recover the run through a new owner.
-		require.NoError(t, p.stdout.Close())
-		require.NoError(t, p.write(map[string]any{"jsonrpc": "2.0", "id": p.nextID + 1, "method": "tools/call", "params": map[string]any{"name": "capy_execute", "arguments": map[string]any{"language": "shell", "code": "touch started; sleep 20; touch must-not-run", "wait_ms": 1500}}}, time.Now().Add(stdioTimeout)))
-		select {
-		case <-p.waited:
-		case <-time.After(10 * time.Second):
-			t.Fatal("owner did not stop after response write failure")
+		for _, phase := range []string{"undelivered admission", "running command"} {
+			t.Run(phase, func(t *testing.T) {
+				project := stdioProject(t)
+				p := launch(t, project)
+				args := map[string]any{
+					"language": "shell", "code": "touch started; sleep 60; touch must-not-run", "wait_ms": 0,
+				}
+				method := "tools/call"
+				params := map[string]any{"name": "capy_execute", "arguments": args}
+				var runID string
+				if phase == "running command" {
+					r := p.capturedRun(t, args)
+					require.False(t, r.IsError)
+					require.NotNil(t, r.Structured.RunID)
+					require.Nil(t, r.Structured.CompletedAt)
+					runID = *r.Structured.RunID
+					require.Eventually(t, func() bool {
+						_, err := os.Stat(filepath.Join(project, "started"))
+						return err == nil
+					}, 10*time.Second, 10*time.Millisecond)
+					// The run has handed off and started. Fail a later response
+					// write without relying on how long startup took.
+					method, params = "tools/list", map[string]any{}
+				}
+				// Keep input open so only a response-write failure stops the
+				// owner. An undelivered admission may be cancelled before spawn;
+				// the running-command case separately requires actual startup.
+				require.NoError(t, p.stdout.Close())
+				require.NoError(t, p.write(map[string]any{
+					"jsonrpc": "2.0", "id": p.nextID + 1, "method": method, "params": params,
+				}, time.Now().Add(stdioTimeout)))
+				select {
+				case <-p.waited:
+				case <-time.After(10 * time.Second):
+					t.Fatal("owner did not stop after response write failure")
+				}
+				require.Equal(t, 1, p.cmd.ProcessState.ExitCode(), p.diagnostics())
+				require.Contains(t, p.diagnostics(), "broken pipe")
+				require.NoFileExists(t, filepath.Join(project, "must-not-run"))
+				reopened := launch(t, project)
+				var listed struct {
+					IsError    bool              `json:"isError"`
+					Structured runstore.ListPage `json:"structuredContent"`
+				}
+				require.NoError(t, reopened.request("tools/call", map[string]any{"name": "capy_runs", "arguments": map[string]any{"action": "list"}}, &listed))
+				require.False(t, listed.IsError)
+				require.Len(t, listed.Structured.Entries, 1)
+				status := reopened.runQuery(t, "status", listed.Structured.Entries[0].RunID)
+				require.False(t, status.IsError)
+				terminal := status.Structured.Run
+				require.Equal(t, "cancelled", terminal.State)
+				require.True(t, terminal.Capture.TerminalPersisted)
+				if phase == "running command" {
+					require.Equal(t, runID, listed.Structured.Entries[0].RunID)
+					require.NotNil(t, terminal.StartedAt)
+					require.FileExists(t, filepath.Join(project, "started"))
+				}
+				reopened.close(t)
+			})
 		}
-		require.FileExists(t, filepath.Join(project, "started"))
-		require.NoFileExists(t, filepath.Join(project, "must-not-run"))
-		reopened := launch(t, project)
-		var listed struct {
-			IsError    bool              `json:"isError"`
-			Structured runstore.ListPage `json:"structuredContent"`
-		}
-		require.NoError(t, reopened.request("tools/call", map[string]any{"name": "capy_runs", "arguments": map[string]any{"action": "list"}}, &listed))
-		require.False(t, listed.IsError)
-		require.Len(t, listed.Structured.Entries, 1)
-		terminal := reopened.runQuery(t, "status", listed.Structured.Entries[0].RunID).Structured.Run
-		require.Equal(t, "cancelled", terminal.State)
-		require.True(t, terminal.Capture.TerminalPersisted)
-		reopened.close(t)
 	})
 	t.Run("configured deadline and explicit override", func(t *testing.T) {
 		project := stdioProject(t)
