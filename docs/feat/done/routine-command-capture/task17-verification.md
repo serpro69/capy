@@ -361,3 +361,42 @@ tests and server's `setupVaultSweepProject`, `setupVaultSweepMultiProject` and
 variable inside the fixtures so their temporary `HOME` owns discovery even when
 a developer exports a custom Claude root. The validation invocation above
 unsets it without changing production configuration.
+
+## Response-write startup synchronization (2026-10-20)
+
+[CI run 39459426896](https://github.com/serpro69/capy/actions/runs/39459426896)
+on `9416745` failed only
+`TestMCPRunHandoffTransport/response_write_failure_cancels_owner`.
+The fixture closed stdout before issuing execution and assumed its 1.5-second
+response wait guaranteed a `started` marker. Under CI load, the response failed
+before the command started. The package finished in 767.445 seconds, within
+the new twenty-minute limit; every other package passed.
+
+The fixture now exercises two distinct response failures without a fixed startup
+delay. The undelivered-admission case closes stdout before a zero-wait execution
+and recovers the cancelled run by listing it from a new owner. Startup is not
+promised for that case. The running-command case first receives the handoff,
+waits for the command's marker, then closes stdout and requests `tools/list` to
+trigger a response failure. It requires the same recovered run ID and recorded
+startup. Both cases keep stdin open, require exit 1 with a broken-pipe diagnostic,
+forbid the command's late side effect, and require persisted cancellation.
+This retains coverage of both missing-receipt recovery and actual process
+cleanup. Production behavior and deadlines are unchanged.
+
+Adjacent execute-file, batch and Codex shutdown fixtures already wait for startup
+markers or valid PID contents before triggering cleanup.
+
+Validation:
+
+- Ten repetitions of both cases passed with `GOMAXPROCS=2`, `GOFLAGS=-race`,
+  `-tags fts5` and synthetic knowledge/vault keys (84.589 s).
+- `go vet -tags fts5 ./...`, Go formatting and whitespace checks passed.
+- Independent code review approved the change with no actionable findings.
+  The external reviewer remains unavailable due to the API-key failure recorded
+  above and was not retried.
+- Full `go test -tags fts5 -race -timeout 20m -count=1 ./...` validation passed
+  every package in one invocation: CLI 516.339 s, server 420.948 s and vault
+  203.081 s. The run used synthetic keys, fresh XDG/Codex roots and
+  `CLAUDE_CONFIG_DIR` unset. With `-json` added for logging, its complete event
+  log is `/tmp/capy-ci-39459426896-tests.jsonl`. These are local results; a new
+  hosted CI result requires pushing the repair.
