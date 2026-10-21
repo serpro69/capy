@@ -54,16 +54,16 @@ func webFetchBlockMessage(rawURL string) string {
 		if ghCmd := info.GhCommand(); ghCmd != "" {
 			return fmt.Sprintf(
 				"capy: WebFetch blocked. This is a GitHub %s — use `%s` for full comprehension. "+
-					"If you need searchable extraction of large content, use capy_fetch_and_index(url: %q) then capy_search(queries: [...]).",
-				info.KindDisplay(), ghCmd, rawURL,
+					"For large-content extraction, run that CLI command through capy_execute and use capy_runs to read or search its captured output.",
+				info.KindDisplay(), ghCmd,
 			)
 		}
 
 		return fmt.Sprintf(
 			"capy: WebFetch blocked. This URL points to a %s (#%s). "+
 				"For full comprehension, use your platform's CLI or WebSearch. "+
-				"For large content extraction, use capy_fetch_and_index(url: %q) then capy_search(queries: [...]).",
-			info.KindDisplay(), info.Number, rawURL,
+				"For large-content extraction, run the platform CLI through capy_execute and use capy_runs to read or search its captured output.",
+			info.KindDisplay(), info.Number,
 		)
 	}
 
