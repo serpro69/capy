@@ -61,9 +61,9 @@ For suitable extraction use:
 
 ### WebFetch — BLOCKED in Claude Code
 Claude main-agent WebFetch calls are denied. Children require their own recent capy_execute or capy_fetch_and_index success for one suitable redirect; otherwise they receive advisory guidance. For extraction or comprehension, use:
-- For git platform issues/PRs/MRs: platform CLI (e.g., `gh issue view N`) or `WebSearch` for full comprehension
+- For git platform issues/PRs/MRs: platform CLI (e.g., `gh issue view N`) or `WebSearch` for full comprehension. For large-content extraction, run the CLI through `capy_execute`, then read or search its captured output with `capy_runs`.
 - For other small pages needing comprehension: `WebSearch` or other runtime web tools
-- For large web content or extraction: `capy_fetch_and_index(url, source)` then `capy_search(queries)`
+- For large content from other URLs: `capy_fetch_and_index(url, source)` then `capy_search(queries)`
 
 ## Source kinds
 

@@ -57,11 +57,17 @@ func TestWebFetchBlockMessage(t *testing.T) {
 		msg := webFetchBlockMessage("https://github.com/serpro69/capy/issues/44")
 		assert.Contains(t, msg, "gh issue view 44 --repo serpro69/capy")
 		assert.Contains(t, msg, "GitHub issue")
+		assert.NotContains(t, msg, "capy_fetch_and_index")
+		assert.Contains(t, msg, "capy_execute")
+		assert.Contains(t, msg, "capy_runs")
 	})
 
 	t.Run("GitHub PR URL mentions gh pr view", func(t *testing.T) {
 		msg := webFetchBlockMessage("https://github.com/serpro69/capy/pull/47")
 		assert.Contains(t, msg, "gh pr view 47 --repo serpro69/capy")
+		assert.NotContains(t, msg, "capy_fetch_and_index")
+		assert.Contains(t, msg, "capy_execute")
+		assert.Contains(t, msg, "capy_runs")
 	})
 
 	t.Run("GitLab issue mentions platform CLI", func(t *testing.T) {
@@ -69,6 +75,9 @@ func TestWebFetchBlockMessage(t *testing.T) {
 		assert.Contains(t, msg, "issue")
 		assert.Contains(t, msg, "#123")
 		assert.Contains(t, msg, "platform")
+		assert.NotContains(t, msg, "capy_fetch_and_index")
+		assert.Contains(t, msg, "capy_execute")
+		assert.Contains(t, msg, "capy_runs")
 	})
 
 	t.Run("generic URL mentions WebSearch", func(t *testing.T) {

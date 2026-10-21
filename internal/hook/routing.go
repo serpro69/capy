@@ -10,7 +10,7 @@ func RoutingBlock() string {
     use observed capy_fetch_and_index. Git issue/PR/MR comprehension keeps native CLI guidance.
     - curl/wget in Bash → use capy_fetch_and_index or capy_execute
     - Inline HTTP in Bash → use capy_execute
-    - WebFetch → for git issues/PRs/MRs: platform CLI (gh issue view) or WebSearch; for large content: capy_fetch_and_index`)
+    - WebFetch → for git issues/PRs/MRs: platform CLI (gh issue view) or WebSearch; for other large pages: capy_fetch_and_index`)
 }
 
 // CodexRoutingBlock shares the core guidance while describing only capy's
