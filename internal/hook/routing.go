@@ -47,7 +47,7 @@ func routingBlock(upgradeNote, blocked string) string {
     - Small-output non-routine commands
     - Files to comprehend or edit (Read)
     - Existing logs to read; recover new captured output with capy_runs
-    - Instruction files, checklists, configs (Read whole)
+    - Governing instructions, checklists, agent configs (Read whole)
     - Small authoritative web pages (issues, PRs, specs) — runtime web tools (gh, WebSearch) when available
   </direct_tools>
 
@@ -96,10 +96,14 @@ For git issues/PRs/MRs, prefer the platform CLI or WebSearch for full comprehens
 // READ_GUIDANCE is the one-time advisory shown when Read is used.
 const READ_GUIDANCE = `<context_guidance>
   <tip>
-    Read is the right default. Use offset/limit to scope large files.
-    Only reach for capy_execute_file when the file is genuinely large (10k+ lines)
-    AND you want a derived answer (count, stats, extracted pattern), not the content itself.
-    If an Edit will follow, just Read — capy_execute_file beforehand is pure overhead.
+    Default to reading the relevant content. Use offset/limit to scope large files.
+    Use capy_execute_file for a specific question when it avoids loading substantial
+    irrelevant content. If you cannot specify what to extract, read the relevant content first.
+    Do not perform extraction that merely duplicates a read you still need.
+
+    - The document is meant to be followed as instructions, applied as a checklist, or read for comprehension — use Read. Indexing turns a coherent document into a bag of fragments.
+    - Finding tests related to X → search for candidates, then use Read on the relevant test blocks.
+    - Extracting *derived answers* (count, stats, extracted pattern, structural summary), not the content itself; for example, counting services with a flag enabled → use capy_execute_file to extract the count.
   </tip>
 </context_guidance>`
 
@@ -118,6 +122,6 @@ const BASH_GUIDANCE = `<context_guidance>
     Prefer capy_execute or capy_batch_execute for routine tests/builds/installs.
     Codex requires capture for recognized routines unless explicitly excepted; Claude advises.
     Recover captured logs with capy_runs or capy runs; do not repeat execution for output.
-    Use Bash for git/diffs and Read for existing logs. Read instructions/configs whole.
+    Use Bash for git/diffs and Read for existing logs. Read governing instructions whole.
   </tip>
 </context_guidance>`

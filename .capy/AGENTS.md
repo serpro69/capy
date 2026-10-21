@@ -15,7 +15,7 @@ Use capture for routine tests, builds and dependency installs. Codex enforces re
 - **Small-output non-routine commands (<~50 lines):** ls, wc, file, git status — Bash directly. Sandbox overhead exceeds savings.
 - **Files to comprehend or edit:** Read tool. Required before Edit.
 - **Existing sequential/ordered content:** read existing test and build logs directly. New routine runs use capture; recover ordered output with capy_runs read or capy runs read. Live native execution in Codex requires an explicit operator exception.
-- **Instruction files, checklists, configs:** Read and internalize whole. BM25 returns ranked fragments, destroying structural relationships.
+- **Governing instructions, checklists, agent configs:** Read and internalize whole. BM25 returns ranked fragments, destroying structural relationships.
 - **Small authoritative web pages:** GitHub issues, PR descriptions, short specs, doc pages — use runtime-native tools when available (e.g., `gh issue view` for GitHub, `WebSearch` for general queries). These are comprehension content; BM25 fragments destroy context just as they do for diffs.
 
 ## When to use capy tools
@@ -84,21 +84,17 @@ New execution logs live under the selected owner's .capy/runs/runs.db, not in kn
 
 ## Read vs capy_execute_file
 
-**Default to `Read`.** It's cheap for normal-sized files, shows you actual content (not just patterns you knew to grep for), and is required if an Edit follows. Use `offset`/`limit` to scope large files.
+Default to reading the relevant content with `Read`. Use `offset`/`limit` to scope large files.
 
-**Reach for `capy_execute_file` only when ALL of these hold:**
-1. The file is genuinely large (10k+ lines, or measured >100 KB), AND
-2. You want a *derived answer* (count, stats, extracted pattern, structural summary) — not the content itself, AND
-3. You can write the exact grep/awk/script upfront. If you'd struggle to, you don't know enough yet — just `Read`.
+Use `capy_execute_file` for a specific question when it avoids loading substantial irrelevant content. If you cannot specify what to extract, read the relevant content first. **Do not perform extraction that merely duplicates a read you still need.**
+
+- The document is meant to be followed as instructions, applied as a checklist, or read for comprehension — use `Read`. Indexing turns a coherent document into a bag of fragments.
+- Finding tests related to X → search for candidates, then use `Read` on the relevant test blocks.
+- Extracting *derived answers* (count, stats, extracted pattern, structural summary), not the content itself; for example, counting services with a flag enabled → use `capy_execute_file` to extract the count.
 
 **Anti-patterns — do NOT do this:**
-- `capy_execute_file` to grep section headings, then `Read` the file anyway to Edit it. The Read makes the capy call pure overhead.
-- `capy_execute_file` on a code file to "explore structure." Use `grep`, `find`, or language-specific tools instead.
-- `capy_execute_file` on a small/medium file (<2k lines) "to save context." The savings don't exist; you're adding latency.
 - `capy_index` on instruction files (skill definitions, checklists, plugin configs, review profiles). These documents must be `Read` and internalized whole — BM25 returns ranked fragments, which destroys structural relationships between sections. A checklist item saying "check X, but only if Y" becomes meaningless when Y landed in a different search result.
 - `capy_index` on files outside the project directory (e.g. plugin caches under `~/.claude/`, tool configs, system paths). These are instructions or configuration the LLM needs to follow, not project data to query.
-
-**Rule of thumb:** capy saves context only when raw data would otherwise flood context and you don't need the full content. If the document is meant to be followed as instructions, applied as a checklist, or read for comprehension — use `Read`. Indexing turns a coherent document into a bag of fragments.
 
 ## Source labels
 
