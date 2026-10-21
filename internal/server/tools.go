@@ -156,7 +156,7 @@ func toolExecuteFile(langList string) mcp.Tool {
 	return mcp.NewTool("capy_execute_file",
 		mcp.WithToolAnnotation(annotationExecute),
 		mcp.WithDescription(fmt.Sprintf(
-			"Read a checked file into FILE_CONTENT inside the sandbox and execute once, capturing stdout/stderr in the encrypted owner-local run store. Returns bounded sanitized output, a run ID and status; recover with capy_runs read or search without repeating execution. Yielded runs remain captured and bound to this server's lifetime. Available: [%s]. Best for large files (10k+ lines) where you only need derived answers (counts, patterns, structural summary). Read is correct when you need to understand or edit the file.",
+			"Read a checked file into FILE_CONTENT inside the sandbox and execute once, capturing stdout/stderr in the encrypted owner-local run store. Returns bounded sanitized output, a run ID and status; recover with capy_runs read or search without repeating execution. Yielded runs remain captured and bound to this server's lifetime. Available: [%s]. Default to Read for the relevant content; use offset/limit to scope large files. Use this tool for a specific question when it avoids loading substantial irrelevant content. If you cannot specify what to extract, read the relevant content first. Do not perform extraction that merely duplicates a read you still need. To find tests related to X, search for candidates, then use Read on the relevant test blocks. Use this tool to count services with a flag enabled.",
 			langList,
 		)),
 		mcp.WithString("path",
