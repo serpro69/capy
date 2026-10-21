@@ -400,3 +400,57 @@ Validation:
   `CLAUDE_CONFIG_DIR` unset. With `-json` added for logging, its complete event
   log is `/tmp/capy-ci-39459426896-tests.jsonl`. These are local results; a new
   hosted CI result requires pushing the repair.
+
+## CI package contention follow-up (2026-10-21)
+
+[CI run 39611870504](https://github.com/serpro69/capy/actions/runs/39611870504)
+on `160240f` failed two storage-dependent tests:
+
+- `TestMCPRunHandoffTransport/background_capture_and_explicit_own_cancel`
+  received `storage_unavailable` instead of `different_owner`.
+- `TestIntegration_Performance_BatchExecuteWithSearch` reported an unpersisted
+  child terminal outcome, with one queued child and four skipped children.
+
+Both operations traverse bounded run-storage writes. Opening a second owner
+runs maintenance before cancellation can inspect ownership; supervisor
+finalization has its own bounded write. The errors do not identify the failing
+storage operation or prove CPU contention. The two tests passed three focused
+race repetitions normally and ten repetitions on one CPU before any changes.
+
+The main CI race command now uses `-p 1` to reduce competition between test
+packages performing encrypted database work. This changes package scheduling;
+race instrumentation, concurrency within each package, all assertions, the
+`fts5` tag, complete `./...` package selection and the twenty-minute package
+timeout remain intact. Production write deadlines are unchanged.
+
+Validation:
+
+- Paired full-package race runs covered `cmd/capy`, `internal/server`,
+  `internal/runstore`, `internal/store` and `internal/knowledge`, using `-p 8`
+  on CPUs 0–1 and `-p 1` on CPUs 2–3. Both use `-count=1 -timeout 20m`, synthetic
+  keys, fresh XDG/Codex roots and an unset `CLAUDE_CONFIG_DIR`. This is a local
+  contention comparison, not a reproduction of hosted runner hardware.
+- The parallel run failed `TestLargeAdmissionMakesProgressAcrossEvictionBatches`
+  during cleanup: both reconciliation and maintenance returned storage errors
+  (`internal/runstore`, 189.933 s). CLI (660.255 s), server (519.355 s), store
+  (234.285 s) and knowledge (243.901 s) passed. The original two CI failures
+  did not reproduce; this is evidence of a different load-sensitive storage
+  failure, not proof of their originating operation.
+- The serial run exited successfully: CLI (525.957 s), server (406.083 s),
+  runstore (81.102 s), store (108.671 s) and knowledge (111.936 s). This includes
+  both original failing packages and the runstore cleanup test that failed in
+  the parallel comparison. Total elapsed time was 1,235.484 s; serial scheduling
+  trades a longer job for less package-level contention. Other packages were
+  not rerun for this CI-only change.
+- Independent source review found no introduced defect and supports the
+  scheduling change. Its CI-repair assessment remains COMMENT because the
+  original two failures were not reproduced; local results support a mitigation
+  without proving their cause. No systemic findings require indexing.
+- `git diff --check` passes. `actionlint` is not installed. PAL has no configured
+  model provider, so it supplied no external review evidence.
+
+Hosted verification is pending because this repair has not been pushed. The
+branch maintainer should inspect the next CI run after pushing; acceptance is
+the unchanged complete race suite passing. If storage failures recur with
+serial packages, investigate the originating storage operation and its bounded
+deadline rather than weakening ownership or durable-finalization assertions.

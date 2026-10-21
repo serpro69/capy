@@ -20,7 +20,10 @@ jobs:
 
       # CLI integration tests include real process deadlines and encrypted
       # database setup; the full package can exceed Go's default ten minutes.
-      - run: CGO_ENABLED=1 go test -tags fts5 -race -timeout 20m ./...
+      # Run packages serially so competing encrypted-store tests do not starve
+      # the capture tests' bounded writes. Race detection and concurrency within
+      # each package remain enabled.
+      - run: CGO_ENABLED=1 go test -tags fts5 -race -p 1 -timeout 20m ./...
         env:
           CAPY_DB_KEY: ci-test-key-at-least-32-characters-long!!
           CAPY_VAULT_KEY: ci-vault-key-at-least-32-characters-long!!
