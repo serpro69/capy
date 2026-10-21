@@ -35,7 +35,7 @@ func TestGenerateRoutingInstructions(t *testing.T) {
 	assert.Contains(t, instructions, "HTTP routing and enforced policy")
 	assert.Contains(t, instructions, "Source kinds")
 	assert.Contains(t, instructions, "Subagent routing")
-	assert.Contains(t, instructions, "Output constraints")
+	assert.Contains(t, instructions, "Source labels")
 	assert.Contains(t, instructions, "capy commands")
 
 	// Must mention curl/wget blocking
