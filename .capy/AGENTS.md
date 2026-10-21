@@ -100,10 +100,8 @@ New execution logs live under the selected owner's .capy/runs/runs.db, not in kn
 
 **Rule of thumb:** capy saves context only when raw data would otherwise flood context and you don't need the full content. If the document is meant to be followed as instructions, applied as a checklist, or read for comprehension — use `Read`. Indexing turns a coherent document into a bag of fragments.
 
-## Output constraints
+## Source labels
 
-- Keep responses under 500 words.
-- Write artifacts (code, configs, PRDs) to FILES — never return them as inline text. Return only: file path + 1-line description.
 - When indexing content, use descriptive source labels so others can `capy_search(source: "label")` later.
 
 ## Subagent routing

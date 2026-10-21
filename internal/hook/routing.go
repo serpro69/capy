@@ -73,14 +73,6 @@ func routingBlock(upgradeNote, blocked string) string {
 ` + blocked + `
   </blocked>
 
-  <output_constraints>
-    <word_limit>Keep your final response under 500 words.</word_limit>
-    <artifact_policy>
-      Write artifacts (code, configs, PRDs) to FILES. NEVER return them as inline text.
-      Return only: file path + 1-line description.
-    </artifact_policy>
-  </output_constraints>
-
   <capy_commands>
     When the user says "capy stats" or asks about context savings:
     → Call the capy_stats MCP tool and display the full output verbatim.
