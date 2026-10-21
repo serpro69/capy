@@ -75,10 +75,10 @@ func routingBlock(upgradeNote, blocked string) string {
 
   <capy_commands>
     When the user says "capy stats" or asks about context savings:
-    → Call the capy_stats MCP tool and display the full output verbatim.
+    → Call the capy_stats MCP tool.
 
     When the user says "capy doctor" or asks to diagnose capy:
-    → Call the capy_doctor MCP tool and display results as a checklist.
+    → Call the capy_doctor MCP tool.
   </capy_commands>
 </context_window_protection>`
 }
