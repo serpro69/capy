@@ -138,7 +138,7 @@ Successful execute/fetch observations expire independently after 60 seconds and 
 
 | Command | Action |
 |---------|--------|
-| ` + "`capy stats`" + ` | Call the ` + "`capy_stats`" + ` MCP tool and display the full output verbatim |
-| ` + "`capy doctor`" + ` | Call the ` + "`capy_doctor`" + ` MCP tool and display as checklist |
+| ` + "`capy stats`" + ` | Call the ` + "`capy_stats`" + ` MCP tool |
+| ` + "`capy doctor`" + ` | Call the ` + "`capy_doctor`" + ` MCP tool |
 `
 }

@@ -208,9 +208,6 @@ func (s *Server) handleStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.C
 		fmt.Sprintf("| Default fetch freshness | **%dh** |", s.config.Store.Cache.FetchTTLHours),
 	)
 
-	lines = append(lines, "", "---",
-		"_Display this entire report as-is. Do NOT summarize or collapse any section._")
-
 	text := strings.Join(lines, "\n")
 	return s.trackToolResponse("capy_stats", textResult(text)), nil
 }
