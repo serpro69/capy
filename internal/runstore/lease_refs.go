@@ -129,6 +129,11 @@ func (r *LeaseRefs) retain() (*LeaseRefs, error) {
 	return b.owner.borrowLocked(), nil
 }
 
+// Retain creates an independent borrower of an existing live reference. Unlike
+// Store.BorrowLeases it can extend an already borrowed lifetime during shutdown;
+// it never creates a new acquisition or bypasses a closed reference.
+func (r *LeaseRefs) Retain() (*LeaseRefs, error) { return r.retain() }
+
 func (r *LeaseRefs) Close() error {
 	if r == nil || r.borrowed == nil {
 		return os.ErrInvalid
