@@ -3,19 +3,16 @@
 > Design: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Evidence: [verification.md](verification.md) · Review: [review-resolution.md](review-resolution.md)
-> Status: in progress — Task 1 done; Tasks 2–13 pending; macOS 26-only scope accepted
+> Evidence: [native process verification](process-proof.md) · [source verification](verification.md)
+> Status: in progress — Tasks 1–2 done; observational Darwin contract accepted; Tasks 3–13 pending
 > Created: 2026-10-22
-> Not Doing: older macOS majors, Intel support, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
+> Not Doing: older macOS majors, Intel support, certified Darwin group retirement, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
-Tasks 1–2 close the process gate; Tasks 3–4 close the lease gate. They are required
+Tasks 1–2 implement the bounded process-observation policy; Tasks 3–4 close the lease proof gate. They are required
 functionality, not exclusions. Use [bootstrap.md](bootstrap.md) only where Codex
 enforcement requires it. Task 1 implementation and native proof are recorded below; its temporary
 verification exceptions are removed after use. Contract fields remain fixed before
 their implementation.
-
-The former nine tasks are split before implementation. See the old→new mapping
-in [review-resolution.md](review-resolution.md#task-split-map); current status is below.
 
 ## Task 1: Select hosted support and prove bounded child waiting
 
@@ -42,20 +39,37 @@ in [review-resolution.md](review-resolution.md#task-split-map); current status i
 - **2026-10-22 — quality comparison and release follow-up:** Baseline and candidate `make bench-quality` both exit 2 at the same four server capture threshold cases because `internal/execution.Supported` still rejects Darwin. Store/vault checks pass, matching dataset hashes and all non-metadata quality results. No assertion or skip changed. Owner: feature implementer; next action: rerun the complete capture benchmark after Task 10 enables the proven backend; verification condition: all four real capture cases pass. This is a later public-activation requirement, not a Task 1 waiter defect.
 - **2026-10-22 — authorization and review:** The user explicitly approved six exact bootstrap test/benchmark exceptions, keeping routine enforcement enabled. The first verification round restored original configuration byte-for-byte and confirmed denial with an installed-hook probe. The same authorized scope was reused for the macOS 26 follow-up, then removed; a second read-only installed-hook probe confirmed restored enforcement and the original config bytes match. Final isolated code review **APPROVED** the narrowed Task 1 scope with no findings. Native results are author-attributed; the reviewer inspected source and performance/quality artifacts. Task 1 is complete; group certification, public activation and full release gates remain later tasks. PAL is unavailable. No new project conventions require indexing because the evidence is recorded here and in `process-proof.md`.
 
-## Task 2: Prove the Darwin group certificate
+## Task 2: Implement bounded Darwin group observation
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Size:** M
 - **Can run in parallel with:** Task 3, Task 4
 - **Strategy:** Risk-First
-- **Docs:** [group certificate](implementation.md#task-2-prove-the-darwin-group-certificate)
+- **Docs:** [group observation](implementation.md#task-2-implement-bounded-darwin-group-observation) · [accepted policy](design.md#darwin-process-lifecycle-and-observational-cleanup)
 
 ### Subtasks
 
-- [ ] 2.1 Add a dormant `supervised_darwin.go` phase lifecycle with retained leader identity and bounded drainage; keep public admission disabled → verify: ordinary/cancelled/compiler phases and a live child with closed output.
-- [ ] 2.2 Resolve fork/spawn publication and group re-entry against the precise scope → verify: justified certificate plus native adversarial fixtures, never signal/EOF/snapshot substitution.
-- [ ] 2.3 Complete `process-proof.md` with evidence limits and the certificate; if unproved, return to design rather than mark rejection-only behavior done.
+- [x] 2.1 Add a dormant `supervised_darwin.go` lifecycle and bounded documented `sysctl` inventory with retained leader identity and natural drainage → verify: ordinary/nonzero/cancelled/compiler phases, live child with closed output and escaped pipe holder; no private libproc production fallback.
+- [x] 2.2 Enforce `darwin_process_group_observation_v1` completion and failure conditions → verify: inventory/signalling/drain/reap errors stay incomplete, actual command/capture outcomes remain distinct, and the existing re-entry counterexample never becomes a `retired` claim. Fork-publication and in-flight-join impossibility proofs are explicitly no longer required.
+- [x] 2.3 Update `process-proof.md` with native policy evidence, API status and accepted limits; keep public dispatch disabled → verify: successful dormant behavior, bounded failure fixtures and independent review. Shared typed/storage/stream integration remains Tasks 5–9.
+
+### Execution context
+
+- **2026-10-22 — explicitly accepted contract revision (current):** After the recommendation to adopt observational Darwin cleanup, the operator replied “Agree. Let's do that.” This authorizes changing the cleanup guarantee, result semantics, normal reuse and retention policy. The current scope is `darwin_process_group_observation_v1` with state `observed`; Linux retains `retired`. This supersedes the former group-retirement gate and later “decision stays open” notes below, which remain historical. The native counterexample remains valid evidence of the accepted limit. Task 2 still requires implementing and testing the observation policy; lease ownership, real failures/quarantine, capture completeness and Linux behavior remain mandatory.
+- **2026-10-22 — revised design review:** Isolated `kk:review-design` returned SOUND with no findings across the seven revised documents and targeted source contracts. PAL was unavailable. Local validation passed 125 relative links/anchors, both JSON examples and `git diff --check`. Proceeding with the dormant observational backend; this review is not native runtime verification. Typed storage/protocol integration and activation remain later tasks.
+- **2026-10-22 — backend implementation prepared, verification pending:** Added a private Darwin phase/compile-run lifecycle, bounded documented sysctl inventory and native/fault fixtures. Existing public stream and execution admission remain unchanged. Native test/race/vet and repository-required benchmark comparisons await the exact bootstrap extension recorded in `bootstrap.md`; no claim of backend runtime success is made yet. The prior re-entry fixture results remain separate.
+- **2026-10-22 — backend verification supersedes pending entry above:** Final focused native count-five suite passed **19.216s**; full executor FTS5/integration race passed **26.696s**; vet passed. Tests cover ordinary/control/compiler/capture paths, public sysctl partial-buffer/identity behavior, natural drainage and all review-requested wait/reap failures. Six-sample baseline comparisons are recorded in `process-proof.md`; all non-metadata quality results match, with the same four inherited public-capture failures. Owner: feature implementer; rerun those capture cases after Task 10 activation, retaining current assertions. All attempts are preserved under `bench-results/macos-observed-task2-validation/`.
+- **2026-10-22 — code review and bootstrap closure:** Initial isolated code review returned COMMENT for three missing failure cases and pending benchmarks, with no source defect. Those fixtures/results were added and the reviewer returned **APPROVE** for the dormant source scope, with no findings. PAL unavailable; execution remains author-attributed. The original config bytes were restored in candidate and baseline, and an installed-hook probe confirmed routine denial. Final evidence-document review is pending; no new runtime or public-activation work is hidden in that closure.
+- **2026-10-22 — completed current scope:** Final isolated review approved the dormant backend and all evidence/closure documentation with no findings. Local documentation checks passed 129 relative links/anchors, both JSON examples and `git diff --check`. Task 2 is **done** under the explicitly accepted observational contract. Runtime execution is author-attributed; no PAL or released/hosted certification is claimed. No new knowledge notes are indexed because the decision, evidence and limits are captured in these documents. Task 3 is the next ready task; lease/storage/protocol integration and public activation remain intentionally pending.
+- **2026-10-22 — observed baseline and boundary:** Started from clean `feat/macos_captured_execution` at `a93aa9830f04fbf18bb0295bba8f8e1bd64a0a21` (branch identity corrected from the initial `master` attribution after checking `git branch --show-current`). Task 1's non-reaping waiter is present; `supervised_other.go` and `execution.Supported` still reject Darwin. This task must justify group retirement before implementing a successful dormant phase path. Storage, protocol changes, Linux retirement and public activation remain outside this slice.
+- **2026-10-22 — investigation in progress:** The selected host remains macOS 26.6.2 / 25G83, Darwin 25.6.0 / xnu-12377.161.14~5, arm64. Inspecting the public group APIs and published XNU ordering against the fork-publication and same-session re-entry obligations in `design.md`. Task 1's expired exceptions authorize only Task 1 verification; none has been reapplied for Task 2. No Task 2 native test has run.
+- **2026-10-22 — observed source / unresolved certificate:** [Task 2 evidence](process-proof.md#task-2-investigation-the-candidate-does-not-close-group-membership) records a same-session re-entry interleaving after the final group observation and before leader reap, plus the distinct group-insertion/process-list-publication gap. Pinned Apple source `ac9718fb1af618d5ce8678d0dc6e8a58f252216f` is not matched to this host; no native reproduction or universal impossibility claim is made. No successful certificate was established. Per Task 2.3, dependent supervisor implementation is stopped pending resolution; all three subtasks remain open.
+- **2026-10-22 — proposed next action, not an accepted change:** Owner: project operator for the contract choice; feature implementer for follow-through. Preserve certified retirement and identify a justified membership-closure mechanism, or explicitly accept observational group cleanup and revise its public/storage/reuse/retention semantics before implementation. The evidence report describes the counterexample, consequences and verification conditions. Native reproduction is deferred with a concrete fixture outline there; existing runtime/storage/security behavior is unchanged.
+- **2026-10-22 — verification and isolated review:** `git diff --check` passed for this documentation-only update. Independent `kk:review-code` review approved the evidence/disposition with no findings, including the added post-reap in-flight-join analysis; it did not approve Task 2 completion or certify host behavior. PAL was unavailable. No tests/builds/benchmarks ran, no routing exceptions were applied, and no findings require indexing because the evidence is recorded here. Task 2 remains in progress at its design gate.
+- **2026-10-22 — accepted fixture scope / verification pending:** The operator requested the proposed deterministic native fixture. Added integration-only leader/member re-exec, pipe barriers, bounded I/O/waits and fixture cleanup. It exercises the cancellation variant: successful group SIGKILL, retained terminal session leader, natural output EOF, then a controlled same-session re-entry and live response after leader reap. A graceful early-abort control exercises fixture cleanup. The installed captured test route rejected before admission; exact native command exceptions are proposed in `bootstrap.md`. This request does not change the cleanup guarantee or complete Task 2.
+- **2026-10-22 — native fixture results supersede pending verification above:** The operator explicitly approved both exact fixture commands. On macOS 26.6.2 arm64, all 20 ordinary repetitions passed (0.869s), as did the focused race run (3.416s). Each reproduced live re-entry after successful group signalling, terminal leader observation and natural pipe EOF; each confirmed fixture cleanup. The early-abort control also passed. Details, private libproc diagnostic status, raw-log locations and untested boundaries are in [the native fixture record](process-proof.md#deterministic-native-re-entry-fixture). This completes the requested experiment, not the group certificate or Task 2. No production code or contract changed.
+- **2026-10-22 — fixture review and bootstrap closure:** Isolated `kk:review-code` approved the five-file experiment with no findings after inspecting the code, waiter/reaper contracts, diagnostic API and both author-supplied logs; no reviewer test execution or PAL review is claimed. `git diff --check` passed. Both temporary native exceptions were removed, original config bytes matched, and an installed-hook probe confirmed restored denial. No new findings/conventions need indexing because the evidence is documented. The requested deterministic fixture is complete; the remaining Task 2 mechanism/contract decision stays open.
 
 ## Task 3: Construct acquisition-proven lease references
 
@@ -96,12 +110,12 @@ in [review-resolution.md](review-resolution.md#task-split-map); current status i
 - **Depends on:** Task 2, Task 4
 - **Size:** M
 - **Can run in parallel with:** —
-- **Docs:** [fresh stores](implementation.md#task-5-enforce-scoped-proof-on-fresh-stores) · [storage contract](contracts.md#storage-and-typed-proof)
+- **Docs:** [fresh stores](implementation.md#task-5-enforce-scoped-proof-on-fresh-stores) · [storage contract](contracts.md#storage-and-typed-evidence)
 
 ### Subtasks
 
-- [ ] 5.1 Add the shared typed proof and schema-9 scope column without DEFAULT → verify: fresh SQL rejects omitted, NULL and unknown scope; current Linux behavior remains usable.
-- [ ] 5.2 Centralize immutable scope/state transitions and safe-terminal predicates in `internal/runstore` → verify: admission, completion, recovery/reuse and retention respect pending uncertainty.
+- [ ] 5.1 Add `executor.CleanupEvidence`, schema-9 scope/state constraints without DEFAULT, and cross-scope pairing checks → verify: fresh SQL rejects omitted/NULL/unknown scope/state, Darwin retired and Linux observed; current Linux behavior remains usable.
+- [ ] 5.2 Centralize immutable scope/state transitions and policy-completion predicates in `internal/runstore` → verify: normal reuse/retention accepts Linux retired and Darwin observed, while pending/errors/inconsistency preserve quarantine. Observed never implies host quiescence.
 - [ ] 5.3 Synchronize manifest child proof transactionally and validate homogeneous batch aggregation → verify: child-log eviction does not erase authoritative proof.
 - [ ] 5.4 Compare retained rows/manifest copies and derive aggregates in one read snapshot, closing it before indexing → verify: concurrent completion causes no false mismatch.
 - [ ] 5.5 Keep existing-v8 stores explicitly refused on this unreleased intermediate branch; do not recreate them or ship before Task 6.
@@ -117,7 +131,7 @@ in [review-resolution.md](review-resolution.md#task-split-map); current status i
 
 ### Subtasks
 
-- [ ] 6.1 Implement authenticated exclusive-lifecycle transactional rebuild and policy update in `migrate.go`/attachment → verify: explicit Linux backfill, no final column DEFAULT, and SQL omission rejection after upgrade.
+- [ ] 6.1 Implement authenticated exclusive-lifecycle transactional rebuild and policy update in `migrate.go`/attachment → verify: explicit Linux backfill, no final column DEFAULT, SQL omission/cross-scope-pair rejection after upgrade, and no conversion of Linux retired to observed.
 - [ ] 6.2 Preserve IDs, logs, cursors, timestamps, quarantine/accounting and saved child proofs under the specified retained/evicted rules → verify: missing nonterminal or inconsistent evidence aborts safely.
 - [ ] 6.3 Cover wrong keys, live handles, interruption/rollback, replaced stores, unexpected versions and FK/index preservation → verify: no diagnostic/supervisor migration or automatic recreation/discard.
 - [ ] 6.4 Account for transient encrypted table-copy/WAL disk requirements separately from retained quota → verify: space failure rolls back without eviction or duplicate retained-byte charges.
@@ -135,7 +149,7 @@ in [review-resolution.md](review-resolution.md#task-split-map); current status i
 
 - [ ] 7.1 Publish cleanup at the exact run/batch/list/search placements and normalize historical blobs → verify: all views agree and bounded serialization preserves essential proof.
 - [ ] 7.2 Preserve compatible cursor/redaction formats and actual CLI/MCP outcomes → verify: prior cursors return identical retained bytes and incomplete cleanup keeps exit/signal evidence.
-- [ ] 7.3 Add explicit v1/v2 `healthyRunEnvelope` rules → verify: correct pending/retired eligibility, malformed/unknown rejection, no printed-JSON fallback, and unchanged one-use/security rules.
+- [ ] 7.3 Add explicit v1/v2 `healthyRunEnvelope` rules → verify: pending running eligibility, Linux retired / Darwin observed terminal eligibility, cross-scope/malformed/unknown rejection, no printed-JSON fallback, and unchanged one-use/security rules.
 - [ ] 7.4 Exercise null proof for unadmitted errors and aggregate/evicted-child cases → verify: no manufactured or contradictory retirement.
 
 ## Task 8: Bind protocol-v2 proof through Linux execution
@@ -149,7 +163,7 @@ in [review-resolution.md](review-resolution.md#task-split-map); current status i
 ### Subtasks
 
 - [ ] 8.1 Connect acquisition references, common exchange and fdinfo validation to Linux startup; bind startup/backend/row scope → verify: malformed or mismatched frames cannot authorize work.
-- [ ] 8.2 Replace unqualified wire `Retired` with typed proof across stream/outcome/store adapters → verify: compiler phases, capture failure, lost notices and local-versus-durable state remain truthful.
+- [ ] 8.2 Replace unqualified wire `Retired` with typed cleanup evidence across stream/outcome/store adapters → verify: compiler phases, capture failure, lost notices and local-versus-durable state remain truthful; only valid scope/state pairs cross v2 boundaries.
 - [ ] 8.3 Remove the transitional Linux adapter and aggregate proof across all phases → verify: compiler retirement followed by runtime spawn failure remains retired, unresolved phases remain pending, and failed persistence never upgrades the durable proof.
 - [ ] 8.4 Preserve the Linux descendant algorithm and run stored ownership/death fixtures → verify: escaped descendants, delayed backend close and pending-proof reset/reuse protection.
 
@@ -167,6 +181,7 @@ in [review-resolution.md](review-resolution.md#task-split-map); current status i
 - [ ] 9.1 Connect `launch_darwin.go`/`supervisor_darwin.go` to the proven executor and shared capture/storage → verify: one private real captured run with encrypted stdout/stderr recovery, nonzero exit and sanitized reads.
 - [ ] 9.2 Exercise owner loss with buffered authorization and capture/finalization failure → verify: no premature gate/lease reuse or duplicate execution.
 - [ ] 9.3 Keep production capability disabled until private integration passes; extract common launch mechanics only for the fixed shared sequence.
+- [ ] 9.4 Adapt Task 2's private observation outcome into shared stream dispatch and `CleanupEvidence`; split unsupported stubs → verify: Darwin observed compiler/run aggregation, no Linux Retired shortcut, and pending on actual observation/capture-finalization failures as specified.
 
 ## Task 10: Enable native CLI and ordinary MCP execution
 
@@ -206,7 +221,7 @@ in [review-resolution.md](review-resolution.md#task-split-map); current status i
 
 ### Subtasks
 
-- [ ] 12.1 Add capability and authenticated schema diagnostics with mixed-version/rollback guidance → verify: no storage creation, owner claims, probes or trust assertions.
+- [ ] 12.1 Add capability, Darwin observational-limit wording and authenticated schema diagnostics with mixed-version/rollback guidance → verify: no storage creation, owner claims, probes, quiescence claims or trust assertions.
 - [ ] 12.2 Add `make test-integration` and `make test-integration-race` with the specified packages/tags/timeouts; add Linux integration CI while retaining its current checks → verify: pre-feature baseline is recorded and newly exposed fixture failures are explicitly repaired.
 - [ ] 12.3 Add native jobs for the hosted matrix selected in Task 1 → verify: named integration suites execute rather than skip; no late self-hosted dependency appears.
 - [ ] 12.4 Extend actual macOS release-artifact smoke capture/recovery → verify: count, stdout/stderr and status beyond version printing.
@@ -222,11 +237,11 @@ in [review-resolution.md](review-resolution.md#task-split-map); current status i
 
 ### Subtasks
 
-- [ ] 13.1 Run `kk:test` for proof, migration, every public mode, required full FTS5/race/vet/build, new Linux/macOS integration targets and artifact parity; record actual versions and missing evidence.
+- [ ] 13.1 Run `kk:test` for observed-policy completion/failures, lease proof, migration, every public mode, required full FTS5/race/vet/build, new Linux/macOS integration targets and artifact parity; record actual versions and missing evidence.
 - [ ] 13.2 Run required executor quality/performance comparisons with matching immediate baselines; distinguish new Darwin capture measurements from comparable regressions.
 - [ ] 13.3 Run `kk:document` for operations/rollback, architecture, help, AGENTS and proof records; close the bootstrap record and remove only authorized temporary entries.
 - [ ] 13.4 Run `kk:review-code` with Go input and `kk:review-spec`; durably disposition findings and revisit architecture review if the documented topology changed.
-- [ ] 13.5 Confirm both proof gates, native all-mode acceptance, preserved Linux behavior/history and real CI coverage; then mark the feature complete.
+- [ ] 13.5 Confirm bounded Darwin observation and lease proof gates, native all-mode acceptance, preserved Linux behavior/history and real CI coverage; then mark the feature complete. Accepted residual-process uncertainty is not a renamed retirement-proof blocker.
 
 ## Dependency Graph
 

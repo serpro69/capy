@@ -1,6 +1,6 @@
 # Native verification bootstrap record
 
-> Status: Task 1 exceptions authorized, used, and removed 2026-10-22; routine enforcement verified restored
+> Status: Task 1 and Task 2 fixture exceptions authorized, used, and removed 2026-10-22; routine enforcement verified restored
 > Applies to: Codex hosts enforcing Capy's routine-capture gate
 > Plan: [implementation.md](implementation.md#execution-rules)
 
@@ -102,3 +102,85 @@ target 26.0. The temporary section was removed after these checks from both
 project and baseline; their original bytes match the recorded SHA-256. A second
 read-only installed-hook probe returned the routine-capture denial for the formerly
 excepted command. The follow-up is closed; no exception remains.
+
+## Task 2 deterministic re-entry fixture
+
+2026-10-22: the operator requested “let's try a deterministic native fixture as
+you propose.” The fixture is prepared in `internal/executor/group_darwin_test.go`
+with an integration-only membership binding in `group_fixture_darwin.go`.
+The attempted captured test was rejected **before admission** with
+`captured execution currently requires Linux supervision`; no run ID exists and
+no test executed. The operator subsequently approved “both fixture commands” in
+the exact-command authorization prompt. The following exceptions were applied
+for this fixture only; the original config was saved at
+`/private/tmp/capy-task2-validation/original-capy.toml`:
+
+```toml
+[routing.routine]
+enabled = true
+native_allow = [
+  "Bash(go test -tags fts5,integration -run=TestDarwinGroupReentry -count=20 -timeout 5m -v ./internal/executor)",
+  "Bash(go test -tags fts5,integration -run=TestDarwinGroupReentry -race -count=1 -timeout 5m -v ./internal/executor)",
+]
+```
+
+Use synthetic `CAPY_DB_KEY`/`CAPY_VAULT_KEY`, `CGO_ENABLED=1`, deployment target
+26.0 and temporary build caches. Scope: this repository's fixture, including
+fix-driven reruns of these exact commands. Preserve the current `.capy.toml`
+`[store]` section. Remove only the added exception entries after verification and
+verify restored enforcement with an installed-hook probe. No broad test, benchmark,
+installation or production activation exception is proposed.
+
+Verification completed: 20 focused repetitions passed (0.869s), followed by the
+focused race run (3.416s). The two entries were removed on 2026-10-22. The restored
+`.capy.toml` matches the saved original byte-for-byte. A read-only
+`capy hook pretooluse --platform codex` probe for the formerly excepted repeated
+test returned `permissionDecision=deny` with routine-capture guidance; it did not
+execute the command. No Task 2 exception remains.
+
+## Task 2 observational backend verification
+
+The user accepted the observational contract on 2026-10-22. The dormant backend,
+public sysctl inventory binding and native lifecycle/failure tests are prepared.
+The earlier two-command authorization covered the re-entry experiment only.
+Installed captured execution still rejects Darwin, so the following exact
+extension was approved by the operator (“Approve these six commands”) for this
+repository and an isolated copy of immediate baseline
+`a93aa9830f04fbf18bb0295bba8f8e1bd64a0a21`. The entries were applied with the
+original config saved at `/private/tmp/capy-task2-backend-validation/original-capy.toml`:
+
+```toml
+[routing.routine]
+enabled = true
+native_allow = [
+  "Bash(go test -tags fts5,integration -run=TestDarwinObserved -count=5 -timeout 5m -v ./internal/executor)",
+  "Bash(go test -tags fts5,integration -race -count=1 -timeout 10m ./internal/executor)",
+  "Bash(go vet -tags fts5 ./internal/executor)",
+  "Bash(go test -tags fts5 -run=TestNoSuchTest -bench=BenchmarkExecutorOverhead -benchmem -count=6 -benchtime=1s ./internal/executor)",
+  "Bash(make bench-quality BENCH_BRANCH=macos-observed-task2)",
+  "Bash(make bench-quality BENCH_BRANCH=macos-observed-task2-baseline)",
+]
+```
+
+Use synthetic keys, CGO, deployment target 26.0 and temporary caches. Compare the
+same benchmark command on baseline/candidate; preserve all attempts. The quality
+suite is expected to retain the existing Darwin public-capture failures until
+Task 10; compare actual results without changing assertions. Scope includes
+fix-driven reruns of these commands, not installation or activation. Keep routine
+enforcement enabled, preserve unrelated config, remove these entries when the
+verification ends, and probe restored enforcement.
+
+The approved backend verification is complete. Focused native tests passed in
+three recorded rounds (18.973s, 19.225s, final 19.216s); full executor integration
+race passed in 28.112s, 27.891s and final 26.696s; vet passed. Later rounds added
+late-cancellation and reviewer-requested wait/reap failure evidence. Performance
+and quality comparisons used the immediate baseline above; see `process-proof.md`
+for limits and the identical pre-existing public-capture quality failures.
+
+Both candidate and baseline exceptions were removed on 2026-10-22. Their config
+files match the separately saved originals byte-for-byte. The installed hook
+denied a read-only probe of the formerly excepted focused backend command with
+routine-capture-required guidance; the probe executed no test. No exception
+remains. All verification logs/reports are retained under
+`bench-results/macos-observed-task2-validation/`; no assertion or skip was changed
+to make the inherited quality failures pass.
