@@ -23,6 +23,7 @@ type Store struct {
 	db                   *sql.DB
 	path, key, id, owner string
 	lifecycle            *os.File
+	leases               *leaseAcquisition
 	policy               Policy
 	closeOnce            sync.Once
 	closeErr             error
@@ -33,9 +34,8 @@ type Store struct {
 	pendingIndexReleases map[string]Owner // only workers that have already returned
 }
 
-func (s *Store) ID() string               { return s.id }
-func (s *Store) Path() string             { return s.path }
-func (s *Store) LifecycleLease() *os.File { return s.lifecycle }
+func (s *Store) ID() string   { return s.id }
+func (s *Store) Path() string { return s.path }
 
 // Open authenticates existing storage before any new file/slot is created.
 // Missing credentials always fail before filesystem side effects. create=false
@@ -197,13 +197,17 @@ func openAttached(ctx context.Context, path, key, owner string, lock int) (*Stor
 		life.Close()
 		return nil, err
 	}
+	if lock == unix.LOCK_SH {
+		s.leases = &leaseAcquisition{lifecycle: life, path: path, id: s.id, refs: 1, exchange: make(chan struct{}, 1)}
+	}
 	return s, nil
 }
 
 func (s *Store) closeHandles() error {
+	s.stopLeaseBorrowing()
 	// Keep lifecycle ownership until database/sql has closed every connection.
 	err := s.db.Close()
-	return errors.Join(err, s.lifecycle.Close())
+	return errors.Join(err, s.closeLifecycle())
 }
 
 func (s *Store) startMaintenance() {
@@ -367,6 +371,7 @@ func initialize(ctx context.Context, path, key, owner string, settings PolicyCon
 
 func (s *Store) Close() error {
 	s.closeOnce.Do(func() {
+		s.stopLeaseBorrowing()
 		s.maintenanceCancel()
 		<-s.maintenanceDone
 		ctx, cancel := context.WithTimeout(context.Background(), recoveryTimeout)
@@ -399,7 +404,7 @@ func (s *Store) Close() error {
 		if err != nil {
 			s.closeErr = errors.Join(s.closeErr, fmt.Errorf("checkpoint runs on close: %w", storageError()))
 		}
-		s.closeErr = errors.Join(s.closeErr, s.lifecycle.Close())
+		s.closeErr = errors.Join(s.closeErr, s.closeLifecycle())
 		if freePages == 0 {
 			return
 		}

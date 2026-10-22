@@ -5,6 +5,7 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,8 +110,12 @@ func runStoredFixtureOwner() int {
 	if err != nil {
 		return 1
 	}
-	helper, err := Launch(context.Background(), exe, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: path, Deadline: deadline}, storedFixtureKey,
-		Leases{Owner: owner.Lease, Lifecycle: st.LifecycleLease()})
+	refs, err := st.BorrowLeases(owner)
+	if err != nil {
+		return 1
+	}
+	helper, err := Launch(context.Background(), exe, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: path, Deadline: deadline}, storedFixtureKey, refs)
+	err = errors.Join(err, refs.Close())
 	if err != nil {
 		if helper != nil {
 			helper.Wait()

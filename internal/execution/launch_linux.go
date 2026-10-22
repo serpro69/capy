@@ -22,12 +22,12 @@ type Supervisor struct {
 	closed        bool
 }
 
-// Launch reexecs the same binary in hidden supervisor mode without a shell.
+// launch reexecs the same binary in hidden supervisor mode without a shell.
 // No raw source or credential appears in argv/environment. ctx bounds startup;
 // after return the owner explicitly calls Cancel/Wait and owns the lifetime.
 // Once a helper has started, even an error returns its handle. The owner MUST
 // retain and join that handle; admission failure is not evidence of quiescence.
-func Launch(ctx context.Context, executable string, start Startup, key string, leases Leases) (*Supervisor, error) {
+func launch(ctx context.Context, executable string, start Startup, key string, leases Leases) (*Supervisor, error) {
 	if err := start.validate(); err != nil {
 		return nil, err
 	}

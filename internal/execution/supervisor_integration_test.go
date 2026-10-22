@@ -201,7 +201,7 @@ func runFixtureOwner() int {
 	if err != nil {
 		return 1
 	}
-	h, err := Launch(context.Background(), exe, fixtureStartup(dir), fixtureKey, leases)
+	h, err := launch(context.Background(), exe, fixtureStartup(dir), fixtureKey, leases)
 	if err != nil {
 		if h != nil {
 			h.Wait()
@@ -242,7 +242,7 @@ func TestStoppedHelperDoesNotBlockAdmission(t *testing.T) {
 			}
 			ready := make(chan launchResult, 1)
 			go func() {
-				h, err := Launch(ctx, exe, fixtureStartup(dir), fixtureKey, leases)
+				h, err := launch(ctx, exe, fixtureStartup(dir), fixtureKey, leases)
 				ready <- launchResult{h, err}
 			}()
 			pid, err := strconv.Atoi(string(waitFile(t, filepath.Join(dir, "opening.pid"))))
@@ -368,7 +368,7 @@ func startFixture(t *testing.T, dir string, start Startup) (*Supervisor, Leases)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := Launch(context.Background(), exe, start, fixtureKey, leases)
+	h, err := launch(context.Background(), exe, start, fixtureKey, leases)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,7 +505,7 @@ func TestSupervisorRejectsPrivateAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mode == "helper_missing" {
-				if _, err := Launch(context.Background(), filepath.Join(dir, "missing"), fixtureStartup(dir), fixtureKey, leases); err == nil {
+				if _, err := launch(context.Background(), filepath.Join(dir, "missing"), fixtureStartup(dir), fixtureKey, leases); err == nil {
 					t.Fatal("missing helper accepted")
 				}
 				assertProof(t, dir, "not_spawned")
