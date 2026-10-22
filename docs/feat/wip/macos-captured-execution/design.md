@@ -1,6 +1,6 @@
 # Native macOS captured execution
 
-> Status: approved direction refined after corroborated review; implementation pending; native feasibility unproved
+> Status: macOS 26-only scope approved; implementation in progress; group/lease feasibility unproved
 > Created: 2026-10-22
 > Baseline: `44ceb813ce2d4f129d058f2534faa2a57b07d8bd`
 > Plan: [implementation.md](implementation.md) · Work: [tasks.md](tasks.md)
@@ -30,17 +30,20 @@ declared cleanup scope must be visible and durable. Linux keeps its existing
 descendant retirement behavior. No platform may certify a stronger proof than
 its backend establishes.
 
-Apple Silicon is the first hardware target. **The minimum macOS version is an
-open feasibility decision**, assigned to Task 1: choose the intersection of verified
-API/toolchain requirements and available stable **GitHub-hosted arm64 runners**.
-Record the floor, deployment target, explicit runner labels, and native test
-versions before enabling support. Every declared OS major, including the floor,
-must be exercisable in hosted CI; `macos-latest` alone does not define a floor.
-Check availability when selecting the matrix, not after implementation. If that
-intersection is empty, stop the feasibility gate. Self-hosted runner provisioning
-is not in scope. See [GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
-The local macOS 26.6.2 host is evidence of the research environment, not
-a chosen support floor. Compilation and a `--version` smoke test are insufficient.
+The initial target is **macOS 26 on Apple Silicon**, with deployment target
+**26.0** and the explicit stable GitHub-hosted arm64 label **`macos-26`**.
+On 2026-10-22 the user accepted this narrower scope and rejected blocking the
+feature on older compatibility promises. The implementer's earlier macOS 15
+candidate is superseded; older majors are outside this release's support contract.
+
+Task 1 records actual API/toolchain and native waiter evidence for this single
+major. Record the OS/kernel/SDK builds used; a proposed hosted SDK is future CI
+configuration, not a separate compatibility gate. Task 12 adds hosted CI and
+release-artifact checks. `macos-latest` alone does not define the target, and
+self-hosted runner provisioning remains out of scope. See
+[GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+The local macOS 26.6.2 runtime fixtures provide native evidence for this target;
+compilation and a `--version` smoke test alone are insufficient.
 
 ## Existing boundaries
 
@@ -362,6 +365,7 @@ No test exception was applied during this design session.
 ## Not Doing
 
 - Intel support in the first release: user selected Apple Silicon first.
+- Older macOS majors in the first release: user selected macOS 26-only scope.
 - Complete detached-descendant cleanup on Darwin: outside selected A; group
   retirement itself remains required, not deferred.
 - Best-effort descendant tracking: adds observation complexity without the chosen
