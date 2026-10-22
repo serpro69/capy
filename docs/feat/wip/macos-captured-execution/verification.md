@@ -7,6 +7,13 @@
 > Scope selected by user: Apple Silicon first; direction A, native process-group supervision with explicit macOS cleanup limits
 > Related feature: [routine command capture](../../done/routine-command-capture/design.md)
 
+Subsequent design review is recorded in [review-resolution.md](review-resolution.md).
+Task numbers in the original verification narrative are historical: former process
+Task 1 is now Tasks 1–2; former lease Task 2 is now Tasks 3–4. The current design
+selects the offset exchange on both platforms, with additional Linux fdinfo
+validation, and adds safe pre-start kill/reap recovery. These are refined design
+decisions, not retroactive runtime verification of this source-only report.
+
 This report is evidence for [the design](design.md), not an implementation,
 independent design review, or successful runtime proof. All four agents started
 without the initial answer or curated search results. They performed read-only

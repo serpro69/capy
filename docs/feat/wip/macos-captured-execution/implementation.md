@@ -1,226 +1,283 @@
 # Implementation: native macOS captured execution
 
-> Status: planned; no implementation or native proof completed
-> Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
-> Evidence: [verification.md](verification.md)
+> Status: refined after corroborated review; no implementation/native proof completed
+> Design: [design.md](design.md) · Contract: [contracts.md](contracts.md)
+> Tasks: [tasks.md](tasks.md) · Review: [review-resolution.md](review-resolution.md)
 
 ## Execution rules
 
-The first two tasks are risk-first gates. A successful compile or happy-path
-process fixture cannot close them. Write proof evidence in `process-proof.md` and
-`lease-proof.md` alongside these documents, including the chosen APIs, OS/kernel
-and SDK versions, assumptions, failure cases, and actual commands/results. These
-files are future task outputs, not evidence that already exists.
+The process gate is Tasks 1–2; the lease gate is Tasks 3–4. Their future evidence
+files are `process-proof.md` and `lease-proof.md`. API availability, runtime
+coverage, and the certificate remain proof work; public/storage/frame shapes are
+already fixed in [contracts.md](contracts.md), not delegated to those experiments.
 
-Before the first native test/build, use an explicitly operator-authorized
-`routing.routine` exception for the required development commands, or another
-approved capture route. Record its scope and removal. Keep security checks intact;
-do not install a speculative backend merely to bypass the capture requirement.
-This bootstrap is a prerequisite for runtime checks, not permission to change
-the user's configuration now.
+For Codex with routine enforcement, follow [bootstrap.md](bootstrap.md) before a
+native test/build that cannot use capture. The operator authorizes exact scope;
+record authorization, configuration and removal there. Claude routine guidance
+and terminals/CI without Capy's enforcement need no such exception. Other host
+permissions remain applicable. No exception has been applied in this design work.
 
-Use the existing Go toolchain/dependencies unless the verified native interface
-requires a bridge. Apply dependency handling before recommending new APIs or
-versions, and record private/deprecated interface risks. Do not guess a Darwin
-`x/sys/unix` wrapper from its Linux counterpart. Every check uses FTS5 and synthetic
-knowledge/vault keys where storage is involved, isolated configuration/data paths,
-and appropriate temporary-path canonicalization on macOS.
+Use existing dependencies/toolchain, FTS5 tags, synthetic knowledge/vault keys, and
+isolated roots. Look up any new native interface against the pinned dependencies
+and chosen OS matrix. Do not guess a Darwin wrapper from Linux. Gate failures must
+be recorded and resolved, not hidden by skips, relaxed assertions, or automatic
+fallbacks. No intermediate commit enables Darwin before both proof gates; no
+schema-changing release ships before preservation/compatibility work is complete.
 
-Size estimates below count substantive mechanisms. Mechanical version propagation,
-registrations, and test data do not create an additional subsystem. If a task
-expands beyond its stated seam, split it before coding rather than conceal an L
-task under an M label.
+These are thirteen bounded slices. Failure fixtures verify the same mechanism
+rather than constitute separate production subsystems. Tasks sharing type or
+adapter files are sequential; no unresolved parallel ownership is delegated to
+the implementer.
 
-## Task 1: Prove Darwin process retirement
+## Task 1: Select hosted support and prove bounded child waiting
 
-Primary seams: `internal/executor/wait_darwin.go`, new
-`internal/executor/supervised_darwin.go`, and `supervised_other.go` build coverage.
-Keep public macOS admission disabled during this proof.
+Primary seams: `internal/executor/wait_darwin.go`, a dedicated child fixture,
+and `process-proof.md`.
 
-- Specify the support floor/deployment target and native matrix; pin the source
-  evidence to the APIs actually used → verify: evidence names every supported
-  version and distinguishes source arguments from exercised kernels.
-- Build the dedicated-helper process fixture around native spawn, retained
-  direct-child identity, validated terminal observation, group cleanup, and
-  bounded pipe drainage → verify: it handles real subprocesses and compiler/run
-  phases without a plaintext command-output spool.
-- Resolve the enumeration/publication and escaped-child re-entry obligations
-  in [Q1](verification.md#q1-what-can-darwin-prove-about-process-group-termination)
-  → verify: a causal proof plus adversarial fixtures; no success predicate based
-  solely on signal delivery, EOF, or repeated empty-looking snapshots.
-- Correct the relevant kqueue ESRCH/NOTE_EXIT waitability assumption as part of
-  the bounded waiting path → verify: stopped/exiting children and cancellation
-  cannot cause a presumed-immediate unbounded final wait.
+- Choose the floor/matrix from the intersection of verified API/toolchain needs
+  and stable GitHub-hosted Apple Silicon labels; record actual available labels,
+  OS/kernel/SDK builds, deployment target, and the runner-reference retrieval date
+  → verify: the floor and every declared OS major can run in CI. Self-hosted
+  provisioning is not an implicit fallback.
+- Establish bounded direct-child terminal observation and exactly one reaper;
+  correct the ESRCH/NOTE_EXIT waitability assumption → verify: stopped, exiting,
+  and cancellation cases never presume an immediate blocking final wait.
+- Record source-aligned or contract-backed evidence per the
+  [evidence standard](design.md#evidence-standard) → verify: unmatched sources are
+  disclosed and critical undocumented ordering is still an unresolved obligation.
 
-Gate outcome: record the precise `darwin_process_group_v1` certificate, its
-excluded descendants, unresolved kernel-stall limits, and tests. If no defensible
-certificate is established, leave the backend disabled and return to the design;
-do not mark this task done on rejection-only behavior.
+Do not add a full group supervisor in this slice. The outcome is a justified
+support matrix and usable bounded waiting primitive, with native fixtures.
 
-## Task 2: Prove lease identity and startup exclusion
+## Task 2: Prove the Darwin group certificate
 
-Primary seams: new `internal/runstore/lease_refs.go`, acquisition paths in
-`owners.go`/`store.go`, and new `internal/execution/lease_darwin.go`. The exact new
-filenames may follow package conventions; the acquisition boundary is mandatory.
+Primary seams: dormant `internal/executor/supervised_darwin.go`, shared phase
+integration in `stream.go`, and disjoint unsupported stubs.
 
-- Represent borrowed lease references with acquisition provenance and controlled
-  lifetime; production launch cannot receive arbitrary unproven files → verify:
-  actual lock acquisition failure/wrong mode cannot create valid launch inputs.
-- Implement a private synthetic helper exchange with causal offset observations
-  in both directions for both roles → verify: same-inode independent descriptors,
-  separate SH holders, swaps, aliases, replay/reflection, partial frames, and seek
-  failures reject; genuine inherited references succeed through real exec.
-- Own the exchange gate at the shared acquisition context, not inside one launch
-  invocation → verify: concurrent attempts and a stopped helper resuming after
-  timeout cannot alter another exchange. Gate ownership survives cancellation
-  until the old actor is joined or barred from offset mutation.
-- Exercise parent/helper death and reset/slot-claim races → verify: continuous
-  exclusion through helper backend close and no contents/size or lock-mode change.
+- Combine the Task 1 waiter with retained leader identity, group signalling and
+  bounded output drainage → verify: ordinary, cancelled and compile/run phases,
+  including a live child that closed output.
+- Resolve concurrent fork/spawn publication and group exit/re-entry against the
+  precise `darwin_process_group_v1` scope → verify: the causal guarantee is justified
+  under the evidence standard and exercised adversarially on the matrix.
+- Preserve distinct command, capture and cleanup outcomes → verify: signal success,
+  EOF and repeated snapshots are never substituted for the certificate.
 
-Gate outcome: `lease-proof.md` explains trusted acquisition versus identity proof.
-Explicitly demonstrate that aliases of the same unlocked description pass an
-identity-only test, then establish why production construction cannot supply it.
-Do not weaken that distinction to make the negative fixture pass.
+Complete `process-proof.md`. If no defensible certificate exists, keep public
+admission disabled and return to design; rejection-only behavior is not completion.
 
-## Task 3: Preserve Linux history with scoped storage
+## Task 3: Construct acquisition-proven lease references
 
-Primary seams: new `internal/runstore/migrate.go` and `cleanup.go`, plus
-`store.go` and `runs.go`. Policy-marker and diagnostic compatibility changes are
-consequences of the same upgrade, not a new policy mechanism.
+Primary seams: new `internal/runstore/lease_refs.go`, `owners.go`, and `store.go`.
 
-- Add authoritative immutable scope metadata and validation for known scoped
-  states; current Linux admissions receive their existing scope → verify: store
-  admission, load, completion, recovery, and ordinary Linux retention remain usable.
-- Implement only the declared 8→9 transactional upgrade under authenticated
-  exclusive lifecycle ownership on normal execution-owner attachment → verify:
-  prior IDs, bytes, cursors, timestamps, counters, pending evidence, and quarantine
-  survive. Supervisor and diagnostic paths never perform migration.
-- Cover wrong keys, concurrent owners/readers, interruption, unexpected versions,
-  quota/accounting effects, and DB replacement between lease attempts → verify:
-  rollback/refusal is explicit and never recreates or discards a run store.
-- Validate scope wherever retired evidence enables recovery/reuse/eviction;
-  propagate row scope through list/diagnostics/batch inventory as required
-  → verify: unknown scope fails closed and pending siblings still prevent reuse.
+- Encapsulate successful EX owner/SH lifecycle acquisitions, exact descriptors,
+  borrowing and closure lifetime → verify: arbitrary/unlocked/wrong-mode source
+  files cannot form production launch inputs.
+- Bind the reference set to its store/slot and shared acquisition context; own an
+  exchange gate there, across all aliases → verify: reference lifetime and gate
+  identity survive concurrent borrowers and normal store shutdown.
+- Preserve existing Linux inheritance and close-not-unlock rules → verify: real
+  reset/slot probes stay excluded while references remain; no exchange protocol
+  or platform backend is added yet.
 
-The migration must preserve unresolved state rather than run destructive cleanup.
-Update existing schema/policy checks coherently; never change the canary/key
-contract or move storage to a fallback path.
+Document the trusted-acquisition boundary in `lease-proof.md`. The next task
+proves transfer identity, not lock mode.
 
-## Task 4: Expose and consume the version-2 recovery contract
+## Task 4: Prove the common exchange and pre-start recovery
 
-Primary seams: `internal/runstore/types.go`/result assembly,
+Primary seams: new portable `internal/execution/lease_exchange.go`, the launch
+phase state machine, and private helper fixtures. Follow the exact
+[frame contract](contracts.md#private-protocol-v2) on Linux and Darwin.
+
+- Implement causal two-way offset changes for both roles → verify: inherited refs
+  succeed; independent same-inode/shared holders, swaps, reflected/replayed frames,
+  invalid markers, seek failures and wrong phases reject.
+- Serialize cancellation with `start_write_attempted`; before that boundary kill
+  the retained direct helper, observe/reap within the separate teardown budget,
+  then release the gate → verify: a SIGSTOPped helper recovers without owner
+  restart; a subsequent run can start.
+- Acquire the gate before helper creation under one startup deadline, and return
+  its ownership token exactly once → verify: gate-wait expiry spawns nothing and
+  cancellation after ready cannot release a subsequent run's gate.
+- Cover partial-start writes, late actors, signal/wait failure and unreapable
+  helpers → verify: no false bounded-reap promise, orphaned waiter, premature gate
+  release, or forced helper kill after possible authorization.
+- Retain Linux fdinfo validation in addition to the common sequence → verify:
+  portable fixtures on both platforms, unchanged lock modes/file bytes, and reset
+  exclusion through backend close.
+
+Complete `lease-proof.md`, including the identity-only unlocked-alias control.
+Same-description identity cannot replace Task 3's actual acquisition provenance.
+
+## Task 5: Enforce scoped proof on fresh stores
+
+Primary seams: new shared `executor.CleanupProof`, `internal/runstore/cleanup.go`,
+`store.go`, and `runs.go`; batch copy propagation follows the same transition.
+
+- Implement [storage fields and state rules](contracts.md#storage-and-typed-proof)
+  for fresh schema-9 stores, with no column defaults → verify: SQL rejects omitted,
+  NULL and unsupported scope, and ordinary Linux capture/recovery stays usable.
+- Centralize valid proof/completion predicates; bind immutable scope to admission
+  and synchronize child manifest proof in the existing transaction → verify:
+  recovery/reuse/expiry refuse pending or inconsistent proof.
+- Preserve proof after child-log eviction and aggregate homogeneous batch scopes
+  → verify: terminal manifests remain interpretable without a live run row;
+  comparisons/aggregates use one read snapshot and do not falsely reject a valid
+  completion between separate queries.
+
+This slice does not upgrade existing stores or publish new wire versions.
+Existing-v8 attachment may remain an explicit incompatible-store refusal on this
+unreleased branch until Task 6 lands; never recreate it.
+
+To keep this slice buildable with the current Linux-only protocol v1, introduce
+an explicitly named, temporary Linux adapter at the capture/completion boundary:
+the known Linux backend supplies scope; the existing `Started`/`Retired` pair maps
+to the typed local proof, and the new row supplies persisted proof on reads.
+This is not a default for unknown scope or a Darwin path. Task 8 replaces the
+adapter with native scoped protocol-v2 outcomes and removes it. Do not pretend
+that an unqualified v1 helper outcome already carries the new fields.
+
+## Task 6: Preserve version-8 histories through migration
+
+Primary seams: new `internal/runstore/migrate.go`, attachment in `store.go`,
+policy markers, and batch-copy conversion.
+
+- Implement the [transactional rebuild](contracts.md#upgrade-representation) under
+  authenticated exclusive lifecycle ownership; explicitly backfill old Linux scope
+  without leaving a DEFAULT → verify: both upgraded and fresh SQL reject omission.
+- Preserve IDs, outputs, cursors, timestamps, quarantine and accounting; convert
+  saved batch proofs by the specified retained/evicted-child rules → verify:
+  unsupported or missing nonterminal evidence aborts rather than infers safety.
+- Cover wrong key, busy owners/readers, interruption/rollback, replaced stores,
+  unexpected versions, FK/index preservation and table-copy/WAL space exhaustion
+  → verify: no plaintext spool, automatic eviction/discard or partial upgrade.
+- Separate transient disk requirements from retained-data quota and refresh any
+  actual accounting debit → verify: copied payload is not counted twice.
+
+Only normal execution-owner attachment migrates. Supervisor/doctor paths refuse
+or report compatibility without migration. New authenticated version-mismatch
+errors name found/supported versions, rather than only path permissions.
+
+## Task 7: Publish version-2 recovery views and hook parsing
+
+Primary seams: result assembly in `internal/runstore`,
 `internal/server/tool_runs.go`, `internal/execution/response.go`, and
-`internal/hook/posttooluse.go`. Query-envelope version propagation is mechanical.
+`internal/hook/posttooluse.go`. Use [public field placements](contracts.md#public-version-2-envelopes).
 
-- Add essential cleanup scope/state to run and batch/list views; emit public
-  version 2 consistently and normalize old saved result blobs from row metadata
-  → verify: execute/status/read/list/search and batch recovery agree on proof and
-  respect configured serialized-byte bounds.
-- Keep cursor/redaction versions and content positions unchanged where compatible
-  → verify: cursors issued before the upgrade still retrieve the same retained
-  bytes and wrong-store/expired cursors retain their errors.
-- Teach observation parsing explicit v1/v2 rules → verify: healthy v2 execution
-  records evidence, malformed/unknown scopes and versions do not, and printed
-  JSON cannot bypass structured validation or existing one-use rules.
-- Preserve CLI exit and MCP failure semantics while exposing actual exit/signal
-  alongside incomplete cleanup → verify: existing status/capture matrix and
-  versioned protocol fixtures, including legacy compatible Linux responses.
+- Expose `cleanup` at the specified run/batch/list/search locations and normalize
+  old saved blobs from authoritative proof → verify: all views agree and essential
+  proof survives bounded serialization.
+- Keep compatible cursors/redaction formats and actual CLI/MCP command outcomes
+  → verify: prior cursors recover identical bytes and incomplete cleanup does not
+  erase actual exit/signal information.
+- Implement explicit v1 and v2 healthy-envelope rules → verify: valid v2 pending/
+  retired states, malformed/unknown rejection, no printed-JSON fallback, and
+  unchanged one-use/security-first routing.
+- Exercise null proof on unadmitted rejection and aggregate/evicted batch cases
+  → verify: empty errors or missing children cannot manufacture retirement.
 
-## Task 5: Carry scoped proof through live Linux execution
+## Task 8: Bind protocol-v2 proof through Linux execution
 
-Primary seams: `internal/executor/stream.go`, `internal/execution/protocol.go`,
-`supervisor_linux.go`, and `stored_run.go`; service outcome mapping follows the
-new type contract. Linux's process algorithm remains unchanged.
+Primary seams: `stream.go`, `protocol.go`, `supervisor_linux.go`, and
+`stored_run.go`; outcome adapters follow the fixed contract.
 
-- Require known scope in startup, helper/backend selection, local outcomes, and
-  store finalization; use private protocol version 2 → verify: missing/mismatched
-  scope or protocol cannot start work or certify cleanup.
-- Wire acquisition-proven references from Task 2 into the launcher boundary while
-  retaining Linux fdinfo validation → verify: the existing inherited-lock and
-  malformed-startup fixtures retain their meaningful rejection guarantees.
-- Exercise ordinary, cancelled, failed-capture, lost-notice, and Rust compile/run
-  execution → verify: Linux still retires adopted escaped descendants, preserves
-  exit status, and distinguishes local proof from durable acknowledgement.
-- Run real stored recovery/owner-death fixtures → verify: free locks never replace
-  pending proof, and delayed backend close still excludes reset and reuse.
+- Wire acquisition references and the common exchange into Linux launch, retain
+  fdinfo checks, and require scope across startup/backend/row/outcome
+  → verify: missing/mismatched frame fields cannot start or certify work.
+- Remove unqualified wire `Retired`; distinguish local proof from durable proof
+  in completion and known-outcome recovery → verify: lost notices/finalization
+  failures, Rust phases, actual exit status and capture loss remain truthful.
+- Remove Task 5's transitional Linux adapter; combine all phase proofs before
+  whole-run finalization → verify: retired compiler plus runtime spawn failure,
+  unresolved compiler cleanup, and failed final persistence cannot manufacture
+  not-spawned or durable-retired outcomes.
+- Preserve the Linux descendant algorithm → verify: escaped descendants,
+  owner/helper death, delayed backend close and reset/reuse fixtures.
 
-## Task 6: Integrate Darwin single-run capture
+Task 8 depends on Task 7: shared response/type consequences are not concurrent work.
 
-Primary seams: new `internal/execution/launch_darwin.go` and
-`supervisor_darwin.go`, `stored_run.go` capability selection, and the proven
-executor backend. Extract common launch/serve mechanics only where it avoids
-duplicating established protocol/capture behavior; leave OS proof operations
-explicit. Unsupported build stubs must remain disjoint.
+## Task 9: Integrate a private Darwin captured run
 
-- Connect the proven exchange, acquired references, authentication, pending
-  persistence, process certificate, capture queue, and finalization
-  → verify: real CLI and MCP runs produce recoverable encrypted stdout/stderr
-  exactly once, with truthful nonzero exits and secret-safe default reads.
-- Preserve startup/cancellation failure ownership, including a buffered start
-  racing owner death and a late failed helper → verify: no premature gate/lease
-  reuse, no command before pending persistence, and no silent retry.
-- Select capability by verified OS/architecture/version support, not build success
-  → verify: unsupported combinations reject before spawn with accurate diagnostics.
+Primary seams: `launch_darwin.go`, `supervisor_darwin.go`, and the proven executor.
+Extract common launch/serve mechanics only where required by the one frame sequence.
 
-Gate outcomes from Tasks 1/2 are prerequisites. Development integration is not
-release readiness; all public modes and release checks below must pass before merge.
+- Connect exchange, authentication, pending persistence, process proof, queue and
+  store finalization through a private service fixture → verify: real encrypted
+  stdout/stderr recovery, nonzero exit and secret-safe default reads.
+- Exercise owner death with a buffered start frame and capture/finalization failure
+  → verify: once-only execution and no premature gate/lease reuse.
+- Keep production `Supported` rejection until this integration passes; public
+  adapters/capability activation are the next slice.
 
-## Task 7: Verify yielded, file, and batch execution on Darwin
+## Task 10: Enable native CLI and ordinary MCP execution
 
-Primary seams: `internal/execution/handoff.go`, `batch.go`, `scheduler.go`, and
-`service.go`; adapters should continue delegating to that shared path.
+Primary seams: backend capability in `stored_run.go`, shared service construction,
+`cmd/capy/execute.go`, and `internal/server/tool_execute_run.go`.
 
-- Verify `wait_ms`/legacy background handoff, execute-file policy and boilerplate,
-  serial batches, and parallel batches sharing lease descriptions
-  → verify: one execution, continued capture, stable owner identity, deadlines,
-  fair bounded capacity, and recoverable child IDs.
-- Separate short startup-exchange serialization from command concurrency
-  → verify: parallel children run concurrently after startup and a stalled
-  exchange cannot corrupt another child or let pending work bypass quarantine.
-- Exercise cancellation/shutdown during admission, exchange, execution, and
-  finalization → verify: joins and capacity accounting persist through cleanup;
-  batch completion/expiry requires every child's valid scoped terminal state.
-- Run compiled MCP/CLI fixtures and existing strict security/routing cases
-  → verify: file access and credential/owner boundaries remain unchanged.
+- Activate only the Task 1 OS/architecture matrix after both proof gates and
+  private integration → verify: compiled CLI/MCP runs capture once and recover
+  correct bytes/status through the installed contract.
+- Preserve owner, credential, security and execution-directory selection
+  → verify: unsupported hosts reject before spawn and no storage fallback appears.
+- Keep adapter changes thin and shared → verify: CLI exit codes, MCP failure flags,
+  response limits and actual runtime errors match the contract.
 
-## Task 8: Make capability and native release checks visible
+## Task 11: Verify yielded, file and batch execution
 
-Primary seams: `internal/platform/doctor*.go`, setup/routing descriptions,
-`.github/workflows/ci.yml`, and `.github/workflows/release.yml`.
+Primary seams: `handoff.go`, `batch.go`, `scheduler.go`, and `service.go`.
 
-- Separate backend capability, stored compatibility, and runtime activation in
-  diagnostics → verify: unsupported hosts are visible without creating storage,
-  acquiring owners, running probes, or claiming hook trust/activation.
-- Add native Apple Silicon CI with the Task 1 matrix and retained Linux coverage
-  → verify: compiled CLI/MCP execution and explicitly selected supervisor
-  integration tests run, rather than being platform-skipped.
-- Extend the macOS release smoke gate beyond version printing to synthetic
-  capture/recovery → verify: the actual release artifact starts a command once and
-  recovers expected output/status in an isolated owner.
-- Update operator docs and any affected generated instructions on both sides
-  → verify: artifact parity/idempotency, accurate scope/upgrade/rollback wording,
-  and no trust, enforcement, or permission changes hidden in setup.
+- Exercise `wait_ms`/legacy background, execute-file and serial/parallel batches
+  through compiled fixtures → verify: one execution, continued capture, deadlines,
+  stable owner identity and recoverable selectors.
+- Separate startup exchange serialization from running concurrency → verify:
+  parallel children run concurrently after ready; stalled startup cannot corrupt
+  siblings or bypass pending capacity/quarantine.
+- Exercise shutdown/cancel across startup/execution/finalization → verify: joins,
+  capacity and batch expiry retain per-child scoped proof; file/policy boundaries
+  remain unchanged.
 
-## Task 9: Final verification and documentation
+## Task 12: Add diagnostics and reproducible native CI
 
-Run `kk:test` for the proof/integration/migration matrix and required full FTS5,
-race, vet/build, and generated-artifact checks. Include focused `fts5,integration`
-supervisor/executor suites on both OS families. Use established isolated homes,
-synthetic keys, and the documented macOS temporary-root convention.
+Primary seams: platform doctor/setup wording, `Makefile`, and CI/release workflows.
 
-Run required executor quality/performance benchmarks against a recorded immediate
-pre-feature baseline. Preserve all results. Compare matching platforms/settings;
-report Darwin capture measurements without pretending the old rejected path is
-a performance baseline. Broaden testing only for failures, shared-code changes,
-or a named unresolved risk.
+- Report capability and authenticated schema compatibility without diagnostic
+  writes/probes/trust claims → verify: unsupported hosts and mixed versions are
+  actionable under the [rollback procedure](design.md#rollback-and-mixed-versions).
+- Add `make test-integration` and `make test-integration-race`: CGO, tags
+  `fts5,integration`, packages `./internal/executor ./internal/execution`, uncached,
+  serial package scheduling, and a 20-minute package timeout; race target adds
+  `-race`. Both require the same synthetic keys/isolated roots as other checks.
+- **Add** these integration targets to Linux CI while retaining existing full
+  FTS5/race/vet checks; add native arm64 jobs for the already-exercisable matrix
+  → verify: named suites execute rather than skip. Record the pre-feature Linux
+  integration baseline and give discovered fixture flakiness an explicit fix and
+  evidence entry; do not remove tags or assertions to claim success.
+- Extend the actual macOS release artifact smoke gate to isolated capture/recovery
+  → verify: invocation count, stdout/stderr and status, beyond `--version`.
+- Update operator docs and affected generators plus committed copies → verify:
+  parity/idempotency and no hidden permission, trust or enforcement changes.
+
+The Makefile targets and new CI coverage are planned implementation work, not
+changes performed by this design-revision task.
+
+## Task 13: Final verification and documentation
+
+Run `kk:test` for both proof gates, migration, every public mode, full required
+FTS5/race/vet/build checks, the new integration targets on both platforms, and
+artifact parity. Record actual OS/toolchain/runner builds. Unavailable evidence
+is not a pass; contract-backed evidence uses the declared standard.
+
+Run executor quality/performance comparisons against the immediate pre-feature
+baseline with matching platform/settings. Report new Darwin measurements without
+claiming that a previously rejected capture path is comparable. Broaden checks
+only for a named risk, shared change or failure.
 
 Run `kk:document`, `kk:review-code` with Go input, and `kk:review-spec`. Record
-remaining findings in these tasks/docs, not chat only. Release requires both proof
-gates, every public mode, preserved Linux behavior/history, and native CI evidence.
-No required check may be called passed because it was unavailable or skipped.
-Remove any authorized temporary test exception when its agreed purpose ends.
+unfixed findings durably. Final docs include run operations/rollback, README,
+architecture, AGENTS, CLI help, relevant generated artifacts, and proof reports.
+Close the bootstrap authorization record and remove only its added exception
+entries when their purpose ends, preserving unrelated user changes.
 
-Relevant final docs: `docs/reference/runs.md`, `README.md`, `docs/architecture.md`,
-`AGENTS.md`, CLI help, setup/routing artifacts when changed, and this feature's
-proof/verification records. Recommend architecture review of the new proof and
-ownership boundaries if implementation changes their documented topology.
+Release requires the proved certificates, native all-mode acceptance, preserved
+Linux behavior/history, and CI execution evidence. A kernel-internals-dependent
+unknown cannot be waived merely because a source tree is unpublished.

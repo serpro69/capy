@@ -1,10 +1,12 @@
 # Native macOS captured execution
 
-> Status: design sections approved; implementation pending; native feasibility unproved
+> Status: approved direction refined after corroborated review; implementation pending; native feasibility unproved
 > Created: 2026-10-22
 > Baseline: `44ceb813ce2d4f129d058f2534faa2a57b07d8bd`
 > Plan: [implementation.md](implementation.md) · Work: [tasks.md](tasks.md)
 > Evidence: [isolated verification](verification.md)
+> Contract: [contracts.md](contracts.md) · Review: [review-resolution.md](review-resolution.md)
+> Fresh reread: [readiness-review.md](readiness-review.md)
 > Predecessor: [routine command capture](../../done/routine-command-capture/design.md)
 
 ## Outcome and scope
@@ -29,9 +31,15 @@ descendant retirement behavior. No platform may certify a stronger proof than
 its backend establishes.
 
 Apple Silicon is the first hardware target. **The minimum macOS version is an
-open feasibility decision**, assigned to Task 1: choose and record the floor,
-deployment target, native test versions, and matching API evidence before enabling
-support. The local macOS 26.6.2 host is evidence of the research environment, not
+open feasibility decision**, assigned to Task 1: choose the intersection of verified
+API/toolchain requirements and available stable **GitHub-hosted arm64 runners**.
+Record the floor, deployment target, explicit runner labels, and native test
+versions before enabling support. Every declared OS major, including the floor,
+must be exercisable in hosted CI; `macos-latest` alone does not define a floor.
+Check availability when selecting the matrix, not after implementation. If that
+intersection is empty, stop the feasibility gate. Self-hosted runner provisioning
+is not in scope. See [GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+The local macOS 26.6.2 host is evidence of the research environment, not
 a chosen support floor. Compilation and a `--version` smoke test are insufficient.
 
 ## Existing boundaries
@@ -69,8 +77,12 @@ plaintext manifests. Owner EOF, cancellation, and deadlines retain their existin
 control roles. A buffered start frame can race owner death; cleanup must handle
 that race rather than claim spawning after owner death is impossible.
 
-Linux retains its kernel-backed lock verification. Darwin's preferred candidate
-is a **shared-offset identity exchange**, described and independently examined in
+**Linux and Darwin both perform the same shared-offset identity exchange.**
+Linux retains its additional kernel-backed fdinfo lock validation before the
+exchange; there is one protocol-v2 message sequence, not platform-negotiated
+shortcuts. Portable fixture coverage runs on Linux as well as Darwin. Linux's
+descendant cleanup algorithm remains unchanged; new startup failure/latency paths
+still require regression checks and measurement. The exchange is examined in
 [Q2 follow-up](verification.md#q2-follow-up-can-shared-offsets-establish-descriptor-continuity).
 Duplicated/inherited regular-file descriptions share offsets; independent opens
 do not. Ordered changes observed on each process's own descriptor establish
@@ -92,12 +104,25 @@ helper storage access. Use role/phase/exchange-bound messages and existing bound
 startup framing. Exchange failures cannot spawn a program.
 
 Serialize exchanges across all aliases of either description, including parallel
-batch launches. **Cancellation does not release that gate by itself.** A late
-helper must be joined or conclusively unable to seek again before another exchange
-uses the descriptions. Retain the gate and refuse further startup when necessary;
-keep user-facing waits bounded without claiming the actor has stopped. Do not hold
-the general service mutex while joining a helper. Normal running helpers no longer
-touch offsets.
+batch launches. Gate acquisition precedes helper creation and consumes the same
+bounded startup deadline, including any earlier execution deadline. A timeout
+waiting for the gate leaves known-not-spawned work, not a stranded helper.
+On failure **before any start-frame write attempt**, disable
+authorization, SIGKILL the retained direct helper, and reap it before releasing
+the gate. A three-second teardown observation budget is separate from startup;
+an ordinary SIGSTOPped helper must recover without restarting the owner.
+Cancellation and the first start write share an atomic phase boundary; partial
+writes count as possible authorization. After that boundary, preserve cooperative
+cleanup and durable-proof handling rather than kill the helper as a shortcut.
+
+SIGKILL does not guarantee a bounded reap. If teardown cannot confirm death in
+budget, retain the actor/gate/leases under cleanup tracking and refuse affected
+owner startup until safe, even in this pre-start case. Do not abandon a waiter,
+release a gate on signal delivery alone, or hold the general service mutex while
+joining. Normal running helpers no longer touch offsets. The precise fields,
+one-time gate release (including cancellation after ready),
+sequence, and race boundary are in [the protocol contract](contracts.md#private-protocol-v2)
+and [pre-start teardown](contracts.md#pre-start-teardown).
 
 If this candidate fails its proof gate, do not silently substitute inode checks or
 lock acquisition on incoming FDs. Return to the ownership decision. The verified
@@ -118,11 +143,26 @@ blindly reuse `wait_darwin.go` followed by a presumed-immediate `cmd.Wait`.
 
 **The retirement certificate remains unresolved.** A retained terminal leader
 and a complete group enumeration containing only that leader are a candidate,
-not a proven algorithm. Task 1 must resolve in-progress fork/spawn publication,
+not a proven algorithm. Task 2 must resolve in-progress fork/spawn publication,
 group changes/re-entry, enumeration failures, and the interval before reaping.
 Repeated observations alone are not proof of atomicity. Any chosen API must be
 verified for the declared OS range, including availability and private/deprecated
-status. A source argument and native adversarial fixtures are both required.
+status. Use the evidence standard below; an unavailable exact kernel source tree
+is not automatically a failed implementation.
+
+### Evidence standard
+
+For each matrix version, record either **source-aligned** evidence (relevant
+published implementation matched to that version, documented API contracts, and
+native fixtures) or **contract-backed** evidence (documented guarantees covering
+the required invariants plus native fixtures, with unmatched/missing sources
+explicitly recorded as weaker evidence). Exact source availability is not a
+universal prerequisite. Neither grade may infer unpublished kernel behavior from
+a passing stress test. If a critical invariant such as fork-publication ordering
+has neither an applicable documented guarantee nor justified source evidence,
+leave that obligation unresolved and narrow the matrix or revise the mechanism.
+This corrects the previous unconditional source-argument wording without relaxing
+the retirement guarantee.
 
 Descendants leaving the original group are outside A's cleanup promise. Their
 possible later re-entry must still be addressed in the precise certificate and
@@ -146,14 +186,17 @@ macOS execution.
 Record an immutable backend-selected scope for every admitted run:
 
 - `linux_descendants_v1`: the existing supervisor-owned descendant/pipe proof.
-- `darwin_process_group_v1`: the approved group/pipe certificate, only after Task 1.
+- `darwin_process_group_v1`: the approved group/pipe certificate, only after Task 2.
 
 Retain the persisted states `not_spawned`, `pending`, and `retired`; interpret them
-only together with a known scope. A typed proof must cross executor, helper IPC,
-store completion, and response boundaries. An internal retirement boolean may be
-retained only inside a mandatory scoped/versioned representation; it must never
-be accepted as an unqualified portable proof. Missing, unknown, or mismatched
+only together with a known scope. `executor.CleanupProof` (`Scope`, `State`)
+crosses executor, helper IPC, store completion, and response boundaries. Remove
+the unqualified wire `Retired` flag in protocol v2; private convenience predicates
+must inspect this typed proof. Missing, unknown, or mismatched
 scope is an error, not an inferred Linux or Darwin default for new data.
+Combine compiler/runtime phase proofs over the entire run; a later unstarted
+phase cannot erase an earlier spawned-and-retired phase. See the
+[whole-run and snapshot rules](contracts.md#storage-and-typed-proof).
 
 | Observation | Completion/recovery consequence |
 | --- | --- |
@@ -177,14 +220,41 @@ claim detached descendants have stopped. Unverified work must not age out as saf
 history. Reset remains explicit discard under exclusive lifecycle ownership and
 operator quiescence where required; it does not discover or terminate descendants.
 
+### Contract summary
+
+The normative [contract](contracts.md) fixes these decisions before implementation:
+
+| Boundary | Representation |
+| --- | --- |
+| SQL | `runs.cleanup_scope TEXT NOT NULL`, no DEFAULT, CHECK limited to the two scopes above; existing `runs.cleanup` stores the three states. |
+| Public run v2 | Required `cleanup: {scope: string, state: string}` alongside `capture`; null only for a rejection without an admitted run. |
+| Recovery views | Run/batch objects carry cleanup; lists use `entries[].cleanup`; search uses the selected subject's cleanup. Exact placement and aggregation are specified in the contract. |
+| Helper v2 | Startup adds `exchange_id` and `cleanup_scope`; later frames bind the exchange; terminal proof is `outcome.result.cleanup`. |
+
+[V1/v2 examples and hook rules](contracts.md#public-version-2-envelopes) and
+[all protocol frame fields](contracts.md#private-protocol-v2) are authoritative.
+Batch proof copies survive child-log eviction; the contract also fixes their
+transactional synchronization and legacy migration interpretation.
+
 ## Compatibility and upgrade
 
 Plan a run schema upgrade **8 → 9** and private helper protocol **1 → 2**; rebase
 those numbers if upstream changes them before implementation. Persist scope as
-authoritative row metadata with supported-value validation. New admission cannot
+authoritative row metadata with supported-value validation and **no column DEFAULT**.
+New admission cannot
 choose a scope from user input. Version-8 rows originated in the Linux-only path
 and receive the existing Linux scope; preserve every prior state, including
 pending cleanup and quarantine.
+
+The pinned SQLite is 3.51.2. Its ADD COLUMN NOT NULL route requires a non-null
+default; leaving that default would silently classify omitted new scopes as
+Linux. Use the [contract's transactional table rebuild](contracts.md#upgrade-representation)
+with an explicit Linux value only in the old-row copy. Both fresh and upgraded
+tables must reject omitted, null, and unknown scope at SQL. Preserve foreign keys,
+indexes, batch proof copies, and logical accounting. Allow for transient encrypted
+table-copy/WAL disk headroom separately from retained-data quota; do not charge a
+second permanent copy of each log. A space failure must roll back, not evict logs
+to complete migration. [SQLite's ALTER TABLE rules](https://www.sqlite.org/lang_altertable.html).
 
 Upgrade only on normal execution-owner attachment, with successful selected-key
 authentication and exclusive lifecycle ownership. Release shared handles before
@@ -216,6 +286,32 @@ availability evidence or fall back to parsing arbitrary output text. Preserve
 security-before-routing and one-use observation rules. Older binaries reject the
 new store; no automatic downgrade or run-log discard is introduced.
 
+### Rollback and mixed versions
+
+To resume execution with a schema-8 binary after upgrade: retain the compatible
+new binary long enough to export any required logs, stop every affected session,
+owner, reader, and helper, and establish quiescence of old command groups where
+cleanup was unverified. Then explicitly run `capy runs reset --discard` with the
+selected owner using the compatible binary. Only after successful reset install
+the older binary and its matching generated bindings, align CLI/PATH/plugin/MCP
+versions, and restart. The old owner creates its old-format cache on next supported
+execution. Keeping v9 logs requires keeping a compatible reader; there is no
+in-place reverse migration. Downgrading also restores the old macOS execution
+limitation, so it does not repair capture on this Mac.
+
+Discard permanently removes **all retained run/batch logs for that owner**.
+Twenty-four hours is a configurable default, not a maximum loss bound; protected
+unverified evidence can be older. This workflow is an explicit operator choice,
+not an automatic repair. Knowledge/vault storage and permanent locks are preserved.
+
+A mixed old executable may currently emit the misleading generic
+`storage_unavailable` advice about path/permissions because its schema comparison
+does not distinguish versions. Document that symptom and use the new binary's
+read-only doctor to identify the authenticated stored version and supported range.
+New code returns an actionable version mismatch without suggesting chmod/reset
+as an automatic fix. Do not add a plaintext sidecar marker: old binaries would
+not read it, and it would add a stale-state/reset surface without fixing their error.
+
 ## Capability, verification, and rollout
 
 Doctor reports compiled/OS execution capability separately from storage health
@@ -227,30 +323,41 @@ Synchronize generators and committed artifacts whenever their output changes.
 Release acceptance requires native Apple Silicon execution for the declared
 version matrix, Linux regression coverage, real helper re-exec, owner/helper
 death and delayed-cleanup races, migration preservation, all public execution
-paths, and bounded responses. Include the `integration`-tagged supervisor suites
-explicitly: the ordinary FTS5 suite does not select all of them. Use synthetic
+paths, and bounded responses. **Add Linux integration coverage**, in addition to
+retaining the existing Linux FTS5/race checks: today's CI and Makefile do not select
+the three `linux && integration` execution suites. Add reproducible
+`make test-integration` and `make test-integration-race` targets and invoke them
+in Linux and native Apple Silicon CI. Baseline the newly activated Linux suites
+against the pre-feature revision, retain failures, and budget fixture repairs as
+explicit work; never make a new gate green by dropping integration tags or
+weakening assertions. Use synthetic
 keys and isolated roots. Executor changes require the repository's quality and
 performance comparisons; distinguish comparable Linux baselines from new Darwin
 capture measurements.
 
-The implementation plan defines a temporary operator-authorized test route while
-the installed macOS capture path rejects commands. Do not bypass routing, rely on
+The implementation plan defines a temporary operator-authorized test route **for
+Codex hosts enforcing routine capture** while macOS capture rejects commands.
+Claude's routine routing is guidance-only; ordinary terminals and CI without that
+hook need no Capy routine exception. Other security/sandbox controls still apply.
+The exact configuration shape, approver, scope, expiry/removal, and verification
+record are defined in [bootstrap.md](bootstrap.md). Do not bypass routing, rely on
 a missing tool as permission, or treat design approval as a configuration change.
 No test exception was applied during this design session.
 
 ## Assumptions
 
 1. A defensible bounded group-retirement certificate exists for the declared native
-   OS range. **Unproved; Task 1 is a blocking feasibility gate.**
+   OS range. **Unproved; Tasks 1–2 are a blocking feasibility gate.**
 2. Shared offsets provide usable identity evidence when trusted acquisition,
    exclusive offset access, continuous references, and cancellation-safe gate
-   lifetime all hold. **Source-supported; native proof is Task 2.**
+   lifetime all hold. **Source-supported; proof is Tasks 3–4 on both platforms.**
 3. Current lease offsets are otherwise unused. Inspection found no seek users in
    execution/runstore; enforce this as an ownership invariant and test it.
 4. Version-8 run rows represent the existing Linux scope. Validate actual baseline
    schema/provenance and unknown-version rejection before migration.
-5. Native CI can exercise the chosen Apple Silicon OS floor. Record unavailable
-   infrastructure as missing release evidence, not successful validation.
+5. The chosen floor/matrix is available on stable hosted arm64 CI. Task 1 must
+   establish this before choosing support; later runner removal requires a new
+   explicit matrix decision, not a silently skipped release check.
 
 ## Not Doing
 
@@ -263,6 +370,7 @@ No test exception was applied during this design session.
   different deployment/ownership products, unnecessary to the selected direction.
 - Windows/BSD support, new runtime languages, PTY/stdin, persistent jobs, and
   cross-owner cancellation: independent execution features.
+- Self-hosted runner provisioning: choose a feasible hosted matrix in Task 1.
 - Knowledge/vault migration, new retrieval algorithms, run rekey, automatic
   discard/downgrade, or security/trust changes: preserve existing contracts.
 
