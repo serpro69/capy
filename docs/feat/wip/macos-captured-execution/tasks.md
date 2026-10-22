@@ -4,7 +4,7 @@
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
 > Evidence: [native process verification](process-proof.md) · [source verification](verification.md)
-> Status: in progress — Tasks 1–3 done; observational Darwin contract accepted; Tasks 4–13 pending
+> Status: in progress — Tasks 1–3 done; Task 4 in progress; observational Darwin contract accepted; Tasks 5–13 pending
 > Created: 2026-10-22
 > Not Doing: older macOS majors, Intel support, certified Darwin group retirement, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
@@ -95,7 +95,7 @@ their implementation.
 
 ## Task 4: Prove the common exchange and pre-start recovery
 
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** Task 2
@@ -110,6 +110,14 @@ their implementation.
 - [ ] 4.4 Acquire the gate before spawning under the same startup budget; track its one-time release → verify: gate-wait timeout spawns no helper and cancellation after ready cannot release another exchange's token.
 - [ ] 4.5 Cover partial authorization, late actors and failed/unbounded reap → verify: retained gate/leases/reservations when necessary, no post-authorization force-kill shortcut, and continued reset/slot exclusion.
 - [ ] 4.6 Complete `lease-proof.md` with fixtures on both OS families and unchanged permanent bytes/lock modes.
+
+### Execution context
+
+- **2026-10-22 — authorized implementation and baseline:** The user requested Task 4 after committing Task 3 as `e32af29265d519373fadc7f6ac1c5ac7ab9f176a`; work starts from that clean Linux x86_64 checkout. Task 4 implements and privately exercises the common protocol-v2 startup exchange and cancellation/recovery state machine. Ordinary Linux execution stays on protocol v1 until Task 8; typed storage/terminal outcomes and Darwin backend activation remain later tasks. Existing Go implement/test/review guidance remains applicable with no new profile.
+- **2026-10-22 — acceptance limit:** This host cannot run native macOS fixtures. Implement and verify the portable mechanism and Linux controls here; keep Task 4 open until the reference/inheritance and exchange fixtures also pass on macOS 26 arm64. Owner: feature implementer; native verification conditions and commands will be recorded in `lease-proof.md`.
+- **2026-10-22 — Linux implementation and evidence:** Added the private common offset exchange, strict v2 startup/message validation, post-exchange binding callback and owner-retained startup/reaping state machine. Real helpers cover causal identity, impostors/replay, SIGSTOP recovery, ready-token ownership, partial writes, delayed/unverified reaping and a late actor after signal failure. The first run exposed filesystem rejection of large valid-wire offsets; generated markers now stay within the positive 31-bit subset without changing wire limits or assertions. The expanded focused race suite and full affected-package race/integration, vet and build passed. A final-source execution race/integration rerun passed 60.957s, followed by vet and the full FTS5 build. See [lease-proof.md](lease-proof.md) for commands, run IDs and native acceptance limits.
+- **2026-10-22 — isolated review and outstanding acceptance:** `kk:review-code` (gpt-6.1-sol) found no code defects after inspecting all ten changed files and the relevant unchanged consumers. It supports the private implementation but returned overall COMMENT because native macOS acceptance is missing; final Linux results are author-attributed, and PAL was unavailable. Code and Linux controls for 4.1–4.5 are implemented; checkboxes and task status remain open for the two-platform gate. Owner: feature implementer; run the documented reference/inheritance and exchange fixtures, full affected-package suite and vet on macOS 26 arm64 with deployment target 26.0, record actual OS/kernel/SDK/toolchain/results, and resolve any failures before completing Task 4. No code findings are deferred. Ordinary v1 execution and schema 8 remain unchanged; production v2 wiring is still Task 8.
+- **2026-10-22 — CI verification route:** The user asked to run these native tests in CI. Added a `macos-26` arm64 proof job to the existing PR workflow, with deployment target 26.0, synthetic keys, full affected-package integration/race tests, vet/build, named-fixture execution checks and uploaded environment/test evidence. This pulls the narrow native proof job forward from Task 12 without claiming its broader integration targets, diagnostics or release-artifact gates. Hosted execution/results are pending; successful native CI can satisfy Task 4's native-host requirement.
 
 ## Task 5: Enforce scoped proof on fresh stores
 

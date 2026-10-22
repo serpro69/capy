@@ -2,7 +2,7 @@
 
 > Task 3 complete: implementation, Linux verification and independent review, 2026-10-22.
 > Baseline: `c833fff220fae4b8a303f61face9bc58632946fb`.
-> Task 4 transfer identity and native Darwin verification remain pending.
+> Task 4 private implementation and Linux verification complete; native Darwin acceptance remains pending.
 
 ## Acquisition boundary
 
@@ -129,3 +129,107 @@ OS/kernel/SDK/toolchain versions, and confirm reset/slot exclusion and unchanged
 permanent lock modes/bytes. Neither this report nor Linux success closes that
 two-platform lease-proof gate. Public Darwin activation remains dependent on the
 later private integration and native acceptance tasks.
+
+## Task 4: private common exchange and pre-start recovery
+
+Baseline: `e32af29265d519373fadc7f6ac1c5ac7ab9f176a`. The shared implementation
+uses the exact v2 startup/control/notice fields in `contracts.md`, bounded framing,
+FDs 3–7, and the existing credential encoding. It remains private to the proof
+fixtures; ordinary service launch and helper execution stay on v1 until Task 8.
+Scoped storage, terminal v2 outcomes and public Darwin activation are later slices.
+
+`lease_exchange.go` implements both roles for both OS families. Each role changes
+and observes its own descriptor offset in the prescribed A → B → C sequence.
+The coordinator checks the observed A, its own transition to B, and the final
+confirmation of C. The helper checks its own transition to C. Messages bind
+exchange, role, step and direction. `lease_frames.go` rejects missing, null,
+duplicate, unknown, wrongly directed and out-of-order fields; markers must be
+positive integer JSON tokens no greater than 2^53−1, without exponent/fraction
+syntax. Startup byte paths retain their existing representation with strict
+nested fields.
+
+The first native Linux attempt exposed a filesystem constraint: seeking random
+offsets drawn from the entire 53-bit wire range returned `EINVAL`. Generated
+markers now use the positive signed-32-bit range, which is within the contract's
+ceiling. Incoming wire markers retain the full specified validation; unsupported
+seeks still fail. The exchange never writes file bytes or increases file length.
+This change does not relax an assertion or enlarge the allowed wire domain.
+
+`acceptLeaseStartup` validates files and Linux fdinfo before exchanging offsets,
+and calls the storage-binding callback only after `leases_confirmed`. Darwin's
+file checks cannot establish lock ownership independently; identity still relies
+on Task 3's trusted acquisition. The callback must authenticate/bind the admitted
+store and selected scope and keep its backend until cleanup finishes. Only its
+successful return permits `ready`; only a matching `start` permits execution.
+
+`leaseLauncher` belongs to an owner. It computes the startup deadline before gate
+acquisition, using the earliest of the three-second budget, context deadline and
+nonzero run deadline. Gate expiry creates no helper. `ready` releases only that
+exchange's one-time token. Cancellation and `startWriteAttempted` share a lock;
+the flag is set before the first write attempt, including zero/partial failures.
+
+On startup failure before that flag, the coordinator signals its retained direct
+child and starts the sole owned reaper. Teardown observes it under a separate
+three-second budget. After possible authorization it closes liveness channels
+and joins cooperatively, never using force-kill as a shortcut. Actual terminal
+OS status releases the token, references and reservation. A signal alone, closed
+pipes, timeout or wait error without terminal status cannot release them.
+
+An unresolved failed startup stays in the owner's reservation registry and blocks
+new launches. The registry and actor own the single waiter after response timeout;
+callers retain the actor and can join it later with `Wait`. A late confirmed reap
+clears the reservation; an unverified wait error keeps protection. No repeated
+waiter or signal is started by repeated joins. `LeaseRefs.Retain` supplies an
+independent reference for this lifetime. Task 8 must connect these private actors
+and reservations to the Service's scheduling and durable outcomes; Task 4 does
+not claim that integration already exists.
+
+### Task 4 evidence
+
+Host and synthetic credential settings match the Task 3 Linux environment above.
+
+| Check | Result / captured run |
+| --- | --- |
+| Strict frame unit race tests | Passed, 1.017s; `b456bc1e-7959-475a-ad40-8c133446d066`. |
+| First native private-helper race suite | Failed on oversized filesystem seeks, 9.664s; `4b95391d-2195-4fbf-ab0f-5a31eb70bf6c`. |
+| Expanded private-helper race suite with bounded generated markers | Passed, 25.812s; `a0cdb819-fd1b-421a-8c34-3548ee63a0e5`. |
+| Full affected-package integration/race, vet and build | Passed: runstore 92.805s, execution 61.260s, vet/build exit 0; `228166a2-cb38-4f70-8efa-022e047cb1ad`. |
+| Final-source execution integration/race, vet and build | Passed: execution 60.957s, vet/build exit 0; `2488727e-0195-49af-8788-f12a363aee6b`. Covers the final early-abort cleanup-error propagation edit. |
+| Independent review | Isolated `kk:review-code` (gpt-6.1-sol): no code findings; source supports the private implementation. Overall COMMENT because native macOS acceptance remains unverified. Final-source results acknowledged as author-attributed; PAL unavailable. |
+| Native macOS 26 arm64 | Not run; required before Task 4 is done. |
+
+The fixtures exercise real helper exec, success, same-inode independent SH
+holders, swapped descriptors, reflection/replay, wrong phase and invalid marker
+controls, gate expiry without spawn, SIGSTOP recovery and a subsequent run,
+cancel after ready with another token already held, partial authorization without
+force-kill, delayed/unverified reaping, signal failure with a late resumed actor,
+and reset/slot exclusion. The identity-only unlocked-alias fixture deliberately
+bypasses acquisition and fdinfo; its success demonstrates why identity alone is
+insufficient. Linux fdinfo rejects those unlocked descriptions separately.
+
+Portable native verification command (with the synthetic keys and CGO enabled):
+
+```sh
+go test -tags fts5,integration -race -count=1 -p 1 -timeout 20m ./internal/runstore ./internal/execution -run '^TestLease'
+```
+
+The full Linux check uses the same command without `-run`, followed by
+`go vet -tags fts5,integration ./internal/runstore ./internal/execution` and
+`go build -tags fts5 ./...`. The final-source rerun repeats execution plus vet/build
+after the last launcher edit. No executor-package, indexing, chunking or retrieval
+algorithm changed, and the private mechanism is not on production launch paths;
+no quality/performance comparison is claimed for this slice.
+
+Owner: feature implementer. Run that command on macOS 26 arm64, then the full
+affected-package suite and vet, recording OS/kernel/SDK/toolchain and fixture
+results, using deployment target `MACOSX_DEPLOYMENT_TARGET=26.0`. Use an ordinary
+terminal/CI or follow [bootstrap.md](bootstrap.md) if Codex routine enforcement
+cannot use captured execution; the expired Task 1–2 exceptions do not authorize
+these new commands. Fix any discrepancy without replacing the common sequence with a weaker
+platform shortcut. Native source compilation alone does not close this gate.
+The code and Linux controls for subtasks 4.1–4.5 are implemented and reviewed.
+Their acceptance checkboxes remain open with 4.6 until native execution establishes
+the promised two-platform behavior. Task 4 is therefore still in progress; this is
+an explicit evidence gap, not a request to reimplement the mechanism. No
+routine-enforcement exception was added on Linux. No review findings or new
+conventions need separate indexing because the evidence and limits are recorded here.
