@@ -1,15 +1,18 @@
 # Implementation: native macOS captured execution
 
-> Status: implementation in progress; macOS 26-only scope accepted; Task 1 native waiter verified
+> Status: implementation in progress; observational Darwin cleanup accepted 2026-10-22; Task 1 native waiter verified
 > Design: [design.md](design.md) · Contract: [contracts.md](contracts.md)
-> Tasks: [tasks.md](tasks.md) · Review: [review-resolution.md](review-resolution.md)
+> Tasks: [tasks.md](tasks.md)
 
 ## Execution rules
 
-The process gate is Tasks 1–2; the lease gate is Tasks 3–4. Their future evidence
-files are `process-proof.md` and `lease-proof.md`. API availability, runtime
-coverage, and the certificate remain proof work; public/storage/frame shapes are
-already fixed in [contracts.md](contracts.md), not delegated to those experiments.
+The process-policy gate is Tasks 1–2; the lease proof gate is Tasks 3–4. Their
+evidence files are `process-proof.md` and `lease-proof.md`. Task 2 now verifies
+bounded observational cleanup, not certified group retirement. The user's
+2026-10-22 acceptance supersedes that former gate while preserving its failed
+candidate and native counterexample as historical evidence. API availability and
+runtime observations still require verification. Public/storage/frame shapes are
+fixed in [contracts.md](contracts.md), not delegated to experiments.
 
 For Codex with routine enforcement, follow [bootstrap.md](bootstrap.md) before a
 native test/build that cannot use capture. The operator authorizes exact scope;
@@ -21,13 +24,16 @@ Use existing dependencies/toolchain, FTS5 tags, synthetic knowledge/vault keys, 
 isolated roots. Look up any new native interface against the pinned dependencies
 and chosen OS matrix. Do not guess a Darwin wrapper from Linux. Gate failures must
 be recorded and resolved, not hidden by skips, relaxed assertions, or automatic
-fallbacks. No intermediate commit enables Darwin before both proof gates; no
+fallbacks. No intermediate commit enables Darwin before the process-policy and lease gates; no
 schema-changing release ships before preservation/compatibility work is complete.
 
 These are thirteen bounded slices. Failure fixtures verify the same mechanism
-rather than constitute separate production subsystems. Tasks sharing type or
-adapter files are sequential; no unresolved parallel ownership is delegated to
-the implementer.
+rather than constitute separate production subsystems. Task boundaries separate
+process waiting from observation, lease acquisition from transfer, fresh-store
+constraints from migration, and private integration from public activation. This
+lets each mechanism be verified independently. Tasks sharing type or adapter
+files are sequential; no unresolved parallel ownership is delegated to the
+implementer.
 
 ## Task 1: Select hosted support and prove bounded child waiting
 
@@ -49,25 +55,41 @@ and `process-proof.md`.
 Do not add a full group supervisor in this slice. The outcome is a justified
 support matrix and usable bounded waiting primitive, with native fixtures.
 Preserve the existing shared executor behavior; Task 1 does not refactor Linux
-retirement. Its native waiter proof is separate from the group certificate in
+retirement. Its native waiter proof is separate from observational group cleanup in
 Task 2 and full hosted/release verification in Tasks 12–13.
 
-## Task 2: Prove the Darwin group certificate
+## Task 2: Implement bounded Darwin group observation
 
-Primary seams: dormant `internal/executor/supervised_darwin.go`, shared phase
-integration in `stream.go`, and disjoint unsupported stubs.
+Primary seams: dormant `internal/executor/supervised_darwin.go`, a bounded SDK
+`sysctl` inventory binding, and native integration fixtures. Follow the exact
+[observational policy](design.md#darwin-process-lifecycle-and-observational-cleanup).
 
-- Combine the Task 1 waiter with retained leader identity, group signalling and
-  bounded output drainage → verify: ordinary, cancelled and compile/run phases,
-  including a live child that closed output.
-- Resolve concurrent fork/spawn publication and group exit/re-entry against the
-  precise `darwin_process_group_v1` scope → verify: the causal guarantee is justified
-  under the evidence standard and exercised adversarially on the matrix.
-- Preserve distinct command, capture and cleanup outcomes → verify: signal success,
-  EOF and repeated snapshots are never substituted for the certificate.
+- Verify the public process-group sysctl on macOS 26 arm64, with SDK-native
+  structures, bounded allocation/retries and strict response validation → verify:
+  actual live/terminal leader/member observations; partial buffers, missing leader
+  and unavailable/invalid observations fail. Keep private libproc fixture-only.
+- Combine Task 1's waiter with new-session leadership, safe group signalling,
+  the final post-drain/pre-reap inventory and the three-second cleanup budget
+  → verify: normal/nonzero/signal/cancelled phases, live child with closed output,
+  escaped pipe holder, capture-sink failure and observation/signal errors.
+- Exercise compiler then runtime phases through the same dormant phase function
+  → verify: no next phase before observation completion, and an unstarted later
+  phase does not erase completed earlier work. Runtime preparation remains shared.
+- Preserve actual command status, capture loss and observation completion as
+  distinct facts. Never set the Linux-era `StreamResult.Retired=true` for a spawned
+  Darwin phase. Use a private phase outcome with a separate observation-complete
+  value; it is not serialized or consumed by current v1 execution/storage. Task 9
+  adapts it to `CleanupEvidence` after Tasks 5–8 establish the shared contract.
+- Retain and exercise the deterministic re-entry counterexample → verify:
+  completion is described as `observed` with the accepted race limitation, not
+  as proof of retirement. No post-reap/in-flight-join proof is required to finish
+  this task. Actual errors/visible survivors cannot pass the observation policy.
 
-Complete `process-proof.md`. If no defensible certificate exists, keep public
-admission disabled and return to design; rejection-only behavior is not completion.
+Complete `process-proof.md` with native policy outcomes, API status and limits.
+Public `PrepareSupervisor`/stream dispatch and `execution.Supported` continue to
+reject Darwin in this slice. Shared stream/stub integration moves to Task 9 so
+an observational result cannot leak into the old unqualified v1 retirement path.
+This is a dormant successful backend, not rejection-only completion.
 
 ## Task 3: Construct acquisition-proven lease references
 
@@ -114,15 +136,17 @@ Same-description identity cannot replace Task 3's actual acquisition provenance.
 
 ## Task 5: Enforce scoped proof on fresh stores
 
-Primary seams: new shared `executor.CleanupProof`, `internal/runstore/cleanup.go`,
+Primary seams: new shared `executor.CleanupEvidence`, `internal/runstore/cleanup.go`,
 `store.go`, and `runs.go`; batch copy propagation follows the same transition.
 
-- Implement [storage fields and state rules](contracts.md#storage-and-typed-proof)
+- Implement [storage fields and state rules](contracts.md#storage-and-typed-evidence)
   for fresh schema-9 stores, with no column defaults → verify: SQL rejects omitted,
-  NULL and unsupported scope, and ordinary Linux capture/recovery stays usable.
-- Centralize valid proof/completion predicates; bind immutable scope to admission
+  NULL, unsupported scope/state and cross-scope pairs, and ordinary Linux capture/recovery stays usable.
+- Centralize scope/state validity and policy-completion predicates; bind immutable scope to admission
   and synchronize child manifest proof in the existing transaction → verify:
-  recovery/reuse/expiry refuse pending or inconsistent proof.
+  recovery/reuse/expiry accept Linux `retired` and Darwin `observed` under their
+  distinct contracts, while refusing pending or inconsistent evidence. Do not
+  name the shared predicate as proof that all processes are gone.
 - Preserve proof after child-log eviction and aggregate homogeneous batch scopes
   → verify: terminal manifests remain interpretable without a live run row;
   comparisons/aggregates use one read snapshot and do not falsely reject a valid
@@ -135,7 +159,7 @@ unreleased branch until Task 6 lands; never recreate it.
 To keep this slice buildable with the current Linux-only protocol v1, introduce
 an explicitly named, temporary Linux adapter at the capture/completion boundary:
 the known Linux backend supplies scope; the existing `Started`/`Retired` pair maps
-to the typed local proof, and the new row supplies persisted proof on reads.
+  to the typed local evidence, and the new row supplies persisted evidence on reads.
 This is not a default for unknown scope or a Darwin path. Task 8 replaces the
 adapter with native scoped protocol-v2 outcomes and removes it. Do not pretend
 that an unqualified v1 helper outcome already carries the new fields.
@@ -173,11 +197,12 @@ Primary seams: result assembly in `internal/runstore`,
 - Keep compatible cursors/redaction formats and actual CLI/MCP command outcomes
   → verify: prior cursors recover identical bytes and incomplete cleanup does not
   erase actual exit/signal information.
-- Implement explicit v1 and v2 healthy-envelope rules → verify: valid v2 pending/
-  retired states, malformed/unknown rejection, no printed-JSON fallback, and
+- Implement explicit v1 and v2 healthy-envelope rules → verify: valid v2 pending,
+  Linux retired and Darwin observed pairs; cross-scope/malformed/unknown rejection,
+  no printed-JSON fallback, and
   unchanged one-use/security-first routing.
 - Exercise null proof on unadmitted rejection and aggregate/evicted batch cases
-  → verify: empty errors or missing children cannot manufacture retirement.
+  → verify: empty errors or missing children cannot manufacture cleanup completion.
 
 ## Task 8: Bind protocol-v2 proof through Linux execution
 
@@ -204,9 +229,12 @@ Task 8 depends on Task 7: shared response/type consequences are not concurrent w
 Primary seams: `launch_darwin.go`, `supervisor_darwin.go`, and the proven executor.
 Extract common launch/serve mechanics only where required by the one frame sequence.
 
-- Connect exchange, authentication, pending persistence, process proof, queue and
+- Connect exchange, authentication, pending persistence, cleanup evidence, queue and
   store finalization through a private service fixture → verify: real encrypted
   stdout/stderr recovery, nonzero exit and secret-safe default reads.
+- Connect Task 2's private phase outcome to shared `CleanupEvidence`, stream phase
+  dispatch and disjoint platform stubs → verify: only the Darwin backend emits
+  `observed`; normal and compile/run paths never use a Linux `Retired` shortcut.
 - Exercise owner death with a buffered start frame and capture/finalization failure
   → verify: once-only execution and no premature gate/lease reuse.
 - Keep production `Supported` rejection until this integration passes; public
@@ -217,7 +245,7 @@ Extract common launch/serve mechanics only where required by the one frame seque
 Primary seams: backend capability in `stored_run.go`, shared service construction,
 `cmd/capy/execute.go`, and `internal/server/tool_execute_run.go`.
 
-- Activate only the Task 1 OS/architecture matrix after both proof gates and
+- Activate only the Task 1 OS/architecture matrix after the process-policy/lease gates and
   private integration → verify: compiled CLI/MCP runs capture once and recover
   correct bytes/status through the installed contract.
 - Preserve owner, credential, security and execution-directory selection
@@ -243,8 +271,9 @@ Primary seams: `handoff.go`, `batch.go`, `scheduler.go`, and `service.go`.
 
 Primary seams: platform doctor/setup wording, `Makefile`, and CI/release workflows.
 
-- Report capability and authenticated schema compatibility without diagnostic
-  writes/probes/trust claims → verify: unsupported hosts and mixed versions are
+- Report capability, the observational Darwin limit and authenticated schema
+  compatibility without diagnostic writes/probes/trust claims → verify: scope
+  wording does not claim all processes are gone; unsupported hosts and mixed versions are
   actionable under the [rollback procedure](design.md#rollback-and-mixed-versions).
 - Add `make test-integration` and `make test-integration-race`: CGO, tags
   `fts5,integration`, packages `./internal/executor ./internal/execution`, uncached,
@@ -265,7 +294,7 @@ changes performed by this design-revision task.
 
 ## Task 13: Final verification and documentation
 
-Run `kk:test` for both proof gates, migration, every public mode, full required
+Run `kk:test` for the observational process-policy and lease proof gates, migration, every public mode, full required
 FTS5/race/vet/build checks, the new integration targets on both platforms, and
 artifact parity. Record actual OS/toolchain/runner builds. Unavailable evidence
 is not a pass; contract-backed evidence uses the declared standard.
@@ -281,6 +310,8 @@ architecture, AGENTS, CLI help, relevant generated artifacts, and proof reports.
 Close the bootstrap authorization record and remove only its added exception
 entries when their purpose ends, preserving unrelated user changes.
 
-Release requires the proved certificates, native all-mode acceptance, preserved
-Linux behavior/history, and CI execution evidence. A kernel-internals-dependent
-unknown cannot be waived merely because a source tree is unpublished.
+Release requires the implemented observation policy, proved lease ownership,
+native all-mode acceptance, preserved Linux behavior/history, and CI execution
+evidence. The accepted creation/re-entry limitation is documented behavior, not
+an unresolved release gate. Unknowns needed for the promised observations or
+lease/identity guarantees remain blockers; do not infer them from stress tests.

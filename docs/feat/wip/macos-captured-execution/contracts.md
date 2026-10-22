@@ -1,60 +1,87 @@
 # Scoped cleanup contracts
 
-> Status: normative design contract; implementation pending
-> Parent: [design.md](design.md) · [review dispositions](review-resolution.md)
+> Status: normative design contract; observational Darwin revision accepted 2026-10-22; implementation pending
+> Parent: [design.md](design.md)
 > Applies to: run schema 9, public envelopes 2, private helper protocol 2
 
-These are contract decisions, not outputs of the Darwin feasibility experiment.
-Only the algorithm establishing `darwin_process_group_v1` remains gated by that
-experiment. Rebase version numbers explicitly if the implementation baseline changes.
+These are contract decisions. On 2026-10-22 the user accepted observational
+Darwin cleanup after the native re-entry experiment. This supersedes the earlier
+unimplemented `darwin_process_group_v1` retirement contract; no old Darwin run
+data is presumed to exist or automatically reclassified. Linux evidence remains
+unchanged. Rebase version numbers explicitly if the implementation baseline changes.
 
-## Storage and typed proof
+## Storage and typed evidence
 
 `runs.cleanup_scope` is a new `TEXT NOT NULL` column, **without a DEFAULT**, with
-`CHECK (cleanup_scope IN ('linux_descendants_v1','darwin_process_group_v1'))`.
+`CHECK (cleanup_scope IN ('linux_descendants_v1','darwin_process_group_observation_v1'))`.
 The existing `runs.cleanup` column remains `TEXT NOT NULL`, without a DEFAULT,
-with `CHECK (cleanup IN ('not_spawned','pending','retired'))`.
+with `CHECK (cleanup IN ('not_spawned','pending','retired','observed'))`.
+Add a row-level CHECK enforcing the exact scope/state pairs below; a known state
+with the wrong known scope is still invalid. Neither column has a DEFAULT.
 
 Admission supplies both columns explicitly. Scope is selected by the backend and
 immutable for the run; callers cannot choose it. All subsequent transitions bind
 the run ID, generation, and unchanged scope. Missing/null/unknown scope is rejected
 by SQL and the typed boundary. Do not introduce a trigger or implicit default.
 
-The shared Go value is `executor.CleanupProof`, with `Scope` and `State` string-enum
+The shared Go value is `executor.CleanupEvidence`, with `Scope` and `State` string-enum
 fields serialized as `scope` and `state`. `StreamResult.Cleanup`,
 `runstore.Completion.Cleanup`, and `runstore.Result.Cleanup` use it. Replace the
 unqualified wire `StreamResult.Retired` in protocol v2; any private convenience
-predicate must inspect the typed proof, not preserve a second authoritative flag.
+predicate must inspect the typed evidence, not preserve a second authoritative flag.
 
 | State | Meaning |
 | --- | --- |
 | `not_spawned` | No command phase has started or been left possibly executing; a compile phase counts as a command phase. |
 | `pending` | Execution was authorized/pending or may exist without completed applicable proof at the layer being reported. This includes running and cleanup-unverified outcomes; persisted pending remains pending until finalization commits. |
-| `retired` | The backend proved retirement within this immutable scope and completed the required pipe drainage. |
+| `retired` | Linux only: the existing backend proved descendant retirement and completed the required pipe drainage. |
+| `observed` | Darwin only: every spawned phase completed the bounded observation policy in `design.md`, including leader reaping, required group signalling, final inventory and natural pipe EOF. It does not prove all processes are gone. |
 
-The local proof and the stored proof are separate observations of this same
-contract. Persist `pending` before spawn; only a matching helper/backend proof
-can finalize `retired`. Preserve `not_spawned` on a known pre-start failure.
+Allowed pairs are Linux with `not_spawned` / `pending` / `retired`, and Darwin
+with `not_spawned` / `pending` / `observed`. Darwin `retired` and Linux `observed`
+are rejected at SQL, private frames, public decoding, recovery and aggregation.
+The old proposed Darwin scope is unsupported, not an alias. Scope is selected
+by the backend, never supplied by a public caller.
+
+Local cleanup evidence and stored evidence are separate observations of this same
+contract. Persist `pending` before spawn; only a matching helper/backend result
+can finalize Linux `retired` or Darwin `observed`. Preserve `not_spawned` on a
+known pre-start failure.
 Public cleanup reports durable evidence, including a validated helper persistence
-acknowledgement. If local retirement succeeded but final persistence did not,
+acknowledgement. If local cleanup completed but final persistence did not,
 keep the public durable state pending, preserve the actual command outcome
 separately, and expose the persistence/capture failure. Report `not_spawned` only
 when that is the known durable admission/finalization state; a local failed spawn
 does not overwrite an already-persisted `pending` state after finalization fails.
-Terminal history additionally requires a completed outcome and valid safe proof
-(`not_spawned` or `retired`); `pending` never enables eviction/reuse. A local proof
+Terminal history additionally requires a completed outcome and policy-accepted
+evidence (`not_spawned`, Linux `retired`, or Darwin `observed`); `pending` never
+enables eviction/reuse. A local result
 whose write failed must not overwrite persisted uncertainty at read time.
 
 For a multi-phase run, scope is fixed across phases. Combine local phase proofs:
 the whole run is `not_spawned` only if no phase started and none is unresolved;
-it is `pending` if any phase is unresolved; otherwise it is `retired` if any phase
-started. Thus a retired Rust compiler followed by failure to spawn the compiled
-program yields whole-run `retired`, not `not_spawned`, while preserving the runtime
-failure. Do not launch a later phase before the previous phase retires. Persist
-whole-run retirement only at finalization, never between compile and run phases.
+it is `pending` if any phase is unresolved; otherwise it is the scope's completed
+state (`retired` for Linux, `observed` for Darwin) if any phase started. Thus a
+completed Rust compiler followed by failure to spawn the compiled program yields
+whole-run `retired`/`observed` according to scope, not `not_spawned`, while
+preserving the runtime failure. Do not launch a later phase before the previous
+phase completes its applicable cleanup policy. Persist whole-run completion only
+at finalization, never between compile and run phases.
 This aggregation governs new execution outcomes. Migration preserves existing v8
 safe cleanup values, including legacy `retired` records for no-start failures;
 `retired` alone is not evidence that a command actually started.
+
+**Reuse and retention are deliberate policy decisions.** Once a completed outcome
+and accepted evidence are durably stored, apply the existing lease, owner, quota
+and TTL rules equally to Linux retirement and Darwin observation completion.
+Darwin's inherent possibility of an unobserved racing survivor does not itself
+cause quarantine or prevent normal admission/expiry. Required signal/observation
+errors, missing leader identity, visible remaining members at deadline, forced
+reader closure, and unconfirmed reaping remain `pending` and preserve quarantine.
+Helper loss cannot create `observed`; only validated durable evidence can recover
+a lost terminal notification. An `observed` row is not proof of machine or
+filesystem quiescence. Capture loss can coexist with completed cleanup evidence;
+it still prevents claiming complete capture, as on Linux.
 
 The run row is authoritative while present. `syncBatchChild` must copy the scoped
 proof into `run_batch_children.result.cleanup` in the **same transaction** as the
@@ -73,8 +100,9 @@ Every admitted batch uses one backend scope for all children. Mixed scopes are
 invalid; no `mixed` scope is introduced. Aggregate batch cleanup state is:
 
 1. `not_spawned` when every child is `not_spawned`;
-2. `retired` when every child is terminal with safe proof and at least one retired;
-3. `pending` otherwise, including a retired child with queued siblings.
+2. the scope's completed state (`retired` or `observed`) when every child is
+   terminal with accepted evidence and at least one has that completed state;
+3. `pending` otherwise, including a completed child with queued siblings.
 
 Aggregate state never substitutes for the per-child terminal/quarantine checks.
 
@@ -122,7 +150,7 @@ Version 1, existing Linux-era success:
 }
 ```
 
-Version 2, successful Darwin execution within the stated group scope:
+Version 2, successful Darwin execution with explicitly observational cleanup:
 
 ```json
 {
@@ -132,7 +160,7 @@ Version 2, successful Darwin execution within the stated group scope:
   "state": "exited",
   "exit_code": 0,
   "signal": null,
-  "cleanup": {"scope": "darwin_process_group_v1", "state": "retired"},
+  "cleanup": {"scope": "darwin_process_group_observation_v1", "state": "observed"},
   "capture": {"state": "complete", "terminal_persisted": true},
   "error": null
 }
@@ -141,8 +169,12 @@ Version 2, successful Darwin execution within the stated group scope:
 `healthyRunEnvelope` keeps the existing v1 branch. Its v2 branch requires a
 nonempty run ID, `kind=run`, no error/failure/signal, and known non-null cleanup.
 For `running`, require `cleanup.state=pending`, `capture.state=recording`, and
-null exit code. For `exited`, require cleanup `retired`, exit code zero, complete
-capture, and `terminal_persisted=true`. Every other state/version/invalid shape
+null exit code. For `exited`, require the scope's completed cleanup state
+(Linux `retired` or Darwin `observed`), exit code zero, complete capture, and
+`terminal_persisted=true`. Reject cross-scope state pairs, including Darwin
+`retired`, before eligibility. Accepting Darwin `observed` establishes usable
+capture evidence under its declared policy, not host quiescence or a new
+permission grant. Every other state/version/invalid shape
 fails observation eligibility. Never parse a command's printed JSON as proof.
 
 ## Private protocol v2
@@ -151,7 +183,7 @@ fails observation eligibility. Never parse a command's printed JSON as proof.
 validates its fdinfo locks before participating. A Linux validation failure ends
 startup; it does not select a shorter protocol. Both platforms use the same frame
 sequence, malformed-frame fixtures, and pre-start recovery state machine. Their
-process retirement algorithms remain distinct.
+process cleanup algorithms and accepted completion states remain distinct.
 
 Retain FDs 3–7 and the existing four-byte big-endian length framing, 16-KiB control
 limit, bounded credential frame, three-second startup deadline, and 250-ms write
@@ -207,10 +239,10 @@ gate or disturb a later exchange. Before ready, failure retains
 the gate until pre-start teardown below; no other startup may reuse it.
 
 Terminal `outcome` retains `captured_bytes`, `last_sequence`, `result`, `reason`,
-and `terminal_persisted`. `result.cleanup` is the required typed local proof;
+and `terminal_persisted`. `result.cleanup` is the required typed local evidence;
 `result.retired` is forbidden in v2. Store completion compares its scope with the
 admitted row. `terminal_persisted` separately acknowledges persistence. Lost or
-invalid terminal data never grants retirement by default.
+invalid terminal data never grants retirement or observation completion by default.
 
 ## Pre-start teardown
 
