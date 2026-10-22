@@ -196,7 +196,7 @@ Host and synthetic credential settings match the Task 3 Linux environment above.
 | Full affected-package integration/race, vet and build | Passed: runstore 92.805s, execution 61.260s, vet/build exit 0; `228166a2-cb38-4f70-8efa-022e047cb1ad`. |
 | Final-source execution integration/race, vet and build | Passed: execution 60.957s, vet/build exit 0; `2488727e-0195-49af-8788-f12a363aee6b`. Covers the final early-abort cleanup-error propagation edit. |
 | Independent review | Isolated `kk:review-code` (gpt-6.1-sol): no code findings; source supports the private implementation. Overall COMMENT because native macOS acceptance remains unverified. Final-source results acknowledged as author-attributed; PAL unavailable. |
-| Native macOS 26 arm64 | Not run; required before Task 4 is done. |
+| First hosted macOS 26 arm64 run | [39834690104](https://github.com/serpro69/capy/actions/runs/39834690104), candidate `a246ba0dc692d7e9c36329874c8db9a120d13d23`: all 53 lease test/subtest events passed and execution passed 30.638s. Full runstore failed 140.514s in `TestLargeAdmissionMakesProgressAcrossEvictionBatches` (close reconciliation) and `TestLargeEvictionPersistsAfterAppendRetryFails` (maintenance). Vet/build were skipped after the suite failure; acceptance remains open. |
 
 The fixtures exercise real helper exec, success, same-inode independent SH
 holders, swapped descriptors, reflection/replay, wrong phase and invalid marker
@@ -206,6 +206,18 @@ force-kill, delayed/unverified reaping, signal failure with a late resumed actor
 and reset/slot exclusion. The identity-only unlocked-alias fixture deliberately
 bypasses acquisition and fdinfo; its success demonstrates why identity alone is
 insufficient. Linux fdinfo rejects those unlocked descriptions separately.
+
+The first hosted runner recorded macOS 26.6.2 / 25G83, Darwin 25.6.0 arm64,
+Xcode 26.6 / 17F113, SDK 26.5 / 25F70, Go 1.27.2 and deployment target 26.0.
+Raw environment and JSON test evidence are retained under
+`bench-results/macos-lease-task4-ci/39834690104/` and the run's uploaded artifact.
+The native job now continues the named-fixture check and vet/build after test
+failure while preserving the failed job status. A temporary conditional baseline
+step runs the two retention cases at pre-Task-4 commit
+`e32af29265d519373fadc7f6ac1c5ac7ab9f176a`. Owner: feature implementer; compare
+results before attributing or changing storage behavior, record every attempt,
+and remove this diagnostic step after the comparison is settled. Do not skip the
+failing tests or loosen retention/recovery guarantees to make the job green.
 
 Portable native verification command (with the synthetic keys and CGO enabled):
 
