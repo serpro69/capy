@@ -1,6 +1,6 @@
 # Implementation: native macOS captured execution
 
-> Status: refined after corroborated review; no implementation/native proof completed
+> Status: implementation in progress; macOS 26-only scope accepted; Task 1 native waiter verified
 > Design: [design.md](design.md) · Contract: [contracts.md](contracts.md)
 > Tasks: [tasks.md](tasks.md) · Review: [review-resolution.md](review-resolution.md)
 
@@ -34,11 +34,11 @@ the implementer.
 Primary seams: `internal/executor/wait_darwin.go`, a dedicated child fixture,
 and `process-proof.md`.
 
-- Choose the floor/matrix from the intersection of verified API/toolchain needs
-  and stable GitHub-hosted Apple Silicon labels; record actual available labels,
-  OS/kernel/SDK builds, deployment target, and the runner-reference retrieval date
-  → verify: the floor and every declared OS major can run in CI. Self-hosted
-  provisioning is not an implicit fallback.
+- Use the user-selected macOS 26-only Apple Silicon scope, deployment target
+  26.0, and stable hosted `macos-26` label. Record verified API/toolchain needs,
+  native OS/kernel/SDK builds, and the runner-reference retrieval date
+  → verify: this single supported major can run in CI. Older-major compatibility
+  and self-hosted provisioning are outside scope.
 - Establish bounded direct-child terminal observation and exactly one reaper;
   correct the ESRCH/NOTE_EXIT waitability assumption → verify: stopped, exiting,
   and cancellation cases never presume an immediate blocking final wait.
@@ -48,6 +48,9 @@ and `process-proof.md`.
 
 Do not add a full group supervisor in this slice. The outcome is a justified
 support matrix and usable bounded waiting primitive, with native fixtures.
+Preserve the existing shared executor behavior; Task 1 does not refactor Linux
+retirement. Its native waiter proof is separate from the group certificate in
+Task 2 and full hosted/release verification in Tasks 12–13.
 
 ## Task 2: Prove the Darwin group certificate
 

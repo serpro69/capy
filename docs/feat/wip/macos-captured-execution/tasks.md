@@ -4,21 +4,22 @@
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
 > Evidence: [verification.md](verification.md) · Review: [review-resolution.md](review-resolution.md)
-> Status: planned — corroborated design fixes applied; implementation/native proof pending
+> Status: in progress — Task 1 done; Tasks 2–13 pending; macOS 26-only scope accepted
 > Created: 2026-10-22
-> Not Doing: Intel support, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
+> Not Doing: older macOS majors, Intel support, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
 Tasks 1–2 close the process gate; Tasks 3–4 close the lease gate. They are required
 functionality, not exclusions. Use [bootstrap.md](bootstrap.md) only where Codex
-enforcement requires it. No exception, implementation, or runtime proof was
-created by this design revision. Contract fields are fixed before coding.
+enforcement requires it. Task 1 implementation and native proof are recorded below; its temporary
+verification exceptions are removed after use. Contract fields remain fixed before
+their implementation.
 
 The former nine tasks are split before implementation. See the old→new mapping
-in [review-resolution.md](review-resolution.md#task-split-map); all remain pending.
+in [review-resolution.md](review-resolution.md#task-split-map); current status is below.
 
 ## Task 1: Select hosted support and prove bounded child waiting
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Task 3
@@ -27,9 +28,19 @@ in [review-resolution.md](review-resolution.md#task-split-map); all remain pendi
 
 ### Subtasks
 
-- [ ] 1.1 Select the floor/deployment target from verified APIs/toolchain and stable hosted arm64 runner availability; record explicit labels and OS/kernel/SDK versions in `process-proof.md` → verify: every declared major, including the floor, is exercisable in CI without self-hosted provisioning.
-- [ ] 1.2 Correct the `wait_darwin.go` ESRCH/NOTE_EXIT assumption and prove bounded terminal observation with one reaper → verify: stopped, exiting and cancelled direct-child fixtures.
-- [ ] 1.3 Grade each matrix entry source-aligned or contract-backed → verify: missing matching sources are disclosed, while critical unsupported ordering remains unresolved.
+- [x] 1.1 Select the floor/deployment target from verified APIs/toolchain and stable hosted arm64 runner availability; record explicit labels and OS/kernel/SDK versions in `process-proof.md` → verify: every declared major, including the floor, is exercisable in CI without self-hosted provisioning.
+- [x] 1.2 Correct the `wait_darwin.go` ESRCH/NOTE_EXIT assumption and prove bounded terminal observation with one reaper → verify: stopped, exiting and cancelled direct-child fixtures.
+- [x] 1.3 Grade each matrix entry source-aligned or contract-backed → verify: missing matching sources are disclosed, while critical unsupported ordering remains unresolved.
+
+### Execution context
+
+- **2026-10-22 — baseline and scope:** Started from clean `master` at `13204a9a68a3def965950e765ca910c615232913`; the original design baseline is `44ceb813ce2d4f129d058f2534faa2a57b07d8bd`. Task 1 covers the Darwin waiter, dedicated fixtures, a pre-existing macOS path assertion fix, and `process-proof.md`. Group retirement, storage/protocol work, public activation and hosted release gates remain later tasks.
+- **2026-10-22 — explicitly accepted decision:** The user accepted **macOS 26-only on Apple Silicon**, saying “let's not overcomplicate this and block the feature on old compatibility contracts that we can't prove.” Floor/deployment target: **26.0**; hosted label: **`macos-26`**. This supersedes the implementer's earlier macOS 15 proposal and its unverified-compatibility blocker. Proposed hosted SDK choices are future CI configuration, not a separate Task 1 gate; actual test SDKs are recorded.
+- **2026-10-22 — implementation and evidence:** Kqueue ESRCH/NOTE_EXIT are wakeups only. The public libc `waitid(P_PID, …, WEXITED|WNOWAIT|WNOHANG)` binding validates the requested PID, SIGCHLD and terminal status, with bounded cancellation and one terminal reaper. The pinned x/sys has no Darwin wrapper; cgo uses SDK types without a new module. Evidence is **contract-backed**, with unmatched XNU source disclosed. The optional shared mutex refactor was removed; `executor.go` now differs only in comments, leaving Linux runtime behavior unchanged. Its inherited error-path reap is not claimed to be bounded.
+- **2026-10-22 — verification fixes:** Independent review caught consuming stop synchronization; the fixture now uses `WSTOPPED|WNOWAIT|WNOHANG` and checks preservation. The initial race run (14.812s) and untouched baseline (13.982s) both failed the Rust fixture's `/var` versus `/private/var` equality. Recording physical paths fixes the fixture without changing production cwd or weakening its assertions. Initial polling overhead was reduced with bounded kqueue wakeups; all attempts remain in `bench-results/macos-wait-task1-validation/`.
+- **2026-10-22 — native results:** On macOS 26.6.2 (25G83), Darwin 25.6.0 / xnu-12377.161.14~5, arm64, Go 1.27.2, SDK 27.0 (26A425), final-scope tests with deployment target 26.0 passed: 20 waiter repetitions **5.604s**, full executor race/integration **15.714s**, and vet. Earlier target-15.0 runs were also on this macOS 26 host, never proof of macOS 15 compatibility. Matching-target six-sample performance comparison is recorded in `process-proof.md`: serial medians −0.68%, −0.31%, +0.30%; parallel +2.33%, −2.24%, +1.74%, with about three extra allocations per run and no significance claim.
+- **2026-10-22 — quality comparison and release follow-up:** Baseline and candidate `make bench-quality` both exit 2 at the same four server capture threshold cases because `internal/execution.Supported` still rejects Darwin. Store/vault checks pass, matching dataset hashes and all non-metadata quality results. No assertion or skip changed. Owner: feature implementer; next action: rerun the complete capture benchmark after Task 10 enables the proven backend; verification condition: all four real capture cases pass. This is a later public-activation requirement, not a Task 1 waiter defect.
+- **2026-10-22 — authorization and review:** The user explicitly approved six exact bootstrap test/benchmark exceptions, keeping routine enforcement enabled. The first verification round restored original configuration byte-for-byte and confirmed denial with an installed-hook probe. The same authorized scope was reused for the macOS 26 follow-up, then removed; a second read-only installed-hook probe confirmed restored enforcement and the original config bytes match. Final isolated code review **APPROVED** the narrowed Task 1 scope with no findings. Native results are author-attributed; the reviewer inspected source and performance/quality artifacts. Task 1 is complete; group certification, public activation and full release gates remain later tasks. PAL is unavailable. No new project conventions require indexing because the evidence is recorded here and in `process-proof.md`.
 
 ## Task 2: Prove the Darwin group certificate
 
