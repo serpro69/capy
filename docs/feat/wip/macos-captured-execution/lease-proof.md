@@ -2,7 +2,7 @@
 
 > Task 3 complete: implementation, Linux verification and independent review, 2026-10-22.
 > Baseline: `c833fff220fae4b8a303f61face9bc58632946fb`.
-> Task 4 private implementation and Linux verification complete; native Darwin acceptance remains pending.
+> Task 4 complete: private implementation, Linux/native macOS verification and independent evidence review.
 
 ## Acquisition boundary
 
@@ -120,15 +120,13 @@ quality/performance benchmark triggers do not apply to this acquisition-only sli
 CLI flags, public envelopes, generated artifacts and CI configuration are unchanged;
 their release updates remain Tasks 7 and 10–13.
 
-## Outstanding platform evidence
+## Task 3 platform handoff (completed by Task 4)
 
-Owner: feature implementer. Native macOS 26 arm64 verification is unavailable on
-this Linux host. Task 4 must run the portable reference/inheritance fixtures above
-alongside the common exchange fixtures on both OS families, record actual
-OS/kernel/SDK/toolchain versions, and confirm reset/slot exclusion and unchanged
-permanent lock modes/bytes. Neither this report nor Linux success closes that
-two-platform lease-proof gate. Public Darwin activation remains dependent on the
-later private integration and native acceptance tasks.
+Task 3 left native reference/inheritance verification to Task 4 because the local
+host is Linux. The hosted Task 4 results below now supply that macOS evidence,
+including reset/slot exclusion and permanent lock preservation. Public Darwin
+activation still depends on the later private integration and all-mode acceptance
+tasks; the lease proof alone does not enable the backend.
 
 ## Task 4: private common exchange and pre-start recovery
 
@@ -195,8 +193,10 @@ Host and synthetic credential settings match the Task 3 Linux environment above.
 | Expanded private-helper race suite with bounded generated markers | Passed, 25.812s; `a0cdb819-fd1b-421a-8c34-3548ee63a0e5`. |
 | Full affected-package integration/race, vet and build | Passed: runstore 92.805s, execution 61.260s, vet/build exit 0; `228166a2-cb38-4f70-8efa-022e047cb1ad`. |
 | Final-source execution integration/race, vet and build | Passed: execution 60.957s, vet/build exit 0; `2488727e-0195-49af-8788-f12a363aee6b`. Covers the final early-abort cleanup-error propagation edit. |
-| Independent review | Isolated `kk:review-code` (gpt-6.1-sol): no code findings; source supports the private implementation. Overall COMMENT because native macOS acceptance remains unverified. Final-source results acknowledged as author-attributed; PAL unavailable. |
-| First hosted macOS 26 arm64 run | [39834690104](https://github.com/serpro69/capy/actions/runs/39834690104), candidate `a246ba0dc692d7e9c36329874c8db9a120d13d23`: all 53 lease test/subtest events passed and execution passed 30.638s. Full runstore failed 140.514s in `TestLargeAdmissionMakesProgressAcrossEvictionBatches` (close reconciliation) and `TestLargeEvictionPersistsAfterAppendRetryFails` (maintenance). Vet/build were skipped after the suite failure; acceptance remains open. |
+| Initial independent review | Isolated `kk:review-code` (gpt-6.1-sol): no code findings; source supports the private implementation. Overall COMMENT at that time because native macOS acceptance was unverified. Final-source results acknowledged as author-attributed; PAL unavailable. The later CI-only increments were approved with no findings. |
+| First hosted macOS 26 arm64 run | [39834690104](https://github.com/serpro69/capy/actions/runs/39834690104), candidate `a246ba0dc692d7e9c36329874c8db9a120d13d23`: all 53 lease test/subtest events passed and execution passed 30.638s. Full runstore failed 140.514s in `TestLargeAdmissionMakesProgressAcrossEvictionBatches` (close reconciliation) and `TestLargeEvictionPersistsAfterAppendRetryFails` (maintenance). Vet/build were skipped after the suite failure; acceptance remained open at that point. |
+| Successful hosted native gate | [39836412099 / job 120025807793](https://github.com/serpro69/capy/actions/runs/39836412099/job/120025807793), candidate `0e430eed1ebfb93122e5f208b64e38403d220c90`: runstore 113.297s and execution 28.286s passed; all 53 lease test/subtest events passed; the required 18-case execution guard, vet and native build passed. Native job conclusion: success. |
+| Final independent review | APPROVE, no findings. Reviewer independently inspected both native environment/JSON artifacts and closure changes, confirmed the two-platform Task 4 scope, and retained the first-failure caveat. Hosted job/guard/vet/build conclusions are author-attributed; no reviewer execution is claimed. |
 
 The fixtures exercise real helper exec, success, same-inode independent SH
 holders, swapped descriptors, reflection/replay, wrong phase and invalid marker
@@ -212,12 +212,19 @@ Xcode 26.6 / 17F113, SDK 26.5 / 25F70, Go 1.27.2 and deployment target 26.0.
 Raw environment and JSON test evidence are retained under
 `bench-results/macos-lease-task4-ci/39834690104/` and the run's uploaded artifact.
 The native job now continues the named-fixture check and vet/build after test
-failure while preserving the failed job status. A temporary conditional baseline
-step runs the two retention cases at pre-Task-4 commit
-`e32af29265d519373fadc7f6ac1c5ac7ab9f176a`. Owner: feature implementer; compare
-results before attributing or changing storage behavior, record every attempt,
-and remove this diagnostic step after the comparison is settled. Do not skip the
-failing tests or loosen retention/recovery guarantees to make the job green.
+failure while preserving the failed job status. The second run used the same
+recorded OS/kernel/SDK/toolchain and identical Go code. Both retention cases
+passed (4.17s and 1.42s), so the temporary failure-only pre-Task-4 comparison was
+skipped; no baseline result or root-cause attribution is claimed. Its diagnostic
+workflow step was removed after this run. Successful-run evidence is retained
+under `bench-results/macos-lease-task4-ci/39836412099/` and its uploaded artifact.
+
+The initial retention failures remain an unresolved CI-reliability issue, not a
+claimed fix or an erased attempt. Owner: feature implementer; Task 12.6 records
+the targeted reproduction, instrumentation, immutable-baseline comparison and
+verification condition. The bounded lease mechanism passed in both native runs;
+the full native suite, vet and build passed before accepting its native evidence.
+Do not skip the retention cases or loosen guarantees to hide their recurrence.
 
 Portable native verification command (with the synthetic keys and CGO enabled):
 
@@ -232,16 +239,14 @@ after the last launcher edit. No executor-package, indexing, chunking or retriev
 algorithm changed, and the private mechanism is not on production launch paths;
 no quality/performance comparison is claimed for this slice.
 
-Owner: feature implementer. Run that command on macOS 26 arm64, then the full
-affected-package suite and vet, recording OS/kernel/SDK/toolchain and fixture
-results, using deployment target `MACOSX_DEPLOYMENT_TARGET=26.0`. Use an ordinary
+Reproduction: run that command on macOS 26 arm64, then the full affected-package
+suite and vet, recording OS/kernel/SDK/toolchain and fixture results, using
+deployment target `MACOSX_DEPLOYMENT_TARGET=26.0`. Use an ordinary
 terminal/CI or follow [bootstrap.md](bootstrap.md) if Codex routine enforcement
 cannot use captured execution; the expired Task 1–2 exceptions do not authorize
 these new commands. Fix any discrepancy without replacing the common sequence with a weaker
-platform shortcut. Native source compilation alone does not close this gate.
-The code and Linux controls for subtasks 4.1–4.5 are implemented and reviewed.
-Their acceptance checkboxes remain open with 4.6 until native execution establishes
-the promised two-platform behavior. Task 4 is therefore still in progress; this is
-an explicit evidence gap, not a request to reimplement the mechanism. No
-routine-enforcement exception was added on Linux. No review findings or new
-conventions need separate indexing because the evidence and limits are recorded here.
+platform shortcut. Native source compilation alone cannot substitute for these
+executed fixtures. Linux and hosted macOS results now cover the Task 4 mechanism;
+final independent evidence review approved closure. No routine-enforcement exception
+was added on Linux or in CI. Evidence, limits and the separate retention follow-up
+are recorded here rather than duplicated in knowledge notes.

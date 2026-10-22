@@ -97,18 +97,6 @@ jobs:
         if: ${{ !cancelled() && (steps.native_tests.outcome == 'success' || steps.native_tests.outcome == 'failure') }}
         run: go build -tags fts5 -o "$RUNNER_TEMP/capy-macos-proof" ./cmd/capy/
 
-      # Temporary Task 4 diagnostic: retain the first native retention failures
-      # against the immediate pre-Task-4 source before changing their behavior.
-      - name: Compare failed retention cases with Task 3 baseline
-        if: ${{ !cancelled() && steps.native_tests.outcome == 'failure' }}
-        run: |
-          git fetch --no-tags --depth=1 origin e32af29265d519373fadc7f6ac1c5ac7ab9f176a
-          git worktree add --detach "$RUNNER_TEMP/capy-task4-baseline" e32af29265d519373fadc7f6ac1c5ac7ab9f176a
-          cd "$RUNNER_TEMP/capy-task4-baseline" || exit 1
-          go test -tags fts5,integration -race -json -count=1 -p 1 -timeout 5m \
-            ./internal/runstore -run '^TestLarge(AdmissionMakesProgressAcrossEvictionBatches|EvictionPersistsAfterAppendRetryFails)$' \
-            | tee "$RUNNER_TEMP/macos-proof-baseline.jsonl"
-
       - name: Preserve native proof evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -117,7 +105,6 @@ jobs:
           path: |
             ${{ runner.temp }}/macos-proof-environment.txt
             ${{ runner.temp }}/macos-proof-tests.jsonl
-            ${{ runner.temp }}/macos-proof-baseline.jsonl
           retention-days: 14
 
   check:
