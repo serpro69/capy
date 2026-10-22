@@ -4,7 +4,7 @@
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
 > Evidence: [native process verification](process-proof.md) · [source verification](verification.md)
-> Status: in progress — Tasks 1–3 done; Task 4 in progress; observational Darwin contract accepted; Tasks 5–13 pending
+> Status: in progress — Tasks 1–4 done; observational Darwin contract accepted; Tasks 5–13 pending
 > Created: 2026-10-22
 > Not Doing: older macOS majors, Intel support, certified Darwin group retirement, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
@@ -95,7 +95,7 @@ their implementation.
 
 ## Task 4: Prove the common exchange and pre-start recovery
 
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** Task 3
 - **Size:** M
 - **Can run in parallel with:** Task 2
@@ -104,12 +104,12 @@ their implementation.
 
 ### Subtasks
 
-- [ ] 4.1 Implement one portable `lease_exchange.go` sequence for Linux and Darwin, with additional Linux fdinfo verification → verify: real helper exec and causal two-way observations for both roles.
-- [ ] 4.2 Cover independent same-inode/shared holders, swapped roles, reflected/replayed frames and invalid offsets → verify: identity alone accepts same-description unlocked aliases, but Task 3 excludes them from production.
-- [ ] 4.3 Serialize cancellation with the first start-frame write; before it, kill/reap the direct helper within the separate observation budget and release the gate only after confirmation → verify: SIGSTOP timeout recovery and a subsequent run without restart.
-- [ ] 4.4 Acquire the gate before spawning under the same startup budget; track its one-time release → verify: gate-wait timeout spawns no helper and cancellation after ready cannot release another exchange's token.
-- [ ] 4.5 Cover partial authorization, late actors and failed/unbounded reap → verify: retained gate/leases/reservations when necessary, no post-authorization force-kill shortcut, and continued reset/slot exclusion.
-- [ ] 4.6 Complete `lease-proof.md` with fixtures on both OS families and unchanged permanent bytes/lock modes.
+- [x] 4.1 Implement one portable `lease_exchange.go` sequence for Linux and Darwin, with additional Linux fdinfo verification → verify: real helper exec and causal two-way observations for both roles.
+- [x] 4.2 Cover independent same-inode/shared holders, swapped roles, reflected/replayed frames and invalid offsets → verify: identity alone accepts same-description unlocked aliases, but Task 3 excludes them from production.
+- [x] 4.3 Serialize cancellation with the first start-frame write; before it, kill/reap the direct helper within the separate observation budget and release the gate only after confirmation → verify: SIGSTOP timeout recovery and a subsequent run without restart.
+- [x] 4.4 Acquire the gate before spawning under the same startup budget; track its one-time release → verify: gate-wait timeout spawns no helper and cancellation after ready cannot release another exchange's token.
+- [x] 4.5 Cover partial authorization, late actors and failed/unbounded reap → verify: retained gate/leases/reservations when necessary, no post-authorization force-kill shortcut, and continued reset/slot exclusion.
+- [x] 4.6 Complete `lease-proof.md` with fixtures on both OS families and unchanged permanent bytes/lock modes.
 
 ### Execution context
 
@@ -118,6 +118,8 @@ their implementation.
 - **2026-10-22 — Linux implementation and evidence:** Added the private common offset exchange, strict v2 startup/message validation, post-exchange binding callback and owner-retained startup/reaping state machine. Real helpers cover causal identity, impostors/replay, SIGSTOP recovery, ready-token ownership, partial writes, delayed/unverified reaping and a late actor after signal failure. The first run exposed filesystem rejection of large valid-wire offsets; generated markers now stay within the positive 31-bit subset without changing wire limits or assertions. The expanded focused race suite and full affected-package race/integration, vet and build passed. A final-source execution race/integration rerun passed 60.957s, followed by vet and the full FTS5 build. See [lease-proof.md](lease-proof.md) for commands, run IDs and native acceptance limits.
 - **2026-10-22 — isolated review and outstanding acceptance:** `kk:review-code` (gpt-6.1-sol) found no code defects after inspecting all ten changed files and the relevant unchanged consumers. It supports the private implementation but returned overall COMMENT because native macOS acceptance is missing; final Linux results are author-attributed, and PAL was unavailable. Code and Linux controls for 4.1–4.5 are implemented; checkboxes and task status remain open for the two-platform gate. Owner: feature implementer; run the documented reference/inheritance and exchange fixtures, full affected-package suite and vet on macOS 26 arm64 with deployment target 26.0, record actual OS/kernel/SDK/toolchain/results, and resolve any failures before completing Task 4. No code findings are deferred. Ordinary v1 execution and schema 8 remain unchanged; production v2 wiring is still Task 8.
 - **2026-10-22 — CI verification route:** The user asked to run these native tests in CI. Added a `macos-26` arm64 proof job to the existing PR workflow, with deployment target 26.0, synthetic keys, full affected-package integration/race tests, vet/build, named-fixture execution checks and uploaded environment/test evidence. This pulls the narrow native proof job forward from Task 12 without claiming its broader integration targets, diagnostics or release-artifact gates. Hosted execution/results are pending; successful native CI can satisfy Task 4's native-host requirement.
+- **2026-10-22 — hosted evidence supersedes native-pending entries:** [CI run 39836412099](https://github.com/serpro69/capy/actions/runs/39836412099/job/120025807793) passed on macOS 26.6.2 / 25G83, Darwin 25.6.0 arm64, Xcode 26.6 / 17F113, SDK 26.5 / 25F70 and Go 1.27.2, deployment target 26.0. Runstore passed 113.297s, execution 28.286s, all 53 lease test/subtest events passed, the required 18-case guard passed, and vet/build passed. Source `0e430eed1ebfb93122e5f208b64e38403d220c90` has identical Go code to the first native attempt at `a246ba0dc692d7e9c36329874c8db9a120d13d23`. The first run's two retention failures did not recur; the conditional baseline comparison was therefore skipped, not passed. No storage bug is claimed fixed or attributed. Temporary baseline workflow code was removed, and investigation is explicitly tracked in Task 12.6.
+- **2026-10-22 — completion:** Isolated `kk:review-code` approved closure with no findings after independently reading both native environment/JSON artifacts and the closure diff. Linux and native macOS evidence satisfy Task 4's specific lease-proof scope; Task 4 is done. Tests were executed by the implementation session/CI, not rerun by the reviewer; PAL remains unavailable. The permanent native job and first-failure evidence remain. Task 5 is next; ordinary v1 execution is unchanged, and public Darwin activation and broader release reliability remain later tasks.
 
 ## Task 5: Enforce scoped proof on fresh stores
 
@@ -241,6 +243,7 @@ their implementation.
 - [ ] 12.3 Add native jobs for the hosted matrix selected in Task 1 → verify: named integration suites execute rather than skip; no late self-hosted dependency appears.
 - [ ] 12.4 Extend actual macOS release-artifact smoke capture/recovery → verify: count, stdout/stderr and status beyond version printing.
 - [ ] 12.5 Update operator docs and changed generators/committed counterparts → verify: parity/idempotency, explicit discard loss, and no hidden trust/enforcement changes.
+- [ ] 12.6 Investigate intermittent native retention failures exposed by Task 4 CI → verify: preserve both hosted runs, reproduce/instrument close reconciliation in `TestLargeAdmissionMakesProgressAcrossEvictionBatches` and maintenance in `TestLargeEvictionPersistsAfterAppendRetryFails`, compare an immutable baseline, identify and fix the cause without skipped tests, relaxed assertions or enlarged capture deadlines, and obtain stable native regression evidence before release. **Owner:** feature implementer. **Reason deferred:** Task 4's lease fixtures passed in both runs and the full native suite passed with unchanged Go code on the second; retention failure causality remains unproven and needs separate targeted investigation. See [lease-proof.md](lease-proof.md#task-4-evidence). The early macOS proof job satisfies only part of Task 12.3; final integration targets and release-artifact coverage remain pending.
 
 ## Task 13: Complete release verification and documentation
 
