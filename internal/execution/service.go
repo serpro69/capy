@@ -209,7 +209,12 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	if err != nil {
 		return s.startFailure(st, row)
 	}
-	h, launchErr := Launch(ctx, binary, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: st.Path(), Deadline: row.Program.Deadline}, s.key, Leases{Owner: owner.Lease, Lifecycle: st.LifecycleLease()})
+	refs, err := st.BorrowLeases(owner)
+	if err != nil {
+		return s.startFailure(st, row)
+	}
+	h, launchErr := Launch(ctx, binary, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: st.Path(), Deadline: row.Program.Deadline}, s.key, refs)
+	launchErr = errors.Join(launchErr, refs.Close())
 	if launchErr != nil {
 		if h == nil {
 			if ctx.Err() != nil {

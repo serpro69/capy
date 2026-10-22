@@ -6,7 +6,7 @@ import "context"
 
 type Supervisor struct{}
 
-func Launch(context.Context, string, Startup, string, Leases) (*Supervisor, error) {
+func launch(context.Context, string, Startup, string, Leases) (*Supervisor, error) {
 	return nil, Supported()
 }
 func (*Supervisor) Cancel() error          { return Supported() }

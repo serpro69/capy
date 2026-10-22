@@ -2,6 +2,7 @@ package runstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 type Owner struct {
 	ID    string
 	Slot  int
-	Lease *os.File
+	Lease *OwnerLease
 }
 
 func (s *Store) OwnerLeasePath(slot int) string {
@@ -22,7 +23,12 @@ func (s *Store) OwnerLeasePath(slot int) string {
 
 // ClaimOwner scans every slot before selecting one, then reconciles the selected
 // slot again under its retained exclusive lease before publishing a generation.
-func (s *Store) ClaimOwner(ctx context.Context) (*Owner, error) {
+func (s *Store) ClaimOwner(ctx context.Context) (_ *Owner, err error) {
+	release, err := s.retainLifecycle()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, release()) }()
 	ctx, cancel := context.WithTimeout(ctx, recoveryTimeout)
 	defer cancel()
 	registry, err := s.recoveryLease(ctx)
@@ -66,13 +72,21 @@ func (s *Store) claimSlot(ctx context.Context, slot int, lease *os.File) (*Owner
 	if err := s.checkQuarantine(ctx); err != nil {
 		return nil, err
 	}
-	owner := &Owner{ID: uuid.NewString(), Slot: slot, Lease: lease}
+	owner := &Owner{ID: uuid.NewString(), Slot: slot}
 	// The registry lease stays held through publication. Admit rechecks recovery
 	// and quarantine when this generation later requests execution.
 	_, err = s.db.ExecContext(ctx, "INSERT INTO run_owners(slot,generation) VALUES(?,?) ON CONFLICT(slot) DO UPDATE SET generation=excluded.generation", slot, owner.ID)
 	if err != nil {
 		return nil, storageError()
 	}
+	a := s.leases
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return nil, os.ErrClosed
+	}
+	a.refs++
+	owner.Lease = &OwnerLease{acquired: &ownerAcquisition{context: a, file: lease, generation: owner.ID, slot: slot, refs: 1}}
 	return owner, nil
 }
 

@@ -4,7 +4,7 @@
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
 > Evidence: [native process verification](process-proof.md) · [source verification](verification.md)
-> Status: in progress — Tasks 1–2 done; observational Darwin contract accepted; Tasks 3–13 pending
+> Status: in progress — Tasks 1–3 done; observational Darwin contract accepted; Tasks 4–13 pending
 > Created: 2026-10-22
 > Not Doing: older macOS majors, Intel support, certified Darwin group retirement, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
@@ -73,7 +73,7 @@ their implementation.
 
 ## Task 3: Construct acquisition-proven lease references
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Task 1, Task 2
@@ -82,9 +82,16 @@ their implementation.
 
 ### Subtasks
 
-- [ ] 3.1 Encapsulate successful EX owner/SH lifecycle acquisitions in `internal/runstore/lease_refs.go` and the existing acquisition paths → verify: arbitrary/unlocked/wrong-mode files cannot construct valid launch inputs.
-- [ ] 3.2 Bind borrowing/lifetime and exchange-gate identity to the shared acquisition context → verify: alias/concurrent borrower handling and close-not-unlock behavior.
-- [ ] 3.3 Record the provenance boundary in `lease-proof.md`; exercise real reset/slot probes while references remain → verify: no new exchange/backend work is hidden in this slice.
+- [x] 3.1 Encapsulate successful EX owner/SH lifecycle acquisitions in `internal/runstore/lease_refs.go` and the existing acquisition paths → verify: arbitrary/unlocked/wrong-mode files cannot construct valid launch inputs.
+- [x] 3.2 Bind borrowing/lifetime and exchange-gate identity to the shared acquisition context → verify: alias/concurrent borrower handling and close-not-unlock behavior.
+- [x] 3.3 Record the provenance boundary in `lease-proof.md`; exercise real reset/slot probes while references remain → verify: no new exchange/backend work is hidden in this slice.
+
+### Execution context
+
+- **2026-10-22 — observed baseline and authorized scope:** The user requested Task 3 on Linux x86_64, starting from clean `c833fff220fae4b8a303f61face9bc58632946fb`. Tasks 1–2 are complete. This slice encapsulates acquired owner/lifecycle references, lifetime and the shared exchange gate, and narrows the production launch boundary without changing protocol v1, storage schema, process cleanup or public platform support. Task 4 owns the actual exchange and its two-platform proof.
+- **2026-10-22 — implementation approach:** Replace raw owner lease exposure with an opaque close/stat handle; construct launch references only from authenticated shared lifecycle attachment and successful exclusive owner acquisition. Bind immutable store/slot/generation identity and one gate to the lifecycle acquisition, including all owner aliases sharing it. Existing references pin locks through store/owner close; release closes descriptors without unlock/conversion. Native macOS verification remains unperformed on this Linux host and will be recorded explicitly in `lease-proof.md`.
+- **2026-10-22 — Linux verification:** The unchanged baseline passed full runstore/execution FTS5 integration race tests. Candidate tests found and corrected a new fixture stderr-read race and missing test import; assertions were preserved. The full candidate suite then passed (runstore 91.833s; execution 34.978s), as did vet. Selected public capture/recovery/reset race checks passed (server 8.896s; CLI 20.490s), followed by the full FTS5 build and `git diff --check`. Commands, captured run IDs, provenance, lifetime/gate behavior and native-evidence limits are in [lease-proof.md](lease-proof.md).
+- **2026-10-22 — review and completion:** Isolated `kk:review-code` (gpt-6.1-sol) approved all 14 changed files with no findings, tracing acquisition, borrowers/gate, shutdown, inherited locks, helper validation and unchanged recovery/index consumers. Tests remain author-attributed; PAL code review was unavailable. Task 3 is done for the authorized Linux implementation scope. No findings or new conventions require indexing because the boundary and evidence are documented. Owner: feature implementer; Task 4 must execute the reference/inheritance and exchange fixtures on macOS 26 arm64 and Linux before closing the two-platform lease-proof gate. No bootstrap exception, schema/protocol change or Darwin activation was introduced.
 
 ## Task 4: Prove the common exchange and pre-start recovery
 
