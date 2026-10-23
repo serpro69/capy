@@ -23,7 +23,7 @@ type runCall struct {
 	stopRequest func() bool
 	ready       chan runstore.Result
 	done        chan struct{}
-	cleanup     chan struct{}
+	cleanup     <-chan struct{}
 	result      runstore.Result
 	reservedAt  time.Time
 	deadline    time.Time

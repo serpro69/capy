@@ -68,6 +68,14 @@ An admitted ID with `start_failed`, a lost response, or incomplete capture requi
 status/list recovery before retrying. In particular, capture failure after spawn
 does not kill a command that may already have modified the project.
 
+Linux startup now verifies acquired lease continuity before authorizing a command.
+A helper stalled before authorization is terminated and reaped before its slot
+can be reused. If reaping cannot be confirmed, ownership and capacity remain held
+and new execution is refused. Once authorization may have been sent, cancellation
+uses the helper's cooperative cleanup path. Compiler phases count as execution:
+a retired compiler followed by runtime spawn failure retains `retired` cleanup
+while reporting `start_failed` and preserving the compiler's captured output.
+
 Version-2 responses expose durable `cleanup: {scope, state}` alongside capture.
 Linux uses scope `linux_descendants_v1` and completed state `retired`. The reserved
 Darwin scope `darwin_process_group_observation_v1` uses `observed`: completion of

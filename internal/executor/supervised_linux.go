@@ -43,7 +43,7 @@ func checkSupervisor() error {
 }
 
 func runStreamPhase(ctx context.Context, bin string, args []string, cwd, tmpDir string, req ExecRequest, phase string, w *eventWriter) (StreamResult, error) {
-	result := StreamResult{Retired: true, Phase: phase}
+	result := StreamResult{Cleanup: initialStreamCleanup(), Phase: phase}
 	if err := ctx.Err(); err != nil {
 		result.StopReason = streamStopReason(ctx)
 		return result, err
@@ -75,7 +75,8 @@ func runStreamPhase(ctx context.Context, bin string, args []string, cwd, tmpDir 
 		}
 		return result, errors.New("starting supervised process")
 	}
-	result.Started, result.Retired = true, false
+	result.Started = true
+	result.Cleanup.State = CleanupPending
 	if w.started != nil && w.err == nil {
 		w.err = w.started(phase)
 	}
@@ -177,7 +178,9 @@ func runStreamPhase(ctx context.Context, bin string, args []string, cwd, tmpDir 
 			errR.Close()
 		}
 	}
-	result.Retired = cleanupErr == nil
+	if cleanupErr == nil {
+		result.Cleanup.State = CleanupRetired
+	}
 	return result, cleanupErr
 }
 
@@ -256,4 +259,8 @@ func retireDescendants(deadline time.Time) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return errors.New("adopted child retirement deadline exceeded")
+}
+
+func initialStreamCleanup() CleanupEvidence {
+	return CleanupEvidence{Scope: CleanupLinuxDescendants, State: CleanupNotSpawned}
 }

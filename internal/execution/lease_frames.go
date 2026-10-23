@@ -6,55 +6,17 @@ import (
 	"errors"
 	"io"
 	"strconv"
-	"time"
-
-	"github.com/serpro69/capy/internal/executor"
 )
 
 const (
-	exchangeProtocolVersion = 2
+	exchangeProtocolVersion = protocolVersion
 	linuxExchangeScope      = "linux_descendants_v1"
 	darwinExchangeScope     = "darwin_process_group_observation_v1"
 	maxLeaseMarker          = 1<<53 - 1
 )
 
-// These are the protocol-v2 startup fields, kept private until Task 8 connects
-// scoped storage and terminal outcomes. No v2 terminal frame is accepted here.
-type exchangeStartup struct {
-	Version      int                 `json:"version"`
-	RunID        string              `json:"run_id"`
-	Generation   string              `json:"generation"`
-	StorePath    executor.ByteString `json:"store_path"`
-	Deadline     time.Time           `json:"deadline"`
-	ExchangeID   string              `json:"exchange_id"`
-	CleanupScope string              `json:"cleanup_scope"`
-}
-
-func (s exchangeStartup) validate() error {
-	if s.Version != exchangeProtocolVersion || !validID(s.RunID) || !validID(s.Generation) || !validID(s.ExchangeID) || len(s.StorePath) == 0 || len(s.StorePath) > 4096 || !exchangeScope(s.CleanupScope) {
-		return errors.New("invalid lease exchange startup")
-	}
-	return nil
-}
-
-func (s *exchangeStartup) UnmarshalJSON(data []byte) error {
-	fields, err := exactFields(data, "version", "run_id", "generation", "store_path", "deadline", "exchange_id", "cleanup_scope")
-	if err != nil {
-		return err
-	}
-	if bytes.HasPrefix(fields["store_path"], []byte("{")) {
-		if _, err := exactFields(fields["store_path"], "bytes"); err != nil {
-			return err
-		}
-	}
-	type plain exchangeStartup
-	var result plain
-	if err := json.Unmarshal(data, &result); err != nil {
-		return err
-	}
-	*s = exchangeStartup(result)
-	return s.validate()
-}
+// The proof fixture and production supervisor use one startup representation.
+type exchangeStartup = Startup
 
 func exchangeScope(scope string) bool {
 	return scope == linuxExchangeScope || scope == darwinExchangeScope
@@ -92,6 +54,7 @@ type leaseMessage struct {
 	Written      leaseMarker `json:"written,omitempty"`
 	Expected     leaseMarker `json:"expected,omitempty"`
 	CleanupScope string      `json:"cleanup_scope,omitempty"`
+	Outcome      *Outcome    `json:"outcome,omitempty"`
 }
 
 func (m *leaseMessage) UnmarshalJSON(data []byte) error {
@@ -136,6 +99,11 @@ func (m *leaseMessage) UnmarshalJSON(data []byte) error {
 		}
 		wantStep = 2
 		fields = append(fields, "observed")
+	case "terminal":
+		if wire.Type == "" || wire.Outcome == nil {
+			return errors.New("invalid terminal notice")
+		}
+		fields = append(fields, "outcome")
 	case "leases_confirmed", "cancel":
 		if wire.Action == "" {
 			return errors.New("invalid lease message direction")

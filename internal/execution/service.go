@@ -17,6 +17,7 @@ import (
 // Service owns runs independently of transport requests and joins every helper
 // before closing database/lease handles.
 type Service struct {
+	launch               supervisorLaunch
 	mu                   sync.Mutex
 	attachMu             sync.Mutex // serialize attachment without blocking owner cancellation during migration
 	admissionMu          sync.Mutex // publishes metadata and its control handle together
@@ -57,7 +58,7 @@ func WithCompletionObserver(observer func(runstore.Result)) ServiceOption {
 }
 
 func NewService(project, key string, policy config.RunsConfig, options ...ServiceOption) *Service {
-	s := &Service{project: project, key: key, policy: policy, jobs: make(map[*serviceCall]context.CancelFunc), running: make(map[string]*runCall), batches: make(map[string]*batchCall), closeDone: make(chan struct{})}
+	s := &Service{launch: newSupervisorLaunch(), project: project, key: key, policy: policy, jobs: make(map[*serviceCall]context.CancelFunc), running: make(map[string]*runCall), batches: make(map[string]*batchCall), closeDone: make(chan struct{})}
 	for _, option := range options {
 		option(s)
 	}
@@ -226,10 +227,10 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	if err != nil {
 		return s.startFailure(st, row)
 	}
-	h, launchErr := Launch(ctx, binary, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: st.Path(), Deadline: row.Program.Deadline}, s.key, refs)
+	h, launchErr := s.launch(ctx, binary, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: st.Path(), Deadline: row.Program.Deadline, CleanupScope: string(row.Cleanup.Scope)}, s.key, refs)
 	launchErr = errors.Join(launchErr, refs.Close())
 	if launchErr != nil {
-		if h == nil {
+		if h == nil || h.knownNotSpawned() {
 			if ctx.Err() != nil {
 				return s.finishUnstarted(st, row, "cancelled")
 			}
@@ -240,6 +241,7 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 			// Retain its slot/leases while resolving cancellation during startup;
 			// a joined helper and durable not_spawned proof permit finalization.
 			h.Wait()
+			call.cleanup = h.cleanupPending()
 			queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			latest, err := st.Load(queryCtx, row.ID)
 			cancel()
@@ -268,8 +270,8 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 		quarantineErr := s.quarantine(st)
 		// Report the startup failure promptly, but retain this worker's active
 		// slot and lifecycle ownership until even a stopped helper is joined.
-		call.cleanup = make(chan struct{})
-		go func() { h.Wait(); close(call.cleanup) }()
+		call.cleanup = h.cleanupPending()
+		go func() { h.Wait() }()
 		result := row.Result
 		// Launch can fail after attempting start authorization. The admission
 		// snapshot is no longer evidence that no command phase was started.
@@ -293,12 +295,13 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	stop := context.AfterFunc(ctx, func() { h.Cancel() })
 	call.ready <- row.Result
 	outcome, waitErr := h.Wait()
+	call.cleanup = h.cleanupPending()
 	stop()
 	queryCtx, cancelQuery := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancelQuery()
 	latest, readErr := st.Load(queryCtx, row.ID)
 	var quarantineErr error
-	if waitErr != nil || !outcome.Result.Retired {
+	if waitErr != nil || !outcome.Result.Cleanup.Complete() {
 		if readErr != nil || latest.Cleanup == (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}) {
 			quarantineErr = s.quarantine(st)
 		}
@@ -339,6 +342,9 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 }
 
 func (s *Service) startFailure(st *runstore.Store, row runstore.Admitted) runstore.Result {
+	if !row.Program.Deadline.IsZero() && !time.Now().Before(row.Program.Deadline) {
+		return s.finishUnstarted(st, row, "deadline")
+	}
 	return s.finishUnstarted(st, row, "spawn_failed")
 }
 
@@ -430,7 +436,7 @@ func (s *Service) Close() error {
 // knownOutcome preserves an authenticated helper acknowledgement even when the
 // subsequent metadata refresh fails. Query failure is not finalization failure.
 func knownOutcome(result runstore.Result, outcome Outcome, cursor *string) runstore.Result {
-	completion, err := linuxV1Completion(result.Cleanup.Scope, outcome)
+	completion, err := completionFromOutcome(result.Cleanup.Scope, outcome)
 	if err != nil {
 		result.Error = &runstore.Error{Code: "cleanup_unverified", Message: err.Error()}
 		return result
@@ -453,7 +459,7 @@ func knownOutcome(result runstore.Result, outcome Outcome, cursor *string) runst
 		switch {
 		case !outcome.Result.Started:
 			result.Capture.State = "not_started"
-		case outcome.Result.CaptureLost || !outcome.Result.Retired:
+		case outcome.Result.CaptureLost || !outcome.Result.Cleanup.Complete():
 			result.Capture.State = "incomplete"
 		}
 		result.Capture.Reason = nil

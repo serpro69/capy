@@ -24,20 +24,20 @@ type OutputEvent struct {
 // draining and discards subsequent output; a capture failure is not cancellation.
 type EventSink func(OutputEvent) error
 
-// StreamResult separates process retirement from command and capture outcomes.
-// Retired is a local process proof, never an acknowledgement of durable storage.
+// StreamResult separates local cleanup evidence from command/capture outcomes.
+// Cleanup never acknowledges durable storage.
 type StreamResult struct {
-	StopReason    string `json:"stop_reason,omitempty"`
-	SpawnCode     int    `json:"spawn_code,omitempty"`
-	Started       bool   `json:"started"`
-	ExitCode      *int   `json:"exit_code"`
-	Signal        int    `json:"signal,omitempty"`
-	Phase         string `json:"phase,omitempty"`
-	Retired       bool   `json:"retired"`
-	CaptureReason string `json:"capture_reason,omitempty"`
-	CaptureLost   bool   `json:"capture_lost"`
-	ObservedBytes int64  `json:"observed_bytes"`
-	ElapsedMS     int64  `json:"elapsed_ms"`
+	StopReason    string          `json:"stop_reason,omitempty"`
+	SpawnCode     int             `json:"spawn_code,omitempty"`
+	Started       bool            `json:"started"`
+	ExitCode      *int            `json:"exit_code"`
+	Signal        int             `json:"signal,omitempty"`
+	Phase         string          `json:"phase,omitempty"`
+	Cleanup       CleanupEvidence `json:"cleanup"`
+	CaptureReason string          `json:"capture_reason,omitempty"`
+	CaptureLost   bool            `json:"capture_lost"`
+	ObservedBytes int64           `json:"observed_bytes"`
+	ElapsedMS     int64           `json:"elapsed_ms"`
 }
 
 type eventWriter struct {
@@ -70,7 +70,7 @@ func (e *PolyglotExecutor) ExecuteStream(ctx context.Context, req ExecRequest, s
 // before its output. A failed persistence callback loses capture but still drains
 // and executes the already-started command under its normal lifetime.
 func (e *PolyglotExecutor) ExecuteStreamWithStart(ctx context.Context, req ExecRequest, sink EventSink, started func(string) error) (StreamResult, error) {
-	result := StreamResult{Retired: true}
+	result := StreamResult{Cleanup: initialStreamCleanup()}
 	if req.Background || sink == nil {
 		return result, errors.New("stream execution requires an attached sink")
 	}
@@ -99,11 +99,11 @@ func (e *PolyglotExecutor) ExecuteStreamWithStart(ctx context.Context, req ExecR
 	}
 	defer os.RemoveAll(p.tmpDir)
 	w := &eventWriter{sink: sink, started: started}
-	compiled := false
+	prior := initialStreamCleanup()
 	if req.Language == Rust {
 		binary := filepath.Join(p.tmpDir, "main")
 		result, err = runStreamPhase(ctx, p.runtime, []string{p.scriptPath, "-o", binary}, p.tmpDir, p.tmpDir, req, "compile", w)
-		if err != nil || !result.Retired || result.ExitCode == nil || *result.ExitCode != 0 || result.Signal != 0 || ctx.Err() != nil {
+		if err != nil || !result.Cleanup.Complete() || result.ExitCode == nil || *result.ExitCode != 0 || result.Signal != 0 || ctx.Err() != nil {
 			if result.StopReason == "" && err == nil && result.ExitCode != nil && *result.ExitCode == 0 && ctx.Err() != nil {
 				result.StopReason = streamStopReason(ctx)
 			}
@@ -112,10 +112,11 @@ func (e *PolyglotExecutor) ExecuteStreamWithStart(ctx context.Context, req ExecR
 			return result, err
 		}
 		p.bin, p.args = binary, nil
-		compiled = true
+		prior = result.Cleanup
 	}
 	result, err = runStreamPhase(ctx, p.bin, p.args, p.workDir, p.tmpDir, req, "run", w)
-	result.Started = result.Started || compiled
+	result.Cleanup, err = combinePhaseCleanup(prior, result.Cleanup, err)
+	result.Started = result.Started || prior.State == CleanupRetired || prior.State == CleanupObserved
 	result.CaptureLost = w.err != nil
 	result.ObservedBytes = w.observed
 	return result, err

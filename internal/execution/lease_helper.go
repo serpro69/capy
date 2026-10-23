@@ -46,7 +46,7 @@ func inheritedExchangeFiles() ([]*os.File, error) {
 // acceptLeaseStartup authorizes no storage before descriptor validation and the
 // common exchange. bind must authenticate/bind the admitted store and selected
 // scope, and retain its backend until cleanup completes. Runtime/terminal handling
-// belongs to Tasks 8–9; this function ends at the exact start-authorization boundary.
+// follows in the platform supervisor; this function ends at start authorization.
 func acceptLeaseStartup(ctx context.Context, files []*os.File, scope string, bind func(context.Context, exchangeStartup, string) error) (exchangeStartup, error) {
 	var start exchangeStartup
 	if len(files) != 5 || !exchangeScope(scope) || bind == nil {
