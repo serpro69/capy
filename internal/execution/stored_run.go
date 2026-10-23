@@ -42,7 +42,7 @@ func OpenStoredRun(ctx context.Context, start Startup, key string, leases Leases
 	if err != nil {
 		return nil, err
 	}
-	if row.Generation != start.Generation || row.Cleanup != "not_spawned" || (row.Result.State != "admitted" && (row.Result.State != "queued" || row.Result.BatchID == "")) || !row.Program.Deadline.Equal(start.Deadline) {
+	if row.Generation != start.Generation || row.Cleanup != (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}) || (row.Result.State != "admitted" && (row.Result.State != "queued" || row.Result.BatchID == "")) || !row.Program.Deadline.Equal(start.Deadline) {
 		return nil, errors.New("admitted run generation or state does not match")
 	}
 	policy := st.Policy()
@@ -52,18 +52,19 @@ func OpenStoredRun(ctx context.Context, start Startup, key string, leases Leases
 	if err := st.ValidateLeaseBinding(row.Slot, leases.Owner, leases.Lifecycle); err != nil {
 		return nil, err
 	}
-	capture := &storedCapture{store: st, id: row.ID, generation: row.Generation}
+	capture := &storedCapture{store: st, id: row.ID, generation: row.Generation, scope: row.Cleanup.Scope}
 	ok = true
 	return &Run{Executor: executor.NewExecutor(row.Program.Owner, 0), Request: row.Program.Request, Store: capture, Started: capture.started}, nil
 }
 
 type storedCapture struct {
+	scope          executor.CleanupScope
 	store          *runstore.Store
 	id, generation string
 }
 
 func (s *storedCapture) Pending(ctx context.Context) error {
-	return s.store.Pending(ctx, s.id, s.generation)
+	return s.store.Pending(ctx, s.id, s.generation, s.scope)
 }
 func (s *storedCapture) started(string) error {
 	// Capture writes are independently bounded even if execution cancellation is
@@ -78,9 +79,11 @@ func (s *storedCapture) Append(e executor.OutputEvent) error {
 	return s.store.Append(ctx, s.id, e)
 }
 func (s *storedCapture) Finish(ctx context.Context, out Outcome) error {
-	return s.store.Finish(ctx, s.id, runstore.Completion{SpawnCode: out.Result.SpawnCode, Started: out.Result.Started, Retired: out.Result.Retired,
-		CaptureLost: out.Result.CaptureLost, CaptureReason: out.Result.CaptureReason, ExitCode: out.Result.ExitCode, Signal: out.Result.Signal, Reason: out.Reason,
-		ObservedBytes: out.Result.ObservedBytes, ElapsedMS: out.Result.ElapsedMS})
+	c, err := linuxV1Completion(s.scope, out)
+	if err != nil {
+		return err
+	}
+	return s.store.Finish(ctx, s.id, c)
 }
 func (s *storedCapture) Close() error { return s.store.Close() }
 

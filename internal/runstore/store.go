@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const schemaVersion = 8
+const schemaVersion = 9
 const OwnerSlots = 64
 const WriteTimeout = 250 * time.Millisecond
 
@@ -173,6 +173,10 @@ func openAttached(ctx context.Context, path, key, owner string, lock int) (*Stor
 		s.policy, err = readPolicy(ctx, probe)
 	}
 	closeErr := probe.Close()
+	if err == nil && closeErr == nil && version != schemaVersion {
+		life.Close()
+		return nil, failure("schema_mismatch", fmt.Sprintf("run store schema %d is incompatible with supported schema %d; this build cannot migrate existing run storage; use a compatible binary", version, schemaVersion))
+	}
 	// A moved tree may retain historical provenance; the current selected path
 	// remains authoritative. The persisted owner never supplies a filesystem target.
 	if err != nil || closeErr != nil || version != schemaVersion || uuid.Validate(s.id) != nil {
@@ -435,13 +439,16 @@ CREATE TABLE runs(
  id TEXT PRIMARY KEY, generation TEXT NOT NULL, slot INTEGER NOT NULL CHECK(slot>=0 AND slot<64),
  created_at INTEGER NOT NULL,
  program BLOB NOT NULL, result BLOB NOT NULL,
- cleanup TEXT NOT NULL CHECK(cleanup IN ('not_spawned','pending','retired')),
+ cleanup_scope TEXT NOT NULL CHECK(cleanup_scope IN ('linux_descendants_v1','darwin_process_group_observation_v1')),
+ cleanup TEXT NOT NULL CHECK(cleanup IN ('not_spawned','pending','retired','observed')),
  terminal INTEGER NOT NULL DEFAULT 0 CHECK(terminal IN (0,1)),
  accounted_bytes INTEGER NOT NULL DEFAULT 0 CHECK(accounted_bytes>=0),
  evicting INTEGER NOT NULL DEFAULT 0 CHECK(evicting IN (0,1)),
  expires_at INTEGER, completed_at INTEGER,
  stdout_bytes INTEGER NOT NULL DEFAULT 0, stderr_bytes INTEGER NOT NULL DEFAULT 0,
- stdout_lines INTEGER NOT NULL DEFAULT 1, stderr_lines INTEGER NOT NULL DEFAULT 1
+ stdout_lines INTEGER NOT NULL DEFAULT 1, stderr_lines INTEGER NOT NULL DEFAULT 1,
+ CHECK((cleanup_scope='linux_descendants_v1' AND cleanup IN ('not_spawned','pending','retired')) OR
+       (cleanup_scope='darwin_process_group_observation_v1' AND cleanup IN ('not_spawned','pending','observed')))
 );
 CREATE INDEX runs_created ON runs(created_at,id);
 CREATE INDEX runs_owner ON runs(slot,generation,terminal,id);

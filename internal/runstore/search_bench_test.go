@@ -34,11 +34,11 @@ func BenchmarkRunSearch(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				row, err := s.Admit(b.Context(), o, Program{})
+				row, err := s.Admit(b.Context(), o, executor.CleanupLinuxDescendants, Program{})
 				if err != nil {
 					b.Fatal(err)
 				}
-				if err := s.Pending(b.Context(), row.ID, o.ID); err != nil {
+				if err := s.Pending(b.Context(), row.ID, o.ID, executor.CleanupLinuxDescendants); err != nil {
 					b.Fatal(err)
 				}
 				if err := s.Started(b.Context(), row.ID); err != nil {
@@ -56,7 +56,7 @@ func BenchmarkRunSearch(b *testing.B) {
 					}
 				}
 				code := 0
-				if err := s.Finish(b.Context(), row.ID, Completion{Started: true, Retired: true, ExitCode: &code, ObservedBytes: int64(len(fixture))}); err != nil {
+				if err := s.Finish(b.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code, ObservedBytes: int64(len(fixture))}); err != nil {
 					b.Fatal(err)
 				}
 				if mode == "capture_only" {

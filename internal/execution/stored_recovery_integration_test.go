@@ -33,6 +33,12 @@ type gatedStoredCapture struct {
 	dir string
 }
 
+type failedCloseStoredCapture struct{ CaptureStore }
+
+func (s *failedCloseStoredCapture) Close() error {
+	return errors.Join(s.CaptureStore.Close(), errors.New("synthetic helper close failure"))
+}
+
 func (s *gatedStoredCapture) Close() error {
 	if err := os.WriteFile(filepath.Join(s.dir, "closing"), nil, 0600); err != nil {
 		return err
@@ -72,7 +78,34 @@ func openStoredFixture(ctx context.Context, start Startup, key string, leases Le
 	if os.Getenv("CAPY_STORED_MODE") == "delayed cleanup" {
 		run.Store = &gatedStoredCapture{CaptureStore: run.Store, dir: os.Getenv("CAPY_STORED_FIXTURE")}
 	}
+	if os.Getenv("CAPY_STORED_MODE") == "unstarted failed close" {
+		run.Request.Language = executor.Language("missing-fixture-runtime")
+		run.Store = &failedCloseStoredCapture{CaptureStore: run.Store}
+	}
 	return run, nil
+}
+
+func TestStoredUnstartedTerminalSurvivesHelperCloseFailure(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"} {
+		t.Setenv(name, dir)
+	}
+	t.Setenv("CAPY_STORED_FIXTURE", dir)
+	t.Setenv("CAPY_STORED_MODE", "unstarted failed close")
+	s := NewService(dir, storedFixtureKey, config.DefaultConfig().Runs)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	result := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "touch forbidden"}, "", 30*time.Second)
+	require.Equal(t, "start_failed", result.State)
+	require.NotNil(t, result.Error)
+	require.Equal(t, "runtime_unavailable", result.Error.Code)
+	require.True(t, result.Capture.TerminalPersisted)
+	require.Equal(t, executor.CleanupNotSpawned, result.Cleanup.State)
+	require.NotNil(t, result.CompletedAt)
+	require.NoFileExists(t, filepath.Join(dir, "forbidden"))
+	stored, err := s.Status(t.Context(), *result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, stored, result)
+	require.False(t, s.unverified)
 }
 
 func runStoredFixtureOwner() int {
@@ -92,7 +125,7 @@ func runStoredFixtureOwner() int {
 	}
 	defer owner.Lease.Close()
 	deadline := time.Now().Add(time.Minute)
-	row, err := st.Admit(context.Background(), owner, runstore.Program{Owner: dir, TTLHours: 9, MaxRunBytes: 1 << 20, Deadline: deadline,
+	row, err := st.Admit(context.Background(), owner, executor.CleanupLinuxDescendants, runstore.Program{Owner: dir, TTLHours: 9, MaxRunBytes: 1 << 20, Deadline: deadline,
 		Request: executor.ExecRequest{Language: executor.Shell, Code: "printf early; echo $$ > leader.pid; sleep 60 & echo $! > child.pid; wait"}})
 	if err != nil {
 		return 1
@@ -224,7 +257,7 @@ func TestStoredOwnerSIGKILLRetainsLeasesUntilHelperClose(t *testing.T) {
 	row, err := st.Load(t.Context(), identity.ID)
 	require.NoError(t, err)
 	require.Equal(t, identity.Generation, row.Generation)
-	require.Equal(t, "pending", row.Cleanup)
+	require.Equal(t, "pending", string(row.Cleanup.State))
 	require.Nil(t, row.Result.Error, "a held helper lease is not an abandoned run")
 	replacement, err := st.ClaimOwner(t.Context())
 	require.NoError(t, err)
@@ -240,7 +273,7 @@ func TestStoredOwnerSIGKILLRetainsLeasesUntilHelperClose(t *testing.T) {
 	observer := openStoredObserver(t, dir)
 	row, err = observer.Load(t.Context(), identity.ID)
 	require.NoError(t, err)
-	require.Equal(t, "retired", row.Cleanup)
+	require.Equal(t, "retired", string(row.Cleanup.State))
 	require.Equal(t, "interrupted", row.Result.State)
 	require.True(t, row.Result.Capture.TerminalPersisted)
 	require.NoError(t, observer.Close())
@@ -290,7 +323,7 @@ func TestStoredHelperLossQuarantinesWithoutSignallingMetadata(t *testing.T) {
 	st := openStoredObserver(t, dir)
 	row, err := st.Load(t.Context(), identity.ID)
 	require.NoError(t, err)
-	require.Equal(t, "pending", row.Cleanup)
+	require.Equal(t, "pending", string(row.Cleanup.State))
 	require.Equal(t, "cleanup_unverified", row.Result.Error.Code)
 	require.Nil(t, row.Result.ExpiresAt)
 	_, err = st.ClaimOwner(t.Context())

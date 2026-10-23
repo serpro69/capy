@@ -1,7 +1,6 @@
 package runstore
 
 import (
-	"encoding/json"
 	"github.com/google/uuid"
 	"github.com/serpro69/capy/internal/sqliteutil"
 	"testing"
@@ -13,16 +12,16 @@ import (
 
 func TestBatchManifestSurvivesChildEviction(t *testing.T) {
 	s, o := retentionStore(t, 4<<20)
-	b, children, err := s.AdmitBatch(t.Context(), o, BatchInput{Concurrency: 1, Queries: []string{"diagnostic"}, Commands: []BatchCommand{{Label: "same", Command: "one"}, {Label: "same", Command: "two"}}})
+	b, children, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Concurrency: 1, Queries: []string{"diagnostic"}, Commands: []BatchCommand{{Label: "same", Command: "one"}, {Label: "same", Command: "two"}}})
 	require.NoError(t, err)
 	require.Len(t, children, 2)
 	require.NotEqual(t, children[0].ID, children[1].ID)
 	for i, child := range children {
-		require.NoError(t, s.Pending(t.Context(), child.ID, o.ID))
+		require.NoError(t, s.Pending(t.Context(), child.ID, o.ID, executor.CleanupLinuxDescendants))
 		require.NoError(t, s.Started(t.Context(), child.ID))
 		require.NoError(t, s.Append(t.Context(), child.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: []byte("diagnostic output")}))
 		code := i * 7
-		require.NoError(t, s.Finish(t.Context(), child.ID, Completion{Started: true, Retired: true, ExitCode: &code, ObservedBytes: 17}))
+		require.NoError(t, s.Finish(t.Context(), child.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code, ObservedBytes: 17}))
 	}
 	status, err := s.BatchStatus(t.Context(), b.BatchID)
 	require.NoError(t, err)
@@ -69,7 +68,7 @@ func TestBatchManifestSurvivesChildEviction(t *testing.T) {
 func TestBatchAdmissionQuotaAtomicAndRecovery(t *testing.T) {
 	t.Run("atomic quota", func(t *testing.T) {
 		s, o := retentionStore(t, 2*runReserve)
-		_, _, err := s.AdmitBatch(t.Context(), o, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "one"}, {Command: "two"}}})
+		_, _, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "one"}, {Command: "two"}}})
 		requireErrorCode(t, err, "quota_exhausted")
 		for _, table := range []string{"run_batches", "run_batch_children", "runs"} {
 			var n int
@@ -85,7 +84,7 @@ func TestBatchAdmissionQuotaAtomicAndRecovery(t *testing.T) {
 			commands[i] = BatchCommand{Command: "no spawn"}
 		}
 		// Raise quota for >64 inventory so bounded recovery needs multiple passes.
-		b, children, err := s.AdmitBatch(t.Context(), o, BatchInput{Concurrency: 1, Commands: commands})
+		b, children, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Concurrency: 1, Commands: commands})
 		require.NoError(t, err)
 		require.NoError(t, o.Lease.Close())
 		for range 3 {
@@ -108,16 +107,16 @@ func TestBatchAdmissionQuotaAtomicAndRecovery(t *testing.T) {
 func TestBatchListSelectorAndFilters(t *testing.T) {
 	s, o := retentionStore(t, 4<<20)
 	input := BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "one"}, {Command: "two"}, {Command: "three"}}}
-	b, children, err := s.AdmitBatch(t.Context(), o, input)
+	b, children, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, input)
 	require.NoError(t, err)
-	require.NoError(t, s.Finish(t.Context(), children[1].ID, Completion{Retired: true, Reason: "queue_timeout"}))
+	require.NoError(t, s.Finish(t.Context(), children[1].ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}, Reason: "queue_timeout"}))
 	first, err := s.List(t.Context(), ListOptions{BatchID: b.BatchID, Limit: 1, States: []string{"queued"}})
 	require.NoError(t, err)
 	require.NotNil(t, first.NextCursor)
 	next, err := s.List(t.Context(), ListOptions{BatchID: b.BatchID, Limit: 1, Cursor: *first.NextCursor})
 	require.NoError(t, err)
 	require.Equal(t, 2, *next.Entries[0].Ordinal)
-	other, _, err := s.AdmitBatch(t.Context(), o, input)
+	other, _, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, input)
 	require.NoError(t, err)
 	_, err = s.List(t.Context(), ListOptions{BatchID: other.BatchID, Limit: 1, Cursor: *first.NextCursor})
 	requireErrorCode(t, err, "cursor_invalid")
@@ -127,9 +126,9 @@ func TestBatchListSelectorAndFilters(t *testing.T) {
 
 func TestBatchUnverifiedChildrenExposeRecoveryError(t *testing.T) {
 	s, o := retentionStore(t, 4<<20)
-	b, children, err := s.AdmitBatch(t.Context(), o, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "uncertain"}, {Command: "safe"}}})
+	b, children, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "uncertain"}, {Command: "safe"}}})
 	require.NoError(t, err)
-	require.NoError(t, s.Pending(t.Context(), children[0].ID, o.ID))
+	require.NoError(t, s.Pending(t.Context(), children[0].ID, o.ID, executor.CleanupLinuxDescendants))
 	require.NoError(t, s.Started(t.Context(), children[0].ID))
 	require.NoError(t, o.Lease.Close())
 	_, err = s.Reconcile(t.Context())
@@ -168,7 +167,7 @@ func TestBatchAdmissionRechecksQuarantineAfterCapacityPreparation(t *testing.T) 
 	// between the preliminary check/capacity preparation and the admission tx.
 	_, err := s.db.ExecContext(t.Context(), `CREATE TRIGGER test_quarantine AFTER DELETE ON runs BEGIN UPDATE run_meta SET admission_blocked=1 WHERE singleton=1; END`)
 	require.NoError(t, err)
-	_, _, err = s.AdmitBatch(t.Context(), o, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "one"}, {Command: "two"}, {Command: "three"}}})
+	_, _, err = s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "one"}, {Command: "two"}, {Command: "three"}}})
 	requireErrorCode(t, err, "cleanup_unverified")
 	var n int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM run_batches").Scan(&n))
@@ -179,9 +178,9 @@ func TestBatchAdmissionRechecksQuarantineAfterCapacityPreparation(t *testing.T) 
 
 func TestActiveBatchManifestAndChildrenProtectedFromQuota(t *testing.T) {
 	s, o := retentionStore(t, 3*runReserve)
-	b, children, err := s.AdmitBatch(t.Context(), o, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "one"}, {Command: "two"}}})
+	b, children, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "one"}, {Command: "two"}}})
 	require.NoError(t, err)
-	_, err = s.Admit(t.Context(), o, Program{})
+	_, err = s.Admit(t.Context(), o, executor.CleanupLinuxDescendants, Program{})
 	requireErrorCode(t, err, "quota_exhausted")
 	_, err = s.BatchStatus(t.Context(), b.BatchID)
 	require.NoError(t, err)
@@ -207,7 +206,7 @@ func TestExpiredBatchDeletionResumesBeforeEvictingLiveLogs(t *testing.T) {
 		for ordinal := range 256 {
 			run := uuid.NewString()
 			code := 0
-			result, err := json.Marshal(Result{Version: 1, Kind: "run", BatchID: id, RunID: &run, OwnerID: o.ID, OwnerType: "mcp", State: "exited", ExitCode: &code, CompletedAt: &expired, ExpiresAt: &expired, Capture: Capture{State: "complete", TerminalPersisted: true}})
+			result, err := encodeManifest(Result{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Version: 1, Kind: "run", BatchID: id, RunID: &run, OwnerID: o.ID, OwnerType: "mcp", State: "exited", ExitCode: &code, CompletedAt: &expired, ExpiresAt: &expired, Capture: Capture{State: "complete", TerminalPersisted: true}})
 			require.NoError(t, err)
 			_, err = tx.ExecContext(t.Context(), "INSERT INTO run_batch_children(batch_id,ordinal,run_id,label,command,result,terminal) VALUES(?,?,?,'label','true',?,1)", id, ordinal, run, result)
 			require.NoError(t, err)
@@ -232,13 +231,13 @@ func TestExpiredBatchDeletionResumesBeforeEvictingLiveLogs(t *testing.T) {
 
 func TestBatchSearchProjectionFailureKeepsRawAvailability(t *testing.T) {
 	s, o := retentionStore(t, 4<<20)
-	b, children, err := s.AdmitBatch(t.Context(), o, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "one"}}})
+	b, children, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "one"}}})
 	require.NoError(t, err)
-	require.NoError(t, s.Pending(t.Context(), children[0].ID, o.ID))
+	require.NoError(t, s.Pending(t.Context(), children[0].ID, o.ID, executor.CleanupLinuxDescendants))
 	require.NoError(t, s.Started(t.Context(), children[0].ID))
 	require.NoError(t, s.Append(t.Context(), children[0].ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: []byte("retained raw")}))
 	code := 0
-	require.NoError(t, s.Finish(t.Context(), children[0].ID, Completion{Started: true, Retired: true, ExitCode: &code, ObservedBytes: 12}))
+	require.NoError(t, s.Finish(t.Context(), children[0].ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code, ObservedBytes: 12}))
 	_, err = s.db.ExecContext(t.Context(), `UPDATE runs SET result=json_set(CAST(result AS TEXT),'$.redaction.state','unavailable') WHERE id=?`, children[0].ID)
 	require.NoError(t, err)
 	page, err := s.Search(t.Context(), o, SearchOptions{BatchID: b.BatchID, Queries: []string{"retained"}, Limit: 5})
@@ -253,7 +252,7 @@ func TestBatchSearchProjectionFailureKeepsRawAvailability(t *testing.T) {
 func TestBatchDispatchDeadlineAndOwner(t *testing.T) {
 	s, o := retentionStore(t, 4<<20)
 	admitted := time.Now().UTC().Add(time.Minute)
-	b, children, err := s.AdmitBatch(t.Context(), o, BatchInput{Concurrency: 8, EffectiveConcurrency: 2, Deadline: admitted, Commands: []BatchCommand{{Command: "one"}, {Command: "two"}}})
+	b, children, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Concurrency: 8, EffectiveConcurrency: 2, Deadline: admitted, Commands: []BatchCommand{{Command: "one"}, {Command: "two"}}})
 	require.NoError(t, err)
 	require.Equal(t, 8, b.RequestedConcurrency)
 	require.Equal(t, 2, b.EffectiveConcurrency)
@@ -265,6 +264,6 @@ func TestBatchDispatchDeadlineAndOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, deadline.Equal(row.Program.Deadline))
 	require.Equal(t, "queued", row.Result.State)
-	require.NoError(t, s.Pending(t.Context(), row.ID, o.ID))
+	require.NoError(t, s.Pending(t.Context(), row.ID, o.ID, executor.CleanupLinuxDescendants))
 	require.Error(t, s.Dispatch(t.Context(), row.ID, o.ID, admitted))
 }

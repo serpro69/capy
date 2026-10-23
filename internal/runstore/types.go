@@ -37,27 +37,29 @@ type Index struct {
 }
 
 type Result struct {
-	BatchID         string     `json:"batch_id,omitempty"`
-	Capacity        *Capacity  `json:"capacity,omitempty"`
-	Preview         string     `json:"preview,omitempty"`
-	MetadataOmitted bool       `json:"metadata_omitted,omitempty"`
-	Version         int        `json:"version"`
-	Kind            string     `json:"kind"`
-	RunID           *string    `json:"run_id"`
-	OwnerID         string     `json:"owner_id,omitempty"`
-	OwnerType       string     `json:"owner_type,omitempty"`
-	State           string     `json:"state"`
-	ExitCode        *int       `json:"exit_code"`
-	Signal          *int       `json:"signal"`
-	Reason          *string    `json:"reason"`
-	StartedAt       *time.Time `json:"started_at"`
-	CompletedAt     *time.Time `json:"completed_at"`
-	ElapsedMS       int64      `json:"elapsed_ms"`
-	Capture         Capture    `json:"capture"`
-	Redaction       Projection `json:"redaction"`
-	Index           Index      `json:"index"`
-	ExpiresAt       *time.Time `json:"expires_at"`
-	Error           *Error     `json:"error"`
+	// Task 7 publishes this in v2. Private manifest copies already persist it.
+	Cleanup         executor.CleanupEvidence `json:"-"`
+	BatchID         string                   `json:"batch_id,omitempty"`
+	Capacity        *Capacity                `json:"capacity,omitempty"`
+	Preview         string                   `json:"preview,omitempty"`
+	MetadataOmitted bool                     `json:"metadata_omitted,omitempty"`
+	Version         int                      `json:"version"`
+	Kind            string                   `json:"kind"`
+	RunID           *string                  `json:"run_id"`
+	OwnerID         string                   `json:"owner_id,omitempty"`
+	OwnerType       string                   `json:"owner_type,omitempty"`
+	State           string                   `json:"state"`
+	ExitCode        *int                     `json:"exit_code"`
+	Signal          *int                     `json:"signal"`
+	Reason          *string                  `json:"reason"`
+	StartedAt       *time.Time               `json:"started_at"`
+	CompletedAt     *time.Time               `json:"completed_at"`
+	ElapsedMS       int64                    `json:"elapsed_ms"`
+	Capture         Capture                  `json:"capture"`
+	Redaction       Projection               `json:"redaction"`
+	Index           Index                    `json:"index"`
+	ExpiresAt       *time.Time               `json:"expires_at"`
+	Error           *Error                   `json:"error"`
 }
 
 type ActiveRun struct {
@@ -98,16 +100,17 @@ type Admitted struct {
 	Slot           int
 	Program        Program
 	Result         Result
-	Cleanup        string
+	Cleanup        executor.CleanupEvidence
 }
 
 type Completion struct {
-	SpawnCode                     int
-	Started, Retired, CaptureLost bool
-	ExitCode                      *int
-	Signal                        int
-	Reason, CaptureReason         string
-	ObservedBytes, ElapsedMS      int64
+	Cleanup                  executor.CleanupEvidence
+	SpawnCode                int
+	Started, CaptureLost     bool
+	ExitCode                 *int
+	Signal                   int
+	Reason, CaptureReason    string
+	ObservedBytes, ElapsedMS int64
 }
 
 type Fragment struct {

@@ -4,7 +4,7 @@
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
 > Evidence: [native process verification](process-proof.md) · [source verification](verification.md)
-> Status: in progress — Tasks 1–4 done; observational Darwin contract accepted; Tasks 5–13 pending
+> Status: in progress — Tasks 1–5 done; observational Darwin contract accepted; Tasks 6–13 pending
 > Created: 2026-10-22
 > Not Doing: older macOS majors, Intel support, certified Darwin group retirement, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
@@ -123,7 +123,7 @@ their implementation.
 
 ## Task 5: Enforce scoped proof on fresh stores
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2, Task 4
 - **Size:** M
 - **Can run in parallel with:** —
@@ -131,12 +131,19 @@ their implementation.
 
 ### Subtasks
 
-- [ ] 5.1 Add `executor.CleanupEvidence`, schema-9 scope/state constraints without DEFAULT, and cross-scope pairing checks → verify: fresh SQL rejects omitted/NULL/unknown scope/state, Darwin retired and Linux observed; current Linux behavior remains usable.
-- [ ] 5.2 Centralize immutable scope/state transitions and policy-completion predicates in `internal/runstore` → verify: normal reuse/retention accepts Linux retired and Darwin observed, while pending/errors/inconsistency preserve quarantine. Observed never implies host quiescence.
-- [ ] 5.3 Synchronize manifest child proof transactionally and validate homogeneous batch aggregation → verify: child-log eviction does not erase authoritative proof.
-- [ ] 5.4 Compare retained rows/manifest copies and derive aggregates in one read snapshot, closing it before indexing → verify: concurrent completion causes no false mismatch.
-- [ ] 5.5 Keep existing-v8 stores explicitly refused on this unreleased intermediate branch; do not recreate them or ship before Task 6.
-- [ ] 5.6 Keep the intermediate Linux v1 path usable through the explicitly scoped transitional adapter in the plan; forbid unknown/Darwin fallback and schedule its removal in Task 8.
+- [x] 5.1 Add `executor.CleanupEvidence`, schema-9 scope/state constraints without DEFAULT, and cross-scope pairing checks → verify: fresh SQL rejects omitted/NULL/unknown scope/state, Darwin retired and Linux observed; current Linux behavior remains usable.
+- [x] 5.2 Centralize immutable scope/state transitions and policy-completion predicates in `internal/runstore` → verify: normal reuse/retention accepts Linux retired and Darwin observed, while pending/errors/inconsistency preserve quarantine. Observed never implies host quiescence.
+- [x] 5.3 Synchronize manifest child proof transactionally and validate homogeneous batch aggregation → verify: child-log eviction does not erase authoritative proof.
+- [x] 5.4 Compare retained rows/manifest copies and derive aggregates in one read snapshot, closing it before indexing → verify: concurrent completion causes no false mismatch.
+- [x] 5.5 Keep existing-v8 stores explicitly refused on this unreleased intermediate branch; do not recreate them or ship before Task 6.
+- [x] 5.6 Keep the intermediate Linux v1 path usable through the explicitly scoped transitional adapter in the plan; forbid unknown/Darwin fallback and schedule its removal in Task 8.
+
+### Execution context
+
+- **2026-10-23 — authorized scope and baseline:** The user requested Task 5 on Linux, starting from clean `828ee23bc33e1a18d4a848cdd75feb793c76375d`. Tasks 1–4 are complete. This slice adds fresh schema-9 scoped evidence, transactional manifest copies and snapshot validation, and a temporary Linux-v1 completion adapter. Existing schema-8 stores are explicitly refused until Task 6; public version-2 publication, protocol-v2 production wiring and Darwin activation remain Tasks 7–10. Verification uses synthetic keys and isolated stores; installed capture remains on its existing binary/store.
+- **2026-10-23 — implementation approach:** Backend admission supplies an explicit scope independently of user program input. Storage transitions validate scope/state together and preserve scope/generation; completion and reuse/retention use policy acceptance, never a host-quiescence claim. Manifest proofs survive log eviction and are compared with retained rows in one bounded snapshot, released before lazy indexing. Public v1 serialization remains unchanged while typed cleanup and private manifest storage are introduced.
+- **2026-10-23 — verification and fixes:** Final full runstore/execution integration race passed (102.501s / 62.194s), as did selected public server/CLI capture regressions, affected-code vet and the full FTS5 build. Both quality reports pass with all reported metrics unchanged. Six-sample runstore benchmark medians: capture +2.46%, first search −4.35%, repeat search −2.67%, fragmented search −5.72%; no significance claim. Initial compile errors and a quadratic batch-recovery regression were corrected without weakening assertions or deadlines. Commands, captured run IDs, native limits and evidence are in [storage-proof.md](storage-proof.md).
+- **2026-10-23 — review and completion:** Isolated `kk:review-code` approved Task 5 after a P2 fix preserving committed `not_spawned` outcomes when a helper close/notification fails. A real-helper race fixture and the final full integration run verify the correction. No open code finding remains; PAL was unavailable and tests are author-attributed. `kk:test` and `kk:document` completed for this slice. No new conventions/findings need indexing because the evidence record captures them. Task 5 is done; Task 6 is next. Schema-8 migration, public v2, protocol-v2 production and native activation remain explicit later tasks; no new macOS CI result is claimed.
 
 ## Task 6: Preserve version-8 histories through migration
 

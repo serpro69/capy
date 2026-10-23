@@ -24,16 +24,16 @@ func TestCaptureAndReopen(t *testing.T) {
 	owner, err := st.ClaimOwner(t.Context())
 	require.NoError(t, err)
 	program := Program{Owner: root, Request: executor.ExecRequest{Language: executor.Shell, Code: "synthetic private program"}, TTLHours: 24, MaxRunBytes: 1 << 20}
-	row, err := st.Admit(t.Context(), owner, program)
+	row, err := st.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, program)
 	require.NoError(t, err)
-	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID))
-	require.Error(t, st.Pending(t.Context(), row.ID, owner.ID), "a run may be authorized once only")
+	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
+	require.Error(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants), "a run may be authorized once only")
 	require.NoError(t, st.Started(t.Context(), row.ID))
 	out := []byte{0, 255, 'a', '\n', 'b'}
 	require.NoError(t, st.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: out}))
 	require.NoError(t, st.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 2, Phase: "run", Stream: "stderr", Data: []byte("failure marker")}))
 	code := 7
-	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Started: true, Retired: true, ExitCode: &code, ObservedBytes: int64(len(out) + len("failure marker")), ElapsedMS: 15}))
+	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code, ObservedBytes: int64(len(out) + len("failure marker")), ElapsedMS: 15}))
 	require.NoError(t, owner.Lease.Close())
 	require.NoError(t, st.Close())
 	raw, err := os.ReadFile(path)
@@ -48,7 +48,7 @@ func TestCaptureAndReopen(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 7, *got.Result.ExitCode)
 	require.Equal(t, "complete", got.Result.Capture.State)
-	require.Equal(t, "retired", got.Cleanup)
+	require.Equal(t, "retired", string(got.Cleanup.State))
 	var collected []byte
 	cursor := ""
 	for {
@@ -135,9 +135,9 @@ func TestIncompleteOwnerIsNotReused(t *testing.T) {
 	defer st.Close()
 	owner, err := st.ClaimOwner(t.Context())
 	require.NoError(t, err)
-	row, err := st.Admit(t.Context(), owner, Program{Owner: root, TTLHours: 24, MaxRunBytes: 1 << 20})
+	row, err := st.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, Program{Owner: root, TTLHours: 24, MaxRunBytes: 1 << 20})
 	require.NoError(t, err)
-	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID))
+	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
 	require.NoError(t, owner.Lease.Close())
 	_, err = st.ClaimOwner(t.Context())
 	require.ErrorContains(t, err, "unverified cleanup")
@@ -178,9 +178,9 @@ func TestAppendBatchRollbackPreservesExactPrefix(t *testing.T) {
 	owner, err := st.ClaimOwner(t.Context())
 	require.NoError(t, err)
 	defer owner.Lease.Close()
-	row, err := st.Admit(t.Context(), owner, Program{TTLHours: 24, MaxRunBytes: 20})
+	row, err := st.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, Program{TTLHours: 24, MaxRunBytes: 20})
 	require.NoError(t, err)
-	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID))
+	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
 	require.NoError(t, st.Started(t.Context(), row.ID))
 	event := func(seq uint64, data string) executor.OutputEvent {
 		return executor.OutputEvent{Sequence: seq, Phase: "run", Stream: "stdout", Data: []byte(data)}

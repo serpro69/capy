@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/runstore"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +42,7 @@ func TestAlreadyCancelledRequestCannotHandoff(t *testing.T) {
 
 func TestCancellationBeforeSpawnKeepsNullChildStatus(t *testing.T) {
 	result := runstore.Result{State: "admitted"}
-	runstore.ApplyOutcome(&result, runstore.Completion{Retired: true, Reason: "cancelled"})
+	runstore.ApplyOutcome(&result, runstore.Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}, Reason: "cancelled"})
 	require.Equal(t, "cancelled", result.State)
 	require.Nil(t, result.ExitCode)
 	require.Nil(t, result.Signal)

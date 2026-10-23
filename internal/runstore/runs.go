@@ -14,7 +14,7 @@ import (
 	"github.com/serpro69/capy/internal/sqliteutil"
 )
 
-func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admitted, error) {
+func (s *Store) Admit(ctx context.Context, owner *Owner, scope executor.CleanupScope, program Program) (Admitted, error) {
 	// The attached store is authoritative. Callers cannot select a different
 	// TTL or capture ceiling through per-program metadata.
 	program.PolicyRevision = s.policy.Revision
@@ -33,7 +33,7 @@ func (s *Store) Admit(ctx context.Context, owner *Owner, program Program) (Admit
 	if err := s.checkQuarantine(ctx); err != nil {
 		return Admitted{}, err
 	}
-	row, encodedProgram, encodedResult, err := s.prepareRun(owner, program)
+	row, encodedProgram, encodedResult, err := s.prepareRun(owner, scope, program)
 	if err != nil {
 		return Admitted{}, err
 	}
@@ -82,10 +82,14 @@ func loadRun(ctx context.Context, query runQuerier, id string) (Admitted, error)
 	var row Admitted
 	row.ID = id
 	var program, result []byte
+	var manifest []byte
+	var manifestTerminal sql.NullBool
 	var terminal, unverified bool
-	err := query.QueryRowContext(ctx, `SELECT generation,slot,program,result,cleanup,terminal,
-EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation AND o.cleanup_unverified=1)
-FROM runs WHERE id=? AND evicting=0`, id).Scan(&row.Generation, &row.Slot, &program, &result, &row.Cleanup, &terminal, &unverified)
+	err := query.QueryRowContext(ctx, `SELECT generation,slot,program,result,cleanup_scope,cleanup,terminal,
+EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation AND o.cleanup_unverified=1),
+(SELECT c.result FROM run_batch_children c WHERE c.run_id=runs.id),
+(SELECT c.terminal FROM run_batch_children c WHERE c.run_id=runs.id)
+FROM runs WHERE id=? AND evicting=0`, id).Scan(&row.Generation, &row.Slot, &program, &result, &row.Cleanup.Scope, &row.Cleanup.State, &terminal, &unverified, &manifest, &manifestTerminal)
 	if errors.Is(err, sql.ErrNoRows) {
 		return row, failure("run_unavailable", "run is unavailable in this owner's store")
 	}
@@ -94,6 +98,15 @@ FROM runs WHERE id=? AND evicting=0`, id).Scan(&row.Generation, &row.Slot, &prog
 	}
 	if json.Unmarshal(program, &row.Program) != nil || json.Unmarshal(result, &row.Result) != nil {
 		return row, storageError()
+	}
+	row.Result.Cleanup = row.Cleanup
+	if err := validateTerminal(row.Cleanup, row.Result, terminal); err != nil {
+		return row, err
+	}
+	if manifestTerminal.Valid {
+		if err := validateManifestCopy(manifest, row.Cleanup, terminal, manifestTerminal.Bool); err != nil {
+			return row, err
+		}
 	}
 	// A completed result without terminal cleanup is already evidence of
 	// unverified retirement, even while its owner lease prevents reconciliation.
@@ -118,21 +131,19 @@ func markUnverified(result *Result) {
 	}
 }
 
-func (s *Store) Pending(ctx context.Context, id, generation string) error {
-	r, err := s.db.ExecContext(ctx, "UPDATE runs SET cleanup='pending' WHERE id=? AND generation=? AND cleanup='not_spawned' AND terminal=0 AND EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation)", id, generation)
-	if err != nil {
-		return storageError()
-	}
-	n, err := r.RowsAffected()
-	if err != nil || n != 1 {
-		return failure("cleanup_unverified", "run start was already authorized or owner generation changed")
-	}
-	return nil
+func (s *Store) Pending(ctx context.Context, id, generation string, scope executor.CleanupScope) error {
+	return s.update(ctx, id, func(_ *sql.Tx, row *Admitted) error {
+		if row.Generation != generation || row.Cleanup.Scope != scope || row.Cleanup.State != executor.CleanupNotSpawned {
+			return failure("cleanup_unverified", "run start was already authorized or owner generation/scope changed")
+		}
+		row.Cleanup.State = executor.CleanupPending
+		return nil
+	})
 }
 
 func (s *Store) Started(ctx context.Context, id string) error {
 	return s.update(ctx, id, func(tx *sql.Tx, row *Admitted) error {
-		if row.Cleanup != "pending" {
+		if row.Cleanup.State != executor.CleanupPending {
 			return storageError()
 		}
 		if row.Result.StartedAt == nil {
@@ -185,7 +196,7 @@ func (s *Store) appendBatch(ctx context.Context, id string, events []executor.Ou
 			if event.Sequence != last+1 {
 				return storageError()
 			}
-			if row.Cleanup != "pending" || row.Result.State != "running" {
+			if row.Cleanup.State != executor.CleanupPending || row.Result.State != "running" {
 				return storageError()
 			}
 			if int64(len(event.Data)) > row.Program.MaxRunBytes-row.Result.Capture.CapturedBytes {
@@ -230,6 +241,12 @@ func (s *Store) appendBatch(ctx context.Context, id string, events []executor.Ou
 
 func (s *Store) Finish(ctx context.Context, id string, c Completion) error {
 	return s.update(ctx, id, func(tx *sql.Tx, row *Admitted) error {
+		if err := validateCleanupTransition(row.Cleanup, c.Cleanup); err != nil {
+			return err
+		}
+		if c.Started && c.Cleanup.State == executor.CleanupNotSpawned {
+			return failure("cleanup_unverified", "started run cannot finish as not spawned")
+		}
 		for _, stream := range []string{"stdout", "stderr"} {
 			if err := s.project(ctx, tx, row, stream, nil, true); err != nil {
 				return err
@@ -256,7 +273,7 @@ func (s *Store) Finish(ctx context.Context, id string, c Completion) error {
 		switch {
 		case !c.Started:
 			result.Capture.State = "not_started"
-		case c.CaptureLost || !c.Retired:
+		case c.CaptureLost || !CleanupAccepted(c.Cleanup):
 			result.Capture.State = "incomplete"
 			reason := c.CaptureReason
 			if reason == "" {
@@ -266,11 +283,7 @@ func (s *Store) Finish(ctx context.Context, id string, c Completion) error {
 		default:
 			result.Capture.State = "complete"
 		}
-		if c.Retired {
-			row.Cleanup = "retired"
-		} else {
-			row.Cleanup = "pending"
-		}
+		row.Cleanup = c.Cleanup
 		return nil
 	})
 }
@@ -283,12 +296,20 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 	defer tx.Rollback()
 	row := Admitted{ID: id}
 	var program, result []byte
-	if err := tx.QueryRowContext(ctx, "SELECT program,result,cleanup FROM runs WHERE id=?", id).Scan(&program, &result, &row.Cleanup); err != nil {
+	var terminal bool
+	if err := tx.QueryRowContext(ctx, "SELECT program,result,generation,cleanup_scope,cleanup,terminal FROM runs WHERE id=?", id).Scan(&program, &result, &row.Generation, &row.Cleanup.Scope, &row.Cleanup.State, &terminal); err != nil {
 		return storageError()
 	}
 	if json.Unmarshal(program, &row.Program) != nil || json.Unmarshal(result, &row.Result) != nil {
 		return storageError()
 	}
+	if err := validateTerminal(row.Cleanup, row.Result, terminal); err != nil {
+		return err
+	}
+	if err := validateRunManifest(ctx, tx, id, row.Cleanup, terminal); err != nil {
+		return err
+	}
+	before := row.Cleanup
 	if row.Result.CompletedAt != nil {
 		return failure("run_unavailable", "run is already terminal")
 	}
@@ -298,6 +319,10 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 	if err := fn(tx, &row); err != nil {
 		return err
 	}
+	if err := validateCleanupTransition(before, row.Cleanup); err != nil {
+		return err
+	}
+	row.Result.Cleanup = row.Cleanup
 	encoded, err := json.Marshal(row.Result)
 	if err != nil || len(encoded) > 8192 {
 		return storageError()
@@ -345,13 +370,17 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 			return err
 		}
 	}
-	terminal := row.Result.CompletedAt != nil && row.Cleanup == "retired"
+	terminal = row.Result.CompletedAt != nil && CleanupAccepted(row.Cleanup)
 	var completed, expires any
 	if terminal {
 		completed, expires = row.Result.CompletedAt.UnixNano(), row.Result.ExpiresAt.UnixMilli()+1
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,cleanup=?,terminal=?,completed_at=?,expires_at=? WHERE id=?", encoded, row.Cleanup, terminal, completed, expires, id); err != nil {
+	r, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,cleanup=?,terminal=?,completed_at=?,expires_at=? WHERE id=? AND generation=? AND cleanup_scope=? AND EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation)", encoded, row.Cleanup.State, terminal, completed, expires, id, row.Generation, before.Scope)
+	if err != nil {
 		return storageError()
+	}
+	if n, err := r.RowsAffected(); err != nil || n != 1 {
+		return failure("cleanup_unverified", "run generation or cleanup scope changed")
 	}
 	if err := syncBatchChild(ctx, tx, row.Result, terminal); err != nil {
 		return err
@@ -375,7 +404,7 @@ func ApplyOutcome(result *Result, c Completion) {
 	}
 	result.State = "exited"
 	switch {
-	case !c.Retired:
+	case !CleanupAccepted(c.Cleanup):
 		result.State = "interrupted"
 	case !c.Started && (c.Reason == "queue_timeout" || c.Reason == "batch_stopped"):
 		result.State = "skipped"
@@ -410,7 +439,11 @@ func (s *Store) CaptureFailed(ctx context.Context, id, reason string) error {
 }
 
 // prepareRun and insertRun are shared by single-run and atomic batch admission.
-func (s *Store) prepareRun(owner *Owner, program Program) (Admitted, []byte, []byte, error) {
+func (s *Store) prepareRun(owner *Owner, scope executor.CleanupScope, program Program) (Admitted, []byte, []byte, error) {
+	cleanup := executor.CleanupEvidence{Scope: scope, State: executor.CleanupNotSpawned}
+	if err := ValidateCleanup(cleanup); err != nil {
+		return Admitted{}, nil, nil, err
+	}
 	program.PolicyRevision = s.policy.Revision
 	program.TTLHours = s.policy.TTLHours
 	program.MaxRunBytes = s.policy.MaxRunBytes
@@ -422,7 +455,7 @@ func (s *Store) prepareRun(owner *Owner, program Program) (Admitted, []byte, []b
 	if ownerType != "mcp" && ownerType != "cli" {
 		return Admitted{}, nil, nil, failure("invalid_argument", "invalid execution owner type")
 	}
-	result := Result{Version: 1, Kind: "run", RunID: &id, OwnerID: owner.ID, OwnerType: ownerType, State: "admitted",
+	result := Result{Cleanup: cleanup, Version: 1, Kind: "run", RunID: &id, OwnerID: owner.ID, OwnerType: ownerType, State: "admitted",
 		Capture: Capture{State: "not_started"}, Redaction: Projection{Version: sanitize.StreamVersion, State: "ready"}, Index: Index{State: "not_requested"}}
 	if program.Intent != "" {
 		result.Index.State = "building"
@@ -436,7 +469,7 @@ func (s *Store) prepareRun(owner *Owner, program Program) (Admitted, []byte, []b
 		return Admitted{}, nil, nil, storageError()
 	}
 
-	return Admitted{ID: id, Generation: owner.ID, Slot: owner.Slot, Program: program, Result: result, Cleanup: "not_spawned"}, encodedProgram, encodedResult, nil
+	return Admitted{ID: id, Generation: owner.ID, Slot: owner.Slot, Program: program, Result: result, Cleanup: cleanup}, encodedProgram, encodedResult, nil
 }
 func insertRun(ctx context.Context, tx *sql.Tx, row Admitted, encodedProgram, encodedResult []byte) error {
 	if _, err := tx.ExecContext(ctx, "UPDATE run_meta SET last_created=max(last_created+1,?) WHERE singleton=1", time.Now().UTC().UnixNano()); err != nil {
@@ -446,7 +479,7 @@ func insertRun(ctx context.Context, tx *sql.Tx, row Admitted, encodedProgram, en
 	if err := tx.QueryRowContext(ctx, "SELECT last_created FROM run_meta WHERE singleton=1").Scan(&createdAt); err != nil {
 		return storageError()
 	}
-	_, err := tx.ExecContext(ctx, "INSERT INTO runs(id,generation,slot,program,result,cleanup,created_at) VALUES(?,?,?,?,?,'not_spawned',?)", row.ID, row.Generation, row.Slot, encodedProgram, encodedResult, createdAt)
+	_, err := tx.ExecContext(ctx, "INSERT INTO runs(id,generation,slot,program,result,cleanup_scope,cleanup,created_at) VALUES(?,?,?,?,?,?,?,?)", row.ID, row.Generation, row.Slot, encodedProgram, encodedResult, row.Cleanup.Scope, row.Cleanup.State, createdAt)
 	if err != nil {
 		return storageError()
 	}

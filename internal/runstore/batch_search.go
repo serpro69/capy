@@ -16,7 +16,7 @@ type SearchCoverage struct {
 
 func (s *Store) searchBatch(ctx context.Context, owner *Owner, o SearchOptions) (SearchPage, error) {
 	page := SearchPage{Version: 1, Kind: "query", BatchID: o.BatchID, QueryScope: o.QueryScope, Index: Index{State: "ready"}, Coverage: map[string]int64{}, Results: []QueryHits{}, Children: []SearchCoverage{}}
-	_, queries, _, err := s.batchMetadata(ctx, o.BatchID)
+	_, queries, children, err := s.batchSnapshot(ctx, o.BatchID)
 	if err != nil {
 		return page, err
 	}
@@ -30,32 +30,16 @@ func (s *Store) searchBatch(ctx context.Context, owner *Owner, o SearchOptions) 
 		return page, failure("invalid_argument", "batch has no stored queries; supply queries")
 	}
 	page.Queries = append([]string(nil), o.Queries...)
-	// Snapshot only bounded identities; close rows before using the one-connection
-	// pool for indexing. Results remain live retained coverage, not a DB snapshot.
-	rows, err := s.db.QueryContext(ctx, "SELECT run_id FROM run_batch_children WHERE batch_id=? ORDER BY ordinal", o.BatchID)
-	if err != nil {
-		return page, storageError()
-	}
-	ids := make([]string, 0, 256)
-	for rows.Next() {
-		var id string
-		if rows.Scan(&id) != nil {
-			rows.Close()
-			return page, storageError()
-		}
-		ids = append(ids, id)
-	}
-	readErr, closeErr := rows.Err(), rows.Close()
-	if readErr != nil || closeErr != nil {
-		return page, storageError()
-	}
+	// Proof and retained-row comparisons were snapshotted together above; the
+	// transaction is closed before indexing uses the one-connection pool.
 	ranked := make([][]batchRankedHit, len(o.Queries))
 	for i := range o.Queries {
 		page.Results = append(page.Results, QueryHits{Query: i, Hits: []SearchHit{}})
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	for _, id := range ids {
+	for _, proof := range children {
+		id := proof.id
 		if ctx.Err() != nil {
 			page.Partial = true
 			break

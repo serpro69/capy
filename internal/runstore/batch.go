@@ -68,27 +68,28 @@ func (b BatchInput) Validate() error {
 }
 
 type BatchResult struct {
-	Capacity             *Capacity           `json:"capacity,omitempty"`
-	Version              int                 `json:"version"`
-	Kind                 string              `json:"kind"`
-	BatchID              string              `json:"batch_id"`
-	OwnerID              string              `json:"owner_id"`
-	OwnerType            string              `json:"owner_type"`
-	State                string              `json:"state"`
-	RequestedConcurrency int                 `json:"requested_concurrency"`
-	EffectiveConcurrency int                 `json:"effective_concurrency"`
-	CurrentConcurrency   int                 `json:"current_concurrency"`
-	Counts               map[string]int      `json:"counts"`
-	FailedCount          int                 `json:"failed_count"`
-	ObservedBytes        int64               `json:"observed_bytes"`
-	CapturedBytes        int64               `json:"captured_bytes"`
-	IncompleteCount      int                 `json:"incomplete_count"`
-	CompletedAt          *time.Time          `json:"completed_at"`
-	ExpiresAt            *time.Time          `json:"expires_at"`
-	ChildrenAction       string              `json:"children_action"`
-	SearchAction         *BatchSearchRequest `json:"search_action,omitempty"`
-	Search               *SearchPage         `json:"search,omitempty"`
-	Error                *Error              `json:"error,omitempty"`
+	Cleanup              executor.CleanupEvidence `json:"-"`
+	Capacity             *Capacity                `json:"capacity,omitempty"`
+	Version              int                      `json:"version"`
+	Kind                 string                   `json:"kind"`
+	BatchID              string                   `json:"batch_id"`
+	OwnerID              string                   `json:"owner_id"`
+	OwnerType            string                   `json:"owner_type"`
+	State                string                   `json:"state"`
+	RequestedConcurrency int                      `json:"requested_concurrency"`
+	EffectiveConcurrency int                      `json:"effective_concurrency"`
+	CurrentConcurrency   int                      `json:"current_concurrency"`
+	Counts               map[string]int           `json:"counts"`
+	FailedCount          int                      `json:"failed_count"`
+	ObservedBytes        int64                    `json:"observed_bytes"`
+	CapturedBytes        int64                    `json:"captured_bytes"`
+	IncompleteCount      int                      `json:"incomplete_count"`
+	CompletedAt          *time.Time               `json:"completed_at"`
+	ExpiresAt            *time.Time               `json:"expires_at"`
+	ChildrenAction       string                   `json:"children_action"`
+	SearchAction         *BatchSearchRequest      `json:"search_action,omitempty"`
+	Search               *SearchPage              `json:"search,omitempty"`
+	Error                *Error                   `json:"error,omitempty"`
 }
 type BatchSearchRequest struct {
 	Action     string `json:"action"`
@@ -100,7 +101,7 @@ type BatchSearchRequest struct {
 // Its bounded change fits the mutable metadata reservation paid at admission.
 func (s *Store) Dispatch(ctx context.Context, id, generation string, deadline time.Time) error {
 	return s.update(ctx, id, func(tx *sql.Tx, row *Admitted) error {
-		if row.Result.OwnerID != generation || row.Cleanup != "not_spawned" || row.Result.State != "queued" {
+		if row.Result.OwnerID != generation || row.Cleanup.State != executor.CleanupNotSpawned || row.Result.State != "queued" {
 			return storageError()
 		}
 		row.Program.Deadline = deadline
@@ -117,7 +118,7 @@ func (s *Store) Dispatch(ctx context.Context, id, generation string, deadline ti
 
 // AdmitBatch commits the entire inventory, quota reservation and manifest before
 // authorizing any child. Every ordinal has a run ID even if it never starts.
-func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, input BatchInput) (BatchResult, []Admitted, error) {
+func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, cleanupScope executor.CleanupScope, input BatchInput) (BatchResult, []Admitted, error) {
 	var empty BatchResult
 	if input.EffectiveConcurrency == 0 {
 		input.EffectiveConcurrency = min(input.Concurrency, len(input.Commands))
@@ -152,13 +153,13 @@ func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, input BatchInput) 
 	manifestCharge := int64(4096 + len(queries))
 	var runCharge int64
 	for _, c := range input.Commands {
-		row, program, _, err := s.prepareRun(owner, Program{Owner: s.owner, Request: executor.ExecRequest{Language: executor.Shell, Code: c.Command, Cwd: input.Cwd}, Deadline: input.Deadline})
+		row, program, _, err := s.prepareRun(owner, cleanupScope, Program{Owner: s.owner, Request: executor.ExecRequest{Language: executor.Shell, Code: c.Command, Cwd: input.Cwd}, Deadline: input.Deadline})
 		if err != nil {
 			return empty, nil, err
 		}
 		row.Result.BatchID = id
 		row.Result.State = "queued"
-		result, err := json.Marshal(row.Result)
+		result, err := encodeManifest(row.Result)
 		if err != nil {
 			return empty, nil, storageError()
 		}
@@ -232,6 +233,7 @@ func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, input BatchInput) 
 	// Construct from committed admission; a post-commit read failure must never
 	// misreport this non-idempotent admission as an unstarted rejection.
 	result := BatchResult{Version: 1, Kind: "batch", BatchID: id, OwnerID: owner.ID, OwnerType: "mcp", State: "queued", RequestedConcurrency: input.Concurrency, EffectiveConcurrency: input.EffectiveConcurrency, Counts: map[string]int{"queued": len(rows)}, ChildrenAction: "capy_runs(action=list,batch_id=" + id + ")"}
+	result.Cleanup = rows[0].Cleanup
 	if len(input.Queries) > 0 {
 		result.SearchAction = &BatchSearchRequest{Action: "search", BatchID: id, QueryScope: scope}
 	}
@@ -243,7 +245,10 @@ func syncBatchChild(ctx context.Context, tx *sql.Tx, result Result, terminal boo
 	if result.BatchID == "" {
 		return nil
 	}
-	encoded, err := json.Marshal(result)
+	if err := validateTerminal(result.Cleanup, result, terminal); err != nil {
+		return err
+	}
+	encoded, err := encodeManifest(result)
 	if err != nil || len(encoded) > batchChildReserve {
 		return storageError()
 	}
@@ -254,10 +259,15 @@ func syncBatchChild(ctx context.Context, tx *sql.Tx, result Result, terminal boo
 		return nil
 	}
 	var pending bool
-	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_batch_children WHERE batch_id=? AND terminal=0)", result.BatchID).Scan(&pending); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_batch_children WHERE batch_id=? AND terminal=0)", result.BatchID).Scan(&pending); err != nil {
 		return storageError()
 	}
 	if !pending {
+		// Validate the aggregate only once, at final completion. Re-decoding all
+		// children on every recovered child makes bounded recovery quadratic.
+		if _, _, err := batchChildren(ctx, tx, result.BatchID); err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		_, err = tx.ExecContext(ctx, "UPDATE run_batches SET completed_at=?,expires_at=?+ttl_hours*3600000 WHERE id=? AND completed_at IS NULL", now.UnixNano(), now.UnixMilli()+1, result.BatchID)
 		if err != nil {
@@ -268,6 +278,10 @@ func syncBatchChild(ctx context.Context, tx *sql.Tx, result Result, terminal boo
 }
 
 func (s *Store) batchMetadata(ctx context.Context, id string) (BatchResult, []string, string, error) {
+	return batchMetadata(ctx, s.db, id)
+}
+
+func batchMetadata(ctx context.Context, query runQuerier, id string) (BatchResult, []string, string, error) {
 	b := BatchResult{Version: 1, Kind: "batch", BatchID: id, OwnerType: "mcp", Counts: map[string]int{}, ChildrenAction: "capy_runs(action=list,batch_id=" + id + ")"}
 	if uuid.Validate(id) != nil {
 		return b, nil, "", failure("invalid_argument", "batch_id must be a UUID")
@@ -276,7 +290,7 @@ func (s *Store) batchMetadata(ctx context.Context, id string) (BatchResult, []st
 	var unverified bool
 	var queries []byte
 	var scope string
-	err := s.db.QueryRowContext(ctx, `SELECT generation,requested,effective,completed_at,expires_at,queries,query_scope,EXISTS(SELECT 1 FROM run_owners o WHERE o.generation=run_batches.generation AND o.cleanup_unverified=1) FROM run_batches WHERE id=? AND (expires_at IS NULL OR expires_at>?)`, id, time.Now().UTC().UnixMilli()).Scan(&b.OwnerID, &b.RequestedConcurrency, &b.EffectiveConcurrency, &completed, &expires, &queries, &scope, &unverified)
+	err := query.QueryRowContext(ctx, `SELECT generation,requested,effective,completed_at,expires_at,queries,query_scope,EXISTS(SELECT 1 FROM run_owners o WHERE o.generation=run_batches.generation AND o.cleanup_unverified=1) FROM run_batches WHERE id=? AND (expires_at IS NULL OR expires_at>?)`, id, time.Now().UTC().UnixMilli()).Scan(&b.OwnerID, &b.RequestedConcurrency, &b.EffectiveConcurrency, &completed, &expires, &queries, &scope, &unverified)
 	if errors.Is(err, sql.ErrNoRows) {
 		return b, nil, "", failure("batch_unavailable", "batch is unavailable in this owner's store")
 	}
@@ -304,23 +318,13 @@ func (s *Store) batchMetadata(ctx context.Context, id string) (BatchResult, []st
 	return b, q, scope, nil
 }
 func (s *Store) BatchStatus(ctx context.Context, id string) (BatchResult, error) {
-	b, _, _, err := s.batchMetadata(ctx, id)
+	b, _, children, err := s.batchSnapshot(ctx, id)
 	if err != nil {
 		return b, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT result,terminal FROM run_batch_children WHERE batch_id=? ORDER BY ordinal`, id)
-	if err != nil {
-		return b, storageError()
-	}
-	defer rows.Close()
 	pending := false
-	for rows.Next() {
-		var encoded []byte
-		var terminal bool
-		var r Result
-		if rows.Scan(&encoded, &terminal) != nil || json.Unmarshal(encoded, &r) != nil {
-			return b, storageError()
-		}
+	for _, child := range children {
+		r, terminal := child.result, child.terminal
 		b.Counts[r.State]++
 		b.ObservedBytes += r.Capture.ObservedBytes
 		b.CapturedBytes += r.Capture.CapturedBytes
@@ -334,9 +338,6 @@ func (s *Store) BatchStatus(ctx context.Context, id string) (BatchResult, error)
 		if r.State != "admitted" && r.State != "queued" && r.State != "running" && (r.State != "exited" || r.ExitCode == nil || *r.ExitCode != 0 || r.Signal != nil) {
 			b.FailedCount++
 		}
-	}
-	if rows.Err() != nil {
-		return b, storageError()
 	}
 	b.State = "completed"
 	if pending {
@@ -378,6 +379,15 @@ func retainBatch(ctx context.Context, tx *sql.Tx, pressure, expire bool, budget 
 	}
 	if err != nil {
 		return false, 0, 0, storageError()
+	}
+	proofs, _, err := batchChildren(ctx, tx, id)
+	if err != nil {
+		return false, 0, 0, err
+	}
+	for _, child := range proofs {
+		if !child.terminal || !CleanupAccepted(child.result.Cleanup) {
+			return false, 0, 0, failure("cleanup_unverified", "batch expiry requires completed child cleanup")
+		}
 	}
 	if _, err = tx.ExecContext(ctx, "DELETE FROM run_batches WHERE id=?", id); err != nil {
 		return false, 0, 0, storageError()

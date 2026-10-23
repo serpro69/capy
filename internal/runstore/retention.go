@@ -89,15 +89,15 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 		// evidence even when the result blob contains a historical expiry.
 		now := time.Now().UTC().UnixMilli()
 		// Resume already-hidden victims even if current pressure disappeared.
-		err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE evicting=1 ORDER BY id LIMIT 1").Scan(&id, &charged, &expiry)
+		err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE evicting=1 AND "+acceptedCleanupSQL+" ORDER BY id LIMIT 1").Scan(&id, &charged, &expiry)
 		if errors.Is(err, sql.ErrNoRows) && !expire && !pressure {
 			break
 		}
 		if errors.Is(err, sql.ErrNoRows) {
-			err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE terminal=1 AND expires_at<=? ORDER BY expires_at,id LIMIT 1", now).Scan(&id, &charged, &expiry)
+			err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE terminal=1 AND "+acceptedCleanupSQL+" AND expires_at<=? ORDER BY expires_at,id LIMIT 1", now).Scan(&id, &charged, &expiry)
 		}
 		if errors.Is(err, sql.ErrNoRows) && pressure {
-			err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE terminal=1 ORDER BY completed_at,id LIMIT 1").Scan(&id, &charged, &expiry)
+			err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE terminal=1 AND "+acceptedCleanupSQL+" ORDER BY completed_at,id LIMIT 1").Scan(&id, &charged, &expiry)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			removed, debit, deleted, err := retainBatch(ctx, tx, pressure, expire, remainingRows)
@@ -123,6 +123,13 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 		}
 		if err != nil || charged < 0 || charged > report.AccountedBytes {
 			return report, storageError()
+		}
+		row, err := retainedCleanup(ctx, tx, id)
+		if err != nil {
+			return report, err
+		}
+		if err := validateRunManifest(ctx, tx, id, row, true); err != nil {
+			return report, err
 		}
 		// Hide the victim before deleting bounded payload batches. Keep its full
 		// debit until final deletion: partial cleanup never creates free quota.
