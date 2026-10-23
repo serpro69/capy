@@ -64,6 +64,9 @@ jobs:
           required = {
               ("runstore", "TestRecoveryMetadataUsesRecoveryBudget"),
               ("runstore", "TestAdmissionAccountingPreservesCallerBudgets"),
+              ("runstore", "TestRetentionWorkUsesOperationBudgets"),
+              ("runstore", "TestCaptureRetentionKeepsWriteDeadline"),
+              ("runstore", "TestMaintenanceBoundsAndBusyWAL"),
               ("runstore", "TestLargeAdmissionMakesProgressAcrossEvictionBatches"),
               ("runstore", "TestLargeEvictionPersistsAfterAppendRetryFails"),
               ("runstore", "TestLeaseRefsInheritancePreservesLocksAndPermanentFiles"),
@@ -97,7 +100,7 @@ jobs:
         if: ${{ !cancelled() && (steps.native_tests.outcome == 'success' || steps.native_tests.outcome == 'failure') }}
         run: |
           go test -tags fts5,integration -race -json -count=5 -timeout 10m \
-            -run '^(TestRecoveryMetadataUsesRecoveryBudget|TestAdmissionAccountingPreservesCallerBudgets|TestLargeAdmissionMakesProgressAcrossEvictionBatches|TestLargeEvictionPersistsAfterAppendRetryFails)$' \
+            -run '^(TestRecoveryMetadataUsesRecoveryBudget|TestAdmissionAccountingPreservesCallerBudgets|TestRetentionWorkUsesOperationBudgets|TestCaptureRetentionKeepsWriteDeadline|TestMaintenanceBoundsAndBusyWAL|TestLargeAdmissionMakesProgressAcrossEvictionBatches|TestLargeEvictionPersistsAfterAppendRetryFails)$' \
             ./internal/runstore | tee "$RUNNER_TEMP/macos-retention-tests.jsonl"
 
       - name: Vet native integration code
