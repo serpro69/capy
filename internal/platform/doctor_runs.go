@@ -35,10 +35,17 @@ func CheckRuns(ctx context.Context, project, key string, cfg config.RunsConfig) 
 				code, repair = typed.Code, "restore the selected credential or stop owners and old execution groups, then explicitly run capy runs reset --discard for this owner (permanently deletes run logs)"
 			case "policy_mismatch":
 				code, repair = typed.Code, "stop and reload owners with a compatible capy version and accounting build"
+			case "schema_mismatch":
+				// Use authenticated numeric metadata, never backend/stored error text.
+				code = typed.Code
+				repair = fmt.Sprintf("stored schema=%d, supported schema=%d; use a compatible capy binary; no data was discarded", report.SchemaVersion, report.SupportedSchemaVersion)
+				if report.SchemaVersion == 8 && report.SupportedSchemaVersion == 9 {
+					repair = "stored schema=8, supported schema=9; stop all run owners/readers and supervisors, then start captured execution to upgrade; inspection does not migrate or discard logs"
+				}
 			case "credential_unavailable":
 				code, repair = typed.Code, "repair the selected knowledge credential and reload; no fallback key was tried"
 			case "storage_busy":
-				code, repair = typed.Code, "retry inspection after the current reset or policy change"
+				code, repair = typed.Code, "retry inspection after the current reset, policy change or schema upgrade"
 			}
 		}
 		return append(results, CheckResult{Name: "Run store", Status: Warn, Detail: code + "; " + repair})

@@ -206,7 +206,13 @@ func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, cleanupScope execu
 		return empty, nil, storageError()
 	}
 	for i, row := range rows {
-		if err = insertRun(ctx, tx, row, programs[i], results[i]); err != nil {
+		// The private manifest is scoped v2; public run results stay v1 until
+		// Task 7. Do not reuse the manifest encoding for the run-row blob.
+		runResult, err := json.Marshal(row.Result)
+		if err != nil {
+			return empty, nil, storageError()
+		}
+		if err = insertRun(ctx, tx, row, programs[i], runResult); err != nil {
 			return empty, nil, err
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO run_batch_children(batch_id,ordinal,run_id,label,command,result) VALUES(?,?,?,?,?,?)`, id, i, row.ID, input.Commands[i].Label, input.Commands[i].Command, results[i])

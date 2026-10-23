@@ -18,6 +18,7 @@ import (
 // before closing database/lease handles.
 type Service struct {
 	mu                   sync.Mutex
+	attachMu             sync.Mutex // serialize attachment without blocking owner cancellation during migration
 	admissionMu          sync.Mutex // publishes metadata and its control handle together
 	closed               bool
 	unverified           bool
@@ -113,6 +114,8 @@ func (s *Service) begin(ctx context.Context, execute bool) (context.Context, fun
 }
 
 func (s *Service) attached(ctx context.Context, create bool) (*runstore.Store, *runstore.Owner, error) {
+	s.attachMu.Lock()
+	defer s.attachMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -126,9 +129,13 @@ func (s *Service) attached(ctx context.Context, create bool) (*runstore.Store, *
 		if err != nil {
 			return nil, nil, &runstore.Error{Code: "storage_unavailable", Message: "selected run owner is unavailable"}
 		}
+		// Schema migration may copy substantial history. Close must be able to
+		// acquire mu and cancel this registered request while attachment runs.
+		s.mu.Unlock()
 		st, err := runstore.OpenWithPolicy(ctx, path, s.key, create, runstore.PolicyConfig{
 			TTLHours: s.policy.TTLHours, MaxRunBytes: s.policy.MaxRunBytes, MaxRetainedBytes: s.policy.MaxRetainedBytes,
 		})
+		s.mu.Lock()
 		if err != nil {
 			var typed *runstore.Error
 			if errors.As(err, &typed) {
@@ -137,6 +144,12 @@ func (s *Service) attached(ctx context.Context, create bool) (*runstore.Store, *
 				err = &copy
 			}
 			return nil, nil, err
+		}
+		if s.closed {
+			s.mu.Unlock()
+			closeErr := st.Close()
+			s.mu.Lock()
+			return nil, nil, errors.Join(&runstore.Error{Code: "storage_unavailable", Message: "execution owner is shutting down"}, closeErr)
 		}
 		s.store = st
 	}
