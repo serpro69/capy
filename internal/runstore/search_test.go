@@ -26,7 +26,7 @@ func appendSearchText(t *testing.T, s *Store, id, stream, data string, seq *uint
 func finishSearchRun(t *testing.T, s *Store, id string, bytes int) {
 	t.Helper()
 	code := 1
-	require.NoError(t, s.Finish(t.Context(), id, Completion{Started: true, Retired: true, ExitCode: &code, ObservedBytes: int64(bytes)}))
+	require.NoError(t, s.Finish(t.Context(), id, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code, ObservedBytes: int64(bytes)}))
 }
 
 func searchToReady(t *testing.T, s *Store, o *Owner, id, query string) SearchPage {

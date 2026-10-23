@@ -65,7 +65,7 @@ func TestKnownOutcomeSeparatesRefreshAndFinalizationFailure(t *testing.T) {
 		t.Run(map[bool]string{false: "finalization failed", true: "refresh failed"}[persisted], func(t *testing.T) {
 			code := 7
 			cursor := "acknowledged-prefix"
-			result := knownOutcome(runstore.Result{}, Outcome{Result: executor.StreamResult{Started: true, Retired: true, ExitCode: &code, ObservedBytes: 12}, CapturedBytes: 12, TerminalPersisted: persisted}, &cursor)
+			result := knownOutcome(runstore.Result{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}}, Outcome{Result: executor.StreamResult{Started: true, Retired: true, ExitCode: &code, ObservedBytes: 12}, CapturedBytes: 12, TerminalPersisted: persisted}, &cursor)
 			require.Equal(t, "exited", result.State)
 			require.Equal(t, 7, *result.ExitCode)
 			require.Equal(t, persisted, result.Capture.TerminalPersisted)

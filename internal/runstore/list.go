@@ -3,6 +3,7 @@ package runstore
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/serpro69/capy/internal/executor"
 )
 
 type ListOptions struct {
@@ -113,8 +115,10 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListPage, error)
 		}
 		states = embedded
 	}
-	query := `SELECT id,created_at,result,terminal,
-EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation AND o.cleanup_unverified=1)
+	query := `SELECT id,created_at,result,terminal,cleanup_scope,cleanup,
+EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation AND o.cleanup_unverified=1),
+(SELECT c.result FROM run_batch_children c WHERE c.run_id=runs.id),
+(SELECT c.terminal FROM run_batch_children c WHERE c.run_id=runs.id)
 FROM runs WHERE evicting=0 AND created_at<=? AND (created_at>? OR (created_at=? AND id>?))`
 	args := []any{cursor.Cutoff, cursor.Created, cursor.Created, cursor.ID}
 	if len(states) > 0 {
@@ -141,12 +145,23 @@ FROM runs WHERE evicting=0 AND created_at<=? AND (created_at>? OR (created_at=? 
 		var created int64
 		var encoded []byte
 		var terminal, unverified bool
-		if err := rows.Scan(&id, &created, &encoded, &terminal, &unverified); err != nil {
+		var cleanup executor.CleanupEvidence
+		var manifest []byte
+		var manifestTerminal sql.NullBool
+		if err := rows.Scan(&id, &created, &encoded, &terminal, &cleanup.Scope, &cleanup.State, &unverified, &manifest, &manifestTerminal); err != nil {
 			return page, storageError()
 		}
 		var result Result
 		if json.Unmarshal(encoded, &result) != nil {
 			return page, storageError()
+		}
+		if err := validateTerminal(cleanup, result, terminal); err != nil {
+			return page, err
+		}
+		if manifestTerminal.Valid {
+			if err := validateManifestCopy(manifest, cleanup, terminal, manifestTerminal.Bool); err != nil {
+				return page, err
+			}
 		}
 		unverified = unverified || (!terminal && result.CompletedAt != nil)
 		cursor.Created, cursor.ID = created, id

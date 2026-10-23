@@ -183,7 +183,7 @@ func (s *Service) execute(ctx context.Context, request executor.ExecRequest, int
 	program := runstore.Program{Owner: physical, OwnerType: s.ownerType, Request: request, Intent: intent, Deadline: deadline}
 	admissionCtx, cancelAdmission := context.WithTimeout(ctx, 3*time.Second)
 	s.admissionMu.Lock()
-	row, err := st.Admit(admissionCtx, owner, program)
+	row, err := st.Admit(admissionCtx, owner, executor.CleanupLinuxDescendants, program)
 	cancelAdmission()
 	if err == nil {
 		s.mu.Lock()
@@ -230,11 +230,11 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 			queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			latest, err := st.Load(queryCtx, row.ID)
 			cancel()
-			if err == nil && latest.Cleanup == "not_spawned" {
-				return s.finishUnstarted(st, row, "cancelled")
-			}
-			if err == nil && latest.Cleanup == "retired" && latest.Result.Capture.TerminalPersisted {
+			if err == nil && latest.Result.CompletedAt != nil && runstore.CleanupAccepted(latest.Cleanup) && latest.Result.Capture.TerminalPersisted {
 				return latest.Result
+			}
+			if err == nil && latest.Result.CompletedAt == nil && latest.Cleanup == (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}) {
+				return s.finishUnstarted(st, row, "cancelled")
 			}
 			// Unknown proof still quarantines; this helper has already been joined.
 			result := row.Result
@@ -271,10 +271,10 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	latest, readErr := st.Load(queryCtx, row.ID)
 	var quarantineErr error
 	if waitErr != nil || !outcome.Result.Retired {
-		if readErr != nil || latest.Cleanup == "pending" {
+		if readErr != nil || latest.Cleanup == (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}) {
 			quarantineErr = s.quarantine(st)
 		}
-		if readErr == nil && latest.Cleanup == "not_spawned" {
+		if readErr == nil && latest.Result.CompletedAt == nil && latest.Cleanup == (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}) {
 			if ctx.Err() != nil {
 				return s.finishUnstarted(st, row, "cancelled")
 			}
@@ -315,13 +315,13 @@ func (s *Service) startFailure(st *runstore.Store, row runstore.Admitted) runsto
 func (s *Service) finishUnstarted(st *runstore.Store, row runstore.Admitted, reason string) runstore.Result {
 	ctx, cancel := context.WithTimeout(context.Background(), runstore.WriteTimeout)
 	defer cancel()
-	if err := st.Finish(ctx, row.ID, runstore.Completion{Retired: true, Reason: reason}); err == nil {
+	if err := st.Finish(ctx, row.ID, runstore.Completion{Cleanup: executor.CleanupEvidence{Scope: row.Cleanup.Scope, State: executor.CleanupNotSpawned}, Reason: reason}); err == nil {
 		if latest, err := st.Load(ctx, row.ID); err == nil {
 			return latest.Result
 		}
 	}
 	result := row.Result
-	runstore.ApplyOutcome(&result, runstore.Completion{Retired: true, Reason: reason})
+	runstore.ApplyOutcome(&result, runstore.Completion{Cleanup: executor.CleanupEvidence{Scope: row.Cleanup.Scope, State: executor.CleanupNotSpawned}, Reason: reason})
 	result.Error = &runstore.Error{Code: "storage_unavailable", Message: "supervisor did not start; finalization was unavailable"}
 	return result
 }
@@ -400,9 +400,19 @@ func (s *Service) Close() error {
 // knownOutcome preserves an authenticated helper acknowledgement even when the
 // subsequent metadata refresh fails. Query failure is not finalization failure.
 func knownOutcome(result runstore.Result, outcome Outcome, cursor *string) runstore.Result {
-	runstore.ApplyOutcome(&result, runstore.Completion{SpawnCode: outcome.Result.SpawnCode, Started: outcome.Result.Started, Retired: outcome.Result.Retired,
-		ExitCode: outcome.Result.ExitCode, Signal: outcome.Result.Signal, Reason: outcome.Reason,
-		ObservedBytes: outcome.Result.ObservedBytes, ElapsedMS: outcome.Result.ElapsedMS})
+	completion, err := linuxV1Completion(result.Cleanup.Scope, outcome)
+	if err != nil {
+		result.Error = &runstore.Error{Code: "cleanup_unverified", Message: err.Error()}
+		return result
+	}
+	runstore.ApplyOutcome(&result, completion)
+	if outcome.TerminalPersisted {
+		result.Cleanup = completion.Cleanup
+	} else {
+		// The helper reached execution; failed finalization cannot replace its
+		// durable pending proof with a local completed/not-spawned observation.
+		result.Cleanup.State = executor.CleanupPending
+	}
 	result.Capture.CapturedBytes = outcome.CapturedBytes
 	result.Capture.LastCommittedCursor = cursor
 	result.Capture.TerminalPersisted = outcome.TerminalPersisted

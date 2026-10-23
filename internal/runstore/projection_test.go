@@ -25,9 +25,9 @@ func projectionFixture(t *testing.T) (*Store, Admitted) {
 	owner, err := st.ClaimOwner(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, owner.Lease.Close()) })
-	row, err := st.Admit(t.Context(), owner, Program{TTLHours: 24, MaxRunBytes: 4 << 20})
+	row, err := st.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, Program{TTLHours: 24, MaxRunBytes: 4 << 20})
 	require.NoError(t, err)
-	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID))
+	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
 	require.NoError(t, st.Started(t.Context(), row.ID))
 	return st, row
 }
@@ -57,7 +57,7 @@ func TestProjectionMergedBarrierAndIndependentStreams(t *testing.T) {
 	require.False(t, independent.RedactionPending)
 	appendEvent(3, "stdout", "ate>SECRET\nHIDDEN</private> public!\n")
 	code := 0
-	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Started: true, Retired: true, ExitCode: &code}))
+	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code}))
 	rest, err := st.ReadProjection(t.Context(), row.ID, "merged", *first.NextCursor, 1024)
 	require.NoError(t, err)
 	require.Equal(t, sanitize.RedactedPrivate+"diagnostic!\n"+sanitize.RedactedPrivate+" public!\n", pageText(rest))
@@ -84,7 +84,7 @@ func TestProjectionPaginationVersionsAndHugeLines(t *testing.T) {
 		seq++
 	}
 	code := 0
-	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Started: true, Retired: true, ExitCode: &code, ObservedBytes: int64(len(original))}))
+	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code, ObservedBytes: int64(len(original))}))
 	cursor := ""
 	var got strings.Builder
 	for pages := 0; pages < 2000; pages++ {
@@ -137,7 +137,7 @@ func TestProjectionStateFailurePreservesRawAndFailsClosed(t *testing.T) {
 	raw := []byte("sk-" + strings.Repeat("S", 30) + " private-tail")
 	require.NoError(t, st.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: raw}))
 	code := 0
-	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Started: true, Retired: true, ExitCode: &code, ObservedBytes: int64(len(raw))}))
+	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code, ObservedBytes: int64(len(raw))}))
 	_, err = st.ReadProjection(t.Context(), row.ID, "stdout", "", 100)
 	require.ErrorContains(t, err, "projection is unavailable")
 	require.NotContains(t, err.Error(), "private-tail")
@@ -159,7 +159,7 @@ func TestProjectionResolvedPrefixKeepsObservedEventOrder(t *testing.T) {
 		require.NoError(t, st.Append(t.Context(), row.ID, event))
 	}
 	code := 0
-	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Started: true, Retired: true, ExitCode: &code}))
+	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code}))
 	page, err := st.ReadProjection(t.Context(), row.ID, "merged", "", 100)
 	require.NoError(t, err)
 	require.Equal(t, "sERR!\nafe!\n", pageText(page))
@@ -192,7 +192,7 @@ func TestProjectionCursorConcurrentCapture(t *testing.T) {
 			}
 		}
 		code := 0
-		done <- writer.Finish(t.Context(), row.ID, Completion{Started: true, Retired: true, ExitCode: &code})
+		done <- writer.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code})
 	}()
 	var got, want strings.Builder
 	for i := 0; i < rounds; i++ {
@@ -233,7 +233,7 @@ func TestProjectionUTF8AcrossInterleavedEvents(t *testing.T) {
 		require.NoError(t, st.Append(t.Context(), row.ID, event))
 	}
 	code := 0
-	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Started: true, Retired: true, ExitCode: &code}))
+	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code}))
 	page, err := st.ReadProjection(t.Context(), row.ID, "merged", "", 100)
 	require.NoError(t, err)
 	require.Equal(t, "€ERR!\n!\n", pageText(page))

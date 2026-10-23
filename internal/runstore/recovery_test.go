@@ -33,7 +33,7 @@ func recoveryStore(t *testing.T) *Store {
 
 func admitRecovery(t *testing.T, st *Store, owner *Owner) Admitted {
 	t.Helper()
-	row, err := st.Admit(t.Context(), owner, Program{TTLHours: 7, MaxRunBytes: 1 << 20})
+	row, err := st.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, Program{TTLHours: 7, MaxRunBytes: 1 << 20})
 	require.NoError(t, err)
 	return row
 }
@@ -53,7 +53,7 @@ func TestRecoveryScansHighSlotsOnOpen(t *testing.T) {
 	high := owners[OwnerSlots-1]
 	neverStarted := admitRecovery(t, st, high)
 	retired := admitRecovery(t, st, high)
-	require.NoError(t, st.Pending(t.Context(), retired.ID, high.ID))
+	require.NoError(t, st.Pending(t.Context(), retired.ID, high.ID, executor.CleanupLinuxDescendants))
 	require.NoError(t, st.Started(t.Context(), retired.ID))
 	data := []byte("visible!\npassword=unfinished")
 	require.NoError(t, st.Append(t.Context(), retired.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: data}))
@@ -108,7 +108,7 @@ func TestRecoveryQuarantinesUnknownCleanupWithoutExpiringEvidence(t *testing.T) 
 	owner, err := st.ClaimOwner(t.Context())
 	require.NoError(t, err)
 	row := admitRecovery(t, st, owner)
-	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID))
+	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
 	require.NoError(t, st.Started(t.Context(), row.ID))
 	require.NoError(t, st.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: []byte("retained-prefix")}))
 	// An unverified terminal write must not hide its proof at its old expiry.
@@ -125,7 +125,7 @@ func TestRecoveryQuarantinesUnknownCleanupWithoutExpiringEvidence(t *testing.T) 
 	got, err := st.Load(t.Context(), row.ID)
 	require.NoError(t, err)
 	require.Equal(t, "cleanup_unverified", got.Result.Error.Code)
-	require.Equal(t, "pending", got.Cleanup)
+	require.Equal(t, "pending", string(got.Cleanup.State))
 	require.Nil(t, got.Result.ExpiresAt)
 	require.Equal(t, "incomplete", got.Result.Capture.State)
 	page, err := st.ReadRaw(t.Context(), row.ID, "stdout", "", 4096)
@@ -210,7 +210,7 @@ func TestRecoveryReleasesOnlyAbandonedGenerationClaims(t *testing.T) {
 	require.NoError(t, err)
 	defer runner.Lease.Close()
 	row := admitRecovery(t, st, runner)
-	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Retired: true}))
+	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}}))
 	worker, err := st.ClaimOwner(t.Context())
 	require.NoError(t, err)
 	claimed, err := st.ClaimIndex(t.Context(), worker, row.ID)
@@ -303,7 +303,7 @@ func TestRecoveryScannerCannotMasqueradeAsLiveOwner(t *testing.T) {
 	require.NoError(t, err)
 	defer live.Lease.Close()
 	row := admitRecovery(t, st, stale)
-	require.NoError(t, st.Pending(t.Context(), row.ID, stale.ID))
+	require.NoError(t, st.Pending(t.Context(), row.ID, stale.ID, executor.CleanupLinuxDescendants))
 	require.NoError(t, stale.Lease.Close())
 	registry, err := st.recoveryLease(t.Context())
 	require.NoError(t, err)
@@ -316,7 +316,7 @@ func TestRecoveryScannerCannotMasqueradeAsLiveOwner(t *testing.T) {
 	// quarantine exists. Scanner/admission B must not treat that flock as a
 	// healthy owner, even when B already has an execution generation.
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
-	_, err = other.Admit(ctx, live, Program{TTLHours: 24, MaxRunBytes: 100})
+	_, err = other.Admit(ctx, live, executor.CleanupLinuxDescendants, Program{TTLHours: 24, MaxRunBytes: 100})
 	cancel()
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	ctx, cancel = context.WithTimeout(t.Context(), 30*time.Millisecond)
@@ -331,7 +331,7 @@ func TestRecoveryScannerCannotMasqueradeAsLiveOwner(t *testing.T) {
 	require.Equal(t, 1, report.UnverifiedSlots)
 	require.NoError(t, scan.Close())
 	require.NoError(t, registry.Close())
-	_, err = other.Admit(t.Context(), live, Program{TTLHours: 24, MaxRunBytes: 100})
+	_, err = other.Admit(t.Context(), live, executor.CleanupLinuxDescendants, Program{TTLHours: 24, MaxRunBytes: 100})
 	require.ErrorContains(t, err, "unverified cleanup")
 	var count int
 	require.NoError(t, st.db.QueryRowContext(t.Context(), "SELECT count(*) FROM runs").Scan(&count))
@@ -344,7 +344,7 @@ func TestRecoveryMixedProofsAndClaims(t *testing.T) {
 	require.NoError(t, err)
 	unsafe := admitRecovery(t, st, owner)
 	safe := admitRecovery(t, st, owner)
-	require.NoError(t, st.Pending(t.Context(), unsafe.ID, owner.ID))
+	require.NoError(t, st.Pending(t.Context(), unsafe.ID, owner.ID, executor.CleanupLinuxDescendants))
 	claimed, err := st.ClaimIndex(t.Context(), owner, safe.ID)
 	require.NoError(t, err)
 	require.True(t, claimed)
@@ -362,7 +362,7 @@ func TestRecoveryMixedProofsAndClaims(t *testing.T) {
 	require.Equal(t, "index_interrupted", got.Result.Index.Error.Code)
 	bad, err := st.Load(t.Context(), unsafe.ID)
 	require.NoError(t, err)
-	require.Equal(t, "pending", bad.Cleanup)
+	require.Equal(t, "pending", string(bad.Cleanup.State))
 	require.Nil(t, bad.Result.ExpiresAt)
 	require.Equal(t, "cleanup_unverified", bad.Result.Error.Code)
 	_, err = st.ClaimOwner(t.Context())
@@ -375,7 +375,7 @@ func TestRecoveryCleanSlotProbeSkipsCompletedHistory(t *testing.T) {
 		owner, err := st.ClaimOwner(t.Context())
 		require.NoError(t, err)
 		row := admitRecovery(t, st, owner)
-		require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Retired: true}))
+		require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}}))
 		require.NoError(t, owner.Lease.Close())
 	}
 	rows, err := st.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN SELECT EXISTS(SELECT 1 FROM runs WHERE slot=? AND terminal=0)", 0)

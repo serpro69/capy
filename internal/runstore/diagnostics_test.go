@@ -66,7 +66,7 @@ func TestInspectReadOnlySnapshot(t *testing.T) {
 	var exists int
 	require.NoError(t, s.db.QueryRow("SELECT count(*) FROM runs WHERE id=?", expired.ID).Scan(&exists))
 	require.Equal(t, 1, exists)
-	require.NoError(t, s.Finish(t.Context(), active.ID, Completion{Started: true, Retired: true}))
+	require.NoError(t, s.Finish(t.Context(), active.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true}))
 }
 
 func TestInspectFailurePreservesStore(t *testing.T) {
@@ -90,7 +90,7 @@ func TestInspectFailurePreservesStore(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, report.AdmissionBlocked)
 	// Diagnostics must not reconcile or clear the quarantine.
-	_, err = s.Admit(t.Context(), owner, Program{Request: executor.ExecRequest{Code: "forbidden"}})
+	_, err = s.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, Program{Request: executor.ExecRequest{Code: "forbidden"}})
 	requireErrorCode(t, err, "cleanup_unverified")
 }
 

@@ -42,16 +42,16 @@ func requireErrorCode(t *testing.T, err error, code string, message ...any) {
 
 func retentionRun(t *testing.T, s *Store, o *Owner, data string, terminal bool) Admitted {
 	t.Helper()
-	r, err := s.Admit(t.Context(), o, Program{})
+	r, err := s.Admit(t.Context(), o, executor.CleanupLinuxDescendants, Program{})
 	require.NoError(t, err)
-	require.NoError(t, s.Pending(t.Context(), r.ID, o.ID))
+	require.NoError(t, s.Pending(t.Context(), r.ID, o.ID, executor.CleanupLinuxDescendants))
 	require.NoError(t, s.Started(t.Context(), r.ID))
 	if data != "" {
 		require.NoError(t, s.Append(t.Context(), r.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: []byte(data)}))
 	}
 	if terminal {
 		code := 0
-		require.NoError(t, s.Finish(t.Context(), r.ID, Completion{Started: true, Retired: true, ExitCode: &code, ObservedBytes: int64(len(data))}))
+		require.NoError(t, s.Finish(t.Context(), r.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code, ObservedBytes: int64(len(data))}))
 	}
 	return r
 }
@@ -92,7 +92,7 @@ func TestCaptureEvictsForConservativePageGrowth(t *testing.T) {
 func TestLiveOwnerUnverifiedCleanupDoesNotExpire(t *testing.T) {
 	s, o := retentionStore(t, 8<<20)
 	row := retentionRun(t, s, o, "recovery evidence\n", false)
-	require.NoError(t, s.Finish(t.Context(), row.ID, Completion{Started: true, Retired: false}))
+	require.NoError(t, s.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}, Started: true}))
 	require.NoError(t, s.Quarantine(t.Context()))
 	expireRun(t, s, row.ID)
 	// Keep the owner lease held: a scanner cannot publish the registry flag.
@@ -158,14 +158,14 @@ func TestQuotaIndependentWritersAndFinalizationReserve(t *testing.T) {
 	}
 	require.Equal(t, 1, successes)
 	require.LessOrEqual(t, accounted(t, s), s.Policy().MaxRetainedBytes)
-	_, err = s.Admit(t.Context(), o, Program{})
+	_, err = s.Admit(t.Context(), o, executor.CleanupLinuxDescendants, Program{})
 	requireErrorCode(t, err, "quota_exhausted")
 	for _, r := range []Admitted{r1, r2} {
 		loaded, err := s.Load(t.Context(), r.ID)
 		require.NoError(t, err, "active runs must not be evicted")
 		code := 0
 		require.NoError(t, s.CaptureFailed(t.Context(), r.ID, "quota_exhausted"))
-		require.NoError(t, s.Finish(t.Context(), r.ID, Completion{Started: true, Retired: true, CaptureLost: true, CaptureReason: "quota_exhausted", ExitCode: &code, ObservedBytes: 3001}))
+		require.NoError(t, s.Finish(t.Context(), r.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, CaptureLost: true, CaptureReason: "quota_exhausted", ExitCode: &code, ObservedBytes: 3001}))
 		page, err := s.ReadRaw(t.Context(), r.ID, "stdout", "", 4096)
 		require.NoError(t, err)
 		require.Equal(t, loaded.Result.Capture.CapturedBytes, page.Run.Capture.CapturedBytes)
@@ -366,7 +366,7 @@ func TestLargeAdmissionMakesProgressAcrossEvictionBatches(t *testing.T) {
 	before := accounted(t, s)
 	// Valid <=1MiB shell source; JSON encodes each control byte as six bytes.
 	code := "#" + strings.Repeat("<", (1<<20)-1)
-	r, err := s.Admit(t.Context(), o, Program{Request: executor.ExecRequest{Language: executor.Shell, Code: code}})
+	r, err := s.Admit(t.Context(), o, executor.CleanupLinuxDescendants, Program{Request: executor.ExecRequest{Language: executor.Shell, Code: code}})
 	require.NoError(t, err)
 	loaded, err := s.Load(t.Context(), r.ID)
 	require.NoError(t, err)
@@ -385,9 +385,9 @@ func TestLargeEvictionPersistsAfterAppendRetryFails(t *testing.T) {
 	used := accounted(t, s)
 	filler := limit - used - runReserve - 4096
 	require.Positive(t, filler)
-	r, err := s.Admit(t.Context(), o, Program{Request: executor.ExecRequest{Code: strings.Repeat("x", int(filler))}})
+	r, err := s.Admit(t.Context(), o, executor.CleanupLinuxDescendants, Program{Request: executor.ExecRequest{Code: strings.Repeat("x", int(filler))}})
 	require.NoError(t, err)
-	require.NoError(t, s.Pending(t.Context(), r.ID, o.ID))
+	require.NoError(t, s.Pending(t.Context(), r.ID, o.ID, executor.CleanupLinuxDescendants))
 	require.NoError(t, s.Started(t.Context(), r.ID))
 	before := accounted(t, s)
 	// First tentative append succeeds. After committing a partial eviction,
@@ -421,5 +421,5 @@ BEGIN SELECT RAISE(ABORT,'injected retry failure'); END`)
 	require.Less(t, accounted(t, s), before)
 	require.NoError(t, s.CaptureFailed(t.Context(), r.ID, "append_failed"))
 	zero := 0
-	require.NoError(t, s.Finish(t.Context(), r.ID, Completion{Started: true, Retired: true, CaptureLost: true, CaptureReason: "append_failed", ExitCode: &zero, ObservedBytes: 8192}))
+	require.NoError(t, s.Finish(t.Context(), r.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, CaptureLost: true, CaptureReason: "append_failed", ExitCode: &zero, ObservedBytes: 8192}))
 }
