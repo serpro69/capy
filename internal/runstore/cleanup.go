@@ -14,15 +14,8 @@ import (
 const acceptedCleanupSQL = `((cleanup_scope='linux_descendants_v1' AND cleanup IN ('not_spawned','retired')) OR (cleanup_scope='darwin_process_group_observation_v1' AND cleanup IN ('not_spawned','observed')))`
 
 func ValidateCleanup(c executor.CleanupEvidence) error {
-	switch c.Scope {
-	case executor.CleanupLinuxDescendants:
-		if c.State == executor.CleanupNotSpawned || c.State == executor.CleanupPending || c.State == executor.CleanupRetired {
-			return nil
-		}
-	case executor.CleanupDarwinObservation:
-		if c.State == executor.CleanupNotSpawned || c.State == executor.CleanupPending || c.State == executor.CleanupObserved {
-			return nil
-		}
+	if c.Valid() {
+		return nil
 	}
 	return failure("cleanup_unverified", "missing, unsupported or inconsistent cleanup scope/state")
 }

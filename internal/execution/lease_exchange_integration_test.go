@@ -17,7 +17,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/serpro69/capy/internal/config"
-	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/runstore"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -130,7 +129,7 @@ func newExchangeFixture(t *testing.T) leaseFixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, refs.Close()) })
 	return leaseFixture{s, o, refs, exchangeStartup{RunID: uuid.NewString(), Generation: o.ID,
-		StorePath: executor.ByteString(path), CleanupScope: exchangeFixtureScope()}, t.TempDir()}
+		StorePath: path, CleanupScope: exchangeFixtureScope()}, t.TempDir()}
 }
 
 func (f leaseFixture) command(t *testing.T, mode string) *exec.Cmd {
@@ -392,7 +391,7 @@ func TestLeaseExchangeIdentityAloneAcceptsUnlockedAliases(t *testing.T) {
 	pipes[0].Close()
 	pipes[2].Close()
 	pipes[5].Close()
-	start := exchangeStartup{Version: 2, RunID: uuid.NewString(), Generation: uuid.NewString(), ExchangeID: uuid.NewString(), StorePath: executor.ByteString(root), CleanupScope: exchangeFixtureScope()}
+	start := exchangeStartup{Version: 2, RunID: uuid.NewString(), Generation: uuid.NewString(), ExchangeID: uuid.NewString(), StorePath: root, CleanupScope: exchangeFixtureScope()}
 	deadline := time.Now().Add(3 * time.Second)
 	require.NoError(t, pipes[1].SetWriteDeadline(deadline))
 	require.NoError(t, pipes[3].SetWriteDeadline(deadline))

@@ -2,12 +2,14 @@
 
 package execution
 
-import "context"
+import (
+	"context"
 
-type Supervisor struct{}
+	"github.com/serpro69/capy/internal/runstore"
+)
 
-func launch(context.Context, string, Startup, string, Leases) (*Supervisor, error) {
-	return nil, Supported()
+func newSupervisorLaunch() supervisorLaunch {
+	return func(context.Context, string, Startup, string, *runstore.LeaseRefs) (*Supervisor, error) {
+		return nil, Supported()
+	}
 }
-func (*Supervisor) Cancel() error          { return Supported() }
-func (*Supervisor) Wait() (Outcome, error) { return Outcome{}, Supported() }

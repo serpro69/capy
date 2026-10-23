@@ -20,8 +20,8 @@ import (
 
 const darwinCleanupTimeout = 3 * time.Second
 
-// This dormant result is deliberately outside StreamResult's v1 wire contract.
-// Task 9 will adapt it to the scoped CleanupEvidence introduced by Task 5.
+// This dormant result remains outside the shared wire contract. Task 9 will
+// populate StreamResult.Cleanup from this private observational outcome.
 // observed means the documented policy completed, not that all processes died.
 type darwinPhaseResult struct {
 	command  StreamResult

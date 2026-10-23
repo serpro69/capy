@@ -1,5 +1,4 @@
-// Package execution owns the private per-run supervisor protocol. Public run
-// admission and storage are added by later routine-command-capture tasks.
+// Package execution owns captured-run admission, supervision and recovery.
 package execution
 
 import (
@@ -19,7 +18,7 @@ import (
 
 const (
 	SupervisorCommand = "execute-supervisor"
-	protocolVersion   = 1
+	protocolVersion   = 2
 	maxFrameBytes     = 16 * 1024
 	// Base64 preserves non-UTF-8 credential bytes. This exceeds Linux's maximum
 	// single environment string, including JSON expansion, without changing the
@@ -32,15 +31,17 @@ const (
 // Startup contains locators only, never source code or credentials. OpenRun must
 // validate the admitted run's generation and recover its program from storage.
 type Startup struct {
-	Version    int       `json:"version"`
-	RunID      string    `json:"run_id"`
-	Generation string    `json:"generation"`
-	StorePath  string    `json:"store_path"`
-	Deadline   time.Time `json:"deadline"`
+	Version      int       `json:"version"`
+	RunID        string    `json:"run_id"`
+	Generation   string    `json:"generation"`
+	StorePath    string    `json:"store_path"`
+	Deadline     time.Time `json:"deadline"`
+	ExchangeID   string    `json:"exchange_id"`
+	CleanupScope string    `json:"cleanup_scope"`
 }
 
 func (s Startup) validate() error {
-	if s.Version != protocolVersion || !validID(s.RunID) || !validID(s.Generation) || s.StorePath == "" || len(s.StorePath) > 4096 {
+	if s.Version != protocolVersion || !validID(s.RunID) || !validID(s.Generation) || s.StorePath == "" || len(s.StorePath) > 4096 || !validID(s.ExchangeID) || !exchangeScope(s.CleanupScope) {
 		return errors.New("invalid supervisor startup")
 	}
 	return nil
@@ -66,7 +67,7 @@ type Outcome struct {
 
 // CaptureStore is the deliberately small persistence seam for the risk proof.
 // Pending must durably record cleanup=pending before returning success. Finish
-// may record cleanup=retired only when Result.Retired is true. All operations
+// may finalize only valid local cleanup evidence with its admitted scope. All operations
 // must be bounded; Append failure must preserve the already committed prefix.
 type CaptureStore interface {
 	Pending(context.Context) error
@@ -86,15 +87,8 @@ type Leases struct{ Owner, Lifecycle *os.File }
 
 type OpenRun func(context.Context, Startup, string, Leases) (*Run, error)
 
-type notice struct {
-	Version int      `json:"version"`
-	Type    string   `json:"type"`
-	Outcome *Outcome `json:"outcome,omitempty"`
-}
-
-type control struct {
-	Action string `json:"action"`
-}
+type notice = leaseMessage
+type control = leaseMessage
 
 func readFrame(r io.Reader, value any) error {
 	return readFrameLimit(r, value, maxFrameBytes)

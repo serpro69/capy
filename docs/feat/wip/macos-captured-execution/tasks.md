@@ -4,7 +4,7 @@
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
 > Evidence: [native process verification](process-proof.md) · [source verification](verification.md)
-> Status: in progress — Tasks 1–7 done; observational Darwin contract accepted; Tasks 8–13 pending
+> Status: in progress — Tasks 1–8 done; observational Darwin contract accepted; Tasks 9–13 pending
 > Created: 2026-10-22
 > Not Doing: older macOS majors, Intel support, certified Darwin group retirement, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
@@ -196,7 +196,7 @@ their implementation.
 
 ## Task 8: Bind protocol-v2 proof through Linux execution
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 7
 - **Size:** M
 - **Can run in parallel with:** —
@@ -204,10 +204,21 @@ their implementation.
 
 ### Subtasks
 
-- [ ] 8.1 Connect acquisition references, common exchange and fdinfo validation to Linux startup; bind startup/backend/row scope → verify: malformed or mismatched frames cannot authorize work.
-- [ ] 8.2 Replace unqualified wire `Retired` with typed cleanup evidence across stream/outcome/store adapters → verify: compiler phases, capture failure, lost notices and local-versus-durable state remain truthful; only valid scope/state pairs cross v2 boundaries.
-- [ ] 8.3 Remove the transitional Linux adapter and aggregate proof across all phases → verify: compiler retirement followed by runtime spawn failure remains retired, unresolved phases remain pending, and failed persistence never upgrades the durable proof.
-- [ ] 8.4 Preserve the Linux descendant algorithm and run stored ownership/death fixtures → verify: escaped descendants, delayed backend close and pending-proof reset/reuse protection.
+- [x] 8.1 Connect acquisition references, common exchange and fdinfo validation to Linux startup; bind startup/backend/row scope → verify: malformed or mismatched frames cannot authorize work.
+- [x] 8.2 Replace unqualified wire `Retired` with typed cleanup evidence across stream/outcome/store adapters → verify: compiler phases, capture failure, lost notices and local-versus-durable state remain truthful; only valid scope/state pairs cross v2 boundaries.
+- [x] 8.3 Remove the transitional Linux adapter and aggregate proof across all phases → verify: compiler retirement followed by runtime spawn failure remains retired, unresolved phases remain pending, and failed persistence never upgrades the durable proof.
+- [x] 8.4 Preserve the Linux descendant algorithm and run stored ownership/death fixtures → verify: escaped descendants, delayed backend close and pending-proof reset/reuse protection.
+
+### Execution context
+
+- **2026-10-23 — authorized scope and baseline:** The user requested Task 8 on Linux after Task 7 commit `0dbf72cb7ce678611a392a69bdf2827f99045123` passed Linux, native macOS, glamour and lint CI. This task connects the proved common exchange to Linux production startup, binds protocol-v2 scope throughout execution, removes the Linux-v1 adapter and preserves whole-run phase evidence. Darwin backend/public activation remains Tasks 9–10.
+- **2026-10-23 — implementation approach:** Reuse Task 4's acquired-reference exchange and cancellation/teardown actor, with one launcher per service owner. Strict v2 startup/control/terminal frames bind exchange and cleanup scope. Executor phases produce typed local evidence; persistence acknowledgement remains separate, and uncertain responses retain pending evidence. Verification uses captured commands, synthetic keys, isolated stores, real Linux helper/death fixtures and immediate-baseline quality/performance comparisons. Native runtime regression evidence for the changed shared code is not yet available.
+- **2026-10-23 — implementation and focused verification:** Production Linux launch now uses the common exchange actor, including fdinfo validation, one-time gate release and pre-authorization teardown. Startup/control/terminal frames reject missing, duplicate, unknown and mismatched fields; terminal results carry typed cleanup without `Retired`. Whole-run proof preserves a completed compiler when runtime spawn fails, while stored outcomes report the actual spawn failure. The first check exposed a removed import (`d237c7aa-ad1c-4282-984f-b45eee34a3c8`); the next exposed a legacy cancellation fixture expecting cooperative pre-start waiting (`40c3a373-c05a-40ca-a132-a8412f333a78`). The fixture now verifies the required confirmed force-reap and known-not-spawned result. Focused protocol/real-helper race checks passed (execution 49.753s, executor 1.013s; `b9375c73-5b6b-4e13-bb50-84bea708f2c0`).
+- **2026-10-23 — affected checks:** With both synthetic environment keys, `go test -tags fts5,integration -race -count=1 -p 1 -timeout 20m ./internal/execution ./internal/executor ./internal/runstore` passed (78.003s / 7.684s / 140.486s), followed by integration-tagged vet for those packages and the full FTS5 build (`abedd276-44ea-4d5f-96bb-9a0afebd9ed7`). Public server/CLI race checks for captured, parallel batch, CLI, MCP recovery/file/handoff and run-search paths passed (112.703s / 64.495s; `830b531c-0298-45bc-86d1-bdaf93e6e542`). A subsequent focused injected-wait failure verifies service capacity, owner refusal and reset exclusion until an actual reap is restored (1.979s; `c6fe6e5f-309a-4800-83de-e8ed72b473e0`). Benchmarks and independent review remain pending.
+- **2026-10-23 — benchmark evidence supersedes pending measurement:** Immediate-base `0dbf72c` and candidate benchmarks passed in one serial captured run (`9e9e0c0a-562e-4243-8b1f-97b119db4692`). Six samples of the same added `BenchmarkStoredStartup` fixture (`-tags fts5,integration -run '^$' -bench '^BenchmarkStoredStartup$' -benchmem -count=6 -benchtime=10x`) show median warm-owner real capture startup 455.154→457.155 ms (+0.44%), 163737.5→192997 B/op and 2708.5→3147.5 allocations/op. Existing executor/direct shell, JavaScript and Python overhead benchmarks also ran with six samples and `-benchtime=100ms`. Both `make bench-quality` reports have identical retrieval metrics, fixture hashes, diagnostic mismatch lists, post-processing deltas, threshold response lengths and indexing flags; only timestamps and measured latency differ. Reports are `bench-results/task8-startup-{base,candidate}.txt`, `task8-executor-{base,candidate}.txt`, `task8-{base,candidate}.json` and `task8-comparison.json`. These are descriptive measurements without a statistical-significance claim. The extra bounded allocation is per captured launch for strict exchange/outcome validation.
+
+- **2026-10-23 — review and completion:** Isolated `kk:review-code` approved all 36 changed/deleted files with no findings after tracing production startup/teardown, scope/exchange binding, whole-run phase aggregation, persisted acknowledgements and unchanged Linux descendant handling. Verification is author-attributed; PAL was unavailable. Final integration-tagged vet and full FTS5 build passed on the reviewed source (`9a41fb54-43aa-4235-8903-28d9c5319a9a`), as did `git diff --check`. `kk:test` and `kk:document` completed; the run reference explains pre-start recovery and compiler/runtime outcomes. Task 8 is done for its Linux integration contract. No new finding/convention needs separate indexing because this record captures the implementation and limits.
+- **2026-10-23 — native/release follow-up:** Owner: feature implementer. This Linux host cannot execute native Darwin fixtures, and Task 8 has not been pushed to CI in this implementation turn. Next action: run the existing `macos-26` proof job against this candidate when published, require its shared lease/runstore fixtures and native vet/build to pass, and retain that evidence with the later Task 13 release checks. Task 9 still owns private Darwin stream/supervisor integration; Tasks 10–13 own activation, all-mode native acceptance and final release verification. No Darwin production execution is enabled here.
 
 ## Task 9: Integrate a private Darwin captured run
 

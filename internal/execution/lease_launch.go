@@ -17,8 +17,7 @@ import (
 
 const preStartTeardownTimeout = 3 * time.Second
 
-// leaseLauncher is the private startup mechanism for Task 4. Task 8 will connect
-// its retained reservations to Service scheduling and scoped persisted outcomes.
+// leaseLauncher owns the common startup exchange and retained reservations.
 // One instance belongs to an execution owner, never to an individual request.
 type leaseLauncher struct {
 	mu           sync.Mutex
@@ -44,6 +43,8 @@ func newLeaseLauncher() *leaseLauncher {
 
 type exchangeProcess struct {
 	owner                     *leaseLauncher
+	start                     Startup
+	reaped                    chan struct{} // closes only on confirmed OS terminal status
 	cmd                       *exec.Cmd
 	refs                      *runstore.LeaseRefs
 	gate                      *runstore.ExchangeLease
@@ -116,7 +117,7 @@ func (l *leaseLauncher) launch(ctx context.Context, cmd *exec.Cmd, start exchang
 		}
 		pipes = append(pipes, r, w)
 	}
-	p := &exchangeProcess{owner: l, cmd: cmd, refs: pin, gate: gate,
+	p := &exchangeProcess{owner: l, start: start, reaped: make(chan struct{}), cmd: cmd, refs: pin, gate: gate,
 		input: pipes[1], credential: pipes[3], events: pipes[4], done: make(chan struct{})}
 	// Check again after gate waiting: another exchange may have become stranded.
 	l.mu.Lock()
@@ -261,6 +262,7 @@ func (p *exchangeProcess) beginWait(failed bool) error {
 		p.owner.mu.Lock()
 		if p.terminal {
 			delete(p.owner.reservations, p)
+			close(p.reaped)
 		} else {
 			p.owner.reservations[p] = true
 		}

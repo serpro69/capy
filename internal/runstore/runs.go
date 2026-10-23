@@ -410,14 +410,14 @@ func ApplyOutcome(result *Result, c Completion) {
 		result.State = "skipped"
 	case c.Reason == "cancelled":
 		result.State = "cancelled"
-	case !c.Started:
+	case c.Reason == "deadline":
+		result.State = "timed_out"
+	case !c.Started || c.SpawnCode != 0:
 		result.State = "start_failed"
 		result.Error = &Error{Code: "spawn_failed", Message: "execution process could not start"}
 		if c.SpawnCode == 127 {
 			result.Error = &Error{Code: "runtime_unavailable", Message: "execution runtime was not found"}
 		}
-	case c.Reason == "deadline":
-		result.State = "timed_out"
 	case c.Reason == "owner_lost" || c.Reason == "control_failed":
 		result.State = "interrupted"
 	}
