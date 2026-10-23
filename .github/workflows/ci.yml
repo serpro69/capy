@@ -62,6 +62,9 @@ jobs:
           import sys
 
           required = {
+              ("runstore", "TestRecoveryMetadataUsesRecoveryBudget"),
+              ("runstore", "TestLargeAdmissionMakesProgressAcrossEvictionBatches"),
+              ("runstore", "TestLargeEvictionPersistsAfterAppendRetryFails"),
               ("runstore", "TestLeaseRefsInheritancePreservesLocksAndPermanentFiles"),
               ("runstore", "TestLeaseRefsRetainLocksAcrossCloseAndAliases"),
               ("runstore", "TestLeaseRefsGateSharedAcrossOwnersAndOneTimeRelease"),
@@ -89,6 +92,13 @@ jobs:
           print(f"Verified {len(required)} native proof fixtures executed and passed")
           PY
 
+      - name: Repeat native recovery and retention regressions
+        if: ${{ !cancelled() && (steps.native_tests.outcome == 'success' || steps.native_tests.outcome == 'failure') }}
+        run: |
+          go test -tags fts5,integration -race -json -count=5 -timeout 10m \
+            -run '^(TestRecoveryMetadataUsesRecoveryBudget|TestLargeAdmissionMakesProgressAcrossEvictionBatches|TestLargeEvictionPersistsAfterAppendRetryFails)$' \
+            ./internal/runstore | tee "$RUNNER_TEMP/macos-retention-tests.jsonl"
+
       - name: Vet native integration code
         if: ${{ !cancelled() && (steps.native_tests.outcome == 'success' || steps.native_tests.outcome == 'failure') }}
         run: go vet -tags fts5,integration ./internal/runstore ./internal/execution
@@ -105,6 +115,7 @@ jobs:
           path: |
             ${{ runner.temp }}/macos-proof-environment.txt
             ${{ runner.temp }}/macos-proof-tests.jsonl
+            ${{ runner.temp }}/macos-retention-tests.jsonl
           retention-days: 14
 
   check:
