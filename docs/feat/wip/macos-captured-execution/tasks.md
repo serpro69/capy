@@ -4,7 +4,7 @@
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
 > Evidence: [native process verification](process-proof.md) · [source verification](verification.md)
-> Status: in progress — Tasks 1–5 done; observational Darwin contract accepted; Tasks 6–13 pending
+> Status: in progress — Tasks 1–6 done; observational Darwin contract accepted; Tasks 7–13 pending
 > Created: 2026-10-22
 > Not Doing: older macOS majors, Intel support, certified Darwin group retirement, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
@@ -147,7 +147,7 @@ their implementation.
 
 ## Task 6: Preserve version-8 histories through migration
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 5
 - **Size:** M
 - **Can run in parallel with:** —
@@ -155,11 +155,18 @@ their implementation.
 
 ### Subtasks
 
-- [ ] 6.1 Implement authenticated exclusive-lifecycle transactional rebuild and policy update in `migrate.go`/attachment → verify: explicit Linux backfill, no final column DEFAULT, SQL omission/cross-scope-pair rejection after upgrade, and no conversion of Linux retired to observed.
-- [ ] 6.2 Preserve IDs, logs, cursors, timestamps, quarantine/accounting and saved child proofs under the specified retained/evicted rules → verify: missing nonterminal or inconsistent evidence aborts safely.
-- [ ] 6.3 Cover wrong keys, live handles, interruption/rollback, replaced stores, unexpected versions and FK/index preservation → verify: no diagnostic/supervisor migration or automatic recreation/discard.
-- [ ] 6.4 Account for transient encrypted table-copy/WAL disk requirements separately from retained quota → verify: space failure rolls back without eviction or duplicate retained-byte charges.
-- [ ] 6.5 Return actionable authenticated found/supported-version errors; preserve old-binary symptom documentation and the explicit rollback path.
+- [x] 6.1 Implement authenticated exclusive-lifecycle transactional rebuild and policy update in `migrate.go`/attachment → verify: explicit Linux backfill, no final column DEFAULT, SQL omission/cross-scope-pair rejection after upgrade, and no conversion of Linux retired to observed.
+- [x] 6.2 Preserve IDs, logs, cursors, timestamps, quarantine/accounting and saved child proofs under the specified retained/evicted rules → verify: missing nonterminal or inconsistent evidence aborts safely.
+- [x] 6.3 Cover wrong keys, live handles, interruption/rollback, replaced stores, unexpected versions and FK/index preservation → verify: no diagnostic/supervisor migration or automatic recreation/discard.
+- [x] 6.4 Account for transient encrypted table-copy/WAL disk requirements separately from retained quota → verify: space failure rolls back without eviction or duplicate retained-byte charges.
+- [x] 6.5 Return actionable authenticated found/supported-version errors; preserve old-binary symptom documentation and the explicit rollback path.
+
+### Execution context
+
+- **2026-10-23 — authorized scope and baseline:** The user requested the next task after Task 5 was committed as `120abebed9ea4b3d42e88b7906cf25b7dcb4f01a` and all CI checks passed, including native macOS runstore/execution. Task 6 starts from that clean Linux checkout. The actual schema-8 source baseline is `828ee23bc33e1a18d4a848cdd75feb793c76375d`. Public/protocol v2 and Darwin activation remain later tasks.
+- **2026-10-23 — implementation approach:** Permit 8→9 only through normal configured execution attachment (`OpenWithPolicy` with creation/admission enabled), after read-only authentication, closing shared handles, acquiring a fresh exclusive lifecycle lease and rechecking file/store identity and version. Rebuild only `runs` and its indexes in one encrypted transaction; backfill Linux scope, normalize legacy manifest proofs, preserve quarantine/history and refresh actual index debit without retention. Diagnostics and reader/supervisor attachments report actionable versions without migration. Verify transient disk headroom separately from retained quota and roll back any failure; use an actual historical schema fixture rather than only changing version markers.
+- **2026-10-23 — implementation and verification:** Added the transactional rebuild, bounded historical-proof conversion, file/store binding through reattachment, separate filesystem/quota checks, and safe numeric version diagnostics. Existing reservations cover new metadata; actual index debit is refreshed once after the old table is dropped and its replacement renamed. The service releases its general mutex during initial attachment so shutdown can cancel migration. Frozen v8 source/DDL fixtures cover preserved raw/text cursors, FTS, FK/indexes, timestamps and pending/quarantine, including legitimate historical index/advisory divergence. Real SQLite-full/WAL-write failures, cancellation and abrupt process exit roll back. Final affected integration race passed (runstore 125.013s; execution 62.084s); public/doctor regressions, vet and full FTS5 build also passed. See [migration-proof.md](migration-proof.md) for every attempt, command and evidence limit.
+- **2026-10-23 — review and completion:** Isolated `kk:review-code` approved Task 6 after two P2 corrections: reject capture/completion contradictions during legacy conversion, and propagate authenticated schema guidance through shared doctor formatting. Both have focused regressions; no open code findings remain. `kk:test` and `kk:document` completed for this slice; PAL was unavailable and execution is author-attributed. Task 6 is done and Task 7 is next. Native Task 6 migration execution remains unverified on this Linux host and is tracked in the proof record/Task 13 release gate; no public/protocol-v2 activation or Darwin support was enabled. Findings/conventions are documented here rather than duplicated in the knowledge index.
 
 ## Task 7: Publish version-2 recovery views and hook parsing
 

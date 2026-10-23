@@ -47,6 +47,8 @@ func Open(ctx context.Context, path, key string, create bool) (*Store, error) {
 // OpenWithPolicy attaches only to matching configured store-wide settings.
 // A mismatch can publish a revision only after all handles/helpers are gone.
 // Open without configuration (used by supervisors) consumes the stored policy.
+// create=true is the normal execution-owner path and may upgrade schema 8;
+// readers (create=false), Open and supervisors never migrate.
 func OpenWithPolicy(ctx context.Context, path, key string, create bool, settings PolicyConfig) (*Store, error) {
 	if err := settings.validate(); err != nil {
 		return nil, err
@@ -82,6 +84,7 @@ func open(ctx context.Context, path, key string, create bool, desired *PolicyCon
 	}
 	// Every retry starts with a new shared lease and revalidates the identity
 	// and policy. A reset or another opener may win either unlocked interval.
+	var upgraded *schemaIdentity
 	for range 3 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -91,6 +94,9 @@ func open(ctx context.Context, path, key string, create bool, desired *PolicyCon
 			return nil, err
 		}
 		if !exists {
+			if upgraded != nil {
+				return nil, failure("run_unavailable", "run store disappeared after schema upgrade; retry attachment; no store was recreated")
+			}
 			if !create {
 				return nil, failure("run_unavailable", "run store does not exist for this owner")
 			}
@@ -98,8 +104,16 @@ func open(ctx context.Context, path, key string, create bool, desired *PolicyCon
 				return nil, err
 			}
 		}
-		s, err := openAttached(ctx, path, key, owner, unix.LOCK_SH)
+		s, err := openAttachedSchema(ctx, path, key, owner, unix.LOCK_SH, schemaVersion, upgraded)
 		if err != nil {
+			var mismatch *schemaMismatch
+			if create && desired != nil && errors.As(err, &mismatch) && mismatch.found == 8 {
+				if err := upgradeSchema8(ctx, path, key, owner, mismatch.identity); err != nil {
+					return nil, err
+				}
+				upgraded = &mismatch.identity
+				continue // close exclusive handles, then authenticate a fresh shared attachment
+			}
 			return nil, err
 		}
 		if desired == nil || *desired == s.policy.PolicyConfig {
@@ -120,7 +134,7 @@ func open(ctx context.Context, path, key string, create bool, desired *PolicyCon
 		}
 		// No shared DB handle or lease survives this point. Nonblocking exclusive
 		// acquisition refuses live readers, owners and inherited helper leases.
-		s, err = openAttached(ctx, path, key, owner, unix.LOCK_EX)
+		s, err = openAttachedSchema(ctx, path, key, owner, unix.LOCK_EX, schemaVersion, upgraded)
 		if err != nil {
 			if errors.Is(err, unix.EWOULDBLOCK) {
 				return nil, policyMismatch(revision)
@@ -139,6 +153,10 @@ func open(ctx context.Context, path, key string, create bool, desired *PolicyCon
 // openAttached returns an authenticated, policy-validated handle without a
 // maintenance worker. The caller closes all handles before releasing its lease.
 func openAttached(ctx context.Context, path, key, owner string, lock int) (*Store, error) {
+	return openAttachedSchema(ctx, path, key, owner, lock, schemaVersion, nil)
+}
+
+func openAttachedSchema(ctx context.Context, path, key, owner string, lock, supported int, expected *schemaIdentity) (*Store, error) {
 	life, err := openRegular(filepath.Join(filepath.Dir(path), "lifecycle.lock"), false)
 	if err != nil {
 		return nil, storageError()
@@ -160,6 +178,11 @@ func openAttached(ctx context.Context, path, key, owner string, lock int) (*Stor
 		return nil, failure("run_unavailable", "run store changed during attachment; retry")
 	}
 	s := &Store{path: path, key: key, owner: owner, lifecycle: life}
+	info, err := os.Lstat(path)
+	if err != nil || !safeRegular(info) {
+		life.Close()
+		return nil, storageError()
+	}
 	// Read-only authentication avoids creating new locks/rows on a wrong key.
 	probe, err := sqliteutil.OpenWithCanary(ctx, sqliteutil.EncryptedDSN(path, key)+"&mode=ro&_busy_timeout=100", path, "selected run credential")
 	if err != nil {
@@ -169,17 +192,22 @@ func openAttached(ctx context.Context, path, key, owner string, lock int) (*Stor
 	var version int
 	var recordedOwner string
 	err = probe.QueryRowContext(ctx, "SELECT version, store_id, owner FROM run_meta WHERE singleton=1").Scan(&version, &s.id, &recordedOwner)
-	if err == nil && version == schemaVersion && uuid.Validate(s.id) == nil {
-		s.policy, err = readPolicy(ctx, probe)
+	if err == nil && version == supported && uuid.Validate(s.id) == nil {
+		s.policy, err = readPolicyVersion(ctx, probe, supported)
 	}
 	closeErr := probe.Close()
-	if err == nil && closeErr == nil && version != schemaVersion {
+	identity := schemaIdentity{id: s.id, file: info}
+	if err == nil && closeErr == nil && uuid.Validate(s.id) == nil && expected != nil && !expected.matches(identity) {
 		life.Close()
-		return nil, failure("schema_mismatch", fmt.Sprintf("run store schema %d is incompatible with supported schema %d; this build cannot migrate existing run storage; use a compatible binary", version, schemaVersion))
+		return nil, failure("run_unavailable", "run store changed during schema upgrade; retry with the selected owner's current store")
+	}
+	if err == nil && closeErr == nil && uuid.Validate(s.id) == nil && version != supported {
+		life.Close()
+		return nil, newSchemaMismatch(version, identity)
 	}
 	// A moved tree may retain historical provenance; the current selected path
 	// remains authoritative. The persisted owner never supplies a filesystem target.
-	if err != nil || closeErr != nil || version != schemaVersion || uuid.Validate(s.id) != nil {
+	if err != nil || closeErr != nil || version != supported || uuid.Validate(s.id) != nil {
 		life.Close()
 		if err != nil {
 			var typed *Error
@@ -435,27 +463,7 @@ func (s *Store) Close() error {
 const schema = `
 CREATE TABLE run_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, store_id TEXT NOT NULL, owner TEXT NOT NULL, admission_blocked INTEGER NOT NULL DEFAULT 0 CHECK(admission_blocked IN (0,1)), last_created INTEGER NOT NULL DEFAULT 0, accounted_bytes INTEGER NOT NULL DEFAULT 0 CHECK(accounted_bytes>=0), index_bytes INTEGER NOT NULL DEFAULT 0 CHECK(index_bytes>=0), index_enabled INTEGER NOT NULL DEFAULT 0 CHECK(index_enabled IN (0,1)));
 CREATE TABLE run_owners(slot INTEGER PRIMARY KEY CHECK(slot>=0 AND slot<64), generation TEXT NOT NULL UNIQUE, cleanup_unverified INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_unverified IN (0,1)));
-CREATE TABLE runs(
- id TEXT PRIMARY KEY, generation TEXT NOT NULL, slot INTEGER NOT NULL CHECK(slot>=0 AND slot<64),
- created_at INTEGER NOT NULL,
- program BLOB NOT NULL, result BLOB NOT NULL,
- cleanup_scope TEXT NOT NULL CHECK(cleanup_scope IN ('linux_descendants_v1','darwin_process_group_observation_v1')),
- cleanup TEXT NOT NULL CHECK(cleanup IN ('not_spawned','pending','retired','observed')),
- terminal INTEGER NOT NULL DEFAULT 0 CHECK(terminal IN (0,1)),
- accounted_bytes INTEGER NOT NULL DEFAULT 0 CHECK(accounted_bytes>=0),
- evicting INTEGER NOT NULL DEFAULT 0 CHECK(evicting IN (0,1)),
- expires_at INTEGER, completed_at INTEGER,
- stdout_bytes INTEGER NOT NULL DEFAULT 0, stderr_bytes INTEGER NOT NULL DEFAULT 0,
- stdout_lines INTEGER NOT NULL DEFAULT 1, stderr_lines INTEGER NOT NULL DEFAULT 1,
- CHECK((cleanup_scope='linux_descendants_v1' AND cleanup IN ('not_spawned','pending','retired')) OR
-       (cleanup_scope='darwin_process_group_observation_v1' AND cleanup IN ('not_spawned','pending','observed')))
-);
-CREATE INDEX runs_created ON runs(created_at,id);
-CREATE INDEX runs_owner ON runs(slot,generation,terminal,id);
-CREATE INDEX runs_unfinished ON runs(slot,generation,id) WHERE terminal=0;
-CREATE INDEX runs_expiry ON runs(expires_at,id) WHERE terminal=1;
-CREATE INDEX runs_completed ON runs(completed_at,id) WHERE terminal=1;
-CREATE INDEX runs_evicting ON runs(id) WHERE evicting=1;
+` + runTableSchema + runIndexesSchema + `
 CREATE TABLE run_work_claims(
  run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
  slot INTEGER NOT NULL CHECK(slot>=0 AND slot<64), generation TEXT NOT NULL
@@ -487,4 +495,32 @@ CREATE TABLE run_projection(
 );
 CREATE INDEX run_projection_order ON run_projection(run_id,seq,raw_start);
 
+`
+
+// Shared by fresh stores and the transactional schema-8 rebuild.
+const runTableSchema = `
+CREATE TABLE runs(
+ id TEXT PRIMARY KEY, generation TEXT NOT NULL, slot INTEGER NOT NULL CHECK(slot>=0 AND slot<64),
+ created_at INTEGER NOT NULL,
+ program BLOB NOT NULL, result BLOB NOT NULL,
+ cleanup_scope TEXT NOT NULL CHECK(cleanup_scope IN ('linux_descendants_v1','darwin_process_group_observation_v1')),
+ cleanup TEXT NOT NULL CHECK(cleanup IN ('not_spawned','pending','retired','observed')),
+ terminal INTEGER NOT NULL DEFAULT 0 CHECK(terminal IN (0,1)),
+ accounted_bytes INTEGER NOT NULL DEFAULT 0 CHECK(accounted_bytes>=0),
+ evicting INTEGER NOT NULL DEFAULT 0 CHECK(evicting IN (0,1)),
+ expires_at INTEGER, completed_at INTEGER,
+ stdout_bytes INTEGER NOT NULL DEFAULT 0, stderr_bytes INTEGER NOT NULL DEFAULT 0,
+ stdout_lines INTEGER NOT NULL DEFAULT 1, stderr_lines INTEGER NOT NULL DEFAULT 1,
+ CHECK((cleanup_scope='linux_descendants_v1' AND cleanup IN ('not_spawned','pending','retired')) OR
+       (cleanup_scope='darwin_process_group_observation_v1' AND cleanup IN ('not_spawned','pending','observed')))
+);
+`
+
+const runIndexesSchema = `
+CREATE INDEX runs_created ON runs(created_at,id);
+CREATE INDEX runs_owner ON runs(slot,generation,terminal,id);
+CREATE INDEX runs_unfinished ON runs(slot,generation,id) WHERE terminal=0;
+CREATE INDEX runs_expiry ON runs(expires_at,id) WHERE terminal=1;
+CREATE INDEX runs_completed ON runs(completed_at,id) WHERE terminal=1;
+CREATE INDEX runs_evicting ON runs(id) WHERE evicting=1;
 `

@@ -74,6 +74,7 @@ func encodeManifest(r Result) ([]byte, error) {
 	if err := ValidateCleanup(r.Cleanup); err != nil {
 		return nil, err
 	}
+	r.Version = 2 // private canonical proof; public publication remains Task 7
 	return json.Marshal(manifestResult{Result: r, Cleanup: r.Cleanup})
 }
 
@@ -82,6 +83,10 @@ func decodeManifest(encoded []byte) (Result, error) {
 	if err := json.Unmarshal(encoded, &stored); err != nil {
 		return Result{}, storageError()
 	}
+	if stored.Version != 1 && stored.Version != 2 {
+		return Result{}, storageError()
+	}
+	stored.Result.Version = 1 // preserve the public v1 adapter until Task 7
 	stored.Result.Cleanup = stored.Cleanup
 	return stored.Result, ValidateCleanup(stored.Cleanup)
 }

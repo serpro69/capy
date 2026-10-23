@@ -149,6 +149,41 @@ session-stat reset clears counters; runs completing afterward contribute their
 whole known outcome. Doctor/stats do not include programs, output, keys or stored
 error text in run diagnostics.
 
+## Run schema upgrades
+
+Run schema 9 preserves schema-8 history through an encrypted transactional upgrade.
+Stop all run owners, readers and supervisors for the selected owner, then start
+captured execution with the compatible new binary. Only normal execution-owner
+attachment performs the upgrade. Recovery queries, supervisors and doctor report
+the found/supported schema versions without migrating.
+
+The upgrade preserves run/batch IDs, output, cursors, expiry timestamps and pending
+cleanup evidence. It does not restart old jobs or clear quarantine. An old
+`retired` record remains Linux retirement evidence. The private batch manifest gains
+scoped proof; public run responses remain version 1 at this implementation stage.
+Normal TTL/quota retention resumes after attachment, including expiry of history
+already beyond its recorded TTL.
+
+Migration requires free filesystem space for the temporary encrypted table copy
+and WAL work, separately from retained-log quota. The preflight conservatively
+asks for three database images plus 2 MiB of headroom; it is not a disk reservation.
+A capacity or write failure rolls back without evicting logs to make the upgrade
+fit. `schema_upgrade_busy` requires stopping remaining handles;
+`schema_upgrade_capacity` identifies filesystem or retained-quota limits. If the
+stored retained quota is insufficient, adjust it with a schema-8-compatible binary
+before retrying. No error automatically recreates or discards the store.
+
+Older binaries cannot read schema 9 and may misleadingly report
+`storage_unavailable` with path/permissions advice. Use the compatible new binary's
+doctor to identify the stored and supported versions. Keeping schema-9 logs requires
+a compatible reader; there is no reverse migration. To return to a schema-8 binary,
+export needed logs first, stop all owners/readers/helpers and establish quiescence
+of any old execution groups, then explicitly run `capy runs reset --discard` with
+the compatible binary for that owner before installing the older binary and its
+matching bindings. This permanently removes **all** retained run/batch logs for that
+owner, including protected history older than the default TTL. Knowledge, vault
+data and permanent locks remain intact.
+
 ## Key rotation and explicit data loss
 
 `capy encrypt` rotates **knowledge only**. Run caches are not rekeyed, and v1 has
