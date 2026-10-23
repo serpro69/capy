@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/serpro69/capy/internal/sqliteutil"
@@ -255,22 +256,20 @@ func (s *Store) prepareCapacity(ctx context.Context, needed int64) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		writeCtx, cancel := context.WithTimeout(ctx, WriteTimeout)
-		tx, err := sqliteutil.BeginImmediateContext(writeCtx, s.db, "runs")
+		// Admission already supplies its bounded operation context. Retention
+		// may require more work than a streaming append's 250-ms allowance.
+		tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
 		if err != nil {
-			cancel()
-			return storageError()
+			return metadataFailure(ctx, "starting admission retention")
 		}
-		report, err := retain(writeCtx, tx, limit, needed, true)
+		report, err := retain(ctx, tx, limit, needed, true)
 		if err != nil {
 			tx.Rollback()
-			cancel()
-			return err
+			return fmt.Errorf("retaining admission capacity: %w", errors.Join(err, ctx.Err()))
 		}
 		err = tx.Commit()
-		cancel()
 		if err != nil {
-			return storageError()
+			return metadataFailure(ctx, "committing admission retention")
 		}
 		if !report.More {
 			return nil
@@ -285,23 +284,25 @@ func (s *Store) prepareCapacity(ctx context.Context, needed int64) error {
 // tombstoned victim by bounded payload batches, then attempts a passive
 // checkpoint. Busy readers/writers retain their WAL; no sidecar is ever removed.
 func (s *Store) Maintain(ctx context.Context) (RetentionReport, error) {
-	ctx, cancel := context.WithTimeout(ctx, WriteTimeout)
+	// Housekeeping uses the bounded metadata budget, including any earlier
+	// caller deadline. Capture append and helper finalization keep WriteTimeout.
+	ctx, cancel := context.WithTimeout(ctx, recoveryTimeout)
 	defer cancel()
 	tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
 	if err != nil {
-		return RetentionReport{}, storageError()
+		return RetentionReport{}, metadataFailure(ctx, "starting run maintenance")
 	}
 	defer tx.Rollback()
 	report, err := retain(ctx, tx, s.policy.MaxRetainedBytes, 0, true)
 	if err != nil {
-		return report, err
+		return report, fmt.Errorf("maintaining retained runs: %w", errors.Join(err, ctx.Err()))
 	}
 	if err := tx.Commit(); err != nil {
-		return report, storageError()
+		return report, metadataFailure(ctx, "committing run maintenance")
 	}
 	var busy, log, checkpointed int
 	if err := s.db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)").Scan(&busy, &log, &checkpointed); err != nil {
-		return report, storageError()
+		return report, metadataFailure(ctx, "checkpointing run maintenance")
 	}
 	return report, nil
 }
