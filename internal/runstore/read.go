@@ -53,7 +53,7 @@ func (s *Store) decodeCursor(encoded, run, stream string) (rawCursor, error) {
 }
 
 func (s *Store) ReadRaw(ctx context.Context, id, stream, encoded string, maxBytes int) (ReadPage, error) {
-	page := ReadPage{Version: 1, Kind: "query", RunID: id, Raw: true, Encoding: "base64", Fragments: []Fragment{}}
+	page := ReadPage{Version: EnvelopeVersion, Kind: "query", RunID: id, Raw: true, Encoding: "base64", Fragments: []Fragment{}}
 	if stream != "stdout" && stream != "stderr" && stream != "merged" {
 		return page, failure("invalid_argument", "stream must be stdout, stderr or merged")
 	}

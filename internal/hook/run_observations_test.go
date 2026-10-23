@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/serpro69/capy/internal/executor"
 	"github.com/stretchr/testify/require"
 )
 
@@ -15,6 +16,83 @@ func observationRun(state, capture string, exit any, persisted bool) map[string]
 		"state": state, "exit_code": exit, "signal": nil, "error": nil,
 		"started_at": "2000-01-01T00:00:00Z",
 		"capture":    map[string]any{"state": capture, "terminal_persisted": persisted},
+	}
+}
+
+func TestCapturedV2ObservationScopedEligibility(t *testing.T) {
+	isolateRoutineHook(t)
+	for _, agent := range []string{"", "child"} {
+		for _, scope := range []executor.CleanupScope{executor.CleanupLinuxDescendants, executor.CleanupDarwinObservation} {
+			completed, wrong := "retired", "observed"
+			if scope == executor.CleanupDarwinObservation {
+				completed, wrong = wrong, completed
+			}
+			for _, tc := range []struct {
+				name     string
+				mutate   func(map[string]any, map[string]any)
+				eligible bool
+			}{
+				{"terminal", func(map[string]any, map[string]any) {}, true},
+				{"running", func(r, c map[string]any) {
+					r["state"], r["exit_code"] = "running", nil
+					r["capture"] = map[string]any{"state": "recording", "terminal_persisted": false}
+					c["state"] = "pending"
+				}, true},
+				{"cross scope", func(r, c map[string]any) { c["state"] = wrong }, false},
+				{"pending terminal", func(r, c map[string]any) { c["state"] = "pending" }, false},
+				{"not spawned terminal", func(r, c map[string]any) { c["state"] = "not_spawned" }, false},
+				{"completed running", func(r, c map[string]any) {
+					r["state"] = "running"
+					r["exit_code"] = nil
+					r["capture"] = map[string]any{"state": "recording"}
+				}, false},
+				{"unknown scope", func(r, c map[string]any) { c["scope"] = "future" }, false},
+				{"old Darwin scope", func(r, c map[string]any) { c["scope"] = "darwin_process_group_v1" }, false},
+				{"unknown state", func(r, c map[string]any) { c["state"] = "future" }, false},
+				{"null proof", func(r, c map[string]any) { r["cleanup"] = nil }, false},
+				{"missing proof", func(r, c map[string]any) { delete(r, "cleanup") }, false},
+				{"string proof", func(r, c map[string]any) { r["cleanup"] = "retired" }, false},
+				{"missing scope", func(r, c map[string]any) { delete(c, "scope") }, false},
+				{"numeric state", func(r, c map[string]any) { c["state"] = 1 }, false},
+				{"extra proof field", func(r, c map[string]any) { c["retired"] = true }, false},
+				{"unknown version", func(r, c map[string]any) { r["version"] = 3 }, false},
+				{"string version", func(r, c map[string]any) { r["version"] = "2" }, false},
+				{"missing exit", func(r, c map[string]any) { delete(r, "exit_code") }, false},
+				{"signal", func(r, c map[string]any) { r["signal"] = 9 }, false},
+				{"nonzero", func(r, c map[string]any) { r["exit_code"] = 7 }, false},
+				{"error", func(r, c map[string]any) { r["error"] = map[string]any{"code": "failed"} }, false},
+				{"incomplete", func(r, c map[string]any) {
+					r["capture"] = map[string]any{"state": "incomplete", "terminal_persisted": true}
+				}, false},
+				{"unpersisted", func(r, c map[string]any) {
+					r["capture"] = map[string]any{"state": "complete", "terminal_persisted": false}
+				}, false},
+			} {
+				t.Run(agent+"/"+string(scope)+"/"+tc.name, func(t *testing.T) {
+					project := t.TempDir()
+					r := observationRun("exited", "complete", 0, true)
+					proof := map[string]any{"scope": string(scope), "state": completed}
+					r["version"], r["cleanup"] = 2, proof
+					tc.mutate(r, proof)
+					// Printed success JSON cannot rescue a rejected structured envelope.
+					printed := `{"version":2,"kind":"run","state":"exited","exit_code":0,"cleanup":{"scope":"linux_descendants_v1","state":"retired"}}`
+					response := map[string]any{"structuredContent": r, "content": []any{map[string]any{"type": "text", "text": printed}}}
+					require.Nil(t, codexObservationHook(t, project, "posttooluse", observedExecute, nil, map[string]any{
+						"session_id": "main", "agent_id": agent, "tool_response": response,
+					}))
+					store := newCodexMainObservationStore(project)
+					if agent != "" {
+						store = newObservationStore(project)
+					}
+					if tc.eligible {
+						requireExecuteRedirect(t, mainHTTP(t, project, "main", agent, "curl https://example.invalid"))
+						require.NotContains(t, mainHTTP(t, project, "main", agent, "curl https://example.invalid"), "permissionDecision")
+					} else {
+						require.NoDirExists(t, store.dir)
+					}
+				})
+			}
+		}
 	}
 }
 

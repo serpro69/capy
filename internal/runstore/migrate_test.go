@@ -115,7 +115,7 @@ func (f *legacyFixture) run(t *testing.T, state executor.CleanupState, terminal 
 	}
 	program, err := json.Marshal(Program{Owner: f.owner, PolicyRevision: 1, TTLHours: 24, MaxRunBytes: f.settings.MaxRunBytes, Request: executor.ExecRequest{Language: executor.Shell, Code: "printf historical"}})
 	require.NoError(t, err)
-	encoded, err := json.Marshal(r)
+	encoded, err := marshalLegacyResult(r)
 	require.NoError(t, err)
 	var completedAt, expiresAt any
 	if terminal {
@@ -157,7 +157,7 @@ func (f *legacyFixture) batch(t *testing.T) string {
 
 func (f *legacyFixture) child(t *testing.T, r Result, ordinal int, terminal bool) {
 	t.Helper()
-	encoded, err := json.Marshal(r)
+	encoded, err := marshalLegacyResult(r)
 	require.NoError(t, err)
 	_, err = f.db.ExecContext(t.Context(), "INSERT INTO run_batch_children(batch_id,ordinal,run_id,label,command,result,terminal) VALUES(?,?,?,'historical label','true',?,?)", r.BatchID, ordinal, *r.RunID, encoded, terminal)
 	require.NoError(t, err)
@@ -243,7 +243,7 @@ func TestMigrationPreservesHistoryProofAndCursors(t *testing.T) {
 	}{{retired, executor.CleanupRetired}, {never, executor.CleanupNotSpawned}, {evicted, executor.CleanupNotSpawned}} {
 		var encoded []byte
 		require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT result FROM run_batch_children WHERE run_id=?", *child.r.RunID).Scan(&encoded))
-		var value manifestResult
+		var value Result
 		require.NoError(t, json.Unmarshal(encoded, &value))
 		require.Equal(t, 2, value.Version)
 		require.Equal(t, executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: child.state}, value.Cleanup)
@@ -318,7 +318,7 @@ func TestMigrationPreservesPendingAndLegacyRetiredNoStart(t *testing.T) {
 	pending := f.run(t, executor.CleanupPending, false, "", "prefix")
 	retired := f.run(t, executor.CleanupRetired, true, "", "")
 	retired.State, retired.StartedAt, retired.ExitCode, retired.Capture.State = "start_failed", nil, nil, "not_started"
-	encoded, err := json.Marshal(retired)
+	encoded, err := marshalLegacyResult(retired)
 	require.NoError(t, err)
 	_, err = f.db.ExecContext(t.Context(), "UPDATE runs SET result=? WHERE id=?", encoded, *retired.RunID)
 	require.NoError(t, err)
@@ -352,7 +352,7 @@ func TestMigrationPreservesLegacyIndexedUnverifiedAnnotation(t *testing.T) {
 	// so saveIndexResult also persisted the read-side unverified annotation.
 	markUnverified(&r)
 	r.Index.State = "ready"
-	encoded, err := json.Marshal(r)
+	encoded, err := marshalLegacyResult(r)
 	require.NoError(t, err)
 	_, err = f.db.ExecContext(t.Context(), "UPDATE runs SET result=? WHERE id=?", encoded, *r.RunID)
 	require.NoError(t, err)
@@ -617,13 +617,13 @@ func TestMigrationBorrowedLeaseBlocksUpgradeAndConcurrentWinner(t *testing.T) {
 	migrationVersions(t, f.db, 9)
 }
 
-func TestMigrationPrivateManifestKeepsPublicV1(t *testing.T) {
+func TestMigrationManifestAndPublicVersionAgree(t *testing.T) {
 	s, o := retentionStore(t, 8<<20)
 	b, rows, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "true"}}})
 	require.NoError(t, err)
 	row, err := s.Load(t.Context(), rows[0].ID)
 	require.NoError(t, err)
-	require.Equal(t, 1, row.Result.Version)
+	require.Equal(t, 2, row.Result.Version)
 	var version int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT json_extract(CAST(result AS TEXT),'$.version') FROM run_batch_children WHERE batch_id=?", b.BatchID).Scan(&version))
 	require.Equal(t, 2, version)
@@ -644,7 +644,7 @@ func TestMigrationRejectsContradictoryCaptureCompletion(t *testing.T) {
 				r.Capture.State = "recording"
 			}
 			f.child(t, r, 0, terminal)
-			encoded, err := json.Marshal(r)
+			encoded, err := marshalLegacyResult(r)
 			require.NoError(t, err)
 			if terminal {
 				_, err = f.db.ExecContext(t.Context(), "DELETE FROM runs WHERE id=?", *r.RunID)
@@ -694,4 +694,19 @@ func TestMigrationInterruptedProcessPreservesHistory(t *testing.T) {
 	f.upgrade(t)
 	f.db = f.connect(t)
 	migrationVersions(t, f.db, 9)
+}
+
+// Keep the schema-8 fixture frozen independently of the current public encoder.
+func marshalLegacyResult(r Result) ([]byte, error) {
+	type plain Result
+	data, err := json.Marshal(plain(r))
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	delete(fields, "cleanup")
+	return json.Marshal(fields)
 }

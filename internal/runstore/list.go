@@ -22,21 +22,22 @@ type ListOptions struct {
 	Cursor  string
 }
 type Summary struct {
-	BatchID         string    `json:"batch_id,omitempty"`
-	Ordinal         *int      `json:"ordinal,omitempty"`
-	Label           string    `json:"label,omitempty"`
-	Reason          *string   `json:"reason,omitempty"`
-	Error           *Error    `json:"error,omitempty"`
-	RunID           string    `json:"run_id"`
-	OwnerID         string    `json:"owner_id"`
-	OwnerType       string    `json:"owner_type"`
-	State           string    `json:"state"`
-	ExitCode        *int      `json:"exit_code"`
-	Signal          *int      `json:"signal"`
-	CaptureState    string    `json:"capture_state"`
-	CapturedBytes   int64     `json:"captured_bytes"`
-	CreatedAt       time.Time `json:"created_at"`
-	OutputAvailable bool      `json:"output_available"`
+	Cleanup         executor.CleanupEvidence `json:"cleanup"`
+	BatchID         string                   `json:"batch_id,omitempty"`
+	Ordinal         *int                     `json:"ordinal,omitempty"`
+	Label           string                   `json:"label,omitempty"`
+	Reason          *string                  `json:"reason,omitempty"`
+	Error           *Error                   `json:"error,omitempty"`
+	RunID           string                   `json:"run_id"`
+	OwnerID         string                   `json:"owner_id"`
+	OwnerType       string                   `json:"owner_type"`
+	State           string                   `json:"state"`
+	ExitCode        *int                     `json:"exit_code"`
+	Signal          *int                     `json:"signal"`
+	CaptureState    string                   `json:"capture_state"`
+	CapturedBytes   int64                    `json:"captured_bytes"`
+	CreatedAt       time.Time                `json:"created_at"`
+	OutputAvailable bool                     `json:"output_available"`
 }
 type ListPage struct {
 	BatchID    string    `json:"batch_id,omitempty"`
@@ -76,7 +77,7 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListPage, error)
 	if options.BatchID != "" {
 		return s.listBatch(ctx, options)
 	}
-	page := ListPage{Version: 1, Kind: "query", Entries: []Summary{}}
+	page := ListPage{Version: EnvelopeVersion, Kind: "query", Entries: []Summary{}}
 	if options.Limit < 1 || options.Limit > 64 {
 		return page, failure("invalid_argument", "limit must be between 1 and 64")
 	}
@@ -152,7 +153,7 @@ FROM runs WHERE evicting=0 AND created_at<=? AND (created_at>? OR (created_at=? 
 			return page, storageError()
 		}
 		var result Result
-		if json.Unmarshal(encoded, &result) != nil {
+		if decodeRunResult(encoded, cleanup, &result) != nil {
 			return page, storageError()
 		}
 		if err := validateTerminal(cleanup, result, terminal); err != nil {
@@ -176,7 +177,7 @@ FROM runs WHERE evicting=0 AND created_at<=? AND (created_at>? OR (created_at=? 
 		if unverified && !terminal {
 			recoveryError = result.Error
 		}
-		page.Entries = append(page.Entries, Summary{BatchID: result.BatchID, RunID: id, OwnerID: result.OwnerID, OwnerType: result.OwnerType, State: result.State, ExitCode: result.ExitCode, Signal: result.Signal, CaptureState: result.Capture.State, CapturedBytes: result.Capture.CapturedBytes, CreatedAt: time.Unix(0, created).UTC(), OutputAvailable: true, Error: recoveryError})
+		page.Entries = append(page.Entries, Summary{Cleanup: cleanup, BatchID: result.BatchID, RunID: id, OwnerID: result.OwnerID, OwnerType: result.OwnerType, State: result.State, ExitCode: result.ExitCode, Signal: result.Signal, CaptureState: result.Capture.State, CapturedBytes: result.Capture.CapturedBytes, CreatedAt: time.Unix(0, created).UTC(), OutputAvailable: true, Error: recoveryError})
 	}
 	if err := rows.Err(); err != nil {
 		return page, storageError()

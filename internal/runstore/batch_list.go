@@ -23,7 +23,7 @@ type batchListCursor struct {
 }
 
 func (s *Store) listBatch(ctx context.Context, o ListOptions) (ListPage, error) {
-	page := ListPage{Version: 1, Kind: "query", BatchID: o.BatchID, Entries: []Summary{}}
+	page := ListPage{Version: EnvelopeVersion, Kind: "query", BatchID: o.BatchID, Entries: []Summary{}}
 	batch, _, children, err := s.batchSnapshot(ctx, o.BatchID)
 	if err != nil {
 		return page, err
@@ -78,6 +78,7 @@ func (s *Store) listBatch(ctx context.Context, o ListOptions) (ListPage, error) 
 		if batch.Error != nil && !terminal {
 			markUnverified(&result)
 		}
+		entry.Cleanup = result.Cleanup
 		entry.BatchID = o.BatchID
 		entry.Ordinal = &ordinal
 		entry.Label = sanitize.StripSecrets(label)

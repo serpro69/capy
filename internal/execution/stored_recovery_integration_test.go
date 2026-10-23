@@ -82,7 +82,94 @@ func openStoredFixture(ctx context.Context, start Startup, key string, leases Le
 		run.Request.Language = executor.Language("missing-fixture-runtime")
 		run.Store = &failedCloseStoredCapture{CaptureStore: run.Store}
 	}
+	if os.Getenv("CAPY_STORED_MODE") == "failed close" {
+		run.Store = &failedCloseStoredCapture{CaptureStore: run.Store}
+	}
 	return run, nil
+}
+
+func TestStoredUnavailableRefreshNeverPublishesAdmissionProof(t *testing.T) {
+	for _, mode := range []string{"single terminal", "single yielded", "batch terminal"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"} {
+				t.Setenv(name, dir)
+			}
+			t.Setenv("CAPY_STORED_FIXTURE", dir)
+			fixture := "failed close"
+			if mode == "single yielded" {
+				fixture = "hold startup"
+			}
+			t.Setenv("CAPY_STORED_MODE", fixture)
+			s := NewService(dir, storedFixtureKey, config.DefaultConfig().Runs)
+			t.Cleanup(func() {
+				// Release both fixture gates even after an assertion failure.
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "release-open"), nil, 0600))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "release-command"), nil, 0600))
+				require.NoError(t, s.Close())
+			})
+			const program = "printf x >> executed-once; touch running; while [ ! -e release-command ]; do sleep .01; done; exit 7"
+			done := make(chan struct{})
+			var result runstore.Result
+			var batch runstore.BatchResult
+			var executeErr error
+			go func() {
+				defer close(done)
+				switch mode {
+				case "single yielded":
+					result, executeErr = s.ExecuteResponse(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: program}, "", 30*time.Second, 0, func(runstore.Result) error { return nil })
+				case "batch terminal":
+					batch, executeErr = s.ExecuteBatchResponse(t.Context(), runstore.BatchInput{Concurrency: 1, Commands: []runstore.BatchCommand{{Command: program}}}, 30*time.Second, 30*time.Second, func(runstore.BatchResult) error { return nil })
+				default:
+					result = s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: program}, "", 30*time.Second)
+				}
+			}()
+			marker := "running"
+			if mode == "single yielded" {
+				marker = "opening"
+			}
+			waitFile(t, filepath.Join(dir, marker))
+			s.mu.Lock()
+			st := s.store
+			s.mu.Unlock()
+			// Fail the owner's refreshes while the inherited helper retains its
+			// independent authenticated connection and acquired leases.
+			require.NoError(t, st.Close())
+			if mode == "single yielded" {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "release-open"), nil, 0600))
+			} else {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "release-command"), nil, 0600))
+			}
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("response did not return")
+			}
+			require.NoError(t, executeErr)
+			proof, problem := result.Cleanup, result.Error
+			if mode == "batch terminal" {
+				proof, problem = batch.Cleanup, batch.Error
+			}
+			require.Equal(t, executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}, proof)
+			require.NotNil(t, problem)
+			if mode == "single yielded" {
+				waitFile(t, filepath.Join(dir, "running"))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "release-command"), nil, 0600))
+			}
+			s.wg.Wait()
+			require.Equal(t, []byte("x"), waitFile(t, filepath.Join(dir, "executed-once")))
+			reader, err := runstore.Open(t.Context(), st.Path(), storedFixtureKey, false)
+			require.NoError(t, err)
+			defer reader.Close()
+			page, err := reader.List(t.Context(), runstore.ListOptions{Limit: 1})
+			require.NoError(t, err)
+			require.Len(t, page.Entries, 1)
+			stored, err := reader.Load(t.Context(), page.Entries[0].RunID)
+			require.NoError(t, err)
+			require.Equal(t, executor.CleanupRetired, stored.Cleanup.State)
+			require.Equal(t, 7, *stored.Result.ExitCode)
+		})
+	}
 }
 
 func TestStoredUnstartedTerminalSurvivesHelperCloseFailure(t *testing.T) {

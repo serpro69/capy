@@ -4,7 +4,7 @@
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
 > Evidence: [native process verification](process-proof.md) · [source verification](verification.md)
-> Status: in progress — Tasks 1–6 done; observational Darwin contract accepted; Tasks 7–13 pending
+> Status: in progress — Tasks 1–7 done; observational Darwin contract accepted; Tasks 8–13 pending
 > Created: 2026-10-22
 > Not Doing: older macOS majors, Intel support, certified Darwin group retirement, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
@@ -170,7 +170,7 @@ their implementation.
 
 ## Task 7: Publish version-2 recovery views and hook parsing
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 6
 - **Size:** M
 - **Can run in parallel with:** —
@@ -178,10 +178,21 @@ their implementation.
 
 ### Subtasks
 
-- [ ] 7.1 Publish cleanup at the exact run/batch/list/search placements and normalize historical blobs → verify: all views agree and bounded serialization preserves essential proof.
-- [ ] 7.2 Preserve compatible cursor/redaction formats and actual CLI/MCP outcomes → verify: prior cursors return identical retained bytes and incomplete cleanup keeps exit/signal evidence.
-- [ ] 7.3 Add explicit v1/v2 `healthyRunEnvelope` rules → verify: pending running eligibility, Linux retired / Darwin observed terminal eligibility, cross-scope/malformed/unknown rejection, no printed-JSON fallback, and unchanged one-use/security rules.
-- [ ] 7.4 Exercise null proof for unadmitted errors and aggregate/evicted-child cases → verify: no manufactured or contradictory retirement.
+- [x] 7.1 Publish cleanup at the exact run/batch/list/search placements and normalize historical blobs → verify: all views agree and bounded serialization preserves essential proof.
+- [x] 7.2 Preserve compatible cursor/redaction formats and actual CLI/MCP outcomes → verify: prior cursors return identical retained bytes and incomplete cleanup keeps exit/signal evidence.
+- [x] 7.3 Add explicit v1/v2 `healthyRunEnvelope` rules → verify: pending running eligibility, Linux retired / Darwin observed terminal eligibility, cross-scope/malformed/unknown rejection, no printed-JSON fallback, and unchanged one-use/security rules.
+- [x] 7.4 Exercise null proof for unadmitted errors and aggregate/evicted-child cases → verify: no manufactured or contradictory retirement.
+
+### Execution context
+
+- **2026-10-23 — authorized scope and baseline:** The user requested the next task, Task 7, starting from clean Linux checkout `e8dd8994143f452ec0b2121a7c3167db6dccbb88`. Publish v2 run/batch/recovery envelopes from authoritative stored cleanup, preserve cursor/redaction representations and actual outcomes, and add explicit v1/v2 hook eligibility. Tasks 8–13, including private protocol wiring and native activation/release acceptance, remain pending.
+- **2026-10-23 — implementation approach:** Normalize historical run blobs against row proof and saved manifests against their validated copies. Use the existing batch proof snapshot for aggregate and child search metadata; retain proof when optional response text/collections are bounded. Unadmitted/query failures carry null proof without inventing scope. Verification uses captured commands, synthetic keys and isolated test stores; native execution is not claimed by this Linux slice.
+- **2026-10-23 — focused verification:** With `CAPY_DB_KEY=test-key-for-development` and `CAPY_VAULT_KEY=test-key`, `go test -tags fts5 -count=1 ./internal/runstore ./internal/hook -run 'Test(Public|Scoped|Migration|Captured.*Observation|RunQueriesNever)'` passed (34.350s / 0.028s; capture `6d91890c-7dc3-4958-9aee-ff35cd47e494`). The first attempt (`bcbc1fa0-a47b-4822-a115-795551a6ee3c`) exposed a fixture mistake: exit code and signal are mutually exclusive. Separate nonzero/signal fixtures now verify both retained outcomes. The same environment with `go test -tags fts5 -count=1 -p 1 ./internal/server ./cmd/capy -run 'Test(Captured|ParallelBatchSmallBudget|RunCLI|MCPRunCaptureRecovery|MCPBatch|MCPExecuteFile|RunSearch)'` passed (31.850s / 63.180s; `c76c3ab2-cdab-46d3-b9a5-77f06c936851`), covering compiled recovery, flags, one execution and essential proof within 2-KiB response budgets.
+- **2026-10-23 — broader checks:** `go test -tags fts5,integration -race -count=1 -p 1 -timeout 20m ./internal/runstore ./internal/execution ./internal/hook` passed (141.252s / 62.285s / 8.015s; `a836c93f-35f2-4e6b-8fc0-1a74e0f204c6`). Affected-package FTS5 vet and full FTS5 build passed (`06692591-e213-45e9-b4de-e7f4046ef821`). These preceded the review correction below; affected paths are being reverified.
+- **2026-10-23 — quality comparison:** Immediate-base `e8dd899` and candidate `make bench-quality` both passed (`4d5c780f-a576-4745-8865-2b5cf2562a32`), with reports `bench-results/task7-base.json` and `task7-candidate.json`. Retrieval metrics, fixture hashes, post-processing deltas and six diagnostic match-layer mismatches are identical. Capture threshold responses grow by 60–62 bytes for cleanup metadata; all remain bounded and unindexed. These are single latency samples, not a performance-significance claim; executor algorithms and indexing/ranking are unchanged.
+- **2026-10-23 — independent review correction:** Isolated `kk:review-code` found one P2 contract issue: newly public cleanup exposed stale `not_spawned` admission snapshots after possible authorization when later refresh/terminal data was unavailable. Startup failures now reload durable proof where possible; uncertain single/batch handoff, terminal and final-refresh fallbacks report scoped `pending`. Known pre-start and persisted terminal outcomes remain distinct. Real-helper regressions close only the owner's storage handle while the helper retains its independent connection/leases, then verify conservative responses, exactly one execution and recovered `retired`/exit-7 history. Focused race checks passed (7.589s; `3ff3eb3a-6413-4f94-ac43-3bd2656065c7`). Full revalidation and independent re-review are pending; PAL is unavailable.
+
+- **2026-10-23 — final verification and completion:** On Linux 7.1.1 x86_64 / Go 1.27.2, corrected full execution integration race passed (67.291s), followed by selected server/CLI race checks (82.262s / 64.826s), affected-package FTS5 vet and the full FTS5 build (`ad50ada6-cb23-4706-8b2b-7464238df33b`). The public-test selector is the same one recorded above, now with `-race`. Final fixture cleanup/portable-recovery assertions passed separately (6.556s; `5ac344c4-d423-4e3f-aab1-c340425fec3f`). The immediate-base source with only that fixture added fails all three expected-pending assertions (`f1f68b99-928b-40ed-89e4-ef8594119494`); an earlier baseline attempt did not compile against the new list-summary field and is excluded from behavioral evidence (`971ecab6-f095-48a2-8a97-81e222940140`). Isolated code re-review approved all 29 changed files with no remaining findings; tests are author-attributed and PAL was unavailable. `kk:test` and `kk:document` completed, including the run reference's v2 and compatibility wording. No new conventions/findings need separate indexing because this record captures the result. Task 7 is done. Task 8 owns protocol-v2 production binding; native activation and release verification remain Tasks 9–13, with their existing owners and acceptance conditions.
 
 ## Task 8: Bind protocol-v2 proof through Linux execution
 
