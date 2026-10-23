@@ -5,21 +5,25 @@ import (
 	"errors"
 	"slices"
 	"time"
+
+	"github.com/serpro69/capy/internal/executor"
 )
 
 type SearchCoverage struct {
-	RunID           string           `json:"run_id"`
-	Index           Index            `json:"index"`
-	Bytes           map[string]int64 `json:"searched_bytes"`
-	OutputAvailable bool             `json:"output_available"`
+	Cleanup         executor.CleanupEvidence `json:"cleanup"`
+	RunID           string                   `json:"run_id"`
+	Index           Index                    `json:"index"`
+	Bytes           map[string]int64         `json:"searched_bytes"`
+	OutputAvailable bool                     `json:"output_available"`
 }
 
 func (s *Store) searchBatch(ctx context.Context, owner *Owner, o SearchOptions) (SearchPage, error) {
-	page := SearchPage{Version: 1, Kind: "query", BatchID: o.BatchID, QueryScope: o.QueryScope, Index: Index{State: "ready"}, Coverage: map[string]int64{}, Results: []QueryHits{}, Children: []SearchCoverage{}}
-	_, queries, children, err := s.batchSnapshot(ctx, o.BatchID)
+	page := SearchPage{Version: EnvelopeVersion, Kind: "query", BatchID: o.BatchID, QueryScope: o.QueryScope, Index: Index{State: "ready"}, Coverage: map[string]int64{}, Results: []QueryHits{}, Children: []SearchCoverage{}}
+	batch, queries, children, err := s.batchSnapshot(ctx, o.BatchID)
 	if err != nil {
 		return page, err
 	}
+	page.Cleanup = batch.Cleanup
 	if page.QueryScope == "" {
 		page.QueryScope = "batch"
 	}
@@ -45,7 +49,7 @@ func (s *Store) searchBatch(ctx context.Context, owner *Owner, o SearchOptions) 
 			break
 		}
 		child, err := s.Search(ctx, owner, SearchOptions{RunID: id, Queries: o.Queries, Limit: o.Limit})
-		coverage := SearchCoverage{RunID: id, Index: child.Index, Bytes: child.Coverage, OutputAvailable: true}
+		coverage := SearchCoverage{Cleanup: proof.result.Cleanup, RunID: id, Index: child.Index, Bytes: child.Coverage, OutputAvailable: true}
 		if err != nil {
 			page.Partial = true
 			var typed *Error

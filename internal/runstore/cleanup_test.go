@@ -83,7 +83,7 @@ func TestScopedCleanupTransitions(t *testing.T) {
 			require.Error(t, s.Finish(t.Context(), row.ID, Completion{Cleanup: proof}))
 			wire, err := json.Marshal(got.Result)
 			require.NoError(t, err)
-			require.NotContains(t, string(wire), `"cleanup"`, "Task 7 owns public v2 publication")
+			require.Contains(t, string(wire), `"cleanup":{"scope":"`+string(scope)+`","state":"`+string(complete)+`"}`)
 			expireRun(t, s, row.ID)
 			_, err = s.Maintain(t.Context())
 			require.NoError(t, err)
@@ -174,15 +174,25 @@ func TestScopedBatchProofSurvivesEviction(t *testing.T) {
 			b, err = s.BatchStatus(t.Context(), b.BatchID)
 			require.NoError(t, err)
 			require.Equal(t, executor.CleanupEvidence{Scope: scope, State: completed}, b.Cleanup)
+			requirePublicCleanup(t, b, b.Cleanup)
 			list, err := s.List(t.Context(), ListOptions{BatchID: b.BatchID, Limit: 10})
 			require.NoError(t, err)
 			require.Len(t, list.Entries, 2)
 			for _, child := range list.Entries {
 				require.False(t, child.OutputAvailable)
+				requirePublicCleanup(t, child, child.Cleanup)
+				require.Equal(t, scope, child.Cleanup.Scope)
 			}
 			page, err := s.Search(t.Context(), o, SearchOptions{BatchID: b.BatchID, Queries: []string{"marker"}, Limit: 1})
 			require.NoError(t, err, "proof snapshot must release the one-connection pool before indexing")
 			require.Len(t, page.Children, 2)
+			requirePublicCleanup(t, page, b.Cleanup)
+			require.Equal(t, completed, page.Children[0].Cleanup.State)
+			require.Equal(t, executor.CleanupNotSpawned, page.Children[1].Cleanup.State)
+			for _, child := range page.Children {
+				requirePublicCleanup(t, child, child.Cleanup)
+				require.Equal(t, scope, child.Cleanup.Scope)
+			}
 		})
 	}
 }

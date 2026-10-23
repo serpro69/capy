@@ -63,32 +63,24 @@ func validateTerminal(c executor.CleanupEvidence, r Result, terminal bool) error
 	return nil
 }
 
-// Private schema-9 manifest format. Public Result retains its v1 wire shape
-// until Task 7; the row columns remain authoritative while a run is retained.
-type manifestResult struct {
-	Result
-	Cleanup executor.CleanupEvidence `json:"cleanup"`
-}
-
 func encodeManifest(r Result) ([]byte, error) {
 	if err := ValidateCleanup(r.Cleanup); err != nil {
 		return nil, err
 	}
-	r.Version = 2 // private canonical proof; public publication remains Task 7
-	return json.Marshal(manifestResult{Result: r, Cleanup: r.Cleanup})
+	r.Version = EnvelopeVersion
+	return json.Marshal(r)
 }
 
 func decodeManifest(encoded []byte) (Result, error) {
-	var stored manifestResult
+	var stored Result
 	if err := json.Unmarshal(encoded, &stored); err != nil {
 		return Result{}, storageError()
 	}
 	if stored.Version != 1 && stored.Version != 2 {
 		return Result{}, storageError()
 	}
-	stored.Result.Version = 1 // preserve the public v1 adapter until Task 7
-	stored.Result.Cleanup = stored.Cleanup
-	return stored.Result, ValidateCleanup(stored.Cleanup)
+	stored.Version = EnvelopeVersion
+	return stored, ValidateCleanup(stored.Cleanup)
 }
 
 // validateRunManifest compares proof copies under the caller's transaction.
@@ -128,7 +120,7 @@ func retainedCleanup(ctx context.Context, tx *sql.Tx, id string) (executor.Clean
 		return c, storageError()
 	}
 	var r Result
-	if json.Unmarshal(encoded, &r) != nil {
+	if decodeRunResult(encoded, c, &r) != nil {
 		return c, storageError()
 	}
 	return c, validateTerminal(c, r, terminal)

@@ -156,6 +156,9 @@ func (s *Service) executeResponse(ctx context.Context, request executor.ExecRequ
 			s.mu.Unlock()
 			current = s.withPreview(queryCtx, st, current)
 		}
+	} else {
+		current.Cleanup.State = executor.CleanupPending
+		current.Error = &runstore.Error{Code: "storage_unavailable", Message: "run status refresh failed; recover the admitted run before retrying"}
 	}
 	stopQuery()
 	if err := prepare(current); err != nil {

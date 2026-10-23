@@ -69,7 +69,7 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 			return operationError(err)
 		}
 		response, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
-			body := map[string]any{"version": 1, "kind": "query", "batch": execution.BoundBatch(result, n)}
+			body := map[string]any{"version": runstore.EnvelopeVersion, "kind": "query", "batch": execution.BoundBatch(result, n)}
 			if action == "cancel" {
 				body["cancel_requested"] = requested
 			}
@@ -169,7 +169,7 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 			return operationError(err)
 		}
 		r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
-			body := map[string]any{"version": 1, "kind": "query", "run": execution.BoundResult(result, n)}
+			body := map[string]any{"version": runstore.EnvelopeVersion, "kind": "query", "run": execution.BoundResult(result, n)}
 			if action == "cancel" {
 				body["cancel_requested"] = requested
 			}

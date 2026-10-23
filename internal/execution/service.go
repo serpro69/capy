@@ -251,6 +251,11 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 			}
 			// Unknown proof still quarantines; this helper has already been joined.
 			result := row.Result
+			if err == nil {
+				result = latest.Result
+			} else {
+				result.Cleanup.State = executor.CleanupPending
+			}
 			result.State = "interrupted"
 			reason := "supervisor_startup_failed"
 			result.Reason = &reason
@@ -266,6 +271,16 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 		call.cleanup = make(chan struct{})
 		go func() { h.Wait(); close(call.cleanup) }()
 		result := row.Result
+		// Launch can fail after attempting start authorization. The admission
+		// snapshot is no longer evidence that no command phase was started.
+		queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		latest, err := st.Load(queryCtx, row.ID)
+		cancel()
+		if err == nil {
+			result = latest.Result
+		} else {
+			result.Cleanup.State = executor.CleanupPending
+		}
 		result.State = "interrupted"
 		reason := "supervisor_startup_failed"
 		result.Reason = &reason
@@ -303,6 +318,8 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	result := row.Result
 	if readErr == nil {
 		result = latest.Result
+	} else {
+		result.Cleanup.State = executor.CleanupPending
 	}
 	result.State = "interrupted"
 	result.Capture.State = "incomplete"

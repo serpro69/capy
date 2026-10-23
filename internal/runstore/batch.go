@@ -68,7 +68,7 @@ func (b BatchInput) Validate() error {
 }
 
 type BatchResult struct {
-	Cleanup              executor.CleanupEvidence `json:"-"`
+	Cleanup              executor.CleanupEvidence `json:"cleanup"`
 	Capacity             *Capacity                `json:"capacity,omitempty"`
 	Version              int                      `json:"version"`
 	Kind                 string                   `json:"kind"`
@@ -238,7 +238,7 @@ func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, cleanupScope execu
 	}
 	// Construct from committed admission; a post-commit read failure must never
 	// misreport this non-idempotent admission as an unstarted rejection.
-	result := BatchResult{Version: 1, Kind: "batch", BatchID: id, OwnerID: owner.ID, OwnerType: "mcp", State: "queued", RequestedConcurrency: input.Concurrency, EffectiveConcurrency: input.EffectiveConcurrency, Counts: map[string]int{"queued": len(rows)}, ChildrenAction: "capy_runs(action=list,batch_id=" + id + ")"}
+	result := BatchResult{Version: EnvelopeVersion, Kind: "batch", BatchID: id, OwnerID: owner.ID, OwnerType: "mcp", State: "queued", RequestedConcurrency: input.Concurrency, EffectiveConcurrency: input.EffectiveConcurrency, Counts: map[string]int{"queued": len(rows)}, ChildrenAction: "capy_runs(action=list,batch_id=" + id + ")"}
 	result.Cleanup = rows[0].Cleanup
 	if len(input.Queries) > 0 {
 		result.SearchAction = &BatchSearchRequest{Action: "search", BatchID: id, QueryScope: scope}
@@ -288,7 +288,7 @@ func (s *Store) batchMetadata(ctx context.Context, id string) (BatchResult, []st
 }
 
 func batchMetadata(ctx context.Context, query runQuerier, id string) (BatchResult, []string, string, error) {
-	b := BatchResult{Version: 1, Kind: "batch", BatchID: id, OwnerType: "mcp", Counts: map[string]int{}, ChildrenAction: "capy_runs(action=list,batch_id=" + id + ")"}
+	b := BatchResult{Version: EnvelopeVersion, Kind: "batch", BatchID: id, OwnerType: "mcp", Counts: map[string]int{}, ChildrenAction: "capy_runs(action=list,batch_id=" + id + ")"}
 	if uuid.Validate(id) != nil {
 		return b, nil, "", failure("invalid_argument", "batch_id must be a UUID")
 	}

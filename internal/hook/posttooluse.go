@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/serpro69/capy/internal/adapter"
+	"github.com/serpro69/capy/internal/executor"
 )
 
 func handlePostToolUse(input []byte, event *adapter.PreToolUseEvent, ctx hookContext, platform adapter.Platform) ([]byte, error) {
@@ -108,7 +109,7 @@ func healthyExecuteObservation(response any, depth int) bool {
 		if structuredSeen {
 			return true
 		}
-		for _, field := range []string{"version", "kind", "run_id", "state", "capture"} {
+		for _, field := range []string{"version", "kind", "run_id", "state", "capture", "cleanup"} {
 			if _, exists := value[field]; exists {
 				return healthyRunEnvelope(value)
 			}
@@ -125,7 +126,16 @@ func healthyExecuteObservation(response any, depth int) bool {
 
 func healthyRunEnvelope(value map[string]any) bool {
 	id, ok := value["run_id"].(string)
-	if !ok || strings.TrimSpace(id) == "" || value["version"] != float64(1) || value["kind"] != "run" || toolFailure(value) || value["signal"] != nil {
+	if !ok || strings.TrimSpace(id) == "" || value["kind"] != "run" || toolFailure(value) || value["signal"] != nil {
+		return false
+	}
+	switch value["version"] {
+	case float64(1): // Preserve the Linux-era envelope interpretation.
+	case float64(2):
+		if !healthyScopedCleanup(value) {
+			return false
+		}
+	default:
 		return false
 	}
 	capture, ok := value["capture"].(map[string]any)
@@ -137,6 +147,36 @@ func healthyRunEnvelope(value map[string]any) bool {
 		return capture["state"] == "recording" && value["exit_code"] == nil
 	case "exited":
 		return value["exit_code"] == float64(0) && capture["state"] == "complete" && capture["terminal_persisted"] == true
+	default:
+		return false
+	}
+}
+
+func healthyScopedCleanup(value map[string]any) bool {
+	cleanup, ok := value["cleanup"].(map[string]any)
+	if !ok || len(cleanup) != 2 || value["error"] != nil {
+		return false
+	}
+	if _, exists := value["exit_code"]; !exists {
+		return false
+	}
+	if _, exists := value["signal"]; !exists {
+		return false
+	}
+	var completed string
+	switch cleanup["scope"] {
+	case string(executor.CleanupLinuxDescendants):
+		completed = string(executor.CleanupRetired)
+	case string(executor.CleanupDarwinObservation):
+		completed = string(executor.CleanupObserved)
+	default:
+		return false
+	}
+	switch value["state"] {
+	case "running":
+		return cleanup["state"] == string(executor.CleanupPending)
+	case "exited":
+		return cleanup["state"] == completed
 	default:
 		return false
 	}

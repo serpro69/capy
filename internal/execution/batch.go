@@ -108,6 +108,9 @@ func (s *Service) ExecuteBatchResponse(ctx context.Context, input runstore.Batch
 	queryCtx, stop := context.WithTimeout(jobCtx, 3*time.Second)
 	if latest, err := s.BatchStatus(queryCtx, current.BatchID); err == nil {
 		current = latest
+	} else {
+		current.Cleanup.State = executor.CleanupPending
+		current.Error = &runstore.Error{Code: "storage_unavailable", Message: "batch status refresh failed; recover the admitted batch before retrying"}
 	}
 	stop()
 	if err := prepare(current); err != nil {
@@ -227,6 +230,7 @@ func (s *Service) runBatch(ctx context.Context, input runstore.BatchInput, timeo
 		return latest
 	}
 	result.Error = &runstore.Error{Code: "storage_unavailable", Message: "batch status refresh failed; recover the admitted batch before retrying"}
+	result.Cleanup.State = executor.CleanupPending
 	return result
 }
 
@@ -251,7 +255,7 @@ func (s *Service) finishBatchChild(queue *batchQueue, child batchChild, outcome 
 
 func batchRejection(err error) runstore.BatchResult {
 	r := reject(err)
-	return runstore.BatchResult{Version: 1, Kind: "rejection", State: "not_started", Error: r.Error}
+	return runstore.BatchResult{Version: runstore.EnvelopeVersion, Kind: "rejection", State: "not_started", Error: r.Error}
 }
 
 func (s *Service) BatchStatus(ctx context.Context, id string) (runstore.BatchResult, error) {

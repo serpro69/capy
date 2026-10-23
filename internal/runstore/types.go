@@ -8,6 +8,9 @@ import (
 	"github.com/serpro69/capy/internal/executor"
 )
 
+// EnvelopeVersion applies to public responses, not cursors, redaction or helper IPC.
+const EnvelopeVersion = 2
+
 type Error struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -37,8 +40,7 @@ type Index struct {
 }
 
 type Result struct {
-	// Task 7 publishes this in v2. Private manifest copies already persist it.
-	Cleanup         executor.CleanupEvidence `json:"-"`
+	Cleanup         executor.CleanupEvidence `json:"cleanup"`
 	BatchID         string                   `json:"batch_id,omitempty"`
 	Capacity        *Capacity                `json:"capacity,omitempty"`
 	Preview         string                   `json:"preview,omitempty"`
@@ -79,7 +81,7 @@ type Capacity struct {
 }
 
 func Rejection(code, message string) Result {
-	return Result{Version: 1, Kind: "rejection", State: "not_started", Capture: Capture{State: "not_started"},
+	return Result{Version: EnvelopeVersion, Kind: "rejection", State: "not_started", Capture: Capture{State: "not_started"},
 		Redaction: Projection{Version: 1, State: "unavailable"}, Index: Index{State: "not_requested"}, Error: &Error{Code: code, Message: message}}
 }
 

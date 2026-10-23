@@ -95,7 +95,7 @@ func newRunQueryCmd(action string) *cobra.Command {
 			if action == "status" && batchID != "" {
 				result, err := service.BatchStatus(ctx, batchID)
 				bounded := execution.BoundBatch(result, n)
-				return runQueryResult{Version: 1, Kind: "query", Batch: &bounded}, err
+				return runQueryResult{Version: runstore.EnvelopeVersion, Kind: "query", Batch: &bounded}, err
 			}
 			return runQuery(ctx, service, action, id, runstore.ReadOptions{Stream: stream, Cursor: cursor, StartLine: startLine, MaxBytes: min(maxBytes, max(1, n)), Raw: raw}, runstore.ListOptions{BatchID: batchID, States: states, Cursor: cursor, Limit: min(limit, max(1, n/256))}, n)
 		}, encode)
@@ -139,7 +139,7 @@ func runQuery(ctx context.Context, service *execution.Service, action, id string
 			return nil, err
 		}
 		result = execution.BoundResult(result, n)
-		return runQueryResult{Version: 1, Kind: "query", Run: &result}, nil
+		return runQueryResult{Version: runstore.EnvelopeVersion, Kind: "query", Run: &result}, nil
 	case "read":
 		page, err := service.Read(ctx, id, read)
 		if err != nil {

@@ -225,7 +225,7 @@ func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
 	if err := tx.QueryRowContext(ctx, "SELECT json_extract(CAST(program AS TEXT),'$.ttl_hours'),result,generation,cleanup_scope,cleanup FROM runs WHERE id=?", id).Scan(&row.Program.TTLHours, &result, &row.Generation, &row.Cleanup.Scope, &row.Cleanup.State); err != nil {
 		return metadataFailure(ctx, "reading recovery metadata")
 	}
-	if json.Unmarshal(result, &row.Result) != nil || row.Program.TTLHours <= 0 || int64(row.Program.TTLHours) > (1<<63-1)/int64(time.Hour) {
+	if decodeRunResult(result, row.Cleanup, &row.Result) != nil || row.Program.TTLHours <= 0 || int64(row.Program.TTLHours) > (1<<63-1)/int64(time.Hour) {
 		return storageError()
 	}
 	if !CleanupAccepted(row.Cleanup) {

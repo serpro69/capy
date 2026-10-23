@@ -96,7 +96,7 @@ FROM runs WHERE id=? AND evicting=0`, id).Scan(&row.Generation, &row.Slot, &prog
 	if err != nil {
 		return row, storageError()
 	}
-	if json.Unmarshal(program, &row.Program) != nil || json.Unmarshal(result, &row.Result) != nil {
+	if json.Unmarshal(program, &row.Program) != nil || decodeRunResult(result, row.Cleanup, &row.Result) != nil {
 		return row, storageError()
 	}
 	row.Result.Cleanup = row.Cleanup
@@ -300,7 +300,7 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 	if err := tx.QueryRowContext(ctx, "SELECT program,result,generation,cleanup_scope,cleanup,terminal FROM runs WHERE id=?", id).Scan(&program, &result, &row.Generation, &row.Cleanup.Scope, &row.Cleanup.State, &terminal); err != nil {
 		return storageError()
 	}
-	if json.Unmarshal(program, &row.Program) != nil || json.Unmarshal(result, &row.Result) != nil {
+	if json.Unmarshal(program, &row.Program) != nil || decodeRunResult(result, row.Cleanup, &row.Result) != nil {
 		return storageError()
 	}
 	if err := validateTerminal(row.Cleanup, row.Result, terminal); err != nil {
@@ -455,7 +455,7 @@ func (s *Store) prepareRun(owner *Owner, scope executor.CleanupScope, program Pr
 	if ownerType != "mcp" && ownerType != "cli" {
 		return Admitted{}, nil, nil, failure("invalid_argument", "invalid execution owner type")
 	}
-	result := Result{Cleanup: cleanup, Version: 1, Kind: "run", RunID: &id, OwnerID: owner.ID, OwnerType: ownerType, State: "admitted",
+	result := Result{Cleanup: cleanup, Version: EnvelopeVersion, Kind: "run", RunID: &id, OwnerID: owner.ID, OwnerType: ownerType, State: "admitted",
 		Capture: Capture{State: "not_started"}, Redaction: Projection{Version: sanitize.StreamVersion, State: "ready"}, Index: Index{State: "not_requested"}}
 	if program.Intent != "" {
 		result.Index.State = "building"
