@@ -200,8 +200,9 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 }
 
 func charge(ctx context.Context, tx *sql.Tx, id string, amount, limit int64, expire bool) error {
-	ctx, cancel := context.WithTimeout(ctx, WriteTimeout)
-	defer cancel()
+	// Callers own the budget: admission has its bounded recovery/admission
+	// context, while appendBatch already supplies the 250-ms capture deadline.
+	// Reapplying that shorter deadline here can cancel valid large admissions.
 	for {
 		report, err := retain(ctx, tx, limit, amount, expire)
 		if err != nil {
@@ -218,10 +219,10 @@ func charge(ctx context.Context, tx *sql.Tx, id string, amount, limit int64, exp
 		// the first 64-victim boundary for actual quota exhaustion.
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE run_meta SET accounted_bytes=accounted_bytes+? WHERE singleton=1", amount); err != nil {
-		return storageError()
+		return metadataFailure(ctx, "charging retained run bytes")
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE runs SET accounted_bytes=accounted_bytes+? WHERE id=?", amount, id); err != nil {
-		return storageError()
+		return metadataFailure(ctx, "charging run metadata")
 	}
 	used, err := refreshIndexDebit(ctx, tx)
 	if err != nil {
