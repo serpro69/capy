@@ -193,7 +193,7 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=? AND generation=?)`, slot, g
 		report.DeferredSlots = 1
 	}
 	if err := tx.Commit(); err != nil {
-		return RecoveryReport{}, recoveryFailure(writeCtx, "committing recovered metadata")
+		return RecoveryReport{}, metadataFailure(writeCtx, "committing recovered metadata")
 	}
 	return report, nil
 }
@@ -223,7 +223,7 @@ func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
 	var result []byte
 	row := Admitted{ID: id}
 	if err := tx.QueryRowContext(ctx, "SELECT json_extract(CAST(program AS TEXT),'$.ttl_hours'),result,generation,cleanup_scope,cleanup FROM runs WHERE id=?", id).Scan(&row.Program.TTLHours, &result, &row.Generation, &row.Cleanup.Scope, &row.Cleanup.State); err != nil {
-		return recoveryFailure(ctx, "reading recovery metadata")
+		return metadataFailure(ctx, "reading recovery metadata")
 	}
 	if json.Unmarshal(result, &row.Result) != nil || row.Program.TTLHours <= 0 || int64(row.Program.TTLHours) > (1<<63-1)/int64(time.Hour) {
 		return storageError()
@@ -269,14 +269,14 @@ func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
 		return storageError()
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,terminal=1,completed_at=?,expires_at=? WHERE id=? AND generation=? AND cleanup_scope=?", encoded, row.Result.CompletedAt.UnixNano(), row.Result.ExpiresAt.UnixMilli()+1, id, row.Generation, row.Cleanup.Scope); err != nil {
-		return recoveryFailure(ctx, "writing recovered metadata")
+		return metadataFailure(ctx, "writing recovered metadata")
 	}
 	return syncBatchChild(ctx, tx, row.Result, true)
 }
 
 // Keep backend/stored text private while exposing the failed phase and causal
 // cancellation. These diagnostics distinguish a deadline from path permissions.
-func recoveryFailure(ctx context.Context, phase string) error {
+func metadataFailure(ctx context.Context, phase string) error {
 	return fmt.Errorf("%s: %w", phase, errors.Join(storageError(), ctx.Err()))
 }
 

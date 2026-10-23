@@ -62,3 +62,49 @@ func TestRecoveryMetadataUsesRecoveryBudget(t *testing.T) {
 		})
 	}
 }
+
+func TestAdmissionAccountingPreservesCallerBudgets(t *testing.T) {
+	s, o := retentionStore(t, 16<<20)
+	conn, err := s.db.Conn(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, conn.Raw(func(driver any) error {
+		return driver.(*sqlite3.SQLiteConn).RegisterFunc("slow_accounting", func() int {
+			time.Sleep(350 * time.Millisecond)
+			return 0
+		}, false)
+	}))
+	require.NoError(t, conn.Close())
+	_, err = s.db.ExecContext(t.Context(), "CREATE TRIGGER slow_charge BEFORE UPDATE OF accounted_bytes ON runs BEGIN SELECT slow_accounting(); END")
+	require.NoError(t, err)
+	program := Program{Request: executor.ExecRequest{Language: executor.Shell, Code: "#" + strings.Repeat("<", (1<<20)-1)}}
+	row, err := s.Admit(t.Context(), o, executor.CleanupLinuxDescendants, program)
+	require.NoError(t, err, "valid admission may use its bounded admission budget")
+	before := accounted(t, s)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	_, err = s.Admit(ctx, o, executor.CleanupLinuxDescendants, Program{})
+	cancel()
+	require.Error(t, err, "earlier caller cancellation must still abort admission")
+	require.Equal(t, before, accounted(t, s))
+	// Cancellation can retire a driver connection. Install the function on the
+	// current connection before exercising the separate capture-write boundary.
+	conn, err = s.db.Conn(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, conn.Raw(func(driver any) error {
+		return driver.(*sqlite3.SQLiteConn).RegisterFunc("slow_accounting", func() int {
+			time.Sleep(350 * time.Millisecond)
+			return 0
+		}, false)
+	}))
+	require.NoError(t, conn.Close())
+	require.NoError(t, s.Pending(t.Context(), row.ID, o.ID, executor.CleanupLinuxDescendants))
+	require.NoError(t, s.Started(t.Context(), row.ID))
+	err = s.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: []byte("must roll back")})
+	require.Error(t, err, "capture append must keep its shorter write deadline")
+	var events int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM run_events WHERE run_id=?", row.ID).Scan(&events))
+	require.Zero(t, events)
+	require.Equal(t, before, accounted(t, s), "failed capture cannot charge uncommitted payload")
+	_, err = s.db.ExecContext(t.Context(), "DROP TRIGGER slow_charge")
+	require.NoError(t, err)
+	require.NoError(t, s.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, CaptureLost: true}))
+}
