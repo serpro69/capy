@@ -17,16 +17,23 @@ func (s Startup) MarshalJSON() ([]byte, error) {
 }
 
 func (s *Startup) UnmarshalJSON(data []byte) error {
+	fields, err := exactFields(data, "version", "run_id", "generation", "store_path", "deadline", "exchange_id", "cleanup_scope")
+	if err != nil {
+		return err
+	}
+	if bytes.HasPrefix(fields["store_path"], []byte("{")) {
+		if _, err := exactFields(fields["store_path"], "bytes"); err != nil {
+			return err
+		}
+	}
 	var wire struct {
 		startupFields
 		StorePath executor.ByteString `json:"store_path"`
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&wire); err != nil {
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
 	*s = Startup(wire.startupFields)
 	s.StorePath = string(wire.StorePath)
-	return nil
+	return s.validate()
 }

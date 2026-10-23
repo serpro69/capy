@@ -23,8 +23,8 @@ type batchListCursor struct {
 }
 
 func (s *Store) listBatch(ctx context.Context, o ListOptions) (ListPage, error) {
-	page := ListPage{Version: 1, Kind: "query", BatchID: o.BatchID, Entries: []Summary{}}
-	batch, _, _, err := s.batchMetadata(ctx, o.BatchID)
+	page := ListPage{Version: EnvelopeVersion, Kind: "query", BatchID: o.BatchID, Entries: []Summary{}}
+	batch, _, children, err := s.batchSnapshot(ctx, o.BatchID)
 	if err != nil {
 		return page, err
 	}
@@ -59,24 +59,10 @@ func (s *Store) listBatch(ctx context.Context, o ListOptions) (ListPage, error) 
 		}
 		states = embedded
 	}
-	query := `SELECT c.ordinal,c.run_id,c.label,c.result,b.created_at,c.terminal,
- EXISTS(SELECT 1 FROM runs r WHERE r.id=c.run_id AND r.evicting=0 AND (r.expires_at IS NULL OR r.expires_at>?))
- FROM run_batch_children c JOIN run_batches b ON b.id=c.batch_id WHERE c.batch_id=? AND c.ordinal>?`
-	args := []any{time.Now().UTC().UnixMilli(), o.BatchID, c.Ordinal}
-	if len(states) > 0 {
-		query += ` AND json_extract(CAST(c.result AS TEXT),'$.state') IN (` + strings.TrimSuffix(strings.Repeat("?,", len(states)), ",") + `)`
-		for _, state := range states {
-			args = append(args, state)
+	for _, child := range children {
+		if child.ordinal <= c.Ordinal || len(states) > 0 && !slices.Contains(states, child.result.State) {
+			continue
 		}
-	}
-	query += " ORDER BY c.ordinal LIMIT ?"
-	args = append(args, o.Limit+1)
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return page, storageError()
-	}
-	defer rows.Close()
-	for rows.Next() {
 		if len(page.Entries) == o.Limit {
 			data, err := json.Marshal(c)
 			if err != nil {
@@ -86,19 +72,13 @@ func (s *Store) listBatch(ctx context.Context, o ListOptions) (ListPage, error) 
 			page.NextCursor = &next
 			break
 		}
-		var entry Summary
-		var result Result
-		var encoded []byte
-		var created int64
-		var ordinal int
-		var terminal bool
-		var label string
-		if rows.Scan(&ordinal, &entry.RunID, &label, &encoded, &created, &terminal, &entry.OutputAvailable) != nil || json.Unmarshal(encoded, &result) != nil {
-			return page, storageError()
-		}
+		entry := Summary{RunID: child.id, OutputAvailable: child.outputAvailable}
+		result, terminal := child.result, child.terminal
+		created, ordinal, label := child.created, child.ordinal, child.label
 		if batch.Error != nil && !terminal {
 			markUnverified(&result)
 		}
+		entry.Cleanup = result.Cleanup
 		entry.BatchID = o.BatchID
 		entry.Ordinal = &ordinal
 		entry.Label = sanitize.StripSecrets(label)
@@ -119,9 +99,6 @@ func (s *Store) listBatch(ctx context.Context, o ListOptions) (ListPage, error) 
 		page.Entries = append(page.Entries, entry)
 		c.Ordinal = ordinal
 		c.States = states
-	}
-	if rows.Err() != nil {
-		return page, storageError()
 	}
 	return page, nil
 }

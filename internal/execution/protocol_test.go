@@ -36,7 +36,7 @@ func TestPrivateProtocolBounds(t *testing.T) {
 		})
 	}
 	var b bytes.Buffer
-	if err := writeFrame(&b, control{Action: "start"}); err != nil {
+	if err := writeFrame(&b, control{Version: protocolVersion, ExchangeID: exchangeTestID, Action: "start", CleanupScope: linuxExchangeScope}); err != nil {
 		t.Fatal(err)
 	}
 	var got control
@@ -49,7 +49,7 @@ func TestPrivateProtocolBounds(t *testing.T) {
 }
 
 func TestStartupValidation(t *testing.T) {
-	valid := Startup{Version: 1, RunID: "11111111-1111-4111-8111-111111111111", Generation: "22222222-2222-4222-8222-222222222222", StorePath: "/test/runs.db"}
+	valid := Startup{Version: protocolVersion, ExchangeID: exchangeTestID, CleanupScope: linuxExchangeScope, RunID: "11111111-1111-4111-8111-111111111111", Generation: "22222222-2222-4222-8222-222222222222", StorePath: "/test/runs.db"}
 	if err := valid.validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestStartupValidation(t *testing.T) {
 }
 
 func TestStartupBytePathPreservesStrictProtocol(t *testing.T) {
-	start := Startup{Version: 1, RunID: "11111111-1111-4111-8111-111111111111", Generation: "22222222-2222-4222-8222-222222222222", StorePath: "/owner-\xff/runs.db"}
+	start := Startup{Version: protocolVersion, ExchangeID: exchangeTestID, CleanupScope: linuxExchangeScope, RunID: "11111111-1111-4111-8111-111111111111", Generation: "22222222-2222-4222-8222-222222222222", StorePath: "/owner-\xff/runs.db"}
 	var frame bytes.Buffer
 	if err := writeFrame(&frame, start); err != nil {
 		t.Fatal(err)

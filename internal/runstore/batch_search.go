@@ -5,21 +5,25 @@ import (
 	"errors"
 	"slices"
 	"time"
+
+	"github.com/serpro69/capy/internal/executor"
 )
 
 type SearchCoverage struct {
-	RunID           string           `json:"run_id"`
-	Index           Index            `json:"index"`
-	Bytes           map[string]int64 `json:"searched_bytes"`
-	OutputAvailable bool             `json:"output_available"`
+	Cleanup         executor.CleanupEvidence `json:"cleanup"`
+	RunID           string                   `json:"run_id"`
+	Index           Index                    `json:"index"`
+	Bytes           map[string]int64         `json:"searched_bytes"`
+	OutputAvailable bool                     `json:"output_available"`
 }
 
 func (s *Store) searchBatch(ctx context.Context, owner *Owner, o SearchOptions) (SearchPage, error) {
-	page := SearchPage{Version: 1, Kind: "query", BatchID: o.BatchID, QueryScope: o.QueryScope, Index: Index{State: "ready"}, Coverage: map[string]int64{}, Results: []QueryHits{}, Children: []SearchCoverage{}}
-	_, queries, _, err := s.batchMetadata(ctx, o.BatchID)
+	page := SearchPage{Version: EnvelopeVersion, Kind: "query", BatchID: o.BatchID, QueryScope: o.QueryScope, Index: Index{State: "ready"}, Coverage: map[string]int64{}, Results: []QueryHits{}, Children: []SearchCoverage{}}
+	batch, queries, children, err := s.batchSnapshot(ctx, o.BatchID)
 	if err != nil {
 		return page, err
 	}
+	page.Cleanup = batch.Cleanup
 	if page.QueryScope == "" {
 		page.QueryScope = "batch"
 	}
@@ -30,38 +34,22 @@ func (s *Store) searchBatch(ctx context.Context, owner *Owner, o SearchOptions) 
 		return page, failure("invalid_argument", "batch has no stored queries; supply queries")
 	}
 	page.Queries = append([]string(nil), o.Queries...)
-	// Snapshot only bounded identities; close rows before using the one-connection
-	// pool for indexing. Results remain live retained coverage, not a DB snapshot.
-	rows, err := s.db.QueryContext(ctx, "SELECT run_id FROM run_batch_children WHERE batch_id=? ORDER BY ordinal", o.BatchID)
-	if err != nil {
-		return page, storageError()
-	}
-	ids := make([]string, 0, 256)
-	for rows.Next() {
-		var id string
-		if rows.Scan(&id) != nil {
-			rows.Close()
-			return page, storageError()
-		}
-		ids = append(ids, id)
-	}
-	readErr, closeErr := rows.Err(), rows.Close()
-	if readErr != nil || closeErr != nil {
-		return page, storageError()
-	}
+	// Proof and retained-row comparisons were snapshotted together above; the
+	// transaction is closed before indexing uses the one-connection pool.
 	ranked := make([][]batchRankedHit, len(o.Queries))
 	for i := range o.Queries {
 		page.Results = append(page.Results, QueryHits{Query: i, Hits: []SearchHit{}})
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	for _, id := range ids {
+	for _, proof := range children {
+		id := proof.id
 		if ctx.Err() != nil {
 			page.Partial = true
 			break
 		}
 		child, err := s.Search(ctx, owner, SearchOptions{RunID: id, Queries: o.Queries, Limit: o.Limit})
-		coverage := SearchCoverage{RunID: id, Index: child.Index, Bytes: child.Coverage, OutputAvailable: true}
+		coverage := SearchCoverage{Cleanup: proof.result.Cleanup, RunID: id, Index: child.Index, Bytes: child.Coverage, OutputAvailable: true}
 		if err != nil {
 			page.Partial = true
 			var typed *Error

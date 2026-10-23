@@ -8,6 +8,9 @@ import (
 	"github.com/serpro69/capy/internal/executor"
 )
 
+// EnvelopeVersion applies to public responses, not cursors, redaction or helper IPC.
+const EnvelopeVersion = 2
+
 type Error struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -37,27 +40,28 @@ type Index struct {
 }
 
 type Result struct {
-	BatchID         string     `json:"batch_id,omitempty"`
-	Capacity        *Capacity  `json:"capacity,omitempty"`
-	Preview         string     `json:"preview,omitempty"`
-	MetadataOmitted bool       `json:"metadata_omitted,omitempty"`
-	Version         int        `json:"version"`
-	Kind            string     `json:"kind"`
-	RunID           *string    `json:"run_id"`
-	OwnerID         string     `json:"owner_id,omitempty"`
-	OwnerType       string     `json:"owner_type,omitempty"`
-	State           string     `json:"state"`
-	ExitCode        *int       `json:"exit_code"`
-	Signal          *int       `json:"signal"`
-	Reason          *string    `json:"reason"`
-	StartedAt       *time.Time `json:"started_at"`
-	CompletedAt     *time.Time `json:"completed_at"`
-	ElapsedMS       int64      `json:"elapsed_ms"`
-	Capture         Capture    `json:"capture"`
-	Redaction       Projection `json:"redaction"`
-	Index           Index      `json:"index"`
-	ExpiresAt       *time.Time `json:"expires_at"`
-	Error           *Error     `json:"error"`
+	Cleanup         executor.CleanupEvidence `json:"cleanup"`
+	BatchID         string                   `json:"batch_id,omitempty"`
+	Capacity        *Capacity                `json:"capacity,omitempty"`
+	Preview         string                   `json:"preview,omitempty"`
+	MetadataOmitted bool                     `json:"metadata_omitted,omitempty"`
+	Version         int                      `json:"version"`
+	Kind            string                   `json:"kind"`
+	RunID           *string                  `json:"run_id"`
+	OwnerID         string                   `json:"owner_id,omitempty"`
+	OwnerType       string                   `json:"owner_type,omitempty"`
+	State           string                   `json:"state"`
+	ExitCode        *int                     `json:"exit_code"`
+	Signal          *int                     `json:"signal"`
+	Reason          *string                  `json:"reason"`
+	StartedAt       *time.Time               `json:"started_at"`
+	CompletedAt     *time.Time               `json:"completed_at"`
+	ElapsedMS       int64                    `json:"elapsed_ms"`
+	Capture         Capture                  `json:"capture"`
+	Redaction       Projection               `json:"redaction"`
+	Index           Index                    `json:"index"`
+	ExpiresAt       *time.Time               `json:"expires_at"`
+	Error           *Error                   `json:"error"`
 }
 
 type ActiveRun struct {
@@ -77,7 +81,7 @@ type Capacity struct {
 }
 
 func Rejection(code, message string) Result {
-	return Result{Version: 1, Kind: "rejection", State: "not_started", Capture: Capture{State: "not_started"},
+	return Result{Version: EnvelopeVersion, Kind: "rejection", State: "not_started", Capture: Capture{State: "not_started"},
 		Redaction: Projection{Version: 1, State: "unavailable"}, Index: Index{State: "not_requested"}, Error: &Error{Code: code, Message: message}}
 }
 
@@ -98,16 +102,17 @@ type Admitted struct {
 	Slot           int
 	Program        Program
 	Result         Result
-	Cleanup        string
+	Cleanup        executor.CleanupEvidence
 }
 
 type Completion struct {
-	SpawnCode                     int
-	Started, Retired, CaptureLost bool
-	ExitCode                      *int
-	Signal                        int
-	Reason, CaptureReason         string
-	ObservedBytes, ElapsedMS      int64
+	Cleanup                  executor.CleanupEvidence
+	SpawnCode                int
+	Started, CaptureLost     bool
+	ExitCode                 *int
+	Signal                   int
+	Reason, CaptureReason    string
+	ObservedBytes, ElapsedMS int64
 }
 
 type Fragment struct {

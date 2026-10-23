@@ -19,17 +19,19 @@ const diagnosticRunLimit = 8
 // Diagnostics is a read-only snapshot. Unfinished records are not proof of live
 // processes: inspection deliberately does not reconcile owners or retire runs.
 type Diagnostics struct {
-	Exists           bool
-	Policy           Policy
-	AccountedBytes   int64
-	IndexBytes       int64
-	DBBytes          int64
-	WALBytes         int64
-	SidecarBytes     int64
-	RetainedRuns     int64
-	UnfinishedRuns   int64
-	AdmissionBlocked bool
-	Recent           []RunDiagnostic
+	Exists                 bool
+	SchemaVersion          int // authenticated run_meta version; also available on schema mismatch
+	SupportedSchemaVersion int
+	Policy                 Policy
+	AccountedBytes         int64
+	IndexBytes             int64
+	DBBytes                int64
+	WALBytes               int64
+	SidecarBytes           int64
+	RetainedRuns           int64
+	UnfinishedRuns         int64
+	AdmissionBlocked       bool
+	Recent                 []RunDiagnostic
 }
 
 // RunDiagnostic excludes invocation, output, cursors and stored error strings.
@@ -94,8 +96,12 @@ func Inspect(ctx context.Context, path, key string) (report Diagnostics, err err
 	if err := db.QueryRowContext(ctx, "SELECT version,store_id FROM run_meta WHERE singleton=1").Scan(&version, &id); err != nil {
 		return report, storageError()
 	}
-	if version != schemaVersion || uuid.Validate(id) != nil {
-		return report, failure("policy_mismatch", "run store requires a compatible capy version")
+	if uuid.Validate(id) != nil {
+		return report, storageError()
+	}
+	report.SchemaVersion, report.SupportedSchemaVersion = version, schemaVersion
+	if version != schemaVersion {
+		return report, newSchemaMismatch(version, schemaIdentity{id: id})
 	}
 	report.Policy, err = readPolicy(ctx, db)
 	if err != nil {

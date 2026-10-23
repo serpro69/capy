@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/serpro69/capy/internal/executor"
-	"golang.org/x/sys/unix"
 )
 
 // ServeInherited owns FDs 3..7: control/liveness, credential, notices, exclusive
@@ -18,99 +17,41 @@ import (
 // after the store closes. Closing a duplicate must not unlock the owner's OFD.
 // The function must run in an otherwise child-free dedicated process.
 func ServeInherited(ctx context.Context, open OpenRun) (retErr error) {
-	var files []*os.File
+	files, err := inheritedExchangeFiles()
+	if err != nil {
+		return err
+	}
 	defer func() {
 		for _, f := range files {
 			f.Close()
 		}
 	}()
-	for fd := 3; fd <= 7; fd++ {
-		var stat unix.Stat_t
-		if err := unix.Fstat(fd, &stat); err != nil {
-			return errors.New("missing supervisor descriptors")
-		}
-		unix.CloseOnExec(fd)
-		if fd <= 5 {
-			if stat.Mode&unix.S_IFMT != unix.S_IFIFO {
-				return errors.New("supervisor channel is not a pipe")
-			}
-			if err := unix.SetNonblock(fd, true); err != nil {
-				return errors.New("supervisor pipe is not deadline capable")
-			}
-		}
-		f := os.NewFile(uintptr(fd), "supervisor-private")
-		if f == nil {
-			return errors.New("invalid supervisor descriptor")
-		}
-		files = append(files, f)
-	}
-	input, credential, events := files[0], files[1], files[2]
-	owner, lifecycle := files[3], files[4]
-	if err := validateLeases(owner, lifecycle); err != nil {
-		return err
-	}
-	deadline := time.Now().Add(startupTimeout)
-	if err := input.SetReadDeadline(deadline); err != nil {
-		return errors.New("supervisor input deadline unavailable")
-	}
-	if err := credential.SetReadDeadline(deadline); err != nil {
-		return errors.New("supervisor credential deadline unavailable")
-	}
-	var start Startup
-	if err := readFrame(input, &start); err != nil {
-		return err
-	}
-	if err := start.validate(); err != nil {
-		return err
-	}
-	var credentialBytes []byte
-	if err := readFrameLimit(credential, &credentialBytes, maxCredentialFrameBytes); err != nil {
-		return err
-	}
-	key := string(credentialBytes)
-	clear(credentialBytes)
-	if key == "" {
-		return errors.New("missing supervisor credential")
-	}
-	credential.Close()
-	if open == nil {
-		return errors.New("run storage is not available in this build")
-	}
-	if err := executor.PrepareSupervisor(); err != nil {
-		return err
-	}
-	admitCtx, stopAdmission := context.WithDeadline(ctx, deadline)
-	run, err := open(admitCtx, start, key, Leases{Owner: owner, Lifecycle: lifecycle})
-	stopAdmission()
-	key = ""
-	if err != nil {
-		return errors.New("opening admitted supervisor run")
-	}
-	if run == nil || run.Store == nil {
-		return errors.New("invalid supervisor run backend")
-	}
+	input, events := files[0], files[2]
+	var run *Run
 	defer func() {
-		// Leases remain held even when Close must finish cleanup. Do not expose
-		// backend diagnostics, which can contain DSNs or command data.
-		if run.Store.Close() != nil {
+		if run != nil && run.Store != nil && run.Store.Close() != nil {
 			retErr = errors.Join(retErr, errors.New("closing supervisor run store"))
 		}
 	}()
-	if run.Executor == nil {
-		return errors.New("missing supervisor executor")
-	}
-	if err := sendNotice(events, notice{Version: protocolVersion, Type: "ready"}); err != nil {
+	start, err := acceptLeaseStartup(ctx, files, linuxExchangeScope, func(admitCtx context.Context, start Startup, key string) error {
+		if open == nil {
+			return errors.New("run storage is not available in this build")
+		}
+		if err := executor.PrepareSupervisor(); err != nil {
+			return err
+		}
+		var err error
+		run, err = open(admitCtx, start, key, Leases{Owner: files[3], Lifecycle: files[4]})
+		if err != nil {
+			return err
+		}
+		if run == nil || run.Store == nil || run.Executor == nil {
+			return errors.New("invalid supervisor run backend")
+		}
+		return nil
+	})
+	if err != nil {
 		return err
-	}
-	var authorization control
-	if err := readFrame(input, &authorization); err != nil {
-		return err
-	}
-	if authorization.Action != "start" {
-		return errors.New("supervisor start was not authorized")
-	}
-	if err := input.SetReadDeadline(time.Time{}); err != nil {
-		return errors.New("clearing supervisor input deadline")
 	}
 	jobCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -125,7 +66,7 @@ func ServeInherited(ctx context.Context, open OpenRun) (retErr error) {
 		var command control
 		if err := readFrame(input, &command); err != nil {
 			cancel(errors.New("owner_lost"))
-		} else if command.Action == "cancel" {
+		} else if command.Action == "cancel" && command.ExchangeID == start.ExchangeID {
 			cancel(errors.New("cancelled"))
 		} else {
 			cancel(errors.New("control_failed"))
@@ -147,11 +88,11 @@ func ServeInherited(ctx context.Context, open OpenRun) (retErr error) {
 		outcome.Reason = result.StopReason
 	} else if execErr != nil {
 		outcome.Reason = "execution_failed"
-		if !result.Started {
+		if !result.Started || result.SpawnCode != 0 {
 			outcome.Reason = "spawn_failed"
 		}
 	}
-	if !result.Retired {
+	if !result.Cleanup.Complete() {
 		outcome.Reason = "cleanup_unverified"
 	}
 	// Freeze execution outcome before storage-only draining: a later deadline
@@ -162,15 +103,18 @@ func ServeInherited(ctx context.Context, open OpenRun) (retErr error) {
 	}
 	outcome.CapturedBytes = queue.captured
 	outcome.LastSequence = queue.lastSequence
+	if err := outcome.validate(executor.CleanupScope(start.CleanupScope)); err != nil {
+		return err
+	}
 	finishCtx, stopFinish := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	err = run.Store.Finish(finishCtx, outcome)
 	stopFinish()
 	outcome.TerminalPersisted = err == nil
 
-	if !result.Retired {
+	if !result.Cleanup.Complete() {
 		outcome.Reason = "cleanup_unverified"
 	}
-	if err := sendNotice(events, notice{Version: protocolVersion, Type: "terminal", Outcome: &outcome}); err != nil {
+	if err := sendNotice(events, notice{Version: protocolVersion, ExchangeID: start.ExchangeID, Type: "terminal", Outcome: &outcome}); err != nil {
 		return err
 	}
 	return nil

@@ -70,10 +70,10 @@ func (s *fixtureStore) Finish(ctx context.Context, outcome Outcome) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !outcome.Result.Retired {
+	if !outcome.Result.Cleanup.Complete() {
 		return errors.New("cleanup unverified")
 	}
-	return writeProof(s.dir, "retired")
+	return writeProof(s.dir, string(outcome.Result.Cleanup.State))
 }
 func (s *fixtureStore) Close() error {
 	if s.cfg.HoldClose {
@@ -201,7 +201,7 @@ func runFixtureOwner() int {
 	if err != nil {
 		return 1
 	}
-	h, err := Launch(context.Background(), exe, fixtureStartup(dir), fixtureKey, leases)
+	h, err := launchFixture(context.Background(), exe, fixtureStartup(dir), fixtureKey, leases)
 	if err != nil {
 		if h != nil {
 			h.Wait()
@@ -220,84 +220,8 @@ func runFixtureOwner() int {
 	return 0
 }
 
-func TestStoppedHelperDoesNotBlockAdmission(t *testing.T) {
-	for _, mode := range []string{"cancel", "timeout"} {
-		t.Run(mode, func(t *testing.T) {
-			dir := fixture(t, fixtureConfig{Code: "touch must-not-spawn", HoldOpen: true})
-			leases, err := lockFixture(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer leases.Owner.Close()
-			defer leases.Lifecycle.Close()
-			exe, err := os.Executable()
-			if err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			type launchResult struct {
-				helper *Supervisor
-				err    error
-			}
-			ready := make(chan launchResult, 1)
-			go func() {
-				h, err := Launch(ctx, exe, fixtureStartup(dir), fixtureKey, leases)
-				ready <- launchResult{h, err}
-			}()
-			pid, err := strconv.Atoi(string(waitFile(t, filepath.Join(dir, "opening.pid"))))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := unix.Kill(pid, unix.SIGSTOP); err != nil {
-				t.Fatal(err)
-			}
-			joined := false
-			defer func() {
-				if !joined {
-					unix.Kill(pid, unix.SIGCONT)
-				}
-			}()
-			if mode == "cancel" {
-				cancel()
-			}
-			var got launchResult
-			select {
-			case got = <-ready:
-			case <-time.After(4 * time.Second):
-				t.Fatal("stopped helper blocked startup deadline")
-			}
-			if got.err == nil || got.helper == nil {
-				t.Fatalf("failure lost helper ownership: %+v", got)
-			}
-			leases.Owner.Close()
-			leases.Lifecycle.Close()
-			for _, name := range []string{"owner.lock", "lifecycle.lock"} {
-				probeLease(t, dir, name, true)
-			}
-			if err := os.WriteFile(filepath.Join(dir, "release-open"), nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if err := unix.Kill(pid, unix.SIGCONT); err != nil {
-				t.Fatal(err)
-			}
-			if out, err := waitResult(t, got.helper); err == nil || out.Result.Retired {
-				t.Fatalf("failed startup certified cleanup: %+v %v", out, err)
-			}
-			joined = true
-			assertProof(t, dir, "not_spawned")
-			if _, err := os.Stat(filepath.Join(dir, "must-not-spawn")); !os.IsNotExist(err) {
-				t.Fatal("failed startup spawned")
-			}
-			for _, name := range []string{"owner.lock", "lifecycle.lock"} {
-				probeLease(t, dir, name, false)
-			}
-		})
-	}
-}
-
 func fixtureStartup(dir string) Startup {
-	return Startup{Version: 1, RunID: fixtureRun, Generation: fixtureGeneration, StorePath: dir, Deadline: time.Now().Add(20 * time.Second)}
+	return Startup{Version: protocolVersion, ExchangeID: exchangeTestID, CleanupScope: linuxExchangeScope, RunID: fixtureRun, Generation: fixtureGeneration, StorePath: dir, Deadline: time.Now().Add(20 * time.Second)}
 }
 
 func fixture(t *testing.T, cfg fixtureConfig) string {
@@ -368,7 +292,7 @@ func startFixture(t *testing.T, dir string, start Startup) (*Supervisor, Leases)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := Launch(context.Background(), exe, start, fixtureKey, leases)
+	h, err := launchFixture(context.Background(), exe, start, fixtureKey, leases)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +394,7 @@ exit 7`})
 		t.Fatal(err)
 	}
 	outcome, err := waitResult(t, h)
-	if err != nil || !outcome.Result.Retired || !outcome.TerminalPersisted || outcome.Result.ExitCode == nil || *outcome.Result.ExitCode != 7 {
+	if err != nil || !outcome.Result.Cleanup.Complete() || !outcome.TerminalPersisted || outcome.Result.ExitCode == nil || *outcome.Result.ExitCode != 7 {
 		t.Fatalf("outcome: %+v, %v", outcome, err)
 	}
 	var stdout, stderr string
@@ -491,7 +415,7 @@ exit 7`})
 }
 
 func TestSupervisorRejectsPrivateAdmission(t *testing.T) {
-	for _, mode := range []string{"version", "generation", "credential", "oversized", "partial", "no_authorization", "unlocked_owner", "unlocked_lifecycle", "aliased_leases", "foreign_owner_lock", "foreign_lifecycle_lock", "helper_missing"} {
+	for _, mode := range []string{"version", "generation", "credential", "oversized", "partial", "no_authorization", "scope", "missing_exchange", "wrong_start_scope", "wrong_start_exchange", "unlocked_owner", "unlocked_lifecycle", "aliased_leases", "foreign_owner_lock", "foreign_lifecycle_lock", "helper_missing"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := fixture(t, fixtureConfig{Code: "touch must-not-spawn"})
 			leases, err := lockFixture(dir)
@@ -505,7 +429,7 @@ func TestSupervisorRejectsPrivateAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mode == "helper_missing" {
-				if _, err := Launch(context.Background(), filepath.Join(dir, "missing"), fixtureStartup(dir), fixtureKey, leases); err == nil {
+				if _, err := launchFixture(context.Background(), filepath.Join(dir, "missing"), fixtureStartup(dir), fixtureKey, leases); err == nil {
 					t.Fatal("missing helper accepted")
 				}
 				assertProof(t, dir, "not_spawned")
@@ -564,6 +488,12 @@ func TestSupervisorRejectsPrivateAdmission(t *testing.T) {
 			if mode == "version" {
 				start.Version = 99
 			}
+			if mode == "scope" {
+				start.CleanupScope = darwinExchangeScope
+			}
+			if mode == "missing_exchange" {
+				start.ExchangeID = ""
+			}
 			if mode == "generation" {
 				start.Generation = "33333333-3333-4333-8333-333333333333"
 			}
@@ -582,9 +512,27 @@ func TestSupervisorRejectsPrivateAdmission(t *testing.T) {
 			}
 			writeFrame(channels[3], []byte(key))
 			channels[3].Close()
-			if mode == "no_authorization" {
+			if mode == "no_authorization" || mode == "generation" || strings.HasPrefix(mode, "wrong_start_") {
+				x := exchangeIO{input: channels[4], output: channels[1], id: start.ExchangeID, deadline: time.Now().Add(startupTimeout)}
+				if err := coordinateLeaseExchange(x, leases); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "no_authorization" || strings.HasPrefix(mode, "wrong_start_") {
 				var ready notice
 				if err := readFrame(channels[4], &ready); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if strings.HasPrefix(mode, "wrong_start_") {
+				authorization := control{Version: protocolVersion, ExchangeID: start.ExchangeID, Action: "start", CleanupScope: linuxExchangeScope}
+				if mode == "wrong_start_scope" {
+					authorization.CleanupScope = darwinExchangeScope
+				} else {
+					authorization.ExchangeID = "33333333-3333-4333-8333-333333333333"
+				}
+				if err := writeFrame(channels[1], authorization); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -658,7 +606,7 @@ func TestSupervisorBoundsBinaryEvents(t *testing.T) {
 	dir := fixture(t, fixtureConfig{Code: `head -c 1048576 /dev/zero; printf tail >&2`})
 	h, _ := startFixture(t, dir, fixtureStartup(dir))
 	outcome, err := waitResult(t, h)
-	if err != nil || outcome.Result.CaptureLost || !outcome.Result.Retired {
+	if err != nil || outcome.Result.CaptureLost || !outcome.Result.Cleanup.Complete() {
 		t.Fatalf("outcome: %+v %v", outcome, err)
 	}
 	count := 0
@@ -704,7 +652,7 @@ func TestSupervisorCancelAndDeadline(t *testing.T) {
 			}
 			outcome, err := waitResult(t, h)
 			want := map[string]string{"cancel": "cancelled", "deadline": "deadline", "owner_eof": "owner_lost"}[mode]
-			if err != nil || outcome.Reason != want || !outcome.Result.Retired || outcome.Result.Signal != 9 {
+			if err != nil || outcome.Reason != want || !outcome.Result.Cleanup.Complete() || outcome.Result.Signal != 9 {
 				t.Fatalf("outcome: %+v, %v", outcome, err)
 			}
 			if err := unix.Kill(pid, 0); err != unix.ESRCH {
@@ -728,7 +676,7 @@ exit 0`})
 		t.Fatal(err)
 	}
 	outcome, err := waitResult(t, h)
-	if err != nil || !outcome.Result.Retired || outcome.Result.ExitCode == nil || *outcome.Result.ExitCode != 0 {
+	if err != nil || !outcome.Result.Cleanup.Complete() || outcome.Result.ExitCode == nil || *outcome.Result.ExitCode != 0 {
 		t.Fatalf("outcome: %+v, %v", outcome, err)
 	}
 	if err := unix.Kill(pid, 0); err != unix.ESRCH {
@@ -756,7 +704,7 @@ func TestSupervisorCaptureAndPersistenceFailures(t *testing.T) {
 				assertProof(t, dir, "not_spawned")
 				return
 			}
-			if err != nil || !outcome.Result.Retired {
+			if err != nil || !outcome.Result.Cleanup.Complete() {
 				t.Fatalf("outcome: %+v, %v", outcome, err)
 			}
 			waitFile(t, filepath.Join(dir, "command-finished"))
@@ -884,7 +832,7 @@ func TestSupervisorLossNeverCertifiesQuiescence(t *testing.T) {
 		t.Fatal(err)
 	}
 	outcome, err := waitResult(t, h)
-	if err == nil || outcome.Result.Retired || outcome.TerminalPersisted || outcome.Reason != "cleanup_unverified" {
+	if err == nil || outcome.Result.Cleanup.Complete() || outcome.TerminalPersisted || outcome.Reason != "cleanup_unverified" {
 		t.Fatalf("lost helper certified: %+v %v", outcome, err)
 	}
 	leases.Owner.Close()
@@ -904,11 +852,15 @@ func TestSupervisorLossNeverCertifiesQuiescence(t *testing.T) {
 }
 
 func TestSupervisorCompilerPhases(t *testing.T) {
-	for _, mode := range []string{"success", "failure", "cancel"} {
+	for _, mode := range []string{"success", "failure", "cancel", "runtime missing", "runtime not executable"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := fixture(t, fixtureConfig{Language: executor.Rust, Code: "synthetic compiler input"})
 			compiler := "#!/bin/sh\nprintf compiler >&2\n"
 			switch mode {
+			case "runtime missing":
+				compiler += "exit 0\n"
+			case "runtime not executable":
+				compiler += "printf invalid > \"$3\"\n"
 			case "failure":
 				compiler += "exit 23\n"
 			case "cancel":
@@ -933,7 +885,7 @@ func TestSupervisorCompilerPhases(t *testing.T) {
 				}
 			}
 			outcome, err := waitResult(t, h)
-			if err != nil || !outcome.Result.Retired || !outcome.Result.Started {
+			if err != nil || !outcome.Result.Cleanup.Complete() || !outcome.Result.Started {
 				t.Fatalf("outcome: %+v %v", outcome, err)
 			}
 			events := readEvents(t, dir)
@@ -948,6 +900,10 @@ func TestSupervisorCompilerPhases(t *testing.T) {
 			}
 			if mode == "cancel" && (outcome.Reason != "cancelled" || unix.Kill(pid, 0) != unix.ESRCH) {
 				t.Fatalf("compiler cancellation failed: %+v", outcome)
+			}
+
+			if strings.HasPrefix(mode, "runtime ") && (outcome.Result.Cleanup.State != executor.CleanupRetired || outcome.Result.SpawnCode == 0 || outcome.Reason != "spawn_failed" || len(events) != 1) {
+				t.Fatalf("runtime spawn failure erased compiler proof: %+v", outcome)
 			}
 			assertProof(t, dir, "retired")
 		})

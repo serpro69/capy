@@ -83,19 +83,19 @@ func TestPolicySnapshotsAdmissionAndPreservesTerminalExpiry(t *testing.T) {
 	owner, err := st.ClaimOwner(t.Context())
 	require.NoError(t, err)
 	defer owner.Lease.Close()
-	row, err := st.Admit(t.Context(), owner, Program{PolicyRevision: 99, TTLHours: 1, MaxRunBytes: math.MaxInt64})
+	row, err := st.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, Program{PolicyRevision: 99, TTLHours: 1, MaxRunBytes: math.MaxInt64})
 	require.NoError(t, err)
 	require.Equal(t, settings.TTLHours, row.Program.TTLHours)
 	require.Equal(t, settings.MaxRunBytes, row.Program.MaxRunBytes)
 	require.EqualValues(t, 1, row.Program.PolicyRevision)
-	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID))
+	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
 	require.NoError(t, st.Started(t.Context(), row.ID))
 	require.ErrorContains(t, st.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: make([]byte, 33)}), "capture limit")
-	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Started: true, Retired: true}))
+	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true}))
 	completed, err := st.Load(t.Context(), row.ID)
 	require.NoError(t, err)
 	require.Equal(t, 9*time.Hour, completed.Result.ExpiresAt.Sub(*completed.Result.CompletedAt))
-	unfinished, err := st.Admit(t.Context(), owner, Program{})
+	unfinished, err := st.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, Program{})
 	require.NoError(t, err)
 	// Model an owner loss without clean shutdown/recovery so the policy-changing
 	// opener itself must reconcile the admitted run using its original TTL.
@@ -119,14 +119,14 @@ func TestPolicySnapshotsAdmissionAndPreservesTerminalExpiry(t *testing.T) {
 	newOwner, err := updated.ClaimOwner(t.Context())
 	require.NoError(t, err)
 	defer newOwner.Lease.Close()
-	newRun, err := updated.Admit(t.Context(), newOwner, Program{})
+	newRun, err := updated.Admit(t.Context(), newOwner, executor.CleanupLinuxDescendants, Program{})
 	require.NoError(t, err)
 	require.EqualValues(t, 2, newRun.Program.PolicyRevision)
-	require.NoError(t, updated.Finish(t.Context(), newRun.ID, Completion{Retired: true}))
+	require.NoError(t, updated.Finish(t.Context(), newRun.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}}))
 	newRun, err = updated.Load(t.Context(), newRun.ID)
 	require.NoError(t, err)
 	require.Equal(t, time.Hour, newRun.Result.ExpiresAt.Sub(*newRun.Result.CompletedAt))
-	require.Error(t, updated.Finish(t.Context(), row.ID, Completion{Retired: true}), "terminal expiry cannot be overwritten")
+	require.Error(t, updated.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}}), "terminal expiry cannot be overwritten")
 }
 
 func TestPolicyInvalidConfigHasNoFilesystemEffects(t *testing.T) {
@@ -260,9 +260,9 @@ func TestPolicyUpdateFailureLeavesRevisionAndReleasesLeases(t *testing.T) {
 			case "unverified cleanup":
 				owner, err := st.ClaimOwner(t.Context())
 				require.NoError(t, err)
-				row, err := st.Admit(t.Context(), owner, Program{})
+				row, err := st.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, Program{})
 				require.NoError(t, err)
-				require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID))
+				require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
 				require.NoError(t, owner.Lease.Close())
 			case "write failure":
 				_, err = st.db.ExecContext(t.Context(), `CREATE TRIGGER test_policy_failure BEFORE UPDATE ON run_policy BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)

@@ -20,6 +20,10 @@ func capturedResult(t *testing.T, r *mcp.CallToolResult) runstore.Result {
 	t.Helper()
 	result, ok := r.StructuredContent.(runstore.Result)
 	require.True(t, ok, "missing run envelope: %s", resultText(r))
+	require.Equal(t, 2, result.Version)
+	if result.RunID != nil {
+		require.NoError(t, runstore.ValidateCleanup(result.Cleanup))
+	}
 	return result
 }
 
@@ -149,6 +153,53 @@ func assertRunBudget(t *testing.T, r *mcp.CallToolResult, limit int) {
 	b, err := json.Marshal(r)
 	require.NoError(t, err)
 	require.LessOrEqual(t, len(b), limit, string(b))
+	assertCleanupEnvelope(t, r.StructuredContent)
+}
+
+// Inspect the actual serialized response, including its smallest-budget form.
+func assertCleanupEnvelope(t *testing.T, value any) {
+	t.Helper()
+	data, err := json.Marshal(value)
+	require.NoError(t, err)
+	var object map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &object))
+	require.JSONEq(t, "2", string(object["version"]))
+	proof := func(subject map[string]json.RawMessage) {
+		t.Helper()
+		require.Contains(t, subject, "cleanup")
+		var evidence executor.CleanupEvidence
+		require.NoError(t, json.Unmarshal(subject["cleanup"], &evidence))
+		require.NoError(t, runstore.ValidateCleanup(evidence))
+	}
+	for _, field := range []string{"run", "batch"} {
+		if child, exists := object[field]; exists {
+			require.NotContains(t, object, "cleanup")
+			assertCleanupEnvelope(t, json.RawMessage(child))
+			return
+		}
+	}
+	if entries, exists := object["entries"]; exists {
+		require.NotContains(t, object, "cleanup")
+		var list []map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(entries, &list))
+		for _, entry := range list {
+			proof(entry)
+		}
+		return
+	}
+	if string(object["kind"]) == `"rejection"` || (object["run_id"] == nil && object["batch_id"] == nil && object["error"] != nil) {
+		require.Contains(t, object, "cleanup")
+		require.JSONEq(t, "null", string(object["cleanup"]))
+		return
+	}
+	proof(object)
+	if children, exists := object["children"]; exists {
+		var list []map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(children, &list))
+		for _, child := range list {
+			proof(child)
+		}
+	}
 }
 
 func TestCapturedResponseBudgetsAndLargeRawRecovery(t *testing.T) {

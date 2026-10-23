@@ -193,7 +193,7 @@ func (s *Server) buildRunResult(result runstore.Result) (*mcp.CallToolResult, er
 }
 
 func boundedRunError(code, message string) *mcp.CallToolResult {
-	r := mcp.NewToolResultStructured(map[string]any{"version": 1, "kind": "query", "error": runstore.Error{Code: code, Message: message}}, "Run operation failed.")
+	r := mcp.NewToolResultStructured(map[string]any{"version": runstore.EnvelopeVersion, "kind": "query", "cleanup": nil, "error": runstore.Error{Code: code, Message: message}}, "Run operation failed.")
 	r.IsError = true
 	return r
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/serpro69/capy/internal/config"
+	"github.com/serpro69/capy/internal/executor"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,7 +21,7 @@ func TestListCutoffFiltersAndRecovery(t *testing.T) {
 	require.NoError(t, err)
 	defer owner.Lease.Close()
 	admit := func() string {
-		row, err := st.Admit(t.Context(), owner, Program{OwnerType: "cli", TTLHours: 24, MaxRunBytes: 100})
+		row, err := st.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, Program{OwnerType: "cli", TTLHours: 24, MaxRunBytes: 100})
 		require.NoError(t, err)
 		return row.ID
 	}

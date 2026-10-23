@@ -17,7 +17,9 @@ import (
 // Service owns runs independently of transport requests and joins every helper
 // before closing database/lease handles.
 type Service struct {
+	launch               supervisorLaunch
 	mu                   sync.Mutex
+	attachMu             sync.Mutex // serialize attachment without blocking owner cancellation during migration
 	admissionMu          sync.Mutex // publishes metadata and its control handle together
 	closed               bool
 	unverified           bool
@@ -56,7 +58,7 @@ func WithCompletionObserver(observer func(runstore.Result)) ServiceOption {
 }
 
 func NewService(project, key string, policy config.RunsConfig, options ...ServiceOption) *Service {
-	s := &Service{project: project, key: key, policy: policy, jobs: make(map[*serviceCall]context.CancelFunc), running: make(map[string]*runCall), batches: make(map[string]*batchCall), closeDone: make(chan struct{})}
+	s := &Service{launch: newSupervisorLaunch(), project: project, key: key, policy: policy, jobs: make(map[*serviceCall]context.CancelFunc), running: make(map[string]*runCall), batches: make(map[string]*batchCall), closeDone: make(chan struct{})}
 	for _, option := range options {
 		option(s)
 	}
@@ -113,6 +115,8 @@ func (s *Service) begin(ctx context.Context, execute bool) (context.Context, fun
 }
 
 func (s *Service) attached(ctx context.Context, create bool) (*runstore.Store, *runstore.Owner, error) {
+	s.attachMu.Lock()
+	defer s.attachMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -126,9 +130,13 @@ func (s *Service) attached(ctx context.Context, create bool) (*runstore.Store, *
 		if err != nil {
 			return nil, nil, &runstore.Error{Code: "storage_unavailable", Message: "selected run owner is unavailable"}
 		}
+		// Schema migration may copy substantial history. Close must be able to
+		// acquire mu and cancel this registered request while attachment runs.
+		s.mu.Unlock()
 		st, err := runstore.OpenWithPolicy(ctx, path, s.key, create, runstore.PolicyConfig{
 			TTLHours: s.policy.TTLHours, MaxRunBytes: s.policy.MaxRunBytes, MaxRetainedBytes: s.policy.MaxRetainedBytes,
 		})
+		s.mu.Lock()
 		if err != nil {
 			var typed *runstore.Error
 			if errors.As(err, &typed) {
@@ -137,6 +145,12 @@ func (s *Service) attached(ctx context.Context, create bool) (*runstore.Store, *
 				err = &copy
 			}
 			return nil, nil, err
+		}
+		if s.closed {
+			s.mu.Unlock()
+			closeErr := st.Close()
+			s.mu.Lock()
+			return nil, nil, errors.Join(&runstore.Error{Code: "storage_unavailable", Message: "execution owner is shutting down"}, closeErr)
 		}
 		s.store = st
 	}
@@ -183,7 +197,7 @@ func (s *Service) execute(ctx context.Context, request executor.ExecRequest, int
 	program := runstore.Program{Owner: physical, OwnerType: s.ownerType, Request: request, Intent: intent, Deadline: deadline}
 	admissionCtx, cancelAdmission := context.WithTimeout(ctx, 3*time.Second)
 	s.admissionMu.Lock()
-	row, err := st.Admit(admissionCtx, owner, program)
+	row, err := st.Admit(admissionCtx, owner, executor.CleanupLinuxDescendants, program)
 	cancelAdmission()
 	if err == nil {
 		s.mu.Lock()
@@ -209,9 +223,14 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	if err != nil {
 		return s.startFailure(st, row)
 	}
-	h, launchErr := Launch(ctx, binary, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: st.Path(), Deadline: row.Program.Deadline}, s.key, Leases{Owner: owner.Lease, Lifecycle: st.LifecycleLease()})
+	refs, err := st.BorrowLeases(owner)
+	if err != nil {
+		return s.startFailure(st, row)
+	}
+	h, launchErr := s.launch(ctx, binary, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: st.Path(), Deadline: row.Program.Deadline, CleanupScope: string(row.Cleanup.Scope)}, s.key, refs)
+	launchErr = errors.Join(launchErr, refs.Close())
 	if launchErr != nil {
-		if h == nil {
+		if h == nil || h.knownNotSpawned() {
 			if ctx.Err() != nil {
 				return s.finishUnstarted(st, row, "cancelled")
 			}
@@ -222,17 +241,23 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 			// Retain its slot/leases while resolving cancellation during startup;
 			// a joined helper and durable not_spawned proof permit finalization.
 			h.Wait()
+			call.cleanup = h.cleanupPending()
 			queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			latest, err := st.Load(queryCtx, row.ID)
 			cancel()
-			if err == nil && latest.Cleanup == "not_spawned" {
-				return s.finishUnstarted(st, row, "cancelled")
-			}
-			if err == nil && latest.Cleanup == "retired" && latest.Result.Capture.TerminalPersisted {
+			if err == nil && latest.Result.CompletedAt != nil && runstore.CleanupAccepted(latest.Cleanup) && latest.Result.Capture.TerminalPersisted {
 				return latest.Result
+			}
+			if err == nil && latest.Result.CompletedAt == nil && latest.Cleanup == (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}) {
+				return s.finishUnstarted(st, row, "cancelled")
 			}
 			// Unknown proof still quarantines; this helper has already been joined.
 			result := row.Result
+			if err == nil {
+				result = latest.Result
+			} else {
+				result.Cleanup.State = executor.CleanupPending
+			}
 			result.State = "interrupted"
 			reason := "supervisor_startup_failed"
 			result.Reason = &reason
@@ -245,9 +270,19 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 		quarantineErr := s.quarantine(st)
 		// Report the startup failure promptly, but retain this worker's active
 		// slot and lifecycle ownership until even a stopped helper is joined.
-		call.cleanup = make(chan struct{})
-		go func() { h.Wait(); close(call.cleanup) }()
+		call.cleanup = h.cleanupPending()
+		go func() { h.Wait() }()
 		result := row.Result
+		// Launch can fail after attempting start authorization. The admission
+		// snapshot is no longer evidence that no command phase was started.
+		queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		latest, err := st.Load(queryCtx, row.ID)
+		cancel()
+		if err == nil {
+			result = latest.Result
+		} else {
+			result.Cleanup.State = executor.CleanupPending
+		}
 		result.State = "interrupted"
 		reason := "supervisor_startup_failed"
 		result.Reason = &reason
@@ -260,16 +295,17 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	stop := context.AfterFunc(ctx, func() { h.Cancel() })
 	call.ready <- row.Result
 	outcome, waitErr := h.Wait()
+	call.cleanup = h.cleanupPending()
 	stop()
 	queryCtx, cancelQuery := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancelQuery()
 	latest, readErr := st.Load(queryCtx, row.ID)
 	var quarantineErr error
-	if waitErr != nil || !outcome.Result.Retired {
-		if readErr != nil || latest.Cleanup == "pending" {
+	if waitErr != nil || !outcome.Result.Cleanup.Complete() {
+		if readErr != nil || latest.Cleanup == (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}) {
 			quarantineErr = s.quarantine(st)
 		}
-		if readErr == nil && latest.Cleanup == "not_spawned" {
+		if readErr == nil && latest.Result.CompletedAt == nil && latest.Cleanup == (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}) {
 			if ctx.Err() != nil {
 				return s.finishUnstarted(st, row, "cancelled")
 			}
@@ -285,6 +321,8 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	result := row.Result
 	if readErr == nil {
 		result = latest.Result
+	} else {
+		result.Cleanup.State = executor.CleanupPending
 	}
 	result.State = "interrupted"
 	result.Capture.State = "incomplete"
@@ -304,19 +342,22 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 }
 
 func (s *Service) startFailure(st *runstore.Store, row runstore.Admitted) runstore.Result {
+	if !row.Program.Deadline.IsZero() && !time.Now().Before(row.Program.Deadline) {
+		return s.finishUnstarted(st, row, "deadline")
+	}
 	return s.finishUnstarted(st, row, "spawn_failed")
 }
 
 func (s *Service) finishUnstarted(st *runstore.Store, row runstore.Admitted, reason string) runstore.Result {
 	ctx, cancel := context.WithTimeout(context.Background(), runstore.WriteTimeout)
 	defer cancel()
-	if err := st.Finish(ctx, row.ID, runstore.Completion{Retired: true, Reason: reason}); err == nil {
+	if err := st.Finish(ctx, row.ID, runstore.Completion{Cleanup: executor.CleanupEvidence{Scope: row.Cleanup.Scope, State: executor.CleanupNotSpawned}, Reason: reason}); err == nil {
 		if latest, err := st.Load(ctx, row.ID); err == nil {
 			return latest.Result
 		}
 	}
 	result := row.Result
-	runstore.ApplyOutcome(&result, runstore.Completion{Retired: true, Reason: reason})
+	runstore.ApplyOutcome(&result, runstore.Completion{Cleanup: executor.CleanupEvidence{Scope: row.Cleanup.Scope, State: executor.CleanupNotSpawned}, Reason: reason})
 	result.Error = &runstore.Error{Code: "storage_unavailable", Message: "supervisor did not start; finalization was unavailable"}
 	return result
 }
@@ -395,9 +436,19 @@ func (s *Service) Close() error {
 // knownOutcome preserves an authenticated helper acknowledgement even when the
 // subsequent metadata refresh fails. Query failure is not finalization failure.
 func knownOutcome(result runstore.Result, outcome Outcome, cursor *string) runstore.Result {
-	runstore.ApplyOutcome(&result, runstore.Completion{SpawnCode: outcome.Result.SpawnCode, Started: outcome.Result.Started, Retired: outcome.Result.Retired,
-		ExitCode: outcome.Result.ExitCode, Signal: outcome.Result.Signal, Reason: outcome.Reason,
-		ObservedBytes: outcome.Result.ObservedBytes, ElapsedMS: outcome.Result.ElapsedMS})
+	completion, err := completionFromOutcome(result.Cleanup.Scope, outcome)
+	if err != nil {
+		result.Error = &runstore.Error{Code: "cleanup_unverified", Message: err.Error()}
+		return result
+	}
+	runstore.ApplyOutcome(&result, completion)
+	if outcome.TerminalPersisted {
+		result.Cleanup = completion.Cleanup
+	} else {
+		// The helper reached execution; failed finalization cannot replace its
+		// durable pending proof with a local completed/not-spawned observation.
+		result.Cleanup.State = executor.CleanupPending
+	}
 	result.Capture.CapturedBytes = outcome.CapturedBytes
 	result.Capture.LastCommittedCursor = cursor
 	result.Capture.TerminalPersisted = outcome.TerminalPersisted
@@ -408,7 +459,7 @@ func knownOutcome(result runstore.Result, outcome Outcome, cursor *string) runst
 		switch {
 		case !outcome.Result.Started:
 			result.Capture.State = "not_started"
-		case outcome.Result.CaptureLost || !outcome.Result.Retired:
+		case outcome.Result.CaptureLost || !outcome.Result.Cleanup.Complete():
 			result.Capture.State = "incomplete"
 		}
 		result.Capture.Reason = nil

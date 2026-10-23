@@ -207,9 +207,10 @@ func (e *PolyglotExecutor) runProcess(ctx context.Context, bin string, args []st
 		}
 		copyErr := errors.Join(<-copied, <-copied)
 		e.bgMu.Lock()
-		// Exit was observed without reaping and both streams are drained:
-		// Wait cannot block on a live child or pipe-copy goroutine here.
-		// All group signals use this same lock, so none can follow reaping.
+		// Successful terminal observation and drained streams permit reaping.
+		// On observation failure the legacy waiter still owns the final Wait;
+		// that error path has no bounded-reap guarantee. All group signals use
+		// this same lock, so none can follow reaping.
 		if observeErr != nil {
 			captureErr = fmt.Errorf("observing process exit: %w", observeErr)
 		}

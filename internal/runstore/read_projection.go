@@ -57,7 +57,7 @@ func (s *Store) decodeProjectionCursor(encoded, run, stream string) (textCursor,
 }
 
 func (s *Store) ReadProjection(ctx context.Context, id, stream, encoded string, maxBytes int) (ReadPage, error) {
-	page := ReadPage{Version: 1, Kind: "query", RunID: id, Encoding: "text", Fragments: []Fragment{}}
+	page := ReadPage{Version: EnvelopeVersion, Kind: "query", RunID: id, Encoding: "text", Fragments: []Fragment{}}
 	if stream != "stdout" && stream != "stderr" && stream != "merged" {
 		return page, failure("invalid_argument", "stream must be stdout, stderr or merged")
 	}

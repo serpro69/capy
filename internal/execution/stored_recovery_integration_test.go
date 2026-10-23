@@ -5,6 +5,7 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,6 +33,12 @@ type gatedStoredCapture struct {
 	dir string
 }
 
+type failedCloseStoredCapture struct{ CaptureStore }
+
+func (s *failedCloseStoredCapture) Close() error {
+	return errors.Join(s.CaptureStore.Close(), errors.New("synthetic helper close failure"))
+}
+
 func (s *gatedStoredCapture) Close() error {
 	if err := os.WriteFile(filepath.Join(s.dir, "closing"), nil, 0600); err != nil {
 		return err
@@ -53,6 +60,10 @@ func openStoredFixture(ctx context.Context, start Startup, key string, leases Le
 	}
 	if os.Getenv("CAPY_STORED_MODE") == "hold startup" {
 		dir := os.Getenv("CAPY_STORED_FIXTURE")
+		if err := os.WriteFile(filepath.Join(dir, "opening.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+			run.Store.Close()
+			return nil, err
+		}
 		if err := os.WriteFile(filepath.Join(dir, "opening"), nil, 0600); err != nil {
 			run.Store.Close()
 			return nil, err
@@ -71,7 +82,121 @@ func openStoredFixture(ctx context.Context, start Startup, key string, leases Le
 	if os.Getenv("CAPY_STORED_MODE") == "delayed cleanup" {
 		run.Store = &gatedStoredCapture{CaptureStore: run.Store, dir: os.Getenv("CAPY_STORED_FIXTURE")}
 	}
+	if os.Getenv("CAPY_STORED_MODE") == "unstarted failed close" {
+		run.Request.Language = executor.Language("missing-fixture-runtime")
+		run.Store = &failedCloseStoredCapture{CaptureStore: run.Store}
+	}
+	if os.Getenv("CAPY_STORED_MODE") == "failed close" {
+		run.Store = &failedCloseStoredCapture{CaptureStore: run.Store}
+	}
 	return run, nil
+}
+
+func TestStoredUnavailableRefreshNeverPublishesAdmissionProof(t *testing.T) {
+	for _, mode := range []string{"single terminal", "single yielded", "batch terminal"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"} {
+				t.Setenv(name, dir)
+			}
+			t.Setenv("CAPY_STORED_FIXTURE", dir)
+			fixture := "failed close"
+			if mode == "single yielded" {
+				fixture = "hold startup"
+			}
+			t.Setenv("CAPY_STORED_MODE", fixture)
+			s := NewService(dir, storedFixtureKey, config.DefaultConfig().Runs)
+			t.Cleanup(func() {
+				// Release both fixture gates even after an assertion failure.
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "release-open"), nil, 0600))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "release-command"), nil, 0600))
+				require.NoError(t, s.Close())
+			})
+			const program = "printf x >> executed-once; touch running; while [ ! -e release-command ]; do sleep .01; done; exit 7"
+			done := make(chan struct{})
+			var result runstore.Result
+			var batch runstore.BatchResult
+			var executeErr error
+			go func() {
+				defer close(done)
+				switch mode {
+				case "single yielded":
+					result, executeErr = s.ExecuteResponse(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: program}, "", 30*time.Second, 0, func(runstore.Result) error { return nil })
+				case "batch terminal":
+					batch, executeErr = s.ExecuteBatchResponse(t.Context(), runstore.BatchInput{Concurrency: 1, Commands: []runstore.BatchCommand{{Command: program}}}, 30*time.Second, 30*time.Second, func(runstore.BatchResult) error { return nil })
+				default:
+					result = s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: program}, "", 30*time.Second)
+				}
+			}()
+			marker := "running"
+			if mode == "single yielded" {
+				marker = "opening"
+			}
+			waitFile(t, filepath.Join(dir, marker))
+			s.mu.Lock()
+			st := s.store
+			s.mu.Unlock()
+			// Fail the owner's refreshes while the inherited helper retains its
+			// independent authenticated connection and acquired leases.
+			require.NoError(t, st.Close())
+			if mode == "single yielded" {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "release-open"), nil, 0600))
+			} else {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "release-command"), nil, 0600))
+			}
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("response did not return")
+			}
+			require.NoError(t, executeErr)
+			proof, problem := result.Cleanup, result.Error
+			if mode == "batch terminal" {
+				proof, problem = batch.Cleanup, batch.Error
+			}
+			require.Equal(t, executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}, proof)
+			require.NotNil(t, problem)
+			if mode == "single yielded" {
+				waitFile(t, filepath.Join(dir, "running"))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "release-command"), nil, 0600))
+			}
+			s.wg.Wait()
+			require.Equal(t, []byte("x"), waitFile(t, filepath.Join(dir, "executed-once")))
+			reader, err := runstore.Open(t.Context(), st.Path(), storedFixtureKey, false)
+			require.NoError(t, err)
+			defer reader.Close()
+			page, err := reader.List(t.Context(), runstore.ListOptions{Limit: 1})
+			require.NoError(t, err)
+			require.Len(t, page.Entries, 1)
+			stored, err := reader.Load(t.Context(), page.Entries[0].RunID)
+			require.NoError(t, err)
+			require.Equal(t, executor.CleanupRetired, stored.Cleanup.State)
+			require.Equal(t, 7, *stored.Result.ExitCode)
+		})
+	}
+}
+
+func TestStoredUnstartedTerminalSurvivesHelperCloseFailure(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"} {
+		t.Setenv(name, dir)
+	}
+	t.Setenv("CAPY_STORED_FIXTURE", dir)
+	t.Setenv("CAPY_STORED_MODE", "unstarted failed close")
+	s := NewService(dir, storedFixtureKey, config.DefaultConfig().Runs)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	result := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "touch forbidden"}, "", 30*time.Second)
+	require.Equal(t, "start_failed", result.State)
+	require.NotNil(t, result.Error)
+	require.Equal(t, "runtime_unavailable", result.Error.Code)
+	require.True(t, result.Capture.TerminalPersisted)
+	require.Equal(t, executor.CleanupNotSpawned, result.Cleanup.State)
+	require.NotNil(t, result.CompletedAt)
+	require.NoFileExists(t, filepath.Join(dir, "forbidden"))
+	stored, err := s.Status(t.Context(), *result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, stored, result)
+	require.False(t, s.unverified)
 }
 
 func runStoredFixtureOwner() int {
@@ -91,7 +216,7 @@ func runStoredFixtureOwner() int {
 	}
 	defer owner.Lease.Close()
 	deadline := time.Now().Add(time.Minute)
-	row, err := st.Admit(context.Background(), owner, runstore.Program{Owner: dir, TTLHours: 9, MaxRunBytes: 1 << 20, Deadline: deadline,
+	row, err := st.Admit(context.Background(), owner, executor.CleanupLinuxDescendants, runstore.Program{Owner: dir, TTLHours: 9, MaxRunBytes: 1 << 20, Deadline: deadline,
 		Request: executor.ExecRequest{Language: executor.Shell, Code: "printf early; echo $$ > leader.pid; sleep 60 & echo $! > child.pid; wait"}})
 	if err != nil {
 		return 1
@@ -109,8 +234,12 @@ func runStoredFixtureOwner() int {
 	if err != nil {
 		return 1
 	}
-	helper, err := Launch(context.Background(), exe, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: path, Deadline: deadline}, storedFixtureKey,
-		Leases{Owner: owner.Lease, Lifecycle: st.LifecycleLease()})
+	refs, err := st.BorrowLeases(owner)
+	if err != nil {
+		return 1
+	}
+	helper, err := Launch(context.Background(), exe, Startup{Version: protocolVersion, RunID: row.ID, Generation: owner.ID, StorePath: path, Deadline: deadline, CleanupScope: linuxExchangeScope}, storedFixtureKey, refs)
+	err = errors.Join(err, refs.Close())
 	if err != nil {
 		if helper != nil {
 			helper.Wait()
@@ -219,7 +348,7 @@ func TestStoredOwnerSIGKILLRetainsLeasesUntilHelperClose(t *testing.T) {
 	row, err := st.Load(t.Context(), identity.ID)
 	require.NoError(t, err)
 	require.Equal(t, identity.Generation, row.Generation)
-	require.Equal(t, "pending", row.Cleanup)
+	require.Equal(t, "pending", string(row.Cleanup.State))
 	require.Nil(t, row.Result.Error, "a held helper lease is not an abandoned run")
 	replacement, err := st.ClaimOwner(t.Context())
 	require.NoError(t, err)
@@ -235,7 +364,7 @@ func TestStoredOwnerSIGKILLRetainsLeasesUntilHelperClose(t *testing.T) {
 	observer := openStoredObserver(t, dir)
 	row, err = observer.Load(t.Context(), identity.ID)
 	require.NoError(t, err)
-	require.Equal(t, "retired", row.Cleanup)
+	require.Equal(t, "retired", string(row.Cleanup.State))
 	require.Equal(t, "interrupted", row.Result.State)
 	require.True(t, row.Result.Capture.TerminalPersisted)
 	require.NoError(t, observer.Close())
@@ -285,7 +414,7 @@ func TestStoredHelperLossQuarantinesWithoutSignallingMetadata(t *testing.T) {
 	st := openStoredObserver(t, dir)
 	row, err := st.Load(t.Context(), identity.ID)
 	require.NoError(t, err)
-	require.Equal(t, "pending", row.Cleanup)
+	require.Equal(t, "pending", string(row.Cleanup.State))
 	require.Equal(t, "cleanup_unverified", row.Result.Error.Code)
 	require.Nil(t, row.Result.ExpiresAt)
 	_, err = st.ClaimOwner(t.Context())
@@ -295,4 +424,138 @@ func TestStoredHelperLossQuarantinesWithoutSignallingMetadata(t *testing.T) {
 	page, err := st.ReadRaw(t.Context(), identity.ID, "stdout", "", 4096)
 	require.NoError(t, err)
 	require.Equal(t, "cleanup_unverified", page.Run.Error.Code)
+}
+
+func TestStoredStoppedStartupRecoversWithoutRestart(t *testing.T) {
+	for _, mode := range []string{"cancel", "timeout"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("CAPY_STORED_FIXTURE", dir)
+			t.Setenv("CAPY_STORED_MODE", "hold startup")
+			s := NewService(dir, storedFixtureKey, config.DefaultConfig().Runs)
+			t.Cleanup(func() { require.NoError(t, s.Close()) })
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan runstore.Result, 1)
+			go func() {
+				done <- s.Execute(ctx, executor.ExecRequest{Language: executor.Shell, Code: "touch forbidden"}, "", 30*time.Second)
+			}()
+			pid, err := strconv.Atoi(string(waitFile(t, filepath.Join(dir, "opening.pid"))))
+			require.NoError(t, err)
+			require.NoError(t, unix.Kill(pid, unix.SIGSTOP))
+			t.Cleanup(func() { unix.Kill(pid, unix.SIGCONT) })
+			if mode == "cancel" {
+				cancel()
+			}
+			var result runstore.Result
+			select {
+			case result = <-done:
+			case <-time.After(8 * time.Second):
+				t.Fatal("pre-start teardown did not finish")
+			}
+			require.Equal(t, executor.CleanupNotSpawned, result.Cleanup.State)
+			require.True(t, result.Capture.TerminalPersisted)
+			require.ErrorIs(t, unix.Kill(pid, 0), unix.ESRCH)
+			require.NoFileExists(t, filepath.Join(dir, "forbidden"))
+			require.False(t, s.unverified)
+			t.Setenv("CAPY_STORED_MODE", "")
+			next := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "printf x >> executed-once"}, "", 30*time.Second)
+			require.Equal(t, executor.CleanupRetired, next.Cleanup.State)
+			require.Equal(t, []byte("x"), waitFile(t, filepath.Join(dir, "executed-once")))
+		})
+	}
+}
+
+func TestStoredGateDeadlineIsKnownUnstarted(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CAPY_STORED_FIXTURE", dir)
+	s := NewService(dir, storedFixtureKey, config.DefaultConfig().Runs)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	st, owner, err := s.attached(t.Context(), true)
+	require.NoError(t, err)
+	refs, err := st.BorrowLeases(owner)
+	require.NoError(t, err)
+	defer refs.Close()
+	gate, err := refs.AcquireExchange(t.Context())
+	require.NoError(t, err)
+	defer gate.Release()
+	result := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "touch forbidden"}, "", 100*time.Millisecond)
+	require.Equal(t, "timed_out", result.State)
+	require.Equal(t, executor.CleanupNotSpawned, result.Cleanup.State)
+	require.True(t, result.Capture.TerminalPersisted)
+	require.False(t, s.unverified)
+	require.NoFileExists(t, filepath.Join(dir, "forbidden"))
+	require.NoError(t, gate.Release())
+	next := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "true"}, "", 30*time.Second)
+	require.Equal(t, executor.CleanupRetired, next.Cleanup.State)
+}
+
+func TestStoredCompilerRetirementSurvivesRuntimeSpawnFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CAPY_STORED_FIXTURE", dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rustc"), []byte("#!/bin/sh\nprintf compiler-output\nexit 0\n"), 0700))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	s := NewService(dir, storedFixtureKey, config.DefaultConfig().Runs)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	result := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Rust, Code: "synthetic compiler"}, "", 30*time.Second)
+	require.Equal(t, "start_failed", result.State)
+	require.Equal(t, "runtime_unavailable", result.Error.Code)
+	require.Equal(t, executor.CleanupRetired, result.Cleanup.State)
+	require.Equal(t, "complete", result.Capture.State)
+	page, err := s.ReadRaw(t.Context(), *result.RunID, "stdout", "", 4096)
+	require.NoError(t, err)
+	require.Equal(t, []byte("compiler-output"), page.Fragments[0].Data)
+}
+
+func TestStoredUnverifiedReapRetainsReservation(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CAPY_STORED_FIXTURE", dir)
+	t.Setenv("CAPY_STORED_MODE", "hold startup")
+	launcher := newLeaseLauncher()
+	launcher.wait = func(*exec.Cmd) error { return errors.New("injected wait failure without reap") }
+	s := NewService(dir, storedFixtureKey, config.DefaultConfig().Runs)
+	s.launch = launcher.launchSupervisor
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan runstore.Result, 1)
+	go func() {
+		done <- s.Execute(ctx, executor.ExecRequest{Language: executor.Shell, Code: "touch forbidden"}, "", 30*time.Second)
+	}()
+	waitFile(t, filepath.Join(dir, "opening"))
+	cancel()
+	var result runstore.Result
+	select {
+	case result = <-done:
+	case <-time.After(8 * time.Second):
+		t.Fatal("unverified teardown response blocked")
+	}
+	launcher.mu.Lock()
+	var actor *exchangeProcess
+	for p, blocked := range launcher.reservations {
+		if blocked {
+			actor = p
+		}
+	}
+	launcher.mu.Unlock()
+	require.NotNil(t, actor)
+	t.Cleanup(func() {
+		// The injected waiter did not call Wait. Restore its sole reap explicitly;
+		// production deliberately retains protection when that proof is unavailable.
+		_ = actor.cmd.Wait()
+		require.NotNil(t, actor.cmd.ProcessState)
+		require.NoError(t, actor.gate.Release())
+		require.NoError(t, actor.refs.Close())
+		close(actor.reaped)
+		require.NoError(t, s.Close())
+	})
+	require.Equal(t, "cleanup_unverified", result.Error.Code)
+	require.False(t, result.Capture.TerminalPersisted)
+	active, _ := s.WorkCounts()
+	require.Equal(t, 1, active)
+	require.Error(t, runstore.Reset(t.Context(), s.store.Path()))
+	next := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "touch another"}, "", time.Second)
+	require.Nil(t, next.RunID)
+	require.Equal(t, "cleanup_unverified", next.Error.Code)
+	require.NoFileExists(t, filepath.Join(dir, "forbidden"))
+	require.NoFileExists(t, filepath.Join(dir, "another"))
 }

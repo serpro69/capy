@@ -51,7 +51,7 @@ or `--wait-ms` option. CLI preserves the child exit code; wrapper failures inclu
 124 for deadline, 126/127 for start failure and 74 for successful execution with
 incomplete capture. The result separately reports actual child status.
 
-MCP `capy_execute` and `capy_execute_file` return the same version-1 run contract.
+MCP `capy_execute` and `capy_execute_file` return the same version-2 run contract.
 `timeout` is the execution deadline in milliseconds; `wait_ms` (0–30,000) controls
 only how long the response waits. A yielded run remains owned by that MCP server,
 and `capy_runs(action=status|read|list|search)` recovers it. Cancel through that
@@ -67,6 +67,33 @@ An admission rejection has a null run ID and means the command did not start.
 An admitted ID with `start_failed`, a lost response, or incomplete capture requires
 status/list recovery before retrying. In particular, capture failure after spawn
 does not kill a command that may already have modified the project.
+
+Linux startup now verifies acquired lease continuity before authorizing a command.
+A helper stalled before authorization is terminated and reaped before its slot
+can be reused. If reaping cannot be confirmed, ownership and capacity remain held
+and new execution is refused. Once authorization may have been sent, cancellation
+uses the helper's cooperative cleanup path. Compiler phases count as execution:
+a retired compiler followed by runtime spawn failure retains `retired` cleanup
+while reporting `start_failed` and preserving the compiler's captured output.
+
+Version-2 responses expose durable `cleanup: {scope, state}` alongside capture.
+Linux uses scope `linux_descendants_v1` and completed state `retired`. The reserved
+Darwin scope `darwin_process_group_observation_v1` uses `observed`: completion of
+a bounded observation policy, which does not prove all processes are gone.
+Publishing this response format does not enable native macOS execution.
+Both scopes also support `not_spawned` and `pending`. Pending proof remains
+pending when final persistence fails, even if local cleanup completed; actual
+exit or signal information is reported separately. A rejection without an
+admitted run and a query error without a loaded subject carry `cleanup: null`.
+
+Status/cancel wrappers and read pages carry proof in their nested run or batch.
+Lists carry it in each entry; search carries the selected subject's proof, with
+per-child proof on batch coverage entries. Batch aggregates use one homogeneous
+scope and retain child proof after log eviction. Response shortening preserves
+proof on every returned object. Cursor and redaction versions remain unchanged,
+so existing cursors can still recover retained bytes. Hooks accept healthy v1
+responses and validate scoped v2 evidence explicitly; this evidence does not
+grant permissions or establish host quiescence.
 
 ## Batches and capacity
 
@@ -148,6 +175,42 @@ not current retention. Unknown bytes after helper loss are not invented. A
 session-stat reset clears counters; runs completing afterward contribute their
 whole known outcome. Doctor/stats do not include programs, output, keys or stored
 error text in run diagnostics.
+
+## Run schema upgrades
+
+Run schema 9 preserves schema-8 history through an encrypted transactional upgrade.
+Stop all run owners, readers and supervisors for the selected owner, then start
+captured execution with the compatible new binary. Only normal execution-owner
+attachment performs the upgrade. Recovery queries, supervisors and doctor report
+the found/supported schema versions without migrating.
+
+The upgrade preserves run/batch IDs, output, cursors, expiry timestamps and pending
+cleanup evidence. It does not restart old jobs or clear quarantine. An old
+`retired` record remains Linux retirement evidence. The batch manifest gains
+scoped proof; public version-2 responses normalize historical blobs from that
+proof and the authoritative run columns without rewriting retained output.
+Normal TTL/quota retention resumes after attachment, including expiry of history
+already beyond its recorded TTL.
+
+Migration requires free filesystem space for the temporary encrypted table copy
+and WAL work, separately from retained-log quota. The preflight conservatively
+asks for three database images plus 2 MiB of headroom; it is not a disk reservation.
+A capacity or write failure rolls back without evicting logs to make the upgrade
+fit. `schema_upgrade_busy` requires stopping remaining handles;
+`schema_upgrade_capacity` identifies filesystem or retained-quota limits. If the
+stored retained quota is insufficient, adjust it with a schema-8-compatible binary
+before retrying. No error automatically recreates or discards the store.
+
+Older binaries cannot read schema 9 and may misleadingly report
+`storage_unavailable` with path/permissions advice. Use the compatible new binary's
+doctor to identify the stored and supported versions. Keeping schema-9 logs requires
+a compatible reader; there is no reverse migration. To return to a schema-8 binary,
+export needed logs first, stop all owners/readers/helpers and establish quiescence
+of any old execution groups, then explicitly run `capy runs reset --discard` with
+the compatible binary for that owner before installing the older binary and its
+matching bindings. This permanently removes **all** retained run/batch logs for that
+owner, including protected history older than the default TTL. Knowledge, vault
+data and permanent locks remain intact.
 
 ## Key rotation and explicit data loss
 

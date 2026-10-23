@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/retrieval"
 	"github.com/serpro69/capy/internal/sanitize"
 	"github.com/serpro69/capy/internal/sqliteutil"
@@ -68,9 +69,10 @@ type KnowledgeHits struct {
 	Hits  []KnowledgeHit `json:"hits"`
 }
 type SearchPage struct {
-	Queries        []string        `json:"-"` // internal batch query recovery; never echoed
-	Knowledge      []KnowledgeHits `json:"knowledge_results,omitempty"`
-	KnowledgeError *Error          `json:"knowledge_error,omitempty"`
+	Cleanup        executor.CleanupEvidence `json:"cleanup"`
+	Queries        []string                 `json:"-"` // internal batch query recovery; never echoed
+	Knowledge      []KnowledgeHits          `json:"knowledge_results,omitempty"`
+	KnowledgeError *Error                   `json:"knowledge_error,omitempty"`
 
 	BatchID         string           `json:"batch_id,omitempty"`
 	QueryScope      string           `json:"query_scope,omitempty"`
@@ -91,7 +93,7 @@ type SearchPage struct {
 // index failure is represented in the page, preserving usable earlier matches;
 // it can never be confused with an authoritative absence of matches.
 func (s *Store) Search(ctx context.Context, owner *Owner, options SearchOptions) (page SearchPage, returnedErr error) {
-	page = SearchPage{Version: 1, Kind: "query", RunID: options.RunID, Results: []QueryHits{}, Coverage: map[string]int64{}}
+	page = SearchPage{Version: EnvelopeVersion, Kind: "query", RunID: options.RunID, Results: []QueryHits{}, Coverage: map[string]int64{}}
 	if err := options.Validate(); err != nil {
 		return page, err
 	}
@@ -135,6 +137,7 @@ func (s *Store) Search(ctx context.Context, owner *Owner, options SearchOptions)
 	if err != nil {
 		return page, err
 	}
+	page.Cleanup = row.Cleanup
 	page.Index = row.Result.Index
 	page.Partial = page.Index.State != "ready"
 	if page.Error != nil {

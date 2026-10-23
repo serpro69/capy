@@ -7,6 +7,121 @@ on:
     branches: [master]
 
 jobs:
+  macos-execution-proof:
+    name: Native macOS execution proof
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      CGO_ENABLED: "1"
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
+      CAPY_DB_KEY: ci-test-key-at-least-32-characters-long!!
+      CAPY_VAULT_KEY: ci-vault-key-at-least-32-characters-long!!
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Record and check native platform
+        run: |
+          {
+            sw_vers
+            uname -srm
+            xcodebuild -version
+            xcrun --sdk macosx --show-sdk-version
+            xcrun --sdk macosx --show-sdk-build-version
+            go version
+            go env GOOS GOARCH CGO_ENABLED
+            printf 'Deployment target: %s\n' "$MACOSX_DEPLOYMENT_TARGET"
+          } | tee "$RUNNER_TEMP/macos-proof-environment.txt"
+          test "$(uname -m)" = arm64
+          test "$(go env GOOS)/$(go env GOARCH)" = darwin/arm64
+          case "$(sw_vers -productVersion)" in
+            26.*) ;;
+            *) echo 'Expected the supported macOS 26 major' >&2; exit 1 ;;
+          esac
+
+      - name: Run native lease and execution suites with race detection
+        id: native_tests
+        run: |
+          go test -tags fts5,integration -race -json -count=1 -p 1 -timeout 20m \
+            ./internal/runstore ./internal/execution \
+            | tee "$RUNNER_TEMP/macos-proof-tests.jsonl"
+
+      - name: Require native proof fixtures to execute
+        if: ${{ !cancelled() && (steps.native_tests.outcome == 'success' || steps.native_tests.outcome == 'failure') }}
+        run: |
+          python3 - "$RUNNER_TEMP/macos-proof-tests.jsonl" <<'PY'
+          import json
+          import sys
+
+          required = {
+              ("runstore", "TestRecoveryMetadataUsesRecoveryBudget"),
+              ("runstore", "TestAdmissionAccountingPreservesCallerBudgets"),
+              ("runstore", "TestRetentionWorkUsesOperationBudgets"),
+              ("runstore", "TestCaptureRetentionKeepsWriteDeadline"),
+              ("runstore", "TestMaintenanceBoundsAndBusyWAL"),
+              ("runstore", "TestLargeAdmissionMakesProgressAcrossEvictionBatches"),
+              ("runstore", "TestLargeEvictionPersistsAfterAppendRetryFails"),
+              ("runstore", "TestLeaseRefsInheritancePreservesLocksAndPermanentFiles"),
+              ("runstore", "TestLeaseRefsRetainLocksAcrossCloseAndAliases"),
+              ("runstore", "TestLeaseRefsGateSharedAcrossOwnersAndOneTimeRelease"),
+              ("execution", "TestLeaseExchangeLaunchAndPermanentFiles"),
+              ("execution", "TestLeaseExchangeGateWaitDoesNotSpawn"),
+              ("execution", "TestLeaseExchangeStoppedHelperRecoversOwner"),
+              ("execution", "TestLeaseExchangeDelayedReapRetainsReservation"),
+              ("execution", "TestLeaseExchangePartialStartNeverKillsHelper"),
+              ("execution", "TestLeaseExchangeIdentityAloneAcceptsUnlockedAliases"),
+              ("execution", "TestLeaseExchangeCancellationAfterReadyKeepsNextGate"),
+              ("execution", "TestLeaseExchangeSignalFailureRetainsUntilReap"),
+              ("execution", "TestLeaseExchangeUnverifiedWaitKeepsProtection"),
+          }
+          for case in ("independent", "swapped", "reflected", "replayed", "bad-marker", "wrong-step"):
+              required.add(("execution", "TestLeaseExchangeRejectsFalseIdentity/" + case))
+          passed = set()
+          with open(sys.argv[1], encoding="utf-8") as log:
+              for line in log:
+                  event = json.loads(line)
+                  if event.get("Action") == "pass" and "Test" in event:
+                      passed.add((event["Package"].rsplit("/", 1)[-1], event["Test"]))
+          missing = sorted(required - passed)
+          if missing:
+              raise SystemExit("Native proof fixtures missing, skipped or failed: " + repr(missing))
+          print(f"Verified {len(required)} native proof fixtures executed and passed")
+          PY
+
+      - name: Repeat native recovery and retention regressions
+        if: ${{ !cancelled() && (steps.native_tests.outcome == 'success' || steps.native_tests.outcome == 'failure') }}
+        run: |
+          go test -tags fts5,integration -race -json -count=5 -timeout 10m \
+            -run '^(TestRecoveryMetadataUsesRecoveryBudget|TestAdmissionAccountingPreservesCallerBudgets|TestRetentionWorkUsesOperationBudgets|TestCaptureRetentionKeepsWriteDeadline|TestMaintenanceBoundsAndBusyWAL|TestLargeAdmissionMakesProgressAcrossEvictionBatches|TestLargeEvictionPersistsAfterAppendRetryFails)$' \
+            ./internal/runstore | tee "$RUNNER_TEMP/macos-retention-tests.jsonl"
+
+      - name: Vet native integration code
+        if: ${{ !cancelled() && (steps.native_tests.outcome == 'success' || steps.native_tests.outcome == 'failure') }}
+        run: go vet -tags fts5,integration ./internal/runstore ./internal/execution
+
+      - name: Build native binary
+        if: ${{ !cancelled() && (steps.native_tests.outcome == 'success' || steps.native_tests.outcome == 'failure') }}
+        run: go build -tags fts5 -o "$RUNNER_TEMP/capy-macos-proof" ./cmd/capy/
+
+      - name: Preserve native proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-execution-proof-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/macos-proof-environment.txt
+            ${{ runner.temp }}/macos-proof-tests.jsonl
+            ${{ runner.temp }}/macos-retention-tests.jsonl
+          retention-days: 14
+
   check:
     runs-on: ubuntu-latest
     steps:

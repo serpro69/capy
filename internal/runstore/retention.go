@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/serpro69/capy/internal/sqliteutil"
@@ -89,15 +90,15 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 		// evidence even when the result blob contains a historical expiry.
 		now := time.Now().UTC().UnixMilli()
 		// Resume already-hidden victims even if current pressure disappeared.
-		err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE evicting=1 ORDER BY id LIMIT 1").Scan(&id, &charged, &expiry)
+		err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE evicting=1 AND "+acceptedCleanupSQL+" ORDER BY id LIMIT 1").Scan(&id, &charged, &expiry)
 		if errors.Is(err, sql.ErrNoRows) && !expire && !pressure {
 			break
 		}
 		if errors.Is(err, sql.ErrNoRows) {
-			err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE terminal=1 AND expires_at<=? ORDER BY expires_at,id LIMIT 1", now).Scan(&id, &charged, &expiry)
+			err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE terminal=1 AND "+acceptedCleanupSQL+" AND expires_at<=? ORDER BY expires_at,id LIMIT 1", now).Scan(&id, &charged, &expiry)
 		}
 		if errors.Is(err, sql.ErrNoRows) && pressure {
-			err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE terminal=1 ORDER BY completed_at,id LIMIT 1").Scan(&id, &charged, &expiry)
+			err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE terminal=1 AND "+acceptedCleanupSQL+" ORDER BY completed_at,id LIMIT 1").Scan(&id, &charged, &expiry)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			removed, debit, deleted, err := retainBatch(ctx, tx, pressure, expire, remainingRows)
@@ -123,6 +124,13 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 		}
 		if err != nil || charged < 0 || charged > report.AccountedBytes {
 			return report, storageError()
+		}
+		row, err := retainedCleanup(ctx, tx, id)
+		if err != nil {
+			return report, err
+		}
+		if err := validateRunManifest(ctx, tx, id, row, true); err != nil {
+			return report, err
 		}
 		// Hide the victim before deleting bounded payload batches. Keep its full
 		// debit until final deletion: partial cleanup never creates free quota.
@@ -193,8 +201,9 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 }
 
 func charge(ctx context.Context, tx *sql.Tx, id string, amount, limit int64, expire bool) error {
-	ctx, cancel := context.WithTimeout(ctx, WriteTimeout)
-	defer cancel()
+	// Callers own the budget: admission has its bounded recovery/admission
+	// context, while appendBatch already supplies the 250-ms capture deadline.
+	// Reapplying that shorter deadline here can cancel valid large admissions.
 	for {
 		report, err := retain(ctx, tx, limit, amount, expire)
 		if err != nil {
@@ -211,10 +220,10 @@ func charge(ctx context.Context, tx *sql.Tx, id string, amount, limit int64, exp
 		// the first 64-victim boundary for actual quota exhaustion.
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE run_meta SET accounted_bytes=accounted_bytes+? WHERE singleton=1", amount); err != nil {
-		return storageError()
+		return metadataFailure(ctx, "charging retained run bytes")
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE runs SET accounted_bytes=accounted_bytes+? WHERE id=?", amount, id); err != nil {
-		return storageError()
+		return metadataFailure(ctx, "charging run metadata")
 	}
 	used, err := refreshIndexDebit(ctx, tx)
 	if err != nil {
@@ -247,22 +256,20 @@ func (s *Store) prepareCapacity(ctx context.Context, needed int64) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		writeCtx, cancel := context.WithTimeout(ctx, WriteTimeout)
-		tx, err := sqliteutil.BeginImmediateContext(writeCtx, s.db, "runs")
+		// Admission already supplies its bounded operation context. Retention
+		// may require more work than a streaming append's 250-ms allowance.
+		tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
 		if err != nil {
-			cancel()
-			return storageError()
+			return metadataFailure(ctx, "starting admission retention")
 		}
-		report, err := retain(writeCtx, tx, limit, needed, true)
+		report, err := retain(ctx, tx, limit, needed, true)
 		if err != nil {
 			tx.Rollback()
-			cancel()
-			return err
+			return fmt.Errorf("retaining admission capacity: %w", errors.Join(err, ctx.Err()))
 		}
 		err = tx.Commit()
-		cancel()
 		if err != nil {
-			return storageError()
+			return metadataFailure(ctx, "committing admission retention")
 		}
 		if !report.More {
 			return nil
@@ -277,23 +284,25 @@ func (s *Store) prepareCapacity(ctx context.Context, needed int64) error {
 // tombstoned victim by bounded payload batches, then attempts a passive
 // checkpoint. Busy readers/writers retain their WAL; no sidecar is ever removed.
 func (s *Store) Maintain(ctx context.Context) (RetentionReport, error) {
-	ctx, cancel := context.WithTimeout(ctx, WriteTimeout)
+	// Housekeeping uses the bounded metadata budget, including any earlier
+	// caller deadline. Capture append and helper finalization keep WriteTimeout.
+	ctx, cancel := context.WithTimeout(ctx, recoveryTimeout)
 	defer cancel()
 	tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
 	if err != nil {
-		return RetentionReport{}, storageError()
+		return RetentionReport{}, metadataFailure(ctx, "starting run maintenance")
 	}
 	defer tx.Rollback()
 	report, err := retain(ctx, tx, s.policy.MaxRetainedBytes, 0, true)
 	if err != nil {
-		return report, err
+		return report, fmt.Errorf("maintaining retained runs: %w", errors.Join(err, ctx.Err()))
 	}
 	if err := tx.Commit(); err != nil {
-		return report, storageError()
+		return report, metadataFailure(ctx, "committing run maintenance")
 	}
 	var busy, log, checkpointed int
 	if err := s.db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)").Scan(&busy, &log, &checkpointed); err != nil {
-		return report, storageError()
+		return report, metadataFailure(ctx, "checkpointing run maintenance")
 	}
 	return report, nil
 }

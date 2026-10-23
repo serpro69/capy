@@ -23,7 +23,7 @@ type runCall struct {
 	stopRequest func() bool
 	ready       chan runstore.Result
 	done        chan struct{}
-	cleanup     chan struct{}
+	cleanup     <-chan struct{}
 	result      runstore.Result
 	reservedAt  time.Time
 	deadline    time.Time
@@ -156,6 +156,9 @@ func (s *Service) executeResponse(ctx context.Context, request executor.ExecRequ
 			s.mu.Unlock()
 			current = s.withPreview(queryCtx, st, current)
 		}
+	} else {
+		current.Cleanup.State = executor.CleanupPending
+		current.Error = &runstore.Error{Code: "storage_unavailable", Message: "run status refresh failed; recover the admitted run before retrying"}
 	}
 	stopQuery()
 	if err := prepare(current); err != nil {

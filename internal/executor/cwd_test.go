@@ -120,14 +120,14 @@ func TestExecuteRustCompileDirectory(t *testing.T) {
 	// Observe the real compiler's cwd, then compile and run normally.
 	record := filepath.Join(t.TempDir(), "compile-cwd")
 	shim := filepath.Join(t.TempDir(), "rustc")
-	script := fmt.Sprintf("#!/bin/sh\npwd > %s\nexec %s \"$@\"\n", quotePosixSingle(record), quotePosixSingle(rustc))
+	script := fmt.Sprintf("#!/bin/sh\npwd -P > %s\nexec %s \"$@\"\n", quotePosixSingle(record), quotePosixSingle(rustc))
 	require.NoError(t, os.WriteFile(shim, []byte(script), 0o700))
 	e.Runtimes()[Rust] = shim
 	result, err := e.Execute(context.Background(), ExecRequest{
 		Language: Rust,
 		Code: `fn main() {
 println!("{}", std::env::current_dir().unwrap().display());
-println!("{}", std::env::current_exe().unwrap().display());
+println!("{}", std::env::current_exe().unwrap().canonicalize().unwrap().display());
 println!("{}", std::env::var("TMPDIR").unwrap());
 }`,
 	})
@@ -140,6 +140,8 @@ println!("{}", std::env::var("TMPDIR").unwrap());
 	assert.Equal(t, project, lines[0])
 	compileDir, err := os.ReadFile(record)
 	require.NoError(t, err)
+	// Resolve while the workspace exists: macOS may report /var for the
+	// executable and /private/var for pwd. Both records above are physical paths.
 	assert.Equal(t, strings.TrimSpace(string(compileDir)), filepath.Dir(lines[1]))
 	assert.NotEqual(t, project, filepath.Dir(lines[1]))
 	assert.Equal(t, filepath.Base(lines[2]), filepath.Base(filepath.Dir(lines[1])))

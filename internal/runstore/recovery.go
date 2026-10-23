@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/sqliteutil"
 	"golang.org/x/sys/unix"
 )
@@ -123,7 +125,11 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=?)`, slot, slot).Scan(&work)
 		}
 		return report, nil
 	}
-	writeCtx, cancel := context.WithTimeout(ctx, WriteTimeout)
+	// Recovery may rewrite a retained program's large encrypted record. It is
+	// bounded by the existing recovery deadline, not the capture append budget.
+	// WithTimeout preserves any earlier caller deadline; capture writes and
+	// helper finalization retain their separate 250-ms limits.
+	writeCtx, cancel := context.WithTimeout(ctx, recoveryTimeout)
 	defer cancel()
 	tx, err := sqliteutil.BeginImmediateContext(writeCtx, s.db, "runs")
 	if err != nil {
@@ -137,7 +143,7 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=?)`, slot, slot).Scan(&work)
 	// Inspect every unfinished proof, even beyond the bounded recovery batch.
 	// A generation mismatch also requires operator recovery; never rewrite it.
 	var unsafe bool
-	err = tx.QueryRowContext(writeCtx, `SELECT EXISTS(SELECT 1 FROM runs WHERE slot=? AND terminal=0 AND (cleanup='pending' OR generation<>?))
+	err = tx.QueryRowContext(writeCtx, `SELECT EXISTS(SELECT 1 FROM runs WHERE slot=? AND terminal=0 AND (NOT `+acceptedCleanupSQL+` OR generation<>?))
 OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=? AND generation<>?)`, slot, generation, slot, generation).Scan(&unsafe)
 	if err != nil {
 		return report, storageError()
@@ -155,7 +161,7 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=? AND generation<>?)`, slot, 
 	}
 	// Safe siblings have their own proof. A pending sibling still prevents
 	// reuse, but cannot prevent recording these independent outcomes/TTLs.
-	ids, err := recoveryIDs(writeCtx, tx, "SELECT id FROM runs WHERE slot=? AND generation=? AND terminal=0 AND cleanup IN ('not_spawned','retired') ORDER BY id LIMIT ?", slot, generation)
+	ids, err := recoveryIDs(writeCtx, tx, `SELECT id FROM runs WHERE slot=? AND generation=? AND terminal=0 AND `+acceptedCleanupSQL+` ORDER BY id LIMIT ?`, slot, generation)
 	if err != nil {
 		return report, err
 	}
@@ -179,7 +185,7 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=? AND generation<>?)`, slot, 
 		report.ReleasedClaims++
 	}
 	var pending bool
-	if err := tx.QueryRowContext(writeCtx, `SELECT EXISTS(SELECT 1 FROM runs WHERE slot=? AND generation=? AND terminal=0 AND cleanup IN ('not_spawned','retired'))
+	if err := tx.QueryRowContext(writeCtx, `SELECT EXISTS(SELECT 1 FROM runs WHERE slot=? AND generation=? AND terminal=0 AND `+acceptedCleanupSQL+`)
 OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=? AND generation=?)`, slot, generation, slot, generation).Scan(&pending); err != nil {
 		return report, storageError()
 	}
@@ -187,7 +193,7 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=? AND generation=?)`, slot, g
 		report.DeferredSlots = 1
 	}
 	if err := tx.Commit(); err != nil {
-		return RecoveryReport{}, storageError()
+		return RecoveryReport{}, metadataFailure(writeCtx, "committing recovered metadata")
 	}
 	return report, nil
 }
@@ -216,12 +222,19 @@ func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
 	// Read directly: expiry must not hide unfinished proof records from recovery.
 	var result []byte
 	row := Admitted{ID: id}
-	if err := tx.QueryRowContext(ctx, "SELECT json_extract(CAST(program AS TEXT),'$.ttl_hours'),result,cleanup FROM runs WHERE id=?", id).Scan(&row.Program.TTLHours, &result, &row.Cleanup); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT json_extract(CAST(program AS TEXT),'$.ttl_hours'),result,generation,cleanup_scope,cleanup FROM runs WHERE id=?", id).Scan(&row.Program.TTLHours, &result, &row.Generation, &row.Cleanup.Scope, &row.Cleanup.State); err != nil {
+		return metadataFailure(ctx, "reading recovery metadata")
+	}
+	if decodeRunResult(result, row.Cleanup, &row.Result) != nil || row.Program.TTLHours <= 0 || int64(row.Program.TTLHours) > (1<<63-1)/int64(time.Hour) {
 		return storageError()
 	}
-	if json.Unmarshal(result, &row.Result) != nil || row.Program.TTLHours <= 0 || int64(row.Program.TTLHours) > (1<<63-1)/int64(time.Hour) {
-		return storageError()
+	if !CleanupAccepted(row.Cleanup) {
+		return failure("cleanup_unverified", "run recovery requires accepted scoped evidence")
 	}
+	if err := validateRunManifest(ctx, tx, id, row.Cleanup, false); err != nil {
+		return err
+	}
+	row.Result.Cleanup = row.Cleanup
 	for _, stream := range []string{"stdout", "stderr"} {
 		if err := s.project(ctx, tx, &row, stream, nil, true); err != nil {
 			return err
@@ -247,7 +260,7 @@ func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
 	}
 	row.Result.Capture.TerminalPersisted = true
 	row.Result.Capture.State = "incomplete"
-	if row.Cleanup == "not_spawned" {
+	if row.Cleanup.State == executor.CleanupNotSpawned {
 		row.Result.Capture.State = "not_started"
 	}
 	row.Result.Capture.Reason = &reason
@@ -255,10 +268,16 @@ func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
 	if err != nil {
 		return storageError()
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,terminal=1,completed_at=?,expires_at=? WHERE id=?", encoded, row.Result.CompletedAt.UnixNano(), row.Result.ExpiresAt.UnixMilli()+1, id); err != nil {
-		return storageError()
+	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,terminal=1,completed_at=?,expires_at=? WHERE id=? AND generation=? AND cleanup_scope=?", encoded, row.Result.CompletedAt.UnixNano(), row.Result.ExpiresAt.UnixMilli()+1, id, row.Generation, row.Cleanup.Scope); err != nil {
+		return metadataFailure(ctx, "writing recovered metadata")
 	}
 	return syncBatchChild(ctx, tx, row.Result, true)
+}
+
+// Keep backend/stored text private while exposing the failed phase and causal
+// cancellation. These diagnostics distinguish a deadline from path permissions.
+func metadataFailure(ctx context.Context, phase string) error {
+	return fmt.Errorf("%s: %w", phase, errors.Join(storageError(), ctx.Err()))
 }
 
 func (s *Store) maintenance(ctx context.Context, ticks <-chan time.Time) {

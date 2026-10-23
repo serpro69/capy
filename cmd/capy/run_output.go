@@ -24,6 +24,17 @@ type runQueryResult struct {
 	Error   *runstore.Error       `json:"error,omitempty"`
 }
 
+func (r runQueryResult) MarshalJSON() ([]byte, error) {
+	type plain runQueryResult
+	if r.Run != nil || r.Batch != nil {
+		return json.Marshal(plain(r))
+	}
+	return json.Marshal(struct {
+		plain
+		Cleanup any `json:"cleanup"`
+	}{plain: plain(r)})
+}
+
 func runTarget(cmd *cobra.Command) (*knowledgeTarget, error) {
 	explicit, err := cmd.Flags().GetString("project-dir")
 	if err != nil {
@@ -68,6 +79,7 @@ func runText(result runstore.Result) string {
 		b.WriteString("Execution not started.\n")
 	} else {
 		fmt.Fprintf(&b, "Run %s: %s; capture %s (%d/%d bytes).\n", *result.RunID, result.State, result.Capture.State, result.Capture.CapturedBytes, result.Capture.ObservedBytes)
+		fmt.Fprintf(&b, "Cleanup: %s / %s.\n", result.Cleanup.Scope, result.Cleanup.State)
 	}
 	if result.ExitCode != nil {
 		fmt.Fprintf(&b, "Exit code: %d.\n", *result.ExitCode)
@@ -101,6 +113,7 @@ func encodeRunText(value any) ([]byte, error) {
 	case runQueryResult:
 		if v.Batch != nil {
 			fmt.Fprintf(&b, "Batch %s: %s; failures=%d incomplete=%d. Recover: capy runs list --batch-id %s.\n", v.Batch.BatchID, v.Batch.State, v.Batch.FailedCount, v.Batch.IncompleteCount, v.Batch.BatchID)
+			fmt.Fprintf(&b, "Cleanup: %s / %s.\n", v.Batch.Cleanup.Scope, v.Batch.Cleanup.State)
 			if v.Batch.Error != nil {
 				fmt.Fprintf(&b, "%s: %s\n", v.Batch.Error.Code, terminalText(v.Batch.Error.Message))
 			}
@@ -113,6 +126,7 @@ func encodeRunText(value any) ([]byte, error) {
 		}
 	case runstore.ReadPage:
 		fmt.Fprintf(&b, "Run %s: %s; capture %s.\n", v.RunID, v.Run.State, v.Run.Capture.State)
+		fmt.Fprintf(&b, "Cleanup: %s / %s.\n", v.Run.Cleanup.Scope, v.Run.Cleanup.State)
 		if v.Raw {
 			b.WriteString("Unsanitized raw bytes (base64).\n")
 		}
@@ -135,6 +149,7 @@ func encodeRunText(value any) ([]byte, error) {
 	case runstore.ListPage:
 		for _, entry := range v.Entries {
 			fmt.Fprintf(&b, "%s %s capture=%s owner=%s output_available=%t\n", entry.RunID, entry.State, entry.CaptureState, entry.OwnerType, entry.OutputAvailable)
+			fmt.Fprintf(&b, "  cleanup=%s/%s\n", entry.Cleanup.Scope, entry.Cleanup.State)
 			if entry.Ordinal != nil {
 				fmt.Fprintf(&b, "  ordinal=%d label=%s\n", *entry.Ordinal, terminalText(entry.Label))
 			}
@@ -151,6 +166,7 @@ func encodeRunText(value any) ([]byte, error) {
 			selector = v.BatchID
 		}
 		fmt.Fprintf(&b, "Run/batch %s: index=%s partial=%t; searched stdout=%d stderr=%d raw bytes.\n", selector, v.Index.State, v.Partial, v.Coverage["stdout"], v.Coverage["stderr"])
+		fmt.Fprintf(&b, "Cleanup: %s / %s.\n", v.Cleanup.Scope, v.Cleanup.State)
 		if v.Error != nil {
 			fmt.Fprintf(&b, "%s: %s\n", v.Error.Code, terminalText(v.Error.Message))
 		}
@@ -197,7 +213,7 @@ func writeRunResponse(cmd *cobra.Command, limit int, jsonOutput bool, code int, 
 	value, err := execution.Budget(limit, build, encode)
 	if err != nil {
 		code = 1
-		value = runQueryResult{Version: 1, Kind: "query", Error: &runstore.Error{Code: "response_unavailable", Message: "result unavailable; recover existing runs before retrying execution"}}
+		value = runQueryResult{Version: runstore.EnvelopeVersion, Kind: "query", Error: &runstore.Error{Code: "response_unavailable", Message: "result unavailable; recover existing runs before retrying execution"}}
 	}
 	b, err := encode(value)
 	if err != nil {
@@ -218,6 +234,6 @@ func writeQueryFailure(cmd *cobra.Command, jsonOutput bool, limit, exit int, err
 	return writeRunResponse(cmd, limit, jsonOutput, exit, func(n int) (any, error) {
 		safe := *failure
 		safe.Message = execution.SafeMessage(safe.Message, n)
-		return runQueryResult{Version: 1, Kind: "query", Error: &safe}, nil
+		return runQueryResult{Version: runstore.EnvelopeVersion, Kind: "query", Error: &safe}, nil
 	})
 }

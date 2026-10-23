@@ -63,13 +63,17 @@ func dbstatAvailable(ctx context.Context, db *sql.DB) (bool, error) {
 }
 
 func readPolicy(ctx context.Context, db *sql.DB) (Policy, error) {
+	return readPolicyVersion(ctx, db, schemaVersion)
+}
+
+func readPolicyVersion(ctx context.Context, db *sql.DB, version int) (Policy, error) {
 	var p Policy
 	err := db.QueryRowContext(ctx, `SELECT revision,ttl_hours,max_run_bytes,max_retained_bytes,schema_version,redaction_version,accounting_mode FROM run_policy WHERE singleton=1`).Scan(
 		&p.Revision, &p.TTLHours, &p.MaxRunBytes, &p.MaxRetainedBytes, &p.SchemaVersion, &p.RedactionVersion, &p.AccountingMode)
 	if err != nil || p.Revision < 1 || p.PolicyConfig.validate() != nil {
 		return Policy{}, storageError()
 	}
-	if p.SchemaVersion != schemaVersion || p.RedactionVersion != sanitize.StreamVersion || (p.AccountingMode != "dbstat" && p.AccountingMode != "conservative") {
+	if p.SchemaVersion != version || p.RedactionVersion != sanitize.StreamVersion || (p.AccountingMode != "dbstat" && p.AccountingMode != "conservative") {
 		return Policy{}, failure("policy_mismatch", "stored run policy versions or accounting mode are unsupported; stop and reload owners with a compatible capy")
 	}
 	if p.AccountingMode == "dbstat" {

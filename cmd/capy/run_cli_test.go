@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/serpro69/capy/internal/execution"
+	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/runstore"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -68,6 +69,9 @@ func TestRunCLICrossInterfaceRecovery(t *testing.T) {
 	require.NotNil(t, result.RunID)
 	require.Equal(t, "cli", result.OwnerType)
 	require.Equal(t, 7, *result.ExitCode)
+	require.Equal(t, 2, result.Version)
+	wantProof := executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}
+	require.Equal(t, wantProof, result.Cleanup)
 	p := startStdioProcess(t, stdioCommand{executable: bin, args: []string{"serve", "--project-dir", project}, dir: project, env: env})
 	p.initialize(t)
 	require.Equal(t, []byte("CLI-out\n"), p.rawRun(t, *result.RunID, "stdout"))
@@ -77,17 +81,26 @@ func TestRunCLICrossInterfaceRecovery(t *testing.T) {
 	require.Empty(t, diag)
 	var page runstore.ReadPage
 	require.NoError(t, json.Unmarshal(out, &page))
+	require.Equal(t, 2, page.Version)
+	require.Equal(t, wantProof, page.Run.Cleanup)
 	require.Equal(t, []byte("MCP-out\n"), page.Fragments[0].Data)
 	out, _, status = capturedCLI(t, bin, project, env, "runs", "status", "--json", "--project-dir", project, "--run-id", *result.RunID)
 	require.Zero(t, status)
 	var query runQueryResult
 	require.NoError(t, json.Unmarshal(out, &query))
+	require.Equal(t, 2, query.Version)
+	require.Equal(t, wantProof, query.Run.Cleanup)
+	require.NotContains(t, string(out), `"cleanup":null`)
 	require.Equal(t, 7, *query.Run.ExitCode)
 	out, _, status = capturedCLI(t, bin, project, env, "runs", "list", "--json", "--project-dir", project, "--limit", "64")
 	require.Zero(t, status)
 	var list runstore.ListPage
 	require.NoError(t, json.Unmarshal(out, &list))
 	require.Len(t, list.Entries, 2)
+	require.Equal(t, 2, list.Version)
+	for _, entry := range list.Entries {
+		require.Equal(t, wantProof, entry.Cleanup)
+	}
 	var mcpList struct {
 		IsError    bool              `json:"isError"`
 		Structured runstore.ListPage `json:"structuredContent"`

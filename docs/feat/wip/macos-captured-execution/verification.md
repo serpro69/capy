@@ -7,7 +7,12 @@
 > Scope selected by user: Apple Silicon first; direction A, native process-group supervision with explicit macOS cleanup limits
 > Related feature: [routine command capture](../../done/routine-command-capture/design.md)
 
-Subsequent design review is recorded in [review-resolution.md](review-resolution.md).
+**Historical contract:** this source-only report predates the native re-entry
+fixture and the user's 2026-10-22 acceptance of observational Darwin cleanup.
+Its source findings remain evidence; group-retirement feasibility is no longer
+a release gate. See the [accepted contract](process-proof.md#accepted-observational-contract)
+and current `design.md`/`contracts.md`. Lease-ownership proof remains required.
+
 Task numbers in the original verification narrative are historical: former process
 Task 1 is now Tasks 1–2; former lease Task 2 is now Tasks 3–4. The current design
 selects the offset exchange on both platforms, with additional Linux fdinfo
