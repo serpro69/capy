@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -178,6 +179,11 @@ func TestExecuteFileCapturedSchema(t *testing.T) {
 }
 
 func TestExecuteFileCapturedPhysicalPathBytes(t *testing.T) {
+	// Darwin filesystems reject invalid UTF-8 names. Keep the byte-preserving
+	// pathname regression on Linux; valid literal paths run on both hosts.
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux byte-transparent filenames")
+	}
 	s := newHandoffServer(t, "")
 	external := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(external, "secret.txt"), []byte("denied-external-fixture"), 0600))

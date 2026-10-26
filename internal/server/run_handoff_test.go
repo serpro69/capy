@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
+	"github.com/serpro69/capy/internal/execution"
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/runstore"
 	"github.com/stretchr/testify/require"
@@ -16,8 +16,8 @@ import (
 
 func newHandoffServer(t *testing.T, project string) *Server {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("captured supervision requires Linux")
+	if err := execution.Supported(); err != nil {
+		t.Skipf("captured execution unavailable on this host: %v", err)
 	}
 	root := t.TempDir()
 	for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {

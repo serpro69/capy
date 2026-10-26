@@ -157,6 +157,7 @@ func runDarwinStreamPhase(ctx context.Context, phase darwinPhase, w *eventWriter
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), ops.budget)
 	defer cancelCleanup()
 	cleanupErr := closeErr
+	signalled := false
 	if !terminal {
 		if ctx.Err() == nil || (!errors.Is(waitErr, context.Canceled) && !errors.Is(waitErr, context.DeadlineExceeded)) {
 			// Lost/unknown wait ownership forbids further numeric signals or an
@@ -164,7 +165,9 @@ func runDarwinStreamPhase(ctx context.Context, phase darwinPhase, w *eventWriter
 			return result, errors.Join(cleanupErr, waitErr, cmd.Process.Release())
 		}
 		result.StopReason = streamStopReason(ctx)
-		cleanupErr = errors.Join(cleanupErr, ops.killGroup(cmd.Process.Pid))
+		killErr := ops.killGroup(cmd.Process.Pid)
+		signalled = killErr == nil
+		cleanupErr = errors.Join(cleanupErr, killErr)
 		waitErr = ops.waitExit(cleanupCtx, cmd.Process.Pid)
 		terminal = waitErr == nil
 		if !terminal {
@@ -216,12 +219,18 @@ func runDarwinStreamPhase(ctx context.Context, phase darwinPhase, w *eventWriter
 			cleanupErr = errors.New("retained darwin leader missing from inventory")
 			break
 		}
-		if otherLive {
+		if otherLive && !signalled {
 			if err := ops.killGroup(cmd.Process.Pid); err != nil {
 				cleanupErr = fmt.Errorf("signalling darwin group: %w", err)
 				break
 			}
+			signalled = true
 		}
+		// A successful SIGKILL already requests termination of the group.
+		// Inventory can still report members during exit; another signal can
+		// fail after the last live member disappears. Observe until drainage
+		// and the final inventory succeed. A surviving/new member still times
+		// out as pending; never infer completion from signal delivery alone.
 		if len(members) == 1 && remaining == 0 {
 			observed = true // snapshot after both natural EOFs, before sole reap
 			break

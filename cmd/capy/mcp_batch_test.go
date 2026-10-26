@@ -13,6 +13,7 @@ import (
 )
 
 func TestMCPParallelBatchControls(t *testing.T) {
+	wantProof := capturedCleanup(t)
 	bin := buildStdioCapy(t)
 	project := stdioProject(t)
 	env := stdioEnv(t, "synthetic-parallel-batch-key-123456789")
@@ -28,7 +29,7 @@ func TestMCPParallelBatchControls(t *testing.T) {
 		require.True(t, bad.IsError)
 	}
 	require.NoFileExists(t, filepath.Join(project, "invalid-spawn"))
-	commands := []any{"touch first; while [ ! -e release ]; do sleep .01; done; printf sharedneedle", "touch second; while [ ! -e release ]; do sleep .01; done; printf late >&2; exit 7", "printf sharedneedle"}
+	commands := []any{"printf x >> once-first; touch first; while [ ! -e release ]; do sleep .01; done; printf sharedneedle", "printf x >> once-second; touch second; while [ ! -e release ]; do sleep .01; done; printf late >&2; exit 7", "printf x >> once-third; printf sharedneedle"}
 	r := p.capturedBatch(t, map[string]any{"commands": commands, "concurrency": 2, "wait_ms": 0, "queries": []any{"sharedneedle"}, "query_scope": "global"})
 	require.False(t, r.IsError)
 	id := r.Structured.BatchID
@@ -40,9 +41,20 @@ func TestMCPParallelBatchControls(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(project, "release"), nil, 0600))
 	final := p.awaitBatch(t, id)
+	require.Equal(t, 2, final.Version)
+	require.Equal(t, wantProof, final.Cleanup)
+	require.NotEmpty(t, r.Structured.OwnerID)
+	require.Equal(t, r.Structured.OwnerID, final.OwnerID)
 	require.Equal(t, 1, final.FailedCount)
 	children := p.batchChildren(t, id)
 	require.Len(t, children, 3)
+	for i, child := range children {
+		require.Equal(t, wantProof, child.Cleanup)
+		require.Equal(t, final.OwnerID, child.OwnerID)
+		require.Equal(t, id, child.BatchID)
+		require.NotNil(t, child.Ordinal)
+		require.Equal(t, i, *child.Ordinal)
+	}
 	require.Equal(t, []byte("late"), p.rawRun(t, children[1].RunID, "stderr"))
 	p.tool(t, "capy_index", map[string]any{"source": "earlier durable", "content": "# shared\n\nsharedneedle reference"})
 	var raw json.RawMessage
@@ -55,6 +67,11 @@ func TestMCPParallelBatchControls(t *testing.T) {
 	p = launch()
 	require.Equal(t, children, p.batchChildren(t, id))
 	p.close(t)
+	for _, name := range []string{"first", "second", "third"} {
+		count, err := os.ReadFile(filepath.Join(project, "once-"+name))
+		require.NoError(t, err)
+		require.Equal(t, "x", string(count))
+	}
 	cmd := exec.Command(bin, "runs", "search", "--batch-id", id, "--query-scope", "global", "--project-dir", project, "--json")
 	cmd.Env = env
 	cmd.Dir = project

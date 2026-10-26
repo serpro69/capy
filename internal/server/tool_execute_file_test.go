@@ -29,6 +29,8 @@ func TestExecuteFile_Success(t *testing.T) {
 	// Create a test file
 	testFile := filepath.Join(t.TempDir(), "test.txt")
 	require.NoError(t, os.WriteFile(testFile, []byte("hello from file"), 0o644))
+	testFile, err := filepath.EvalSymlinks(testFile)
+	require.NoError(t, err)
 	writeExecuteFileRules(t, project, map[string][]string{"allow": {"Read(/" + testFile + ")"}})
 	srv := newTestServerWithProjectDir(t, nil, project)
 
@@ -95,7 +97,8 @@ func writeExecuteFileRules(t *testing.T, project string, permissions map[string]
 
 func TestExecuteFile_CheckedPathHandoff(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	project, external := root+"/project", root+"/external"
 	require.NoError(t, os.MkdirAll(project, 0o755))
 	require.NoError(t, os.MkdirAll(external+"/child", 0o755))
