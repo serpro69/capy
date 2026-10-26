@@ -1,6 +1,6 @@
 # Native verification bootstrap record
 
-> Status: Task 1 and Task 2 fixture exceptions authorized, used, and removed 2026-10-22; routine enforcement verified restored
+> Status: Task 1, Task 2 and Task 9 exceptions removed; routine enforcement verified restored 2026-10-26
 > Applies to: Codex hosts enforcing Capy's routine-capture gate
 > Plan: [implementation.md](implementation.md#execution-rules)
 
@@ -184,3 +184,56 @@ routine-capture-required guidance; the probe executed no test. No exception
 remains. All verification logs/reports are retained under
 `bench-results/macos-observed-task2-validation/`; no assertion or skip was changed
 to make the inherited quality failures pass.
+
+## Task 9 private captured integration — authorized verification
+
+2026-10-26: Task 9's native supervisor/stream wiring and encrypted integration
+fixtures are prepared from baseline `31c0ef259ad8dbcc5f67fc12c7fc9cd5ec15730c`.
+Installed MCP capture rejected a readiness probe before admission; no command ran.
+The earlier Task 1–2 authorizations do not cover this task. The operator approved
+this seven-command scope on 2026-10-26: “Run the native verification.” Temporary
+exceptions were applied to the project and isolated baseline `.capy.toml`, then
+removed after verification; routine enforcement stayed enabled. Original project configuration is preserved
+at `/private/tmp/capy-task9-validation.X0I2Gj/original-capy.toml`.
+
+The authorized scope used these exact temporary exceptions for this repository and an isolated
+copy of that baseline, including fix-driven reruns. Preserve existing settings,
+keep routine enforcement enabled, use synthetic knowledge/vault keys, CGO,
+deployment target 26.0 and temporary build caches. No install, public activation,
+push or release is included.
+
+```toml
+[routing.routine]
+enabled = true
+native_allow = [
+  "Bash(go test -tags fts5,integration -run=TestDarwin -count=5 -timeout 10m -v ./internal/executor ./internal/execution)",
+  "Bash(go test -tags fts5,integration -race -count=1 -p 1 -timeout 20m ./internal/executor ./internal/execution ./internal/runstore)",
+  "Bash(go vet -tags fts5,integration ./internal/executor ./internal/execution ./internal/runstore)",
+  "Bash(go build -tags fts5 ./...)",
+  "Bash(go test -tags fts5 -run=TestNoSuchTest -bench=BenchmarkExecutorOverhead -benchmem -count=6 -benchtime=1s ./internal/executor)",
+  "Bash(make bench-quality BENCH_BRANCH=macos-captured-task9)",
+  "Bash(make bench-quality BENCH_BRANCH=macos-captured-task9-baseline)",
+]
+```
+
+Compare the same six-sample executor benchmark on baseline/candidate and retain
+all attempts. Both quality runs are expected to retain the public Darwin capture
+rejections until Task 10; compare actual results without modifying assertions.
+Native private-capture results are new evidence, not a performance comparison
+against an already working public Darwin backend. Linux runtime regression
+verification remains necessary on Linux/CI; cross-compilation is not a substitute.
+
+Verification completed: the final focused five-repeat suite, full affected
+integration race, vet and FTS5 build passed. Both performance runs passed. Both
+quality runs retained the same four public-Darwin-capture failures, with identical
+non-metadata results. Initial owner-loss fixture failures and all subsequent
+results are retained in [capture-proof.md](capture-proof.md) and
+`bench-results/macos-captured-task9-validation/`.
+
+Removal completed 2026-10-26. Project and baseline configuration each match the
+saved original byte-for-byte. A read-only `capy hook pretooluse --platform codex`
+probe of the formerly excepted focused command returned `permissionDecision=deny`
+with routine-capture-required guidance. The probe executed no test. Its response
+is retained as `enforcement-restored.json` in the validation directory. No Task 9
+exception remains; native verification is closed. Linux runtime/release evidence
+remains tracked separately in the task and capture proof.

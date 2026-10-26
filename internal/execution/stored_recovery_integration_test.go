@@ -35,6 +35,12 @@ type gatedStoredCapture struct {
 
 type failedCloseStoredCapture struct{ CaptureStore }
 
+type failedFinishStoredCapture struct{ CaptureStore }
+
+func (s *failedFinishStoredCapture) Finish(context.Context, Outcome) error {
+	return errors.New("synthetic helper finalization failure")
+}
+
 func (s *failedCloseStoredCapture) Close() error {
 	return errors.Join(s.CaptureStore.Close(), errors.New("synthetic helper close failure"))
 }
@@ -89,7 +95,33 @@ func openStoredFixture(ctx context.Context, start Startup, key string, leases Le
 	if os.Getenv("CAPY_STORED_MODE") == "failed close" {
 		run.Store = &failedCloseStoredCapture{CaptureStore: run.Store}
 	}
+	if os.Getenv("CAPY_STORED_MODE") == "failed finish" {
+		run.Store = &failedFinishStoredCapture{CaptureStore: run.Store}
+	}
 	return run, nil
+}
+
+func TestStoredFinalizationFailureQuarantinesLiveOwner(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CAPY_STORED_FIXTURE", dir)
+	t.Setenv("CAPY_STORED_MODE", "failed finish")
+	s := NewService(dir, storedFixtureKey, config.DefaultConfig().Runs)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	result := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "printf x >> once; exit 7"}, "", 30*time.Second)
+	exit := 7
+	require.Equal(t, &exit, result.ExitCode)
+	require.Equal(t, executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}, result.Cleanup)
+	require.False(t, result.Capture.TerminalPersisted)
+	next := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "touch forbidden"}, "", time.Second)
+	require.Nil(t, next.RunID)
+	require.Equal(t, "cleanup_unverified", next.Error.Code)
+	_, err := s.store.Admit(t.Context(), s.owner, executor.CleanupLinuxDescendants,
+		runstore.Program{Owner: dir, Request: executor.ExecRequest{Language: executor.Shell, Code: "touch forbidden"}})
+	require.ErrorContains(t, err, "unverified cleanup")
+	count, err := os.ReadFile(filepath.Join(dir, "once"))
+	require.NoError(t, err)
+	require.Equal(t, "x", string(count))
+	require.NoFileExists(t, filepath.Join(dir, "forbidden"))
 }
 
 func TestStoredUnavailableRefreshNeverPublishesAdmissionProof(t *testing.T) {

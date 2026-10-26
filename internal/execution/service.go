@@ -248,7 +248,7 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 			if err == nil && latest.Result.CompletedAt != nil && runstore.CleanupAccepted(latest.Cleanup) && latest.Result.Capture.TerminalPersisted {
 				return latest.Result
 			}
-			if err == nil && latest.Result.CompletedAt == nil && latest.Cleanup == (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}) {
+			if err == nil && latest.Result.CompletedAt == nil && latest.Cleanup == (executor.CleanupEvidence{Scope: row.Cleanup.Scope, State: executor.CleanupNotSpawned}) {
 				return s.finishUnstarted(st, row, "cancelled")
 			}
 			// Unknown proof still quarantines; this helper has already been joined.
@@ -301,11 +301,14 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	defer cancelQuery()
 	latest, readErr := st.Load(queryCtx, row.ID)
 	var quarantineErr error
-	if waitErr != nil || !outcome.Result.Cleanup.Complete() {
-		if readErr != nil || latest.Cleanup == (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}) {
+	// A locally completed policy cannot authorize reuse when finalization left
+	// durable proof pending. Reconciliation skips this still-held owner slot,
+	// so quarantine it here as well as during later owner recovery.
+	if waitErr != nil || !outcome.TerminalPersisted || !outcome.Result.Cleanup.Complete() {
+		if readErr != nil || latest.Cleanup == (executor.CleanupEvidence{Scope: row.Cleanup.Scope, State: executor.CleanupPending}) {
 			quarantineErr = s.quarantine(st)
 		}
-		if readErr == nil && latest.Result.CompletedAt == nil && latest.Cleanup == (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}) {
+		if readErr == nil && latest.Result.CompletedAt == nil && latest.Cleanup == (executor.CleanupEvidence{Scope: row.Cleanup.Scope, State: executor.CleanupNotSpawned}) {
 			if ctx.Err() != nil {
 				return s.finishUnstarted(st, row, "cancelled")
 			}

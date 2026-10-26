@@ -42,7 +42,7 @@ func OpenStoredRun(ctx context.Context, start Startup, key string, leases Leases
 	if err != nil {
 		return nil, err
 	}
-	if row.Generation != start.Generation || start.CleanupScope != string(row.Cleanup.Scope) || row.Cleanup != (executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}) || (row.Result.State != "admitted" && (row.Result.State != "queued" || row.Result.BatchID == "")) || !row.Program.Deadline.Equal(start.Deadline) {
+	if row.Generation != start.Generation || start.CleanupScope != string(row.Cleanup.Scope) || !row.Cleanup.Valid() || row.Cleanup != (executor.CleanupEvidence{Scope: supervisorCleanupScope(), State: executor.CleanupNotSpawned}) || (row.Result.State != "admitted" && (row.Result.State != "queued" || row.Result.BatchID == "")) || !row.Program.Deadline.Equal(start.Deadline) {
 		return nil, errors.New("admitted run generation or state does not match")
 	}
 	policy := st.Policy()

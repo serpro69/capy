@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -19,14 +18,6 @@ import (
 )
 
 const darwinCleanupTimeout = 3 * time.Second
-
-// This dormant result remains outside the shared wire contract. Task 9 will
-// populate StreamResult.Cleanup from this private observational outcome.
-// observed means the documented policy completed, not that all processes died.
-type darwinPhaseResult struct {
-	command  StreamResult
-	observed bool
-}
 
 type darwinPhase struct {
 	bin, cwd, tmpDir, name string
@@ -66,80 +57,29 @@ func darwinObservationSupported() error {
 	return nil
 }
 
-// executeDarwinStream is private until the scoped storage/protocol integration
-// lands. Existing PrepareSupervisor/ExecuteStream still reject Darwin. Runtime
-// preparation, safe environment and event ordering reuse the existing executor.
-// Like ExecuteStream, this belongs in a dedicated per-run helper. An unconfirmed
-// terminal state remains incomplete and requires helper teardown/pending-state
-// handling; Process.Release is not a reap or proof that the command stopped.
-func (e *PolyglotExecutor) executeDarwinStream(ctx context.Context, req ExecRequest, sink EventSink, started func(string) error) (darwinPhaseResult, error) {
-	result := darwinPhaseResult{}
-	if req.Background || sink == nil {
-		return result, errors.New("darwin stream execution requires an attached sink")
-	}
-	if err := ctx.Err(); err != nil {
-		result.command.StopReason = streamStopReason(ctx)
-		return result, err
-	}
-	if err := darwinObservationSupported(); err != nil {
-		return result, err
-	}
-	if req.FilePath != "" {
-		if !filepath.IsAbs(req.FilePath) {
-			return result, errors.New("darwin stream execution requires an admitted absolute file path")
-		}
-		req.Code = injectFileContent(req.Language, req.Code)
-	}
-	p, err := e.prepare(req)
-	if err != nil {
-		result.command.SpawnCode = 126
-		if errors.Is(err, ErrRuntimeUnavailable) {
-			result.command.SpawnCode = 127
-		}
-		return result, err
-	}
-	defer os.RemoveAll(p.tmpDir)
-	w := &eventWriter{sink: sink, started: started}
-	ops := nativeDarwinPhaseOps()
-	compiled := false
-	if req.Language == Rust {
-		binary := filepath.Join(p.tmpDir, "main")
-		result, err = runDarwinStreamPhase(ctx, darwinPhase{
-			bin: p.runtime, args: []string{p.scriptPath, "-o", binary},
-			cwd: p.tmpDir, tmpDir: p.tmpDir, name: "compile", request: req,
-		}, w, ops)
-		if err != nil || !result.observed || result.command.ExitCode == nil ||
-			*result.command.ExitCode != 0 || result.command.Signal != 0 || ctx.Err() != nil {
-			if result.command.StopReason == "" && err == nil && result.command.ExitCode != nil &&
-				*result.command.ExitCode == 0 && ctx.Err() != nil {
-				result.command.StopReason = streamStopReason(ctx)
-			}
-			return result, err
-		}
-		p.bin, p.args = binary, nil
-		compiled = true
-	}
-	result, err = runDarwinStreamPhase(ctx, darwinPhase{
-		bin: p.bin, args: p.args, cwd: p.workDir, tmpDir: p.tmpDir,
-		name: "run", request: req,
-	}, w, ops)
-	if compiled && !result.command.Started {
-		// A failed/unstarted runtime cannot erase the completed compiler phase.
-		result.command.Started = true
-		result.observed = true
-	}
-	result.command.CaptureLost = w.err != nil
-	result.command.ObservedBytes = w.observed
-	return result, err
+// PrepareSupervisor checks the verified native matrix. Darwin needs no process-wide
+// subreaper setup; each phase creates and owns a new session leader.
+func PrepareSupervisor() error { return darwinObservationSupported() }
+func checkSupervisor() error   { return darwinObservationSupported() }
+
+func initialStreamCleanup() CleanupEvidence {
+	return CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupNotSpawned}
 }
 
-func runDarwinStreamPhase(ctx context.Context, phase darwinPhase, w *eventWriter, ops darwinPhaseOps) (result darwinPhaseResult, resultErr error) {
-	result.command.Phase = phase.name
+func runStreamPhase(ctx context.Context, bin string, args []string, cwd, tmpDir string, req ExecRequest, phase string, w *eventWriter) (StreamResult, error) {
+	return runDarwinStreamPhase(ctx, darwinPhase{
+		bin: bin, args: args, cwd: cwd, tmpDir: tmpDir, name: phase, request: req,
+	}, w, nativeDarwinPhaseOps())
+}
+
+func runDarwinStreamPhase(ctx context.Context, phase darwinPhase, w *eventWriter, ops darwinPhaseOps) (result StreamResult, resultErr error) {
+	result.Phase = phase.name
+	result.Cleanup = initialStreamCleanup()
 	if w == nil || w.sink == nil || ops.waitExit == nil || ops.inventory == nil || ops.killGroup == nil || ops.budget <= 0 {
 		return result, errors.New("invalid darwin phase dependencies")
 	}
 	if err := ctx.Err(); err != nil {
-		result.command.StopReason = streamStopReason(ctx)
+		result.StopReason = streamStopReason(ctx)
 		return result, err
 	}
 	cmd := exec.Command(phase.bin, phase.args...)
@@ -163,13 +103,14 @@ func runDarwinStreamPhase(ctx context.Context, phase darwinPhase, w *eventWriter
 	defer errW.Close()
 	cmd.Stdout, cmd.Stderr = outW, errW
 	if err := cmd.Start(); err != nil {
-		result.command.SpawnCode = 126
+		result.SpawnCode = 126
 		if os.IsNotExist(err) {
-			result.command.SpawnCode = 127
+			result.SpawnCode = 127
 		}
 		return result, fmt.Errorf("starting darwin phase: %w", err)
 	}
-	result.command.Started = true
+	result.Started = true
+	result.Cleanup.State = CleanupPending
 	if w.started != nil && w.err == nil {
 		w.err = w.started(phase.name)
 	}
@@ -203,8 +144,8 @@ func runDarwinStreamPhase(ctx context.Context, phase darwinPhase, w *eventWriter
 			resultErr = errors.Join(resultErr, <-drained)
 			remaining--
 		}
-		result.command.CaptureLost = w.err != nil
-		result.command.ObservedBytes = w.observed
+		result.CaptureLost = w.err != nil
+		result.ObservedBytes = w.observed
 	}()
 
 	waitErr := ops.waitExit(ctx, cmd.Process.Pid)
@@ -218,7 +159,7 @@ func runDarwinStreamPhase(ctx context.Context, phase darwinPhase, w *eventWriter
 			// assumed-immediate Wait. Durable integration will keep this pending.
 			return result, errors.Join(cleanupErr, waitErr, cmd.Process.Release())
 		}
-		result.command.StopReason = streamStopReason(ctx)
+		result.StopReason = streamStopReason(ctx)
 		cleanupErr = errors.Join(cleanupErr, ops.killGroup(cmd.Process.Pid))
 		waitErr = ops.waitExit(cleanupCtx, cmd.Process.Pid)
 		terminal = waitErr == nil
@@ -289,8 +230,10 @@ func runDarwinStreamPhase(ctx context.Context, phase darwinPhase, w *eventWriter
 	}
 	// Even a failed inventory/drain must preserve the real command status when
 	// terminal ownership is known. No group signal is allowed after this call.
-	reapErr := reapDarwinLeader(cmd, &result.command)
-	result.observed = observed && cleanupErr == nil && reapErr == nil
+	reapErr := reapDarwinLeader(cmd, &result)
+	if observed && cleanupErr == nil && reapErr == nil {
+		result.Cleanup.State = CleanupObserved
+	}
 	return result, errors.Join(cleanupErr, reapErr)
 }
 
