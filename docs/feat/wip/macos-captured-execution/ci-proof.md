@@ -3,7 +3,7 @@
 > Baseline: `23fbf90c0b12ceff97f40921dc71d305d6cf3ac8`
 > Scope: [Task 12](tasks.md#task-12-add-diagnostics-and-reproducible-native-ci)
 > Date: 2026-10-26
-> Status: implementation and local verification; candidate hosted acceptance pending
+> Status: Task 12 complete; hosted acceptance verified at `f9df6ab`; Task 13 pending
 
 ## Implemented behavior
 
@@ -101,7 +101,7 @@ the precise SQL statement behind older opaque hosted errors or certify the new
 Task 12 workflow. The old failed attempts remain retained in their prior task
 directories and are not reclassified as passes.
 
-## Review and remaining acceptance
+## Initial review and acceptance gate
 
 Independent internal review found no source defects, but returned COMMENT while
 current hosted acceptance remained unknown. It inspected both local integration
@@ -118,12 +118,12 @@ was attempted: the earlier explicit approval and subsequent export rejection
 were limited to the Task 11 bundle. The internal review provides independent
 source coverage; no external corroboration is claimed.
 
-Task 12 stays in progress. Owner: feature implementer, after authorization to
-publish the candidate to existing PR #140. Next action: publish the reviewed
+Task 12 initially stayed in progress pending authorization to
+publish the candidate to existing PR #140. The next action was to publish the reviewed
 revision, require the new Linux baseline/current integration evidence and expanded
 native job/guards/smoke to execute, inspect all results, and fix failures without
-dropping tags or assertions. The remote PR currently points to `31c0ef2`, so its
-old success cannot satisfy this condition. Task 13 retains the separate final
+dropping tags or assertions. At that point the remote PR pointed to `31c0ef2`, so its
+old success could not satisfy this condition. Task 13 retains the separate final
 feature/release verification; no hidden deployment prerequisite is marked done.
 
 The operator subsequently authorized the commit and push to PR #140 by replying
@@ -166,3 +166,63 @@ Independent review found no source defects in these corrections. Corrected
 hosted Linux/non-race/race/repetition and native execution remain required;
 the first failed runs are not reclassified as passes. No unchanged job retry
 or capture-deadline enlargement was used.
+
+## Corrected candidate Linux evidence
+
+Commit `f9df6ab213e9ad89bf1273d6f630da09a7367cc9` triggered
+[run 40328223610](https://github.com/serpro69/capy/actions/runs/40328223610).
+Linux tested the PR merge revision `2db0edfe9bc5e223578feeedac299383a8e52398`
+on Linux 6.17.0-1022-azure x86_64, Go 1.27.2, CGO enabled. Candidate
+executor/execution passed non-race 5.624s/40.880s and race 9.331s/71.713s.
+All five queue race repetitions passed (1.06–1.11s each); guard and vet passed.
+Artifacts are retained under `ci-40328223610/linux/` in this task's evidence
+directory. No candidate failure event is present.
+
+The immutable `13204a9` baseline passed executor 17.244s but failed execution at
+`TestStoredOwnerSIGKILLRetainsLeasesUntilHelperClose`: `st.Close()` reported a
+generic maintenance-on-close error, also observed by fixture cleanup. The same
+baseline suite passed in the first hosted run. Both outcomes remain evidence;
+historical failure does not disable any candidate test. This predates the
+operation-budget corrections recorded above, but the opaque error does not
+establish a precise failing SQL stage. Candidate ownership/close assertions
+remain intact and pass in both modes. Corrected native and full Linux CI are
+still pending.
+
+## Corrected candidate macOS evidence
+
+The same [run 40328223610](https://github.com/serpro69/capy/actions/runs/40328223610/job/121590405179)
+completed its native job successfully after waiting for a runner. Executor and
+execution passed 33.536s/76.468s, runstore 223.381s, and compiled modes 140.173s.
+The corrected eight-attached-call case passed 4.42s. All seven retention
+regressions passed five repetitions (169.049s). The 50-fixture guard, integration
+vet, native build and actual-binary capture/recovery smoke steps succeeded.
+No candidate failure event is present in the downloaded JSON artifacts.
+
+Host: macOS 26.6.2/25G83, Darwin 25.6.0 arm64, Xcode 26.6/17F113,
+SDK 26.5/25F70, Go 1.27.2, CGO and deployment target 26.0.
+Artifacts and proof-job metadata are retained under `ci-40328223610/` in this
+task's evidence directory. At the initial artifact inspection, the existing full
+Linux race check remained pending; lint, glamour and both dedicated execution
+proof jobs were green. The completion record below closes that last check.
+
+## Completion
+
+[Run 40328223610](https://github.com/serpro69/capy/actions/runs/40328223610)
+completed successfully for head `f9df6ab213e9ad89bf1273d6f630da09a7367cc9`.
+The existing full Linux FTS5/race/vet job completed successfully at
+2026-10-26 13:43:14 UTC. Linux integration, macOS proof, glamour and both lint
+checks are green. `final-run-metadata.json` retains exact job/step results;
+`native-final-steps.log` records the 50-fixture guard and actual-binary smoke
+success messages. Earlier failed attempts and baseline limitations remain as
+recorded above.
+
+Final independent review APPROVED Task 12 with no findings after inspecting
+the candidate artifacts, all 50 native and 13 Linux required fixture events,
+repetition counts, full-suite metadata and smoke output. Reviewers did not run
+tests themselves. These are the same source/workflow files as the tested head;
+the completion commit changes only `tasks.md` and this evidence record. No
+runtime test repetition is needed solely for that documentation update.
+
+Task 12 is complete. Task 13 retains final feature/release acceptance and its
+documentation/review requirements; no release or full-feature completion is
+claimed here. No new systemic finding requires separate knowledge indexing.
