@@ -67,7 +67,7 @@ func TestDarwinObservedExecution(t *testing.T) {
 			var sequence uint64
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			result, err := NewExecutor(t.TempDir(), 0).executeDarwinStream(ctx,
+			result, err := NewExecutor(t.TempDir(), 0).ExecuteStreamWithStart(ctx,
 				ExecRequest{Language: Shell, Code: tc.code}, func(event OutputEvent) error {
 					if event.Sequence != sequence+1 || event.Phase != "run" {
 						return errors.New("invalid phase/sequence")
@@ -80,12 +80,12 @@ func TestDarwinObservedExecution(t *testing.T) {
 					}
 					return nil
 				}, nil)
-			if err != nil || !result.observed || !result.command.Started || result.command.Cleanup.State == CleanupRetired ||
-				result.command.ExitCode == nil || *result.command.ExitCode != tc.exit || result.command.CaptureLost {
+			if err != nil || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupObserved}) || !result.Started || result.Cleanup.State == CleanupRetired ||
+				result.ExitCode == nil || *result.ExitCode != tc.exit || result.CaptureLost {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
-			if stdout.String() != "out" || stderr.String() != "err" || result.command.ObservedBytes != 6 {
-				t.Fatalf("output %q/%q bytes=%d", stdout.String(), stderr.String(), result.command.ObservedBytes)
+			if stdout.String() != "out" || stderr.String() != "err" || result.ObservedBytes != 6 {
+				t.Fatalf("output %q/%q bytes=%d", stdout.String(), stderr.String(), result.ObservedBytes)
 			}
 		})
 	}
@@ -93,32 +93,32 @@ func TestDarwinObservedExecution(t *testing.T) {
 		t.Run(reason, func(t *testing.T) {
 			ctx, cancel := context.WithCancelCause(context.Background())
 			defer cancel(nil)
-			result, err := NewExecutor(t.TempDir(), 0).executeDarwinStream(ctx,
+			result, err := NewExecutor(t.TempDir(), 0).ExecuteStreamWithStart(ctx,
 				ExecRequest{Language: Shell, Code: "printf ready; exec sleep 30"}, func(OutputEvent) error {
 					cancel(errors.New(reason)) // command has started; no sleep race
 					return nil
 				}, nil)
-			if err != nil || !result.observed || result.command.Cleanup.State == CleanupRetired ||
-				result.command.StopReason != reason || result.command.Signal != int(syscall.SIGKILL) {
+			if err != nil || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupObserved}) || result.Cleanup.State == CleanupRetired ||
+				result.StopReason != reason || result.Signal != int(syscall.SIGKILL) {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
 		})
 	}
 	t.Run("capture failure keeps execution", func(t *testing.T) {
 		root := t.TempDir()
-		result, err := NewExecutor(root, 0).executeDarwinStream(context.Background(),
+		result, err := NewExecutor(root, 0).ExecuteStreamWithStart(context.Background(),
 			ExecRequest{Language: Shell, Code: "printf data; printf error >&2; : > completed"},
 			func(OutputEvent) error { return errors.New("synthetic capture failure") }, nil)
-		if err != nil || !result.observed || !result.command.CaptureLost || result.command.ExitCode == nil || *result.command.ExitCode != 0 {
+		if err != nil || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupObserved}) || !result.CaptureLost || result.ExitCode == nil || *result.ExitCode != 0 {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
 		if _, err := os.Stat(filepath.Join(root, "completed")); err != nil {
 			t.Fatalf("command did not complete after capture loss: %v", err)
 		}
 	})
-	t.Run("public dispatcher remains disabled", func(t *testing.T) {
-		if err := PrepareSupervisor(); err == nil {
-			t.Fatal("public Darwin supervisor unexpectedly enabled")
+	t.Run("private stream dispatcher is supported", func(t *testing.T) {
+		if err := PrepareSupervisor(); err != nil {
+			t.Fatal(err)
 		}
 	})
 }
@@ -140,14 +140,14 @@ func TestDarwinObservedCompilerPhases(t *testing.T) {
 			var stdout strings.Builder
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			result, err := NewExecutor(t.TempDir(), 0).executeDarwinStream(ctx,
+			result, err := NewExecutor(t.TempDir(), 0).ExecuteStreamWithStart(ctx,
 				ExecRequest{Language: Rust, Code: tc.code}, func(event OutputEvent) error {
 					if event.Stream == "stdout" {
 						stdout.Write(event.Data)
 					}
 					return nil
 				}, func(phase string) error { phases = append(phases, phase); return nil })
-			if err != nil || !result.observed || result.command.Cleanup.State == CleanupRetired || len(phases) != tc.wantPhases || phases[0] != "compile" {
+			if err != nil || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupObserved}) || result.Cleanup.State == CleanupRetired || len(phases) != tc.wantPhases || phases[0] != "compile" {
 				t.Fatalf("phases=%v result=%+v err=%v", phases, result, err)
 			}
 			if tc.wantPhases == 2 && (phases[1] != "run" || stdout.String() != "compiled output\n") {
@@ -165,9 +165,9 @@ func TestDarwinObservedCompilerPhases(t *testing.T) {
 		}
 		e := NewExecutor(root, 0)
 		e.detectOnce.Do(func() { e.runtimes = map[Language]string{Rust: compiler} })
-		result, err := e.executeDarwinStream(context.Background(), ExecRequest{Language: Rust, Code: "fixture"},
+		result, err := e.ExecuteStreamWithStart(context.Background(), ExecRequest{Language: Rust, Code: "fixture"},
 			func(OutputEvent) error { return nil }, nil)
-		if err == nil || !result.observed || !result.command.Started || result.command.Cleanup.State == CleanupRetired || result.command.SpawnCode != 126 {
+		if err == nil || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupObserved}) || !result.Started || result.Cleanup.State == CleanupRetired || result.SpawnCode != 126 {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
 	})
@@ -276,8 +276,8 @@ func TestDarwinObservedCleanupFailures(t *testing.T) {
 		result, err := runDarwinStreamPhase(ctx,
 			darwinPhase{bin: "/bin/sh", args: []string{"-c", "exit 9"}, cwd: root, tmpDir: root, name: "run"},
 			&eventWriter{sink: func(OutputEvent) error { return nil }}, ops)
-		if err != nil || !result.observed || result.command.StopReason != "" ||
-			result.command.ExitCode == nil || *result.command.ExitCode != 9 {
+		if err != nil || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupObserved}) || result.StopReason != "" ||
+			result.ExitCode == nil || *result.ExitCode != 9 {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
 	})
@@ -285,7 +285,7 @@ func TestDarwinObservedCleanupFailures(t *testing.T) {
 		phase := observedChildPhase(t, "closed")
 		result, err := runDarwinStreamPhase(context.Background(), phase,
 			&eventWriter{sink: func(OutputEvent) error { return nil }}, nativeDarwinPhaseOps())
-		if err != nil || !result.observed || result.command.Cleanup.State == CleanupRetired || result.command.ExitCode == nil || *result.command.ExitCode != 0 {
+		if err != nil || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupObserved}) || result.Cleanup.State == CleanupRetired || result.ExitCode == nil || *result.ExitCode != 0 {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
 	})
@@ -294,7 +294,7 @@ func TestDarwinObservedCleanupFailures(t *testing.T) {
 		began := time.Now()
 		result, err := runDarwinStreamPhase(context.Background(), phase,
 			&eventWriter{sink: func(OutputEvent) error { return nil }}, nativeDarwinPhaseOps())
-		if err == nil || result.observed || result.command.ExitCode == nil || *result.command.ExitCode != 0 {
+		if err == nil || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupPending}) || result.ExitCode == nil || *result.ExitCode != 0 {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
 		if time.Since(began) > 6*time.Second {
@@ -308,7 +308,7 @@ func TestDarwinObservedCleanupFailures(t *testing.T) {
 		ops.budget = 100 * time.Millisecond
 		result, err := runDarwinStreamPhase(context.Background(), phase,
 			&eventWriter{sink: func(OutputEvent) error { return nil }}, ops)
-		if err == nil || result.observed || result.command.ExitCode == nil || *result.command.ExitCode != 0 {
+		if err == nil || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupPending}) || result.ExitCode == nil || *result.ExitCode != 0 {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
 	})
@@ -322,7 +322,7 @@ func TestDarwinObservedCleanupFailures(t *testing.T) {
 		}
 		result, err := runDarwinStreamPhase(context.Background(), phase,
 			&eventWriter{sink: func(OutputEvent) error { return nil }}, ops)
-		if !errors.Is(err, syscall.EPERM) || result.observed || result.command.ExitCode == nil || *result.command.ExitCode != 0 {
+		if !errors.Is(err, syscall.EPERM) || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupPending}) || result.ExitCode == nil || *result.ExitCode != 0 {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
 	})
@@ -340,7 +340,7 @@ func TestDarwinObservedCleanupFailures(t *testing.T) {
 			result, err := runDarwinStreamPhase(context.Background(),
 				darwinPhase{bin: "/bin/sh", args: []string{"-c", "exit 9"}, cwd: root, tmpDir: root, name: "run"},
 				&eventWriter{sink: func(OutputEvent) error { return nil }}, ops)
-			if err == nil || result.observed || result.command.ExitCode == nil || *result.command.ExitCode != 9 {
+			if err == nil || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupPending}) || result.ExitCode == nil || *result.ExitCode != 9 {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
 		})
@@ -433,7 +433,7 @@ func TestDarwinObservedWaitFailures(t *testing.T) {
 			result, err := runDarwinStreamPhase(ctx,
 				darwinPhase{bin: "/bin/sh", args: []string{"-c", code}, cwd: root, tmpDir: root, name: "run"},
 				&eventWriter{sink: func(OutputEvent) error { return nil }}, ops)
-			if err == nil || result.observed || result.command.Cleanup.State == CleanupRetired || result.command.ExitCode != nil {
+			if err == nil || result.Cleanup != (CleanupEvidence{Scope: CleanupDarwinObservation, State: CleanupPending}) || result.Cleanup.State == CleanupRetired || result.ExitCode != nil {
 				t.Fatalf("unverified outcome: result=%+v err=%v", result, err)
 			}
 			if time.Since(began) > time.Second {
@@ -445,7 +445,7 @@ func TestDarwinObservedWaitFailures(t *testing.T) {
 					t.Fatalf("unexpected observer-error operations: waits=%d signals=%d err=%v", waits, signals, err)
 				}
 			case "cancelled but not terminal":
-				if !errors.Is(err, context.DeadlineExceeded) || waits != 2 || signals != 1 || result.command.StopReason != "cancelled" {
+				if !errors.Is(err, context.DeadlineExceeded) || waits != 2 || signals != 1 || result.StopReason != "cancelled" {
 					t.Fatalf("unexpected timeout operations: waits=%d signals=%d result=%+v err=%v", waits, signals, result, err)
 				}
 			case "sole reap failed":

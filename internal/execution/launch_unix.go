@@ -1,3 +1,5 @@
+//go:build linux || (darwin && cgo)
+
 package execution
 
 import (
@@ -11,8 +13,8 @@ import (
 func newSupervisorLaunch() supervisorLaunch { return newLeaseLauncher().launchSupervisor }
 
 func (launcher *leaseLauncher) launchSupervisor(ctx context.Context, executable string, start Startup, key string, refs *runstore.LeaseRefs) (*Supervisor, error) {
-	if start.CleanupScope != string(executor.CleanupLinuxDescendants) {
-		return nil, &runstore.Error{Code: "cleanup_unverified", Message: "Linux supervisor requires Linux cleanup scope"}
+	if start.CleanupScope != string(supervisorCleanupScope()) {
+		return nil, &runstore.Error{Code: "cleanup_unverified", Message: "supervisor requires its backend cleanup scope"}
 	}
 	cmd := exec.Command(executable, SupervisorCommand)
 	p, err := launcher.launch(ctx, cmd, start, key, refs)
