@@ -1,14 +1,60 @@
 package platform
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/serpro69/capy/internal/config"
+	"github.com/serpro69/capy/internal/execution"
 	"github.com/serpro69/capy/internal/runstore"
 	"github.com/serpro69/capy/internal/sqliteutil"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRunCapabilityDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name, platform, detail string
+		err                    error
+		status                 CheckStatus
+	}{
+		{"linux", "linux", "linux_descendants_v1", nil, Pass},
+		{"darwin", "darwin", "observed does not prove host quiescence", nil, Pass},
+		{"unsupported build", "darwin", "unsupported host/build", errors.New("private-backend-error"), Fail},
+		{"unknown platform", "other", "unsupported execution platform", nil, Fail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			check := checkRunCapability(tc.platform, tc.err)
+			require.Equal(t, tc.status, check.Status)
+			require.Contains(t, check.Detail, tc.detail)
+			require.NotContains(t, check.Detail, "private-backend-error")
+		})
+	}
+}
+
+func TestRunCapabilityDoesNotInitializeStorage(t *testing.T) {
+	project := t.TempDir()
+	checks := CheckRuns(t.Context(), project, "", config.DefaultConfig().Runs)
+	require.NoDirExists(t, filepath.Join(project, ".capy"))
+	var capability *CheckResult
+	for i := range checks {
+		if checks[i].Name == "Run execution" {
+			capability = &checks[i]
+		}
+	}
+	require.NotNil(t, capability)
+	require.Contains(t, capability.Detail, "no execution probe")
+	if execution.Supported() == nil {
+		require.Equal(t, Pass, capability.Status)
+	} else {
+		require.Equal(t, Fail, capability.Status)
+	}
+	entries, err := os.ReadDir(project)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
 
 func TestCheckRunsSchemaMismatchGuidance(t *testing.T) {
 	for _, version := range []int{8, 77} {

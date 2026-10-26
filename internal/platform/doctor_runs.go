@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/serpro69/capy/internal/config"
+	"github.com/serpro69/capy/internal/execution"
 	"github.com/serpro69/capy/internal/runstore"
 	"github.com/serpro69/capy/internal/sanitize"
 )
@@ -17,12 +19,14 @@ import (
 // resolve the run owner first; a credential-resolution failure is an empty key,
 // never a fallback credential. No diagnostic error includes backend error text.
 func CheckRuns(ctx context.Context, project, key string, cfg config.RunsConfig) []CheckResult {
+	capability := CheckRunCapability()
 	path, err := config.ResolveRunDBPath(project)
 	if err != nil {
-		return []CheckResult{{Name: "Run store", Status: Fail, Detail: "selected run owner is unavailable; check --project-dir and installation bindings"}}
+		return []CheckResult{capability, {Name: "Run store", Status: Fail, Detail: "selected run owner is unavailable; check --project-dir and installation bindings"}}
 	}
 	results := []CheckResult{
 		{Name: "Run path", Status: Pass, Detail: diagnosticPath(path)},
+		capability,
 		{Name: "Run capacity", Status: Pass, Detail: fmt.Sprintf("configured per owner: max_active=%d, max_pending=%d; foreign-owner live capacity is not inferred from saved metadata", cfg.MaxActive, cfg.MaxPending)},
 	}
 	report, err := runstore.Inspect(ctx, path, key)
@@ -53,7 +57,7 @@ func CheckRuns(ctx context.Context, project, key string, cfg config.RunsConfig) 
 	if !report.Exists {
 		return append(results, CheckResult{Name: "Run store", Status: Pass, Detail: "not initialized; inspection created no run store"})
 	}
-	status, detail := Pass, "readable; inspection does not prove sandbox writability or hook activation"
+	status, detail := Pass, fmt.Sprintf("readable; stored schema=%d, supported schema=%d; inspection does not prove sandbox writability or hook activation", report.SchemaVersion, report.SupportedSchemaVersion)
 	if report.AdmissionBlocked {
 		status, detail = Fail, "cleanup_unverified; stop owners and old execution groups before explicit capy runs reset --discard (permanently deletes run logs); never reset as an automatic retry"
 	}
@@ -81,10 +85,36 @@ func CheckRuns(ctx context.Context, project, key string, cfg config.RunsConfig) 
 		if run.Signal != nil {
 			childStatus += fmt.Sprintf(" signal=%d", *run.Signal)
 		}
-		results = append(results, CheckResult{Name: "Run " + run.ID, Status: Pass, Detail: fmt.Sprintf("state=%s%s capture=%s redaction=%s index=%s observed=%d captured=%d bytes expires=%s; status/read by run ID",
-			run.State, childStatus, run.Capture, run.Redaction, run.Index, run.ObservedBytes, run.CapturedBytes, expiry)})
+		results = append(results, CheckResult{Name: "Run " + run.ID, Status: Pass, Detail: fmt.Sprintf("state=%s%s cleanup=%s/%s capture=%s redaction=%s index=%s observed=%d captured=%d bytes expires=%s; status/read by run ID",
+			run.State, childStatus, run.Cleanup.Scope, run.Cleanup.State, run.Capture, run.Redaction, run.Index, run.ObservedBytes, run.CapturedBytes, expiry)})
 	}
 	return results
+}
+
+// CheckRunCapability checks only compiled/OS support. On Linux it does not enable
+// subreaping; on Darwin it reads the host version without launching a probe.
+func CheckRunCapability() CheckResult {
+	return checkRunCapability(runtime.GOOS, execution.Supported())
+}
+
+func checkRunCapability(goos string, unsupported error) CheckResult {
+	result := CheckResult{Name: "Run execution", Status: Pass}
+	if unsupported != nil {
+		result.Status = Fail
+		result.Detail = "unsupported host/build; capture requires Linux or macOS 26 on Apple Silicon with CGO; align CLI/PATH/MCP binaries and reload; no execution probe was run"
+		return result
+	}
+	switch goos {
+	case "linux":
+		result.Detail = "available; cleanup scope=linux_descendants_v1, completed state=retired"
+	case "darwin":
+		result.Detail = "available on macOS 26 Apple Silicon; cleanup scope=darwin_process_group_observation_v1, completed state=observed; escaped or racing descendants may survive; observed does not prove host quiescence"
+	default:
+		result.Status = Fail
+		result.Detail = "unsupported execution platform"
+	}
+	result.Detail += "; capability only, no execution probe; storage health and hook activation are separate"
+	return result
 }
 
 func diagnosticPath(path string) string {

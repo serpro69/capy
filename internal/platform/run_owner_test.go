@@ -9,9 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Owner resolution returns physical paths; macOS temp roots can use /var aliases.
+func physicalPlatformTempDir(t *testing.T) string {
+	t.Helper()
+	path, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	return path
+}
+
 func TestResolveRunOwner(t *testing.T) {
 	t.Setenv("CLAUDE_PROJECT_DIR", "")
-	root := t.TempDir()
+	root := physicalPlatformTempDir(t)
 	nested := filepath.Join(root, "nested")
 	cwd := filepath.Join(nested, "sub")
 	require.NoError(t, os.MkdirAll(cwd, 0o700))

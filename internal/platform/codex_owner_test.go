@@ -114,7 +114,7 @@ func TestCodexOwnerBindings(t *testing.T) {
 		{"wrong ID", "config.toml", codexMCPBlock(strings.Repeat("a", 32)), "disagrees"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := physicalPlatformTempDir(t)
 			writeCodexFixture(t, dir, codexOwnerRelPath, codexOwnerContent(testCodexOwnerID))
 			writeCodexFixture(t, dir, ".codex/"+tc.file, tc.content)
 			owners, err := InspectCodexOwners(dir)
@@ -188,7 +188,7 @@ func TestCodexOwnerBindings(t *testing.T) {
 func TestCodexHookStateConfiguration(t *testing.T) {
 	for _, location := range []string{"ancestor", "project"} {
 		t.Run(location, func(t *testing.T) {
-			base := t.TempDir()
+			base := physicalPlatformTempDir(t)
 			project := filepath.Join(base, "project")
 			cwd := filepath.Join(project, "subdir")
 			require.NoError(t, os.MkdirAll(cwd, 0o755))
@@ -234,7 +234,7 @@ func TestCodexHookStateConfiguration(t *testing.T) {
 func TestCodexNestedOwnerResolution(t *testing.T) {
 	for _, id := range []string{testCodexOwnerID, strings.Repeat("b", 32)} {
 		t.Run(id, func(t *testing.T) {
-			root := t.TempDir()
+			root := physicalPlatformTempDir(t)
 			nested := filepath.Join(root, "nested")
 			writeCodexFixture(t, root, codexOwnerRelPath, codexOwnerContent(testCodexOwnerID))
 			writeCodexFixture(t, root, ".codex/config.toml", codexMCPBlock(testCodexOwnerID))

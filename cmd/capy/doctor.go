@@ -80,7 +80,7 @@ func newDoctorCmd() *cobra.Command {
 func runChecks(cmd *cobra.Command) []platform.CheckResult {
 	target, err := runTarget(cmd)
 	if err != nil {
-		return []platform.CheckResult{{Name: "Run store", Status: platform.Fail,
+		return []platform.CheckResult{platform.CheckRunCapability(), {Name: "Run store", Status: platform.Fail,
 			Detail: "cannot resolve run owner/configuration; check installation bindings and --project-dir; no fallback store was inspected"}}
 	}
 	key, _, err := resolveKnowledgeKey(target)

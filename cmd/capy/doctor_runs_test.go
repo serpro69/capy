@@ -80,6 +80,20 @@ func TestDoctorRunOwnerUsesCaptureSelection(t *testing.T) {
 	require.NoDirExists(t, filepath.Join(subdir, ".capy", "runs"))
 }
 
+func TestDoctorRunInvalidConfigReportsCapability(t *testing.T) {
+	project := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(project, ".capy.toml"), []byte("[invalid"), 0600))
+	cmd := newDoctorCmd()
+	cmd.Flags().String("project-dir", project, "")
+	checks := runChecks(cmd)
+	require.Len(t, checks, 2)
+	require.Equal(t, platform.CheckRunCapability(), checks[0])
+	require.Equal(t, "Run store", checks[1].Name)
+	require.Equal(t, platform.Fail, checks[1].Status)
+	require.Contains(t, checks[1].Detail, "no fallback store was inspected")
+	require.NoDirExists(t, filepath.Join(project, ".capy", "runs"))
+}
+
 func TestCapturedPreviewLimitCLI(t *testing.T) {
 	bin := buildStdioCapy(t)
 	project := cliProject(t, "[executor]\nmax_output_bytes=12\n")

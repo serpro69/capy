@@ -11,6 +11,16 @@ with CGO. Other macOS majors, Intel Macs and other platforms fail before spawn.
 Commands inherit the caller's OS confinement; capy does not grant filesystem or
 network permissions.
 
+Native lifecycle verification is reproducible with `make test-integration` and
+`make test-integration-race`, after setting synthetic `CAPY_DB_KEY` and
+`CAPY_VAULT_KEY` values as shown in the repository build instructions. Both use
+CGO, `fts5,integration`, uncached execution, serial package scheduling, and a
+20-minute package timeout for `internal/executor` and `internal/execution`.
+Tests use isolated fixture roots. CI retains the full ordinary FTS5/race/vet
+checks and adds these lifecycle suites; macOS proof runs on the explicit
+`macos-26` arm64 runner. Release builds verify capture and restart recovery with
+the actual binary before packaging, including both streams and a nonzero exit.
+
 ## Execute and recover
 
 From a project with its existing knowledge credential configured:
@@ -163,13 +173,19 @@ Lower quotas may evict completed logs; existing expiry timestamps stay unchanged
 capy doctor --project-dir .
 ```
 
-CLI doctor, MCP doctor and MCP stats share the run-store checks: safe path,
+CLI doctor, MCP doctor and MCP stats share the run-store checks: host/build
+execution capability and its cleanup scope, safe path,
 configured capacity, authoritative policy, accounted/physical usage, retained and
-unfinished counts, and at most eight recent run states/expiry/byte counts. An
+unfinished counts, and at most eight recent run states/scoped cleanup/expiry/byte counts. An
 unfinished record is not proof of a live process. Only the receiving MCP owner
 reports its actual active/pending reservations. Inspection has a two-second
 budget, does not create a run store or locks, and neither reconciles, indexes nor
 cleans up. A readable store does not prove sandbox writability or hook activation.
+Capability checks launch no command and perform no cleanup proof probe. Darwin
+`observed` never proves host quiescence: escaped or racing descendants may survive.
+Each retained run's cleanup scope comes from its authoritative row, so historical
+Linux `retired` rows remain distinguishable from Darwin observations. Authenticated
+stored/supported schema versions are reported separately from executable capability.
 
 Session run byte totals are posted once at each owner completion, including late
 output after handoff and each batch child. In-progress bytes remain available in

@@ -38,6 +38,7 @@ func TestInspectReadOnlySnapshot(t *testing.T) {
 	row, err := s.Load(t.Context(), active.ID)
 	require.NoError(t, err)
 	row.Result.Index.State = secret
+	row.Result.Cleanup = executor.CleanupEvidence{Scope: executor.CleanupScope(secret), State: executor.CleanupObserved}
 	data, err := json.Marshal(row.Result)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(t.Context(), "UPDATE runs SET result=? WHERE id=?", data, active.ID)
@@ -53,6 +54,7 @@ func TestInspectReadOnlySnapshot(t *testing.T) {
 	require.Equal(t, active.ID, report.Recent[0].ID)
 	require.Equal(t, "running", report.Recent[0].State)
 	require.Equal(t, "unknown", report.Recent[0].Index)
+	require.Equal(t, executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}, report.Recent[0].Cleanup, "diagnostics use authoritative columns, not saved response proof")
 	require.EqualValues(t, len(secret), report.Recent[0].CapturedBytes)
 	require.Nil(t, report.Recent[0].ExpiresAt)
 	require.NotNil(t, report.Recent[1].ExpiresAt)
@@ -95,7 +97,7 @@ func TestInspectFailurePreservesStore(t *testing.T) {
 }
 
 func TestInspectRejectsUnsafePathsAndBusyLifecycle(t *testing.T) {
-	for _, mode := range []string{"symlink", "fifo", "missing lock", "busy lock", "oversized metadata"} {
+	for _, mode := range []string{"symlink", "fifo", "missing lock", "busy lock", "oversized metadata", "invalid cleanup", "oversized cleanup"} {
 		t.Run(mode, func(t *testing.T) {
 			s, owner := retentionStore(t, 1<<20)
 			path := s.Path()
@@ -121,6 +123,18 @@ func TestInspectRejectsUnsafePathsAndBusyLifecycle(t *testing.T) {
 				db, err := openAttached(t.Context(), path, testKey, s.owner, unix.LOCK_SH)
 				require.NoError(t, err)
 				_, err = db.db.Exec("UPDATE runs SET result=zeroblob(65537) WHERE id=?", run.ID)
+				require.NoError(t, err)
+				require.NoError(t, db.closeHandles())
+			case "invalid cleanup", "oversized cleanup":
+				db, err := openAttached(t.Context(), path, testKey, s.owner, unix.LOCK_SH)
+				require.NoError(t, err)
+				_, err = db.db.Exec("PRAGMA ignore_check_constraints=ON")
+				require.NoError(t, err)
+				value := "invalid-private-scope"
+				if mode == "oversized cleanup" {
+					value = string(make([]byte, 65537))
+				}
+				_, err = db.db.Exec("UPDATE runs SET cleanup_scope=? WHERE id=?", value, run.ID)
 				require.NoError(t, err)
 				require.NoError(t, db.closeHandles())
 			}

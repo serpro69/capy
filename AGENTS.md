@@ -20,7 +20,7 @@ internal/
   adapter/          Platform adapter interface (HookAdapter) + Claude Code and Codex implementations
   config/           TOML config loading with 3-level precedence, project root detection, DB path resolution
   executor/         Polyglot code executor (11 languages), process group isolation, output truncation
-  execution/        Shared MCP/CLI admission, Linux per-run supervisor, owner scheduling and bounded responses
+  execution/        Shared MCP/CLI admission, Linux/Darwin per-run supervisors, owner scheduling and bounded responses
   giturl/           Git platform URL detection (GitHub/GitLab/Bitbucket/Gitea)
   hook/             Hook event dispatch: PreToolUse routing, guidance, security, subagent injection
   platform/         Setup command (writes hooks/MCP config), doctor diagnostics, routing instructions
@@ -75,6 +75,8 @@ make build                                    # CGO_ENABLED=1, -tags fts5
 make build-glamour                            # + opt-in glamour TUI markdown (-tags fts5,glamour)
 make test                                     # all tests
 make test-race                                # with race detector
+make test-integration                         # uncached executor/execution, fts5,integration, serial packages
+make test-integration-race                    # same native suites with race detector
 go test -tags fts5 -count=1 ./internal/<pkg>/... # single package
 go test -tags fts5,glamour ./internal/vault/tui/... # glamour-tagged TUI subset
 ```

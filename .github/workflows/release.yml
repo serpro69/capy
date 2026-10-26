@@ -13,7 +13,7 @@ jobs:
         include:
           - goos: darwin
             goarch: arm64
-            runner: macos-latest
+            runner: macos-26
           - goos: linux
             goarch: amd64
             runner: ubuntu-latest
@@ -30,6 +30,14 @@ jobs:
 
       - name: Build
         run: |
+          if [ '${{ matrix.goos }}' = darwin ]; then
+            export MACOSX_DEPLOYMENT_TARGET=26.0
+            test "$(uname -m)" = arm64
+            case "$(sw_vers -productVersion)" in
+              26.*) ;;
+              *) echo 'Expected supported macOS 26' >&2; exit 1 ;;
+            esac
+          fi
           CGO_ENABLED=1 go build -trimpath -tags fts5 \
             -ldflags "-X github.com/serpro69/capy/internal/version.Version=${{ github.ref_name }}" \
             -o capy ./cmd/capy/
@@ -39,6 +47,9 @@ jobs:
           OUTPUT=$(./capy --version)
           echo "Version output: ${OUTPUT}"
           echo "${OUTPUT}" | grep -q "${{ github.ref_name }}"
+
+      - name: Smoke test captured execution and restart recovery
+        run: bash .github/scripts/capture-smoke.sh "$PWD/capy"
 
       - name: Package
         run: |

@@ -9,9 +9,10 @@ BUILD_TAGS      := -tags "fts5"
 BENCH_BRANCH    := $(shell git rev-parse --abbrev-ref HEAD | tr '/' '-')
 BENCH_COUNT     ?= 6
 BENCH_TIME      ?= 1s
+INTEGRATION_TEST_FLAGS ?=
 TOOLBOX_VERSION := latest # also accepts other refs like branch names ('master', 'feat/...'), or tags ('v1.2.3')
 
-.PHONY: help build build-glamour test test-race fmt vet clean bench bench-perf bench-quality bench-compare sync
+.PHONY: help build build-glamour test test-race test-integration test-integration-race fmt vet clean bench bench-perf bench-quality bench-compare sync
 
 help: ## Print this help message
 	@grep -E "^[a-zA-Z_-]+:.*?## .*$$" $(MAKEFILE_LIST) |\
@@ -29,6 +30,12 @@ test: ## Run all tests
 
 test-race: ## Run tests with race detector
 	CGO_ENABLED=1 go test -race $(BUILD_TAGS) ./...
+
+test-integration: ## Run uncached native executor and execution integration tests
+	CGO_ENABLED=1 go test -tags fts5,integration -count=1 -p 1 -timeout 20m $(INTEGRATION_TEST_FLAGS) ./internal/executor ./internal/execution
+
+test-integration-race: ## Run native execution integration tests with race detection
+	CGO_ENABLED=1 go test -tags fts5,integration -race -count=1 -p 1 -timeout 20m $(INTEGRATION_TEST_FLAGS) ./internal/executor ./internal/execution
 
 fmt: ## Format .go files
 	go fmt ./...

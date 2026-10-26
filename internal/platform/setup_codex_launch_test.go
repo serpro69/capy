@@ -41,7 +41,7 @@ func TestCodexHookSupervisorFailure(t *testing.T) {
 }
 
 func TestCodexOwnerInlineBindings(t *testing.T) {
-	dir := t.TempDir()
+	dir := physicalPlatformTempDir(t)
 	command := codexHookCommand(testCodexOwnerID, "pretooluse")
 	// Literal multiline TOML decodes to the exact same command as hooks.json.
 	config := "[[hooks.PreToolUse]]\nmatcher='Bash'\n[[hooks.PreToolUse.hooks]]\ntype='command'\ncommand=\"\"\"" + strings.ReplaceAll(strings.ReplaceAll(command, "\\", "\\\\"), "\"", "\\\"") + "\"\"\"\n"
