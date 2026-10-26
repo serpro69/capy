@@ -234,7 +234,7 @@ data and permanent locks remain intact.
 
 ## Key rotation and explicit data loss
 
-`capy encrypt` rotates **knowledge only**. Run caches are not rekeyed, and v1 has
+`capy encrypt` rotates **knowledge only**. Run caches are not rekeyed; there is
 no `capy runs rekey` or log-preserving rotation workflow.
 
 1. Stop knowledge users, all affected run owners/readers/supervisors, and old
@@ -290,5 +290,7 @@ storage; keep the current binary available to recover logs, or explicitly discar
 them after quiescence if needed. Do not change encryption merely to downgrade.
 Older nested-installation limitations still apply.
 
-Installed acceptance and the final feature release decision remain tracked in
+The original installed-routing acceptance is recorded in
 [Task 17](../feat/done/routine-command-capture/tasks.md#task-17-verify-installed-acceptance-and-release-readiness).
+Native macOS capture, schema-8 preservation and Linux regression evidence are
+tracked in the [native execution release record](../feat/wip/macos-captured-execution/release-proof.md).
