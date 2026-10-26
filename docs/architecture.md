@@ -225,9 +225,9 @@ Darwin observation completion permits normal reuse and retention under its
 accepted residual-process limit; it does not prove host quiescence. Actual
 observation, signal, drainage, reap or persistence failures keep pending evidence
 and quarantine. Operators must establish quiescence before explicit reset when
-old groups may remain. See the [cleanup contract](feat/wip/macos-captured-execution/contracts.md),
-[native process evidence](feat/wip/macos-captured-execution/process-proof.md),
-[lease evidence](feat/wip/macos-captured-execution/lease-proof.md), and
+old groups may remain. See the [cleanup contract](feat/done/macos-captured-execution/contracts.md),
+[native process evidence](feat/done/macos-captured-execution/process-proof.md),
+[lease evidence](feat/done/macos-captured-execution/lease-proof.md), and
 [Linux supervisor evidence](feat/done/routine-command-capture/supervisor-proof.md).
 
 Normal execution-owner attachment alone can migrate schema 8 to 9 after selected-key

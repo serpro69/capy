@@ -1,6 +1,6 @@
 # Native macOS captured execution
 
-> Status: Tasks 1–12 implemented and verified; Task 13 final acceptance in progress
+> Status: complete — Tasks 1–13 verified 2026-10-26; no release published
 > Created: 2026-10-22
 > Baseline: `44ceb813ce2d4f129d058f2534faa2a57b07d8bd`
 > Plan: [implementation.md](implementation.md) · Work: [tasks.md](tasks.md)

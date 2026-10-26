@@ -3,7 +3,7 @@
 > Baseline: `23fbf90c0b12ceff97f40921dc71d305d6cf3ac8`
 > Scope: [Task 12](tasks.md#task-12-add-diagnostics-and-reproducible-native-ci)
 > Date: 2026-10-26
-> Status: Task 12 complete; hosted acceptance verified at `f9df6ab`; Task 13 pending
+> Status: Task 12 complete; hosted acceptance verified at `f9df6ab`; [final Task 13 acceptance](release-proof.md) complete
 
 ## Implemented behavior
 

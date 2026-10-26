@@ -293,4 +293,4 @@ Older nested-installation limitations still apply.
 The original installed-routing acceptance is recorded in
 [Task 17](../feat/done/routine-command-capture/tasks.md#task-17-verify-installed-acceptance-and-release-readiness).
 Native macOS capture, schema-8 preservation and Linux regression evidence are
-tracked in the [native execution release record](../feat/wip/macos-captured-execution/release-proof.md).
+tracked in the [native execution release record](../feat/done/macos-captured-execution/release-proof.md).

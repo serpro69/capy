@@ -4,7 +4,7 @@
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
 > Evidence: [native process verification](process-proof.md) · [source verification](verification.md)
-> Status: in progress — Tasks 1–12 done; Task 13 in progress
+> Status: done — Tasks 1–13 complete; no release published
 > Created: 2026-10-22
 > Not Doing: older macOS majors, Intel support, certified Darwin group retirement, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
@@ -345,7 +345,7 @@ their implementation.
 
 ## Task 13: Complete release verification and documentation
 
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6, Task 7, Task 8, Task 9, Task 10, Task 11, Task 12
 - **Size:** S
 - **Can run in parallel with:** —
@@ -353,11 +353,11 @@ their implementation.
 
 ### Subtasks
 
-- [ ] 13.1 Run `kk:test` for observed-policy completion/failures, lease proof, migration, every public mode, required full FTS5/race/vet/build, new Linux/macOS integration targets and artifact parity; record actual versions and missing evidence.
-- [ ] 13.2 Run required executor quality/performance comparisons with matching immediate baselines; distinguish new Darwin capture measurements from comparable regressions.
-- [ ] 13.3 Run `kk:document` for operations/rollback, architecture, help, AGENTS and proof records; close the bootstrap record and remove only authorized temporary entries.
-- [ ] 13.4 Run `kk:review-code` with Go input and `kk:review-spec`; durably disposition findings and revisit architecture review if the documented topology changed.
-- [ ] 13.5 Confirm bounded Darwin observation and lease proof gates, native all-mode acceptance, preserved Linux behavior/history and real CI coverage; then mark the feature complete. Accepted residual-process uncertainty is not a renamed retirement-proof blocker.
+- [x] 13.1 Run `kk:test` for observed-policy completion/failures, lease proof, migration, every public mode, required full FTS5/race/vet/build, new Linux/macOS integration targets and artifact parity; record actual versions and missing evidence.
+- [x] 13.2 Run required executor quality/performance comparisons with matching immediate baselines; distinguish new Darwin capture measurements from comparable regressions.
+- [x] 13.3 Run `kk:document` for operations/rollback, architecture, help, AGENTS and proof records; close the bootstrap record and remove only authorized temporary entries.
+- [x] 13.4 Run `kk:review-code` with Go input and `kk:review-spec`; durably disposition findings and revisit architecture review if the documented topology changed.
+- [x] 13.5 Confirm bounded Darwin observation and lease proof gates, native all-mode acceptance, preserved Linux behavior/history and real CI coverage; then mark the feature complete. Accepted residual-process uncertainty is not a renamed retirement-proof blocker.
 
 ### Execution context
 
@@ -365,6 +365,13 @@ their implementation.
 - **2026-10-26 — verification approach:** Run required Linux FTS5/race/integration/vet/build and artifact checks through capture with synthetic keys and isolated fixture stores. Compare executor performance and quality against immediate pre-feature `13204a9a68a3def965950e765ca910c615232913` with matching settings; retain every attempt. Native runtime evidence must come from traceable native/hosted results, not this Linux host. Owner: feature implementer; record any missing acceptance evidence and concrete next action before closing this task. No bootstrap exception or dependency change is needed.
 - **2026-10-26 — review corrections:** Isolated specification review found the native workflow omitted the explicitly required non-race integration target. Added it before race, preserved its JSON artifact and retained race/downstream evidence collection after failure; new hosted execution remains required. Architecture review identified an overbroad gate-retention sentence: the existing `contracts.md` rule releases the token at validated ready. Clarified teardown retains only a still-held token and cannot release another exchange's token. Both corrections passed source re-review; no runtime policy or requirement changed.
 - **2026-10-26 — local environment failure and disposition:** Initial full non-race capture `88af46e0-0df6-4c72-8617-88f423f58147` failed seven vault CLI cases after inheriting the personal global `vault.min_session_bytes=196608`, excluding their tiny import fixtures. Their helpers/source are unchanged from pre-feature `13204a9`; other helpers already isolate XDG configuration. Preserve this failed attempt and run a controlled baseline/config comparison, then reverify with isolated XDG configuration. Owner: feature implementer for final checks. Broader fixture self-isolation is pre-existing follow-up, owner unassigned: add isolated XDG configuration to `setupCodexVaultEnv`, `setupVaultWithSidecar` and the merge fixture, then verify with a nonzero personal import policy. Task 13 uses an isolated test environment rather than changing unrelated vault behavior or assertions.
+- **2026-10-26 — controlled configuration result:** Capture `38d0285e-e394-42b7-a1cb-bb5b8a633db0` reproduced the import exclusion on pre-feature source with a synthetic 196608-byte global policy (2.443s, expected exit 1); the same baseline fixture passed with isolated configuration (2.884s). All seven failing candidate cases then passed (14.924s). Final help build, both rendered help views, actual-binary smoke and whole-file/idempotency parity passed in `00c64673-a16d-4e1f-90af-2265e8c58a96`. No assertion, production behavior or personal configuration changed.
+- **2026-10-26 — candidate published for required verification:** Committed reviewed Task 13 documentation/help and native CI correction as `bcf1c04c7fc456e4bc7657597b76d069e1218ef3`, pushed to the existing feature PR to execute [CI run 40353055119](https://github.com/serpro69/capy/actions/runs/40353055119). Task 13 remains in progress until this new hosted gate, local results, matching-baseline benchmarks and evidence review close. No release was published.
+- **2026-10-26 — infrastructure interruption:** Native job `121678027361` was cancelled before runner acquisition with no steps, accompanied by GitHub macOS arm64 capacity annotations. Owner: feature implementer; attempt one job retry, inspect actual execution if allocated, and keep 13.1/13.5 open if capacity remains unavailable. This is not an unchanged failed-test retry. Linux integration proof and glamour passed; full Linux race/vet remains running. The completed Linux benchmark comparison and native historical-evidence limits are recorded in `release-proof.md`.
+- **2026-10-26 — review/benchmark closure and remaining gate:** Independent code/spec reviewers recomputed all ten six-sample benchmark groups and compared both quality JSON reports. No source finding remains; full release acceptance stays conditional on current hosted verification. The architecture review is SOUND after the documented token clarification. 13.2–13.4 are complete; 13.1/13.5 remain open. GitHub refused the native rerun request with `job 121678027361 cannot be rerun` while the full workflow was active; no retry execution occurred. Owner: feature implementer; reattempt once after the workflow finishes, preserving the capacity cancellation and refusing to treat it as a pass.
+- **2026-10-26 — hosted retry executing:** Full candidate Linux FTS5 race/vet passed. After workflow completion, GitHub accepted the native-only retry (attempt 2, job `121692550626`), which acquired a runner and started execution. The tested merge tree `0e3c5ca1a7b1f98f0cdf1490cadfeaded770b663` exactly matches published `bcf1c04`. Native completion and final evidence review remain required; no additional retry is planned.
+- **2026-10-26 — completion supersedes pending gates:** [CI attempt 2](https://github.com/serpro69/capy/actions/runs/40353055119/attempts/2) passed. Native non-race executor/execution passed 13.290s/43.949s, race 24.860s/65.550s, runstore 161.836s, compiled modes 117.485s, and all seven retention groups passed five repetitions (143.322s). All 32 required lifecycle/exchange entries passed in each native target; all 50 required native entries, vet/build and actual-binary smoke passed. Full Linux race/vet, integration, glamour and lint are green. The capacity-only first attempt remains recorded separately.
+- **2026-10-26 — final review and archive:** Isolated code review APPROVED and spec review returned CONFORMANT after independently inspecting final events/logs, recomputing all benchmark medians and confirming the current-candidate gates. Architecture review is SOUND. No required implementation or verification gap remains; the inherited vault fixture isolation follow-up above stays explicitly unassigned. `kk:test` and `kk:document` are complete, bootstrap exceptions are closed, and no new systemic finding/convention requires indexing beyond these records. Task 13 and the feature are done; archive under `docs/feat/done/macos-captured-execution/` with updated incoming links. Closure changes documentation only; tested runtime/workflow source remains `bcf1c04`. No release was published.
 
 ## Dependency Graph
 
