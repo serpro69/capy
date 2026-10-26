@@ -209,21 +209,24 @@ func TestMCPRunHandoffTransport(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(project, ".capy.toml"), []byte("[runs]\nmax_active=8\n"), 0600))
 		p := launch(t, project)
 		executions := make(map[int]bool)
+		startupDeadline := time.Now().Add(10 * time.Second)
 		for i := range 8 {
 			p.nextID++
 			executions[p.nextID] = true
 			require.NoError(t, p.write(map[string]any{"jsonrpc": "2.0", "id": p.nextID, "method": "tools/call", "params": map[string]any{
 				"name": "capy_execute", "arguments": map[string]any{"language": "shell", "code": fmt.Sprintf("touch started-%d; sleep 60", i), "background": true, "timeout": 60000},
 			}}, time.Now().Add(stdioTimeout)))
+			// Establish each running call before submitting the next one. All
+			// handlers remain attached for 60s; this isolates recovery headroom
+			// from simultaneous cold startup's independent three-second gate.
+			// Preserve the original ten-second budget for all eight starts.
+			remaining := time.Until(startupDeadline)
+			require.Greater(t, remaining, time.Duration(0), "eight-run startup budget exhausted")
+			require.Eventually(t, func() bool {
+				_, err := os.Stat(filepath.Join(project, fmt.Sprintf("started-%d", i)))
+				return err == nil
+			}, remaining, 10*time.Millisecond, "run %d did not start", i)
 		}
-		require.Eventually(t, func() bool {
-			for i := range 8 {
-				if _, err := os.Stat(filepath.Join(project, fmt.Sprintf("started-%d", i))); err != nil {
-					return false
-				}
-			}
-			return true
-		}, 10*time.Second, 10*time.Millisecond)
 		// All execution handlers are still attached. Recovery must be served by
 		// transport headroom, not wait for one of those calls to yield.
 		p.timeout = 5 * time.Second
