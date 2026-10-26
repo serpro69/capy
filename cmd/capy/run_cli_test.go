@@ -16,7 +16,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/serpro69/capy/internal/execution"
-	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/runstore"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -59,9 +58,7 @@ func cliProject(t *testing.T, extra string) string {
 	return project
 }
 func TestRunCLICrossInterfaceRecovery(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux supervisor required")
-	}
+	wantProof := capturedCleanup(t)
 	bin := buildStdioCapy(t)
 	project := cliProject(t, "")
 	env := stdioEnv(t, "synthetic-cli-capture-key")
@@ -70,7 +67,6 @@ func TestRunCLICrossInterfaceRecovery(t *testing.T) {
 	require.Equal(t, "cli", result.OwnerType)
 	require.Equal(t, 7, *result.ExitCode)
 	require.Equal(t, 2, result.Version)
-	wantProof := executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}
 	require.Equal(t, wantProof, result.Cleanup)
 	p := startStdioProcess(t, stdioCommand{executable: bin, args: []string{"serve", "--project-dir", project}, dir: project, env: env})
 	p.initialize(t)
@@ -116,9 +112,7 @@ func TestRunCLICrossInterfaceRecovery(t *testing.T) {
 }
 
 func TestRunCLIExitAndCaptureMatrix(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux supervisor required")
-	}
+	wantProof := capturedCleanup(t)
 	bin := buildStdioCapy(t)
 	for _, tc := range []struct {
 		name, code, config string
@@ -145,6 +139,9 @@ func TestRunCLIExitAndCaptureMatrix(t *testing.T) {
 			require.NoError(t, json.Unmarshal(out, &result))
 			require.Equal(t, tc.state, result.State)
 			require.Equal(t, tc.capture, result.Capture.State)
+			require.Equal(t, 2, result.Version)
+			require.Equal(t, wantProof, result.Cleanup)
+			require.True(t, result.Capture.TerminalPersisted)
 			if tc.name == "capture loss" {
 				require.FileExists(t, filepath.Join(project, "finished"))
 				require.Equal(t, 0, *result.ExitCode)
@@ -154,9 +151,7 @@ func TestRunCLIExitAndCaptureMatrix(t *testing.T) {
 }
 
 func TestRunCLIPolicyFilesAndInvalidFlags(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux supervisor required")
-	}
+	capturedCleanup(t)
 	bin := buildStdioCapy(t)
 	for _, mode := range []string{"deny shell", "ask shell", "ask python", "deny file", "ask file", "outside file", "fifo", "both inputs", "background", "wait", "zero timeout", "fractional timeout", "long flag"} {
 		t.Run(mode, func(t *testing.T) {
@@ -223,9 +218,7 @@ func TestRunCLIPolicyFilesAndInvalidFlags(t *testing.T) {
 }
 
 func TestRunCLICodeFileAndSpawnFailures(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux supervisor required")
-	}
+	capturedCleanup(t)
 	bin := buildStdioCapy(t)
 	t.Run("accepted checked file", func(t *testing.T) {
 		project := cliProject(t, "")
@@ -322,9 +315,7 @@ func TestRunCLINestedCaptureRetainsOuterPolicy(t *testing.T) {
 }
 
 func TestRunCLINestedAndWorktreeOwners(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux supervisor required")
-	}
+	capturedCleanup(t)
 	bin := buildStdioCapy(t)
 	root := cliProject(t, "")
 	child := filepath.Join(root, "child")
@@ -344,7 +335,12 @@ func TestRunCLINestedAndWorktreeOwners(t *testing.T) {
 	require.Zero(t, status, string(out))
 	require.FileExists(t, filepath.Join(child, ".capy", "runs", "runs.db"))
 	require.NoDirExists(t, filepath.Join(root, ".capy", "runs"))
-	require.NoError(t, exec.Command("git", "-C", root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture").Run())
+	commit := exec.Command("git", "-C", root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture")
+	// Use the fixture's HOME/config roots so host signing and hooks do not
+	// affect the synthetic commit required to create a linked worktree.
+	commit.Env = env
+	output, err := commit.CombinedOutput()
+	require.NoError(t, err, string(output))
 	linked := filepath.Join(t.TempDir(), "linked")
 	require.NoError(t, exec.Command("git", "-C", root, "worktree", "add", "-q", "-b", "linked-fixture", linked).Run())
 	out, _, status = capturedCLI(t, bin, linked, env, "execute", "--json", "--code", "printf linked!")
@@ -398,9 +394,7 @@ func TestRunCLIWorkspaceWriteSandbox(t *testing.T) {
 }
 
 func TestRunCLIRemainsAttachedThroughSignal(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux supervisor required")
-	}
+	capturedCleanup(t)
 	bin := buildStdioCapy(t)
 	project := cliProject(t, "")
 	env := stdioEnv(t, "synthetic-cli-owner-signal-key")

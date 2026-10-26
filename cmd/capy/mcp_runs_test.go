@@ -67,9 +67,7 @@ func (p *stdioProcess) executeOutput(t *testing.T, args map[string]any) string {
 }
 
 func TestMCPRunCaptureRecovery(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("captured supervision requires Linux")
-	}
+	wantProof := capturedCleanup(t)
 	bin := buildStdioCapy(t)
 	project := stdioProject(t)
 	const key = "synthetic-captured-project-credential-12345678"
@@ -89,6 +87,8 @@ func TestMCPRunCaptureRecovery(t *testing.T) {
 	result := p.capturedRun(t, map[string]any{"language": "shell", "code": "printf 'first\\000\\377last\\n'; printf 'failure diagnostic' >&2; printf x >> executed-once; exit 7"})
 	require.True(t, result.IsError)
 	run := result.Structured
+	require.Equal(t, 2, run.Version)
+	require.Equal(t, wantProof, run.Cleanup)
 	require.NotNil(t, run.RunID)
 	require.Equal(t, 7, *run.ExitCode)
 	require.Equal(t, "complete", run.Capture.State)
@@ -144,6 +144,7 @@ func TestMCPRunCaptureRecovery(t *testing.T) {
 	require.NoError(t, reopened.request("tools/call", map[string]any{"name": "capy_runs", "arguments": map[string]any{"action": "status", "run_id": *run.RunID}}, &status))
 	require.False(t, status.IsError, "query success is independent of child exit 7")
 	require.Equal(t, 7, *status.Structured.Run.ExitCode)
+	require.Equal(t, wantProof, status.Structured.Run.Cleanup)
 	require.Equal(t, want, reopened.rawRun(t, *run.RunID, "stdout"))
 	reopened.close(t)
 	count, err := os.ReadFile(filepath.Join(project, "executed-once"))

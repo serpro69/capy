@@ -11,10 +11,21 @@ import (
 )
 
 func Supported() error {
-	if runtime.GOOS != "linux" {
-		return &runstore.Error{Code: "storage_unavailable", Message: "captured execution currently requires Linux supervision"}
+	switch runtime.GOOS {
+	case "linux":
+		// Subreaper preparation changes process-wide ownership and belongs only
+		// in the helper. Preserve Linux's existing admission behavior.
+		return nil
+	case "darwin":
+		// Darwin preparation only checks the compiled backend and verified host
+		// matrix; it neither spawns a process nor opens run storage.
+		if err := executor.PrepareSupervisor(); err != nil {
+			return &runstore.Error{Code: "storage_unavailable", Message: "captured execution unavailable: " + err.Error()}
+		}
+		return nil
+	default:
+		return &runstore.Error{Code: "storage_unavailable", Message: "captured execution requires Linux or macOS 26 on Apple Silicon with CGO"}
 	}
-	return nil
 }
 
 func ValidateCredentialTransfer(key string) error {

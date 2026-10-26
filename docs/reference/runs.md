@@ -6,9 +6,10 @@ as exact bytes in the selected owner's encrypted `.capy/runs/runs.db`; responses
 and default reads use a sanitized projection. Search is built lazily from that
 projection. New run output does not become knowledge or vault content.
 
-The captured execution supervisor currently supports Linux. Unsupported platforms
-fail before spawn. Commands inherit the caller's OS confinement; capy does not
-grant filesystem or network permissions.
+The captured execution supervisor supports Linux and macOS 26 on Apple Silicon
+with CGO. Other macOS majors, Intel Macs and other platforms fail before spawn.
+Commands inherit the caller's OS confinement; capy does not grant filesystem or
+network permissions.
 
 ## Execute and recover
 
@@ -68,19 +69,22 @@ An admitted ID with `start_failed`, a lost response, or incomplete capture requi
 status/list recovery before retrying. In particular, capture failure after spawn
 does not kill a command that may already have modified the project.
 
-Linux startup now verifies acquired lease continuity before authorizing a command.
+Linux and macOS startup verify acquired lease continuity before authorizing a command.
 A helper stalled before authorization is terminated and reaped before its slot
 can be reused. If reaping cannot be confirmed, ownership and capacity remain held
 and new execution is refused. Once authorization may have been sent, cancellation
 uses the helper's cooperative cleanup path. Compiler phases count as execution:
-a retired compiler followed by runtime spawn failure retains `retired` cleanup
-while reporting `start_failed` and preserving the compiler's captured output.
+a completed compiler followed by runtime spawn failure retains its scope's
+completed cleanup state while reporting `start_failed` and preserving the
+compiler's captured output.
 
 Version-2 responses expose durable `cleanup: {scope, state}` alongside capture.
-Linux uses scope `linux_descendants_v1` and completed state `retired`. The reserved
+Linux uses scope `linux_descendants_v1` and completed state `retired`. The
 Darwin scope `darwin_process_group_observation_v1` uses `observed`: completion of
 a bounded observation policy, which does not prove all processes are gone.
-Publishing this response format does not enable native macOS execution.
+Escaped descendants or processes racing the final group observation can survive;
+normal reuse and retention accept this limitation. Required observation, signal,
+drainage or reap failures still leave cleanup pending and preserve quarantine.
 Both scopes also support `not_spawned` and `pending`. Pending proof remains
 pending when final persistence fails, even if local cleanup completed; actual
 exit or signal information is reported separately. A rejection without an
@@ -271,4 +275,4 @@ them after quiescence if needed. Do not change encryption merely to downgrade.
 Older nested-installation limitations still apply.
 
 Installed acceptance and the final feature release decision remain tracked in
-[Task 17](../feat/wip/routine-command-capture/tasks.md#task-17-verify-installed-acceptance-and-release-readiness).
+[Task 17](../feat/done/routine-command-capture/tasks.md#task-17-verify-installed-acceptance-and-release-readiness).

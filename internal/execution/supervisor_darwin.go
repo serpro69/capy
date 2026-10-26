@@ -10,8 +10,8 @@ import (
 
 func supervisorCleanupScope() executor.CleanupScope { return executor.CleanupDarwinObservation }
 
-// ServeInherited is reachable only through the private helper path. Public
-// admission remains gated by Supported until native integration is accepted.
+// ServeInherited handles the private helper path after public admission checks
+// the same verified host matrix through Supported.
 func ServeInherited(ctx context.Context, open OpenRun) error {
 	return serveInherited(ctx, open, supervisorCleanupScope())
 }
