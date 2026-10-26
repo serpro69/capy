@@ -1,6 +1,6 @@
 # Implementation: native macOS captured execution
 
-> Status: Tasks 1–12 implemented and verified; Task 13 final acceptance in progress
+> Status: complete — Tasks 1–13 verified 2026-10-26; no release published
 > Design: [design.md](design.md) · Contract: [contracts.md](contracts.md)
 > Tasks: [tasks.md](tasks.md)
 
