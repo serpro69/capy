@@ -140,7 +140,7 @@ func (s *Service) runBatch(ctx context.Context, input runstore.BatchInput, timeo
 		return batchRejection(err)
 	}
 	s.admissionMu.Lock()
-	result, rows, err := st.AdmitBatch(ctx, owner, executor.CleanupLinuxDescendants, input)
+	result, rows, err := st.AdmitBatch(ctx, owner, supervisorCleanupScope(), input)
 	queue := &batchQueue{cutoff: input.Deadline, timeout: timeout, parallel: input.Concurrency > 1,
 		ceiling: input.EffectiveConcurrency, work: make(chan batchWork, len(rows))}
 	if err == nil {

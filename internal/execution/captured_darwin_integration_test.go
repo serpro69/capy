@@ -290,14 +290,19 @@ func TestDarwinCapturedCompilerRuntimeFailure(t *testing.T) {
 	require.Equal(t, "compiler-output", darwinRawText(t, s, *result.RunID, "stdout"))
 }
 
-func TestDarwinCapturedPublicAdmissionDisabled(t *testing.T) {
+func TestDarwinCapturedPublicAdmission(t *testing.T) {
 	s := newDarwinCaptureService(t, "")
-	require.Error(t, Supported())
-	result := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "touch forbidden"}, "", time.Second)
-	require.Nil(t, result.RunID)
-	require.Equal(t, "storage_unavailable", result.Error.Code)
-	require.NoFileExists(t, filepath.Join(s.project, "forbidden"))
-	require.NoDirExists(t, filepath.Join(s.project, ".capy", "runs"))
+	require.NoError(t, Supported())
+	result := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "printf x >> once; printf public-output; exit 7"}, "", 10*time.Second)
+	require.NotNil(t, result.RunID)
+	require.Nil(t, result.Error)
+	require.Equal(t, 7, *result.ExitCode)
+	require.Equal(t, executor.CleanupEvidence{Scope: executor.CleanupDarwinObservation, State: executor.CleanupObserved}, result.Cleanup)
+	require.Equal(t, "complete", result.Capture.State)
+	require.Equal(t, "public-output", darwinRawText(t, s, *result.RunID, "stdout"))
+	count, err := os.ReadFile(filepath.Join(s.project, "once"))
+	require.NoError(t, err)
+	require.Equal(t, "x", string(count))
 }
 
 func TestDarwinCapturedObservationFailure(t *testing.T) {

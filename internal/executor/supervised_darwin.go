@@ -43,12 +43,16 @@ func nativeDarwinPhaseOps() darwinPhaseOps {
 }
 
 func darwinObservationSupported() error {
-	if runtime.GOARCH != "arm64" {
-		return errors.New("darwin observation requires apple silicon")
-	}
 	version, err := unix.Sysctl("kern.osproductversion")
 	if err != nil {
 		return fmt.Errorf("reading macos version: %w", err)
+	}
+	return darwinObservationMatrix(runtime.GOARCH, version)
+}
+
+func darwinObservationMatrix(arch, version string) error {
+	if arch != "arm64" {
+		return errors.New("darwin observation requires apple silicon")
 	}
 	major, _, _ := strings.Cut(version, ".")
 	if major != "26" {

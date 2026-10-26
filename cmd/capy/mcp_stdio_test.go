@@ -111,10 +111,15 @@ func stdioSearch(t *testing.T, p *stdioProcess, want, absent string) {
 
 func stdioDoctor(t *testing.T, p *stdioProcess, project string) {
 	t.Helper()
+	// Owner resolution reports the physical path, including macOS's /var alias.
+	physical, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
 	text := p.tool(t, "capy_doctor", map[string]any{})
 	for _, want := range []string{
 		"[x] FTS5: available", "[x] Knowledge base: 1 sources, 1 chunks",
-		"[x] Project: " + project, "[-] Vault: disabled",
+		"[x] Project: " + physical, "[-] Vault: disabled",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("doctor missing %q: %s", want, text)

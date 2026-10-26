@@ -197,7 +197,7 @@ func (s *Service) execute(ctx context.Context, request executor.ExecRequest, int
 	program := runstore.Program{Owner: physical, OwnerType: s.ownerType, Request: request, Intent: intent, Deadline: deadline}
 	admissionCtx, cancelAdmission := context.WithTimeout(ctx, 3*time.Second)
 	s.admissionMu.Lock()
-	row, err := st.Admit(admissionCtx, owner, executor.CleanupLinuxDescendants, program)
+	row, err := st.Admit(admissionCtx, owner, supervisorCleanupScope(), program)
 	cancelAdmission()
 	if err == nil {
 		s.mu.Lock()

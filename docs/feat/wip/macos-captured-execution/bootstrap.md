@@ -1,6 +1,6 @@
 # Native verification bootstrap record
 
-> Status: Task 1, Task 2 and Task 9 exceptions removed; routine enforcement verified restored 2026-10-26
+> Status: Task 1, Task 2, Task 9 and Task 10 exceptions removed; routine enforcement verified restored 2026-10-26
 > Applies to: Codex hosts enforcing Capy's routine-capture gate
 > Plan: [implementation.md](implementation.md#execution-rules)
 
@@ -237,3 +237,54 @@ with routine-capture-required guidance. The probe executed no test. Its response
 is retained as `enforcement-restored.json` in the validation directory. No Task 9
 exception remains; native verification is closed. Linux runtime/release evidence
 remains tracked separately in the task and capture proof.
+
+## Task 10 public activation — authorized bootstrap
+
+2026-10-26: the Task 10 source and compiled CLI/MCP regression fixtures are
+prepared from `43a8686001e69adddc9e688acaf2596a70b144c9`. Installed MCP capture
+still rejects Darwin before admission. The operator approved “Approve the one-build
+bootstrap” on 2026-10-26. The single build exception was applied with enforcement
+enabled and removed immediately after the successful build. The restored config
+matches `/private/tmp/capy-task10-validation.M1BbL6/original-capy.toml` byte-for-byte;
+`logs/enforcement-restored.json` records the installed-hook denial of the formerly
+excepted command. Earlier task authorizations have expired.
+
+The approved exception was **one build**, producing a temporary candidate binary:
+
+```toml
+[routing.routine]
+enabled = true
+native_allow = [
+  "Bash(go build -tags fts5 -o /private/tmp/capy-task10-validation.M1BbL6/capy ./cmd/capy)",
+]
+```
+
+Run from this repository with `CGO_ENABLED=1`, deployment target 26.0, synthetic
+knowledge/vault keys and temporary caches. Preserve the existing project
+`.capy.toml`; remove only this entry immediately after the build and verify restored
+enforcement with a read-only installed-hook probe. The scope includes fix-driven
+rebuilds of this exact command, with the same removal procedure. It does not
+install the binary, replace the running MCP server or change trust/security.
+
+Use the temporary binary's `execute` command for all subsequent tests, vet,
+builds and benchmarks, with an isolated temporary owner/run store, synthetic
+credentials and `--cwd` pointing to the candidate or immutable baseline. Confirm
+one successful capture and recovered output first. Capture failure remains a
+repair requirement; this proposal does not authorize native test execution.
+
+The readiness run `c1ee91a1-cef1-4d6d-91ea-18638cb4c423` completed with exit zero,
+complete capture and scoped `observed` cleanup; a separate `runs read` recovered
+its stdout. Subsequent verification uses this temporary binary's capture path.
+
+Verification covers the capability matrix/public admission fixtures, compiled
+CLI/MCP capture and restart recovery, outcome/response-budget matrices and
+owner/credential/security/cwd boundaries; then affected executor/execution/server
+race tests, vet and FTS5 build. Run the required quality comparison against the
+immediate baseline and require all four formerly rejected public capture cases
+to pass. Compare the existing six-sample executor overhead benchmark under
+matching conditions. Retain every attempt. Linux runtime evidence still requires
+Linux/CI, and broader all-mode/release acceptance remains Tasks 11–13.
+
+Task 10 verification and isolated internal review completed successfully. The
+bootstrap is closed; no exception remains. See [activation-proof.md](activation-proof.md)
+for retained results, fixture corrections and later-task release limits.

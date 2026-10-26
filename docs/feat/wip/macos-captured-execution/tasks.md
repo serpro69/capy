@@ -4,7 +4,7 @@
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
 > Evidence: [native process verification](process-proof.md) · [source verification](verification.md)
-> Status: in progress — Tasks 1–9 done; Tasks 10–13 pending
+> Status: in progress — Tasks 1–10 done; Tasks 11–13 pending
 > Created: 2026-10-22
 > Not Doing: older macOS majors, Intel support, certified Darwin group retirement, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
@@ -252,17 +252,30 @@ their implementation.
 
 ## Task 10: Enable native CLI and ordinary MCP execution
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 9
 - **Size:** M
 - **Can run in parallel with:** —
-- **Docs:** [public activation](implementation.md#task-10-enable-native-cli-and-ordinary-mcp-execution)
+- **Docs:** [public activation](implementation.md#task-10-enable-native-cli-and-ordinary-mcp-execution) · [activation evidence](activation-proof.md)
 
 ### Subtasks
 
-- [ ] 10.1 Enable only the proved OS/architecture matrix in shared service/capability selection → verify: compiled CLI/MCP once-only capture and recovery.
-- [ ] 10.2 Preserve owner, credential, security and cwd selection through existing adapters → verify: unsupported hosts reject before spawn and no storage fallback appears.
-- [ ] 10.3 Exercise CLI exit codes, MCP flags and response budgets for runtime failures → verify: thin adapters share the same scoped contract.
+- [x] 10.1 Enable only the proved OS/architecture matrix in shared service/capability selection → verify: compiled CLI/MCP once-only capture and recovery.
+- [x] 10.2 Preserve owner, credential, security and cwd selection through existing adapters → verify: unsupported hosts reject before spawn and no storage fallback appears.
+- [x] 10.3 Exercise CLI exit codes, MCP flags and response budgets for runtime failures → verify: thin adapters share the same scoped contract.
+
+### Execution context
+
+- **2026-10-26 — authorized scope and baseline:** The user requested the next task, Task 10, from clean `43a8686001e69adddc9e688acaf2596a70b144c9` on macOS. Activate the already-proved macOS 26/arm64 backend through shared admission, retain Linux behavior and public v2 contracts, and verify compiled CLI/ordinary MCP capture, recovery, failure outcomes and owner/credential/security/cwd boundaries. All-mode acceptance, diagnostics/CI and release verification remain Tasks 11–13.
+- **2026-10-26 — observed activation seams:** `Supported` rejects Darwin, and single/batch admission hardcodes Linux scope despite the helper's backend-selected scope. Both admission paths must select the backend scope when the shared capability gate opens. CLI/MCP adapters retain their existing policy and credential paths. No dependency, schema or protocol change is needed.
+- **2026-10-26 — verification route:** Installed MCP capture rejected a readiness probe before admission with `captured execution currently requires Linux supervision`; no command ran. Earlier bootstrap authorizations expired with their tasks. Owner: feature implementer; prepare the source/tests and isolated source review, then obtain the exact native verification scope in `bootstrap.md`. Do not mark Task 10 done without its runtime acceptance. Linux runtime evidence remains a Linux/CI requirement for release.
+- **2026-10-26 — implementation prepared, verification pending:** Shared admission now checks the Darwin backend's existing macOS 26/arm64/CGO capability and stamps the selected scope for both individual and batch rows. Linux retains its existing admission and helper-only subreaper preparation. Compiled fixtures cover v2 scoped proof, encrypted cross-interface/restart recovery, actual exit/signal/deadline/capture-loss outcomes, 2-KiB budgets, cwd/owner separation, blocked storage and selected-key failures. Existing MCP deny-only policy and CLI matched-ask rejection are preserved. Formatting and `git diff --check` pass; no test/build has run. The proposed bootstrap is one temporary candidate build, followed by captured verification using that binary and an isolated owner. Source review is in progress; all subtasks remain open until runtime verification and final review complete.
+- **2026-10-26 — verification supersedes pending entry:** The operator approved the one-build bootstrap. The temporary binary built successfully; original routing configuration was restored byte-for-byte and an installed-hook probe confirmed enforcement. All later checks used candidate capture with an isolated owner and synthetic keys. Selected native executor/execution/server integration race passed (14.841s / 22.783s / 34.409s); final compiled CLI/MCP race passed (70.296s), followed by affected-package vet and full FTS5 build. Two existing fixtures needed host-independent expectations: isolate the synthetic Git commit from host signing configuration and compare doctor's physical project path. All attempts, captured IDs, commands and skipped-host limits are in [activation-proof.md](activation-proof.md).
+- **2026-10-26 — benchmarks and review:** Baseline/candidate comparisons completed in capture `5635488b-ea46-4aa5-8104-74319cc2ef13`. The baseline reproduces the doctor path fixture failure and four public-capture quality rejections; the candidate passes the full quality suite, including all four capture sizes. Retrieval metrics and fixture hashes match. Six-sample executor comparisons and control variation are retained without a significance claim in the activation record. Internal isolated source review found no defects and approved both fixture fixes; final evidence review is pending. Automatic approval review rejected the external Claude source export, so no external review/receipt is claimed. Owner: feature implementer; complete final evidence review before closing Task 10. Linux runtime and broader release acceptance remain Tasks 11–13.
+
+- **2026-10-26 — completion:** Final isolated internal `kk:review-code` approved all 18 files and Task 10 acceptance with no findings after inspecting verification envelopes and logs, independently comparing quality results and benchmark medians, and verifying restored routing configuration. `kk:test` and `kk:document` completed for this slice; 43 local documentation links/anchors and `git diff --check` pass. Execution is author-attributed; external review remains unavailable after the export rejection. Task 10 is done; Task 11 is next. No new convention or systemic finding needs separate indexing because the activation record preserves the evidence. Later-task Linux, CI, all-mode and release prerequisites remain assigned to the feature implementer.
+
+- **2026-10-26 — external review authorization and outcome:** After the source-export rejection was reported, the operator replied “I approve the review,” authorizing the Task 10 bundle to Claude. Prepared refreshed immutable code, specification and verification snapshots at `/private/tmp/capy-task10-claude-w9469rso/`; omitted earlier review conclusions from the external context. Submitted a read-only PAL `clink` request to `claude` with all 12 criteria and the current 14 Go files. The request timed out awaiting `tools/call` after 300 seconds, with no findings, observed model identity, continuation ID or source-read receipt. Outcome: **attempted, incomplete**. All 14 candidate Go files still match their submitted hashes. No retry or alternate provider was attempted; internal approval and native evidence remain the completed acceptance record. Owner: feature implementer; retain this coverage limit and resolve the transport timeout before any separately requested external attempt. Completion requires an actual review response with source coverage; authorization alone is not review evidence.
 
 ## Task 11: Verify yielded, file and batch execution
 
