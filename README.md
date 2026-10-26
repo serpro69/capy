@@ -135,14 +135,17 @@ Your agent receives the argument schemas when it connects. The eleven tools are:
 
 Execution supports JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, and Elixir, using runtimes installed on your machine. Commands run from the selected project by default; optional `cwd` changes the execution directory for that call. It does not change the database, credentials, or the base for an `execute_file` input path.
 
-Execution output is captured in a separate encrypted run store and bounded responses apply with or without `intent`. Run indexing is lazy on search, intent, or batch queries. Use `capy_runs` or `capy runs` to recover retained output instead of repeating execution; new execution logs are not knowledge sources. See the [execution contracts](docs/feat/wip/routine-command-capture/contracts.md) for response, retention and recovery limits.
+Execution output is captured in a separate encrypted run store and bounded responses apply with or without `intent`. Run indexing is lazy on search, intent, or batch queries. Use `capy_runs` or `capy runs` to recover retained output instead of repeating execution; new execution logs are not knowledge sources. See the [execution contracts](docs/feat/done/routine-command-capture/contracts.md) for response, retention and recovery limits.
 
 From a terminal, use `capy execute --code 'go test -tags fts5 ./...' --json`,
 then `capy runs list --json` and `capy runs read --run-id <returned-id> --json`.
 The CLI stays attached; MCP can yield with `wait_ms` while capture continues.
 The [run operations guide](docs/reference/runs.md) covers pagination, batches,
-cancellation, quotas, owner selection and rotation. Captured execution currently
-requires Linux; the final installed acceptance gate remains Task 17.
+cancellation, quotas, owner selection and rotation. Captured execution supports
+Linux and macOS 26 on Apple Silicon with CGO. Darwin reports bounded cleanup
+observations; escaped or racing descendants may survive. Doctor separates
+host/build capability from storage health and hook activation. See the guide's
+schema-upgrade and explicit-discard rollback procedures before mixing versions.
 
 ### Finding earlier results
 

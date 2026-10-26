@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/sqliteutil"
 	"golang.org/x/sys/unix"
 )
@@ -36,6 +37,7 @@ type Diagnostics struct {
 
 // RunDiagnostic excludes invocation, output, cursors and stored error strings.
 type RunDiagnostic struct {
+	Cleanup                          executor.CleanupEvidence
 	ID                               string
 	State, Capture, Redaction, Index string
 	ExitCode, Signal                 *int
@@ -149,7 +151,9 @@ func Inspect(ctx context.Context, path, key string) (report Diagnostics, err err
 
 func diagnosticRuns(ctx context.Context, tx *sql.Tx, now int64) ([]RunDiagnostic, error) {
 	// Bound each decoded metadata row even if the authenticated DB is damaged.
-	rows, err := tx.QueryContext(ctx, `SELECT id,CASE WHEN length(result)<=65536 THEN result ELSE NULL END,expires_at
+	rows, err := tx.QueryContext(ctx, `SELECT id,CASE WHEN length(result)<=65536 THEN result ELSE NULL END,expires_at,
+		CASE WHEN length(CAST(cleanup_scope AS BLOB))<=64 THEN cleanup_scope ELSE NULL END,
+		CASE WHEN length(CAST(cleanup AS BLOB))<=16 THEN cleanup ELSE NULL END
 		FROM runs WHERE evicting=0 AND (terminal=0 OR expires_at>?)
 		ORDER BY created_at DESC,id DESC LIMIT ?`, now, diagnosticRunLimit)
 	if err != nil {
@@ -161,14 +165,16 @@ func diagnosticRuns(ctx context.Context, tx *sql.Tx, now int64) ([]RunDiagnostic
 		var id string
 		var data []byte
 		var expiry sql.NullInt64
-		if err := rows.Scan(&id, &data, &expiry); err != nil {
+		var cleanup executor.CleanupEvidence
+		if err := rows.Scan(&id, &data, &expiry, &cleanup.Scope, &cleanup.State); err != nil {
 			return nil, storageError()
 		}
 		var result Result
-		if uuid.Validate(id) != nil || len(data) == 0 || json.Unmarshal(data, &result) != nil {
+		if uuid.Validate(id) != nil || len(data) == 0 || json.Unmarshal(data, &result) != nil || !cleanup.Valid() {
 			return nil, storageError()
 		}
 		entry := RunDiagnostic{
+			Cleanup:       cleanup,
 			ID:            id,
 			State:         diagnosticState(result.State, "admitted", "queued", "running", "exited", "start_failed", "timed_out", "cancelled", "interrupted", "skipped"),
 			Capture:       diagnosticState(result.Capture.State, "not_started", "recording", "complete", "incomplete"),
