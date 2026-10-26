@@ -186,6 +186,16 @@ kernel scheduling/I/O. Join every drain worker after closing readers on failure;
 never abandon a wait goroutine. If leader terminal state cannot be established,
 do not call an assumed-immediate blocking reap or certify cleanup.
 
+**Task 11 implementation note:** each phase sends at most one successful group
+SIGKILL, then continues observing within the same budget. Re-signalling a group
+whose members are exiting produced an `EPERM` failure in native fixtures; that
+error cannot be ignored under this contract. The single-signal implementation
+deliberately reduces termination effort: a member joining after that signal
+receives no further termination attempt. If it remains visible, cleanup stays
+pending and the owner is quarantined. This availability tradeoff never permits
+`observed` with a visible survivor or relaxes the final inventory, natural EOF,
+required-signal error or sole-reap conditions.
+
 Task 2 must verify these observable conditions on macOS 26 arm64, including the
 actual error paths. It no longer needs to rule out unpublished membership or
 in-flight joins. Keep the native re-entry fixture: its passing counterexample must

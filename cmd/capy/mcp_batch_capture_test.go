@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/runstore"
 	"github.com/stretchr/testify/require"
 )
@@ -58,6 +59,7 @@ func (p *stdioProcess) awaitBatch(t *testing.T, id string) runstore.BatchResult 
 	return r.Structured.Batch
 }
 func TestMCPSerialBatchCapture(t *testing.T) {
+	wantProof := capturedCleanup(t)
 	bin := buildStdioCapy(t)
 	launch := func(t *testing.T, project string) *stdioProcess {
 		p := startStdioProcess(t, stdioCommand{executable: bin, args: []string{"serve", "--project-dir", project}, dir: project, env: stdioEnv(t, "synthetic-serial-batch-key")})
@@ -81,9 +83,18 @@ func TestMCPSerialBatchCapture(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(project, "release"), nil, 0600))
 		result := p.awaitBatch(t, id)
 		require.Equal(t, "completed", result.State)
+		require.Equal(t, 2, result.Version)
+		require.Equal(t, wantProof, result.Cleanup)
+		require.NotEmpty(t, r.Structured.OwnerID)
+		require.Equal(t, r.Structured.OwnerID, result.OwnerID)
 		require.Equal(t, 1, result.FailedCount)
 		entries := p.batchChildren(t, id)
 		require.Len(t, entries, 3)
+		for _, child := range entries {
+			require.Equal(t, wantProof, child.Cleanup)
+			require.Equal(t, result.OwnerID, child.OwnerID)
+			require.Equal(t, id, child.BatchID)
+		}
 		require.Equal(t, 7, *entries[1].ExitCode)
 		require.Equal(t, []byte("earlylate"), p.rawRun(t, entries[0].RunID, "stdout"))
 		require.Equal(t, []byte("stderr-tail"), p.rawRun(t, entries[1].RunID, "stderr"))
@@ -123,6 +134,10 @@ func TestMCPSerialBatchCapture(t *testing.T) {
 		require.True(t, r.IsError)
 		require.Equal(t, "cancelled", r.Structured.State)
 		entries := p.batchChildren(t, r.Structured.BatchID)
+		require.Len(t, entries, 2)
+		require.Equal(t, wantProof, entries[0].Cleanup)
+		require.Equal(t, executor.CleanupEvidence{Scope: wantProof.Scope, State: executor.CleanupNotSpawned}, entries[1].Cleanup)
+		require.Equal(t, wantProof, r.Structured.Cleanup)
 		require.Equal(t, "cancelled", entries[1].State)
 		require.Nil(t, entries[1].ExitCode)
 		require.NoFileExists(t, filepath.Join(project, "forbidden"))
@@ -139,6 +154,12 @@ func TestMCPSerialBatchCapture(t *testing.T) {
 		p = launch(t, project)
 		b := p.awaitBatch(t, r.Structured.BatchID)
 		require.Equal(t, "cancelled", b.State)
+		require.Equal(t, wantProof, b.Cleanup)
+		require.Equal(t, r.Structured.OwnerID, b.OwnerID)
+		entries := p.batchChildren(t, b.BatchID)
+		require.Len(t, entries, 2)
+		require.Equal(t, wantProof, entries[0].Cleanup)
+		require.Equal(t, executor.CleanupEvidence{Scope: wantProof.Scope, State: executor.CleanupNotSpawned}, entries[1].Cleanup)
 		require.NoFileExists(t, filepath.Join(project, "sibling"))
 		p.close(t)
 	})

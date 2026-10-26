@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -42,9 +41,7 @@ func (p *stdioProcess) awaitRun(t *testing.T, id string) runstore.Result {
 }
 
 func TestMCPRunHandoffTransport(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("captured supervision requires Linux")
-	}
+	wantProof := capturedCleanup(t)
 	bin := buildStdioCapy(t)
 	launch := func(t *testing.T, project string) *stdioProcess {
 		p := startStdioProcess(t, stdioCommand{executable: bin, args: []string{"serve", "--project-dir", project}, dir: project, env: stdioEnv(t, "synthetic-handoff-key")})
@@ -63,6 +60,10 @@ func TestMCPRunHandoffTransport(t *testing.T) {
 		require.NoError(t, p.write(map[string]any{"jsonrpc": "2.0", "method": "notifications/cancelled", "params": map[string]any{"requestId": p.nextID}}, time.Now().Add(stdioTimeout)))
 		require.NoError(t, os.WriteFile(filepath.Join(project, "release"), nil, 0600))
 		terminal := p.awaitRun(t, *r.Structured.RunID)
+		require.Equal(t, r.Structured.RunID, terminal.RunID)
+		require.NotEmpty(t, r.Structured.OwnerID)
+		require.Equal(t, r.Structured.OwnerID, terminal.OwnerID)
+		require.Equal(t, wantProof, terminal.Cleanup)
 		require.Equal(t, "exited", terminal.State)
 		require.Equal(t, "complete", terminal.Capture.State)
 		require.Equal(t, []byte("earlylate"), p.rawRun(t, *r.Structured.RunID, "stdout"))
@@ -91,6 +92,7 @@ func TestMCPRunHandoffTransport(t *testing.T) {
 		}
 		require.True(t, response.IsError)
 		require.Equal(t, "cancelled", response.Structured.State)
+		require.Equal(t, wantProof, response.Structured.Cleanup)
 		require.NoFileExists(t, filepath.Join(project, "must-not-run"))
 		p.close(t)
 	})
@@ -111,7 +113,10 @@ func TestMCPRunHandoffTransport(t *testing.T) {
 		cancelled := p.runQuery(t, "cancel", *r.Structured.RunID)
 		require.False(t, cancelled.IsError)
 		require.True(t, cancelled.Structured.CancelRequested)
-		require.Equal(t, "cancelled", p.awaitRun(t, *r.Structured.RunID).State)
+		terminal := p.awaitRun(t, *r.Structured.RunID)
+		require.Equal(t, "cancelled", terminal.State)
+		require.Equal(t, wantProof, terminal.Cleanup)
+		require.Equal(t, r.Structured.OwnerID, terminal.OwnerID)
 		require.Equal(t, []byte("startlate"), p.rawRun(t, *r.Structured.RunID, "stdout"))
 		require.False(t, p.runQuery(t, "cancel", *r.Structured.RunID).Structured.CancelRequested)
 		p.close(t)
@@ -172,6 +177,7 @@ func TestMCPRunHandoffTransport(t *testing.T) {
 				if phase == "running command" {
 					require.Equal(t, runID, listed.Structured.Entries[0].RunID)
 					require.NotNil(t, terminal.StartedAt)
+					require.Equal(t, wantProof, terminal.Cleanup)
 					require.FileExists(t, filepath.Join(project, "started"))
 				}
 				reopened.close(t)
@@ -190,9 +196,11 @@ func TestMCPRunHandoffTransport(t *testing.T) {
 		terminal := p.awaitRun(t, *deadline.Structured.RunID)
 		require.NotNil(t, terminal.StartedAt, "the fixture must start before its execution deadline")
 		require.Equal(t, "timed_out", terminal.State)
+		require.Equal(t, wantProof, terminal.Cleanup)
 		override := p.capturedRun(t, map[string]any{"language": "shell", "code": "sleep 5.2; printf override-tail", "timeout": 10000, "wait_ms": 30000})
 		require.False(t, override.IsError)
 		require.Equal(t, "exited", override.Structured.State)
+		require.Equal(t, wantProof, override.Structured.Cleanup)
 		require.Equal(t, []byte("override-tail"), p.rawRun(t, *override.Structured.RunID, "stdout"))
 		p.close(t)
 	})
@@ -260,7 +268,8 @@ func TestMCPRunHandoffTransport(t *testing.T) {
 			if executions[response.ID] {
 				var execution stdioRunResponse
 				require.NoError(t, json.Unmarshal(response.Result, &execution))
-				require.Equal(t, "cancelled", execution.Structured.State)
+				require.Equal(t, "cancelled", execution.Structured.State, "%s", response.Result)
+				require.Equal(t, wantProof, execution.Structured.Cleanup)
 				delete(executions, response.ID)
 			} else {
 				require.True(t, cancels[response.ID], "unexpected response id %d", response.ID)
@@ -287,6 +296,7 @@ func TestMCPRunHandoffTransport(t *testing.T) {
 		require.Equal(t, 0, *terminal.ExitCode)
 		require.Equal(t, "complete", terminal.Capture.State)
 		require.Equal(t, []byte("earlybeyond-old-default"), p.rawRun(t, *r.Structured.RunID, "stdout"))
+		require.Equal(t, wantProof, terminal.Cleanup)
 		p.close(t)
 	})
 }

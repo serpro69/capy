@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,9 +12,7 @@ import (
 )
 
 func TestMCPExecuteFileCapturedLifetime(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("captured supervision requires Linux")
-	}
+	wantProof := capturedCleanup(t)
 	bin := buildStdioCapy(t)
 	launch := func(t *testing.T, project string) *stdioProcess {
 		p := startStdioProcess(t, stdioCommand{executable: bin, args: []string{"serve", "--project-dir", project}, dir: project, env: stdioEnv(t, "synthetic-file-run-key")})
@@ -53,6 +50,10 @@ func TestMCPExecuteFileCapturedLifetime(t *testing.T) {
 		require.NoError(t, p.write(map[string]any{"jsonrpc": "2.0", "method": "notifications/cancelled", "params": map[string]any{"requestId": p.nextID}}, time.Now().Add(stdioTimeout)))
 		require.NoError(t, os.WriteFile(filepath.Join(project, "release"), nil, 0600))
 		terminal := p.awaitRun(t, id)
+		require.Equal(t, r.Structured.RunID, terminal.RunID)
+		require.NotEmpty(t, r.Structured.OwnerID)
+		require.Equal(t, r.Structured.OwnerID, terminal.OwnerID)
+		require.Equal(t, wantProof, terminal.Cleanup)
 		require.Equal(t, "exited", terminal.State)
 		require.Equal(t, 0, *terminal.ExitCode)
 		require.Equal(t, "complete", terminal.Capture.State)
@@ -60,7 +61,10 @@ func TestMCPExecuteFileCapturedLifetime(t *testing.T) {
 		require.Equal(t, []byte("late-stderr"), p.rawRun(t, id, "stderr"))
 		p.close(t)
 		p = launch(t, project)
-		require.Equal(t, "exited", p.runQuery(t, "status", id).Structured.Run.State)
+		recovered := p.runQuery(t, "status", id).Structured.Run
+		require.Equal(t, "exited", recovered.State)
+		require.Equal(t, terminal.OwnerID, recovered.OwnerID)
+		require.Equal(t, wantProof, recovered.Cleanup)
 		require.Equal(t, []byte(want), p.rawRun(t, id, "stdout"))
 		p.close(t)
 		count, err := os.ReadFile(filepath.Join(project, "once"))
@@ -81,12 +85,14 @@ func TestMCPExecuteFileCapturedLifetime(t *testing.T) {
 		terminal := p.awaitRun(t, *r.Structured.RunID)
 		require.NotNil(t, terminal.StartedAt, "the fixture must start before its execution deadline")
 		require.Equal(t, "timed_out", terminal.State)
+		require.Equal(t, wantProof, terminal.Cleanup)
 		require.Equal(t, "complete", terminal.Capture.State)
 		require.Equal(t, []byte("file-content"), p.rawRun(t, *r.Structured.RunID, "stdout"))
 		require.NoFileExists(t, filepath.Join(project, "must-not-run"))
 		r = call(t, p, map[string]any{"code": `sleep 5.2; printf '%s' "$FILE_CONTENT"`, "timeout": 10000, "wait_ms": 30000})
 		require.False(t, r.IsError)
 		require.Equal(t, "exited", r.Structured.State)
+		require.Equal(t, wantProof, r.Structured.Cleanup)
 		require.Equal(t, []byte("file-content"), p.rawRun(t, *r.Structured.RunID, "stdout"))
 		p.close(t)
 	})
@@ -111,6 +117,7 @@ func TestMCPExecuteFileCapturedLifetime(t *testing.T) {
 		}
 		require.True(t, r.IsError)
 		require.Equal(t, "cancelled", r.Structured.State)
+		require.Equal(t, wantProof, r.Structured.Cleanup)
 		require.Equal(t, "complete", r.Structured.Capture.State)
 		require.NoFileExists(t, filepath.Join(project, "must-not-run"))
 		p.close(t)
@@ -129,7 +136,9 @@ func TestMCPExecuteFileCapturedLifetime(t *testing.T) {
 		require.Nil(t, blocked.Structured.RunID)
 		require.NoFileExists(t, filepath.Join(project, "capacity-bypass"))
 		require.False(t, p.runQuery(t, "cancel", *r.Structured.RunID).IsError)
-		require.Equal(t, "cancelled", p.awaitRun(t, *r.Structured.RunID).State)
+		terminal := p.awaitRun(t, *r.Structured.RunID)
+		require.Equal(t, "cancelled", terminal.State)
+		require.Equal(t, wantProof, terminal.Cleanup)
 		require.NoFileExists(t, filepath.Join(project, "must-not-run"))
 		p.close(t)
 	})
@@ -145,6 +154,8 @@ func TestMCPExecuteFileCapturedLifetime(t *testing.T) {
 		terminal := p.runQuery(t, "status", *r.Structured.RunID).Structured.Run
 		require.Equal(t, "cancelled", terminal.State)
 		require.True(t, terminal.Capture.TerminalPersisted)
+		require.Equal(t, wantProof, terminal.Cleanup)
+		require.Equal(t, r.Structured.OwnerID, terminal.OwnerID)
 		require.NoFileExists(t, filepath.Join(project, "must-not-run"))
 		p.close(t)
 	})

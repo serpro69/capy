@@ -85,6 +85,24 @@ func openDarwinCaptureFixture(ctx context.Context, start Startup, key string, le
 	}
 	mode := os.Getenv("CAPY_DARWIN_CAPTURE_MODE")
 	root := os.Getenv("CAPY_DARWIN_CAPTURE_ROOT")
+	if mode == "batch phases" {
+		mode = ""
+		switch {
+		case strings.HasPrefix(run.Request.Code, "# hold startup\n"):
+			// Authentication/exchange completed, but ready has not released the
+			// shared offset gate. Cancellation must reap this helper first.
+			if err := os.WriteFile(filepath.Join(root, "opening"), nil, 0600); err != nil {
+				return nil, errors.Join(err, run.Store.Close())
+			}
+			if err := awaitLeaseFile(ctx, filepath.Join(root, "release-startup")); err != nil {
+				return nil, errors.Join(err, run.Store.Close())
+			}
+		case strings.HasPrefix(run.Request.Code, "# hold close\n"):
+			mode = "hold close"
+		case strings.HasPrefix(run.Request.Code, "# fail finish\n"):
+			mode = "finish failure"
+		}
+	}
 	if mode != "" {
 		run.Store = &darwinCaptureFixture{CaptureStore: run.Store, root: root, mode: mode}
 	}
