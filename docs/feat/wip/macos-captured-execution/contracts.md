@@ -1,6 +1,6 @@
 # Scoped cleanup contracts
 
-> Status: normative design contract; observational Darwin revision accepted 2026-10-22; implementation pending
+> Status: implemented contract; observational Darwin revision accepted 2026-10-22; final acceptance tracked in Task 13
 > Parent: [design.md](design.md)
 > Applies to: run schema 9, public envelopes 2, private helper protocol 2
 

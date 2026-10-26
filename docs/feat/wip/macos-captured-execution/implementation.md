@@ -1,6 +1,6 @@
 # Implementation: native macOS captured execution
 
-> Status: implementation in progress; observational Darwin cleanup accepted 2026-10-22; Task 1 native waiter verified
+> Status: Tasks 1–12 implemented and verified; Task 13 final acceptance in progress
 > Design: [design.md](design.md) · Contract: [contracts.md](contracts.md)
 > Tasks: [tasks.md](tasks.md)
 
@@ -289,8 +289,8 @@ Primary seams: platform doctor/setup wording, `Makefile`, and CI/release workflo
 - Update operator docs and affected generators plus committed copies → verify:
   parity/idempotency and no hidden permission, trust or enforcement changes.
 
-The Makefile targets and new CI coverage are planned implementation work, not
-changes performed by this design-revision task.
+The Makefile targets and CI coverage are implemented; their execution evidence
+is recorded in [ci-proof.md](ci-proof.md).
 
 ## Task 13: Final verification and documentation
 

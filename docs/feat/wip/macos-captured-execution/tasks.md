@@ -4,7 +4,7 @@
 > Contract: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
 > Evidence: [native process verification](process-proof.md) · [source verification](verification.md)
-> Status: in progress — Tasks 1–12 done; Task 13 pending
+> Status: in progress — Tasks 1–12 done; Task 13 in progress
 > Created: 2026-10-22
 > Not Doing: older macOS majors, Intel support, certified Darwin group retirement, full Darwin detached-descendant cleanup, best-effort tracker, VMs, persistent/privileged services, restricted entitlements, self-hosted runner provisioning, other OS ports, PTY/stdin, persistent jobs, cross-owner cancellation, knowledge/vault migration, run rekey, automatic discard/downgrade, trust/security changes
 
@@ -345,7 +345,7 @@ their implementation.
 
 ## Task 13: Complete release verification and documentation
 
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6, Task 7, Task 8, Task 9, Task 10, Task 11, Task 12
 - **Size:** S
 - **Can run in parallel with:** —
@@ -358,6 +358,13 @@ their implementation.
 - [ ] 13.3 Run `kk:document` for operations/rollback, architecture, help, AGENTS and proof records; close the bootstrap record and remove only authorized temporary entries.
 - [ ] 13.4 Run `kk:review-code` with Go input and `kk:review-spec`; durably disposition findings and revisit architecture review if the documented topology changed.
 - [ ] 13.5 Confirm bounded Darwin observation and lease proof gates, native all-mode acceptance, preserved Linux behavior/history and real CI coverage; then mark the feature complete. Accepted residual-process uncertainty is not a renamed retirement-proof blocker.
+
+### Execution context
+
+- **2026-10-26 — authorized scope and baseline:** The user requested the next task, Task 13, from clean `ec6586a382135164f92835a8d70551fe1a10ad14` on Linux 7.1.1-76070101-generic x86_64. Final verification, benchmark comparison, operator documentation and independent code/specification review are in scope; release publication is not. The difference from hosted-tested head `f9df6ab213e9ad89bf1273d6f630da09a7367cc9` consists only of Task 12 evidence/task records. Verify that source identity and inspect hosted artifacts before reusing native acceptance. Preserve the accepted macOS 26/arm64 observational contract, lease provenance, Linux retirement and schema-8 history.
+- **2026-10-26 — verification approach:** Run required Linux FTS5/race/integration/vet/build and artifact checks through capture with synthetic keys and isolated fixture stores. Compare executor performance and quality against immediate pre-feature `13204a9a68a3def965950e765ca910c615232913` with matching settings; retain every attempt. Native runtime evidence must come from traceable native/hosted results, not this Linux host. Owner: feature implementer; record any missing acceptance evidence and concrete next action before closing this task. No bootstrap exception or dependency change is needed.
+- **2026-10-26 — review corrections:** Isolated specification review found the native workflow omitted the explicitly required non-race integration target. Added it before race, preserved its JSON artifact and retained race/downstream evidence collection after failure; new hosted execution remains required. Architecture review identified an overbroad gate-retention sentence: the existing `contracts.md` rule releases the token at validated ready. Clarified teardown retains only a still-held token and cannot release another exchange's token. Both corrections passed source re-review; no runtime policy or requirement changed.
+- **2026-10-26 — local environment failure and disposition:** Initial full non-race capture `88af46e0-0df6-4c72-8617-88f423f58147` failed seven vault CLI cases after inheriting the personal global `vault.min_session_bytes=196608`, excluding their tiny import fixtures. Their helpers/source are unchanged from pre-feature `13204a9`; other helpers already isolate XDG configuration. Preserve this failed attempt and run a controlled baseline/config comparison, then reverify with isolated XDG configuration. Owner: feature implementer for final checks. Broader fixture self-isolation is pre-existing follow-up, owner unassigned: add isolated XDG configuration to `setupCodexVaultEnv`, `setupVaultWithSidecar` and the merge fixture, then verify with a nonzero personal import policy. Task 13 uses an isolated test environment rather than changing unrelated vault behavior or assertions.
 
 ## Dependency Graph
 

@@ -62,7 +62,7 @@ the workload and returned bytes, not a universal fixed percentage.
 3. A per-run supervisor owns executor phases, pipes and process-group cleanup.
 4. `internal/runstore` persists exact raw streams plus streaming sanitized
    projection/checkpoints, using bounded queues and writes.
-5. The adapter returns a version-1 result within the complete serialized response
+5. The adapter returns a version-2 result with durable scoped cleanup evidence within the complete serialized response
    budget (8,192 bytes by default), regardless of intent.
 6. Intent/search/batch queries lazily build FTS from finalized projection only.
 7. `capy_runs` / CLI runs recover retained status, pages and matches by ID.
@@ -183,7 +183,7 @@ bytes; older knowledge/fetch text responses retain their text-byte accounting.
 
 ## Run storage and diagnostics
 
-`internal/runstore` owns schema 8 in `<selected-owner>/.capy/runs/runs.db`.
+`internal/runstore` owns schema 9 in `<selected-owner>/.capy/runs/runs.db`.
 It shares sqliteutil and corpus-independent retrieval without importing server
 or changing knowledge/vault source kinds. The physical selected owner determines
 the path; execution cwd and knowledge worktree sharing do not relocate it.
@@ -197,12 +197,47 @@ state failures close default text/search access; explicit raw reads remain
 unsanitized base64. Per-stream order is exact; merged order is observed order.
 
 Permanent lifecycle/recovery and 64 owner-slot locks protect reset, admission
-and generation recovery. The Linux supervisor retains inherited leases through
-group retirement, drain, persistence, reap and close, including coordinator
-death. Recovery never signals stored PIDs. Unproven cleanup quarantines admission;
-operators must stop old execution groups before explicit reset. The Linux proof
-and forced-helper-loss limits are recorded in the
-[supervisor evidence](feat/wip/routine-command-capture/supervisor-proof.md).
+and generation recovery. `runstore.LeaseRefs` retains the successfully acquired
+exclusive owner and shared lifecycle descriptions. Linux and Darwin helpers use
+the same private protocol-v2 shared-offset exchange to verify inherited
+description identity; Linux additionally checks fdinfo locks. A gate shared by
+all acquisition aliases serializes exchanges before helper creation and consumes
+the three-second startup budget. The helper then authenticates the admitted
+store, reports ready, accepts start authorization and persists pending cleanup
+before spawning. Credentials and private descriptors never reach the command.
+
+Before any start-frame write attempt, cancellation can kill the retained direct
+helper and release its gate/leases only after confirmed reap. After possible
+authorization, cooperative cleanup and durable proof govern recovery. Helpers
+retain leases through cleanup, drainage, persistence, reap and backend close,
+including coordinator death. Recovery never signals stored PIDs. Missing durable
+proof quarantines admission even when local cleanup succeeded or locks became free.
+
+Every admitted row has immutable `cleanup_scope` and a validated `cleanup` state,
+with no SQL defaults. Linux uses `linux_descendants_v1` / `retired`; macOS 26 on
+Apple Silicon with CGO uses `darwin_process_group_observation_v1` / `observed`.
+`not_spawned` and `pending` exist in both scopes. Compiler/runtime phase evidence
+is combined before finalization. Batch manifest copies are updated in the same
+transaction as their run rows and remain authoritative after child-log eviction;
+recovery compares retained rows and copies in one read snapshot.
+
+Darwin observation completion permits normal reuse and retention under its
+accepted residual-process limit; it does not prove host quiescence. Actual
+observation, signal, drainage, reap or persistence failures keep pending evidence
+and quarantine. Operators must establish quiescence before explicit reset when
+old groups may remain. See the [cleanup contract](feat/wip/macos-captured-execution/contracts.md),
+[native process evidence](feat/wip/macos-captured-execution/process-proof.md),
+[lease evidence](feat/wip/macos-captured-execution/lease-proof.md), and
+[Linux supervisor evidence](feat/done/routine-command-capture/supervisor-proof.md).
+
+Normal execution-owner attachment alone can migrate schema 8 to 9 after selected-key
+authentication and exclusive lifecycle acquisition. An encrypted transactional
+rebuild backfills the old Linux scope while preserving IDs, logs, cursors, batch
+proof and quarantine. Readers, helpers and diagnostics never migrate. Capacity
+or compatibility failures do not discard history. Public envelopes become v2;
+cursor and redaction formats remain unchanged. Hooks explicitly accept healthy
+v1 and v2 envelopes. Downgrade requires a compatible reader for retained logs or
+an operator's explicit discard; see [upgrade and rollback](reference/runs.md#run-schema-upgrades).
 
 Store-authoritative TTL/quota/version/accounting policy can change only after
 all handles/helpers release lifecycle ownership. Opens close/release and retry
@@ -216,7 +251,10 @@ used-page accounting). Physical main/WAL sizes are distinct from quota.
 lease, with a two-second context. It creates no store/locks, owner generation,
 reconciliation, maintenance, policy revision or index. Shared platform formatting
 serves CLI doctor, MCP doctor and MCP stats: safe path/capacity/policy/usage plus
-at most eight recent status/expiry/byte summaries. No program, output or stored
+at most eight recent status/scoped-cleanup/expiry/byte summaries. Static backend
+capability and authenticated schema compatibility are reported separately from
+storage health and hook activation; neither starts a command or a proof probe.
+No program, output or stored
 error text is displayed. Saved unfinished rows are not liveness evidence;
 `Service.WorkCounts` reports only the receiving MCP owner's reservations.
 
@@ -226,7 +264,7 @@ locks. `capy encrypt` rotates knowledge only and warns before/after: changing
 the selected credential requires explicit per-owner run discard in v1.
 There is no run-rekey preservation path. See the runnable
 [operator workflow](reference/runs.md) and normative
-[execution contracts](feat/wip/routine-command-capture/contracts.md).
+[execution contracts](feat/done/routine-command-capture/contracts.md).
 
 ## Knowledge ingestion
 
@@ -692,7 +730,9 @@ directory/project-identity split and its module-discovery compatibility cost.
 
 ### Sandbox Protections
 
-- **Process group isolation** (`Setpgid`) — kills entire process tree on cleanup
+- **Process supervision** — Linux owns and retires descendants; Darwin owns a
+  new session per phase and completes a bounded process-group observation policy.
+  Escaped or racing Darwin descendants can survive successful observations.
 - **Environment sanitization** — ~50 dangerous env vars stripped (LD_PRELOAD, NODE_OPTIONS, etc.)
 - **Captured output** — bounded queues and per-run/store quotas; exhaustion marks capture incomplete and continues draining without killing execution
 - **Timeout enforcement** — captured calls consume configured seconds (default 300) unless explicit per-call milliseconds override them
@@ -703,11 +743,16 @@ directory/project-identity split and its module-discovery compatibility cost.
   direct executor API retains ADR-005 behavior for its remaining callers; public
   captured execution uses the supervisor stream path.
 
-The executor owns stdout/stderr read ends and drains both before reaping the
-leader. A non-reaping exit observer (`waitid` on Linux, `kqueue` on Darwin) keeps
-its PID reserved while descendants hold the pipes. Group signals, final reap and
-registry changes share a mutex, so exited leaders do not prevent descendant
-cleanup and recycled identifiers are never signalled through stale entries.
+The captured executor owns stdout/stderr read ends and retains the direct leader
+until the last group signal. Non-reaping `waitid` validates terminal status;
+Darwin kqueue events are wakeups only. Darwin requires natural EOF on both pipes,
+a bounded final sysctl inventory containing only the terminal leader, and exactly
+one reap before reporting `observed`. It allows three seconds after cancellation
+or terminal observation for cleanup and drainage. Closing readers at the deadline
+is a failure, not EOF. At most one successful group SIGKILL is sent per phase;
+a late visible member prevents completion. Signals never use persisted PID/PGID
+metadata or run after leader reap. These observations cannot exclude an in-flight
+creation or re-entry after the final inventory, and do not certify group retirement.
 
 ## Security
 

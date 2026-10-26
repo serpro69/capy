@@ -1,6 +1,6 @@
 # Native macOS captured execution
 
-> Status: observational Darwin cleanup approved 2026-10-22; implementation in progress; lease proof remains required
+> Status: Tasks 1–12 implemented and verified; Task 13 final acceptance in progress
 > Created: 2026-10-22
 > Baseline: `44ceb813ce2d4f129d058f2534faa2a57b07d8bd`
 > Plan: [implementation.md](implementation.md) · Work: [tasks.md](tasks.md)
@@ -11,10 +11,13 @@
 ## Outcome and scope
 
 Restore native captured commands for agents and developers using Capy on Apple
-Silicon. The current capture service rejects every non-Linux OS before spawn,
+Silicon. At the pre-feature baseline, the capture service rejected every non-Linux
+OS before spawn,
 while Codex routing requires capture for recognized tests, builds, and installs.
-The macOS release artifact and doctor checks do not expose that incompatibility
-adequately.
+The baseline macOS release artifact and doctor checks did not expose that
+incompatibility adequately. The implementation now supports the matrix below; final evidence is
+collected in [release-proof.md](release-proof.md). The task descriptions retain
+their original implementation sequence and acceptance requirements.
 
 The user selected **A: native process-group supervision with explicit macOS
 cleanup limits**, after comparison with additional descendant tracking and a
@@ -120,15 +123,18 @@ bounded startup deadline, including any earlier execution deadline. A timeout
 waiting for the gate leaves known-not-spawned work, not a stranded helper.
 On failure **before any start-frame write attempt**, disable
 authorization, SIGKILL the retained direct helper, and reap it before releasing
-the gate. A three-second teardown observation budget is separate from startup;
+any exchange gate it still holds. Validated ready already releases that exchange's
+token because the helper has stopped changing offsets; later teardown must not
+reacquire it or release a subsequent exchange's token. A three-second teardown
+observation budget is separate from startup;
 an ordinary SIGSTOPped helper must recover without restarting the owner.
 Cancellation and the first start write share an atomic phase boundary; partial
 writes count as possible authorization. After that boundary, preserve cooperative
 cleanup and durable-proof handling rather than kill the helper as a shortcut.
 
 SIGKILL does not guarantee a bounded reap. If teardown cannot confirm death in
-budget, retain the actor/gate/leases under cleanup tracking and refuse affected
-owner startup until safe, even in this pre-start case. Do not abandon a waiter,
+budget, retain the actor, any still-held gate and leases under cleanup tracking
+and refuse affected-owner startup until safe, even in this pre-start case. Do not abandon a waiter,
 release a gate on signal delivery alone, or hold the general service mutex while
 joining. Normal running helpers no longer touch offsets. The precise fields,
 one-time gate release (including cancellation after ready),

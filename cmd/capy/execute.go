@@ -97,7 +97,7 @@ func newExecuteCmd() *cobra.Command {
 	flags.Int64Var(&timeoutMS, "timeout-ms", 0, "execution deadline in milliseconds (default: configured executor.timeout)")
 	flags.StringVar(&intent, "intent", "", "optional sanitized search preview (at most 512 UTF-8 bytes); indexing resumes with runs search")
 	flags.BoolVar(&jsonOutput, "json", false, "emit the shared versioned JSON envelope")
-	cmd.Long = "Execute a program once and retain encrypted output under the selected owner's .capy/runs. Waits attached until completion; --background and --wait-ms are not supported. Default output is sanitized. Recover retained output with capy runs; do not repeat execution to retrieve it."
+	cmd.Long = "Execute a program once and retain encrypted output under the selected owner's .capy/runs. Waits attached until completion; --background and --wait-ms are not supported. Default output is sanitized. Recover retained output with capy runs; do not repeat execution to retrieve it.\n\nSupported on Linux and macOS 26 on Apple Silicon with CGO. Version-2 results report durable cleanup scope and state. Darwin observed cleanup does not prove every descendant is gone."
 	return cmd
 }
 

@@ -1,6 +1,6 @@
 # Native verification bootstrap record
 
-> Status: Task 1, Task 2, Task 9 and Task 10 exceptions removed; routine enforcement verified restored 2026-10-26
+> Status: closed — Task 1, Task 2, Task 9 and Task 10 exceptions removed; routine enforcement verified restored 2026-10-26
 > Applies to: Codex hosts enforcing Capy's routine-capture gate
 > Plan: [implementation.md](implementation.md#execution-rules)
 
@@ -288,3 +288,12 @@ Linux/CI, and broader all-mode/release acceptance remains Tasks 11–13.
 Task 10 verification and isolated internal review completed successfully. The
 bootstrap is closed; no exception remains. See [activation-proof.md](activation-proof.md)
 for retained results, fixture corrections and later-task release limits.
+
+## Task 13 closure
+
+Final verification on Linux uses the installed captured execution route with
+synthetic fixture keys. Tasks 11–12 used the verified temporary native binary's
+capture route; neither required another exception. The removals and installed-hook
+denial probes above close every granted bootstrap scope. No exception is carried
+forward as an installation requirement, and no routing configuration is changed
+by Task 13. The final evidence record is [release-proof.md](release-proof.md).

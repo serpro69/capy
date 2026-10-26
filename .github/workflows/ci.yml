@@ -47,8 +47,15 @@ jobs:
             *) echo 'Expected the supported macOS 26 major' >&2; exit 1 ;;
           esac
 
+      - name: Run native execution integration target
+        id: native_integration
+        run: |
+          make --silent test-integration INTEGRATION_TEST_FLAGS=-json \
+            | tee "$RUNNER_TEMP/macos-integration-tests.jsonl"
+
       - name: Run native execution integration target with race detection
         id: native_tests
+        if: ${{ !cancelled() && (steps.native_integration.outcome == 'success' || steps.native_integration.outcome == 'failure') }}
         run: |
           make --silent test-integration-race INTEGRATION_TEST_FLAGS=-json \
             | tee "$RUNNER_TEMP/macos-proof-tests.jsonl"
@@ -162,6 +169,7 @@ jobs:
           name: macos-execution-proof-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/macos-proof-environment.txt
+            ${{ runner.temp }}/macos-integration-tests.jsonl
             ${{ runner.temp }}/macos-proof-tests.jsonl
             ${{ runner.temp }}/macos-store-tests.jsonl
             ${{ runner.temp }}/macos-mode-tests.jsonl
