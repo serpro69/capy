@@ -258,6 +258,13 @@ jobs:
       - name: Vet Linux integration code
         run: go vet -tags fts5,integration ./internal/executor ./internal/execution
 
+      - name: Repeat Linux queue saturation regression
+        if: ${{ !cancelled() && (steps.integration.outcome == 'success' || steps.integration.outcome == 'failure') }}
+        run: |
+          go test -tags fts5,integration -race -json -count=5 -timeout 5m \
+            -run '^TestSupervisorCaptureAndPersistenceFailures$/^queue$' ./internal/execution \
+            | tee "$RUNNER_TEMP/linux-queue-tests.jsonl"
+
       - name: Preserve Linux comparison evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -269,6 +276,7 @@ jobs:
             ${{ runner.temp }}/linux-baseline-tests.jsonl
             ${{ runner.temp }}/linux-integration-tests.jsonl
             ${{ runner.temp }}/linux-proof-tests.jsonl
+            ${{ runner.temp }}/linux-queue-tests.jsonl
           retention-days: 14
 
   check:

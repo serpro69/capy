@@ -129,3 +129,40 @@ feature/release verification; no hidden deployment prerequisite is marked done.
 The operator subsequently authorized the commit and push to PR #140 by replying
 “Yes,” including the three existing local Tasks 9–11 commits. Candidate publication
 and hosted verification are now authorized; this does not authorize a release.
+
+## First candidate CI and fixture corrections
+
+Commit `6fd1a437fa6816adfa444fc750c01ecab5e1faf4` triggered
+[run 40325180177](https://github.com/serpro69/capy/actions/runs/40325180177).
+All downloaded platform artifacts are preserved under `ci-40325180177/` in this
+task's evidence directory. Linux pre-feature integration race passed (executor
+19.529s, execution 34.896s), including the queue case at 7.59s. Candidate non-race
+executor passed 6.518s; execution failed its queue fixture at 12.01s before the
+race phase could run. The required-fixture guard correctly failed as well.
+
+The fixture's 100-ms delay applied to every pipe fragment. A 1-MiB retained
+prefix split into 128 fragments already requires 12.8 seconds to persist;
+full 16-KiB reads are not guaranteed. Replace this timing dependency with a
+bounded first-append gate released by `command-finished`, then flush the prefix
+without per-fragment delays. Four MiB of command output still must saturate the
+queue while the writer is held, continue draining, retain a nonempty prefix,
+and report `queue_saturated` and completed cleanup. The original 12-second wait
+and production deadlines stay unchanged. The independent deadline-flush fixture
+keeps its separate `AppendDelay`. CI adds five race repetitions of the repaired
+queue case. This is a test-backend correction, not a runtime queue change.
+
+On macOS, executor/execution passed 36.106s/79.948s, runstore passed 222.416s,
+and retention repetitions passed 166.470s. Vet, build and actual-binary smoke
+also passed. Compiled modes failed only the eight-attached-call fixture's
+startup-marker condition (10.06s); the precise startup failure is not identified
+by that log. Establish each started call before submitting the next, within the
+same shared ten-second setup budget. All eight handlers still wait attached for
+60 seconds, so recovery/capacity/cancellation assertions retain their meaning.
+Separate lifecycle fixtures continue to cover startup-gate contention. Local
+three-repeat race verification passed 12.377s in capture
+`ec661a51-d559-4e3f-a7d6-dc8e88212afa`.
+
+Independent review found no source defects in these corrections. Corrected
+hosted Linux/non-race/race/repetition and native execution remain required;
+the first failed runs are not reclassified as passes. No unchanged job retry
+or capture-deadline enlargement was used.

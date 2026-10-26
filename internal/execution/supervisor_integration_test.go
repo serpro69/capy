@@ -34,15 +34,17 @@ type fixtureConfig struct {
 	PendingFail, AppendFail, FinishFail, HoldClose bool
 	HoldOpen                                       bool
 	HoldStarted                                    bool
+	AppendWaitForCommand                           bool
 	AppendDelay                                    time.Duration
 }
 
 // These files contain synthetic fixture data only. Production uses the injected
 // encrypted runstore, not this backend or a plaintext output/proof spool.
 type fixtureStore struct {
-	dir    string
-	cfg    fixtureConfig
-	events *os.File
+	dir            string
+	cfg            fixtureConfig
+	events         *os.File
+	appendReleased bool
 }
 
 func (s *fixtureStore) Pending(ctx context.Context) error {
@@ -55,6 +57,26 @@ func (s *fixtureStore) Pending(ctx context.Context) error {
 	return writeProof(s.dir, "pending")
 }
 func (s *fixtureStore) Append(event executor.OutputEvent) error {
+	if s.cfg.AppendWaitForCommand && !s.appendReleased {
+		// Hold only the first append until the command drains past the bounded
+		// queue. A delay on every pipe fragment makes finalization depend on
+		// kernel read sizes (128 x 100 ms already exceeds waitResult's budget).
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			_, err := os.Stat(filepath.Join(s.dir, "command-finished"))
+			if err == nil {
+				s.appendReleased = true
+				break
+			}
+			if !os.IsNotExist(err) {
+				return err
+			}
+			if time.Now().After(deadline) {
+				return errors.New("fixture command did not drain while append was held")
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
 	if s.cfg.AppendDelay > 0 {
 		time.Sleep(s.cfg.AppendDelay)
 	}
@@ -691,7 +713,7 @@ func TestSupervisorCaptureAndPersistenceFailures(t *testing.T) {
 			if mode == "queue" {
 				code = `head -c 4194304 /dev/zero; printf final > command-finished`
 			}
-			dir := fixture(t, fixtureConfig{Code: code, AppendDelay: map[bool]time.Duration{true: 100 * time.Millisecond}[mode == "queue"], AppendFail: mode == "append", FinishFail: mode == "finish", PendingFail: mode == "pending"})
+			dir := fixture(t, fixtureConfig{Code: code, AppendWaitForCommand: mode == "queue", AppendFail: mode == "append", FinishFail: mode == "finish", PendingFail: mode == "pending"})
 			h, _ := startFixture(t, dir, fixtureStartup(dir))
 			outcome, err := waitResult(t, h)
 			if mode == "pending" {
@@ -713,6 +735,11 @@ func TestSupervisorCaptureAndPersistenceFailures(t *testing.T) {
 					t.Fatal("capture loss hidden")
 				}
 				assertProof(t, dir, "retired")
+			}
+			if mode == "queue" {
+				if outcome.Result.CaptureReason != "queue_saturated" || outcome.Result.ObservedBytes != 4194304 || outcome.CapturedBytes <= 0 || outcome.CapturedBytes >= outcome.Result.ObservedBytes {
+					t.Fatalf("queue saturation did not retain a prefix and drain the whole command: %+v", outcome)
+				}
 			}
 			if mode == "finish" {
 				if outcome.TerminalPersisted {
