@@ -1,6 +1,6 @@
 # Run recovery that preserves history
 
-> Status: design complete; independent review pending
+> Status: implementation-ready after fresh-read check; implementation pending
 > Issue: [#142](https://github.com/serpro69/capy/issues/142)
 > Contracts: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
@@ -55,7 +55,7 @@ Keep the existing cleanup scope/state pairs and execution-terminal invariant. Ad
 
 Use one shared operational predicate for admission/reconciliation/retention consumers: a retained run is operationally closed when it has valid execution-terminal evidence or a valid operator disposition bound to that exact historical run/generation. Never substitute this predicate for `CleanupAccepted` or execution-terminal validation.
 
-The disposition holds the immutable result/proof snapshot required to interpret retained batches after child output is evicted. Historic warnings no longer depend solely on the current mutable owner registry. Administrative metadata remains independently retained and accounted.
+The disposition holds the immutable result/proof snapshot required to interpret retained batches after child output is evicted. After disposition, the stored `runs.result` blob remains byte-immutable until payload eviction. Mutable search progress/status lives in separate index metadata and is overlaid only in query responses. Historic warnings no longer depend solely on the current mutable owner registry. Administrative metadata remains independently retained and accounted.
 
 ### Attribute incidents where they arise
 
@@ -65,7 +65,7 @@ Existing records may lack a causal run or detection time. Report that explicitly
 
 ### Provide a shared read-only inspection model
 
-Add `capy runs inspect` and `capy_runs(action="inspect")`, backed by the same authenticated, bounded read-only snapshot model used by doctor. Show blocker totals and paginated details independently of recent history. Include retention/disposition information when inspecting a recovered run or receipt. The model does not create storage/locks, claim an owner generation, reconcile, index, publish policy or maintain history.
+Add `capy runs inspect` and `capy_runs(action="inspect")`, backed by the same authenticated, bounded read-only snapshot model used by CLI/MCP doctor and `capy_stats`. Show blocker totals and paginated details independently of recent history. Include retention/disposition information when inspecting a recovered run or receipt; `--receipt-id`/`receipt_id` selects a recovery receipt UUID, never an incident UUID. The model does not create storage/locks, claim an owner generation, reconcile, index, publish policy or maintain history. Stats retains its existing once-only byte accounting; inspection adds no completion observation.
 
 Admission errors carry a small structured recovery hint and an exact next inspection step. An inability to retrieve detail cannot turn a refusal into permission. Optional lists and text may be shortened; the code, no-admission statement and next action must survive the minimum response budget.
 
@@ -73,7 +73,7 @@ Admission errors carry a small structured recovery hint and an exact next inspec
 
 `capy runs recover` without `--apply` is a nonmutating plan operation. It obtains exclusive administrative access so it can inventory abandoned work without confusing live jobs with incidents. While owners remain attached it refuses plan readiness and directs the operator to ordinary inspection and shutdown.
 
-The plan binds store identity, schema/policy versions and the complete reviewed operational incident set. It includes a bounded summary, total counts, continuation instructions, retention consequences and a token. Application is all-or-nothing for that complete set in v1; there is no partial per-run override.
+The plan binds the selected physical owner/database/lock identities, store UUID, schema/policy versions and the complete reviewed operational incident set. One deterministic inventory builder serves preview, pagination and apply; inferred subjects use stable keys until their UUIDs are allocated at commit. Unchanged evidence produces the same plan, while moving/copying/replacing its target requires a new plan. It includes a bounded summary, total counts, continuation instructions, estimated retention consequences and a token. An empty plan creates no token or audit action. Application is all-or-nothing for that complete set in v1; there is no partial per-run override. Offline planning and application default to five minutes each and accept a positive finite `--timeout` duration. An incomplete scan produces no token and gives an exact longer-timeout command; the two-second interactive inspection budget is separate.
 
 `capy runs recover --apply` requires that token, explicit stopped-process confirmation, a cleanup-basis selection and a short explanation. Under exclusive locks it reauthenticates, validates the full inventory, checks idempotency and capacity, and commits dispositions plus derived quarantine changes in one transaction. A changed plan requires review again. It neither signals stored PIDs nor resumes a command. Restarted services get fresh process-local state.
 
@@ -81,15 +81,19 @@ The plan binds store identity, schema/policy versions and the complete reviewed 
 
 Recovery never renews unrelated completed-run expiry or evicts logs to fund itself. Disposed uncertain-run payload uses a separate retention deadline, `resolved_at + admission_ttl`, leaving original execution timestamps untouched. Normal post-recovery quota pressure may evict that payload sooner.
 
-Audit metadata survives through its retention window and while a retained run or batch depends on it. It participates in accounting, bounded deletion and capacity checks. Batch operational closure and retention use separate administrative metadata; historical cleanup remains pending where originally pending. The [contracts](contracts.md#retention-and-accounting) define pruning and dependency order.
+Audit metadata survives through its retention window and while a retained run or batch depends on it. It participates in accounting, bounded deletion and capacity checks. An attributed unresolved incident protects its retained run evidence even if terminal proof subsequently arrives; resolving that incident does not renew the run's original expiry or create an unnecessary run disposition. Batch operational closure and retention use separate administrative metadata, recalculated both at apply and when safe siblings are finalized by later reconciliation; historical cleanup remains pending where originally pending. The [contracts](contracts.md#retention-and-accounting) define pruning and dependency order.
 
 ### Upgrade without admitting a command
 
 Use schema 10 for the additional state. `capy runs upgrade` provides an authenticated exclusive offline path for schema 8/9 stores. It preserves history and quarantine; it cannot resolve an incident. Legacy read-only inspection can explain the necessary upgrade but does not perform it or issue an applicable schema-10 plan.
 
-The command also supplies a narrowly constrained offline quota-increase path when required to preserve metadata: after the operator raises `runs.max_retained_bytes` in configuration, it may publish that increase without retention, while rejecting configured TTL/per-run-limit changes and quota decreases. This avoids an unrecoverable cycle in which quarantine prevents the only way to fund preservation. It reports the policy revision change and requires a fresh plan afterward.
+The command also supplies a narrowly constrained offline quota-increase path when required to preserve metadata: after the operator raises `runs.max_retained_bytes` in configuration, it validates and commits that increase against the currently authenticated schema before migration capacity checks/copying, without retention, while rejecting configured TTL/per-run-limit changes and quota decreases. This avoids an unrecoverable cycle in which quarantine or migration prevents the only way to fund preservation. It reports the policy revision change and requires a fresh plan afterward. The quota increase can remain committed if a later migration fails; the command reports the resulting policy and schema without claiming a whole-command rollback.
 
-Normal compatible execution attachment may use the same migration implementation under existing exclusive conditions. Recovery procedures always use the explicit command. Old binaries must reject schema 10; public run envelopes, helper protocol, cursor and redaction versions remain unchanged, with additive recovery metadata and explicitly tested hook rejection of administratively resolved historical results.
+The 8→9 migration uses a frozen schema-9 destination and explicit stage-version checks; it must not inherit the new schema-10 phase requirement through the shared fresh-store DDL. The separate 9→10 rebuild then establishes that requirement while preserving historical bytes and identities.
+
+Normal authenticated, configured execution attachment automatically upgrades eligible schema-8/9 stores to schema 10 before admission, using the same migrations and exclusive lifecycle checks as `capy runs upgrade`. It must attempt that path; it does not require every existing user to run the CLI command first. A busy/failed upgrade refuses execution with repair guidance. Migration does not clear quarantine: a quarantined store can reach schema 10 as a side effect of an execute that is subsequently rejected, with no command admitted or spawned. Operators can instead use the explicit command without submitting application work. Ordinary attachment retains its normal maintenance behavior after migration; the offline administrative path does not run maintenance.
+
+Old binaries must reject schema 10. Public run envelopes, helper protocol, cursor and redaction versions remain unchanged. Hooks continue to observe execute/fetch rather than run queries, and additionally reject any run envelope containing a `recovery` field as healthy execution evidence. Task 9 owns the defensive check and its root/child, v1/v2 and benign-control tests.
 
 ## Operator experience
 
@@ -97,7 +101,7 @@ Errors, doctor, inspection and the reference guide share one workflow:
 
 1. Identify the selected owner and inspect blockers; retrieve any needed retained logs.
 2. Stop all affected MCP sessions, attached CLI work, readers/helpers and old execution groups. Explain that closing a session alone is not proof all descendants stopped.
-3. From an ordinary terminal, upgrade if required and obtain a complete recovery plan. Do not run administrative recovery inside `capy_execute`, which would participate in the lifecycle being excluded.
+3. From an ordinary terminal, inspect the current schema, upgrade if still required and obtain a complete recovery plan. A prior refused execute may already have upgraded the store without clearing quarantine; do not infer schema from the error's timing. If planning times out, use its longer `--timeout` command. Do not run administrative recovery inside `capy_execute`, which would participate in the lifecycle being excluded.
 4. Review the exact incidents and retention consequences; apply with the operator's cleanup basis. If cleanup cannot be established, remain blocked and investigate rather than acknowledge speculatively.
 5. Restart affected sessions, inspect readiness and deliberately execute a harmless captured verification command. Then separately decide whether to retry the original application command; recovery itself never retries it.
 
@@ -148,8 +152,8 @@ Finalization reliability and the historical Linux reproduction remain separate f
 
 The defining scenario combines an interrupted owner, retained successful siblings, a newer session, a blocker outside the recent-run sample, useful refusal guidance, continued reads, explicit recovery and successful fresh admission after restart. Verify unchanged original proof/results and byte-exact retained output, not merely a cleared flag.
 
-Use meaningful deterministic fixtures for stale plans, conflicting owners, wrong keys, complete/partial inventory, interrupted transactions, idempotent application, batch copies, slot reuse, cursor compatibility, projection boundaries and bounded retention/accounting. User-visible tests cover exact next actions and minimum response budgets without exposing secrets. Run native lifecycle suites on Linux and supported macOS, required repository race/build checks and quality comparison for affected search/indexing behavior. Evidence limits remain explicit.
+Use meaningful deterministic fixtures for stale plans, conflicting owners, wrong keys, complete/partial inventory, interrupted transactions, idempotent application, batch copies, slot reuse, cursor compatibility, projection boundaries and bounded retention/accounting. User-visible tests cover exact next actions and minimum response budgets without exposing secrets. Run native lifecycle suites on Linux and supported macOS and required repository race/build checks. Apply the repository's quality-benchmark trigger to the final implementation diff: changes to search, indexing, chunking or executor code require `make bench-quality`, including run-store search changes planned here. Documentation-only corrections do not trigger runtime benchmarks. Evidence limits remain explicit.
 
 Expose apply only after every affected consumer understands dispositions. Read-only diagnostics can be developed first. Implementation tasks include documentation and generated-artifact synchronization where guidance changes. No new dependency is proposed; retain existing Go `database/sql`, encrypted SQLite, context deadlines and permanent-lock conventions. PostgreSQL-oriented profile advice, external migration tools and service telemetry stacks do not replace these repository contracts.
 
-Independent design review remains pending. This artifact records the approved direction and detailed proposed contracts; it is not evidence that the feature has been implemented or independently reviewed.
+External design-review findings were supplied and corroborated against code; the [resolution record](investigation.md#design-review-finding-corroboration) distinguishes valid gaps from corrected premises. A subsequent [fresh-read check](investigation.md#fresh-read-implementation-readiness) reread all five documents, confirmed those fixes and closed additional migration, planning, view-lifecycle and locking gaps. No remaining design blocker was identified. This is the author's implementation-readiness assessment, not independent reviewer approval or runtime evidence; all implementation and release-verification work remains pending.
