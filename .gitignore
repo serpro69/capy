@@ -15,6 +15,9 @@
 !docs/**/.files
 !.gitleaks.toml
 
+# Build / Compilation
+__pycache__
+
 # Logs
 logs
 *.log*
