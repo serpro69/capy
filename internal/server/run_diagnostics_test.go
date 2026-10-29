@@ -9,10 +9,53 @@ import (
 	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/config"
+	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/platform"
 	"github.com/serpro69/capy/internal/runstore"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRunDiagnosticsOldBlockerWithoutCompletionAccounting(t *testing.T) {
+	isolateRunDiagnostics(t)
+	srv := newTestServer(t, nil)
+	path, err := config.ResolveRunDBPath(srv.projectDir)
+	require.NoError(t, err)
+	store, err := runstore.Open(t.Context(), path, srv.knowledgeKey, true)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	owner, err := store.ClaimOwner(t.Context())
+	require.NoError(t, err)
+	var old string
+	for i := range 11 {
+		run, err := store.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, runstore.Program{})
+		require.NoError(t, err)
+		if i == 0 {
+			old = run.ID
+			require.NoError(t, store.Pending(t.Context(), run.ID, owner.ID, executor.CleanupLinuxDescendants))
+		} else {
+			require.NoError(t, store.Finish(t.Context(), run.ID, runstore.Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupNotSpawned}}))
+		}
+	}
+	require.NoError(t, owner.Lease.Close())
+	_, err = store.Reconcile(t.Context())
+	require.NoError(t, err)
+	before := srv.stats.Snapshot()
+	for _, call := range []func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error){srv.handleDoctor, srv.handleStats} {
+		result, err := call(t.Context(), mcp.CallToolRequest{})
+		require.NoError(t, err)
+		require.Contains(t, resultText(result), old)
+		require.Contains(t, resultText(result), "recorded quarantine markers=2; inferred candidates=1")
+		require.Nil(t, srv.runs)
+	}
+	after := srv.stats.Snapshot()
+	require.Equal(t, before.RunsCompleted, after.RunsCompleted)
+	require.Equal(t, before.RunsIncomplete, after.RunsIncomplete)
+	require.Equal(t, before.RunObservedBytes, after.RunObservedBytes)
+	require.Equal(t, before.RunCapturedBytes, after.RunCapturedBytes)
+	require.Greater(t, after.BytesReturned["capy_stats"], before.BytesReturned["capy_stats"], "ordinary response accounting still occurs")
+	require.Greater(t, after.BytesReturned["capy_doctor"], before.BytesReturned["capy_doctor"])
+}
 
 func isolateRunDiagnostics(t *testing.T) {
 	t.Helper()

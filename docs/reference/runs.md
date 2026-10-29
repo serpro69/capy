@@ -187,6 +187,42 @@ Each retained run's cleanup scope comes from its authoritative row, so historica
 Linux `retired` rows remain distinguishable from Darwin observations. Authenticated
 stored/supported schema versions are reported separately from executable capability.
 
+`capy runs inspect` reports recorded quarantine markers and unfinished observations
+independently of those eight recent runs. It supports schema 8 and 9 without
+migration. Pending work without recorded quarantine is an unattributed observation,
+not a confirmed incident, a live-process claim or a guarantee of healthy admission.
+
+```bash
+capy runs inspect --project-dir . --limit 16 --json
+capy runs inspect --project-dir . --run-id RUN_UUID
+capy runs inspect --project-dir . --cursor CURSOR --json
+```
+
+Keep the same owner and selector when continuing a page. A store or registry
+change invalidates the cursor; restart inspection without it. Legacy stores have
+no audit epoch, so run state and pending counts are current to each page. Responses
+state when subjects were omitted, and response shortening preserves pagination.
+Only allowlisted metadata is returned, without commands, output or stored errors.
+
+Inspection uses a shared lifecycle lease for active WAL stores. For a closed
+store without a WAL it takes a fresh nonblocking exclusive lifecycle lease,
+rechecks WAL absence and rejects a nonempty rollback journal before an immutable
+read. If the lease is busy, stop attached store users and retry inspection.
+While that brief exclusive snapshot runs, a concurrent ordinary attachment can
+also return `storage_unavailable` with “run store lifecycle is busy”; retry
+attachment after inspection finishes rather than repairing or discarding storage. Both
+paths prevent creation of missing WAL/SHM files and perform no maintenance.
+
+This increment adds diagnostics only. History-preserving administrative recovery
+requires the later schema-10-capable binary and offline upgrade workflow.
+`--receipt-id` accepts a recovery receipt UUID, never an incident UUID; `--plan`
+looks up a retained applied receipt, not an unapplied plan. Schema 8/9 has no
+receipts and returns `receipt_unavailable`; absence never proves nonapplication.
+Copyable inspection commands appear separately from explanatory next-step text.
+Inspection does not apply recovery or retry the original command. CLI inspection
+returns 0 on success, 2 for invalid arguments, 1 for storage/lookup failures and
+74 if output delivery fails. `--json` uses the configured run response budget.
+
 Session run byte totals are posted once at each owner completion, including late
 output after handoff and each batch child. In-progress bytes remain available in
 run status. Observed, captured and serialized response bytes are distinct:
@@ -201,8 +237,8 @@ error text in run diagnostics.
 Run schema 9 preserves schema-8 history through an encrypted transactional upgrade.
 Stop all run owners, readers and supervisors for the selected owner, then start
 captured execution with the compatible new binary. Only normal execution-owner
-attachment performs the upgrade. Recovery queries, supervisors and doctor report
-the found/supported schema versions without migrating.
+attachment performs the upgrade. Recovery queries and supervisors refuse old
+schemas without migrating; inspection and doctor can report schema-8 diagnostics.
 
 The upgrade preserves run/batch IDs, output, cursors, expiry timestamps and pending
 cleanup evidence. It does not restart old jobs or clear quarantine. An old
