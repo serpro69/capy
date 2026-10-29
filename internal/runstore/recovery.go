@@ -128,9 +128,15 @@ func (s *Store) reconcileSlot(ctx context.Context, slot int) (RecoveryReport, er
 	}
 	// Avoid taking SQLite's writer lock for the usual already-clean slot.
 	var work bool
-	err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM runs WHERE slot=? AND terminal=0)
+	workQuery := `SELECT EXISTS(SELECT 1 FROM runs WHERE slot=? AND terminal=0)
 OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=?)
- OR EXISTS(SELECT 1 FROM run_batch_children c JOIN run_batches b ON b.id=c.batch_id LEFT JOIN runs r ON r.id=c.run_id WHERE b.slot=? AND c.terminal=0 AND r.id IS NULL)`, slot, slot, slot).Scan(&work)
+ OR EXISTS(SELECT 1 FROM run_batch_children c JOIN run_batches b ON b.id=c.batch_id LEFT JOIN runs r ON r.id=c.run_id WHERE b.slot=? AND c.terminal=0 AND r.id IS NULL)`
+	args := []any{slot, slot, slot}
+	if s.policy.SchemaVersion >= 10 {
+		workQuery += " OR EXISTS(SELECT 1 FROM run_resolutions WHERE slot=?)"
+		args = append(args, slot)
+	}
+	err = s.db.QueryRowContext(ctx, workQuery, args...).Scan(&work)
 	if err != nil || !work {
 		if err != nil {
 			return report, storageError()
@@ -152,10 +158,13 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=?)
 	if err := tx.QueryRowContext(writeCtx, "SELECT generation FROM run_owners WHERE slot=?", slot).Scan(&current); err != nil || current != generation {
 		return report, storageError()
 	}
+	if err := validateSlotResolutions(writeCtx, tx, slot); err != nil {
+		return report, err
+	}
 	// Inspect every unfinished proof, even beyond the bounded recovery batch.
 	// A generation mismatch also requires operator recovery; never rewrite it.
 	var unsafe bool
-	err = tx.QueryRowContext(writeCtx, `SELECT EXISTS(SELECT 1 FROM runs WHERE slot=? AND terminal=0 AND (NOT `+acceptedCleanupSQL+` OR generation<>?))
+	err = tx.QueryRowContext(writeCtx, `SELECT EXISTS(SELECT 1 FROM runs WHERE slot=? AND terminal=0 AND `+undisposedRunSQL+` AND (NOT `+acceptedCleanupSQL+` OR generation<>?))
 OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=? AND generation<>?)`, slot, generation, slot, generation).Scan(&unsafe)
 	if err != nil {
 		return report, storageError()
@@ -247,6 +256,9 @@ func recoveryIDs(ctx context.Context, tx *sql.Tx, query string, slot int, genera
 }
 
 func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
+	if err := rejectDisposedMutation(ctx, tx, id); err != nil {
+		return err
+	}
 	// Read directly: expiry must not hide unfinished proof records from recovery.
 	var result []byte
 	row := Admitted{ID: id}

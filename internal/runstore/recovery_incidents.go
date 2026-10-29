@@ -18,10 +18,10 @@ func (s *Store) recordLegacyMarkers(ctx context.Context) error {
 	} // stage-only legacy fixture handles
 	const missing = `(SELECT admission_blocked FROM run_meta WHERE singleton=1)=1
  AND NOT EXISTS(SELECT 1 FROM run_incidents WHERE receipt_id IS NULL)
- AND NOT EXISTS(SELECT 1 FROM runs WHERE terminal=0 AND cleanup='pending')`
+ AND NOT EXISTS(SELECT 1 FROM runs WHERE terminal=0 AND cleanup='pending' AND ` + undisposedRunSQL + `)`
 	const owners = `SELECT o.slot,CASE WHEN length(o.generation)=36 THEN o.generation ELSE NULL END FROM run_owners o WHERE o.cleanup_unverified=1
  AND NOT EXISTS(SELECT 1 FROM run_incidents i WHERE i.slot=o.slot AND i.receipt_id IS NULL)
- AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.slot=o.slot AND r.terminal=0 AND r.cleanup='pending')`
+ AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.slot=o.slot AND r.terminal=0 AND r.cleanup='pending' AND NOT EXISTS(SELECT 1 FROM run_resolutions d WHERE d.run_id=r.id))`
 	var work bool
 	if err := s.db.QueryRowContext(ctx, "SELECT ("+missing+") OR EXISTS("+owners+")").Scan(&work); err != nil {
 		return storageError()
@@ -34,6 +34,13 @@ func (s *Store) recordLegacyMarkers(ctx context.Context) error {
 		return storageError()
 	}
 	defer tx.Rollback()
+	// A rare legacy-marker publication must not use a malformed disposition
+	// to hide its causal pending run. Validate within this publication snapshot.
+	for slot := range OwnerSlots {
+		if err := validateSlotResolutions(ctx, tx, slot); err != nil {
+			return err
+		}
+	}
 	changed := false
 	if err := tx.QueryRowContext(ctx, "SELECT "+missing).Scan(&work); err != nil {
 		return storageError()
@@ -88,7 +95,7 @@ type recoveryCandidate struct {
 func observeSlotRuns(ctx context.Context, tx *sql.Tx, slot int, generation string) (bool, map[string]bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT CASE WHEN length(r.id)=36 THEN r.id ELSE '' END,CASE WHEN length(r.generation)=36 THEN r.generation ELSE '' END,r.slot,CASE WHEN length(r.last_phase)<=16 THEN r.last_phase ELSE '' END,
  CASE WHEN length(r.result)<=8192 THEN r.result ELSE NULL END,CASE WHEN length(r.cleanup_scope)<=64 THEN r.cleanup_scope ELSE '' END,CASE WHEN length(r.cleanup)<=16 THEN r.cleanup ELSE '' END,r.terminal
- FROM runs r WHERE r.slot=? AND r.terminal=0 AND ((`+acceptedCleanupSQL+` AND NOT EXISTS(SELECT 1 FROM run_incidents bad WHERE bad.run_id=r.id AND bad.receipt_id IS NULL AND bad.reason IN ('generation_mismatch','invalid_proof','invalid_manifest','structural_inconsistency'))) OR NOT EXISTS(
+ FROM runs r WHERE r.slot=? AND r.terminal=0 AND NOT EXISTS(SELECT 1 FROM run_resolutions d WHERE d.run_id=r.id) AND ((`+acceptedCleanupSQL+` AND NOT EXISTS(SELECT 1 FROM run_incidents bad WHERE bad.run_id=r.id AND bad.receipt_id IS NULL AND bad.reason IN ('generation_mismatch','invalid_proof','invalid_manifest','structural_inconsistency'))) OR NOT EXISTS(
  SELECT 1 FROM run_incidents i WHERE i.run_id=r.id AND i.generation=r.generation AND i.receipt_id IS NULL
  AND i.last_phase=CASE WHEN r.last_phase IN ('unknown','admitted','queued','authorized','compile','run') THEN r.last_phase ELSE 'unknown' END AND (r.generation=? OR i.reason='generation_mismatch'))) ORDER BY r.id LIMIT 64`, slot, generation)
 	if err != nil {
