@@ -284,7 +284,9 @@ reconciliation, maintenance, policy revision or index. Shared platform formattin
 serves CLI doctor, MCP doctor and MCP stats: safe path/capacity/policy/usage plus
 at most eight recent status/scoped-cleanup/expiry/byte summaries. A separate
 paginated inventory exposes older quarantine markers and pending observations;
-CLI `runs inspect` uses the same model. Schema-8/9 inspection binds cursors to
+CLI `runs inspect` and MCP `capy_runs(action="inspect")` use the same model.
+The MCP adapter bypasses execution-service attachment and budgets a single
+captured snapshot; inspection cannot apply recovery. Schema-8/9 inspection binds cursors to
 store identity, registry/quarantine markers and a creation cutoff, without
 inventing an audit epoch or treating pending observations as confirmed incidents.
 Static backend

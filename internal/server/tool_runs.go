@@ -30,8 +30,19 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		return fail("storage_unavailable", "run query failed")
 	}
 	action, ok := args["action"].(string)
-	if !ok || (action != "status" && action != "read" && action != "list" && action != "cancel" && action != "search") {
-		return fail("invalid_argument", "action must be status, read, list, search or cancel")
+	if !ok || (action != "status" && action != "read" && action != "list" && action != "cancel" && action != "search" && action != "inspect") {
+		return fail("invalid_argument", "action must be status, read, list, search, cancel or inspect")
+	}
+	if action == "inspect" {
+		result, err := s.inspectRuns(ctx, args)
+		if err != nil {
+			var typed *runstore.Error
+			if errors.As(err, &typed) {
+				return fail(typed.Code, inspectionMCPMessage(typed.Message))
+			}
+			return operationError(err)
+		}
+		return s.trackToolResponse("capy_runs", result), nil
 	}
 	if action == "search" {
 		options, err := runSearchOptions(args)
@@ -248,16 +259,18 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 
 func toolRuns() mcp.Tool {
 	return mcp.NewTool("capy_runs", mcp.WithToolAnnotation(annotationCleanup),
-		mcp.WithDescription("Recover captured runs with status, list, sanitized/raw reads and lazy sanitized search independent of the knowledge-search budget. Search reports coverage; repeat to resume bounded indexing. Cancel requests termination of this MCP owner's runs; poll status. Serial batch status/list/search/cancel use batch_id; list yields child run_id values for reads."),
-		mcp.WithString("action", mcp.Required(), mcp.Enum("status", "read", "list", "search", "cancel")),
-		mcp.WithString("run_id", mcp.Description("Captured run UUID in this owner's run store")),
+		mcp.WithDescription("Recover captured runs with status, list, sanitized/raw reads and lazy sanitized search independent of the knowledge-search budget. Inspect reports recorded blockers and retained receipts without creating storage, claiming an owner, migrating or applying recovery; unfinished records do not prove live processes or healthy admission. Search reports coverage; repeat to resume bounded indexing. Cancel requests termination of this MCP owner's runs; poll status. Serial batch status/list/search/cancel use batch_id; list yields child run_id values for reads."),
+		mcp.WithString("action", mcp.Required(), mcp.Enum("status", "read", "list", "search", "cancel", "inspect")),
+		mcp.WithString("run_id", mcp.Description("Captured run UUID in this owner's run store; inspect selector, mutually exclusive with receipt_id and plan")),
+		mcp.WithString("receipt_id", mcp.Description("Inspect only: recovery receipt UUID, not an incident UUID; mutually exclusive with run_id and plan")),
+		mcp.WithString("plan", mcp.Description("Inspect only: lookup a retained applied receipt by plan token; does not validate unapplied plans or prove nonapplication when absent")),
 		mcp.WithString("batch_id", mcp.Description("Batch UUID for status/list/search/cancel; mutually exclusive with run_id")),
 		mcp.WithArray("queries", mcp.Items(map[string]any{"type": "string"}), mcp.Description("Search: 1–8 nonblank queries, at most 512 UTF-8 bytes each")),
 		mcp.WithString("query_scope", mcp.Enum("batch", "global"), mcp.Description("Batch search only")),
 		mcp.WithBoolean("raw", mcp.Description("Explicitly request unsanitized bytes (default false)")),
 		mcp.WithString("encoding", mcp.Enum("text", "base64")),
 		mcp.WithString("stream", mcp.Enum("stdout", "stderr", "merged")),
-		mcp.WithString("cursor", mcp.Description("Opaque continuation returned by the previous read")),
+		mcp.WithString("cursor", mcp.Description("Opaque read/list/inspect continuation; inspect requires the same selector")),
 		mcp.WithArray("states", mcp.Items(map[string]any{"type": "string"})),
 		mcp.WithNumber("limit", mcp.Min(1), mcp.Max(64)),
 		mcp.WithNumber("start_line", mcp.Min(1), mcp.Description("Raw line number; requires stdout or stderr and no cursor")),

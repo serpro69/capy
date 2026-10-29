@@ -84,6 +84,17 @@ func TestRunsInspectCLIAndDoctorStats(t *testing.T) {
 	require.NoError(t, err, "%s", doctor)
 	p := startStdioProcess(t, stdioCommand{executable: bin, args: []string{"serve", "--project-dir", project}, dir: project, env: env})
 	p.initialize(t)
+	out, diag, status = capturedCLI(t, bin, project, env, "runs", "inspect", "--json", "--run-id", old, "--project-dir", project)
+	require.Zero(t, status, "%s", out)
+	require.Empty(t, diag)
+	var cliView runstore.Inspection
+	require.NoError(t, json.Unmarshal(out, &cliView))
+	mcpView := stdioInspection(t, p, map[string]any{"action": "inspect", "run_id": old})
+	require.Equal(t, cliView.SchemaVersion, mcpView.SchemaVersion)
+	require.Equal(t, cliView.StoreID, mcpView.StoreID)
+	require.Equal(t, cliView.Admission, mcpView.Admission)
+	require.Equal(t, cliView.Counts, mcpView.Counts)
+	require.Equal(t, cliView.Subjects, mcpView.Subjects)
 	for _, name := range []string{"capy_doctor", "capy_stats"} {
 		result := p.tool(t, name, map[string]any{})
 		for _, line := range strings.Split(string(doctor), "\n") {

@@ -187,7 +187,7 @@ Each retained run's cleanup scope comes from its authoritative row, so historica
 Linux `retired` rows remain distinguishable from Darwin observations. Authenticated
 stored/supported schema versions are reported separately from executable capability.
 
-`capy runs inspect` reports durable incidents, recorded quarantine markers and unfinished observations
+`capy runs inspect` and MCP `capy_runs(action="inspect")` report durable incidents, recorded quarantine markers and unfinished observations
 independently of those eight recent runs. It supports schema 8, 9 and 10 without
 migration. Pending work without recorded quarantine is an unattributed observation,
 not a confirmed incident, a live-process claim or a guarantee of healthy admission.
@@ -197,6 +197,16 @@ capy runs inspect --project-dir . --limit 16 --json
 capy runs inspect --project-dir . --run-id RUN_UUID
 capy runs inspect --project-dir . --cursor CURSOR --json
 ```
+
+For MCP, omit selectors for the blocker inventory, or pass exactly one of
+`run_id`, `receipt_id`, or `plan`. Use `limit` (1–64, default 16) and the returned
+`cursor` to continue with the same selector. Omit unused selectors; supplied
+selectors must be nonempty. Inspection uses the server's selected
+physical owner and captured credential without attaching an execution owner.
+Each response comes from one read-only snapshot, even when its configured response
+budget shortens the page. Restart an existing MCP server on the updated binary to
+load the new action schema. Recovery application and confirmation arguments are
+not accepted over MCP.
 
 Schema 10 records incident UUIDs, historical subjects, causes, detection stages
 and the last durable phase during live-owner failure handling and normal reconciliation. Reobserving the same
@@ -252,7 +262,7 @@ paths prevent creation of missing WAL/SHM files and perform no maintenance.
 This increment provides diagnostics and offline schema upgrade. History-preserving
 administrative recovery application remains unavailable; upgrading does not clear
 quarantine.
-`--receipt-id` accepts a recovery receipt UUID, never an incident UUID; `--plan`
+`--receipt-id` (MCP `receipt_id`) accepts a recovery receipt UUID, never an incident UUID; `--plan` (MCP `plan`)
 looks up a retained applied receipt, not an unapplied plan. Schema 8/9 has no
 receipts and returns `receipt_unavailable`; absence never proves nonapplication.
 Schema 10 looks up retained receipts by exact UUID or plan hash, even after their
@@ -262,6 +272,9 @@ Copyable inspection commands appear separately from explanatory next-step text.
 Inspection does not apply recovery or retry the original command. CLI inspection
 returns 0 on success, 2 for invalid arguments, 1 for storage/lookup failures and
 74 if output delivery fails. `--json` uses the configured run response budget.
+MCP inspection returns a successful diagnostic result even when admission is
+recorded as blocked. Invalid arguments and storage/lookup failures return tool
+errors. The complete MCP result uses that same configured response budget.
 
 Session run byte totals are posted once at each owner completion, including late
 output after handoff and each batch child. In-progress bytes remain available in
