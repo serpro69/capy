@@ -554,40 +554,52 @@ func TestRecoveryReceiptRecordBoundsAndLookup(t *testing.T) {
 }
 
 func TestUpgradeIndexedQuotaFailureRollsBackRebuild(t *testing.T) {
-	f := newSchema9Fixture(t)
-	id := schema9Run(t, f, true)
-	_, err := f.db.Exec("UPDATE run_meta SET index_enabled=1")
-	require.NoError(t, err)
-	tx, err := f.db.BeginTx(t.Context(), nil)
-	require.NoError(t, err)
-	before, err := refreshIndexDebit(t.Context(), tx)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
-	var pageSize int64
-	require.NoError(t, f.db.QueryRow("PRAGMA page_size").Scan(&pageSize))
-	// The old debit fits: only the post-rebuild recount can refuse this quota.
-	quota := before + pageSize
-	_, err = f.db.Exec("UPDATE run_policy SET max_run_bytes=1,max_retained_bytes=?", quota)
-	require.NoError(t, err)
-	var original []byte
-	require.NoError(t, f.db.QueryRow("SELECT result FROM runs WHERE id=?", id).Scan(&original))
-	settings := f.settings
-	settings.MaxRunBytes = 1
-	settings.MaxRetainedBytes = quota
-	f.close(t)
-	result, err := Upgrade(t.Context(), f.path, testKey, settings)
-	requireErrorCode(t, err, "schema_upgrade_capacity")
-	require.Equal(t, 9, result.SchemaVersion)
-	require.False(t, result.QuotaIncreased)
-	f.db = f.connect(t)
-	migrationVersions(t, f.db, 9)
-	var after int64
-	require.NoError(t, f.db.QueryRow("SELECT accounted_bytes FROM run_meta").Scan(&after))
-	require.Equal(t, before, after)
-	var retained []byte
-	require.NoError(t, f.db.QueryRow("SELECT result FROM runs WHERE id=?", id).Scan(&retained))
-	require.Equal(t, original, retained)
-	var newTables int
-	require.NoError(t, f.db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE name='runs_v10' OR name GLOB 'run_recovery_*' OR name='run_incidents'").Scan(&newTables))
-	require.Zero(t, newTables)
+	for _, state := range []string{"pending", "terminal"} {
+		t.Run(state, func(t *testing.T) {
+			f := newSchema9Fixture(t)
+			id := schema9Run(t, f, state == "pending")
+			if state == "terminal" {
+				var encoded []byte
+				var result Result
+				require.NoError(t, f.db.QueryRow("SELECT result FROM runs WHERE id=?", id).Scan(&encoded))
+				require.NoError(t, json.Unmarshal(encoded, &result))
+				_, err := f.db.Exec("UPDATE runs SET completed_at=?,expires_at=? WHERE id=?", result.CompletedAt.UnixNano(), result.ExpiresAt.UnixMilli()+1, id)
+				require.NoError(t, err)
+			}
+			_, err := f.db.Exec("UPDATE run_meta SET index_enabled=1")
+			require.NoError(t, err)
+			tx, err := f.db.BeginTx(t.Context(), nil)
+			require.NoError(t, err)
+			before, err := refreshIndexDebit(t.Context(), tx)
+			require.NoError(t, err)
+			require.NoError(t, tx.Commit())
+			var pageSize int64
+			require.NoError(t, f.db.QueryRow("PRAGMA page_size").Scan(&pageSize))
+			// The old debit fits: only the post-rebuild recount can refuse this quota.
+			quota := before + pageSize
+			_, err = f.db.Exec("UPDATE run_policy SET max_run_bytes=1,max_retained_bytes=?", quota)
+			require.NoError(t, err)
+			var original []byte
+			require.NoError(t, f.db.QueryRow("SELECT result FROM runs WHERE id=?", id).Scan(&original))
+			settings := f.settings
+			settings.MaxRunBytes = 1
+			settings.MaxRetainedBytes = quota
+			f.close(t)
+			result, err := Upgrade(t.Context(), f.path, testKey, settings)
+			requireErrorCode(t, err, "schema_upgrade_capacity")
+			require.Equal(t, 9, result.SchemaVersion)
+			require.False(t, result.QuotaIncreased)
+			f.db = f.connect(t)
+			migrationVersions(t, f.db, 9)
+			var after int64
+			require.NoError(t, f.db.QueryRow("SELECT accounted_bytes FROM run_meta").Scan(&after))
+			require.Equal(t, before, after)
+			var retained []byte
+			require.NoError(t, f.db.QueryRow("SELECT result FROM runs WHERE id=?", id).Scan(&retained))
+			require.Equal(t, original, retained)
+			var newTables int
+			require.NoError(t, f.db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE name='runs_v10' OR name GLOB 'run_recovery_*' OR name='run_incidents'").Scan(&newTables))
+			require.Zero(t, newTables)
+		})
+	}
 }

@@ -120,6 +120,13 @@ func TestRecoveryApplyAtomicFailures(t *testing.T) {
 	for _, mode := range []string{"write", "capacity", "before commit", "commit rejected", "lost commit response"} {
 		t.Run(mode, func(t *testing.T) {
 			s, o, closeStore := planFixture(t)
+			var siblingID string
+			var siblingBefore []byte
+			if mode == "capacity" {
+				sibling := retentionRun(t, s, o, "completed sibling survives apply capacity refusal\n", true)
+				siblingID = sibling.ID
+				siblingBefore = applyHistory(t, s.db, siblingID)
+			}
 			r := planPending(t, s, o)
 			require.NoError(t, s.Quarantine(t.Context()))
 			before := applyHistory(t, s.db, r.ID)
@@ -154,6 +161,9 @@ func TestRecoveryApplyAtomicFailures(t *testing.T) {
 			}
 			db := applyTestDB(t, s.path)
 			require.Equal(t, before, applyHistory(t, db, r.ID))
+			if siblingID != "" {
+				require.Equal(t, siblingBefore, applyHistory(t, db, siblingID), "apply must not evict eligible completed output to fund audit")
+			}
 			var receipts, dispositions, members int
 			var blocked bool
 			require.NoError(t, db.QueryRow("SELECT admission_blocked,(SELECT count(*) FROM run_recovery_receipts),(SELECT count(*) FROM run_resolutions),(SELECT count(*) FROM run_incident_resolutions) FROM run_meta").Scan(&blocked, &receipts, &dispositions, &members))

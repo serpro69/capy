@@ -165,8 +165,20 @@ including when a safe queued sibling is finalized by later reconciliation. The
 receipt identifies the disposition supplying closure provenance; individual child
 summaries retain their own receipts. Missing uncertain child output is accepted
 only with its exact surviving disposition marked `evicted`; a missing retained or
-evicting payload remains an inconsistency. Payload eviction, audit pruning and
+evicting payload remains an inconsistency. Disposed payload uses its fixed deadline
+from recovery time and its admission-recorded TTL; later quota pressure can evict
+it sooner, ordered by recovery time. Deletion resumes in bounded batches after
+interruption, keeping the full payload debit until the parent row is deleted.
+Independently charged recovery evidence survives that deletion. Audit pruning and
 public apply remain gated on the remaining recovery tasks.
+
+An unresolved run incident protects retained output even when terminal proof
+arrives later. Status, reads and lists expose that evidence without extending its
+original expiry. Resolving such an incident creates no run disposition or new
+output window: the original expiry applies again, including when already past.
+Once disposed output is unavailable, use `capy runs inspect --run-id` with the
+same run ID and owner to inspect retained recovery evidence; this cannot restore
+evicted bytes.
 
 The default owner allows four active runs and 64 pending batch children.
 Standalone work rejects when full; queries and cancellation remain available.

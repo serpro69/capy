@@ -76,7 +76,14 @@ type runQuerier interface {
 }
 
 func (s *Store) Load(ctx context.Context, id string) (Admitted, error) {
-	return loadRun(ctx, s.db, id)
+	// Payload and its independent disposition must come from one snapshot;
+	// concurrent eviction can otherwise look like missing retained evidence.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Admitted{}, storageError()
+	}
+	defer tx.Rollback()
+	return loadRun(ctx, tx, id)
 }
 
 func loadRun(ctx context.Context, query runQuerier, id string) (Admitted, error) {
@@ -92,6 +99,13 @@ EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.g
 (SELECT c.terminal FROM run_batch_children c WHERE c.run_id=runs.id)
 FROM runs WHERE id=? AND evicting=0`, id).Scan(&row.Generation, &row.Slot, &program, &result, &row.Cleanup.Scope, &row.Cleanup.State, &terminal, &row.LastPhase, &unverified, &manifest, &manifestTerminal)
 	if errors.Is(err, sql.ErrNoRows) {
+		d, err := readRunResolution(ctx, query, id)
+		if err != nil {
+			return row, err
+		}
+		if d != nil {
+			return row, disposedOutputUnavailable()
+		}
 		return row, failure("run_unavailable", "run is unavailable in this owner's store")
 	}
 	if err != nil {
@@ -114,6 +128,9 @@ FROM runs WHERE id=? AND evicting=0`, id).Scan(&row.Generation, &row.Slot, &prog
 		return row, err
 	}
 	if !available {
+		if row.Result.Recovery != nil && row.Result.Recovery.DispositionID != "" {
+			return Admitted{}, disposedOutputUnavailable()
+		}
 		return Admitted{}, failure("run_unavailable", "run is unavailable in this owner's store")
 	}
 	return row, nil

@@ -47,6 +47,8 @@ func projectRunHistory(ctx context.Context, q runQuerier, id, generation string,
 	}
 	// The historical generation is durable even after its registry slot is
 	// reused. Prefer an open episode over an older resolved one for this run.
+	// Retention also pins mismatched attribution for separate repair, but this
+	// view must never use another generation's incident to extend availability.
 	i, err := scanIncident(q.QueryRowContext(ctx, "SELECT "+incidentColumns+" FROM run_incidents WHERE run_id=? AND generation=? ORDER BY receipt_id IS NULL DESC,detected_at DESC,id DESC LIMIT 1", id, generation))
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, metadataReadError(err)
@@ -74,11 +76,18 @@ func projectRunHistory(ctx context.Context, q runQuerier, id, generation string,
 			result.Recovery = &Recovery{State: "unresolved", BlocksAdmission: true}
 		}
 	}
-	return result.ExpiresAt == nil || now.Before(*result.ExpiresAt), nil
+	// An open attributed incident pins its retained evidence through a late
+	// terminal outcome. Resolving the incident restores the original deadline;
+	// neither this view nor incident-only recovery renews it.
+	return result.Recovery != nil && result.Recovery.BlocksAdmission || result.ExpiresAt == nil || now.Before(*result.ExpiresAt), nil
 }
 
 func dispositionView(d *runResolution) *Recovery {
 	resolved, expires := time.Unix(0, d.ResolvedAt).UTC(), time.UnixMilli(d.ExpiresAt).UTC()
 	return &Recovery{State: "operator_resolved", IncidentID: d.IncidentID, ReceiptID: d.ReceiptID, DispositionID: d.RunID,
 		ResolvedAt: &resolved, Basis: d.Receipt.Basis, RetentionExpiresAt: &expires, OperationallyClosed: true, CaptureClosed: true}
+}
+
+func disposedOutputUnavailable() error {
+	return failure("run_unavailable", "operator-resolved output is unavailable; inspect retained recovery evidence with capy runs inspect --run-id using this run ID and owner")
 }
