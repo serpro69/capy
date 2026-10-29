@@ -36,32 +36,59 @@ func CheckRuns(ctx context.Context, project, key string, cfg config.RunsConfig) 
 		if errors.As(err, &typed) {
 			switch typed.Code {
 			case "wrong_key":
-				code, repair = typed.Code, "restore the selected credential or stop owners and old execution groups, then explicitly run capy runs reset --discard for this owner (permanently deletes run logs)"
+				code, repair = typed.Code, "restore the matching selected credential and reload; no data was discarded"
 			case "policy_mismatch":
 				code, repair = typed.Code, "stop and reload owners with a compatible capy version and accounting build"
 			case "schema_mismatch":
 				// Use authenticated numeric metadata, never backend/stored error text.
 				code = typed.Code
 				repair = fmt.Sprintf("stored schema=%d, supported schema=%d; use a compatible capy binary; no data was discarded", report.SchemaVersion, report.SupportedSchemaVersion)
-				if report.SchemaVersion == 8 && report.SupportedSchemaVersion == 9 {
-					repair = "stored schema=8, supported schema=9; stop all run owners/readers and supervisors, then start captured execution to upgrade; inspection does not migrate or discard logs"
-				}
 			case "credential_unavailable":
 				code, repair = typed.Code, "repair the selected knowledge credential and reload; no fallback key was tried"
 			case "storage_busy":
-				code, repair = typed.Code, "retry inspection after the current reset, policy change or schema upgrade"
+				code, repair = typed.Code, "retry inspection after concurrent lifecycle work completes; a no-WAL snapshot requires a brief exclusive lease, so stop attached store users if contention persists"
+			case "recovery_inconsistent":
+				code, repair = typed.Code, "inspection details are incomplete; preserve history and repair inconsistent run metadata separately; operator confirmation cannot override it"
 			}
 		}
-		return append(results, CheckResult{Name: "Run store", Status: Warn, Detail: code + "; " + repair})
+		status := Warn
+		if report.AdmissionBlocked || report.Inspection.Counts.QuarantineMarkers > 0 {
+			status = Fail
+			repair = "recorded quarantine blocks admission; " + repair
+		}
+		return append(results, CheckResult{Name: "Run store", Status: status, Detail: code + "; " + repair})
 	}
 	if !report.Exists {
 		return append(results, CheckResult{Name: "Run store", Status: Pass, Detail: "not initialized; inspection created no run store"})
 	}
-	status, detail := Pass, fmt.Sprintf("readable; stored schema=%d, supported schema=%d; inspection does not prove sandbox writability or hook activation", report.SchemaVersion, report.SupportedSchemaVersion)
-	if report.AdmissionBlocked {
-		status, detail = Fail, "cleanup_unverified; stop owners and old execution groups before explicit capy runs reset --discard (permanently deletes run logs); never reset as an automatic retry"
+	view := report.Inspection
+	status, detail := Pass, fmt.Sprintf("readable; stored schema=%d, supported schema=%d; admission unverified; inspection does not prove sandbox writability or hook activation", report.SchemaVersion, report.SupportedSchemaVersion)
+	if report.SchemaVersion != report.SupportedSchemaVersion {
+		status, detail = Warn, fmt.Sprintf("upgrade_required; stored schema=%d, supported schema=%d; legacy read-only diagnostics; inspection does not migrate", report.SchemaVersion, report.SupportedSchemaVersion)
+	}
+	if view.Admission == "recorded_blocked" {
+		status, detail = Fail, "cleanup_unverified; recorded quarantine blocks admission; inspect the selected owner's blockers before stopping affected sessions and old execution groups"
 	}
 	results = append(results, CheckResult{Name: "Run store", Status: status, Detail: detail})
+	status = Pass
+	if view.Counts.QuarantineMarkers > 0 {
+		status = Fail
+	} else if view.Counts.UnattributedPending > 0 {
+		status = Warn
+	}
+	results = append(results, CheckResult{Name: "Run blockers", Status: status, Detail: fmt.Sprintf("recorded quarantine markers=%d; inferred candidates=%d; unattributed pending=%d (not confirmed incidents or proof of live work); details=%s; %s",
+		view.Counts.QuarantineMarkers, view.Counts.InferredCandidates, view.Counts.UnattributedPending, view.Details, view.NextStep)})
+	if view.InspectCommand != "" {
+		results = append(results, CheckResult{Name: "Run inspection command", Status: Pass, Detail: view.InspectCommand})
+	}
+	for _, subject := range view.Subjects {
+		if subject.RunID == "" {
+			continue
+		}
+		results = append(results, CheckResult{Name: "Run observation " + subject.RunID, Status: Warn,
+			Detail: fmt.Sprintf("%s; attribution=%s; last recorded state=%s phase=%s; missing=%s; inspect --run-id %s for this owner",
+				subject.Reason, subject.Attribution, subject.State, subject.Phase, strings.Join(subject.MissingEvidence, ","), subject.RunID)})
+	}
 	p := report.Policy
 	status, detail = Pass, fmt.Sprintf("revision=%d schema=%d redaction=%d accounting=%s ttl_hours=%d max_run_bytes=%d max_retained_bytes=%d", p.Revision, p.SchemaVersion, p.RedactionVersion, p.AccountingMode, p.TTLHours, p.MaxRunBytes, p.MaxRetainedBytes)
 	if p.TTLHours != cfg.TTLHours || p.MaxRunBytes != cfg.MaxRunBytes || p.MaxRetainedBytes != cfg.MaxRetainedBytes {
@@ -71,7 +98,7 @@ func CheckRuns(ctx context.Context, project, key string, cfg config.RunsConfig) 
 	results = append(results,
 		CheckResult{Name: "Run policy", Status: status, Detail: detail},
 		CheckResult{Name: "Run usage", Status: Pass, Detail: fmt.Sprintf("accounted=%d bytes (includes index debit=%d); physical DB=%d WAL=%d other sidecars=%d bytes; quota is not a filesystem ceiling", report.AccountedBytes, report.IndexBytes, report.DBBytes, report.WALBytes, report.SidecarBytes)},
-		CheckResult{Name: "Run inventory", Status: Pass, Detail: fmt.Sprintf("%d retained, %d unfinished records (not proof of live processes); showing %d recent runs; use capy runs list or capy_runs(action=list) for recovery", report.RetainedRuns, report.UnfinishedRuns, len(report.Recent))},
+		CheckResult{Name: "Run inventory", Status: Pass, Detail: fmt.Sprintf("%d retained, %d unfinished records (not proof of live processes); showing %d recent runs; capy runs inspect pages blocker observations independently of this recent sample", report.RetainedRuns, report.UnfinishedRuns, len(report.Recent))},
 	)
 	for _, run := range report.Recent {
 		expiry := "unset"
@@ -119,7 +146,7 @@ func checkRunCapability(goos string, unsupported error) CheckResult {
 
 func diagnosticPath(path string) string {
 	path = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return '�'
 		}
 		return r

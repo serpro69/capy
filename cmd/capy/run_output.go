@@ -108,6 +108,34 @@ func runText(result runstore.Result) string {
 func encodeRunText(value any) ([]byte, error) {
 	var b strings.Builder
 	switch v := value.(type) {
+	case runstore.Inspection:
+		fmt.Fprintf(&b, "Run inspection: %s; store=%s schema=%d. Owner: %s\n", v.Admission, v.StoreID, v.SchemaVersion, v.Owner)
+		fmt.Fprintf(&b, "Recorded quarantine markers=%d; inferred candidates=%d; unattributed pending=%d. Details: %s; omitted=%t.\n",
+			v.Counts.QuarantineMarkers, v.Counts.InferredCandidates, v.Counts.UnattributedPending, v.Details, v.Omitted)
+		fmt.Fprintf(&b, "%s.\n", v.Consistency)
+		for _, subject := range v.Subjects {
+			fmt.Fprintf(&b, "%s %s: %s (%s); recorded_quarantine=%t", subject.Kind, subject.RunID, subject.Reason, subject.Attribution, subject.BlocksAdmission)
+			if subject.Slot != nil {
+				fmt.Fprintf(&b, "; slot=%d generation=%s", *subject.Slot, subject.Generation)
+			}
+			if subject.Cleanup != nil {
+				fmt.Fprintf(&b, "; last recorded state=%s phase=%s cleanup=%s/%s", subject.State, subject.Phase, subject.Cleanup.Scope, subject.Cleanup.State)
+			}
+			if len(subject.MissingEvidence) > 0 {
+				fmt.Fprintf(&b, "; missing=%s", strings.Join(subject.MissingEvidence, ","))
+			}
+			if subject.OutputAvailable != nil {
+				fmt.Fprintf(&b, "; output_available=%t", *subject.OutputAvailable)
+			}
+			b.WriteByte('\n')
+		}
+		if v.NextCursor != "" {
+			fmt.Fprintf(&b, "Continue with the same owner and selector: --cursor %s\n", v.NextCursor)
+		}
+		fmt.Fprintf(&b, "%s: %s\n", v.Action, v.NextStep)
+		if v.InspectCommand != "" {
+			fmt.Fprintf(&b, "Inspect command: %s\n", v.InspectCommand)
+		}
 	case runstore.Result:
 		b.WriteString(runText(v))
 	case runQueryResult:

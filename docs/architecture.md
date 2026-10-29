@@ -247,11 +247,21 @@ logs can be evicted in bounded work; active runs are protected. Accounting inclu
 raw/projection/metadata reservations and lazy FTS debit (dbstat or conservative
 used-page accounting). Physical main/WAL sizes are distinct from quota.
 
-`runstore.Inspect` authenticates read-only under an existing shared lifecycle
-lease, with a two-second context. It creates no store/locks, owner generation,
+`runstore.Inspect` and `InspectRuns` share read-only authentication and snapshots
+with a two-second context. Active WAL stores use a shared lifecycle lease. A
+closed store without a WAL uses a fresh nonblocking exclusive lease, verifies
+WAL absence and refuses a nonempty rollback journal before an immutable read.
+A dedicated SQLite VFS preserves encryption while refusing file creation/deletion;
+read-only SHM access prevents sidecar creation during shared attachment races.
+Inspection creates no store/locks, owner generation,
 reconciliation, maintenance, policy revision or index. Shared platform formatting
 serves CLI doctor, MCP doctor and MCP stats: safe path/capacity/policy/usage plus
-at most eight recent status/scoped-cleanup/expiry/byte summaries. Static backend
+at most eight recent status/scoped-cleanup/expiry/byte summaries. A separate
+paginated inventory exposes older quarantine markers and pending observations;
+CLI `runs inspect` uses the same model. Schema-8/9 inspection binds cursors to
+store identity, registry/quarantine markers and a creation cutoff, without
+inventing an audit epoch or treating pending observations as confirmed incidents.
+Static backend
 capability and authenticated schema compatibility are reported separately from
 storage health and hook activation; neither starts a command or a proof probe.
 No program, output or stored
