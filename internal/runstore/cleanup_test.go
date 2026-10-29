@@ -302,7 +302,7 @@ func TestSchemaEightRefusedWithoutRecreation(t *testing.T) {
 		require.Nil(t, opened)
 		requireErrorCode(t, err, "schema_mismatch")
 		require.ErrorContains(t, err, "schema 8")
-		require.ErrorContains(t, err, "schema 9")
+		require.ErrorContains(t, err, "schema 10")
 	}
 	var version int
 	var id string

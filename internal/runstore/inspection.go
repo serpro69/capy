@@ -199,7 +199,7 @@ func inspectSnapshot(ctx context.Context, path, key string, options InspectionOp
 		return report, storageError()
 	}
 	report.SchemaVersion, report.SupportedSchemaVersion = view.SchemaVersion, schemaVersion
-	if view.SchemaVersion != 8 && view.SchemaVersion != 9 {
+	if view.SchemaVersion != 8 && view.SchemaVersion != 9 && view.SchemaVersion != 10 {
 		return report, failure("schema_mismatch", "unsupported run schema; use a compatible capy binary; inspection does not migrate")
 	}
 	// Policy cannot change while the shared lifecycle lease is held. All mutable
@@ -280,7 +280,7 @@ func BoundInspection(view Inspection, entries int) Inspection {
 		view.Consistency = "legacy markers; run observations per page; no liveness or admission guarantee"
 		view.NextStep = "For the same selected owner, run capy runs inspect."
 		if view.Action == "upgrade_required" {
-			view.NextStep += " Recovery requires a schema-10-capable binary with offline runs upgrade."
+			view.NextStep += " Stop store users, then run capy runs upgrade from an ordinary terminal; quarantine is preserved."
 		}
 	}
 	entries = max(1, entries)

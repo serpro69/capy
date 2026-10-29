@@ -8,7 +8,6 @@ import (
 	"math"
 	"os"
 	"strings"
-	"time"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
 	"golang.org/x/sys/unix"
@@ -34,32 +33,10 @@ func (e *schemaMismatch) Unwrap() error { return e.cause }
 
 func newSchemaMismatch(found int, identity schemaIdentity) *schemaMismatch {
 	message := fmt.Sprintf("run store schema %d is incompatible with supported schema %d; use a compatible capy binary", found, schemaVersion)
-	if found == 8 {
-		message = "run store schema 8 requires upgrade to supported schema 9; stop all run owners/readers and their supervisors, then start captured execution with this binary; recovery queries and supervisors cannot upgrade"
+	if found == 8 || found == 9 {
+		message = fmt.Sprintf("run store schema %d requires upgrade to schema %d; stop owners, readers and supervisors, then use capy runs upgrade from an ordinary terminal; readers and helpers cannot upgrade", found, schemaVersion)
 	}
 	return &schemaMismatch{found: found, identity: identity, cause: &Error{Code: "schema_mismatch", Message: message}}
-}
-
-// upgradeSchema8 never converts the shared lock. openAttached has already closed
-// its read-only probe and shared lease; a reset/another upgrader can win that gap.
-func upgradeSchema8(ctx context.Context, path, key, owner string, expected schemaIdentity) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	s, err := openAttachedSchema(ctx, path, key, owner, unix.LOCK_EX, 8, &expected)
-	if err != nil {
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			return failure("schema_upgrade_busy", "run schema upgrade requires exclusive lifecycle ownership; stop all run owners, readers and supervisors, then retry")
-		}
-		var mismatch *schemaMismatch
-		if errors.As(err, &mismatch) && mismatch.found == schemaVersion && expected.matches(mismatch.identity) {
-			return nil // another upgrader committed this same store; reattach and validate
-		}
-		return err
-	}
-	err = migrateSchema8(ctx, s)
-	// No maintenance/reconciliation runs through this exclusive migration handle.
-	// Database handles close before the lease, even after a cancelled transaction.
-	return errors.Join(err, s.closeHandles())
 }
 
 const legacyRunColumns = "id,generation,slot,created_at,program,result,cleanup,terminal,accounted_bytes,evicting,expires_at,completed_at,stdout_bytes,stderr_bytes,stdout_lines,stderr_lines"
@@ -124,7 +101,7 @@ func migrateSchema8(ctx context.Context, s *Store) (retErr error) {
 	if err := validateLegacyRuns(ctx, tx); err != nil {
 		return err
 	}
-	newTable := strings.Replace(runTableSchema, "CREATE TABLE runs(", "CREATE TABLE runs_v9(", 1)
+	newTable := strings.Replace(runTableSchemaV9, "CREATE TABLE runs(", "CREATE TABLE runs_v9(", 1)
 	statements := []string{
 		newTable,
 		"INSERT INTO runs_v9(rowid," + legacyRunColumns + ",cleanup_scope) SELECT rowid," + legacyRunColumns + ",'linux_descendants_v1' FROM runs",
@@ -165,7 +142,7 @@ OR (b.completed_at IS NULL) <> (b.expires_at IS NULL))`).Scan(&inconsistentBatch
 		return err
 	}
 	if used > s.policy.MaxRetainedBytes {
-		return failure("schema_upgrade_capacity", "preserved history exceeds the stored retained quota; adjust capacity with a schema-8-compatible binary, then retry; no logs were evicted")
+		return failure("schema_upgrade_capacity", "preserved history exceeds the stored retained quota; raise runs.max_retained_bytes and use capy runs upgrade offline, then retry; no logs were evicted")
 	}
 	for _, statement := range []string{
 		"UPDATE run_policy SET schema_version=9 WHERE singleton=1 AND schema_version=8",
@@ -186,6 +163,10 @@ OR (b.completed_at IS NULL) <> (b.expires_at IS NULL))`).Scan(&inconsistentBatch
 }
 
 func legacyRunIndexes(ctx context.Context, tx *sql.Tx) ([]string, error) {
+	return migrationRunIndexes(ctx, tx, legacyRunColumns)
+}
+
+func migrationRunIndexes(ctx context.Context, tx *sql.Tx, expectedColumns string) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT name FROM pragma_table_info('runs') ORDER BY cid")
 	if err != nil {
 		return nil, upgradeError(err)
@@ -202,8 +183,8 @@ func legacyRunIndexes(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, upgradeError(err)
 	}
-	if strings.Join(columns, ",") != legacyRunColumns {
-		return nil, failure("schema_upgrade_failed", "schema-8 runs table has unexpected columns; history was not changed")
+	if strings.Join(columns, ",") != expectedColumns {
+		return nil, failure("schema_upgrade_failed", "run migration source table has unexpected columns; history was not changed")
 	}
 	rows, err = tx.QueryContext(ctx, "SELECT type,sql FROM sqlite_schema WHERE tbl_name='runs' AND type IN ('index','trigger') AND sql IS NOT NULL LIMIT 65")
 	if err != nil {
@@ -217,7 +198,7 @@ func legacyRunIndexes(ctx context.Context, tx *sql.Tx) ([]string, error) {
 			return nil, upgradeError(err)
 		}
 		if kind != "index" || len(statement) > 16384 || len(indexes) == 64 {
-			return nil, failure("schema_upgrade_failed", "schema-8 runs table has unsupported dependent objects")
+			return nil, failure("schema_upgrade_failed", "run migration source table has unsupported dependent objects")
 		}
 		indexes = append(indexes, statement)
 	}

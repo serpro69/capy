@@ -188,7 +188,7 @@ Linux `retired` rows remain distinguishable from Darwin observations. Authentica
 stored/supported schema versions are reported separately from executable capability.
 
 `capy runs inspect` reports recorded quarantine markers and unfinished observations
-independently of those eight recent runs. It supports schema 8 and 9 without
+independently of those eight recent runs. It supports schema 8, 9 and 10 without
 migration. Pending work without recorded quarantine is an unattributed observation,
 not a confirmed incident, a live-process claim or a guarantee of healthy admission.
 
@@ -213,8 +213,9 @@ also return `storage_unavailable` with “run store lifecycle is busy”; retry
 attachment after inspection finishes rather than repairing or discarding storage. Both
 paths prevent creation of missing WAL/SHM files and perform no maintenance.
 
-This increment adds diagnostics only. History-preserving administrative recovery
-requires the later schema-10-capable binary and offline upgrade workflow.
+This increment provides diagnostics and offline schema upgrade. History-preserving
+administrative recovery application remains unavailable; upgrading does not clear
+quarantine.
 `--receipt-id` accepts a recovery receipt UUID, never an incident UUID; `--plan`
 looks up a retained applied receipt, not an unapplied plan. Schema 8/9 has no
 receipts and returns `receipt_unavailable`; absence never proves nonapplication.
@@ -234,39 +235,61 @@ error text in run diagnostics.
 
 ## Run schema upgrades
 
-Run schema 9 preserves schema-8 history through an encrypted transactional upgrade.
-Stop all run owners, readers and supervisors for the selected owner, then start
-captured execution with the compatible new binary. Only normal execution-owner
-attachment performs the upgrade. Recovery queries and supervisors refuse old
-schemas without migrating; inspection and doctor can report schema-8 diagnostics.
+Run schema 10 supports fresh storage and encrypted upgrades from schema 8 or 9.
+Normal authenticated, configured execution attachment automatically attempts the
+upgrade before admission. Readers, helpers, inspection and doctor never migrate.
+An execute refused for quarantine may already have upgraded the database; inspect
+the actual schema instead of assuming it remained unchanged.
 
-The upgrade preserves run/batch IDs, output, cursors, expiry timestamps and pending
-cleanup evidence. It does not restart old jobs or clear quarantine. An old
-`retired` record remains Linux retirement evidence. The batch manifest gains
-scoped proof; public version-2 responses normalize historical blobs from that
-proof and the authoritative run columns without rewriting retained output.
-Normal TTL/quota retention resumes after attachment, including expiry of history
-already beyond its recorded TTL.
+For an upgrade without submitting any application command, stop all run owners,
+readers and supervisors for the selected owner, then use an ordinary terminal:
 
-Migration requires free filesystem space for the temporary encrypted table copy
-and WAL work, separately from retained-log quota. The preflight conservatively
-asks for three database images plus 2 MiB of headroom; it is not a disk reservation.
-A capacity or write failure rolls back without evicting logs to make the upgrade
-fit. `schema_upgrade_busy` requires stopping remaining handles;
-`schema_upgrade_capacity` identifies filesystem or retained-quota limits. If the
-stored retained quota is insufficient, adjust it with a schema-8-compatible binary
-before retrying. No error automatically recreates or discards the store.
+```bash
+capy runs inspect --project-dir . --json
+capy runs upgrade --project-dir . --json
+```
 
-Older binaries cannot read schema 9 and may misleadingly report
-`storage_unavailable` with path/permissions advice. Use the compatible new binary's
-doctor to identify the stored and supported versions. Keeping schema-9 logs requires
-a compatible reader; there is no reverse migration. To return to a schema-8 binary,
-export needed logs first, stop all owners/readers/helpers and establish quiescence
-of any old execution groups, then explicitly run `capy runs reset --discard` with
-the compatible binary for that owner before installing the older binary and its
-matching bindings. This permanently removes **all** retained run/batch logs for that
-owner, including protected history older than the default TTL. Knowledge, vault
-data and permanent locks remain intact.
+Do not run the administrative command inside `capy_execute`: that capture holds
+the lifecycle lease the upgrade needs exclusively. `runs upgrade` never creates a
+missing store, claims a generation, performs retention or clears quarantine.
+Normal execution attachment retains its ordinary post-migration maintenance,
+including expiry of history already beyond its recorded TTL.
+
+The stages commit separately: 8→9 adds Linux cleanup scope and normalizes batch
+proof as before; 9→10 preserves original result/program/output bytes and adds
+required phase metadata with explicit legacy `unknown`. Both preserve run/batch
+IDs, row IDs, cursors, expiry, retained proof and quarantine. Schema 10 also
+provisions bounded recovery metadata for later recovery support. The public
+envelope and helper protocol remain version 2. No old job is restarted.
+
+Migration needs free filesystem space for the encrypted table copy and WAL,
+separately from retained-log quota. Preflight conservatively requires three
+database images plus 2 MiB; this is not a disk reservation. Capacity/write failure
+rolls back the current stage without eviction. A committed earlier stage remains
+valid and can be resumed with the same command. `schema_upgrade_busy` means stop
+remaining attached users; `schema_upgrade_capacity` identifies disk or quota limits.
+
+If retained quota is insufficient, increase only `runs.max_retained_bytes` in the
+selected configuration, keeping TTL and per-run limits unchanged, then run
+`capy runs upgrade`. The command authenticates the existing schema and commits the
+quota increase **before** migration checks. It rejects decreases and TTL/per-run
+changes, including on schema 10, and works while quarantined. Its result reports
+schema and policy revision. A later migration failure can leave that quota
+increase committed; the output reports it explicitly. Automatic execution
+migration uses the stored quota and never silently applies this administrative
+increase. No failure evicts logs or recreates the store.
+
+Reload compatible CLI/MCP binaries after upgrade. Older binaries refuse schema
+10; there is no reverse migration. Retained history requires a compatible reader.
+Explicit `capy runs reset --discard` remains a separate destructive option after
+stopping all store users and establishing quiescence of old execution groups. It
+permanently removes **all** retained run/batch logs for that owner, including
+protected history. Knowledge, vault data and permanent locks remain intact.
+
+Upgrade returns 0 on success, 2 for invalid arguments, 1 for failure and 74 for
+output-delivery failure. A lost response does not establish rollback: inspect
+current schema/policy before retrying. Response budgeting formats one captured
+operation result and never repeats the upgrade.
 
 ## Key rotation and explicit data loss
 

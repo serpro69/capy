@@ -83,7 +83,7 @@ func TestCheckRunsSchemaMismatchGuidance(t *testing.T) {
 				found = true
 				require.Equal(t, Warn, check.Status)
 				require.Contains(t, check.Detail, fmt.Sprintf("stored schema=%d", version))
-				require.Contains(t, check.Detail, "supported schema=9")
+				require.Contains(t, check.Detail, "supported schema=10")
 				require.NotContains(t, check.Detail, "permissions")
 				require.NotContains(t, check.Detail, "reset --discard")
 				if version == 8 {

@@ -159,6 +159,7 @@ func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, cleanupScope execu
 		}
 		row.Result.BatchID = id
 		row.Result.State = "queued"
+		row.LastPhase = "queued"
 		result, err := encodeManifest(row.Result)
 		if err != nil {
 			return empty, nil, storageError()
