@@ -241,18 +241,27 @@ then refuse admission. Readers, helpers and diagnostics never migrate.
 The frozen schema-9 rebuild preserves the old Linux proof transformation. The
 schema-10 rebuild copies row IDs and exact program/result bytes, keeps indexes/FKs,
 and backfills required no-default `last_phase` as `unknown`. New admissions insert
-`admitted`/`queued` explicitly. Schema 10 provisions bounded incident, receipt,
+`admitted`/`queued` explicitly; pending authorization records `authorized`, and
+existing start callbacks record `compile`/`run` without extra output events.
+Schema 10 provisions bounded incident, receipt,
 disposition, membership, batch-resolution and separate disposed-index tables;
 reconciliation now publishes bounded, independently charged incident records
 with the quarantine markers and monotonic recovery epoch in one transaction.
-Live quarantine preserves its marker without requiring audit allocation or index
-recount. Attribution-capacity/write/epoch failure permits configured queries to
+Live quarantine passes bounded admitted identity and typed cause/stage into the
+same transaction. An attribution savepoint allows a writable marker to commit
+even if audit allocation or index recount fails; the service retains its refusal
+latch and explicitly volatile context when attribution persistence is unconfirmed.
+Any attribution error triggers one fresh bounded, idempotent marker-only attempt,
+including whole-transaction rollback or deadline expiry. If neither attempt can
+commit, the store-wide marker may remain absent while the service latch blocks
+its own work; pending evidence remains available for later reconciliation.
+Attribution-capacity/write/epoch failure permits configured queries to
 reattach read-only with a permanent admission refusal and no maintenance; helpers
 never use that fallback.
 Unresolved subjects deduplicate by historical identity; resolved episodes remain
 immutable. Schema-10 inspection binds incident/receipt pages to that epoch and
-samples run state separately, without publication or maintenance. Runtime cause
-attribution and recovery application remain later run-recovery tasks.
+samples run state separately, without publication or maintenance. Recovery
+application remains a later run-recovery task.
 Public envelope/helper protocol 2 and cursor/redaction formats are unchanged.
 See [upgrade and rollback](reference/runs.md#run-schema-upgrades).
 

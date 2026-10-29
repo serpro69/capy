@@ -45,7 +45,7 @@ func retentionRun(t *testing.T, s *Store, o *Owner, data string, terminal bool) 
 	r, err := s.Admit(t.Context(), o, executor.CleanupLinuxDescendants, Program{})
 	require.NoError(t, err)
 	require.NoError(t, s.Pending(t.Context(), r.ID, o.ID, executor.CleanupLinuxDescendants))
-	require.NoError(t, s.Started(t.Context(), r.ID))
+	require.NoError(t, s.Started(t.Context(), r.ID, "run"))
 	if data != "" {
 		require.NoError(t, s.Append(t.Context(), r.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: []byte(data)}))
 	}
@@ -388,7 +388,7 @@ func TestLargeEvictionPersistsAfterAppendRetryFails(t *testing.T) {
 	r, err := s.Admit(t.Context(), o, executor.CleanupLinuxDescendants, Program{Request: executor.ExecRequest{Code: strings.Repeat("x", int(filler))}})
 	require.NoError(t, err)
 	require.NoError(t, s.Pending(t.Context(), r.ID, o.ID, executor.CleanupLinuxDescendants))
-	require.NoError(t, s.Started(t.Context(), r.ID))
+	require.NoError(t, s.Started(t.Context(), r.ID, "run"))
 	before := accounted(t, s)
 	// First tentative append succeeds. After committing a partial eviction,
 	// force the retried append to fail, proving that rollback cannot erase the

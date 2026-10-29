@@ -12,25 +12,25 @@ import (
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
-type incidentCause string
-type incidentStage string
+type IncidentCause string
+type IncidentStage string
 type incidentAttribution string
 
 const (
-	incidentPending      incidentCause       = "pending_cleanup"
-	incidentFinalization incidentCause       = "finalization_unpersisted"
-	incidentSupervisor   incidentCause       = "supervisor_lost"
-	incidentStartup      incidentCause       = "startup_uncertain"
-	incidentGeneration   incidentCause       = "generation_mismatch"
-	incidentProof        incidentCause       = "invalid_proof"
-	incidentManifest     incidentCause       = "invalid_manifest"
-	incidentStructure    incidentCause       = "structural_inconsistency"
-	incidentLegacy       incidentCause       = "legacy_unattributed"
-	stageStartup         incidentStage       = "startup"
-	stageHelperWait      incidentStage       = "helper_wait"
-	stageFinalization    incidentStage       = "finalization"
-	stageReconciliation  incidentStage       = "reconciliation"
-	stageLegacy          incidentStage       = "legacy_inspection"
+	incidentPending      IncidentCause       = "pending_cleanup"
+	incidentFinalization IncidentCause       = "finalization_unpersisted"
+	incidentSupervisor   IncidentCause       = "supervisor_lost"
+	incidentStartup      IncidentCause       = "startup_uncertain"
+	incidentGeneration   IncidentCause       = "generation_mismatch"
+	incidentProof        IncidentCause       = "invalid_proof"
+	incidentManifest     IncidentCause       = "invalid_manifest"
+	incidentStructure    IncidentCause       = "structural_inconsistency"
+	incidentLegacy       IncidentCause       = "legacy_unattributed"
+	stageStartup         IncidentStage       = "startup"
+	stageHelperWait      IncidentStage       = "helper_wait"
+	stageFinalization    IncidentStage       = "finalization"
+	stageReconciliation  IncidentStage       = "reconciliation"
+	stageLegacy          IncidentStage       = "legacy_inspection"
 	attributionRecorded  incidentAttribution = "recorded"
 	attributionInferred  incidentAttribution = "inferred"
 	attributionUnknown   incidentAttribution = "unattributed"
@@ -40,8 +40,8 @@ type incident struct {
 	Version                                                     int
 	ID, Kind, Key, Generation, RunID, BatchID, Phase, ReceiptID string
 	Slot                                                        *int
-	Cause                                                       incidentCause
-	Stage                                                       incidentStage
+	Cause                                                       IncidentCause
+	Stage                                                       IncidentStage
 	Attribution                                                 incidentAttribution
 	DetectedAt                                                  *int64
 	Revision, ChargedBytes                                      int64
@@ -54,7 +54,7 @@ func validPhase(s string) bool {
 	}
 	return false
 }
-func (c incidentCause) rank() int {
+func (c IncidentCause) rank() int {
 	switch c {
 	case incidentLegacy:
 		return 1
@@ -94,7 +94,7 @@ func (i incident) valid() bool {
 func storeIncident() incident {
 	return incident{Kind: "store", Key: "store", Cause: incidentLegacy, Stage: stageLegacy, Attribution: attributionUnknown, Phase: "unknown"}
 }
-func ownerIncident(slot int, generation string, cause incidentCause) incident {
+func ownerIncident(slot int, generation string, cause IncidentCause) incident {
 	return incident{Kind: "owner", Key: fmt.Sprintf("owner:%d:%s", slot, generation), Slot: &slot, Generation: generation, Cause: cause, Stage: stageLegacy, Attribution: attributionUnknown, Phase: "unknown"}
 }
 func optionalString(s string) any {

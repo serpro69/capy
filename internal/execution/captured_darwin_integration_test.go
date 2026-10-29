@@ -124,6 +124,11 @@ func (s *darwinCaptureFixture) Append(event executor.OutputEvent) error {
 }
 
 func (s *darwinCaptureFixture) Finish(ctx context.Context, out Outcome) error {
+	if s.mode == "helper loss" {
+		// Execution cleanup has finished, but neither terminal persistence nor
+		// acknowledgement occurs. The owner only has durable pending evidence.
+		os.Exit(74)
+	}
 	if s.mode == "finish failure" {
 		return errors.New("synthetic finalization failure")
 	}
@@ -273,6 +278,7 @@ func TestDarwinCapturedPersistenceFailures(t *testing.T) {
 			} else {
 				require.Equal(t, executor.CleanupPending, result.Cleanup.State)
 				require.False(t, result.Capture.TerminalPersisted)
+				assertRuntimeIncident(t, s, *result.RunID, "", "finalization_unpersisted", "finalization", "run")
 				_, done, err := s.begin(t.Context(), true)
 				if done != nil {
 					done()
@@ -306,6 +312,9 @@ func TestDarwinCapturedCompilerRuntimeFailure(t *testing.T) {
 	require.Equal(t, executor.CleanupObserved, result.Cleanup.State)
 	require.True(t, result.Capture.TerminalPersisted)
 	require.Equal(t, "compiler-output", darwinRawText(t, s, *result.RunID, "stdout"))
+	row, err := s.store.Load(t.Context(), *result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "compile", row.LastPhase, "failed runtime spawn must not claim a durable run phase")
 }
 
 func TestDarwinCapturedPublicAdmission(t *testing.T) {
@@ -347,9 +356,60 @@ func TestDarwinCapturedObservationFailure(t *testing.T) {
 	require.Equal(t, "incomplete", result.Capture.State)
 	require.True(t, result.Capture.TerminalPersisted, "a persisted outcome does not imply completed cleanup")
 	require.Equal(t, "cleanup_unverified", result.Error.Code)
+	assertRuntimeIncident(t, s, *result.RunID, "", "pending_cleanup", "finalization", "run")
 	_, done, err := s.begin(t.Context(), true)
 	if done != nil {
 		done()
 	}
 	require.ErrorContains(t, err, "unverified run cleanup", "the service must quarantine pending Darwin proof")
+}
+
+func TestDarwinStartupIncidentRetainsHelperReservation(t *testing.T) {
+	s := newDarwinCaptureService(t, "batch phases")
+	launcher := newLeaseLauncher()
+	launcher.wait = func(*exec.Cmd) error { return errors.New("injected wait failure without reap") }
+	s.launch = launcher.launchSupervisor
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan runstore.Result, 1)
+	go func() {
+		done <- s.Execute(ctx, executor.ExecRequest{Language: executor.Shell, Code: "# hold startup\ntouch forbidden"}, "", 30*time.Second)
+	}()
+	require.NoError(t, awaitLeaseFile(t.Context(), filepath.Join(s.project, "opening")))
+	cancel()
+	var result runstore.Result
+	select {
+	case result = <-done:
+	case <-time.After(8 * time.Second):
+		t.Fatal("unverified startup did not return")
+	}
+	launcher.mu.Lock()
+	var actor *exchangeProcess
+	for p, blocked := range launcher.reservations {
+		if blocked {
+			actor = p
+		}
+	}
+	launcher.mu.Unlock()
+	require.NotNil(t, actor)
+	t.Cleanup(func() {
+		// The fixture waiter skipped the sole reap; restore it before service
+		// shutdown. Production keeps the reservation while that proof is absent.
+		_ = actor.cmd.Wait()
+		require.NotNil(t, actor.cmd.ProcessState)
+		require.NoError(t, actor.gate.Release())
+		require.NoError(t, actor.refs.Close())
+		close(actor.reaped)
+	})
+	require.Equal(t, "cleanup_unverified", result.Error.Code)
+	require.False(t, result.Capture.TerminalPersisted)
+	assertRuntimeIncident(t, s, *result.RunID, "", "startup_uncertain", "startup", "admitted")
+	active, _ := s.WorkCounts()
+	require.Equal(t, 1, active)
+	require.Error(t, runstore.Reset(t.Context(), s.store.Path()))
+	next := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "touch bypass"}, "", time.Second)
+	require.Nil(t, next.RunID)
+	require.Contains(t, next.Error.Message, *result.RunID)
+	require.NoFileExists(t, filepath.Join(s.project, "forbidden"))
+	require.NoFileExists(t, filepath.Join(s.project, "bypass"))
 }

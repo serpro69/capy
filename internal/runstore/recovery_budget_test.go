@@ -97,7 +97,7 @@ func TestAdmissionAccountingPreservesCallerBudgets(t *testing.T) {
 	}))
 	require.NoError(t, conn.Close())
 	require.NoError(t, s.Pending(t.Context(), row.ID, o.ID, executor.CleanupLinuxDescendants))
-	require.NoError(t, s.Started(t.Context(), row.ID))
+	require.NoError(t, s.Started(t.Context(), row.ID, "run"))
 	err = s.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: []byte("must roll back")})
 	require.Error(t, err, "capture append must keep its shorter write deadline")
 	var events int

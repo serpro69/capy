@@ -139,7 +139,7 @@ func TestRunsIncidentFailurePreservesReadsAndBlocksOtherProcess(t *testing.T) {
 	kept, err := s.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, runstore.Program{})
 	require.NoError(t, err)
 	require.NoError(t, s.Pending(t.Context(), kept.ID, owner.ID, executor.CleanupLinuxDescendants))
-	require.NoError(t, s.Started(t.Context(), kept.ID))
+	require.NoError(t, s.Started(t.Context(), kept.ID, "run"))
 	data := []byte("successful sibling retained")
 	require.NoError(t, s.Append(t.Context(), kept.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: data}))
 	require.NoError(t, s.Finish(t.Context(), kept.ID, runstore.Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true}))

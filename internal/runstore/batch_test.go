@@ -18,7 +18,7 @@ func TestBatchManifestSurvivesChildEviction(t *testing.T) {
 	require.NotEqual(t, children[0].ID, children[1].ID)
 	for i, child := range children {
 		require.NoError(t, s.Pending(t.Context(), child.ID, o.ID, executor.CleanupLinuxDescendants))
-		require.NoError(t, s.Started(t.Context(), child.ID))
+		require.NoError(t, s.Started(t.Context(), child.ID, "run"))
 		require.NoError(t, s.Append(t.Context(), child.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: []byte("diagnostic output")}))
 		code := i * 7
 		require.NoError(t, s.Finish(t.Context(), child.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code, ObservedBytes: 17}))
@@ -129,7 +129,7 @@ func TestBatchUnverifiedChildrenExposeRecoveryError(t *testing.T) {
 	b, children, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "uncertain"}, {Command: "safe"}}})
 	require.NoError(t, err)
 	require.NoError(t, s.Pending(t.Context(), children[0].ID, o.ID, executor.CleanupLinuxDescendants))
-	require.NoError(t, s.Started(t.Context(), children[0].ID))
+	require.NoError(t, s.Started(t.Context(), children[0].ID, "run"))
 	require.NoError(t, o.Lease.Close())
 	_, err = s.Reconcile(t.Context())
 	require.NoError(t, err)
@@ -234,7 +234,7 @@ func TestBatchSearchProjectionFailureKeepsRawAvailability(t *testing.T) {
 	b, children, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Concurrency: 1, Commands: []BatchCommand{{Command: "one"}}})
 	require.NoError(t, err)
 	require.NoError(t, s.Pending(t.Context(), children[0].ID, o.ID, executor.CleanupLinuxDescendants))
-	require.NoError(t, s.Started(t.Context(), children[0].ID))
+	require.NoError(t, s.Started(t.Context(), children[0].ID, "run"))
 	require.NoError(t, s.Append(t.Context(), children[0].ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: []byte("retained raw")}))
 	code := 0
 	require.NoError(t, s.Finish(t.Context(), children[0].ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true, ExitCode: &code, ObservedBytes: 12}))

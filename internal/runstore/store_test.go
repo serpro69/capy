@@ -28,7 +28,7 @@ func TestCaptureAndReopen(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
 	require.Error(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants), "a run may be authorized once only")
-	require.NoError(t, st.Started(t.Context(), row.ID))
+	require.NoError(t, st.Started(t.Context(), row.ID, "run"))
 	out := []byte{0, 255, 'a', '\n', 'b'}
 	require.NoError(t, st.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: out}))
 	require.NoError(t, st.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 2, Phase: "run", Stream: "stderr", Data: []byte("failure marker")}))
@@ -181,7 +181,7 @@ func TestAppendBatchRollbackPreservesExactPrefix(t *testing.T) {
 	row, err := st.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, Program{TTLHours: 24, MaxRunBytes: 20})
 	require.NoError(t, err)
 	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
-	require.NoError(t, st.Started(t.Context(), row.ID))
+	require.NoError(t, st.Started(t.Context(), row.ID, "run"))
 	event := func(seq uint64, data string) executor.OutputEvent {
 		return executor.OutputEvent{Sequence: seq, Phase: "run", Stream: "stdout", Data: []byte(data)}
 	}

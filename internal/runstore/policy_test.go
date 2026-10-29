@@ -89,7 +89,7 @@ func TestPolicySnapshotsAdmissionAndPreservesTerminalExpiry(t *testing.T) {
 	require.Equal(t, settings.MaxRunBytes, row.Program.MaxRunBytes)
 	require.EqualValues(t, 1, row.Program.PolicyRevision)
 	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
-	require.NoError(t, st.Started(t.Context(), row.ID))
+	require.NoError(t, st.Started(t.Context(), row.ID, "run"))
 	require.ErrorContains(t, st.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: make([]byte, 33)}), "capture limit")
 	require.NoError(t, st.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true}))
 	completed, err := st.Load(t.Context(), row.ID)

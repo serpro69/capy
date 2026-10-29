@@ -77,12 +77,12 @@ type storedCapture struct {
 func (s *storedCapture) Pending(ctx context.Context) error {
 	return s.store.Pending(ctx, s.id, s.generation, s.scope)
 }
-func (s *storedCapture) started(string) error {
+func (s *storedCapture) started(phase string) error {
 	// Capture writes are independently bounded even if execution cancellation is
 	// already requested; a failed write must not abandon pipe draining.
 	ctx, cancel := context.WithTimeout(context.Background(), runstore.WriteTimeout)
 	defer cancel()
-	return s.store.Started(ctx, s.id)
+	return s.store.Started(ctx, s.id, phase)
 }
 func (s *storedCapture) Append(e executor.OutputEvent) error {
 	ctx, cancel := context.WithTimeout(context.Background(), runstore.WriteTimeout)

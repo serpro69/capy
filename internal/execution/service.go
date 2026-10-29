@@ -3,6 +3,7 @@ package execution
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -23,6 +24,8 @@ type Service struct {
 	admissionMu          sync.Mutex // publishes metadata and its control handle together
 	closed               bool
 	unverified           bool
+	unverifiedContext    *runstore.RuntimeIncident
+	unverifiedDurable    bool
 	jobs                 map[*serviceCall]context.CancelFunc
 	running              map[string]*runCall
 	active               int
@@ -86,7 +89,7 @@ func (s *Service) begin(ctx context.Context, execute bool) (context.Context, fun
 		return nil, nil, &runstore.Error{Code: "storage_unavailable", Message: "execution owner is shutting down"}
 	}
 	if execute && s.unverified {
-		return nil, nil, &runstore.Error{Code: "cleanup_unverified", Message: "this owner has unverified run cleanup; stop execution groups and recover before admitting more work"}
+		return nil, nil, s.unverifiedErrorLocked()
 	}
 	if execute {
 		s.dispatchLocked(time.Now())
@@ -262,12 +265,12 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 			reason := "supervisor_startup_failed"
 			result.Reason = &reason
 			result.Error = &runstore.Error{Code: "cleanup_unverified", Message: "cancelled helper cleanup could not be verified; recover batch status before retrying"}
-			if err := s.quarantine(st); err != nil {
-				result.Error.Message += "; admission quarantine could not be persisted"
+			if err := s.quarantine(st, row, runstore.IncidentStartupUncertain, runstore.StageStartup); err != nil {
+				result.Error.Message += "; incident attribution persistence was not confirmed"
 			}
 			return result
 		}
-		quarantineErr := s.quarantine(st)
+		quarantineErr := s.quarantine(st, row, runstore.IncidentStartupUncertain, runstore.StageStartup)
 		// Report the startup failure promptly, but retain this worker's active
 		// slot and lifecycle ownership until even a stopped helper is joined.
 		call.cleanup = h.cleanupPending()
@@ -288,7 +291,7 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 		result.Reason = &reason
 		result.Error = &runstore.Error{Code: "cleanup_unverified", Message: "supervisor startup outcome is unknown; inspect this run before retrying"}
 		if quarantineErr != nil {
-			result.Error.Message += "; admission quarantine could not be persisted"
+			result.Error.Message += "; incident attribution persistence was not confirmed"
 		}
 		return result
 	}
@@ -306,7 +309,13 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	// so quarantine it here as well as during later owner recovery.
 	if waitErr != nil || !outcome.TerminalPersisted || !outcome.Result.Cleanup.Complete() {
 		if readErr != nil || latest.Cleanup == (executor.CleanupEvidence{Scope: row.Cleanup.Scope, State: executor.CleanupPending}) {
-			quarantineErr = s.quarantine(st)
+			cause, stage := runstore.IncidentPendingCleanup, runstore.StageFinalization
+			if waitErr != nil {
+				cause, stage = runstore.IncidentSupervisorLost, runstore.StageHelperWait
+			} else if !outcome.TerminalPersisted {
+				cause = runstore.IncidentFinalizationUnpersisted
+			}
+			quarantineErr = s.quarantine(st, row, cause, stage)
 		}
 		if readErr == nil && latest.Result.CompletedAt == nil && latest.Cleanup == (executor.CleanupEvidence{Scope: row.Cleanup.Scope, State: executor.CleanupNotSpawned}) {
 			if ctx.Err() != nil {
@@ -317,7 +326,7 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	}
 	if readErr == nil && latest.Result.Capture.TerminalPersisted {
 		if quarantineErr != nil {
-			latest.Result.Error = &runstore.Error{Code: "cleanup_unverified", Message: "process cleanup is unverified and admission quarantine could not be persisted"}
+			latest.Result.Error = &runstore.Error{Code: "cleanup_unverified", Message: "process cleanup is unverified and incident attribution persistence was not confirmed"}
 		}
 		return s.withPreview(queryCtx, st, latest.Result)
 	}
@@ -339,7 +348,7 @@ func (s *Service) executeAdmitted(ctx context.Context, st *runstore.Store, owner
 	}
 
 	if quarantineErr != nil {
-		result.Error.Message += "; admission quarantine could not be persisted"
+		result.Error.Message += "; incident attribution persistence was not confirmed"
 	}
 	return result
 }
@@ -373,15 +382,51 @@ func reject(err error) runstore.Result {
 	return runstore.Rejection("storage_unavailable", "run admission failed before execution")
 }
 
-func (s *Service) quarantine(st *runstore.Store) error {
+func (s *Service) quarantine(st *runstore.Store, row runstore.Admitted, cause runstore.IncidentCause, stage runstore.IncidentStage) error {
+	// Keep one immutable subject, not the admitted program/result or an unbounded
+	// incident list. Concurrent failures still each attempt durable publication.
+	subject := runstore.RuntimeIncident{RunID: row.ID, Generation: row.Generation, Slot: row.Slot, BatchID: row.Result.BatchID, Cause: cause, Stage: stage}
 	s.mu.Lock()
 	s.unverified = true
+	if s.unverifiedContext == nil {
+		s.unverifiedContext = &subject
+	}
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), runstore.WriteTimeout)
-	defer cancel()
 	// Pending rows and retained leases remain the fallback proof if this write
 	// fails; all future calls through this owner are blocked in memory as well.
-	return st.Quarantine(ctx)
+	err := st.QuarantineRun(ctx, subject)
+	cancel()
+	if err != nil {
+		// Deadline expiry or SQLite transaction-wide rollback can invalidate the
+		// attribution savepoint and its marker. Give the existing marker-only
+		// path an independent bounded attempt; never retry execution/finalization
+		// or claim that this fallback made attribution durable.
+		markerCtx, stopMarker := context.WithTimeout(context.Background(), runstore.WriteTimeout)
+		markerErr := st.Quarantine(markerCtx)
+		stopMarker()
+		return errors.Join(err, markerErr)
+	}
+	s.mu.Lock()
+	if s.unverifiedContext == &subject {
+		s.unverifiedDurable = true
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+// The caller holds mu. Context describes this owner's first refusal only; the
+// durable inventory may contain additional incidents from concurrent children.
+func (s *Service) unverifiedErrorLocked() *runstore.Error {
+	message := "this owner has unverified run cleanup; stop execution groups and recover before admitting more work"
+	if subject := s.unverifiedContext; subject != nil {
+		persistence := "volatile attribution; persistence unconfirmed"
+		if s.unverifiedDurable {
+			persistence = "durable attribution"
+		}
+		message += fmt.Sprintf("; run %s, owner %s, slot %d: %s at %s (%s)", subject.RunID, subject.Generation, subject.Slot, subject.Cause, subject.Stage, persistence)
+	}
+	return &runstore.Error{Code: "cleanup_unverified", Message: message}
 }
 
 func (s *Service) Status(ctx context.Context, id string) (runstore.Result, error) {

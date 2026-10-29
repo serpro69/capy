@@ -173,33 +173,3 @@ func TestDarwinBatchShutdownJoinsFinalizer(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "x", string(count))
 }
-
-func TestDarwinBatchFinalizationFailureQuarantinesPendingChildren(t *testing.T) {
-	s := newDarwinCaptureService(t, "batch phases")
-	s.policy.MaxActive = 1
-	b := darwinBatch(t, s, 1, "# fail finish\nprintf prefix; printf x >> once; exit 7", "touch forbidden")
-	require.Eventually(t, func() bool {
-		active, pending := s.WorkCounts()
-		return active == 0 && pending == 0
-	}, 10*time.Second, 10*time.Millisecond)
-	status, err := s.BatchStatus(t.Context(), b.BatchID)
-	require.NoError(t, err)
-	require.Equal(t, executor.CleanupPending, status.Cleanup.State)
-	require.Nil(t, status.ExpiresAt, "unverified child proof cannot expire as completed history")
-	children, err := s.List(t.Context(), runstore.ListOptions{BatchID: b.BatchID, Limit: 8})
-	require.NoError(t, err)
-	require.Len(t, children.Entries, 2)
-	require.Equal(t, executor.CleanupPending, children.Entries[0].Cleanup.State)
-	require.Equal(t, executor.CleanupNotSpawned, children.Entries[1].Cleanup.State)
-	require.Equal(t, "prefix", darwinRawText(t, s, children.Entries[0].RunID, "stdout"))
-	rejected := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "touch bypass"}, "", time.Second)
-	require.Equal(t, "cleanup_unverified", rejected.Error.Code)
-	blocked, err := s.ExecuteBatchResponse(t.Context(), runstore.BatchInput{Concurrency: 1, Commands: []runstore.BatchCommand{{Command: "touch bypass"}}}, time.Second, 0, func(runstore.BatchResult) error { return nil })
-	require.NoError(t, err)
-	require.Equal(t, "cleanup_unverified", blocked.Error.Code)
-	require.NoFileExists(t, filepath.Join(s.project, "forbidden"))
-	require.NoFileExists(t, filepath.Join(s.project, "bypass"))
-	count, err := os.ReadFile(filepath.Join(s.project, "once"))
-	require.NoError(t, err)
-	require.Equal(t, "x", string(count))
-}

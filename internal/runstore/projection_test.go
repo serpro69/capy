@@ -28,7 +28,7 @@ func projectionFixture(t *testing.T) (*Store, Admitted) {
 	row, err := st.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, Program{TTLHours: 24, MaxRunBytes: 4 << 20})
 	require.NoError(t, err)
 	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
-	require.NoError(t, st.Started(t.Context(), row.ID))
+	require.NoError(t, st.Started(t.Context(), row.ID, "run"))
 	return st, row
 }
 func pageText(page ReadPage) string {
