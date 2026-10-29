@@ -155,13 +155,16 @@ func inspectLegacySubjects(ctx context.Context, tx *sql.Tx, view *Inspection, op
 	if len(markers) > 0 {
 		view.Admission = "recorded_blocked"
 	}
-	// Never advertise an unavailable apply/upgrade command in this staged binary.
-	// Both legacy schemas require schema 10 for attributed operator recovery.
+	// Apply remains unavailable in this staged binary; offline upgrade is usable.
 	view.Action = "inspect"
 	view.NextStep = "Select this physical owner with --project-dir to inspect again. No recorded quarantine is not a guarantee of admission; pending observations do not prove live or abandoned work."
-	if len(markers) > 0 || view.SchemaVersion < schemaVersion {
+	if len(markers) > 0 {
+		view.Action = "inspect"
+		view.NextStep = "Preserve retained history and stop affected sessions and old execution groups; this binary supports inspection and upgrade, but operator recovery application is not available yet."
+	}
+	if view.SchemaVersion < schemaVersion {
 		view.Action = "upgrade_required"
-		view.NextStep = "Recovery needs a schema-10-capable binary with offline runs upgrade. Stop affected sessions and old execution groups before administration."
+		view.NextStep = "Stop affected sessions, readers and supervisors, then run capy runs upgrade for this selected owner from an ordinary terminal. Upgrade preserves quarantine and submits no command."
 	}
 	var cutoff int64
 	if err := tx.QueryRowContext(ctx, "SELECT last_created FROM run_meta WHERE singleton=1").Scan(&cutoff); err != nil || cutoff < 0 {

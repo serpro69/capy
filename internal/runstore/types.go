@@ -97,6 +97,8 @@ type Program struct {
 }
 
 type Admitted struct {
+	LastPhase string // internal durable phase; never an execution argument
+
 	chargeBytes    int64 // transaction-local payload growth; never serialized
 	ID, Generation string
 	Slot           int

@@ -108,6 +108,20 @@ func runText(result runstore.Result) string {
 func encodeRunText(value any) ([]byte, error) {
 	var b strings.Builder
 	switch v := value.(type) {
+	case runstore.UpgradeResult:
+		if v.Policy != nil && v.AdmissionBlocked != nil {
+			fmt.Fprintf(&b, "Run upgrade: schema %d → %d; policy revision %d → %d; retained quota %d bytes.\n", v.FromSchema, v.SchemaVersion, v.PreviousPolicyRevision, v.Policy.Revision, v.Policy.MaxRetainedBytes)
+			if v.QuotaIncreased {
+				b.WriteString("Quota increase committed and retained independently of migration.\n")
+			}
+			fmt.Fprintf(&b, "Recorded admission block=%t. No command admitted; quarantine and history preserved.\n", *v.AdmissionBlocked)
+		} else {
+			b.WriteString("Run upgrade: authenticated schema/policy or admission state unavailable. No command admitted.\n")
+		}
+		if v.Error != nil {
+			fmt.Fprintf(&b, "%s: %s\n", v.Error.Code, terminalText(v.Error.Message))
+		}
+		b.WriteString("Inspect with capy runs inspect; reload compatible sessions after upgrade.\n")
 	case runstore.Inspection:
 		fmt.Fprintf(&b, "Run inspection: %s; store=%s schema=%d. Owner: %s\n", v.Admission, v.StoreID, v.SchemaVersion, v.Owner)
 		fmt.Fprintf(&b, "Recorded quarantine markers=%d; inferred candidates=%d; unattributed pending=%d. Details: %s; omitted=%t.\n",

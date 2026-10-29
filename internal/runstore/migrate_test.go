@@ -167,7 +167,7 @@ func (f *legacyFixture) upgrade(t *testing.T) {
 	t.Helper()
 	identity := f.identity(t)
 	f.close(t)
-	require.NoError(t, upgradeSchema8(t.Context(), f.path, testKey, f.owner, identity))
+	require.NoError(t, upgradeSupportedSchema(t.Context(), f.path, testKey, f.owner, 8, identity))
 }
 
 func migrationVersions(t *testing.T, db *sql.DB, want int) {
@@ -222,7 +222,7 @@ func TestMigrationPreservesHistoryProofAndCursors(t *testing.T) {
 	s, err := openAttached(t.Context(), f.path, testKey, f.owner, unix.LOCK_SH)
 	require.NoError(t, err)
 	defer s.closeHandles()
-	migrationVersions(t, s.db, 9)
+	migrationVersions(t, s.db, 10)
 	require.Equal(t, f.id, s.ID())
 	require.EqualValues(t, 1, s.Policy().Revision)
 	var after []byte
@@ -301,12 +301,12 @@ func TestMigrationOnlyConfiguredExecutionMayUpgrade(t *testing.T) {
 	report, err := Inspect(t.Context(), f.path, testKey)
 	require.NoError(t, err)
 	require.Equal(t, 8, report.SchemaVersion, "inspection supports legacy diagnostics without upgrading")
-	require.Equal(t, 9, report.SupportedSchemaVersion)
+	require.Equal(t, 10, report.SupportedSchemaVersion)
 	require.Equal(t, "upgrade_required", report.Inspection.Action)
 	s, err := OpenWithPolicy(t.Context(), f.path, testKey, true, f.settings)
 	require.NoError(t, err)
 	defer s.Close()
-	migrationVersions(t, s.db, 9)
+	migrationVersions(t, s.db, 10)
 	owner, err := s.ClaimOwner(t.Context())
 	require.NoError(t, err)
 	defer owner.Lease.Close()
@@ -395,7 +395,7 @@ func TestMigrationWrongKeyBusyAndChangedStore(t *testing.T) {
 	// inode check across the shared-to-exclusive gap.
 	require.NoError(t, os.Rename(f.path, f.path+".old"))
 	require.NoError(t, os.WriteFile(f.path, before, 0600))
-	requireErrorCode(t, upgradeSchema8(t.Context(), f.path, testKey, f.owner, expected), "run_unavailable")
+	requireErrorCode(t, upgradeLegacyStage(t.Context(), f.path, testKey, f.owner, expected), "run_unavailable")
 	f.db = f.connect(t)
 	migrationVersions(t, f.db, 8)
 }
@@ -446,7 +446,7 @@ func TestMigrationRejectsMalformedLegacyEvidence(t *testing.T) {
 			require.NoError(t, err)
 			expected := f.identity(t)
 			f.close(t)
-			err = upgradeSchema8(t.Context(), f.path, testKey, f.owner, expected)
+			err = upgradeLegacyStage(t.Context(), f.path, testKey, f.owner, expected)
 			require.Error(t, err)
 			f.db = f.connect(t)
 			var version int
@@ -608,12 +608,12 @@ func TestMigrationBorrowedLeaseBlocksUpgradeAndConcurrentWinner(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, owner.Lease.Close())
 	require.NoError(t, old.closeHandles())
-	requireErrorCode(t, upgradeSchema8(t.Context(), f.path, testKey, f.owner, expected), "schema_upgrade_busy")
+	requireErrorCode(t, upgradeLegacyStage(t.Context(), f.path, testKey, f.owner, expected), "schema_upgrade_busy")
 	require.NoError(t, refs.Close())
-	require.NoError(t, upgradeSchema8(t.Context(), f.path, testKey, f.owner, expected))
+	require.NoError(t, upgradeLegacyStage(t.Context(), f.path, testKey, f.owner, expected))
 	// A second contender may observe the same store already upgraded after it
 	// releases the shared lease. Revalidate instead of rebuilding it again.
-	require.NoError(t, upgradeSchema8(t.Context(), f.path, testKey, f.owner, expected))
+	require.NoError(t, upgradeLegacyStage(t.Context(), f.path, testKey, f.owner, expected))
 	f.db = f.connect(t)
 	migrationVersions(t, f.db, 9)
 }
@@ -657,7 +657,7 @@ func TestMigrationRejectsContradictoryCaptureCompletion(t *testing.T) {
 			require.NoError(t, err)
 			expected := f.identity(t)
 			f.close(t)
-			err = upgradeSchema8(t.Context(), f.path, testKey, f.owner, expected)
+			err = upgradeLegacyStage(t.Context(), f.path, testKey, f.owner, expected)
 			requireErrorCode(t, err, "schema_upgrade_failed")
 			require.ErrorContains(t, err, "capture")
 			f.db = f.connect(t)
@@ -694,7 +694,7 @@ func TestMigrationInterruptedProcessPreservesHistory(t *testing.T) {
 	require.NoError(t, err)
 	f.upgrade(t)
 	f.db = f.connect(t)
-	migrationVersions(t, f.db, 9)
+	migrationVersions(t, f.db, 10)
 }
 
 // Keep the schema-8 fixture frozen independently of the current public encoder.
@@ -710,4 +710,26 @@ func marshalLegacyResult(r Result) ([]byte, error) {
 	}
 	delete(fields, "cleanup")
 	return json.Marshal(fields)
+}
+
+// upgradeLegacyStage never converts the shared lock. openAttached has already closed
+// its read-only probe and shared lease; a reset/another upgrader can win that gap.
+func upgradeLegacyStage(ctx context.Context, path, key, owner string, expected schemaIdentity) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	s, err := openAttachedSchema(ctx, path, key, owner, unix.LOCK_EX, 8, &expected)
+	if err != nil {
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			return failure("schema_upgrade_busy", "run schema upgrade requires exclusive lifecycle ownership; stop all run owners, readers and supervisors, then retry")
+		}
+		var mismatch *schemaMismatch
+		if errors.As(err, &mismatch) && (mismatch.found == 9 || mismatch.found == 10) && expected.matches(mismatch.identity) {
+			return nil // another upgrader committed this same store; reattach and validate
+		}
+		return err
+	}
+	err = migrateSchema8(ctx, s)
+	// No maintenance/reconciliation runs through this exclusive migration handle.
+	// Database handles close before the lease, even after a cancelled transaction.
+	return errors.Join(err, s.closeHandles())
 }

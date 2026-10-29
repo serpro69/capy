@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const schemaVersion = 9
+const schemaVersion = 10
 const OwnerSlots = 64
 const WriteTimeout = 250 * time.Millisecond
 
@@ -47,7 +47,7 @@ func Open(ctx context.Context, path, key string, create bool) (*Store, error) {
 // OpenWithPolicy attaches only to matching configured store-wide settings.
 // A mismatch can publish a revision only after all handles/helpers are gone.
 // Open without configuration (used by supervisors) consumes the stored policy.
-// create=true is the normal execution-owner path and may upgrade schema 8;
+// create=true is the normal execution-owner path and may upgrade schemas 8/9;
 // readers (create=false), Open and supervisors never migrate.
 func OpenWithPolicy(ctx context.Context, path, key string, create bool, settings PolicyConfig) (*Store, error) {
 	if err := settings.validate(); err != nil {
@@ -107,8 +107,8 @@ func open(ctx context.Context, path, key string, create bool, desired *PolicyCon
 		s, err := openAttachedSchema(ctx, path, key, owner, unix.LOCK_SH, schemaVersion, upgraded)
 		if err != nil {
 			var mismatch *schemaMismatch
-			if create && desired != nil && errors.As(err, &mismatch) && mismatch.found == 8 {
-				if err := upgradeSchema8(ctx, path, key, owner, mismatch.identity); err != nil {
+			if create && desired != nil && errors.As(err, &mismatch) && (mismatch.found == 8 || mismatch.found == 9) {
+				if err := upgradeSupportedSchema(ctx, path, key, owner, mismatch.found, mismatch.identity); err != nil {
 					return nil, err
 				}
 				upgraded = &mismatch.identity
@@ -192,6 +192,13 @@ func openAttachedSchema(ctx context.Context, path, key, owner string, lock, supp
 	var version int
 	var recordedOwner string
 	err = probe.QueryRowContext(ctx, "SELECT version, store_id, owner FROM run_meta WHERE singleton=1").Scan(&version, &s.id, &recordedOwner)
+	// A zero target is reserved for authenticated offline upgrade discovery.
+	if supported == 0 {
+		supported = schemaVersion
+		if version == 8 || version == 9 {
+			supported = version
+		}
+	}
 	if err == nil && version == supported && uuid.Validate(s.id) == nil {
 		s.policy, err = readPolicyVersion(ctx, probe, supported)
 	}
@@ -383,7 +390,7 @@ func initialize(ctx context.Context, path, key, owner string, settings PolicyCon
 		return storageError()
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schema+policySchema+searchSchema+batchSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, schema+policySchema+searchSchema+batchSchema+recoverySchema); err != nil {
 		return storageError()
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO run_meta(singleton,version,store_id,owner) VALUES(1,?,?,?)", schemaVersion, uuid.NewString(), owner); err != nil {
@@ -461,7 +468,7 @@ func (s *Store) Close() error {
 }
 
 const schema = `
-CREATE TABLE run_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, store_id TEXT NOT NULL, owner TEXT NOT NULL, admission_blocked INTEGER NOT NULL DEFAULT 0 CHECK(admission_blocked IN (0,1)), last_created INTEGER NOT NULL DEFAULT 0, accounted_bytes INTEGER NOT NULL DEFAULT 0 CHECK(accounted_bytes>=0), index_bytes INTEGER NOT NULL DEFAULT 0 CHECK(index_bytes>=0), index_enabled INTEGER NOT NULL DEFAULT 0 CHECK(index_enabled IN (0,1)));
+CREATE TABLE run_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, store_id TEXT NOT NULL, owner TEXT NOT NULL, admission_blocked INTEGER NOT NULL DEFAULT 0 CHECK(admission_blocked IN (0,1)), last_created INTEGER NOT NULL DEFAULT 0, accounted_bytes INTEGER NOT NULL DEFAULT 0 CHECK(accounted_bytes>=0), index_bytes INTEGER NOT NULL DEFAULT 0 CHECK(index_bytes>=0), index_enabled INTEGER NOT NULL DEFAULT 0 CHECK(index_enabled IN (0,1)), recovery_revision INTEGER NOT NULL DEFAULT 0 CHECK(recovery_revision>=0));
 CREATE TABLE run_owners(slot INTEGER PRIMARY KEY CHECK(slot>=0 AND slot<64), generation TEXT NOT NULL UNIQUE, cleanup_unverified INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_unverified IN (0,1)));
 ` + runTableSchema + runIndexesSchema + `
 CREATE TABLE run_work_claims(
@@ -497,7 +504,7 @@ CREATE INDEX run_projection_order ON run_projection(run_id,seq,raw_start);
 
 `
 
-// Shared by fresh stores and the transactional schema-8 rebuild.
+// Current schema for fresh stores and the schema-9 rebuild.
 const runTableSchema = `
 CREATE TABLE runs(
  id TEXT PRIMARY KEY, generation TEXT NOT NULL, slot INTEGER NOT NULL CHECK(slot>=0 AND slot<64),
@@ -511,6 +518,7 @@ CREATE TABLE runs(
  expires_at INTEGER, completed_at INTEGER,
  stdout_bytes INTEGER NOT NULL DEFAULT 0, stderr_bytes INTEGER NOT NULL DEFAULT 0,
  stdout_lines INTEGER NOT NULL DEFAULT 1, stderr_lines INTEGER NOT NULL DEFAULT 1,
+ last_phase TEXT NOT NULL CHECK(last_phase IN ('unknown','admitted','queued','authorized','compile','run')),
  CHECK((cleanup_scope='linux_descendants_v1' AND cleanup IN ('not_spawned','pending','retired')) OR
        (cleanup_scope='darwin_process_group_observation_v1' AND cleanup IN ('not_spawned','pending','observed')))
 );

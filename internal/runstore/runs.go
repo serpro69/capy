@@ -85,11 +85,11 @@ func loadRun(ctx context.Context, query runQuerier, id string) (Admitted, error)
 	var manifest []byte
 	var manifestTerminal sql.NullBool
 	var terminal, unverified bool
-	err := query.QueryRowContext(ctx, `SELECT generation,slot,program,result,cleanup_scope,cleanup,terminal,
+	err := query.QueryRowContext(ctx, `SELECT generation,slot,program,result,cleanup_scope,cleanup,terminal,last_phase,
 EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation AND o.cleanup_unverified=1),
 (SELECT c.result FROM run_batch_children c WHERE c.run_id=runs.id),
 (SELECT c.terminal FROM run_batch_children c WHERE c.run_id=runs.id)
-FROM runs WHERE id=? AND evicting=0`, id).Scan(&row.Generation, &row.Slot, &program, &result, &row.Cleanup.Scope, &row.Cleanup.State, &terminal, &unverified, &manifest, &manifestTerminal)
+FROM runs WHERE id=? AND evicting=0`, id).Scan(&row.Generation, &row.Slot, &program, &result, &row.Cleanup.Scope, &row.Cleanup.State, &terminal, &row.LastPhase, &unverified, &manifest, &manifestTerminal)
 	if errors.Is(err, sql.ErrNoRows) {
 		return row, failure("run_unavailable", "run is unavailable in this owner's store")
 	}
@@ -469,9 +469,12 @@ func (s *Store) prepareRun(owner *Owner, scope executor.CleanupScope, program Pr
 		return Admitted{}, nil, nil, storageError()
 	}
 
-	return Admitted{ID: id, Generation: owner.ID, Slot: owner.Slot, Program: program, Result: result, Cleanup: cleanup}, encodedProgram, encodedResult, nil
+	return Admitted{LastPhase: "admitted", ID: id, Generation: owner.ID, Slot: owner.Slot, Program: program, Result: result, Cleanup: cleanup}, encodedProgram, encodedResult, nil
 }
 func insertRun(ctx context.Context, tx *sql.Tx, row Admitted, encodedProgram, encodedResult []byte) error {
+	if (row.LastPhase != "admitted" && row.LastPhase != "queued") || row.LastPhase != row.Result.State {
+		return failure("invalid_argument", "new run requires an explicit admitted or queued phase matching its state")
+	}
 	if _, err := tx.ExecContext(ctx, "UPDATE run_meta SET last_created=max(last_created+1,?) WHERE singleton=1", time.Now().UTC().UnixNano()); err != nil {
 		return storageError()
 	}
@@ -479,7 +482,7 @@ func insertRun(ctx context.Context, tx *sql.Tx, row Admitted, encodedProgram, en
 	if err := tx.QueryRowContext(ctx, "SELECT last_created FROM run_meta WHERE singleton=1").Scan(&createdAt); err != nil {
 		return storageError()
 	}
-	_, err := tx.ExecContext(ctx, "INSERT INTO runs(id,generation,slot,program,result,cleanup_scope,cleanup,created_at) VALUES(?,?,?,?,?,?,?,?)", row.ID, row.Generation, row.Slot, encodedProgram, encodedResult, row.Cleanup.Scope, row.Cleanup.State, createdAt)
+	_, err := tx.ExecContext(ctx, "INSERT INTO runs(id,generation,slot,program,result,cleanup_scope,cleanup,created_at,last_phase) VALUES(?,?,?,?,?,?,?,?,?)", row.ID, row.Generation, row.Slot, encodedProgram, encodedResult, row.Cleanup.Scope, row.Cleanup.State, createdAt, row.LastPhase)
 	if err != nil {
 		return storageError()
 	}

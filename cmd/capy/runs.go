@@ -12,9 +12,9 @@ import (
 func newRunsCmd() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{Use: "runs", Short: "Recover captured runs without executing them again", SilenceErrors: true, SilenceUsage: true}
-	cmd.Long = "Inspect retained output with status, list, read and search. Logs live in the selected owner's .capy/runs and expire or may be evicted under quota pressure. Default reads are sanitized; --raw returns unsanitized base64. Cancel MCP-owned runs through their original MCP owner; interrupt an attached CLI process to cancel it. After a credential change, stop owners and old execution groups before reset --discard, which permanently deletes this owner's run logs. Run rekey is not supported.\n\nVersion-2 results distinguish Linux retired cleanup from Darwin observed cleanup; observed does not establish host quiescence. Schema-8 history upgrades only during normal execution attachment after authentication and exclusive lifecycle ownership. Recovery queries and doctor do not migrate it. There is no reverse migration: keep a compatible reader or explicitly discard retained history before downgrading."
+	cmd.Long = "Inspect retained output with status, list, read and search. Logs live in the selected owner's .capy/runs and expire or may be evicted under quota pressure. Default reads are sanitized; --raw returns unsanitized base64. Cancel MCP-owned runs through their original MCP owner; interrupt an attached CLI process to cancel it. After a credential change, stop owners and old execution groups before reset --discard, which permanently deletes this owner's run logs. Run rekey is not supported.\n\nVersion-2 results distinguish Linux retired cleanup from Darwin observed cleanup; observed does not establish host quiescence. Schema-8/9 history upgrades during configured execution attachment or explicit offline runs upgrade, after authentication and exclusive lifecycle ownership. Migration preserves quarantine; a refused execution may already have upgraded. Readers, helpers and doctor never migrate. There is no reverse migration: keep a compatible reader or explicitly discard retained history before downgrading."
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		return writeQueryFailure(cmd, jsonOutput, 2048, 2, &runstore.Error{Code: "invalid_argument", Message: "choose runs inspect, status, read, list, search or reset --discard"})
+		return writeQueryFailure(cmd, jsonOutput, 2048, 2, &runstore.Error{Code: "invalid_argument", Message: "choose runs inspect, upgrade, status, read, list, search or reset --discard"})
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit a versioned JSON error for an invalid operation")
 	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, _ error) error {
@@ -26,6 +26,7 @@ func newRunsCmd() *cobra.Command {
 	cmd.AddCommand(newRunsResetCmd())
 	cmd.AddCommand(newRunsSearchCmd())
 	cmd.AddCommand(newRunsInspectCmd())
+	cmd.AddCommand(newRunsUpgradeCmd())
 	return cmd
 }
 func newRunQueryCmd(action string) *cobra.Command {

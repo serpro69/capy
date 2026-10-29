@@ -183,7 +183,7 @@ bytes; older knowledge/fetch text responses retain their text-byte accounting.
 
 ## Run storage and diagnostics
 
-`internal/runstore` owns schema 9 in `<selected-owner>/.capy/runs/runs.db`.
+`internal/runstore` owns schema 10 in `<selected-owner>/.capy/runs/runs.db`.
 It shares sqliteutil and corpus-independent retrieval without importing server
 or changing knowledge/vault source kinds. The physical selected owner determines
 the path; execution cwd and knowledge worktree sharing do not relocate it.
@@ -230,14 +230,22 @@ old groups may remain. See the [cleanup contract](feat/done/macos-captured-execu
 [lease evidence](feat/done/macos-captured-execution/lease-proof.md), and
 [Linux supervisor evidence](feat/done/routine-command-capture/supervisor-proof.md).
 
-Normal execution-owner attachment alone can migrate schema 8 to 9 after selected-key
-authentication and exclusive lifecycle acquisition. An encrypted transactional
-rebuild backfills the old Linux scope while preserving IDs, logs, cursors, batch
-proof and quarantine. Readers, helpers and diagnostics never migrate. Capacity
-or compatibility failures do not discard history. Public envelopes become v2;
-cursor and redaction formats remain unchanged. Hooks explicitly accept healthy
-v1 and v2 envelopes. Downgrade requires a compatible reader for retained logs or
-an operator's explicit discard; see [upgrade and rollback](reference/runs.md#run-schema-upgrades).
+Configured execution attachment automatically migrates schema 8→9→10 or 9→10
+before admission, under selected-key authentication and exclusive lifecycle
+ownership. The explicit offline `capy runs upgrade` uses the same separately
+committed stages without submitting work, reconciliation or retention. Its
+restricted quota-growth transaction precedes migration and can remain committed
+if a later stage fails. Both paths preserve quarantine; execution can upgrade and
+then refuse admission. Readers, helpers and diagnostics never migrate.
+
+The frozen schema-9 rebuild preserves the old Linux proof transformation. The
+schema-10 rebuild copies row IDs and exact program/result bytes, keeps indexes/FKs,
+and backfills required no-default `last_phase` as `unknown`. New admissions insert
+`admitted`/`queued` explicitly. Schema 10 provisions bounded incident, receipt,
+disposition, membership, batch-resolution and separate disposed-index tables;
+publication/application and their consumers remain later run-recovery tasks.
+Public envelope/helper protocol 2 and cursor/redaction formats are unchanged.
+See [upgrade and rollback](reference/runs.md#run-schema-upgrades).
 
 Store-authoritative TTL/quota/version/accounting policy can change only after
 all handles/helpers release lifecycle ownership. Opens close/release and retry
