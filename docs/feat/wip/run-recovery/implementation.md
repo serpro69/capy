@@ -137,6 +137,7 @@ Extend `retention.go` and recovery accounting helpers with separate administrati
 - Protect attributed unresolved-incident run evidence from expiry/quota deletion even when later terminal proof arrives; expose that protected evidence without modifying expiry → verify: planning can resolve the incident only, and original expiry resumes afterward without a run disposition or new payload window.
 - Allow subsequent TTL/quota eviction of disposed payload without accepting its cleanup as execution proof; atomically mark `evicting` with the run tombstone and `evicted` with final parent deletion → verify: output bytes/FTS rows disappear in bounded work, full debit remains until completion, and crashes never leave ambiguous legitimate-vs-missing child evidence.
 - Transfer independently retained audit charges before parent deletion and preserve dependencies → verify: exact no-double-charge/no-free-audit behavior under dbstat and conservative accounting, including cancellation mid-eviction.
+  - Task 8 already funds run-related audit independently at apply. Task 11 preserves that separation at parent deletion, releasing only payload debit; no second transfer is needed. Exact charge assertions include receipts, incidents, memberships, run dispositions and batch resolutions alongside payload/index debit.
 - Refuse apply/upgrade capacity shortages without invoking retention → verify: unrelated completed output cannot be sacrificed to make an administrative transaction succeed.
 
 ## Task 12: Retain batch dispositions and prune audit records

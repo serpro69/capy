@@ -86,19 +86,22 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 
 		var id string
 		var charged, expiry int64
-		// Only proven terminal records are evictable. Unverified cleanup remains
-		// evidence even when the result blob contains a historical expiry.
+		// Administrative closure has its own clock and never supplies execution
+		// proof. Open run incidents protect evidence even after late completion.
 		now := time.Now().UTC().UnixMilli()
 		// Resume already-hidden victims even if current pressure disappeared.
-		err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE evicting=1 AND "+acceptedCleanupSQL+" ORDER BY id LIMIT 1").Scan(&id, &charged, &expiry)
+		err = tx.QueryRowContext(ctx, `SELECT id,accounted_bytes,COALESCE(
+ (SELECT retention_expires_at FROM run_resolutions WHERE run_id=runs.id),expires_at)
+ FROM runs WHERE evicting=1 AND ((terminal=1 AND `+acceptedCleanupSQL+`) OR NOT `+undisposedRunSQL+`)
+ AND `+unprotectedRunSQL+` ORDER BY id LIMIT 1`).Scan(&id, &charged, &expiry)
 		if errors.Is(err, sql.ErrNoRows) && !expire && !pressure {
 			break
 		}
 		if errors.Is(err, sql.ErrNoRows) {
-			err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE terminal=1 AND "+acceptedCleanupSQL+" AND expires_at<=? ORDER BY expires_at,id LIMIT 1", now).Scan(&id, &charged, &expiry)
+			err = selectRetentionVictim(ctx, tx, now, false).Scan(&id, &charged, &expiry)
 		}
 		if errors.Is(err, sql.ErrNoRows) && pressure {
-			err = tx.QueryRowContext(ctx, "SELECT id,accounted_bytes,expires_at FROM runs WHERE terminal=1 AND "+acceptedCleanupSQL+" ORDER BY completed_at,id LIMIT 1").Scan(&id, &charged, &expiry)
+			err = selectRetentionVictim(ctx, tx, now, true).Scan(&id, &charged, &expiry)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			removed, debit, deleted, err := retainBatch(ctx, tx, pressure, expire, remainingRows)
@@ -129,13 +132,29 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 		if err != nil {
 			return report, err
 		}
-		if err := validateRunManifest(ctx, tx, id, row, true); err != nil {
+		disposition, err := readRunResolution(ctx, tx, id)
+		if err != nil {
+			return report, err
+		}
+		if disposition == nil && !CleanupAccepted(row) {
+			return report, recoveryInconsistent("eviction without operational closure")
+		}
+		if err := validateRunManifest(ctx, tx, id, row, disposition == nil); err != nil {
 			return report, err
 		}
 		// Hide the victim before deleting bounded payload batches. Keep its full
 		// debit until final deletion: partial cleanup never creates free quota.
-		if _, err := tx.ExecContext(ctx, "UPDATE runs SET evicting=1 WHERE id=? AND terminal=1", id); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE runs SET evicting=1 WHERE id=?", id); err != nil {
 			return report, storageError()
+		}
+		if disposition != nil && disposition.PayloadState == "retained" {
+			cause := "quota"
+			if expiry <= now {
+				cause = "ttl"
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE run_resolutions SET payload_state='evicting',eviction_cause=? WHERE run_id=?", cause, id); err != nil {
+				return report, storageError()
+			}
 		}
 		deleted, pending, err := deleteIndexWindows(ctx, tx, id, remainingRows)
 		if err != nil {
@@ -167,7 +186,19 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 			break
 		}
 		// Only bounded checkpoints, index progress and one claim remain.
-		if _, err := tx.ExecContext(ctx, "DELETE FROM runs WHERE id=? AND terminal=1", id); err != nil {
+		// Audit was independently funded at apply, not borrowed from the run
+		// reservation. Keep that debit and its dependencies intact. Only this
+		// parent's payload reservation is released, with the eviction evidence
+		// in the same transaction; run_search_state cascades with payload.
+		if disposition != nil {
+			// Wall-clock rollback must not create an impossible audit ordering.
+			// This bookkeeping clamp changes neither original nor recovery TTLs.
+			evictedAt := max(time.Now().UTC().UnixNano(), disposition.ResolvedAt)
+			if _, err := tx.ExecContext(ctx, "UPDATE run_resolutions SET payload_state='evicted',evicted_at=? WHERE run_id=?", evictedAt, id); err != nil {
+				return report, storageError()
+			}
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM runs WHERE id=?", id); err != nil {
 			return report, storageError()
 		}
 		report.AccountedBytes -= charged
@@ -198,6 +229,36 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 	}
 	report.More = report.AccountedBytes > limit-needed
 	return report, nil
+}
+
+// Run-scoped attribution is a retention pin, including an inconsistent
+// generation that requires separate repair. Owner/store incidents invent no
+// run pin. The indexed run_id/receipt_id lookup also serves disposed victims.
+const unprotectedRunSQL = `NOT EXISTS(SELECT 1 FROM run_incidents i WHERE i.run_id=runs.id AND i.receipt_id IS NULL)`
+
+// Each indexed branch selects at most one victim before the final comparison;
+// sorting the complete union would scan all eligible history under pressure.
+// Clocks have identical units: expiry milliseconds, order nanoseconds.
+// All returned administrative candidates are fully validated before deletion.
+func selectRetentionVictim(ctx context.Context, tx *sql.Tx, now int64, pressure bool) *sql.Row {
+	terminalFilter, dispositionFilter, order := " AND expires_at<=?", " AND d.retention_expires_at<=?", "expiry"
+	terminalOrder, dispositionOrder := "expires_at,id", "d.retention_expires_at,d.run_id"
+	args := []any{now, now}
+	if pressure {
+		terminalFilter, dispositionFilter, order, args = "", "", "ordered", nil
+		terminalOrder, dispositionOrder = "completed_at,id", "d.resolved_at,d.run_id"
+	}
+	return tx.QueryRowContext(ctx, `SELECT id,charged,expiry FROM (
+ SELECT * FROM (
+ SELECT id,accounted_bytes AS charged,expires_at AS expiry,completed_at AS ordered FROM runs
+ WHERE evicting=0 AND terminal=1 AND `+acceptedCleanupSQL+` AND `+undisposedRunSQL+` AND `+unprotectedRunSQL+terminalFilter+`
+ ORDER BY `+terminalOrder+` LIMIT 1)
+ UNION ALL
+ SELECT * FROM (
+ SELECT d.run_id,runs.accounted_bytes,d.retention_expires_at,d.resolved_at FROM run_resolutions d JOIN runs ON runs.id=d.run_id
+ WHERE d.payload_state='retained' AND `+unprotectedRunSQL+dispositionFilter+`
+ ORDER BY `+dispositionOrder+` LIMIT 1))
+ ORDER BY `+order+`,id LIMIT 1`, args...)
 }
 
 func charge(ctx context.Context, tx *sql.Tx, id string, amount, limit int64, expire bool) error {

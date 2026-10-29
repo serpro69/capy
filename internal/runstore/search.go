@@ -169,9 +169,11 @@ func (s *Store) Search(ctx context.Context, owner *Owner, options SearchOptions)
 		DB: s.db, PorterTable: "run_search_fts", TrigramTable: "run_search_trigram", TitleWeight: 1,
 		SelectColumns: "w.id,c.title,c.content,w.stream,w.raw_start,w.raw_end,w.seq,w.phase,w.start_line",
 		Join:          "JOIN run_search_windows w ON w.id=c.rowid JOIN runs r ON r.id=w.run_id",
-		FilterSQL:     " AND w.run_id=? AND r.evicting=0 AND (r.expires_at IS NULL OR r.expires_at>?) AND w.raw_end<=CASE w.stream WHEN 'stdout' THEN ? ELSE ? END",
-		FilterParams:  []any{options.RunID, time.Now().UTC().UnixMilli(), page.Coverage["stdout"], page.Coverage["stderr"]},
-		OnError:       func(err error) { mu.Lock(); layerErr = errors.Join(layerErr, err); mu.Unlock() },
+		FilterSQL: " AND w.run_id=? AND r.evicting=0 AND (r.expires_at IS NULL OR r.expires_at>? OR " +
+			"EXISTS(SELECT 1 FROM run_incidents i WHERE i.run_id=r.id AND i.generation=r.generation AND i.receipt_id IS NULL)) " +
+			"AND w.raw_end<=CASE w.stream WHEN 'stdout' THEN ? ELSE ? END",
+		FilterParams: []any{options.RunID, time.Now().UTC().UnixMilli(), page.Coverage["stdout"], page.Coverage["stderr"]},
+		OnError:      func(err error) { mu.Lock(); layerErr = errors.Join(layerErr, err); mu.Unlock() },
 		MapRow: func(rows *sql.Rows) (retrieval.SearchResult, error) {
 			var result retrieval.SearchResult
 			hit := SearchHit{RunID: options.RunID}

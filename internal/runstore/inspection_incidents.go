@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/serpro69/capy/internal/sanitize"
@@ -218,6 +219,39 @@ func incidentSubject(ctx context.Context, tx *sql.Tx, view *Inspection, i incide
 		s.MissingEvidence = append(s.MissingEvidence, "causal_run")
 		return s, nil
 	}
+	if i.ReceiptID != "" {
+		d, err := readRunResolution(ctx, tx, i.RunID)
+		if err != nil {
+			// Inspection must still enumerate other incidents when one retained
+			// disposition is damaged or its optional detail cannot be read.
+			var typed *Error
+			if errors.As(err, &typed) && typed.Code == "recovery_inconsistent" {
+				s.EvidenceInconsistent = true
+				s.MissingEvidence = append(s.MissingEvidence, "valid_disposition")
+			} else {
+				s.DetailUnavailable = true
+				s.MissingEvidence = append(s.MissingEvidence, "disposition_unavailable")
+			}
+			return s, nil
+		}
+		if d != nil {
+			if d.IncidentID != i.ID || d.ReceiptID != i.ReceiptID {
+				s.EvidenceInconsistent = true
+				s.MissingEvidence = append(s.MissingEvidence, "matching_disposition")
+				return s, nil
+			}
+			var original Result
+			if err := decodeRunResult(d.Original, d.Cleanup, &original); err != nil {
+				return s, err
+			}
+			s.State = diagnosticState(original.State, "admitted", "queued", "running", "exited", "start_failed", "timed_out", "cancelled", "interrupted", "skipped")
+			s.Cleanup = &d.Cleanup
+			s.MissingEvidence = append(s.MissingEvidence, "accepted_cleanup", "terminal_outcome")
+			available := d.PayloadState == "retained" && view.ObservedAt.Before(time.UnixMilli(d.ExpiresAt))
+			s.OutputAvailable = &available
+			return s, nil
+		}
+	}
 	// One indexed run lookup in the same read snapshot, without recursively
 	// counting the whole inventory for every incident on this page.
 	row, _, err := scanInspectionRun(tx.QueryRowContext(ctx, "SELECT "+inspectionRunColumns(view.SchemaVersion)+" FROM runs r WHERE r.id=?", i.RunID), view)
@@ -228,8 +262,12 @@ func incidentSubject(ctx context.Context, tx *sql.Tx, view *Inspection, i incide
 			case "run_unavailable":
 				available := false
 				s.OutputAvailable = &available
-				s.EvidenceInconsistent = true
-				s.MissingEvidence = append(s.MissingEvidence, "run_metadata")
+				// Resolved incident-only terminal history can expire normally.
+				// Open incidents still require their protected run evidence.
+				s.EvidenceInconsistent = i.ReceiptID == ""
+				if s.EvidenceInconsistent {
+					s.MissingEvidence = append(s.MissingEvidence, "run_metadata")
+				}
 			case "recovery_inconsistent":
 				s.EvidenceInconsistent = true
 				s.MissingEvidence = append(s.MissingEvidence, "valid_run_metadata")
@@ -243,6 +281,16 @@ func incidentSubject(ctx context.Context, tx *sql.Tx, view *Inspection, i incide
 	}
 
 	s.State, s.Cleanup, s.OutputAvailable = row.State, row.Cleanup, row.OutputAvailable
+	if i.ReceiptID == "" {
+		// This reports physical retention. A mismatched incident generation is
+		// flagged below and cannot authorize expired reads or operator recovery;
+		// retention nevertheless pins those bytes for separate evidence repair.
+		var available bool
+		if err := tx.QueryRowContext(ctx, "SELECT evicting=0 FROM runs WHERE id=?", i.RunID).Scan(&available); err != nil {
+			return s, metadataReadError(err)
+		}
+		s.OutputAvailable = &available
+	}
 	s.MissingEvidence = append(s.MissingEvidence, row.MissingEvidence...)
 	s.EvidenceInconsistent = s.EvidenceInconsistent || row.Reason == "recovery_inconsistent" || row.Generation != i.Generation || row.Slot == nil || *row.Slot != *i.Slot
 	return s, nil

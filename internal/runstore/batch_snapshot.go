@@ -24,7 +24,8 @@ func batchChildren(ctx context.Context, query *sql.Tx, id string) ([]batchChild,
 	rows, err := query.QueryContext(ctx, `SELECT c.run_id,c.ordinal,c.label,CASE WHEN length(c.result) BETWEEN 1 AND 8192 THEN c.result ELSE NULL END,c.terminal,b.created_at,b.generation,b.slot,
 r.cleanup_scope,r.cleanup,r.terminal,r.generation,r.slot,CASE WHEN length(r.result) BETWEEN 1 AND 8192 THEN r.result ELSE NULL END,
 EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=b.slot AND o.generation=b.generation AND o.cleanup_unverified=1),
-(r.id IS NOT NULL AND r.evicting=0 AND (r.expires_at IS NULL OR r.expires_at>?))
+(r.id IS NOT NULL AND r.evicting=0 AND (r.expires_at IS NULL OR r.expires_at>? OR
+ EXISTS(SELECT 1 FROM run_incidents i WHERE i.run_id=r.id AND i.generation=r.generation AND i.receipt_id IS NULL)))
 FROM run_batch_children c JOIN run_batches b ON b.id=c.batch_id
 LEFT JOIN runs r ON r.id=c.run_id WHERE c.batch_id=? ORDER BY c.ordinal LIMIT 257`, time.Now().UTC().UnixMilli(), id)
 	if err != nil {
