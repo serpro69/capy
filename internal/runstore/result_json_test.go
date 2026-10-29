@@ -31,7 +31,7 @@ func TestPublicRecoveryViewsNormalizeHistoricalProof(t *testing.T) {
 			require.NoError(t, err)
 			requirePublicCleanup(t, row.Result, row.Cleanup)
 			require.NoError(t, s.Pending(t.Context(), row.ID, owner.ID, scope))
-			require.NoError(t, s.Started(t.Context(), row.ID))
+			require.NoError(t, s.Started(t.Context(), row.ID, "run"))
 			const output = "historical marker\nsecond line\n"
 			require.NoError(t, s.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: []byte(output)}))
 			// Actual nonzero/signal outcomes survive incomplete cleanup.
@@ -91,7 +91,7 @@ func TestPublicPendingCleanupPreservesSignal(t *testing.T) {
 			row, err := s.Admit(t.Context(), owner, scope, Program{})
 			require.NoError(t, err)
 			require.NoError(t, s.Pending(t.Context(), row.ID, owner.ID, scope))
-			require.NoError(t, s.Started(t.Context(), row.ID))
+			require.NoError(t, s.Started(t.Context(), row.ID, "run"))
 			proof := executor.CleanupEvidence{Scope: scope, State: executor.CleanupPending}
 			require.NoError(t, s.Finish(t.Context(), row.ID, Completion{Cleanup: proof, Started: true, Signal: 9}))
 			loaded, err := s.Load(t.Context(), row.ID)

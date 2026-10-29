@@ -215,7 +215,7 @@ func observeSlotInconsistencies(ctx context.Context, tx *sql.Tx, slot int, gener
 	return changed, nil
 }
 
-func reconciliationManifestCause(ctx context.Context, tx *sql.Tx, c recoveryCandidate, r Result) (incidentCause, error) {
+func reconciliationManifestCause(ctx context.Context, tx *sql.Tx, c recoveryCandidate, r Result) (IncidentCause, error) {
 	var encoded []byte
 	var terminal bool
 	var batch, generation string

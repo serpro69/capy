@@ -47,7 +47,7 @@ func (s *Service) ExecuteBatchResponse(ctx context.Context, input runstore.Batch
 	s.mu.Lock()
 	switch {
 	case s.unverified:
-		err = &runstore.Error{Code: "cleanup_unverified", Message: "execution owner has unverified cleanup"}
+		err = s.unverifiedErrorLocked()
 	case len(input.Commands) > s.policy.MaxPending-s.pending:
 		err = &runstore.Error{Code: "pending_capacity_exhausted", Message: "batch inventory exceeds pending capacity; recover existing batches before retrying"}
 	case s.active >= s.policy.MaxActive || s.eligibleBatchLocked(time.Now()):

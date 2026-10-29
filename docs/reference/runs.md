@@ -199,12 +199,15 @@ capy runs inspect --project-dir . --cursor CURSOR --json
 ```
 
 Schema 10 records incident UUIDs, historical subjects, causes, detection stages
-and the last durable phase during normal reconciliation. Reobserving the same
+and the last durable phase during live-owner failure handling and normal reconciliation. Reobserving the same
 unresolved episode preserves its first detection time; later material evidence
 revises it. A later incident after resolution gets a new UUID. Legacy markers
 with no known causal run retain explicit unattributed metadata and no invented
-detection time. Live-owner cause attribution and later phase updates are still
-pending; current reconciliation observations remain labeled as inferred.
+detection time. Live owners record startup uncertainty, helper loss, unpersisted
+finalization or pending cleanup with the admitted run/generation and detection
+stage. Reconciliation observations remain labeled as inferred. The last durable
+phase advances through `admitted`/`queued`, `authorized`, and `compile`/`run`
+in existing state writes; it is separate from where a failure was detected.
 
 Keep the same owner and selector when continuing a page. Schema-10 incident and
 receipt membership is bound to the recovery epoch; a membership/marker change
@@ -216,8 +219,17 @@ commands, output or raw stored errors. Identity/proof/manifest inconsistencies
 remain diagnostic blockers that operator confirmation cannot override.
 
 Reconciliation commits incident publication, quarantine markers, accounting and
-epoch changes together. Live quarantine writes its safety marker and epoch without
-requiring incident quota or an index recount; runtime attribution remains Task 4.
+epoch changes together. Live quarantine commits attribution with its safety
+marker when possible. If attribution allocation/write/recount fails, its changes
+roll back while a writable safety marker can still commit independently of audit
+capacity. The live service always keeps its refusal latch and one bounded failure
+context; subsequent refusals label that context volatile when persistence is
+unconfirmed. After any attribution error, the service makes one fresh bounded
+marker-only attempt; an already committed marker makes that attempt a no-op.
+This does not retry the command or its finalization and does not make attribution
+durable. If neither attempt can commit, the store-wide marker may remain absent
+while this owner's in-memory latch continues to refuse execution.
+Restarted diagnostics rely on retained evidence, not that lost context.
 Capacity or attribution-write failures refuse new execution without partial
 attribution. Configured status/read/list queries can attach in SQLite read-only
 mode to recover retained history when attribution cannot be committed; this

@@ -150,8 +150,8 @@ func (s *Store) tryOwnerLease(slot int) (*os.File, error) {
 }
 
 // Quarantine preserves the existing live-owner safety latch without depending
-// on incident quota or an index recount. Task 4 adds known runtime attribution;
-// reconciliation separately records unattributed legacy markers when necessary.
+// on incident quota or an index recount. Callers with admitted identity use
+// QuarantineRun; reconciliation attributes legacy markers when necessary.
 func (s *Store) Quarantine(ctx context.Context) error {
 	tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
 	if err != nil {

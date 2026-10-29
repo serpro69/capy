@@ -35,9 +35,16 @@ type gatedStoredCapture struct {
 
 type failedCloseStoredCapture struct{ CaptureStore }
 
-type failedFinishStoredCapture struct{ CaptureStore }
+type failedFinishStoredCapture struct {
+	CaptureStore
+	lost bool
+}
 
 func (s *failedFinishStoredCapture) Finish(context.Context, Outcome) error {
+	if s.lost {
+		// Cleanup completed locally, but no terminal write or notice survives.
+		os.Exit(74)
+	}
 	return errors.New("synthetic helper finalization failure")
 }
 
@@ -95,8 +102,8 @@ func openStoredFixture(ctx context.Context, start Startup, key string, leases Le
 	if os.Getenv("CAPY_STORED_MODE") == "failed close" {
 		run.Store = &failedCloseStoredCapture{CaptureStore: run.Store}
 	}
-	if os.Getenv("CAPY_STORED_MODE") == "failed finish" {
-		run.Store = &failedFinishStoredCapture{CaptureStore: run.Store}
+	if mode := os.Getenv("CAPY_STORED_MODE"); mode == "failed finish" || mode == "helper loss" {
+		run.Store = &failedFinishStoredCapture{CaptureStore: run.Store, lost: mode == "helper loss"}
 	}
 	return run, nil
 }
@@ -112,6 +119,7 @@ func TestStoredFinalizationFailureQuarantinesLiveOwner(t *testing.T) {
 	require.Equal(t, &exit, result.ExitCode)
 	require.Equal(t, executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}, result.Cleanup)
 	require.False(t, result.Capture.TerminalPersisted)
+	assertRuntimeIncident(t, s, *result.RunID, "", "finalization_unpersisted", "finalization", "run")
 	next := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "touch forbidden"}, "", time.Second)
 	require.Nil(t, next.RunID)
 	require.Equal(t, "cleanup_unverified", next.Error.Code)
@@ -456,6 +464,13 @@ func TestStoredHelperLossQuarantinesWithoutSignallingMetadata(t *testing.T) {
 	page, err := st.ReadRaw(t.Context(), identity.ID, "stdout", "", 4096)
 	require.NoError(t, err)
 	require.Equal(t, "cleanup_unverified", page.Run.Error.Code)
+	view, err := runstore.InspectRuns(t.Context(), st.Path(), storedFixtureKey, runstore.InspectionOptions{RunID: identity.ID, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, view.Subjects, 1)
+	require.Equal(t, "inferred", view.Subjects[0].Attribution)
+	require.Equal(t, "reconciliation", view.Subjects[0].DetectionStage)
+	require.Equal(t, "pending_cleanup", view.Subjects[0].Reason)
+	require.Equal(t, "run", view.Subjects[0].Phase)
 }
 
 func TestStoredStoppedStartupRecoversWithoutRestart(t *testing.T) {
@@ -534,6 +549,9 @@ func TestStoredCompilerRetirementSurvivesRuntimeSpawnFailure(t *testing.T) {
 	require.Equal(t, "runtime_unavailable", result.Error.Code)
 	require.Equal(t, executor.CleanupRetired, result.Cleanup.State)
 	require.Equal(t, "complete", result.Capture.State)
+	row, err := s.store.Load(t.Context(), *result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "compile", row.LastPhase)
 	page, err := s.ReadRaw(t.Context(), *result.RunID, "stdout", "", 4096)
 	require.NoError(t, err)
 	require.Equal(t, []byte("compiler-output"), page.Fragments[0].Data)
@@ -582,6 +600,7 @@ func TestStoredUnverifiedReapRetainsReservation(t *testing.T) {
 	})
 	require.Equal(t, "cleanup_unverified", result.Error.Code)
 	require.False(t, result.Capture.TerminalPersisted)
+	assertRuntimeIncident(t, s, *result.RunID, "", "startup_uncertain", "startup", "admitted")
 	active, _ := s.WorkCounts()
 	require.Equal(t, 1, active)
 	require.Error(t, runstore.Reset(t.Context(), s.store.Path()))

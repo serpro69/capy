@@ -133,11 +133,15 @@ func (s *Store) Pending(ctx context.Context, id, generation string, scope execut
 			return failure("cleanup_unverified", "run start was already authorized or owner generation/scope changed")
 		}
 		row.Cleanup.State = executor.CleanupPending
+		row.LastPhase = "authorized"
 		return nil
 	})
 }
 
-func (s *Store) Started(ctx context.Context, id string) error {
+func (s *Store) Started(ctx context.Context, id, phase string) error {
+	if phase != "compile" && phase != "run" {
+		return failure("invalid_argument", "run start phase must be compile or run")
+	}
 	return s.update(ctx, id, func(tx *sql.Tx, row *Admitted) error {
 		if row.Cleanup.State != executor.CleanupPending {
 			return storageError()
@@ -147,6 +151,10 @@ func (s *Store) Started(ctx context.Context, id string) error {
 			row.Result.StartedAt = &now
 		}
 		row.Result.State = "running"
+		if phaseOrder(phase) < phaseOrder(row.LastPhase) {
+			return failure("invalid_argument", "run start phase cannot move backwards")
+		}
+		row.LastPhase = phase
 		if row.Result.Capture.State != "incomplete" {
 			row.Result.Capture.State = "recording"
 		}
@@ -293,7 +301,7 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 	row := Admitted{ID: id}
 	var program, result []byte
 	var terminal bool
-	if err := tx.QueryRowContext(ctx, "SELECT program,result,generation,cleanup_scope,cleanup,terminal FROM runs WHERE id=?", id).Scan(&program, &result, &row.Generation, &row.Cleanup.Scope, &row.Cleanup.State, &terminal); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT program,result,generation,cleanup_scope,cleanup,terminal,last_phase FROM runs WHERE id=?", id).Scan(&program, &result, &row.Generation, &row.Cleanup.Scope, &row.Cleanup.State, &terminal, &row.LastPhase); err != nil {
 		return storageError()
 	}
 	if json.Unmarshal(program, &row.Program) != nil || decodeRunResult(result, row.Cleanup, &row.Result) != nil {
@@ -371,7 +379,7 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 	if terminal {
 		completed, expires = row.Result.CompletedAt.UnixNano(), row.Result.ExpiresAt.UnixMilli()+1
 	}
-	r, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,cleanup=?,terminal=?,completed_at=?,expires_at=? WHERE id=? AND generation=? AND cleanup_scope=? AND EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation)", encoded, row.Cleanup.State, terminal, completed, expires, id, row.Generation, before.Scope)
+	r, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,cleanup=?,terminal=?,completed_at=?,expires_at=?,last_phase=? WHERE id=? AND generation=? AND cleanup_scope=? AND EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation)", encoded, row.Cleanup.State, terminal, completed, expires, row.LastPhase, id, row.Generation, before.Scope)
 	if err != nil {
 		return storageError()
 	}

@@ -54,7 +54,7 @@ func TestRecoveryScansHighSlotsOnOpen(t *testing.T) {
 	neverStarted := admitRecovery(t, st, high)
 	retired := admitRecovery(t, st, high)
 	require.NoError(t, st.Pending(t.Context(), retired.ID, high.ID, executor.CleanupLinuxDescendants))
-	require.NoError(t, st.Started(t.Context(), retired.ID))
+	require.NoError(t, st.Started(t.Context(), retired.ID, "run"))
 	data := []byte("visible!\npassword=unfinished")
 	require.NoError(t, st.Append(t.Context(), retired.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: data}))
 	// Model a durable retirement proof without terminal metadata; recovery
@@ -109,7 +109,7 @@ func TestRecoveryQuarantinesUnknownCleanupWithoutExpiringEvidence(t *testing.T) 
 	require.NoError(t, err)
 	row := admitRecovery(t, st, owner)
 	require.NoError(t, st.Pending(t.Context(), row.ID, owner.ID, executor.CleanupLinuxDescendants))
-	require.NoError(t, st.Started(t.Context(), row.ID))
+	require.NoError(t, st.Started(t.Context(), row.ID, "run"))
 	require.NoError(t, st.Append(t.Context(), row.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: []byte("retained-prefix")}))
 	// An unverified terminal write must not hide its proof at its old expiry.
 	_, err = st.db.ExecContext(t.Context(), `UPDATE runs SET result=json_set(CAST(result AS TEXT),'$.expires_at','2000-01-01T00:00:00Z') WHERE id=?`, row.ID)

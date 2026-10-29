@@ -67,7 +67,7 @@ func TestScopedCleanupTransitions(t *testing.T) {
 			require.Error(t, s.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: scope, State: complete}, Started: true}))
 			require.NoError(t, s.Pending(t.Context(), row.ID, o.ID, scope))
 			require.Error(t, s.Pending(t.Context(), row.ID, o.ID, scope))
-			require.NoError(t, s.Started(t.Context(), row.ID))
+			require.NoError(t, s.Started(t.Context(), row.ID, "run"))
 			for _, bad := range []executor.CleanupEvidence{{}, {Scope: other, State: executor.CleanupPending}, {Scope: scope, State: executor.CleanupNotSpawned}} {
 				require.Error(t, s.Finish(t.Context(), row.ID, Completion{Cleanup: bad, Started: true}))
 			}
@@ -103,7 +103,7 @@ func TestScopedCleanupPendingPreservesQuarantine(t *testing.T) {
 	row, err := s.Admit(t.Context(), o, executor.CleanupDarwinObservation, Program{})
 	require.NoError(t, err)
 	require.NoError(t, s.Pending(t.Context(), row.ID, o.ID, row.Cleanup.Scope))
-	require.NoError(t, s.Started(t.Context(), row.ID))
+	require.NoError(t, s.Started(t.Context(), row.ID, "run"))
 	require.NoError(t, s.Finish(t.Context(), row.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: row.Cleanup.Scope, State: executor.CleanupPending}, Started: true}))
 	expireRun(t, s, row.ID)
 	require.NoError(t, o.Lease.Close())
@@ -127,7 +127,7 @@ func TestScopedDarwinRecoveryAcceptsCompletedObservation(t *testing.T) {
 		require.NoError(t, err)
 		if state == executor.CleanupObserved {
 			require.NoError(t, s.Pending(t.Context(), row.ID, o.ID, row.Cleanup.Scope))
-			require.NoError(t, s.Started(t.Context(), row.ID))
+			require.NoError(t, s.Started(t.Context(), row.ID, "run"))
 			// Synthetic durable proof, mirroring the Linux recovery fixture.
 			// This tests storage policy, not native process observation.
 			_, err := s.db.ExecContext(t.Context(), "UPDATE runs SET cleanup='observed' WHERE id=?", row.ID)
@@ -160,7 +160,7 @@ func TestScopedBatchProofSurvivesEviction(t *testing.T) {
 			b, err = s.BatchStatus(t.Context(), b.BatchID)
 			require.NoError(t, err)
 			require.Equal(t, executor.CleanupPending, b.Cleanup.State)
-			require.NoError(t, s.Started(t.Context(), first.ID))
+			require.NoError(t, s.Started(t.Context(), first.ID, "run"))
 			require.NoError(t, s.Finish(t.Context(), first.ID, Completion{Cleanup: executor.CleanupEvidence{Scope: scope, State: completed}, Started: true}))
 			b, err = s.BatchStatus(t.Context(), b.BatchID)
 			require.NoError(t, err)
@@ -203,7 +203,7 @@ func TestScopedBatchSnapshotAcrossCompletion(t *testing.T) {
 	require.NoError(t, err)
 	row := children[0]
 	require.NoError(t, s.Pending(t.Context(), row.ID, o.ID, row.Cleanup.Scope))
-	require.NoError(t, s.Started(t.Context(), row.ID))
+	require.NoError(t, s.Started(t.Context(), row.ID, "run"))
 	writer, err := Open(t.Context(), s.path, testKey, false)
 	require.NoError(t, err)
 	defer writer.Close()

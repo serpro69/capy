@@ -41,7 +41,7 @@ func BenchmarkRunSearch(b *testing.B) {
 				if err := s.Pending(b.Context(), row.ID, o.ID, executor.CleanupLinuxDescendants); err != nil {
 					b.Fatal(err)
 				}
-				if err := s.Started(b.Context(), row.ID); err != nil {
+				if err := s.Started(b.Context(), row.ID, "run"); err != nil {
 					b.Fatal(err)
 				}
 				if mode == "capture_only" {
