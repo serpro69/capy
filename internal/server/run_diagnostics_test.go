@@ -45,7 +45,7 @@ func TestRunDiagnosticsOldBlockerWithoutCompletionAccounting(t *testing.T) {
 		result, err := call(t.Context(), mcp.CallToolRequest{})
 		require.NoError(t, err)
 		require.Contains(t, resultText(result), old)
-		require.Contains(t, resultText(result), "recorded quarantine markers=2; inferred candidates=1")
+		require.Contains(t, resultText(result), "recorded quarantine markers=2; recorded incidents=0; inferred incidents=1")
 		require.Nil(t, srv.runs)
 	}
 	after := srv.stats.Snapshot()

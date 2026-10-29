@@ -179,12 +179,8 @@ func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, cleanupScope execu
 		return empty, nil, storageError()
 	}
 	defer tx.Rollback()
-	var blocked bool
-	if err := tx.QueryRowContext(ctx, "SELECT admission_blocked FROM run_meta WHERE singleton=1").Scan(&blocked); err != nil {
-		return empty, nil, storageError()
-	}
-	if blocked {
-		return empty, nil, failure("cleanup_unverified", "run store admission is blocked by unverified process cleanup")
+	if err := s.checkQuarantineQuery(ctx, tx); err != nil {
+		return empty, nil, err
 	}
 	var generation string
 	if err = tx.QueryRowContext(ctx, "SELECT generation FROM run_owners WHERE slot=?", owner.Slot).Scan(&generation); err != nil || generation != owner.ID {

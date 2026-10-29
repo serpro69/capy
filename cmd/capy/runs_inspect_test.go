@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -111,4 +113,68 @@ func TestRunsInspectTextDistinguishesOwnerMarkers(t *testing.T) {
 	require.Contains(t, string(text), "slot=1 generation=10000000-0000-0000-0000-000000000001")
 	require.Contains(t, string(text), "slot=2 generation=20000000-0000-0000-0000-000000000002")
 	require.Contains(t, string(text), "missing=causal_run,detection_time")
+}
+
+func TestRunsIncidentFailurePreservesReadsAndBlocksOtherProcess(t *testing.T) {
+	bin := buildStdioCapy(t)
+	project := cliProject(t, "")
+	key := "synthetic-incident-cli-key"
+	env := stdioEnv(t, key)
+	path, err := config.ResolveRunDBPath(project)
+	require.NoError(t, err)
+	cfg := runstore.PolicyConfig{TTLHours: 24, MaxRunBytes: 64 << 20, MaxRetainedBytes: 512 << 20}
+	s, err := runstore.OpenWithPolicy(t.Context(), path, key, true, cfg)
+	require.NoError(t, err)
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			require.NoError(t, s.Close())
+		}
+	})
+	owner, err := s.ClaimOwner(t.Context())
+	require.NoError(t, err)
+	pending, err := s.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, runstore.Program{})
+	require.NoError(t, err)
+	require.NoError(t, s.Pending(t.Context(), pending.ID, owner.ID, executor.CleanupLinuxDescendants))
+	kept, err := s.Admit(t.Context(), owner, executor.CleanupLinuxDescendants, runstore.Program{})
+	require.NoError(t, err)
+	require.NoError(t, s.Pending(t.Context(), kept.ID, owner.ID, executor.CleanupLinuxDescendants))
+	require.NoError(t, s.Started(t.Context(), kept.ID))
+	data := []byte("successful sibling retained")
+	require.NoError(t, s.Append(t.Context(), kept.ID, executor.OutputEvent{Sequence: 1, Phase: "run", Stream: "stdout", Data: data}))
+	require.NoError(t, s.Finish(t.Context(), kept.ID, runstore.Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true}))
+	db := upgradeFixtureDB(t, path, key)
+	var used int64
+	require.NoError(t, db.QueryRow("SELECT accounted_bytes FROM run_meta").Scan(&used))
+	_, err = db.Exec("UPDATE run_policy SET max_run_bytes=1,max_retained_bytes=?", used)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	configText := "[store]\npath='knowledge.db'\n[runs]\nmax_response_bytes=2048\nmax_run_bytes=1\nmax_retained_bytes=" + strconv.FormatInt(used, 10) + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(project, ".capy.toml"), []byte(configText), 0600))
+	require.NoError(t, s.Quarantine(t.Context()), "live safety marker cannot depend on audit capacity")
+	rejected := cliRun(t, bin, project, env, "touch must-not-start")
+	require.Nil(t, rejected.RunID)
+	require.NotNil(t, rejected.Error)
+	require.Equal(t, "cleanup_unverified", rejected.Error.Code)
+	require.NoFileExists(t, filepath.Join(project, "must-not-start"))
+	require.NoError(t, owner.Lease.Close())
+	err = s.Close()
+	closed = true
+	require.Error(t, err, "offline incident publication has no headroom")
+	out, diag, status := capturedCLI(t, bin, project, env, "runs", "read", "--json", "--raw", "--run-id", kept.ID, "--project-dir", project)
+	require.Zero(t, status, "%s", out)
+	require.Empty(t, diag)
+	var page runstore.ReadPage
+	require.NoError(t, json.Unmarshal(out, &page))
+	require.Equal(t, data, page.Fragments[0].Data)
+	for _, action := range []string{"status", "list"} {
+		args := []string{"runs", action, "--json", "--project-dir", project}
+		if action == "status" {
+			args = append(args, "--run-id", kept.ID)
+		}
+		out, diag, status = capturedCLI(t, bin, project, env, args...)
+		require.Zero(t, status, "%s", out)
+		require.Empty(t, diag)
+		require.Contains(t, string(out), kept.ID)
+	}
 }

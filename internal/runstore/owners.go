@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 
 	"github.com/google/uuid"
+	"github.com/serpro69/capy/internal/sqliteutil"
 	"golang.org/x/sys/unix"
 )
 
@@ -106,13 +108,27 @@ func (s *Store) GuardAdmission(ctx context.Context) error {
 	return s.checkQuarantine(ctx)
 }
 
-func (s *Store) checkQuarantine(ctx context.Context) error {
+func (s *Store) checkQuarantine(ctx context.Context) error { return s.checkQuarantineQuery(ctx, s.db) }
+
+// Transactional admission rechecks use their existing connection. Exhausted
+// recovery epochs also refuse new work, including while a live slot is held.
+func (s *Store) checkQuarantineQuery(ctx context.Context, q runQuerier) error {
 	var blocked bool
-	if err := s.db.QueryRowContext(ctx, "SELECT admission_blocked FROM run_meta WHERE singleton=1").Scan(&blocked); err != nil {
-		return storageError()
+	if s.policy.SchemaVersion < 10 {
+		if err := q.QueryRowContext(ctx, "SELECT admission_blocked FROM run_meta WHERE singleton=1").Scan(&blocked); err != nil {
+			return storageError()
+		}
+	} else {
+		var epoch int64
+		if err := q.QueryRowContext(ctx, "SELECT admission_blocked OR EXISTS(SELECT 1 FROM run_incidents WHERE receipt_id IS NULL),recovery_revision FROM run_meta WHERE singleton=1").Scan(&blocked, &epoch); err != nil {
+			return storageError()
+		}
+		if epoch == math.MaxInt64 {
+			return failure("recovery_revision_exhausted", "recovery revision exhausted; admission is refused; preserve history and inspect before repair")
+		}
 	}
 	if blocked {
-		return failure("cleanup_unverified", "run store admission is blocked by unverified cleanup; stop old execution groups before explicit operator reset")
+		return failure("cleanup_unverified", "run store admission is blocked by unverified cleanup; inspect retained evidence before operator recovery")
 	}
 	return nil
 }
@@ -133,9 +149,26 @@ func (s *Store) tryOwnerLease(slot int) (*os.File, error) {
 	return f, nil
 }
 
+// Quarantine preserves the existing live-owner safety latch without depending
+// on incident quota or an index recount. Task 4 adds known runtime attribution;
+// reconciliation separately records unattributed legacy markers when necessary.
 func (s *Store) Quarantine(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, "UPDATE run_meta SET admission_blocked=1 WHERE singleton=1"); err != nil {
+	tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
+	if err != nil {
 		return storageError()
+	}
+	defer tx.Rollback()
+	changed, err := quarantineMarkers(ctx, tx, nil, "")
+	if err != nil {
+		return err
+	}
+	if changed {
+		if err := advanceRecoveryRevision(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return metadataFailure(ctx, "persisting quarantine marker")
 	}
 	return nil
 }

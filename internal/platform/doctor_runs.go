@@ -52,7 +52,7 @@ func CheckRuns(ctx context.Context, project, key string, cfg config.RunsConfig) 
 			}
 		}
 		status := Warn
-		if report.AdmissionBlocked || report.Inspection.Counts.QuarantineMarkers > 0 {
+		if report.AdmissionBlocked || report.Inspection.Counts.QuarantineMarkers > 0 || report.Inspection.Counts.UnresolvedIncidents > 0 {
 			status = Fail
 			repair = "recorded quarantine blocks admission; " + repair
 		}
@@ -66,22 +66,32 @@ func CheckRuns(ctx context.Context, project, key string, cfg config.RunsConfig) 
 	if report.SchemaVersion != report.SupportedSchemaVersion {
 		status, detail = Warn, fmt.Sprintf("upgrade_required; stored schema=%d, supported schema=%d; legacy read-only diagnostics; inspection does not migrate", report.SchemaVersion, report.SupportedSchemaVersion)
 	}
+	if view.Action == "recovery_inconsistent" {
+		status, detail = Warn, "recovery_inconsistent; recent run details are incomplete; preserve history and inspect the durable incident inventory"
+	}
 	if view.Admission == "recorded_blocked" {
 		status, detail = Fail, "cleanup_unverified; recorded quarantine blocks admission; inspect the selected owner's blockers before stopping affected sessions and old execution groups"
 	}
 	results = append(results, CheckResult{Name: "Run store", Status: status, Detail: detail})
 	status = Pass
-	if view.Counts.QuarantineMarkers > 0 {
+	if view.Counts.QuarantineMarkers > 0 || view.Counts.UnresolvedIncidents > 0 {
 		status = Fail
-	} else if view.Counts.UnattributedPending > 0 {
+	} else if view.Counts.UnattributedPending > 0 || view.Details != "complete" {
 		status = Warn
 	}
-	results = append(results, CheckResult{Name: "Run blockers", Status: status, Detail: fmt.Sprintf("recorded quarantine markers=%d; inferred candidates=%d; unattributed pending=%d (not confirmed incidents or proof of live work); details=%s; %s",
-		view.Counts.QuarantineMarkers, view.Counts.InferredCandidates, view.Counts.UnattributedPending, view.Details, view.NextStep)})
+	results = append(results, CheckResult{Name: "Run blockers", Status: status, Detail: fmt.Sprintf("recorded quarantine markers=%d; recorded incidents=%d; inferred incidents=%d; unattributed incidents=%d; inferred candidates=%d; unattributed pending=%d (not confirmed incidents or proof of live work); details=%s; %s",
+		view.Counts.QuarantineMarkers, view.Counts.RecordedIncidents, view.Counts.InferredIncidents, view.Counts.UnattributedIncidents, view.Counts.InferredCandidates, view.Counts.UnattributedPending, view.Details, view.NextStep)})
 	if view.InspectCommand != "" {
 		results = append(results, CheckResult{Name: "Run inspection command", Status: Pass, Detail: view.InspectCommand})
 	}
 	for _, subject := range view.Subjects {
+		if subject.IncidentID != "" {
+			detected := "unknown"
+			if subject.DetectedAt != nil {
+				detected = subject.DetectedAt.Format(time.RFC3339)
+			}
+			results = append(results, CheckResult{Name: "Run incident " + subject.IncidentID, Status: Warn, Detail: fmt.Sprintf("subject=%s cause=%s attribution=%s stage=%s first_detected=%s phase=%s inconsistent=%t; inspect this owner for full details", subject.Kind, subject.Reason, subject.Attribution, subject.DetectionStage, detected, subject.Phase, subject.EvidenceInconsistent)})
+		}
 		if subject.RunID == "" {
 			continue
 		}

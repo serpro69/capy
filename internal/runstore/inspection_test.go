@@ -52,7 +52,8 @@ func TestInspectionOldBlockersAndHeldOwner(t *testing.T) {
 	require.Len(t, view.Subjects, 1)
 	require.Equal(t, old.ID, view.Subjects[0].RunID)
 	require.False(t, view.Subjects[0].BlocksAdmission, "held healthy pending owner is not an incident")
-	require.Nil(t, view.RecoveryRevision)
+	require.NotNil(t, view.RecoveryRevision)
+	require.Zero(t, *view.RecoveryRevision)
 	require.Equal(t, files, inspectionFiles(t, filepath.Dir(s.Path())))
 	require.Equal(t, before, accounted(t, s))
 	// Only reconciliation after releasing the owner can attribute this marker.
@@ -63,8 +64,8 @@ func TestInspectionOldBlockersAndHeldOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "recorded_blocked", report.Inspection.Admission)
 	require.EqualValues(t, 2, report.Inspection.Counts.QuarantineMarkers)
-	require.EqualValues(t, 1, report.Inspection.Counts.InferredCandidates)
-	require.Equal(t, old.ID, report.Inspection.Subjects[2].RunID)
+	require.EqualValues(t, 1, report.Inspection.Counts.InferredIncidents)
+	require.Equal(t, old.ID, report.Inspection.Subjects[0].RunID)
 	for _, r := range report.Recent {
 		require.NotEqual(t, old.ID, r.ID)
 	}
@@ -190,7 +191,9 @@ func TestInspectionPaginationAndStaleMarkers(t *testing.T) {
 		page, err := InspectRuns(t.Context(), s.Path(), testKey, options)
 		require.NoError(t, err)
 		for _, subject := range page.Subjects {
-			seen = append(seen, subject.RunID)
+			if subject.RunID != "" {
+				seen = append(seen, subject.RunID)
+			}
 		}
 		options.Cursor = page.NextCursor
 		if options.Cursor == "" {
@@ -202,8 +205,12 @@ func TestInspectionPaginationAndStaleMarkers(t *testing.T) {
 	require.NoError(t, s.Finish(t.Context(), ids[1], Completion{Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Started: true}))
 	_, err = InspectRuns(t.Context(), s.Path(), testKey, InspectionOptions{Limit: 2, Cursor: first.NextCursor})
 	require.NoError(t, err)
-	_, err = s.db.Exec("UPDATE run_owners SET cleanup_unverified=1")
+	tx, err := s.db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
+	_, err = tx.Exec("UPDATE run_owners SET cleanup_unverified=1")
+	require.NoError(t, err)
+	require.NoError(t, advanceRecoveryRevision(t.Context(), tx))
+	require.NoError(t, tx.Commit())
 	_, err = InspectRuns(t.Context(), s.Path(), testKey, InspectionOptions{Limit: 2, Cursor: first.NextCursor})
 	requireErrorCode(t, err, "inspection_stale")
 	_, err = InspectRuns(t.Context(), s.Path(), testKey, InspectionOptions{RunID: ids[0], Limit: 2, Cursor: short.NextCursor})

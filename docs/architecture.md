@@ -243,7 +243,16 @@ schema-10 rebuild copies row IDs and exact program/result bytes, keeps indexes/F
 and backfills required no-default `last_phase` as `unknown`. New admissions insert
 `admitted`/`queued` explicitly. Schema 10 provisions bounded incident, receipt,
 disposition, membership, batch-resolution and separate disposed-index tables;
-publication/application and their consumers remain later run-recovery tasks.
+reconciliation now publishes bounded, independently charged incident records
+with the quarantine markers and monotonic recovery epoch in one transaction.
+Live quarantine preserves its marker without requiring audit allocation or index
+recount. Attribution-capacity/write/epoch failure permits configured queries to
+reattach read-only with a permanent admission refusal and no maintenance; helpers
+never use that fallback.
+Unresolved subjects deduplicate by historical identity; resolved episodes remain
+immutable. Schema-10 inspection binds incident/receipt pages to that epoch and
+samples run state separately, without publication or maintenance. Runtime cause
+attribution and recovery application remain later run-recovery tasks.
 Public envelope/helper protocol 2 and cursor/redaction formats are unchanged.
 See [upgrade and rollback](reference/runs.md#run-schema-upgrades).
 

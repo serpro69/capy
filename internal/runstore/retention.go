@@ -284,6 +284,9 @@ func (s *Store) prepareCapacity(ctx context.Context, needed int64) error {
 // tombstoned victim by bounded payload batches, then attempts a passive
 // checkpoint. Busy readers/writers retain their WAL; no sidecar is ever removed.
 func (s *Store) Maintain(ctx context.Context) (RetentionReport, error) {
+	if s.recoveryReadOnly != nil {
+		return RetentionReport{}, s.recoveryReadOnly
+	}
 	// Housekeeping uses the bounded metadata budget, including any earlier
 	// caller deadline. Capture append and helper finalization keep WriteTimeout.
 	ctx, cancel := context.WithTimeout(ctx, recoveryTimeout)

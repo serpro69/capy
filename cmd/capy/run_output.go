@@ -124,11 +124,24 @@ func encodeRunText(value any) ([]byte, error) {
 		b.WriteString("Inspect with capy runs inspect; reload compatible sessions after upgrade.\n")
 	case runstore.Inspection:
 		fmt.Fprintf(&b, "Run inspection: %s; store=%s schema=%d. Owner: %s\n", v.Admission, v.StoreID, v.SchemaVersion, v.Owner)
+		fmt.Fprintf(&b, "Incidents: recorded=%d inferred=%d unattributed=%d unresolved=%d.\n", v.Counts.RecordedIncidents, v.Counts.InferredIncidents, v.Counts.UnattributedIncidents, v.Counts.UnresolvedIncidents)
+		if v.Receipt != nil {
+			fmt.Fprintf(&b, "Receipt %s: %s/%s; pruning=%t. %s\n", v.Receipt.ID, v.Receipt.Method, v.Receipt.Basis, v.Receipt.Pruning, terminalText(v.Receipt.Explanation))
+		}
 		fmt.Fprintf(&b, "Recorded quarantine markers=%d; inferred candidates=%d; unattributed pending=%d. Details: %s; omitted=%t.\n",
 			v.Counts.QuarantineMarkers, v.Counts.InferredCandidates, v.Counts.UnattributedPending, v.Details, v.Omitted)
 		fmt.Fprintf(&b, "%s.\n", v.Consistency)
 		for _, subject := range v.Subjects {
 			fmt.Fprintf(&b, "%s %s: %s (%s); recorded_quarantine=%t", subject.Kind, subject.RunID, subject.Reason, subject.Attribution, subject.BlocksAdmission)
+			if subject.IncidentID != "" {
+				fmt.Fprintf(&b, "; incident=%s revision=%d stage=%s", subject.IncidentID, subject.IncidentRevision, subject.DetectionStage)
+			}
+			if subject.ReceiptID != "" {
+				fmt.Fprintf(&b, "; receipt=%s", subject.ReceiptID)
+			}
+			if subject.EvidenceInconsistent {
+				b.WriteString("; inconsistent evidence: operator confirmation cannot override")
+			}
 			if subject.Slot != nil {
 				fmt.Fprintf(&b, "; slot=%d generation=%s", *subject.Slot, subject.Generation)
 			}
