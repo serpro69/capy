@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/serpro69/capy/internal/sanitize"
@@ -211,11 +210,7 @@ func inspectIncidentSubjects(ctx context.Context, tx *sql.Tx, view *Inspection, 
 }
 
 func incidentSubject(ctx context.Context, tx *sql.Tx, view *Inspection, i incident) (InspectionSubject, error) {
-	s := InspectionSubject{Kind: i.Kind, IncidentID: i.ID, IncidentRevision: i.Revision, RunID: i.RunID, ReceiptID: i.ReceiptID, Generation: i.Generation, Slot: i.Slot, Attribution: string(i.Attribution), Reason: string(i.Cause), Phase: i.Phase, DetectionStage: string(i.Stage), BlocksAdmission: i.ReceiptID == "", EvidenceInconsistent: i.Cause.rank() == 4}
-	if i.DetectedAt != nil {
-		detected := time.Unix(0, *i.DetectedAt).UTC()
-		s.DetectedAt = &detected
-	}
+	s := incidentSummary(i)
 	if i.DetectedAt == nil {
 		s.MissingEvidence = append(s.MissingEvidence, "detection_time")
 	}

@@ -30,7 +30,7 @@ func Supported() error {
 
 func ValidateCredentialTransfer(key string) error {
 	if key == "" || len(key) > (maxCredentialFrameBytes-2)/4*3 || base64.StdEncoding.EncodedLen(len(key))+2 > maxCredentialFrameBytes {
-		return &runstore.Error{Code: "storage_unavailable", Message: "selected run credential cannot be transferred through the bounded private channel"}
+		return &runstore.Error{Code: "credential_unavailable", Message: "selected run credential cannot be transferred through the bounded private channel"}
 	}
 	return nil
 }

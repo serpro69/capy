@@ -118,7 +118,12 @@ func (s *Store) Dispatch(ctx context.Context, id, generation string, deadline ti
 
 // AdmitBatch commits the entire inventory, quota reservation and manifest before
 // authorizing any child. Every ordinal has a run ID even if it never starts.
-func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, cleanupScope executor.CleanupScope, input BatchInput) (BatchResult, []Admitted, error) {
+func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, cleanupScope executor.CleanupScope, input BatchInput) (_ BatchResult, _ []Admitted, retErr error) {
+	defer func() {
+		if retErr != nil {
+			retErr = AdmissionError(retErr, s.owner)
+		}
+	}()
 	var empty BatchResult
 	if input.EffectiveConcurrency == 0 {
 		input.EffectiveConcurrency = min(input.Concurrency, len(input.Commands))

@@ -208,6 +208,34 @@ budget shortens the page. Restart an existing MCP server on the updated binary t
 load the new action schema. Recovery application and confirmation arguments are
 not accepted over MCP.
 
+Execution refusals carry `error.recovery_hint`: an explicit `no_admission`,
+store-wide or owner-local scope, a repair action and a next inspection step.
+Known incident counts and a bounded subject are optional; `detail_unavailable`
+means attribution could not be retrieved or persisted. A cached subject labeled
+`volatile` is not durable evidence. Even the minimum response budget preserves
+the refusal and same-owner inspection instruction. Safe paths also get a quoted
+`inspect_command`; otherwise select the same owner explicitly. No refused
+standalone/file/batch submission gets a new run or batch ID or starts a command.
+
+Restore the selected matching credential for credential failures. Stop attached
+store users for held leases; address the reported schema-upgrade cause before
+using a compatible binary and offline `runs upgrade`. Malformed or inconsistent
+history requires separate repair rather than repeated upgrades, and a stale
+plan requires fresh review. These hints never recommend discard, bypassing
+capture or blindly repeating the original command. Application remains unavailable
+in this staged binary. CLI configuration, exit conventions and CI checks retain
+the existing contracts in this reference and `AGENTS.md`; no CI workflow changes
+are needed for admission guidance.
+
+Lifecycle contention now uses `storage_busy`. Empty credentials rejected by
+runstore attachment and credential failures from execute/inspect/upgrade use
+`credential_unavailable`; ordinary CLI status/read/list/search credential
+resolution retains `storage_unavailable`. Envelope version 2 is unchanged.
+Search that cannot claim an
+indexing owner preserves the same repair hint. Optional `error.detail` retains
+safe credential-source diagnostics and migration cause/capacity information;
+response budgeting shortens it before the essential next action.
+
 Schema 10 records incident UUIDs, historical subjects, causes, detection stages
 and the last durable phase during live-owner failure handling and normal reconciliation. Reobserving the same
 unresolved episode preserves its first detection time; later material evidence

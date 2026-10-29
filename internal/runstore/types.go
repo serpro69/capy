@@ -12,13 +12,26 @@ import (
 const EnvelopeVersion = 2
 
 type Error struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code         string        `json:"code"`
+	Message      string        `json:"message"`
+	Detail       string        `json:"detail,omitempty"`
+	RecoveryHint *RecoveryHint `json:"recovery_hint,omitempty"`
+	cause        error
 }
 
 func (e *Error) Error() string { return e.Message }
+func (e *Error) Unwrap() error { return e.cause }
 
-func failure(code, message string) error { return &Error{Code: code, Message: message} }
+func failure(code, message string) error {
+	e := &Error{Code: code, Message: message}
+	// These diagnostics are constructed here from fixed migration text/numeric
+	// capacity facts, never a backend error. Admission may retain them as detail.
+	switch code {
+	case "schema_upgrade_busy", "schema_upgrade_failed", "schema_upgrade_capacity":
+		e.Detail = message
+	}
+	return e
+}
 
 type Capture struct {
 	State               string  `json:"state"`

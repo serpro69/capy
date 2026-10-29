@@ -51,7 +51,12 @@ func Open(ctx context.Context, path, key string, create bool) (*Store, error) {
 // Open without configuration (used by supervisors) consumes the stored policy.
 // create=true is the normal execution-owner path and may upgrade schemas 8/9;
 // readers (create=false), Open and supervisors never migrate.
-func OpenWithPolicy(ctx context.Context, path, key string, create bool, settings PolicyConfig) (*Store, error) {
+func OpenWithPolicy(ctx context.Context, path, key string, create bool, settings PolicyConfig) (_ *Store, retErr error) {
+	defer func() {
+		if create && retErr != nil {
+			retErr = AdmissionError(retErr, filepath.Dir(filepath.Dir(filepath.Dir(path))))
+		}
+	}()
 	if err := settings.validate(); err != nil {
 		return nil, err
 	}
@@ -60,7 +65,7 @@ func OpenWithPolicy(ctx context.Context, path, key string, create bool, settings
 
 func open(ctx context.Context, path, key string, create bool, desired *PolicyConfig) (*Store, error) {
 	if key == "" {
-		return nil, failure("storage_unavailable", "selected run credential is empty")
+		return nil, failure("credential_unavailable", "selected run credential is empty")
 	}
 	if !filepath.IsAbs(path) || filepath.Base(path) != "runs.db" || filepath.Base(filepath.Dir(path)) != "runs" || filepath.Base(filepath.Dir(filepath.Dir(path))) != ".capy" {
 		return nil, failure("storage_unavailable", "invalid owner-local run store path")
@@ -176,7 +181,7 @@ func openAttachedSchema(ctx context.Context, path, key, owner string, lock, supp
 		if lock == unix.LOCK_EX && errors.Is(err, unix.EWOULDBLOCK) {
 			return nil, err
 		}
-		return nil, failure("storage_unavailable", "run store lifecycle is busy")
+		return nil, failure("storage_busy", "run store lifecycle is busy")
 	}
 	// Recheck after locking: a reset may have removed/replaced storage between
 	// the initial inspection and lease acquisition. Never recreate it with rw.
@@ -274,7 +279,7 @@ func storageError() error {
 }
 func openError(err error, path string) error {
 	if sqliteutil.IsWrongPassphrase(err) || sqliteutil.IsSQLiteCorruption(err) {
-		return failure("wrong_key", fmt.Sprintf("run store %s cannot be authenticated; restore the selected credential or, after stopping owners and old execution groups, explicitly run capy runs reset --discard for this project (permanently deletes its run logs); no data was discarded", path))
+		return failure("wrong_key", "run store cannot be authenticated; restore the selected matching credential and reload affected processes, then inspect retained history; no data was discarded")
 	}
 	return storageError()
 }

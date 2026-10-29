@@ -28,7 +28,7 @@ func (s *Service) ExecuteBatchResponse(ctx context.Context, input runstore.Batch
 		return runstore.BatchResult{}, err
 	}
 	if err := ValidateCredentialTransfer(s.key); err != nil {
-		return runstore.BatchResult{}, err
+		return runstore.BatchResult{}, runstore.AdmissionError(err, s.project)
 	}
 	cwd, err := executor.ResolveCwd(s.project, input.Cwd)
 	if err != nil {
@@ -60,7 +60,7 @@ func (s *Service) ExecuteBatchResponse(ctx context.Context, input runstore.Batch
 	if err != nil {
 		cancel()
 		release()
-		result := batchRejection(err)
+		result := s.batchRejection(err)
 		result.Capacity = s.capacity()
 		return result, prepare(result)
 	}
@@ -137,7 +137,7 @@ func (s *Service) runBatch(ctx context.Context, input runstore.BatchInput, timeo
 	}()
 	st, owner, err := s.attached(ctx, true)
 	if err != nil {
-		return batchRejection(err)
+		return s.batchRejection(err)
 	}
 	s.admissionMu.Lock()
 	result, rows, err := st.AdmitBatch(ctx, owner, supervisorCleanupScope(), input)
@@ -162,7 +162,7 @@ func (s *Service) runBatch(ctx context.Context, input runstore.BatchInput, timeo
 	}
 	s.admissionMu.Unlock()
 	if err != nil {
-		return batchRejection(err)
+		return s.batchRejection(err)
 	}
 	call.ready <- result
 	// A single bounded coordinator handles skipped children. Only reserved
@@ -253,8 +253,8 @@ func (s *Service) finishBatchChild(queue *batchQueue, child batchChild, outcome 
 	s.mu.Unlock()
 }
 
-func batchRejection(err error) runstore.BatchResult {
-	r := reject(err)
+func (s *Service) batchRejection(err error) runstore.BatchResult {
+	r := s.reject(err)
 	return runstore.BatchResult{Version: runstore.EnvelopeVersion, Kind: "rejection", State: "not_started", Error: r.Error}
 }
 
@@ -305,9 +305,7 @@ func BoundBatch(result runstore.BatchResult, n int) runstore.BatchResult {
 		result.Capacity = BoundResult(runstore.Result{Capacity: result.Capacity}, n).Capacity
 	}
 	if result.Error != nil {
-		e := *result.Error
-		e.Message = SafeMessage(e.Message, n)
-		result.Error = &e
+		result.Error = BoundError(result.Error, n)
 	}
 	if result.Search != nil {
 		page := BoundSearch(*result.Search, n)

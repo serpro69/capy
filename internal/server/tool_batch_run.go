@@ -21,7 +21,11 @@ func (s *Server) handleBatchExecute(ctx context.Context, req mcp.CallToolRequest
 		if errors.As(err, &typed) {
 			code = typed.Code
 		}
-		return s.runResultForTool("capy_batch_execute", runstore.Rejection(code, err.Error())), nil
+		result := runstore.Rejection(code, err.Error())
+		if typed != nil {
+			result.Error = runstore.AdmissionError(err, s.projectDir)
+		}
+		return s.runResultForTool("capy_batch_execute", result), nil
 	}
 	concurrency, err := integerArg(args, "concurrency", 1, 1, 8)
 	if err != nil {
@@ -146,7 +150,7 @@ func (s *Server) buildBatchRunResult(result runstore.BatchResult) (*mcp.CallTool
 		}
 		bounded := execution.BoundBatch(result, n)
 		if bounded.Error != nil {
-			text += " " + bounded.Error.Message
+			text += " " + bounded.Error.Message + execution.RecoveryText(bounded.Error)
 		}
 		r := mcp.NewToolResultStructured(bounded, text)
 		r.IsError = execution.BatchFailed(result)

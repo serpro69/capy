@@ -184,7 +184,7 @@ func (s *Server) buildRunResult(result runstore.Result) (*mcp.CallToolResult, er
 			}
 		}
 		if bounded.Error != nil {
-			text += " " + bounded.Error.Message
+			text += " " + bounded.Error.Message + execution.RecoveryText(bounded.Error)
 		}
 		r := mcp.NewToolResultStructured(bounded, text)
 		r.IsError = execution.ExecutionFailed(result)

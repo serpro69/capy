@@ -52,9 +52,13 @@ func (s *Store) recoveryLease(ctx context.Context) (*os.File, error) {
 	}
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
+	waited := false
 	for {
 		if err := ctx.Err(); err != nil {
 			lease.Close()
+			if waited {
+				return nil, errors.Join(failure("storage_busy", "run registry lease is busy"), err)
+			}
 			return nil, err
 		}
 		err = unix.Flock(int(lease.Fd()), unix.LOCK_EX|unix.LOCK_NB)
@@ -65,10 +69,11 @@ func (s *Store) recoveryLease(ctx context.Context) (*os.File, error) {
 			lease.Close()
 			return nil, storageError()
 		}
+		waited = true
 		select {
 		case <-ctx.Done():
 			lease.Close()
-			return nil, ctx.Err()
+			return nil, errors.Join(failure("storage_busy", "run registry lease is busy"), ctx.Err())
 		case <-ticker.C:
 		}
 	}

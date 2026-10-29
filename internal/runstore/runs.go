@@ -14,7 +14,12 @@ import (
 	"github.com/serpro69/capy/internal/sqliteutil"
 )
 
-func (s *Store) Admit(ctx context.Context, owner *Owner, scope executor.CleanupScope, program Program) (Admitted, error) {
+func (s *Store) Admit(ctx context.Context, owner *Owner, scope executor.CleanupScope, program Program) (_ Admitted, retErr error) {
+	defer func() {
+		if retErr != nil {
+			retErr = AdmissionError(retErr, s.owner)
+		}
+	}()
 	// The attached store is authoritative. Callers cannot select a different
 	// TTL or capture ceiling through per-program metadata.
 	program.PolicyRevision = s.policy.Revision

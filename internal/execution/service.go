@@ -3,7 +3,6 @@ package execution
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,7 +11,6 @@ import (
 	"github.com/serpro69/capy/internal/config"
 	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/runstore"
-	"github.com/serpro69/capy/internal/sanitize"
 )
 
 // Service owns runs independently of transport requests and joins every helper
@@ -141,12 +139,6 @@ func (s *Service) attached(ctx context.Context, create bool) (*runstore.Store, *
 		})
 		s.mu.Lock()
 		if err != nil {
-			var typed *runstore.Error
-			if errors.As(err, &typed) {
-				copy := *typed
-				copy.Message += "; selected path: " + sanitize.StripSecrets(path)
-				err = &copy
-			}
 			return nil, nil, err
 		}
 		if s.closed {
@@ -179,10 +171,10 @@ func (s *Service) Execute(ctx context.Context, request executor.ExecRequest, int
 // through runCall, never inherited directly by this context.
 func (s *Service) execute(ctx context.Context, request executor.ExecRequest, intent string, deadline time.Time, call *runCall) runstore.Result {
 	if err := Supported(); err != nil {
-		return reject(err)
+		return s.reject(err)
 	}
 	if err := ValidateCredentialTransfer(s.key); err != nil {
-		return reject(err)
+		return s.reject(err)
 	}
 	cwd, err := executor.ResolveCwd(s.project, request.Cwd)
 	if err != nil {
@@ -194,7 +186,7 @@ func (s *Service) execute(ctx context.Context, request executor.ExecRequest, int
 	}
 	st, owner, err := s.attached(ctx, true)
 	if err != nil {
-		return reject(err)
+		return s.reject(err)
 	}
 	physical := filepath.Dir(filepath.Dir(filepath.Dir(st.Path())))
 	program := runstore.Program{Owner: physical, OwnerType: s.ownerType, Request: request, Intent: intent, Deadline: deadline}
@@ -209,7 +201,7 @@ func (s *Service) execute(ctx context.Context, request executor.ExecRequest, int
 	}
 	s.admissionMu.Unlock()
 	if err != nil {
-		return reject(err)
+		return s.reject(err)
 	}
 	return s.executeAdmitted(ctx, st, owner, row, call)
 }
@@ -374,12 +366,11 @@ func (s *Service) finishUnstarted(st *runstore.Store, row runstore.Admitted, rea
 	return result
 }
 
-func reject(err error) runstore.Result {
-	var e *runstore.Error
-	if errors.As(err, &e) {
-		return runstore.Rejection(e.Code, e.Message)
-	}
-	return runstore.Rejection("storage_unavailable", "run admission failed before execution")
+func (s *Service) reject(err error) runstore.Result {
+	e := runstore.AdmissionError(err, s.project)
+	result := runstore.Rejection(e.Code, e.Message)
+	result.Error = e
+	return result
 }
 
 func (s *Service) quarantine(st *runstore.Store, row runstore.Admitted, cause runstore.IncidentCause, stage runstore.IncidentStage) error {
@@ -418,15 +409,7 @@ func (s *Service) quarantine(st *runstore.Store, row runstore.Admitted, cause ru
 // The caller holds mu. Context describes this owner's first refusal only; the
 // durable inventory may contain additional incidents from concurrent children.
 func (s *Service) unverifiedErrorLocked() *runstore.Error {
-	message := "this owner has unverified run cleanup; stop execution groups and recover before admitting more work"
-	if subject := s.unverifiedContext; subject != nil {
-		persistence := "volatile attribution; persistence unconfirmed"
-		if s.unverifiedDurable {
-			persistence = "durable attribution"
-		}
-		message += fmt.Sprintf("; run %s, owner %s, slot %d: %s at %s (%s)", subject.RunID, subject.Generation, subject.Slot, subject.Cause, subject.Stage, persistence)
-	}
-	return &runstore.Error{Code: "cleanup_unverified", Message: message}
+	return runstore.RuntimeAdmissionError(s.project, s.unverifiedContext, s.unverifiedDurable)
 }
 
 func (s *Service) Status(ctx context.Context, id string) (runstore.Result, error) {

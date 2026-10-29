@@ -305,7 +305,7 @@ func TestInspectionExclusiveLeaseTemporarilyExcludesAttachment(t *testing.T) {
 	require.NoError(t, unix.Flock(int(lease.Fd()), unix.LOCK_EX|unix.LOCK_NB))
 	attached, err := Open(t.Context(), s.Path(), testKey, false)
 	require.Nil(t, attached)
-	requireErrorCode(t, err, "storage_unavailable")
+	requireErrorCode(t, err, "storage_busy")
 	require.Contains(t, err.Error(), "lifecycle is busy")
 	require.NoError(t, unix.Flock(int(lease.Fd()), unix.LOCK_UN))
 	attached, err = Open(t.Context(), s.Path(), testKey, false)

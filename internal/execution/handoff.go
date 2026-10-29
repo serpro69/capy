@@ -82,7 +82,7 @@ func (s *Service) executeResponse(ctx context.Context, request executor.ExecRequ
 	jobCtx, release, err := s.begin(ownerCtx, true)
 	if err != nil {
 		cancel()
-		result := reject(err)
+		result := s.reject(err)
 		if result.Error.Code == "capacity_exhausted" {
 			result.Capacity = s.capacity()
 		}
