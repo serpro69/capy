@@ -235,6 +235,11 @@ func (s *Store) indexBatch(ctx context.Context, owner *Owner, id string) error {
 }
 
 func saveIndexResult(ctx context.Context, tx *sql.Tx, row Admitted) error {
+	// Task 13 routes disposed writes to the dedicated index metadata. This
+	// existing writer must never rewrite the immutable execution snapshot.
+	if err := rejectDisposedMutation(ctx, tx, row.ID); err != nil {
+		return err
+	}
 	encoded, err := json.Marshal(row.Result)
 	if err != nil {
 		return storageError()

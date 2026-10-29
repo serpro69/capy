@@ -27,6 +27,7 @@ type recoveryInventory struct {
 	limit   int
 	step    func(context.Context) error
 	owners  []inspectionRegistry
+	visit   func(incident, string, int) error
 }
 
 func (b *recoveryInventory) record(kind string, value any) error {
@@ -274,7 +275,7 @@ func (b *recoveryInventory) claims() error {
 
 func (b *recoveryInventory) markers(blocked bool) error {
 	var attributed bool
-	if err := b.tx.QueryRowContext(b.ctx, "SELECT EXISTS(SELECT 1 FROM run_incidents WHERE receipt_id IS NULL AND subject_kind<>'store') OR EXISTS(SELECT 1 FROM runs WHERE terminal=0 AND cleanup='pending')").Scan(&attributed); err != nil {
+	if err := b.tx.QueryRowContext(b.ctx, "SELECT EXISTS(SELECT 1 FROM run_incidents WHERE receipt_id IS NULL AND subject_kind<>'store') OR EXISTS(SELECT 1 FROM runs WHERE terminal=0 AND cleanup='pending' AND "+undisposedRunSQL+")").Scan(&attributed); err != nil {
 		return err
 	}
 	i, found, err := b.openIncident("store")
@@ -297,7 +298,7 @@ func (b *recoveryInventory) markers(blocked bool) error {
 		if err != nil {
 			return err
 		}
-		if err := b.tx.QueryRowContext(b.ctx, `SELECT EXISTS(SELECT 1 FROM run_incidents WHERE slot=? AND receipt_id IS NULL AND subject_kind='run') OR EXISTS(SELECT 1 FROM runs WHERE slot=? AND terminal=0 AND cleanup='pending')`, o.Slot, o.Slot).Scan(&attributed); err != nil {
+		if err := b.tx.QueryRowContext(b.ctx, `SELECT EXISTS(SELECT 1 FROM run_incidents WHERE slot=? AND receipt_id IS NULL AND subject_kind='run') OR EXISTS(SELECT 1 FROM runs WHERE slot=? AND terminal=0 AND cleanup='pending' AND `+undisposedRunSQL+`)`, o.Slot, o.Slot).Scan(&attributed); err != nil {
 			return err
 		}
 		if found || o.Blocked && !attributed {
@@ -327,6 +328,11 @@ func (b *recoveryInventory) openIncident(key string) (incident, bool, error) {
 }
 
 func (b *recoveryInventory) subject(i incident, action string, ttl int) error {
+	if b.visit != nil {
+		if err := b.visit(i, action, ttl); err != nil {
+			return err
+		}
+	}
 	// Fingerprints include the stable identity and classification, not a
 	// synthesized incident UUID/detection timestamp or estimated expiry.
 	if err := b.record("subject", struct {
@@ -423,6 +429,19 @@ func (b *recoveryInventory) run(r recoveryRunEvidence) error {
 		r.Terminal && (result.ExpiresAt == nil || r.Completed.Int64 != result.CompletedAt.UnixNano() || r.Expires.Int64 != result.ExpiresAt.UnixMilli()+1) {
 		return recoveryInconsistent("run outcome timestamps or capture counters")
 	}
+	closed, err := operationallyClosed(b.ctx, b.tx, r.ID, r.Cleanup, result, r.Terminal)
+	if err != nil {
+		return err
+	}
+	if closed && !r.Terminal {
+		// Exact immutable disposition replaces only operational ownership.
+		// Still include its original evidence in the canonical fingerprint.
+		r.ResultDigest = sha256.Sum256(r.encoded)
+		if err := b.record("disposed-run", r); err != nil {
+			return err
+		}
+		return b.streams(r)
+	}
 	if !r.Terminal {
 		var owner bool
 		if err := b.tx.QueryRowContext(b.ctx, "SELECT EXISTS(SELECT 1 FROM run_owners WHERE slot=? AND generation=?)", r.Slot, r.Generation).Scan(&owner); err != nil {
@@ -431,15 +450,6 @@ func (b *recoveryInventory) run(r recoveryRunEvidence) error {
 		if !owner {
 			return recoveryInconsistent("nonterminal owner generation")
 		}
-	}
-	var disposed bool
-	if err := b.tx.QueryRowContext(b.ctx, "SELECT EXISTS(SELECT 1 FROM run_resolutions WHERE run_id=?)", r.ID).Scan(&disposed); err != nil {
-		return err
-	}
-	if disposed {
-		// Task 8 replaces this staging guard with exact disposition validation
-		// before any binary can expose application (Task 14).
-		return recoveryInconsistent("existing run disposition; use a binary with integrated recovery consumers")
 	}
 	cause, err := reconciliationManifestCause(b.ctx, b.tx, recoveryCandidate{id: r.ID, generation: r.Generation, slot: r.Slot, result: r.encoded, cleanup: r.Cleanup, terminal: r.Terminal}, result)
 	if err != nil {
@@ -478,6 +488,9 @@ func (b *recoveryInventory) run(r recoveryRunEvidence) error {
 	}
 	action := "reconcile"
 	if r.Cleanup.State == executor.CleanupPending {
+		if _, err := resolutionIndex(result.Index); err != nil {
+			return err
+		}
 		action = "dispose_run"
 		b.view.Counts.Dispositions++
 		if !found {

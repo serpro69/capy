@@ -24,6 +24,11 @@ func (s *Store) ClaimIndex(ctx context.Context, owner *Owner, id string) (bool, 
 		return false, storageError()
 	}
 	defer tx.Rollback()
+	// Task 13 enables fresh-owner indexing through separate run_search_state.
+	// Until then, never let this historical-result write path claim a disposition.
+	if err := rejectDisposedMutation(ctx, tx, id); err != nil {
+		return false, err
+	}
 	var generation string
 	if err := tx.QueryRowContext(ctx, "SELECT generation FROM run_owners WHERE slot=? AND cleanup_unverified=0", owner.Slot).Scan(&generation); err != nil || generation != owner.ID {
 		return false, storageError()
@@ -102,6 +107,19 @@ func (s *Store) rememberIndexRelease(owner *Owner, id string) {
 }
 
 func (s *Store) recoverClaim(ctx context.Context, tx *sql.Tx, id string, slot int, generation string) error {
+	d, err := readRunResolution(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if d != nil {
+		// The worker's free matching lease authorizes claim recovery, not any
+		// change to the disposed execution outcome. Preserve its frozen blob.
+		if _, err := tx.ExecContext(ctx, "UPDATE run_search_state SET state='failed',error_code='index_unavailable' WHERE run_id=? AND state='building'", id); err != nil {
+			return storageError()
+		}
+		_, err := tx.ExecContext(ctx, "DELETE FROM run_work_claims WHERE run_id=? AND slot=? AND generation=?", id, slot, generation)
+		return metadataFailureIf(ctx, err)
+	}
 	var encoded []byte
 	if err := tx.QueryRowContext(ctx, "SELECT result FROM runs WHERE id=?", id).Scan(&encoded); err != nil {
 		return storageError()

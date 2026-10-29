@@ -10,6 +10,9 @@ const (
 	recoveryMembershipReserve  = 4096
 )
 
+// Applied/detected/resolved clocks use Unix nanoseconds. Retention/audit
+// deadlines use Unix milliseconds rounded up (like runs.expires_at), allowing
+// the maximum admission TTL to extend beyond time.Time's UnixNano range.
 const recoverySchema = `
 CREATE TABLE run_recovery_receipts(
  id TEXT PRIMARY KEY CHECK(length(id)=36), plan_hash TEXT NOT NULL UNIQUE CHECK(length(plan_hash)=64),

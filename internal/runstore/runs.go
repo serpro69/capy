@@ -304,6 +304,9 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 	}
 	defer tx.Rollback()
 	row := Admitted{ID: id}
+	if err := rejectDisposedMutation(ctx, tx, id); err != nil {
+		return err
+	}
 	var program, result []byte
 	var terminal bool
 	if err := tx.QueryRowContext(ctx, "SELECT program,result,generation,cleanup_scope,cleanup,terminal,last_phase FROM runs WHERE id=?", id).Scan(&program, &result, &row.Generation, &row.Cleanup.Scope, &row.Cleanup.State, &terminal, &row.LastPhase); err != nil {

@@ -133,6 +133,32 @@ func (a *recoveryAdmin) close() error {
 	return err
 }
 
+// enableWrites retains all administrative leases while replacing only the
+// read-only connection. mode=rw cannot initialize a missing store. No ordinary
+// Store attachment, policy publication or close-time maintenance is involved.
+func (a *recoveryAdmin) enableWrites(ctx context.Context, key string) error {
+	if err := a.verifyTarget(); err != nil {
+		return err
+	}
+	if err := a.db.Close(); err != nil {
+		return storageError()
+	}
+	a.db = nil
+	db, err := sqliteutil.OpenWithCanary(ctx, sqliteutil.EncryptedDSN(a.path, key)+"&mode=rw&_foreign_keys=on&_busy_timeout=100", a.path, "selected run credential")
+	if err != nil {
+		return openError(err, a.path)
+	}
+	a.db = db
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	var id string
+	var version int
+	if err := db.QueryRowContext(ctx, "SELECT store_id,version FROM run_meta WHERE singleton=1").Scan(&id, &version); err != nil || id != a.id || version != schemaVersion {
+		return staleRecoveryPlan()
+	}
+	return a.verifyTarget()
+}
+
 // Only path and device/inode identities participate, never mtimes, sizes or
 // observation times. Cooperating clients remain excluded until handles close.
 func (a *recoveryAdmin) targetBinding() (string, error) {
