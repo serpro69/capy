@@ -54,12 +54,14 @@ func retain(ctx context.Context, tx *sql.Tx, limit, needed int64, expire bool) (
 		pressure := report.AccountedBytes > limit-needed
 		// A deferred expired manifest still precedes live logs. Finish this
 		// pass and let the caller resume with a fresh deletion budget.
-		if remainingRows < 257 {
-			var expiredManifest bool
-			if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_batches WHERE completed_at IS NOT NULL AND expires_at<=?)", time.Now().UTC().UnixMilli()).Scan(&expiredManifest); err != nil {
+		if remainingRows < batchDeletionBudget {
+			var id string
+			var debit, children int64
+			err := selectBatchVictim(ctx, tx, false).Scan(&id, &debit, &children)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return report, storageError()
 			}
-			if expiredManifest {
+			if err == nil {
 				break
 			}
 		}
@@ -341,9 +343,10 @@ func (s *Store) prepareCapacity(ctx context.Context, needed int64) error {
 	}
 }
 
-// Maintain removes at most 64 small completed runs, or advances one larger
-// tombstoned victim by bounded payload batches, then attempts a passive
-// checkpoint. Busy readers/writers retain their WAL; no sidecar is ever removed.
+// Maintain advances bounded payload eviction and unreferenced audit pruning in
+// one transaction: a failure rolls back both kinds of progress for this pass.
+// It then attempts a passive checkpoint. Busy readers/writers retain their WAL;
+// no sidecar is ever removed.
 func (s *Store) Maintain(ctx context.Context) (RetentionReport, error) {
 	if s.recoveryReadOnly != nil {
 		return RetentionReport{}, s.recoveryReadOnly
@@ -361,6 +364,17 @@ func (s *Store) Maintain(ctx context.Context) (RetentionReport, error) {
 	if err != nil {
 		return report, fmt.Errorf("maintaining retained runs: %w", errors.Join(err, ctx.Err()))
 	}
+	deleted, pending, err := pruneRecovery(ctx, tx, min(retentionBatch, 2*evictionRows-int(report.DeletedRows)))
+	if err != nil {
+		return report, fmt.Errorf("maintaining recovery audit: %w", errors.Join(err, ctx.Err()))
+	}
+	report.DeletedRows += deleted
+	report.PendingDeletion = report.PendingDeletion || pending
+	report.AccountedBytes, err = refreshIndexDebit(ctx, tx)
+	if err != nil {
+		return report, err
+	}
+	report.More = report.AccountedBytes > s.policy.MaxRetainedBytes
 	if err := tx.Commit(); err != nil {
 		return report, metadataFailure(ctx, "committing run maintenance")
 	}

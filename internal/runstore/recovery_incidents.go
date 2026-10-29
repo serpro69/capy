@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/serpro69/capy/internal/executor"
-	"github.com/serpro69/capy/internal/sqliteutil"
 )
 
 // Historical markers have no recorded causal run or detection timestamp. Only
@@ -29,18 +28,20 @@ func (s *Store) recordLegacyMarkers(ctx context.Context) error {
 	if !work {
 		return nil
 	}
-	tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
+	// A rare legacy-marker publication also validates all immutable authority
+	// without blocking capture writers. recovery.lock prevents concurrent
+	// registry publication; the epoch recheck fences audit membership changes.
+	var slots [OwnerSlots]int
+	for slot := range slots {
+		slots[slot] = slot
+	}
+	tx, err := beginRecoveryWrite(ctx, s.db, func(ctx context.Context) (int64, error) {
+		return s.validateResolutionsSnapshot(ctx, slots[:]...)
+	})
 	if err != nil {
-		return storageError()
+		return err
 	}
 	defer tx.Rollback()
-	// A rare legacy-marker publication must not use a malformed disposition
-	// to hide its causal pending run. Validate within this publication snapshot.
-	for slot := range OwnerSlots {
-		if err := validateSlotResolutions(ctx, tx, slot); err != nil {
-			return err
-		}
-	}
 	changed := false
 	if err := tx.QueryRowContext(ctx, "SELECT "+missing).Scan(&work); err != nil {
 		return storageError()

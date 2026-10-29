@@ -220,6 +220,10 @@ func incidentSubject(ctx context.Context, tx *sql.Tx, view *Inspection, i incide
 		return s, nil
 	}
 	if i.ReceiptID != "" {
+		var pruning bool
+		if err := tx.QueryRowContext(ctx, "SELECT pruning FROM run_recovery_receipts WHERE id=?", i.ReceiptID).Scan(&pruning); err != nil {
+			return s, metadataReadError(err)
+		}
 		d, err := readRunResolution(ctx, tx, i.RunID)
 		if err != nil {
 			// Inspection must still enumerate other incidents when one retained
@@ -232,6 +236,17 @@ func incidentSubject(ctx context.Context, tx *sql.Tx, view *Inspection, i incide
 				s.DetailUnavailable = true
 				s.MissingEvidence = append(s.MissingEvidence, "disposition_unavailable")
 			}
+			return s, nil
+		}
+		if pruning {
+			var retained bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM runs WHERE id=?)
+ OR EXISTS(SELECT 1 FROM run_batches WHERE id=?) OR EXISTS(SELECT 1 FROM run_batch_children WHERE run_id=?)`, i.RunID, i.BatchID, i.RunID).Scan(&retained); err != nil {
+				return s, metadataReadError(err)
+			}
+			s.EvidenceInconsistent = retained
+			s.DetailUnavailable = true
+			s.MissingEvidence = append(s.MissingEvidence, "pruned_audit_details")
 			return s, nil
 		}
 		if d != nil {
