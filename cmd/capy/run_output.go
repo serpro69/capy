@@ -88,7 +88,7 @@ func runText(result runstore.Result) string {
 		fmt.Fprintf(&b, "Signal: %d.\n", *result.Signal)
 	}
 	if result.Error != nil {
-		fmt.Fprintf(&b, "%s: %s\n", result.Error.Code, terminalText(result.Error.Message))
+		fmt.Fprintf(&b, "%s: %s%s\n", result.Error.Code, terminalText(result.Error.Message), terminalText(execution.RecoveryText(result.Error)))
 	}
 	if result.Index.State != "" && result.Index.State != "not_requested" {
 		fmt.Fprintf(&b, "Index: %s.\n", result.Index.State)
@@ -177,7 +177,7 @@ func encodeRunText(value any) ([]byte, error) {
 			b.WriteString(runText(*v.Run))
 		}
 		if v.Error != nil {
-			fmt.Fprintf(&b, "%s: %s\n", v.Error.Code, terminalText(v.Error.Message))
+			fmt.Fprintf(&b, "%s: %s%s\n", v.Error.Code, terminalText(v.Error.Message), terminalText(execution.RecoveryText(v.Error)))
 		}
 	case runstore.ReadPage:
 		fmt.Fprintf(&b, "Run %s: %s; capture %s.\n", v.RunID, v.Run.State, v.Run.Capture.State)
@@ -287,8 +287,6 @@ func writeExecutionRejection(cmd *cobra.Command, jsonOutput bool, limit, exit in
 func writeQueryFailure(cmd *cobra.Command, jsonOutput bool, limit, exit int, err error) error {
 	failure := commandRunError(err)
 	return writeRunResponse(cmd, limit, jsonOutput, exit, func(n int) (any, error) {
-		safe := *failure
-		safe.Message = execution.SafeMessage(safe.Message, n)
-		return runQueryResult{Version: runstore.EnvelopeVersion, Kind: "query", Error: &safe}, nil
+		return runQueryResult{Version: runstore.EnvelopeVersion, Kind: "query", Error: execution.BoundError(failure, n)}, nil
 	})
 }

@@ -26,6 +26,11 @@ func (s *Store) OwnerLeasePath(slot int) string {
 // ClaimOwner scans every slot before selecting one, then reconciles the selected
 // slot again under its retained exclusive lease before publishing a generation.
 func (s *Store) ClaimOwner(ctx context.Context) (_ *Owner, err error) {
+	defer func() {
+		if err != nil {
+			err = AdmissionError(err, s.owner)
+		}
+	}()
 	release, err := s.retainLifecycle()
 	if err != nil {
 		return nil, err
@@ -94,7 +99,12 @@ func (s *Store) claimSlot(ctx context.Context, slot int, lease *os.File) (*Owner
 
 // GuardAdmission reconciles all free slots, including slots never selected by
 // later low-concurrency owners. A free lock alone is never a cleanup proof.
-func (s *Store) GuardAdmission(ctx context.Context) error {
+func (s *Store) GuardAdmission(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			err = AdmissionError(err, s.owner)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(ctx, recoveryTimeout)
 	defer cancel()
 	registry, err := s.recoveryLease(ctx)
@@ -124,11 +134,11 @@ func (s *Store) checkQuarantineQuery(ctx context.Context, q runQuerier) error {
 			return storageError()
 		}
 		if epoch == math.MaxInt64 {
-			return failure("recovery_revision_exhausted", "recovery revision exhausted; admission is refused; preserve history and inspect before repair")
+			return s.admissionFailure(ctx, q, "recovery_revision_exhausted", "recovery revision exhausted")
 		}
 	}
 	if blocked {
-		return failure("cleanup_unverified", "run store admission is blocked by unverified cleanup; inspect retained evidence before operator recovery")
+		return s.admissionFailure(ctx, q, "cleanup_unverified", "unverified cleanup")
 	}
 	return nil
 }

@@ -51,8 +51,10 @@ func newExecuteCmd() *cobra.Command {
 		}
 		limit := target.cfg.Runs.MaxResponseBytes
 		fail := func(err error) error {
-			e := commandRunError(err)
-			return writeExecutionRejection(cmd, jsonOutput, limit, 1, e.Code, e.Message)
+			e := runstore.AdmissionError(commandRunError(err), target.projectDir)
+			result := runstore.Rejection(e.Code, e.Message)
+			result.Error = e
+			return writeRunResponse(cmd, limit, jsonOutput, 1, func(n int) (any, error) { return execution.BoundResult(result, n), nil })
 		}
 		if cmd.Flags().Changed("code-file") {
 			code, err = readCLIProgram(target.projectDir, codeFile)
@@ -69,9 +71,9 @@ func newExecuteCmd() *cobra.Command {
 		if err := execution.CheckCLIProgram(executor.Language(language), code, security.ReadBashPolicies(target.projectDir, "")); err != nil {
 			return fail(err)
 		}
-		key, _, err := resolveKnowledgeKey(target)
+		key, _, err := target.cfg.ResolveStoreKey(target.projectDir)
 		if err != nil {
-			return fail(err)
+			return fail(&runstore.Error{Code: "credential_unavailable", Message: "restore the selected run credential", Detail: execution.SafeMessage(err.Error(), 512)})
 		}
 		if !cmd.Flags().Changed("timeout-ms") {
 			timeoutMS = int64(target.cfg.Executor.Timeout) * 1000

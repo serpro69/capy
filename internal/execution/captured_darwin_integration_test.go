@@ -283,7 +283,7 @@ func TestDarwinCapturedPersistenceFailures(t *testing.T) {
 				if done != nil {
 					done()
 				}
-				require.ErrorContains(t, err, "unverified run cleanup", "the live service must refuse new work")
+				require.ErrorContains(t, err, "unverified cleanup", "the live service must refuse new work")
 				_, err = s.store.Admit(t.Context(), s.owner, executor.CleanupDarwinObservation,
 					runstore.Program{Owner: s.project, Request: executor.ExecRequest{Language: executor.Shell, Code: "touch forbidden"}})
 				require.ErrorContains(t, err, "unverified cleanup", "the live owner's durable admission must also be blocked")
@@ -361,7 +361,7 @@ func TestDarwinCapturedObservationFailure(t *testing.T) {
 	if done != nil {
 		done()
 	}
-	require.ErrorContains(t, err, "unverified run cleanup", "the service must quarantine pending Darwin proof")
+	require.ErrorContains(t, err, "unverified cleanup", "the service must quarantine pending Darwin proof")
 }
 
 func TestDarwinStartupIncidentRetainsHelperReservation(t *testing.T) {

@@ -25,6 +25,19 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	operationError := func(err error) (*mcp.CallToolResult, error) {
 		var typed *runstore.Error
 		if errors.As(err, &typed) {
+			if typed.RecoveryHint != nil {
+				r, budgetErr := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
+					problem := execution.BoundError(typed, n)
+					result := mcp.NewToolResultStructured(map[string]any{"version": runstore.EnvelopeVersion, "kind": "query", "cleanup": nil, "error": problem},
+						"Run operation failed. "+problem.Message+execution.RecoveryText(problem))
+					result.IsError = true
+					return result, nil
+				}, nil)
+				if budgetErr != nil {
+					r = boundedRunError("response_unavailable", "Run query response unavailable.")
+				}
+				return s.trackToolResponse("capy_runs", r), nil
+			}
 			return fail(typed.Code, typed.Message)
 		}
 		return fail("storage_unavailable", "run query failed")

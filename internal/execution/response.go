@@ -61,12 +61,11 @@ func BoundResult(result runstore.Result, allowance int) runstore.Result {
 	}
 	result = boundPreview(result, allowance)
 	if result.Error != nil {
-		safe := *result.Error
-		safe.Message = SafeMessage(safe.Message, allowance)
-		if safe.Message != result.Error.Message {
+		safe := BoundError(result.Error, allowance)
+		if safe.Message != result.Error.Message || safe.Detail != result.Error.Detail || safe.RecoveryHint != nil && (safe.RecoveryHint.Subject == nil && result.Error.RecoveryHint.Subject != nil || safe.RecoveryHint.InspectCommand != result.Error.RecoveryHint.InspectCommand) {
 			result.MetadataOmitted = true
 		}
-		result.Error = &safe
+		result.Error = safe
 	}
 	if result.Index.Error != nil {
 		safe := *result.Index.Error
@@ -77,6 +76,47 @@ func BoundResult(result runstore.Result, allowance int) runstore.Result {
 		result.Index.Error = &safe
 	}
 	return result
+}
+
+// BoundError retains the refusal and next action even when optional attribution
+// and safely quoted owner commands cannot fit the complete transport envelope.
+func BoundError(err *runstore.Error, allowance int) *runstore.Error {
+	safe := *err
+	safe.Message = SafeMessage(safe.Message, allowance)
+	safe.Detail = SafeMessage(safe.Detail, allowance)
+	if err.RecoveryHint != nil {
+		hint := *err.RecoveryHint
+		if allowance < 512 {
+			hint.Subject = nil
+		}
+		if allowance < 256 {
+			hint.InspectCommand = ""
+		}
+		// Fixed producer text, never user/backend data. It cannot disappear with
+		// the optional message allowance, unlike ordinary diagnostic prose.
+		if safe.Message != err.Message {
+			safe.Message = "No command was admitted."
+		}
+		safe.RecoveryHint = &hint
+	}
+	return &safe
+}
+
+// RecoveryText is the text-only transport's essential next action. Detailed
+// attribution stays in structured data; the same-owner selection is explicit.
+func RecoveryText(err *runstore.Error) string {
+	if err == nil || err.RecoveryHint == nil {
+		return ""
+	}
+	h := err.RecoveryHint
+	text := " " + h.NextStep
+	if err.Detail != "" {
+		text += " " + err.Detail
+	}
+	if h.InspectCommand != "" {
+		text += " Next: " + h.InspectCommand
+	}
+	return text
 }
 
 func boundPreview(result runstore.Result, allowance int) runstore.Result {
