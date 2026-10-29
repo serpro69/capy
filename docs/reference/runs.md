@@ -150,6 +150,24 @@ searches child logs; `global` adds separately labelled knowledge results. Omit
 queries during execution to avoid indexing. Later batch search can reuse the
 original nonempty query array.
 
+Batch history also distinguishes operator-disposed children from execution-terminal
+children. `recovered_count` counts dispositions separately; historical state counts,
+cleanup and original completion/expiry remain unchanged. `current_concurrency`
+excludes closed history, accepted-cleanup backlog and uncertain children carrying
+incident or owner warnings. Zero therefore does not prove old execution stopped.
+A mixed batch can retain
+`state: "running"` and pending cleanup while `recovery.operationally_closed=true`;
+human output labels that state “last recorded.”
+
+`recovery.closed_at` and `recovery.retention_expires_at` are separate batch clocks.
+They are recorded once every child is execution-terminal or validly disposed,
+including when a safe queued sibling is finalized by later reconciliation. The
+receipt identifies the disposition supplying closure provenance; individual child
+summaries retain their own receipts. Missing uncertain child output is accepted
+only with its exact surviving disposition marked `evicted`; a missing retained or
+evicting payload remains an inconsistency. Payload eviction, audit pruning and
+public apply remain gated on the remaining recovery tasks.
+
 The default owner allows four active runs and 64 pending batch children.
 Standalone work rejects when full; queries and cancellation remain available.
 Batch concurrency is 1–8, bounded by the same owner capacity; eligible batches

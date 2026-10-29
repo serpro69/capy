@@ -113,7 +113,7 @@ func buildRecoveryInventory(ctx context.Context, tx *sql.Tx, a *recoveryAdmin, v
 	if c.administrative() > math.MaxInt64/(4*recoveryDispositionReserve) {
 		return failure("recovery_inventory_incomplete", "recovery inventory exceeds supported accounting bounds; no applicable token")
 	}
-	needed := int64(recoveryReceiptReserve) + c.administrative()*recoveryMembershipReserve + c.NewIncidents*recoveryIncidentReserve + c.Dispositions*recoveryDispositionReserve + c.Batches*recoveryMembershipReserve
+	needed := int64(recoveryReceiptReserve) + c.administrative()*recoveryMembershipReserve + c.NewIncidents*recoveryIncidentReserve + c.Dispositions*recoveryDispositionReserve + view.batchReservations*recoveryBatchReserve
 	// Read-only equivalent of the accounting sample, without SAVEPOINT/UPDATE
 	// or retention. Existing reservations and metadata remain untouched.
 	if indexed {
@@ -415,7 +415,7 @@ func (b *recoveryInventory) runs() error {
 
 func (b *recoveryInventory) run(r recoveryRunEvidence) error {
 	var result Result
-	if uuid.Validate(r.ID) != nil || uuid.Validate(r.Generation) != nil || r.Slot < 0 || r.Slot >= OwnerSlots || !validPhase(r.Phase) || r.Evicting || r.TTL < 1 || int64(r.TTL) > math.MaxInt64/int64(time.Hour) || r.Policy < 1 || r.Policy > b.admin.policy.Revision || r.Created < 0 || r.Stdout < 0 || r.Stderr < 0 || r.StdoutLines < 1 || r.StderrLines < 1 || decodeRunResult(r.encoded, r.Cleanup, &result) != nil || validateTerminal(r.Cleanup, result, r.Terminal) != nil {
+	if uuid.Validate(r.ID) != nil || uuid.Validate(r.Generation) != nil || r.Slot < 0 || r.Slot >= OwnerSlots || !validPhase(r.Phase) || r.TTL < 1 || int64(r.TTL) > math.MaxInt64/int64(time.Hour) || r.Policy < 1 || r.Policy > b.admin.policy.Revision || r.Created < 0 || r.Stdout < 0 || r.Stderr < 0 || r.StdoutLines < 1 || r.StderrLines < 1 || decodeRunResult(r.encoded, r.Cleanup, &result) != nil || validateTerminal(r.Cleanup, result, r.Terminal) != nil {
 		return recoveryInconsistent("run identity, outcome or cleanup")
 	}
 	if result.RunID == nil || *result.RunID != r.ID || result.OwnerID != r.Generation {
@@ -440,7 +440,20 @@ func (b *recoveryInventory) run(r recoveryRunEvidence) error {
 		if err := b.record("disposed-run", r); err != nil {
 			return err
 		}
+		d, err := readRunResolution(b.ctx, b.tx, r.ID)
+		if err != nil {
+			return err
+		}
+		if err := b.record("disposition", d); err != nil {
+			return err
+		}
+		if r.Evicting {
+			return nil
+		} // payload prefixes can be partially removed
 		return b.streams(r)
+	}
+	if r.Evicting {
+		return recoveryInconsistent("unresolved run eviction")
 	}
 	if !r.Terminal {
 		var owner bool

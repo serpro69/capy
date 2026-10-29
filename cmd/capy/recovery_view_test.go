@@ -30,3 +30,32 @@ func TestRecoveryViewCLIHistoricalTextAndBudget(t *testing.T) {
 		require.Contains(t, string(wire), `"disposition_id":"`+id+`"`)
 	}
 }
+
+func TestBatchRecoveryCLIReportsAdministrativeClosure(t *testing.T) {
+	id := "11111111-2222-4333-8444-555555555555"
+	now := time.Now().UTC()
+	expiry := now.Add(time.Hour)
+	batch := runstore.BatchResult{Version: 2, Kind: "batch", BatchID: id, State: "running", RecoveredCount: 1, Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending}, Recovery: &runstore.Recovery{State: "operator_resolved", ReceiptID: id, Basis: "groups_stopped", ClosedAt: &now, RetentionExpiresAt: &expiry, OperationallyClosed: true, CaptureClosed: true}}
+	value := runQueryResult{Version: 2, Kind: "query", Batch: &batch}
+	_, err := execution.Budget(2048, func(int) (any, error) { return value, nil }, encodeRunText)
+	require.NoError(t, err)
+	text, err := encodeRunText(value)
+	require.NoError(t, err)
+	require.Contains(t, string(text), "last recorded running")
+	require.Contains(t, string(text), "Operator-disposed children: 1; administratively closed: true")
+	require.Contains(t, string(text), "Original batch completion is unchanged")
+	require.Contains(t, string(text), "Batch history deadline:")
+	require.NotContains(t, string(text), "Retained output deadline:")
+	require.Equal(t, &expiry, batch.Recovery.RetentionExpiresAt)
+	require.Nil(t, batch.CompletedAt)
+}
+
+func TestBatchRecoveryCLIIncidentOnlyKeepsExecutionCompletion(t *testing.T) {
+	now := time.Now().UTC()
+	batch := runstore.BatchResult{Version: 2, Kind: "batch", BatchID: "11111111-2222-4333-8444-555555555555", State: "completed", CompletedAt: &now, Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupRetired}, Recovery: &runstore.Recovery{State: "operator_resolved", ReceiptID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", Basis: "groups_stopped", OperationallyClosed: true}}
+	text, err := encodeRunText(runQueryResult{Version: 2, Kind: "query", Batch: &batch})
+	require.NoError(t, err)
+	require.Contains(t, string(text), ": completed;")
+	require.NotContains(t, string(text), "last recorded completed")
+	require.NotContains(t, string(text), "administratively closed")
+}

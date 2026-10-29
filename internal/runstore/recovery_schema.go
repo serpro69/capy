@@ -10,7 +10,7 @@ const (
 	recoveryMembershipReserve  = 4096
 )
 
-// Applied/detected/resolved clocks use Unix nanoseconds. Retention/audit
+// Applied/detected/resolved/evicted clocks use Unix nanoseconds. Retention/audit
 // deadlines use Unix milliseconds rounded up (like runs.expires_at), allowing
 // the maximum admission TTL to extend beyond time.Time's UnixNano range.
 const recoverySchema = `

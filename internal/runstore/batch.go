@@ -68,6 +68,8 @@ func (b BatchInput) Validate() error {
 }
 
 type BatchResult struct {
+	Recovery             *Recovery                `json:"recovery,omitempty"`
+	RecoveredCount       int                      `json:"recovered_count,omitempty"`
 	Cleanup              executor.CleanupEvidence `json:"cleanup"`
 	Capacity             *Capacity                `json:"capacity,omitempty"`
 	Version              int                      `json:"version"`
@@ -208,8 +210,8 @@ func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, cleanupScope execu
 		return empty, nil, storageError()
 	}
 	for i, row := range rows {
-		// The private manifest is scoped v2; public run results stay v1 until
-		// Task 7. Do not reuse the manifest encoding for the run-row blob.
+		// The manifest is an independent execution snapshot. Keep its encoding
+		// separate from run results, whose index metadata can evolve later.
 		runResult, err := json.Marshal(row.Result)
 		if err != nil {
 			return empty, nil, storageError()
@@ -249,40 +251,42 @@ func (s *Store) AdmitBatch(ctx context.Context, owner *Owner, cleanupScope execu
 }
 
 // Called in the same transaction as every child state change and crash recovery.
-func syncBatchChild(ctx context.Context, tx *sql.Tx, result Result, terminal bool) error {
+func syncBatchChild(ctx context.Context, tx *sql.Tx, result Result, terminal bool) (bool, error) {
 	if result.BatchID == "" {
-		return nil
+		return false, nil
 	}
 	if err := validateTerminal(result.Cleanup, result, terminal); err != nil {
-		return err
+		return false, err
 	}
 	encoded, err := encodeManifest(result)
 	if err != nil || len(encoded) > batchChildReserve {
-		return storageError()
+		return false, storageError()
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE run_batch_children SET result=?,terminal=? WHERE run_id=? AND batch_id=?", encoded, terminal, *result.RunID, result.BatchID); err != nil {
-		return storageError()
+		return false, storageError()
 	}
 	if !terminal {
-		return nil
+		return false, nil
 	}
 	var pending bool
 	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_batch_children WHERE batch_id=? AND terminal=0)", result.BatchID).Scan(&pending); err != nil {
-		return storageError()
+		return false, storageError()
 	}
 	if !pending {
 		// Validate the aggregate only once, at final completion. Re-decoding all
 		// children on every recovered child makes bounded recovery quadratic.
 		if _, _, err := batchChildren(ctx, tx, result.BatchID); err != nil {
-			return err
+			return false, err
 		}
 		now := time.Now().UTC()
 		_, err = tx.ExecContext(ctx, "UPDATE run_batches SET completed_at=?,expires_at=?+ttl_hours*3600000 WHERE id=? AND completed_at IS NULL", now.UnixNano(), now.UnixMilli()+1, result.BatchID)
 		if err != nil {
-			return storageError()
+			return false, storageError()
 		}
+	} else {
+		return closeBatchRecovery(ctx, tx, result.BatchID, time.Now().UTC())
 	}
-	return nil
+	return false, nil
 }
 
 func (s *Store) batchMetadata(ctx context.Context, id string) (BatchResult, []string, string, error) {
@@ -306,7 +310,7 @@ func batchMetadata(ctx context.Context, query runQuerier, id string) (BatchResul
 		return b, nil, "", storageError()
 	}
 	if unverified && !completed.Valid {
-		b.Error = &Error{Code: "cleanup_unverified", Message: "last recorded child states; cleanup is unverified; stop old execution groups before explicit operator reset"}
+		b.Error = &Error{Code: "cleanup_unverified", Message: "last recorded child states; cleanup is unverified; inspect this owner with capy runs inspect before offline recovery"}
 	}
 	if completed.Valid {
 		t := time.Unix(0, completed.Int64).UTC()
@@ -337,7 +341,7 @@ func (s *Store) BatchStatus(ctx context.Context, id string) (BatchResult, error)
 		b.ObservedBytes += r.Capture.ObservedBytes
 		b.CapturedBytes += r.Capture.CapturedBytes
 		pending = pending || !terminal
-		if r.State == "running" {
+		if r.State == "running" && !child.closed && r.Recovery == nil && r.Cleanup.State == executor.CleanupPending {
 			b.CurrentConcurrency++
 		}
 		if r.Capture.State == "incomplete" {

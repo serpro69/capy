@@ -146,7 +146,11 @@ func (s *Server) buildBatchRunResult(result runstore.BatchResult) (*mcp.CallTool
 	return execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
 		text := "Batch rejected before admission."
 		if result.BatchID != "" {
-			text = fmt.Sprintf("Batch %s: %s. Recover children with capy_runs(action=list,batch_id=%s); do not resubmit execution.", result.BatchID, result.State, result.BatchID)
+			label := ""
+			if result.Recovery != nil && result.CompletedAt == nil {
+				label = "last recorded "
+			}
+			text = fmt.Sprintf("Batch %s: %s%s. Recover children with capy_runs(action=list,batch_id=%s); do not resubmit execution.", result.BatchID, label, result.State, result.BatchID)
 		}
 		bounded := execution.BoundBatch(result, n)
 		if bounded.Error != nil {

@@ -68,6 +68,7 @@ func (b *recoveryInventory) batches() error {
 func (b *recoveryInventory) batch(batch recoveryBatchEvidence) error {
 	count := 0
 	allTerminal := true
+	allClosed, hasDisposition := true, false
 	pending := false
 	scope := ""
 	for {
@@ -109,20 +110,31 @@ func (b *recoveryInventory) batch(batch recoveryBatchEvidence) error {
 				return recoveryInconsistent("mixed batch cleanup scopes")
 			}
 			scope = string(r.Cleanup.Scope)
+			d, err := readRunResolution(b.ctx, b.tx, c.ID)
+			if err != nil {
+				return err
+			}
+			hasDisposition = hasDisposition || d != nil
+			allClosed = allClosed && (c.Terminal || d != nil)
+			if d != nil {
+				if err := b.record("child-disposition", d); err != nil {
+					return err
+				}
+			}
 			var generation string
 			var slot int
 			var terminal bool
 			var encoded []byte
 			err = b.tx.QueryRowContext(b.ctx, `SELECT CASE WHEN length(generation)=36 THEN generation ELSE NULL END,slot,terminal,CASE WHEN length(result) BETWEEN 1 AND 8192 THEN result ELSE NULL END FROM runs WHERE id=?`, c.ID).Scan(&generation, &slot, &terminal, &encoded)
 			if errors.Is(err, sql.ErrNoRows) {
-				if !c.Terminal {
+				if !c.Terminal && (d == nil || d.PayloadState != "evicted") {
 					return recoveryInconsistent("missing nonterminal batch child")
 				}
 			} else if err != nil {
 				return err
 			} else {
 				var retained Result
-				if generation != batch.Generation || slot != batch.Slot || terminal != c.Terminal || decodeRunResult(encoded, r.Cleanup, &retained) != nil || !samePlanExecution(retained, r) {
+				if generation != batch.Generation || slot != batch.Slot || terminal != c.Terminal || decodeRunResult(encoded, r.Cleanup, &retained) != nil || !samePlanExecution(retained, r) || !c.Terminal && !sameDispositionExecution(r, retained) {
 					return recoveryInconsistent("batch outcome copy")
 				}
 				var actualScope, actualState string
@@ -142,7 +154,7 @@ func (b *recoveryInventory) batch(batch recoveryBatchEvidence) error {
 				return err
 			}
 			allTerminal = allTerminal && c.Terminal
-			pending = pending || r.Cleanup.State == "pending"
+			pending = pending || r.Cleanup.State == "pending" && d == nil
 			count++
 		}
 		if len(children) < 64 {
@@ -154,6 +166,35 @@ func (b *recoveryInventory) batch(batch recoveryBatchEvidence) error {
 	}
 	if pending {
 		b.view.Counts.Batches++
+		if !hasDisposition {
+			b.view.batchReservations++
+		}
+	}
+	closure, err := readBatchClosure(b.ctx, b.tx, batch.ID)
+	if err != nil {
+		return err
+	}
+	if (closure != nil) != (hasDisposition && allClosed) {
+		return recoveryInconsistent("batch closure inventory")
+	}
+	if hasDisposition || pending {
+		base, charged, err := batchRecoveryDebit(b.ctx, b.tx, batch.ID)
+		if err != nil {
+			return err
+		}
+		if hasDisposition && closure == nil {
+			base += recoveryBatchReserve
+		}
+		if charged < base {
+			return recoveryInconsistent("batch recovery reservation")
+		}
+		if err := b.record("batch-recovery", struct {
+			Batch   string
+			Closure *batchClosure
+			Debit   int64
+		}{batch.ID, closure, charged}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
