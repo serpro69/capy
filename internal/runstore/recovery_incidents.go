@@ -190,6 +190,7 @@ func observeSlotInconsistencies(ctx context.Context, tx *sql.Tx, slot int, gener
 	}
 	rows, err = tx.QueryContext(ctx, `SELECT CASE WHEN length(c.run_id)=36 THEN c.run_id ELSE NULL END,CASE WHEN length(b.id)=36 THEN b.id ELSE NULL END,CASE WHEN length(b.generation)=36 THEN b.generation ELSE NULL END FROM run_batch_children c JOIN run_batches b ON b.id=c.batch_id
  LEFT JOIN runs r ON r.id=c.run_id WHERE b.slot=? AND c.terminal=0 AND r.id IS NULL
+ AND NOT EXISTS(SELECT 1 FROM run_resolutions d WHERE d.run_id=c.run_id)
  AND NOT EXISTS(SELECT 1 FROM run_incidents i WHERE i.run_id=c.run_id AND i.generation=b.generation AND i.receipt_id IS NULL)
  ORDER BY c.run_id LIMIT 64`, slot)
 	if err != nil {

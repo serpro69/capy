@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/serpro69/capy/internal/execution"
@@ -201,8 +202,26 @@ func encodeRunText(value any) ([]byte, error) {
 		b.WriteString(runText(v))
 	case runQueryResult:
 		if v.Batch != nil {
-			fmt.Fprintf(&b, "Batch %s: %s; failures=%d incomplete=%d. Recover: capy runs list --batch-id %s.\n", v.Batch.BatchID, v.Batch.State, v.Batch.FailedCount, v.Batch.IncompleteCount, v.Batch.BatchID)
+			label := ""
+			if v.Batch.Recovery != nil && v.Batch.CompletedAt == nil {
+				label = "last recorded "
+			}
+			fmt.Fprintf(&b, "Batch %s: %s%s; failures=%d incomplete=%d. Recover: capy runs list --batch-id %s.\n", v.Batch.BatchID, label, v.Batch.State, v.Batch.FailedCount, v.Batch.IncompleteCount, v.Batch.BatchID)
 			fmt.Fprintf(&b, "Cleanup: %s / %s.\n", v.Batch.Cleanup.Scope, v.Batch.Cleanup.State)
+			if v.Batch.Recovery != nil {
+				if v.Batch.RecoveredCount > 0 || v.Batch.Recovery.ClosedAt != nil {
+					fmt.Fprintf(&b, "Operator-disposed children: %d; administratively closed: %t. Original batch completion is unchanged.\n", v.Batch.RecoveredCount, v.Batch.Recovery.OperationallyClosed)
+				}
+				if v.Batch.Recovery.ReceiptID != "" {
+					recovery := *v.Batch.Recovery
+					expires := recovery.RetentionExpiresAt
+					recovery.RetentionExpiresAt = nil
+					b.WriteString(execution.RunRecoveryText(&recovery))
+					if expires != nil {
+						fmt.Fprintf(&b, "Batch history deadline: %s; child output has independent TTL/quota limits.\n", expires.UTC().Format(time.RFC3339Nano))
+					}
+				}
+			}
 			if v.Batch.Error != nil {
 				fmt.Fprintf(&b, "%s: %s\n", v.Batch.Error.Code, terminalText(v.Batch.Error.Message))
 			}

@@ -72,29 +72,30 @@ type RecoveryPlanCapacity struct {
 // a complete validated inventory can carry a token. Preview clocks/capacity are
 // samples; actual retention and capacity must be checked by eventual apply.
 type RecoveryPlan struct {
-	Version          int                   `json:"version"`
-	Kind             string                `json:"kind"`
-	Status           string                `json:"status"`
-	StoreID          string                `json:"store_id,omitempty"`
-	RecoveryRevision *int64                `json:"recovery_revision,omitempty"`
-	Complete         bool                  `json:"complete"`
-	Token            string                `json:"plan,omitempty"`
-	Counts           RecoveryPlanCounts    `json:"counts"`
-	Subjects         []RecoveryPlanSubject `json:"subjects,omitempty"`
-	Capacity         *RecoveryPlanCapacity `json:"capacity,omitempty"`
-	ObservedAt       time.Time             `json:"observed_at"`
-	EffectiveTimeout string                `json:"effective_timeout"`
-	Omitted          bool                  `json:"omitted"`
-	MetadataOmitted  bool                  `json:"metadata_omitted,omitempty"`
-	NextCursor       string                `json:"next_cursor,omitempty"`
-	NextCommand      string                `json:"next_command,omitempty"`
-	NextTimeout      string                `json:"next_timeout,omitempty"`
-	NextStep         string                `json:"next_step"`
-	Error            *Error                `json:"error,omitempty"`
-	position         int64
-	fingerprint      string
-	command          string
-	timeout          time.Duration
+	Version           int                   `json:"version"`
+	Kind              string                `json:"kind"`
+	Status            string                `json:"status"`
+	StoreID           string                `json:"store_id,omitempty"`
+	RecoveryRevision  *int64                `json:"recovery_revision,omitempty"`
+	Complete          bool                  `json:"complete"`
+	Token             string                `json:"plan,omitempty"`
+	Counts            RecoveryPlanCounts    `json:"counts"`
+	Subjects          []RecoveryPlanSubject `json:"subjects,omitempty"`
+	Capacity          *RecoveryPlanCapacity `json:"capacity,omitempty"`
+	ObservedAt        time.Time             `json:"observed_at"`
+	EffectiveTimeout  string                `json:"effective_timeout"`
+	Omitted           bool                  `json:"omitted"`
+	MetadataOmitted   bool                  `json:"metadata_omitted,omitempty"`
+	NextCursor        string                `json:"next_cursor,omitempty"`
+	NextCommand       string                `json:"next_command,omitempty"`
+	NextTimeout       string                `json:"next_timeout,omitempty"`
+	NextStep          string                `json:"next_step"`
+	Error             *Error                `json:"error,omitempty"`
+	position          int64
+	fingerprint       string
+	command           string
+	timeout           time.Duration
+	batchReservations int64
 }
 
 type recoveryPlanCursor struct {

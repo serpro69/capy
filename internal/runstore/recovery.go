@@ -200,9 +200,11 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=? AND generation<>?)`, slot, 
 		if !recoverable[id] {
 			continue
 		}
-		if err := s.recoverRun(writeCtx, tx, id); err != nil {
+		batchClosed, err := s.recoverRun(writeCtx, tx, id)
+		if err != nil {
 			return report, err
 		}
+		changed = changed || batchClosed
 		report.RecoveredRuns++
 	}
 	// Index workers own no external command group. Their matching generation
@@ -255,36 +257,36 @@ func recoveryIDs(ctx context.Context, tx *sql.Tx, query string, slot int, genera
 	return ids, nil
 }
 
-func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
+func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
 	if err := rejectDisposedMutation(ctx, tx, id); err != nil {
-		return err
+		return false, err
 	}
 	// Read directly: expiry must not hide unfinished proof records from recovery.
 	var result []byte
 	row := Admitted{ID: id}
 	if err := tx.QueryRowContext(ctx, "SELECT json_extract(CAST(program AS TEXT),'$.ttl_hours'),result,generation,cleanup_scope,cleanup FROM runs WHERE id=?", id).Scan(&row.Program.TTLHours, &result, &row.Generation, &row.Cleanup.Scope, &row.Cleanup.State); err != nil {
-		return metadataFailure(ctx, "reading recovery metadata")
+		return false, metadataFailure(ctx, "reading recovery metadata")
 	}
 	if decodeRunResult(result, row.Cleanup, &row.Result) != nil || row.Program.TTLHours <= 0 || int64(row.Program.TTLHours) > (1<<63-1)/int64(time.Hour) {
-		return storageError()
+		return false, storageError()
 	}
 	if !CleanupAccepted(row.Cleanup) {
-		return failure("cleanup_unverified", "run recovery requires accepted scoped evidence")
+		return false, failure("cleanup_unverified", "run recovery requires accepted scoped evidence")
 	}
 	if err := validateRunManifest(ctx, tx, id, row.Cleanup, false); err != nil {
-		return err
+		return false, err
 	}
 	row.Result.Cleanup = row.Cleanup
 	for _, stream := range []string{"stdout", "stderr"} {
 		if err := s.project(ctx, tx, &row, stream, nil, true); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if err := s.projectionState(ctx, tx, &row); err != nil {
-		return err
+		return false, err
 	}
 	if row.chargeBytes > runReserve/2 {
-		return storageError()
+		return false, storageError()
 	}
 	reason := "owner_lost"
 	row.Result.State, row.Result.Reason = "interrupted", &reason
@@ -306,10 +308,10 @@ func (s *Store) recoverRun(ctx context.Context, tx *sql.Tx, id string) error {
 	row.Result.Capture.Reason = &reason
 	encoded, err := json.Marshal(row.Result)
 	if err != nil {
-		return storageError()
+		return false, storageError()
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=?,terminal=1,completed_at=?,expires_at=? WHERE id=? AND generation=? AND cleanup_scope=?", encoded, row.Result.CompletedAt.UnixNano(), row.Result.ExpiresAt.UnixMilli()+1, id, row.Generation, row.Cleanup.Scope); err != nil {
-		return metadataFailure(ctx, "writing recovered metadata")
+		return false, metadataFailure(ctx, "writing recovered metadata")
 	}
 	return syncBatchChild(ctx, tx, row.Result, true)
 }

@@ -16,6 +16,7 @@ type Recovery struct {
 	ReceiptID           string     `json:"receipt_id,omitempty"`
 	DispositionID       string     `json:"disposition_id,omitempty"`
 	ResolvedAt          *time.Time `json:"resolved_at,omitempty"`
+	ClosedAt            *time.Time `json:"closed_at,omitempty"` // administrative batch closure
 	Basis               string     `json:"basis,omitempty"`
 	RetentionExpiresAt  *time.Time `json:"retention_expires_at,omitempty"`
 	OperationallyClosed bool       `json:"operationally_closed"`
@@ -36,16 +37,13 @@ func projectRunHistory(ctx context.Context, q runQuerier, id, generation string,
 		return false, err
 	}
 	if d != nil {
-		resolved := time.Unix(0, d.ResolvedAt).UTC()
-		expires := time.UnixMilli(d.ExpiresAt).UTC()
-		result.Recovery = &Recovery{State: "operator_resolved", IncidentID: d.IncidentID, ReceiptID: d.ReceiptID, DispositionID: d.RunID,
-			ResolvedAt: &resolved, Basis: d.Receipt.Basis, RetentionExpiresAt: &expires, OperationallyClosed: true, CaptureClosed: true}
+		result.Recovery = dispositionView(d)
 		// Capture did not complete with accepted execution proof. Preserve the
 		// recorded exit, completion, persistence flag, reason and original expiry.
 		if result.Capture.State != "not_started" {
 			result.Capture.State = "incomplete"
 		}
-		return now.Before(expires), nil
+		return d.PayloadState == "retained" && now.Before(*result.Recovery.RetentionExpiresAt), nil
 	}
 	// The historical generation is durable even after its registry slot is
 	// reused. Prefer an open episode over an older resolved one for this run.
@@ -77,4 +75,10 @@ func projectRunHistory(ctx context.Context, q runQuerier, id, generation string,
 		}
 	}
 	return result.ExpiresAt == nil || now.Before(*result.ExpiresAt), nil
+}
+
+func dispositionView(d *runResolution) *Recovery {
+	resolved, expires := time.Unix(0, d.ResolvedAt).UTC(), time.UnixMilli(d.ExpiresAt).UTC()
+	return &Recovery{State: "operator_resolved", IncidentID: d.IncidentID, ReceiptID: d.ReceiptID, DispositionID: d.RunID,
+		ResolvedAt: &resolved, Basis: d.Receipt.Basis, RetentionExpiresAt: &expires, OperationallyClosed: true, CaptureClosed: true}
 }

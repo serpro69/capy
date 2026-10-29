@@ -391,11 +391,18 @@ func (s *Store) update(ctx context.Context, id string, fn func(*sql.Tx, *Admitte
 	if n, err := r.RowsAffected(); err != nil || n != 1 {
 		return failure("cleanup_unverified", "run generation or cleanup scope changed")
 	}
-	if err := syncBatchChild(ctx, tx, row.Result, terminal); err != nil {
+	batchClosed, err := syncBatchChild(ctx, tx, row.Result, terminal)
+	if err != nil {
 		return err
 	}
-	if _, err := refreshIndexDebit(ctx, tx); err != nil {
-		return err
+	if batchClosed {
+		if err := finishIncidentChanges(ctx, tx, true); err != nil {
+			return err
+		}
+	} else {
+		if _, err := refreshIndexDebit(ctx, tx); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return storageError()

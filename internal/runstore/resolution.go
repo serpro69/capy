@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -25,30 +26,35 @@ type runResolution struct {
 	Terminal                                                    bool
 	Original, Digest                                            []byte
 	PayloadState                                                string
+	EvictedAt                                                   sql.NullInt64
+	EvictionCause                                               string
 	Receipt                                                     recoveryReceipt
 }
 
 // readRunResolution validates the immutable binding against the retained row,
 // receipt and incident membership. Absence is distinct from invalid evidence.
-// Evicted payload support is added with the bounded retention consumer (Task 11).
+// A missing payload is legitimate only after its durable evicted transition.
+// This reader does not perform eviction or infer it from an absent row.
 func readRunResolution(ctx context.Context, q runQuerier, id string) (*runResolution, error) {
 	d := &runResolution{RunID: id}
-	var matches bool
+	var auditMatches, rowMatches, present, evicting bool
 	err := q.QueryRowContext(ctx, `SELECT d.store_id,d.generation,d.slot,COALESCE(d.batch_id,''),d.receipt_id,d.incident_id,d.version,
  CASE WHEN length(d.original_result) BETWEEN 1 AND 8192 THEN d.original_result ELSE NULL END,d.result_sha256,
- d.cleanup_scope,d.cleanup,d.terminal,d.ttl_hours,d.policy_revision,d.resolved_at,d.retention_expires_at,d.audit_expires_at,d.charged_bytes,d.payload_state,
- EXISTS(SELECT 1 FROM runs r JOIN run_meta meta ON meta.singleton=1
+ d.cleanup_scope,d.cleanup,d.terminal,d.ttl_hours,d.policy_revision,d.resolved_at,d.retention_expires_at,d.audit_expires_at,d.charged_bytes,d.payload_state,d.evicted_at,COALESCE(d.eviction_cause,''),
+ EXISTS(SELECT 1 FROM run_meta meta
  JOIN run_incidents i ON i.id=d.incident_id JOIN run_incident_resolutions m ON m.incident_id=i.id AND m.receipt_id=d.receipt_id
- WHERE r.id=d.run_id AND meta.store_id=d.store_id AND r.generation=d.generation AND r.slot=d.slot
- AND r.result=d.original_result AND r.cleanup_scope=d.cleanup_scope AND r.cleanup=d.cleanup AND r.terminal=d.terminal
- AND json_extract(CAST(r.program AS TEXT),'$.ttl_hours')=d.ttl_hours
- AND json_extract(CAST(r.program AS TEXT),'$.policy_revision')=d.policy_revision
+ WHERE meta.singleton=1 AND meta.store_id=d.store_id
  AND i.subject_kind='run' AND i.run_id=d.run_id AND i.generation=d.generation AND i.slot=d.slot
  AND COALESCE(i.batch_id,'')=COALESCE(d.batch_id,'') AND i.receipt_id=d.receipt_id
- AND i.audit_expires_at=d.audit_expires_at AND m.audit_expires_at=d.audit_expires_at
- AND r.evicting=0 AND d.evicted_at IS NULL AND d.eviction_cause IS NULL)
+ AND i.audit_expires_at=d.audit_expires_at AND m.audit_expires_at=d.audit_expires_at),
+ EXISTS(SELECT 1 FROM runs r WHERE r.id=d.run_id AND r.generation=d.generation AND r.slot=d.slot
+ AND r.result=d.original_result AND r.cleanup_scope=d.cleanup_scope AND r.cleanup=d.cleanup AND r.terminal=d.terminal
+ AND json_extract(CAST(r.program AS TEXT),'$.ttl_hours')=d.ttl_hours
+ AND json_extract(CAST(r.program AS TEXT),'$.policy_revision')=d.policy_revision),
+ EXISTS(SELECT 1 FROM runs r WHERE r.id=d.run_id),
+ EXISTS(SELECT 1 FROM runs r WHERE r.id=d.run_id AND r.evicting=1)
  FROM run_resolutions d WHERE d.run_id=?`, id).Scan(&d.StoreID, &d.Generation, &d.Slot, &d.BatchID, &d.ReceiptID, &d.IncidentID, &d.Version,
-		&d.Original, &d.Digest, &d.Cleanup.Scope, &d.Cleanup.State, &d.Terminal, &d.TTL, &d.Policy, &d.ResolvedAt, &d.ExpiresAt, &d.AuditExpiresAt, &d.ChargedBytes, &d.PayloadState, &matches)
+		&d.Original, &d.Digest, &d.Cleanup.Scope, &d.Cleanup.State, &d.Terminal, &d.TTL, &d.Policy, &d.ResolvedAt, &d.ExpiresAt, &d.AuditExpiresAt, &d.ChargedBytes, &d.PayloadState, &d.EvictedAt, &d.EvictionCause, &auditMatches, &rowMatches, &present, &evicting)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -57,9 +63,9 @@ func readRunResolution(ctx context.Context, q runQuerier, id string) (*runResolu
 	}
 	digest := sha256.Sum256(d.Original)
 	var original Result
-	if !matches || d.Version != 1 || uuid.Validate(id) != nil || uuid.Validate(d.StoreID) != nil || uuid.Validate(d.Generation) != nil ||
+	if !auditMatches || present && !rowMatches || !d.validPayload(present, evicting) || d.Version != 1 || uuid.Validate(id) != nil || uuid.Validate(d.StoreID) != nil || uuid.Validate(d.Generation) != nil ||
 		uuid.Validate(d.ReceiptID) != nil || uuid.Validate(d.IncidentID) != nil || d.Slot < 0 || d.Slot >= OwnerSlots ||
-		d.TTL < 1 || d.TTL > 2562047 || d.Policy < 1 || d.Terminal || d.Cleanup.State != executor.CleanupPending || d.PayloadState != "retained" ||
+		d.TTL < 1 || d.TTL > 2562047 || d.Policy < 1 || d.Terminal || d.Cleanup.State != executor.CleanupPending ||
 		d.ChargedBytes != recoveryDispositionReserve || !bytes.Equal(digest[:], d.Digest) || decodeRunResult(d.Original, d.Cleanup, &original) != nil ||
 		validateTerminal(d.Cleanup, original, d.Terminal) != nil || original.RunID == nil || *original.RunID != id || original.OwnerID != d.Generation || original.BatchID != d.BatchID ||
 		d.ExpiresAt != time.Unix(0, d.ResolvedAt).Add(time.Duration(d.TTL)*time.Hour).UnixMilli()+1 || d.AuditExpiresAt < d.ExpiresAt {
@@ -76,17 +82,91 @@ func readRunResolution(ctx context.Context, q runQuerier, id string) (*runResolu
 	if d.Receipt.StoreID != d.StoreID || d.Receipt.AppliedAt != d.ResolvedAt || d.Receipt.AuditExpiresAt < d.AuditExpiresAt || d.Receipt.Pruning {
 		return nil, recoveryInconsistent("run disposition receipt")
 	}
-	var state string
-	if err := q.QueryRowContext(ctx, "SELECT state FROM run_search_state WHERE run_id=?", id).Scan(&state); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, recoveryInconsistent("missing disposed run index state")
+	if present {
+		var state string
+		err := q.QueryRowContext(ctx, "SELECT state FROM run_search_state WHERE run_id=?", id).Scan(&state)
+		if err != nil && !(d.PayloadState == "evicting" && errors.Is(err, sql.ErrNoRows)) {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, recoveryInconsistent("missing disposed run index state")
+			}
+			return nil, metadataReadError(err)
 		}
-		return nil, metadataReadError(err)
+		if err == nil && !validResolutionIndexState(state) {
+			return nil, recoveryInconsistent("disposed run index state")
+		}
 	}
-	if !validResolutionIndexState(state) {
-		return nil, recoveryInconsistent("disposed run index state")
+	if err := validateDispositionManifest(ctx, q, d); err != nil {
+		return nil, err
 	}
 	return d, nil
+}
+
+func (d *runResolution) validPayload(present, evicting bool) bool {
+	knownCause := d.EvictionCause == "ttl" || d.EvictionCause == "quota"
+	switch d.PayloadState {
+	case "retained":
+		return present && !evicting && !d.EvictedAt.Valid && d.EvictionCause == ""
+	case "evicting":
+		return present && evicting && !d.EvictedAt.Valid && knownCause
+	case "evicted":
+		return !present && d.EvictedAt.Valid && d.EvictedAt.Int64 >= d.ResolvedAt && knownCause
+	default:
+		return false
+	}
+}
+
+// Retained manifests are independent historical copies. Index/projection views
+// may differ, but execution identity, outcome and captured-prefix facts may not.
+func sameDispositionExecution(manifest, recorded Result) bool {
+	// Released schema 9 (v0.18.2) index writers could persist loadRun's known
+	// unverified annotation only in the run row. Recognize that same transform
+	// as the schema-8 proof migrator, without rewriting either historical copy.
+	// Counts, cursors, identity, state, exit/completion and proof still compare.
+	if !(recorded.CompletedAt != nil && CleanupAccepted(recorded.Cleanup)) && recorded.Error != nil && recorded.Error.Code == "cleanup_unverified" {
+		markUnverified(&manifest)
+		manifest.Error = recorded.Error // diagnostic wording is not cleanup proof
+	}
+	for _, r := range []*Result{&manifest, &recorded} {
+		r.Index, r.Redaction = Index{}, Projection{}
+		r.Recovery, r.Capacity, r.Preview, r.MetadataOmitted = nil, nil, "", false
+	}
+	x, err := json.Marshal(manifest)
+	if err != nil {
+		return false
+	}
+	y, err := json.Marshal(recorded)
+	return err == nil && bytes.Equal(x, y)
+}
+
+func validateDispositionManifest(ctx context.Context, q runQuerier, d *runResolution) error {
+	var batch, generation string
+	var slot int
+	var encoded []byte
+	var terminal bool
+	err := q.QueryRowContext(ctx, `SELECT c.batch_id,b.generation,b.slot,CASE WHEN length(c.result) BETWEEN 1 AND 8192 THEN c.result ELSE NULL END,c.terminal
+ FROM run_batch_children c LEFT JOIN run_batches b ON b.id=c.batch_id WHERE c.run_id=?`, d.RunID).Scan(&batch, &generation, &slot, &encoded, &terminal)
+	if errors.Is(err, sql.ErrNoRows) {
+		if d.BatchID == "" {
+			return nil
+		}
+		var retained bool
+		if err := q.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_batches WHERE id=?)", d.BatchID).Scan(&retained); err != nil {
+			return metadataReadError(err)
+		}
+		if !retained {
+			return nil
+		} // the whole manifest may legitimately age out
+		return recoveryInconsistent("missing disposition child manifest")
+	}
+	if err != nil {
+		return metadataReadError(err)
+	}
+	saved, err := decodeManifest(encoded)
+	var original Result
+	if err != nil || decodeRunResult(d.Original, d.Cleanup, &original) != nil || batch != d.BatchID || generation != d.Generation || slot != d.Slot || terminal != d.Terminal || !sameDispositionExecution(saved, original) {
+		return recoveryInconsistent("disposition child manifest binding")
+	}
+	return nil
 }
 
 func validResolutionIndexState(state string) bool {

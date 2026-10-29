@@ -142,11 +142,6 @@ func applyRecovery(ctx context.Context, path, key string, options recoveryApplyO
 	if preview.fingerprint != plan.Snapshot || preview.Counts.administrative() == 0 {
 		return view, staleRecoveryPlan()
 	}
-	// Task 10 must replace this guard with shared batch closure before public
-	// application. A standalone slice cannot partially resolve a mixed plan.
-	if preview.Counts.Batches != 0 {
-		return view, recoveryInconsistent("batch application requires integrated batch recovery consumers")
-	}
 	if preview.Capacity == nil || !preview.Capacity.Sufficient {
 		return view, recoveryApplyCapacity()
 	}
@@ -223,6 +218,9 @@ func applyRecovery(ctx context.Context, path, key string, options recoveryApplyO
 	if _, err := tx.ExecContext(ctx, "UPDATE run_recovery_receipts SET audit_expires_at=? WHERE id=?", receipt.AuditExpiresAt, receipt.ID); err != nil {
 		return view, err
 	}
+	if err := closeAppliedBatches(ctx, tx, receipt.ID, now); err != nil {
+		return view, err
+	}
 	if err := clearResolvedMarkers(ctx, tx); err != nil {
 		return view, err
 	}
@@ -280,6 +278,9 @@ func reserveRecoveryAudit(ctx context.Context, tx *sql.Tx, debit int64) error {
 }
 
 func insertRunResolution(ctx context.Context, tx *sql.Tx, store string, receipt recoveryReceipt, i incident, ttl int, expiry int64) error {
+	if err := reserveBatchRecovery(ctx, tx, i.BatchID); err != nil {
+		return err
+	}
 	var encoded []byte
 	var policy int64
 	var scope, state string

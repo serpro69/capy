@@ -61,18 +61,25 @@ func encodeManifest(r Result) ([]byte, error) {
 		return nil, err
 	}
 	r.Version = EnvelopeVersion
+	r.Recovery = nil // administrative views never become execution evidence
 	return json.Marshal(r)
 }
 
 func decodeManifest(encoded []byte) (Result, error) {
 	var stored Result
-	if err := json.Unmarshal(encoded, &stored); err != nil {
+	var cached struct {
+		*Result
+		Recovery json.RawMessage `json:"recovery"`
+	}
+	cached.Result = &stored
+	if err := json.Unmarshal(encoded, &cached); err != nil {
 		return Result{}, storageError()
 	}
 	if stored.Version != 1 && stored.Version != 2 {
 		return Result{}, storageError()
 	}
 	stored.Version = EnvelopeVersion
+	stored.Recovery = nil
 	return stored, ValidateCleanup(stored.Cleanup)
 }
 

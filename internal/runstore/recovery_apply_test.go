@@ -223,15 +223,10 @@ func TestRecoveryApplyAttestationAndLaterBlocker(t *testing.T) {
 }
 
 func TestRecoveryApplyRefusalsAndSnapshotBinding(t *testing.T) {
-	for _, mode := range []string{"wrong key", "held lease", "no confirmation", "legacy token", "changed prefix", "changed policy", "unsupported generation", "batch", "capacity"} {
+	for _, mode := range []string{"wrong key", "held lease", "no confirmation", "legacy token", "changed prefix", "changed policy", "unsupported generation", "capacity"} {
 		t.Run(mode, func(t *testing.T) {
 			s, o, closeStore := planFixture(t)
 			r := planPending(t, s, o)
-			if mode == "batch" {
-				_, children, err := s.AdmitBatch(t.Context(), o, executor.CleanupLinuxDescendants, BatchInput{Commands: []BatchCommand{{Command: "fixture"}}, Concurrency: 1})
-				require.NoError(t, err)
-				require.NoError(t, s.Pending(t.Context(), children[0].ID, o.ID, executor.CleanupLinuxDescendants))
-			}
 			closeStore()
 			plan, err := PlanRecovery(t.Context(), s.path, testKey, planOptions())
 			require.NoError(t, err)
@@ -259,8 +254,6 @@ func TestRecoveryApplyRefusalsAndSnapshotBinding(t *testing.T) {
 				mutatePlanStore(t, s.path, "UPDATE run_policy SET revision=revision+1")
 			case "unsupported generation":
 				mutatePlanStore(t, s.path, "UPDATE run_owners SET generation=? WHERE slot=?", "00000000-0000-0000-0000-000000000001", o.Slot)
-				code = "recovery_inconsistent"
-			case "batch":
 				code = "recovery_inconsistent"
 			case "capacity":
 				// A quota change first invalidates the reviewed plan. Fresh planning

@@ -24,7 +24,7 @@ type batchListCursor struct {
 
 func (s *Store) listBatch(ctx context.Context, o ListOptions) (ListPage, error) {
 	page := ListPage{Version: EnvelopeVersion, Kind: "query", BatchID: o.BatchID, Entries: []Summary{}}
-	batch, _, children, err := s.batchSnapshot(ctx, o.BatchID)
+	_, _, children, err := s.batchSnapshot(ctx, o.BatchID)
 	if err != nil {
 		return page, err
 	}
@@ -73,11 +73,9 @@ func (s *Store) listBatch(ctx context.Context, o ListOptions) (ListPage, error) 
 			break
 		}
 		entry := Summary{RunID: child.id, OutputAvailable: child.outputAvailable}
-		result, terminal := child.result, child.terminal
+		result := child.result
 		created, ordinal, label := child.created, child.ordinal, child.label
-		if batch.Error != nil && !terminal {
-			markUnverified(&result)
-		}
+		entry.Recovery = result.Recovery
 		entry.Cleanup = result.Cleanup
 		entry.BatchID = o.BatchID
 		entry.Ordinal = &ordinal
