@@ -359,6 +359,64 @@ increase committed; the output reports it explicitly. Automatic execution
 migration uses the stored quota and never silently applies this administrative
 increase. No failure evicts logs or recreates the store.
 
+After stopping the selected owner's sessions, readers, helpers and old execution
+groups, preview recovery from an ordinary terminal:
+
+```bash
+capy runs recover --project-dir . --json
+capy runs recover --project-dir . --cursor CURSOR --limit 16 --json
+capy runs recover --project-dir . --timeout 15m --json
+```
+
+This command is **preview-only**. It never applies recovery, admits a command,
+creates an owner generation, changes policy, runs retention or writes audit
+records. No application or confirmation flags are registered. Exclusive
+lifecycle, registry and owner-slot leases exclude cooperating store users; they
+do not prove that old execution groups stopped. Run it outside `capy_execute`.
+Schema 8/9 requires the separate offline upgrade first. Missing, held or unsafe
+leases refuse planning without creating replacement files.
+
+Every preview and cursor page inventories the whole store before producing a
+token. The token binds the physical owner path, database/permanent-lock inodes,
+store UUID, schema/policy/recovery revisions and ordered incident, owner, claim,
+batch, run outcome and capture-prefix evidence. Changing the evidence, moving or
+copying the store, or replacing a database/lock requires a fresh plan. Unchanged
+evidence gives the same token despite different page sizes, timeouts or preview
+clocks. Inferred subjects have stable keys, not invented incident UUIDs or dates.
+Use the returned `next_command`/`next_cursor` to review omitted subjects;
+continuation commands preserve the selected timeout. New plan tokens separately
+bind their physical target and inventory digest so future applied-receipt retries
+can validate the original target without reconstructing old evidence.
+At the smallest response budget, or when the owner path cannot be safely shown,
+the full shell command may be omitted. Select the same physical owner explicitly
+with `--project-dir`, then use the returned `next_cursor` and `next_timeout`.
+Omitted count fields mean zero; `complete=false` still marks an incomplete scan.
+`inspect --plan` remains a lookup for an already applied receipt, not a way to
+validate or page an unapplied plan.
+
+The plan distinguishes uncertain runs needing disposition, terminal runs needing
+only incident resolution, owner/store concerns, and proven-safe reconciliation
+backlog. It refuses unsupported proof, generation, claim or manifest
+inconsistencies. `no_recovery_needed` has no token or audit allocation. TTLs and
+estimated output/audit deadlines describe the proposed consequences; planning
+does not start those clocks or renew unrelated expiry. Quota can evict output
+sooner after eventual recovery. Capacity numbers are samples, not reservations;
+application must recheck actual accounting and filesystem headroom without
+evicting history to succeed.
+Insufficient sampled capacity withholds an applicable token but keeps the complete
+inventory pageable, with a capacity-specific repair step. Obtain a fresh plan
+after an offline quota change. Cancellation is reported separately from timeout
+and does not imply that the scan needs a longer budget.
+
+The default total offline budget is five minutes. `--timeout` accepts a positive
+finite Go duration, with any earlier caller deadline taking precedence. A timeout
+returns `recovery_inventory_incomplete`, no token, the effective budget and a
+same-owner longer-timeout command. Raise an earlier caller deadline too. Invalid
+zero, negative, malformed or overflowing durations fail before storage work.
+Interactive inspection retains its separate two-second budget. The existing CLI
+configuration, encryption, exit-status and CI conventions are unchanged; only
+the preview command and its reference are added here.
+
 Reload compatible CLI/MCP binaries after upgrade. Older binaries refuse schema
 10; there is no reverse migration. Retained history requires a compatible reader.
 Explicit `capy runs reset --discard` remains a separate destructive option after
