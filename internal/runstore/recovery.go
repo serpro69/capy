@@ -77,6 +77,9 @@ func (s *Store) recoveryLease(ctx context.Context) (*os.File, error) {
 // The caller holds recovery.lock throughout this pass and any following
 // admission/generation publication. Capture writes do not take this lock.
 func (s *Store) reconcile(ctx context.Context) (RecoveryReport, error) {
+	if s.recoveryReadOnly != nil {
+		return RecoveryReport{}, s.recoveryReadOnly
+	}
 	var report RecoveryReport
 	for slot := 0; slot < OwnerSlots; slot++ {
 		if err := ctx.Err(); err != nil {
@@ -100,6 +103,9 @@ func (s *Store) reconcile(ctx context.Context) (RecoveryReport, error) {
 		report.UnverifiedSlots += part.UnverifiedSlots
 		report.DeferredSlots += part.DeferredSlots
 	}
+	if err := s.recordLegacyMarkers(ctx); err != nil {
+		return report, err
+	}
 	return report, nil
 }
 
@@ -118,7 +124,8 @@ func (s *Store) reconcileSlot(ctx context.Context, slot int) (RecoveryReport, er
 	// Avoid taking SQLite's writer lock for the usual already-clean slot.
 	var work bool
 	err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM runs WHERE slot=? AND terminal=0)
-OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=?)`, slot, slot).Scan(&work)
+OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=?)
+ OR EXISTS(SELECT 1 FROM run_batch_children c JOIN run_batches b ON b.id=c.batch_id LEFT JOIN runs r ON r.id=c.run_id WHERE b.slot=? AND c.terminal=0 AND r.id IS NULL)`, slot, slot, slot).Scan(&work)
 	if err != nil || !work {
 		if err != nil {
 			return report, storageError()
@@ -148,24 +155,37 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=? AND generation<>?)`, slot, 
 	if err != nil {
 		return report, storageError()
 	}
-	if unsafe {
-		if _, err := tx.ExecContext(writeCtx, "UPDATE run_meta SET admission_blocked=1 WHERE singleton=1"); err != nil {
-			return report, storageError()
+	changed, recoverable, err := observeSlotRuns(writeCtx, tx, slot, generation)
+	if err != nil {
+		return report, err
+	}
+	inconsistent, err := observeSlotInconsistencies(writeCtx, tx, slot, generation)
+	if err != nil {
+		return report, err
+	}
+	changed = changed || inconsistent
+	var recorded bool
+	if err := tx.QueryRowContext(writeCtx, "SELECT EXISTS(SELECT 1 FROM run_incidents WHERE slot=? AND receipt_id IS NULL)", slot).Scan(&recorded); err != nil {
+		return report, storageError()
+	}
+	if unsafe || recorded {
+		marked, err := quarantineMarkers(writeCtx, tx, &slot, generation)
+		if err != nil {
+			return report, err
 		}
-		// Keep all proof/program/output rows intact. Readers expose an explicit
-		// cleanup error for this generation through the separate registry marker.
-		if _, err := tx.ExecContext(writeCtx, "UPDATE run_owners SET cleanup_unverified=1 WHERE slot=? AND generation=?", slot, generation); err != nil {
-			return report, storageError()
-		}
+		changed = changed || marked
 		report.UnverifiedSlots = 1
 	}
 	// Safe siblings have their own proof. A pending sibling still prevents
 	// reuse, but cannot prevent recording these independent outcomes/TTLs.
-	ids, err := recoveryIDs(writeCtx, tx, `SELECT id FROM runs WHERE slot=? AND generation=? AND terminal=0 AND `+acceptedCleanupSQL+` ORDER BY id LIMIT ?`, slot, generation)
+	ids, err := recoveryIDs(writeCtx, tx, `SELECT id FROM runs WHERE slot=? AND generation=? AND terminal=0 AND `+acceptedCleanupSQL+` AND NOT EXISTS(SELECT 1 FROM run_incidents i WHERE i.run_id=runs.id AND i.receipt_id IS NULL AND i.reason IN ('generation_mismatch','invalid_proof','invalid_manifest','structural_inconsistency')) ORDER BY id LIMIT ?`, slot, generation)
 	if err != nil {
 		return report, err
 	}
 	for _, id := range ids {
+		if !recoverable[id] {
+			continue
+		}
 		if err := s.recoverRun(writeCtx, tx, id); err != nil {
 			return report, err
 		}
@@ -191,6 +211,9 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=? AND generation=?)`, slot, g
 	}
 	if pending {
 		report.DeferredSlots = 1
+	}
+	if err := finishIncidentChanges(writeCtx, tx, changed); err != nil {
+		return report, err
 	}
 	if err := tx.Commit(); err != nil {
 		return RecoveryReport{}, metadataFailure(writeCtx, "committing recovered metadata")

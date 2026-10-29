@@ -1,8 +1,8 @@
 package runstore
 
 // These are fixed metadata bounds, separate from payload/index reservations.
-// Later publication/apply transactions must reserve each record before insertion;
-// this schema-only slice creates no incidents, receipts or dispositions.
+// Incident publication reserves its independent debit before insertion. Later
+// apply transactions must do the same for receipts, dispositions and membership.
 const (
 	recoveryIncidentReserve    = 4096
 	recoveryReceiptReserve     = 4096

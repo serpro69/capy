@@ -20,6 +20,8 @@ const OwnerSlots = 64
 const WriteTimeout = 250 * time.Millisecond
 
 type Store struct {
+	recoveryReadOnly error // immutable refusal on a restricted configured query attachment
+
 	db                   *sql.DB
 	path, key, id, owner string
 	lifecycle            *os.File
@@ -118,6 +120,14 @@ func open(ctx context.Context, path, key string, create bool, desired *PolicyCon
 		}
 		if desired == nil || *desired == s.policy.PolicyConfig {
 			if _, err := s.Reconcile(ctx); err != nil {
+				if !create && desired != nil && ctx.Err() == nil && attributionUnavailable(err) {
+					if readErr := s.attachRecoveryReader(ctx, err); readErr == nil {
+						return s, nil
+					} else {
+						s.closeHandles()
+						return nil, errors.Join(readErr, err)
+					}
+				}
 				s.closeHandles()
 				return nil, err
 			}
@@ -410,6 +420,10 @@ func initialize(ctx context.Context, path, key, owner string, settings PolicyCon
 
 func (s *Store) Close() error {
 	s.closeOnce.Do(func() {
+		if s.recoveryReadOnly != nil {
+			s.closeErr = s.closeHandles()
+			return
+		}
 		s.stopLeaseBorrowing()
 		s.maintenanceCancel()
 		<-s.maintenanceDone

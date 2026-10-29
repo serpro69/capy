@@ -8,8 +8,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/serpro69/capy/internal/executor"
@@ -18,18 +20,25 @@ import (
 // InspectionSubject contains allowlisted metadata only. Legacy marker subjects
 // are not persisted incidents and have neither invented UUIDs nor detection dates.
 type InspectionSubject struct {
-	Kind            string                    `json:"subject"`
-	RunID           string                    `json:"run_id,omitempty"`
-	Generation      string                    `json:"generation,omitempty"`
-	Slot            *int                      `json:"slot,omitempty"`
-	Attribution     string                    `json:"attribution"`
-	Reason          string                    `json:"reason"`
-	BlocksAdmission bool                      `json:"recorded_quarantine"`
-	State           string                    `json:"last_recorded_state,omitempty"`
-	Phase           string                    `json:"last_durable_phase,omitempty"`
-	Cleanup         *executor.CleanupEvidence `json:"cleanup,omitempty"`
-	MissingEvidence []string                  `json:"missing_evidence,omitempty"`
-	OutputAvailable *bool                     `json:"output_available,omitempty"`
+	IncidentID           string                    `json:"incident_id,omitempty"`
+	ReceiptID            string                    `json:"receipt_id,omitempty"`
+	IncidentRevision     int64                     `json:"incident_revision,omitempty"`
+	DetectedAt           *time.Time                `json:"detected_at,omitempty"`
+	DetectionStage       string                    `json:"detection_stage,omitempty"`
+	DetailUnavailable    bool                      `json:"detail_unavailable,omitempty"`
+	EvidenceInconsistent bool                      `json:"evidence_inconsistent,omitempty"`
+	Kind                 string                    `json:"subject"`
+	RunID                string                    `json:"run_id,omitempty"`
+	Generation           string                    `json:"generation,omitempty"`
+	Slot                 *int                      `json:"slot,omitempty"`
+	Attribution          string                    `json:"attribution"`
+	Reason               string                    `json:"reason"`
+	BlocksAdmission      bool                      `json:"recorded_quarantine"`
+	State                string                    `json:"last_recorded_state,omitempty"`
+	Phase                string                    `json:"last_durable_phase,omitempty"`
+	Cleanup              *executor.CleanupEvidence `json:"cleanup,omitempty"`
+	MissingEvidence      []string                  `json:"missing_evidence,omitempty"`
+	OutputAvailable      *bool                     `json:"output_available,omitempty"`
 }
 
 type inspectionRegistry struct {
@@ -190,10 +199,13 @@ func inspectLegacySubjects(ctx context.Context, tx *sql.Tx, view *Inspection, op
 	}
 	// Markers are stable across accepted legacy pages. Runs can finish/disappear
 	// between pages: totals and evidence are explicitly per-page observations.
-	const inferred = `EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=r.slot AND o.cleanup_unverified=1
-		AND (r.cleanup='pending' OR o.generation<>r.generation))`
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(sum(`+inferred+`),0),COALESCE(sum(NOT `+inferred+`),0)
-		FROM runs r WHERE terminal=0 AND created_at<=?`, cursor.Cutoff).
+
+	exclude := ""
+	if view.SchemaVersion >= 10 {
+		exclude = " AND NOT EXISTS(SELECT 1 FROM run_incidents i WHERE i.run_id=r.id)"
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(sum(`+inferredRunSQL+`),0),COALESCE(sum(NOT `+inferredRunSQL+`),0)
+		FROM runs r WHERE terminal=0 AND created_at<=?`+exclude, cursor.Cutoff).
 		Scan(&view.Counts.InferredCandidates, &view.Counts.UnattributedPending); err != nil {
 		return storageError()
 	}
@@ -207,19 +219,13 @@ func inspectLegacySubjects(ctx context.Context, tx *sql.Tx, view *Inspection, op
 		}
 	}
 	// SQL fragments are version-selected constants. User selectors remain bound.
-	query := `SELECT CASE WHEN length(r.id)=36 THEN r.id ELSE NULL END,
-		CASE WHEN length(r.generation)=36 THEN r.generation ELSE NULL END,r.slot,r.created_at,
-		CASE WHEN length(r.result)<=65536 THEN r.result ELSE NULL END,` + inspectionScopeSQL(view.SchemaVersion) + `,
-		CASE WHEN length(CAST(r.cleanup AS BLOB))<=16 THEN r.cleanup ELSE NULL END,
-		r.terminal,r.evicting,r.expires_at,` + inferred + `,
-		EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=r.slot AND o.generation=r.generation)
-		FROM runs r WHERE r.created_at<=? AND (r.created_at,r.id)>(?,?)`
+	query := "SELECT " + inspectionRunColumns(view.SchemaVersion) + ` FROM runs r WHERE r.created_at<=? AND (r.created_at,r.id)>(?,?)`
 	args := []any{cursor.Cutoff, cursor.Created, cursor.ID}
 	if options.RunID != "" {
 		query += " AND r.id=?"
 		args = append(args, options.RunID)
 	} else {
-		query += " AND r.terminal=0"
+		query += " AND r.terminal=0" + exclude
 	}
 	query += " ORDER BY r.created_at,r.id LIMIT ?"
 	args = append(args, options.Limit-len(view.Subjects)+1)
@@ -234,43 +240,10 @@ func inspectLegacySubjects(ctx context.Context, tx *sql.Tx, view *Inspection, op
 			more = true
 			break
 		}
-		var subject InspectionSubject
-		var slot int
-		var created int64
-		var data []byte
-		var cleanup executor.CleanupEvidence
-		var terminal, evicting, attributed, matching bool
-		var expiry sql.NullInt64
-		if err := rows.Scan(&subject.RunID, &subject.Generation, &slot, &created, &data, &cleanup.Scope, &cleanup.State,
-			&terminal, &evicting, &expiry, &attributed, &matching); err != nil {
-			return failure("recovery_inconsistent", "retained run metadata is inconsistent; inspection details are incomplete; preserve history and repair the metadata separately")
+		subject, created, err := scanInspectionRun(rows, view)
+		if err != nil {
+			return err
 		}
-		var result Result
-		if uuid.Validate(subject.RunID) != nil || uuid.Validate(subject.Generation) != nil || slot < 0 || slot >= OwnerSlots || len(data) == 0 ||
-			decodeRunResult(data, cleanup, &result) != nil {
-			return failure("recovery_inconsistent", "retained run identity, cleanup or result metadata is inconsistent; preserve history and repair that evidence separately; inspection details are incomplete")
-		}
-		subject.Kind, subject.Slot, subject.Cleanup = "run", &slot, &cleanup
-		subject.Attribution, subject.Reason = "unattributed", "unattributed_pending"
-		if attributed {
-			subject.Attribution, subject.Reason, subject.BlocksAdmission = "inferred", "pending_cleanup", true
-		}
-		if terminal {
-			subject.Reason = "recorded_terminal"
-		}
-		if validateTerminal(cleanup, result, terminal) != nil || (!terminal && !matching) {
-			subject.Reason = "recovery_inconsistent"
-		}
-		subject.State = diagnosticState(result.State, "admitted", "queued", "running", "exited", "start_failed", "timed_out", "cancelled", "interrupted", "skipped")
-		subject.Phase = "unknown" // not persisted until schema 10
-		if cleanup.State == executor.CleanupPending {
-			subject.MissingEvidence = append(subject.MissingEvidence, "accepted_cleanup")
-		}
-		if !terminal {
-			subject.MissingEvidence = append(subject.MissingEvidence, "terminal_outcome")
-		}
-		available := !evicting && (!terminal || expiry.Valid && expiry.Int64 > view.ObservedAt.UnixMilli())
-		subject.OutputAvailable = &available
 		view.Subjects = append(view.Subjects, subject)
 		cursor.Created, cursor.ID = created, subject.RunID
 		view.positions = append(view.positions, cursor.encode())
@@ -286,4 +259,70 @@ func inspectLegacySubjects(ctx context.Context, tx *sql.Tx, view *Inspection, op
 		view.Omitted, view.Details, view.NextCursor = true, "partial", cursor.encode()
 	}
 	return nil
+}
+
+func inspectionPhaseSQL(version int) string {
+	if version < 10 {
+		return "'unknown'"
+	}
+	return "CASE WHEN length(last_phase)<=16 THEN last_phase ELSE NULL END"
+}
+
+const inferredRunSQL = `EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=r.slot AND o.cleanup_unverified=1
+		AND (r.cleanup='pending' OR o.generation<>r.generation))`
+
+func inspectionRunColumns(version int) string {
+	return `CASE WHEN length(r.id)=36 THEN r.id ELSE NULL END,
+		CASE WHEN length(r.generation)=36 THEN r.generation ELSE NULL END,r.slot,r.created_at,
+		CASE WHEN length(r.result)<=65536 THEN r.result ELSE NULL END,` + inspectionScopeSQL(version) + `,
+		CASE WHEN length(CAST(r.cleanup AS BLOB))<=16 THEN r.cleanup ELSE NULL END,
+		r.terminal,r.evicting,r.expires_at,` + inspectionPhaseSQL(version) + `,` + inferredRunSQL + `,
+		EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=r.slot AND o.generation=r.generation)`
+}
+
+func scanInspectionRun(row incidentScanner, view *Inspection) (InspectionSubject, int64, error) {
+	var subject InspectionSubject
+	var slot int
+	var created int64
+	var data []byte
+	var cleanup executor.CleanupEvidence
+	var terminal, evicting, attributed, matching bool
+	var expiry sql.NullInt64
+	if err := row.Scan(&subject.RunID, &subject.Generation, &slot, &created, &data, &cleanup.Scope, &cleanup.State,
+		&terminal, &evicting, &expiry, &subject.Phase, &attributed, &matching); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return subject, 0, failure("run_unavailable", "no retained run matches this ID")
+		}
+		return subject, 0, metadataReadError(err)
+	}
+	var result Result
+	if uuid.Validate(subject.RunID) != nil || uuid.Validate(subject.Generation) != nil || slot < 0 || slot >= OwnerSlots || len(data) == 0 ||
+		decodeRunResult(data, cleanup, &result) != nil {
+		return subject, 0, failure("recovery_inconsistent", "retained run identity, cleanup or result metadata is inconsistent; preserve history and repair that evidence separately; inspection details are incomplete")
+	}
+	subject.Kind, subject.Slot, subject.Cleanup = "run", &slot, &cleanup
+	subject.Attribution, subject.Reason = "unattributed", "unattributed_pending"
+	if attributed {
+		subject.Attribution, subject.Reason, subject.BlocksAdmission = "inferred", "pending_cleanup", true
+	}
+	if terminal {
+		subject.Reason = "recorded_terminal"
+	}
+	if validateTerminal(cleanup, result, terminal) != nil || (!terminal && !matching) || result.RunID == nil || *result.RunID != subject.RunID || result.OwnerID != subject.Generation {
+		subject.Reason = "recovery_inconsistent"
+		subject.EvidenceInconsistent = true
+	}
+	subject.State = diagnosticState(result.State, "admitted", "queued", "running", "exited", "start_failed", "timed_out", "cancelled", "interrupted", "skipped")
+	if !validPhase(subject.Phase) {
+		return subject, 0, inconsistentIncident()
+	}
+	if cleanup.State == executor.CleanupPending {
+		subject.MissingEvidence = append(subject.MissingEvidence, "accepted_cleanup")
+	}
+	if !terminal {
+		subject.MissingEvidence = append(subject.MissingEvidence, "terminal_outcome")
+	}
+	available := !evicting && (!terminal || expiry.Valid && expiry.Int64 > view.ObservedAt.UnixMilli())
+	subject.OutputAvailable = &available
+	return subject, created, nil
 }

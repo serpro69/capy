@@ -50,7 +50,7 @@ func Inspect(ctx context.Context, path, key string) (report Diagnostics, err err
 
 func diagnosticRuns(ctx context.Context, tx *sql.Tx, now int64, version int) ([]RunDiagnostic, error) {
 	// Bound each decoded metadata row even if the authenticated DB is damaged.
-	rows, err := tx.QueryContext(ctx, `SELECT id,CASE WHEN length(result)<=65536 THEN result ELSE NULL END,expires_at,
+	rows, err := tx.QueryContext(ctx, `SELECT CASE WHEN length(id)=36 THEN id ELSE NULL END,CASE WHEN length(result)<=65536 THEN result ELSE NULL END,expires_at,
 		`+inspectionScopeSQL(version)+`,
 		CASE WHEN length(CAST(cleanup AS BLOB))<=16 THEN cleanup ELSE NULL END
 		FROM runs WHERE evicting=0 AND (terminal=0 OR expires_at>?)

@@ -187,7 +187,7 @@ Each retained run's cleanup scope comes from its authoritative row, so historica
 Linux `retired` rows remain distinguishable from Darwin observations. Authenticated
 stored/supported schema versions are reported separately from executable capability.
 
-`capy runs inspect` reports recorded quarantine markers and unfinished observations
+`capy runs inspect` reports durable incidents, recorded quarantine markers and unfinished observations
 independently of those eight recent runs. It supports schema 8, 9 and 10 without
 migration. Pending work without recorded quarantine is an unattributed observation,
 not a confirmed incident, a live-process claim or a guarantee of healthy admission.
@@ -198,11 +198,35 @@ capy runs inspect --project-dir . --run-id RUN_UUID
 capy runs inspect --project-dir . --cursor CURSOR --json
 ```
 
-Keep the same owner and selector when continuing a page. A store or registry
-change invalidates the cursor; restart inspection without it. Legacy stores have
-no audit epoch, so run state and pending counts are current to each page. Responses
-state when subjects were omitted, and response shortening preserves pagination.
-Only allowlisted metadata is returned, without commands, output or stored errors.
+Schema 10 records incident UUIDs, historical subjects, causes, detection stages
+and the last durable phase during normal reconciliation. Reobserving the same
+unresolved episode preserves its first detection time; later material evidence
+revises it. A later incident after resolution gets a new UUID. Legacy markers
+with no known causal run retain explicit unattributed metadata and no invented
+detection time. Live-owner cause attribution and later phase updates are still
+pending; current reconciliation observations remain labeled as inferred.
+
+Keep the same owner and selector when continuing a page. Schema-10 incident and
+receipt membership is bound to the recovery epoch; a membership/marker change
+invalidates its continuation. Legacy schema-8/9 cursors bind registry markers and
+a creation cutoff instead. Pending/run observations are current to each page,
+separate from stable incident membership. Response shortening preserves a cursor
+after the last displayed subject. Only allowlisted metadata is returned, without
+commands, output or raw stored errors. Identity/proof/manifest inconsistencies
+remain diagnostic blockers that operator confirmation cannot override.
+
+Reconciliation commits incident publication, quarantine markers, accounting and
+epoch changes together. Live quarantine writes its safety marker and epoch without
+requiring incident quota or an index recount; runtime attribution remains Task 4.
+Capacity or attribution-write failures refuse new execution without partial
+attribution. Configured status/read/list queries can attach in SQLite read-only
+mode to recover retained history when attribution cannot be committed; this
+attachment performs no maintenance and can never claim an execution owner. A
+service that used this fallback remains query-only: after repairing the store,
+restart it before executing new work. Supported recovery and offline quota growth
+require stopping all store users first. Helpers do not use that fallback. Epoch exhaustion refuses new admission even while the
+affected execution owner still holds its lease.
+Unchanged observations and read-only inspection do not advance the epoch.
 
 Inspection uses a shared lifecycle lease for active WAL stores. For a closed
 store without a WAL it takes a fresh nonblocking exclusive lifecycle lease,
@@ -219,6 +243,9 @@ quarantine.
 `--receipt-id` accepts a recovery receipt UUID, never an incident UUID; `--plan`
 looks up a retained applied receipt, not an unapplied plan. Schema 8/9 has no
 receipts and returns `receipt_unavailable`; absence never proves nonapplication.
+Schema 10 looks up retained receipts by exact UUID or plan hash, even after their
+audit deadline. A pruning receipt retains its summary with incomplete detail;
+lookup never reconstructs or validates an unapplied plan.
 Copyable inspection commands appear separately from explanatory next-step text.
 Inspection does not apply recovery or retry the original command. CLI inspection
 returns 0 on success, 2 for invalid arguments, 1 for storage/lookup failures and

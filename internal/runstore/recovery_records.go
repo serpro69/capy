@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// recoveryReceipt is the bounded private record boundary. Publication and public
-// lookup are separate later tasks; schema upgrade never creates audit records.
+// recoveryReceipt is the bounded private record boundary shared by inspection
+// and future application. Schema upgrade never creates audit records.
 type recoveryReceipt struct {
 	ID, PlanHash, StoreID, Method, Basis, Explanation               string
 	Version                                                         int
@@ -32,7 +32,7 @@ func readRecoveryReceipt(ctx context.Context, q runQuerier, id, planHash string)
 	}
 	// The identifier is selected above from two internal constants; the value is
 	// always bound. CASE bounds reads even if stored constraints were bypassed.
-	err := q.QueryRowContext(ctx, `SELECT id,plan_hash,store_id,version,applied_at,method,basis,uid,
+	err := q.QueryRowContext(ctx, `SELECT CASE WHEN length(id)=36 THEN id ELSE NULL END,CASE WHEN length(plan_hash)=64 THEN plan_hash ELSE NULL END,CASE WHEN length(store_id)=36 THEN store_id ELSE NULL END,version,applied_at,CASE WHEN length(method)<=8 THEN method ELSE NULL END,CASE WHEN length(basis)<=16 THEN basis ELSE NULL END,uid,
  CASE WHEN length(CAST(explanation AS BLOB)) BETWEEN 1 AND 1024 THEN explanation ELSE NULL END,
  incident_count,run_count,owner_count,store_count,charged_bytes,audit_expires_at,pruning
  FROM run_recovery_receipts WHERE `+column+`=?`, value).Scan(&receipt.ID, &receipt.PlanHash, &receipt.StoreID, &receipt.Version, &receipt.AppliedAt, &receipt.Method, &receipt.Basis, &receipt.UID, &receipt.Explanation, &receipt.IncidentCount, &receipt.RunCount, &receipt.OwnerCount, &receipt.StoreCount, &receipt.ChargedBytes, &receipt.AuditExpiresAt, &receipt.Pruning)

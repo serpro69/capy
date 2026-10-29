@@ -32,6 +32,7 @@ type Inspection struct {
 	StoreID                string              `json:"store_id,omitempty"`
 	SchemaVersion          int                 `json:"schema_version,omitempty"`
 	SupportedSchemaVersion int                 `json:"supported_schema_version"`
+	Receipt                *InspectionReceipt  `json:"receipt,omitempty"`
 	RecoveryRevision       *int64              `json:"recovery_revision,omitempty"`
 	ObservedAt             time.Time           `json:"observed_at"`
 	Admission              string              `json:"admission"`
@@ -50,10 +51,14 @@ type Inspection struct {
 }
 
 type InspectionCounts struct {
-	QuarantineMarkers   int64 `json:"quarantine_markers"`
-	InferredCandidates  int64 `json:"inferred_candidates"`
-	UnattributedPending int64 `json:"unattributed_pending"`
-	Subjects            int64 `json:"subjects"`
+	RecordedIncidents     int64 `json:"recorded_incidents,omitempty"`
+	InferredIncidents     int64 `json:"inferred_incidents,omitempty"`
+	UnattributedIncidents int64 `json:"unattributed_incidents,omitempty"`
+	UnresolvedIncidents   int64 `json:"unresolved_incidents,omitempty"`
+	QuarantineMarkers     int64 `json:"quarantine_markers"`
+	InferredCandidates    int64 `json:"inferred_candidates"`
+	UnattributedPending   int64 `json:"unattributed_pending"`
+	Subjects              int64 `json:"subjects"`
 }
 
 func (o InspectionOptions) Validate() error {
@@ -217,7 +222,11 @@ func inspectSnapshot(ctx context.Context, path, key string, options InspectionOp
 		Scan(&report.AccountedBytes, &report.IndexBytes, &report.AdmissionBlocked); err != nil {
 		return report, storageError()
 	}
-	if err := inspectLegacySubjects(ctx, tx, view, options, report.AdmissionBlocked); err != nil {
+	inspectSubjects := inspectLegacySubjects
+	if view.SchemaVersion >= 10 {
+		inspectSubjects = inspectIncidentSubjects
+	}
+	if err := inspectSubjects(ctx, tx, view, options, report.AdmissionBlocked); err != nil {
 		return report, err
 	}
 	if diagnostics {
@@ -228,7 +237,17 @@ func inspectSnapshot(ctx context.Context, path, key string, options InspectionOp
 		}
 		report.Recent, err = diagnosticRuns(ctx, tx, now, view.SchemaVersion)
 		if err != nil {
-			return report, err
+			var typed *Error
+			if view.SchemaVersion >= 10 && view.Counts.RecordedIncidents+view.Counts.InferredIncidents+view.Counts.UnattributedIncidents > 0 && errors.As(err, &typed) && typed.Code == "recovery_inconsistent" {
+				// Optional recent detail must not erase the independent durable incident
+				// inventory. Keep the missing detail explicit in the shared doctor view.
+				report.Recent = nil
+				view.Details = "partial"
+				view.Action = "recovery_inconsistent"
+				view.NextStep += " Recent details are incomplete; preserve history and repair inconsistent metadata separately."
+			} else {
+				return report, err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -275,9 +294,17 @@ func BoundInspection(view Inspection, entries int) Inspection {
 	if entries <= 0 {
 		// Even the smallest envelope must make pagination progress. Path display
 		// and explanatory prose can shrink; the next subject cannot disappear.
+		if view.Receipt != nil {
+			copy := *view.Receipt
+			copy.Explanation = ""
+			view.Receipt = &copy
+		}
 		view.Owner = ""
 		view.InspectCommand = ""
 		view.Consistency = "legacy markers; run observations per page; no liveness or admission guarantee"
+		if view.RecoveryRevision != nil {
+			view.Consistency = "epoch-bound incidents; observations per page; no liveness guarantee"
+		}
 		view.NextStep = "For the same selected owner, run capy runs inspect."
 		if view.Action == "upgrade_required" {
 			view.NextStep += " Stop store users, then run capy runs upgrade from an ordinary terminal; quarantine is preserved."
