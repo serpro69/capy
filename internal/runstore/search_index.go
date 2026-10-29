@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/serpro69/capy/internal/executor"
 	"github.com/serpro69/capy/internal/sanitize"
 	"github.com/serpro69/capy/internal/sqliteutil"
 )
@@ -240,7 +241,20 @@ func saveIndexResult(ctx context.Context, tx *sql.Tx, row Admitted) error {
 	if err := rejectDisposedMutation(ctx, tx, row.ID); err != nil {
 		return err
 	}
-	encoded, err := json.Marshal(row.Result)
+	// loadRun is a public projection and may include derived capture warnings
+	// from an incident published after the worker claimed the run. Merge only
+	// Index into freshly decoded stored evidence, never persist that projection.
+	var original []byte
+	var cleanup executor.CleanupEvidence
+	if err := tx.QueryRowContext(ctx, "SELECT result,cleanup_scope,cleanup FROM runs WHERE id=?", row.ID).Scan(&original, &cleanup.Scope, &cleanup.State); err != nil {
+		return storageError()
+	}
+	var result Result
+	if err := decodeRunResult(original, cleanup, &result); err != nil {
+		return err
+	}
+	result.Index = row.Result.Index
+	encoded, err := json.Marshal(result)
 	if err != nil {
 		return storageError()
 	}

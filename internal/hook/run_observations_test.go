@@ -2,6 +2,7 @@ package hook
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -223,7 +224,7 @@ func TestRunQueriesNeverRefreshObservations(t *testing.T) {
 		before, err := os.ReadFile(observationFile(store))
 		require.NoError(t, err)
 		for _, tool := range []string{"capy_runs", "mcp__alias__capy_runs", "capy_execute_file", "capy_batch_execute", "Bash"} {
-			for _, action := range []string{"status", "read", "search", "cancel"} {
+			for _, action := range []string{"status", "read", "inspect", "search", "cancel"} {
 				require.Nil(t, codexObservationHook(t, project, "posttooluse", tool, map[string]any{"action": action}, map[string]any{
 					"session_id": "main", "agent_id": agent,
 					"tool_response": map[string]any{"isError": false, "structuredContent": observationRun("running", "recording", nil, false)},
@@ -233,5 +234,63 @@ func TestRunQueriesNeverRefreshObservations(t *testing.T) {
 		after, err := os.ReadFile(observationFile(store))
 		require.NoError(t, err)
 		require.Equal(t, before, after)
+	}
+}
+
+func TestRecoveryEnvelopesNeverCreateObservations(t *testing.T) {
+	isolateRoutineHook(t)
+	for _, agent := range []string{"", "child"} {
+		for _, version := range []int{1, 2} {
+			for _, scope := range []executor.CleanupScope{executor.CleanupLinuxDescendants, executor.CleanupDarwinObservation} {
+				for _, state := range []string{"running", "exited"} {
+					for _, value := range []struct {
+						name  string
+						value any
+					}{
+						{"object", map[string]any{"state": "operator_resolved"}}, {"null", nil}, {"string", "resolved"}, {"array", []any{}}, {"number", 1}, {"boolean", false},
+					} {
+						t.Run(fmt.Sprintf("%s/v%d/%s/%s/%s", agent, version, scope, state, value.name), func(t *testing.T) {
+							project := t.TempDir()
+							r := observationRun("running", "recording", nil, false)
+							cleanup := "pending"
+							if state == "exited" {
+								r = observationRun("exited", "complete", 0, true)
+								cleanup = "retired"
+								if scope == executor.CleanupDarwinObservation {
+									cleanup = "observed"
+								}
+							}
+							r["version"], r["cleanup"], r["recovery"] = version, map[string]any{"scope": scope, "state": cleanup}, value.value
+							for _, response := range []any{r, map[string]any{"structuredContent": r}, map[string]any{"recovery": value.value}} {
+								require.Nil(t, codexObservationHook(t, project, "posttooluse", observedExecute, nil, map[string]any{"session_id": "main", "agent_id": agent, "tool_response": response}))
+							}
+							store := newCodexMainObservationStore(project)
+							if agent != "" {
+								store = newObservationStore(project)
+							}
+							require.NoDirExists(t, store.dir)
+							delete(r, "recovery")
+							require.Nil(t, codexObservationHook(t, project, "posttooluse", observedExecute, nil, map[string]any{"session_id": "main", "agent_id": agent, "tool_response": map[string]any{"structuredContent": r}}))
+							require.FileExists(t, observationFile(store), "healthy control still records evidence")
+						})
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestRecoveryPrintedContentAndFetchRemainObservations(t *testing.T) {
+	isolateRoutineHook(t)
+	for _, tool := range []string{observedExecute, observedFetch} {
+		t.Run(tool, func(t *testing.T) {
+			project := t.TempDir()
+			response := map[string]any{"content": []any{map[string]any{"type": "text", "text": `{"recovery":null}`}}}
+			if tool == observedFetch {
+				response["recovery"] = nil
+			}
+			require.Nil(t, codexObservationHook(t, project, "posttooluse", tool, nil, map[string]any{"session_id": "main", "agent_id": "child", "tool_response": response}))
+			require.FileExists(t, observationFile(newObservationStore(project)))
+		})
 	}
 }

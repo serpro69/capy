@@ -197,7 +197,11 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 			if action == "cancel" {
 				body["cancel_requested"] = requested
 			}
-			return mcp.NewToolResultStructured(body, fmt.Sprintf("Run %s: %s; capture %s.", id, result.State, result.Capture.State)), nil
+			label := ""
+			if result.Recovery != nil {
+				label = "last recorded "
+			}
+			return mcp.NewToolResultStructured(body, fmt.Sprintf("Run %s: %s%s; capture %s.", id, label, result.State, result.Capture.State)), nil
 		}, nil)
 		if err != nil {
 			return fail("response_unavailable", "Run status response unavailable.")
@@ -261,7 +265,7 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		if err != nil {
 			return nil, err
 		}
-		page.Run = execution.BoundResult(page.Run, n)
+		page = execution.BoundRead(page, n)
 		return mcp.NewToolResultStructured(page, fallback), nil
 	}, nil)
 	if err != nil {

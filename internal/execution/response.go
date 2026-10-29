@@ -3,6 +3,8 @@ package execution
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"time"
 	"unicode/utf8"
 
 	"github.com/serpro69/capy/internal/runstore"
@@ -52,6 +54,13 @@ func SafeMessage(message string, allowance int) string {
 }
 
 func BoundResult(result runstore.Result, allowance int) runstore.Result {
+	if result.Recovery != nil && allowance < 256 && (result.Redaction.CoverageCursor != nil || result.Index.CoverageCursor != nil) {
+		// Coverage summaries are optional response metadata, recoverable through
+		// read/search. Keep the raw committed boundary, all execution facts and
+		// recovery authority; never alter stored snapshots or read continuations.
+		result.Redaction.CoverageCursor, result.Index.CoverageCursor = nil, nil
+		result.MetadataOmitted = true
+	}
 	if result.Capacity != nil {
 		capacity := *result.Capacity
 		count := min(len(capacity.Runs), allowance/128)
@@ -76,6 +85,35 @@ func BoundResult(result runstore.Result, allowance int) runstore.Result {
 		result.Index.Error = &safe
 	}
 	return result
+}
+
+// RunRecoveryText describes administrative closure without inferring process
+// success or cleanup proof. Recovery identifiers remain essential structured
+// metadata even when optional previews/messages are shortened by Budget.
+func RunRecoveryText(recovery *runstore.Recovery) string {
+	if recovery == nil {
+		return ""
+	}
+	if recovery.State != "operator_resolved" {
+		return "Recovery concern unresolved; inspect this owner's recorded blockers.\n"
+	}
+	text := fmt.Sprintf("Operator resolution: receipt %s; basis %s. Original execution evidence is unchanged.\n", recovery.ReceiptID, recovery.Basis)
+	if recovery.RetentionExpiresAt != nil {
+		text += "Retained output deadline: " + recovery.RetentionExpiresAt.UTC().Format(time.RFC3339Nano) + "; quota may evict sooner.\n"
+	}
+	return text
+}
+
+// BoundRead keeps the page's continuation and byte coordinates authoritative.
+// A compact historical read can omit the nested status-only capture boundary;
+// it is still available through status, and never substitutes for NextCursor.
+func BoundRead(page runstore.ReadPage, allowance int) runstore.ReadPage {
+	page.Run = BoundResult(page.Run, allowance)
+	if page.Run.Recovery != nil && allowance < 256 && page.Run.Capture.LastCommittedCursor != nil {
+		page.Run.Capture.LastCommittedCursor = nil
+		page.Run.MetadataOmitted = true
+	}
+	return page
 }
 
 // BoundError retains the refusal and next action even when optional attribution

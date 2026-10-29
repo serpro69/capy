@@ -78,8 +78,13 @@ func runText(result runstore.Result) string {
 	if result.RunID == nil {
 		b.WriteString("Execution not started.\n")
 	} else {
-		fmt.Fprintf(&b, "Run %s: %s; capture %s (%d/%d bytes).\n", *result.RunID, result.State, result.Capture.State, result.Capture.CapturedBytes, result.Capture.ObservedBytes)
+		stateLabel := ""
+		if result.Recovery != nil {
+			stateLabel = "last recorded "
+		}
+		fmt.Fprintf(&b, "Run %s: %s%s; capture %s (%d/%d bytes).\n", *result.RunID, stateLabel, result.State, result.Capture.State, result.Capture.CapturedBytes, result.Capture.ObservedBytes)
 		fmt.Fprintf(&b, "Cleanup: %s / %s.\n", result.Cleanup.Scope, result.Cleanup.State)
+		b.WriteString(execution.RunRecoveryText(result.Recovery))
 	}
 	if result.ExitCode != nil {
 		fmt.Fprintf(&b, "Exit code: %d.\n", *result.ExitCode)
@@ -209,8 +214,13 @@ func encodeRunText(value any) ([]byte, error) {
 			fmt.Fprintf(&b, "%s: %s%s\n", v.Error.Code, terminalText(v.Error.Message), terminalText(execution.RecoveryText(v.Error)))
 		}
 	case runstore.ReadPage:
-		fmt.Fprintf(&b, "Run %s: %s; capture %s.\n", v.RunID, v.Run.State, v.Run.Capture.State)
+		label := ""
+		if v.Run.Recovery != nil {
+			label = "last recorded "
+		}
+		fmt.Fprintf(&b, "Run %s: %s%s; capture %s.\n", v.RunID, label, v.Run.State, v.Run.Capture.State)
 		fmt.Fprintf(&b, "Cleanup: %s / %s.\n", v.Run.Cleanup.Scope, v.Run.Cleanup.State)
+		b.WriteString(execution.RunRecoveryText(v.Run.Recovery))
 		if v.Raw {
 			b.WriteString("Unsanitized raw bytes (base64).\n")
 		}
@@ -232,8 +242,13 @@ func encodeRunText(value any) ([]byte, error) {
 		fmt.Fprintf(&b, "end_of_available=%t eof=%t\n", v.EndOfAvailable, v.EOF)
 	case runstore.ListPage:
 		for _, entry := range v.Entries {
-			fmt.Fprintf(&b, "%s %s capture=%s owner=%s output_available=%t\n", entry.RunID, entry.State, entry.CaptureState, entry.OwnerType, entry.OutputAvailable)
+			label := ""
+			if entry.Recovery != nil {
+				label = "last recorded "
+			}
+			fmt.Fprintf(&b, "%s %s%s capture=%s owner=%s output_available=%t\n", entry.RunID, label, entry.State, entry.CaptureState, entry.OwnerType, entry.OutputAvailable)
 			fmt.Fprintf(&b, "  cleanup=%s/%s\n", entry.Cleanup.Scope, entry.Cleanup.State)
+			b.WriteString(execution.RunRecoveryText(entry.Recovery))
 			if entry.Ordinal != nil {
 				fmt.Fprintf(&b, "  ordinal=%d label=%s\n", *entry.Ordinal, terminalText(entry.Label))
 			}

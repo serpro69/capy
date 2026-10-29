@@ -178,7 +178,14 @@ func (s *Server) buildRunResult(result runstore.Result) (*mcp.CallToolResult, er
 		bounded := execution.BoundResult(result, allowance)
 		text := "Execution rejected before admission."
 		if result.RunID != nil {
-			text = fmt.Sprintf("Run %s: %s. Recover with capy_runs; do not repeat execution.", *result.RunID, result.State)
+			label := ""
+			if result.Recovery != nil {
+				label = "last recorded "
+			}
+			text = fmt.Sprintf("Run %s: %s%s. Recover with capy_runs; do not repeat execution.", *result.RunID, label, result.State)
+			if result.Recovery != nil && result.Recovery.State == "operator_resolved" {
+				text += " Operator resolution is separate from execution cleanup."
+			}
 			if result.ExitCode != nil {
 				text += fmt.Sprintf(" Exit code: %d.", *result.ExitCode)
 			}

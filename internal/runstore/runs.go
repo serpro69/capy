@@ -109,21 +109,18 @@ FROM runs WHERE id=? AND evicting=0`, id).Scan(&row.Generation, &row.Slot, &prog
 			return row, err
 		}
 	}
-	// A completed result without terminal cleanup is already evidence of
-	// unverified retirement, even while its owner lease prevents reconciliation.
-	unverified = unverified || (!terminal && row.Result.CompletedAt != nil)
-	if unverified && !terminal {
-		// Preserve the last recorded state as evidence, not a fresh assertion of
-		// liveness. Unknown cleanup never expires away or becomes safe reuse.
-		markUnverified(&row.Result)
-	} else if row.Result.ExpiresAt != nil && !time.Now().Before(*row.Result.ExpiresAt) {
+	available, err := projectRunHistory(ctx, query, id, row.Generation, &row.Result, terminal, unverified, time.Now())
+	if err != nil {
+		return row, err
+	}
+	if !available {
 		return Admitted{}, failure("run_unavailable", "run is unavailable in this owner's store")
 	}
 	return row, nil
 }
 
 func markUnverified(result *Result) {
-	result.Error = &Error{Code: "cleanup_unverified", Message: "last recorded state; owner cleanup is unverified and execution may still exist; stop old execution groups before explicit operator reset"}
+	result.Error = &Error{Code: "cleanup_unverified", Message: "last recorded state; cleanup is unverified and execution may still exist; inspect this owner with capy runs inspect before offline recovery"}
 	result.ExpiresAt = nil
 	if result.Capture.State != "not_started" {
 		result.Capture.State = "incomplete"

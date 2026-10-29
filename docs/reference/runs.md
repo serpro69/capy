@@ -109,6 +109,29 @@ so existing cursors can still recover retained bytes. Hooks accept healthy v1
 responses and validate scoped v2 evidence explicitly; this evidence does not
 grant permissions or establish host quiescence.
 
+Standalone status and list views carry optional `recovery` metadata for an
+unresolved incident or operator resolution. A historical `state: "running"`
+is the last recorded state, not a liveness assertion. Operator resolution keeps
+the original exit, completion, persistence flag and cleanup evidence; uncertain
+capture is shown as incomplete. `recovery.receipt_id` identifies the operator
+action, while `recovery.disposition_id`, when present, is the run ID that keys its
+disposition. `blocks_admission` describes this concern, not other blockers.
+
+A disposition exposes its separate `retention_expires_at`, `capture_closed` and
+`operationally_closed` fields. Status/list availability uses that deadline;
+original execution expiry is preserved and quota can remove output sooner.
+Resolving an incident on an execution-terminal run creates no new payload
+deadline. At a tight response budget, `metadata_omitted=true` can indicate omitted
+projection/index coverage cursors. Status retains the raw committed boundary;
+compact reads can omit that nested status field while retaining their own
+`next_cursor` and byte coordinates. Original execution facts and recovery
+identifiers remain; stored cursor coordinates do not change. Healthy results omit
+`recovery` entirely. Hooks reject execute
+envelopes containing that field, including null or malformed values; printed
+output and fetch responses keep their existing behavior. Public recovery apply
+remains unavailable until the remaining batch, retention and search consumers
+are integrated.
+
 ## Batches and capacity
 
 `capy_batch_execute` validates every command before any can run. Each child has

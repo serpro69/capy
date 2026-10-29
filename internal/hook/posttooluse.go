@@ -109,7 +109,7 @@ func healthyExecuteObservation(response any, depth int) bool {
 		if structuredSeen {
 			return true
 		}
-		for _, field := range []string{"version", "kind", "run_id", "state", "capture", "cleanup"} {
+		for _, field := range []string{"version", "kind", "run_id", "state", "capture", "cleanup", "recovery"} {
 			if _, exists := value[field]; exists {
 				return healthyRunEnvelope(value)
 			}
@@ -125,6 +125,9 @@ func healthyExecuteObservation(response any, depth int) bool {
 }
 
 func healthyRunEnvelope(value map[string]any) bool {
+	if _, present := value["recovery"]; present {
+		return false
+	}
 	id, ok := value["run_id"].(string)
 	if !ok || strings.TrimSpace(id) == "" || value["kind"] != "run" || toolFailure(value) || value["signal"] != nil {
 		return false

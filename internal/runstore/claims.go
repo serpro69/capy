@@ -52,12 +52,8 @@ func (s *Store) ClaimIndex(ctx context.Context, owner *Owner, id string) (bool, 
 		return false, nil
 	}
 	row.Result.Index.State, row.Result.Index.Error = "building", nil
-	encoded, err := json.Marshal(row.Result)
-	if err != nil {
-		return false, storageError()
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE runs SET result=? WHERE id=?", encoded, id); err != nil {
-		return false, storageError()
+	if err := saveIndexResult(ctx, tx, row); err != nil {
+		return false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return false, storageError()

@@ -148,7 +148,7 @@ func runQuery(ctx context.Context, service *execution.Service, action, id string
 		if err != nil {
 			return nil, err
 		}
-		page.Run = execution.BoundResult(page.Run, n)
+		page = execution.BoundRead(page, n)
 		return page, nil
 	default:
 		return service.List(ctx, list)
