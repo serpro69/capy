@@ -65,6 +65,16 @@ type inspectionPlan struct {
 	Version int    `json:"v"`
 	Store   string `json:"store"`
 	Hash    string `json:"hash"`
+	// Generated plans carry both components so an applied receipt can be
+	// retried only at its original physical target, without reconstructing its
+	// pre-application inventory. Hash-only legacy tokens remain lookup-only;
+	// application must require these components and compare Target to its leases.
+	Target   string `json:"target,omitempty"`
+	Snapshot string `json:"snapshot,omitempty"`
+}
+
+func recoveryPlanHash(store, target, snapshot string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte("capy-recovery-plan-v1\x00"+store+"\x00"+target+"\x00"+snapshot)))
 }
 
 func decodeInspectionToken(token string, value any) error {
@@ -90,11 +100,18 @@ func decodeInspectionPlan(token string) (inspectionPlan, error) {
 	if err != nil || plan.Version != 1 || uuid.Validate(plan.Store) != nil || hashErr != nil || len(hash) != sha256.Size {
 		return plan, failure("invalid_argument", "invalid recovery plan token")
 	}
+	if plan.Target != "" || plan.Snapshot != "" {
+		target, targetErr := hex.DecodeString(plan.Target)
+		snapshot, snapshotErr := hex.DecodeString(plan.Snapshot)
+		if targetErr != nil || snapshotErr != nil || len(target) != sha256.Size || len(snapshot) != sha256.Size || plan.Hash != recoveryPlanHash(plan.Store, plan.Target, plan.Snapshot) {
+			return plan, failure("invalid_argument", "invalid recovery plan binding")
+		}
+	}
 	return plan, nil
 }
 
 func receiptUnavailable() error {
-	return failure("receipt_unavailable", "no retained receipt matches; absence does not prove nonapplication or validate an unapplied plan; inspect current blockers and review unapplied plans through recover with a compatible recovery-capable binary")
+	return failure("receipt_unavailable", "no retained receipt matches; absence does not prove nonapplication or validate an unapplied plan; inspect current blockers and review unapplied plans through capy runs recover")
 }
 
 func staleInspection() error {

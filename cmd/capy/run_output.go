@@ -108,6 +108,35 @@ func runText(result runstore.Result) string {
 func encodeRunText(value any) ([]byte, error) {
 	var b strings.Builder
 	switch v := value.(type) {
+	case runstore.RecoveryPlan:
+		fmt.Fprintf(&b, "Recovery plan: %s; complete=%t; effective timeout=%s.\n", v.Status, v.Complete, v.EffectiveTimeout)
+		fmt.Fprintf(&b, "Subjects=%d; dispositions=%d; incident-only=%d; owner/store concerns=%d/%d; safe reconciliation=%d.\n", v.Counts.Subjects, v.Counts.Dispositions, v.Counts.IncidentOnly, v.Counts.OwnerConcerns, v.Counts.StoreConcerns, v.Counts.SafeReconciliation)
+		for _, s := range v.Subjects {
+			fmt.Fprintf(&b, "%s: %s; %s; ttl=%dh", s.Key, s.Action, s.Evidence.Reason, s.TTLHours)
+			if s.EstimatedExpiry != nil {
+				fmt.Fprintf(&b, "; estimated output expiry=%s", s.EstimatedExpiry.Format("2006-01-02T15:04:05Z07:00"))
+			}
+			b.WriteByte('\n')
+		}
+		if v.Capacity != nil {
+			fmt.Fprintf(&b, "Capacity sample: metadata=%d available=%d; disk needed=%d available=%d; sufficient=%t (recheck at application).\n", v.Capacity.MetadataBytes, v.Capacity.AvailableBytes, v.Capacity.DiskNeeded, v.Capacity.DiskAvailable, v.Capacity.Sufficient)
+		}
+		if v.Token != "" {
+			fmt.Fprintf(&b, "Plan: %s\n", v.Token)
+		}
+		if v.Error != nil {
+			fmt.Fprintf(&b, "%s: %s\n", v.Error.Code, terminalText(v.Error.Message))
+		}
+		fmt.Fprintln(&b, v.NextStep)
+		if v.NextCommand != "" {
+			fmt.Fprintf(&b, "Next: %s\n", v.NextCommand)
+		} else if v.NextTimeout != "" {
+			fmt.Fprintf(&b, "For the same physical owner (select it with --project-dir): capy runs recover --timeout %s", v.NextTimeout)
+			if v.NextCursor != "" {
+				fmt.Fprintf(&b, " --cursor %s", v.NextCursor)
+			}
+			b.WriteByte('\n')
+		}
 	case runstore.UpgradeResult:
 		if v.Policy != nil && v.AdmissionBlocked != nil {
 			fmt.Fprintf(&b, "Run upgrade: schema %d → %d; policy revision %d → %d; retained quota %d bytes.\n", v.FromSchema, v.SchemaVersion, v.PreviousPolicyRevision, v.Policy.Revision, v.Policy.MaxRetainedBytes)
