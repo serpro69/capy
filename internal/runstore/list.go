@@ -22,6 +22,7 @@ type ListOptions struct {
 	Cursor  string
 }
 type Summary struct {
+	Recovery        *Recovery                `json:"recovery,omitempty"`
 	Cleanup         executor.CleanupEvidence `json:"cleanup"`
 	BatchID         string                   `json:"batch_id,omitempty"`
 	Ordinal         *int                     `json:"ordinal,omitempty"`
@@ -85,8 +86,13 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListPage, error)
 	if err != nil {
 		return page, err
 	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return page, storageError()
+	}
+	defer tx.Rollback()
 	var cutoff int64
-	if err := s.db.QueryRowContext(ctx, "SELECT last_created FROM run_meta WHERE singleton=1").Scan(&cutoff); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT last_created FROM run_meta WHERE singleton=1").Scan(&cutoff); err != nil {
 		return page, storageError()
 	}
 	cursor := listCursor{Version: 1, Store: s.id, Operation: "list", Cutoff: cutoff, States: states}
@@ -116,7 +122,7 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListPage, error)
 		}
 		states = embedded
 	}
-	query := `SELECT id,created_at,result,terminal,cleanup_scope,cleanup,
+	query := `SELECT id,generation,created_at,result,terminal,cleanup_scope,cleanup,
 EXISTS(SELECT 1 FROM run_owners o WHERE o.slot=runs.slot AND o.generation=runs.generation AND o.cleanup_unverified=1),
 (SELECT c.result FROM run_batch_children c WHERE c.run_id=runs.id),
 (SELECT c.terminal FROM run_batch_children c WHERE c.run_id=runs.id)
@@ -130,26 +136,33 @@ FROM runs WHERE evicting=0 AND created_at<=? AND (created_at>? OR (created_at=? 
 	}
 	query += ` ORDER BY created_at,id LIMIT ?`
 	args = append(args, options.Limit+1)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return page, storageError()
 	}
 	defer rows.Close()
 	examined := 0
 	more := false
+	type candidate struct {
+		id, generation       string
+		created              int64
+		result               Result
+		terminal, unverified bool
+	}
+	candidates := make([]candidate, 0, options.Limit)
 	for rows.Next() {
 		if examined == options.Limit {
 			more = true
 			break
 		}
-		var id string
+		var id, generation string
 		var created int64
 		var encoded []byte
 		var terminal, unverified bool
 		var cleanup executor.CleanupEvidence
 		var manifest []byte
 		var manifestTerminal sql.NullBool
-		if err := rows.Scan(&id, &created, &encoded, &terminal, &cleanup.Scope, &cleanup.State, &unverified, &manifest, &manifestTerminal); err != nil {
+		if err := rows.Scan(&id, &generation, &created, &encoded, &terminal, &cleanup.Scope, &cleanup.State, &unverified, &manifest, &manifestTerminal); err != nil {
 			return page, storageError()
 		}
 		var result Result
@@ -164,23 +177,32 @@ FROM runs WHERE evicting=0 AND created_at<=? AND (created_at>? OR (created_at=? 
 				return page, err
 			}
 		}
-		unverified = unverified || (!terminal && result.CompletedAt != nil)
 		cursor.Created, cursor.ID = created, id
 		examined++
-		if unverified && !terminal {
-			markUnverified(&result)
-		}
-		if result.ExpiresAt != nil && !time.Now().Before(*result.ExpiresAt) {
-			continue
-		}
-		var recoveryError *Error
-		if unverified && !terminal {
-			recoveryError = result.Error
-		}
-		page.Entries = append(page.Entries, Summary{Cleanup: cleanup, BatchID: result.BatchID, RunID: id, OwnerID: result.OwnerID, OwnerType: result.OwnerType, State: result.State, ExitCode: result.ExitCode, Signal: result.Signal, CaptureState: result.Capture.State, CapturedBytes: result.Capture.CapturedBytes, CreatedAt: time.Unix(0, created).UTC(), OutputAvailable: true, Error: recoveryError})
+		candidates = append(candidates, candidate{id: id, generation: generation, created: created, result: result, terminal: terminal, unverified: unverified})
 	}
 	if err := rows.Err(); err != nil {
 		return page, storageError()
+	}
+	// Release the active row iterator before additional snapshot queries. The
+	// store has one connection; neither a nested attachment nor pool wait is safe.
+	if err := rows.Close(); err != nil {
+		return page, storageError()
+	}
+	for _, c := range candidates {
+		result := c.result
+		available, err := projectRunHistory(ctx, tx, c.id, c.generation, &result, c.terminal, c.unverified, time.Now())
+		if err != nil {
+			return page, err
+		}
+		if !available {
+			continue
+		}
+		var recoveryError *Error
+		if result.Recovery != nil {
+			recoveryError = result.Error
+		}
+		page.Entries = append(page.Entries, Summary{Recovery: result.Recovery, Cleanup: result.Cleanup, BatchID: result.BatchID, RunID: c.id, OwnerID: result.OwnerID, OwnerType: result.OwnerType, State: result.State, ExitCode: result.ExitCode, Signal: result.Signal, CaptureState: result.Capture.State, CapturedBytes: result.Capture.CapturedBytes, CreatedAt: time.Unix(0, c.created).UTC(), OutputAvailable: true, Error: recoveryError})
 	}
 	if more {
 		cursor.States = states

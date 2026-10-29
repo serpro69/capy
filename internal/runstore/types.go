@@ -53,6 +53,7 @@ type Index struct {
 }
 
 type Result struct {
+	Recovery        *Recovery                `json:"recovery,omitempty"`
 	Cleanup         executor.CleanupEvidence `json:"cleanup"`
 	BatchID         string                   `json:"batch_id,omitempty"`
 	Capacity        *Capacity                `json:"capacity,omitempty"`

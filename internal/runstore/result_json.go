@@ -38,7 +38,8 @@ func (b BatchResult) MarshalJSON() ([]byte, error) {
 func decodeRunResult(encoded []byte, cleanup executor.CleanupEvidence, result *Result) error {
 	var cached struct {
 		*Result
-		Cleanup json.RawMessage `json:"cleanup"`
+		Cleanup  json.RawMessage `json:"cleanup"`
+		Recovery json.RawMessage `json:"recovery"`
 	}
 	cached.Result = result
 	if err := json.Unmarshal(encoded, &cached); err != nil {
@@ -52,5 +53,8 @@ func decodeRunResult(encoded []byte, cleanup executor.CleanupEvidence, result *R
 	}
 	result.Version = EnvelopeVersion
 	result.Cleanup = cleanup
+	// Administrative authority comes only from validated audit records, never
+	// cached/public JSON persisted in the original execution result.
+	result.Recovery = nil
 	return nil
 }
