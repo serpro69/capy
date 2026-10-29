@@ -309,6 +309,13 @@ func batchMetadata(ctx context.Context, query runQuerier, id string) (BatchResul
 	if err != nil {
 		return b, nil, "", storageError()
 	}
+	closure, err := readBatchClosure(ctx, query, id)
+	if err != nil {
+		return b, nil, "", err
+	}
+	if closure != nil && closure.ExpiresAt <= time.Now().UTC().UnixMilli() {
+		return b, nil, "", failure("batch_unavailable", "batch is unavailable in this owner's store")
+	}
 	if unverified && !completed.Valid {
 		b.Error = &Error{Code: "cleanup_unverified", Message: "last recorded child states; cleanup is unverified; inspect this owner with capy runs inspect before offline recovery"}
 	}
@@ -373,19 +380,12 @@ func sumCounts(counts map[string]int) int {
 }
 
 func retainBatch(ctx context.Context, tx *sql.Tx, pressure, expire bool, budget int) (bool, int64, int64, error) {
-	if (!pressure && !expire) || budget < 257 {
+	if (!pressure && !expire) || budget < batchDeletionBudget {
 		return false, 0, 0, nil
 	}
 	var id string
 	var debit, children int64
-	query := "SELECT id,accounted_bytes,(SELECT count(*) FROM run_batch_children c WHERE c.batch_id=run_batches.id) FROM run_batches WHERE completed_at IS NOT NULL"
-	args := []any{}
-	if !pressure {
-		query += " AND expires_at<=?"
-		args = append(args, time.Now().UTC().UnixMilli())
-	}
-	query += " ORDER BY expires_at,id LIMIT 1"
-	err := tx.QueryRowContext(ctx, query, args...).Scan(&id, &debit, &children)
+	err := selectBatchVictim(ctx, tx, pressure).Scan(&id, &debit, &children)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, 0, 0, nil
 	}
@@ -396,10 +396,21 @@ func retainBatch(ctx context.Context, tx *sql.Tx, pressure, expire bool, budget 
 	if err != nil {
 		return false, 0, 0, err
 	}
+	closure, err := readBatchClosure(ctx, tx, id)
+	if err != nil {
+		return false, 0, 0, err
+	}
 	for _, child := range proofs {
-		if !child.terminal || !CleanupAccepted(child.result.Cleanup) {
-			return false, 0, 0, failure("cleanup_unverified", "batch expiry requires completed child cleanup")
+		if !child.closed || !child.terminal && closure == nil {
+			return false, 0, 0, failure("cleanup_unverified", "batch expiry requires operationally closed children")
 		}
+	}
+	deleted := children + 1
+	if closure != nil {
+		// Closure was funded independently when it left the manifest reserve.
+		// Its FK cascade removes that row too; release its charge exactly once.
+		debit += closure.ChargedBytes
+		deleted++
 	}
 	if _, err = tx.ExecContext(ctx, "DELETE FROM run_batches WHERE id=?", id); err != nil {
 		return false, 0, 0, storageError()
@@ -407,5 +418,27 @@ func retainBatch(ctx context.Context, tx *sql.Tx, pressure, expire bool, budget 
 	if _, err = tx.ExecContext(ctx, "UPDATE run_meta SET accounted_bytes=accounted_bytes-? WHERE singleton=1", debit); err != nil {
 		return false, 0, 0, storageError()
 	}
-	return true, debit, children + 1, nil
+	return true, debit, deleted, nil
+}
+
+// At most 256 children, their manifest and one separately charged closure.
+const batchDeletionBudget = 258
+
+// Select one candidate from each expiry index before comparing, so ordering
+// never sorts all retained manifests. Administrative expiry does not rewrite
+// the execution-completed clock or accept historical pending cleanup.
+func selectBatchVictim(ctx context.Context, tx *sql.Tx, pressure bool) *sql.Row {
+	terminalFilter, recoveryFilter := " AND expires_at<=?", " AND d.retention_expires_at<=?"
+	now := time.Now().UTC().UnixMilli()
+	args := []any{now, now}
+	if pressure {
+		terminalFilter, recoveryFilter, args = "", "", nil
+	}
+	return tx.QueryRowContext(ctx, `SELECT id,charged,(SELECT count(*) FROM run_batch_children c WHERE c.batch_id=v.id) FROM (
+ SELECT * FROM (SELECT id,accounted_bytes AS charged,expires_at AS expiry FROM run_batches
+ WHERE completed_at IS NOT NULL`+terminalFilter+` ORDER BY expires_at,id LIMIT 1)
+ UNION ALL
+ SELECT * FROM (SELECT b.id,b.accounted_bytes,d.retention_expires_at FROM run_batch_resolutions d JOIN run_batches b ON b.id=d.batch_id
+ WHERE b.completed_at IS NULL`+recoveryFilter+` ORDER BY d.retention_expires_at,d.batch_id LIMIT 1)
+ ) v ORDER BY expiry,id LIMIT 1`, args...)
 }

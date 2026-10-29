@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/serpro69/capy/internal/executor"
+	"github.com/serpro69/capy/internal/sqliteutil"
 )
 
 // A disposition is administrative authority, never execution cleanup proof.
@@ -79,8 +80,21 @@ func readRunResolution(ctx context.Context, q runQuerier, id string) (*runResolu
 		}
 		return nil, errors.Join(err, ctx.Err())
 	}
-	if d.Receipt.StoreID != d.StoreID || d.Receipt.AppliedAt != d.ResolvedAt || d.Receipt.AuditExpiresAt < d.AuditExpiresAt || d.Receipt.Pruning {
+	if d.Receipt.StoreID != d.StoreID || d.Receipt.AppliedAt != d.ResolvedAt || d.Receipt.AuditExpiresAt < d.AuditExpiresAt {
 		return nil, recoveryInconsistent("run disposition receipt")
+	}
+	if d.Receipt.Pruning {
+		var manifest bool
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM run_batches WHERE id=?)
+ OR EXISTS(SELECT 1 FROM run_batch_children WHERE run_id=?)`, d.BatchID, id).Scan(&manifest); err != nil {
+			return nil, metadataReadError(err)
+		}
+		if present || d.PayloadState != "evicted" || manifest {
+			return nil, recoveryInconsistent("referenced pruning disposition")
+		}
+		// Dispositions are pruned before their memberships/incidents, so a
+		// remaining evicted member can still be validated. It authorizes no live
+		// consumer; missing-output readers must report unavailable, not damage.
 	}
 	if present {
 		var state string
@@ -246,6 +260,74 @@ func validateSlotResolutions(ctx context.Context, tx *sql.Tx, slot int) error {
 		}
 		if len(ids) < 64 {
 			return nil
+		}
+	}
+}
+
+// The caller holds recovery.lock throughout validation and the subsequent
+// write transaction (and the slot lease when reclaiming it). Disposed evidence
+// is immutable; ordinary retention may only hide/delete its payload/manifest.
+// Audit pruning and any new administrative authority change the recovery epoch,
+// rechecked under the writer lock before using the validated exclusion. Keeping
+// the full validation in a read snapshot lets unrelated capture writers proceed.
+func (s *Store) validateResolutionsSnapshot(ctx context.Context, slots ...int) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return 0, storageError()
+	}
+	defer tx.Rollback()
+	var epoch int64
+	if err := tx.QueryRowContext(ctx, "SELECT recovery_revision FROM run_meta WHERE singleton=1").Scan(&epoch); err != nil {
+		return 0, storageError()
+	}
+	for _, slot := range slots {
+		if err := validateSlotResolutions(ctx, tx, slot); err != nil {
+			return 0, err
+		}
+	}
+	return epoch, nil
+}
+
+func recheckRecoveryRevision(ctx context.Context, tx *sql.Tx, expected int64) error {
+	var current int64
+	if err := tx.QueryRowContext(ctx, "SELECT recovery_revision FROM run_meta WHERE singleton=1").Scan(&current); err != nil {
+		return storageError()
+	}
+	if current != expected {
+		return errRecoverySnapshotChanged
+	}
+	return nil
+}
+
+var errRecoverySnapshotChanged = errors.New("recovery snapshot changed")
+
+// Retry only stale read validation, before any mutation or command admission.
+// The caller supplies its existing operation deadline and holds recovery.lock.
+// A peer's legitimate audit GC or incident publication must not turn a single
+// overlapping commit into a startup failure, or force long writer-lock holds.
+func beginRecoveryWrite(ctx context.Context, db *sql.DB, validate func(context.Context) (int64, error)) (*sql.Tx, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, errors.Join(failure("storage_busy", "recovery metadata kept changing; retry after maintenance completes"), err)
+		}
+		epoch, err := validate(ctx)
+		if err != nil {
+			return nil, err
+		}
+		tx, err := sqliteutil.BeginImmediateContext(ctx, db, "runs")
+		if err != nil {
+			return nil, metadataFailure(ctx, "starting recovery write")
+		}
+		err = recheckRecoveryRevision(ctx, tx, epoch)
+		if err == nil {
+			return tx, nil
+		}
+		rollbackErr := tx.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			return nil, metadataFailure(ctx, "rolling back stale recovery validation")
+		}
+		if !errors.Is(err, errRecoverySnapshotChanged) {
+			return nil, err
 		}
 	}
 }

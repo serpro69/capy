@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/serpro69/capy/internal/executor"
-	"github.com/serpro69/capy/internal/sqliteutil"
 	"golang.org/x/sys/unix"
 )
 
@@ -149,17 +148,16 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=?)
 	// helper finalization retain their separate 250-ms limits.
 	writeCtx, cancel := context.WithTimeout(ctx, recoveryTimeout)
 	defer cancel()
-	tx, err := sqliteutil.BeginImmediateContext(writeCtx, s.db, "runs")
+	tx, err := beginRecoveryWrite(writeCtx, s.db, func(ctx context.Context) (int64, error) {
+		return s.validateResolutionsSnapshot(ctx, slot)
+	})
 	if err != nil {
-		return report, storageError()
+		return report, err
 	}
 	defer tx.Rollback()
 	var current string
 	if err := tx.QueryRowContext(writeCtx, "SELECT generation FROM run_owners WHERE slot=?", slot).Scan(&current); err != nil || current != generation {
 		return report, storageError()
-	}
-	if err := validateSlotResolutions(writeCtx, tx, slot); err != nil {
-		return report, err
 	}
 	// Inspect every unfinished proof, even beyond the bounded recovery batch.
 	// A generation mismatch also requires operator recovery; never rewrite it.

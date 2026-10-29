@@ -535,6 +535,10 @@ func TestRecoveryReceiptRecordBoundsAndLookup(t *testing.T) {
 	hash := strings.Repeat("a", 64)
 	_, err := s.db.Exec(`INSERT INTO run_recovery_receipts(id,plan_hash,store_id,version,applied_at,method,basis,uid,explanation,incident_count,run_count,owner_count,store_count,charged_bytes,audit_expires_at) VALUES(?,?,?,1,1,'operator','groups_stopped',0,'stopped',0,0,0,0,?,2)`, id, hash, s.id, recoveryReceiptReserve)
 	require.NoError(t, err)
+	// This fixture bypasses apply; fund its receipt before close maintenance
+	// performs the same exact debit release as for a real expired receipt.
+	_, err = s.db.Exec("UPDATE run_meta SET accounted_bytes=accounted_bytes+?", recoveryReceiptReserve)
+	require.NoError(t, err)
 	for _, byPlan := range []bool{false, true} {
 		lookupID, lookupHash := id, ""
 		if byPlan {

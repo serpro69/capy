@@ -169,8 +169,20 @@ evicting payload remains an inconsistency. Disposed payload uses its fixed deadl
 from recovery time and its admission-recorded TTL; later quota pressure can evict
 it sooner, ordered by recovery time. Deletion resumes in bounded batches after
 interruption, keeping the full payload debit until the parent row is deleted.
-Independently charged recovery evidence survives that deletion. Audit pruning and
-public apply remain gated on the remaining recovery tasks.
+Independently charged recovery evidence survives that deletion. Closed batch
+manifests use their administrative deadline and can also be evicted under quota
+pressure; terminal batches retain their original expiry. An unresolved child
+prevents manifest eviction. Child output and manifests have independent clocks,
+so either can disappear first.
+
+Ordinary maintenance prunes recovery audit only after the entire receipt group's
+deadline has passed and no retained run or manifest depends on it. It deletes
+bounded groups of records, releases each charge once and keeps the receipt's plan
+identity until the last dependent record is gone. Interrupted pruning resumes
+after restart. Inspection still shows a pruning receipt's immutable summary,
+with incomplete detail; changed audit membership invalidates inspection cursors.
+Retries cannot recreate pruned evidence or renew retention. Public apply remains
+gated on the remaining recovery tasks.
 
 An unresolved run incident protects retained output even when terminal proof
 arrives later. Status, reads and lists expose that evidence without extending its
