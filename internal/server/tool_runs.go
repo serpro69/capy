@@ -67,7 +67,7 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 			return operationError(err)
 		}
 		r, err := execution.Budget(s.config.Runs.MaxResponseBytes, func(n int) (*mcp.CallToolResult, error) {
-			result := mcp.NewToolResultStructured(execution.BoundSearch(page, n), "Search covers only the reported sanitized prefix; repeat search to resume indexing. Use hit read_cursor with the same run_id and stream.")
+			result := mcp.NewToolResultStructured(execution.BoundSearch(page, n), "Search covers the reported safe prefix; repeat to resume indexing. Administratively closed capture cannot gain withheld output. Use hit read_cursor with the same run_id and stream.")
 			result.IsError = page.Error != nil || page.KnowledgeError != nil
 			return result, nil
 		}, nil)
@@ -158,7 +158,7 @@ func (s *Server) handleRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 			if err != nil {
 				return nil, err
 			}
-			return mcp.NewToolResultStructured(page, "Captured run summaries; use status or read by run_id."), nil
+			return mcp.NewToolResultStructured(execution.BoundList(page, n), "Captured run summaries; use status or read by run_id."), nil
 		}, nil)
 		if err != nil {
 			return operationError(err)

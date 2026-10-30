@@ -126,6 +126,99 @@ func TestRecoveryRecordedOutcomeMinimumBudget(t *testing.T) {
 	}
 }
 
+func TestRecoveryIndexedListMinimumBudget(t *testing.T) {
+	id := "11111111-2222-4333-8444-555555555555"
+	now := time.Now().UTC()
+	expires := now.Add(time.Hour)
+	cursor := strings.Repeat("c", 240)
+	ordinal := 0
+	recovery := &runstore.Recovery{State: "operator_resolved", IncidentID: id, ReceiptID: id, DispositionID: id,
+		ResolvedAt: &now, Basis: "groups_stopped", RetentionExpiresAt: &expires, OperationallyClosed: true, CaptureClosed: true}
+	entry := runstore.Summary{RunID: id, BatchID: id, OwnerID: id, OwnerType: "mcp", Ordinal: &ordinal, Label: strings.Repeat("<", 80),
+		State: "running", Cleanup: executor.CleanupEvidence{Scope: executor.CleanupLinuxDescendants, State: executor.CleanupPending},
+		CaptureState: "incomplete", CapturedBytes: 1000, CreatedAt: now, OutputAvailable: true, Recovery: recovery}
+	labelNeeded := false
+	for size := 80; size <= 160; size++ {
+		t.Run(fmt.Sprintf("escaped label %d", size), func(t *testing.T) {
+			entry.Label = strings.Repeat("<", size)
+			list := runstore.ListPage{Version: 2, Kind: "query", BatchID: id, Entries: []runstore.Summary{entry}, NextCursor: &cursor}
+			baseline, err := json.Marshal(mcp.NewToolResultStructured(list, "Captured run summaries; use status or read by run_id."))
+			require.NoError(t, err)
+			list.Entries[0].Index = &runstore.Index{State: "failed", CoverageCursor: &cursor, Error: &runstore.Error{Code: "index_unavailable", Message: "index work was interrupted or unavailable; retry search to resume retained safe coverage"}}
+			// Reproduce the initial correction's remaining boundary: index cursor
+			// and prose removed, but the original label still fills the envelope.
+			indexOnly := execution.BoundList(list, 0)
+			indexOnly.Entries[0].Label = entry.Label
+			unboundedLabel, err := json.Marshal(mcp.NewToolResultStructured(indexOnly, "Captured run summaries; use status or read by run_id."))
+			require.NoError(t, err)
+			if len(baseline) <= 2048 && len(unboundedLabel) > 2048 {
+				if !labelNeeded {
+					t.Logf("label %d: without index %d bytes; compact index with original label %d bytes", size, len(baseline), len(unboundedLabel))
+				}
+				labelNeeded = true
+			}
+			response, err := execution.Budget(2048, func(n int) (*mcp.CallToolResult, error) {
+				return mcp.NewToolResultStructured(execution.BoundList(list, n), "Captured run summaries; use status or read by run_id."), nil
+			}, nil)
+			require.NoError(t, err)
+			wire, err := json.Marshal(response)
+			require.NoError(t, err)
+			require.LessOrEqual(t, len(wire), 2048)
+			page := response.StructuredContent.(runstore.ListPage)
+			require.Equal(t, list.NextCursor, page.NextCursor)
+			require.Equal(t, entry.Recovery, page.Entries[0].Recovery)
+			require.Equal(t, "failed", page.Entries[0].Index.State)
+			require.Equal(t, "index_unavailable", page.Entries[0].Index.Error.Code)
+			require.True(t, page.Entries[0].MetadataOmitted)
+			require.NotNil(t, list.Entries[0].Index.CoverageCursor, "formatting must not mutate the original view")
+			require.Equal(t, entry.Label, list.Entries[0].Label)
+		})
+	}
+	require.True(t, labelNeeded, "the sweep must include a formerly fitting label that needs shortening")
+}
+
+func TestRecoverySearchMinimumBudget(t *testing.T) {
+	id := "11111111-2222-4333-8444-555555555555"
+	now := time.Now().UTC()
+	expires := now.Add(time.Hour)
+	cursor := strings.Repeat("c", 240)
+	recovery := &runstore.Recovery{State: "operator_resolved", IncidentID: id, ReceiptID: id, DispositionID: id,
+		ResolvedAt: &now, Basis: "groups_stopped", RetentionExpiresAt: &expires, OperationallyClosed: true, CaptureClosed: true}
+	for _, batch := range []bool{false, true} {
+		page := runstore.SearchPage{Version: 2, Kind: "query", RunID: id, Recovery: recovery,
+			Cleanup: executor.CleanupEvidence{Scope: executor.CleanupDarwinObservation, State: executor.CleanupPending},
+			Index:   runstore.Index{State: "partial", CoverageCursor: &cursor}, Partial: true,
+			Coverage: map[string]int64{"stdout": 1 << 30, "stderr": 1 << 30},
+			Results:  []runstore.QueryHits{{Hits: []runstore.SearchHit{{RunID: id, ReadCursor: cursor, Text: strings.Repeat("hit ", 1000)}}}}}
+		if batch {
+			page.BatchID, page.RunID = id, ""
+			batchRecovery := *recovery
+			batchRecovery.DispositionID = ""
+			page.Recovery = &batchRecovery
+			page.CoverageOmitted = true
+			page.Children = []runstore.SearchCoverage{{RunID: id, Recovery: recovery, Index: page.Index, OutputAvailable: true}}
+			page.Error = runstore.AdmissionError(&runstore.Error{Code: "cleanup_unverified"}, "/tmp/"+strings.Repeat("<", 160))
+			page.Error.RecoveryHint.Subject = &runstore.InspectionSubject{RunID: id}
+			page.Index.State, page.Index.Error = "failed", page.Error
+		}
+		response, err := execution.Budget(2048, func(n int) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultStructured(execution.BoundSearch(page, n), "Search covers retained safe prefixes; closed capture cannot gain withheld output."), nil
+		}, nil)
+		require.NoError(t, err)
+		wire, err := json.Marshal(response)
+		require.NoError(t, err)
+		require.LessOrEqual(t, len(wire), 2048)
+		require.Contains(t, string(wire), `"receipt_id":"`+id+`"`)
+		require.Contains(t, string(wire), `"capture_closed":true`)
+		require.Contains(t, string(wire), `"partial":true`)
+		if batch {
+			require.Contains(t, string(wire), `"coverage_omitted":true`)
+			require.Contains(t, string(wire), `"code":"cleanup_unverified"`)
+			require.Contains(t, string(wire), `"next_step":`)
+		}
+	}
+}
+
 func TestUnresolvedHistoryActualMCPBudgets(t *testing.T) {
 	s := newTestServer(t, nil)
 	s.config.Runs.MaxResponseBytes = 2048

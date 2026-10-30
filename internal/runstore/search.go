@@ -69,6 +69,7 @@ type KnowledgeHits struct {
 	Hits  []KnowledgeHit `json:"hits"`
 }
 type SearchPage struct {
+	Recovery       *Recovery                `json:"recovery,omitempty"`
 	Cleanup        executor.CleanupEvidence `json:"cleanup"`
 	Queries        []string                 `json:"-"` // internal batch query recovery; never echoed
 	Knowledge      []KnowledgeHits          `json:"knowledge_results,omitempty"`
@@ -138,6 +139,7 @@ func (s *Store) Search(ctx context.Context, owner *Owner, options SearchOptions)
 		return page, err
 	}
 	page.Cleanup = row.Cleanup
+	page.Recovery = row.Result.Recovery
 	page.Index = row.Result.Index
 	page.Partial = page.Index.State != "ready"
 	if page.Error != nil {
@@ -165,14 +167,14 @@ func (s *Store) Search(ctx context.Context, owner *Owner, options SearchOptions)
 	}
 	var mu sync.Mutex
 	var layerErr error
+	now := time.Now().UTC().UnixMilli()
 	corpus, err := retrieval.NewCorpus(retrieval.CorpusConfig{
 		DB: s.db, PorterTable: "run_search_fts", TrigramTable: "run_search_trigram", TitleWeight: 1,
 		SelectColumns: "w.id,c.title,c.content,w.stream,w.raw_start,w.raw_end,w.seq,w.phase,w.start_line",
 		Join:          "JOIN run_search_windows w ON w.id=c.rowid JOIN runs r ON r.id=w.run_id",
-		FilterSQL: " AND w.run_id=? AND r.evicting=0 AND (r.expires_at IS NULL OR r.expires_at>? OR " +
-			"EXISTS(SELECT 1 FROM run_incidents i WHERE i.run_id=r.id AND i.generation=r.generation AND i.receipt_id IS NULL)) " +
+		FilterSQL: " AND w.run_id=? AND " + searchablePayloadSQL + " " +
 			"AND w.raw_end<=CASE w.stream WHEN 'stdout' THEN ? ELSE ? END",
-		FilterParams: []any{options.RunID, time.Now().UTC().UnixMilli(), page.Coverage["stdout"], page.Coverage["stderr"]},
+		FilterParams: []any{options.RunID, now, now, page.Coverage["stdout"], page.Coverage["stderr"]},
 		OnError:      func(err error) { mu.Lock(); layerErr = errors.Join(layerErr, err); mu.Unlock() },
 		MapRow: func(rows *sql.Rows) (retrieval.SearchResult, error) {
 			var result retrieval.SearchResult
@@ -193,13 +195,13 @@ func (s *Store) Search(ctx context.Context, owner *Owner, options SearchOptions)
 			page.Error = &Error{Code: "index_search_failed", Message: "an index layer could not be searched; read retained output or retry search"}
 			page.Partial = true
 			page.Results = nil
-			page.Index.State, page.Index.Error = "failed", page.Error
+			searchPageError(&page, page.Error)
 			if claimed {
 				if err := s.failIndex(ctx, owner, options.RunID, page.Error); err != nil {
 					page.Error = indexError(err)
 				}
 			}
-			return page, nil
+			break
 		}
 		group := QueryHits{Query: i, Hits: []SearchHit{}}
 		for _, match := range matches {
@@ -221,12 +223,21 @@ func (s *Store) Search(ctx context.Context, owner *Owner, options SearchOptions)
 	if current.Result.Redaction.State == "unavailable" {
 		return page, failure("redaction_unavailable", "sanitized output became unavailable")
 	}
+	if disposedResult(current.Result) {
+		page.Index = current.Result.Index
+		page.Partial = page.Partial || page.Index.State != "ready"
+	}
 	return page, nil
 }
 
 func searchPageError(page *SearchPage, problem *Error) {
 	page.Error = problem
 	page.Partial = true
+	if page.Recovery != nil && page.Recovery.DispositionID != "" {
+		// Query/release errors are not durable index-state updates. Retain the
+		// validated side-state view, refreshed after any attempted failure save.
+		return
+	}
 	page.Index.State, page.Index.Error = "failed", problem
 	if problem.Code == "index_quota_blocked" {
 		page.Index.State = "quota_blocked"
@@ -235,13 +246,18 @@ func searchPageError(page *SearchPage, problem *Error) {
 
 func indexError(err error) *Error {
 	var typed *Error
-	if errors.As(err, &typed) && (typed.Code == "index_quota_blocked" || typed.Code == "redaction_unavailable") {
+	if errors.As(err, &typed) && (typed.Code == "index_quota_blocked" || typed.Code == "redaction_unavailable" || typed.RecoveryHint != nil) {
 		return typed
 	}
 	return &Error{Code: "index_failed", Message: "index work was interrupted or unavailable; retry search to resume retained coverage"}
 }
 
 func (s *Store) failIndex(ctx context.Context, owner *Owner, id string, problem *Error) error {
+	leases, err := s.BorrowLeases(owner)
+	if err != nil {
+		return err
+	}
+	defer leases.Close()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), WriteTimeout)
 	defer cancel()
 	tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
@@ -249,9 +265,8 @@ func (s *Store) failIndex(ctx context.Context, owner *Owner, id string, problem 
 		return storageError()
 	}
 	defer tx.Rollback()
-	var claimed bool
-	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_work_claims WHERE run_id=? AND slot=? AND generation=?)", id, owner.Slot, owner.ID).Scan(&claimed); err != nil || !claimed {
-		return storageError()
+	if err := validateIndexClaim(ctx, tx, owner, id); err != nil {
+		return err
 	}
 	row, err := loadRun(ctx, tx, id)
 	if err != nil {
@@ -261,7 +276,7 @@ func (s *Store) failIndex(ctx context.Context, owner *Owner, id string, problem 
 	if problem.Code == "index_quota_blocked" {
 		row.Result.Index.State = "quota_blocked"
 	}
-	if err := saveIndexResult(ctx, tx, row); err != nil {
+	if err := s.saveIndexResult(ctx, tx, owner, row); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

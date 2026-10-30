@@ -146,6 +146,11 @@ VALUES(?,?,?,?,?,?,?) ON CONFLICT(run_id,stream,raw_start) DO UPDATE SET raw_end
 }
 
 func (s *Store) indexBatch(ctx context.Context, owner *Owner, id string) error {
+	leases, err := s.BorrowLeases(owner)
+	if err != nil {
+		return err
+	}
+	defer leases.Close()
 	ctx, cancel := context.WithTimeout(ctx, WriteTimeout)
 	defer cancel()
 	tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
@@ -153,9 +158,8 @@ func (s *Store) indexBatch(ctx context.Context, owner *Owner, id string) error {
 		return storageError()
 	}
 	defer tx.Rollback()
-	var claimed bool
-	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_work_claims WHERE run_id=? AND slot=? AND generation=?)", id, owner.Slot, owner.ID).Scan(&claimed); err != nil || !claimed {
-		return storageError()
+	if err := validateIndexClaim(ctx, tx, owner, id); err != nil {
+		return err
 	}
 	row, err := loadRun(ctx, tx, id)
 	if err != nil {
@@ -164,7 +168,9 @@ func (s *Store) indexBatch(ctx context.Context, owner *Owner, id string) error {
 	if row.Result.Redaction.State == "unavailable" || row.Result.Redaction.Version != sanitize.StreamVersion {
 		return failure("redaction_unavailable", "sanitized output is unavailable; explicit raw reads remain independent")
 	}
-	complete := row.Result.CompletedAt != nil && row.Result.Redaction.State == "ready"
+	disposed := disposedResult(row.Result)
+	complete := (row.Result.CompletedAt != nil || disposed) && row.Result.Redaction.State == "ready"
+	caughtUp := true
 	coverage := make(map[string]int64, 2)
 	for _, stream := range []string{"stdout", "stderr"} {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO run_search_progress(run_id,stream) VALUES(?,?) ON CONFLICT DO NOTHING", id, stream); err != nil {
@@ -201,10 +207,15 @@ func (s *Store) indexBatch(ctx context.Context, owner *Owner, id string) error {
 		}
 		coverage[stream] = covered
 		complete = complete && covered == available
+		caughtUp = caughtUp && covered == available
 	}
 	row.Result.Index = Index{State: "building"}
 	if complete {
 		row.Result.Index.State = "ready"
+	} else if disposed && caughtUp {
+		// No more safe projection can arrive. Withheld sanitizer tails stay
+		// withheld; finishing index work cannot make that coverage complete.
+		row.Result.Index.State = "partial"
 	}
 	cursorBytes, err := json.Marshal(struct {
 		Version          int `json:"v"`
@@ -216,7 +227,7 @@ func (s *Store) indexBatch(ctx context.Context, owner *Owner, id string) error {
 	}
 	cursor := base64.RawURLEncoding.EncodeToString(cursorBytes)
 	row.Result.Index.CoverageCursor = &cursor
-	if err := saveIndexResult(ctx, tx, row); err != nil {
+	if err := s.saveIndexResult(ctx, tx, owner, row); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE run_meta SET index_enabled=1 WHERE singleton=1"); err != nil {
@@ -235,11 +246,42 @@ func (s *Store) indexBatch(ctx context.Context, owner *Owner, id string) error {
 	return nil
 }
 
-func saveIndexResult(ctx context.Context, tx *sql.Tx, row Admitted) error {
-	// Task 13 routes disposed writes to the dedicated index metadata. This
-	// existing writer must never rewrite the immutable execution snapshot.
-	if err := rejectDisposedMutation(ctx, tx, row.ID); err != nil {
+func (s *Store) saveIndexResult(ctx context.Context, tx *sql.Tx, owner *Owner, row Admitted) error {
+	if err := validateIndexClaim(ctx, tx, owner, row.ID); err != nil {
 		return err
+	}
+	d, err := readRunResolution(ctx, tx, row.ID)
+	if err != nil {
+		return err
+	}
+	if d != nil {
+		// Losing admission health stops index work, but the matching worker
+		// may still record its failure before releasing the claim. This cannot
+		// create windows or advance coverage and never alters execution truth.
+		if row.Result.Index.State != "failed" && row.Result.Index.State != "quota_blocked" {
+			if err := s.checkQuarantineQuery(ctx, tx); err != nil {
+				return err
+			}
+		}
+		index, err := resolutionIndex(row.Result.Index)
+		if err != nil {
+			return err
+		}
+		var code any
+		if index.Error != nil {
+			code = index.Error.Code
+		}
+		// Validation above requires the seeded side row. Never upsert missing
+		// metadata or route this write through historical execution updates.
+		updated, err := tx.ExecContext(ctx, "UPDATE run_search_state SET state=?,cursor=?,error_code=? WHERE run_id=?", index.State, index.CoverageCursor, code, row.ID)
+		if err != nil {
+			return metadataReadError(err)
+		}
+		n, err := updated.RowsAffected()
+		if err != nil || n != 1 {
+			return recoveryInconsistent("missing disposed run index state")
+		}
+		return nil
 	}
 	// loadRun is a public projection and may include derived capture warnings
 	// from an incident published after the worker claimed the run. Merge only

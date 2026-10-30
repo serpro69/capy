@@ -107,11 +107,13 @@ func TestRecoveryApplyStandalonePreservesHistoryAndReusesOwner(t *testing.T) {
 	} {
 		applyErrorCode(t, mutate(), "run_unavailable")
 	}
-	_, err = fresh.ClaimIndex(t.Context(), owner, r.ID)
-	applyErrorCode(t, err, "run_unavailable")
+	claimed, err := fresh.ClaimIndex(t.Context(), owner, r.ID)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, fresh.ReleaseIndex(t.Context(), owner, r.ID))
 	tx, err := sqliteutil.BeginImmediateContext(t.Context(), fresh.db, "runs")
 	require.NoError(t, err)
-	applyErrorCode(t, saveIndexResult(t.Context(), tx, Admitted{ID: r.ID}), "run_unavailable")
+	applyErrorCode(t, fresh.saveIndexResult(t.Context(), tx, owner, Admitted{ID: r.ID}), "storage_unavailable")
 	require.NoError(t, tx.Rollback())
 	require.Equal(t, before, applyHistory(t, fresh.db, r.ID))
 }

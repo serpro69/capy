@@ -11,12 +11,11 @@ import (
 // ClaimIndex reserves bounded indexing work for a live owner generation. The
 // caller retains Owner.Lease through the work and release.
 func (s *Store) ClaimIndex(ctx context.Context, owner *Owner, id string) (bool, error) {
-	if owner == nil || owner.Lease == nil {
-		return false, storageError()
+	leases, err := s.BorrowLeases(owner)
+	if err != nil {
+		return false, err
 	}
-	if _, err := owner.Lease.Stat(); err != nil {
-		return false, storageError()
-	}
+	defer leases.Close()
 	ctx, cancel := context.WithTimeout(ctx, WriteTimeout)
 	defer cancel()
 	tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
@@ -24,11 +23,6 @@ func (s *Store) ClaimIndex(ctx context.Context, owner *Owner, id string) (bool, 
 		return false, storageError()
 	}
 	defer tx.Rollback()
-	// Task 13 enables fresh-owner indexing through separate run_search_state.
-	// Until then, never let this historical-result write path claim a disposition.
-	if err := rejectDisposedMutation(ctx, tx, id); err != nil {
-		return false, err
-	}
 	var generation string
 	if err := tx.QueryRowContext(ctx, "SELECT generation FROM run_owners WHERE slot=? AND cleanup_unverified=0", owner.Slot).Scan(&generation); err != nil || generation != owner.ID {
 		return false, storageError()
@@ -37,7 +31,11 @@ func (s *Store) ClaimIndex(ctx context.Context, owner *Owner, id string) (bool, 
 	if err != nil {
 		return false, err
 	}
-	if row.Result.Error != nil && row.Result.Error.Code == "cleanup_unverified" {
+	if disposedResult(row.Result) {
+		if err := s.checkQuarantineQuery(ctx, tx); err != nil {
+			return false, err
+		}
+	} else if row.Result.Error != nil && row.Result.Error.Code == "cleanup_unverified" {
 		return false, row.Result.Error
 	}
 	inserted, err := tx.ExecContext(ctx, "INSERT INTO run_work_claims(run_id,slot,generation) VALUES(?,?,?) ON CONFLICT(run_id) DO NOTHING", id, owner.Slot, owner.ID)
@@ -52,13 +50,30 @@ func (s *Store) ClaimIndex(ctx context.Context, owner *Owner, id string) (bool, 
 		return false, nil
 	}
 	row.Result.Index.State, row.Result.Index.Error = "building", nil
-	if err := saveIndexResult(ctx, tx, row); err != nil {
+	if err := s.saveIndexResult(ctx, tx, owner, row); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return false, storageError()
 	}
 	return true, nil
+}
+
+// A worker's current generation authorizes index work, independently of the
+// historical execution generation. Callers pin its acquired leases throughout
+// the transaction; a matching claim alone is not a live-worker credential.
+func validateIndexClaim(ctx context.Context, q runQuerier, owner *Owner, id string) error {
+	var claimed bool
+	if owner == nil {
+		return storageError()
+	}
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM run_work_claims c
+ JOIN run_owners o ON o.slot=c.slot AND o.generation=c.generation
+ WHERE c.run_id=? AND c.slot=? AND c.generation=?)`, id, owner.Slot, owner.ID).Scan(&claimed)
+	if err != nil || !claimed {
+		return storageError()
+	}
+	return nil
 }
 
 // ReleaseIndex is generation-scoped so an old worker cannot release a replacement

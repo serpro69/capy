@@ -76,6 +76,9 @@ func (s *Store) listBatch(ctx context.Context, o ListOptions) (ListPage, error) 
 		result := child.result
 		created, ordinal, label := child.created, child.ordinal, child.label
 		entry.Recovery = result.Recovery
+		if disposedResult(result) && child.outputAvailable {
+			entry.Index = &result.Index
+		}
 		entry.Cleanup = result.Cleanup
 		entry.BatchID = o.BatchID
 		entry.Ordinal = &ordinal

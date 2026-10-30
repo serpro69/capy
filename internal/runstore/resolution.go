@@ -30,6 +30,7 @@ type runResolution struct {
 	EvictedAt                                                   sql.NullInt64
 	EvictionCause                                               string
 	Receipt                                                     recoveryReceipt
+	Index                                                       *Index // mutable payload metadata; never part of Original/Digest
 }
 
 // readRunResolution validates the immutable binding against the retained row,
@@ -97,16 +98,27 @@ func readRunResolution(ctx context.Context, q runQuerier, id string) (*runResolu
 		// consumer; missing-output readers must report unavailable, not damage.
 	}
 	if present {
-		var state string
-		err := q.QueryRowContext(ctx, "SELECT state FROM run_search_state WHERE run_id=?", id).Scan(&state)
+		var index Index
+		var cursor, code sql.NullString
+		err := q.QueryRowContext(ctx, "SELECT state,cursor,error_code FROM run_search_state WHERE run_id=?", id).Scan(&index.State, &cursor, &code)
 		if err != nil && !(d.PayloadState == "evicting" && errors.Is(err, sql.ErrNoRows)) {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, recoveryInconsistent("missing disposed run index state")
 			}
 			return nil, metadataReadError(err)
 		}
-		if err == nil && !validResolutionIndexState(state) {
-			return nil, recoveryInconsistent("disposed run index state")
+		if err == nil {
+			if !validResolutionIndexState(index.State) || cursor.Valid && len(cursor.String) > 1024 || code.Valid && !validResolutionIndexError(code.String) {
+				return nil, recoveryInconsistent("disposed run index state")
+			}
+			if cursor.Valid {
+				index.CoverageCursor = &cursor.String
+			}
+			if code.Valid {
+				index.Error = &Error{Code: code.String}
+			}
+			index = publicResolutionIndex(index)
+			d.Index = &index
 		}
 	}
 	if err := validateDispositionManifest(ctx, q, d); err != nil {
@@ -185,6 +197,28 @@ func validateDispositionManifest(ctx context.Context, q runQuerier, d *runResolu
 
 func validResolutionIndexState(state string) bool {
 	return state == "not_requested" || state == "building" || state == "partial" || state == "ready" || state == "failed"
+}
+
+func validResolutionIndexError(code string) bool {
+	switch code {
+	case "storage_unavailable", "capture_limit", "run_unavailable", "index_unavailable", "index_capacity", "cleanup_unverified":
+		return true
+	default:
+		return false
+	}
+}
+
+// Side metadata stores only allowed codes. Messages are generated at read time,
+// never copied from stored backend errors or the original execution snapshot.
+func publicResolutionIndex(index Index) Index {
+	if index.Error != nil {
+		problem := &Error{Code: index.Error.Code, Message: "index work was interrupted or unavailable; retry search to resume retained safe coverage"}
+		if problem.Code == "index_capacity" {
+			problem.Message = "index quota exhausted; retained raw and sanitized output can still be read"
+		}
+		index.Error = problem
+	}
+	return index
 }
 
 // Normalize the existing index writer's view into the bounded side-state
