@@ -114,6 +114,33 @@ func runText(result runstore.Result) string {
 func encodeRunText(value any) ([]byte, error) {
 	var b strings.Builder
 	switch v := value.(type) {
+	case runstore.RecoveryApplication:
+		fmt.Fprintf(&b, "Recovery: %s.\n", v.Status)
+		if v.Recovery != nil {
+			r := v.Recovery
+			fmt.Fprintf(&b, "Receipt %s: %s/%s; applied=%s; incidents=%d disposed runs=%d; audit deadline=%s; pruning=%t.\n", r.ID, r.Method, r.Basis, time.Unix(0, r.AppliedAt).UTC().Format(time.RFC3339Nano), r.IncidentCount, r.RunCount, time.UnixMilli(r.AuditExpiresAt).UTC().Format(time.RFC3339Nano), r.Pruning)
+		}
+		if v.Admission == nil {
+			b.WriteString("Current cleanup admission gate: unknown.\n")
+		} else {
+			fmt.Fprintf(&b, "Current cleanup admission block=%t; unresolved incidents=%d pending runs=%d; safe reconciliation after restart=%d. This is not a guarantee of future admission.\n", v.Admission.Blocked, v.Admission.UnresolvedIncidents, v.Admission.PendingRuns, v.Admission.SafeReconciliation)
+		}
+		if v.Capacity != nil {
+			fmt.Fprintf(&b, "Preflight capacity sample: metadata needed=%d available=%d; disk needed=%d available=%d; sufficient=%t. This was not reserved; later transaction checks may refuse. No history was evicted.\n", v.Capacity.MetadataBytes, v.Capacity.AvailableBytes, v.Capacity.DiskNeeded, v.Capacity.DiskAvailable, v.Capacity.Sufficient)
+		}
+		if v.Error != nil {
+			fmt.Fprintf(&b, "%s: %s\n", v.Error.Code, terminalText(v.Error.Message))
+		}
+		fmt.Fprintln(&b, v.NextStep)
+		if v.Plan != "" {
+			fmt.Fprintf(&b, "Plan: %s\n", v.Plan)
+		}
+		if v.NextTimeout != "" {
+			fmt.Fprintf(&b, "Retry timeout: --timeout %s\n", v.NextTimeout)
+		}
+		if v.NextCommand != "" {
+			fmt.Fprintf(&b, "Next: %s\n", v.NextCommand)
+		}
 	case runstore.RecoveryPlan:
 		fmt.Fprintf(&b, "Recovery plan: %s; complete=%t; effective timeout=%s.\n", v.Status, v.Complete, v.EffectiveTimeout)
 		fmt.Fprintf(&b, "Subjects=%d; dispositions=%d; incident-only=%d; owner/store concerns=%d/%d; safe reconciliation=%d.\n", v.Counts.Subjects, v.Counts.Dispositions, v.Counts.IncidentOnly, v.Counts.OwnerConcerns, v.Counts.StoreConcerns, v.Counts.SafeReconciliation)
@@ -188,6 +215,9 @@ func encodeRunText(value any) ([]byte, error) {
 			}
 			if subject.OutputAvailable != nil {
 				fmt.Fprintf(&b, "; output_available=%t", *subject.OutputAvailable)
+			}
+			if subject.RetentionExpiresAt != nil {
+				fmt.Fprintf(&b, "; output deadline=%s (quota may evict sooner)", subject.RetentionExpiresAt.Format(time.RFC3339Nano))
 			}
 			b.WriteByte('\n')
 		}

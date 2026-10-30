@@ -39,6 +39,7 @@ type InspectionSubject struct {
 	Cleanup              *executor.CleanupEvidence `json:"cleanup,omitempty"`
 	MissingEvidence      []string                  `json:"missing_evidence,omitempty"`
 	OutputAvailable      *bool                     `json:"output_available,omitempty"`
+	RetentionExpiresAt   *time.Time                `json:"retention_expires_at,omitempty"`
 }
 
 type inspectionRegistry struct {
@@ -181,12 +182,12 @@ func inspectLegacySubjects(ctx context.Context, tx *sql.Tx, view *Inspection, op
 	if len(markers) > 0 {
 		view.Admission = "recorded_blocked"
 	}
-	// Apply remains unavailable in this staged binary; offline upgrade is usable.
+	// Legacy schemas need upgrade before a complete current recovery plan.
 	view.Action = "inspect"
 	view.NextStep = "Select this physical owner with --project-dir to inspect again. No recorded quarantine is not a guarantee of admission; pending observations do not prove live or abandoned work."
 	if len(markers) > 0 {
 		view.Action = "inspect"
-		view.NextStep = "Preserve retained history and stop affected sessions and old execution groups; this binary supports inspection and upgrade, but operator recovery application is not available yet."
+		view.NextStep = "Preserve retained history and stop affected sessions and old execution groups; use capy runs recover from an ordinary terminal to review a complete plan."
 	}
 	if view.SchemaVersion < schemaVersion {
 		view.Action = "upgrade_required"

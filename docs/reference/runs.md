@@ -128,8 +128,8 @@ compact reads can omit that nested status field while retaining their own
 identifiers remain; stored cursor coordinates do not change. Healthy results omit
 `recovery` entirely. Hooks reject execute
 envelopes containing that field, including null or malformed values; printed
-output and fetch responses keep their existing behavior. Public recovery apply
-remains unavailable until its explicit CLI activation task is complete.
+output and fetch responses keep their existing behavior. Recovery application is
+an explicit offline CLI operation; MCP exposes inspection only.
 
 Reads of disposed output preserve the original execution-based `eof`. When
 `recovery.capture_closed=true`, stop polling at `end_of_available=true` even if
@@ -199,8 +199,7 @@ bounded groups of records, releases each charge once and keeps the receipt's pla
 identity until the last dependent record is gone. Interrupted pruning resumes
 after restart. Inspection still shows a pruning receipt's immutable summary,
 with incomplete detail; changed audit membership invalidates inspection cursors.
-Retries cannot recreate pruned evidence or renew retention. Public apply remains
-gated on the remaining recovery tasks.
+Retries cannot recreate pruned evidence or renew retention.
 
 An unresolved run incident protects retained output even when terminal proof
 arrives later. Status, reads and lists expose that evidence without extending its
@@ -370,9 +369,8 @@ also return `storage_unavailable` with “run store lifecycle is busy”; retry
 attachment after inspection finishes rather than repairing or discarding storage. Both
 paths prevent creation of missing WAL/SHM files and perform no maintenance.
 
-This increment provides diagnostics and offline schema upgrade. History-preserving
-administrative recovery application remains unavailable; upgrading does not clear
-quarantine.
+History-preserving recovery requires explicit offline application; upgrading alone
+does not clear quarantine.
 `--receipt-id` (MCP `receipt_id`) accepts a recovery receipt UUID, never an incident UUID; `--plan` (MCP `plan`)
 looks up a retained applied receipt, not an unapplied plan. Schema 8/9 has no
 receipts and returns `receipt_unavailable`; absence never proves nonapplication.
@@ -422,7 +420,7 @@ The stages commit separately: 8→9 adds Linux cleanup scope and normalizes batc
 proof as before; 9→10 preserves original result/program/output bytes and adds
 required phase metadata with explicit legacy `unknown`. Both preserve run/batch
 IDs, row IDs, cursors, expiry, retained proof and quarantine. Schema 10 also
-provisions bounded recovery metadata for later recovery support. The public
+provisions bounded recovery metadata. The public
 envelope and helper protocol remain version 2. No old job is restarted.
 
 Migration needs free filesystem space for the encrypted table copy and WAL,
@@ -451,9 +449,9 @@ capy runs recover --project-dir . --cursor CURSOR --limit 16 --json
 capy runs recover --project-dir . --timeout 15m --json
 ```
 
-This command is **preview-only**. It never applies recovery, admits a command,
+Without `--apply`, this command is **preview-only**. It never admits a command,
 creates an owner generation, changes policy, runs retention or writes audit
-records. No application or confirmation flags are registered. Exclusive
+records. Exclusive
 lifecycle, registry and owner-slot leases exclude cooperating store users; they
 do not prove that old execution groups stopped. Run it outside `capy_execute`.
 Schema 8/9 requires the separate offline upgrade first. Missing, held or unsafe
@@ -468,7 +466,7 @@ evidence gives the same token despite different page sizes, timeouts or preview
 clocks. Inferred subjects have stable keys, not invented incident UUIDs or dates.
 Use the returned `next_command`/`next_cursor` to review omitted subjects;
 continuation commands preserve the selected timeout. New plan tokens separately
-bind their physical target and inventory digest so future applied-receipt retries
+bind their physical target and inventory digest so applied-receipt retries
 can validate the original target without reconstructing old evidence.
 At the smallest response budget, or when the owner path cannot be safely shown,
 the full shell command may be omitted. Select the same physical owner explicitly
@@ -497,8 +495,65 @@ returns `recovery_inventory_incomplete`, no token, the effective budget and a
 same-owner longer-timeout command. Raise an earlier caller deadline too. Invalid
 zero, negative, malformed or overflowing durations fail before storage work.
 Interactive inspection retains its separate two-second budget. The existing CLI
-configuration, encryption, exit-status and CI conventions are unchanged; only
-the preview command and its reference are added here.
+configuration, encryption, exit-status and CI conventions are unchanged;
+the recovery CLI uses the existing configuration in `internal/config`, command
+conventions in `cmd/capy`, and build/test settings in the Makefile and
+`.github/workflows`. No new configuration or CI pipeline is required.
+
+After reviewing every plan page and establishing that originating execution has
+stopped, apply from the same ordinary terminal:
+
+```bash
+PLAN='paste-reviewed-plan-token'
+capy runs recover --project-dir . --apply --plan "$PLAN" \
+  --confirm-stopped --cleanup-basis groups_stopped \
+  --reason 'Stopped the originating execution groups' --json
+```
+
+The alternative basis is `host_restarted`. Both are operator attestations; Capy
+does not verify historical host identity or descendant quiescence. Establish
+cleanup on the originating machine even if the store moved. If cleanup is
+unknown, remain blocked and investigate. All confirmation fields are required;
+`--cursor` and `--limit` are preview-only. The reason is normalized and redacted,
+then must contain 1–1,024 UTF-8 bytes. Apply also accepts a positive `--timeout`,
+defaulting to five minutes for validation and the transaction together.
+
+Apply preserves original results, cleanup uncertainty, payload and unrelated
+expiry. Its `recovery.receipt_id` identifies the committed operator action.
+`admission` reports the current cleanup gate when known, not a guarantee that
+future work will pass every admission check. Inspect the receipt for individual
+disposed-output deadlines; normal quota pressure can evict output sooner:
+
+```bash
+capy runs inspect --project-dir . --plan "$PLAN" --json
+capy runs inspect --project-dir . --receipt-id RECEIPT_UUID --json
+```
+
+If output delivery fails or `recovery_outcome_unknown` is returned, look up the
+receipt by the same plan before retrying. Absence does not prove nonapplication.
+An exact retained-plan retry returns `already_applied` with unchanged receipt,
+timestamps and charges, while still reporting later blockers. A changed basis or
+normalized reason returns `recovery_receipt_conflict` with the retained receipt
+ID. A stale plan requires a fresh review. `recovery_timeout` makes no new
+disposition in that attempt; an existing receipt still records prior application.
+When a refusal carries a receipt, inspect it and current blockers instead of
+inferring healthy admission. `recovery_outcome_unknown` with a receipt means the
+commit succeeded but administrative close failed; without a receipt the commit
+itself may be uncertain. Otherwise retry with the same token/attestation and the longer timeout
+reported in the response. At small response budgets, use `plan` and
+`next_timeout` with the same physical `--project-dir` if full command text is
+omitted. Invalid arguments exit 2, runtime refusals exit 1, successful apply or
+exact retry exits 0, and failed output delivery exits 74.
+
+Capacity refusals include the preflight `capacity_sample` when available, with
+required and available metadata bytes and filesystem space. This sample can
+precede a later transactional capacity failure; it is not reserved headroom.
+
+After apply, restart affected sessions using compatible binaries, inspect
+readiness and deliberately run a harmless captured verification command.
+Recovery never resubmits the original application command. Decide separately
+whether that work should be retried. Keep every attached binary disposition-aware;
+early development builds with schema 10 alone are not compatible recovery readers.
 
 Reload compatible CLI/MCP binaries after upgrade. Older binaries refuse schema
 10; there is no reverse migration. Retained history requires a compatible reader.

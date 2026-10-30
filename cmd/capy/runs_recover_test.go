@@ -195,7 +195,9 @@ func TestRunsRecoverFlagsAndTimeout(t *testing.T) {
 	cmd.Dir, cmd.Env = project, env
 	help, err := cmd.Output()
 	require.NoError(t, err)
-	require.NotContains(t, string(help), "--apply")
+	require.Contains(t, string(help), "--apply")
+	require.Contains(t, string(help), "--confirm-stopped")
+	require.NotContains(t, string(help), "unavailable in this binary")
 	require.Contains(t, string(help), "5m0s")
 	path, err := config.ResolveRunDBPath(project)
 	require.NoError(t, err)
