@@ -18,11 +18,17 @@ import (
 	"github.com/serpro69/capy/internal/sqliteutil"
 )
 
-// Private until batch, retention and search consumers are integrated (Task 14).
-type recoveryApplyOptions struct {
+// RecoveryApplyOptions supplies the reviewed plan and operator attestation.
+// Timeout must be positive; CLI callers default it to DefaultRecoveryTimeout.
+type RecoveryApplyOptions struct {
 	Plan, Basis, Explanation string
 	ConfirmStopped           bool
 	Timeout                  time.Duration
+}
+
+func (o RecoveryApplyOptions) Validate() error {
+	_, _, err := normalizeRecoveryAttestation(o)
+	return err
 }
 
 type recoveryApplyResult struct {
@@ -33,6 +39,7 @@ type recoveryApplyResult struct {
 	PendingRuns         int64
 	SafeReconciliation  int64
 	RecoveryRevision    int64
+	Capacity            *RecoveryPlanCapacity
 }
 
 // Per-call fault injection avoids global hooks and covers both sides of commit.
@@ -42,7 +49,7 @@ type recoveryApplyHooks struct {
 	Commit       func(*sql.Tx) error
 }
 
-func normalizeRecoveryAttestation(o recoveryApplyOptions) (recoveryApplyOptions, inspectionPlan, error) {
+func normalizeRecoveryAttestation(o RecoveryApplyOptions) (RecoveryApplyOptions, inspectionPlan, error) {
 	plan, err := decodeInspectionPlan(o.Plan)
 	if err != nil || plan.Target == "" || plan.Snapshot == "" || !o.ConfirmStopped || o.Timeout <= 0 ||
 		(o.Basis != "groups_stopped" && o.Basis != "host_restarted") || len(o.Explanation) > 4096 || !utf8.ValidString(o.Explanation) {
@@ -66,7 +73,7 @@ func normalizeRecoveryAttestation(o recoveryApplyOptions) (recoveryApplyOptions,
 	return o, plan, nil
 }
 
-func applyRecovery(ctx context.Context, path, key string, options recoveryApplyOptions, hooks *recoveryApplyHooks) (view recoveryApplyResult, retErr error) {
+func applyRecovery(ctx context.Context, path, key string, options RecoveryApplyOptions, hooks *recoveryApplyHooks) (view recoveryApplyResult, retErr error) {
 	options, plan, err := normalizeRecoveryAttestation(options)
 	if err != nil {
 		return view, err
@@ -84,7 +91,7 @@ func applyRecovery(ctx context.Context, path, key string, options recoveryApplyO
 			return
 		}
 		if ctx.Err() != nil {
-			retErr = &Error{Code: "recovery_timeout", Message: "recovery did not commit; retry the same apply token and attestation with a longer --timeout if its deadline expired; raise any earlier caller deadline too", cause: ctx.Err()}
+			retErr = &Error{Code: "recovery_timeout", Message: "this attempt did not commit recovery changes; retry the same token and attestation with a longer --timeout if its deadline expired; raise any earlier caller deadline too", cause: ctx.Err()}
 		} else {
 			var typed *Error
 			if !errors.As(retErr, &typed) {
@@ -136,7 +143,9 @@ func applyRecovery(ctx context.Context, path, key string, options recoveryApplyO
 	if hooks != nil {
 		step = hooks.Inventory
 	}
-	if err := buildRecoveryInventory(ctx, tx, a, &preview, 0, step); err != nil {
+	err = buildRecoveryInventory(ctx, tx, a, &preview, 0, step)
+	view.Capacity = preview.Capacity
+	if err != nil {
 		return view, err
 	}
 	if preview.fingerprint != plan.Snapshot || preview.Counts.administrative() == 0 {

@@ -184,13 +184,7 @@ func planRecovery(ctx context.Context, path, key string, options RecoveryPlanOpt
 		view.Complete = false
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			retErr = errors.Join(failure("recovery_inventory_incomplete", "offline inventory did not complete within its effective timeout; no applicable token was produced"), ctx.Err())
-			next := 15 * time.Minute
-			if options.Timeout >= next/3 {
-				next = time.Duration(math.MaxInt64)
-				if options.Timeout <= time.Duration(math.MaxInt64)/3 {
-					next = 3 * options.Timeout
-				}
-			}
+			next := longerRecoveryTimeout(options.Timeout)
 			view.NextStep = "Keep store users stopped and retry the full plan with a longer --timeout; an earlier caller deadline must also be raised."
 			view.NextCommand = recoveryCommand(path) + " --timeout " + next.String()
 			if options.Cursor != "" {
@@ -259,7 +253,7 @@ func planRecovery(ctx context.Context, path, key string, options RecoveryPlanOpt
 		return view, err
 	}
 	view.Complete = true
-	view.NextStep = "Preview only; application is unavailable in this binary. Leases do not prove old groups stopped. Expiry estimates use preview time; later quota pressure may evict output sooner."
+	view.NextStep = "Preview only. Review every page before explicit apply (capy runs recover --help). Leases do not prove old groups stopped. Expiry estimates use preview time; later quota pressure may evict output sooner."
 	if view.Counts.administrative() == 0 {
 		view.Status = "no_recovery_needed"
 		view.NextStep = "No administrative recovery is needed; any proven-safe backlog remains for ordinary reconciliation. No token or audit record was created."
@@ -298,7 +292,7 @@ func BoundRecoveryPlan(view RecoveryPlan, entries int) RecoveryPlan {
 	if compact {
 		view.MetadataOmitted = true
 		if view.Status == "ready" {
-			view.NextStep = "Preview only; no apply. Expiry is estimated; quota may evict sooner. Leases do not prove old groups stopped."
+			view.NextStep = "Preview only. Review all pages before apply; see recover --help. Expiry is estimated; quota may evict sooner. Leases do not prove old groups stopped."
 		}
 		for i := range view.Subjects {
 			view.Subjects[i].EstimatedExpiry = nil

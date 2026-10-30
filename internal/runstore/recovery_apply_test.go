@@ -18,8 +18,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func applyOptions(token string) recoveryApplyOptions {
-	return recoveryApplyOptions{Plan: token, ConfirmStopped: true, Basis: "groups_stopped", Explanation: "Stopped the originating execution groups", Timeout: DefaultRecoveryTimeout}
+func applyOptions(token string) RecoveryApplyOptions {
+	return RecoveryApplyOptions{Plan: token, ConfirmStopped: true, Basis: "groups_stopped", Explanation: "Stopped the originating execution groups", Timeout: DefaultRecoveryTimeout}
 }
 
 func applyTestDB(t *testing.T, path string) *sql.DB {
@@ -330,6 +330,11 @@ func TestRecoveryApplyDeadlinesAndPruningReceipt(t *testing.T) {
 		require.Equal(t, view.Receipt.ID, again.Receipt.ID)
 		require.True(t, again.Receipt.Pruning)
 		require.EqualValues(t, 1, again.Receipt.IncidentCount)
+		public, err := ApplyRecovery(t.Context(), s.path, testKey, applyOptions(plan.Token))
+		require.NoError(t, err)
+		require.Equal(t, "already_applied", public.Status)
+		require.True(t, public.Recovery.Pruning)
+		require.Contains(t, public.NextStep, "details are being pruned and may be unavailable")
 	})
 }
 

@@ -50,7 +50,7 @@ func inspectIncidentSubjects(ctx context.Context, tx *sql.Tx, view *Inspection, 
 	view.RecoveryRevision = &epoch
 	view.Consistency = "recovery epoch binds incident membership; pending/run observations are current to each page; no liveness or admission guarantee"
 	view.Action = "inspect"
-	view.NextStep = "Inspect retained incident evidence for this owner; operator recovery application is not available in this binary."
+	view.NextStep = "Inspect retained incident evidence. For recovery, stop store users and originating execution groups, then run capy runs recover from an ordinary terminal to review a plan before explicit apply."
 	var unresolved bool
 	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM run_incidents WHERE receipt_id IS NULL)").Scan(&unresolved); err != nil {
 		return storageError()
@@ -264,6 +264,8 @@ func incidentSubject(ctx context.Context, tx *sql.Tx, view *Inspection, i incide
 			s.MissingEvidence = append(s.MissingEvidence, "accepted_cleanup", "terminal_outcome")
 			available := d.PayloadState == "retained" && view.ObservedAt.Before(time.UnixMilli(d.ExpiresAt))
 			s.OutputAvailable = &available
+			expires := time.UnixMilli(d.ExpiresAt).UTC()
+			s.RetentionExpiresAt = &expires
 			return s, nil
 		}
 	}

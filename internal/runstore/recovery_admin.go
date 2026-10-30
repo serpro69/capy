@@ -29,7 +29,7 @@ type recoveryAdmin struct {
 
 func openRecoveryAdmin(ctx context.Context, path, key string) (_ *recoveryAdmin, retErr error) {
 	if key == "" {
-		return nil, failure("credential_unavailable", "restore the selected matching credential; planning tried no fallback key")
+		return nil, failure("credential_unavailable", "restore the selected matching credential; offline recovery tried no fallback key")
 	}
 	if !filepath.IsAbs(path) || filepath.Base(path) != "runs.db" || filepath.Base(filepath.Dir(path)) != "runs" || filepath.Base(filepath.Dir(filepath.Dir(path))) != ".capy" {
 		return nil, storageError()
@@ -42,7 +42,7 @@ func openRecoveryAdmin(ctx context.Context, path, key string) (_ *recoveryAdmin,
 		if err != nil {
 			return nil, err
 		}
-		return nil, failure("run_unavailable", "run store does not exist; planning creates nothing")
+		return nil, failure("run_unavailable", "run store does not exist; offline recovery creates nothing")
 	}
 	defer func() {
 		if retErr != nil {
@@ -60,14 +60,14 @@ func openRecoveryAdmin(ctx context.Context, path, key string) (_ *recoveryAdmin,
 		}
 		f, err := openRegular(name, false)
 		if err != nil {
-			return nil, failure("recovery_inconsistent", "a permanent recovery lease is missing or unsafe; restore its provenance before planning")
+			return nil, failure("recovery_inconsistent", "a permanent recovery lease is missing or unsafe; restore its provenance before offline recovery")
 		}
 		a.files = append(a.files, f)
 		if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 			if !errors.Is(err, unix.EWOULDBLOCK) {
 				return nil, failure("storage_unavailable", "cannot acquire the permanent recovery leases; check filesystem locking support and permissions")
 			}
-			return nil, failure("storage_busy", "offline planning requires exclusive leases; stop sessions, readers and helpers, then retry from an ordinary terminal; do not run recovery inside capy_execute")
+			return nil, failure("storage_busy", "offline recovery requires exclusive leases; stop sessions, readers and helpers, then retry from an ordinary terminal; do not run recovery inside capy_execute")
 		}
 	}
 	// Retain the selected database inode too. SQLite has its own descriptor;
@@ -110,7 +110,7 @@ func openRecoveryAdmin(ctx context.Context, path, key string) (_ *recoveryAdmin,
 		return nil, failure("upgrade_required", "inspect this owner, then use capy runs upgrade from an ordinary terminal; legacy history cannot produce a current recovery plan")
 	}
 	if version != schemaVersion {
-		return nil, failure("schema_mismatch", "use a compatible capy binary; planning never upgrades an unsupported schema")
+		return nil, failure("schema_mismatch", "use a compatible capy binary; recovery never upgrades an unsupported schema")
 	}
 	a.policy, err = readPolicy(ctx, a.db)
 	if err != nil {
