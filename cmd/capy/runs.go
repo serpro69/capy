@@ -151,6 +151,7 @@ func runQuery(ctx context.Context, service *execution.Service, action, id string
 		page = execution.BoundRead(page, n)
 		return page, nil
 	default:
-		return service.List(ctx, list)
+		page, err := service.List(ctx, list)
+		return execution.BoundList(page, n), err
 	}
 }

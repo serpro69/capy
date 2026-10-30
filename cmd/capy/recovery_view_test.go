@@ -59,3 +59,15 @@ func TestBatchRecoveryCLIIncidentOnlyKeepsExecutionCompletion(t *testing.T) {
 	require.NotContains(t, string(text), "last recorded completed")
 	require.NotContains(t, string(text), "administratively closed")
 }
+
+func TestRecoverySearchCLIReportsCoverageOmission(t *testing.T) {
+	id := "11111111-2222-4333-8444-555555555555"
+	page := runstore.SearchPage{Version: 2, Kind: "query", RunID: id, Partial: true, CoverageOmitted: true,
+		Index: runstore.Index{State: "partial"},
+		Recovery: &runstore.Recovery{State: "operator_resolved", ReceiptID: id, DispositionID: id, CaptureClosed: true, Basis: "groups_stopped"}}
+	text, err := encodeRunText(page)
+	require.NoError(t, err)
+	require.Contains(t, string(text), "Some child coverage is omitted")
+	require.Contains(t, string(text), "administratively closed")
+	require.Contains(t, string(text), id)
+}

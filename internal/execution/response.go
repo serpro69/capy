@@ -98,6 +98,9 @@ func RunRecoveryText(recovery *runstore.Recovery) string {
 		return "Recovery concern unresolved; inspect this owner's recorded blockers.\n"
 	}
 	text := fmt.Sprintf("Operator resolution: receipt %s; basis %s. Original execution evidence is unchanged.\n", recovery.ReceiptID, recovery.Basis)
+	if recovery.DispositionID != "" && recovery.CaptureClosed {
+		text += "Capture is administratively closed: stop polling at end_of_available; EOF still reflects the original execution evidence.\n"
+	}
 	if recovery.RetentionExpiresAt != nil {
 		text += "Retained output deadline: " + recovery.RetentionExpiresAt.UTC().Format(time.RFC3339Nano) + "; quota may evict sooner.\n"
 	}
@@ -112,6 +115,28 @@ func BoundRead(page runstore.ReadPage, allowance int) runstore.ReadPage {
 	if page.Run.Recovery != nil && allowance < 256 && page.Run.Capture.LastCommittedCursor != nil {
 		page.Run.Capture.LastCommittedCursor = nil
 		page.Run.MetadataOmitted = true
+	}
+	return page
+}
+
+// BoundList preserves membership, continuation, index state and recovery
+// authority. Index cursors/error prose are also available through status/search;
+// one rich historical entry must fit after pagination reaches its minimum.
+func BoundList(page runstore.ListPage, allowance int) runstore.ListPage {
+	entries := make([]runstore.Summary, len(page.Entries))
+	copy(entries, page.Entries)
+	page.Entries = entries
+	for i := range page.Entries {
+		entry := &page.Entries[i]
+		if entry.Index == nil {
+			continue
+		}
+		bounded := BoundResult(runstore.Result{Recovery: entry.Recovery, Index: *entry.Index}, allowance/max(1, len(entries)))
+		entry.Index = &bounded.Index
+		entry.MetadataOmitted = entry.MetadataOmitted || bounded.MetadataOmitted
+		label := SafeMessage(entry.Label, allowance/max(1, len(entries)))
+		entry.MetadataOmitted = entry.MetadataOmitted || label != entry.Label
+		entry.Label = label
 	}
 	return page
 }

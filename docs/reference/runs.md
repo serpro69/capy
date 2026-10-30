@@ -122,15 +122,33 @@ A disposition exposes its separate `retention_expires_at`, `capture_closed` and
 original execution expiry is preserved and quota can remove output sooner.
 Resolving an incident on an execution-terminal run creates no new payload
 deadline. At a tight response budget, `metadata_omitted=true` can indicate omitted
-projection/index coverage cursors. Status retains the raw committed boundary;
+projection/index coverage cursors or shortened list labels and error text. Status retains the raw committed boundary;
 compact reads can omit that nested status field while retaining their own
 `next_cursor` and byte coordinates. Original execution facts and recovery
 identifiers remain; stored cursor coordinates do not change. Healthy results omit
 `recovery` entirely. Hooks reject execute
 envelopes containing that field, including null or malformed values; printed
 output and fetch responses keep their existing behavior. Public recovery apply
-remains unavailable until the remaining batch, retention and search consumers
-are integrated.
+remains unavailable until its explicit CLI activation task is complete.
+
+Reads of disposed output preserve the original execution-based `eof`. When
+`recovery.capture_closed=true`, stop polling at `end_of_available=true` even if
+`eof=false`: no more capture will arrive. Recovery never flushes an unfinished
+sanitizer checkpoint. Withheld secret or UTF-8 tails stay withheld; explicit raw
+base64 reads remain independent, with the same retained byte coordinates.
+
+A fresh healthy owner can lazily index disposed output using only its existing
+safe projection. Search, status, reads and retained list entries show the current
+index state from separate metadata; the original execution result and disposition
+snapshot stay unchanged. `index.state=partial` with closed capture means indexing
+has reached the available safe prefix but cannot cover withheld output. Repeating
+search can resume bounded indexing; it cannot finish that sanitizer state. Index
+capacity failures leave retained reads available. Missing required index metadata
+returns `recovery_inconsistent` instead of rebuilding from the frozen result.
+Batch search carries recovery context per returned child, marks expired or evicted
+output unavailable, and reports partial coverage rather than authoritative zero
+matches. `coverage_omitted` means some child coverage was omitted by the time or
+response budget; retrieve a child's status/read/search directly for its detail.
 
 ## Batches and capacity
 

@@ -22,6 +22,8 @@ type ListOptions struct {
 	Cursor  string
 }
 type Summary struct {
+	MetadataOmitted bool                     `json:"metadata_omitted,omitempty"`
+	Index           *Index                   `json:"index,omitempty"` // current disposed-payload index view
 	Recovery        *Recovery                `json:"recovery,omitempty"`
 	Cleanup         executor.CleanupEvidence `json:"cleanup"`
 	BatchID         string                   `json:"batch_id,omitempty"`
@@ -203,6 +205,9 @@ FROM runs WHERE evicting=0 AND created_at<=? AND (created_at>? OR (created_at=? 
 			recoveryError = result.Error
 		}
 		page.Entries = append(page.Entries, Summary{Recovery: result.Recovery, Cleanup: result.Cleanup, BatchID: result.BatchID, RunID: c.id, OwnerID: result.OwnerID, OwnerType: result.OwnerType, State: result.State, ExitCode: result.ExitCode, Signal: result.Signal, CaptureState: result.Capture.State, CapturedBytes: result.Capture.CapturedBytes, CreatedAt: time.Unix(0, c.created).UTC(), OutputAvailable: true, Error: recoveryError})
+		if disposedResult(result) {
+			page.Entries[len(page.Entries)-1].Index = &result.Index
+		}
 	}
 	if more {
 		cursor.States = states

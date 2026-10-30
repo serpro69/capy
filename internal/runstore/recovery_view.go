@@ -24,6 +24,19 @@ type Recovery struct {
 	BlocksAdmission     bool       `json:"blocks_admission"`
 }
 
+func disposedResult(result Result) bool {
+	return result.Recovery != nil && result.Recovery.DispositionID != ""
+}
+
+// SQL availability prefilter for already validated run bindings, aliased r.
+// Bind the same current millisecond timestamp twice. Readers still validate
+// disposition authority and recheck availability after multi-query searches.
+const searchablePayloadSQL = `r.evicting=0 AND CASE
+ WHEN EXISTS(SELECT 1 FROM run_resolutions d WHERE d.run_id=r.id)
+ THEN EXISTS(SELECT 1 FROM run_resolutions d WHERE d.run_id=r.id AND d.payload_state='retained' AND d.retention_expires_at>?)
+ ELSE (r.expires_at IS NULL OR r.expires_at>? OR EXISTS(
+ SELECT 1 FROM run_incidents i WHERE i.run_id=r.id AND i.generation=r.generation AND i.receipt_id IS NULL)) END`
+
 // projectRunHistory mutates only the returned view. It must be called after
 // decoding the stored outcome and validating authoritative cleanup columns.
 // The supplied query belongs to the caller's snapshot/attachment; no new store,
@@ -38,6 +51,9 @@ func projectRunHistory(ctx context.Context, q runQuerier, id, generation string,
 	}
 	if d != nil {
 		result.Recovery = dispositionView(d)
+		if d.Index != nil {
+			result.Index = *d.Index
+		}
 		// Capture did not complete with accepted execution proof. Preserve the
 		// recorded exit, completion, persistence flag, reason and original expiry.
 		if result.Capture.State != "not_started" {

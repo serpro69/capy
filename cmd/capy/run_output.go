@@ -285,8 +285,13 @@ func encodeRunText(value any) ([]byte, error) {
 		}
 		fmt.Fprintf(&b, "Run/batch %s: index=%s partial=%t; searched stdout=%d stderr=%d raw bytes.\n", selector, v.Index.State, v.Partial, v.Coverage["stdout"], v.Coverage["stderr"])
 		fmt.Fprintf(&b, "Cleanup: %s / %s.\n", v.Cleanup.Scope, v.Cleanup.State)
+		b.WriteString(execution.RunRecoveryText(v.Recovery))
+		for _, child := range v.Children {
+			fmt.Fprintf(&b, "Run %s: index=%s; output_available=%t.\n", child.RunID, child.Index.State, child.OutputAvailable)
+			b.WriteString(execution.RunRecoveryText(child.Recovery))
+		}
 		if v.Error != nil {
-			fmt.Fprintf(&b, "%s: %s\n", v.Error.Code, terminalText(v.Error.Message))
+			fmt.Fprintf(&b, "%s: %s%s\n", v.Error.Code, terminalText(v.Error.Message), terminalText(execution.RecoveryText(v.Error)))
 		}
 		for _, group := range v.Results {
 			for _, hit := range group.Hits {
@@ -305,7 +310,10 @@ func encodeRunText(value any) ([]byte, error) {
 			b.WriteString("Results shortened to the response budget; use read_cursor with the same run and stream.\n")
 		}
 		if v.Partial {
-			b.WriteString("Only the reported prefix was searched; repeat search to resume indexing, or read retained output.\n")
+			b.WriteString("Only the reported safe prefix was searched. Repeat search to resume indexing; administratively closed capture cannot gain withheld output.\n")
+		}
+		if v.CoverageOmitted {
+			b.WriteString("Some child coverage is omitted; use status or search with a child run_id for detail.\n")
 		}
 	default:
 		return nil, errors.New("unknown run response")

@@ -43,7 +43,7 @@ func BoundSearch(page runstore.SearchPage, allowance int) runstore.SearchPage {
 	// the whole budget on coverage metadata and permanently hide every hit.
 	count := min(len(page.Children), allowance/(4*512))
 	bounded.Children = page.Children[:count]
-	bounded.CoverageOmitted = count < len(page.Children)
+	bounded.CoverageOmitted = page.CoverageOmitted || count < len(page.Children)
 	allowance -= count * 512
 	bounded.Results = make([]runstore.QueryHits, len(page.Results))
 	// Reserve space for both explicitly labelled corpora in global queries.
@@ -97,14 +97,10 @@ func BoundSearch(page runstore.SearchPage, allowance int) runstore.SearchPage {
 		bounded.KnowledgeError = &e
 	}
 	if page.Error != nil {
-		err := *page.Error
-		err.Message = SafeMessage(err.Message, allowance)
-		bounded.Error = &err
+		bounded.Error = BoundError(page.Error, allowance)
 	}
 	if page.Index.Error != nil {
-		err := *page.Index.Error
-		err.Message = SafeMessage(err.Message, allowance)
-		bounded.Index.Error = &err
+		bounded.Index.Error = BoundError(page.Index.Error, allowance)
 	}
 	if budget < 128 && len(bounded.Results)+len(bounded.Knowledge) > 0 {
 		bounded.Results = nil
