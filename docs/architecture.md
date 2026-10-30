@@ -383,17 +383,17 @@ the selected credential requires explicit per-owner run discard in v1.
 There is no run-rekey preservation path. See the runnable
 [operator workflow](reference/runs.md) and normative
 [execution contracts](feat/done/routine-command-capture/contracts.md) and
-[recovery contracts](feat/wip/run-recovery/contracts.md).
+[recovery contracts](feat/done/run-recovery/contracts.md).
 
-Machine-verifiable recovery remains a [conditional future investigation](feat/wip/run-recovery/design.md#conditional-future-improvement),
+Machine-verifiable recovery remains a [conditional future investigation](feat/done/run-recovery/design.md#conditional-future-improvement),
 triggered by unreliable operator identification, guessed confirmations, unattended
 recovery needs or demonstrated survivors after operator recovery. Any future
 mechanism needs an explicit legacy policy for missing execution-origin provenance;
 current host identity cannot be backfilled as historical proof. Finalization
 reliability and the original incident reproduction remain separate follow-ups.
-The [release evidence task](feat/wip/run-recovery/tasks.md#task-16-final-verification-and-release-evidence)
-tracks native Linux/macOS and compatible-binary acceptance; implemented mechanisms
-alone do not certify that rollout.
+The [release evidence](feat/done/run-recovery/verification.md) records native
+Linux/macOS and compatible-binary acceptance. Installed deployments still need
+compatible attached binaries and the documented offline operator procedure.
 
 ## Knowledge ingestion
 

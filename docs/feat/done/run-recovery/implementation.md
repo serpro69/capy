@@ -1,6 +1,6 @@
 # Run recovery implementation plan
 
-> Status: Tasks 1–15 implemented; Task 16 verification and release evidence in progress
+> Status: done — see [verification.md](verification.md) for final acceptance evidence
 > Design: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Execution checklist: [tasks.md](tasks.md)
