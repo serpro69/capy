@@ -212,6 +212,8 @@ authorization, cooperative cleanup and durable proof govern recovery. Helpers
 retain leases through cleanup, drainage, persistence, reap and backend close,
 including coordinator death. Recovery never signals stored PIDs. Missing durable
 proof quarantines admission even when local cleanup succeeded or locks became free.
+Only an explicit validated operator disposition can close that uncertainty for
+operational reuse; it never supplies the missing execution proof.
 
 Every admitted row has immutable `cleanup_scope` and a validated `cleanup` state,
 with no SQL defaults. Linux uses `linux_descendants_v1` / `retired`; macOS 26 on
@@ -224,8 +226,8 @@ recovery compares retained rows and copies in one read snapshot.
 Darwin observation completion permits normal reuse and retention under its
 accepted residual-process limit; it does not prove host quiescence. Actual
 observation, signal, drainage, reap or persistence failures keep pending evidence
-and quarantine. Operators must establish quiescence before explicit reset when
-old groups may remain. See the [cleanup contract](feat/done/macos-captured-execution/contracts.md),
+and quarantine. Operators must establish that originating execution stopped before
+offline recovery or explicit reset when old groups may remain. See the [cleanup contract](feat/done/macos-captured-execution/contracts.md),
 [native process evidence](feat/done/macos-captured-execution/process-proof.md),
 [lease evidence](feat/done/macos-captured-execution/lease-proof.md), and
 [Linux supervisor evidence](feat/done/routine-command-capture/supervisor-proof.md).
@@ -236,7 +238,10 @@ ownership. The explicit offline `capy runs upgrade` uses the same separately
 committed stages without submitting work, reconciliation or retention. Its
 restricted quota-growth transaction precedes migration and can remain committed
 if a later stage fails. Both paths preserve quarantine; execution can upgrade and
-then refuse admission. Readers, helpers and diagnostics never migrate.
+then refuse admission. Busy or failed migration refuses before admission/spawn.
+Readers, helpers and diagnostics never migrate. Ordinary configured attachment
+retains its post-migration reconciliation/maintenance; only the dedicated offline
+path excludes that work.
 
 The frozen schema-9 rebuild preserves the old Linux proof transformation. The
 schema-10 rebuild copies row IDs and exact program/result bytes, keeps indexes/FKs,
@@ -260,10 +265,72 @@ reattach read-only with a permanent admission refusal and no maintenance; helper
 never use that fallback.
 Unresolved subjects deduplicate by historical identity; resolved episodes remain
 immutable. Schema-10 inspection binds incident/receipt pages to that epoch and
-samples run state separately, without publication or maintenance. Recovery
-application remains a later run-recovery task.
+samples run state separately, without publication or maintenance.
 Public envelope/helper protocol 2 and cursor/redaction formats are unchanged.
 See [upgrade and rollback](reference/runs.md#run-schema-upgrades).
+
+### Offline administration and historical truth
+
+`cmd/capy/runs_recover.go` exposes nonmutating planning and explicit CLI-only
+application through `runstore.PlanRecovery` and `ApplyRecovery`. Both use the
+dedicated administrative attachment in `recovery_admin.go`, not normal store or
+execution-service attachment. It acquires the existing lifecycle, recovery and
+owner-slot leases exclusively, authenticates the selected credential, and checks
+physical file identities without creating replacement locks or an owner generation.
+Database handles close before leases, without ordinary close-time maintenance.
+Exclusive leases exclude cooperating users; they do not establish host quiescence.
+
+`recovery_plan.go` and its inventory helpers share complete canonical validation
+with apply. A plan binds physical owner/database/lock identities, store UUID,
+schema/policy/recovery revisions and the ordered incident/run/batch/claim evidence.
+Every preview page revalidates that complete inventory. Presentation limits and
+timeouts do not change plan identity; changed evidence or moved/replaced storage
+requires fresh review. Unsupported identity/proof/manifest inconsistencies refuse
+the entire plan. An empty plan has no token or receipt. Both plan and apply use a
+five-minute total budget, extendable with `--timeout`; interactive inspection
+retains its independent two-second bound.
+
+`recovery_apply.go` requires the exact plan, stopped-process confirmation, an
+operator-established `groups_stopped` or `host_restarted` basis, and a bounded
+sanitized explanation. Under one immediate transaction it validates the target
+and evidence, funds audit metadata without retention, inserts the receipt,
+memberships and required dispositions, derives batch closure/quarantine markers,
+and advances the recovery epoch. Incident-only resolution preserves accepted
+terminal proof and original expiry without allocating a run disposition. Exact
+retained-plan/attestation retries return the same receipt and current blockers;
+changed attestations conflict. Uncertain commit/delivery uses read-only receipt
+lookup by plan hash. A missing receipt does not prove nonapplication after pruning.
+The response layer budgets one captured administrative result and never repeats
+the operation while formatting it.
+
+`resolution.go` validates operational closure against the exact historical
+store/run/generation, cleanup columns, terminal bit and byte-exact result snapshot
+and digest. Operational closure accepts execution-terminal evidence or a valid
+disposition; it does not replace `CleanupAccepted` or the execution-terminal
+predicate. Owner reuse, reconciliation, query availability and retention use that
+separate rule. Apply never signals PIDs, resumes work or retries an application
+command. Service refusal latches and query-only attachments require restart.
+
+Disposed `runs.result` remains immutable until payload eviction. Query projections
+carry essential `recovery` metadata and label original states as last recorded.
+Raw/projection reads keep existing IDs/cursors and execution-based `eof`;
+`recovery.capture_closed` plus `end_of_available` ends polling without inventing
+completion. Apply does not flush sanitizer tails. Fresh healthy indexing workers
+validate their current lease/generation and work claim, index only persisted safe
+projection, and write aggregate status to `run_search_state` alongside existing
+per-stream progress. Returned views overlay that state; missing or inconsistent
+evidence is an error, not permission to repair the frozen result.
+
+Batch snapshots preserve original child proof/result/terminal copies and report
+recovered children separately. A missing uncertain child requires an exact
+disposition with durable `payload_state=evicted`; a receipt alone is insufficient.
+`batch_resolution.go` records separate closure/expiry once every child is terminal
+or disposed, both at apply and when later safe-sibling reconciliation completes.
+It never manufactures original batch completion or renews the administrative clock.
+Hooks observe execute/fetch only and reject any execute-envelope `recovery` field,
+including null or malformed values; historical queries cannot create routing evidence.
+
+### Retention and diagnostics
 
 Store-authoritative TTL/quota/version/accounting policy can change only after
 all handles/helpers release lifecycle ownership. Opens close/release and retry
@@ -272,6 +339,19 @@ records TTL/revision; terminal expiry is immutable. Expired and old completed
 logs can be evicted in bounded work; active runs are protected. Accounting includes
 raw/projection/metadata reservations and lazy FTS debit (dbstat or conservative
 used-page accounting). Physical main/WAL sizes are distinct from quota.
+
+An unresolved attributed run incident protects retained evidence even if terminal
+proof arrives later. Resolving that incident resumes the original expiry.
+Disposed uncertain output instead gets a fixed deadline from resolution time plus
+its admission TTL, with normal subsequent quota eviction allowed sooner. Recovery
+never renews unrelated deadlines or evicts history to fund itself. Bounded payload
+deletion atomically records `evicting` and then `evicted`, retaining the payload
+debit until final deletion and independently funded audit afterward. Batch manifests
+have their own administrative expiry and can outlive child output or disappear first.
+`recovery_retention.go` prunes receipt groups only after their deadlines and retained
+run/manifest dependencies end, deleting the receipt/plan identity last. Epoch changes
+invalidate affected inspection cursors; pruning summaries remain readable without
+reconstructing removed members or creating another retention window.
 
 `runstore.Inspect` and `InspectRuns` share read-only authentication and snapshots
 with a two-second context. Active WAL stores use a shared lifecycle lease. A
@@ -302,7 +382,18 @@ locks. `capy encrypt` rotates knowledge only and warns before/after: changing
 the selected credential requires explicit per-owner run discard in v1.
 There is no run-rekey preservation path. See the runnable
 [operator workflow](reference/runs.md) and normative
-[execution contracts](feat/done/routine-command-capture/contracts.md).
+[execution contracts](feat/done/routine-command-capture/contracts.md) and
+[recovery contracts](feat/wip/run-recovery/contracts.md).
+
+Machine-verifiable recovery remains a [conditional future investigation](feat/wip/run-recovery/design.md#conditional-future-improvement),
+triggered by unreliable operator identification, guessed confirmations, unattended
+recovery needs or demonstrated survivors after operator recovery. Any future
+mechanism needs an explicit legacy policy for missing execution-origin provenance;
+current host identity cannot be backfilled as historical proof. Finalization
+reliability and the original incident reproduction remain separate follow-ups.
+The [release evidence task](feat/wip/run-recovery/tasks.md#task-16-final-verification-and-release-evidence)
+tracks native Linux/macOS and compatible-binary acceptance; implemented mechanisms
+alone do not certify that rollout.
 
 ## Knowledge ingestion
 
@@ -1651,6 +1742,9 @@ against the repository's **main worktree** so all worktrees share one committed 
 | `capy doctor` | Run diagnostics |
 | `capy execute` | Attached command execution with encrypted run capture |
 | `capy runs status/read/list/search` | Bounded recovery by run/batch identity |
+| `capy runs inspect` | Read-only blockers, historical subjects and retained receipt lookup |
+| `capy runs upgrade` | Exclusive offline schema upgrade/quota growth without admission or retention |
+| `capy runs recover` / `recover --apply` | Complete offline plan / explicit operator resolution preserving execution evidence |
 | `capy runs reset --discard` | Explicit keyless run-cache discard after operator quiescence |
 | `capy which` | Print knowledge base path |
 | `capy cleanup` | Remove stale entries; `--vacuum` reclaims freelist pages, `--optimize` rebuilds FTS indexes + VACUUM to reclaim FTS tombstone bloat (ADR-029) |

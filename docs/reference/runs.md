@@ -11,6 +11,10 @@ with CGO. Other macOS majors, Intel Macs and other platforms fail before spawn.
 Commands inherit the caller's OS confinement; capy does not grant filesystem or
 network permissions.
 
+For a `cleanup_unverified` refusal, follow [Recover a blocked store](#recover-a-blocked-store).
+That offline procedure preserves retained history and records an operator action;
+it does not replay the failed command or turn uncertain cleanup into execution proof.
+
 Native lifecycle verification is reproducible with `make test-integration` and
 `make test-integration-race`, after setting synthetic `CAPY_DB_KEY` and
 `CAPY_VAULT_KEY` values as shown in the repository build instructions. Both use
@@ -304,10 +308,8 @@ store users for held leases; address the reported schema-upgrade cause before
 using a compatible binary and offline `runs upgrade`. Malformed or inconsistent
 history requires separate repair rather than repeated upgrades, and a stale
 plan requires fresh review. These hints never recommend discard, bypassing
-capture or blindly repeating the original command. Application remains unavailable
-in this staged binary. CLI configuration, exit conventions and CI checks retain
-the existing contracts in this reference and `AGENTS.md`; no CI workflow changes
-are needed for admission guidance.
+capture or blindly repeating the original command. Apply is available through
+the explicit offline CLI workflow below; MCP provides read-only inspection.
 
 Lifecycle contention now uses `storage_busy`. Empty credentials rejected by
 runstore attachment and credential failures from execute/inspect/upgrade use
@@ -365,7 +367,7 @@ store without a WAL it takes a fresh nonblocking exclusive lifecycle lease,
 rechecks WAL absence and rejects a nonempty rollback journal before an immutable
 read. If the lease is busy, stop attached store users and retry inspection.
 While that brief exclusive snapshot runs, a concurrent ordinary attachment can
-also return `storage_unavailable` with “run store lifecycle is busy”; retry
+also return `storage_busy` with “run store lifecycle is busy”; retry
 attachment after inspection finishes rather than repairing or discarding storage. Both
 paths prevent creation of missing WAL/SHM files and perform no maintenance.
 
@@ -394,11 +396,141 @@ session-stat reset clears counters; runs completing afterward contribute their
 whole known outcome. Doctor/stats do not include programs, output, keys or stored
 error text in run diagnostics.
 
+## Recover a blocked store
+
+Use this procedure when retained cleanup evidence blocks new captured work.
+Keep the selected credential unchanged and use compatible, disposition-aware
+CLI and MCP binaries throughout. Schema 10 alone does not establish compatibility
+with early development builds. Recovery affects only the selected physical
+owner's run store, even when other worktrees share its knowledge database.
+
+1. **Inspect and save needed output.** In an ordinary terminal, select the owner
+   named by the refusal, not the command's execution cwd. Replace the example path:
+
+   ```bash
+   OWNER='/absolute/path/to/selected-owner'
+   capy runs inspect --project-dir "$OWNER" --limit 16 --json
+   ```
+
+   Follow inspection cursors with the same owner and selector. While sessions are
+   still attached, MCP `capy_runs(action="inspect")` provides the same diagnostics.
+   Use known run IDs with `runs read` to save needed retained output when ordinary
+   reads are available. Inspection is nonmutating; ordinary status/read/list/search
+   attachment can reconcile and maintain history, and search can write indexes.
+   Schema 8/9 supports inspection but needs upgrade before ordinary reads. For those
+   stores, continue offline recovery and retrieve output after restart. If export
+   must precede apply, upgrade first, finish and close those readers before planning,
+   and account for ordinary attachment maintenance, including expired-log deletion.
+
+2. **Take that owner offline and establish cleanup.** Stop every MCP session using
+   it, attached CLI execution, readers/searches and remaining capture helpers.
+   Stop the originating execution groups through the application or service that
+   launched them, using verified origin information. Closing an MCP session,
+   finding a free lease or failing to find a PID does not prove descendants stopped.
+   Do not signal guessed or merely stored PIDs. For `host_restarted`, establish
+   that the originating host actually restarted; restarting a different host after
+   copying a store is insufficient. If cleanup remains unknown, stay blocked and
+   investigate. Keep those users stopped through planning and application.
+
+3. **Check schema and plan from the ordinary terminal.** Administrative commands
+   must run outside `capy_execute`, `capy_batch_execute` and `capy execute`, whose
+   capture holds the lifecycle lease administration needs exclusively.
+
+   ```bash
+   capy runs inspect --project-dir "$OWNER" --json
+   # Only if inspection reports supported schema 8/9 needing upgrade:
+   capy runs upgrade --project-dir "$OWNER" --json
+   # After a successful upgrade, or directly on schema 10:
+   capy runs recover --project-dir "$OWNER" --timeout 15m --json
+   ```
+
+   Run each command separately and resolve a refusal before proceeding. A prior
+   refused execute may already have migrated the schema without clearing quarantine.
+   Inspect reports the current schema; upgrade never clears the incident. Review
+   every plan page using its `next_command`, or `recover --cursor` with the same
+   owner and timeout. Require a complete applicable plan and review its affected
+   subjects and retention consequences. `no_recovery_needed` supplies no token:
+   proceed to restart/verification if cleanup is established, without inventing an
+   acknowledgement. Proven-safe reconciliation backlog is separate from incidents.
+
+4. **Apply the reviewed plan.** Set `PLAN` to the returned token. Use a truthful
+   reason describing the cleanup you established; the example assumes you stopped
+   the originating groups. Use `host_restarted` only for that established basis.
+
+   ```bash
+   PLAN='paste-reviewed-plan-token'
+   REASON='Stopped the originating execution groups'
+   capy runs recover --project-dir "$OWNER" --apply --plan "$PLAN" \
+     --confirm-stopped --cleanup-basis groups_stopped --reason "$REASON" \
+     --timeout 15m --json
+   capy runs inspect --project-dir "$OWNER" --plan "$PLAN" --json
+   ```
+
+   Planning and apply each default to five minutes; these examples give each a
+   longer budget without changing validation. Apply covers the entire reviewed
+   inventory atomically. Save `recovery.receipt_id` and inspect any reported later
+   blockers. If delivery or commit is uncertain, use receipt lookup before retrying
+   the administrative action, as described below. Never infer success from silence.
+
+5. **Restart, then verify new capture.** Reload all affected MCP sessions on the
+   compatible binary and matching configuration/credential; existing refusal
+   latches and query-only attachments are not cleared in place. Inspect again in
+   each affected session. Deliberately submit one harmless captured command, such
+   as MCP `capy_execute(language="shell", code="printf 'recovery verified\\n'")`,
+   then recover its returned run ID with `capy_runs(action="read", run_id=...)`.
+   The CLI equivalent is:
+
+   ```bash
+   capy runs inspect --project-dir "$OWNER" --json
+   capy execute --project-dir "$OWNER" --code "printf 'recovery verified\\n'" --json
+   RUN_ID='paste-new-verification-run-id'
+   capy runs read --project-dir "$OWNER" --run-id "$RUN_ID" --json
+   ```
+
+   Confirm the new run succeeded with complete capture and accepted scoped cleanup;
+   a readable receipt or empty inspection alone does not prove admission works.
+   Check retained sibling output using its existing IDs/cursors. Recovery has not
+   retried the original application command; decide separately whether to do so.
+
+### Refusals and next actions
+
+Use the same `--project-dir "$OWNER"` for every command below. Preserve diagnostic
+output when seeking repair; do not edit SQLite, remove permanent locks, disable
+capture or discard logs to bypass a refusal.
+
+| Result or condition | Meaning and next action |
+| --- | --- |
+| `cleanup_unverified` before admission | No command was admitted. Run `capy runs inspect --project-dir "$OWNER" --json`, then follow the shutdown and planning steps above. An admitted run with incomplete capture needs status/read recovery before any execution retry. |
+| `upgrade_required` / `schema_mismatch` | Inspect the actual schema, stop users and run `capy runs upgrade --project-dir "$OWNER" --json` for supported schema 8/9. An unsupported schema needs a compatible binary; repeated upgrades cannot repair it. |
+| `credential_unavailable` / `wrong_key` | Restore the selected matching credential privately and reload processes that captured it. Credential selection is `store.key_file` → database-owner `.env` → distinct main-worktree `.env` → inherited `CAPY_DB_KEY`; invalid selected credentials do not fall back. Recovery cannot decrypt with a replacement key. |
+| `storage_busy` / `schema_upgrade_busy` | A cooperating user holds a required lease. Let a brief inspection finish; for offline administration, stop remaining sessions/readers/helpers and retry the same administrative command. Never delete a lock to force access. |
+| `inspection_stale` / `recovery_plan_stale` | Restart inspection without its cursor, then obtain and review a fresh offline plan. Evidence, policy or physical target changed; an old confirmation must not cover the new set. |
+| `recovery_inventory_incomplete` | No applicable token. If the cause is a scan deadline, keep users stopped and use the returned longer-budget `next_command`, or the same owner/cursor with `next_timeout`. After the walkthrough's 15-minute scan, for example, use `capy runs recover --project-dir "$OWNER" --timeout 45m --json`; preserve a continuation cursor when retrying a page. Fix other stated read/metadata limits separately. |
+| `recovery_timeout` | No new disposition was committed by that attempt. If a receipt is present, inspect its prior application first. Otherwise repeat the exact apply command above with the same token, basis and reason and a larger `--timeout`; an earlier caller deadline must also be raised. |
+| `recovery_capacity` / `schema_upgrade_capacity` | Check the reported quota and filesystem requirements. For quota, increase only `runs.max_retained_bytes`, then run offline `runs upgrade` and obtain a fresh plan. For filesystem shortage, provide space outside retained run history. Upgrade may retain a quota increase even if migration later fails; inspect schema/policy before retrying. No administrative operation evicts history to fund itself. |
+| `recovery_inconsistent` | Preserve diagnostics and seek separate repair of the named identity/proof/manifest problem. A damaged list page fails as a whole; try inspection and `runs read --run-id` for known unaffected IDs. Those reads may also fail if the inconsistency prevents attachment. Acknowledgement cannot repair structural damage, and discard is not the default remedy. |
+| Cleanup cannot be established | Remain blocked and investigate the originating execution. Neither more time, a free lease nor a guessed attestation supplies cleanup evidence. |
+| `recovery_outcome_unknown` or lost apply response | Run `capy runs inspect --project-dir "$OWNER" --plan "$PLAN" --json`. A returned receipt records application; current blockers may still be unknown. With a receipt in the error, commit succeeded but close failed; without one, commit may be uncertain. After lookup, an exact retained-token/attestation retry of `recover --apply` is idempotent. Never rerun the original captured command to recover the response. |
+| `run_unavailable` | If the store is missing, verify `--project-dir` names the selected owner; offline administration creates nothing. If a particular run's payload is unavailable, inspect its retained audit by run or receipt ID. Audit cannot restore evicted output. |
+| `receipt_unavailable` | No retained receipt matches; this does not prove nonapplication because audit can be pruned. Inspect current blockers, then obtain/review a fresh offline plan if needed. `inspect --plan` never validates an unapplied plan. |
+| `recovery_receipt_conflict` | Inspect the returned receipt with `runs inspect --receipt-id RECEIPT_UUID`. The retained action has a different normalized basis/reason; it cannot be overwritten. An exact retained-token/attestation retry is idempotent and still reports later blockers. |
+
+Retrieve retained audit with `capy runs inspect --project-dir "$OWNER" --receipt-id
+RECEIPT_UUID --json`, or use `--run-id` for a particular historical subject. MCP uses
+`capy_runs(action="inspect", receipt_id=...)` or `run_id`. Receipt IDs are distinct
+from incident IDs. Output still uses `runs read/search` and the original run ID.
+Disposed output gets its admission-recorded TTL from resolution time; unrelated
+completed output keeps its old expiry, and quota may evict either sooner. Receipts
+survive their deadlines while retained runs/manifests depend on them, then ordinary
+bounded maintenance can prune them. Neither recovery nor audit lookup restores
+evicted bytes or promises permanent history. See [batch retention](#batches-and-capacity)
+and the read-prefix rules above.
+
 ## Run schema upgrades
 
 Run schema 10 supports fresh storage and encrypted upgrades from schema 8 or 9.
 Normal authenticated, configured execution attachment automatically attempts the
-upgrade before admission. Readers, helpers, inspection and doctor never migrate.
+upgrade before admission. Readers, helpers, inspection, doctor and stats never migrate.
 An execute refused for quarantine may already have upgraded the database; inspect
 the actual schema instead of assuming it remained unchanged.
 
@@ -439,6 +571,13 @@ schema and policy revision. A later migration failure can leave that quota
 increase committed; the output reports it explicitly. Automatic execution
 migration uses the stored quota and never silently applies this administrative
 increase. No failure evicts logs or recreates the store.
+
+Upgrade returns 0 on success, 2 for invalid arguments, 1 for failure and 74 for
+output-delivery failure. A lost response does not establish rollback: inspect
+current schema/policy before retrying. Response budgeting formats one captured
+operation result and never repeats the upgrade.
+
+## Recovery plan and application reference
 
 After stopping the selected owner's sessions, readers, helpers and old execution
 groups, preview recovery from an ordinary terminal:
@@ -561,11 +700,6 @@ Explicit `capy runs reset --discard` remains a separate destructive option after
 stopping all store users and establishing quiescence of old execution groups. It
 permanently removes **all** retained run/batch logs for that owner, including
 protected history. Knowledge, vault data and permanent locks remain intact.
-
-Upgrade returns 0 on success, 2 for invalid arguments, 1 for failure and 74 for
-output-delivery failure. A lost response does not establish rollback: inspect
-current schema/policy before retrying. Response budgeting formats one captured
-operation result and never repeats the upgrade.
 
 ## Key rotation and explicit data loss
 
