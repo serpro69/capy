@@ -326,7 +326,7 @@ func TestRecoveryScannerCannotMasqueradeAsLiveOwner(t *testing.T) {
 	got, err := other.Load(t.Context(), row.ID)
 	require.NoError(t, err, "read recovery needs no registry/execution reservation")
 	require.Nil(t, got.Result.Error)
-	report, err := st.reconcileSlot(t.Context(), stale.Slot)
+	report, err := st.reconcileSlotValidated(t.Context(), stale.Slot, &recoveryValidation{})
 	require.NoError(t, err)
 	require.Equal(t, 1, report.UnverifiedSlots)
 	require.NoError(t, scan.Close())

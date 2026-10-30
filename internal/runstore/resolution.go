@@ -304,7 +304,19 @@ func validateSlotResolutions(ctx context.Context, tx *sql.Tx, slot int) error {
 // Audit pruning and any new administrative authority change the recovery epoch,
 // rechecked under the writer lock before using the validated exclusion. Keeping
 // the full validation in a read snapshot lets unrelated capture writers proceed.
-func (s *Store) validateResolutionsSnapshot(ctx context.Context, slots ...int) (int64, error) {
+// Reuse immutable disposition validation only within one held recovery.lock
+// lease. ClaimOwner revisits its chosen slot and legacy attribution can revisit
+// every slot; repeating the same full scan exhausted the three-second budget
+// on native macOS with 256 dispositions. The epoch fences new authority and
+// audit pruning just as it fences the read-to-write handoff below. Never retain
+// this cache on Store or across registry leases. Mutable index/availability
+// views are still read afresh by their consumers; no result rows are cached.
+type recoveryValidation struct {
+	validated [OwnerSlots]bool
+	epoch     [OwnerSlots]int64
+}
+
+func (v *recoveryValidation) snapshot(ctx context.Context, s *Store, slots ...int) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return 0, storageError()
@@ -315,9 +327,16 @@ func (s *Store) validateResolutionsSnapshot(ctx context.Context, slots ...int) (
 		return 0, storageError()
 	}
 	for _, slot := range slots {
+		if slot < 0 || slot >= OwnerSlots {
+			return 0, recoveryInconsistent("owner slot")
+		}
+		if v.validated[slot] && v.epoch[slot] == epoch {
+			continue
+		}
 		if err := validateSlotResolutions(ctx, tx, slot); err != nil {
 			return 0, err
 		}
+		v.validated[slot], v.epoch[slot] = true, epoch
 	}
 	return epoch, nil
 }

@@ -38,6 +38,8 @@ func setupCodexVaultEnv(t *testing.T) (home string) {
 	t.Setenv("CAPY_VAULT_KEY", testVaultKey)
 	t.Setenv("CAPY_VAULT_PATH", filepath.Join(dir, "vault.db"))
 	t.Setenv("CAPY_MACHINE_ID", "test-machine")
+	// Tiny transcript fixtures must not inherit personal import-size policy.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, "claude"))
 
 	home = filepath.Join(dir, "codex")

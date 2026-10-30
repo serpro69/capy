@@ -15,6 +15,46 @@ func TestRecoveryRetainedDispositionContention(t *testing.T) {
 	t.Run("legacy marker", func(t *testing.T) { testRecoveryDispositionContention(t, true) })
 }
 
+func TestRecoveryValidationRechecksAuthority(t *testing.T) {
+	for _, changedEpoch := range []bool{false, true} {
+		name := "new registry operation"
+		if changedEpoch {
+			name = "changed epoch"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, old, closeStore := planFixture(t)
+			r := planPending(t, s, old)
+			applyRetentionFixture(t, s, closeStore)
+			fresh := attachBatchFixture(t, s)
+			if !changedEpoch {
+				owner, err := fresh.ClaimOwner(t.Context())
+				require.NoError(t, err)
+				require.NoError(t, owner.Lease.Close())
+			}
+			registry, err := fresh.recoveryLease(t.Context())
+			require.NoError(t, err)
+			defer registry.Close()
+			validated := &recoveryValidation{}
+			_, err = validated.snapshot(t.Context(), fresh, old.Slot)
+			require.NoError(t, err)
+			// Deliberately corrupt an immutable row to make a fresh validation
+			// observable. No production writer is allowed to make this change.
+			_, err = fresh.db.Exec("UPDATE runs SET result=? WHERE id=?", []byte("invalid"), r.ID)
+			require.NoError(t, err)
+			if changedEpoch {
+				_, err = fresh.db.Exec("UPDATE run_meta SET recovery_revision=recovery_revision+1")
+				require.NoError(t, err)
+				_, err = validated.snapshot(t.Context(), fresh, old.Slot)
+				requireErrorCode(t, err, "recovery_inconsistent")
+			} else {
+				require.NoError(t, registry.Close())
+				_, err = fresh.ClaimOwner(t.Context())
+				requireErrorCode(t, err, "recovery_inconsistent")
+			}
+		})
+	}
+}
+
 func testRecoveryDispositionContention(t *testing.T, legacy bool) {
 	t.Helper()
 	s, old, _, children, closeStore := recoveryBatchFixture(t, executor.CleanupLinuxDescendants, 256)

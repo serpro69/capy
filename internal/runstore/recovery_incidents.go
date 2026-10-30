@@ -11,7 +11,7 @@ import (
 
 // Historical markers have no recorded causal run or detection timestamp. Only
 // normal attachment/reconciliation publishes their durable fallback attribution.
-func (s *Store) recordLegacyMarkers(ctx context.Context) error {
+func (s *Store) recordLegacyMarkers(ctx context.Context, validated *recoveryValidation) error {
 	if s.policy.SchemaVersion < 10 {
 		return nil
 	} // stage-only legacy fixture handles
@@ -36,7 +36,7 @@ func (s *Store) recordLegacyMarkers(ctx context.Context) error {
 		slots[slot] = slot
 	}
 	tx, err := beginRecoveryWrite(ctx, s.db, func(ctx context.Context) (int64, error) {
-		return s.validateResolutionsSnapshot(ctx, slots[:]...)
+		return validated.snapshot(ctx, s, slots[:]...)
 	})
 	if err != nil {
 		return err

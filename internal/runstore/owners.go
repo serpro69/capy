@@ -43,7 +43,8 @@ func (s *Store) ClaimOwner(ctx context.Context) (_ *Owner, err error) {
 		return nil, err
 	}
 	defer registry.Close()
-	if _, err := s.reconcile(ctx); err != nil {
+	validated := &recoveryValidation{}
+	if _, err := s.reconcileValidated(ctx, validated); err != nil {
 		return nil, err
 	}
 	if err := s.checkQuarantine(ctx); err != nil {
@@ -57,7 +58,7 @@ func (s *Store) ClaimOwner(ctx context.Context) (_ *Owner, err error) {
 		if f == nil {
 			continue
 		}
-		owner, err := s.claimSlot(ctx, slot, f)
+		owner, err := s.claimSlot(ctx, slot, f, validated)
 		if err != nil || owner == nil {
 			f.Close()
 		}
@@ -68,8 +69,8 @@ func (s *Store) ClaimOwner(ctx context.Context) (_ *Owner, err error) {
 	return nil, failure("owner_slots_exhausted", "all run owner slots are occupied or awaiting bounded recovery")
 }
 
-func (s *Store) claimSlot(ctx context.Context, slot int, lease *os.File) (*Owner, error) {
-	report, err := s.reconcileSlot(ctx, slot)
+func (s *Store) claimSlot(ctx context.Context, slot int, lease *os.File, validated *recoveryValidation) (*Owner, error) {
+	report, err := s.reconcileSlotValidated(ctx, slot, validated)
 	if err != nil {
 		return nil, err
 	}

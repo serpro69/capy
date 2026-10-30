@@ -336,7 +336,8 @@ func TestRecoveryGCInvalidatesValidatedOwnerSnapshot(t *testing.T) {
 	fresh := attachBatchFixture(t, s)
 	ageRetentionFixture(t, fresh, 48*time.Hour)
 	retainFixture(t, fresh, fresh.policy.MaxRetainedBytes, true)
-	epoch, err := fresh.validateResolutionsSnapshot(t.Context(), o.Slot)
+	validated := &recoveryValidation{}
+	epoch, err := validated.snapshot(t.Context(), fresh, o.Slot)
 	require.NoError(t, err)
 	// Audit pruning between validation and writer acquisition removes the
 	// authority that was validated. The old snapshot cannot authorize mutation.
@@ -346,7 +347,7 @@ func TestRecoveryGCInvalidatesValidatedOwnerSnapshot(t *testing.T) {
 	defer tx.Rollback()
 	require.ErrorIs(t, recheckRecoveryRevision(t.Context(), tx, epoch), errRecoverySnapshotChanged)
 	require.NoError(t, tx.Rollback())
-	epoch, err = fresh.validateResolutionsSnapshot(t.Context(), o.Slot)
+	epoch, err = validated.snapshot(t.Context(), fresh, o.Slot)
 	require.NoError(t, err)
 	tx, err = sqliteutil.BeginImmediateContext(t.Context(), fresh.db, "runs")
 	require.NoError(t, err)
@@ -403,10 +404,11 @@ func TestRecoveryGCRetriesChangedSnapshot(t *testing.T) {
 			require.NoError(t, err)
 			defer registry.Close()
 			attempts := 0
+			validated := &recoveryValidation{}
 			// Exercise the transaction-acquisition path used by both production
 			// callers, with real peer GC precisely between validation and begin.
 			tx, err := beginRecoveryWrite(t.Context(), fresh.db, func(ctx context.Context) (int64, error) {
-				epoch, err := fresh.validateResolutionsSnapshot(ctx, slots...)
+				epoch, err := validated.snapshot(ctx, fresh, slots...)
 				if err != nil {
 					return 0, err
 				}
