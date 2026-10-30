@@ -72,7 +72,7 @@ jobs:
         if: ${{ !cancelled() && (steps.native_tests.outcome == 'success' || steps.native_tests.outcome == 'failure') }}
         run: |
           go test -tags fts5 -race -json -count=1 -timeout 20m ./cmd/capy \
-            -run '^Test(MCPOrdinaryCaptureOutcomes|CapturedPublicOwnerCwdAndRejections|MCPRunHandoffTransport|MCPExecuteFileCapturedLifetime|MCPSerialBatchCapture|MCPParallelBatchControls|DoctorRunStoreParity|DoctorRunInvalidConfigReportsCapability)$' \
+            -run '^Test(MCPOrdinaryCaptureOutcomes|CapturedPublicOwnerCwdAndRejections|MCPRunHandoffTransport|MCPExecuteFileCapturedLifetime|MCPSerialBatchCapture|MCPParallelBatchControls|DoctorRunStoreParity|DoctorRunInvalidConfigReportsCapability|RunsRecoverApplyOfflineCLI)$' \
             | tee "$RUNNER_TEMP/macos-mode-tests.jsonl"
 
       - name: Require native proof fixtures to execute
@@ -99,7 +99,11 @@ jobs:
               ("execution", "TestDarwinCapturedObservationFailure"),
               ("execution", "TestDarwinBatchStalledStartupPreservesSibling"),
               ("execution", "TestDarwinBatchShutdownJoinsFinalizer"),
-              ("execution", "TestDarwinBatchFinalizationFailureQuarantinesPendingChildren"),
+              ("execution", "TestYieldedRuntimeIncidentCompletionOnce/finish_failure"),
+              ("execution", "TestYieldedRuntimeIncidentCompletionOnce/helper_loss"),
+              ("execution", "TestBatchRuntimeIncidentCompletionOnce"),
+              ("execution", "TestNativeRecoveryAfterRuntimeIncident/finish_failure"),
+              ("execution", "TestNativeRecoveryAfterRuntimeIncident/helper_loss"),
               ("capy", "TestMCPOrdinaryCaptureOutcomes"),
               ("capy", "TestCapturedPublicOwnerCwdAndRejections"),
               ("capy", "TestMCPRunHandoffTransport"),
@@ -108,6 +112,7 @@ jobs:
               ("capy", "TestMCPParallelBatchControls"),
               ("capy", "TestDoctorRunStoreParity"),
               ("capy", "TestDoctorRunInvalidConfigReportsCapability"),
+              ("capy", "TestRunsRecoverApplyOfflineCLI"),
               ("runstore", "TestRecoveryMetadataUsesRecoveryBudget"),
               ("runstore", "TestAdmissionAccountingPreservesCallerBudgets"),
               ("runstore", "TestRetentionWorkUsesOperationBudgets"),
@@ -250,6 +255,11 @@ jobs:
               "TestStoredUnverifiedReapRetainsReservation",
               "TestLeaseExchangeLaunchAndPermanentFiles",
               "TestLeaseExchangeStoppedHelperRecoversOwner",
+              "TestYieldedRuntimeIncidentCompletionOnce/finish_failure",
+              "TestYieldedRuntimeIncidentCompletionOnce/helper_loss",
+              "TestBatchRuntimeIncidentCompletionOnce",
+              "TestNativeRecoveryAfterRuntimeIncident/finish_failure",
+              "TestNativeRecoveryAfterRuntimeIncident/helper_loss",
           }
           passed = set()
           with open(sys.argv[1], encoding="utf-8") as log:

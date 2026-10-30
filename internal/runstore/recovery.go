@@ -81,6 +81,10 @@ func (s *Store) recoveryLease(ctx context.Context) (*os.File, error) {
 // The caller holds recovery.lock throughout this pass and any following
 // admission/generation publication. Capture writes do not take this lock.
 func (s *Store) reconcile(ctx context.Context) (RecoveryReport, error) {
+	return s.reconcileValidated(ctx, &recoveryValidation{})
+}
+
+func (s *Store) reconcileValidated(ctx context.Context, validated *recoveryValidation) (RecoveryReport, error) {
 	if s.recoveryReadOnly != nil {
 		return RecoveryReport{}, s.recoveryReadOnly
 	}
@@ -97,7 +101,7 @@ func (s *Store) reconcile(ctx context.Context) (RecoveryReport, error) {
 		if lease == nil {
 			continue
 		}
-		part, err := s.reconcileSlot(ctx, slot)
+		part, err := s.reconcileSlotValidated(ctx, slot, validated)
 		closeErr := lease.Close()
 		if err != nil || closeErr != nil {
 			return report, errors.Join(err, closeErr)
@@ -107,7 +111,7 @@ func (s *Store) reconcile(ctx context.Context) (RecoveryReport, error) {
 		report.UnverifiedSlots += part.UnverifiedSlots
 		report.DeferredSlots += part.DeferredSlots
 	}
-	if err := s.recordLegacyMarkers(ctx); err != nil {
+	if err := s.recordLegacyMarkers(ctx, validated); err != nil {
 		return report, err
 	}
 	return report, nil
@@ -115,7 +119,7 @@ func (s *Store) reconcile(ctx context.Context) (RecoveryReport, error) {
 
 // The caller owns this slot's exclusive lease. Queries use its current recorded
 // generation, never one cached before acquiring the lease.
-func (s *Store) reconcileSlot(ctx context.Context, slot int) (RecoveryReport, error) {
+func (s *Store) reconcileSlotValidated(ctx context.Context, slot int, validated *recoveryValidation) (RecoveryReport, error) {
 	var report RecoveryReport
 	var generation string
 	err := s.db.QueryRowContext(ctx, "SELECT generation FROM run_owners WHERE slot=?", slot).Scan(&generation)
@@ -149,7 +153,7 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=?)
 	writeCtx, cancel := context.WithTimeout(ctx, recoveryTimeout)
 	defer cancel()
 	tx, err := beginRecoveryWrite(writeCtx, s.db, func(ctx context.Context) (int64, error) {
-		return s.validateResolutionsSnapshot(ctx, slot)
+		return validated.snapshot(ctx, s, slot)
 	})
 	if err != nil {
 		return report, err

@@ -1,6 +1,6 @@
 # Run recovery implementation plan
 
-> Status: pending implementation; fresh-read design readiness check completed
+> Status: Tasks 1–15 implemented; Task 16 verification and release evidence in progress
 > Design: [design.md](design.md)
 > Contract: [contracts.md](contracts.md)
 > Execution checklist: [tasks.md](tasks.md)

@@ -409,7 +409,9 @@ func TestDarwinStartupIncidentRetainsHelperReservation(t *testing.T) {
 	require.Error(t, runstore.Reset(t.Context(), s.store.Path()))
 	next := s.Execute(t.Context(), executor.ExecRequest{Language: executor.Shell, Code: "touch bypass"}, "", time.Second)
 	require.Nil(t, next.RunID)
-	require.Contains(t, next.Error.Message, *result.RunID)
+	require.NotNil(t, next.Error.RecoveryHint)
+	require.NotNil(t, next.Error.RecoveryHint.Subject)
+	require.Equal(t, *result.RunID, next.Error.RecoveryHint.Subject.RunID)
 	require.NoFileExists(t, filepath.Join(s.project, "forbidden"))
 	require.NoFileExists(t, filepath.Join(s.project, "bypass"))
 }

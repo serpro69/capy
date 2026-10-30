@@ -486,7 +486,7 @@ Task sizes count substantive responsibilities, excluding mechanical registration
 
 ## Task 16: Final verification and release evidence
 
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** Task 15
 - **Size:** S
 - **Can run in parallel with:** —
@@ -499,6 +499,15 @@ Task sizes count substantive responsibilities, excluding mechanical registration
 - [ ] 16.2 Apply the repository benchmark trigger to the final diff: search/indexing/chunking/executor changes (including planned Task 13 run-store changes) require `make bench-quality` baseline/candidate comparison; documentation-only edits do not. Verify disposed-run eligibility/coverage/immutability with focused tests; add performance checks only for changed paths or concrete concerns → verify: regressions and each check's limits are explicit, with all attempts retained.
 - [ ] 16.3 Invoke `kk:document`, `kk:review-code` with Go and `kk:review-spec`; resolve material findings and record any accepted remaining work durably → verify: implementation, operator guidance and these contracts agree.
 - [ ] 16.4 Complete actual-binary operator walkthroughs and compatible-binary rollout checks; archive feature docs only after implementation/acceptance are complete → verify: no historical output loss, automatic execution retry or misleading cleanup-proof claim.
+
+### Execution context
+
+- 2026-10-30 — Observed: started from clean `02c63f7fa73878d21c012919f29ddea9ef5fb319` on Linux x86_64, kernel `7.1.1-76070101-generic`, Go `1.27.2`. Scope is Task 16 under the release evidence matrix; Tasks 1–15 are committed. Preserve all execution/administrative boundaries and use only isolated synthetic fixtures. The actual pre-implementation tree is `16e0880` (immediately before Task 1); recorded task commit IDs may predate history rewriting, so new evidence will use locally resolved revisions.
+- 2026-10-30 — Approach: run uncached repository FTS5 race, native integration race, explicit dbstat/conservative accounting, build/vet, existing actual-binary operator fixtures and a pre-feature/candidate quality comparison. Inspect native cross-session and compatible-binary coverage and add only missing consequential checks. Use `kk:test`, `kk:document`, isolated `kk:review-code` and `kk:review-spec`; retain all failures and distinguish source review from runtime evidence. No dependency or production behavior change is planned unless verification exposes a material defect.
+- 2026-10-30 — Unresolved platform gate (owner: unassigned): this workspace is Linux; supported macOS 26 arm64/CGO final-candidate native integration race and offline-recovery smoke evidence is not available yet. Earlier task-level macOS passes do not cover the completed feature. Obtain that native evidence before marking 16.1/16.4 or the feature done; keep documents in `wip` until acceptance is complete. Linux work proceeds independently.
+- 2026-10-30 — Implementation/evidence: added native cross-session recovery and opt-in actual legacy-binary rollout fixtures. Corrected the macOS CI proof guard's removed test name to its shared replacement, required the shared incident/recovery subcases on both platforms and selected the CLI offline walkthrough on macOS. `kk:document` refreshed obsolete status text; CLI/configuration/CI behavior is inherited from `cmd/capy`, `internal/config`, `Makefile` and `.github/workflows/ci.yml`, with only these test selectors/guards changed. Commands, results, source baselines, review coverage and remaining acceptance are maintained in [verification.md](verification.md).
+- 2026-10-30 — Observed scope expansion: base macOS CI `41063734889` exposed obsolete prose/path fixture assumptions and a real three-second disposition-validation deadline failure. Local full race exposed unrelated vault fixtures inheriting personal import-size policy. Correct the fixtures without weakening assertions; reuse exact disposition validation only within one held registry lease and matching recovery epoch, with invalidation/new-operation tests. Native macOS CI remains the acceptance check for the latency correction. The user explicitly requested completion, commit, push and CI verification in this session; use the existing native CI job rather than a manual Mac host. No contract or deadline change is authorized or needed.
+- 2026-10-30 — Review/verification before CI: isolated internal code and spec reviews report no remaining material source issue, including the validation cache and historical binary/helper evidence. Focused corrected store tests, vault isolation, strengthened legacy rollout, vet/build and refreshed quality comparison passed as attributed in the verification record. External review and complete final-candidate native/full CI remain in progress. Commit/push this reviewable candidate under the user's explicit authorization, then close acceptance using the resulting CI evidence; Task 16 remains in-progress until then.
 
 ## Dependency Graph
 

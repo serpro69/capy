@@ -244,6 +244,8 @@ func TestRecoveryPlanChangedEvidenceAndTargetStale(t *testing.T) {
 					return os.Chmod(p, mode)
 				}))
 			}
+			path, err = filepath.EvalSymlinks(path)
+			require.NoError(t, err)
 			opts.Cursor = first.NextCursor
 			view, err := PlanRecovery(t.Context(), path, testKey, opts)
 			requireErrorCode(t, err, "recovery_plan_stale")
@@ -379,6 +381,8 @@ func TestRecoveryPlanUnprintableOwnerRetainsRetryArguments(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(dest), 0700))
 	require.NoError(t, os.Rename(s.owner, dest))
 	path := filepath.Join(dest, ".capy", "runs", "runs.db")
+	path, err := filepath.EvalSymlinks(path)
+	require.NoError(t, err)
 	opts := planOptions()
 	opts.Limit = 1
 	opts.Timeout = 15 * time.Minute
@@ -452,6 +456,8 @@ func TestRecoveryPlanRetainedWALIsByteImmutable(t *testing.T) {
 		return os.Chmod(path, mode)
 	}))
 	path := filepath.Join(root, "runs", "runs.db")
+	path, err := filepath.EvalSymlinks(path)
+	require.NoError(t, err)
 	require.FileExists(t, path+"-wal")
 	snapshot := func() map[string]string {
 		out := map[string]string{}
@@ -519,6 +525,8 @@ func TestRecoveryPlanTokenTargetBindingSurvivesReceiptLookup(t *testing.T) {
 	mutatePlanStore(t, s.path, `INSERT INTO run_recovery_receipts(id,plan_hash,store_id,version,applied_at,method,basis,uid,explanation,incident_count,run_count,owner_count,store_count,charged_bytes,audit_expires_at) VALUES(?,?,?,1,1,'operator','groups_stopped',0,'fixture',0,0,0,0,0,2)`, id, plan.Hash, s.id)
 	dest := filepath.Join(t.TempDir(), "moved")
 	require.NoError(t, os.Rename(s.owner, dest))
+	dest, err = filepath.EvalSymlinks(dest)
+	require.NoError(t, err)
 	inspection, err := InspectRuns(t.Context(), filepath.Join(dest, ".capy", "runs", "runs.db"), testKey, InspectionOptions{Plan: v.Token, Limit: 1})
 	require.NoError(t, err)
 	require.Equal(t, id, inspection.Receipt.ID)

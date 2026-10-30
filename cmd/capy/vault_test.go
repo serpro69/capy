@@ -156,6 +156,8 @@ func setupVaultWithSidecar(t *testing.T) (root, uuid string, mainBytes, sidecarB
 	t.Setenv("CAPY_VAULT_KEY", testVaultKey)
 	t.Setenv("CAPY_VAULT_PATH", filepath.Join(dir, "vault.db"))
 	t.Setenv("CAPY_MACHINE_ID", "test-machine")
+	// Keep the transcript and sidecar below any personal import-size policy.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	root = filepath.Join(dir, "project")
 	require.NoError(t, os.MkdirAll(root, 0o755))
@@ -458,6 +460,7 @@ func TestVaultMerge_EndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CAPY_VAULT_KEY", testVaultKey)
 	t.Setenv("CAPY_MACHINE_ID", "test-machine")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	srcVault := filepath.Join(dir, "source.db")
 	destVault := filepath.Join(dir, "dest.db")
