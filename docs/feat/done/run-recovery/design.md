@@ -1,6 +1,6 @@
 # Run recovery that preserves history
 
-> Status: Tasks 1–15 implemented; final verification and release evidence in progress (Task 16)
+> Status: done — implementation and Linux/macOS acceptance recorded in [verification.md](verification.md)
 > Issue: [#142](https://github.com/serpro69/capy/issues/142)
 > Contracts: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
@@ -156,4 +156,4 @@ Use meaningful deterministic fixtures for stale plans, conflicting owners, wrong
 
 Expose apply only after every affected consumer understands dispositions. Read-only diagnostics can be developed first. Implementation tasks include documentation and generated-artifact synchronization where guidance changes. No new dependency is proposed; retain existing Go `database/sql`, encrypted SQLite, context deadlines and permanent-lock conventions. PostgreSQL-oriented profile advice, external migration tools and service telemetry stacks do not replace these repository contracts.
 
-External design-review findings were supplied and corroborated against code; the [resolution record](investigation.md#design-review-finding-corroboration) distinguishes valid gaps from corrected premises. A subsequent [fresh-read check](investigation.md#fresh-read-implementation-readiness) reread all five documents, confirmed those fixes and closed additional migration, planning, view-lifecycle and locking gaps. That historical readiness assessment is not runtime evidence. Tasks 1–15 are implemented; their verification and independent reviews are recorded in [tasks.md](tasks.md). Final release acceptance remains open under Task 16, including native evidence on both supported platforms.
+External design-review findings were supplied and corroborated against code; the [resolution record](investigation.md#design-review-finding-corroboration) distinguishes valid gaps from corrected premises. A subsequent [fresh-read check](investigation.md#fresh-read-implementation-readiness) reread all five documents, confirmed those fixes and closed additional migration, planning, view-lifecycle and locking gaps. That historical readiness assessment is separate from runtime evidence. All 16 tasks are complete; implementation and independent reviews are recorded in [tasks.md](tasks.md), and final Linux/macOS acceptance, source baselines and deployment limits are recorded in [verification.md](verification.md).

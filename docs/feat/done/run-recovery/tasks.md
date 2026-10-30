@@ -3,13 +3,13 @@
 > Design: [design.md](design.md)
 > Contracts: [contracts.md](contracts.md)
 > Implementation: [implementation.md](implementation.md)
-> Status: in-progress
+> Status: done
 > Created: 2026-10-28
 > Not Doing: automatic recovery, MCP apply, execution replay/adoption, changed cleanup guarantees, run rekey, archive management, permanent archives, generic database repair, finalization retries
 
-The user approved all four design presentation sections, same-store recovery and operator responsibility. Machine-verifiable recovery is a documented conditional future option, not a v1 gate. Supplied external review findings have been corroborated and incorporated. A subsequent author fresh-read check of all five documents closed the additional gaps recorded in [investigation.md](investigation.md#fresh-read-implementation-readiness); no known design blocker remains. This is an implementation-readiness assessment, not independent reviewer approval or runtime evidence. Tasks 1–15 execution and verification are recorded below; Task 16 release verification remains pending.
+The user approved all four design presentation sections, same-store recovery and operator responsibility. Machine-verifiable recovery is a documented conditional future option, not a v1 gate. Supplied external review findings have been corroborated and incorporated. A subsequent author fresh-read check of all five documents closed the additional gaps recorded in [investigation.md](investigation.md#fresh-read-implementation-readiness). That historical readiness assessment is separate from the implementation, independent reviews and runtime evidence recorded below. All 16 tasks are complete; final Linux/macOS acceptance and its limits are recorded in [verification.md](verification.md).
 
-Task sizes count substantive responsibilities, excluding mechanical registration/call-site wiring and fixtures. Each task is a complete testable path or an explicitly identified contract-first slice. Public apply remains unavailable until Task 14; private disposition fixtures do not authorize shipping partial recovery support.
+Task sizes count substantive responsibilities, excluding mechanical registration/call-site wiring and fixtures. Each task is a complete testable path or an explicitly identified contract-first slice. During implementation, public apply was withheld until Task 14; private disposition fixtures did not authorize shipping partial recovery support.
 
 ## Task 1: Inspect blockers without changing history
 
@@ -486,7 +486,7 @@ Task sizes count substantive responsibilities, excluding mechanical registration
 
 ## Task 16: Final verification and release evidence
 
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** Task 15
 - **Size:** S
 - **Can run in parallel with:** —
@@ -494,11 +494,11 @@ Task sizes count substantive responsibilities, excluding mechanical registration
 
 ### Subtasks
 
-- [ ] 16.1 Invoke `kk:test` for the named evidence matrix, affected FTS5/race suites including hook observations and stats consumers, repository build/vet/race checks and Linux/macOS native lifecycle acceptance → verify: captured commands, exact revision/platform and meaningful outcomes are recorded; unrun native checks remain open.
+- [x] 16.1 Invoke `kk:test` for the named evidence matrix, affected FTS5/race suites including hook observations and stats consumers, repository build/vet/race checks and Linux/macOS native lifecycle acceptance → verify: captured commands, exact revision/platform and meaningful outcomes are recorded; unrun native checks remain open.
   Include an explicit `CGO_CFLAGS=-DSQLITE_ENABLE_DBSTAT_VTAB go test -race -tags fts5 -count=1 ./internal/runstore -run 'TestRecoveryGCAccountingModes|TestRecoveryRetentionBoundedIndexedPayload'` run: default Makefile/CI builds skip dbstat, so the release evidence must demonstrate both accounting modes.
-- [ ] 16.2 Apply the repository benchmark trigger to the final diff: search/indexing/chunking/executor changes (including planned Task 13 run-store changes) require `make bench-quality` baseline/candidate comparison; documentation-only edits do not. Verify disposed-run eligibility/coverage/immutability with focused tests; add performance checks only for changed paths or concrete concerns → verify: regressions and each check's limits are explicit, with all attempts retained.
-- [ ] 16.3 Invoke `kk:document`, `kk:review-code` with Go and `kk:review-spec`; resolve material findings and record any accepted remaining work durably → verify: implementation, operator guidance and these contracts agree.
-- [ ] 16.4 Complete actual-binary operator walkthroughs and compatible-binary rollout checks; archive feature docs only after implementation/acceptance are complete → verify: no historical output loss, automatic execution retry or misleading cleanup-proof claim.
+- [x] 16.2 Apply the repository benchmark trigger to the final diff: search/indexing/chunking/executor changes (including planned Task 13 run-store changes) require `make bench-quality` baseline/candidate comparison; documentation-only edits do not. Verify disposed-run eligibility/coverage/immutability with focused tests; add performance checks only for changed paths or concrete concerns → verify: regressions and each check's limits are explicit, with all attempts retained.
+- [x] 16.3 Invoke `kk:document`, `kk:review-code` with Go and `kk:review-spec`; resolve material findings and record any accepted remaining work durably → verify: implementation, operator guidance and these contracts agree.
+- [x] 16.4 Complete actual-binary operator walkthroughs and compatible-binary rollout checks; archive feature docs only after implementation/acceptance are complete → verify: no historical output loss, automatic execution retry or misleading cleanup-proof claim.
 
 ### Execution context
 
@@ -508,6 +508,9 @@ Task sizes count substantive responsibilities, excluding mechanical registration
 - 2026-10-30 — Implementation/evidence: added native cross-session recovery and opt-in actual legacy-binary rollout fixtures. Corrected the macOS CI proof guard's removed test name to its shared replacement, required the shared incident/recovery subcases on both platforms and selected the CLI offline walkthrough on macOS. `kk:document` refreshed obsolete status text; CLI/configuration/CI behavior is inherited from `cmd/capy`, `internal/config`, `Makefile` and `.github/workflows/ci.yml`, with only these test selectors/guards changed. Commands, results, source baselines, review coverage and remaining acceptance are maintained in [verification.md](verification.md).
 - 2026-10-30 — Observed scope expansion: base macOS CI `41063734889` exposed obsolete prose/path fixture assumptions and a real three-second disposition-validation deadline failure. Local full race exposed unrelated vault fixtures inheriting personal import-size policy. Correct the fixtures without weakening assertions; reuse exact disposition validation only within one held registry lease and matching recovery epoch, with invalidation/new-operation tests. Native macOS CI remains the acceptance check for the latency correction. The user explicitly requested completion, commit, push and CI verification in this session; use the existing native CI job rather than a manual Mac host. No contract or deadline change is authorized or needed.
 - 2026-10-30 — Review/verification before CI: isolated internal code and spec reviews report no remaining material source issue, including the validation cache and historical binary/helper evidence. Focused corrected store tests, vault isolation, strengthened legacy rollout, vet/build and refreshed quality comparison passed as attributed in the verification record. External review and complete final-candidate native/full CI remain in progress. Commit/push this reviewable candidate under the user's explicit authorization, then close acceptance using the resulting CI evidence; Task 16 remains in-progress until then.
+- 2026-10-30 — Observed publication/review update: committed as `929442b4de3c913d9b060b5cf03236bdb1757ed0`; the user pushed after this session's SSH/HTTPS/API publication failures. GitHub left PR #143 at its old head; closing/reopening refreshed it and started candidate CI `41072609962`. Cancelled only the duplicate old-head run `41072609373`. Internal code/spec and external PAL reviews are complete with no material unresolved source finding; optional external test-presentation limits and all attempts are recorded in verification.md. Final Linux native/dbstat/legacy positive-and-negative checks passed. Runtime acceptance and archival still await final candidate CI.
+- 2026-10-30 — Completion: CI `41072609962` passed for `929442b`, including native Linux, native macOS 26.6.2 arm64/CGO, all 55 macOS required proof cases, actual-binary offline recovery, full repository FTS5 race, vet/build and glamour; lint also passed. Downloaded native artifacts verify unskipped acceptance/correction cases and 256-disposition claim/legacy times of 463.5ms/1.212s within unchanged budgets. Full Linux CI passed all 20 tested packages, including CLI, hook/stats consumers, runstore and server. The earlier local suite remains failed/incomplete and is not relabeled. Exact commands, artifact hashes, review scope, baseline/candidate quality and deployment limits are in verification.md. Task 16 and the feature are done; archive to `docs/feat/done/run-recovery` with reference links updated. No live-store recovery or deployment was performed.
+- 2026-10-30 — Reflection: final native evidence exposed stale test assumptions about structured hints and physical paths, and duplicate immutable validation made owner reuse too slow on macOS. Reusing validation within a single registry lease and unchanged epoch preserved the contract and met both platforms' deadlines. Local full-suite testing also exposed personal configuration leaking into unrelated tiny vault fixtures. CI completed the acceptance work without a manually managed Mac host; preserve the explicit proof guards and environment isolation in future changes.
 
 ## Dependency Graph
 

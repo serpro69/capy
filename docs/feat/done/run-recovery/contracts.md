@@ -1,6 +1,6 @@
 # Run recovery contracts
 
-> Status: implementation-ready contract after author fresh-read check
+> Status: implemented — acceptance evidence in [verification.md](verification.md)
 > Parent: [design.md](design.md)
 > Plan: [implementation.md](implementation.md)
 
