@@ -80,10 +80,18 @@ func TestWebFetchBlockMessage(t *testing.T) {
 		assert.Contains(t, msg, "capy_runs")
 	})
 
-	t.Run("generic URL mentions WebSearch", func(t *testing.T) {
-		msg := webFetchBlockMessage("https://docs.example.com/page")
-		assert.Contains(t, msg, "WebSearch")
-		assert.Contains(t, msg, "capy_fetch_and_index")
+	t.Run("non-git URLs are not blocked", func(t *testing.T) {
+		for _, url := range []string{
+			"https://docs.example.com/page",
+			"https://www.finn.no/realestate/homes/ad.html?finnkode=1",
+			"https://gist.github.com/serpro69/abc123",
+			"https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/getting-started",
+			"https://docs.gitlab.com/user/project/merge_requests/approvals/",
+			"not a URL",
+			"",
+		} {
+			assert.Empty(t, webFetchBlockMessage(url), url)
+		}
 	})
 }
 

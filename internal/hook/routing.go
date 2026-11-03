@@ -4,13 +4,14 @@ package hook
 // prompts and session start events. Guides the LLM on when to use capy MCP
 // tools vs direct tools based on comprehension-vs-extraction needs.
 func RoutingBlock() string {
-	return routingBlock("    A Bash-to-general-purpose upgrade does not prove that MCP tools are available.\n", `    Claude routine capture is guidance-only. Main-agent HTTP redirects are enforced below. A child may receive one redirect to a recently
+	return routingBlock("    A Bash-to-general-purpose upgrade does not prove that MCP tools are available.\n", `    Claude routine capture is guidance-only. Main-agent Bash HTTP redirects are enforced below. A child may receive one redirect to a recently
     successful suitable tool; otherwise it gets discovery/native-tool advice. Security denies
-    and matched asks still apply. Bash HTTP requires observed capy_execute; WebFetch can also
+    and matched asks still apply. Bash HTTP requires observed capy_execute; child WebFetch can also
     use observed capy_fetch_and_index. Git issue/PR/MR comprehension keeps native CLI guidance.
     - curl/wget in Bash → use capy_fetch_and_index or capy_execute
     - Inline HTTP in Bash → use capy_execute
-    - WebFetch → for git issues/PRs/MRs: platform CLI (gh issue view) or WebSearch; for other large pages: capy_fetch_and_index`)
+    - Main-agent WebFetch is allowed for comprehending specific pages; git issues/PRs/MRs are denied
+      in favor of the platform CLI (gh issue view); for large-page extraction use capy_fetch_and_index`)
 }
 
 // CodexRoutingBlock shares the core guidance while describing only capy's
@@ -48,7 +49,7 @@ func routingBlock(upgradeNote, blocked string) string {
     - Files to comprehend or edit (Read)
     - Existing logs to read; recover new captured output with capy_runs
     - Governing instructions, checklists, agent configs (Read whole)
-    - Small authoritative web pages (issues, PRs, specs) — runtime web tools (gh, WebSearch) when available
+    - Small authoritative web pages (issues, PRs, specs) — runtime web tools (gh, WebFetch or hosted web tools, WebSearch) when available
   </direct_tools>
 
   <capy_tools>
@@ -113,6 +114,16 @@ const GREP_GUIDANCE = `<context_guidance>
     Grep results can be large. If you need all matches for comprehension, this is fine.
     For extraction from large result sets, use capy_execute(language: "shell", code: "grep ...")
     to run in sandbox — only your printed summary enters context.
+  </tip>
+</context_guidance>`
+
+// WEBFETCH_GUIDANCE is the one-time advisory shown when main-agent WebFetch is allowed.
+const WEBFETCH_GUIDANCE = `<context_guidance>
+  <tip>
+    WebFetch suits specific pages you need to comprehend: it answers your prompt about the page.
+    For large pages where you need specific facts or follow-up queries, use
+    capy_fetch_and_index(url, source), then capy_search(queries).
+    For git issues/PRs/MRs, use the platform CLI (e.g., gh issue view).
   </tip>
 </context_guidance>`
 

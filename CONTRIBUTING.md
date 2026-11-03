@@ -221,11 +221,17 @@ echo '{"tool_name":"Bash","tool_input":{"command":"curl https://example.com"},"s
 
 # Expected: permissionDecision "allow" with updatedInput replacing curl with echo message
 
-# Test: WebFetch gets denied
+# Test: main-agent WebFetch gets one-time advisory guidance (no permission decision)
 echo '{"tool_name":"WebFetch","tool_input":{"url":"https://example.com"},"session_id":"test"}' \
   | ./capy hook pretooluse | python3 -m json.tool
 
-# Expected: permissionDecision "deny"
+# Expected: additionalContext mentioning capy_fetch_and_index on the first call in the session; empty output afterwards
+
+# Test: WebFetch of a git platform issue gets denied
+echo '{"tool_name":"WebFetch","tool_input":{"url":"https://github.com/serpro69/capy/issues/44"},"session_id":"test"}' \
+  | ./capy hook pretooluse | python3 -m json.tool
+
+# Expected: permissionDecision "deny" naming gh issue view
 
 # Test: normal bash gets guidance
 echo '{"tool_name":"Bash","tool_input":{"command":"ls -la"},"session_id":"test"}' \

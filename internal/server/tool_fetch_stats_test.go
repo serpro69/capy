@@ -39,6 +39,8 @@ func TestFetchStatsRejectedURLs(t *testing.T) {
 			{name: "mapped IPv4 loopback rejected by transport", url: "https://[::ffff:127.0.0.1]:1/"},
 			{name: "IPv6 loopback", url: "http://[::1]:1/"},
 			{name: "git redirect", url: "https://github.com/owner/repo/issues/1"},
+			{name: "git PR diff redirect", url: "https://github.com/owner/repo/pull/47.diff"},
+			{name: "git MR patch redirect", url: "https://gitlab.com/group/project/-/merge_requests/456.patch"},
 			{name: "loopback", url: "http://127.0.0.1:1"},
 			{name: "private", url: "http://10.0.0.1"},
 			{name: "link local", url: "http://169.254.169.254"},

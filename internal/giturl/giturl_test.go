@@ -30,6 +30,18 @@ func TestParsePlatformURL(t *testing.T) {
 		{"issues listing", "https://github.com/serpro69/capy/issues", "", "", "", "", "", false},
 		{"gist", "https://gist.github.com/serpro69/abc123", "", "", "", "", "", false},
 		{"non-git URL", "https://docs.example.com/api/reference", "", "", "", "", "", false},
+		{"GitHub docs pull-requests topic", "https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/getting-started", "", "", "", "", "", false},
+		{"GitHub docs issues topic", "https://docs.github.com/en/issues/tracking-your-work-with-issues/about-issues", "", "", "", "", "", false},
+		{"GitLab docs merge requests topic", "https://docs.gitlab.com/user/project/merge_requests/approvals/", "", "", "", "", "", false},
+		{"GitHub new issue form", "https://github.com/serpro69/capy/issues/new", "", "", "", "", "", false},
+		{"GitHub file under issues directory", "https://github.com/owner/repo/blob/main/issues/README.md", "", "", "", "", "", false},
+		{"docs topic before numeric item", "https://git.example.com/docs/issues/guide/org/repo/pulls/7", "git.example.com", "", "", "7", "pr", true},
+		{"GitHub PR diff", "https://github.com/o/r/pull/47.diff", "github.com", "o", "r", "47", "pr", true},
+		{"GitHub PR patch redirect target", "https://patch-diff.githubusercontent.com/raw/o/r/pull/47.patch", "patch-diff.githubusercontent.com", "", "", "47", "pr", true},
+		{"GitLab MR patch", "https://gitlab.com/group/project/-/merge_requests/456.patch", "gitlab.com", "", "", "456", "mr", true},
+		{"Gitea pull diff", "https://gitea.example.com/org/repo/pulls/12.diff", "gitea.example.com", "", "", "12", "pr", true},
+		{"empty item segment", "https://github.com/o/r/issues//44", "", "", "", "", "", false},
+		{"suffix only", "https://github.com/o/r/pull/.diff", "", "", "", "", "", false},
 		{"empty", "", "", "", "", "", "", false},
 	}
 

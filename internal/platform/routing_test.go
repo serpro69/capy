@@ -86,10 +86,10 @@ func TestRoutingToolDiscoveryFallback(t *testing.T) {
 
 func TestRoutingPlatformCoverage(t *testing.T) {
 	text := platform.GenerateRoutingInstructions()
-	for _, want := range []string{"Codex hooks cover canonical Bash", "hosted web/search tools are not intercepted", "WebFetch — BLOCKED in Claude Code", "In Claude Code, when spawning", "In Codex, SubagentStart", "Child launch arguments and agent types are preserved"} {
+	for _, want := range []string{"Codex hooks cover canonical Bash", "hosted web/search tools are not intercepted", "WebFetch — Claude Code", "In Claude Code, when spawning", "In Codex, SubagentStart", "Child launch arguments and agent types are preserved"} {
 		assert.Contains(t, text, want)
 	}
-	for _, want := range []string{"Security denies and matched asks always apply before routing", "Claude main-agent HTTP redirects remain enforced", "Codex main sessions receive advisory", "permits one HTTP redirect within 60 seconds", "Main and child evidence are isolated", "Root SessionEnd independently clears"} {
+	for _, want := range []string{"Security denies and matched asks always apply before routing", "Claude main-agent Bash HTTP redirects remain enforced", "main-agent WebFetch is allowed except for git issue/PR/MR URLs", "Codex main sessions receive advisory", "permits one HTTP redirect within 60 seconds", "Main and child evidence are isolated", "Root SessionEnd independently clears"} {
 		assert.Contains(t, text, want)
 	}
 	assert.Contains(t, hook.CodexRoutingBlock(), "Main and child HTTP redirects each require their own capy_execute success")

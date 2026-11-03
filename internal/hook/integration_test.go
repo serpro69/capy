@@ -2,6 +2,7 @@ package hook
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/serpro69/capy/internal/adapter"
@@ -160,21 +161,47 @@ func TestHookIntegration_NormalBash_ThrottledAfterFirst(t *testing.T) {
 	assert.Nil(t, output2)
 }
 
-// ─── WebFetch → deny ───────────────────────────────────────────────────────────
+// ─── WebFetch → advisory once; git platform URLs → deny (ADR-037) ─────────────
 
-func TestHookIntegration_WebFetch_Denied(t *testing.T) {
-	ResetGuidanceThrottle()
+func TestHookIntegration_WebFetch_AllowedWithGuidanceOnce(t *testing.T) {
 	a := ccAdapter()
+	project := t.TempDir()
 	input := ccInput("WebFetch", map[string]any{"url": "https://docs.anthropic.com/api"})
-	output, err := handlePreToolUse(input, a, nil, "")
+	output, err := handlePreToolUse(input, a, nil, project)
 	require.NoError(t, err)
 	require.NotNil(t, output)
 
 	hso := ccParse(t, output)
 	assert.Equal(t, "PreToolUse", hso["hookEventName"])
-	assert.Equal(t, "deny", hso["permissionDecision"])
-	reason := hso["permissionDecisionReason"].(string)
-	assert.Contains(t, reason, "capy_fetch_and_index")
+	assert.NotContains(t, hso, "permissionDecision", "advisory must leave native permission handling intact")
+	assert.Contains(t, hso["additionalContext"], "capy_fetch_and_index")
+	assert.FileExists(t, filepath.Join(project, ".capy", "guidance-test-session-123-webfetch.once"))
+
+	output, err = handlePreToolUse(input, a, nil, project)
+	require.NoError(t, err)
+	assert.Nil(t, output, "second main-agent WebFetch in the session passes through silently")
+}
+
+func TestHookIntegration_WebFetch_GitPlatformDenied(t *testing.T) {
+	project := t.TempDir()
+	for _, tc := range []struct{ name, url, want string }{
+		{name: "github issue", url: "https://github.com/serpro69/capy/issues/44", want: "gh issue view 44 --repo serpro69/capy"},
+		{name: "github pr", url: "https://github.com/serpro69/capy/pull/47", want: "gh pr view 47 --repo serpro69/capy"},
+		{name: "gitlab mr", url: "https://gitlab.com/group/project/-/merge_requests/456", want: "platform's CLI"},
+		{name: "github pr diff", url: "https://github.com/serpro69/capy/pull/47.diff", want: "gh pr view 47 --repo serpro69/capy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for range 2 {
+				output, err := handlePreToolUse(ccInput("WebFetch", map[string]any{"url": tc.url}), ccAdapter(), nil, project)
+				require.NoError(t, err)
+				require.NotNil(t, output)
+				hso := ccParse(t, output)
+				assert.Equal(t, "deny", hso["permissionDecision"], "git platform denial must fire on every call")
+				assert.Contains(t, hso["permissionDecisionReason"], tc.want)
+			}
+		})
+	}
+	assert.NoFileExists(t, filepath.Join(project, ".capy", "guidance-test-session-123-webfetch.once"), "a denial must not claim the advisory")
 }
 
 // ─── Read → context guidance ───────────────────────────────────────────────────
