@@ -122,7 +122,7 @@ func TestGuidanceLegacyState(t *testing.T) {
 			require.NoError(t, os.Mkdir(dir, 0o755))
 			legacy := filepath.Join(dir, "guidance-s.json")
 			require.NoError(t, os.WriteFile(legacy, []byte(tc.data), 0o600))
-			for _, guidanceType := range []string{"bash", "read", "grep"} {
+			for _, guidanceType := range []string{"bash", "read", "grep", "webfetch"} {
 				claimed := false
 				for _, known := range tc.claimed {
 					claimed = claimed || known == guidanceType
@@ -277,7 +277,7 @@ func TestGuidanceResetIsolation(t *testing.T) {
 			component := sessionIDComponent(session)
 			expected := map[string]bool{}
 			for _, id := range []string{component, component + "-other"} {
-				for _, suffix := range []string{".json", "-bash.once", "-read.once", "-grep.once", "-other.once"} {
+				for _, suffix := range []string{".json", "-bash.once", "-read.once", "-grep.once", "-webfetch.once", "-other.once"} {
 					name := "guidance-" + id + suffix
 					require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0o600))
 					expected[name] = session == "" || id != component || suffix == "-other.once"
@@ -303,7 +303,7 @@ func TestGuidanceResetIsolation(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, os.SameFile(before, after))
 			if session != "" {
-				for _, kind := range []string{"read", "bash", "grep"} {
+				for _, kind := range []string{"read", "bash", "grep", "webfetch"} {
 					output, err := guidanceOnce(kind, "advisory", ccAdapter(), project, session)
 					require.NoError(t, err)
 					require.NotEmpty(t, output)
@@ -317,13 +317,14 @@ func TestGuidanceResetIsolation(t *testing.T) {
 	t.Run("symlink directory", func(t *testing.T) {
 		project, outside := t.TempDir(), t.TempDir()
 		require.NoError(t, os.Symlink(outside, filepath.Join(project, ".capy")))
-		for _, suffix := range []string{".json", "-bash.once", "-read.once", "-grep.once"} {
+		suffixes := []string{".json", "-bash.once", "-read.once", "-grep.once", "-webfetch.once"}
+		for _, suffix := range suffixes {
 			require.NoError(t, os.WriteFile(filepath.Join(outside, "guidance-s"+suffix), nil, 0o600))
 		}
 		ResetGuidanceFile(project, "s")
 		entries, err := os.ReadDir(outside)
 		require.NoError(t, err)
-		assert.Len(t, entries, 4)
+		assert.Len(t, entries, len(suffixes))
 	})
 }
 

@@ -17,6 +17,8 @@ type Info struct {
 // ParsePlatformURL detects if a URL points to a git platform issue, PR, or
 // merge request. Recognizes GitHub, GitLab, Bitbucket, Gitea, and generic
 // platforms using common path conventions (/issues/N, /pull/N, /merge_requests/N).
+// N must be numeric, optionally with a .diff/.patch suffix, so documentation
+// paths such as /en/pull-requests/<topic> are not mistaken for platform items.
 func ParsePlatformURL(rawURL string) (Info, bool) {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
@@ -28,17 +30,19 @@ func ParsePlatformURL(rawURL string) (Info, bool) {
 
 	// GitHub: owner/repo/issues/N or owner/repo/pull/N
 	if u.Host == "github.com" && len(parts) >= 4 {
-		info.Owner = parts[0]
-		info.Repo = parts[1]
-		switch parts[2] {
-		case "issues":
-			info.Number = parts[3]
-			info.Kind = "issue"
-			return info, true
-		case "pull":
-			info.Number = parts[3]
-			info.Kind = "pr"
-			return info, true
+		if number, ok := itemNumber(parts[3]); ok {
+			info.Owner = parts[0]
+			info.Repo = parts[1]
+			switch parts[2] {
+			case "issues":
+				info.Number = number
+				info.Kind = "issue"
+				return info, true
+			case "pull":
+				info.Number = number
+				info.Kind = "pr"
+				return info, true
+			}
 		}
 	}
 
@@ -46,23 +50,44 @@ func ParsePlatformURL(rawURL string) (Info, bool) {
 	// Covers GitLab (/-/issues/N, /-/merge_requests/N), Bitbucket
 	// (/issues/N, /pull-requests/N), Gitea (/issues/N, /pulls/N), and others.
 	for i := 0; i < len(parts)-1; i++ {
+		number, ok := itemNumber(parts[i+1])
+		if !ok {
+			continue
+		}
 		switch parts[i] {
 		case "issues":
-			info.Number = parts[i+1]
+			info.Number = number
 			info.Kind = "issue"
 			return info, true
 		case "pull", "pulls", "pull-requests":
-			info.Number = parts[i+1]
+			info.Number = number
 			info.Kind = "pr"
 			return info, true
 		case "merge_requests":
-			info.Number = parts[i+1]
+			info.Number = number
 			info.Kind = "mr"
 			return info, true
 		}
 	}
 
 	return Info{}, false
+}
+
+// itemNumber returns the ASCII digits of an issue/PR/MR path segment. A
+// trailing .diff or .patch (raw change endpoints) is accepted and dropped.
+func itemNumber(segment string) (string, bool) {
+	for _, suffix := range []string{".diff", ".patch"} {
+		segment = strings.TrimSuffix(segment, suffix)
+	}
+	if segment == "" {
+		return "", false
+	}
+	for i := 0; i < len(segment); i++ {
+		if segment[i] < '0' || segment[i] > '9' {
+			return "", false
+		}
+	}
+	return segment, true
 }
 
 // IsGistURL returns true for gist.github.com and gist.githubusercontent.com URLs.

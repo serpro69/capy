@@ -612,7 +612,7 @@ deadlines; shorter host timeouts or blocked startup can still terminate first.
 
 | Event | Handler | Purpose |
 |-------|---------|---------|
-| `PreToolUse` | Route Bash, block curl/wget/WebFetch, inject subagent routing, security checks | Main routing logic |
+| `PreToolUse` | Route Bash, block curl/wget and git-platform WebFetch, inject subagent routing, security checks | Main routing logic |
 | `PostToolUse` | Record successful child execute/fetch observations | One-use routing evidence |
 | `PreCompact` | Stub | Future resume snapshot |
 | `SessionStart` | Inject routing block | Teach LLM about capy on session start |
@@ -627,12 +627,18 @@ and child context are each capped at 4,096 UTF-8 bytes; generated handlers omit
 
 Bash HTTP routing rejections use `FormatBlock`, carrying `permissionDecision:
 "deny"` and guidance in `permissionDecisionReason`, without a replacement command.
-Claude main-agent HTTP redirects remain enforced. A Codex main session receives
+Claude main-agent Bash HTTP redirects remain enforced. A Codex main session receives
 advisory context while tool availability is unverified; one recent successful
 `capy_execute` call permits one redirect within 60 seconds. Fetch, batch and
 other tools cannot supply that evidence. Security denies and matched asks run
 first, and existing silent/quiet file-download exceptions still apply.
 `FormatModify` remains in use for Claude Agent/Task prompt injection.
+
+Claude main-agent WebFetch is allowed with a once-per-session `FormatAllow`
+advisory claimed through the `webfetch` guidance marker; it carries no
+permission decision, so native permission rules still apply. Git platform
+issue/PR/MR URLs remain denied with the platform CLI command. See
+[ADR-037](adr/037-allow-main-agent-webfetch.md).
 
 The adapter preserves `agent_id`, `agent_type` and payload `cwd`. Only a nonempty
 agent ID selects child routing; a type alone does not. Children with unverified
@@ -691,10 +697,11 @@ the same selected project. Hooks do not resolve database keys or open a store.
 
 ### Guidance System
 
-Read, Grep and Bash advisories share an atomic per-session claim across hook
-processes. After serializing an advisory, its winner exclusively creates an
-empty 0600 `.capy/guidance-<session-component>-<type>.once` marker, where type is
-one of `read`, `grep` or `bash`. A valid empty regular marker suppresses later
+Read, Grep, Bash and Claude main-agent WebFetch advisories share an atomic
+per-session claim across hook processes. After serializing an advisory, its
+winner exclusively creates an empty 0600
+`.capy/guidance-<session-component>-<type>.once` marker, where type is one of
+`read`, `grep`, `bash` or `webfetch`. A valid empty regular marker suppresses later
 advisories of that type. Concurrent types and sessions have independent markers.
 The `.capy` directory and state files must not be symlinks; existing directory
 permissions are preserved. Invalid or unavailable state produces a bounded
@@ -716,7 +723,7 @@ identity does not persist state and continues to receive guidance on every call.
 This guarantees at-most-once claiming with healthy local state, not delivery:
 a process killed after claiming can leave its optional advisory suppressed.
 SessionEnd does not remove guidance. `ResetGuidanceFile` is a quiescent test
-helper that removes only the exact session's legacy file and three known markers,
+helper that removes only the exact session's legacy file and four known markers,
 preserving neighboring sessions and observation locks. No automatic retention
 sweep is introduced; hostile concurrent directory replacement and network
 filesystem coordination are outside this guarantee.

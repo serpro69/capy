@@ -388,7 +388,7 @@ rekey. See the [complete rotation and rollback workflow](docs/reference/runs.md#
 
 Hooks guide large-output work toward capy and enforce additional command policies. They do not automatically capture or reduce the output of every native tool call.
 
-- **Claude Code:** main-agent HTTP calls through Bash or WebFetch are redirected to capy or the platform CLI. Read/Grep guidance is advisory; subagents receive routing instructions.
+- **Claude Code:** main-agent HTTP calls through Bash are redirected to capy. Main-agent WebFetch is allowed with advisory guidance, except git issue/PR/MR URLs, which are redirected to the platform CLI. Read/Grep guidance is advisory; subagents receive routing instructions.
 - **Codex CLI:** recognized routine tests/builds/installs require capture through MCP or `capy execute`, including mixed HTTP/routine requests. This applies before HTTP routing regardless of availability evidence. Hosted web/search tools are outside shell-hook coverage. HTTP-only main routing is advisory until a healthy running or successful complete `capy_execute` response; that evidence allows one redirect within 60 seconds.
 - **Subagents:** Codex routine capture is mandatory for children too. HTTP-only routing depends on each child's recent successful execute/fetch evidence and permits advisory native fallback when evidence is absent. This does not grant permission or bypass security rules.
 - **Downloads:** silent file downloads remain allowed by the HTTP routing rules, subject to permissions.

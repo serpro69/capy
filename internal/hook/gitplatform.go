@@ -46,30 +46,25 @@ func gistGuidance(rawURL string) string {
 </context_guidance>`
 }
 
-// webFetchBlockMessage returns the block message for WebFetch calls, with
-// git-platform-specific comprehension guidance when the URL matches.
+// webFetchBlockMessage returns the block reason for a main-agent WebFetch of a
+// git platform issue/PR/MR URL, or "" when WebFetch may proceed (ADR-037).
 func webFetchBlockMessage(rawURL string) string {
 	info, ok := giturl.ParsePlatformURL(rawURL)
-	if ok {
-		if ghCmd := info.GhCommand(); ghCmd != "" {
-			return fmt.Sprintf(
-				"capy: WebFetch blocked. This is a GitHub %s — use `%s` for full comprehension. "+
-					"For large-content extraction, run that CLI command through capy_execute and use capy_runs to read or search its captured output.",
-				info.KindDisplay(), ghCmd,
-			)
-		}
-
+	if !ok {
+		return ""
+	}
+	if ghCmd := info.GhCommand(); ghCmd != "" {
 		return fmt.Sprintf(
-			"capy: WebFetch blocked. This URL points to a %s (#%s). "+
-				"For full comprehension, use your platform's CLI or WebSearch. "+
-				"For large-content extraction, run the platform CLI through capy_execute and use capy_runs to read or search its captured output.",
-			info.KindDisplay(), info.Number,
+			"capy: WebFetch blocked. This is a GitHub %s — use `%s` for full comprehension. "+
+				"For large-content extraction, run that CLI command through capy_execute and use capy_runs to read or search its captured output.",
+			info.KindDisplay(), ghCmd,
 		)
 	}
 
 	return fmt.Sprintf(
-		"capy: WebFetch blocked. For comprehension of small pages, use WebSearch or direct tools (e.g., platform CLI for git issues/PRs). "+
-			"For large content extraction, use capy_fetch_and_index(url: %q) then capy_search(queries: [...]).",
-		rawURL,
+		"capy: WebFetch blocked. This URL points to a %s (#%s). "+
+			"For full comprehension, use your platform's CLI or WebSearch. "+
+			"For large-content extraction, run the platform CLI through capy_execute and use capy_runs to read or search its captured output.",
+		info.KindDisplay(), info.Number,
 	)
 }

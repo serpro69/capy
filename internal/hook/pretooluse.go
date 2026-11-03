@@ -61,10 +61,12 @@ func routePreToolUse(event *adapter.PreToolUseEvent, a adapter.HookAdapter, poli
 		return routeBash(event, a, policies, ctx)
 	}
 
-	// ─── WebFetch: deny → redirect with comprehension-aware guidance ───
+	// ─── WebFetch: git platform deny, otherwise comprehension guidance (ADR-037) ───
 	if canonical == "WebFetch" {
 		rawURL, _ := toolInput["url"].(string)
 		if event.AgentID != "" {
+			// TODO: ADR-037 keeps one-use child redirects while main-agent WebFetch is
+			// allowed; decide whether children should match before changing this branch.
 			parsedURL, err := url.Parse(rawURL)
 			eligible := err == nil && parsedURL.Hostname() != "" &&
 				(parsedURL.Scheme == "https" || parsedURL.Scheme == "http") && gitPlatformBlockMessage(rawURL) == ""
@@ -75,7 +77,10 @@ func routePreToolUse(event *adapter.PreToolUseEvent, a adapter.HookAdapter, poli
 			}
 			return a.FormatAllow(childToolGuidance)
 		}
-		return a.FormatBlock(webFetchBlockMessage(rawURL))
+		if msg := webFetchBlockMessage(rawURL); msg != "" {
+			return a.FormatBlock(msg)
+		}
+		return guidanceOnce("webfetch", WEBFETCH_GUIDANCE, a, ctx.projectDir, sessionID)
 	}
 
 	// ─── Read: guidance once ───

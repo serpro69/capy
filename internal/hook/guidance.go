@@ -64,7 +64,7 @@ func guidanceOnce(guidanceType, content string, a adapter.HookAdapter, projectDi
 
 func validGuidanceType(guidanceType string) bool {
 	switch guidanceType {
-	case "bash", "read", "grep":
+	case "bash", "read", "grep", "webfetch":
 		return true
 	}
 	return false
@@ -167,7 +167,7 @@ func readGuidanceState(path string) (map[string]*bool, error) {
 // Tests should use ResetGuidanceFile instead.
 func ResetGuidanceThrottle() {}
 
-// ResetGuidanceFile removes only this session's legacy file and three known
+// ResetGuidanceFile removes only this session's legacy file and four known
 // markers. This is a quiescent test helper, not a concurrent production reset.
 func ResetGuidanceFile(projectDir, sessionID string) {
 	if projectDir == "" || sessionID == "" {
@@ -178,7 +178,7 @@ func ResetGuidanceFile(projectDir, sessionID string) {
 		return
 	}
 	base := filepath.Join(dir, "guidance-"+sessionIDComponent(sessionID))
-	for _, suffix := range []string{".json", "-bash.once", "-read.once", "-grep.once"} {
+	for _, suffix := range []string{".json", "-bash.once", "-read.once", "-grep.once", "-webfetch.once"} {
 		os.Remove(base + suffix)
 	}
 }

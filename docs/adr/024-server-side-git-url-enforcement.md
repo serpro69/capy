@@ -13,6 +13,11 @@ acceptance is tracked there separately from installed-command tests. The shared
 server-side enforcement remains necessary for clients without active hooks;
 this clarification does not change the original decision.
 
+**Matcher clarification (2026-11-03):** D4's `/issues/N` patterns now require
+a numeric N (optionally `.diff`/`.patch`), so documentation paths such as
+`docs.github.com/en/pull-requests/...` are no longer blocked. See
+[ADR-037](037-allow-main-agent-webfetch.md) decision 5.
+
 ## Context
 
 Issue [#44](https://github.com/serpro69/capy/issues/44) (v0.9.0) established the comprehension-vs-extraction routing principle: git diffs, small commands, and sequential content use direct tools (Bash/Read); large-output extraction uses capy tools.

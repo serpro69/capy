@@ -278,7 +278,7 @@ func TestPreToolUse_BashGuidanceOnce(t *testing.T) {
 
 // ─── WebFetch tests ────────────────────────────────────────────────────────────
 
-func TestPreToolUse_WebFetchDenied(t *testing.T) {
+func TestPreToolUse_WebFetchAllowedWithGuidance(t *testing.T) {
 	ResetGuidanceThrottle()
 	a := &testAdapter{}
 	input := makeInput("WebFetch", map[string]any{"url": "https://example.com"})
@@ -286,8 +286,8 @@ func TestPreToolUse_WebFetchDenied(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output)
 	result := parseResult(t, output)
-	assert.Equal(t, "deny", result["action"])
-	assert.Contains(t, result["reason"], "capy_fetch_and_index")
+	assert.Equal(t, "context", result["action"])
+	assert.Contains(t, result["additionalContext"], "capy_fetch_and_index")
 }
 
 // ─── Read/Grep guidance tests ──────────────────────────────────────────────────

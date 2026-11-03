@@ -42,6 +42,16 @@ func TestChildRoutingUnknownCapabilities(t *testing.T) {
 					input := hookInput(t, call.tool, call.input, map[string]any{"agent_id": identity.id, "agent_type": identity.kind})
 					output, err := handleEvent("pretooluse", input, ccAdapter(), &project)
 					require.NoError(t, err)
+					if identity.id == "" && call.name == "web page" {
+						// ADR-037: main-agent WebFetch is allowed; the advisory is claimed
+						// once per session, so a later main identity passes through silently.
+						if output != nil {
+							hso := ccParse(t, output)
+							assert.NotContains(t, hso, "permissionDecision")
+							assert.Contains(t, hso["additionalContext"], "capy_fetch_and_index")
+						}
+						return
+					}
 					hso := ccParse(t, output)
 					assert.NotContains(t, hso, "updatedInput")
 					if identity.id == "" {
