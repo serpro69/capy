@@ -84,7 +84,7 @@ func TestMergeCodexHooks(t *testing.T) {
 				},
 			},
 		}
-		require.NoError(t, writeJSONFile(path, root))
+		require.NoError(t, writeJSONFile(path, root, nil))
 		require.NoError(t, mergeCodexHooks(path, testCodexOwnerID))
 		data, err := os.ReadFile(path)
 		require.NoError(t, err)
@@ -142,6 +142,76 @@ func TestMergeCodexHooks(t *testing.T) {
 			require.Equal(t, tc.content, string(after))
 		})
 	}
+}
+
+// Order-preserving tools (e.g. jq-based template syncs) also merge these files;
+// setup must not reorder or re-escape content it leaves alone, or each tool
+// rewrites the other's output on every run.
+func TestSetupJSONMergesPreserveFormatting(t *testing.T) {
+	external := `{"type": "command", "command": "a 2>/dev/null <&0 && b"}`
+	assertPreserved := func(t *testing.T, path string, merge func(string) error, prefixes ...string) {
+		t.Helper()
+		require.NoError(t, merge(path))
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.NotContains(t, string(data), `\u00`, "HTML-escaped output")
+		require.Contains(t, string(data), `"a 2>/dev/null <&0 && b"`)
+		last := -1
+		for _, prefix := range prefixes {
+			index := strings.Index(string(data), prefix)
+			require.Greater(t, index, last, "%s moved:\n%s", prefix, data)
+			last = index
+		}
+		require.NoError(t, merge(path))
+		again, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, string(data), string(again))
+	}
+
+	t.Run("codex hooks", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "hooks.json")
+		content := `{"zeta": 1, "hooks": {"SessionStart": [{"matcher": "s", "hooks": [` + external + `]}],` +
+			` "PreToolUse": [{"matcher": "p", "hooks": [` + external + `]}]}, "alpha": 2}`
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+		assertPreserved(t, path, func(path string) error { return mergeCodexHooks(path, testCodexOwnerID) },
+			`"zeta"`, `"SessionStart"`, `"matcher": "s"`, `"PreToolUse"`, `"matcher": "p"`, codexHookEvents[1].Matcher,
+			// New events follow existing ones, sorted like a fresh file.
+			`"PostToolUse"`, `"SessionEnd"`, `"SubagentStart"`, `"alpha"`)
+	})
+
+	t.Run("codex hooks rewritten with escaped commands", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "hooks.json")
+		require.NoError(t, mergeCodexHooks(path, testCodexOwnerID))
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		escaped := strings.NewReplacer("<", `\u003c`, ">", `\u003e`, "&", `\u0026`).Replace(string(data))
+		require.NotEqual(t, string(data), escaped)
+		require.NoError(t, os.WriteFile(path, []byte(escaped), 0o644))
+		require.NoError(t, mergeCodexHooks(path, testCodexOwnerID))
+		again, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, string(data), string(again))
+	})
+
+	t.Run("claude settings and MCP config", func(t *testing.T) {
+		settings := filepath.Join(t.TempDir(), "settings.json")
+		content := `{"zeta": 1, "hooks": {"Stop": [{"matcher": "", "hooks": [` + external + `]}],` +
+			` "PreToolUse": [{"matcher": "x", "hooks": [` + external + `]}]}, "alpha": 2}`
+		require.NoError(t, os.WriteFile(settings, []byte(content), 0o644))
+		assertPreserved(t, settings, mergeHooks, `"zeta"`, `"Stop"`, `"PreToolUse"`, `"matcher": "x"`,
+			"hook pretooluse", `"PostToolUse"`, `"alpha"`)
+		removed, err := removeCapyHooks(settings)
+		require.NoError(t, err)
+		require.True(t, removed)
+		data, err := os.ReadFile(settings)
+		require.NoError(t, err)
+		require.NotContains(t, string(data), `\u00`)
+		require.Less(t, strings.Index(string(data), `"Stop"`), strings.Index(string(data), `"PreToolUse"`))
+
+		mcp := filepath.Join(t.TempDir(), ".mcp.json")
+		require.NoError(t, os.WriteFile(mcp, []byte(`{"mcpServers": {"zed": {"command": "a 2>/dev/null <&0 && b"}, "abc": {}}}`), 0o644))
+		assertPreserved(t, mcp, mergeMCPServer, `"zed"`, `"abc"`, `"capy"`)
+	})
 }
 
 func TestCodexMCPMergePreservesOversizeInput(t *testing.T) {

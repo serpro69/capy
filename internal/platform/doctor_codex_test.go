@@ -154,7 +154,7 @@ func mutateDoctorHooks(t *testing.T, dir string, mutate func(map[string]any)) {
 	path := filepath.Join(dir, codexHooksRelPath)
 	root := mustReadJSONMap(t, path)
 	mutate(root["hooks"].(map[string]any))
-	require.NoError(t, writeJSONFile(path, root))
+	require.NoError(t, writeJSONFile(path, root, nil))
 }
 
 func replaceDoctorConfig(t *testing.T, dir, from, to string) {

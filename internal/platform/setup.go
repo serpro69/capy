@@ -2,7 +2,6 @@ package platform
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -383,7 +382,7 @@ var hookEvents = []struct {
 // mergeHooks reads the given settings file, upserts capy hook entries, and writes back.
 // Hook commands reference the portable wrapper script via $CLAUDE_PROJECT_DIR.
 func mergeHooks(settingsPath string) error {
-	settings, err := readJSONFile(settingsPath)
+	settings, order, err := readJSONFile(settingsPath)
 	if err != nil {
 		return err
 	}
@@ -417,13 +416,13 @@ func mergeHooks(settingsPath string) error {
 	}
 
 	settings["hooks"] = hooks
-	return writeJSONFile(settingsPath, settings)
+	return writeJSONFile(settingsPath, settings, order)
 }
 
 // removeCapyHooks removes all capy hook entries from a settings file.
 // Returns true if any hooks were removed. Preserves non-capy entries.
 func removeCapyHooks(settingsPath string) (bool, error) {
-	settings, err := readJSONFile(settingsPath)
+	settings, order, err := readJSONFile(settingsPath)
 	if err != nil {
 		return false, err
 	}
@@ -455,7 +454,7 @@ func removeCapyHooks(settingsPath string) (bool, error) {
 	if len(hooks) == 0 {
 		delete(settings, "hooks")
 	}
-	return true, writeJSONFile(settingsPath, settings)
+	return true, writeJSONFile(settingsPath, settings, order)
 }
 
 // findHookEntry finds the index of a hook entry whose command contains the given substring.
@@ -484,7 +483,7 @@ func findHookEntry(entries []any, commandSubstr string) int {
 // mergeMCPServer reads .mcp.json, upserts the capy server entry, and writes back.
 // Uses the portable wrapper script instead of a hardcoded binary path.
 func mergeMCPServer(mcpPath string) error {
-	root, err := readJSONFile(mcpPath)
+	root, order, err := readJSONFile(mcpPath)
 	if err != nil {
 		return err
 	}
@@ -500,7 +499,7 @@ func mergeMCPServer(mcpPath string) error {
 	}
 
 	root["mcpServers"] = servers
-	return writeJSONFile(mcpPath, root)
+	return writeJSONFile(mcpPath, root, order)
 }
 
 // codexMCPMarker is the TOML table header that indicates capy is registered as an MCP server.
@@ -636,29 +635,31 @@ func ensureGitignoreEntry(gitignorePath, entry string) error {
 	return err
 }
 
-// readJSONFile reads a JSON file into a map. Returns an empty map if the file doesn't exist.
-func readJSONFile(path string) (map[string]any, error) {
+// readJSONFile reads a JSON object into a map, recording its key order for
+// writeJSONFile. Returns an empty map if the file doesn't exist. Duplicate keys
+// keep json.Unmarshal's last-wins behavior.
+func readJSONFile(path string) (map[string]any, jsonKeyOrder, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return make(map[string]any), nil
+		return make(map[string]any), nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	var result map[string]any
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	result, order, err := decodeOrderedJSON(data, false)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
-	return result, nil
+	return result, order, nil
 }
 
-// writeJSONFile writes a map to a JSON file with 2-space indentation.
-func writeJSONFile(path string, data map[string]any) error {
-	out, err := json.MarshalIndent(data, "", "  ")
+// writeJSONFile writes a map to a JSON file with 2-space indentation, keeping
+// the key order readJSONFile recorded (nil order sorts keys).
+func writeJSONFile(path string, data map[string]any, order jsonKeyOrder) error {
+	out, err := encodeOrderedJSON(data, order)
 	if err != nil {
 		return err
 	}
-	out = append(out, '\n')
 	return os.WriteFile(path, out, 0o644)
 }
