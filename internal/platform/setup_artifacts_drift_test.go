@@ -59,8 +59,10 @@ type mergeArtifact struct {
 	genName string             // merge-function symbol, named in the failure message
 }
 
-// jsonMergeArtifacts are compared as parsed maps, so key ordering / whitespace
-// never causes a false positive — only a semantic change in the capy entry fails.
+// jsonMergeArtifacts are compared as parsed maps (to report semantic drift in the
+// capy entry) and then byte-wise: setup keeps existing key order and literal <, >
+// and &, so a no-op merge must not reformat what other tools (e.g. order-preserving
+// jq template syncs) wrote.
 var jsonMergeArtifacts = []mergeArtifact{
 	{".mcp.json", mergeMCPServer, "mergeMCPServer"},
 	{".claude/settings.local.json", mergeHooks, "mergeHooks"},
@@ -117,6 +119,13 @@ func TestMergedArtifactsAreIdempotent(t *testing.T) {
 				"%s changed when %s re-ran — the committed capy entry drifted from the "+
 					"generator. Apply the change to BOTH %s and the committed file.\n"+
 					"before: %v\nafter:  %v", a.path, a.genName, a.genName, before, after)
+			beforeBytes, err := os.ReadFile(src)
+			require.NoError(t, err)
+			afterBytes, err := os.ReadFile(tmp)
+			require.NoError(t, err)
+			assert.Equal(t, string(beforeBytes), string(afterBytes),
+				"%s was reformatted when %s re-ran (key order, escaping or whitespace) — "+
+					"setup must leave untouched content byte-identical.", a.path, a.genName)
 		})
 	}
 

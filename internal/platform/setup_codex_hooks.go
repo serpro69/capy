@@ -1,7 +1,6 @@
 package platform
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 )
@@ -36,8 +35,9 @@ func mergeCodexHooks(path, id string) error {
 		return err
 	}
 	root := make(map[string]any)
+	var order jsonKeyOrder
 	if exists {
-		root, err = decodeCodexJSON(data)
+		root, order, err = decodeOrderedJSON(data, true)
 		if err != nil {
 			return fmt.Errorf("parse %s: %w", path, err)
 		}
@@ -70,11 +70,10 @@ func mergeCodexHooks(path, id string) error {
 		})
 	}
 	// additionalContextLimit is deliberately absent from generated handlers.
-	out, err := json.MarshalIndent(root, "", "  ")
+	out, err := encodeOrderedJSON(root, order)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", path, err)
 	}
-	out = append(out, '\n')
 	if len(out) > codexConfigLimit {
 		return fmt.Errorf("%s would exceed %d bytes after merging; reduce the configuration before setup", path, codexConfigLimit)
 	}
