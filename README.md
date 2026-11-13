@@ -479,7 +479,9 @@ This project is developed with AI assistance and human review, testing, and rewo
 
 ## Acknowledgements
 
-capy began as a Go port of [context-mode](https://github.com/mksglu/context-mode), which provided the original search, chunking, execution, and routing foundations. It has since evolved independently with persistent knowledge, mandatory encryption, and the session vault. Go provides a native binary without a Node.js installation requirement for capy itself.
+Capy began as a personal pet-project where I explored and borrowed ideas like the original search, chunking, execution, and routing foundations from [context-mode](https://github.com/mksglu/context-mode) and implemented them in Go with the help of AI. It provided me with a playground for learning and improving on how I work with AI-assisted development.
+
+Since then capy has evolved independently of the context-mode and now contains a lot of its own new features like persistent knowledge, mandatory encryption, and the session vault. I also use it daily for various projects, and it's deeply integrated into my other AI-related tooling: [claude-toolbox](https://github.com/serpro69/claude-toolbox).
 
 ## License
 
