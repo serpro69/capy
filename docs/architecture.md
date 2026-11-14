@@ -216,8 +216,8 @@ Only an explicit validated operator disposition can close that uncertainty for
 operational reuse; it never supplies the missing execution proof.
 
 Every admitted row has immutable `cleanup_scope` and a validated `cleanup` state,
-with no SQL defaults. Linux uses `linux_descendants_v1` / `retired`; macOS 26 on
-Apple Silicon with CGO uses `darwin_process_group_observation_v1` / `observed`.
+with no SQL defaults. Linux uses `linux_descendants_v1` / `retired`; macOS 26–27
+on Apple Silicon with CGO uses `darwin_process_group_observation_v1` / `observed`.
 `not_spawned` and `pending` exist in both scopes. Compiler/runtime phase evidence
 is combined before finalization. Batch manifest copies are updated in the same
 transaction as their run rows and remain authoritative after child-log eviction;

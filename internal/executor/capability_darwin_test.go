@@ -11,8 +11,10 @@ func TestDarwinObservationSupportMatrix(t *testing.T) {
 	}{
 		{"floor", "arm64", "26.0", true},
 		{"patch", "arm64", "26.6.2", true},
+		{"next major", "arm64", "27.0", true},
+		{"next major patch", "arm64", "27.2.1", true},
 		{"older major", "arm64", "15.7", false},
-		{"future major", "arm64", "27.0", false},
+		{"future major", "arm64", "28.0", false},
 		{"intel", "amd64", "26.0", false},
 		{"unknown architecture", "", "26.0", false},
 		{"unknown version", "arm64", "", false},

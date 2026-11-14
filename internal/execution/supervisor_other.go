@@ -10,7 +10,7 @@ import (
 )
 
 func ServeInherited(context.Context, OpenRun) error {
-	return errors.New("run supervision requires Linux or macOS 26 on Apple Silicon with CGO")
+	return errors.New("run supervision requires Linux or macOS 26–27 on Apple Silicon with CGO")
 }
 
 func supervisorCleanupScope() executor.CleanupScope { return "" }

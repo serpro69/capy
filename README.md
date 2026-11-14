@@ -142,7 +142,7 @@ then `capy runs list --json` and `capy runs read --run-id <returned-id> --json`.
 The CLI stays attached; MCP can yield with `wait_ms` while capture continues.
 The [run operations guide](docs/reference/runs.md) covers pagination, batches,
 cancellation, quotas, owner selection and rotation. Captured execution supports
-Linux and macOS 26 on Apple Silicon with CGO. Darwin reports bounded cleanup
+Linux and macOS 26–27 on Apple Silicon with CGO. Darwin reports bounded cleanup
 observations; escaped or racing descendants may survive. Doctor separates
 host/build capability from storage health and hook activation. See the guide's
 schema-upgrade and explicit-discard rollback procedures before mixing versions.

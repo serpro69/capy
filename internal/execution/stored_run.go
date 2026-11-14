@@ -24,7 +24,7 @@ func Supported() error {
 		}
 		return nil
 	default:
-		return &runstore.Error{Code: "storage_unavailable", Message: "captured execution requires Linux or macOS 26 on Apple Silicon with CGO"}
+		return &runstore.Error{Code: "storage_unavailable", Message: "captured execution requires Linux or macOS 26–27 on Apple Silicon with CGO"}
 	}
 }
 
