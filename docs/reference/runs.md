@@ -6,8 +6,8 @@ as exact bytes in the selected owner's encrypted `.capy/runs/runs.db`; responses
 and default reads use a sanitized projection. Search is built lazily from that
 projection. New run output does not become knowledge or vault content.
 
-The captured execution supervisor supports Linux and macOS 26 on Apple Silicon
-with CGO. Other macOS majors, Intel Macs and other platforms fail before spawn.
+The captured execution supervisor supports Linux and macOS 26–27 on Apple
+Silicon with CGO. Other macOS majors, Intel Macs and other platforms fail before spawn.
 Commands inherit the caller's OS confinement; capy does not grant filesystem or
 network permissions.
 
@@ -24,6 +24,15 @@ Tests use isolated fixture roots. CI retains the full ordinary FTS5/race/vet
 checks and adds these lifecycle suites; macOS proof runs on the explicit
 `macos-26` arm64 runner. Release builds verify capture and restart recovery with
 the actual binary before packaging, including both streams and a nonzero exit.
+
+macOS 27 support has only been verified locally; CI does not run on 27. GitHub
+offers no hosted `macos-27` arm64 image yet, so release binaries are built and
+tested on 26 with deployment target 26.0. On 2026-11-14, on macOS 27.2.1
+(26B131), Darwin 27.2.0 arm64, Go 1.27.2, SDK 27.2, deployment target 26.0, all of
+the following passed: both integration targets, the run-store race suite, the
+compiled mode tests, vet, the release-binary capture smoke test and all 55
+required native proof fixtures. Add a 27 runner to the CI proof job once
+GitHub publishes one.
 
 ## Execute and recover
 

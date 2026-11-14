@@ -42,6 +42,10 @@ jobs:
           } | tee "$RUNNER_TEMP/macos-proof-environment.txt"
           test "$(uname -m)" = arm64
           test "$(go env GOOS)/$(go env GOARCH)" = darwin/arm64
+          # TODO: macOS 27 is supported (darwinObservationMatrix) but proved only
+          # locally (docs/reference/runs.md). No hosted macos-27 arm64 image exists
+          # yet; when one does, run this job as a matrix over macos-26/macos-27
+          # and widen this check to accept 27.*.
           case "$(sw_vers -productVersion)" in
             26.*) ;;
             *) echo 'Expected the supported macOS 26 major' >&2; exit 1 ;;

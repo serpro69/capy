@@ -55,8 +55,8 @@ func darwinObservationMatrix(arch, version string) error {
 		return errors.New("darwin observation requires apple silicon")
 	}
 	major, _, _ := strings.Cut(version, ".")
-	if major != "26" {
-		return errors.New("darwin observation requires macos 26")
+	if major != "26" && major != "27" {
+		return errors.New("darwin observation requires macos 26 or 27")
 	}
 	return nil
 }

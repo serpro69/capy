@@ -22,7 +22,7 @@ func GenerateRoutingInstructions() string {
 
 Capy captures execution output in a separate encrypted run store and returns bounded results. Knowledge and session search remain separate.
 
-Captured execution supports Linux and macOS 26 on Apple Silicon with CGO. Darwin cleanup is observational: escaped or racing descendants may survive a completed run. Use capy_doctor to check host/build capability and authenticated storage compatibility separately; it does not execute a proof probe or establish hook activation or host quiescence. Align CLI/PATH/MCP versions and reload after upgrades. Never discard run logs automatically to repair a version or cleanup error.
+Captured execution supports Linux and macOS 26–27 on Apple Silicon with CGO. Darwin cleanup is observational: escaped or racing descendants may survive a completed run. Use capy_doctor to check host/build capability and authenticated storage compatibility separately; it does not execute a proof probe or establish hook activation or host quiescence. Align CLI/PATH/MCP versions and reload after upgrades. Never discard run logs automatically to repair a version or cleanup error.
 
 ## Decision principle
 

@@ -138,14 +138,14 @@ func checkRunCapability(goos string, unsupported error) CheckResult {
 	result := CheckResult{Name: "Run execution", Status: Pass}
 	if unsupported != nil {
 		result.Status = Fail
-		result.Detail = "unsupported host/build; capture requires Linux or macOS 26 on Apple Silicon with CGO; align CLI/PATH/MCP binaries and reload; no execution probe was run"
+		result.Detail = "unsupported host/build; capture requires Linux or macOS 26–27 on Apple Silicon with CGO; align CLI/PATH/MCP binaries and reload; no execution probe was run"
 		return result
 	}
 	switch goos {
 	case "linux":
 		result.Detail = "available; cleanup scope=linux_descendants_v1, completed state=retired"
 	case "darwin":
-		result.Detail = "available on macOS 26 Apple Silicon; cleanup scope=darwin_process_group_observation_v1, completed state=observed; escaped or racing descendants may survive; observed does not prove host quiescence"
+		result.Detail = "available on macOS 26–27 Apple Silicon; cleanup scope=darwin_process_group_observation_v1, completed state=observed; escaped or racing descendants may survive; observed does not prove host quiescence"
 	default:
 		result.Status = Fail
 		result.Detail = "unsupported execution platform"
