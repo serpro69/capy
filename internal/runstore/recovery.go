@@ -129,22 +129,9 @@ func (s *Store) reconcileSlotValidated(ctx context.Context, slot int, validated 
 	if err != nil {
 		return report, storageError()
 	}
-	// Avoid taking SQLite's writer lock for the usual already-clean slot.
-	var work bool
-	workQuery := `SELECT EXISTS(SELECT 1 FROM runs WHERE slot=? AND terminal=0)
-OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=?)
- OR EXISTS(SELECT 1 FROM run_batch_children c JOIN run_batches b ON b.id=c.batch_id LEFT JOIN runs r ON r.id=c.run_id WHERE b.slot=? AND c.terminal=0 AND r.id IS NULL)`
-	args := []any{slot, slot, slot}
-	if s.policy.SchemaVersion >= 10 {
-		workQuery += " OR EXISTS(SELECT 1 FROM run_resolutions WHERE slot=?)"
-		args = append(args, slot)
-	}
-	err = s.db.QueryRowContext(ctx, workQuery, args...).Scan(&work)
+	work, err := s.slotNeedsRecovery(ctx, slot, validated)
 	if err != nil || !work {
-		if err != nil {
-			return report, storageError()
-		}
-		return report, nil
+		return report, err
 	}
 	// Recovery may rewrite a retained program's large encrypted record. It is
 	// bounded by the existing recovery deadline, not the capture append budget.
@@ -237,6 +224,46 @@ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=? AND generation=?)`, slot, g
 		return RecoveryReport{}, metadataFailure(writeCtx, "committing recovered metadata")
 	}
 	return report, nil
+}
+
+// The caller holds the registry and slot leases. A disposed run still carries
+// its original nonterminal state. Validate the authority to exclude it in the
+// same read snapshot that decides whether this slot needs a writer.
+func (s *Store) slotNeedsRecovery(ctx context.Context, slot int, validated *recoveryValidation) (bool, error) {
+	var work bool
+	if s.policy.SchemaVersion < 10 {
+		err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM runs WHERE slot=?1 AND terminal=0)
+ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=?1)
+ OR EXISTS(SELECT 1 FROM run_batch_children c JOIN run_batches b ON b.id=c.batch_id LEFT JOIN runs r ON r.id=c.run_id WHERE b.slot=?1 AND c.terminal=0 AND r.id IS NULL)`, slot).Scan(&work)
+		if err != nil {
+			return false, storageError()
+		}
+		return work, nil
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return false, storageError()
+	}
+	defer tx.Rollback()
+	var dispositions, openIncident bool
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM run_resolutions WHERE slot=?1),
+ EXISTS(SELECT 1 FROM runs WHERE slot=?1 AND terminal=0 AND `+undisposedRunSQL+`)
+ OR EXISTS(SELECT 1 FROM run_work_claims WHERE slot=?1)
+ OR EXISTS(SELECT 1 FROM run_batch_children c JOIN run_batches b ON b.id=c.batch_id LEFT JOIN runs r ON r.id=c.run_id
+   WHERE b.slot=?1 AND c.terminal=0 AND r.id IS NULL AND NOT EXISTS(SELECT 1 FROM run_resolutions d WHERE d.run_id=c.run_id)),
+ EXISTS(SELECT 1 FROM run_incidents WHERE slot=?1 AND receipt_id IS NULL)`, slot).Scan(&dispositions, &work, &openIncident)
+	if err != nil {
+		return false, storageError()
+	}
+	// With only terminal history, checkQuarantine already refuses an open
+	// incident. Preserve that read-only refusal while a peer holds the writer.
+	if dispositions && openIncident {
+		return true, nil
+	}
+	if dispositions && !work {
+		_, err = validated.validateSnapshot(ctx, tx, slot)
+	}
+	return work, err
 }
 
 func recoveryIDs(ctx context.Context, tx *sql.Tx, query string, slot int, generation string) ([]string, error) {
