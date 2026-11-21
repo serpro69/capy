@@ -125,6 +125,7 @@ func TestMergeCancelledAfterCommittedDeletionBatch(t *testing.T) {
 	defer tx.Rollback()
 	res, err := mergeSnapshot(ctx, cancelAfterDeletionBatch{dest, cancel}, tx, MergeOptions{})
 	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorContains(t, err, fmt.Sprintf("unprocessed deletion UUIDs abcd1234-0000-0000-0000-%012d", maxBatchSessions))
 	require.Len(t, res.Deletions, maxBatchSessions)
 	retry := mergeVaults(t, dest, src, MergeOptions{})
 	require.Len(t, retry.Deletions, maxBatchSessions+1)
@@ -220,6 +221,37 @@ func (s *interleavedDestination) WriteBatch(ctx context.Context, w []SessionWrit
 		s.afterWrite()
 	}
 	return out, err
+}
+
+func TestMergeCancellationReportsQueuedAndRemainingSessions(t *testing.T) {
+	src, dest := newTestVault(t), newTestVault(t)
+	for _, id := range []string{"session-a", "session-b", "session-c"} {
+		require.NoError(t, src.InsertSession(t.Context(), mergeRecord(t, id, "live", 3, 20, "hash", "a", "/a")))
+	}
+	db, err := src.getDB(t.Context())
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	// A is queued. Cancelling during B's planning fails its source read,
+	// leaving A unwritten and C unvisited at the next session boundary.
+	plans := 0
+	receiver := &interleavedDestination{VaultStore: dest, afterPlan: func() {
+		plans++
+		if plans == 2 {
+			cancel()
+		}
+	}}
+	res, err := mergeSnapshot(ctx, receiver, tx, MergeOptions{})
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorContains(t, err, "before session-c (live sessions remaining: 1)")
+	require.Zero(t, res.Imported)
+	require.Equal(t, 2, res.Errors)
+	require.Contains(t, res.Sessions, ImportedSession{UUID: "session-a", Platform: PlatformClaudeCode,
+		Status: StatusError, Reason: "unprocessed", Err: context.Canceled})
+	require.Equal(t, 3, mergeVaults(t, dest, src, MergeOptions{}).Imported)
 }
 
 func mergeWithDestination(t *testing.T, dest mergeDestination, src *VaultStore, opts MergeOptions) ImportResult {

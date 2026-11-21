@@ -90,6 +90,8 @@ func TestImportDeletionBeforeFileRead(t *testing.T) {
 			}
 		}
 	}
+	// The admitted Codex neighbor requires version 3 by itself.
+	require.Equal(t, "4", minReaderMarker(t, s))
 }
 
 func TestDeletedWriteSurvivesBatchRollbackAndRetry(t *testing.T) {
@@ -191,18 +193,38 @@ func (w *interleavedImportWriter) importDigest(ctx context.Context, id string) (
 }
 
 func TestImportDeletionDuringFileRead(t *testing.T) {
-	for _, dry := range []bool{true, false} {
-		s := newTestVault(t)
-		home := t.TempDir()
-		writeCodexRollout(t, home, codexActiveRel(codexDiscUUIDA), codexImportRollout(t, codexLegacy, codexDiscUUIDA, "/a", "test"), false)
-		require.Equal(t, 1, importCodexHome(t, s, home, ImportOptions{}).Imported)
-		files, _, err := DiscoverCodexSessions(t.Context(), home, CodexDiscoverOptions{})
-		require.NoError(t, err)
-		w := &interleavedImportWriter{VaultStore: s, beforeDigest: func() { rememberForTest(t, s, codexDiscUUIDA) }}
-		res := importSessions(t.Context(), w, files, ImportOptions{DryRun: dry, MinSessionBytes: 1 << 30})
-		require.Len(t, res.Sessions, 1)
-		require.Equal(t, StatusExcluded, res.Sessions[0].Status)
-		require.Equal(t, reasonDeleted, res.Sessions[0].Reason)
+	for _, tc := range []struct {
+		name      string
+		sightings int
+		dry       bool
+	}{
+		{"first sighting", 1, false}, {"first sighting preview", 1, true},
+		{"duplicate", 2, false}, {"duplicate preview", 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestVault(t)
+			home := t.TempDir()
+			writeCodexRollout(t, home, codexActiveRel(codexDiscUUIDA), codexImportRollout(t, codexLegacy, codexDiscUUIDA, "/a", "test"), false)
+			require.Equal(t, 1, importCodexHome(t, s, home, ImportOptions{}).Imported)
+			files, _, err := DiscoverCodexSessions(t.Context(), home, CodexDiscoverOptions{})
+			require.NoError(t, err)
+			if tc.sightings == 2 {
+				files = append(files, files[0])
+			}
+			reads := 0
+			w := &interleavedImportWriter{VaultStore: s, beforeDigest: func() {
+				reads++
+				if reads == tc.sightings {
+					rememberForTest(t, s, codexDiscUUIDA)
+				}
+			}}
+			res := importSessions(t.Context(), w, files, ImportOptions{DryRun: tc.dry, MinSessionBytes: 1 << 30})
+			require.Len(t, res.Sessions, tc.sightings)
+			require.Equal(t, tc.sightings-1, res.Skipped)
+			last := res.Sessions[tc.sightings-1]
+			require.Equal(t, StatusExcluded, last.Status)
+			require.Equal(t, reasonDeleted, last.Reason)
+		})
 	}
 }
 

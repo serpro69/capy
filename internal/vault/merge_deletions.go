@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/serpro69/capy/internal/sqliteutil"
 )
@@ -28,10 +29,20 @@ func mergeSourceDeletions(ctx context.Context, src ctxQueryer, dest mergeDestina
 	}
 	defer rows.Close()
 	var batch []deletionGroup
+	unprocessed := func(err error) error {
+		if len(batch) == 0 {
+			return err
+		}
+		ids := make([]string, 0, len(batch))
+		for _, group := range batch {
+			ids = append(ids, group.uuid)
+		}
+		return fmt.Errorf("unprocessed deletion UUIDs %s: %w", strings.Join(ids, ", "), err)
+	}
 	flush := func() error {
 		results, err := dest.mergeDeletionBatch(ctx, batch, opts.DryRun)
 		if err != nil {
-			return fmt.Errorf("processing deletion batch starting at %s: %w", batch[0].uuid, err)
+			return unprocessed(fmt.Errorf("processing deletion batch: %w", err))
 		}
 		res.Deletions = append(res.Deletions, results...)
 		batch = nil
@@ -40,7 +51,7 @@ func mergeSourceDeletions(ctx context.Context, src ctxQueryer, dest mergeDestina
 	for rows.Next() {
 		var id, project string
 		if err := rows.Scan(&id, &project); err != nil {
-			return err
+			return unprocessed(fmt.Errorf("scanning source deletion: %w", err))
 		}
 		if opts.Project != "" && !containsProjectASCII(project, opts.Project) {
 			continue
@@ -48,7 +59,7 @@ func mergeSourceDeletions(ctx context.Context, src ctxQueryer, dest mergeDestina
 		if len(batch) == 0 || batch[len(batch)-1].uuid != id {
 			if len(batch) == maxBatchSessions {
 				if err := flush(); err != nil {
-					return err
+					return fmt.Errorf("stopped before deletion UUID %s: %w", id, err)
 				}
 			}
 			batch = append(batch, deletionGroup{uuid: id})
@@ -57,7 +68,7 @@ func mergeSourceDeletions(ctx context.Context, src ctxQueryer, dest mergeDestina
 		last.projects = append(last.projects, project)
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return unprocessed(fmt.Errorf("reading source deletions: %w", err))
 	}
 	if len(batch) > 0 {
 		return flush()

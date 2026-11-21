@@ -296,18 +296,10 @@ func importSessions(ctx context.Context, store importStore, sessions []SessionFi
 		// surgery inside the batch slices). A dry run has no batch; wouldWrite
 		// stands in for "pending" so it reports the same `updated`.
 		prev, dup := seen[sf.UUID]
-		if dup {
-			if hash == prev.hash || size < prev.size {
-				res.record(outcome(StatusSkipped, size))
-				continue
-			}
-			if prev.gen == batchGen && !opts.DryRun {
-				flush()
-			}
+		skipDuplicate := dup && (hash == prev.hash || size < prev.size)
+		if dup && !skipDuplicate && prev.gen == batchGen && !opts.DryRun {
+			flush()
 		}
-		// Record this sighting now (whatever the decision turns out to be) so a
-		// third copy reconciles against it; gen/wouldWrite are refined below.
-		seen[sf.UUID] = seenSession{hash: hash, size: size, gen: -1}
 
 		digest, err := store.importDigest(ctx, sf.UUID)
 		if err != nil {
@@ -320,6 +312,12 @@ func importSessions(ctx context.Context, store importStore, sessions []SessionFi
 			res.record(writeOutcome{reason: reasonDeleted}.apply(outcome(StatusExcluded, size)))
 			continue
 		}
+		if skipDuplicate {
+			res.record(outcome(StatusSkipped, size))
+			continue
+		}
+		// Later copies reconcile against this sighting. gen/wouldWrite are refined below.
+		seen[sf.UUID] = seenSession{hash: hash, size: size, gen: -1}
 
 		// Size filtering is an admission rule, so it must follow the digest lookup
 		// and leave existing archives (including stale indexes and moves) alone.

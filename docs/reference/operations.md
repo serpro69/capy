@@ -33,6 +33,7 @@ Files merge from global `~/.config/capy/config.toml` (or `XDG_CONFIG_HOME`) thro
 | `search.taper_after` | `3` | Later calls return at most one hit per query. |
 | `search.block_after` | `8` | Later calls are blocked until reset. |
 | `vault.min_session_bytes` | `0` | Minimum size for new archives; zero disables. |
+| `vault.remember_deletions` | `true` | Record future local deletions for import suppression and propagation through merge. Existing and incoming deletion records apply in either mode. [Vault deletion](vault.md#delete-a-session) |
 
 Search fields merge by presence. Zero, wrong types, and out-of-range values fail; the merged thresholds require `1 <= taper_after < block_after <= 10000`. Restart MCP to load changes. Other fields have their own merge rules; do not assume zero clears an inherited value. See [configuration internals](../architecture.md#configuration).
 

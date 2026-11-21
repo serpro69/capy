@@ -103,7 +103,10 @@ default ~/.codex — both sessions/ and archived_sessions/). Pass --platform to
 restrict the run to one of them, or --source to import from one directory
 (its layout is autodetected, see the flag).
 
-The MCP server's startup sweep only archives the current project. Run
+Import and the server's startup sweep exclude UUIDs with a remembered deletion,
+even if the transcript has grown or moved.
+
+The MCP server's startup sweep defaults to the current project. Run
 'capy vault import' periodically (e.g. via cron) to capture sessions across
 all projects before Claude Code's 30-day cleanup removes them.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -989,9 +992,12 @@ func newVaultMergeCmd(env *vaultEnv) *cobra.Command {
 		Use:   "merge --from <vault.db>",
 		Short: "Merge sessions and remembered deletions from another vault",
 		Long: `Import sessions and remembered deletions from another machine's vault.
-A selected deletion removes the matching UUID from this vault and is kept for
-future merges. --project selects deletion records by their source project at
-deletion time. Use --dry-run to preview archive removals and deletion pairs.
+A selected deletion removes the matching UUID from this vault. Even with local
+recording disabled, this vault retains the original UUID/project pair for future
+merges. --project selects deletion records by their source project at deletion
+time. Use --dry-run to preview distinct archives removed, new pairs added, and
+pairs already present. If a later batch fails, the command reports the batches
+that committed. A retry recognizes their deletion pairs as already present.
 
 Distinct live sessions are added. For a shared live UUID the larger-total-content
 copy wins. Re-running is idempotent.
@@ -1008,8 +1014,9 @@ be WRITABLE (merge checkpoints its WAL before reading) — copy a read-only sour
 (backup media, read-only mount) to a writable location first and point --from at
 the copy.
 
-No "stop the server" requirement: merge writes only this (destination) vault and
-tolerates a concurrent server sweep via busy-timeout retry, the same as import.`,
+Before recording or receiving the first deletion, upgrade and restart all writers
+sharing the vault. The first pair requires reader version 4. After rollout, merge
+can run alongside the server's startup sweep.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := guardTUI(cmd); err != nil {
 				return err
@@ -1061,7 +1068,7 @@ tolerates a concurrent server sweep via busy-timeout retry, the same as import.`
 	}
 	cmd.Flags().StringVar(&from, "from", "", "path to the source vault.db to merge from (required)")
 	cmd.Flags().StringVar(&keyFlag, "key", "", "source vault passphrase (default: CAPY_VAULT_MERGE_KEY, then CAPY_VAULT_KEY)")
-	cmd.Flags().StringVar(&project, "project", "", "only merge sessions whose source effective project contains this literal substring (custom label, otherwise imported path)")
+	cmd.Flags().StringVar(&project, "project", "", "select live sessions and deletion records by literal substring of their source effective project")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview what would be merged without writing")
 	cmd.Flags().Int64("min-size-bytes", 0, "minimum uncompressed size for new sessions, including sidecars (overrides vault.min_session_bytes; 0 disables)")
 	return cmd
@@ -1378,8 +1385,9 @@ func newVaultDeleteCmd(env *vaultEnv) *cobra.Command {
 		Long: `Remove a session's transcript, sidecars, and search entries from this vault.
 By default capy remembers the UUID and its effective project. Future imports
 exclude the UUID, and merges can delete its copies in other vaults. Capy cannot
-undo a remembered deletion. Set vault.remember_deletions = false for a one-time
-local removal. The original Claude or Codex transcript stays on disk.
+undo a remembered deletion. Set vault.remember_deletions = false in the invocation
+project's configuration for a one-time local removal. Existing and incoming
+deletions still apply. The original Claude or Codex transcript stays on disk.
 
 Only the addressed session is deleted. Its child sessions (Codex sub-agent
 rollouts) are separate archived sessions and are kept — a warning lists them.`,

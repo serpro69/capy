@@ -4,7 +4,7 @@
 >
 > Implementation: [implementation.md](./implementation.md)
 >
-> Status: in-progress
+> Status: done
 >
 > Not Doing: bulk deletion, physical erasure, local or synchronized undelete
 >
@@ -62,13 +62,20 @@
 
 ## Task 4. Verify the operator workflow and document rollout
 
-**Status:** pending · **Depends on:** Task 3 · **Size:** S · **Can run in parallel with:** —
+**Status:** done · **Depends on:** Task 3 · **Size:** S · **Can run in parallel with:** —
 
 **Docs:** [Operator documentation and verification](./implementation.md#operator-documentation-and-verification)
 
-- [ ] Use `kk:test` for the encrypted workflow with CLI import and merge. Reopen a marked vault through the normal server startup sweep and verify its excluded and admitted counts. Include receipt of a deletion when local recording is disabled.
-- [ ] Use `kk:document` to update the CLI help, README, vault reference, `AGENTS.md` and `docs/architecture.md` with the implemented behavior and reader milestone. Run the quality benchmark for the shared index-path change.
-- [ ] Run the Go `kk:review-code` and `kk:review-spec` checks against the agreed behavior and resolve findings.
+- [x] Use `kk:test` for the encrypted workflow with CLI import and merge. Reopen a marked vault through the normal server startup sweep and verify its excluded and admitted counts. Include receipt of a deletion when local recording is disabled.
+- [x] Use `kk:document` to update the CLI help, README, vault reference, `AGENTS.md` and `docs/architecture.md` with the implemented behavior and reader milestone. Run the quality benchmark for the shared index-path change.
+- [x] Run the Go `kk:review-code` and `kk:review-spec` checks against the agreed behavior and resolve findings.
+
+**Execution context**
+
+- 2026-11-21, observed at `7443005`. The CLI can originate and receive deletion records. The server opens the vault in its background startup sweep and logs import outcomes per platform. Verify that handoff through the CLI and a fresh server process using temporary encrypted vaults.
+- 2026-11-21, verified. The CLI imported a session, propagated its deletion to an opted-out peer, and previewed a subsequent import. A fresh `capy serve` process excluded that session and admitted its neighbor. The focused FTS5 race run passed with a symlinked temporary directory. `make bench-quality` and `qualstat` passed against the saved Task 3 report.
+- 2026-11-21, verified after review. Identical duplicate transcripts now check the post-read deletion state. A failed or interrupted merge identifies queued work and preserves earlier committed counts. Regression tests cover cancellation after the first 50 deletions, rollback of a two-UUID batch, retry, and preservation of reader version 4 after a later Codex write. Independent code and spec reviewers approved the corrections.
+- 2026-11-21, final verification. The vault and config race suites passed with the optional local-corpus canaries excluded. The final CLI and vault regression run passed with FTS5, race instrumentation in the CLI subprocess, and a symlinked temporary directory. The uncached quality benchmark passed comparison with Task 3. Deployment remains an operator action: upgrade and restart all shared-vault writers before the first local or incoming deletion.
 
 ## Dependency graph
 

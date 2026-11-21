@@ -45,8 +45,7 @@ const noCompressEnv = "CAPY_VAULT_NO_COMPRESS"
 // supportedReaderVersion: the batch writer stamps the highest version any record
 // in the transaction needs (store.go requiredReaderVersion), and `capy vault
 // compact` (compact.go markCompressed), which only recompresses blobs, stamps
-// readerVersionZstd — so compacting a Claude-only vault leaves the marker at 2
-// and older binaries can still open it.
+// readerVersionZstd. Compact preserves higher requirements, including deletions.
 const (
 	// readerVersionZstd: zstd-encoded blobs (vault v2, `encoding` column).
 	readerVersionZstd = 2
@@ -56,7 +55,8 @@ const (
 	// launch `claude --resume` on a Codex uuid, and its merge would rescan the
 	// blob with the Claude scanner and store it as claude-code with empty FTS, a
 	// permanent mislabel — so the first such row must lock older binaries out.
-	readerVersionPlatform         = 3
+	readerVersionPlatform = 3
+	// Recording or receiving a deletion requires readers that honor and forward its pair.
 	readerVersionSessionDeletions = 4
 )
 
@@ -67,8 +67,7 @@ const (
 const supportedReaderVersion = readerVersionSessionDeletions
 
 // minReaderVersionKey is the vault_meta row key carrying the minimum reader
-// version required to safely read the vault. Absent ⇒ no constraint (a v1 vault,
-// or one never written with compression).
+// version required to safely read the vault. Absent means no gated write has been recorded.
 const minReaderVersionKey = "min_reader_version"
 
 // blobEncoder/blobDecoder are shared package-level instances. EncodeAll/DecodeAll
@@ -138,7 +137,7 @@ func decodeBlob(encoding string, b []byte) ([]byte, error) {
 // MONOTONIC upsert: it creates an absent marker and raises a lower one, but
 // never lowers an existing marker — a later zstd-only write on a vault already
 // holding a Codex row must not roll 3 back to 2. Callers pass the version their
-// own write requires (readerVersionZstd / readerVersionPlatform), never
+// own write requires, never
 // supportedReaderVersion (see the readerVersion* comment). It cannot protect a
 // v1 binary (which predates the marker and reads compressed bytes as garbage — a
 // documented cross-version constraint), but every binary since refuses a vault
