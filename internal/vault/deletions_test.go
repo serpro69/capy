@@ -11,7 +11,7 @@ import (
 
 func rememberForTest(t *testing.T, s *VaultStore, id string) {
 	t.Helper()
-	ok, err := s.deleteSession(t.Context(), id, true)
+	ok, err := s.DeleteSession(t.Context(), id, true)
 	require.NoError(t, err)
 	require.True(t, ok)
 }
@@ -42,7 +42,7 @@ func TestDeletionMigrationAndAtomicRemoval(t *testing.T) {
 	before := minReaderMarker(t, s)
 	_, err = db.Exec("CREATE TRIGGER reject_delete BEFORE DELETE ON vault_sessions BEGIN SELECT RAISE(ABORT, 'rollback'); END")
 	require.NoError(t, err)
-	_, err = s.deleteSession(ctx, parent.Session.UUID, true)
+	_, err = s.DeleteSession(ctx, parent.Session.UUID, true)
 	require.ErrorContains(t, err, "rollback")
 	deleted, err := s.sessionDeleted(ctx, parent.Session.UUID)
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestDeletionMigrationAndAtomicRemoval(t *testing.T) {
 	}
 	_, err = s.GetSession(ctx, child.Session.UUID)
 	require.NoError(t, err)
-	ok, err := s.deleteSession(ctx, "missing", true)
+	ok, err := s.DeleteSession(ctx, "missing", true)
 	require.NoError(t, err)
 	require.False(t, ok)
 }
@@ -111,6 +111,68 @@ func TestDeletedWriteSurvivesBatchRollbackAndRetry(t *testing.T) {
 	require.Equal(t, StatusExcluded, pending[0].Status)
 	require.Equal(t, StatusNew, pending[1].Status)
 	require.Equal(t, StatusError, pending[2].Status)
+}
+
+type deleteBeforeImportFlush struct {
+	*VaultStore
+	remove func()
+}
+
+func (w *deleteBeforeImportFlush) WriteBatch(ctx context.Context, writes []SessionWrite) ([]writeOutcome, error) {
+	w.remove()
+	return w.VaultStore.WriteBatch(ctx, writes)
+}
+
+func TestOneTimeDeletionBetweenReplacementPlanAndFlush(t *testing.T) {
+	for _, op := range []string{"import", "merge"} {
+		t.Run(op, func(t *testing.T) {
+			ctx := t.Context()
+			dest := newTestVault(t)
+			home := t.TempDir()
+			const id = codexDiscUUIDA
+			original := codexImportRollout(t, codexLegacy, id, "/project", "original")
+			writeCodexRollout(t, home, codexActiveRel(id), original, false)
+			require.Equal(t, 1, importCodexHome(t, dest, home, ImportOptions{}).Imported)
+			full := codexImportRollout(t, codexLegacy, id, "/project", "original and longer searchable text")
+			writeCodexRollout(t, home, codexActiveRel(id), full, false)
+			files, _, err := DiscoverCodexSessions(ctx, home, CodexDiscoverOptions{})
+			require.NoError(t, err)
+			db, err := dest.getDB(ctx)
+			require.NoError(t, err)
+			indexes := []string{"vault_fts", "vault_chunks", "vault_chunks_trigram"}
+			var count int
+			for _, table := range indexes {
+				require.NoError(t, db.QueryRow("SELECT count(*) FROM "+table+" WHERE session_uuid=?", id).Scan(&count))
+				require.Positive(t, count, table)
+			}
+			remove := func() {
+				ok, err := dest.DeleteSession(ctx, id, false)
+				require.NoError(t, err)
+				require.True(t, ok)
+			}
+			var result ImportResult
+			if op == "import" {
+				result = importSessions(ctx, &deleteBeforeImportFlush{dest, remove}, files, ImportOptions{})
+			} else {
+				src := newTestVault(t)
+				require.Equal(t, 1, Import(ctx, src, files, ImportOptions{}).Imported)
+				result = mergeWithDestination(t, &interleavedDestination{VaultStore: dest, beforeWrite: remove}, src, MergeOptions{})
+			}
+			require.Len(t, result.Sessions, 1)
+			require.Equal(t, StatusSkipped, result.Sessions[0].Status)
+			require.Equal(t, reasonDisappeared, result.Sessions[0].Reason)
+			require.NoError(t, db.QueryRow("SELECT count(*) FROM vault_sessions WHERE uuid=?", id).Scan(&count))
+			require.Zero(t, count)
+			for _, table := range append(indexes, "vault_session_deletions") {
+				require.NoError(t, db.QueryRow("SELECT count(*) FROM "+table+" WHERE session_uuid=?", id).Scan(&count))
+				require.Zero(t, count, table)
+			}
+			require.Equal(t, 1, Import(ctx, dest, files, ImportOptions{}).Imported)
+			sess, err := dest.GetSession(ctx, id)
+			require.NoError(t, err)
+			require.Equal(t, full, sess.RawJSONL)
+		})
+	}
 }
 
 type interleavedImportWriter struct {

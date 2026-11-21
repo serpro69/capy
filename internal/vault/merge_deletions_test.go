@@ -250,7 +250,7 @@ func TestMergeDestinationDeletionDuringPlanningOrReporting(t *testing.T) {
 			require.NoError(t, err)
 			dest := &interleavedDestination{VaultStore: dst}
 			del := func() {
-				ok, err := dst.deleteSession(ctx, codexDiscUUIDA, phase != "metadata one-time")
+				ok, err := dst.DeleteSession(ctx, codexDiscUUIDA, phase != "metadata one-time")
 				require.NoError(t, err)
 				require.True(t, ok)
 			}

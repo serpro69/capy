@@ -453,7 +453,7 @@ func TestVaultStore_CascadeDelete(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM vault_files WHERE session_uuid=?`, uuid).Scan(&fileCount))
 	require.Equal(t, 2, fileCount)
 
-	deleted, err := s.DeleteSession(context.Background(), uuid)
+	deleted, err := s.DeleteSession(context.Background(), uuid, false)
 	require.NoError(t, err)
 	assert.True(t, deleted)
 
@@ -472,7 +472,7 @@ func TestVaultStore_CascadeDelete(t *testing.T) {
 
 func TestVaultStore_DeleteMissing(t *testing.T) {
 	s := newTestVault(t)
-	deleted, err := s.DeleteSession(context.Background(), "does-not-exist")
+	deleted, err := s.DeleteSession(context.Background(), "does-not-exist", false)
 	require.NoError(t, err)
 	assert.False(t, deleted)
 }
@@ -664,6 +664,6 @@ func TestVaultStore_RespectsCanceledContext(t *testing.T) {
 	_, _, _, _, _, err = s.SessionDigest(ctx, uuid)
 	require.ErrorIs(t, err, context.Canceled, "QueryRowContext must honor ctx")
 
-	_, err = s.DeleteSession(ctx, uuid)
+	_, err = s.DeleteSession(ctx, uuid, false)
 	require.ErrorIs(t, err, context.Canceled, "transaction begin (BeginImmediateContext) must honor ctx")
 }

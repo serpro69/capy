@@ -34,9 +34,10 @@ type RunsConfig struct {
 	MaxRetainedBytes int64 `toml:"max_retained_bytes"`
 }
 
-// VaultConfig controls admission of new sessions to the archive.
+// VaultConfig controls archive admission and recording of local deletions.
 type VaultConfig struct {
-	MinSessionBytes int64 `toml:"min_session_bytes"` // uncompressed transcript + sidecars; 0 disables
+	RememberDeletions bool  `toml:"remember_deletions"`
+	MinSessionBytes   int64 `toml:"min_session_bytes"` // uncompressed transcript + sidecars; 0 disables
 }
 
 // StoreConfig controls the FTS5 knowledge base.
@@ -90,6 +91,7 @@ type SearchConfig struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
+		Vault: VaultConfig{RememberDeletions: true},
 		Store: StoreConfig{
 			TitleWeight:    2.0,
 			MaxSourceBytes: 2 * 1024 * 1024,

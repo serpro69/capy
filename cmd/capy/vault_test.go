@@ -217,43 +217,64 @@ func TestVaultRestoreDefaultLocationHonorsConfigDir(t *testing.T) {
 	assert.Equal(t, mainBytes, got)
 }
 
-func TestVaultDeleteWithYes(t *testing.T) {
-	root, uuid := setupVaultEnv(t)
-	short := uuid[:8]
+func TestVaultDeleteRecordingPolicy(t *testing.T) {
+	for _, mode := range []string{"remember", "one-time"} {
+		t.Run(mode, func(t *testing.T) {
+			root, id := setupVaultEnv(t)
+			project := t.TempDir()
+			configPath := filepath.Join(project, ".capy.toml")
+			const optOut = "[vault]\nremember_deletions = false\n"
+			if mode == "one-time" {
+				require.NoError(t, os.WriteFile(configPath, []byte(optOut), 0o600))
+			}
+			run := func(args ...string) (string, string) {
+				t.Helper()
+				args = append(args, "--project-dir", project)
+				out, stderr, code := capy(t, append([]string{"vault"}, args...)...)
+				require.Zero(t, code, stderr)
+				return out, stderr
+			}
+			checkPreview := func(stderr string) {
+				t.Helper()
+				require.Contains(t, stderr, id)
+				if mode == "one-time" {
+					require.Contains(t, stderr, "One-time local deletion")
+					require.Contains(t, stderr, "Copies in other vaults are kept")
+					require.Contains(t, stderr, "can return")
+				} else {
+					require.Contains(t, stderr, "cannot undo")
+					require.Contains(t, stderr, "exclude this UUID")
+					require.Contains(t, stderr, "delete copies in other vaults")
+				}
+			}
+			run("import", "--source", root)
+			out, stderr := run("delete", id[:8])
+			checkPreview(stderr)
+			require.Contains(t, out, "aborted")
+			out, _ = run("list")
+			require.Contains(t, out, id[:8])
+			out, _ = run("import", "--source", root)
+			require.Contains(t, out, "skipped 1")
 
-	_, stderr, code := capy(t, "vault", "import", "--source", root)
-	require.Equal(t, 0, code, "stderr: %s", stderr)
+			out, stderr = run("delete", id[:8], "--yes")
+			checkPreview(stderr)
+			require.Contains(t, out, "deleted "+id[:8])
+			out, _ = run("list")
+			require.Contains(t, out, "no sessions archived")
+			out, _ = run("search", "brontosaurus")
+			require.Contains(t, out, "no matches")
 
-	stdout, stderr, code := capy(t, "vault", "delete", short, "--yes")
-	require.Equal(t, 0, code, "stderr: %s", stderr)
-	assert.Contains(t, stdout, "deleted "+short)
-
-	stdout, _, code = capy(t, "vault", "list")
-	require.Equal(t, 0, code)
-	assert.Contains(t, stdout, "no sessions archived")
-
-	// FTS rows are gone too — the deleted content is no longer searchable.
-	stdout, _, code = capy(t, "vault", "search", "brontosaurus")
-	require.Equal(t, 0, code)
-	assert.Contains(t, stdout, "no matches")
-}
-
-// Without --yes and with no interactive stdin, delete must abort (the safe
-// default) and leave the session intact.
-func TestVaultDeleteAbortsWithoutConfirmation(t *testing.T) {
-	root, uuid := setupVaultEnv(t)
-	short := uuid[:8]
-
-	_, stderr, code := capy(t, "vault", "import", "--source", root)
-	require.Equal(t, 0, code, "stderr: %s", stderr)
-
-	stdout, _, code := capy(t, "vault", "delete", short)
-	require.Equal(t, 0, code)
-	assert.Contains(t, stdout, "aborted")
-
-	stdout, _, code = capy(t, "vault", "list")
-	require.Equal(t, 0, code)
-	assert.Contains(t, stdout, short, "session must survive an aborted delete")
+			require.NoError(t, os.WriteFile(configPath, []byte(optOut), 0o600))
+			out, _ = run("import", "--source", root)
+			if mode == "one-time" {
+				require.Contains(t, out, "imported 1")
+			} else {
+				require.Contains(t, out, "excluded 1")
+				require.Contains(t, out, id)
+				require.Contains(t, out, "deleted")
+			}
+		})
+	}
 }
 
 // TestVaultRename_EndToEnd drives rename/clear/name-lookup through the CLI:

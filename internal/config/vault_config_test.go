@@ -43,6 +43,40 @@ func TestLoadVaultMinSessionBytes(t *testing.T) {
 	}
 }
 
+func TestLoadVaultRememberDeletions(t *testing.T) {
+	for _, tt := range []struct {
+		name, global, project, root string
+		want                        bool
+	}{
+		{name: "enabled by default", want: true},
+		{name: "global false", global: "false"},
+		{name: "project false", global: "true", project: "false"},
+		{name: "root false", project: "true", root: "false"},
+		{name: "project true overrides global", global: "false", project: "true", want: true},
+		{name: "root true overrides project", project: "false", root: "true", want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, xdg := t.TempDir(), t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", xdg)
+			for path, value := range map[string]string{
+				filepath.Join(xdg, "capy", "config.toml"):  tt.global,
+				filepath.Join(dir, ".capy", "config.toml"): tt.project,
+				filepath.Join(dir, ".capy.toml"):           tt.root,
+			} {
+				content := "[vault]\n"
+				if value != "" {
+					content += "remember_deletions = " + value + "\n"
+				}
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+				require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+			}
+			cfg, err := Load(dir)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, cfg.Vault.RememberDeletions)
+		})
+	}
+}
+
 func TestLoadVaultMinSessionBytesRejectsInvalidValues(t *testing.T) {
 	for _, value := range []string{"-1", "9223372036854775808", "1.5", "\"100KB\""} {
 		t.Run(value, func(t *testing.T) {

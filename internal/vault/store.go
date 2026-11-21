@@ -1155,13 +1155,10 @@ func (s *VaultStore) OutdatedSessionUUIDs(ctx context.Context, maxVersion int) (
 	return uuids, nil
 }
 
-// DeleteSession removes a session and its FTS rows transactionally; vault_files
-// cascade via the foreign key. Returns false if no session matched the exact UUID.
-func (s *VaultStore) DeleteSession(ctx context.Context, uuid string) (bool, error) {
-	return s.deleteSession(ctx, uuid, false)
-}
-
-func (s *VaultStore) deleteSession(ctx context.Context, uuid string, remember bool) (bool, error) {
+// DeleteSession removes the exact UUID's archive and indexes in one transaction.
+// When remember is true, the UUID and effective project also survive for
+// suppression and forwarding. A missing archive returns false in either mode.
+func (s *VaultStore) DeleteSession(ctx context.Context, uuid string, remember bool) (bool, error) {
 	db, err := s.getDB(ctx)
 	if err != nil {
 		return false, err
@@ -1174,7 +1171,7 @@ func (s *VaultStore) deleteSession(ctx context.Context, uuid string, remember bo
 
 	if remember {
 		var project string
-		err := tx.QueryRowContext(ctx, "SELECT COALESCE(p.custom_project, s.project_path)"+
+		err := tx.QueryRowContext(ctx, "SELECT "+effectiveProjectSQL+
 			sessionMetaJoin+" WHERE s.uuid = ?", uuid).Scan(&project)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
