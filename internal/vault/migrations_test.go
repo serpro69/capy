@@ -443,7 +443,7 @@ func TestSessionProject_MigrationFreshLegacyParity(t *testing.T) {
 				require.NoError(t, legacy.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'vault_session_projects'`).Scan(&count))
 				assert.Zero(t, count)
 				// Exercise migration creation directly: schemaSQL must not hide a missing DDL.
-				require.NoError(t, migrate0007AddSessionProjects(ctx, legacy))
+				require.NoError(t, migrateTable(ctx, legacy, "0007_session_projects", sessionProjectsTableSQL))
 				require.NoError(t, legacy.Close())
 			}
 			s := NewVaultStore(path)

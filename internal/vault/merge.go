@@ -131,24 +131,11 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		if len(batch) == 0 {
 			return
 		}
-		if !opts.DryRun {
-			if err := dest.WriteBatch(ctx, batch); err != nil {
-				slog.Warn("vault merge: batch write failed, retrying per-session",
-					"count", len(batch), "error", err)
-				for i := range batch {
-					if err := dest.writeOne(ctx, batch[i]); err != nil {
-						slog.Warn("vault merge: session write failed",
-							"uuid", batch[i].Record.Session.UUID, "error", err)
-						pending[i].Status = StatusError
-						pending[i].Err = err
-					}
-				}
-			}
-		}
+		flushImportBatch(ctx, batch, pending, dest.WriteBatch)
 		// Successful writes keep StatusNew/Updated unless the committed metadata
 		// cannot be read for reporting; every write/read failure stays visible.
 		for _, p := range pending {
-			if p.Status != StatusError {
+			if p.Status == StatusNew || p.Status == StatusUpdated {
 				// Report committed winners, including a local edit that landed
 				// after the prospective snapshot used to queue this write.
 				sess, err := dest.sessionMetadata(ctx, p.UUID)

@@ -4,7 +4,7 @@
 >
 > Implementation: [implementation.md](./implementation.md)
 >
-> Status: pending
+> Status: in-progress
 >
 > Not Doing: bulk deletion, physical erasure, local or synchronized undelete
 >
@@ -12,15 +12,20 @@
 
 ## Task 1. Enforce the deletion record at archive write boundaries
 
-**Status:** pending · **Depends on:** — · **Size:** M · **Can run in parallel with:** —
+**Status:** done · **Depends on:** — · **Size:** M · **Can run in parallel with:** —
 
 **Docs:** [Local deletion and archive writes](./implementation.md#local-deletion-and-archive-writes)
 
-- [ ] Add `0008_session_deletions` and the matching fresh schema. Define milestone 4 and preserve existing platform/encoding stamps. Keep the public reader maximum at 3 and the CLI delete behavior as shipped during this preparatory task.
-- [ ] Implement the internal remembered-delete operation. Capture the effective project and atomically remove the archive and its indexes, record its pair, and stamp 4. In an isolated fixture verify rollback and independent child sessions.
-- [ ] In `Import`, check every selected UUID before reading transcript or sidecars. On the open fixture handle, compare preview and apply for an unopenable marked candidate beside a readable new session. Assert `excluded` / `deleted` and neighbor admission.
-- [ ] Guard full writes in their transaction and check replacement row counts before child writes. Preserve per-input outcomes through commit, batch rollback and individual retries.
-- [ ] Cover a mixed stale-index batch with one remembered deletion and one survivor, including the retry path. Check moved Codex rollouts with deletion before the hint update and, for a stale moved rollout, between hint update and rebuild. Assert one final outcome per candidate and preserve reindex's survivor count.
+- [x] Add `0008_session_deletions` and the matching fresh schema. Define milestone 4 and preserve existing platform/encoding stamps. Keep the public reader maximum at 3 and the CLI delete behavior as shipped during this preparatory task.
+- [x] Implement the internal remembered-delete operation. Capture the effective project and atomically remove the archive and its indexes, record its pair, and stamp 4. In an isolated fixture verify rollback and independent child sessions.
+- [x] In `Import`, check every selected UUID before reading transcript or sidecars. On the open fixture handle, compare preview and apply for an unopenable marked candidate beside a readable new session. Assert `excluded` / `deleted` and neighbor admission.
+- [x] Guard full writes in their transaction and check replacement row counts before child writes. Preserve per-input outcomes through commit, batch rollback and individual retries.
+- [x] Cover a mixed stale-index batch with one remembered deletion and one survivor, including the retry path. Check moved Codex rollouts with deletion before the hint update and, for a stale moved rollout, between hint update and rebuild. Assert one final outcome per candidate and preserve reindex's survivor count.
+
+**Execution context**
+
+- 2026-11-21, observed at `a6dd4f1`. Import queues full and index-only writes separately. Both flush paths need committed per-input outcomes. The existing reader maximum and CLI deletion mode stay in effect for this task.
+- 2026-11-21, verified. Focused race tests passed for deletion, digest planning, moved Codex files, and batch retries. Independent review approved after adding the post-read marker/digest snapshot and its regression test. `make bench-quality` passed. The stored master comparison flagged differences also present at `a6dd4f1`. A fresh encrypted benchmark at that revision passed comparison with the candidate.
 
 ## Task 2. Propagate deletions through a vault merge
 
