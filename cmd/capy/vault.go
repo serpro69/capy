@@ -8,8 +8,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/serpro69/capy/internal/config"
@@ -201,6 +203,23 @@ func printImportResult(res vault.ImportResult, report *vault.DiscoveryReport, dr
 	if dryRun {
 		fmt.Println("DRY RUN — no changes written")
 	}
+	if len(res.Deletions) > 0 {
+		removed, added, known := 0, 0, 0
+		for _, deletion := range res.Deletions {
+			n := 0
+			if deletion.Removed {
+				n = 1
+			}
+			fmt.Printf("%s  archives removed %d, deletion pairs added %d, already present %d\n", deletion.UUID, n, deletion.Added, deletion.Known)
+			removed += n
+			added += deletion.Added
+			known += deletion.Known
+		}
+		fmt.Printf("total archives removed %d, deletion pairs added %d, already present %d\n", removed, added, known)
+		if len(res.Sessions) == 0 {
+			return
+		}
+	}
 	if len(res.Sessions) == 0 {
 		fmt.Println("no sessions matched")
 		if report != nil {
@@ -213,6 +232,10 @@ func printImportResult(res vault.ImportResult, report *vault.DiscoveryReport, dr
 		if s.Status == vault.StatusError && s.Err != nil {
 			fmt.Fprintf(os.Stderr, "  error %s: %v\n", shortUUID(s.UUID, s.Platform), s.Err)
 		}
+		id := shortUUID(s.UUID, s.Platform)
+		if s.Reason == "deleted" || s.Reason == "session disappeared" {
+			id = s.UUID
+		}
 		project := displayPath(s.ProjectPath)
 		if s.Project != "" {
 			project = s.Project
@@ -221,7 +244,7 @@ func printImportResult(res vault.ImportResult, report *vault.DiscoveryReport, dr
 			}
 		}
 		fmt.Printf("%-12s  %-8s  %-28s  %8s  %-50s  %s\n",
-			shortUUID(s.UUID, s.Platform), s.Status, truncate(project, 28),
+			id, s.Status, truncate(project, 28),
 			formatSize(s.SizeBytes), truncate(s.Title, 50), s.Reason)
 	}
 	fmt.Printf("\n%s\n", importCounts{
@@ -956,12 +979,14 @@ func newVaultMergeCmd(env *vaultEnv) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "merge --from <vault.db>",
-		Short: "Merge sessions from another vault into this one (cross-machine union)",
-		Long: `Import the sessions of another machine's vault into this one, non-destructively.
+		Short: "Merge sessions and remembered deletions from another vault",
+		Long: `Import sessions and remembered deletions from another machine's vault.
+A selected deletion removes the matching UUID from this vault and is kept for
+future merges. --project selects deletion records by their source project at
+deletion time. Use --dry-run to preview archive removals and deletion pairs.
 
-Unlike copying vault.db (which replaces the whole archive), merge unites the two:
-distinct sessions are added, and where both vaults hold the same session UUID the
-larger-total-content copy wins. Re-running is idempotent.
+Distinct live sessions are added. For a shared live UUID the larger-total-content
+copy wins. Re-running is idempotent.
 
 Custom titles and project assignments reconcile independently, including clears.
 --project matches the source's effective project (label, otherwise imported path)
@@ -1001,21 +1026,25 @@ tolerates a concurrent server sweep via busy-timeout retry, the same as import.`
 				return fmt.Errorf("source and destination are the same vault (%s)", env.dbPath)
 			}
 
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
 			srcKey, srcKeyEnv := resolveMergeKey(keyFlag)
 
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 			// Fail fast on a wrong destination key / corrupt DB before reading the source.
-			if err := st.Open(cmd.Context()); err != nil {
+			if err := st.Open(ctx); err != nil {
 				return err
 			}
 
-			res, err := vault.MergeFrom(cmd.Context(), st, from, srcKey, srcKeyEnv,
+			res, err := vault.MergeFrom(ctx, st, from, srcKey, srcKeyEnv,
 				vault.MergeOptions{Project: project, DryRun: dryRun, MinSessionBytes: minSessionBytes})
+			if err == nil || len(res.Deletions) > 0 || len(res.Sessions) > 0 {
+				printImportResult(res, nil, dryRun)
+			}
 			if err != nil {
 				return err
 			}
-			printImportResult(res, nil, dryRun)
 			if res.Errors > 0 {
 				return fmt.Errorf("%d session(s) failed to merge", res.Errors)
 			}

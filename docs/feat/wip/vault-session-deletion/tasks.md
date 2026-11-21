@@ -29,16 +29,21 @@
 
 ## Task 2. Propagate deletions through a vault merge
 
-**Status:** pending · **Depends on:** Task 1 · **Size:** M · **Can run in parallel with:** —
+**Status:** done · **Depends on:** Task 1 · **Size:** M · **Can run in parallel with:** —
 
 **Docs:** [Cross-machine merge and reporting](./implementation.md#cross-machine-merge-and-reporting)
 
-- [ ] Pin source version/schema, marker pairs, UUIDs, payloads and metadata to one read transaction. Commit a source delete between enumerations in a two-connection fixture and verify this merge and the next.
-- [ ] Apply selected source pairs verbatim and honor destination markers for live records and metadata-only writes. Verify A→B→C with differing checkout paths/labels, both filtered and full merges, and an unrelated UUID. Also cover independently originated pairs.
-- [ ] Use bounded index cleanup for distinct live or first-remembered UUIDs. Seed legacy FTS rows for a missing parent and prove its first incoming marker removes them while preserving a neighboring UUID. Require zero FTS deletes on repeat and when an already-marked absent UUID gains a different project pair.
-- [ ] Compare preview, apply, and repeat with two pairs for one live UUID and a second UUID sharing its prefix. Check distinct archive and pair counts, full IDs, and marker-only output.
-- [ ] Verify planning, metadata-only reconciliation and post-commit reporting when a destination row disappears. Force an error or cancellation after one committed batch, verify partial CLI output and nonzero exit, then retry and verify the totals.
-- [ ] Raise the reader maximum to 4 with complete merge handling and updated help. Verify reopen/forward after the first incoming marker, version 3 for ordinary platform writes, and 5 for future-version refusal. Verify that an inconsistent version-4 source missing its marker table fails before changes, and a supported legacy source cannot revive a deleted UUID.
+- [x] Pin source version/schema, marker pairs, UUIDs, payloads and metadata to one read transaction. Commit a source delete between enumerations in a two-connection fixture and verify this merge and the next.
+- [x] Apply selected source pairs verbatim and honor destination markers for live records and metadata-only writes. Verify A→B→C with differing checkout paths/labels, both filtered and full merges, and an unrelated UUID. Also cover independently originated pairs.
+- [x] Use bounded index cleanup for distinct live or first-remembered UUIDs. Seed legacy FTS rows for a missing parent and prove its first incoming marker removes them while preserving a neighboring UUID. Require zero FTS deletes on repeat and when an already-marked absent UUID gains a different project pair.
+- [x] Compare preview, apply, and repeat with two pairs for one live UUID and a second UUID sharing its prefix. Check distinct archive and pair counts, full IDs, and marker-only output.
+- [x] Verify planning, metadata-only reconciliation and post-commit reporting when a destination row disappears. Force an error or cancellation after one committed batch, verify partial CLI output and nonzero exit, then retry and verify the totals.
+- [x] Raise the reader maximum to 4 with complete merge handling and updated help. Verify reopen/forward after the first incoming marker, version 3 for ordinary platform writes, and 5 for future-version refusal. Verify that an inconsistent version-4 source missing its marker table fails before changes, and a supported legacy source cannot revive a deleted UUID.
+
+**Execution context**
+
+- 2026-11-21, observed at `4172ad1`. Merge reads the source and destination metadata in separate pool queries. Bind source reads to one transaction, plan from a consistent destination view, and publish each batch's results after commit.
+- 2026-11-21, verified. Race tests covered filtered forwarding, snapshot interleavings, orphan cleanup, cancellation after commit, legacy refusal/suppression and CLI partial failure/retry. The independent review identified platform attribution and CLI signal handling, both corrected and retested. An earlier full vault race invocation timed out in the optional real-corpus Codex canary. Synthetic race suites cover this feature.
 
 ## Task 3. Enable local recording and its opt-out
 

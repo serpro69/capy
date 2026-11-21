@@ -24,11 +24,21 @@ type MergeOptions struct {
 	DryRun bool
 }
 
+type mergeReader interface {
+	ctxQueryer
+	rowQueryer
+}
+
+type mergeDestination interface {
+	mergeDeletionBatch(context.Context, []deletionGroup, bool) ([]MergedDeletion, error)
+	mergeState(context.Context, string) (*Session, bool, error)
+	reconcileSessionMetadata(context.Context, ImportedSession, *SessionName, *SessionProject) (ImportedSession, error)
+	WriteBatch(context.Context, []SessionWrite) ([]writeOutcome, error)
+}
+
 // MergeFrom imports the sessions of the source vault at srcPath (opened with
-// srcKey) into dest, non-destructively — the cross-machine union v1's destructive
-// replace could not do. It reuses the disk-import idempotent decision per session
-// (dest.SessionDigest → skip a same-hash or smaller variant, else insert/replace),
-// carries the source row's metadata verbatim, and rebuilds FTS with the
+// srcKey) into dest. It propagates selected deletions first, skips a same-hash
+// or smaller live variant, carries the winning metadata, and rebuilds FTS with the
 // destination's CURRENT indexer (re-scanning the decoded blobs rather than copying
 // source FTS rows, so a v1 source's index is upgraded as a side effect — the same
 // posture as `capy vault reindex`).
@@ -39,8 +49,8 @@ type MergeOptions struct {
 // "no such column" against it — absent ⇒ every source blob is treated as raw.
 //
 // Per-session read/scan/write failures are logged and recorded as StatusError
-// without aborting the run; MergeFrom returns an error only for setup failures
-// (opening or probing the source). The 0-message exclusion (Task 11) applies, so
+// without aborting the run. Snapshot, enumeration, deletion-batch and cancellation
+// errors return the partial result with the error. The 0-message exclusion (Task 11) applies, so
 // a source's empty shells are not carried over.
 //
 // Capy-owned session names (vault_session_names) reconcile INDEPENDENTLY of the
@@ -72,12 +82,23 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		return res, fmt.Errorf("opening source vault: %w", err)
 	}
 	defer srcDB.Close()
+	tx, err := srcDB.BeginTx(ctx, nil)
+	if err != nil {
+		return res, fmt.Errorf("starting source snapshot: %w", err)
+	}
+	defer tx.Rollback()
+	return mergeSnapshot(ctx, dest, tx, opts)
+}
+
+func mergeSnapshot(ctx context.Context, dest mergeDestination, srcDB mergeReader, opts MergeOptions) (ImportResult, error) {
+	var res ImportResult
 
 	// Refuse a source whose on-disk format is newer than this binary supports —
 	// its blobs could be encoded in a way decodeBlob cannot read. A v1/unmarked
 	// source carries no marker and is unconstrained. vault_meta exists since v1, so
 	// this read is safe against the un-migrated source.
-	if err := checkReaderVersion(ctx, srcDB); err != nil {
+	required, err := checkReaderVersion(ctx, srcDB)
+	if err != nil {
 		return res, fmt.Errorf("source vault: %w", err)
 	}
 
@@ -117,7 +138,20 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 	}
 	srcCols := sourceColumns{encoding: srcSessEnc, platform: srcPlatform, parentUUID: srcParent}
 
-	uuids, err := sourceSessionUUIDs(ctx, srcDB, opts.Project, srcHasProjects)
+	hasDeletions, err := tableExists(ctx, srcDB, "vault_session_deletions")
+	if err != nil {
+		return res, err
+	}
+	if required >= readerVersionSessionDeletions && !hasDeletions {
+		return res, fmt.Errorf("source requires reader version %d but lacks vault_session_deletions", required)
+	}
+	if hasDeletions {
+		if err := mergeSourceDeletions(ctx, srcDB, dest, opts, &res); err != nil {
+			return res, err
+		}
+	}
+
+	uuids, err := sourceSessionUUIDs(ctx, srcDB, opts.Project, srcHasProjects, hasDeletions)
 	if err != nil {
 		return res, fmt.Errorf("listing source sessions: %w", err)
 	}
@@ -132,32 +166,36 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			return
 		}
 		flushImportBatch(ctx, batch, pending, dest.WriteBatch)
-		// Successful writes keep StatusNew/Updated unless the committed metadata
-		// cannot be read for reporting; every write/read failure stays visible.
 		for _, p := range pending {
-			if p.Status == StatusNew || p.Status == StatusUpdated {
-				// Report committed winners, including a local edit that landed
-				// after the prospective snapshot used to queue this write.
-				sess, err := dest.sessionMetadata(ctx, p.UUID)
-				if err != nil {
-					p.Status, p.Err = StatusError, err
-				} else {
-					p = mergeReportMetadata(p, sess)
-				}
-			}
 			res.record(p)
 		}
 		batch, pending, batchBytes = nil, nil, 0
 	}
 
 	for _, uuid := range uuids {
-		// Cooperative cancellation at the session boundary (matches Import): the
-		// final flush still persists whatever is already batched.
-		if ctx.Err() != nil {
-			slog.Debug("vault merge: cancelled before completion",
-				"imported", res.Imported, "updated", res.Updated,
-				"skipped", res.Skipped, "excluded", res.Excluded, "errors", res.Errors)
-			break
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
+
+		existing, deleted, err := dest.mergeState(ctx, uuid)
+		if err != nil {
+			res.record(ImportedSession{UUID: uuid, Status: StatusError, Err: err})
+			continue
+		}
+		if deleted {
+			// Keep live candidates in their platform subtotal without decoding a
+			// transcript that the destination has already deleted.
+			platform := PlatformClaudeCode
+			if srcCols.platform {
+				var stored string
+				if err := srcDB.QueryRowContext(ctx, "SELECT COALESCE(platform,'') FROM vault_sessions WHERE uuid=?", uuid).Scan(&stored); err != nil {
+					res.record(ImportedSession{UUID: uuid, Status: StatusError, Err: err})
+					continue
+				}
+				platform, _ = ParsePlatform(stored) // an unknown value needs the suppressed blob to resolve
+			}
+			res.record(ImportedSession{UUID: uuid, Platform: platform, Status: StatusExcluded, Reason: reasonDeleted})
+			continue
 		}
 
 		src, err := readSourceSession(ctx, srcDB, uuid, srcCols)
@@ -203,17 +241,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			}
 		}
 
-		// The digest lookup precedes the zero-message exclusion because metadata
-		// reconciles independently of transcript content (design §Cross-Machine
-		// Merge): the exclusion and skip branches below must still know whether a
-		// destination session exists to reconcile its title and project against.
-		existingHash, existingSize, _, _, found, err := dest.SessionDigest(ctx, uuid)
-		if err != nil {
-			slog.Warn("vault merge: digest lookup failed", "uuid", uuid, "error", err)
-			res.record(ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusError, Err: err})
-			continue
-		}
-
+		found := existing != nil
 		if !found && src.sizeBytes < opts.MinSessionBytes {
 			res.record(ImportedSession{
 				UUID: uuid, Platform: platform, Title: src.title, ProjectPath: src.projectPath,
@@ -237,7 +265,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 				Reason: "no messages",
 			}
 			if found {
-				entry = reconcileMergeMetadata(ctx, dest, entry, srcName, srcProject, opts.DryRun)
+				entry = reconcileMergeMetadata(ctx, dest, entry, existing, srcName, srcProject, opts.DryRun)
 			}
 			res.record(entry)
 			continue
@@ -255,10 +283,10 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			switch {
 			// Same-hash (idempotent re-merge) and smaller-divergent-variant skips
 			// share one arm because their metadata handling is identical.
-			case src.contentHash == existingHash, src.sizeBytes < existingSize:
+			case src.contentHash == existing.ContentHash, src.sizeBytes < existing.SizeBytes:
 				entry := ImportedSession{UUID: uuid, Platform: Platform(src.platform), SizeBytes: src.sizeBytes, Status: StatusSkipped}
 				if srcName != nil || srcProject != nil {
-					entry = reconcileMergeMetadata(ctx, dest, entry, srcName, srcProject, opts.DryRun)
+					entry = reconcileMergeMetadata(ctx, dest, entry, existing, srcName, srcProject, opts.DryRun)
 				}
 				res.record(entry)
 				continue
@@ -295,11 +323,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		prospective := &Session{Title: src.title, ProjectPath: src.projectPath}
 		if replace {
 			status = StatusUpdated
-			prospective, err = dest.sessionMetadata(ctx, uuid)
-			if err != nil {
-				res.record(ImportedSession{UUID: uuid, SizeBytes: src.sizeBytes, Status: StatusError, Err: err})
-				continue
-			}
+			prospective = existing
 			// The transcript replacement changes imported values, independently
 			// of whichever title and project states win.
 			prospective.Title, prospective.ProjectPath = src.title, src.projectPath
@@ -318,7 +342,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 			continue
 		}
 
-		batch = append(batch, SessionWrite{Record: rec, Replace: replace, Name: srcName, Project: srcProject})
+		batch = append(batch, SessionWrite{Record: rec, Replace: replace, Name: srcName, Project: srcProject, reportMetadata: true})
 		pending = append(pending, entry)
 		batchBytes += src.sizeBytes
 		if len(batch) >= maxBatchSessions || batchBytes >= maxBatchBytes {
@@ -326,7 +350,7 @@ func MergeFrom(ctx context.Context, dest *VaultStore, srcPath, srcKey, srcKeyEnv
 		}
 	}
 	flush()
-	return res, nil
+	return res, ctx.Err()
 }
 
 // sourceSession holds one source vault_sessions row: its metadata, carried into
@@ -393,8 +417,8 @@ func (s *sourceSession) toRecord(files []File, fts []FTSRow, chunks []Chunk) *Se
 // sourceSessionUUIDs collects keys before any blob loading or destination write.
 // Filtered enumeration reads metadata only and normalizes foreign empty project
 // values exactly as readSourceProject does. Unfiltered enumeration stays UUID-only.
-func sourceSessionUUIDs(ctx context.Context, srcDB *sql.DB, project string, hasProjects bool) ([]string, error) {
-	query := `SELECT uuid FROM vault_sessions`
+func sourceSessionUUIDs(ctx context.Context, srcDB ctxQueryer, project string, hasProjects, hasDeletions bool) ([]string, error) {
+	query := `SELECT s.uuid FROM vault_sessions s`
 	if project != "" {
 		query = `SELECT s.uuid, s.project_path, NULL FROM vault_sessions s`
 		if hasProjects {
@@ -402,7 +426,11 @@ func sourceSessionUUIDs(ctx context.Context, srcDB *sql.DB, project string, hasP
 				LEFT JOIN vault_session_projects p ON p.session_uuid = s.uuid`
 		}
 	}
-	query += ` ORDER BY uuid`
+	if hasDeletions {
+		// An older attached writer may have left both a marker and a live copy.
+		query += ` WHERE NOT EXISTS (SELECT 1 FROM vault_session_deletions d WHERE d.session_uuid=s.uuid)`
+	}
+	query += ` ORDER BY s.uuid`
 
 	rows, err := srcDB.QueryContext(ctx, query)
 	if err != nil {
@@ -463,7 +491,7 @@ func likeContains(s string) string {
 // (cols): NULL for encoding (blob read as raw), 'claude-code' for platform and
 // NULL for parent_uuid (a pre-0006 row is a top-level Claude session — never
 // sniffed, see MergeFrom).
-func readSourceSession(ctx context.Context, srcDB *sql.DB, uuid string, cols sourceColumns) (*sourceSession, error) {
+func readSourceSession(ctx context.Context, srcDB rowQueryer, uuid string, cols sourceColumns) (*sourceSession, error) {
 	encCol := "NULL" // v1 source: no encoding column → read as raw
 	if cols.encoding {
 		encCol = "encoding"
@@ -516,7 +544,7 @@ func readSourceSession(ctx context.Context, srcDB *sql.DB, uuid string, cols sou
 // a legacy source is supported and contributes no state for absent tables.
 // table is bound as an ordinary WHERE value (sqlite_master.name), never spliced
 // into the statement as an identifier, so no injection surface exists here.
-func tableExists(ctx context.Context, db *sql.DB, table string) (bool, error) {
+func tableExists(ctx context.Context, db rowQueryer, table string) (bool, error) {
 	var n int
 	err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n)
@@ -532,7 +560,7 @@ func tableExists(ctx context.Context, db *sql.DB, table string) (bool, error) {
 // tombstone, preserving the NULL-or-non-empty invariant before comparison and
 // destination write. Everything else is carried verbatim: merge does not
 // re-validate a foreign vault's names.
-func readSourceName(ctx context.Context, srcDB *sql.DB, uuid string) (*SessionName, error) {
+func readSourceName(ctx context.Context, srcDB rowQueryer, uuid string) (*SessionName, error) {
 	var (
 		customTitle sql.NullString
 		renamedAtNS int64
@@ -563,7 +591,7 @@ func sourceCustomProject(custom sql.NullString) *string {
 	return &custom.String
 }
 
-func readSourceProject(ctx context.Context, db *sql.DB, uuid string) (*SessionProject, error) {
+func readSourceProject(ctx context.Context, db rowQueryer, uuid string) (*SessionProject, error) {
 	var custom sql.NullString
 	var state SessionProject
 	err := db.QueryRowContext(ctx,
@@ -625,85 +653,102 @@ func readMergeMetadata(rows *sql.Rows, err error) (*Session, error) {
 	return &sess, nil
 }
 
-func (s *VaultStore) sessionMetadata(ctx context.Context, uuid string) (*Session, error) {
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return readMergeMetadata(db.QueryContext(ctx,
-		`SELECT `+sessionMetaColumns+sessionMetaJoin+` WHERE s.uuid = ?`, uuid))
-}
-
-// reconcileSessionMetadata keeps both metadata decisions in one transaction on
-// branches that leave the transcript untouched. Errors roll back both fields;
-// a concurrent delete cannot create orphan rows or silently report success.
-func (s *VaultStore) reconcileSessionMetadata(ctx context.Context, uuid string, name *SessionName, project *SessionProject) (*Session, bool, error) {
+// mergeState observes both the marker and the live row (including its digest
+// and metadata) before the source transcript is decoded.
+func (s *VaultStore) mergeState(ctx context.Context, uuid string) (*Session, bool, error) {
 	db, err := s.getDB(ctx)
 	if err != nil {
 		return nil, false, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+	return mergeStateTx(ctx, tx, uuid)
+}
+
+func mergeStateTx(ctx context.Context, tx *sql.Tx, uuid string) (*Session, bool, error) {
+	deleted, err := sessionDeleted(ctx, tx, uuid)
+	if err != nil || deleted {
+		return nil, deleted, err
+	}
+	sess, err := mergeSessionMetadata(ctx, tx, uuid)
+	if errors.Is(err, ErrSessionNotFound) {
+		return nil, false, nil
+	}
+	return sess, false, err
+}
+
+func mergeSessionMetadata(ctx context.Context, q ctxQueryer, uuid string) (*Session, error) {
+	return readMergeMetadata(q.QueryContext(ctx,
+		"SELECT "+sessionMetaColumns+sessionMetaJoin+" WHERE s.uuid = ?", uuid))
+}
+
+// Recheck the FK parent, reconcile both overrides, and report the winners from
+// the same transaction. A delete after commit cannot alter this report.
+func (s *VaultStore) reconcileSessionMetadata(ctx context.Context, entry ImportedSession, name *SessionName, project *SessionProject) (ImportedSession, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return entry, err
 	}
 	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
 	if err != nil {
-		return nil, false, fmt.Errorf("begin: %w", err)
+		return entry, err
 	}
-	defer tx.Rollback() //nolint:errcheck
-
-	var nameChanged, projectChanged bool
+	defer tx.Rollback()
+	sess, deleted, err := mergeStateTx(ctx, tx, entry.UUID)
+	if err != nil {
+		return entry, err
+	}
+	if deleted {
+		return writeOutcome{reason: reasonDeleted}.apply(entry), nil
+	}
+	if sess == nil {
+		return writeOutcome{reason: reasonDisappeared}.apply(entry), nil
+	}
 	if name != nil {
-		nameChanged, err = reconcileSessionNameTx(ctx, tx, uuid, *name)
-		if err != nil {
-			return nil, false, err
+		if _, err := reconcileSessionNameTx(ctx, tx, entry.UUID, *name); err != nil {
+			return entry, err
 		}
 	}
 	if project != nil {
-		projectChanged, err = reconcileSessionProjectTx(ctx, tx, uuid, *project)
-		if err != nil {
-			return nil, false, err
+		if _, err := reconcileSessionProjectTx(ctx, tx, entry.UUID, *project); err != nil {
+			return entry, err
 		}
 	}
-	sess, err := readMergeMetadata(tx.QueryContext(ctx,
-		`SELECT `+sessionMetaColumns+sessionMetaJoin+` WHERE s.uuid = ?`, uuid))
-	if err != nil {
-		return nil, false, err
-	}
+	entry = previewMergeMetadata(entry, sess, name, project)
 	if err := tx.Commit(); err != nil {
-		return nil, false, fmt.Errorf("committing session metadata reconcile: %w", err)
+		return entry, err
 	}
-	return sess, nameChanged || projectChanged, nil
+	return entry, nil
 }
 
-func reconcileMergeMetadata(ctx context.Context, dest *VaultStore, entry ImportedSession, name *SessionName, project *SessionProject, dryRun bool) ImportedSession {
-	var sess *Session
-	var changed bool
-	var err error
-	if dryRun {
-		sess, err = dest.sessionMetadata(ctx, entry.UUID)
-		if err == nil {
-			changed = mergeMetadataState(sess, name, project)
-		}
-	} else {
-		sess, changed, err = dest.reconcileSessionMetadata(ctx, entry.UUID, name, project)
+func previewMergeMetadata(entry ImportedSession, sess *Session, name *SessionName, project *SessionProject) ImportedSession {
+	if mergeMetadataState(sess, name, project) {
+		entry.Status = StatusUpdated
+	} else if entry.Status == StatusSkipped {
+		return entry
 	}
+	return mergeReportMetadata(entry, sess)
+}
+
+func reconcileMergeMetadata(ctx context.Context, dest mergeDestination, entry ImportedSession, sess *Session, name *SessionName, project *SessionProject, dry bool) ImportedSession {
+	if dry {
+		return previewMergeMetadata(entry, sess, name, project)
+	}
+	result, err := dest.reconcileSessionMetadata(ctx, entry, name, project)
 	if err != nil {
-		slog.Warn("vault merge: metadata reconcile failed", "uuid", entry.UUID, "error", err)
 		entry.Status, entry.Err = StatusError, err
 		return entry
 	}
-	if !changed && entry.Status == StatusSkipped {
-		return entry // preserve the existing omitted metadata on skipped rows
-	}
-	if changed {
-		entry.Status = StatusUpdated
-	}
-	// Existing excluded sessions already report metadata. Even when the source
-	// has no edits or loses both comparisons, report the destination's values.
-	return mergeReportMetadata(entry, sess)
+	return result
 }
 
 // readSourceFiles loads and decodes a source session's sidecar files. As with the
 // session row, an absent encoding column (v1 source) is handled by selecting a
 // NULL literal so each blob reads as raw.
-func readSourceFiles(ctx context.Context, srcDB *sql.DB, uuid string, hasEncoding bool) ([]File, error) {
+func readSourceFiles(ctx context.Context, srcDB ctxQueryer, uuid string, hasEncoding bool) ([]File, error) {
 	encCol := "NULL"
 	if hasEncoding {
 		encCol = "encoding"

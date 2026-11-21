@@ -681,15 +681,15 @@ func TestMergeFrom_SourceNewerThanSupportedIsRefused(t *testing.T) {
 	)
 	mutateSource(t, srcPath, key, func(t *testing.T, db *sql.DB) {
 		_, err := db.Exec(`INSERT OR REPLACE INTO vault_meta (key, value) VALUES (?, ?)`,
-			minReaderVersionKey, "4")
+			minReaderVersionKey, "5")
 		require.NoError(t, err)
 	})
-	require.Equal(t, 3, supportedReaderVersion, "fixture: 4 is the first marker this binary refuses")
+	require.Equal(t, 4, supportedReaderVersion, "fixture: 5 is the first marker this binary refuses")
 
 	dest := openDest(t, destPath, key)
 	_, err := MergeFrom(ctx, dest, srcPath, key, "CAPY_VAULT_KEY", MergeOptions{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires reader version 4")
+	assert.Contains(t, err.Error(), "requires reader version 5")
 
 	sessions, err := dest.ListSessions(ctx, ListOptions{IncludeChildren: true})
 	require.NoError(t, err)
@@ -1304,14 +1304,13 @@ func TestMergeFrom_EmptySourceTitleNormalizesToTombstone(t *testing.T) {
 	assert.Equal(t, "title desttok", got.EffectiveTitle(), "cleared name falls back to the imported title")
 }
 
-// TestVaultStore_ReconcileSessionNameMissingSessionFails proves the name-only
-// write path surfaces a concurrent delete as an actionable error (the FK has no
-// parent) instead of silently inserting orphan metadata.
-func TestVaultStore_ReconcileSessionNameMissingSessionFails(t *testing.T) {
+func TestReconcileMetadataAfterParentDisappears(t *testing.T) {
 	s := newTestVault(t)
-	_, _, err := s.reconcileSessionMetadata(context.Background(), "04040404-dead-beef-0000-000000000004",
+	entry, err := s.reconcileSessionMetadata(t.Context(), ImportedSession{UUID: "04040404-dead-beef-0000-000000000004", Status: StatusSkipped},
 		&SessionName{CustomTitle: namePtr("orphan"), RenamedAtNS: 1, MachineID: "m"}, nil)
-	require.Error(t, err, "a name row without a parent session must be rejected")
+	require.NoError(t, err)
+	require.Equal(t, reasonDisappeared, entry.Reason)
+	require.Equal(t, StatusSkipped, entry.Status)
 }
 
 // TestMergeFrom_RenameMergeRaceDeterministicWinner races a concurrent local

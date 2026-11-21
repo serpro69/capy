@@ -158,10 +158,8 @@ func TestPlatform_ReaderVersionPairing(t *testing.T) {
 	// The milestones themselves, pinned so a renumbering is deliberate.
 	assert.Equal(t, 2, readerVersionZstd)
 	assert.Equal(t, 3, readerVersionPlatform)
-	// This binary knows every platform constant, so it supports the platform
-	// milestone. A future milestone raises both together; never raise
-	// supportedReaderVersion without a readerVersion* constant that names why.
-	assert.Equal(t, readerVersionPlatform, supportedReaderVersion)
+	assert.Equal(t, 4, readerVersionSessionDeletions)
+	assert.Equal(t, readerVersionSessionDeletions, supportedReaderVersion)
 }
 
 // resolveStoredPlatform is the shared merge/reindex rule for a row's stored
