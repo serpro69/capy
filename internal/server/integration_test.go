@@ -199,8 +199,7 @@ func TestIntegration_CleanupAfterIndex(t *testing.T) {
 	require.False(t, r.IsError)
 	assert.NotContains(t, resultText(r), "No results found")
 
-	// Dry-run cleanup — freshly indexed content has a high retention score,
-	// so it should NOT be an eviction candidate.
+	// General cleanup preserves explicitly indexed durable content.
 	r2 := callCleanup(t, srv, map[string]any{})
 	require.False(t, r2.IsError)
 	text := resultText(r2)

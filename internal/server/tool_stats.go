@@ -109,13 +109,13 @@ func (s *Server) handleStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.C
 			)
 			if kbStats.DurableSourceCount > 0 {
 				lines = append(lines, "",
-					"#### Durable retention tiers",
+					"#### Durable source scores",
 					"| Tier | Count |",
 					"|------|------:|",
 					fmt.Sprintf("| hot | %d |", kbStats.DurableHotCount),
 					fmt.Sprintf("| warm | %d |", kbStats.DurableWarmCount),
 					fmt.Sprintf("| cold | %d |", kbStats.DurableColdCount),
-					fmt.Sprintf("| evictable | %d |", kbStats.DurableEvictableCount),
+					fmt.Sprintf("| lowest score | %d |", kbStats.DurableEvictableCount),
 				)
 			}
 			if kbStats.EphemeralSourceCount > 0 {

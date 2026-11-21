@@ -528,7 +528,7 @@ vocabulary       — unique words extracted from indexed content, used for fuzzy
 
 | Kind | Lifecycle | Default search visibility | Produced by |
 |------|-----------|--------------------------|-------------|
-| `durable` | Retention-score tiers (hot/warm/cold/evictable) | Included | `capy_index`, `capy_fetch_and_index(kind: "durable")` |
+| `durable` | Protected from general cleanup while durable | Included | `capy_index`, `capy_fetch_and_index(kind: "durable")` |
 | `ephemeral` | Strict TTL (default 24h) | Excluded | `capy_execute`, `capy_execute_file`, `capy_batch_execute`, `capy_fetch_and_index` |
 | `session` | Legacy tier — draining; no new writes (ADR-027) | Served from the vault via federation | The session **vault** (`vault_chunks`); knowledge.db no longer writes `session` rows — pre-existing ones reclaimed via `capy_cleanup purge_session` |
 
@@ -541,7 +541,7 @@ score = salience × exp(-λ × daysSinceIndexed) + σ × recencyBoost
 - **salience** = base (0.5 prose, 0.6 mixed, 0.7 code) + frequency bonus (min(0.2, accessCount × 0.02))
 - **temporal decay** λ = 0.045
 - **recency boost** = 1/(1 + daysSinceLastAccess) when accessCount > 0
-- Tiers: hot (≥0.7), warm (≥0.4), cold (≥0.15), evictable (<0.15, never accessed)
+- The hot (≥0.7), warm (≥0.4), cold (≥0.15), and lowest (<0.15) score tiers describe usage. General cleanup preserves durable sources in every tier.
 
 ### Content Deduplication
 

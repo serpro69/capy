@@ -244,7 +244,7 @@ func toolSearch() mcp.Tool {
 			mcp.Description("Filter to a specific indexed knowledge source (partial match). When set, kind filtering is bypassed and the session (vault) pass is skipped — caller's named source wins."),
 		),
 		mcp.WithArray("include_kinds",
-			mcp.Description("Source kinds to include. Accepted values: \"durable\" (explicitly indexed reference content, retained by retention score), \"ephemeral\" (auto-indexed command output and fetched web pages, swept by TTL), and \"session\" (past conversation transcripts from the archived vault; requires CAPY_VAULT_KEY). Default: [\"durable\", \"session\"]. Use [\"durable\",\"ephemeral\"] to recover prior command output or fetched pages, or [\"durable\",\"ephemeral\",\"session\"] to search everything."),
+			mcp.Description("Source kinds to include. Accepted values: \"durable\" (explicitly indexed reference content, protected from general cleanup), \"ephemeral\" (auto-indexed command output and fetched web pages, swept by TTL), and \"session\" (past conversation transcripts from the archived vault; requires CAPY_VAULT_KEY). Default: [\"durable\", \"session\"]. Use [\"durable\",\"ephemeral\"] to recover prior command output or fetched pages, or [\"durable\",\"ephemeral\",\"session\"] to search everything."),
 			mcp.Items(map[string]any{"type": "string", "enum": []string{"durable", "ephemeral", "session"}}),
 		),
 		mcp.WithString("project",
@@ -318,7 +318,7 @@ func toolFetchAndIndex() mcp.Tool {
 			mcp.MultipleOf(1),
 		),
 		mcp.WithString("kind",
-			mcp.Description("Source kind for indexed content: 'ephemeral' (default, configurable retention TTL, excluded from default search) or 'durable' (retained by retention score, included in default search). Use 'durable' for reference docs you want to persist across sessions. Applies to all URLs in batch mode; ttl does not change retention."),
+			mcp.Description("Source kind for indexed content: 'ephemeral' (default, configurable retention TTL, excluded from default search) or 'durable' (protected from general cleanup, included in default search). Use 'durable' for reference docs you want to persist across sessions. Applies to all URLs in batch mode; ttl does not change retention."),
 			mcp.Enum("durable", "ephemeral"),
 		),
 	)
@@ -380,7 +380,7 @@ func toolDoctor() mcp.Tool {
 func toolCleanup() mcp.Tool {
 	return mcp.NewTool("capy_cleanup",
 		mcp.WithToolAnnotation(annotationCleanup),
-		mcp.WithDescription("Clean up evictable knowledge base entries. By default runs four paths: oversized source eviction, retention-score eviction for durable sources, strict TTL eviction for ephemeral sources, and strict TTL eviction for session sources. Set purge_ephemeral=true or purge_session=true for kind-specific purges, source=<label> to evict a specific source, or purge_all=true for a full project-scope reset. Set optimize=true to reclaim FTS5 tombstone bloat (rebuild FTS indexes + VACUUM) — alone it runs immediately regardless of dry_run; combined with an eviction it runs after the eviction (skipped on dry runs). Mirrors `capy cleanup --optimize`."),
+		mcp.WithDescription("Clean up evictable knowledge base entries. Default cleanup removes expired or oversized ephemeral and legacy session sources. Durable sources require an exact label or a full reset. Set purge_ephemeral=true or purge_session=true for kind-specific purges, source=<label> to evict a specific source, or purge_all=true for a full project-scope reset. Set optimize=true to reclaim FTS5 tombstone bloat (rebuild FTS indexes + VACUUM) — alone it runs immediately regardless of dry_run; combined with an eviction it runs after the eviction (skipped on dry runs). Mirrors `capy cleanup --optimize`."),
 		mcp.WithBoolean("dry_run",
 			mcp.Description("Preview what would be removed without deleting (default: true)"),
 		),

@@ -34,7 +34,7 @@ func TestRetentionScoreOldUnaccessed(t *testing.T) {
 	}
 	score := retentionScore(src, now)
 	// 90-day-old prose, never accessed: salience=0.5, decay≈0.02, no access boost → score≈0.01
-	assert.Less(t, score, evictableThreshold, "90-day-old never-accessed prose should be evictable")
+	assert.Less(t, score, coldThreshold, "90-day-old never-accessed prose should fall in the lowest score tier")
 }
 
 func TestRetentionScoreOldButAccessed(t *testing.T) {
@@ -49,8 +49,7 @@ func TestRetentionScoreOldButAccessed(t *testing.T) {
 	score := retentionScore(src, now)
 	// 60-day-old code with 10 accesses and recent access:
 	// salience=0.7+0.2=0.9, decay≈0.07, access_boost≈0.5 → score≈0.9*0.07+0.3*0.5≈0.21
-	assert.GreaterOrEqual(t, score, evictableThreshold,
-		"old but frequently accessed source should not be evictable")
+	assert.GreaterOrEqual(t, score, coldThreshold, "recent access should raise the score")
 }
 
 func TestRetentionScoreContentTypeWeight(t *testing.T) {
@@ -185,16 +184,15 @@ func TestCleanupDryRun(t *testing.T) {
 	db, err := s.getDB()
 	require.NoError(t, err)
 
-	// Insert an old source with access_count = 0 (evictable).
-	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count)
-		VALUES ('stale', 'plaintext', 1, 0, 'h1', datetime('now', '-60 days'), datetime('now', '-60 days'), 0)`)
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('stale', 'plaintext', 1, 0, 'h1', datetime('now', '-60 days'), datetime('now', '-60 days'), 0, 'ephemeral')`)
 	db.Exec(`INSERT INTO chunks (title, content, source_id, content_type) VALUES ('t', 'c', 1, 'prose')`)
 	db.Exec(`INSERT INTO chunks_trigram (title, content, source_id, content_type) VALUES ('t', 'c', 1, 'prose')`)
 
 	// Dry run should return candidates but not delete.
 	candidates, err := s.Cleanup(true, 24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
-	assert.Len(t, candidates, 1)
+	require.Len(t, candidates, 1)
 	assert.Equal(t, "stale", candidates[0].Label)
 
 	// Source should still exist.
@@ -208,9 +206,8 @@ func TestCleanupForce(t *testing.T) {
 	db, err := s.getDB()
 	require.NoError(t, err)
 
-	// Insert an old source with access_count = 0 (evictable).
-	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count)
-		VALUES ('stale', 'plaintext', 1, 0, 'h1', datetime('now', '-60 days'), datetime('now', '-60 days'), 0)`)
+	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
+		VALUES ('stale', 'plaintext', 1, 0, 'h1', datetime('now', '-60 days'), datetime('now', '-60 days'), 0, 'ephemeral')`)
 	db.Exec(`INSERT INTO chunks (title, content, source_id, content_type) VALUES ('t', 'c', 1, 'prose')`)
 	db.Exec(`INSERT INTO chunks_trigram (title, content, source_id, content_type) VALUES ('t', 'c', 1, 'prose')`)
 
@@ -258,7 +255,7 @@ func TestCleanupPreservesAccessedSources(t *testing.T) {
 	assert.Empty(t, candidates, "source with access_count > 0 should not be a cleanup candidate")
 }
 
-// ─── Cleanup split (durable retention + ephemeral TTL) ────────────────────
+// ─── Cleanup by source kind ───────────────────────────────────────────────
 
 func TestCleanupEphemeralTTL(t *testing.T) {
 	s := newTestStore(t)
@@ -289,12 +286,12 @@ func TestCleanupEphemeralTTL(t *testing.T) {
 	assert.False(t, youngPresent, "young ephemeral within TTL preserved")
 }
 
-func TestCleanupDurableOnlyRespectsKind(t *testing.T) {
+func TestCleanupPreviewProtectsNeverAccessedDurable(t *testing.T) {
 	s := newTestStore(t)
 	db, err := s.getDB()
 	require.NoError(t, err)
 
-	// Old, never-accessed durable prose — retention path should evict.
+	// Old, never-accessed durable prose remains outside the preview.
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
 		VALUES ('notes', 'plaintext', 1, 0, 'dur-old', datetime('now', '-60 days'), datetime('now', '-60 days'), 0, 'durable')`)
 	// Young ephemeral that would score "cold" by age but is too fresh for TTL.
@@ -304,17 +301,14 @@ func TestCleanupDurableOnlyRespectsKind(t *testing.T) {
 	pruned, err := s.Cleanup(true, 24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
 
-	require.Len(t, pruned, 1, "only the durable candidate should be pruned")
-	assert.Equal(t, "notes", pruned[0].Label)
-	assert.Equal(t, "retention", pruned[0].EvictionReason)
+	require.Empty(t, pruned)
 }
 
-func TestCleanupMergedReasons(t *testing.T) {
+func TestCleanupRemovesOnlyExpiredScratch(t *testing.T) {
 	s := newTestStore(t)
 	db, err := s.getDB()
 	require.NoError(t, err)
 
-	// One candidate per path.
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
 		VALUES ('stale-prose', 'plaintext', 1, 0, 'h1', datetime('now', '-60 days'), datetime('now', '-60 days'), 0, 'durable')`)
 	db.Exec(`INSERT INTO sources (label, content_type, chunk_count, code_chunk_count, content_hash, indexed_at, last_accessed_at, access_count, kind)
@@ -322,19 +316,39 @@ func TestCleanupMergedReasons(t *testing.T) {
 
 	pruned, err := s.Cleanup(false, 24*time.Hour, 60*24*time.Hour)
 	require.NoError(t, err)
-	require.Len(t, pruned, 2)
+	require.Len(t, pruned, 1)
+	assert.Equal(t, "ttl", pruned[0].EvictionReason)
+	assert.Equal(t, "execute:shell-old", pruned[0].Label)
+	sources, err := s.ListSources()
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+	assert.Equal(t, "stale-prose", sources[0].Label)
+}
 
-	reasons := map[string]string{}
-	for _, p := range pruned {
-		reasons[p.Label] = p.EvictionReason
-	}
-	assert.Equal(t, "retention", reasons["stale-prose"])
-	assert.Equal(t, "ttl", reasons["execute:shell-old"])
-
-	// Both actually deleted.
-	var count int
-	db.QueryRow("SELECT COUNT(*) FROM sources").Scan(&count)
-	assert.Equal(t, 0, count)
+func TestCleanupPreservesSourcePromotedAfterSelection(t *testing.T) {
+	s := newTestStore(t)
+	original, err := s.Index("durable evidence", "notes", "plaintext", KindEphemeral)
+	require.NoError(t, err)
+	db, err := s.getDB()
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE sources SET indexed_at='2000-01-01 00:00:00' WHERE id=?", original.SourceID)
+	require.NoError(t, err)
+	selected, err := s.Cleanup(true, time.Hour, 0)
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	promoted, err := s.Index("durable evidence", "notes", "plaintext", KindDurable)
+	require.NoError(t, err)
+	require.Equal(t, original.SourceID, promoted.SourceID)
+	removed, err := s.evict(selected, false)
+	require.NoError(t, err)
+	require.Empty(t, removed)
+	var sources, chunks, trigram int
+	require.NoError(t, db.QueryRow(`SELECT (SELECT count(*) FROM sources WHERE id=?1 AND kind='durable'),
+		(SELECT count(*) FROM chunks WHERE source_id=?1),(SELECT count(*) FROM chunks_trigram WHERE source_id=?1)`, promoted.SourceID).Scan(&sources, &chunks, &trigram))
+	assert.Equal(t, 1, sources)
+	require.Positive(t, original.TotalChunks)
+	assert.Equal(t, original.TotalChunks, chunks)
+	assert.Equal(t, chunks, trigram)
 }
 
 func TestCleanupEphemeralIgnoresAccessCount(t *testing.T) {

@@ -12,6 +12,10 @@ capy's persistent DB (ADR-006) changes the calculus. Deleting a source that was 
 
 ## Decision
 
+**Current policy (2026-11-21).** A durable source may be needed years after indexing or before its first search. General CLI and MCP cleanup therefore preserves every durable source, including one that exceeds a newly lowered size limit. Operators can remove a durable source by its exact label or explicitly reset the whole knowledge base. Retention scores describe usage. This amendment supersedes the earlier durable eviction rules below and applies to existing databases. [Issue #8](https://github.com/serpro69/capy/issues/8)
+
+### Original policy
+
 Do not port `cleanupStaleSources`. Keep the existing `Cleanup()` method which only removes sources meeting ALL of:
 - `access_count = 0` (never accessed via search)
 - Retention score < 0.15 (evictable tier)

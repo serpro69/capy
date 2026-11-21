@@ -12,6 +12,7 @@ func newCleanupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cleanup",
 		Short: "Remove stale data from the knowledge base",
+		Long:  "Preview expired or oversized ephemeral and legacy session sources. To remove durable knowledge, select its exact label with --source and apply with --force.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target, err := loadKnowledgeTarget(cmd)
 			if err != nil {
@@ -163,18 +164,14 @@ func reclaimName(optimize bool) string {
 	return "--vacuum"
 }
 
-// formatCleanupDetail renders per-source eviction detail, switching between
-// retention-score framing and TTL-age framing based on EvictionReason.
+// formatCleanupDetail describes why an entry qualified for the sweep.
 func formatCleanupDetail(s store.SourceInfo) string {
 	switch s.EvictionReason {
 	case "ttl":
 		return fmt.Sprintf("reason: ttl, age: %s", time.Since(s.IndexedAt).Truncate(time.Minute))
 	case "oversized":
 		return fmt.Sprintf("reason: oversized, chunks: %d, kind: %s", s.ChunkCount, s.Kind)
-	case "manual":
-		return fmt.Sprintf("reason: manual, kind: %s, chunks: %d", s.Kind, s.ChunkCount)
 	default:
-		return fmt.Sprintf("reason: retention, score: %.2f, last accessed: %s",
-			s.RetentionScore, s.LastAccessedAt.Format("2006-01-02"))
+		return fmt.Sprintf("reason: %s, kind: %s", s.EvictionReason, s.Kind)
 	}
 }

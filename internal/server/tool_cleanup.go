@@ -122,7 +122,7 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 		return s.finishCleanup(st, "No evictable sources found.", dryRun, optimize, vacuum)
 	}
 
-	var durableN, ephemeralN, sessionN, oversizedN int
+	var ephemeralN, sessionN, oversizedN int
 	for _, src := range pruned {
 		if src.EvictionReason == "oversized" {
 			oversizedN++
@@ -133,8 +133,6 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 			sessionN++
 		case store.KindEphemeral:
 			ephemeralN++
-		default:
-			durableN++
 		}
 	}
 
@@ -151,7 +149,6 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 		parts = append(parts, fmt.Sprintf("%d oversized", oversizedN))
 	}
 	parts = append(parts,
-		fmt.Sprintf("%d durable (retention)", durableN),
 		fmt.Sprintf("%d ephemeral (TTL)", ephemeralN),
 		fmt.Sprintf("%d session (TTL)", sessionN),
 	)
@@ -163,17 +160,20 @@ func (s *Server) handleCleanup(_ context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	lines = append(lines, "",
-		"| Source | Reason | Score | Age | Chunks |",
-		"|--------|--------|-------|-----|--------|",
+		"| Source | Reason | Age | Chunks |",
+		"|--------|--------|-----|--------|",
 	)
 	for _, src := range pruned {
-		ageHours := time.Since(src.IndexedAt).Hours()
-		ageStr := fmt.Sprintf("%dd", int(ageHours/24))
-		if src.EvictionReason == "ttl" && ageHours < 48 {
-			ageStr = fmt.Sprintf("%.1fh", ageHours)
+		ageStr := "unknown"
+		if !src.IndexedAt.IsZero() {
+			ageHours := time.Since(src.IndexedAt).Hours()
+			ageStr = fmt.Sprintf("%dd", int(ageHours/24))
+			if src.EvictionReason == "ttl" && ageHours < 48 {
+				ageStr = fmt.Sprintf("%.1fh", ageHours)
+			}
 		}
-		lines = append(lines, fmt.Sprintf("| %s | %s | %.2f | %s | %d |",
-			src.Label, src.EvictionReason, src.RetentionScore, ageStr, src.ChunkCount))
+		lines = append(lines, fmt.Sprintf("| %s | %s | %s | %d |",
+			src.Label, src.EvictionReason, ageStr, src.ChunkCount))
 	}
 
 	if dryRun {
