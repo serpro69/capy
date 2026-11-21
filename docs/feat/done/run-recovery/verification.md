@@ -204,3 +204,25 @@ onto a disposition-aware binary before applying recovery. Schema 10 alone does
 not certify an intermediate build; no installed-environment rollout was performed
 here. Existing nonblocking diagnostic wording follow-ups remain in Tasks 8, 12
 and 13 with their original scope and next actions.
+
+## Owner claims under capture contention
+
+On 2026-11-21, held-writer tests reproduced two production failure paths.
+Owner generation publication could return after one SQLite busy wait (100 ms)
+even with time left in the three-second claim budget. A free slot containing
+only disposed runs also took the writer lock during reconciliation, once during
+the registry scan and again if selected for reuse. The original CI logs report
+total claim time and do not identify which phase consumed it. [Issue #147](https://github.com/serpro69/capy/issues/147)
+
+Reconciliation now checks for outstanding work and validates the dispositions
+that justify a read-only return in the same snapshot. Publication retries writer
+acquisition within the caller's deadline and checks quarantine in the transaction
+that installs the new generation. A terminal run with an open incident still
+refuses admission while another connection holds the writer lock.
+
+Five Linux FTS5 integration race repetitions exercised both 256-disposition
+cases with 123–136 concurrent appends per claim. Claims took 303–344 ms and
+the longest append took 24 ms (rounded up). The same run exercised refused and
+successful claims with a held writer and validated a disposed slot while a
+second connection kept the write transaction open. Captured run
+`d9cd5366-0031-41c7-ab3b-e1637ed8d7af` records those results.

@@ -322,6 +322,10 @@ func (v *recoveryValidation) snapshot(ctx context.Context, s *Store, slots ...in
 		return 0, storageError()
 	}
 	defer tx.Rollback()
+	return v.validateSnapshot(ctx, tx, slots...)
+}
+
+func (v *recoveryValidation) validateSnapshot(ctx context.Context, tx *sql.Tx, slots ...int) (int64, error) {
 	var epoch int64
 	if err := tx.QueryRowContext(ctx, "SELECT recovery_revision FROM run_meta WHERE singleton=1").Scan(&epoch); err != nil {
 		return 0, storageError()

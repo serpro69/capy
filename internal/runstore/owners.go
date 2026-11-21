@@ -77,15 +77,25 @@ func (s *Store) claimSlot(ctx context.Context, slot int, lease *os.File, validat
 	if report.DeferredSlots != 0 {
 		return nil, nil
 	}
-	if err := s.checkQuarantine(ctx); err != nil {
+	// Capture may own SQLite's writer lock longer than one busy wait. Acquire
+	// it with the same bounded retry used by reconciliation, then publish once.
+	tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
+	if err != nil {
+		return nil, metadataFailure(ctx, "acquiring owner publication writer")
+	}
+	defer tx.Rollback()
+	if err := s.checkQuarantineQuery(ctx, tx); err != nil {
 		return nil, err
 	}
 	owner := &Owner{ID: uuid.NewString(), Slot: slot}
 	// The registry lease stays held through publication. Admit rechecks recovery
 	// and quarantine when this generation later requests execution.
-	_, err = s.db.ExecContext(ctx, "INSERT INTO run_owners(slot,generation) VALUES(?,?) ON CONFLICT(slot) DO UPDATE SET generation=excluded.generation", slot, owner.ID)
+	_, err = tx.ExecContext(ctx, "INSERT INTO run_owners(slot,generation) VALUES(?,?) ON CONFLICT(slot) DO UPDATE SET generation=excluded.generation", slot, owner.ID)
 	if err != nil {
-		return nil, storageError()
+		return nil, metadataFailure(ctx, "publishing owner generation")
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, metadataFailure(ctx, "committing owner generation")
 	}
 	a := s.leases
 	a.mu.Lock()
