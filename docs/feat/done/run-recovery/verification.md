@@ -226,3 +226,17 @@ the longest append took 24 ms (rounded up). The same run exercised refused and
 successful claims with a held writer and validated a disposed slot while a
 second connection kept the write transaction open. Captured run
 `d9cd5366-0031-41c7-ab3b-e1637ed8d7af` records those results.
+
+The first fix still used SQLite's busy handler and exponential backoff to
+acquire the registry writer. Native macOS CI identified an owner publication
+that expired after 3.025 seconds while 816 capture appends succeeded. Its
+five-repeat step passed on the same runner. [Native job log](https://github.com/serpro69/capy/actions/runs/44879889215/job/136772642268)
+
+Registry writes now start a WAL read snapshot and attempt to promote it to a
+writer. A busy promotion rolls back before any mutation and retries from a
+fresh snapshot after one millisecond. This lets recovery acquire the lock
+between consecutive capture writes. In a Linux race-enabled probe with a
+separate connection repeatedly holding the writer for two milliseconds, ten
+clean-slot claims took 9–29 ms, compared with 7–563 ms under the previous
+acquisition strategy. The macOS workflow repeats the 256-disposition fixture
+five times in addition to the full suite.

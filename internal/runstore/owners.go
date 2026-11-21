@@ -79,7 +79,7 @@ func (s *Store) claimSlot(ctx context.Context, slot int, lease *os.File, validat
 	}
 	// Capture may own SQLite's writer lock longer than one busy wait. Acquire
 	// it with the same bounded retry used by reconciliation, then publish once.
-	tx, err := sqliteutil.BeginImmediateContext(ctx, s.db, "runs")
+	tx, err := beginRegistryWrite(ctx, s.db)
 	if err != nil {
 		return nil, metadataFailure(ctx, "acquiring owner publication writer")
 	}
