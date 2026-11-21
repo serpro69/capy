@@ -42,8 +42,11 @@ func migrateVault(ctx context.Context, db *sql.DB) error {
 	if err := migrate0006AddPlatform(ctx, db); err != nil {
 		return fmt.Errorf("migration 0006_platform: %w", err)
 	}
-	if err := migrate0007AddSessionProjects(ctx, db); err != nil {
+	if err := migrateTable(ctx, db, "0007_session_projects", sessionProjectsTableSQL); err != nil {
 		return fmt.Errorf("migration 0007_session_projects: %w", err)
+	}
+	if err := migrateTable(ctx, db, "0008_session_deletions", sessionDeletionsTableSQL); err != nil {
+		return fmt.Errorf("migration 0008_session_deletions: %w", err)
 	}
 	return nil
 }
@@ -333,12 +336,8 @@ func migrate0006AddPlatform(ctx context.Context, db *sql.DB) error {
 	return tx.Commit()
 }
 
-// migrate0007AddSessionProjects creates the capy-owned session-project table. Fresh
-// vaults already have it through schemaSQL; IF NOT EXISTS keeps the legacy and
-// fresh paths identical while the name-keyed migration record makes reruns a
-// read-only fast path.
-func migrate0007AddSessionProjects(ctx context.Context, db *sql.DB) error {
-	const name = "0007_session_projects"
+// migrateTable installs the same table definition used for new vaults.
+func migrateTable(ctx context.Context, db *sql.DB, name, ddl string) error {
 
 	var count int
 	if err := db.QueryRowContext(ctx,
@@ -360,8 +359,8 @@ func migrate0007AddSessionProjects(ctx context.Context, db *sql.DB) error {
 		return tx.Commit()
 	}
 
-	if _, err := tx.ExecContext(ctx, sessionProjectsTableSQL); err != nil {
-		return fmt.Errorf("creating session projects table: %w", err)
+	if _, err := tx.ExecContext(ctx, ddl); err != nil {
+		return fmt.Errorf("creating table: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO vault_migrations (name) VALUES (?)`, name); err != nil {
 		return fmt.Errorf("recording migration: %w", err)

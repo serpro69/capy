@@ -300,7 +300,8 @@ func TestVaultStore_MinReaderVersionMonotonic(t *testing.T) {
 		a := sampleRecord("c0dec0de-0000-0000-0000-000000000006")
 		a.Session.RawJSONL = compressibleBytes()
 		b := sampleRecord("c0dec0de-0000-0000-0000-000000000007") // tiny → raw
-		require.NoError(t, s.WriteBatch(ctx, []SessionWrite{{Record: a}, {Record: b}}))
+		_, err := s.WriteBatch(ctx, []SessionWrite{{Record: a}, {Record: b}})
+		require.NoError(t, err)
 		assert.Equal(t, strconv.Itoa(readerVersionZstd), marker(t, s))
 		assert.NotEqual(t, strconv.Itoa(supportedReaderVersion), marker(t, s),
 			"a Claude-only vault must remain openable by a pre-platform binary")
@@ -310,11 +311,12 @@ func TestVaultStore_MinReaderVersionMonotonic(t *testing.T) {
 		s := newTestVault(t)
 		a := sampleRecord("c0dec0de-0000-0000-0000-000000000008")
 		a.Session.RawJSONL = compressibleBytes()
-		require.NoError(t, s.WriteBatch(ctx, []SessionWrite{
+		_, err := s.WriteBatch(ctx, []SessionWrite{
 			{Record: a},
 			{Record: codexRecord("c0dec0de-0000-0000-0000-000000000009")},
 			{Record: sampleRecord("c0dec0de-0000-0000-0000-00000000000a")},
-		}))
+		})
+		require.NoError(t, err)
 		assert.Equal(t, strconv.Itoa(readerVersionPlatform), marker(t, s))
 	})
 

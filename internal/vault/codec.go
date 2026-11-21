@@ -56,7 +56,8 @@ const (
 	// launch `claude --resume` on a Codex uuid, and its merge would rescan the
 	// blob with the Claude scanner and store it as claude-code with empty FTS, a
 	// permanent mislabel — so the first such row must lock older binaries out.
-	readerVersionPlatform = 3
+	readerVersionPlatform         = 3
+	readerVersionSessionDeletions = 4
 )
 
 // supportedReaderVersion is the highest vault min_reader_version this binary can

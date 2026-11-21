@@ -97,7 +97,8 @@ func projectMetadataFixture(t testing.TB, count int, overrides bool) *VaultStore
 			}
 			writes = append(writes, write)
 		}
-		require.NoError(t, s.WriteBatch(ctx, writes))
+		_, err := s.WriteBatch(ctx, writes)
+		require.NoError(t, err)
 	}
 	return s
 }
