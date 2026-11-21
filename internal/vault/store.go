@@ -522,7 +522,7 @@ func (s *VaultStore) openDB(ctx context.Context) (*sql.DB, error) {
 	// Refuse a vault whose on-disk format is newer than this binary understands
 	// (a future version's compressed blobs would otherwise be mis-read). Runs
 	// after migrations so vault_meta exists; an unmarked (v1) vault passes.
-	if err := checkReaderVersion(ctx, db); err != nil {
+	if _, err := checkReaderVersion(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -722,6 +722,8 @@ type SessionWrite struct {
 	// Project carries independently ordered source project state in the same
 	// transaction as the session and title. Disk import leaves it nil.
 	Project *SessionProject
+	// Merge reports the metadata that won inside this write transaction.
+	reportMetadata bool
 }
 
 // InsertSession writes a new session, its files, and its FTS rows in one
@@ -793,6 +795,12 @@ func (s *VaultStore) WriteBatch(ctx context.Context, writes []SessionWrite) ([]w
 		outcome, err := s.writeRecord(ctx, tx, w)
 		if err != nil {
 			return nil, err
+		}
+		if w.reportMetadata && outcome.reason == "" {
+			outcome.metadata, err = mergeSessionMetadata(ctx, tx, w.Record.Session.UUID)
+			if err != nil {
+				return nil, err
+			}
 		}
 		required = max(required, outcome.readerVersion)
 		outcomes = append(outcomes, outcome)

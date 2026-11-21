@@ -25,11 +25,15 @@ const (
 
 // writeOutcome describes one input after its transaction commits.
 type writeOutcome struct {
+	metadata      *Session
 	readerVersion int
 	reason        string
 }
 
 func (o writeOutcome) apply(entry ImportedSession) ImportedSession {
+	if o.metadata != nil {
+		entry = mergeReportMetadata(entry, o.metadata)
+	}
 	switch o.reason {
 	case reasonDeleted:
 		entry.Status, entry.Reason = StatusExcluded, o.reason

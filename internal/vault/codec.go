@@ -61,10 +61,10 @@ const (
 )
 
 // supportedReaderVersion is the highest vault min_reader_version this binary can
-// read: readerVersionPlatform, since it knows every platform constant. A vault
+// read, including remembered and forwarded session deletions. A vault
 // whose marker exceeds this (a future on-disk format this binary predates) is
 // refused on open by checkReaderVersion rather than silently mis-read.
-const supportedReaderVersion = readerVersionPlatform
+const supportedReaderVersion = readerVersionSessionDeletions
 
 // minReaderVersionKey is the vault_meta row key carrying the minimum reader
 // version required to safely read the vault. Absent ⇒ no constraint (a v1 vault,
@@ -166,24 +166,24 @@ func markMinReaderVersion(ctx context.Context, tx *sql.Tx, version int) error {
 // constraint. Called on open after the schema and migrations are in place, so
 // vault_meta is guaranteed to exist; without this read the marker is inert and
 // protects no one (design.md §1).
-func checkReaderVersion(ctx context.Context, db *sql.DB) error {
+func checkReaderVersion(ctx context.Context, db rowQueryer) (int, error) {
 	var value string
 	err := db.QueryRowContext(ctx,
 		`SELECT value FROM vault_meta WHERE key = ?`, minReaderVersionKey).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil // no marker — unconstrained (v1 / never-compressed vault)
+		return 0, nil // no marker — unconstrained (v1 / never-compressed vault)
 	}
 	if err != nil {
-		return fmt.Errorf("reading min_reader_version: %w", err)
+		return 0, fmt.Errorf("reading min_reader_version: %w", err)
 	}
 	required, perr := strconv.Atoi(value)
 	if perr != nil {
 		// A non-numeric marker is corruption we must surface, not paper over.
-		return fmt.Errorf("invalid min_reader_version %q in vault: %w", value, perr)
+		return 0, fmt.Errorf("invalid min_reader_version %q in vault: %w", value, perr)
 	}
 	if required > supportedReaderVersion {
-		return fmt.Errorf("vault requires reader version %d but this capy binary supports %d; upgrade capy to open it",
+		return 0, fmt.Errorf("vault requires reader version %d but this capy binary supports %d; upgrade capy to open it",
 			required, supportedReaderVersion)
 	}
-	return nil
+	return required, nil
 }

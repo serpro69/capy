@@ -94,12 +94,13 @@ type seenSession struct {
 
 // ImportResult aggregates an import run.
 type ImportResult struct {
-	Imported int
-	Updated  int
-	Skipped  int
-	Excluded int
-	Errors   int
-	Sessions []ImportedSession
+	Imported  int
+	Updated   int
+	Skipped   int
+	Excluded  int
+	Errors    int
+	Sessions  []ImportedSession
+	Deletions []MergedDeletion
 }
 
 func (r *ImportResult) record(s ImportedSession) {
