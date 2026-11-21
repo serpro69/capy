@@ -1,8 +1,8 @@
 {
   "schema_version": "1",
   "upstream_repo": "serpro69/claude-toolbox",
-  "template_version": "fe4d80933170dfc6495c81b34b3c7f92be717fd3",
-  "synced_at": "2026-11-13T14:59:41Z",
+  "template_version": "9880439951af3d6316016209256b862c2b6b2751",
+  "synced_at": "2026-11-21T06:56:07Z",
   "variables": {
     "PROJECT_NAME": "capy",
     "LANGUAGES": "go",
@@ -11,7 +11,7 @@
     "CC_EFFORT_LEVEL": "high",
     "CC_PERMISSION_MODE": "default",
     "CODEX_APPROVAL_POLICY": "on-request",
-    "CODEX_MODEL": "gpt-6-astra",
+    "CODEX_MODEL": "gpt-6.2-astra",
     "SKIP_CAPY": "false"
   },
   "plugin_migrated": true
