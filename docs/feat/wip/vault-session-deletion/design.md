@@ -6,7 +6,7 @@ Revised after two design reviews. Implementation is pending. The behavior below 
 
 Issue #109 requests archive cleanup and suppression of disk re-import, with a configuration opt-out. During design on 2026-11-21 the maintainer also explicitly chose outbound deletion propagation, unconditional acceptance of incoming deletions, and source effective-project filtering. The configuration choice applies when issuing a local delete. [Review decisions](./review-resolution.md)
 
-A session keeps its UUID when copied to another vault. Suppose two machines have checkouts at `/home/alex/capy` and `/src/capy`. A session started on A and a separate session started on B have different UUIDs. If B has previously merged A's session, deleting it on A and merging A into B removes that copy from B. B keeps its own session. A full merge requires only the UUID. With `--project capy`, selection uses the source's effective project, which can be a label or a path containing `capy`. The destination checkout path plays no part in identifying the archive to remove.
+A session keeps its UUID when copied to another vault. Suppose two machines have checkouts at `/home/alex/capy` and `/src/capy`. A session started on A and a separate session started on B have different UUIDs. If B has previously merged A's session, deleting it on A and merging A into B removes that copy from B. B keeps its own session. A full merge carries every recorded pair. With `--project capy`, selection uses the source's effective project, which can be a label or a path containing `capy`. In both cases the destination matches the archive by exact UUID.
 
 ## User-visible behavior
 
@@ -23,25 +23,35 @@ Today, `capy vault delete` removes the session row containing the raw transcript
 
 The preview for a remembered delete identifies the full UUID and tells the operator that capy cannot undo this deletion, imports will exclude this UUID, and a merge can delete copies in other vaults. For a one-time delete it explains that the archive can return. Show this information before confirmation, including in the preview printed with `--yes`. Changing the setting later preserves existing deletion records. Independently archived children keep their existing lifecycle. Original Claude and Codex files remain under the user's control. Deletions made before this feature have no historical record to propagate.
 
-## Storage and merge
+## Stored deletion records
 
 A deletion record, commonly called a tombstone, contains the full session UUID and the effective project captured inside the delete transaction. Prefer the custom project label when present, otherwise use the imported path. The retained record contains no transcript, session title, sidecar content, or search text. A vault owner who wants to delete once without keeping these identifiers can opt out before deletion.
 
 Store unique `(session_uuid, effective_project)` pairs independently of live session rows. Any pair suppresses the UUID locally. Only an explicit remembered delete captures the local effective project. Two machines that independently delete the same UUID under different labels can contribute two pairs. Receiving a deletion imports the selected pairs verbatim. For example, if A issued the delete under `personal` and B receives it while holding the UUID under `work`, a later full merge or `--project personal` from B forwards it. A `--project work` merge requires an independently recorded matching pair.
 
-Commit each UUID's archive removal and new marker pairs together. Check destination membership inside the transaction. Clean the three search indexes only for distinct live UUIDs, in bounded batches. Applying markers to absent sessions, including a replay of a previous merge, issues zero search-index deletes for those sessions.
+Commit each UUID's archive removal and new pairs together. On the first remembered deletion for a UUID, clean that UUID from all three search indexes even if its archive is already absent. An older writer could leave search rows after a concurrent deletion. A live archive also requires cleanup. Once a UUID has a marker and no live row, a repeat or an additional project pair issues zero search-index deletes for it. Batch this work by distinct UUID and leave other sessions' indexes alone.
+
+## Import and concurrent writes
 
 For each selected disk-import candidate, check the UUID before the importer reads the transcript or sidecars, in preview and apply. Recheck inside the transaction that writes archive data, search entries, a location hint, or merge metadata. A remembered UUID yields `StatusExcluded` with reason `deleted`. If a planned replacement, rebuild, or location update encounters an absent parent with no marker, return `StatusSkipped` with reason `session disappeared` and perform no child writes. An ordinary later import can admit it as a new session. Report the committed outcome for each input, including each batch retry and each startup-sweep candidate.
 
-Merge reads the source's markers and live records from one SQLite snapshot. Without it, a source deletion can commit between reading the marker set and enumerating live UUIDs. Both reads can omit the UUID even though every committed source state contains either the archive or its marker. The next merge can pick up a deletion that committed after the selected snapshot.
+## Merge and reporting
 
-Merge preview and apply count archive removals once per distinct live destination UUID. They count marker additions and already-present markers once per distinct selected pair. Print the full UUID for deletion outcomes, including marker-only rows. For two new project pairs for one live archive, the totals are one removal, two additions and zero already present. A repeat gives zero removals, zero additions and two already present. An empty destination receiving the two pairs for the first time reports zero removals and two additions. Preview is relative to the destination state observed, and apply reports committed outcomes.
+Merge reads the source's markers and live records from one SQLite snapshot. With separate reads, a source deletion can commit between reading the marker set and enumerating live UUIDs. Both reads can omit the UUID even though every committed source state contains either the archive or its marker. The next merge can pick up a deletion that committed after the selected snapshot.
+
+| Destination before merge | Live archives removed | Selected pairs added | Selected pairs already present |
+| --- | ---: | ---: | ---: |
+| One live UUID receives two new project pairs | 1 | 2 | 0 |
+| The same merge runs again | 0 | 0 | 2 |
+| An empty vault receives both pairs | 0 | 2 | 0 |
+
+Print the full UUID for deletion outcomes. Preview reports what would change in the observed destination. It leaves archive contents, search rows, deletion records, and the reader requirement untouched. The normal vault open and source WAL checkpoint still apply. An apply reports committed batches. If a later batch fails or the running command observes cancellation before completion, show the partial results and return a failure. Retrying recognizes previously committed pairs.
 
 ## Compatibility
 
 Migration `0008_session_deletions` creates `vault_session_deletions` with `session_uuid TEXT NOT NULL`, `effective_project TEXT NOT NULL` and primary key `(session_uuid, effective_project)`. The record outlives the session and has no foreign key to it. Empty imported project paths retain their existing representation. Table creation alone preserves the old reader requirement. The first locally recorded or received pair stamps `readerVersionSessionDeletions = 4` in the same transaction. Platform writes still require at most 3 and compression alone at most 2. Later writes preserve the highest requirement. Legacy sources contribute live sessions and zero markers.
 
-Upgrade and restart all writers attached to a shared vault before enabling the behavior. The open-time version check protects subsequent opens by marker-aware older binaries. A writer already attached or a binary predating version checks does not have that protection.
+Upgrade and restart all writers attached to a shared vault before enabling the behavior. The open-time version check protects subsequent opens by marker-aware older binaries. A writer already attached or a binary predating version checks does not have that protection. Ship local recording, suppression, merge propagation and its CLI notices in the same release. An intermediate build that merely recognizes the new table cannot safely advertise reader version 4.
 
 ## Assumptions
 
