@@ -358,6 +358,33 @@ func recheckRecoveryRevision(ctx context.Context, tx *sql.Tx, expected int64) er
 
 var errRecoverySnapshotChanged = errors.New("recovery snapshot changed")
 
+// Capture can release and reacquire the WAL writer between polls of SQLite's
+// busy handler. Start a read snapshot first: upgrading it either obtains the
+// writer or returns BUSY promptly. Retry a fresh snapshot on a short cadence
+// within the caller's deadline. Only lock acquisition is retried.
+func beginRegistryWrite(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
+	for {
+		tx, err := db.BeginTx(ctx, nil)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, "SELECT singleton FROM run_meta WHERE singleton=1; DELETE FROM runs WHERE 0")
+			if err == nil {
+				return tx, nil
+			}
+			if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+				return nil, rollbackErr
+			}
+		}
+		if !sqliteutil.IsBusy(err) {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
 // Retry only stale read validation, before any mutation or command admission.
 // The caller supplies its existing operation deadline and holds recovery.lock.
 // A peer's legitimate audit GC or incident publication must not turn a single
@@ -371,7 +398,7 @@ func beginRecoveryWrite(ctx context.Context, db *sql.DB, validate func(context.C
 		if err != nil {
 			return nil, err
 		}
-		tx, err := sqliteutil.BeginImmediateContext(ctx, db, "runs")
+		tx, err := beginRegistryWrite(ctx, db)
 		if err != nil {
 			return nil, metadataFailure(ctx, "starting recovery write")
 		}
