@@ -94,12 +94,13 @@ type seenSession struct {
 
 // ImportResult aggregates an import run.
 type ImportResult struct {
-	Imported int
-	Updated  int
-	Skipped  int
-	Excluded int
-	Errors   int
-	Sessions []ImportedSession
+	Imported  int
+	Updated   int
+	Skipped   int
+	Excluded  int
+	Errors    int
+	Sessions  []ImportedSession
+	Deletions []MergedDeletion
 }
 
 func (r *ImportResult) record(s ImportedSession) {
@@ -118,6 +119,40 @@ func (r *ImportResult) record(s ImportedSession) {
 	r.Sessions = append(r.Sessions, s)
 }
 
+// flushImportBatch publishes only committed decisions. If the transaction rolled
+// back, retry each input independently, including the guarded skips.
+func flushImportBatch[T any](ctx context.Context, items []T, pending []ImportedSession, write func(context.Context, []T) ([]writeOutcome, error)) {
+	if len(items) == 0 {
+		return
+	}
+	outcomes, err := write(ctx, items)
+	if err == nil {
+		for i, outcome := range outcomes {
+			pending[i] = outcome.apply(pending[i])
+		}
+		return
+	}
+	slog.Warn("vault: batch failed, retrying per session", "count", len(items), "error", err)
+	for i := range items {
+		outcomes, err := write(ctx, items[i:i+1])
+		if err != nil {
+			pending[i].Status, pending[i].Err = StatusError, err
+			slog.Warn("vault: session write failed", "uuid", pending[i].UUID, "error", err)
+			continue
+		}
+		pending[i] = outcomes[0].apply(pending[i])
+	}
+}
+
+type importStore interface {
+	sessionDeleted(context.Context, string) (bool, error)
+	importDigest(context.Context, string) (archiveDigest, error)
+	MachineSummary(context.Context, string) (int, int, error)
+	WriteBatch(context.Context, []SessionWrite) ([]writeOutcome, error)
+	rebuildFTSBatch(context.Context, []FTSRebuild) ([]writeOutcome, error)
+	updateLocationHint(context.Context, string, string) (writeOutcome, error)
+}
+
 // Import archives the given discovered sessions into store, applying idempotent
 // skip/insert/replace logic per session and writing in batched transactions.
 // Per-session failures are logged and recorded (StatusError) without aborting
@@ -133,6 +168,10 @@ func (r *ImportResult) record(s ImportedSession) {
 // in-flight query/transaction rather than only being observed at the next
 // session boundary.
 func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts ImportOptions) ImportResult {
+	return importSessions(ctx, store, sessions, opts)
+}
+
+func importSessions(ctx context.Context, store importStore, sessions []SessionFile, opts ImportOptions) ImportResult {
 	var res ImportResult
 	if len(sessions) == 0 {
 		// Nothing to import — skip the machine-mismatch probe so an empty run
@@ -165,38 +204,8 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		if len(batch) == 0 && len(ftsBatch) == 0 {
 			return
 		}
-		if !opts.DryRun {
-			if len(batch) > 0 {
-				if err := store.WriteBatch(ctx, batch); err != nil {
-					slog.Warn("vault import: batch write failed, retrying per-session",
-						"count", len(batch), "error", err)
-					for i := range batch {
-						if err := store.writeOne(ctx, batch[i]); err != nil {
-							slog.Warn("vault import: session write failed",
-								"uuid", batch[i].Record.Session.UUID, "error", err)
-							pending[i].Status = StatusError
-							pending[i].Err = err
-						}
-					}
-				}
-			}
-			if len(ftsBatch) > 0 {
-				if _, err := store.RebuildFTSBatch(ctx, ftsBatch); err != nil {
-					slog.Warn("vault import: fts upgrade batch failed, retrying per-session",
-						"count", len(ftsBatch), "error", err)
-					for i := range ftsBatch {
-						if _, err := store.RebuildFTSBatch(ctx, ftsBatch[i:i+1]); err != nil {
-							slog.Warn("vault import: session fts upgrade failed",
-								"uuid", ftsBatch[i].UUID, "error", err)
-							ftsPending[i].Status = StatusError
-							ftsPending[i].Err = err
-						}
-					}
-				}
-			}
-		}
-		// On success each session keeps its pre-assigned status (StatusNew/StatusUpdated);
-		// only a failed per-session retry above mutates it to StatusError.
+		flushImportBatch(ctx, batch, pending, store.WriteBatch)
+		flushImportBatch(ctx, ftsBatch, ftsPending, store.rebuildFTSBatch)
 		for _, p := range pending {
 			res.record(p)
 		}
@@ -244,6 +253,16 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 			res.record(e)
 		}
 
+		deleted, err := store.sessionDeleted(ctx, sf.UUID)
+		if err != nil {
+			fail(0, err)
+			continue
+		}
+		if deleted {
+			res.record(writeOutcome{reason: reasonDeleted}.apply(outcome(StatusExcluded, 0)))
+			continue
+		}
+
 		mainBytes, err := os.ReadFile(sf.Path)
 		if err != nil {
 			slog.Warn("vault import: cannot read session file", "platform", platform, "path", sf.Path, "error", err)
@@ -277,29 +296,32 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		// surgery inside the batch slices). A dry run has no batch; wouldWrite
 		// stands in for "pending" so it reports the same `updated`.
 		prev, dup := seen[sf.UUID]
-		if dup {
-			if hash == prev.hash || size < prev.size {
-				res.record(outcome(StatusSkipped, size))
-				continue
-			}
-			if prev.gen == batchGen && !opts.DryRun {
-				flush()
-			}
+		skipDuplicate := dup && (hash == prev.hash || size < prev.size)
+		if dup && !skipDuplicate && prev.gen == batchGen && !opts.DryRun {
+			flush()
 		}
-		// Record this sighting now (whatever the decision turns out to be) so a
-		// third copy reconciles against it; gen/wouldWrite are refined below.
-		seen[sf.UUID] = seenSession{hash: hash, size: size, gen: -1}
 
-		existingHash, existingSize, existingIndexVersion, existingHint, found, err := store.SessionDigest(ctx, sf.UUID)
+		digest, err := store.importDigest(ctx, sf.UUID)
 		if err != nil {
 			slog.Warn("vault import: digest lookup failed", "platform", platform, "uuid", sf.UUID, "error", err)
 			fail(size, err)
 			continue
 		}
 
+		if digest.deleted {
+			res.record(writeOutcome{reason: reasonDeleted}.apply(outcome(StatusExcluded, size)))
+			continue
+		}
+		if skipDuplicate {
+			res.record(outcome(StatusSkipped, size))
+			continue
+		}
+		// Later copies reconcile against this sighting. gen/wouldWrite are refined below.
+		seen[sf.UUID] = seenSession{hash: hash, size: size, gen: -1}
+
 		// Size filtering is an admission rule, so it must follow the digest lookup
 		// and leave existing archives (including stale indexes and moves) alone.
-		if !found && size < opts.MinSessionBytes {
+		if !digest.found && size < opts.MinSessionBytes {
 			e := outcome(StatusExcluded, size)
 			e.ProjectPath = resolveProjectPath(sf.ProjectPath, sf.ProjectDir)
 			e.Reason = minimumSizeReason(size, opts.MinSessionBytes)
@@ -315,8 +337,8 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		// rows never enter the branch: their hint is the mangled project dir and
 		// Claude Code never moves a session file.
 		hint := locationHint(sf)
-		moved := found && hash == existingHash && platform == PlatformCodex && hint != existingHint
-		if moved && codexRolloutPresent(sf.Root, existingHint) {
+		moved := digest.found && hash == digest.hash && platform == PlatformCodex && hint != digest.hint
+		if moved && codexRolloutPresent(sf.Root, digest.hint) {
 			// Not a move: the file at the stored hint is still on disk, so this
 			// is a duplicate copy (sessions/ and archived_sessions/ both holding
 			// the thread). The in-run map above catches that pair only when the
@@ -328,14 +350,19 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 			// location is empty; a lingering duplicate is `skipped`, real and dry
 			// run alike.
 			slog.Debug("vault import: duplicate codex copy, stored location still present",
-				"uuid", sf.UUID, "stored", existingHint, "copy", hint)
+				"uuid", sf.UUID, "stored", digest.hint, "copy", hint)
 			res.record(outcome(StatusSkipped, size))
 			continue
 		}
 		if moved && !opts.DryRun {
-			if err := store.UpdateLocationHint(ctx, sf.UUID, hint); err != nil {
+			change, err := store.updateLocationHint(ctx, sf.UUID, hint)
+			if err != nil {
 				slog.Warn("vault import: location hint update failed", "platform", platform, "uuid", sf.UUID, "error", err)
 				fail(size, err)
+				continue
+			}
+			if change.reason != "" {
+				res.record(change.apply(outcome(StatusUpdated, size)))
 				continue
 			}
 		}
@@ -355,9 +382,9 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		//   - A different-hash variant of equal-or-larger total size replaces in place.
 		replace := false
 		ftsOnly := false
-		if found {
+		if digest.found {
 			switch {
-			case hash == existingHash && existingIndexVersion >= currentIndexVersion:
+			case hash == digest.hash && digest.version >= currentIndexVersion:
 				if !moved {
 					res.record(outcome(StatusSkipped, size))
 					continue
@@ -366,9 +393,9 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 				e.ProjectPath = sf.ProjectPath // the discovery hint; the row is not rescanned
 				res.record(e)
 				continue
-			case hash == existingHash:
+			case hash == digest.hash:
 				ftsOnly = true // unchanged content, stale index → rebuild FTS only
-			case size < existingSize:
+			case size < digest.size:
 				res.record(outcome(StatusSkipped, size))
 				continue
 			default:
@@ -408,7 +435,7 @@ func Import(ctx context.Context, store *VaultStore, sessions []SessionFile, opts
 		entry.Title, entry.ProjectPath = rec.Session.Title, rec.Session.ProjectPath
 
 		if opts.DryRun {
-			if dup && prev.wouldWrite && !found {
+			if dup && prev.wouldWrite && !digest.found {
 				// The real run would have committed the earlier copy and replaced it.
 				entry.Status = StatusUpdated
 			}
@@ -454,7 +481,7 @@ func minimumSizeReason(size, minimum int64) string {
 // warnOnMachineMismatch prints a prominent warning when the vault already holds
 // sessions but none were archived by this machine — the signal that copying a
 // vault.db here is about to bury unarchived local sessions.
-func warnOnMachineMismatch(ctx context.Context, store *VaultStore, machineID string) {
+func warnOnMachineMismatch(ctx context.Context, store importStore, machineID string) {
 	total, matching, err := store.MachineSummary(ctx, machineID)
 	if err != nil {
 		slog.Warn("vault import: machine summary query failed", "error", err)

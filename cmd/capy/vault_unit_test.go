@@ -318,14 +318,14 @@ func TestPrintDeletePreview_WarnsAboutChildren(t *testing.T) {
 	}
 
 	var sb strings.Builder
-	printDeletePreview(&sb, parent, children)
+	printDeletePreview(&sb, parent, children, true)
 	got := sb.String()
 	assert.Contains(t, got, "Platform: codex\n")
 	assert.Contains(t, got, "warning: 2 child session(s) name this session as parent and will NOT be deleted (no cascade): 019e22ba-9f0, 019e22bb-000\n")
 	assert.Contains(t, got, "capy vault list --include-children")
 
 	sb.Reset()
-	printDeletePreview(&sb, parent, nil)
+	printDeletePreview(&sb, parent, nil, true)
 	assert.NotContains(t, sb.String(), "warning:", "no children, no warning")
 	assert.Contains(t, sb.String(), "Messages: 4\n")
 }

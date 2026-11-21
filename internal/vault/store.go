@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS vault_sessions (
   parent_uuid        TEXT
 );
 
-` + sessionNamesTableSQL + sessionProjectsTableSQL + `
+` + sessionNamesTableSQL + sessionProjectsTableSQL + sessionDeletionsTableSQL + `
 
 CREATE TABLE IF NOT EXISTS vault_files (
   session_uuid  TEXT NOT NULL REFERENCES vault_sessions(uuid) ON DELETE CASCADE,
@@ -522,7 +522,7 @@ func (s *VaultStore) openDB(ctx context.Context) (*sql.DB, error) {
 	// Refuse a vault whose on-disk format is newer than this binary understands
 	// (a future version's compressed blobs would otherwise be mis-read). Runs
 	// after migrations so vault_meta exists; an unmarked (v1) vault passes.
-	if err := checkReaderVersion(ctx, db); err != nil {
+	if _, err := checkReaderVersion(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -722,41 +722,38 @@ type SessionWrite struct {
 	// Project carries independently ordered source project state in the same
 	// transaction as the session and title. Disk import leaves it nil.
 	Project *SessionProject
+	// Merge reports the metadata that won inside this write transaction.
+	reportMetadata bool
 }
 
 // InsertSession writes a new session, its files, and its FTS rows in one
 // transaction. Use ReplaceSession to overwrite an existing UUID.
 func (s *VaultStore) InsertSession(ctx context.Context, rec *SessionRecord) error {
-	return s.writeOne(ctx, SessionWrite{Record: rec, Replace: false})
+	outcome, err := s.writeOne(ctx, SessionWrite{Record: rec, Replace: false})
+	if err == nil && outcome.reason != "" {
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, outcome.reason)
+	}
+	return err
 }
 
 // ReplaceSession overwrites an existing session in place (UPDATE, not
 // DELETE+INSERT) so archived_at is preserved, then rebuilds its files and FTS
 // rows. All within one transaction.
 func (s *VaultStore) ReplaceSession(ctx context.Context, rec *SessionRecord) error {
-	return s.writeOne(ctx, SessionWrite{Record: rec, Replace: true})
+	outcome, err := s.writeOne(ctx, SessionWrite{Record: rec, Replace: true})
+	if err == nil && outcome.reason != "" {
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, outcome.reason)
+	}
+	return err
 }
 
 // writeOne applies a single SessionWrite in its own transaction.
-func (s *VaultStore) writeOne(ctx context.Context, w SessionWrite) error {
-	db, err := s.getDB(ctx)
+func (s *VaultStore) writeOne(ctx context.Context, w SessionWrite) (writeOutcome, error) {
+	outcomes, err := s.WriteBatch(ctx, []SessionWrite{w})
 	if err != nil {
-		return err
+		return writeOutcome{}, err
 	}
-	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	required, err := s.writeRecord(ctx, tx, w)
-	if err != nil {
-		return err
-	}
-	if err := stampReaderVersion(ctx, tx, required); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return outcomes[0], nil
 }
 
 // stampReaderVersion records the reader-version requirement of a write
@@ -776,34 +773,45 @@ func stampReaderVersion(ctx context.Context, tx *sql.Tx, required int) error {
 // server-startup sweep). On any error the whole batch rolls back; the caller is
 // expected to retry the batch's records individually via InsertSession/
 // ReplaceSession (see import.go). A nil/empty batch is a no-op.
-func (s *VaultStore) WriteBatch(ctx context.Context, writes []SessionWrite) error {
+func (s *VaultStore) WriteBatch(ctx context.Context, writes []SessionWrite) ([]writeOutcome, error) {
 	if len(writes) == 0 {
-		return nil
+		return nil, nil
 	}
 	db, err := s.getDB(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
 	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+		return nil, fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
 	// Stamp the reader marker ONCE per tx with the highest version any record in
 	// the batch requires (design § Reader version), not once per record.
 	required := 0
+	outcomes := make([]writeOutcome, 0, len(writes))
 	for _, w := range writes {
-		v, err := s.writeRecord(ctx, tx, w)
+		outcome, err := s.writeRecord(ctx, tx, w)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		required = max(required, v)
+		if w.reportMetadata && outcome.reason == "" {
+			outcome.metadata, err = mergeSessionMetadata(ctx, tx, w.Record.Session.UUID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		required = max(required, outcome.readerVersion)
+		outcomes = append(outcomes, outcome)
 	}
 	if err := stampReaderVersion(ctx, tx, required); err != nil {
-		return err
+		return nil, err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return outcomes, nil
 }
 
 // writePlatform resolves the platform value to persist for sess: an empty value
@@ -843,35 +851,44 @@ func requiredReaderVersion(platform Platform, anyZstd bool) int {
 // an insert adds a fresh row. Children (files + FTS) are written in both cases.
 // It returns the reader version the written record requires
 // (requiredReaderVersion); the caller stamps the marker once per transaction.
-func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite) (int, error) {
+func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite) (writeOutcome, error) {
 	sess := &w.Record.Session
+	deleted, err := sessionDeleted(ctx, tx, sess.UUID)
+	if err != nil || deleted {
+		return writeOutcome{reason: reasonDeleted}, err
+	}
 	platform, err := writePlatform(sess)
 	if err != nil {
-		return 0, err
+		return writeOutcome{}, err
 	}
 	// Compress at the blob seam only — content_hash/size_bytes/FTS were already
 	// computed on the uncompressed bytes upstream (import.go), so encoding never
 	// affects idempotency, the larger-wins merge tiebreaker, or search.
 	rawData, rawEnc := encodeBlob(sess.RawJSONL)
 	if w.Replace {
-		if _, err := tx.StmtContext(ctx, s.stmtUpdateSession).ExecContext(ctx,
+		res, err := tx.StmtContext(ctx, s.stmtUpdateSession).ExecContext(ctx,
 			nullString(sess.Title), writeTime(sess.StartTime), writeTime(sess.EndTime),
 			sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
 			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch),
 			sess.IndexVersion, rawData, rawEnc,
 			string(platform), nullString(sess.ParentUUID),
 			sess.UUID,
-		); err != nil {
-			return 0, fmt.Errorf("update session: %w", err)
+		)
+		if err != nil {
+			return writeOutcome{}, fmt.Errorf("update session: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil || n == 0 {
+			return writeOutcome{reason: reasonDisappeared}, err
 		}
 		if _, err := tx.StmtContext(ctx, s.stmtDeleteFilesBySession).ExecContext(ctx, sess.UUID); err != nil {
-			return 0, fmt.Errorf("delete files: %w", err)
+			return writeOutcome{}, fmt.Errorf("delete files: %w", err)
 		}
 		if _, err := tx.StmtContext(ctx, s.stmtDeleteFTSBySession).ExecContext(ctx, sess.UUID); err != nil {
-			return 0, fmt.Errorf("delete fts: %w", err)
+			return writeOutcome{}, fmt.Errorf("delete fts: %w", err)
 		}
 		if err := s.deleteChunks(ctx, tx, sess.UUID); err != nil {
-			return 0, err
+			return writeOutcome{}, err
 		}
 	} else {
 		if _, err := tx.StmtContext(ctx, s.stmtInsertSession).ExecContext(ctx,
@@ -881,26 +898,26 @@ func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite
 			sess.IndexVersion, rawData, rawEnc,
 			string(platform), nullString(sess.ParentUUID),
 		); err != nil {
-			return 0, fmt.Errorf("insert session: %w", err)
+			return writeOutcome{}, fmt.Errorf("insert session: %w", err)
 		}
 	}
 	// After the session row exists (FK parent) and before children: carried
 	// title and project state reconcile in the same tx as the session.
 	if w.Name != nil {
 		if _, err := reconcileSessionNameTx(ctx, tx, sess.UUID, *w.Name); err != nil {
-			return 0, err
+			return writeOutcome{}, err
 		}
 	}
 	if w.Project != nil {
 		if _, err := reconcileSessionProjectTx(ctx, tx, sess.UUID, *w.Project); err != nil {
-			return 0, err
+			return writeOutcome{}, err
 		}
 	}
 	childCompressed, err := s.writeChildren(ctx, tx, w.Record)
 	if err != nil {
-		return 0, err
+		return writeOutcome{}, err
 	}
-	return requiredReaderVersion(platform, rawEnc == encodingZstd || childCompressed), nil
+	return writeOutcome{readerVersion: requiredReaderVersion(platform, rawEnc == encodingZstd || childCompressed)}, nil
 }
 
 // writeChildren inserts the file and FTS rows for rec within tx. File blobs are
@@ -1006,33 +1023,56 @@ func (s *VaultStore) UpdateSessionFTS(ctx context.Context, uuid string, newVersi
 // Returns the number of sessions actually rebuilt (survivors); callers treat
 // items - survivors as silently-skipped (vanished), not errors.
 func (s *VaultStore) RebuildFTSBatch(ctx context.Context, items []FTSRebuild) (int, error) {
+	outcomes, err := s.rebuildFTSBatch(ctx, items)
+	n := 0
+	for _, outcome := range outcomes {
+		if outcome.reason == "" {
+			n++
+		}
+	}
+	return n, err
+}
+
+func (s *VaultStore) rebuildFTSBatch(ctx context.Context, items []FTSRebuild) ([]writeOutcome, error) {
 	if len(items) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	db, err := s.getDB(ctx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
 	if err != nil {
-		return 0, fmt.Errorf("begin: %w", err)
+		return nil, fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
 	// Bump every version; keep only sessions that still exist (RowsAffected > 0).
 	bump := tx.StmtContext(ctx, s.stmtUpdateIndexVersion)
 	survivors := make([]FTSRebuild, 0, len(items))
-	for _, it := range items {
+	outcomes := make([]writeOutcome, len(items))
+	for i, it := range items {
+		deleted, err := sessionDeleted(ctx, tx, it.UUID)
+		if err != nil {
+			return nil, err
+		}
+		if deleted {
+			outcomes[i].reason = reasonDeleted
+			continue
+		}
 		res, err := bump.ExecContext(ctx, it.NewVersion, it.UUID)
 		if err != nil {
-			return 0, fmt.Errorf("update index_version %s: %w", it.UUID, err)
+			return nil, fmt.Errorf("update index_version %s: %w", it.UUID, err)
 		}
-		if n, _ := res.RowsAffected(); n > 0 {
+		n, err := res.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
 			survivors = append(survivors, it)
+		} else {
+			outcomes[i].reason = reasonDisappeared
 		}
-	}
-	if len(survivors) == 0 {
-		return 0, nil // every session vanished — the deferred Rollback discards the empty tx
 	}
 
 	// One scan per index table deletes all survivors' existing rows (vault_fts +
@@ -1045,12 +1085,8 @@ func (s *VaultStore) RebuildFTSBatch(ctx context.Context, items []FTSRebuild) (i
 	for i, it := range survivors {
 		uuids[i] = it.UUID
 	}
-	placeholders := strings.Repeat("?,", len(uuids)-1) + `?`
-	for _, table := range []string{"vault_fts", "vault_chunks", "vault_chunks_trigram"} {
-		delQ := `DELETE FROM ` + table + ` WHERE session_uuid IN (` + placeholders + `)` //nolint:gosec // table is a trusted internal constant; UUIDs are bound params, never interpolated
-		if _, err := tx.ExecContext(ctx, delQ, uuids...); err != nil {
-			return 0, fmt.Errorf("delete %s: %w", table, err)
-		}
+	if err := deleteSessionIndexes(ctx, tx, uuids); err != nil {
+		return nil, err
 	}
 
 	insFTS := tx.StmtContext(ctx, s.stmtInsertFTS)
@@ -1060,17 +1096,17 @@ func (s *VaultStore) RebuildFTSBatch(ctx context.Context, items []FTSRebuild) (i
 				r.ContentText, it.UUID, r.SubagentID,
 				r.TurnIndex, r.MessageIndex, r.LineIndex, r.Role,
 			); err != nil {
-				return 0, fmt.Errorf("insert fts row for %s: %w", it.UUID, err)
+				return nil, fmt.Errorf("insert fts row for %s: %w", it.UUID, err)
 			}
 		}
 		if err := s.insertChunks(ctx, tx, it.UUID, it.Chunks); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return nil, err
 	}
-	return len(survivors), nil
+	return outcomes, nil
 }
 
 // checkpointWAL truncates the WAL into the main DB file on the live connection
@@ -1119,9 +1155,10 @@ func (s *VaultStore) OutdatedSessionUUIDs(ctx context.Context, maxVersion int) (
 	return uuids, nil
 }
 
-// DeleteSession removes a session and its FTS rows transactionally; vault_files
-// cascade via the foreign key. Returns false if no session matched the exact UUID.
-func (s *VaultStore) DeleteSession(ctx context.Context, uuid string) (bool, error) {
+// DeleteSession removes the exact UUID's archive and indexes in one transaction.
+// When remember is true, the UUID and effective project also survive for
+// suppression and forwarding. A missing archive returns false in either mode.
+func (s *VaultStore) DeleteSession(ctx context.Context, uuid string, remember bool) (bool, error) {
 	db, err := s.getDB(ctx)
 	if err != nil {
 		return false, err
@@ -1132,20 +1169,37 @@ func (s *VaultStore) DeleteSession(ctx context.Context, uuid string) (bool, erro
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	if _, err := tx.StmtContext(ctx, s.stmtDeleteFTSBySession).ExecContext(ctx, uuid); err != nil {
-		return false, fmt.Errorf("delete fts: %w", err)
+	if remember {
+		var project string
+		err := tx.QueryRowContext(ctx, "SELECT "+effectiveProjectSQL+
+			sessionMetaJoin+" WHERE s.uuid = ?", uuid).Scan(&project)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if _, err := tx.ExecContext(ctx, insertDeletionSQL, uuid, project); err != nil {
+			return false, fmt.Errorf("recording session deletion: %w", err)
+		}
+		if err := markMinReaderVersion(ctx, tx, readerVersionSessionDeletions); err != nil {
+			return false, err
+		}
 	}
-	if err := s.deleteChunks(ctx, tx, uuid); err != nil {
+	if err := deleteSessionIndexes(ctx, tx, []any{uuid}); err != nil {
 		return false, err
 	}
 	res, err := tx.StmtContext(ctx, s.stmtDeleteSession).ExecContext(ctx, uuid)
 	if err != nil {
 		return false, fmt.Errorf("delete session: %w", err)
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
 	return n > 0, nil
 }
 
@@ -1337,20 +1391,33 @@ func (s *VaultStore) Children(ctx context.Context, parentUUID string) ([]Session
 // path moves the hint). found is false (with a nil error) when the session is
 // not yet archived.
 func (s *VaultStore) SessionDigest(ctx context.Context, uuid string) (hash string, size int64, indexVersion int, claudeProjectDir string, found bool, err error) {
+	digest, err := s.importDigest(ctx, uuid)
+	return digest.hash, digest.size, digest.version, digest.hint, digest.found, err
+}
+
+type archiveDigest struct {
+	hash, hint     string
+	size           int64
+	version        int
+	found, deleted bool
+}
+
+// Classify admission against one snapshot after the candidate's files are read.
+func (s *VaultStore) importDigest(ctx context.Context, uuid string) (archiveDigest, error) {
 	db, err := s.getDB(ctx)
 	if err != nil {
-		return "", 0, 0, "", false, err
+		return archiveDigest{}, err
 	}
-	err = db.QueryRowContext(ctx,
-		`SELECT content_hash, size_bytes, index_version, claude_project_dir FROM vault_sessions WHERE uuid = ?`, uuid).
-		Scan(&hash, &size, &indexVersion, &claudeProjectDir)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", 0, 0, "", false, nil
-	}
+	var d archiveDigest
+	err = db.QueryRowContext(ctx, `SELECT s.uuid IS NOT NULL, COALESCE(s.content_hash,''),
+		COALESCE(s.size_bytes,0), COALESCE(s.index_version,0), COALESCE(s.claude_project_dir,''),
+		EXISTS(SELECT 1 FROM vault_session_deletions WHERE session_uuid = candidate.id)
+		FROM (SELECT ? AS id) candidate LEFT JOIN vault_sessions s ON s.uuid = candidate.id`, uuid).
+		Scan(&d.found, &d.hash, &d.size, &d.version, &d.hint, &d.deleted)
 	if err != nil {
-		return "", 0, 0, "", false, fmt.Errorf("querying session digest: %w", err)
+		return archiveDigest{}, fmt.Errorf("querying session digest: %w", err)
 	}
-	return hash, size, indexVersion, claudeProjectDir, true, nil
+	return d, nil
 }
 
 // UpdateLocationHint rewrites ONLY a session's location hint (claude_project_dir)
@@ -1360,29 +1427,41 @@ func (s *VaultStore) SessionDigest(ctx context.Context, uuid string) (hash strin
 // archived_at is touched, so it deliberately stays outside WriteBatch's two
 // write shapes. Returns ErrSessionNotFound when uuid matches no row.
 func (s *VaultStore) UpdateLocationHint(ctx context.Context, uuid, hint string) error {
+	outcome, err := s.updateLocationHint(ctx, uuid, hint)
+	if err == nil && outcome.reason != "" {
+		return ErrSessionNotFound
+	}
+	return err
+}
+
+func (s *VaultStore) updateLocationHint(ctx context.Context, uuid, hint string) (writeOutcome, error) {
 	db, err := s.getDB(ctx)
 	if err != nil {
-		return err
+		return writeOutcome{}, err
 	}
 	tx, err := sqliteutil.BeginImmediateContext(ctx, db, "vault_meta")
 	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+		return writeOutcome{}, fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	deleted, err := sessionDeleted(ctx, tx, uuid)
+	if err != nil || deleted {
+		return writeOutcome{reason: reasonDeleted}, err
+	}
 	res, err := tx.ExecContext(ctx, `UPDATE vault_sessions SET claude_project_dir = ? WHERE uuid = ?`, hint, uuid)
 	if err != nil {
-		return fmt.Errorf("updating location hint: %w", err)
+		return writeOutcome{}, fmt.Errorf("updating location hint: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
 		// Never conflate a driver error with "no such session".
-		return fmt.Errorf("updating location hint: rows affected: %w", err)
+		return writeOutcome{}, fmt.Errorf("updating location hint: rows affected: %w", err)
 	}
 	if n == 0 {
-		return ErrSessionNotFound
+		return writeOutcome{reason: reasonDisappeared}, nil
 	}
-	return tx.Commit()
+	return writeOutcome{}, tx.Commit()
 }
 
 // CodexLocationSizes returns claude_project_dir → size_bytes for every Codex row:

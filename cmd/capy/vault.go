@@ -8,8 +8,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/serpro69/capy/internal/config"
@@ -101,7 +103,10 @@ default ~/.codex — both sessions/ and archived_sessions/). Pass --platform to
 restrict the run to one of them, or --source to import from one directory
 (its layout is autodetected, see the flag).
 
-The MCP server's startup sweep only archives the current project. Run
+Import and the server's startup sweep exclude UUIDs with a remembered deletion,
+even if the transcript has grown or moved.
+
+The MCP server's startup sweep defaults to the current project. Run
 'capy vault import' periodically (e.g. via cron) to capture sessions across
 all projects before Claude Code's 30-day cleanup removes them.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -165,18 +170,26 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 	return cmd
 }
 
-// resolveVaultMinSessionBytes uses the invocation project's config, just like
-// serve. A cross-project import/merge applies this one policy to the whole run.
-func resolveVaultMinSessionBytes(cmd *cobra.Command) (int64, error) {
+// vaultConfigForCommand resolves policy for the invocation project, including
+// commands whose archive or source is located in another project.
+func vaultConfigForCommand(cmd *cobra.Command) (config.VaultConfig, error) {
 	projectDir := config.DetectProjectRoot()
 	if f := cmd.Flag("project-dir"); f != nil && f.Value.String() != "" {
 		projectDir = f.Value.String()
 	}
 	cfg, err := config.Load(projectDir)
 	if err != nil {
-		return 0, fmt.Errorf("loading vault configuration: %w", err)
+		return config.VaultConfig{}, fmt.Errorf("loading vault configuration: %w", err)
 	}
-	minimum := cfg.Vault.MinSessionBytes
+	return cfg.Vault, nil
+}
+
+func resolveVaultMinSessionBytes(cmd *cobra.Command) (int64, error) {
+	cfg, err := vaultConfigForCommand(cmd)
+	if err != nil {
+		return 0, err
+	}
+	minimum := cfg.MinSessionBytes
 	if cmd.Flags().Changed("min-size-bytes") {
 		minimum, err = cmd.Flags().GetInt64("min-size-bytes")
 		if err != nil {
@@ -201,6 +214,23 @@ func printImportResult(res vault.ImportResult, report *vault.DiscoveryReport, dr
 	if dryRun {
 		fmt.Println("DRY RUN — no changes written")
 	}
+	if len(res.Deletions) > 0 {
+		removed, added, known := 0, 0, 0
+		for _, deletion := range res.Deletions {
+			n := 0
+			if deletion.Removed {
+				n = 1
+			}
+			fmt.Printf("%s  archives removed %d, deletion pairs added %d, already present %d\n", deletion.UUID, n, deletion.Added, deletion.Known)
+			removed += n
+			added += deletion.Added
+			known += deletion.Known
+		}
+		fmt.Printf("total archives removed %d, deletion pairs added %d, already present %d\n", removed, added, known)
+		if len(res.Sessions) == 0 {
+			return
+		}
+	}
 	if len(res.Sessions) == 0 {
 		fmt.Println("no sessions matched")
 		if report != nil {
@@ -213,6 +243,10 @@ func printImportResult(res vault.ImportResult, report *vault.DiscoveryReport, dr
 		if s.Status == vault.StatusError && s.Err != nil {
 			fmt.Fprintf(os.Stderr, "  error %s: %v\n", shortUUID(s.UUID, s.Platform), s.Err)
 		}
+		id := shortUUID(s.UUID, s.Platform)
+		if s.Reason == "deleted" || s.Reason == "session disappeared" {
+			id = s.UUID
+		}
 		project := displayPath(s.ProjectPath)
 		if s.Project != "" {
 			project = s.Project
@@ -221,7 +255,7 @@ func printImportResult(res vault.ImportResult, report *vault.DiscoveryReport, dr
 			}
 		}
 		fmt.Printf("%-12s  %-8s  %-28s  %8s  %-50s  %s\n",
-			shortUUID(s.UUID, s.Platform), s.Status, truncate(project, 28),
+			id, s.Status, truncate(project, 28),
 			formatSize(s.SizeBytes), truncate(s.Title, 50), s.Reason)
 	}
 	fmt.Printf("\n%s\n", importCounts{
@@ -956,12 +990,17 @@ func newVaultMergeCmd(env *vaultEnv) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "merge --from <vault.db>",
-		Short: "Merge sessions from another vault into this one (cross-machine union)",
-		Long: `Import the sessions of another machine's vault into this one, non-destructively.
+		Short: "Merge sessions and remembered deletions from another vault",
+		Long: `Import sessions and remembered deletions from another machine's vault.
+A selected deletion removes the matching UUID from this vault. Even with local
+recording disabled, this vault retains the original UUID/project pair for future
+merges. --project selects deletion records by their source project at deletion
+time. Use --dry-run to preview distinct archives removed, new pairs added, and
+pairs already present. If a later batch fails, the command reports the batches
+that committed. A retry recognizes their deletion pairs as already present.
 
-Unlike copying vault.db (which replaces the whole archive), merge unites the two:
-distinct sessions are added, and where both vaults hold the same session UUID the
-larger-total-content copy wins. Re-running is idempotent.
+Distinct live sessions are added. For a shared live UUID the larger-total-content
+copy wins. Re-running is idempotent.
 
 Custom titles and project assignments reconcile independently, including clears.
 --project matches the source's effective project (label, otherwise imported path)
@@ -975,8 +1014,9 @@ be WRITABLE (merge checkpoints its WAL before reading) — copy a read-only sour
 (backup media, read-only mount) to a writable location first and point --from at
 the copy.
 
-No "stop the server" requirement: merge writes only this (destination) vault and
-tolerates a concurrent server sweep via busy-timeout retry, the same as import.`,
+Before recording or receiving the first deletion, upgrade and restart all writers
+sharing the vault. The first pair requires reader version 4. After rollout, merge
+can run alongside the server's startup sweep.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := guardTUI(cmd); err != nil {
 				return err
@@ -1001,21 +1041,25 @@ tolerates a concurrent server sweep via busy-timeout retry, the same as import.`
 				return fmt.Errorf("source and destination are the same vault (%s)", env.dbPath)
 			}
 
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
 			srcKey, srcKeyEnv := resolveMergeKey(keyFlag)
 
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 			// Fail fast on a wrong destination key / corrupt DB before reading the source.
-			if err := st.Open(cmd.Context()); err != nil {
+			if err := st.Open(ctx); err != nil {
 				return err
 			}
 
-			res, err := vault.MergeFrom(cmd.Context(), st, from, srcKey, srcKeyEnv,
+			res, err := vault.MergeFrom(ctx, st, from, srcKey, srcKeyEnv,
 				vault.MergeOptions{Project: project, DryRun: dryRun, MinSessionBytes: minSessionBytes})
+			if err == nil || len(res.Deletions) > 0 || len(res.Sessions) > 0 {
+				printImportResult(res, nil, dryRun)
+			}
 			if err != nil {
 				return err
 			}
-			printImportResult(res, nil, dryRun)
 			if res.Errors > 0 {
 				return fmt.Errorf("%d session(s) failed to merge", res.Errors)
 			}
@@ -1024,7 +1068,7 @@ tolerates a concurrent server sweep via busy-timeout retry, the same as import.`
 	}
 	cmd.Flags().StringVar(&from, "from", "", "path to the source vault.db to merge from (required)")
 	cmd.Flags().StringVar(&keyFlag, "key", "", "source vault passphrase (default: CAPY_VAULT_MERGE_KEY, then CAPY_VAULT_KEY)")
-	cmd.Flags().StringVar(&project, "project", "", "only merge sessions whose source effective project contains this literal substring (custom label, otherwise imported path)")
+	cmd.Flags().StringVar(&project, "project", "", "select live sessions and deletion records by literal substring of their source effective project")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview what would be merged without writing")
 	cmd.Flags().Int64("min-size-bytes", 0, "minimum uncompressed size for new sessions, including sidecars (overrides vault.min_session_bytes; 0 disables)")
 	return cmd
@@ -1338,15 +1382,22 @@ func newVaultDeleteCmd(env *vaultEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete <session-id>",
 		Short: "Delete an archived session from the vault (partial UUID, 8+ chars)",
-		Long: `Permanently remove a session (its transcript, sidecars, and search index)
-from the vault. This does not touch any copy still on disk under the Claude
-projects directory or the Codex home.
+		Long: `Remove a session's transcript, sidecars, and search entries from this vault.
+By default capy remembers the UUID and its effective project. Future imports
+exclude the UUID, and merges can delete its copies in other vaults. Capy cannot
+undo a remembered deletion. Set vault.remember_deletions = false in the invocation
+project's configuration for a one-time local removal. Existing and incoming
+deletions still apply. The original Claude or Codex transcript stays on disk.
 
 Only the addressed session is deleted. Its child sessions (Codex sub-agent
 rollouts) are separate archived sessions and are kept — a warning lists them.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := guardTUI(cmd); err != nil {
+				return err
+			}
+			cfg, err := vaultConfigForCommand(cmd)
+			if err != nil {
 				return err
 			}
 			st := vault.NewVaultStore(env.dbPath)
@@ -1362,13 +1413,13 @@ rollouts) are separate archived sessions and are kept — a warning lists them.`
 			}
 
 			short := shortUUID(sess.UUID, sess.Platform)
-			printDeletePreview(os.Stderr, sess, children)
+			printDeletePreview(os.Stderr, sess, children, cfg.RememberDeletions)
 			if !yes && !promptYesNo(fmt.Sprintf("delete session %s?", short), false) {
 				fmt.Println("aborted")
 				return nil
 			}
 
-			ok, err := st.DeleteSession(cmd.Context(), sess.UUID)
+			ok, err := st.DeleteSession(cmd.Context(), sess.UUID, cfg.RememberDeletions)
 			if err != nil {
 				return err
 			}
@@ -1390,7 +1441,12 @@ rollouts) are separate archived sessions and are kept — a warning lists them.`
 // Sub-agent Model — Codex's own /delete does; the divergence is deliberate), so
 // the children stay archived and, having a parent id, hidden from the default
 // `list` — reachable via --include-children.
-func printDeletePreview(w io.Writer, sess *vault.Session, children []vault.Session) {
+func printDeletePreview(w io.Writer, sess *vault.Session, children []vault.Session, remember bool) {
+	if remember {
+		fmt.Fprintln(w, "Capy will remember this UUID and project. Capy cannot undo this deletion. Future imports will exclude this UUID. A merge can delete copies in other vaults.")
+	} else {
+		fmt.Fprintln(w, "One-time local deletion. Copies in other vaults are kept. This archive can return through a later import or merge.")
+	}
 	fmt.Fprintf(w, "UUID:     %s\n", sess.UUID)
 	fmt.Fprintf(w, "Platform: %s\n", sess.Platform.OrClaude())
 	fmt.Fprintf(w, "Title:    %s\n", orDash(sess.EffectiveTitle()))

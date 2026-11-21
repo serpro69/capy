@@ -300,7 +300,8 @@ func TestVaultStore_MinReaderVersionMonotonic(t *testing.T) {
 		a := sampleRecord("c0dec0de-0000-0000-0000-000000000006")
 		a.Session.RawJSONL = compressibleBytes()
 		b := sampleRecord("c0dec0de-0000-0000-0000-000000000007") // tiny → raw
-		require.NoError(t, s.WriteBatch(ctx, []SessionWrite{{Record: a}, {Record: b}}))
+		_, err := s.WriteBatch(ctx, []SessionWrite{{Record: a}, {Record: b}})
+		require.NoError(t, err)
 		assert.Equal(t, strconv.Itoa(readerVersionZstd), marker(t, s))
 		assert.NotEqual(t, strconv.Itoa(supportedReaderVersion), marker(t, s),
 			"a Claude-only vault must remain openable by a pre-platform binary")
@@ -310,11 +311,12 @@ func TestVaultStore_MinReaderVersionMonotonic(t *testing.T) {
 		s := newTestVault(t)
 		a := sampleRecord("c0dec0de-0000-0000-0000-000000000008")
 		a.Session.RawJSONL = compressibleBytes()
-		require.NoError(t, s.WriteBatch(ctx, []SessionWrite{
+		_, err := s.WriteBatch(ctx, []SessionWrite{
 			{Record: a},
 			{Record: codexRecord("c0dec0de-0000-0000-0000-000000000009")},
 			{Record: sampleRecord("c0dec0de-0000-0000-0000-00000000000a")},
-		}))
+		})
+		require.NoError(t, err)
 		assert.Equal(t, strconv.Itoa(readerVersionPlatform), marker(t, s))
 	})
 
@@ -356,14 +358,14 @@ func TestVaultStore_ReaderVersionGate(t *testing.T) {
 
 	t.Run("future version is refused", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "vault.db")
-		// supportedReaderVersion is 3 (platform milestone), so 4 is the first
+		// supportedReaderVersion is 4 (session deletions), so 5 is the first
 		// marker this binary must refuse.
-		require.Equal(t, 4, supportedReaderVersion+1)
+		require.Equal(t, 5, supportedReaderVersion+1)
 		setMarker(t, path, fmt.Sprintf("%d", supportedReaderVersion+1))
 
 		err := NewVaultStore(path).Open(ctx)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "requires reader version 4")
+		assert.Contains(t, err.Error(), "requires reader version 5")
 	})
 
 	t.Run("a codex-bearing vault opens on this binary", func(t *testing.T) {

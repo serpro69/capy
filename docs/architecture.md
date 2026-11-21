@@ -1132,8 +1132,10 @@ vault_session_names — capy-owned custom titles, one row per session ever renam
 vault_session_projects — capy-owned project labels: session_uuid PK →
 		   vault_sessions (CASCADE), custom_project (NULL = clear,
 		   never empty), updated_at_ns, machine_id (migration 0007)
+vault_session_deletions — retained (session_uuid, effective_project) pairs,
+                   composite PK independent of vault_sessions (migration 0008)
 vault_meta       — key-value store; holds min_reader_version (the forward-compat
-                   marker: 2 = zstd blobs, 3 = non-Claude platform rows — see below)
+                   marker: 2 = zstd blobs, 3 = non-Claude rows, 4 = deletion records)
 vault_migrations — migration tracking (by-name); migration runner lives in migrations.go
 ```
 
@@ -1162,22 +1164,15 @@ earlier magic-byte design).
 
 ### Reader version (`min_reader_version`)
 
-`vault_meta.min_reader_version` is the forward-compat marker: `openDB` reads it after
-migration and refuses a vault whose marker exceeds the binary's
-`supportedReaderVersion` (now **3**), so an old binary never silently misreads a newer
-vault; `MergeFrom` applies the same check to its source. Two named versions live in
-`codec.go`: `readerVersionZstd = 2` (the vault holds a `'zstd'` blob) and
-`readerVersionPlatform = 3` (the vault holds a row whose platform is not Claude — an
-older binary is platform-blind and would restore a Codex row under
-`~/.claude/projects/`, `claude --resume` a Codex uuid, or merge a Codex blob as
-`claude-code` with empty FTS, permanently). `markMinReaderVersion` is a monotonic
-upsert that only raises the numeric value, and **every stamping site passes the
-version its own write requires**: the batch writer stamps the highest version any
-record in the transaction needs; `compact.go`'s `markCompressed` passes
-`readerVersionZstd`, so compacting a Claude-only vault never locks older binaries out.
-A vault that never receives a Codex row stays at 2. **Standing rule:** a new platform
-constant is a reader-version bump (pinned by `platform_test.go`). There is no opt-out
-env var — as with the v2 zstd bump, upgrade the older binary before merging.
+`openDB` and `MergeFrom` refuse vaults requiring more than `supportedReaderVersion` (4). Each transaction raises `vault_meta.min_reader_version` only as far as its writes require. Later writes preserve the high-water mark.
+
+| Milestone in `codec.go` | First write requiring it |
+| --- | --- |
+| `readerVersionZstd = 2` | A compressed blob, including one written by `compact`. |
+| `readerVersionPlatform = 3` | A non-Claude session. Platform-blind readers would restore Codex rows under the Claude directory or decode them as Claude during merge. Each new platform requires its own reader milestone. |
+| `readerVersionSessionDeletions = 4` | A locally recorded or received UUID/project deletion pair. Migration 0008 alone preserves the previous requirement. |
+
+The version check runs on open. Upgrade and restart every writer attached to a shared vault before the first remembered deletion or merge carrying one. An already-open connection or a binary predating the gate can still perform incompatible writes. [Operator rollout](reference/vault.md#delete-a-session)
 
 ### Search index & `index_version`
 
@@ -1608,13 +1603,17 @@ strings-only `platform.CheckVaultPlatforms` — `internal/platform` must not imp
 
 ### Archival Paths
 
+**Remembered deletions.** By default, a local delete removes the parent row, sidecars, overrides and all three search indexes in the transaction that records the UUID and its effective project. Independently archived children have their own UUIDs. Any retained pair excludes that UUID from disk imports, startup sweeps and live merges. Import checks the UUID after discovery and selection, before reading the transcript or sidecars. Writers recheck in their transaction, including index rebuilds, location hints and metadata-only updates. A remembered UUID yields `excluded / deleted`. A planned update whose parent disappeared after a one-time local delete yields `skipped / session disappeared` before any child write. `vault.remember_deletions = false` affects only the creation of records by future local deletes.
+
 **Minimum-size admission (issue #106).** `[vault] min_session_bytes` is an opt-in, non-negative byte limit, defaulting to zero (disabled). `ImportOptions.MinSessionBytes` and `MergeOptions.MinSessionBytes` gate only UUIDs absent from the destination, after its digest lookup and before scanning/queuing new records. Imports use the existing uncompressed transcript-plus-sidecar total; merges use the source's uncompressed `size_bytes`. Values strictly below the minimum report `excluded` with a reason; equality qualifies. There is no exclusion tombstone: later growth or a lowered limit permits admission. Existing archives still receive updates, index upgrades, location changes, and name reconciliation. The separate zero-message exclusion remains in force.
 
 Both platform startup sweeps pass the server's loaded config to the importer. Manual import and merge load config for the invocation project (`--project-dir` or root detection), apply one policy across the run, and accept `--min-size-bytes` as an override, including zero. Pointer-based overlay detection preserves explicit zero overrides across config layers. Dry runs use the same admission rule. Filtering does not purge archived sessions or remove source files; it changes no schema, stored size/hash definition, or index format.
 
 1. **MCP server startup** — background goroutine (`server.go` `vaultSweep`, opt-in via `CAPY_VAULT_KEY`) discovers **each platform independently** — a Claude failure or empty result never skips Codex. It imports the current project's Claude sessions, then the Codex rollouts whose first-line `cwd` equals the project dir (cleaned, symlink-resolved; a rollout with no cwd hint is unreachable by the sweep). Before Codex discovery it loads `CodexLocationSizes` once and hands the discoverer a `Skip` predicate — plain rollout: relative path **and** on-disk size match; `.zst`: path matches (rollouts are append-only, compressed ones immutable) — so an archived, unchanged file is never opened. Accepted bound, stated in the function comment: one bounded first-line read per rollout not archived at its current `(path, size)`, other projects' rollouts included, on every start, under the 30 s budget. Discovery honors that budget too — every `Discoverer.Discover` takes the sweep's context, the Codex walker checks it before each entry and hands back what it found with `ctx.Err()`, and the sweep drops a cancelled walk at debug (Import would refuse the partial list at its first session boundary anyway) so the next start resumes from what is archived and shutdown never waits on a walk. `CAPY_VAULT_SWEEP_ALL` widens both platforms. A missing `$CODEX_HOME` is a debug line; a Codex home with no rollout root does not even open the vault (`HasCodexRolloutRoot`)
 2. **`capy vault import`** — manual; every platform root that exists (`DiscoverAll`), `--platform` to restrict, `--source <dir>` with layout autodetection; idempotent (hash-based, larger-total-size wins) plus the in-run reconciliation and the Codex location policy above. The summary is per platform when a run touched more than one, and counts skipped revert variants
-3. **`capy vault merge --from <path>`** — non-destructive cross-machine union (`merge.go`): reads another vault's `vault_sessions`+`vault_files`, applies the same idempotent digest decision (distinct added, larger-wins on UUID overlap), carries source metadata verbatim, re-scans FTS with the destination's decoder for the carried platform. Feature-detects a v1 (no `encoding` column) source and a pre-0006 (no `platform`/`parent_uuid`) source — absent columns mean Claude, **never sniffed**; a present but unrecognized value is sniffed with a warning and the resolved value is stored (`resolveStoredPlatform`). `--project` matches the source's effective project with literal ASCII case-insensitive substring semantics; location hints are no longer aliases. Legacy sources fall back to imported `project_path`. A source whose `min_reader_version` exceeds this binary's is refused before any row. Destination writes tolerate a concurrent server sweep via busy-timeout retry. The established source opener enables WAL and checkpoints it; source schema and archived contents are not migrated or rewritten.
+3. **`capy vault merge --from <path>`** checkpoints the writable source and reads its version, schema, deletion records, sessions, files and metadata from one snapshot. It applies selected deletion pairs first. `--project` uses literal ASCII case-insensitive substring matching against the source's effective project, captured at deletion for a pair. The destination matches archives by exact UUID and retains each selected source pair verbatim, even with local recording disabled. For live or first-remembered UUIDs, bounded batches clean all three indexes, including legacy orphan rows. Replaying a deletion for an already-marked absent UUID skips index cleanup. Preview counts distinct live removals and new or known pairs. Apply reports committed batches, including on partial failure.
+
+   For surviving live UUIDs, merge adds distinct sessions, keeps the larger transcript on overlap and rebuilds FTS with the destination's decoder for the carried platform. A v1 source can lack `encoding`. A pre-0006 source without `platform` or `parent_uuid` contributes Claude sessions. An unrecognized stored platform triggers format detection and a warning (`resolveStoredPlatform`). Legacy sources without project overrides use the imported `project_path`. Sources below reader version 4 can lack the deletion table and contribute no pairs. A version-4 source missing that table fails before any destination writes. Destination writes tolerate a concurrent upgraded server sweep via busy-timeout retry.
 
    **Custom names reconcile on an independent track.** The source `vault_session_names` table is feature-detected (a pre-0005 source contributes none). For every source session whose UUID exists in the destination — *including* sessions the zero-message exclusion drops and transcripts skipped as same-hash or smaller — the source name state wins when its `(renamed_at_ns, machine_id)` tuple is greater; an absent destination row loses to any tuple; an equal tuple (machine IDs can collide via `CAPY_MACHINE_ID` or a synced dotfile) is broken by value — a non-NULL title beats a tombstone, two titles compare bytewise and the greater wins — so convergence never depends on unique machine IDs. A winning state is written **verbatim** (never re-stamped with the local `max(now, stored+1)` bump, which would break idempotence), a NULL title clears, and a new session plus its name commit in one transaction to satisfy the foreign key. Name-only changes report `updated`, identical/older states `skipped`, and dry-run reports the prospective effective title. Known non-destructive gap: an older binary merging *from* a newer vault reads no `vault_session_names` and carries no names; re-running with an upgraded binary carries them.
 
@@ -1629,12 +1628,12 @@ Both platform startup sweeps pass the server's loaded config to the importer. Ma
 | `capy vault show` | Display full session (pager, `--format` for export). The header prints the platform, a child's parent and a parent's children; the assistant heading is `Claude`/`Codex` |
 | `capy vault restore` | Write JSONL + session files back to disk — under the Claude projects dir as `<uuid>.jsonl` + sidecars, or under `$CODEX_HOME` at the stored relative rollout path (a `.zst` twin is left untouched and noted) |
 | `capy vault resume` | Restore + launch `claude --resume` — Claude Code only; a Codex session fails loudly before anything is restored, naming `capy vault restore` and `codex resume <uuid>` |
-| `capy vault delete` | Remove a session from the vault (cascades its name row; warns when the session has children, which are never cascaded) |
+| `capy vault delete` | Remove an archive and remember its UUID and effective project by default. Warns about separately archived children. |
 | `capy vault rename` | Set (`<name>`) or clear (`--clear`) the capy-owned name of a session; prints the resulting effective title. Writes only `vault_session_names` — never `raw_jsonl`, hashes, or FTS |
 | `capy vault stats` | DB size, session count, per-project and per-platform breakdown, child count, index version + reindex backlog |
 | `capy vault checkpoint` | Flush WAL (required before cross-machine copy) |
 | `capy vault compact` | Recompress legacy (`encoding IS NULL`) blobs through the zstd codec + `VACUUM` to reclaim disk. No-op if nothing is uncompressed; aborts under `CAPY_VAULT_NO_COMPRESS` or a busy DB (stop the server first) |
-| `capy vault merge --from <path>` | Non-destructive cross-machine union (see Archival Paths). Titles and projects reconcile independently. Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`; `--project` (source effective project), `--dry-run` |
+| `capy vault merge --from <path>` | Apply selected deletions, then reconcile surviving sessions, titles and projects. Source key via `--key`/`CAPY_VAULT_MERGE_KEY`/`CAPY_VAULT_KEY`. Supports `--project` and `--dry-run`. |
 | `capy vault rekey` | Rotate the encryption key to the current `CAPY_VAULT_KEY` via `sqliteutil.Rekey` (SQLite backup-API: open old → checkpoint → copy into a new file under the new key → swap+verify). Sidesteps the WAL/PRAGMA-rekey incompatibility (ADR-020) by writing a fresh file. Stop the server first; `--remove-backup` unlinks the old-key `.bak` |
 
 `list`, `search`, and `show` support `--tui` for interactive browsing/search/viewing.

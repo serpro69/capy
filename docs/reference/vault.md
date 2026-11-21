@@ -21,7 +21,37 @@ Import is mutating by default; unchanged sessions are skipped and smaller copies
 
 Transcript search accepts plain keywords, or FTS5 MATCH syntax with `--raw`. Roles are `user`, `assistant`, `tool`, and `system`; date flags take `YYYY-MM-DD`. Project/role/date filtering occurs before ranked result selection and limits. Names and project labels are not added to transcript search text.
 
-The minimum-size setting applies only to new archives, counting uncompressed transcript and sidecar bytes. Equality qualifies; negative limits fail. Existing sessions continue updating/reindexing, and excluded sessions can qualify after growing. Zero-message sessions remain excluded even with the limit disabled. The selected project's configuration applies to the entire import, merge, or startup sweep, including other projects; use global configuration for a consistent policy. This is a byte-size filter, not a conversation-quality measure.
+The minimum-size setting applies only to new archives, counting uncompressed transcript and sidecar bytes. Equality qualifies; negative limits fail. Existing sessions continue updating/reindexing, and sessions excluded for size can qualify after growing. Zero-message sessions remain excluded even with the limit disabled. The selected project's configuration applies to the entire import, merge, or startup sweep, including other projects; use global configuration for a consistent policy. This is a byte-size filter, not a conversation-quality measure.
+
+## Delete a session
+
+`capy vault delete <id>` previews the full UUID and the consequences before asking for confirmation. `--yes` skips the prompt and still prints the preview. The command removes the archived transcript, sidecars, search entries, and title and project overrides together. Original files, backups, and independently archived child sessions survive. Deletion provides no guarantee of physical erasure.
+
+By default the encrypted vault keeps a permanent deletion record containing only the UUID and its effective project at deletion time (custom label if set, otherwise the imported path). A manual import reports that UUID as `excluded` with reason `deleted`, even if its transcript grows or moves. The server's startup sweep counts it in the platform's excluded total. A merge can carry the deletion to other vaults. Capy has no undelete operation.
+
+For a one-time local removal, set the following in the invocation project's `.capy.toml` before running `delete`. Use `--project-dir` to select the configuration project explicitly.
+
+```toml
+[vault]
+remember_deletions = false
+```
+
+That local delete records no pair. A later disk import or a merge from a live copy can restore the session. Changing the setting preserves existing records, and new incoming deletions are always honored. Deletions made before capy supported recording have no record to forward.
+
+### Preview and propagate a deletion
+
+Checkpoint the source vault, copy it to a separate writable file, then preview the same selection you intend to apply.
+
+```bash
+capy vault merge --from /path/to/copied-vault.db --project personal --dry-run
+capy vault merge --from /path/to/copied-vault.db --project personal
+```
+
+`--project` matches the recorded source project as a literal, ASCII case-insensitive substring. Omit it to select all projects. A deletion recorded under `personal` removes the exact UUID even if the receiver labels its copy `work`. The receiver retains the original `personal` pair for future merges, even if it never held the archive. Other UUIDs in either project are independent.
+
+The preview shows the full UUID, distinct live archives to remove, new UUID/project pairs to add, and selected pairs already present. Two machines can independently delete the same UUID under different labels. Receiving both records for one live archive removes **1** archive and adds **2** pairs. Repeating the merge removes **0**, adds **0**, and reports **2** already present. A failed merge can report earlier committed batches. Retry the same selection to apply the outstanding work.
+
+**Upgrade before the first deletion.** Stop every writer attached to a shared vault, including MCP servers and scheduled imports. Upgrade capy on participating machines to a release supporting reader version 4, then restart the writers before recording or receiving a deletion. Creating the empty deletion table preserves the current reader requirement. Recording the first pair locally or through merge raises it to 4. The version check runs on open, so it cannot protect an already-attached old writer or a binary predating the check.
 
 ## Exports and restore locations
 
