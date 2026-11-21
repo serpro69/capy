@@ -142,6 +142,9 @@ func loadAndMerge(cfg *Config, path string) error {
 	if detect.Store.KeyFile != nil {
 		cfg.Store.KeyFile = *detect.Store.KeyFile
 	}
+	if detect.Vault.RememberDeletions != nil {
+		cfg.Vault.RememberDeletions = *detect.Vault.RememberDeletions
+	}
 	// An explicit zero disables a lower-priority size filter; omission inherits it.
 	if detect.Vault.MinSessionBytes != nil {
 		if *detect.Vault.MinSessionBytes < 0 {
@@ -172,7 +175,8 @@ type detectionOverlay struct {
 		BlockAfter *int `toml:"block_after"`
 	} `toml:"search"`
 	Vault struct {
-		MinSessionBytes *int64 `toml:"min_session_bytes"`
+		RememberDeletions *bool  `toml:"remember_deletions"`
+		MinSessionBytes   *int64 `toml:"min_session_bytes"`
 	} `toml:"vault"`
 	Store struct {
 		KeyFile *string `toml:"key_file"`

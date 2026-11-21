@@ -167,18 +167,26 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 	return cmd
 }
 
-// resolveVaultMinSessionBytes uses the invocation project's config, just like
-// serve. A cross-project import/merge applies this one policy to the whole run.
-func resolveVaultMinSessionBytes(cmd *cobra.Command) (int64, error) {
+// vaultConfigForCommand resolves policy for the invocation project, including
+// commands whose archive or source is located in another project.
+func vaultConfigForCommand(cmd *cobra.Command) (config.VaultConfig, error) {
 	projectDir := config.DetectProjectRoot()
 	if f := cmd.Flag("project-dir"); f != nil && f.Value.String() != "" {
 		projectDir = f.Value.String()
 	}
 	cfg, err := config.Load(projectDir)
 	if err != nil {
-		return 0, fmt.Errorf("loading vault configuration: %w", err)
+		return config.VaultConfig{}, fmt.Errorf("loading vault configuration: %w", err)
 	}
-	minimum := cfg.Vault.MinSessionBytes
+	return cfg.Vault, nil
+}
+
+func resolveVaultMinSessionBytes(cmd *cobra.Command) (int64, error) {
+	cfg, err := vaultConfigForCommand(cmd)
+	if err != nil {
+		return 0, err
+	}
+	minimum := cfg.MinSessionBytes
 	if cmd.Flags().Changed("min-size-bytes") {
 		minimum, err = cmd.Flags().GetInt64("min-size-bytes")
 		if err != nil {
@@ -1367,15 +1375,21 @@ func newVaultDeleteCmd(env *vaultEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete <session-id>",
 		Short: "Delete an archived session from the vault (partial UUID, 8+ chars)",
-		Long: `Permanently remove a session (its transcript, sidecars, and search index)
-from the vault. This does not touch any copy still on disk under the Claude
-projects directory or the Codex home.
+		Long: `Remove a session's transcript, sidecars, and search entries from this vault.
+By default capy remembers the UUID and its effective project. Future imports
+exclude the UUID, and merges can delete its copies in other vaults. Capy cannot
+undo a remembered deletion. Set vault.remember_deletions = false for a one-time
+local removal. The original Claude or Codex transcript stays on disk.
 
 Only the addressed session is deleted. Its child sessions (Codex sub-agent
 rollouts) are separate archived sessions and are kept — a warning lists them.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := guardTUI(cmd); err != nil {
+				return err
+			}
+			cfg, err := vaultConfigForCommand(cmd)
+			if err != nil {
 				return err
 			}
 			st := vault.NewVaultStore(env.dbPath)
@@ -1391,13 +1405,13 @@ rollouts) are separate archived sessions and are kept — a warning lists them.`
 			}
 
 			short := shortUUID(sess.UUID, sess.Platform)
-			printDeletePreview(os.Stderr, sess, children)
+			printDeletePreview(os.Stderr, sess, children, cfg.RememberDeletions)
 			if !yes && !promptYesNo(fmt.Sprintf("delete session %s?", short), false) {
 				fmt.Println("aborted")
 				return nil
 			}
 
-			ok, err := st.DeleteSession(cmd.Context(), sess.UUID)
+			ok, err := st.DeleteSession(cmd.Context(), sess.UUID, cfg.RememberDeletions)
 			if err != nil {
 				return err
 			}
@@ -1419,7 +1433,12 @@ rollouts) are separate archived sessions and are kept — a warning lists them.`
 // Sub-agent Model — Codex's own /delete does; the divergence is deliberate), so
 // the children stay archived and, having a parent id, hidden from the default
 // `list` — reachable via --include-children.
-func printDeletePreview(w io.Writer, sess *vault.Session, children []vault.Session) {
+func printDeletePreview(w io.Writer, sess *vault.Session, children []vault.Session, remember bool) {
+	if remember {
+		fmt.Fprintln(w, "Capy will remember this UUID and project. Capy cannot undo this deletion. Future imports will exclude this UUID. A merge can delete copies in other vaults.")
+	} else {
+		fmt.Fprintln(w, "One-time local deletion. Copies in other vaults are kept. This archive can return through a later import or merge.")
+	}
 	fmt.Fprintf(w, "UUID:     %s\n", sess.UUID)
 	fmt.Fprintf(w, "Platform: %s\n", sess.Platform.OrClaude())
 	fmt.Fprintf(w, "Title:    %s\n", orDash(sess.EffectiveTitle()))

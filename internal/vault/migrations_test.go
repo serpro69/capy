@@ -501,7 +501,7 @@ func TestSessionProject_MigrationFreshLegacyParity(t *testing.T) {
 			var count int
 			require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM vault_migrations WHERE name = '0007_session_projects'`).Scan(&count))
 			assert.Equal(t, 1, count)
-			deleted, err := s.DeleteSession(ctx, uuid)
+			deleted, err := s.DeleteSession(ctx, uuid, false)
 			require.NoError(t, err)
 			require.True(t, deleted)
 			require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM vault_session_projects`).Scan(&count))

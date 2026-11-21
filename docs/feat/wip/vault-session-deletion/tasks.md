@@ -47,13 +47,18 @@
 
 ## Task 3. Enable local recording and its opt-out
 
-**Status:** pending · **Depends on:** Task 2 · **Size:** M · **Can run in parallel with:** —
+**Status:** done · **Depends on:** Task 2 · **Size:** M · **Can run in parallel with:** —
 
 **Docs:** [Local configuration](./implementation.md#local-configuration)
 
-- [ ] Enable remembered deletion by default with the config opt-out and permanence notice in the same change. Check the preview, full UUID, declined confirmation and `--yes` for each mode.
-- [ ] Verify configuration precedence, the invocation project's `--project-dir` override and suppression of earlier recorded deletions after a config change.
-- [ ] Interleave an opted-out delete between replacement planning and flush in import and merge. With no sidecars or overrides, assert `skipped` / `session disappeared`, zero session and all three FTS row counts, and successful admission of a fresh complete copy on a later import.
+- [x] Enable remembered deletion by default with the config opt-out and permanence notice in the same change. Check the preview, full UUID, declined confirmation and `--yes` for each mode.
+- [x] Verify configuration precedence, the invocation project's `--project-dir` override and suppression of earlier recorded deletions after a config change.
+- [x] Interleave an opted-out delete between replacement planning and flush in import and merge. With no sidecars or overrides, assert `skipped` / `session disappeared`, zero session and all three FTS row counts, and successful admission of a fresh complete copy on a later import.
+
+**Execution context**
+
+- 2026-11-21, observed at `539bcc8`. The delete command already resolves a full UUID before confirmation. Load the invocation project's deletion setting once, display the corresponding notice, and pass that same value to the store.
+- 2026-11-21, verified. Encrypted race tests passed for configuration precedence, both CLI previews and confirmation paths, and stale sidecar-free import and merge replacements. The vault and TUI race suites passed with the optional local-corpus canaries excluded. All packages compiled with FTS5. The quality benchmark passed comparison against a fresh run at `a6dd4f1`. Independent Task 3 source review approved. Task 4 owns startup verification and rollout documentation.
 
 ## Task 4. Verify the operator workflow and document rollout
 

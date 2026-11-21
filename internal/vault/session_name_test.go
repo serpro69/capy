@@ -519,7 +519,7 @@ func TestVaultStore_RenameDeleteRaceLeavesNoOrphan(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			deleted, deleteErr = s.DeleteSession(ctx, uuid)
+			deleted, deleteErr = s.DeleteSession(ctx, uuid, false)
 		}()
 		close(start)
 		wg.Wait()

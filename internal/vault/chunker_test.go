@@ -291,7 +291,7 @@ func TestDeleteSession_RemovesChunkRows(t *testing.T) {
 	porter, _ := chunkCounts(t, s, uuid)
 	require.Positive(t, porter)
 
-	ok, err := s.DeleteSession(context.Background(), uuid)
+	ok, err := s.DeleteSession(context.Background(), uuid, false)
 	require.NoError(t, err)
 	require.True(t, ok)
 
