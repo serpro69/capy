@@ -87,7 +87,7 @@ func TestFetchTTLSubsecondAndOverrides(t *testing.T) {
 					require.False(t, r.IsError, resultText(r))
 					text := strings.ToLower(resultText(r))
 					assert.Contains(t, text, tc.want)
-					assert.Contains(t, text, "retention: durable scoring")
+					assert.Contains(t, text, "general cleanup preserves this source while it is durable")
 					assert.NotContains(t, text, "0 sections")
 					assert.Equal(t, tc.wantCalls, calls.Load())
 					if tc.ttl == nil {

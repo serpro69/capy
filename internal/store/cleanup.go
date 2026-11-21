@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"math"
@@ -14,10 +15,9 @@ const (
 	lambdaDecay = 0.045 // temporal decay rate
 	sigmaAccess = 0.3   // weight of recency boost
 
-	hotThreshold       = 0.7
-	warmThreshold      = 0.4
-	coldThreshold      = 0.15
-	evictableThreshold = coldThreshold // sources below coldThreshold are evictable
+	hotThreshold  = 0.7
+	warmThreshold = 0.4
+	coldThreshold = 0.15
 )
 
 // retentionScore computes a continuous retention score for a source.
@@ -123,54 +123,31 @@ func (s *ContentStore) ClassifySources(ephemeralTTL, sessionTTL time.Duration) (
 	return sources, nil
 }
 
-// Cleanup removes sources via four independent paths:
-//   - oversized: sources whose total content exceeds maxSourceBytes (any kind).
-//   - durable: retention-score-based eviction (ADR-011) for `kind = 'durable'`.
-//   - ephemeral: strict TTL eviction for `kind = 'ephemeral'` (ADR-017).
-//   - session: strict TTL eviction for `kind = 'session'`.
-//
-// TTL-based eviction ignores access_count — search hits must not extend lifetime.
-// If dryRun is true, returns what would be removed without deleting.
-// The returned slice tags each SourceInfo with EvictionReason ("retention",
-// "ttl", or "oversized") so callers can render per-kind breakdowns.
-// Vocabulary is shared and never deleted.
+// Cleanup removes oversized or expired ephemeral and legacy session sources.
+// Durable knowledge requires exact-label eviction or an explicit full reset.
+// Oversize takes precedence when a source also exceeds its TTL.
 func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL, sessionTTL time.Duration) ([]SourceInfo, error) {
-	oversized, err := s.cleanupOversized(dryRun)
+	now := time.Now()
+	removed, err := s.cleanupMatching(dryRun, `
+		WITH oversized AS (
+			SELECT s.id, SUM(LENGTH(c.content)) AS content_bytes
+			FROM sources s JOIN chunks c ON CAST(c.source_id AS INTEGER) = s.id
+			WHERE s.kind IN ('ephemeral', 'session')
+			GROUP BY s.id HAVING content_bytes > ?
+		)
+		SELECT `+cleanupColumns+`, CASE WHEN o.id IS NULL THEN 'ttl' ELSE 'oversized' END
+		FROM sources s LEFT JOIN oversized o ON o.id = s.id
+		WHERE o.id IS NOT NULL OR (s.kind = 'ephemeral' AND s.indexed_at < ?)
+			OR (s.kind = 'session' AND s.indexed_at < ?)
+		ORDER BY o.content_bytes DESC, s.kind, s.id DESC`, s.maxSourceBytes,
+		expiryCutoff(now, KindEphemeral, ephemeralTTL), expiryCutoff(now, KindSession, sessionTTL))
 	if err != nil {
 		return nil, err
-	}
-	// Collect IDs already evicted so downstream passes don't re-process them.
-	evictedIDs := make(map[int64]bool, len(oversized))
-	for _, src := range oversized {
-		evictedIDs[src.ID] = true
-	}
-
-	durable, err := s.cleanupDurable(dryRun, ephemeralTTL, sessionTTL)
-	if err != nil {
-		return nil, err
-	}
-	ephemeral, err := s.cleanupByTTL(KindEphemeral, dryRun, ephemeralTTL)
-	if err != nil {
-		return nil, err
-	}
-	session, err := s.cleanupByTTL(KindSession, dryRun, sessionTTL)
-	if err != nil {
-		return nil, err
-	}
-
-	merged := make([]SourceInfo, 0, len(oversized)+len(durable)+len(ephemeral)+len(session))
-	merged = append(merged, oversized...)
-	for _, lists := range [][]SourceInfo{durable, ephemeral, session} {
-		for _, src := range lists {
-			if !evictedIDs[src.ID] {
-				merged = append(merged, src)
-			}
-		}
 	}
 
 	// Auto-vacuum when freelist exceeds 20% of total pages after a non-dry-run
 	// eviction. This reclaims dead pages left by deleted rows.
-	if !dryRun && len(merged) > 0 {
+	if !dryRun && len(removed) > 0 {
 		if ratio := s.FreelistRatio(); ratio > 0.20 {
 			slog.Info("auto-vacuum triggered", "freelist_ratio", fmt.Sprintf("%.1f%%", ratio*100))
 			if err := s.Vacuum(); err != nil {
@@ -179,7 +156,7 @@ func (s *ContentStore) Cleanup(dryRun bool, ephemeralTTL, sessionTTL time.Durati
 		}
 	}
 
-	return merged, nil
+	return removed, nil
 }
 
 // PurgeCounts reports how many rows a PurgeAll removed (or, in dry-run mode,
@@ -266,10 +243,7 @@ func (s *ContentStore) PurgeAll(dryRun bool) (PurgeCounts, error) {
 	return counts, nil
 }
 
-// PurgeEphemeral evicts ephemeral sources past the TTL window, skipping
-// durable retention entirely. Intended for a one-shot "clear scratch"
-// operation exposed via capy_cleanup's purge_ephemeral flag. Durable
-// rows are never touched, regardless of retention score.
+// PurgeEphemeral evicts ephemeral sources past the TTL window.
 func (s *ContentStore) PurgeEphemeral(dryRun bool, ttl time.Duration) ([]SourceInfo, error) {
 	return s.cleanupByTTL(KindEphemeral, dryRun, ttl)
 }
@@ -280,91 +254,15 @@ func (s *ContentStore) PurgeSession(dryRun bool, ttl time.Duration) ([]SourceInf
 	return s.cleanupByTTL(KindSession, dryRun, ttl)
 }
 
-// cleanupOversized finds and evicts sources whose total content size exceeds
-// the configured maxSourceBytes limit. These sources should never have been
-// indexed at the current limit — evicting is a correction, not a policy change.
-func (s *ContentStore) cleanupOversized(dryRun bool) ([]SourceInfo, error) {
-	db, err := s.getDB()
-	if err != nil {
-		return nil, err
-	}
+const cleanupColumns = `s.id, s.label, s.content_type, s.chunk_count, s.code_chunk_count,
+	COALESCE(s.indexed_at, ''), COALESCE(s.last_accessed_at, ''), s.access_count, COALESCE(s.content_hash, ''), s.kind`
 
-	rows, err := db.Query(`
-		SELECT s.id, s.label, s.content_type, s.chunk_count, s.code_chunk_count,
-			s.indexed_at, s.last_accessed_at, s.access_count, s.content_hash, s.kind,
-			COALESCE(SUM(LENGTH(c.content)), 0) AS content_bytes
-		FROM sources s
-		LEFT JOIN chunks c ON CAST(c.source_id AS INTEGER) = s.id
-		GROUP BY s.id
-		HAVING content_bytes > ?
-		ORDER BY content_bytes DESC`, s.maxSourceBytes)
-	if err != nil {
-		return nil, fmt.Errorf("selecting oversized sources: %w", err)
-	}
-	defer rows.Close()
-
-	var candidates []SourceInfo
-	for rows.Next() {
-		var si SourceInfo
-		var indexedAt, lastAccessedAt string
-		var contentBytes int64
-		if err := rows.Scan(&si.ID, &si.Label, &si.ContentType, &si.ChunkCount,
-			&si.CodeChunkCount, &indexedAt, &lastAccessedAt, &si.AccessCount,
-			&si.ContentHash, &si.Kind, &contentBytes); err != nil {
-			slog.Warn("cleanupOversized: row scan failed, skipping", "error", err)
-			continue
-		}
-		si.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
-		si.LastAccessedAt, _ = time.Parse("2006-01-02 15:04:05", lastAccessedAt)
-		si.EvictionReason = "oversized"
-		candidates = append(candidates, si)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return candidates, s.evict(candidates, dryRun)
-}
-
-// cleanupDurable applies retention-score-based eviction to durable sources.
-// A source is a candidate iff its retentionScore is below the evictable
-// threshold AND it has never been accessed. ephemeralTTL is threaded
-// through only so ClassifySources can bucket ephemeral rows consistently;
-// it does not influence durable eviction.
-func (s *ContentStore) cleanupDurable(dryRun bool, ephemeralTTL, sessionTTL time.Duration) ([]SourceInfo, error) {
-	sources, err := s.ClassifySources(ephemeralTTL, sessionTTL)
-	if err != nil {
-		return nil, err
-	}
-
-	var candidates []SourceInfo
-	for _, src := range sources {
-		if src.Kind != KindDurable {
-			continue
-		}
-		if src.RetentionScore >= evictableThreshold {
-			continue
-		}
-		if src.AccessCount > 0 {
-			continue
-		}
-		src.EvictionReason = "retention"
-		candidates = append(candidates, src)
-	}
-
-	return candidates, s.evict(candidates, dryRun)
-}
-
-// cleanupByTTL evicts sources of the given kind whose indexed_at is older than
-// ttl. access_count is intentionally ignored — TTL-based kinds must not have
-// their lifetime extended by search hits (ADR-017). Non-positive ttl falls
-// back to a safe default (24h for ephemeral, 60 days for session).
 func (s *ContentStore) cleanupByTTL(kind SourceKind, dryRun bool, ttl time.Duration) ([]SourceInfo, error) {
-	db, err := s.getDB()
-	if err != nil {
-		return nil, err
-	}
+	return s.cleanupMatching(dryRun, `SELECT `+cleanupColumns+`, 'ttl' FROM sources s
+		WHERE s.kind = ? AND s.indexed_at < ? ORDER BY s.id DESC`, kind, expiryCutoff(time.Now(), kind, ttl))
+}
 
+func expiryCutoff(now time.Time, kind SourceKind, ttl time.Duration) string {
 	if ttl <= 0 {
 		switch kind {
 		case KindSession:
@@ -375,16 +273,17 @@ func (s *ContentStore) cleanupByTTL(kind SourceKind, dryRun bool, ttl time.Durat
 		slog.Warn("cleanupByTTL: non-positive TTL supplied, using default",
 			"kind", kind, "ttl", ttl)
 	}
-	cutoff := time.Now().Add(-ttl).UTC().Format("2006-01-02 15:04:05")
+	return now.Add(-ttl).UTC().Format(time.DateTime)
+}
 
-	rows, err := db.Query(`
-		SELECT id, label, content_type, chunk_count, code_chunk_count,
-			indexed_at, last_accessed_at, access_count, content_hash, kind
-		FROM sources
-		WHERE kind = ? AND indexed_at < ?
-		ORDER BY id DESC`, kind, cutoff)
+func (s *ContentStore) cleanupMatching(dryRun bool, query string, args ...any) ([]SourceInfo, error) {
+	db, err := s.getDB()
 	if err != nil {
-		return nil, fmt.Errorf("selecting stale %s sources: %w", kind, err)
+		return nil, err
+	}
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("selecting cleanup candidates: %w", err)
 	}
 	defer rows.Close()
 
@@ -394,33 +293,30 @@ func (s *ContentStore) cleanupByTTL(kind SourceKind, dryRun bool, ttl time.Durat
 		var indexedAt, lastAccessedAt string
 		if err := rows.Scan(&si.ID, &si.Label, &si.ContentType, &si.ChunkCount,
 			&si.CodeChunkCount, &indexedAt, &lastAccessedAt, &si.AccessCount,
-			&si.ContentHash, &si.Kind); err != nil {
-			slog.Warn("cleanupByTTL: row scan failed, skipping", "kind", kind, "error", err)
-			continue
+			&si.ContentHash, &si.Kind, &si.EvictionReason); err != nil {
+			return nil, fmt.Errorf("reading cleanup candidate: %w", err)
 		}
 		si.IndexedAt, _ = time.Parse("2006-01-02 15:04:05", indexedAt)
 		si.LastAccessedAt, _ = time.Parse("2006-01-02 15:04:05", lastAccessedAt)
-		si.EvictionReason = "ttl"
 		candidates = append(candidates, si)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	return candidates, s.evict(candidates, dryRun)
+	return s.evict(candidates, dryRun)
 }
 
-// evict performs the transactional delete for a list of candidates. On
-// dryRun or an empty list it is a no-op. Safe to call from both cleanup
-// paths — the three prepared statements are keyed by source id.
-func (s *ContentStore) evict(candidates []SourceInfo, dryRun bool) error {
+// evict rechecks the selected kind under the writer lock. Same-content
+// indexing can promote a source to durable while retaining its ID.
+func (s *ContentStore) evict(candidates []SourceInfo, dryRun bool) ([]SourceInfo, error) {
 	if dryRun || len(candidates) == 0 {
-		return nil
+		return candidates, nil
 	}
 
 	db, err := s.getDB()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Use sqliteutil.BeginImmediate so the eviction sweep gets the same
@@ -428,7 +324,7 @@ func (s *ContentStore) evict(candidates []SourceInfo, dryRun bool) error {
 	// surfaces SQLITE_BUSY mid-transaction under write contention.
 	tx, err := sqliteutil.BeginImmediate(db, "sources")
 	if err != nil {
-		return fmt.Errorf("beginning cleanup transaction: %w", err)
+		return nil, fmt.Errorf("beginning cleanup transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
@@ -437,24 +333,37 @@ func (s *ContentStore) evict(candidates []SourceInfo, dryRun bool) error {
 	// statement per candidate, which compounds on large eviction sweeps.
 	delChunks := tx.Stmt(s.stmtDeleteChunksBySource)
 	delTrigram := tx.Stmt(s.stmtDeleteTrigramBySource)
-	delSource := tx.Stmt(s.stmtDeleteSource)
+	delSource, err := tx.Prepare("DELETE FROM sources WHERE id = ? AND kind = ? AND kind IN ('ephemeral','session')")
+	if err != nil {
+		return nil, fmt.Errorf("preparing source cleanup: %w", err)
+	}
 
+	removed := candidates[:0]
 	for _, src := range candidates {
+		res, err := delSource.Exec(src.ID, src.Kind)
+		if err != nil {
+			return nil, fmt.Errorf("deleting source %d: %w", src.ID, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if n == 0 {
+			continue
+		}
 		if _, err := delChunks.Exec(src.ID); err != nil {
-			return fmt.Errorf("deleting chunks for source %d: %w", src.ID, err)
+			return nil, fmt.Errorf("deleting chunks for source %d: %w", src.ID, err)
 		}
 		if _, err := delTrigram.Exec(src.ID); err != nil {
-			return fmt.Errorf("deleting trigram chunks for source %d: %w", src.ID, err)
+			return nil, fmt.Errorf("deleting trigram chunks for source %d: %w", src.ID, err)
 		}
-		if _, err := delSource.Exec(src.ID); err != nil {
-			return fmt.Errorf("deleting source %d: %w", src.ID, err)
-		}
+		removed = append(removed, src)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing cleanup: %w", err)
+		return nil, fmt.Errorf("committing cleanup: %w", err)
 	}
-	return nil
+	return removed, nil
 }
 
 // EvictByLabel force-evicts a source by its exact label, regardless of
@@ -466,12 +375,31 @@ func (s *ContentStore) EvictByLabel(label string, dryRun bool) (*SourceInfo, err
 		return nil, err
 	}
 
+	if dryRun {
+		return sourceByExactLabel(db.QueryRow, label)
+	}
+	tx, err := sqliteutil.BeginImmediate(db, "sources")
+	if err != nil {
+		return nil, fmt.Errorf("beginning exact-label eviction: %w", err)
+	}
+	defer tx.Rollback()
+	target, err := sourceByExactLabel(tx.QueryRow, label)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.deleteSourceTx(tx, target.ID); err != nil {
+		return nil, fmt.Errorf("deleting source %d: %w", target.ID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing exact-label eviction: %w", err)
+	}
+	return target, nil
+}
+
+func sourceByExactLabel(queryRow func(string, ...any) *sql.Row, label string) (*SourceInfo, error) {
 	var si SourceInfo
 	var indexedAt, lastAccessedAt string
-	err = db.QueryRow(`
-		SELECT id, label, content_type, chunk_count, code_chunk_count,
-			indexed_at, last_accessed_at, access_count, content_hash, kind
-		FROM sources WHERE label = ?`, label).Scan(
+	err := queryRow("SELECT "+cleanupColumns+" FROM sources s WHERE s.label = ?", label).Scan(
 		&si.ID, &si.Label, &si.ContentType, &si.ChunkCount,
 		&si.CodeChunkCount, &indexedAt, &lastAccessedAt, &si.AccessCount,
 		&si.ContentHash, &si.Kind)
@@ -482,9 +410,6 @@ func (s *ContentStore) EvictByLabel(label string, dryRun bool) (*SourceInfo, err
 	si.LastAccessedAt, _ = time.Parse("2006-01-02 15:04:05", lastAccessedAt)
 	si.EvictionReason = "manual"
 
-	if err := s.evict([]SourceInfo{si}, dryRun); err != nil {
-		return nil, err
-	}
 	return &si, nil
 }
 

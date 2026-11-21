@@ -204,7 +204,7 @@ func (s *Server) fetchFreshnessNote(ttl time.Duration, force bool, kind store.So
 	if kind == store.KindEphemeral {
 		return note + fmt.Sprintf(" Retention: %s from indexing; unchanged revalidation does not extend it.", s.ephemeralTTL())
 	}
-	return note + " Retention: durable scoring; unchanged revalidation preserves indexing age."
+	return note + " General cleanup preserves this source while it is durable."
 }
 
 func (s *Server) fetchTime() time.Time {

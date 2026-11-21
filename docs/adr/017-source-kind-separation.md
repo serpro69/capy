@@ -32,7 +32,7 @@ SQLite FTS5's BM25 relies on term frequency and inverse document frequency. A 10
 Introduce a **binary source-kind column** on the `sources` table:
 
 - `kind = 'ephemeral'` — transient command output captured for flood protection. Default-excluded from search. Cleaned up on a strict TTL (24h, configurable) regardless of `access_count`.
-- `kind = 'durable'` — curated/fetched content intended as long-term memory. Default-included in search. Cleaned up by the existing retention-score policy (ADR-011).
+- `kind = 'durable'` — curated/fetched content intended as long-term memory. Default-included in search. General cleanup preserves it under the amended ADR-011.
 
 Write sites are responsible for tagging at creation:
 
@@ -48,7 +48,7 @@ Search (`tool_search.go`) default-excludes `ephemeral` unless the caller sets `i
 
 Cleanup (`cleanup.go`) splits into two code paths:
 
-1. `durable` sources — unchanged. `retentionScore`, `access_count = 0` gate, `evictableThreshold`.
+1. `durable` sources originally used retention scores for eviction. The [2026-11-21 amendment to ADR-011](011-conservative-cleanup-policy.md#decision) protects sources from general cleanup while their kind is durable.
 2. `ephemeral` sources — pure TTL. `IndexedAt < now − TTL`. Access count is ignored. Default TTL 24 h, overridable via `.capy.toml`.
 
 Migration is one-shot on store open: `ALTER TABLE sources ADD COLUMN kind TEXT NOT NULL DEFAULT 'durable'`, then a retroactive `UPDATE` tagging rows whose label matches `execute:%`, `file:%`, `batch:%` as `ephemeral`. Existing durable rows stay durable by the default, matching the safety bias of ADR-011.

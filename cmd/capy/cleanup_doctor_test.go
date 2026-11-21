@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +32,68 @@ func newCLIProject(t *testing.T) (dir, dbPath string) {
 		0o644,
 	))
 	return dir, filepath.Join(dir, "test.db")
+}
+
+func TestGeneralCleanupPreservesDurableCLIAndMCP(t *testing.T) {
+	bin := buildStdioCapy(t)
+	for _, surface := range []string{"CLI", "MCP"} {
+		t.Run(surface, func(t *testing.T) {
+			dir, dbPath := newCLIProject(t)
+			st := store.NewContentStore(dbPath, dir, 0, 0)
+			for label, kind := range map[string]store.SourceKind{
+				"project:decisions": store.KindDurable, "scratch": store.KindEphemeral,
+			} {
+				_, err := st.Index(strings.Repeat("reference material ", 20), label, "", kind)
+				require.NoError(t, err)
+			}
+			require.NoError(t, st.Close())
+			// Older rows may lack optional metadata. Size alone makes scratch eligible.
+			db, err := sql.Open("sqlite3", store.EncryptedDSN(dbPath, cliTestKey))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			_, err = db.Exec("UPDATE sources SET indexed_at=NULL, content_hash=NULL WHERE label='scratch'")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, ".capy.toml"),
+				[]byte("[store]\npath = 'test.db'\nmax_source_bytes = 64\n"), 0600))
+
+			env := stdioEnv(t, cliTestKey)
+			var server *stdioProcess
+			if surface == "MCP" {
+				server = startStdioProcess(t, stdioCommand{executable: bin,
+					args: []string{"serve", "--project-dir", dir}, dir: dir, env: env, secrets: []string{cliTestKey}})
+				server.initialize(t)
+				defer server.close(t)
+			}
+			for _, apply := range []bool{false, true} {
+				var text string
+				if server != nil {
+					args := map[string]any{}
+					if apply {
+						args["dry_run"] = false
+					}
+					text = server.tool(t, "capy_cleanup", args)
+					require.Contains(t, text, "| scratch | oversized | unknown |")
+				} else {
+					args := []string{"cleanup", "--project-dir", dir}
+					if apply {
+						args = append(args, "--force")
+					}
+					cmd := exec.Command(bin, args...)
+					cmd.Env = env
+					out, err := cmd.CombinedOutput()
+					require.NoError(t, err, "%s", out)
+					text = string(out)
+				}
+				require.Contains(t, text, "scratch")
+				require.NotContains(t, text, "project:decisions")
+				var durable, scratch bool
+				require.NoError(t, db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sources WHERE label='project:decisions' AND kind='durable'),
+					EXISTS(SELECT 1 FROM sources WHERE label='scratch')`).Scan(&durable, &scratch))
+				require.True(t, durable)
+				require.Equal(t, !apply, scratch)
+			}
+		})
+	}
 }
 
 func TestCleanupSubcommand_ProjectCredentials(t *testing.T) {

@@ -135,42 +135,41 @@ func TestCleanup_EvictsOversizedSources(t *testing.T) {
 
 	// Create store with a high limit to index large content.
 	s := NewContentStore(dbPath, dir, 0, 100_000)
-	_, err := s.Index(strings.Repeat("big ", 5000), "big-source", "", KindDurable)
+	for _, kind := range []SourceKind{KindDurable, KindEphemeral, KindSession} {
+		_, err := s.Index(strings.Repeat("big ", 5000), string(kind), "", kind)
+		require.NoError(t, err)
+	}
+	_, err := s.Index("small content", "small-source", "", KindEphemeral)
 	require.NoError(t, err)
-	_, err = s.Index("small content", "small-source", "", KindDurable)
+	db, err := s.getDB()
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE sources SET indexed_at='2000-01-01 00:00:00' WHERE label IN ('ephemeral','durable')")
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
-	// Reopen with a smaller limit so "big-source" is now oversized.
+	// Reopen with a smaller limit. The ephemeral row is both oversized and expired.
 	s2 := NewContentStore(dbPath, dir, 0, 1024)
 	t.Cleanup(func() { s2.Close() })
 
-	// Dry run should report the oversized source.
-	pruned, err := s2.Cleanup(true, 24*time.Hour, 60*24*time.Hour)
-	require.NoError(t, err)
-
-	var oversizedLabels []string
-	for _, src := range pruned {
-		if src.EvictionReason == "oversized" {
-			oversizedLabels = append(oversizedLabels, src.Label)
+	for _, dryRun := range []bool{true, false} {
+		pruned, err := s2.Cleanup(dryRun, 24*time.Hour, 60*24*time.Hour)
+		require.NoError(t, err)
+		var labels []string
+		for _, src := range pruned {
+			require.Equal(t, "oversized", src.EvictionReason)
+			labels = append(labels, src.Label)
+		}
+		require.ElementsMatch(t, []string{"ephemeral", "session"}, labels)
+		sources, err := s2.ListSources()
+		require.NoError(t, err)
+		if dryRun {
+			require.Len(t, sources, 4)
+		} else {
+			require.Len(t, sources, 2)
 		}
 	}
-	assert.Contains(t, oversizedLabels, "big-source")
-	assert.NotContains(t, oversizedLabels, "small-source")
-
-	// Verify source still exists (dry run).
-	sources, err := s2.ListSources()
-	require.NoError(t, err)
-	assert.Len(t, sources, 2)
-
-	// Actual eviction.
-	pruned, err = s2.Cleanup(false, 24*time.Hour, 60*24*time.Hour)
-	require.NoError(t, err)
-
-	sources, err = s2.ListSources()
-	require.NoError(t, err)
-	assert.Len(t, sources, 1)
-	assert.Equal(t, "small-source", sources[0].Label)
+	require.NotNil(t, fetchMeta(t, s2, "durable"))
+	require.NotNil(t, fetchMeta(t, s2, "small-source"))
 }
 
 // --- EvictByLabel ---

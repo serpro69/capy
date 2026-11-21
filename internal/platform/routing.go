@@ -93,7 +93,7 @@ Every indexed entry has a **kind** that controls its lifecycle and search visibi
 
 | Kind | What produces it | Retention | Included by default in search? |
 |------|-----------------|-----------|-------------------------------|
-| ` + "`durable`" + ` | ` + "`capy_index`" + `, ` + "`capy_fetch_and_index(kind: \"durable\")`" + ` | Retention-score tiers (hot → warm → cold → evictable) | Yes |
+| ` + "`durable`" + ` | ` + "`capy_index`" + `, ` + "`capy_fetch_and_index(kind: \"durable\")`" + ` | Protected from general cleanup while durable | Yes |
 | ` + "`ephemeral`" + ` | ` + "`capy_fetch_and_index`" + ` (default), plus retained legacy execute/file/batch sources | Strict TTL — swept after expiry | No |
 | ` + "`session`" + ` | the session vault (archived transcripts from Claude Code and Codex; requires ` + "`CAPY_VAULT_KEY`" + `) | Archived forever (vault); already-archived sessions become searchable after ` + "`capy vault reindex`" + ` | Yes |
 

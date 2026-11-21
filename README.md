@@ -151,7 +151,7 @@ schema-upgrade and explicit-discard rollback procedures before mixing versions.
 
 | Content | Retention | Included in default `capy_search`? |
 | --- | --- | --- |
-| Indexed notes and files (`durable`) | Retention-based cleanup | Yes |
+| Indexed notes and files (`durable`) | Protected from general cleanup while durable | Yes |
 | Captured command output (run store) | 24 hours by default; completed logs may be evicted earlier | No; use `capy_runs` / `capy runs` |
 | Fetched pages and legacy command sources (`ephemeral`) | 24 hours by default | No |
 | Archived conversations (`session`) | Kept until explicitly deleted from the vault | Yes, with `CAPY_VAULT_KEY` |

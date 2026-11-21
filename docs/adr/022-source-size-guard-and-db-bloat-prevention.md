@@ -27,8 +27,8 @@ guards complement the central store gate without replacing it.
 
 Batch provenance is part of the admitted source payload. Its 81,920-byte response
 budget bounds displayed JSON, not stored content; admission errors never silently
-truncate command output. Oversized-source cleanup still measures stored chunk
-bytes, so expansion may make an admitted source eligible for explicit cleanup.
+truncate command output. The oversized sweep measures stored chunk text, so
+expansion can make an admitted ephemeral or legacy session source eligible.
 Vault transcripts remain owned by the separate vault (ADR-027), not the historical
 knowledge-session sweep discussed below.
 
@@ -78,6 +78,10 @@ The issue proposed a second threshold (`TrigramSkipBytes = 512 KB`) where source
 If aggregate trigram growth becomes a real problem, the skip can be added later with usage data to justify the complexity.
 
 ### 3. Retroactive cleanup of oversized sources
+
+**Amendment (2026-11-21).** Retroactive size eviction applies to ephemeral and legacy knowledge-session sources. Lowering `store.max_source_bytes` preserves previously indexed durable sources and enforces the new limit on subsequent indexing. Exact-label eviction and a full knowledge-base reset can remove oversized durable content. This narrows the original all-kinds sweep described below. [Durable cleanup policy](011-conservative-cleanup-policy.md#decision)
+
+The existing sweep sums SQLite `length(content)` on TEXT. Multibyte characters count once and embedded NUL ends the count. Switching to stored byte length would make additional non-durable sources eligible for deletion. That change is deferred for separate review against multibyte and NUL-containing fixtures.
 
 `Cleanup()` now runs an oversized-eviction pass **before** the existing retention-score and TTL passes. Sources whose total content size (summed across chunks) exceeds `MaxSourceBytes` are flagged as evictable with reason `"oversized"`, regardless of retention score, access count, or kind.
 

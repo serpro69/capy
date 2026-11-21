@@ -137,7 +137,9 @@ Statistics count cache hits and attempted misses, including failures and force/z
 
 ## Cleanup and older chunks
 
-Normal cleanup previews oversized-source eviction, durable retention-score eviction, and TTL eviction of ephemeral/legacy knowledge-session sources. It never deletes the separate vault's archives.
+General cleanup previews expired or oversized ephemeral and legacy knowledge-session sources. Cleanup preserves a durable source at every age and size, including after a reduction in `store.max_source_bytes`. Reindexing or refetching the label as ephemeral makes its indexing age and size eligible for cleanup again. To delete one, use its exact label with `capy cleanup --source <label> --force` or MCP `source` and `dry_run: false`. Vault archives have a separate lifecycle.
+
+The CLI or MCP server running cleanup enforces this policy. Older binaries sharing the same knowledge database can still evict durable sources under their earlier rules.
 
 - `capy cleanup --force` or MCP `dry_run: false` applies requested eviction.
 - MCP `purge_ephemeral: true` restricts eviction to **expired** ephemeral sources; it does not clear all recent scratch output. CLI `--kind ephemeral` has the same TTL restriction.
