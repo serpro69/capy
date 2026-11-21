@@ -156,7 +156,7 @@ jobs:
         if: ${{ !cancelled() && (steps.native_tests.outcome == 'success' || steps.native_tests.outcome == 'failure') }}
         run: |
           go test -tags fts5,integration -race -json -count=5 -timeout 10m \
-            -run '^(TestRecoveryMetadataUsesRecoveryBudget|TestAdmissionAccountingPreservesCallerBudgets|TestRetentionWorkUsesOperationBudgets|TestCaptureRetentionKeepsWriteDeadline|TestMaintenanceBoundsAndBusyWAL|TestLargeAdmissionMakesProgressAcrossEvictionBatches|TestLargeEvictionPersistsAfterAppendRetryFails)$' \
+            -run '^(TestRecoveryRetainedDispositionContention|TestRecoveryMetadataUsesRecoveryBudget|TestAdmissionAccountingPreservesCallerBudgets|TestRetentionWorkUsesOperationBudgets|TestCaptureRetentionKeepsWriteDeadline|TestMaintenanceBoundsAndBusyWAL|TestLargeAdmissionMakesProgressAcrossEvictionBatches|TestLargeEvictionPersistsAfterAppendRetryFails)$' \
             ./internal/runstore | tee "$RUNNER_TEMP/macos-retention-tests.jsonl"
 
       - name: Vet native integration code
