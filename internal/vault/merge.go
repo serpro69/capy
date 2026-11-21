@@ -67,10 +67,10 @@ type mergeDestination interface {
 // selection; a pre-project source contributes no project state.
 //
 // Concurrency: MergeFrom writes only the destination (batched BeginImmediate), so
-// a concurrent server-startup sweep on the same vault.db is absorbed by
-// busy_timeout + retry, exactly like disk import — no "stop the server first"
-// requirement (unlike rekey's file swap) and no busy pre-check (unlike compact's
-// VACUUM). The source is a different file the server does not normally hold open.
+// a concurrent upgraded server's startup sweep is absorbed by busy_timeout +
+// retry, exactly like disk import. Upgrade and restart all attached writers before
+// the first deletion pair. The source is a different file the server does not
+// normally hold open.
 //
 // srcKeyEnv names where srcKey came from (e.g. "CAPY_VAULT_MERGE_KEY", "--key"),
 // used only for the wrong-passphrase error message.
@@ -172,9 +172,13 @@ func mergeSnapshot(ctx context.Context, dest mergeDestination, srcDB mergeReader
 		batch, pending, batchBytes = nil, nil, 0
 	}
 
-	for _, uuid := range uuids {
+	for i, uuid := range uuids {
 		if err := ctx.Err(); err != nil {
-			return res, err
+			for _, entry := range pending {
+				res.record(ImportedSession{UUID: entry.UUID, Platform: entry.Platform,
+					Status: StatusError, Reason: "unprocessed", Err: err})
+			}
+			return res, fmt.Errorf("merge interrupted before %s (live sessions remaining: %d): %w", uuid, len(uuids)-i, err)
 		}
 
 		existing, deleted, err := dest.mergeState(ctx, uuid)

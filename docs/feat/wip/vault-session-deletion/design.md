@@ -1,6 +1,6 @@
 # Remember and propagate vault session deletions
 
-Revised after two design reviews. Implementation is pending. The behavior below applies to vault owners who keep original session files on disk or exchange archives between machines. [Issue #109](https://github.com/serpro69/capy/issues/109)
+The behavior below applies to vault owners who keep original session files on disk or exchange archives between machines. [Issue #109](https://github.com/serpro69/capy/issues/109)
 
 ## Requirements and identity
 
@@ -10,12 +10,12 @@ A session keeps its UUID when copied to another vault. Suppose two machines have
 
 ## User-visible behavior
 
-Today, `capy vault delete` removes the session row containing the raw transcript, its sidecars, search entries, and title and project overrides in one transaction. The original transcript file survives. A subsequent import can archive it again. Merge currently treats a missing UUID as a candidate to insert.
+Before deletion records, `capy vault delete` removed the session row containing the raw transcript, its sidecars, search entries, and title and project overrides in one transaction. The original transcript file survived. A subsequent import or merge could archive it again.
 
 | Operation | Result for one session UUID |
 | --- | --- |
 | Delete with default configuration | Remove the archived session and record its UUID and effective project together in the encrypted vault. A manual import or server startup sweep excludes that UUID, even if the transcript grows or moves. |
-| Delete with the proposed `vault.remember_deletions = false` | Remove the local archive once. This operation produces no deletion record to share. A later disk import or merge can bring back the session. |
+| Delete with `vault.remember_deletions = false` | Remove the local archive once. This operation produces no deletion record to share. A later disk import or merge can bring back the session. |
 | Merge a deletion into a vault holding the session | Remove the destination archive by UUID and retain exactly the selected source pairs for forwarding, alongside any pairs already recorded. Every destination honors incoming deletions, including when its own local delete setting is disabled. |
 | Merge a deletion into a vault that has never held the session | Remember it there too. A future import or merge excludes a live copy of that UUID. |
 | Merge a live copy into a vault that remembers the deletion | Keep the session deleted, regardless of size, timestamp, title, or project edits. Repeating either merge direction preserves the outcome. |

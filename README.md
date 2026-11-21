@@ -192,7 +192,9 @@ With `CAPY_VAULT_KEY` in its launch environment, the MCP server also archives th
 
 The default location is `~/.local/share/capy/vault.db` (under `XDG_DATA_HOME` when set). Override it with `CAPY_VAULT_PATH` or `capy vault --path <vault.db>`.
 
-**Archives are verbatim.** Search snippets have recognized secrets redacted, but stored transcripts retain them, and restore writes plaintext files. The vault has no automatic expiry; `capy vault delete` removes an archive without deleting the original session files.
+**Archives are verbatim.** Search snippets have recognized secrets redacted, but stored transcripts retain them, and restore writes plaintext files. The vault has no automatic expiry.
+
+`capy vault delete <id>` removes the archive and remembers its full UUID and effective project. The original files stay on disk. Imports and startup sweeps exclude that UUID, and merging this vault into another can delete the other copy. **Capy cannot undo a remembered deletion.** For a one-time local removal, set `vault.remember_deletions = false` before deleting. Existing and incoming deletions still apply. [Vault deletion and merge examples](docs/reference/vault.md#delete-a-session)
 
 ### Browse and find
 
@@ -253,9 +255,9 @@ capy vault merge --from /path/to/copied-vault.db --dry-run
 capy vault merge --from /path/to/copied-vault.db
 ```
 
-If the source uses a different passphrase, provide it through `CAPY_VAULT_MERGE_KEY`. Merge adds missing sessions, keeps the larger transcript on overlap, and reconciles names and project labels independently using the latest edit or clear. Replacing the destination `vault.db` directly would lose archives found only there.
+If the source uses a different passphrase, provide it through `CAPY_VAULT_MERGE_KEY`. Review the preview for archives that will be removed and deletion records that will be carried forward. For live UUIDs without a deletion record, merge adds missing sessions, keeps the larger transcript on overlap, and reconciles names and project labels independently using the latest edit or clear. Replacing the destination `vault.db` directly would lose archives found only there.
 
-Upgrade all machines before sharing a vault containing Codex sessions: older capy versions without Codex support refuse to open it.
+Before recording or merging the first deletion, stop all writers attached to shared vaults, upgrade capy on every participating machine, and restart the writers with the upgraded binary. Codex archives require reader version 3. The first locally recorded or received deletion raises the vault's reader requirement to 4. Older capy versions that check this requirement will then refuse to open the vault.
 
 For key rotation, stop MCP and other processes using the vault, set `CAPY_VAULT_KEY` to the new passphrase, then run `capy vault rekey` and enter the old one when prompted. Persist the new key before restarting. The backup remains readable with the old key; `--remove-backup` deletes it after verification but does not guarantee secure erasure. `capy vault compact` can reclaim space from older uncompressed archives; stop MCP before running it.
 
@@ -305,6 +307,7 @@ block_after = 8
 
 [vault]
 min_session_bytes = 0        # minimum size for new archives; 0 disables
+remember_deletions = true    # retain and share future local deletions
 ```
 
 Restart MCP after configuration changes. Invalid configuration stops knowledge access instead of silently choosing another database. See [all configuration defaults](docs/reference/operations.md#configuration-defaults) for less common settings.
