@@ -14,6 +14,7 @@ import (
 
 func TestCodexSubagentStart(t *testing.T) {
 	t.Parallel()
+	wantRouting := wantChildRouting(t, &adapter.CodexAdapter{})
 	for _, agentType := range []string{"worker", "explorer", "default", "custom", ""} {
 		t.Run(agentType, func(t *testing.T) {
 			project := t.TempDir()
@@ -28,6 +29,7 @@ func TestCodexSubagentStart(t *testing.T) {
 			assert.Equal(t, "SubagentStart", response["hookEventName"])
 			context, ok := response["additionalContext"].(string)
 			require.True(t, ok)
+			assert.Equal(t, wantRouting, context)
 			assert.LessOrEqual(t, len(context), 4096)
 			for _, want := range []string{"Comprehension", "Extraction", "availability is unverified", "capy schemas once", "60 seconds", "native fallback", "Hosted web/search tools are not intercepted"} {
 				assert.Contains(t, context, want)

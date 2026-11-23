@@ -3,6 +3,7 @@ package hook
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/serpro69/capy/internal/adapter"
@@ -36,6 +37,22 @@ func ccParse(t *testing.T, output []byte) map[string]any {
 	hso, ok := raw["hookSpecificOutput"].(map[string]any)
 	require.True(t, ok, "expected hookSpecificOutput wrapper in Claude Code format")
 	return hso
+}
+
+// Child hooks must emit the main session's routing text with only the user commands removed.
+func wantChildRouting(t *testing.T, a adapter.HookAdapter) string {
+	t.Helper()
+	project := t.TempDir()
+	output, err := handleEvent("sessionstart", []byte(`{"source":"startup"}`), a, &project)
+	require.NoError(t, err)
+	main := ccParse(t, output)["additionalContext"].(string)
+	before, rest, ok := strings.Cut(main, "\n\n  <capy_commands>")
+	require.True(t, ok, "main session is missing the user commands")
+	commands, after, ok := strings.Cut(rest, "</capy_commands>")
+	require.True(t, ok)
+	require.Contains(t, commands, "capy_stats")
+	require.Contains(t, commands, "capy_doctor")
+	return before + after
 }
 
 // ─── Bash routing → direct denial with actionable guidance ────────────────────
@@ -224,10 +241,12 @@ func TestHookIntegration_Read_Guidance(t *testing.T) {
 // ─── Agent → routing block injected ────────────────────────────────────────────
 
 func TestHookIntegration_Agent_RoutingBlockInjected(t *testing.T) {
+	wantRouting := wantChildRouting(t, ccAdapter())
+	const task = "Investigate the build failure"
 	for _, tool := range []string{"Agent", "Task"} {
 		t.Run(tool, func(t *testing.T) {
 			input := ccInput(tool, map[string]any{
-				"prompt":            "Investigate the build failure",
+				"prompt":            task,
 				"subagent_type":     "general-purpose",
 				"description":       "Inspect build logs",
 				"model":             "sonnet",
@@ -244,8 +263,7 @@ func TestHookIntegration_Agent_RoutingBlockInjected(t *testing.T) {
 
 			updated := hso["updatedInput"].(map[string]any)
 			prompt := updated["prompt"].(string)
-			assert.Contains(t, prompt, "Investigate the build failure")
-			assert.Contains(t, prompt, "context_window_protection")
+			assert.Equal(t, task+wantRouting, prompt)
 			assert.Equal(t, "general-purpose", updated["subagent_type"])
 			assert.Equal(t, "Inspect build logs", updated["description"])
 			assert.Equal(t, "sonnet", updated["model"])

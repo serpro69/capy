@@ -214,7 +214,7 @@ func routeAgent(toolInput map[string]any, a adapter.HookAdapter) ([]byte, error)
 	// Build updated input
 	updated := make(map[string]any, len(toolInput))
 	maps.Copy(updated, toolInput)
-	updated[fieldName] = prompt + RoutingBlock()
+	updated[fieldName] = prompt + childRoutingBlock(a.Platform())
 
 	// Upgrade Bash subagent to general-purpose
 	if subType, _ := toolInput["subagent_type"].(string); subType == "Bash" {
