@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -12,6 +13,59 @@ import (
 	"github.com/serpro69/capy/internal/vault"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCommittedDeleteReportDelivery(t *testing.T) {
+	for _, delivery := range []string{"displayed", "coalesced", "write failed", "clipped"} {
+		t.Run(delivery, func(t *testing.T) {
+			m, st := deletionApp(t, true, deleteID)
+			m = readyDeletion(t, press(t, m, "a"))
+			m, apply := deleteStep(m, keyMsg("y"))
+			st.listErr = errors.New("list unavailable")
+			m, _ = deleteStep(m, apply())
+			require.Equal(t, 1, st.applies)
+			const status = "deleted 1 session(s) · list refresh failed: list unavailable"
+			require.Equal(t, status, m.status)
+
+			width := 90
+			if delivery == "clipped" {
+				width = 8
+			}
+			m, _ = deleteStep(m, tea.WindowSizeMsg{Width: width, Height: 1})
+			frame := m.View()
+			if delivery != "clipped" {
+				require.Contains(t, frame, status)
+			}
+			if delivery == "coalesced" {
+				m = press(t, m, "down")
+				frame = m.View()
+				require.NotContains(t, frame, status)
+			}
+			file, err := os.CreateTemp(t.TempDir(), "terminal")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = file.Close() })
+			m.deleteOutput.File = file
+			if delivery == "write failed" {
+				require.NoError(t, file.Close())
+			}
+			_, writeErr := m.deleteOutput.Write([]byte(frame))
+			var stderr bytes.Buffer
+			err = m.deleteOutput.finishReports(&stderr)
+			switch delivery {
+			case "write failed":
+				require.ErrorIs(t, writeErr, os.ErrClosed)
+				require.ErrorIs(t, err, os.ErrClosed)
+				require.ErrorContains(t, err, status)
+			case "displayed":
+				require.NoError(t, err)
+				require.Empty(t, stderr.String())
+			default:
+				require.NoError(t, err)
+				require.Equal(t, status+"\n", stderr.String())
+			}
+			require.Equal(t, 1, st.applies)
+		})
+	}
+}
 
 // Observe confirmation handling before Bubble Tea queues the next View. The
 // renderer can hold its lock in Write while the event loop processes a key.

@@ -1549,11 +1549,12 @@ unchanged — a rollout aborted before the model answered (`task_started` then
 
 **Sub-agents.** Codex writes each spawned agent as its own rollout, and the vault
 mirrors that: a child is its own row with `parent_uuid` from its `session_meta`
-(lifted `parent_thread_id` or `source.subagent.thread_spawn`), **no foreign key** —
-a child may arrive before its parent, and deleting a parent never cascades
-(`delete` warns via `printDeletePreview`). Children are hidden from `list` and the
-TUI list by default (`ListOptions.IncludeChildren`, `--include-children`, TUI key
-`s`), listed in the parent's `show` header (`Children`), and opened from the parent's
+(lifted `parent_thread_id` or `source.subagent.thread_spawn`). The link has no
+foreign key, so a child may arrive before its parent and survive its deletion.
+The zero value of `ListOptions` selects roots. `IncludeChildren` selects all rows
+and `ChildrenOnly` selects rows with a parent UUID, including orphans. The store
+and CLI reject both options together. Children are listed in the parent's
+`show` header (`Children`) and opened from the parent's
 launch markers in the TUI (see [Tool-result display](#tool-result-display-show-vs---tui)):
 `Launch.ChildUUID` resolves from a `collab_agent_spawn_end` event (legacy) or a
 `SubAgentActivity` item (paginated). A child from Codex ≥ 0.147 records no human
@@ -1603,7 +1604,13 @@ strings-only `platform.CheckVaultPlatforms` — `internal/platform` must not imp
 
 ### Archival Paths
 
-**Remembered deletions.** By default, a local delete removes the parent row, sidecars, overrides and all three search indexes in the transaction that records the UUID and its effective project. Independently archived children have their own UUIDs. Any retained pair excludes that UUID from disk imports, startup sweeps and live merges. Import checks the UUID after discovery and selection, before reading the transcript or sidecars. Writers recheck in their transaction, including index rebuilds, location hints and metadata-only updates. A remembered UUID yields `excluded / deleted`. A planned update whose parent disappeared after a one-time local delete yields `skipped / session disappeared` before any child write. `vault.remember_deletions = false` affects only the creation of records by future local deletes.
+**Local deletion.** The CLI passes literal UUID prefixes to `VaultStore.PrepareDelete`. The TUI passes exact marked UUIDs in accepted-list order. Both supply the invocation project's deletion policy. One metadata-only read transaction resolves and deduplicates explicit targets. By default it identifies direct children outside the selection. With descendant expansion enabled it walks indexed parent links across projects, tracking visited UUIDs to handle overlap and cycles. The resulting in-memory plan binds exact UUIDs, effective projects and policy to the open store. The read transaction ends before confirmation.
+
+`ApplyDelete` takes an immediate write transaction and rechecks every exact UUID and effective project before mutating any rows. A missing or reassigned target invalidates the whole plan. Title edits and transcript growth preserve eligibility. Even a one-time deletion followed by reimport of the same UUID in the same effective project qualifies. The writer never reruns the selection, so a later child survives. Bounded SQL groups share one commit for all archive rows, sidecars, overrides, three search indexes and any deletion records and reader-version stamp. A failure in any group rolls back every group. A CLI output failure after commit reports the committed count.
+
+The TUI reconciles marks against the accepted list across pages. It snapshots that membership on opening review, then uses it to label added descendants outside the list. Each toggle requests a fresh plan. A request sequence discards superseded replies, and confirmation waits until the current preview reaches terminal output. On a stale result, the viewer reloads and reconciles marks before another review. On commit it clears deleted rows and marks, invalidates old search replies and reruns an active query independently of the list reload. It retains the committed count and any refresh error until the renderer writes the complete status or the viewer reports it after terminal teardown. [Operator workflow](reference/vault.md#mark-and-delete-in-the-viewer)
+
+**Remembered deletions.** By default the transaction records each reviewed UUID and its effective project. Any retained pair excludes that UUID from disk imports, startup sweeps and live merges. Import checks the UUID after discovery and selection, before reading the transcript or sidecars. Writers recheck in their transaction, including index rebuilds, location hints and metadata-only updates. A remembered UUID yields `excluded / deleted`. A planned update whose parent disappeared after a one-time local delete yields `skipped / session disappeared` before any child write. `vault.remember_deletions = false` affects only the creation of records by future local deletes.
 
 **Minimum-size admission (issue #106).** `[vault] min_session_bytes` is an opt-in, non-negative byte limit, defaulting to zero (disabled). `ImportOptions.MinSessionBytes` and `MergeOptions.MinSessionBytes` gate only UUIDs absent from the destination, after its digest lookup and before scanning/queuing new records. Imports use the existing uncompressed transcript-plus-sidecar total; merges use the source's uncompressed `size_bytes`. Values strictly below the minimum report `excluded` with a reason; equality qualifies. There is no exclusion tombstone: later growth or a lowered limit permits admission. Existing archives still receive updates, index upgrades, location changes, and name reconciliation. The separate zero-message exclusion remains in force.
 
@@ -1623,12 +1630,12 @@ Both platform startup sweeps pass the server's loaded config to the importer. Ma
 |---------|-------------|
 | `capy vault import` | Archive discovered sessions or one transcript selected by `--source <path>`. Directories use layout autodetection. Use `--dry-run` to preview, `--platform claude-code\|codex` to restrict the platform, and `--project` to match the Claude project directory or Codex cwd hint. |
 | `capy vault reindex` | Rebuild the FTS index for sessions on an older `index_version` (DB-driven; no disk dependency; batched + WAL-checkpointed; dispatches on the stored platform) |
-| `capy vault list` | List sessions, reverse chronological (`--project` in SQL; `--name` — literal, Unicode case-folded substring over the effective title, applied in Go before `--limit`; `--platform`; `--include-children` — child sessions are hidden by default and show `↳ <parent id>` in the title cell; a PLATFORM column; JSON carries `platform` and `parent_uuid`) |
+| `capy vault list` | List roots by default, all sessions with `--include-children`, or children with `--children-only`. Project, platform and effective-title filters precede the limit. Results sort by descending end time and ascending UUID. Child titles show `↳ <parent id>`. JSON includes `platform` and `parent_uuid`. |
 | `capy vault search` | Full-text search with snippets (PLATFORM column reads `codex (child)` for a child hit; JSON carries `platform`/`parent_uuid`) |
 | `capy vault show` | Display full session (pager, `--format` for export). The header prints the platform, a child's parent and a parent's children; the assistant heading is `Claude`/`Codex` |
 | `capy vault restore` | Write JSONL + session files back to disk — under the Claude projects dir as `<uuid>.jsonl` + sidecars, or under `$CODEX_HOME` at the stored relative rollout path (a `.zst` twin is left untouched and noted) |
 | `capy vault resume` | Restore + launch `claude --resume` — Claude Code only; a Codex session fails loudly before anything is restored, naming `capy vault restore` and `codex resume <uuid>` |
-| `capy vault delete` | Remove an archive and remember its UUID and effective project by default. Warns about separately archived children. |
+| `capy vault delete <id> [<id> ...]` | Preview and atomically delete the reviewed UUIDs. `--with-descendants` adds archived descendants recursively. `--yes` skips the prompt and prints the preview. |
 | `capy vault rename` | Set (`<name>`) or clear (`--clear`) the capy-owned name of a session; prints the resulting effective title. Writes only `vault_session_names` — never `raw_jsonl`, hashes, or FTS |
 | `capy vault stats` | DB size, session count, per-project and per-platform breakdown, child count, index version + reindex backlog |
 | `capy vault checkpoint` | Flush WAL (required before cross-machine copy) |
@@ -1637,19 +1644,18 @@ Both platform startup sweeps pass the server's loaded config to the importer. Ma
 | `capy vault rekey` | Rotate the encryption key to the current `CAPY_VAULT_KEY` via `sqliteutil.Rekey` (SQLite backup-API: open old → checkpoint → copy into a new file under the new key → swap+verify). Sidesteps the WAL/PRAGMA-rekey incompatibility (ADR-020) by writing a fresh file. Stop the server first; `--remove-backup` unlinks the old-key `.bak` |
 
 `list`, `search`, and `show` support `--tui` for interactive browsing/search/viewing.
-A `list --platform <platform> --tui` launch retains that predicate for the initial
-list, every list reload, and live search queries. `list` and `search` launches
-also retain `--project` across reloads and mode changes. Other interactions are: filter `f`
-— effective title, effective project, or UUID via the shared `ContainsFold`
-matcher; rename `e` in the list and viewer, `ctrl+e` in search because its query
-input is always focused and a printable key would be untypeable; project edit
-`ctrl+g` in list (including its active finder), search and viewer; copy `c`; restore
-`r`; resume `R`; `s` in the list toggles child sessions, re-querying the store since
-hiding children is a SQL predicate, not an in-memory filter. The mutating/exec
-commands do not. A rename runs as a Bubble Tea
-command and, on success, reloads authoritative store state (list re-query with the
-active filter reapplied, search rerun, viewer metadata refresh) rather than patching
-the cached presentation.
+The TUI preserves platform and project filters in the session list and live
+search. List queries also keep their launch name filter and cap. The list's
+`s` and `S` keys change the child predicate with a fresh store query. The local
+`f` finder then matches the effective title, project or UUID using `ContainsFold`.
+Deletion review opens from the list inside any viewer launch. [Viewer controls](reference/vault.md#viewer-search-and-navigation)
+
+Rename uses `e` in the list and viewer, and `ctrl+e` in search where the query
+input has focus. Project edit uses `ctrl+g` in the list (including its finder),
+search and viewer. Other keys include copy (`c`), restore (`r`) and resume
+(`R`). After a successful rename, the TUI reloads the list and reapplies the
+active filter, reruns search and refreshes the viewer metadata.
+
 **Raw archive view** (`internal/vault/tui/raw.go`, key `v` in list/view mode)
 displays the archived main JSONL or the currently open Claude subagent sidecar.
 A Codex child uses its own session blob; an inline tool detail uses its containing

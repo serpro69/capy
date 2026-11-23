@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/serpro69/capy/internal/vault"
 )
 
@@ -123,6 +126,8 @@ type Model struct {
 	raw                      rawModel
 	deletion                 deleteReview
 	deleteOutput             *deletePreviewOutput
+	deleteReportTag          string
+	deleteSearchSeq          int
 	deleteSeq                uint64
 	deleteNeedsReload        bool
 	resolveRememberDeletions func() (bool, error)
@@ -193,21 +198,34 @@ func Run(ctx context.Context, st *vault.VaultStore, opts Options) (Action, error
 	if err != nil {
 		return Action{}, err
 	}
+	// A closed stdout pipe must return EPIPE to the renderer so Run can
+	// report any committed deletion after tearing down the terminal.
+	brokenPipe := make(chan os.Signal, 1)
+	signal.Notify(brokenPipe, syscall.SIGPIPE)
+	defer signal.Stop(brokenPipe)
+	// Bubble Tea drops renderer errors. Leave an unusable terminal through
+	// the normal quit path, which waits for any confirmed write to finish.
+	failed := make(chan struct{})
+	m.deleteOutput.failed = failed
+	m.initCmd = tea.Batch(m.initCmd, func() tea.Msg {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-failed:
+			return tea.Quit()
+		}
+	})
 	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithFilter(waitForDelete), tea.WithOutput(m.deleteOutput)).Run()
-	if err != nil {
-		return Action{}, err
-	}
+	err = errors.Join(err, m.deleteOutput.finishReports(os.Stderr))
 	fm, ok := final.(Model)
 	if !ok {
-		return Action{}, nil
+		return Action{}, err
 	}
-	if fm.quitAfterDelete {
-		if fm.statusErr {
-			return Action{}, errors.New(fm.status)
-		}
-		if _, err := fmt.Fprintln(os.Stderr, fm.status); err != nil {
-			return Action{}, fmt.Errorf("%s (reporting error: %w)", fm.status, err)
-		}
+	if fm.quitAfterDelete && fm.statusErr {
+		err = errors.Join(err, errors.New(fm.status))
+	}
+	if err != nil {
+		return Action{}, err
 	}
 	return fm.action, nil
 }
@@ -339,12 +357,14 @@ func boundInputWidth(in *textinput.Model, rowWidth, hintWidth int) {
 // appears/disappears. clearStatus is a no-op (and skips the relayout) when no
 // status is set.
 func (m Model) withStatus(s string) Model {
+	m.deleteReportTag = ""
 	m.status = s
 	m.statusErr = false
 	return m.layoutSubmodels()
 }
 
 func (m Model) withError(s string) Model {
+	m.deleteReportTag = ""
 	m.status = s
 	m.statusErr = true
 	return m.layoutSubmodels()
@@ -355,6 +375,7 @@ func (m Model) clearStatus() Model {
 		return m
 	}
 	m.status = ""
+	m.deleteReportTag = ""
 	m.statusErr = false
 	return m.layoutSubmodels()
 }
@@ -456,6 +477,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.search, cmd = m.search.Update(msg)
 		if refreshFailed {
 			m = m.withError(m.search.status)
+			if msg.seq == m.deleteSearchSeq {
+				m.deleteReportTag = m.deleteOutput.report(msg.seq, m.status)
+			}
 		}
 		return m, cmd
 	case debounceMsg:
@@ -1075,16 +1099,24 @@ func (m Model) View() string {
 		}
 		rows = append(rows, m.renameLine())
 	}
-	if m.status != "" && m.height > 1 {
-		// At one row the submodel (including find's query/counter) takes priority.
-		// Keep the status in state so it returns when the terminal grows.
+	if m.status != "" && (m.height > 1 || m.deleteReportTag != "") {
 		// Status otherwise occupies one reserved row; bound display cells as well as runes
 		// so wide Unicode labels cannot wrap after a successful metadata edit.
 		style := m.styles.StatusBar
 		if m.statusErr {
 			style = m.styles.ErrorMsg
 		}
-		rows = append(rows, fitRow(style.Render(truncate(oneLine(m.status), max(1, m.width))), m.width))
+		line := fitRow(style.Render(truncate(oneLine(m.status), max(1, m.width))), m.width)
+		if m.deleteReportTag != "" {
+			// A clipped status still needs the full report on exit.
+			if strings.Contains(ansi.Strip(line), oneLine(m.status)) {
+				line = m.deleteReportTag + line
+			}
+			if m.height <= 1 {
+				return line
+			}
+		}
+		rows = append(rows, line)
 	}
 	return strings.Join(rows, "\n")
 }
