@@ -52,9 +52,9 @@ func TestApp_ChildrenToggleReloadsWithIncludeChildren(t *testing.T) {
 	m = press(t, m, listChildrenKey)
 	assert.Equal(t, calls+1, st.listCalls, "the toggle re-reads the snapshot (children are a store predicate)")
 	assert.True(t, st.lastListOpts.IncludeChildren)
-	assert.True(t, m.list.includeChildren)
+	assert.True(t, m.list.listOptions.IncludeChildren)
 	require.Len(t, m.list.list.Items(), 2)
-	assert.Contains(t, m.list.list.Title, "incl. children")
+	assert.Contains(t, m.list.list.Title, "all sessions")
 	var childItem sessionItem
 	for _, it := range m.list.list.Items() {
 		if si := it.(sessionItem); si.sess.UUID == codexChildID {
@@ -77,10 +77,118 @@ func TestApp_ChildrenToggleReloadFailureReverts(t *testing.T) {
 	st.listErr = errors.New("db gone")
 
 	m = press(t, m, listChildrenKey)
-	assert.False(t, m.list.includeChildren, "a failed re-read leaves the setting as it was")
+	assert.False(t, m.list.listOptions.IncludeChildren, "a failed re-read leaves the setting as it was")
 	assert.Len(t, m.list.list.Items(), 1, "and the current items in place")
 	assert.True(t, m.statusErr)
 	assert.Contains(t, m.status, "refreshing sessions failed: db gone")
+}
+
+func TestAppDirectChildModes(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		all      bool
+		firstKey string
+		nextAll  bool
+	}{
+		{"child only to roots", false, "S", false},
+		{"child only to all", false, "s", true},
+		{"all to child only and back", true, "S", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &stubStore{}
+			for _, row := range []struct{ id, parent, title string }{
+				{"grand", "child", "keep grand"}, {"orphan", "absent", "keep orphan"}, {"child", "root", "keep child"},
+				{"omitted", "", "skip by name"}, {"root", "", "keep parent"}, {"extra", "", "keep beyond cap"},
+			} {
+				st.sessions = append(st.sessions, vault.Session{UUID: row.id, ParentUUID: row.parent, Title: row.title, ProjectPath: "team", Platform: vault.PlatformCodex})
+			}
+			launch := vault.ListOptions{Name: "keep", Limit: 4, Platform: vault.PlatformCodex, Project: "team", IncludeChildren: tc.all, ChildrenOnly: !tc.all}
+			m, err := newModel(t.Context(), st, Options{List: launch})
+			require.NoError(t, err)
+			resized, _ := m.Update(tea.WindowSizeMsg{Width: 125, Height: 30})
+			m = resized.(Model)
+			for _, label := range []string{`project "team"`, `name "keep"`, "codex", "limit 4"} {
+				require.Contains(t, m.View(), label)
+			}
+			items := m.list.list.Items()
+			require.Equal(t, "orphan", items[0].(sessionItem).sess.UUID)
+			require.Contains(t, items[0].(sessionItem).Title(), "(parent absent)")
+			if tc.all {
+				require.Len(t, items, 4)
+				require.Equal(t, "root", items[1].(sessionItem).sess.UUID)
+				require.Equal(t, 2, items[3].(sessionItem).depth)
+			} else {
+				require.Len(t, items, 3)
+				require.Equal(t, "child", items[1].(sessionItem).sess.UUID)
+				require.Equal(t, 1, items[2].(sessionItem).depth)
+			}
+			m = press(t, m, tc.firstKey)
+			want := launch
+			if tc.all {
+				want.ChildrenOnly, want.IncludeChildren = true, false
+				require.Equal(t, want, st.lastListOpts)
+				// A failed exit must keep the child-only list and remember all.
+				st.listErr = errors.New("refresh failed")
+				before := m.list.list.Items()
+				m = press(t, m, "S")
+				require.True(t, m.statusErr)
+				require.Equal(t, want, m.list.listOptions)
+				require.Equal(t, before, m.list.list.Items())
+				st.listErr = nil
+				m = press(t, m, "S")
+			}
+			want.ChildrenOnly, want.IncludeChildren = false, tc.nextAll
+			require.Equal(t, want, st.lastListOpts)
+			require.Equal(t, want, m.list.listOptions)
+			if tc.nextAll {
+				require.Len(t, m.list.list.Items(), 4)
+			} else {
+				require.Len(t, m.list.list.Items(), 2)
+			}
+			// Finder edits operate on the already-capped store result.
+			if tc.nextAll {
+				m = press(t, m, "f")
+				m = typeRunes(t, m, "extra")
+				require.Empty(t, m.list.list.Items())
+			}
+		})
+	}
+}
+
+func TestAppListScopesRemainVisibleAfterResize(t *testing.T) {
+	project := "/worktrees/platform/infrastructure/operator/controller-runtime"
+	opts := vault.ListOptions{Project: project, Platform: vault.PlatformCodex, Name: "delivery manager", Limit: 12, ChildrenOnly: true}
+	m, err := newModel(t.Context(), &stubStore{}, Options{List: opts})
+	require.NoError(t, err)
+	for _, width := range []int{160, 80, 40, 80} {
+		next, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 24})
+		m = next.(Model)
+		view := m.View()
+		for _, part := range []string{"children only", "project \"/worktrees", "platform codex", `name "delivery manager"`, "limit 12"} {
+			require.Contains(t, view, part, "width %d", width)
+		}
+		require.LessOrEqual(t, len(strings.Split(view, "\n")), 24)
+		for _, row := range m.list.visibleScopeRows() {
+			require.LessOrEqual(t, displayWidth(row), width)
+		}
+	}
+}
+
+func TestAppListScopesYieldToFinderInShortTerminal(t *testing.T) {
+	project := "/projects/long/directory/for/a/small/terminal"
+	sess := vault.Session{UUID: "child001", ParentUUID: "parent01", Platform: vault.PlatformCodex, ProjectPath: project, Title: "keep"}
+	st := &stubStore{sessions: []vault.Session{sess}}
+	m, err := newModel(t.Context(), st, Options{List: vault.ListOptions{ChildrenOnly: true, Project: project, Platform: vault.PlatformCodex, Name: "keep", Limit: 12}})
+	require.NoError(t, err)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 9})
+	m = press(t, next.(Model), "f")
+	rows := strings.Split(m.View(), "\n")
+	// Bubble Tea takes the last terminal-height rows when a view is too tall.
+	visible := strings.Join(rows[max(0, len(rows)-9):], "\n")
+	require.Contains(t, visible, "filter:")
+	require.Contains(t, visible, "children only")
+	require.Contains(t, visible, "keep")
+	require.Empty(t, m.list.visibleScopeRows())
 }
 
 func TestApp_ChildrenGroupedInVisibleList(t *testing.T) {

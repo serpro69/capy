@@ -99,22 +99,19 @@ func TestListKeys_ChildrenToggleIsUnbound(t *testing.T) {
 // TestListModel_IncludeChildrenOptionsAndTitle pins the store query the toggle
 // drives and the title suffix that tells the user children are shown.
 func TestListModel_IncludeChildrenOptionsAndTitle(t *testing.T) {
-	m := newListModel(nil, DefaultStyles(), 80, 24)
-	assert.Equal(t, vault.ListOptions{}, m.listOptions(), "children hidden by default — the unfiltered read")
-	assert.NotContains(t, m.list.Title, "children")
-
-	m.platform = vault.PlatformCodex
-	assert.Equal(t, vault.ListOptions{Platform: vault.PlatformCodex}, m.listOptions(),
-		"the launch platform is retained in later store reads")
-
-	m = m.setIncludeChildren(true)
-	assert.Equal(t, vault.ListOptions{IncludeChildren: true, Platform: vault.PlatformCodex}, m.listOptions())
-	m, _ = m.setSessions(nil, "")
-	assert.Contains(t, m.list.Title, "incl. children")
-
-	m = m.setIncludeChildren(false)
-	m, _ = m.setSessions(nil, "")
-	assert.NotContains(t, m.list.Title, "children")
+	for _, tc := range []struct {
+		opts  vault.ListOptions
+		title string
+	}{
+		{vault.ListOptions{}, "roots"},
+		{vault.ListOptions{IncludeChildren: true}, "all sessions"},
+		{vault.ListOptions{ChildrenOnly: true}, "children only"},
+	} {
+		t.Run(tc.title, func(t *testing.T) {
+			m := newListModel(nil, tc.opts, DefaultStyles(), 80, 24)
+			assert.Contains(t, m.list.Title, tc.title)
+		})
+	}
 }
 
 func TestListModel_Selected(t *testing.T) {
@@ -122,14 +119,14 @@ func TestListModel_Selected(t *testing.T) {
 		{UUID: "1111aaaa", Title: "one"},
 		{UUID: "2222bbbb", Title: "two"},
 	}
-	m := newListModel(sessions, DefaultStyles(), 80, 24)
+	m := newListModel(sessions, vault.ListOptions{}, DefaultStyles(), 80, 24)
 	sel, ok := m.selected()
 	require.True(t, ok)
 	assert.Equal(t, "1111aaaa", sel.UUID)
 }
 
 func TestListModel_SelectedEmpty(t *testing.T) {
-	m := newListModel(nil, DefaultStyles(), 80, 24)
+	m := newListModel(nil, vault.ListOptions{}, DefaultStyles(), 80, 24)
 	_, ok := m.selected()
 	assert.False(t, ok)
 }

@@ -242,6 +242,42 @@ func TestVaultStore_ListChildrenAndPlatform(t *testing.T) {
 	assert.Equal(t, parent, byUUID[childA].ParentUUID)
 }
 
+func TestVaultStoreChildrenOnlyFilteredLimit(t *testing.T) {
+	s := newTestVault(t)
+	ctx := t.Context()
+	_, err := s.ListSessions(ctx, ListOptions{IncludeChildren: true, ChildrenOnly: true})
+	require.ErrorContains(t, err, "mutually exclusive")
+	require.NoFileExists(t, s.dbPath)
+	// Equal end times and reverse insertion order make the UUID tie break visible.
+	for _, row := range []struct{ id, parent, title string }{
+		{"child004", "absent01", "KEEP fourth"}, {"child003", "absent01", "KEEP third"},
+		{"child002", "absent01", "KEEP second"}, {"child001", "absent01", "different title"},
+		{"parent01", "", "KEEP root"},
+	} {
+		rec := sampleRecord(row.id)
+		rec.Session.ParentUUID, rec.Session.Title, rec.Session.Platform = row.parent, row.title, PlatformCodex
+		require.NoError(t, s.InsertSession(ctx, rec))
+	}
+	_, err = s.SetSessionProject(ctx, "child002", ProjectOptions{Name: "other"})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name string
+		opts ListOptions
+		want string
+	}{
+		{"SQL cap", ListOptions{ChildrenOnly: true, Limit: 1}, "child001"},
+		{"title predicate before cap", ListOptions{ChildrenOnly: true, Name: "keep", Limit: 1}, "child002"},
+		{"effective project before cap", ListOptions{ChildrenOnly: true, Platform: PlatformCodex, Project: "/home/user", Name: "keep", Limit: 1}, "child003"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := s.ListSessions(ctx, tc.opts)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			require.Equal(t, tc.want, rows[0].UUID)
+		})
+	}
+}
+
 // TestVaultStore_StatsByPlatformAndLocationSizes covers VaultStats.ByPlatform /
 // Children and the sweep's CodexLocationSizes map.
 func TestVaultStore_StatsByPlatformAndLocationSizes(t *testing.T) {

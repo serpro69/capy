@@ -229,10 +229,10 @@ func TestApp_ProjectEditorScopeRefreshAndStaleResults(t *testing.T) {
 			for i := range st.sessions {
 				st.sessions[i].Platform = vault.PlatformCodex
 			}
-			m.list.platform, m.search.platform = vault.PlatformCodex, vault.PlatformCodex
-			m.list.includeChildren = true
+			m.list.listOptions.Platform, m.search.platform = vault.PlatformCodex, vault.PlatformCodex
+			m.list.listOptions.IncludeChildren = true
 			if scope == "project" {
-				m.list.project, m.search.project = label, label
+				m.list.listOptions.Project, m.search.project = label, label
 			}
 			var err error
 			m, _, err = m.reloadSessions()

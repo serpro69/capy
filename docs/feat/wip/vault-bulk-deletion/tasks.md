@@ -39,13 +39,19 @@
 
 ## Task 3. Browse child sessions on both surfaces
 
-**Status:** pending · **Depends on:** — · **Size:** M · **Can run in parallel with:** Tasks 1, 2
+**Status:** done · **Depends on:** — · **Size:** M · **Can run in parallel with:** Tasks 1, 2
+
+**Execution context**
+
+2026-11-23, observed at `2b58b010`. Plain list and the TUI construct their initial queries separately. The TUI also builds its first frame with grouping off. Both surfaces will use the same list options, including the launch cap and title predicate.
+
+2026-11-23, verified. Full encrypted FTS5 vault and TUI suites, the glamour TUI suite, and vault CLI tests passed (run `78a90385-0728-44cf-83f1-98fe03bd960b`). The final layout passed the default and glamour TUI suites (`6cf8d18e` and `0a8dca98`). Independent review confirmed fixed filter visibility after resize and preservation of the finder and selected row in a 40×9 terminal. In short panes the filter summary yields space to browsing.
 
 **Docs:** [Browsing sub-agents](implementation.md#browsing-sub-agents)
 
-- [ ] Add `ListOptions.ChildrenOnly`, preserve the zero value and existing `IncludeChildren` callers, and reject both true at CLI and store entry. Wire flags through plain and interactive list launches.
-- [ ] Reject negative CLI limits before opening either surface. Verify omission (50 plain, unlimited interactive), explicit zero and a positive cap. Cover name filtering and equal end times at the cap boundary.
-- [ ] Show the active mode and preserve fixed project/platform/name/cap constraints. Check grouping and orphan visibility on the initial frame. From separate direct child-only launches verify first `S` gives roots and first `s` gives all. Cover restoration of the previous mode and a failed refresh.
+- [x] Add `ListOptions.ChildrenOnly`, preserve the zero value and existing `IncludeChildren` callers, and reject both true at CLI and store entry. Wire flags through plain and interactive list launches.
+- [x] Reject negative CLI limits before opening either surface. Verify omission (50 plain, unlimited interactive), explicit zero and a positive cap. Cover name filtering and equal end times at the cap boundary.
+- [x] Show the active mode and preserve fixed project/platform/name/cap constraints. Check grouping and orphan visibility on the initial frame. From separate direct child-only launches verify first `S` gives roots and first `s` gives all. Cover restoration of the previous mode and a failed refresh.
 
 ## Task 4. Mark and delete sessions in the TUI
 

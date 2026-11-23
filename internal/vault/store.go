@@ -338,8 +338,17 @@ type ListOptions struct {
 	// top-level list (design § Sub-agent Model). Claude sessions never carry a
 	// parent, so a Claude-only vault lists identically either way.
 	IncludeChildren bool
+	// ChildrenOnly selects archived rows with a parent UUID, including orphans.
+	ChildrenOnly bool
 	// Platform restricts the listing to one platform ("" == no filter).
 	Platform Platform
+}
+
+func (opts ListOptions) ValidateChildMode() error {
+	if opts.IncludeChildren && opts.ChildrenOnly {
+		return errors.New("--include-children and --children-only are mutually exclusive")
+	}
+	return nil
 }
 
 // SearchOptions controls Search.
@@ -1281,6 +1290,9 @@ func (s *VaultStore) GetFiles(ctx context.Context, sessionUUID string) ([]File, 
 // must not pre-truncate the candidate rows — the limit applies after both
 // predicates.
 func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Session, error) {
+	if err := opts.ValidateChildMode(); err != nil {
+		return nil, err
+	}
 	db, err := s.getDB(ctx)
 	if err != nil {
 		return nil, err
@@ -1296,7 +1308,9 @@ func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Sess
 		where = append(where, predicate)
 		args = append(args, pattern)
 	}
-	if !opts.IncludeChildren {
+	if opts.ChildrenOnly {
+		where = append(where, `s.parent_uuid IS NOT NULL`)
+	} else if !opts.IncludeChildren {
 		where = append(where, `s.parent_uuid IS NULL`)
 	}
 	if opts.Platform != "" {
@@ -1306,7 +1320,7 @@ func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Sess
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
-	query += ` ORDER BY s.end_time DESC`
+	query += ` ORDER BY s.end_time DESC, s.uuid ASC`
 	if opts.Limit > 0 && opts.Name == "" {
 		query += ` LIMIT ?`
 		args = append(args, opts.Limit)

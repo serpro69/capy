@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/serpro69/capy/internal/vault"
 )
 
@@ -94,18 +95,9 @@ type listModel struct {
 	filtering bool            // input focused; keystrokes edit the filter
 	applied   string          // applied filter substring ("" == all)
 
-	// includeChildren mirrors vault.ListOptions.IncludeChildren for the store
-	// reads that refresh the snapshot (listOptions): child sessions (Codex
-	// sub-agent rollouts, parent_uuid set) are hidden by default like Codex's own
-	// pickers and toggled in with listChildrenKey. It is a store-side predicate,
-	// not an in-memory filter — the default snapshot never contains the children,
-	// so every flip re-reads (Model.toggleChildren).
-	includeChildren bool
-	// platform is the immutable scope supplied by `vault list --platform` when
-	// the TUI starts. Every refresh and children toggle must preserve it.
-	platform vault.Platform
-	// project is the immutable effective-project scope supplied at launch.
-	project string
+	listOptions vault.ListOptions
+	returnToAll bool // S restores roots on a direct child-only launch
+	scopeRows   []string
 
 	width, height int
 }
@@ -166,9 +158,8 @@ func sessionListItems(sessions []vault.Session, includeChildren bool) []list.Ite
 	return items
 }
 
-func newListModel(sessions []vault.Session, styles Styles, width, height int) listModel {
-	l := list.New(sessionListItems(sessions, false), list.NewDefaultDelegate(), width, height)
-	l.Title = fmt.Sprintf("Vault — %d session(s)", len(sessions))
+func newListModel(sessions []vault.Session, opts vault.ListOptions, styles Styles, width, height int) listModel {
+	l := list.New(nil, list.NewDefaultDelegate(), width, height)
 	l.SetShowHelp(true)
 	l.SetFilteringEnabled(false)
 	l.DisableQuitKeybindings() // the app owns q/ctrl+c quit
@@ -180,7 +171,8 @@ func newListModel(sessions []vault.Session, styles Styles, width, height int) li
 			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "filter")),
 			key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "rename")),
 			key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("ctrl+g", "project")),
-			key.NewBinding(key.WithKeys(listChildrenKey), key.WithHelp(listChildrenKey, "children")),
+			key.NewBinding(key.WithKeys(listChildrenKey), key.WithHelp(listChildrenKey, "include children")),
+			key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "children only")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 			key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "raw JSONL")),
 			key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restore")),
@@ -194,7 +186,9 @@ func newListModel(sessions []vault.Session, styles Styles, width, height int) li
 	fi.Placeholder = "substring of title, project, or uuid"
 	fi.CharLimit = 256
 
-	return listModel{list: l, styles: styles, all: sessions, filter: fi, width: width, height: height}
+	m := listModel{list: l, listOptions: opts, styles: styles, filter: fi, width: width, height: height}
+	m, _ = m.setSessions(sessions, "") // the built-in asynchronous filter is disabled
+	return m.setSize(width, height)
 }
 
 // listFilterHint sits to the right of the filter input on its row; setSize
@@ -203,18 +197,72 @@ const listFilterHint = "enter apply · esc clear · ctrl+g project"
 
 func (m listModel) setSize(width, height int) listModel {
 	m.width, m.height = width, height
-	m.list.SetSize(width, m.listHeight())
+	m.scopeRows = listScopeRows(m.listOptions, width)
+	m.sizeList()
 	boundInputWidth(&m.filter, width, utf8.RuneCountInString(listFilterHint))
 	return m
+}
+
+// The title already carries the number of sessions. In a short pane the
+// redundant item count can yield its rows to the selected item and finder.
+func (m *listModel) sizeList() {
+	height := m.listHeight()
+	m.list.SetShowStatusBar(height >= minBrowserRows)
+	m.list.SetSize(m.width, height)
 }
 
 // listHeight reserves one row for the filter prompt while filtering so the input
 // line doesn't clip the list's bottom row.
 func (m listModel) listHeight() int {
+	h := m.height - len(m.visibleScopeRows())
 	if m.filtering {
-		return max(1, m.height-1)
+		h--
 	}
-	return m.height
+	return max(1, h)
+}
+
+// The default list renders its title, status, pagination and help around a
+// two-line selected item. Below ten rows the footer yields to the browser.
+const minBrowserRows = 10
+
+// Keep the list and its filter usable when the terminal shrinks. At normal
+// heights every scope has room independent of the length of the other fields.
+func (m listModel) visibleScopeRows() []string {
+	available := m.height - minBrowserRows
+	if m.filtering {
+		available--
+	}
+	return m.scopeRows[:min(len(m.scopeRows), max(0, available))]
+}
+
+func listScopeRows(opts vault.ListOptions, width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	var fields []string
+	if opts.Project != "" {
+		fields = append(fields, fmt.Sprintf("project %q", opts.Project))
+	}
+	if opts.Platform != "" {
+		fields = append(fields, "platform "+string(opts.Platform))
+	}
+	if opts.Name != "" {
+		fields = append(fields, fmt.Sprintf("name %q", opts.Name))
+	}
+	if opts.Limit > 0 {
+		fields = append(fields, fmt.Sprintf("limit %d", opts.Limit))
+	}
+	var rows []string
+	for _, field := range fields {
+		field = ansi.Truncate(field, width, "…")
+		last := len(rows) - 1
+		if last >= 0 && ansi.StringWidth(rows[last]+" · "+field) <= width {
+			rows[last] += " · " + field
+		} else {
+			rows = append(rows, field)
+		}
+	}
+	return rows
 }
 
 // startFilter focuses the session-filter input, pre-filled with the active filter
@@ -224,7 +272,7 @@ func (m listModel) startFilter() listModel {
 	m.filter.SetValue(m.applied)
 	m.filter.CursorEnd()
 	m.filter.Focus()
-	m.list.SetSize(m.width, m.listHeight())
+	m.sizeList()
 	return m
 }
 
@@ -234,7 +282,7 @@ func (m listModel) startFilter() listModel {
 func (m listModel) stopFilter() listModel {
 	m.filtering = false
 	m.filter.Blur()
-	m.list.SetSize(m.width, m.listHeight())
+	m.sizeList()
 	return m
 }
 
@@ -253,7 +301,8 @@ func (m listModel) updateFilterInput(msg tea.Msg) (listModel, tea.Cmd) {
 // memory, or a fresh store read to refresh it.
 func (m listModel) setSessions(all []vault.Session, applied string) (listModel, tea.Cmd) {
 	shown := filterSessions(all, applied)
-	cmd := m.list.SetItems(sessionListItems(shown, m.includeChildren))
+	opts := m.listOptions
+	cmd := m.list.SetItems(sessionListItems(shown, opts.IncludeChildren || opts.ChildrenOnly))
 	// SetItems clamps the page, but its cursor can sit past the last row on
 	// that page after filtering or hiding children.
 	if len(shown) > 0 && m.list.Index() >= len(shown) {
@@ -262,28 +311,19 @@ func (m listModel) setSessions(all []vault.Session, applied string) (listModel, 
 	m.all = all
 	m.applied = applied
 	title := fmt.Sprintf("Vault — %d session(s)", len(shown))
-	if m.includeChildren {
-		title += " · incl. children"
+	switch {
+	case opts.ChildrenOnly:
+		title += " · children only"
+	case opts.IncludeChildren:
+		title += " · all sessions"
+	default:
+		title += " · roots"
 	}
 	if applied != "" {
 		title += fmt.Sprintf(" · filter %q", applied)
 	}
 	m.list.Title = title
 	return m, cmd
-}
-
-// setIncludeChildren records the children setting for the next snapshot read.
-// It does not touch the items: the caller (Model.toggleChildren) follows it
-// with reloadSessions, whose setSessions call re-derives the title.
-func (m listModel) setIncludeChildren(on bool) listModel {
-	m.includeChildren = on
-	return m
-}
-
-// listOptions preserves the launch scopes and children setting on every read.
-// The local multi-field finder (filterSessions) narrows this snapshot in memory.
-func (m listModel) listOptions() vault.ListOptions {
-	return vault.ListOptions{IncludeChildren: m.includeChildren, Platform: m.platform, Project: m.project}
 }
 
 // selectedRootUUID keeps the current family in focus across a children toggle.
@@ -322,11 +362,15 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 }
 
 func (m listModel) View() string {
+	body := m.list.View()
 	if m.filtering {
 		hint := m.styles.Help.Render(listFilterHint)
-		return fitRow(m.filter.View()+"  "+hint, m.width) + "\n" + m.list.View()
+		body = fitRow(m.filter.View()+"  "+hint, m.width) + "\n" + body
 	}
-	return m.list.View()
+	if rows := m.visibleScopeRows(); len(rows) > 0 {
+		body += "\n" + m.styles.Help.Render(strings.Join(rows, "\n"))
+	}
+	return body
 }
 
 // selected returns the highlighted session, or false when the list is empty.

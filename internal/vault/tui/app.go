@@ -88,12 +88,9 @@ type Options struct {
 	Mode      string // "list" (default) | "search" | "view"
 	Query     string // initial query for search mode
 	SessionID string // session to open for view mode (partial UUID, 8+ chars)
-	// Platform scopes both the session list and live search for the lifetime of
-	// the TUI. The empty value includes every platform.
-	Platform vault.Platform
-	// Project scopes list and search by effective project substring for the
-	// lifetime of the TUI. The empty value includes every project.
-	Project string
+	// List configures the session browser. Its project and platform also
+	// scope live search. The zero value starts in roots mode without a cap.
+	List vault.ListOptions
 }
 
 // Model is the root bubbletea model composing the list, viewer, and search
@@ -199,10 +196,7 @@ func Run(ctx context.Context, st *vault.VaultStore, opts Options) (Action, error
 func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 	styles := DefaultStyles()
 
-	// The initial read hides children, the listModel's default (children reach
-	// the list through the toggle key — see listModel.includeChildren), while
-	// retaining the platform and project scopes supplied by the launching CLI.
-	sessions, err := st.ListSessions(ctx, vault.ListOptions{Platform: opts.Platform, Project: opts.Project})
+	sessions, err := st.ListSessions(ctx, opts.List)
 	if err != nil {
 		return Model{}, fmt.Errorf("loading sessions: %w", err)
 	}
@@ -211,12 +205,10 @@ func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 	ri.Prompt = renamePrompt
 	ri.CharLimit = 256
 
-	list := newListModel(sessions, styles, 0, 0)
-	list.platform = opts.Platform
-	list.project = opts.Project
+	list := newListModel(sessions, opts.List, styles, 0, 0)
 	search := newSearchModel(ctx, st, styles, 0, 0)
-	search.platform = opts.Platform
-	search.project = opts.Project
+	search.platform = opts.List.Platform
+	search.project = opts.List.Project
 
 	m := Model{
 		ctx:         ctx,
@@ -512,8 +504,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.requestAction(actionFor(msg.String()), sess.UUID)
-	case listChildrenKey:
-		return m.toggleChildren()
+	case listChildrenKey, "S":
+		return m.toggleChildren(msg.String())
 	case "enter":
 		sess, ok := m.list.selected()
 		if !ok {
@@ -530,18 +522,24 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// toggleChildren flips the list between hiding and showing child sessions
-// (Codex sub-agent rollouts, parent_uuid set — hidden by default like Codex's
-// own pickers, design § Sub-agent Model) and re-reads the snapshot with the new
-// ListOptions.IncludeChildren, since the default read never fetched the
-// children. A failed re-read reverts the toggle and keeps the current items
-// (never blank the browser), reporting the failure in the status line.
-func (m Model) toggleChildren() (tea.Model, tea.Cmd) {
+// Publish both the new mode and its return mode only after the new read succeeds.
+func (m Model) toggleChildren(key string) (tea.Model, tea.Cmd) {
 	rootID := m.list.selectedRootUUID()
-	m.list = m.list.setIncludeChildren(!m.list.includeChildren)
-	next, cmd, err := m.reloadSessions()
+	candidate := m
+	opts := &candidate.list.listOptions
+	switch {
+	case key == listChildrenKey:
+		opts.IncludeChildren = !opts.IncludeChildren
+		opts.ChildrenOnly = false
+	case opts.ChildrenOnly:
+		opts.ChildrenOnly = false
+		opts.IncludeChildren = candidate.list.returnToAll
+	default:
+		candidate.list.returnToAll = opts.IncludeChildren
+		opts.ChildrenOnly, opts.IncludeChildren = true, false
+	}
+	next, cmd, err := candidate.reloadSessions()
 	if err != nil {
-		m.list = m.list.setIncludeChildren(!m.list.includeChildren)
 		return m.withError("refreshing sessions failed: " + err.Error()), nil
 	}
 	if rootID != "" {
@@ -600,7 +598,7 @@ func (m Model) applySessionFilter(needle string) (tea.Model, tea.Cmd) {
 // the current items are left in place and the error is returned for the caller
 // to surface.
 func (m Model) reloadSessions() (Model, tea.Cmd, error) {
-	sessions, err := m.store.ListSessions(m.ctx, m.list.listOptions())
+	sessions, err := m.store.ListSessions(m.ctx, m.list.listOptions)
 	if err != nil {
 		return m, nil, err
 	}

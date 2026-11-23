@@ -64,7 +64,7 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 	cmd.AddCommand(
 		newVaultImportCmd(env),
 		newVaultReindexCmd(env),
-		newVaultListCmd(env),
+		newVaultListCmd(env, launchTUI),
 		newVaultSearchCmd(env),
 		newVaultShowCmd(env),
 		newVaultStatsCmd(env),
@@ -360,15 +360,10 @@ are left untouched.`,
 // list
 // ---------------------------------------------------------------------------
 
-func newVaultListCmd(env *vaultEnv) *cobra.Command {
-	var (
-		project         string
-		name            string
-		platformFlag    string
-		includeChildren bool
-		limit           int
-		jsonOut         bool
-	)
+func newVaultListCmd(env *vaultEnv, launch func(*cobra.Command, *vaultEnv, tui.Options) error) *cobra.Command {
+	var filters vault.ListOptions
+	var platformFlag string
+	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List archived sessions, newest first",
@@ -376,23 +371,32 @@ func newVaultListCmd(env *vaultEnv) *cobra.Command {
 
 Sub-agent sessions (Codex child rollouts, which carry a parent session) are
 hidden by default — mirroring Codex's own pickers, which reach them from the
-parent. Pass --include-children to list them; a child row shows "↳ <parent id>"
-before its title.`,
+parent. Pass --include-children to list all sessions, or --children-only to list
+just sub-agents, including those whose parent is absent. In the TUI, s toggles
+roots/all and S toggles sub-agents only. The other launch filters stay active.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			opts := filters
+			if opts.Limit < 0 {
+				return errors.New("--limit must be zero or positive")
+			}
+			if err := opts.ValidateChildMode(); err != nil {
+				return err
+			}
 			platform, err := parsePlatformFlag(platformFlag)
 			if err != nil {
 				return err
 			}
+			opts.Platform = platform
 			if tuiRequested(cmd) {
-				return launchTUI(cmd, env, tui.Options{Mode: "list", Platform: platform, Project: project})
+				if !cmd.Flags().Changed("limit") {
+					opts.Limit = 0
+				}
+				return launch(cmd, env, tui.Options{Mode: "list", List: opts})
 			}
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 
-			sessions, err := st.ListSessions(cmd.Context(), vault.ListOptions{
-				Project: project, Name: name, Limit: limit,
-				Platform: platform, IncludeChildren: includeChildren,
-			})
+			sessions, err := st.ListSessions(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}
@@ -403,11 +407,12 @@ before its title.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&project, "project", "", "filter by effective project substring (custom name or imported path; literal, ASCII case-insensitive)")
-	cmd.Flags().StringVar(&name, "name", "", "filter by title substring (case-insensitive, literal; matches the effective title)")
+	cmd.Flags().StringVar(&filters.Project, "project", "", "filter by effective project substring (custom name or imported path; literal, ASCII case-insensitive)")
+	cmd.Flags().StringVar(&filters.Name, "name", "", "filter by title substring (case-insensitive, literal; matches the effective title)")
 	cmd.Flags().StringVar(&platformFlag, "platform", "", "only sessions from this platform: claude-code|codex")
-	cmd.Flags().BoolVar(&includeChildren, "include-children", false, "also list sub-agent (child) sessions, hidden by default")
-	cmd.Flags().IntVar(&limit, "limit", 50, "max sessions to list (0 = no limit)")
+	cmd.Flags().BoolVar(&filters.IncludeChildren, "include-children", false, "list roots and sub-agents together")
+	cmd.Flags().BoolVar(&filters.ChildrenOnly, "children-only", false, "list only sub-agent sessions")
+	cmd.Flags().IntVar(&filters.Limit, "limit", 50, "max matching sessions (0 = unlimited; omitted: 50 plain, unlimited in TUI)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "output JSON")
 	return cmd
 }
@@ -478,7 +483,7 @@ func newVaultSearchCmd(env *vaultEnv) *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if tuiRequested(cmd) {
-				return launchTUI(cmd, env, tui.Options{Mode: "search", Query: strings.Join(args, " "), Project: project})
+				return launchTUI(cmd, env, tui.Options{Mode: "search", Query: strings.Join(args, " "), List: vault.ListOptions{Project: project}})
 			}
 			afterT, err := parseDateFlag(after, false)
 			if err != nil {
