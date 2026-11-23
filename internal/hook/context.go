@@ -12,8 +12,9 @@ import (
 
 // hookContext keeps settings/state ownership separate from cwd-relative rules.
 type hookContext struct {
-	projectDir string
-	workingDir string
+	projectDir    string
+	workingDir    string
+	hasPayloadCwd bool
 }
 
 func resolveHookContext(platform adapter.Platform, explicitProjectDir *string, event *adapter.PreToolUseEvent) (hookContext, error) {
@@ -47,10 +48,11 @@ func resolveHookContext(platform adapter.Platform, explicitProjectDir *string, e
 	if err != nil {
 		return hookContext{}, fmt.Errorf("invalid hook project directory: %w", err)
 	}
-	if workingDir == "" {
+	hasPayloadCwd := workingDir != ""
+	if !hasPayloadCwd {
 		workingDir = projectDir
 	}
-	return hookContext{projectDir: projectDir, workingDir: workingDir}, nil
+	return hookContext{projectDir: projectDir, workingDir: workingDir, hasPayloadCwd: hasPayloadCwd}, nil
 }
 
 func validatedPayloadCwd(event *adapter.PreToolUseEvent) string {

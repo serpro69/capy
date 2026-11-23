@@ -33,6 +33,7 @@ const codexBlocked = `    Codex shell tools (including exec_command and code mod
     Recognized routine tests/builds/installs require capture for roots and children before
     HTTP routing, regardless of tool evidence. Only routing.routine operator exceptions
     permit native routine execution. Nothing runs on denial; no HTTP evidence is consumed.
+    For an authorized local command, check the cwd in any suggested capture arguments.
     Use capy_execute/capy_batch_execute or capy execute --code '<program>'. If capture
     cannot start, stop and repair it. A failed/missing tool never grants routine native fallback.
     For HTTP-only requests, silent file downloads are allowed.

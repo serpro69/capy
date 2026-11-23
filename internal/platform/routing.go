@@ -62,6 +62,8 @@ Security denies and matched asks always apply before routing. Claude main-agent 
 
 Codex evaluates whole-request security, including captured CLI programs, before routine capture policy and HTTP-only routing. A mixed HTTP/routine request is denied before any side effect, evidence consumption or native-fallback advice. Each uncaptured routine element must be excepted independently; a captured sibling cannot exempt it. Claude has no routine enforcement gate.
 
+A Codex routing denial may supply complete capy_execute arguments for an authorized local shell request. Check the displayed working directory and any other approval or denial before retrying.
+
 The literal catalogue covers go test/build; cargo test/build/check; pytest and python -m pytest; pip install and python -m pip install; npm/pnpm/yarn install/ci/add/test/build/run; make/gmake targets; gradle/gradlew, mvn/mvnw, sbt and mise run. Assignment, env, command, literal shell -c and mise exec wrappers are inspected. Help/version probes are excluded; dynamic executables, aliases and script bodies are outside this targeted recognizer and receive guidance.
 
 Use ` + "`capy_execute`" + ` or ` + "`capy_batch_execute`" + `; ` + "`capy execute`" + ` is a CLI capture alternative, not an availability guarantee. Do not add tail/grep filters to avoid capture. If capture cannot start, stop and repair it. Unknown outcomes require ` + "`capy_runs`" + ` / ` + "`capy runs`" + ` recovery before retrying. Missing tools or exhausted capacity do not authorize native routine execution.

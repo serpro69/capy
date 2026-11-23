@@ -24,6 +24,7 @@ func handlePreToolUse(input []byte, a adapter.HookAdapter, policies []security.S
 	ctx := hookContext{projectDir: projectDir, workingDir: projectDir}
 	if cwd := validatedPayloadCwd(event); cwd != "" {
 		ctx.workingDir = cwd
+		ctx.hasPayloadCwd = true
 	}
 	return routePreToolUse(event, a, policies, ctx)
 }

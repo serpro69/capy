@@ -747,6 +747,25 @@ routine guidance only. `[routing.routine] enabled=false` disables this output
 policy; `native_allow` supplies explicit `Bash(pattern)` exceptions per routine
 element. Neither setting bypasses security, and HTTP-only routing stays separate.
 
+For a recognized routine, the hook denies the native call before execution. Its
+reason can include a ready-to-use `capy_execute` argument object with the whole
+original program and the validated physical working directory. Use it for an
+authorized local shell request after checking that the displayed directory is
+the intended target. Codex may report the host directory for a remote tool.
+Missing or invalid directories, additional tool-input fields and nested captures
+receive generic capture guidance. The hook also withholds suggestions for
+commands containing `=` or `://`, text the run sanitizer would redact, and
+suggestions longer than 4,096 bytes.
+If execution may already have started, recover its run before retrying.
+
+Automatic shell rewriting is deferred for [#134](https://github.com/serpro69/capy/issues/134).
+Codex 0.171.0 evaluates native command policy after applying the rewrite. When
+multiple hooks propose rewrites, the last one to complete wins. A denial
+preserves the routine capture gate across those hooks. Revisit automatic routing
+when the host can enforce the original command's policy and the final capture
+command together. [Codex tool dispatch](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/core/src/tools/registry.rs#L896)
+and [hook resolution](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/hooks/src/events/pre_tool_use.rs#L116).
+
 Before upgrading loaded hooks, stop affected sessions and owners. Put the
 compatible binary on PATH, run `capy setup --platform codex --project-dir .`
 (and the existing Claude setup variant where used), then restart and review/trust
