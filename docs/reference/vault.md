@@ -10,12 +10,19 @@ Import discovers Claude sessions under `~/.claude/projects` and Codex rollouts u
 capy vault import --project myproject --dry-run
 capy vault import --platform codex
 capy vault import --source /path/to/agent-home
+capy vault import --source ~/Downloads/rollout-2026-05-01T10-00-00-019e22ba-4c15-7ae0-a903-255537a6a1b3.jsonl
 capy vault import --min-size-bytes 102400 --dry-run
 capy vault list --project myproject --platform codex --include-children --limit 0
 capy vault search "timeout" --project myproject --role assistant --after 2026-01-01 --before 2026-02-01
 ```
 
 Import is mutating by default; unchanged sessions are skipped and smaller copies do not replace fuller archives. `--source` autodetects a Claude config/projects directory or a Codex home. `import --project` filters physical discovery locations. List, search, and merge instead match a custom project label when set, otherwise the imported path.
+
+Pass a single transcript to `--source` to import just that session. Use its original filename. A Claude `<uuid>.jsonl` includes sidecars from the adjacent `<uuid>/` directory. Claude uses the containing directory name for default restore. If you imported a copy from Downloads, use `capy vault restore <id> --output <project-directory>` to choose its destination.
+
+Codex accepts both plain and compressed rollout files. A rollout in its original layout retains its restore path. A loose copy, such as a download, keeps the path already recorded in the vault. On first import of a loose copy, restore uses `sessions/YYYY/MM/DD/` and the local date from the filename.
+
+Single-file import ignores the configured `vault.min_session_bytes`. Pass `--min-size-bytes` to apply a threshold for that invocation. Project and platform filters, the zero-message exclusion, and remembered deletions still apply.
 
 `list` defaults to the newest 50 sessions; `--limit 0` lists all. `--name` matches the displayed title as a Unicode-aware, case-insensitive literal substring. `--project` uses literal ASCII case-insensitive substring matching. Percent, underscore, backslash, and star characters in CLI project filters are ordinary characters; the MCP `project: "*"` all-project selector is a separate convention. List filters combine before its limit.
 

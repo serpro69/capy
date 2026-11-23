@@ -337,7 +337,7 @@ func importSessions(ctx context.Context, store importStore, sessions []SessionFi
 		// rows never enter the branch: their hint is the mangled project dir and
 		// Claude Code never moves a session file.
 		hint := locationHint(sf)
-		moved := digest.found && hash == digest.hash && platform == PlatformCodex && hint != digest.hint
+		moved := digest.found && hash == digest.hash && platform == PlatformCodex && !sf.inferredLocation && hint != digest.hint
 		if moved && codexRolloutPresent(sf.Root, digest.hint) {
 			// Not a move: the file at the stored hint is still on disk, so this
 			// is a duplicate copy (sessions/ and archived_sessions/ both holding
@@ -452,7 +452,7 @@ func importSessions(ctx context.Context, store importStore, sessions []SessionFi
 			ftsPending = append(ftsPending, entry)
 			ftsBatchBytes += ftsContentBytes(rec.FTS) + chunkContentBytes(rec.Chunks)
 		} else {
-			batch = append(batch, SessionWrite{Record: rec, Replace: replace})
+			batch = append(batch, SessionWrite{Record: rec, Replace: replace, preserveCodexLocation: sf.inferredLocation})
 			pending = append(pending, entry)
 			batchBytes += size
 		}

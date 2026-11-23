@@ -100,8 +100,9 @@ func newVaultImportCmd(env *vaultEnv) *cobra.Command {
 By default every platform root that exists on disk is scanned: Claude Code's
 projects directory (honoring CLAUDE_CONFIG_DIR) and the Codex home (CODEX_HOME,
 default ~/.codex — both sessions/ and archived_sessions/). Pass --platform to
-restrict the run to one of them, or --source to import from one directory
-(its layout is autodetected, see the flag).
+restrict the run to one of them, or --source to select a directory or a single
+transcript. A single file bypasses the configured minimum size unless you
+explicitly pass --min-size-bytes.
 
 Import and the server's startup sweep exclude UUIDs with a remembered deletion,
 even if the transcript has grown or moved.
@@ -125,7 +126,10 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 			)
 			switch {
 			case source != "":
-				sessions, report, err = vault.DiscoverSessionsReport(cmd.Context(), source)
+				sessions, report, err = vault.DiscoverImportSource(cmd.Context(), source)
+				if report.SingleFile && !cmd.Flags().Changed("min-size-bytes") {
+					minSessionBytes = 0
+				}
 			case platform != "":
 				// Scope discovery, not just the import: the other platform's tree
 				// is never walked (and never warns) on a single-platform run, and
@@ -162,7 +166,7 @@ all projects before Claude Code's 30-day cleanup removes them.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&source, "source", "", "import from this directory only — a Claude config dir, projects dir or single project dir, or a Codex home holding sessions/ or archived_sessions/ (default: every platform root that exists)")
+	cmd.Flags().StringVar(&source, "source", "", "import one Claude session or Codex rollout file, or scan one directory (Claude config, projects or project directory, or Codex home)")
 	cmd.Flags().StringVar(&project, "project", "", "only import sessions whose Claude project dir or Codex project path matches this substring")
 	cmd.Flags().StringVar(&platformFlag, "platform", "", "only import sessions of this platform: claude-code|codex (default: all)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview what would be imported without writing")

@@ -46,6 +46,29 @@ func TestDiscoverSessions_SingleProjectDir(t *testing.T) {
 	assert.Equal(t, "subagents/agent-x.jsonl", sessions[0].AssociatedFiles[0].RelativePath)
 }
 
+func TestDiscoverImportSource_ResolveParentBeforeDotDot(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "backup", "project")
+	nested := filepath.Join(project, "nested")
+	require.NoError(t, os.MkdirAll(nested, 0o700))
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(nested, link))
+	const id = "cccccccc-1111-2222-3333-444444444444"
+	writeSession(t, project, id, sampleMainJSONL(t), nil)
+	require.NoError(t, os.WriteFile(filepath.Join(project, id), []byte("unrelated sibling"), 0o600))
+	writeSession(t, root, id, []byte("a different transcript"), nil)
+	// Joining with filepath.Join would erase the path component under test.
+	rawPath := link + "/../" + id + ".jsonl"
+	files, _, err := DiscoverImportSource(t.Context(), rawPath)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	require.Equal(t, "project", files[0].ProjectDir)
+	require.Empty(t, files[0].AssociatedFiles)
+	contents, err := os.ReadFile(files[0].Path)
+	require.NoError(t, err)
+	require.Equal(t, sampleMainJSONL(t), contents)
+}
+
 func TestDiscoverSessions_ConfigDir(t *testing.T) {
 	root := t.TempDir()
 	projects := filepath.Join(root, "projects")

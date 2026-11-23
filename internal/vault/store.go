@@ -552,7 +552,8 @@ func (s *VaultStore) prepareStatements(ctx context.Context, db *sql.DB) error {
 	if s.stmtUpdateSession, err = db.PrepareContext(ctx, `
 		UPDATE vault_sessions SET
 			title = ?, start_time = ?, end_time = ?, message_count = ?, size_bytes = ?,
-			content_hash = ?, machine_id = ?, claude_project_dir = ?, project_path = ?,
+			content_hash = ?, machine_id = ?,
+			claude_project_dir = CASE WHEN ? AND platform = 'codex' THEN claude_project_dir ELSE ? END, project_path = ?,
 			git_branch = ?, index_version = ?, raw_jsonl = ?, encoding = ?,
 			platform = ?, parent_uuid = ?
 		WHERE uuid = ?`); err != nil {
@@ -711,6 +712,9 @@ func (s *VaultStore) Checkpoint() error {
 type SessionWrite struct {
 	Record  *SessionRecord
 	Replace bool
+	// A loose rollout may update content but supplies no observed restore
+	// path. Preserve the current Codex hint inside the replacement transaction.
+	preserveCodexLocation bool
 	// Name, when non-nil, is source name state merge carries alongside the
 	// session row, reconciled into vault_session_names within the SAME
 	// transaction: a new session and its name must commit atomically to satisfy
@@ -869,7 +873,7 @@ func (s *VaultStore) writeRecord(ctx context.Context, tx *sql.Tx, w SessionWrite
 		res, err := tx.StmtContext(ctx, s.stmtUpdateSession).ExecContext(ctx,
 			nullString(sess.Title), writeTime(sess.StartTime), writeTime(sess.EndTime),
 			sess.MessageCount, sess.SizeBytes, sess.ContentHash, sess.MachineID,
-			sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch),
+			w.preserveCodexLocation, sess.ClaudeProjectDir, sess.ProjectPath, nullString(sess.GitBranch),
 			sess.IndexVersion, rawData, rawEnc,
 			string(platform), nullString(sess.ParentUUID),
 			sess.UUID,
