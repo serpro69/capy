@@ -265,6 +265,10 @@ func TestDeletePreviewConfirmationAndQuit(t *testing.T) {
 	require.IsType(t, tea.QuitMsg{}, cmd())
 	require.Equal(t, 1, st.applies)
 	require.Contains(t, m.status, "deleted 1 session")
+	require.Empty(t, m.View(), "quitting skips the final result frame")
+	var stderr strings.Builder
+	require.NoError(t, m.deleteOutput.finishReports(&stderr))
+	require.Equal(t, "deleted 1 session(s)\n", stderr.String())
 	_, err := st.GetSession(t.Context(), deleteID)
 	require.ErrorIs(t, err, vault.ErrSessionNotFound)
 }

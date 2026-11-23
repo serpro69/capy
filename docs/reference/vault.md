@@ -24,7 +24,9 @@ Codex accepts both plain and compressed rollout files. A rollout in its original
 
 Single-file import ignores the configured `vault.min_session_bytes`. Pass `--min-size-bytes` to apply a threshold for that invocation. Project and platform filters, the zero-message exclusion, and remembered deletions still apply.
 
-`list` defaults to the newest 50 sessions; `--limit 0` lists all. `--name` matches the displayed title as a Unicode-aware, case-insensitive literal substring. `--project` uses literal ASCII case-insensitive substring matching. Percent, underscore, backslash, and star characters in CLI project filters are ordinary characters; the MCP `project: "*"` all-project selector is a separate convention. List filters combine before its limit.
+`vault list` shows top-level sessions by default. Use `--include-children` to list all sessions or `--children-only` to list just independently archived children. Choose one child flag per invocation. A child can appear even when its parent is missing or filtered out.
+
+`--name` matches the displayed title as a Unicode-aware, case-insensitive literal substring. `--project` uses literal ASCII case-insensitive substring matching. Percent, underscore, backslash, and star characters in CLI project filters are ordinary characters. The MCP selector `project: "*"` selects all projects. Project, platform, title and child filters all apply before the list limit. Plain output defaults to the newest 50 matches and the TUI defaults to unlimited. An explicit `--limit 0` is unlimited on either surface. Negative limits are invalid. Ties in end time are resolved by UUID ascending.
 
 Transcript search accepts plain keywords, or FTS5 MATCH syntax with `--raw`. Roles are `user`, `assistant`, `tool`, and `system`; date flags take `YYYY-MM-DD`. Project/role/date filtering occurs before ranked result selection and limits. Names and project labels are not added to transcript search text.
 
@@ -32,11 +34,24 @@ The minimum-size setting applies only to new archives, counting uncompressed tra
 
 ## Delete a session
 
-`capy vault delete <id>` previews the full UUID and the consequences before asking for confirmation. `--yes` skips the prompt and still prints the preview. The command removes the archived transcript, sidecars, search entries, and title and project overrides together. Original files, backups, and independently archived child sessions survive. Deletion provides no guarantee of physical erasure.
+`capy vault delete <id> [<id> ...]` deletes a reviewed selection in one transaction. Supply full UUIDs or unambiguous prefixes of at least eight characters. Prefixes that resolve to the same UUID select it once. If any argument is too short, missing or ambiguous, the command reports the bad arguments in input order and leaves the entire selection intact.
+
+```bash
+capy vault delete 3f8a1c2b 734d92ef
+capy vault delete --with-descendants 3f8a1c2b
+```
+
+The first command selects exactly the named sessions. The second also follows archived parent links to every depth, even across project labels. A batch preview lists explicit selections first, then each added descendant with its parent and effective project. It also tells you how many direct children will stay archived. Independently archived children survive a parent deletion by default. Claude sub-agent sidecars belong to their containing archive and are removed with it.
+
+Read the preview on stderr. Press Enter to decline, or answer `y` to confirm the entire selection. `--yes` still prints the preview. A single ID with descendants off keeps the detailed preview and short-ID success line. Multiple arguments or `--with-descendants` produce a count and the distinct committed UUIDs on stdout.
+
+At confirmation, capy rechecks each reviewed UUID and its effective project. If either check fails, the whole deletion fails. Review again before retrying. A title edit or growing transcript still qualifies, as does a UUID removed and reimported under the same project before the check. A child archived after the preview survives.
+
+A write failure rolls back the entire selection, including sidecars, search entries, title/project overrides and deletion records. After commit, a reporting or viewer refresh error leaves the deletion in effect. If the process stopped before reporting the outcome, inspect the vault before retrying. Original files and backups stay on disk. Deletion provides no guarantee of physical erasure.
 
 By default the encrypted vault keeps a permanent deletion record containing only the UUID and its effective project at deletion time (custom label if set, otherwise the imported path). A manual import reports that UUID as `excluded` with reason `deleted`, even if its transcript grows or moves. The server's startup sweep counts it in the platform's excluded total. A merge can carry the deletion to other vaults. Capy has no undelete operation.
 
-For a one-time local removal, set the following in the invocation project's `.capy.toml` before running `delete`. Use `--project-dir` to select the configuration project explicitly.
+For a one-time local removal, set the following in the invocation project's `.capy.toml`. This policy applies to the entire CLI or TUI selection, including targets in other projects. Use `--project-dir` to select the configuration project explicitly.
 
 ```toml
 [vault]
@@ -44,6 +59,15 @@ remember_deletions = false
 ```
 
 That local delete records no pair. A later disk import or a merge from a live copy can restore the session. Changing the setting preserves existing records, and new incoming deletions are always honored. Deletions made before capy supported recording have no record to forward.
+
+### Mark and delete in the viewer
+
+1. Open `capy vault list --tui`. To start with only archived child sessions, add `--children-only`. Set any project, platform, name or limit flags before launch. The local `f` finder narrows those rows further.
+2. Press `m` to toggle the highlighted row, `a` to mark every match across all pages, or `A` to clear all marks. Check the marked count in the list title. Paging preserves marks. Accepting a filter or refreshing the list drops marks that no longer match. Widening the list leaves those rows unmarked. Single-session actions still use the highlighted row.
+3. Press `x` with at least one mark to review the selection. Descendants start off. Press `d` to toggle them and read the fresh preview. **Outside current list** identifies an added descendant absent from the entire filtered list when review opened. An unmarked child on another page is still inside that list.
+4. Scroll with Up/Down or PgUp/PgDn. Before confirmation, Escape returns to the list with your marks. Lowercase `y` confirms the displayed plan. Once deletion starts, the viewer ignores Escape and further confirmations. Ctrl+C waits for the result.
+
+If the preview becomes stale, the viewer reloads under the current filters and reports dropped marks. If that reload fails, `x` retries it. Review the surviving selection and confirm again. After a successful delete, the viewer removes the deleted rows and refreshes an active search. If the terminal misses or clips the result, the viewer reports the full outcome on exit, including any output error.
 
 ### Preview and propagate a deletion
 
@@ -84,7 +108,7 @@ Claude resume chooses `--dir`, then a usable recorded project path, then the cur
 
 `list`, `search`, and `show` accept `--tui`; mutating commands such as `restore`, `resume`, `delete`, and `project` do not. Platform/project launch filters stay active during browsing and live search.
 
-In the session list, press `s` to show Codex child sessions beneath their parents. Top-level sessions and siblings are each ordered by end time, newest first. If a parent is missing or filtered out, its visible child appears at the top level with the parent's short ID.
+In the session list, `s` switches between roots and all sessions. From child-only mode it shows all sessions. `S` switches to child-only and back to the previous mode, returning to roots on a direct `--children-only` launch. The fixed launch filters and cap apply on each switch. Visible children group under their parents. Top-level sessions and siblings are each ordered by end time, newest first. If a parent is missing or filtered out, its visible child appears at the top level with the parent's short ID.
 
 In a transcript, `/` finds case-sensitive literal text. Typing previews a match; Enter commits. `n` / `N` visit every occurrence, including overlaps, and wrap. Spaces and punctuation are literal; queries are single-line and limited to 256 Unicode code points.
 

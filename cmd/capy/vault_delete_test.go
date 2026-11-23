@@ -110,6 +110,30 @@ func TestDeleteCLIReportsBadArgumentsInOrder(t *testing.T) {
 	require.Len(t, rows, 2)
 }
 
+func TestDeleteCLISingleLookupDiagnostics(t *testing.T) {
+	path := deleteFixture(t, deleteTestID, "abcd1234-bbbb-4000-8000-000000000002")
+	for _, tc := range []struct {
+		id, message string
+		candidates  int
+	}{
+		{"abcd1234", `ambiguous session id "abcd1234" (2 matches) — use more characters`, 2},
+		{"missing1", `no session matches "missing1"`, 0},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := runDelete(t, path, "", &stdout, &stderr, tc.id, "--yes")
+			require.EqualError(t, err, tc.message)
+			require.Empty(t, stdout.String())
+			if tc.candidates == 0 {
+				require.Empty(t, stderr.String())
+			} else {
+				require.Contains(t, stderr.String(), `ambiguous session id "abcd1234" matches 2 sessions:`)
+				require.Equal(t, tc.candidates, strings.Count(stderr.String(), `first line\nsecond`))
+			}
+		})
+	}
+}
+
 func TestDeleteCLIShortPrefixBeforeVaultOpen(t *testing.T) {
 	t.Setenv("CAPY_VAULT_KEY", testVaultKey)
 	path := filepath.Join(t.TempDir(), "missing.db")

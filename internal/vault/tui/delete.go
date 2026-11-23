@@ -294,9 +294,12 @@ func (m Model) handleDeleteApplied(msg deleteAppliedMsg) (tea.Model, tea.Cmd) {
 	m.search.results, m.search.cursor, m.search.status = nil, 0, ""
 	var searchCmd tea.Cmd
 	m.search, searchCmd = m.search.refresh(status + " · search refresh failed")
+	m.deleteSearchSeq = m.search.seq
 	if m.quitAfterDelete {
 		m.quitting = true
-		return m.withStatus(status), tea.Quit
+		m = m.withStatus(status)
+		m.deleteReportTag = m.deleteOutput.report(m.deleteSearchSeq, m.status)
+		return m, tea.Quit
 	}
 	var err error
 	m, _, err = m.reloadSessions()
@@ -305,7 +308,10 @@ func (m Model) handleDeleteApplied(msg deleteAppliedMsg) (tea.Model, tea.Cmd) {
 		if m.search.refreshReason != "" {
 			m.search.refreshReason = status + " · list and search refresh failed · list: " + detail + " · search"
 		}
-		return m.withError(status + " · list refresh failed: " + detail), searchCmd
+		m = m.withError(status + " · list refresh failed: " + detail)
+	} else {
+		m = m.withStatus(status)
 	}
-	return m.withStatus(status), searchCmd
+	m.deleteReportTag = m.deleteOutput.report(m.deleteSearchSeq, m.status)
+	return m, searchCmd
 }

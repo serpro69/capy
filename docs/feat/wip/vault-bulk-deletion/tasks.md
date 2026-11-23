@@ -1,6 +1,6 @@
 # Bulk vault deletion tasks
 
-**Status:** in-progress · **Created:** 2026-11-23 · [Design](design.md) · [Implementation plan](implementation.md)
+**Status:** done · **Created:** 2026-11-23 · [Design](design.md) · [Implementation plan](implementation.md)
 
 **Not Doing:** automated cleanup, individual Claude sidecar pruning, persisted deletion jobs and MCP mutations.
 
@@ -87,13 +87,25 @@
 
 ## Task 6. Verify and document the operator workflow
 
-**Status:** pending · **Depends on:** Task 5 · **Size:** S · **Can run in parallel with:** —
+**Status:** done · **Depends on:** Task 5 · **Size:** S · **Can run in parallel with:** —
+
+**Execution context**
+
+2026-11-23, observed at `fae57b2`. The CLI and viewer share a reviewed deletion plan. The operator reference still describes single-ID deletion, and the architecture's sub-agent section documents only the roots/all toggle. Issue #136 remains open for bulk project and session-title edits.
+
+2026-11-23, corrected during code review. Bubble Tea can coalesce a committed status or discard a terminal write error. The viewer now keeps the full outcome for reporting on exit until a successful frame displays it. A failed frame requests a quit that waits for any confirmed write. A pseudo-terminal check against a temporary encrypted vault closed stdout after the real preview and confirmed that the process exited on its own, reported one committed deletion and the broken pipe on stderr, and left the vault empty (run `0dea3fa9`).
+
+2026-11-23, reviewed. Added CLI coverage for the original single-ID missing and ambiguous diagnostics, including the candidate rows on stderr. Task 1 explicitly preserves the existing `DeleteSession` API, including its missing-row result and one-time orphan-index cleanup. Both deletion paths share the same write primitive.
+
+2026-11-23, verified with both synthetic keys and FTS5. The full CLI rerun passed (`62be8653`). The full vault store suite passed (`4ecade6a`), including remembered deletion, import and merge. The extra whole-store race run reached its deadline. The requested deletion and concurrency cases passed under the race detector (`28f4426c`). Default, race and glamour TUI suites passed (`388bdec8`, `42918c5e`, `cac2f694`), as did the race-enabled single-ID CLI checks (`1e41464b`). The quit-during-apply test also verifies the count reaches stderr exactly once.
+
+2026-11-23, reviewed against the design. The independent code and spec reviewers approved the reporting fix. The Claude CLI follow-up approved the Task 6 changes and identified the quit-path assertion added above. Bulk project reassignment and title editing remain on the open [issue #136](https://github.com/serpro69/capy/issues/136), with scope and acceptance questions in the [follow-up](implementation.md#follow-up).
 
 **Docs:** [Between review and commit](design.md#between-review-and-commit)
 
-- [ ] Run `kk:test` with both synthetic vault/knowledge credentials and FTS5. Cover the affected CLI, store and TUI suites, including the existing remembered-delete/import/merge tests. Run the store concurrency cases under the race detector and exercise the TUI with the optional glamour build tag.
-- [ ] Use `kk:document` to update the [vault reference](../../../reference/vault.md) and relevant [architecture sections](../../../architecture.md) for selection, parent behavior, confirmation and rollback.
-- [ ] Use `kk:review-code` for the Go changes and `kk:review-spec` against the design. Track remaining title/project editing work on [#136](https://github.com/serpro69/capy/issues/136).
+- [x] Run `kk:test` with both synthetic vault/knowledge credentials and FTS5. Cover the affected CLI, store and TUI suites, including the existing remembered-delete/import/merge tests. Run the store concurrency cases under the race detector and exercise the TUI with the optional glamour build tag.
+- [x] Use `kk:document` to update the [vault reference](../../../reference/vault.md) and relevant [architecture sections](../../../architecture.md) for selection, parent behavior, confirmation and rollback.
+- [x] Use `kk:review-code` for the Go changes and `kk:review-spec` against the design. Track remaining title/project editing work on [#136](https://github.com/serpro69/capy/issues/136).
 
 ## Dependency graph
 
