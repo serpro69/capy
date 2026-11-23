@@ -231,6 +231,13 @@ func (s *stubStore) ListSessions(_ context.Context, opts vault.ListOptions) ([]v
 	return out, nil
 }
 
+func (s *stubStore) PrepareDelete(context.Context, []string, vault.DeleteOptions) (*vault.DeletePlan, error) {
+	return nil, fmt.Errorf("unexpected PrepareDelete on stub store")
+}
+func (s *stubStore) ApplyDelete(context.Context, *vault.DeletePlan) error {
+	return fmt.Errorf("unexpected ApplyDelete on stub store")
+}
+
 func (s *stubStore) GetSession(_ context.Context, prefix string) (*vault.Session, error) {
 	if s.getErr != nil {
 		return nil, s.getErr

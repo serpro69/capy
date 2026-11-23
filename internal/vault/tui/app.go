@@ -26,6 +26,7 @@ const (
 	modeView
 	modeSearch
 	modeRaw
+	modeDelete
 )
 
 // dataStore is the slice of *vault.VaultStore the TUI reads through. Defined at
@@ -39,6 +40,8 @@ type dataStore interface {
 	Search(ctx context.Context, opts vault.SearchOptions) ([]vault.SearchResult, error)
 	RenameSession(ctx context.Context, prefix string, opts vault.RenameOptions) (*vault.Session, error)
 	SetSessionProject(ctx context.Context, prefix string, opts vault.ProjectOptions) (*vault.Session, error)
+	PrepareDelete(context.Context, []string, vault.DeleteOptions) (*vault.DeletePlan, error)
+	ApplyDelete(context.Context, *vault.DeletePlan) error
 }
 
 // editTarget distinguishes the two fields sharing the root editor lifecycle.
@@ -91,6 +94,8 @@ type Options struct {
 	// List configures the session browser. Its project and platform also
 	// scope live search. The zero value starts in roots mode without a cap.
 	List vault.ListOptions
+	// ResolveRememberDeletions reads the invocation project's policy on review.
+	ResolveRememberDeletions func() (bool, error)
 }
 
 // Model is the root bubbletea model composing the list, viewer, and search
@@ -112,10 +117,15 @@ type Model struct {
 	mode     mode
 	prevMode mode // where view mode returns to (list or search)
 
-	list   listModel
-	viewer viewerModel
-	search searchModel
-	raw    rawModel
+	list                     listModel
+	viewer                   viewerModel
+	search                   searchModel
+	raw                      rawModel
+	deletion                 deleteReview
+	deleteSeq                uint64
+	deleteNeedsReload        bool
+	resolveRememberDeletions func() (bool, error)
+	quitAfterDelete          bool
 	// Raw viewing suspends the current screen without changing its navigation chain.
 	rawReturn mode
 	rawSeq    int
@@ -182,13 +192,21 @@ func Run(ctx context.Context, st *vault.VaultStore, opts Options) (Action, error
 	if err != nil {
 		return Action{}, err
 	}
-	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithFilter(waitForDelete)).Run()
 	if err != nil {
 		return Action{}, err
 	}
 	fm, ok := final.(Model)
 	if !ok {
 		return Action{}, nil
+	}
+	if fm.quitAfterDelete {
+		if fm.statusErr {
+			return Action{}, errors.New(fm.status)
+		}
+		if _, err := fmt.Fprintln(os.Stderr, fm.status); err != nil {
+			return Action{}, fmt.Errorf("%s (reporting error: %w)", fm.status, err)
+		}
 	}
 	return fm.action, nil
 }
@@ -211,15 +229,16 @@ func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 	search.project = opts.List.Project
 
 	m := Model{
-		ctx:         ctx,
-		store:       st,
-		styles:      styles,
-		mode:        modeList,
-		list:        list,
-		viewer:      newViewerModel(styles, 0, 0),
-		search:      search,
-		renameInput: ri,
-		clipOut:     os.Stderr,
+		ctx:                      ctx,
+		store:                    st,
+		resolveRememberDeletions: opts.ResolveRememberDeletions,
+		styles:                   styles,
+		mode:                     modeList,
+		list:                     list,
+		viewer:                   newViewerModel(styles, 0, 0),
+		search:                   search,
+		renameInput:              ri,
+		clipOut:                  os.Stderr,
 	}
 
 	switch opts.Mode {
@@ -270,6 +289,9 @@ func (m Model) layoutSubmodels() Model {
 	}
 	m.raw = m.raw.setSize(m.width, h)
 	m.search = m.search.setSize(m.width, h)
+	if m.mode == modeDelete {
+		m.deletion.resize(m.width, h)
+	}
 	m.renameInput.Prompt = renamePrompt
 	if m.editTarget == editProject {
 		m.renameInput.Prompt = projectPrompt
@@ -350,11 +372,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.quitAfterDelete && m.quitting {
+		return m, nil
+	} // preserve the final outcome until tea.Quit arrives
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m.layoutSubmodels(), nil
 	case tea.KeyMsg:
+		if m.mode == modeDelete {
+			return m.updateDelete(msg)
+		}
 		if msg.String() == "ctrl+c" {
 			m.viewer = m.viewer.invalidateFind()
 			if m.rawCancel != nil {
@@ -416,12 +444,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case renameResultMsg:
 		return m.handleRenameResult(msg)
+	case deletePreparedMsg:
+		return m.handleDeletePrepared(msg)
+	case deleteAppliedMsg:
+		return m.handleDeleteApplied(msg)
 	case searchResultsMsg:
-		refreshFailed := m.search.refreshPending && msg.seq == m.search.seq && msg.err != nil
+		refreshFailed := m.search.refreshReason != "" && msg.seq == m.search.seq && msg.err != nil
 		var cmd tea.Cmd
 		m.search, cmd = m.search.Update(msg)
 		if refreshFailed {
-			m = m.withError("saved, refresh failed: " + msg.err.Error())
+			m = m.withError(m.search.status)
 		}
 		return m, cmd
 	case debounceMsg:
@@ -437,6 +469,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Non-key messages (debounce ticks, search results, viewport msgs) go to the
 	// active sub-model.
 	switch m.mode {
+	case modeDelete:
+		return m, nil
 	case modeRaw:
 		var cmd tea.Cmd
 		m.raw.vp, cmd = m.raw.vp.Update(msg)
@@ -461,6 +495,12 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateListFilter(msg)
 	}
 	switch msg.String() {
+	case "m", "a", "A":
+		var cmd tea.Cmd
+		m.list, cmd = m.list.mark(msg.String())
+		return m, cmd
+	case "x":
+		return m.beginDelete()
 	case "v":
 		sess, ok := m.list.selected()
 		if !ok {
@@ -560,7 +600,7 @@ func (m Model) updateListFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.applySessionFilter("")
 	case "enter":
 		m.list = m.list.stopFilter()
-		return m, nil
+		return m.applySessionFilter(m.list.filterValue())
 	case "up", "down", "ctrl+p", "ctrl+n":
 		// Let the highlight move through the filtered results without leaving the
 		// input, mirroring the search panel's feel.
@@ -572,8 +612,9 @@ func (m Model) updateListFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.list, cmd = m.list.updateFilterInput(msg)
 	if m.list.filterValue() != before {
-		next, applyCmd := m.applySessionFilter(m.list.filterValue())
-		return next, tea.Batch(cmd, applyCmd)
+		var draw tea.Cmd
+		m.list, draw = m.list.redraw()
+		return m, tea.Batch(cmd, draw)
 	}
 	return m, cmd
 }
@@ -585,9 +626,8 @@ func (m Model) updateListFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // filter opens and after a rename, not per keystroke.
 func (m Model) applySessionFilter(needle string) (tea.Model, tea.Cmd) {
 	m = m.clearStatus()
-	var cmd tea.Cmd
-	m.list, cmd = m.list.setSessions(m.list.all, needle)
-	return m, cmd
+	m.list.applied = needle
+	return m.acceptSessions(m.list.all)
 }
 
 // reloadSessions re-reads the session list from the store into the list's
@@ -602,9 +642,19 @@ func (m Model) reloadSessions() (Model, tea.Cmd, error) {
 	if err != nil {
 		return m, nil, err
 	}
-	var cmd tea.Cmd
-	m.list, cmd = m.list.setSessions(sessions, m.list.applied)
+	m.deleteNeedsReload = false
+	m, cmd := m.acceptSessions(sessions)
 	return m, cmd, nil
+}
+
+func (m Model) acceptSessions(sessions []vault.Session) (Model, tea.Cmd) {
+	before := len(m.list.marks)
+	var cmd tea.Cmd
+	m.list, cmd = m.list.setSessions(sessions)
+	if notice := withDroppedMarks("", before-len(m.list.marks)); notice != "" {
+		m = m.withStatus(notice)
+	}
+	return m, cmd
 }
 
 // startRename opens the rename editor over the current body, prefilled with the
@@ -770,7 +820,8 @@ func (m Model) handleRenameResult(msg renameResultMsg) (tea.Model, tea.Cmd) {
 
 	// Invalidate old results even when the independent list refresh fails.
 	var searchCmd tea.Cmd
-	m.search, searchCmd = m.search.refresh()
+	m.search, searchCmd = m.search.refresh("saved, refresh failed")
+	before := len(m.list.marks)
 	m, listCmd, err := m.reloadSessions()
 	if err != nil {
 		prefix := "rename succeeded, but refreshing sessions failed: "
@@ -781,7 +832,7 @@ func (m Model) handleRenameResult(msg renameResultMsg) (tea.Model, tea.Cmd) {
 	}
 	m.list = m.list.selectSession(msg.sess.UUID)
 
-	return m.withStatus(status), tea.Batch(listCmd, searchCmd)
+	return m.withStatus(withDroppedMarks(status, before-len(m.list.marks))), tea.Batch(listCmd, searchCmd)
 }
 
 // requestAction records a deferred restore/resume intent for the given session
@@ -1004,6 +1055,8 @@ func (m Model) View() string {
 	}
 	var body string
 	switch m.mode {
+	case modeDelete:
+		body = m.deletion.view()
 	case modeRaw:
 		body = m.raw.View()
 	case modeView:

@@ -54,12 +54,12 @@ type searchModel struct {
 	// project is the immutable effective-project scope inherited at launch.
 	project string
 
-	input          textinput.Model
-	results        []vault.SearchResult
-	cursor         int
-	seq            int    // increments per keystroke; latest-wins for debounce + results
-	status         string // transient status / error line
-	refreshPending bool   // current sequence refreshes a committed metadata edit
+	input         textinput.Model
+	results       []vault.SearchResult
+	cursor        int
+	seq           int    // increments per keystroke; latest-wins for debounce + results
+	status        string // transient status / error line
+	refreshReason string // context for a failure of this refresh sequence
 }
 
 func newSearchModel(ctx context.Context, store searcher, styles Styles, width, height int) searchModel {
@@ -89,7 +89,7 @@ func (m searchModel) setQuery(q string) (searchModel, tea.Cmd) {
 // scheduleSearch bumps the sequence and schedules a debounced fire for the
 // current input value.
 func (m searchModel) scheduleSearch() (searchModel, tea.Cmd) {
-	m.refreshPending = false
+	m.refreshReason = ""
 	m.seq++
 	seq := m.seq
 	return m, tea.Tick(searchDebounce, func(time.Time) tea.Msg { return debounceMsg{seq: seq} })
@@ -98,16 +98,16 @@ func (m searchModel) scheduleSearch() (searchModel, tea.Cmd) {
 // refresh reruns the current query after a metadata edit. An empty query
 // clears cached hits. The rerun skips debounce but still uses the sequence
 // guard so a slow rerun cannot overwrite results of a newer query.
-func (m searchModel) refresh() (searchModel, tea.Cmd) {
+func (m searchModel) refresh(reason string) (searchModel, tea.Cmd) {
 	m.seq++ // invalidates in-flight results and debounce ticks, even when empty
-	m.refreshPending = false
+	m.refreshReason = ""
 	if strings.TrimSpace(m.input.Value()) == "" {
 		m.results = nil
 		m.cursor = 0
 		m.status = ""
 		return m, nil
 	}
-	m.refreshPending = true
+	m.refreshReason = reason
 	return m, m.runSearch(m.seq)
 }
 
@@ -137,23 +137,23 @@ func (m searchModel) Update(msg tea.Msg) (searchModel, tea.Cmd) {
 			return m, nil // stale results
 		}
 		selected, hadSelection := m.selected()
-		refresh := m.refreshPending
-		m.refreshPending = false
+		refresh := m.refreshReason
+		m.refreshReason = ""
 		if msg.err != nil {
 			// User-visible only: the TUI has no logger, and the error is surfaced
 			// in the status line rather than returned (a search failure must not
 			// tear down the program). The raw message may be high-cardinality
 			// (SQLite internals) but that is acceptable in an interactive status line.
 			m.status = "search error: " + msg.err.Error()
-			if refresh {
-				m.status = "saved, refresh failed: " + msg.err.Error()
+			if refresh != "" {
+				m.status = refresh + ": " + msg.err.Error()
 			}
 			m.results = nil
 			return m, nil
 		}
 		m.results = msg.results
 		m.cursor = 0
-		if refresh && hadSelection {
+		if refresh != "" && hadSelection {
 			for i, hit := range m.results {
 				if hit.SessionUUID == selected.SessionUUID && hit.SubagentID == selected.SubagentID && hit.LineIndex == selected.LineIndex {
 					m.cursor = i
