@@ -1384,18 +1384,19 @@ func runClaudeResume(bin, uuid, dir string) error {
 func newVaultDeleteCmd(env *vaultEnv) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "delete <session-id>",
-		Short: "Delete an archived session from the vault (partial UUID, 8+ chars)",
-		Long: `Remove a session's transcript, sidecars, and search entries from this vault.
-By default capy remembers the UUID and its effective project. Future imports
-exclude the UUID, and merges can delete its copies in other vaults. Capy cannot
-undo a remembered deletion. Set vault.remember_deletions = false in the invocation
-project's configuration for a one-time local removal. Existing and incoming
-deletions still apply. The original Claude or Codex transcript stays on disk.
+		Use:   "delete <session-id> [<session-id> ...]",
+		Short: "Review and delete one or more archived sessions atomically",
+		Long: `Remove the selected archives, sidecars, and search entries in one transaction.
+Use full UUIDs or unique literal prefixes of at least eight characters. The
+preview lists each distinct session. Child archives survive unless selected.
 
-Only the addressed session is deleted. Its child sessions (Codex sub-agent
-rollouts) are separate archived sessions and are kept — a warning lists them.`,
-		Args: cobra.ExactArgs(1),
+By default capy remembers each UUID and effective project. Future imports
+exclude those UUIDs, and merges can delete their copies in other vaults. Capy
+cannot undo a remembered deletion. Set vault.remember_deletions = false in the
+invocation project's configuration for a one-time local removal. Existing and
+incoming deletions still apply. Original transcripts stay on disk.`,
+		Example: "  capy vault delete abcd1234\n  capy vault delete abcd1234 deadbeef --yes",
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := guardTUI(cmd); err != nil {
 				return err
@@ -1407,69 +1408,133 @@ rollouts) are separate archived sessions and are kept — a warning lists them.`
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 
-			sess, err := st.GetSession(cmd.Context(), args[0])
+			plan, err := st.PrepareDelete(cmd.Context(), args, vault.DeleteOptions{Remember: cfg.RememberDeletions})
+			// A closed stdout/stderr pipe must return its write error to this
+			// command, including when the deletion has already committed.
+			brokenPipe := make(chan os.Signal, 1)
+			signal.Notify(brokenPipe, syscall.SIGPIPE)
+			defer signal.Stop(brokenPipe)
 			if err != nil {
-				return handleLookupError(args[0], err)
+				return deleteLookupError(cmd.ErrOrStderr(), args, err)
 			}
-			children, err := st.Children(cmd.Context(), sess.UUID)
-			if err != nil {
+			targets := plan.Targets()
+			single := len(args) == 1
+			w := bufio.NewWriter(cmd.ErrOrStderr())
+			writeDeletePolicy(w, plan.RemembersDeletions(), single)
+			var question, success string
+			if single {
+				t := targets[0]
+				writeDeleteDetail(w, t, plan.RetainedChildren)
+				short := terminal.EscapeField(shortUUID(t.UUID, t.Platform))
+				question = "delete session " + short + "?"
+				success = "deleted " + short
+			} else {
+				fmt.Fprintf(w, "%d explicit, 0 added\n", len(targets))
+				for _, t := range targets {
+					fmt.Fprintf(w, "explicit  %s\n  Platform: %s\n  Title: %s\n  Project: %s\n", terminal.EscapeField(t.UUID),
+						terminal.EscapeField(string(t.Platform.OrClaude())), terminal.EscapeField(orDash(t.Title)), terminal.EscapeField(t.Project))
+				}
+				if len(plan.RetainedChildren) > 0 {
+					fmt.Fprintf(w, "%d direct child session(s) will stay archived.\n", len(plan.RetainedChildren))
+				}
+				question = fmt.Sprintf("delete %d session(s)?", len(targets))
+				success = fmt.Sprintf("deleted %d session(s)", len(targets))
+			}
+			if err := w.Flush(); err != nil {
+				return fmt.Errorf("writing deletion preview: %w", err)
+			}
+			if !yes {
+				if _, err := fmt.Fprint(cmd.ErrOrStderr(), question+" [y/N] "); err != nil {
+					return fmt.Errorf("writing confirmation prompt: %w", err)
+				}
+				if !readYesNo(bufio.NewReader(cmd.InOrStdin()), false) {
+					_, err := fmt.Fprintln(cmd.OutOrStdout(), "aborted")
+					return err
+				}
+			}
+			if err := st.ApplyDelete(cmd.Context(), plan); err != nil {
 				return err
 			}
-
-			short := shortUUID(sess.UUID, sess.Platform)
-			printDeletePreview(os.Stderr, sess, children, cfg.RememberDeletions)
-			if !yes && !promptYesNo(fmt.Sprintf("delete session %s?", short), false) {
-				fmt.Println("aborted")
-				return nil
+			report := bufio.NewWriter(cmd.OutOrStdout())
+			fmt.Fprintln(report, success)
+			if !single {
+				for _, target := range targets {
+					fmt.Fprintln(report, terminal.EscapeField(target.UUID))
+				}
 			}
-
-			ok, err := st.DeleteSession(cmd.Context(), sess.UUID, cfg.RememberDeletions)
-			if err != nil {
-				return err
+			if err := report.Flush(); err != nil {
+				return fmt.Errorf("deletion committed for %d session(s), writing success message: %w", len(targets), err)
 			}
-			if !ok {
-				return fmt.Errorf("session %s was not deleted (no longer in vault)", short)
-			}
-			fmt.Printf("deleted %s\n", short)
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt and still print the preview")
 	return cmd
 }
 
-// printDeletePreview writes to w — stderr in production, so the "what you're
-// about to delete" context stays attached to the confirmation prompt even when
-// stdout is redirected. A non-empty children list ends the preview with a
-// warning: capy deletes only the addressed row and never cascades (design §
-// Sub-agent Model — Codex's own /delete does; the divergence is deliberate), so
-// the children stay archived and, having a parent id, hidden from the default
-// `list` — reachable via --include-children.
-func printDeletePreview(w io.Writer, sess *vault.Session, children []vault.Session, remember bool) {
-	if remember {
-		fmt.Fprintln(w, "Capy will remember this UUID and project. Capy cannot undo this deletion. Future imports will exclude this UUID. A merge can delete copies in other vaults.")
-	} else {
+func deleteLookupError(w io.Writer, args []string, err error) error {
+	var invalid vault.DeleteInputErrors
+	if !errors.As(err, &invalid) {
+		return err
+	}
+	var messages []error
+	for _, input := range invalid {
+		var amb *vault.AmbiguousUUIDError
+		switch {
+		case errors.As(input.Err, &amb):
+			var candidates strings.Builder
+			writeLookupCandidates(&candidates, amb)
+			summary := fmt.Sprintf("ambiguous session id %q (%d matches) — use more characters", amb.Prefix, len(amb.Candidates))
+			if len(args) == 1 {
+				if _, err := io.WriteString(w, candidates.String()); err != nil {
+					return err
+				}
+				return errors.New(summary)
+			}
+			messages = append(messages, errors.New(candidates.String()+summary))
+		case errors.Is(input.Err, vault.ErrSessionNotFound):
+			messages = append(messages, fmt.Errorf("no session matches %q", input.ID))
+		default:
+			if len(args) == 1 {
+				return input.Err
+			}
+			messages = append(messages, input)
+		}
+	}
+	return errors.Join(messages...)
+}
+
+func writeDeletePolicy(w io.Writer, remember, single bool) {
+	switch {
+	case !remember:
 		fmt.Fprintln(w, "One-time local deletion. Copies in other vaults are kept. This archive can return through a later import or merge.")
+	case single:
+		fmt.Fprintln(w, "Capy will remember this UUID and project. Capy cannot undo this deletion. Future imports will exclude this UUID. A merge can delete copies in other vaults.")
+	default:
+		fmt.Fprintln(w, "Capy will remember each UUID and project. Capy cannot undo this deletion. Future imports will exclude these UUIDs. A merge can delete copies in other vaults.")
 	}
-	fmt.Fprintf(w, "UUID:     %s\n", sess.UUID)
-	fmt.Fprintf(w, "Platform: %s\n", sess.Platform.OrClaude())
-	fmt.Fprintf(w, "Title:    %s\n", orDash(sess.EffectiveTitle()))
-	fmt.Fprintf(w, "Project:  %s\n", displaySessionProject(*sess))
-	if sess.EffectiveProject() != sess.ProjectPath {
-		fmt.Fprintf(w, "Original path: %s\n", displayPath(sess.ProjectPath))
+}
+
+func writeDeleteDetail(w io.Writer, t vault.DeleteTarget, children []vault.Session) {
+	project := t.Project
+	if !t.CustomProject {
+		project = displayPath(project)
 	}
-	fmt.Fprintf(w, "Messages: %d\n", sess.MessageCount)
-	fmt.Fprintf(w, "Dates:    %s – %s\n", fmtDate(sess.StartTime), fmtDate(sess.EndTime))
+	fmt.Fprintf(w, "UUID:     %s\nPlatform: %s\nTitle:    %s\nProject:  %s\n", terminal.EscapeField(t.UUID),
+		terminal.EscapeField(string(t.Platform.OrClaude())), terminal.EscapeField(orDash(t.Title)), terminal.EscapeField(project))
+	if t.Project != t.OriginalPath {
+		fmt.Fprintf(w, "Original path: %s\n", terminal.EscapeField(displayPath(t.OriginalPath)))
+	}
+	fmt.Fprintf(w, "Messages: %d\nDates:    %s – %s\n", t.MessageCount, fmtDate(t.StartTime), fmtDate(t.EndTime))
 	if len(children) == 0 {
 		return
 	}
 	ids := make([]string, 0, len(children))
 	for _, c := range children {
-		ids = append(ids, shortUUID(c.UUID, c.Platform))
+		ids = append(ids, terminal.EscapeField(shortUUID(c.UUID, c.Platform)))
 	}
 	fmt.Fprintf(w, "warning: %d child session(s) name this session as parent and will NOT be deleted (no cascade): %s\n"+
-		"         they stay archived; see them with 'capy vault list --include-children'\n",
-		len(children), strings.Join(ids, ", "))
+		"         they stay archived; see them with 'capy vault list --include-children'\n", len(children), strings.Join(ids, ", "))
 }
 
 // ---------------------------------------------------------------------------
@@ -1758,7 +1823,11 @@ func promptYesNo(question string, def bool) bool {
 		suffix = " [Y/n] "
 	}
 	fmt.Fprint(os.Stderr, question+suffix)
-	line, err := stdinReader.ReadString('\n')
+	return readYesNo(stdinReader, def)
+}
+
+func readYesNo(r *bufio.Reader, def bool) bool {
+	line, err := r.ReadString('\n')
 	if err != nil && line == "" {
 		return def
 	}
@@ -1801,8 +1870,8 @@ func writeLookupCandidates(w io.Writer, amb *vault.AmbiguousUUIDError) {
 	fmt.Fprintf(w, "ambiguous session id %q matches %d sessions:\n", amb.Prefix, len(amb.Candidates))
 	for _, c := range amb.Candidates {
 		fmt.Fprintf(w, "  %-*s  %s  %-28s  %s\n",
-			uuidColumnWidth, shortUUID(c.UUID, c.Platform), fmtDate(c.EndTime),
-			truncate(displaySessionProject(c), 28), truncate(c.EffectiveTitle(), 50))
+			uuidColumnWidth, terminal.EscapeField(shortUUID(c.UUID, c.Platform)), fmtDate(c.EndTime),
+			truncate(terminal.EscapeField(displaySessionProject(c)), 28), truncate(terminal.EscapeField(c.EffectiveTitle()), 50))
 	}
 }
 

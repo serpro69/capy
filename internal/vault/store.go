@@ -422,7 +422,6 @@ type VaultStore struct {
 	stmtInsertChunkTrigram   *sql.Stmt // vault_chunks_trigram (trigram layer)
 	stmtDeleteChunksPorter   *sql.Stmt
 	stmtDeleteChunksTrigram  *sql.Stmt
-	stmtDeleteSession        *sql.Stmt
 	stmtSessionsByPrefix     *sql.Stmt
 	stmtFilesBySession       *sql.Stmt
 	stmtUpdateIndexVersion   *sql.Stmt
@@ -602,10 +601,6 @@ func (s *VaultStore) prepareStatements(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 
-	if s.stmtDeleteSession, err = db.PrepareContext(ctx, `DELETE FROM vault_sessions WHERE uuid = ?`); err != nil {
-		return err
-	}
-
 	if s.stmtSessionsByPrefix, err = db.PrepareContext(ctx, `
 		SELECT `+sessionMetaColumns+`, s.encoding, s.raw_jsonl
 		`+sessionMetaJoin+` WHERE s.uuid LIKE ? ESCAPE '\' ORDER BY s.end_time DESC`); err != nil {
@@ -632,7 +627,7 @@ func (s *VaultStore) statements() []*sql.Stmt {
 		s.stmtDeleteFilesBySession, s.stmtInsertFTS, s.stmtDeleteFTSBySession,
 		s.stmtInsertChunk, s.stmtInsertChunkTrigram,
 		s.stmtDeleteChunksPorter, s.stmtDeleteChunksTrigram,
-		s.stmtDeleteSession, s.stmtSessionsByPrefix, s.stmtFilesBySession,
+		s.stmtSessionsByPrefix, s.stmtFilesBySession,
 		s.stmtUpdateIndexVersion,
 	}
 }
@@ -663,7 +658,6 @@ func (s *VaultStore) Close() error {
 	s.stmtInsertChunkTrigram = nil
 	s.stmtDeleteChunksPorter = nil
 	s.stmtDeleteChunksTrigram = nil
-	s.stmtDeleteSession = nil
 	s.stmtSessionsByPrefix = nil
 	s.stmtFilesBySession = nil
 	s.stmtUpdateIndexVersion = nil
@@ -1173,31 +1167,17 @@ func (s *VaultStore) DeleteSession(ctx context.Context, uuid string, remember bo
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	target := DeleteTarget{UUID: uuid}
 	if remember {
-		var project string
-		err := tx.QueryRowContext(ctx, "SELECT "+effectiveProjectSQL+
-			sessionMetaJoin+" WHERE s.uuid = ?", uuid).Scan(&project)
+		target.Project, err = deletionProject(ctx, tx, uuid)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
 		if err != nil {
 			return false, err
 		}
-		if _, err := tx.ExecContext(ctx, insertDeletionSQL, uuid, project); err != nil {
-			return false, fmt.Errorf("recording session deletion: %w", err)
-		}
-		if err := markMinReaderVersion(ctx, tx, readerVersionSessionDeletions); err != nil {
-			return false, err
-		}
 	}
-	if err := deleteSessionIndexes(ctx, tx, []any{uuid}); err != nil {
-		return false, err
-	}
-	res, err := tx.StmtContext(ctx, s.stmtDeleteSession).ExecContext(ctx, uuid)
-	if err != nil {
-		return false, fmt.Errorf("delete session: %w", err)
-	}
-	n, err := res.RowsAffected()
+	n, err := deleteArchiveGroup(ctx, tx, []DeleteTarget{target}, remember)
 	if err != nil {
 		return false, err
 	}
@@ -1366,11 +1346,17 @@ func (s *VaultStore) Children(ctx context.Context, parentUUID string) ([]Session
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.QueryContext(ctx,
-		`SELECT `+sessionMetaColumns+sessionMetaJoin+` WHERE s.parent_uuid = ? ORDER BY s.start_time, s.uuid`,
-		parentUUID)
+	return childMetadata(ctx, db, parentUUID)
+}
+
+func childMetadata(ctx context.Context, q ctxQueryer, parentUUID string) ([]Session, error) {
+	return querySessionMetadata(ctx, q, "WHERE s.parent_uuid = ? ORDER BY s.start_time, s.uuid", parentUUID)
+}
+
+func querySessionMetadata(ctx context.Context, q ctxQueryer, clause string, args ...any) ([]Session, error) {
+	rows, err := q.QueryContext(ctx, "SELECT "+sessionMetaColumns+sessionMetaJoin+" "+clause, args...)
 	if err != nil {
-		return nil, fmt.Errorf("listing child sessions: %w", err)
+		return nil, fmt.Errorf("reading session metadata: %w", err)
 	}
 	defer rows.Close()
 
@@ -1383,7 +1369,7 @@ func (s *VaultStore) Children(ctx context.Context, parentUUID string) ([]Session
 		out = append(out, sess)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating child sessions: %w", err)
+		return nil, fmt.Errorf("iterating session metadata: %w", err)
 	}
 	return out, nil
 }

@@ -311,21 +311,21 @@ func TestWriteLookupCandidates_CodexCollidingPrefixes(t *testing.T) {
 }
 
 func TestPrintDeletePreview_WarnsAboutChildren(t *testing.T) {
-	parent := &vault.Session{UUID: codexParentUUID, Platform: vault.PlatformCodex, Title: "Parent work", MessageCount: 4}
+	parent := vault.DeleteTarget{UUID: codexParentUUID, Platform: vault.PlatformCodex, Title: "Parent work", MessageCount: 4}
 	children := []vault.Session{
 		{UUID: codexChildUUID, Platform: vault.PlatformCodex, ParentUUID: codexParentUUID},
 		{UUID: "019e22bb-0000-7000-8000-000000000000", Platform: vault.PlatformCodex, ParentUUID: codexParentUUID},
 	}
 
 	var sb strings.Builder
-	printDeletePreview(&sb, parent, children, true)
+	writeDeleteDetail(&sb, parent, children)
 	got := sb.String()
 	assert.Contains(t, got, "Platform: codex\n")
 	assert.Contains(t, got, "warning: 2 child session(s) name this session as parent and will NOT be deleted (no cascade): 019e22ba-9f0, 019e22bb-000\n")
 	assert.Contains(t, got, "capy vault list --include-children")
 
 	sb.Reset()
-	printDeletePreview(&sb, parent, nil, true)
+	writeDeleteDetail(&sb, parent, nil)
 	assert.NotContains(t, sb.String(), "warning:", "no children, no warning")
 	assert.Contains(t, sb.String(), "Messages: 4\n")
 }
