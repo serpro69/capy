@@ -169,3 +169,28 @@ func TestDeleteCLIWriteFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleteCLIWithDescendants(t *testing.T) {
+	const leaf = "leaf0001-aaaa-4000-8000-000000000001"
+	path := deleteFixture(t, deleteTestID, leaf)
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runDelete(t, path, "", &stdout, &stderr, "--help"))
+	require.Contains(t, stdout.String(), "By default, child archives survive")
+	require.Contains(t, stdout.String(), "capy vault delete abcd1234 --with-descendants")
+	st := vault.NewVaultStore(path)
+	const child = "child001-aaaa-4000-8000-000000000002"
+	rec := &vault.SessionRecord{Session: vault.Session{UUID: child, ParentUUID: deleteTestID, ProjectPath: "foreign project", RawJSONL: []byte("{}\n")}}
+	require.NoError(t, st.InsertSession(t.Context(), rec))
+	require.NoError(t, st.Close())
+	stdout.Reset()
+	require.NoError(t, runDelete(t, path, "yes\n", &stdout, &stderr, deleteTestID, "--with-descendants"))
+	require.Contains(t, stderr.String(), "1 explicit, 1 added")
+	require.Contains(t, stderr.String(), "descendant  "+child+"\n  Parent: "+deleteTestID)
+	require.Contains(t, stderr.String(), "  Project: foreign project")
+	require.Equal(t, "deleted 2 session(s)\n"+deleteTestID+"\n"+child+"\n", stdout.String())
+	stderr.Reset()
+	stdout.Reset()
+	require.NoError(t, runDelete(t, path, "", &stdout, &stderr, leaf, "--with-descendants", "--yes"))
+	require.Contains(t, stderr.String(), "1 explicit, 0 added")
+	require.Equal(t, "deleted 1 session(s)\n"+leaf+"\n", stdout.String())
+}

@@ -1382,20 +1382,22 @@ func runClaudeResume(bin, uuid, dir string) error {
 // ---------------------------------------------------------------------------
 
 func newVaultDeleteCmd(env *vaultEnv) *cobra.Command {
-	var yes bool
+	var yes, withDescendants bool
 	cmd := &cobra.Command{
 		Use:   "delete <session-id> [<session-id> ...]",
 		Short: "Review and delete one or more archived sessions atomically",
 		Long: `Remove the selected archives, sidecars, and search entries in one transaction.
 Use full UUIDs or unique literal prefixes of at least eight characters. The
-preview lists each distinct session. Child archives survive unless selected.
+preview lists each distinct session. By default, child archives survive unless
+selected explicitly. Pass --with-descendants to include all archived descendants
+recursively, including sessions in other projects.
 
 By default capy remembers each UUID and effective project. Future imports
 exclude those UUIDs, and merges can delete their copies in other vaults. Capy
 cannot undo a remembered deletion. Set vault.remember_deletions = false in the
 invocation project's configuration for a one-time local removal. Existing and
 incoming deletions still apply. Original transcripts stay on disk.`,
-		Example: "  capy vault delete abcd1234\n  capy vault delete abcd1234 deadbeef --yes",
+		Example: "  capy vault delete abcd1234\n  capy vault delete abcd1234 deadbeef --yes\n  capy vault delete abcd1234 --with-descendants",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := guardTUI(cmd); err != nil {
@@ -1408,7 +1410,9 @@ incoming deletions still apply. Original transcripts stay on disk.`,
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
 
-			plan, err := st.PrepareDelete(cmd.Context(), args, vault.DeleteOptions{Remember: cfg.RememberDeletions})
+			plan, err := st.PrepareDelete(cmd.Context(), args, vault.DeleteOptions{
+				Remember: cfg.RememberDeletions, WithDescendants: withDescendants,
+			})
 			// A closed stdout/stderr pipe must return its write error to this
 			// command, including when the deletion has already committed.
 			brokenPipe := make(chan os.Signal, 1)
@@ -1418,7 +1422,7 @@ incoming deletions still apply. Original transcripts stay on disk.`,
 				return deleteLookupError(cmd.ErrOrStderr(), args, err)
 			}
 			targets := plan.Targets()
-			single := len(args) == 1
+			single := len(args) == 1 && !withDescendants
 			w := bufio.NewWriter(cmd.ErrOrStderr())
 			writeDeletePolicy(w, plan.RemembersDeletions(), single)
 			var question, success string
@@ -1429,9 +1433,14 @@ incoming deletions still apply. Original transcripts stay on disk.`,
 				question = "delete session " + short + "?"
 				success = "deleted " + short
 			} else {
-				fmt.Fprintf(w, "%d explicit, 0 added\n", len(targets))
-				for _, t := range targets {
-					fmt.Fprintf(w, "explicit  %s\n  Platform: %s\n  Title: %s\n  Project: %s\n", terminal.EscapeField(t.UUID),
+				fmt.Fprintf(w, "%d explicit, %d added\n", plan.ExplicitCount(), len(targets)-plan.ExplicitCount())
+				for i, t := range targets {
+					if i < plan.ExplicitCount() {
+						fmt.Fprintf(w, "explicit  %s\n", terminal.EscapeField(t.UUID))
+					} else {
+						fmt.Fprintf(w, "descendant  %s\n  Parent: %s\n", terminal.EscapeField(t.UUID), terminal.EscapeField(t.ParentUUID))
+					}
+					fmt.Fprintf(w, "  Platform: %s\n  Title: %s\n  Project: %s\n",
 						terminal.EscapeField(string(t.Platform.OrClaude())), terminal.EscapeField(orDash(t.Title)), terminal.EscapeField(t.Project))
 				}
 				if len(plan.RetainedChildren) > 0 {
@@ -1469,6 +1478,7 @@ incoming deletions still apply. Original transcripts stay on disk.`,
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt and still print the preview")
+	cmd.Flags().BoolVar(&withDescendants, "with-descendants", false, "also select recursively archived child sessions across projects")
 	return cmd
 }
 
