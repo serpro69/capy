@@ -1,14 +1,10 @@
 # Knowledge search excerpt tasks
 
-> Design: [Design](design.md)
+> [Design](design.md) · [Implementation plan](implementation.md) · [Review resolution](review-design-2026-11-23.md#resolution-after-recheck)
 >
-> Implementation: [Implementation plan](implementation.md)
+> Status: pending implementation · Created: 2026-11-23
 >
-> Status: pending
->
-> Created: 2026-11-23
->
-> Not Doing: cross-request rank paging, rank changes, run/vault presentation
+> Not Doing: rank changes, cross-request paging, ingestion changes, run/vault presentation
 
 ## Task 1. Accept pasted keyword boundaries
 
@@ -16,10 +12,11 @@
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Task 2
-- **Docs:** [Implementation plan](implementation.md#keyword-normalization)
+- **Docs:** [Keyword normalization](implementation.md#keyword-normalization)
 
-- [ ] 1.1 Normalize embedded NULs on the shared non-raw keyword path through Porter, trigram and fallback. Keep the raw vault MATCH path separate.
-- [ ] 1.2 At `handleSearch` reject separator-only queries before throttle advancement. Test a pasted two-token query against a strict encrypted knowledge lookup and the federated adapter.
+- [ ] Normalize NUL before both FTS query builders, fuzzy correction, reranking and the vault's non-raw per-line quoting. Apply the normalized blank check to vault chunks. Exercise direct strict knowledge, federated knowledge/vault, dedicated vault and run retrieval with a two-term query.
+- [ ] Normalize every parsed `capy_search` keyword before admission. Exercise the alias, native and serialized arrays, a mixed valid/blank batch and ordinary stopword/punctuation controls. Check that invalid requests leave the shared counter untouched and a valid batch advances it once.
+- [ ] Compare a fuzzy and an entity-boosted NUL query with their space equivalents. Confirm raw vault receives the original expression and run admission, saved batch queries and result ordinals retain their contracts.
 
 ## Task 2. Show the strongest passage on both surfaces
 
@@ -27,40 +24,62 @@
 - **Depends on:** —
 - **Size:** M
 - **Can run in parallel with:** Task 1
-- **Docs:** [Implementation plan](implementation.md#selecting-and-displaying-a-passage)
+- **Docs:** [Passage selection](implementation.md#selecting-and-displaying-a-passage)
 
-- [ ] 2.1 Move the excerpt selector to a shared Go package and wire it through `formatKnowledgeHit` and `writeKnowledgeSearch`, carrying query and highlights.
-- [ ] 2.2 Select one passage, preserve a fitting fence and spend the byte budget on the excerpt plus omission indicators. Discard highlight offsets when display-safe text differs.
-- [ ] 2.3 Exercise late-identifier, title-only, Unicode, credential-boundary and long legacy cases through both CLI and MCP. Assert the answer actually appears.
+- [ ] Replace the MCP window collector and CLI prefix path with the shared selector. Pass query and winner's highlights through both public paths. Preserve CLI quoting, cancellation and output errors. Apply source/title redaction, one-line MCP escaping and the two per-field bounds independently of the compact-replies rollout.
+- [ ] Return fitting display-safe bodies in full. For long bodies, score visible term groups, exact identifiers and validated marker locations. Reserve omission bytes, choose contiguous lines or a rune-safe slice of an oversized line, and exercise first-nonblank opening context.
+- [ ] Compare the same late answer on CLI and MCP. Exercise short/full and title-only bodies, a repetitive weak prefix, invalid UTF-8, CJK, case folding, literal controls and secret redaction before a prospective cut. Check long multibyte metadata with an embedded newline and a synthetic credential.
 
-## Task 3. Show a fitting JSON record
+## Task 2a. Recover body evidence across retrieval layers
 
 - **Status:** pending
 - **Depends on:** Task 2
 - **Size:** M
-- **Can run in parallel with:** —
-- **Docs:** [Implementation plan](implementation.md#selecting-a-json-record)
+- **Can run in parallel with:** Task 2b
+- **Docs:** [Match evidence](implementation.md#match-evidence)
 
-- [ ] 3.1 Expose source format through the knowledge row mapper, then locate object spans within a complete bounded stored array and score them against the query.
-- [ ] 3.2 Emit the winning fitting record with its display label. Exercise legacy multi-record chunks, an oversized row, mixed arrays and JSON-looking plaintext.
+- [ ] Retain display-only evidence for the winning content across both FTS layers and the fuzzy merge on the two knowledge display paths. Keep the original ranking highlight and winning metadata. Reject alternate marks from different content under the same source/title.
+- [ ] Use the title `migrating` fixture to demonstrate the late body answer on both surfaces even when trigram wins. Exercise repeated synonyms, a corrected-only hit and a same-title/different-body collision. Distinguish a valid unmarked body with an incidental substring from invalid offsets with a safe synonym or no recoverable match. Compare ranking fields to the baseline.
+
+## Task 2b. Preserve the matching code example
+
+- **Status:** pending
+- **Depends on:** Task 2
+- **Size:** M
+- **Can run in parallel with:** Task 2a
+- **Docs:** [Passage and fence rules](design.md#choosing-a-passage) · [Windows and cost](implementation.md#windows-and-cost)
+
+- [ ] Recognize backtick and tilde fences with the agreed opener and closer grammar. Prefer a complete fitting fenced identifier over an otherwise tied prose mention. Handle an oversized fence, one giant line, a shorter inner delimiter and a historical partial block using available source bytes.
+- [ ] Verify the exact `RetryBudget` signature and return value through CLI and MCP, plus a prose-only control. Assert valid UTF-8, the visible slice and marker-inclusive byte count at the fit boundary. Check that an absent delimiter is never emitted as source text.
+- [ ] Check scorer allocation growth on repetitive legacy bodies of increasing size with the best match near EOF. Separate selection workspace from full-field sanitization and input/highlight bytes.
+
+## Task 3. Show a fitting JSON record
+
+- **Status:** pending
+- **Depends on:** Tasks 2a and 2b
+- **Size:** M
+- **Can run in parallel with:** —
+- **Docs:** [JSON record selection](implementation.md#selecting-a-json-record)
+
+- [ ] Carry source format alongside existing knowledge-specific coordinates. For eligible complete arrays rank whole records, select the winner, then fit its exact safe slice or a marked passage under the remaining item-label budget.
+- [ ] Exercise a large exact-ID winner next to a fitting weak neighbor, two distinct IDs with common keys, a title-only hit, and escaped text with a distinctive value. Check whole-array fit, label-inclusive fit and one byte over, the 64 KiB threshold, mixed/trailing/partial values and JSON-looking plaintext.
 
 ## Task 4. Verify and document the feature
 
 - **Status:** pending
-- **Depends on:** Task 1, Task 2, Task 3
+- **Depends on:** Tasks 1 and 3
 - **Size:** S
 - **Can run in parallel with:** —
-- **Docs:** [Implementation plan](implementation.md#verification)
+- **Docs:** [Verification](implementation.md#verification)
 
-- [ ] 4.1 Run `$kk:test` with FTS5 and the two synthetic test keys. Compare IDs/ranks, answer-bearing excerpt bytes and `make bench-quality` against the pre-change baseline. Check shared query normalization against vault and run search callers.
-- [ ] 4.2 Run `$kk:document`. Update `cmd/capy/search.go` help and `docs/reference/tools.md` with the excerpt limit and an example of a late match.
-- [ ] 4.3 Run `$kk:review-code` with Go as the language and `$kk:review-spec` against this design. Record any unresolved behavior in this task list before closing it.
+- [ ] Run `$kk:test` with the two synthetic keys and `-tags fts5`. Compare the ordered ordinary-query results and mixed-corpus ranks on a fixed pre/post fixture. Assert answer-bearing text and rendered byte limits separately and compare `make bench-quality` against the pre-change baseline.
+- [ ] Run `$kk:document`. Update `cmd/capy/search.go` help, `docs/reference/tools.md` and the knowledge CLI paragraph in `docs/architecture.md`. Show a late answer, the field budgets, and the ordinary-keyword NUL contract.
+- [ ] Run `$kk:review-code` for Go and `$kk:review-spec` against this design. Resolve discrepancies and record verification results and any remaining issues before closing the tasks.
 
-## Dependency Graph
+## Dependency graph
 
 ```text
-Task 2 -> Task 3
-Task 1 -> Task 4
-Task 2 -> Task 4
-Task 3 -> Task 4
+Task 1 -------------------------------> Task 4
+Task 2 -> Task 2a -> Task 3 ----------> Task 4
+       -> Task 2b -> Task 3
 ```

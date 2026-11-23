@@ -6,14 +6,14 @@ These eight proposals address distinct operator and developer workflows. Each ha
 | --- | --- | --- |
 | Index a manual or a structured API response | [Structured knowledge sections](structured-knowledge-sections/design.md) | A short fence inside an example preserves its section. An oversized JSON record keeps its identity across bounded pieces. |
 | Find the line that answers a question | [Match-centered knowledge search](knowledge-search-excerpts/design.md) | A late-matching function or JSON record appears in the CLI and MCP excerpt. |
-| Find the next section of a known manual | [Knowledge source browsing](knowledge-source-browsing/design.md) | Open one source by ID and page through its sections without guessing a keyword. |
+| Find the next section of a known manual | [Knowledge source browsing](knowledge-source-browsing/design.md) | Open at the beginning from an index or single-URL fetch receipt, or continue immediately after a ranked knowledge hit. |
 | Ask several related questions | [Compact multi-query search replies](compact-search-replies/design.md) | Repeated passages receive references. Omissions identify the first query to retry. |
 | Fetch an article or API reference | [Readable fetched pages](readable-fetched-pages/design.md) | Relative references resolve after redirects. An empty application shell preserves the last good copy. |
-| Pick up an archived conversation | [Vault session brief](vault-session-brief/design.md) | See the last request and reply through a cited line in one explicitly selected session. |
+| Pick up an archived conversation | [Vault session brief](vault-session-brief/design.md) | Read the latest indexed request and assistant entry in a named archive, with citations to each message's start. |
 | Explain context consumption | [Session byte accounting](session-byte-accounting/design.md) | Reconcile measured workload bytes, report overhead and cache estimates. |
 | Diagnose a missing interpreter | [Runtime availability diagnostics](runtime-availability-diagnostics/design.md) | See the candidate executable names checked for the missing language. |
 
-The three search presentation changes meet in the MCP knowledge handler. Review that file together if branches land concurrently. Source browsing works with historical chunks. Match-centered search can extract a JSON record from an existing array chunk. Compact replies can use either the current or the proposed excerpt renderer. None requires a synchronized rollout.
+The three knowledge search presentation changes meet in the MCP knowledge handler. Review that file together if branches land concurrently. Source browsing works with historical chunks. Match-centered search can extract a JSON record from an existing array chunk. Compact replies can use either excerpt renderer. Compact replies and the vault brief also share the vault-hit formatter. Its chunk-start citation stays with the search passage, and its brief action opens the named archive's latest exchange using the search's original project selectors. Each proposal can ship independently.
 
 ## Existing capabilities considered
 
@@ -27,4 +27,4 @@ The three search presentation changes meet in the MCP knowledge handler. Review 
 | Hook write contention | Guidance and tool observations have bounded file-state and one-use semantics across short-lived processes. | A delayed spool could publish or consume obsolete routing evidence. On-demand session recall takes a vault read outside hook dispatch. [Hook architecture](../../architecture.md) |
 | Operator reporting | Local workload counters and read-only run diagnostics already have separate lifetimes. | Account for measurements within the running server. Pricing, remote telemetry and multi-day charts would require a different dataset. [Run inspection](../../reference/runs.md) |
 
-All feature statuses are proposals. Their acceptance examples describe checks to run when implemented.
+Each design records its readiness for implementation. Its acceptance examples describe checks to run against the implemented feature.

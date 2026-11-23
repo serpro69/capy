@@ -93,6 +93,24 @@ savings displays keep the existing formula but use one decimal, capped at
 `99.9%` when returned bytes are nonzero. Positive processed bytes with no returned
 bytes display `100.0%`; no processed bytes display `0.0%`.
 
+## Workload byte reporting decision (2026-11-23)
+
+**Accepted for implementation.** The October reporting behavior above describes
+the currently implemented report. The session byte accounting change will
+replace its savings displays with one estimate for the running MCP server's
+accounting interval. Input will be the sum of explicit knowledge submissions,
+admitted HTTP bodies and observed run output at owner completion. For positive
+input, the estimated reduction will be the greater of zero and input minus
+counted workload response bytes, divided by input for the percentage. Zero input
+will yield an unavailable estimate with the returned byte count still visible.
+The one-decimal percentage will retain its 99.9% ceiling when the workload
+returned any bytes. Reading the report will contribute to a separate overhead row.
+
+Each TTL hit will continue to contribute its cached chunk count times 1,600 bytes
+to the cache estimate. Cache eligibility, attempted misses, hit rate and default
+freshness keep the October rules. Only the workload reduction uses the ceiling.
+The cache estimate and the captured subset of run output sit outside its arithmetic.
+
 ## Consequences
 
 - `CacheConfig.FetchTTLHours` added to config with default 24
