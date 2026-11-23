@@ -45,7 +45,7 @@ func TestApp_PlatformScopeAppliesToListAndSearch(t *testing.T) {
 		},
 	}
 
-	m, err := newModel(context.Background(), st, Options{Platform: vault.PlatformCodex})
+	m, err := newModel(context.Background(), st, Options{List: vault.ListOptions{Platform: vault.PlatformCodex}})
 	require.NoError(t, err)
 	require.Len(t, m.list.list.Items(), 1)
 	assert.Equal(t, codex.UUID, m.list.list.Items()[0].(sessionItem).sess.UUID)

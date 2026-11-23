@@ -38,7 +38,7 @@ func TestApp_ProjectScopePersistence(t *testing.T) {
 				})
 			}
 			m, err := newModel(context.Background(), st, Options{
-				Mode: startMode, Query: "needle", Project: label, Platform: vault.PlatformCodex,
+				Mode: startMode, Query: "needle", List: vault.ListOptions{Project: label, Platform: vault.PlatformCodex},
 			})
 			require.NoError(t, err)
 			next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})

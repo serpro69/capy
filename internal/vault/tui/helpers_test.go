@@ -214,10 +214,19 @@ func (s *stubStore) ListSessions(_ context.Context, opts vault.ListOptions) ([]v
 		if opts.Platform != "" && sess.Platform.OrClaude() != opts.Platform {
 			continue
 		}
-		if !opts.IncludeChildren && sess.ParentUUID != "" {
+		if opts.ChildrenOnly && sess.ParentUUID == "" {
+			continue
+		}
+		if !opts.IncludeChildren && !opts.ChildrenOnly && sess.ParentUUID != "" {
+			continue
+		}
+		if opts.Name != "" && !vault.ContainsFold(sess.EffectiveTitle(), opts.Name) {
 			continue
 		}
 		out = append(out, sess)
+		if opts.Limit > 0 && len(out) == opts.Limit {
+			break
+		}
 	}
 	return out, nil
 }
