@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -80,6 +81,76 @@ func TestApp_ChildrenToggleReloadFailureReverts(t *testing.T) {
 	assert.Len(t, m.list.list.Items(), 1, "and the current items in place")
 	assert.True(t, m.statusErr)
 	assert.Contains(t, m.status, "refreshing sessions failed: db gone")
+}
+
+func TestApp_ChildrenGroupedInVisibleList(t *testing.T) {
+	// The store returns newest end time first. The newest child belongs to
+	// the oldest parent, and both families are interleaved in that order.
+	longTitle := "Agency" + strings.Repeat(" long title", 12)
+	m, st := codexFamilyApp(t,
+		vault.Session{UUID: "new-child-a", ParentUUID: "parent-a", Title: longTitle},
+		vault.Session{UUID: "grandchild", ParentUUID: "new-child-a", Title: "Agency review"},
+		vault.Session{UUID: "parent-b", Title: "Parent B"},
+		vault.Session{UUID: "orphan", ParentUUID: "missing", Title: "Orphan"},
+		vault.Session{UUID: "child-b", ParentUUID: "parent-b", Title: "Child B"},
+		vault.Session{UUID: "old-child-a", ParentUUID: "parent-a", Title: "Older child"},
+		vault.Session{UUID: "parent-a", Title: "Parent A"},
+	)
+	ids := func(m Model) []string {
+		var ids []string
+		for _, item := range m.list.list.Items() {
+			ids = append(ids, item.(sessionItem).sess.UUID)
+		}
+		return ids
+	}
+	m = press(t, m, "down", listChildrenKey)
+	require.Equal(t, []string{"parent-b", "child-b", "orphan", "parent-a", "new-child-a", "grandchild", "old-child-a"}, ids(m))
+	selected, ok := m.list.selected()
+	require.True(t, ok)
+	assert.Equal(t, "parent-a", selected.UUID)
+	items := m.list.list.Items()
+	assert.Equal(t, "(parent missing)  Orphan", items[2].(sessionItem).Title())
+	assert.Contains(t, items[5].(sessionItem).Title(), "    ↳ ")
+
+	// A grandchild disappears on collapse; its family's root remains selected.
+	m = press(t, m, "down", "down", listChildrenKey)
+	selected, ok = m.list.selected()
+	require.True(t, ok)
+	require.Equal(t, "parent-a", selected.UUID)
+	m = press(t, m, listChildrenKey)
+
+	m = press(t, m, "f")
+	calls := st.listCalls
+	m = press(t, m, "A", "g", "e", "n", "c", "y")
+	require.Equal(t, []string{"new-child-a", "grandchild"}, ids(m))
+	m = press(t, m, "up")
+	assert.Contains(t, m.View(), "(parent parent-a)", "the parent stays visible when the child's title is truncated")
+	assert.Contains(t, m.list.list.Items()[1].(sessionItem).Title(), "  ↳ ")
+	assert.Equal(t, calls, st.listCalls)
+	m = press(t, m, "esc", listChildrenKey)
+	assert.Equal(t, []string{"parent-b", "parent-a"}, ids(m))
+}
+
+func TestApp_HidingOrphanKeepsASelectableRow(t *testing.T) {
+	m, _ := codexFamilyApp(t, vault.Session{UUID: "root"}, vault.Session{UUID: "orphan", ParentUUID: "missing"})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = press(t, next.(Model), listChildrenKey, "down", listChildrenKey)
+	selected, ok := m.list.selected()
+	require.True(t, ok)
+	require.Equal(t, "root", selected.UUID)
+}
+
+func TestSessionListItems_CyclicParentIDs(t *testing.T) {
+	sessions := []vault.Session{
+		{UUID: "a", ParentUUID: "b"}, {UUID: "b", ParentUUID: "a"},
+		{UUID: "self", ParentUUID: "self"},
+	}
+	items := sessionListItems(sessions, true)
+	var ids []string
+	for _, item := range items {
+		ids = append(ids, item.(sessionItem).sess.UUID)
+	}
+	require.ElementsMatch(t, []string{"a", "b", "self"}, ids)
 }
 
 // TestApp_OpenChildAndReturnToParentThenList drives the whole chain: open the

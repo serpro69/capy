@@ -62,7 +62,7 @@ func TestSessionItem_PlatformInDescription(t *testing.T) {
 // sessionTitleCell also uses: indented, "↳", the parent's short id, then the
 // title. A top-level row is untouched.
 func TestSessionItem_ChildRowIndentedUnderParent(t *testing.T) {
-	child := sessionItem{sess: vault.Session{
+	child := sessionItem{depth: 1, sess: vault.Session{
 		UUID: codexChildID, ParentUUID: codexParentID, Platform: vault.PlatformCodex, Title: "Boole · code-reviewer",
 	}}
 	assert.Equal(t, "  ↳ "+shortID(codexParentID)+"  Boole · code-reviewer", child.Title())
@@ -71,7 +71,7 @@ func TestSessionItem_ChildRowIndentedUnderParent(t *testing.T) {
 	parent := sessionItem{sess: vault.Session{UUID: codexParentID, Platform: vault.PlatformCodex, Title: "Parent review"}}
 	assert.Equal(t, "Parent review", parent.Title())
 
-	untitledChild := sessionItem{sess: vault.Session{UUID: codexChildID, ParentUUID: codexParentID}}
+	untitledChild := sessionItem{depth: 1, sess: vault.Session{UUID: codexChildID, ParentUUID: codexParentID}}
 	assert.Equal(t, "  ↳ "+shortID(codexParentID)+"  (untitled)", untitledChild.Title(),
 		"the untitled fallback still carries the parent prefix")
 }

@@ -17,13 +17,12 @@ import (
 // full Session so selecting it can open the viewer without a second lookup of the
 // list metadata (the raw_jsonl blob is still fetched lazily on open).
 type sessionItem struct {
-	sess vault.Session
+	sess  vault.Session
+	depth int // number of visible ancestors
 }
 
-// Title is the primary line. A child session (a Codex sub-agent rollout with
-// parent_uuid set, listed only while includeChildren is on) is indented under
-// its parent's short id — "  ↳ 019dc606f552  <title>" — mirroring the CLI's
-// sessionTitleCell so the two list surfaces read alike.
+// Title indents children below their visible parent. A child whose parent is
+// absent carries the parent ID inline so it reads as a standalone row.
 func (i sessionItem) Title() string {
 	t := strings.TrimSpace(i.sess.EffectiveTitle())
 	if t == "" {
@@ -32,7 +31,10 @@ func (i sessionItem) Title() string {
 	if i.sess.ParentUUID == "" {
 		return t
 	}
-	return "  ↳ " + shortID(i.sess.ParentUUID) + "  " + t
+	if i.depth == 0 {
+		return "(parent " + shortID(i.sess.ParentUUID) + ")  " + t
+	}
+	return strings.Repeat("  ", i.depth) + "↳ " + shortID(i.sess.ParentUUID) + "  " + t
 }
 
 // Description is the secondary line: short uuid · platform · date · messages ·
@@ -114,12 +116,58 @@ type listModel struct {
 // g G, ?, esc) — TestListKeys_ChildrenToggleIsUnbound pins the latter.
 const listChildrenKey = "s"
 
-func newListModel(sessions []vault.Session, styles Styles, width, height int) listModel {
-	items := make([]list.Item, len(sessions))
-	for i, s := range sessions {
-		items[i] = sessionItem{sess: s}
+// sessionListItems receives visible sessions in descending end-time order.
+// Visiting each parent's children in input order preserves that order among
+// both the top-level rows and each group of siblings.
+func sessionListItems(sessions []vault.Session, includeChildren bool) []list.Item {
+	items := make([]list.Item, 0, len(sessions))
+	if !includeChildren {
+		for _, s := range sessions {
+			items = append(items, sessionItem{sess: s})
+		}
+		return items
 	}
-	l := list.New(items, list.NewDefaultDelegate(), width, height)
+
+	byID := make(map[string]int, len(sessions))
+	for i := range sessions {
+		byID[sessions[i].UUID] = i
+	}
+	children := make([][]int, len(sessions))
+	var roots []int
+	for i, s := range sessions {
+		if parent, ok := byID[s.ParentUUID]; s.ParentUUID != "" && ok {
+			children[parent] = append(children[parent], i)
+		} else {
+			roots = append(roots, i)
+		}
+	}
+	seen := make([]bool, len(sessions))
+	var add func(int, int)
+	add = func(i, depth int) {
+		if seen[i] {
+			return
+		}
+		seen[i] = true
+		items = append(items, sessionItem{sess: sessions[i], depth: depth})
+		for _, child := range children[i] {
+			add(child, depth+1)
+		}
+	}
+	for _, root := range roots {
+		add(root, 0)
+	}
+	// Imported parent IDs have no foreign key. A cycle has no root, but its
+	// sessions must still be accessible and appear only once.
+	if len(items) < len(sessions) {
+		for i := range sessions {
+			add(i, 0)
+		}
+	}
+	return items
+}
+
+func newListModel(sessions []vault.Session, styles Styles, width, height int) listModel {
+	l := list.New(sessionListItems(sessions, false), list.NewDefaultDelegate(), width, height)
 	l.Title = fmt.Sprintf("Vault — %d session(s)", len(sessions))
 	l.SetShowHelp(true)
 	l.SetFilteringEnabled(false)
@@ -205,11 +253,12 @@ func (m listModel) updateFilterInput(msg tea.Msg) (listModel, tea.Cmd) {
 // memory, or a fresh store read to refresh it.
 func (m listModel) setSessions(all []vault.Session, applied string) (listModel, tea.Cmd) {
 	shown := filterSessions(all, applied)
-	items := make([]list.Item, len(shown))
-	for i, s := range shown {
-		items[i] = sessionItem{sess: s}
+	cmd := m.list.SetItems(sessionListItems(shown, m.includeChildren))
+	// SetItems clamps the page, but its cursor can sit past the last row on
+	// that page after filtering or hiding children.
+	if len(shown) > 0 && m.list.Index() >= len(shown) {
+		m.list.Select(len(shown) - 1)
 	}
-	cmd := m.list.SetItems(items)
 	m.all = all
 	m.applied = applied
 	title := fmt.Sprintf("Vault — %d session(s)", len(shown))
@@ -237,10 +286,23 @@ func (m listModel) listOptions() vault.ListOptions {
 	return vault.ListOptions{IncludeChildren: m.includeChildren, Platform: m.platform, Project: m.project}
 }
 
+// selectedRootUUID keeps the current family in focus across a children toggle.
+// The nearest preceding top-level row owns the selected subtree.
+func (m listModel) selectedRootUUID() string {
+	items := m.list.Items()
+	for i := m.list.Index(); i >= 0 && i < len(items); i-- {
+		row := items[i].(sessionItem)
+		if row.depth == 0 {
+			return row.sess.UUID
+		}
+	}
+	return ""
+}
+
 // selectSession moves the highlight to the session with the given UUID when it
 // is present in the current (possibly filtered) item set. When it is not — a
 // rename made the item disappear from a non-matching active filter — the
-// selection is left where SetItems clamped it, a sensible neighbor.
+// selection is left where setSessions clamped it, a sensible neighbor.
 func (m listModel) selectSession(uuid string) listModel {
 	for i, it := range m.list.Items() {
 		if si, ok := it.(sessionItem); ok && si.sess.UUID == uuid {
