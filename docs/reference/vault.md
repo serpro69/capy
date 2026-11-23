@@ -84,6 +84,8 @@ Claude resume chooses `--dir`, then a usable recorded project path, then the cur
 
 `list`, `search`, and `show` accept `--tui`; mutating commands such as `restore`, `resume`, `delete`, and `project` do not. Platform/project launch filters stay active during browsing and live search.
 
+In the session list, press `s` to show Codex child sessions beneath their parents. Top-level sessions and siblings are each ordered by end time, newest first. If a parent is missing or filtered out, its visible child appears at the top level with the parent's short ID.
+
 In a transcript, `/` finds case-sensitive literal text. Typing previews a match; Enter commits. `n` / `N` visit every occurrence, including overlaps, and wrap. Spaces and punctuation are literal; queries are single-line and limited to 256 Unicode code points.
 
 `ctrl+f` opens a case-insensitive fuzzy line picker: `ndl` can match `needle`, with spaces still significant. Empty input browses nonempty lines. Use arrows, `ctrl+p` / `ctrl+n`, or PageUp/PageDown to select, then Enter. Accepting a fuzzy result replaces exact find, so `n` / `N` return to marker navigation.

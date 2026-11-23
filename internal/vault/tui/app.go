@@ -537,11 +537,15 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // children. A failed re-read reverts the toggle and keeps the current items
 // (never blank the browser), reporting the failure in the status line.
 func (m Model) toggleChildren() (tea.Model, tea.Cmd) {
+	rootID := m.list.selectedRootUUID()
 	m.list = m.list.setIncludeChildren(!m.list.includeChildren)
 	next, cmd, err := m.reloadSessions()
 	if err != nil {
 		m.list = m.list.setIncludeChildren(!m.list.includeChildren)
 		return m.withError("refreshing sessions failed: " + err.Error()), nil
+	}
+	if rootID != "" {
+		next.list = next.list.selectSession(rootID)
 	}
 	return next, cmd
 }
