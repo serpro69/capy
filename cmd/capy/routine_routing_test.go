@@ -38,13 +38,22 @@ func TestRoutineGeneratedHooksAndMCPRecovery(t *testing.T) {
 	bin := buildStdioCapy(t)
 	owner := t.TempDir()
 	args, hookEnv := installCodexLaunch(t, bin, owner)
-	require.NoError(t, os.WriteFile(filepath.Join(owner, "Makefile"), []byte("test:\n\t@printf once >> count\n\t@printf 'captured test result\\n'\n"), 0600))
+	work := filepath.Join(owner, "child's package")
+	require.NoError(t, os.Mkdir(work, 0700))
+	work, err := filepath.EvalSymlinks(work)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(work, "Makefile"), []byte("test:\n\t@printf once >> count\n\t@printf 'captured test result\\n'\n"), 0600))
+	var retry map[string]any
 	for _, agent := range []string{"", "child"} {
-		out := generatedRoutineHook(t, owner, owner, hookEnv, "PreToolUse", agent, "Bash", map[string]any{"command": "make test"}, nil)
+		out := generatedRoutineHook(t, owner, work, hookEnv, "PreToolUse", agent, "Bash", map[string]any{"command": "make test"}, nil)
 		require.Equal(t, "deny", out["permissionDecision"])
 		require.Contains(t, out["permissionDecisionReason"], "Nothing in this request ran")
+		_, tail, found := strings.Cut(out["permissionDecisionReason"].(string), "retry with capy_execute ")
+		require.True(t, found)
+		require.NoError(t, json.NewDecoder(strings.NewReader(tail)).Decode(&retry))
+		require.Equal(t, map[string]any{"language": "shell", "code": "make test", "cwd": work}, retry)
 	}
-	require.NoFileExists(t, filepath.Join(owner, "count"))
+	require.NoFileExists(t, filepath.Join(work, "count"))
 	require.NoDirExists(t, filepath.Join(owner, ".capy", "runs"))
 	serveEnv := append([]string(nil), hookEnv...)
 	for i, entry := range serveEnv {
@@ -58,12 +67,13 @@ func TestRoutineGeneratedHooksAndMCPRecovery(t *testing.T) {
 	require.NoError(t, p.request("tools/list", map[string]any{}, &tools))
 	require.Len(t, tools["tools"], 11)
 	var result map[string]any
-	require.NoError(t, p.request("tools/call", map[string]any{"name": "capy_execute", "arguments": map[string]any{"language": "shell", "code": "make test", "wait_ms": 30000}}, &result))
+	retry["wait_ms"] = 30000
+	require.NoError(t, p.request("tools/call", map[string]any{"name": "capy_execute", "arguments": retry}, &result))
 	require.NotEqual(t, true, result["isError"], "%+v", result)
 	run := result["structuredContent"].(map[string]any)
 	require.Equal(t, "exited", run["state"])
 	require.EqualValues(t, 0, run["exit_code"])
-	count, err := os.ReadFile(filepath.Join(owner, "count"))
+	count, err := os.ReadFile(filepath.Join(work, "count"))
 	require.NoError(t, err)
 	require.Equal(t, "once", string(count))
 	for _, agent := range []string{"", "child"} {
@@ -85,7 +95,7 @@ func TestRoutineGeneratedHooksAndMCPRecovery(t *testing.T) {
 		require.NotContains(t, http, "permissionDecision", "polling must not refresh consumed evidence")
 	}
 	p.close(t)
-	count, err = os.ReadFile(filepath.Join(owner, "count"))
+	count, err = os.ReadFile(filepath.Join(work, "count"))
 	require.NoError(t, err)
 	require.Equal(t, "once", string(count), "recovery must not execute again")
 }

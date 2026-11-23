@@ -22,6 +22,38 @@ func isolateRoutineHook(t *testing.T) {
 	t.Setenv("CAPY_VAULT_KEY", "")
 }
 
+func TestRoutineCaptureRoutes(t *testing.T) {
+	isolateRoutineHook(t)
+	project := t.TempDir()
+	work := filepath.Join(project, "package")
+	require.NoError(t, os.Mkdir(work, 0700))
+	work, err := filepath.EvalSymlinks(work)
+	require.NoError(t, err)
+	for _, command := range []string{"npm test", "npm test -- --filter api", "make test > output", "env npm test", "npm test && make build", "npm test\n", "npm run test:special"} {
+		out := codexObservationHook(t, project, "pretooluse", "Bash", map[string]any{"command": command}, map[string]any{"cwd": work})
+		require.Equal(t, "deny", out["permissionDecision"])
+		require.NotContains(t, out, "updatedInput")
+		_, tail, ok := strings.Cut(out["permissionDecisionReason"].(string), "retry with capy_execute ")
+		require.True(t, ok)
+		var args map[string]string
+		require.NoError(t, json.NewDecoder(strings.NewReader(tail)).Decode(&args))
+		require.Equal(t, map[string]string{"code": command, "cwd": work, "language": "shell"}, args)
+	}
+	for _, cwd := range []any{nil, ".", filepath.Join(project, "missing")} {
+		out := codexObservationHook(t, project, "pretooluse", "Bash", map[string]any{"command": "npm test"}, map[string]any{"cwd": cwd})
+		require.Equal(t, routineCaptureReason, out["permissionDecisionReason"])
+	}
+	input := map[string]any{"command": "npm test", "tty": true}
+	out := codexObservationHook(t, project, "pretooluse", "Bash", input, map[string]any{"cwd": work})
+	require.Equal(t, routineCaptureReason, out["permissionDecisionReason"])
+	for _, command := range []string{"npm test -- " + strings.Repeat("x", 4096), "CAPY_DB_KEY=sample npm test", "npm test -- https://user:pass@example.invalid", "npm test -- token=" + strings.Repeat("a", 30), "npm test -- '<private>text'", "capy execute --code 'echo marker'; npm test"} {
+		out := codexObservationHook(t, project, "pretooluse", "Bash", map[string]any{"command": command}, map[string]any{"cwd": work})
+		require.Equal(t, routineCaptureReason, out["permissionDecisionReason"])
+	}
+	// A valid JSON cwd can resolve through a symlink to a non-UTF-8 filename.
+	require.Equal(t, routineCaptureReason, routineRetryReason("npm test", "/package\xff"))
+}
+
 func TestRoutineGatePlatformScope(t *testing.T) {
 	isolateRoutineHook(t)
 	for _, a := range []adapter.HookAdapter{&adapter.CodexAdapter{}, &adapter.ClaudeCodeAdapter{}} {
