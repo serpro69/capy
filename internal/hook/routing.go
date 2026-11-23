@@ -1,23 +1,33 @@
 package hook
 
-// RoutingBlock returns the XML routing instructions injected into subagent
-// prompts and session start events. Guides the LLM on when to use capy MCP
-// tools vs direct tools based on comprehension-vs-extraction needs.
+import "github.com/serpro69/capy/internal/adapter"
+
+// RoutingBlock returns the Claude Code main-session routing instructions.
 func RoutingBlock() string {
-	return routingBlock("    A Bash-to-general-purpose upgrade does not prove that MCP tools are available.\n", `    Claude routine capture is guidance-only. Main-agent Bash HTTP redirects are enforced below. A child may receive one redirect to a recently
+	return routingBlock(adapter.ClaudeCode, mainSessionCommands)
+}
+
+// CodexRoutingBlock returns the Codex main-session routing instructions.
+func CodexRoutingBlock() string {
+	return routingBlock(adapter.Codex, mainSessionCommands)
+}
+
+func childRoutingBlock(platform adapter.Platform) string {
+	return routingBlock(platform, "")
+}
+
+const claudeUpgradeNote = "    A Bash-to-general-purpose upgrade does not prove that MCP tools are available.\n"
+
+const claudeBlocked = `    Claude routine capture is guidance-only. Main-agent Bash HTTP redirects are enforced below. A child may receive one redirect to a recently
     successful suitable tool; otherwise it gets discovery/native-tool advice. Security denies
     and matched asks still apply. Bash HTTP requires observed capy_execute; child WebFetch can also
     use observed capy_fetch_and_index. Git issue/PR/MR comprehension keeps native CLI guidance.
     - curl/wget in Bash → use capy_fetch_and_index or capy_execute
     - Inline HTTP in Bash → use capy_execute
     - Main-agent WebFetch is allowed for comprehending specific pages; git issues/PRs/MRs are denied
-      in favor of the platform CLI (gh issue view); for large-page extraction use capy_fetch_and_index`)
-}
+      in favor of the platform CLI (gh issue view); for large-page extraction use capy_fetch_and_index`
 
-// CodexRoutingBlock shares the core guidance while describing only capy's
-// selected Bash/MCP coverage. Codex child launch arguments are never rewritten.
-func CodexRoutingBlock() string {
-	return routingBlock("", `    Codex shell tools (including exec_command and code mode) reach hooks as Bash.
+const codexBlocked = `    Codex shell tools (including exec_command and code mode) reach hooks as Bash.
     Hosted web/search tools are not intercepted. Security and matched asks are checked first;
     matched asks deny with rule/source because this PreToolUse hook cannot request approval.
     Recognized routine tests/builds/installs require capture for roots and children before
@@ -31,10 +41,13 @@ func CodexRoutingBlock() string {
     results and polling do not. Fetch alone cannot justify a Bash HTTP redirect.
     Main and child evidence are isolated; a child redirect consumes all its alternatives.
     SubagentStart supplies guidance; child launch arguments are preserved.
-    Git issue/PR/MR comprehension uses native CLI.`)
-}
+    Git issue/PR/MR comprehension uses native CLI.`
 
-func routingBlock(upgradeNote, blocked string) string {
+func routingBlock(platform adapter.Platform, commands string) string {
+	upgradeNote, blocked := claudeUpgradeNote, claudeBlocked
+	if platform == adapter.Codex {
+		upgradeNote, blocked = "", codexBlocked
+	}
 	return `<context_window_protection>
   <routing_principle>
     Capture routine tests/builds/installs; Codex enforces recognized forms, Claude advises.
@@ -72,7 +85,11 @@ func routingBlock(upgradeNote, blocked string) string {
 
   <blocked>
 ` + blocked + `
-  </blocked>
+  </blocked>` + commands + `
+</context_window_protection>`
+}
+
+const mainSessionCommands = `
 
   <capy_commands>
     When the user says "capy stats" or asks about context savings:
@@ -80,9 +97,7 @@ func routingBlock(upgradeNote, blocked string) string {
 
     When the user says "capy doctor" or asks to diagnose capy:
     → Call the capy_doctor MCP tool.
-  </capy_commands>
-</context_window_protection>`
-}
+  </capy_commands>`
 
 const childToolGuidance = `capy: This child's capy tool availability is unverified.
 If the host offers deferred-tool discovery, discover capy schemas once, then use suitable available tools.

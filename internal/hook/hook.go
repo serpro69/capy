@@ -83,7 +83,7 @@ func handleEvent(event string, input []byte, a adapter.HookAdapter, explicitProj
 	case "sessionstart":
 		return handleSessionStart(input, a)
 	case "subagentstart":
-		return a.FormatSubagentStart(CodexRoutingBlock())
+		return a.FormatSubagentStart(childRoutingBlock(a.Platform()))
 	case "userpromptsubmit":
 		return handleUserPromptSubmit(input, a)
 	case "sessionend":
