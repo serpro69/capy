@@ -1,0 +1,171 @@
+package main
+
+import (
+	"bytes"
+	"database/sql"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/serpro69/capy/internal/sqliteutil"
+	"github.com/serpro69/capy/internal/vault"
+	"github.com/stretchr/testify/require"
+)
+
+const deleteTestID = "abcd1234-aaaa-4000-8000-000000000001"
+const deleteTestProject = "/proj\tRED\x1b[0m\u2028next"
+const deleteTestTitle = "first line\nsecond\rline\u2029end"
+
+func deleteFixture(t *testing.T, ids ...string) string {
+	t.Helper()
+	t.Setenv("CAPY_VAULT_KEY", testVaultKey)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "vault.db")
+	st := vault.NewVaultStore(path)
+	defer st.Close()
+	for _, id := range ids {
+		rec := &vault.SessionRecord{Session: vault.Session{UUID: id, Title: deleteTestTitle, ProjectPath: deleteTestProject, RawJSONL: []byte("{}\n")}}
+		require.NoError(t, st.InsertSession(t.Context(), rec))
+	}
+	return path
+}
+
+func runDelete(t *testing.T, path, input string, out, stderr io.Writer, args ...string) error {
+	t.Helper()
+	cmd := newVaultDeleteCmd(&vaultEnv{dbPath: path})
+	cmd.Flags().String("project-dir", t.TempDir(), "")
+	cmd.SetIn(strings.NewReader(input))
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.SetArgs(args)
+	cmd.SilenceErrors, cmd.SilenceUsage = true, true
+	return cmd.ExecuteContext(t.Context())
+}
+
+func TestDeleteCLIReviewsAliasesAndEscapesFields(t *testing.T) {
+	for _, mode := range []string{"prompt", "yes", "decline", "eof"} {
+		t.Run(mode, func(t *testing.T) {
+			path := deleteFixture(t, deleteTestID)
+			args := []string{deleteTestID[:8], deleteTestID}
+			input := " YES \n"
+			switch mode {
+			case "yes":
+				args = append(args, "--yes")
+			case "decline":
+				input = "n\n"
+			case "eof":
+				input = ""
+			}
+			var stdout, stderr bytes.Buffer
+			require.NoError(t, runDelete(t, path, input, &stdout, &stderr, args...))
+			require.Contains(t, stderr.String(), "1 explicit, 0 added")
+			require.Equal(t, 1, strings.Count(stderr.String(), deleteTestID))
+			require.Contains(t, stderr.String(), `first line\nsecond\rline\u2029end`)
+			require.Contains(t, stderr.String(), `/proj\tRED\x1b[0m\u2028next`)
+			require.NotContains(t, stderr.String(), deleteTestProject)
+			db, err := sql.Open("sqlite3", sqliteutil.EncryptedDSN(path, testVaultKey))
+			require.NoError(t, err)
+			defer db.Close()
+			var project string
+			err = db.QueryRow("SELECT effective_project FROM vault_session_deletions WHERE session_uuid=?", deleteTestID).Scan(&project)
+			if mode == "decline" || mode == "eof" {
+				require.Equal(t, "aborted\n", stdout.String())
+				require.ErrorIs(t, err, sql.ErrNoRows)
+				require.NoError(t, db.QueryRow("SELECT project_path FROM vault_sessions WHERE uuid=?", deleteTestID).Scan(&project))
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, "deleted 1 session(s)\n"+deleteTestID+"\n", stdout.String())
+			}
+			require.Equal(t, deleteTestProject, project)
+		})
+	}
+}
+
+func TestDeleteCLIReportsBadArgumentsInOrder(t *testing.T) {
+	path := deleteFixture(t, deleteTestID, "abcd1234-bbbb-4000-8000-000000000002")
+	var stdout, stderr bytes.Buffer
+	err := runDelete(t, path, "", &stdout, &stderr, deleteTestID, "short", "missing1", "abcd1234", "--yes")
+	require.Error(t, err)
+	msg := err.Error()
+	pos := -1
+	for _, part := range []string{`"short": session id must be at least 8`, `no session matches "missing1"`, `ambiguous session id "abcd1234" matches 2 sessions`, `first line\nsecond`} {
+		i := strings.Index(msg, part)
+		require.Greater(t, i, pos, part)
+		pos = i
+	}
+	require.NotContains(t, msg, deleteTestProject)
+	require.Empty(t, stdout.String())
+	require.Empty(t, stderr.String())
+	st := vault.NewVaultStore(path)
+	defer st.Close()
+	rows, err := st.ListSessions(t.Context(), vault.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+}
+
+func TestDeleteCLIShortPrefixBeforeVaultOpen(t *testing.T) {
+	t.Setenv("CAPY_VAULT_KEY", testVaultKey)
+	path := filepath.Join(t.TempDir(), "missing.db")
+	err := runDelete(t, path, "", io.Discard, io.Discard, "short")
+	require.EqualError(t, err, "session id must be at least 8 characters")
+	require.NoFileExists(t, path)
+}
+
+func TestDeleteCLIBrokenStdoutPipe(t *testing.T) {
+	path := deleteFixture(t, deleteTestID)
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	require.NoError(t, r.Close())
+	defer w.Close()
+	cmd := exec.CommandContext(t.Context(), "go", "run", "-tags", "fts5", ".", "vault", "delete", deleteTestID, "--yes", "--path", path, "--project-dir", t.TempDir())
+	var stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = w, &stderr
+	require.Error(t, cmd.Run())
+	require.Contains(t, stderr.String(), "deletion committed for 1 session")
+	st := vault.NewVaultStore(path)
+	defer st.Close()
+	_, err = st.GetSession(t.Context(), deleteTestID)
+	require.ErrorIs(t, err, vault.ErrSessionNotFound)
+}
+
+type failDeleteWrite struct{ after int }
+
+func (w *failDeleteWrite) Write(p []byte) (int, error) {
+	if w.after == 0 {
+		return 0, errors.New("writer closed")
+	}
+	w.after--
+	return len(p), nil
+}
+
+func TestDeleteCLIWriteFailures(t *testing.T) {
+	for _, stage := range []string{"preview", "prompt", "success"} {
+		t.Run(stage, func(t *testing.T) {
+			path := deleteFixture(t, deleteTestID)
+			out, stderr := io.Discard, io.Discard
+			switch stage {
+			case "preview":
+				stderr = &failDeleteWrite{}
+			case "prompt":
+				stderr = &failDeleteWrite{after: 1}
+			case "success":
+				out = &failDeleteWrite{}
+			}
+			err := runDelete(t, path, "y\n", out, stderr, deleteTestID[:8])
+			require.ErrorContains(t, err, "writer closed")
+			st := vault.NewVaultStore(path)
+			defer st.Close()
+			_, lookup := st.GetSession(t.Context(), deleteTestID)
+			if stage == "success" {
+				require.ErrorContains(t, err, "committed for 1 session")
+				require.ErrorIs(t, lookup, vault.ErrSessionNotFound)
+			} else {
+				require.NoError(t, lookup)
+			}
+		})
+	}
+}

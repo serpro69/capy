@@ -1,19 +1,25 @@
 # Bulk vault deletion tasks
 
-**Status:** pending · **Created:** 2026-11-23 · [Design](design.md) · [Implementation plan](implementation.md)
+**Status:** in-progress · **Created:** 2026-11-23 · [Design](design.md) · [Implementation plan](implementation.md)
 
 **Not Doing:** automated cleanup, individual Claude sidecar pruning, persisted deletion jobs and MCP mutations.
 
 ## Task 1. Delete explicit CLI selections atomically
 
-**Status:** pending · **Depends on:** — · **Size:** M · **Can run in parallel with:** Task 3
+**Status:** done · **Depends on:** — · **Size:** M · **Can run in parallel with:** Task 3
+
+**Execution context**
+
+2026-11-23, observed at `65b9501`. The existing CLI loads transcript bytes before confirmation. The batch path needs metadata-only selection while preserving the single-session preview and the store’s one-time cleanup of orphan indexes.
+
+2026-11-23, verified. Focused encrypted FTS5 tests passed for `./internal/vault` and `./cmd/capy` (run `26c49cc3`). Group rollback, stale targets and legacy cleanup also passed under `-race` (run `fb749eb7`). Independent review confirmed the fixes for closed stdout pipes, short-only input before vault open, and labeled batch fields.
 
 **Docs:** [Explicit IDs through the CLI](implementation.md#explicit-ids-through-the-cli)
 
-- [ ] Add metadata-only preparation and exact-UUID, transactional apply in `internal/vault`. Preserve `DeleteSession`'s existing missing-row behavior and both deletion policies.
-- [ ] Update `newVaultDeleteCmd` usage, help, examples and argument validation. Check diagnostics in input order for a mixture of valid, short, missing and ambiguous IDs. Verify ordinary single-ID output, duplicate arguments resolving to one UUID, decline and empty stdin.
-- [ ] Implement field escaping and checked CLI output. Capture stderr with a multiline imported title and a control-bearing project, with and without `--yes`. Compare display text with the original tombstone project. Fail preview/prompt writes before apply and a success write after commit. Task 4 integrates the same escaping into the TUI.
-- [ ] Use a second connection to remove a reviewed target or change its project before apply. Assert zero batch writes. Select one more target than fits in a SQL parameter group plus a survivor. Verify the last UUID on success. Force failure in group two and assert rollback of both groups' archive rows, sidecars, overrides, all three indexes, deletion pairs and reader marker.
+- [x] Add metadata-only preparation and exact-UUID, transactional apply in `internal/vault`. Preserve `DeleteSession`'s existing missing-row behavior and both deletion policies.
+- [x] Update `newVaultDeleteCmd` usage, help, examples and argument validation. Check diagnostics in input order for a mixture of valid, short, missing and ambiguous IDs. Verify ordinary single-ID output, duplicate arguments resolving to one UUID, decline and empty stdin.
+- [x] Implement field escaping and checked CLI output. Capture stderr with a multiline imported title and a control-bearing project, with and without `--yes`. Compare display text with the original tombstone project. Fail preview/prompt writes before apply and a success write after commit. Task 4 integrates the same escaping into the TUI.
+- [x] Use a second connection to remove a reviewed target or change its project before apply. Assert zero batch writes. Select one more target than fits in a SQL parameter group plus a survivor. Verify the last UUID on success. Force failure in group two and assert rollback of both groups' archive rows, sidecars, overrides, all three indexes, deletion pairs and reader marker.
 
 ## Task 2. Include archived descendants on request
 
