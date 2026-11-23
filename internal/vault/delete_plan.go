@@ -14,8 +14,9 @@ import (
 
 // DeleteOptions selects how to resolve input IDs and whether to record deletions.
 type DeleteOptions struct {
-	ExactIDs bool // TUI selections are full identities, never prefixes.
-	Remember bool
+	ExactIDs        bool // TUI selections are full identities, never prefixes.
+	Remember        bool
+	WithDescendants bool
 }
 
 // DeleteTarget is the metadata reviewed for one exact archive.
@@ -40,12 +41,14 @@ func deleteTarget(s Session) DeleteTarget {
 type DeletePlan struct {
 	store            *VaultStore
 	targets          []DeleteTarget
+	explicitCount    int // explicit targets precede every added descendant
 	remember         bool
 	RetainedChildren []Session
 }
 
 func (p *DeletePlan) Targets() []DeleteTarget  { return slices.Clone(p.targets) }
 func (p *DeletePlan) RemembersDeletions() bool { return p.remember }
+func (p *DeletePlan) ExplicitCount() int       { return p.explicitCount }
 
 // DeleteInputError identifies a bad argument without losing its position or candidates.
 type DeleteInputError struct {
@@ -125,21 +128,37 @@ func (s *VaultStore) PrepareDelete(ctx context.Context, ids []string, opts Delet
 	if len(invalid) > 0 {
 		return nil, invalid
 	}
-	for _, target := range plan.targets {
-		children, err := childMetadata(ctx, tx, target.UUID)
-		if err != nil {
-			return nil, err
-		}
-		for _, child := range children {
-			if !selected[child.UUID] {
-				plan.RetainedChildren = append(plan.RetainedChildren, child)
-			}
-		}
+	plan.explicitCount = len(plan.targets)
+	if err := plan.collectChildren(ctx, tx, selected, opts.WithDescendants); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return plan, nil
+}
+
+// Walk in explicit selection order, then breadth-first in stable spawn order.
+// The selected set includes every explicit target before the first parent lookup.
+func (p *DeletePlan) collectChildren(ctx context.Context, tx *sql.Tx, selected map[string]bool, expand bool) error {
+	for i := 0; i < len(p.targets); i++ {
+		children, err := childMetadata(ctx, tx, p.targets[i].UUID)
+		if err != nil {
+			return err
+		}
+		for _, child := range children {
+			if selected[child.UUID] {
+				continue
+			}
+			if expand {
+				selected[child.UUID] = true
+				p.targets = append(p.targets, deleteTarget(child))
+			} else {
+				p.RetainedChildren = append(p.RetainedChildren, child)
+			}
+		}
+	}
+	return nil
 }
 
 // ErrStaleDeletePlan requires a fresh review before retrying.

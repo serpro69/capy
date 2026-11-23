@@ -23,13 +23,19 @@
 
 ## Task 2. Include archived descendants on request
 
-**Status:** pending · **Depends on:** Task 1 · **Size:** M · **Can run in parallel with:** Tasks 3, 4
+**Status:** done · **Depends on:** Task 1 · **Size:** M · **Can run in parallel with:** Tasks 3, 4
+
+**Execution context**
+
+2026-11-23, observed at `cf7bacc`. Explicit targets and retained direct children already share a read transaction. Recursive selection will follow indexed parent links from those explicit identities before releasing that snapshot.
+
+2026-11-23, verified. Encrypted FTS5 race tests passed for the store and CLI (runs `aff32a66` and `1f68f389`). A test-local SQLite function commits a child through a second connection while the production command reads parent metadata. That child and another inserted after preview survive apply. Independent review approved the updated tests and recursive selection.
 
 **Docs:** [Descendants through the CLI](implementation.md#descendants-through-the-cli)
 
-- [ ] Add `--with-descendants`, revise `vault delete --help` and examples to distinguish the default from recursive selection, and test the help text. Traverse parent links inside preparation. Deduplicate targets, terminate on cycles and identify retained children against the whole deletion set.
-- [ ] Distinguish explicit and added rows in the preview. Show each added UUID's effective project even across projects.
-- [ ] Verify the parent/child/grandchild example, a missing parent, overlapping selections, a cycle, and single-ID batch output with expansion enabled. Insert children both during the read snapshot and after preview. Compare default and opt-in outcomes and verify the late arrivals survive.
+- [x] Add `--with-descendants`, revise `vault delete --help` and examples to distinguish the default from recursive selection, and test the help text. Traverse parent links inside preparation. Deduplicate targets, terminate on cycles and identify retained children against the whole deletion set.
+- [x] Distinguish explicit and added rows in the preview. Show each added UUID's effective project even across projects.
+- [x] Verify the parent/child/grandchild example, a missing parent, overlapping selections, a cycle, and single-ID batch output with expansion enabled. Insert children both during the read snapshot and after preview. Compare default and opt-in outcomes and verify the late arrivals survive.
 
 ## Task 3. Browse child sessions on both surfaces
 
