@@ -18,8 +18,9 @@ import (
 // full Session so selecting it can open the viewer without a second lookup of the
 // list metadata (the raw_jsonl blob is still fetched lazily on open).
 type sessionItem struct {
-	sess  vault.Session
-	depth int // number of visible ancestors
+	sess   vault.Session
+	depth  int // number of visible ancestors
+	marked bool
 }
 
 // Title indents children below their visible parent. A child whose parent is
@@ -29,13 +30,17 @@ func (i sessionItem) Title() string {
 	if t == "" {
 		t = "(untitled)"
 	}
+	mark := ""
+	if i.marked {
+		mark = "[x] "
+	}
 	if i.sess.ParentUUID == "" {
-		return t
+		return mark + t
 	}
 	if i.depth == 0 {
-		return "(parent " + shortID(i.sess.ParentUUID) + ")  " + t
+		return mark + "(parent " + shortID(i.sess.ParentUUID) + ")  " + t
 	}
-	return strings.Repeat("  ", i.depth) + "↳ " + shortID(i.sess.ParentUUID) + "  " + t
+	return mark + strings.Repeat("  ", i.depth) + "↳ " + shortID(i.sess.ParentUUID) + "  " + t
 }
 
 // Description is the secondary line: short uuid · platform · date · messages ·
@@ -93,7 +98,8 @@ type listModel struct {
 
 	filter    textinput.Model // session-filter input, shown only while filtering
 	filtering bool            // input focused; keystrokes edit the filter
-	applied   string          // applied filter substring ("" == all)
+	applied   string          // last accepted finder; filter holds the draft while editing
+	marks     map[string]bool // full UUIDs from the last accepted result
 
 	listOptions vault.ListOptions
 	returnToAll bool // S restores roots on a direct child-only launch
@@ -111,11 +117,11 @@ const listChildrenKey = "s"
 // sessionListItems receives visible sessions in descending end-time order.
 // Visiting each parent's children in input order preserves that order among
 // both the top-level rows and each group of siblings.
-func sessionListItems(sessions []vault.Session, includeChildren bool) []list.Item {
+func sessionListItems(sessions []vault.Session, includeChildren bool, marks map[string]bool) []list.Item {
 	items := make([]list.Item, 0, len(sessions))
 	if !includeChildren {
 		for _, s := range sessions {
-			items = append(items, sessionItem{sess: s})
+			items = append(items, sessionItem{sess: s, marked: marks[s.UUID]})
 		}
 		return items
 	}
@@ -140,7 +146,8 @@ func sessionListItems(sessions []vault.Session, includeChildren bool) []list.Ite
 			return
 		}
 		seen[i] = true
-		items = append(items, sessionItem{sess: sessions[i], depth: depth})
+		s := sessions[i]
+		items = append(items, sessionItem{sess: s, depth: depth, marked: marks[s.UUID]})
 		for _, child := range children[i] {
 			add(child, depth+1)
 		}
@@ -165,20 +172,28 @@ func newListModel(sessions []vault.Session, opts vault.ListOptions, styles Style
 	l.DisableQuitKeybindings() // the app owns q/ctrl+c quit
 	// Surface the app-level keybindings in the list's own help line (bubbles/list
 	// only documents its built-in navigation otherwise).
+	mark := key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mark"))
+	markAll := key.NewBinding(key.WithKeys("a", "A"), key.WithHelp("a/A", "mark all/clear"))
+	review := key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "review deletion"))
 	l.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "filter")),
+			key.NewBinding(key.WithKeys(listChildrenKey, "S"), key.WithHelp("s/S", "children")),
+			mark, review, markAll,
 			key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "rename")),
 			key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("ctrl+g", "project")),
-			key.NewBinding(key.WithKeys(listChildrenKey), key.WithHelp(listChildrenKey, "include children")),
-			key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "children only")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 			key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "raw JSONL")),
 			key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restore")),
 			key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "resume")),
 			key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 		}
+	}
+	// Bubbles renders these bindings in one vertical column in expanded help.
+	// Keep deletion controls together without displacing the selection.
+	l.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{mark, markAll, review}
 	}
 
 	fi := textinput.New()
@@ -187,7 +202,7 @@ func newListModel(sessions []vault.Session, opts vault.ListOptions, styles Style
 	fi.CharLimit = 256
 
 	m := listModel{list: l, listOptions: opts, styles: styles, filter: fi, width: width, height: height}
-	m, _ = m.setSessions(sessions, "") // the built-in asynchronous filter is disabled
+	m, _ = m.setSessions(sessions) // the built-in asynchronous filter is disabled
 	return m.setSize(width, height)
 }
 
@@ -295,22 +310,43 @@ func (m listModel) updateFilterInput(msg tea.Msg) (listModel, tea.Cmd) {
 	return m, cmd
 }
 
-// setSessions replaces the cached snapshot with all, displays the subset
-// matching applied (filterSessions), and records applied for the title and the
-// next startFilter pre-fill. Pass the current snapshot (m.all) to re-filter in
-// memory, or a fresh store read to refresh it.
-func (m listModel) setSessions(all []vault.Session, applied string) (listModel, tea.Cmd) {
-	shown := filterSessions(all, applied)
+// Reconcile marks only when a snapshot or finder is accepted. A refresh
+// during editing uses the accepted finder here and the draft for display.
+func (m listModel) setSessions(all []vault.Session) (listModel, tea.Cmd) {
+	m.all = all
+	if len(m.marks) != 0 {
+		kept := make(map[string]bool)
+		for _, s := range filterSessions(all, m.applied) {
+			if m.marks[s.UUID] {
+				kept[s.UUID] = true
+			}
+		}
+		m.marks = kept
+	}
+	return m.redraw()
+}
+
+func (m listModel) redraw() (listModel, tea.Cmd) {
+	needle := m.applied
+	if m.filtering {
+		needle = m.filterValue()
+	}
+	shown := filterSessions(m.all, needle)
 	opts := m.listOptions
-	cmd := m.list.SetItems(sessionListItems(shown, opts.IncludeChildren || opts.ChildrenOnly))
+	items := sessionListItems(shown, opts.IncludeChildren || opts.ChildrenOnly, m.marks)
+	cmd := m.list.SetItems(items)
 	// SetItems clamps the page, but its cursor can sit past the last row on
 	// that page after filtering or hiding children.
 	if len(shown) > 0 && m.list.Index() >= len(shown) {
 		m.list.Select(len(shown) - 1)
 	}
-	m.all = all
-	m.applied = applied
-	title := fmt.Sprintf("Vault — %d session(s)", len(shown))
+	m.setTitle(needle)
+	return m, cmd
+}
+
+func (m *listModel) setTitle(needle string) {
+	opts := m.listOptions
+	title := fmt.Sprintf("Vault · %d marked", len(m.marks))
 	switch {
 	case opts.ChildrenOnly:
 		title += " · children only"
@@ -319,11 +355,52 @@ func (m listModel) setSessions(all []vault.Session, applied string) (listModel, 
 	default:
 		title += " · roots"
 	}
-	if applied != "" {
-		title += fmt.Sprintf(" · filter %q", applied)
+	title += fmt.Sprintf(" · %d session(s)", len(m.list.Items()))
+	if needle != "" {
+		title += fmt.Sprintf(" · filter %q", needle)
 	}
 	m.list.Title = title
-	return m, cmd
+}
+
+// markedIDs follows the visible family order over the complete item model.
+func (m listModel) markedIDs() []string {
+	ids := make([]string, 0, len(m.marks))
+	for _, item := range m.list.Items() {
+		row := item.(sessionItem)
+		if m.marks[row.sess.UUID] {
+			ids = append(ids, row.sess.UUID)
+		}
+	}
+	return ids
+}
+
+func (m listModel) mark(key string) (listModel, tea.Cmd) {
+	if m.marks == nil {
+		m.marks = make(map[string]bool)
+	}
+	switch key {
+	case "m":
+		row, ok := m.list.SelectedItem().(sessionItem)
+		if !ok {
+			return m, nil
+		}
+		row.marked = !row.marked
+		if row.marked {
+			m.marks[row.sess.UUID] = true
+		} else {
+			delete(m.marks, row.sess.UUID)
+		}
+		cmd := m.list.SetItem(m.list.Index(), row)
+		m.setTitle(m.applied)
+		return m, cmd
+	case "a":
+		for _, item := range m.list.Items() {
+			m.marks[item.(sessionItem).sess.UUID] = true
+		}
+	case "A":
+		clear(m.marks)
+	}
+	return m.redraw()
 }
 
 // selectedRootUUID keeps the current family in focus across a children toggle.

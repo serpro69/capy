@@ -187,7 +187,7 @@ func (s *VaultStore) ApplyDelete(ctx context.Context, p *DeletePlan) error {
 	for _, target := range p.targets {
 		project, err := deletionProject(ctx, tx, target.UUID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("%w: session %q no longer in vault", ErrStaleDeletePlan, target.UUID)
+			return fmt.Errorf("%w: %w: %q", ErrStaleDeletePlan, ErrSessionNotFound, target.UUID)
 		}
 		if err != nil {
 			return err

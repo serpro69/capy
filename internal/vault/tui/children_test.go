@@ -253,7 +253,7 @@ func TestSessionListItems_CyclicParentIDs(t *testing.T) {
 		{UUID: "a", ParentUUID: "b"}, {UUID: "b", ParentUUID: "a"},
 		{UUID: "self", ParentUUID: "self"},
 	}
-	items := sessionListItems(sessions, true)
+	items := sessionListItems(sessions, true, nil)
 	var ids []string
 	for _, item := range items {
 		ids = append(ids, item.(sessionItem).sess.UUID)

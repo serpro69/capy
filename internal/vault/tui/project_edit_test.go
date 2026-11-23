@@ -265,7 +265,7 @@ func TestApp_ProjectEditorScopeRefreshAndStaleResults(t *testing.T) {
 			}
 			if scope == "finder" {
 				assert.True(t, m.list.filtering)
-				assert.Equal(t, label, m.list.applied)
+				assert.Empty(t, m.list.applied, "refresh preserves the previously accepted finder")
 				assert.Equal(t, label, m.list.filterValue())
 			}
 			st.results = append([]vault.SearchResult(nil), old...)

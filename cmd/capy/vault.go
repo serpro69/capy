@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1741,12 +1742,20 @@ func tuiRequested(cmd *cobra.Command) bool {
 // alt-screen has taken over the terminal. The TUI never closes the store — the
 // CLI owns that lifecycle (deferred Close here).
 func launchTUI(cmd *cobra.Command, env *vaultEnv, opts tui.Options) error {
+	return runVaultTUI(cmd, env, opts, tui.Run)
+}
+
+func runVaultTUI(cmd *cobra.Command, env *vaultEnv, opts tui.Options, run func(context.Context, *vault.VaultStore, tui.Options) (tui.Action, error)) error {
 	st := vault.NewVaultStore(env.dbPath)
 	defer st.Close()
 	if err := st.Open(cmd.Context()); err != nil {
 		return err
 	}
-	action, err := tui.Run(cmd.Context(), st, opts)
+	opts.ResolveRememberDeletions = func() (bool, error) {
+		cfg, err := vaultConfigForCommand(cmd)
+		return cfg.RememberDeletions, err
+	}
+	action, err := run(cmd.Context(), st, opts)
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"io"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/serpro69/capy/internal/sqliteutil"
 	"github.com/serpro69/capy/internal/vault"
+	"github.com/serpro69/capy/internal/vault/tui"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
@@ -193,4 +196,32 @@ func TestDeleteCLIWithDescendants(t *testing.T) {
 	require.NoError(t, runDelete(t, path, "", &stdout, &stderr, leaf, "--with-descendants", "--yes"))
 	require.Contains(t, stderr.String(), "1 explicit, 0 added")
 	require.Equal(t, "deleted 1 session(s)\n"+leaf+"\n", stdout.String())
+}
+
+func TestVaultTUIDeleteUsesInvocationProjectPolicy(t *testing.T) {
+	path := deleteFixture(t, deleteTestID)
+	project := t.TempDir()
+	cmd := &cobra.Command{Use: "list"}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("project-dir", project, "")
+	err := runVaultTUI(cmd, &vaultEnv{dbPath: path}, tui.Options{Mode: "list"}, func(ctx context.Context, st *vault.VaultStore, opts tui.Options) (tui.Action, error) {
+		// Edit the invocation project's file after launch, as an operator can
+		// before opening a preview in a long-lived browser.
+		require.NoError(t, os.WriteFile(filepath.Join(project, ".capy.toml"), []byte("[vault]\nremember_deletions = false\n"), 0600))
+		remember, err := opts.ResolveRememberDeletions()
+		require.NoError(t, err)
+		require.False(t, remember)
+		plan, err := st.PrepareDelete(ctx, []string{deleteTestID}, vault.DeleteOptions{ExactIDs: true, Remember: remember})
+		require.NoError(t, err)
+		return tui.Action{}, st.ApplyDelete(ctx, plan)
+	})
+	require.NoError(t, err)
+	db, err := sql.Open("sqlite3", sqliteutil.EncryptedDSN(path, testVaultKey))
+	require.NoError(t, err)
+	defer db.Close()
+	for _, table := range []string{"vault_sessions", "vault_session_deletions"} {
+		var count int
+		require.NoError(t, db.QueryRow("SELECT count(*) FROM "+table).Scan(&count))
+		require.Zero(t, count)
+	}
 }

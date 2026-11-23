@@ -55,14 +55,20 @@
 
 ## Task 4. Mark and delete sessions in the TUI
 
-**Status:** pending · **Depends on:** Tasks 1, 3 · **Size:** M · **Can run in parallel with:** Task 2
+**Status:** done · **Depends on:** Tasks 1, 3 · **Size:** M · **Can run in parallel with:** Task 2
+
+**Execution context**
+
+2026-11-23, observed at `dbe6430`. The list owns the full filtered result across pages. Its finder redraws on each keystroke. The deletion workflow will bind marks to the accepted finder and use the existing exact-ID vault plan.
+
+2026-11-23, verified. The default and glamour TUI suites and focused race-enabled deletion/CLI checks passed (run `716fe3af-2ee8-4bf8-9b92-3532bb958b30`). The missing-target and changed-project cases also passed across store, TUI and CLI (`5955e110`). A pseudo-terminal drove the built CLI through marking, previewing and deleting two archives, then verified reimport under the invocation project’s one-time policy (`02104450`). Independent review approved the rendered stale notices and compact help after the fixes.
 
 **Docs:** [Deleting from the TUI](implementation.md#deleting-from-the-tui)
 
-- [ ] Add full-UUID marks and a persistent count in the list title. Test mark-all across pages and after each first toggle from a direct child-only launch. Reconcile marks with every accepted result, including rename/project refresh. Verify that narrowing then widening never resurrects marks, and an error in the status line leaves the count visible.
-- [ ] Wire the preview to the store and invocation-project policy. Check scrolling, full UUIDs at narrow widths, escaped fields, opt-out and empty marks. Exercise `x x`, `x Enter`, Escape before confirmation, and a stale prepare reply after cancel/reopen. While apply is pending, verify that repeated `y` schedules one write, Escape cannot report cancellation, `Ctrl+G` cannot open an editor, and a quit request waits for the result.
-- [ ] Exercise a target vanishing before prepare and before apply, and a project changing before apply. Reload under current filters, report dropped marks, and review surviving marks on the next `x`. Inject a failed reload and show that retry recovers without automatic confirmation.
-- [ ] After commit, remove cached rows and hits, advance the search sequence and rerun a nonempty query independently of list reload. Combine a failed list reload, reopening search and a late old reply. Assert the committed count is reported and stale hits stay gone. A fresh read after one-time deletion and reimport may return the UUID again.
+- [x] Add full-UUID marks and a persistent count in the list title. Test mark-all across pages and after each first toggle from a direct child-only launch. Reconcile marks with every accepted result, including rename/project refresh. Verify that narrowing then widening never resurrects marks, and an error in the status line leaves the count visible.
+- [x] Wire the preview to the store and invocation-project policy. Check scrolling, full UUIDs at narrow widths, escaped fields, opt-out and empty marks. Exercise `x x`, `x Enter`, Escape before confirmation, and a stale prepare reply after cancel/reopen. While apply is pending, verify that repeated `y` schedules one write, Escape cannot report cancellation, `Ctrl+G` cannot open an editor, and a quit request waits for the result.
+- [x] Exercise a target vanishing before prepare and before apply, and a project changing before apply. Reload under current filters, report dropped marks, and review surviving marks on the next `x`. Inject a failed reload and show that retry recovers without automatic confirmation.
+- [x] After commit, remove cached rows and hits, advance the search sequence and rerun a nonempty query independently of list reload. Combine a failed list reload, reopening search and a late old reply. Assert the committed count is reported and stale hits stay gone. A fresh read after one-time deletion and reimport may return the UUID again.
 
 ## Task 5. Expand and review descendants in the TUI
 
