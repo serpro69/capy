@@ -186,7 +186,7 @@ capy vault search "rate limiter"
 capy vault show 3f8a1c2b
 ```
 
-Import scans the platform roots present on disk, honoring `CLAUDE_CONFIG_DIR` and `CODEX_HOME`. Use `--dry-run` to preview, `--platform claude-code` or `--platform codex` to restrict it, and `--source <dir>` for another location. Repeated imports skip unchanged sessions, update grown ones, and keep the larger archive when the local transcript is smaller.
+Import scans the platform roots present on disk, honoring `CLAUDE_CONFIG_DIR` and `CODEX_HOME`. Use `--dry-run` to preview, `--platform claude-code` or `--platform codex` to restrict it, and `--source <path>` to select another directory or a single transcript. Naming a file bypasses the configured minimum size. Repeated imports skip unchanged sessions, update grown ones, and keep the larger archive when the local transcript is smaller.
 
 With `CAPY_VAULT_KEY` in its launch environment, the MCP server also archives the current project's sessions at startup. Set `CAPY_VAULT_SWEEP_ALL=1` to scan all projects on startup. **Run `capy vault import` periodically** to capture sessions from projects you do not reopen; files deleted before import cannot be recovered by capy.
 

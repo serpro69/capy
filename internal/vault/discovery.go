@@ -15,6 +15,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 
@@ -47,6 +48,9 @@ type SessionFile struct {
 	// filename faithfully, since the UTC metadata cannot rebuild it. Unused for
 	// Claude (whose main file is always <ProjectDir>/<uuid>.jsonl).
 	RelativePath string
+	// inferredLocation marks a loose Codex rollout. Its fallback path is only
+	// for a new archive; copying a rollout is not evidence that it moved.
+	inferredLocation bool
 	// Root is the Codex home RelativePath is relative to (the directory the
 	// walker was given), so import can ask whether a rollout still exists at a
 	// row's stored hint before treating a same-hash file elsewhere as a move
@@ -85,6 +89,8 @@ type Discoverer interface {
 // and the server sweep can print or log the counts without re-walking the tree.
 // Every skip it counts was also logged at the moment it happened.
 type DiscoveryReport struct {
+	// SingleFile means the CLI selected one explicit transcript.
+	SingleFile bool
 	// SkippedRevertVariants lists, root-relative and slash-separated, the Codex
 	// `_<rollout_id>` rollouts (thread/revert variants) v1 does not archive
 	// (design § Import — revert variants; implementation.md § Deferred #3).
@@ -116,6 +122,97 @@ type AssociatedFile struct {
 func DiscoverSessions(ctx context.Context, rootDir string) ([]SessionFile, error) {
 	sessions, _, err := DiscoverSessionsReport(ctx, rootDir)
 	return sessions, err
+}
+
+// DiscoverImportSource resolves an explicit CLI source. Directories keep the
+// normal discovery rules. For a file, inspect just its name and own sidecars.
+func DiscoverImportSource(ctx context.Context, source string) ([]SessionFile, DiscoveryReport, error) {
+	var report DiscoveryReport
+	info, err := os.Stat(source)
+	if err != nil {
+		return nil, report, fmt.Errorf("reading input path: %w", err)
+	}
+	if info.IsDir() {
+		return DiscoverSessionsReport(ctx, source)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, report, err
+	}
+	info, err = os.Lstat(source)
+	if err != nil {
+		return nil, report, fmt.Errorf("reading session path: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, report, fmt.Errorf("session source must be a regular file: %q", source)
+	}
+	// Resolve the parent before cleaning: link/../file can name a different
+	// transcript from the lexically shortened path. The leaf may not be a link.
+	dir, base := filepath.Split(source)
+	if dir == "" {
+		dir = "."
+	}
+	dir, err = absoluteDirectory(dir)
+	if err != nil {
+		return nil, report, fmt.Errorf("resolving session directory: %w", err)
+	}
+	path := filepath.Join(dir, base)
+	report.SingleFile = true
+	if name, ok := parseRolloutFilename(base); ok {
+		if name.RolloutID != "" {
+			return nil, report, fmt.Errorf("codex revert rollout variants cannot be imported: %q", source)
+		}
+		home, rel := codexFileLocation(path, name)
+		report.FirstLineReads++
+		sf, err := codexSessionFile(path, home, rel, name, info.Size())
+		if err != nil {
+			return nil, report, err
+		}
+		sf.inferredLocation = home == ""
+		return []SessionFile{sf}, report, nil
+	}
+	if !claudeSessionFilenameRe.MatchString(base) {
+		return nil, report, fmt.Errorf("expected a Claude <uuid>.jsonl or Codex rollout filename: %q", source)
+	}
+	return []SessionFile{claudeSessionFile(path, info.Size())}, report, nil
+}
+
+func absoluteDirectory(dir string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(resolved)
+}
+
+// codexFileLocation recognizes the native relative path under a rollout root.
+// A loose file has no home; use the filename's local date for its first restore.
+func codexFileLocation(path string, name rolloutName) (home, rel string) {
+	// A file can be imported from a backup even if there is no local Codex home.
+	var configuredHome string
+	if home, err := config.CodexHome(); err == nil {
+		configuredHome, _ = absoluteDirectory(home)
+	}
+	dir := filepath.Dir(path)
+	plainName := strings.TrimSuffix(filepath.Base(path), ".zst")
+	for ancestor := dir; ancestor != filepath.Dir(ancestor); ancestor = filepath.Dir(ancestor) {
+		rootName := filepath.Base(ancestor)
+		if !slices.Contains(codexRolloutRoots[:], rootName) {
+			continue
+		}
+		// For a backup outside CODEX_HOME, recognize the native layout,
+		// including a date directory that differs from the filename's date.
+		subdir, err := filepath.Rel(ancestor, dir)
+		if err != nil {
+			continue
+		}
+		_, dateErr := time.Parse("2006/01/02", filepath.ToSlash(subdir))
+		home = filepath.Dir(ancestor)
+		if home == configuredHome || (rootName == "archived_sessions" && subdir == ".") || dateErr == nil {
+			return home, filepath.ToSlash(filepath.Join(rootName, subdir, plainName))
+		}
+	}
+	date := strings.ReplaceAll(name.LocalTS[:10], "-", "/")
+	return "", "sessions/" + date + "/" + plainName
 }
 
 // DiscoverSessionsReport finds all session files reachable from rootDir and
@@ -373,8 +470,6 @@ func discoverProject(projectDir string) ([]SessionFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing project dir: %w", err)
 	}
-	projectName := filepath.Base(projectDir)
-
 	var sessions []SessionFile
 	for _, e := range entries {
 		// Only regular files are real session JSONLs. e.Type().IsRegular() is
@@ -384,20 +479,22 @@ func discoverProject(projectDir string) ([]SessionFile, error) {
 		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		uuid := strings.TrimSuffix(e.Name(), ".jsonl")
-		sf := SessionFile{
-			Platform:   PlatformClaudeCode,
-			Path:       filepath.Join(projectDir, e.Name()),
-			UUID:       uuid,
-			ProjectDir: projectName,
-		}
+		var size int64
 		if info, err := e.Info(); err == nil {
-			sf.OnDiskSize = info.Size()
+			size = info.Size()
 		}
-		sf.AssociatedFiles = collectAssociatedFiles(filepath.Join(projectDir, uuid))
-		sessions = append(sessions, sf)
+		sessions = append(sessions, claudeSessionFile(filepath.Join(projectDir, e.Name()), size))
 	}
 	return sessions, nil
+}
+
+func claudeSessionFile(path string, size int64) SessionFile {
+	dir := filepath.Dir(path)
+	uuid := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	return SessionFile{
+		Platform: PlatformClaudeCode, Path: path, UUID: uuid, OnDiskSize: size,
+		ProjectDir: filepath.Base(dir), AssociatedFiles: collectAssociatedFiles(filepath.Join(dir, uuid)),
+	}
 }
 
 // collectAssociatedFiles walks the <uuid>/ session directory recursively and
@@ -411,7 +508,9 @@ func collectAssociatedFiles(sessionDir string) []AssociatedFile {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
+		// Only descendants of an actual session directory are sidecars.
+		// A regular sibling named <uuid> would otherwise be collected as ".".
+		if path == sessionDir || d.IsDir() {
 			return nil
 		}
 		// Skip non-regular entries (symlinks, devices, sockets, FIFOs). For a
@@ -624,33 +723,38 @@ func (d codexDiscoverer) walkRoot(ctx context.Context, home, root string, report
 		}
 
 		report.FirstLineReads++
-		first, ferr := readRolloutFirstLine(path, name.Compressed)
-		if ferr != nil {
-			slog.Warn("vault discovery: skipping codex rollout with an unreadable first line", "path", path, "error", ferr)
+		sf, lineErr := codexSessionFile(path, home, rel, name, info.Size())
+		if lineErr != nil {
+			slog.Warn("vault discovery: skipping codex rollout with an "+lineErr.Op, "path", path, "error", lineErr.Err)
 			return nil
 		}
-		cwd, cerr := codexFirstLineCWD(first)
-		if cerr != nil {
-			slog.Warn("vault discovery: skipping codex rollout with an unparseable first line", "path", path, "error", cerr)
-			return nil
-		}
-		if cwd == "" {
-			slog.Debug("vault discovery: codex rollout does not open with session_meta; no project hint", "path", path)
-		}
-		sessions = append(sessions, SessionFile{
-			Platform:     PlatformCodex,
-			Path:         path,
-			UUID:         name.UUID,
-			RelativePath: rel,
-			Root:         home,
-			ProjectPath:  cwd,
-			Compressed:   name.Compressed,
-			OnDiskSize:   info.Size(),
-		})
+		sessions = append(sessions, sf)
 		return nil
 	})
 	return sessions, err
 }
+
+func codexSessionFile(path, home, rel string, name rolloutName, size int64) (SessionFile, *fs.PathError) {
+	first, err := readRolloutFirstLine(path, name.Compressed)
+	if err != nil {
+		return SessionFile{}, &fs.PathError{Op: "unreadable first line", Path: path, Err: err}
+	}
+	cwd, err := codexFirstLineCWD(first)
+	if err != nil {
+		return SessionFile{}, &fs.PathError{Op: "unparseable first line", Path: path, Err: err}
+	}
+	if cwd == "" {
+		slog.Debug("vault discovery: codex rollout does not open with session_meta; no project hint", "path", path)
+	}
+	return SessionFile{
+		Platform: PlatformCodex, Path: path, UUID: name.UUID, RelativePath: rel,
+		Root: home, ProjectPath: cwd, Compressed: name.Compressed, OnDiskSize: size,
+	}, nil
+}
+
+const uuidPattern = `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`
+
+var claudeSessionFilenameRe = regexp.MustCompile(`^(?i:` + uuidPattern + `)\.jsonl$`)
 
 // rolloutFilenameRe matches Codex's rollout file name
 // (codex-rs/rollout/src/rollout_file_name.rs):
@@ -660,7 +764,7 @@ func (d codexDiscoverer) walkRoot(ctx context.Context, home, root string, report
 // The timestamp is the thread's LOCAL creation time; the uuid is lowercase
 // (UUIDv7); the optional _<rollout_id> marks a thread/revert variant.
 var rolloutFilenameRe = regexp.MustCompile(
-	`^rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_([^.]+))?\.jsonl(\.zst)?$`)
+	`^rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-(` + uuidPattern + `)(?:_([^.]+))?\.jsonl(\.zst)?$`)
 
 // rolloutName is a parsed Codex rollout file name.
 type rolloutName struct {

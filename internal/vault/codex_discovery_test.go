@@ -100,6 +100,34 @@ func TestParseRolloutFilename(t *testing.T) {
 	}
 }
 
+func TestDiscoverImportSource_CodexFiles(t *testing.T) {
+	home := writeCodexDiscoveryHome(t)
+	t.Setenv("CODEX_HOME", t.TempDir()) // also recognize a backup's layout
+	path := filepath.Join(home, codexDiscRelC+".zst")
+	for _, input := range []string{path, filepath.Join(t.TempDir(), filepath.Base(path))} {
+		if input != path {
+			require.NoError(t, os.Rename(path, input))
+		}
+		files, report, err := DiscoverImportSource(t.Context(), input)
+		require.NoError(t, err)
+		require.Len(t, files, 1)
+		assert.True(t, report.SingleFile)
+		assert.Equal(t, 1, report.FirstLineReads)
+		assert.True(t, files[0].Compressed)
+		assert.Equal(t, "/p/c", files[0].ProjectPath)
+		assert.Equal(t, codexDiscRelC, files[0].RelativePath)
+		assert.Equal(t, input != path, files[0].inferredLocation)
+	}
+	for _, rel := range []string{codexDiscRelE, "outside.jsonl", "missing.jsonl"} {
+		_, _, err := DiscoverImportSource(t.Context(), filepath.Join(home, rel))
+		require.Error(t, err, rel)
+	}
+	link := filepath.Join(t.TempDir(), filepath.Base(codexDiscRelA))
+	require.NoError(t, os.Symlink(filepath.Join(home, codexDiscRelA), link))
+	_, _, err := DiscoverImportSource(t.Context(), link)
+	require.ErrorContains(t, err, "regular file")
+}
+
 func TestDiscoverCodex_Layouts(t *testing.T) {
 	home := writeCodexDiscoveryHome(t)
 	h := captureSlog(t)

@@ -288,3 +288,42 @@ func TestVaultCodex_RestoreDefaultRootIsCodexHome(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("compressed twin"), twinBytes, "the .zst twin is never touched")
 }
+
+func TestVaultImportSingleCodexFile(t *testing.T) {
+	home := setupCodexVaultEnv(t)
+	name := filepath.Base(codexCLIRel)
+	active := filepath.Join(home, codexCLIRel)
+	loose := filepath.Join(t.TempDir(), name)
+	require.NoError(t, os.Rename(active, loose))
+	run := func(args ...string) string {
+		t.Helper()
+		stdout, stderr, code := capy(t, append([]string{"vault"}, args...)...)
+		require.Zero(t, code, stderr)
+		return stdout
+	}
+	restore := func(rel string, want []byte) {
+		t.Helper()
+		dest := t.TempDir()
+		run("restore", codexCLIUUID, "--output", dest)
+		got, err := os.ReadFile(filepath.Join(dest, rel))
+		require.NoError(t, err)
+		require.Equal(t, want, got)
+	}
+	require.Contains(t, run("import", "--source", loose), "imported 1")
+	restore(codexCLIRel, codexCLIRollout)
+
+	archivedRel := filepath.Join("archived_sessions", name)
+	archived := filepath.Join(home, archivedRel)
+	require.NoError(t, os.MkdirAll(filepath.Dir(archived), 0o700))
+	require.NoError(t, os.WriteFile(archived, codexCLIRollout, 0o600))
+	require.Contains(t, run("import", "--source", archived), "updated 1")
+	require.NoError(t, os.Remove(archived))
+	require.Contains(t, run("import", "--source", loose), "skipped 1")
+	restore(archivedRel, codexCLIRollout)
+
+	const extraTurn = `{"type":"event_msg","payload":{"type":"user_message","message":"One more turn"}}`
+	grown := []byte(string(codexCLIRollout) + extraTurn + "\n")
+	require.NoError(t, os.WriteFile(loose, grown, 0o600))
+	require.Contains(t, run("import", "--source", loose), "updated 1")
+	restore(archivedRel, grown)
+}

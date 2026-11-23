@@ -48,3 +48,34 @@ func TestVaultMinSessionBytesCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestVaultImportSingleClaudeFile(t *testing.T) {
+	root, id, main, sidecar := setupVaultWithSidecar(t)
+	project := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(project, ".capy.toml"),
+		[]byte("[vault]\nmin_session_bytes = 1048576\n"), 0o600))
+	source := filepath.Join(root, id+".jsonl")
+	sibling := filepath.Join(root, "eeeeeeee-1111-2222-3333-444444444444.jsonl")
+	require.NoError(t, os.WriteFile(sibling, main, 0o600))
+	run := func(args ...string) string {
+		t.Helper()
+		stdout, stderr, code := capy(t, append([]string{"--project-dir", project, "vault"}, args...)...)
+		require.Zero(t, code, stderr)
+		return stdout
+	}
+	require.Contains(t, run("import", "--source", source, "--min-size-bytes", "1048576"), "below minimum size")
+	require.Contains(t, run("import", "--source", source, "--platform", "codex"), "no sessions matched")
+	require.Contains(t, run("import", "--source", source, "--dry-run"), "imported 1")
+	require.Contains(t, run("list"), "no sessions archived")
+	require.Contains(t, run("import", "--source", source), "imported 1")
+	require.NotContains(t, run("list", "--json"), "eeeeeeee")
+	out := t.TempDir()
+	run("restore", id, "--output", out)
+	got, err := os.ReadFile(filepath.Join(out, id, "subagents", "agent-7.jsonl"))
+	require.NoError(t, err)
+	require.Equal(t, sidecar, got)
+	run("delete", id, "--yes")
+	require.Contains(t, run("import", "--source", source), "deleted")
+	require.NoError(t, os.WriteFile(sibling, []byte(`{"type":"ai-title","aiTitle":"metadata only"}`), 0o600))
+	require.Contains(t, run("import", "--source", sibling), "no messages")
+}
