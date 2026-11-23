@@ -22,10 +22,18 @@ const (
 	deleteApplying
 )
 
+type deleteSelection struct {
+	marked []string
+	inList map[string]bool
+}
+
 type deleteReview struct {
+	selection     deleteSelection
+	options       vault.DeleteOptions
 	phase         deletePhase
 	cancelPrepare context.CancelFunc
 	plan          *vault.DeletePlan
+	frameTag      string
 	vp            viewport.Model
 	content       string // escaped before wrapping, retained for terminal resizes
 	showHelp      bool
@@ -74,15 +82,25 @@ func (m Model) beginDelete() (tea.Model, tea.Cmd) {
 	if err != nil {
 		return m.withError("loading deletion policy: " + err.Error()), nil
 	}
+	return m.prepareDelete(m.list.deleteSelection(), vault.DeleteOptions{ExactIDs: true, Remember: remember})
+}
+
+// Every toggle starts a new vault snapshot. The opening selection and policy
+// outlive its individual requests; only the latest reply can become ready.
+func (m Model) prepareDelete(selection deleteSelection, opts vault.DeleteOptions) (tea.Model, tea.Cmd) {
+	m.deleteOutput.awaiting.Store(nil)
+	if m.deletion.cancelPrepare != nil {
+		m.deletion.cancelPrepare()
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
-	ids := m.list.markedIDs()
+	ids := selection.marked
 	m.deleteSeq++
 	seq, store := m.deleteSeq, m.store
 	m.mode = modeDelete
-	m.deletion = deleteReview{phase: deletePreparing, cancelPrepare: cancel}
+	m.deletion = deleteReview{selection: selection, options: opts, phase: deletePreparing, cancelPrepare: cancel}
 	return m, func() tea.Msg {
 		defer cancel()
-		p, err := store.PrepareDelete(ctx, ids, vault.DeleteOptions{ExactIDs: true, Remember: remember})
+		p, err := store.PrepareDelete(ctx, ids, opts)
 		return deletePreparedMsg{seq, p, err}
 	}
 }
@@ -99,16 +117,23 @@ func (m Model) handleDeletePrepared(msg deletePreparedMsg) (tea.Model, tea.Cmd) 
 		return m.deleteFailed(errors.New("vault returned no deletion plan"))
 	}
 	m.deletion.phase, m.deletion.plan = deleteReady, msg.plan
-	m.deletion.content = deletePreviewText(msg.plan)
+	m.deletion.frameTag = m.deleteOutput.watch()
+	m.deletion.content = m.deletion.previewText()
 	m.deletion.vp = viewport.New(0, 0)
 	m.deletion.resize(m.width, m.bodyHeight())
 	return m, nil
 }
 
-func deletePreviewText(plan *vault.DeletePlan) string {
+func (d deleteReview) previewText() string {
 	var b strings.Builder
+	plan := d.plan
 	targets := plan.Targets()
-	fmt.Fprintf(&b, "Review deletion · %d explicit, %d added\n\n", plan.ExplicitCount(), len(targets)-plan.ExplicitCount())
+	fmt.Fprintf(&b, "Review deletion · %d explicit, %d added\n", plan.ExplicitCount(), len(targets)-plan.ExplicitCount())
+	if d.options.WithDescendants {
+		b.WriteString("Include descendants: on\n\n")
+	} else {
+		b.WriteString("Include descendants: off\n\n")
+	}
 	if plan.RemembersDeletions() {
 		b.WriteString("Capy will remember each UUID and project. Future imports exclude these sessions. A merge can delete copies in other vaults. Capy cannot undo this deletion.\n")
 	} else {
@@ -118,8 +143,17 @@ func deletePreviewText(plan *vault.DeletePlan) string {
 	if len(plan.RetainedChildren) > 0 {
 		fmt.Fprintf(&b, "%d direct child session(s) will stay archived.\n", len(plan.RetainedChildren))
 	}
-	for _, target := range targets {
-		fmt.Fprintf(&b, "\nUUID: %s\nTitle: %s\nPlatform: %s\nProject: %s\n", terminal.EscapeField(target.UUID), terminal.EscapeField(target.Title), terminal.EscapeField(string(target.Platform.OrClaude())), terminal.EscapeField(target.Project))
+	for i, target := range targets {
+		if i < plan.ExplicitCount() {
+			b.WriteString("\nExplicit selection\n")
+		} else {
+			b.WriteString("\nAdded descendant")
+			if !d.selection.inList[target.UUID] {
+				b.WriteString(" · outside current list")
+			}
+			fmt.Fprintf(&b, "\nParent: %s\n", terminal.EscapeField(target.ParentUUID))
+		}
+		fmt.Fprintf(&b, "UUID: %s\nTitle: %s\nPlatform: %s\nProject: %s\n", terminal.EscapeField(target.UUID), terminal.EscapeField(target.Title), terminal.EscapeField(string(target.Platform.OrClaude())), terminal.EscapeField(target.Project))
 		if len(targets) == 1 {
 			if target.Project != target.OriginalPath {
 				fmt.Fprintf(&b, "Original path: %s\n", terminal.EscapeField(target.OriginalPath))
@@ -144,14 +178,14 @@ func (d *deleteReview) resize(width, height int) {
 func (d deleteReview) view() string {
 	switch d.phase {
 	case deletePreparing:
-		return "Preparing deletion preview…"
+		return "Preparing deletion preview… · d toggle descendants · esc cancel"
 	case deleteApplying:
 		return "Deleting reviewed sessions…"
 	default:
 		if !d.showHelp {
-			return d.vp.View()
+			return d.frameTag + d.vp.View()
 		}
-		return d.vp.View() + "\n" + fitRow("y delete · esc cancel · ↑/↓ scroll · pgup/pgdn page", d.vp.Width)
+		return d.frameTag + d.vp.View() + "\n" + fitRow("y delete · d descendants · esc cancel · ↑/↓ scroll · pgup/pgdn page", d.vp.Width)
 	}
 }
 
@@ -174,6 +208,7 @@ func (m Model) updateDelete(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key.String() == "esc" || quit {
+		m.deleteOutput.awaiting.Store(nil)
 		if m.deletion.cancelPrepare != nil {
 			m.deletion.cancelPrepare()
 		}
@@ -183,6 +218,11 @@ func (m Model) updateDelete(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m.clearStatus(), nil
+	}
+	if key.String() == "d" {
+		opts := m.deletion.options
+		opts.WithDescendants = !opts.WithDescendants
+		return m.prepareDelete(m.deletion.selection, opts)
 	}
 	if m.deletion.phase != deleteReady {
 		return m, nil
@@ -197,6 +237,9 @@ func (m Model) updateDelete(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "pgdown":
 		m.deletion.vp.PageDown()
 	case "y":
+		if m.deleteOutput.awaiting.Load() != nil {
+			return m, nil
+		}
 		m.deletion.phase = deleteApplying
 		store, ctx, plan, seq := m.store, m.ctx, m.deletion.plan, m.deleteSeq
 		return m, func() tea.Msg { return deleteAppliedMsg{seq, store.ApplyDelete(ctx, plan)} }

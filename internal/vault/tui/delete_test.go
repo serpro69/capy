@@ -57,12 +57,18 @@ func archiveForDelete(t *testing.T, st *vault.VaultStore, id string) {
 	require.NoError(t, st.InsertSession(t.Context(), &rec))
 }
 
-func deletionApp(t *testing.T, remember bool, ids ...string) (Model, *deleteTestStore) {
+func newDeleteTestStore(t *testing.T) *deleteTestStore {
 	t.Helper()
 	t.Setenv("CAPY_VAULT_KEY", "synthetic-vault-test-key")
 	t.Setenv("CAPY_MACHINE_ID", "test-machine")
 	st := &deleteTestStore{VaultStore: vault.NewVaultStore(filepath.Join(t.TempDir(), "vault.db"))}
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	return st
+}
+
+func deletionApp(t *testing.T, remember bool, ids ...string) (Model, *deleteTestStore) {
+	t.Helper()
+	st := newDeleteTestStore(t)
 	for _, id := range ids {
 		archiveForDelete(t, st.VaultStore, id)
 	}
@@ -74,7 +80,13 @@ func deletionApp(t *testing.T, remember bool, ids ...string) (Model, *deleteTest
 
 func deleteStep(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	next, cmd := m.Update(msg)
-	return next.(Model), cmd
+	m = next.(Model)
+	// These model tests drive one displayed frame per step. The renderer
+	// integration test separately exercises input while a frame is buffered.
+	if m.mode == modeDelete && m.deletion.phase == deleteReady {
+		m.deleteOutput.didWrite([]byte(m.View()))
+	}
+	return m, cmd
 }
 
 func readyDeletion(t *testing.T, m Model) Model {
@@ -141,11 +153,11 @@ func TestDeleteMarksFollowAcceptedFinder(t *testing.T) {
 	require.True(t, m.list.filtering)
 	require.Equal(t, modeList, m.mode)
 	m = press(t, m, "backspace", "enter")
-	require.Equal(t, []string{"aaaa1111"}, m.list.markedIDs())
+	require.Equal(t, []string{"aaaa1111"}, m.list.deleteSelection().marked)
 	require.Contains(t, m.status, "dropped 1 mark")
 	m = press(t, m, "f", "esc")
 	require.Len(t, m.list.list.Items(), 2)
-	require.Equal(t, []string{"aaaa1111"}, m.list.markedIDs())
+	require.Equal(t, []string{"aaaa1111"}, m.list.deleteSelection().marked)
 }
 
 func TestDeleteMarksAfterMetadataRefresh(t *testing.T) {
@@ -185,7 +197,7 @@ func TestDeleteMarksAfterMetadataRefresh(t *testing.T) {
 				require.Equal(t, "aaaa1111", m.list.list.Items()[0].(sessionItem).sess.UUID)
 				m = press(t, m, "esc")
 			}
-			require.Equal(t, []string{"bbbb2222"}, m.list.markedIDs())
+			require.Equal(t, []string{"bbbb2222"}, m.list.deleteSelection().marked)
 		})
 	}
 }
@@ -329,7 +341,7 @@ func TestDeletePolicyErrorAndReadyCancellation(t *testing.T) {
 	require.Contains(t, m.deletion.content, "remember each UUID")
 	m = press(t, m, "esc")
 	require.Zero(t, st.applies)
-	require.Equal(t, []string{deleteID}, m.list.markedIDs())
+	require.Equal(t, []string{deleteID}, m.list.deleteSelection().marked)
 	_, err := st.GetSession(t.Context(), deleteID)
 	require.NoError(t, err)
 	remember = false

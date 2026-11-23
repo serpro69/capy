@@ -362,16 +362,21 @@ func (m *listModel) setTitle(needle string) {
 	m.list.Title = title
 }
 
-// markedIDs follows the visible family order over the complete item model.
-func (m listModel) markedIDs() []string {
-	ids := make([]string, 0, len(m.marks))
+// Snapshot the accepted list across pages and preserve family order for the
+// explicit selection. Called from list navigation after the finder is accepted.
+func (m listModel) deleteSelection() deleteSelection {
+	selection := deleteSelection{
+		marked: make([]string, 0, len(m.marks)),
+		inList: make(map[string]bool, len(m.list.Items())),
+	}
 	for _, item := range m.list.Items() {
-		row := item.(sessionItem)
-		if m.marks[row.sess.UUID] {
-			ids = append(ids, row.sess.UUID)
+		id := item.(sessionItem).sess.UUID
+		selection.inList[id] = true
+		if m.marks[id] {
+			selection.marked = append(selection.marked, id)
 		}
 	}
-	return ids
+	return selection
 }
 
 func (m listModel) mark(key string) (listModel, tea.Cmd) {

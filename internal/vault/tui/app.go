@@ -122,6 +122,7 @@ type Model struct {
 	search                   searchModel
 	raw                      rawModel
 	deletion                 deleteReview
+	deleteOutput             *deletePreviewOutput
 	deleteSeq                uint64
 	deleteNeedsReload        bool
 	resolveRememberDeletions func() (bool, error)
@@ -192,7 +193,7 @@ func Run(ctx context.Context, st *vault.VaultStore, opts Options) (Action, error
 	if err != nil {
 		return Action{}, err
 	}
-	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithFilter(waitForDelete)).Run()
+	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithFilter(waitForDelete), tea.WithOutput(m.deleteOutput)).Run()
 	if err != nil {
 		return Action{}, err
 	}
@@ -232,6 +233,7 @@ func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 		ctx:                      ctx,
 		store:                    st,
 		resolveRememberDeletions: opts.ResolveRememberDeletions,
+		deleteOutput:             &deletePreviewOutput{File: os.Stdout},
 		styles:                   styles,
 		mode:                     modeList,
 		list:                     list,

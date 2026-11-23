@@ -72,12 +72,18 @@
 
 ## Task 5. Expand and review descendants in the TUI
 
-**Status:** pending · **Depends on:** Tasks 2, 4 · **Size:** S · **Can run in parallel with:** —
+**Status:** done · **Depends on:** Tasks 2, 4 · **Size:** S · **Can run in parallel with:** —
+
+**Execution context**
+
+2026-11-23, observed at `b49dc07`. The vault already returns explicit targets before recursively added descendants. The TUI has the full accepted item model before pagination and guards prepare replies by request number.
+
+2026-11-23, verified. The deletion race tests and full default and glamour TUI suites passed (run `5e02ed74-dea4-4d80-a459-43f8348d1241`). Independent review identified that Bubble Tea can coalesce frames. Confirmation now waits for a successful terminal write of the current preview. A renderer test held that write and checked both early and subsequent confirmations three times under the race detector (`abf6dc42`). A pseudo-terminal test exercised expansion, collapse, the outside-list label and deletion against a temporary vault (`d7580a2e`). Re-review approved the change.
 
 **Docs:** [Descendants and preview](design.md#descendants-and-preview)
 
-- [ ] On opening the preview capture all accepted list UUIDs across pages separately from the marked UUIDs. Use the same membership for every `d` toggle. Label only added descendants absent from that set. Accept `y` only for the currently displayed, ready plan.
-- [ ] Mark a parent in an all-sessions list. Put one unmarked child on a later page and exclude its same-project sibling by name. Expand, collapse and expand again. Assert only the excluded sibling carries the outside-list label each time. Cover roots-only membership, overlapping marks, cancel and a late prepare reply after a toggle.
+- [x] On opening the preview capture all accepted list UUIDs across pages separately from the marked UUIDs. Use the same membership for every `d` toggle. Label only added descendants absent from that set. Accept `y` only for the currently displayed, ready plan.
+- [x] Mark a parent in an all-sessions list. Put one unmarked child on a later page and exclude its same-project sibling by name. Expand, collapse and expand again. Assert only the excluded sibling carries the outside-list label each time. Cover roots-only membership, overlapping marks, cancel and a late prepare reply after a toggle.
 
 ## Task 6. Verify and document the operator workflow
 
