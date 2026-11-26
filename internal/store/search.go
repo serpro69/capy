@@ -137,7 +137,7 @@ func (s *ContentStore) searchCorpusWithErrorHandler(opts SearchOptions, onError 
 		DB:            db,
 		PorterTable:   "chunks",
 		TrigramTable:  "chunks_trigram",
-		SelectColumns: "s.label, c.title, c.content, c.source_id, c.content_type",
+		SelectColumns: "s.label, c.title, c.content, c.source_id, c.content_type, c.rowid",
 		Join:          "JOIN sources s ON s.id = c.source_id",
 		TitleWeight:   s.titleWeight,
 		FilterSQL:     filterSQL,
@@ -186,10 +186,10 @@ func knowledgeFilterClauses(opts SearchOptions) (string, []any) {
 
 // scanSearchRow is the knowledge corpus's retrieval.RowMapper: it scans the
 // SELECT list built by searchCorpus plus the skeleton's highlighted/rank
-// columns.
+// columns. The rowid, with the layer table the engine stamps, locates the row.
 func scanSearchRow(rows *sql.Rows) (retrieval.SearchResult, error) {
 	var r retrieval.SearchResult
-	err := rows.Scan(&r.Label, &r.Title, &r.Content, &r.SourceID, &r.ContentType, &r.Highlighted, &r.Rank)
+	err := rows.Scan(&r.Label, &r.Title, &r.Content, &r.SourceID, &r.ContentType, &r.RowID, &r.Highlighted, &r.Rank)
 	return r, err
 }
 

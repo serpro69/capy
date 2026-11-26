@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,14 @@ func assertBoundedReply(t *testing.T, srv *Server, r *mcp.CallToolResult, tracke
 	return text
 }
 
+// entryNumberRe matches the entry number prefixed to a full hit block.
+var entryNumberRe = regexp.MustCompile(`^\[\d+\] `)
+
+// knowledgeBlock renders a knowledge hit's full block.
+func knowledgeBlock(r store.SearchResult, query string) string {
+	return renderKnowledgeHit(r, query).block
+}
+
 func trackedSearchBytes(srv *Server) int64 {
 	return srv.stats.Snapshot().BytesReturned["capy_search"]
 }
@@ -94,7 +103,7 @@ func TestDisplayFieldBounds(t *testing.T) {
 func TestExtractSnippetBounds(t *testing.T) {
 	t.Run("interior multibyte windows stay valid and bounded", func(t *testing.T) {
 		content := strings.Repeat("é", 1000) + " needle " + strings.Repeat("ü", 1000) + " needle " + strings.Repeat("ö", 1000)
-		got := ExtractSnippet(content, "needle", searchPassageMaxBytes, "")
+		got := snippetText(content, "needle", searchPassageMaxBytes, "")
 		assert.True(t, utf8.ValidString(got))
 		assert.LessOrEqual(t, len(got), searchPassageMaxBytes)
 		assert.Contains(t, got, "needle")
@@ -103,7 +112,7 @@ func TestExtractSnippetBounds(t *testing.T) {
 		// U+023A is 2 bytes but lowercases to U+2C65, 3 bytes, so offsets in
 		// the lowered text drift right of the original by one byte per rune.
 		content := strings.Repeat("Ⱥ", 1200) + " needle " + strings.Repeat("x", 2000)
-		got := ExtractSnippet(content, "needle", 600, "")
+		got := snippetText(content, "needle", 600, "")
 		assert.Contains(t, got, "needle")
 		assert.True(t, utf8.ValidString(got))
 		assert.LessOrEqual(t, len(got), 600)
@@ -111,40 +120,48 @@ func TestExtractSnippetBounds(t *testing.T) {
 	t.Run("highlights that do not reproduce the content are ignored", func(t *testing.T) {
 		content := strings.Repeat("a", 2000) + " needle " + strings.Repeat("b", 2000)
 		stale := "\x02" + strings.Repeat("z", 10) + "\x03" + strings.Repeat("a", 3000)
-		got := ExtractSnippet(content, "needle", 600, stale)
+		got := snippetText(content, "needle", 600, stale)
 		assert.Contains(t, got, "needle")
 	})
 	t.Run("prefix fallback stays inside the cap", func(t *testing.T) {
-		got := ExtractSnippet(strings.Repeat("é", 1000), "zzz", 101, "")
+		got := snippetText(strings.Repeat("é", 1000), "zzz", 101, "")
 		assert.LessOrEqual(t, len(got), 101)
 		assert.True(t, utf8.ValidString(got))
 	})
 }
 
 // TestHitBlockUpperBound renders hits whose every field is oversized: each
-// block with its separator stays within searchHitMaxBytes, and ten distinct
-// full hits plus a maximal frame and the notice reserve fit 33,792 bytes.
+// numbered block with its separator stays within searchHitMaxBytes, and ten
+// distinct full hits plus a maximal frame and the notice reserve fit 33,792
+// bytes.
 func TestHitBlockUpperBound(t *testing.T) {
 	huge := strings.Repeat("ű", 5000)
-	k := formatKnowledgeHit(store.SearchResult{
+	// No reply holds more entries than this, so no entry number is longer.
+	number := fmt.Sprintf("[%d] ", searchReplyMaxBytes)
+	k := knowledgeBlock(store.SearchResult{
 		Label:   "session:" + huge,
 		Title:   huge,
 		Content: strings.Repeat("needle ", 2000),
 	}, "needle")
-	assert.LessOrEqual(t, len(hitSeparator)+len(k), searchHitMaxBytes)
+	assert.LessOrEqual(t, len(hitSeparator)+len(number)+len(k), searchHitMaxBytes)
 	assert.Contains(t, k, "(knowledge)", "a session:-looking knowledge label keeps explicit attribution")
 
 	v := formatVaultHit(vault.SearchResult{
-		SessionUUID: huge,
-		Title:       huge,
-		Project:     huge,
-		EndTime:     time.Unix(0, 0),
-		LineIndex:   math.MaxInt,
-		Platform:    vault.Platform(huge),
-		ParentUUID:  huge,
-		Snippet:     huge,
+		SessionUUID:   huge,
+		SubagentID:    "sk-ant-" + strings.Repeat("Q", 40) + huge,
+		Title:         huge,
+		Project:       huge,
+		EndTime:       time.Unix(0, 0),
+		LineIndex:     math.MaxInt,
+		ChunkIndex:    math.MaxInt,
+		HasChunkIndex: true,
+		Platform:      vault.Platform(huge),
+		ParentUUID:    huge,
+		Snippet:       huge,
 	})
-	assert.LessOrEqual(t, len(hitSeparator)+len(v), searchHitMaxBytes)
+	assert.Contains(t, v, "(ID redacted and shortened; chunk ")
+	assert.LessOrEqual(t, len(hitSeparator)+len(number)+len(v), searchHitMaxBytes)
+	assert.LessOrEqual(t, len(hitSeparator)+len(referenceBlock(searchReplyMaxBytes)), searchHitMaxBytes)
 	assert.True(t, utf8.ValidString(k) && utf8.ValidString(v))
 
 	frame := queryFrame(math.MaxInt, huge, []string{"knowledge: " + huge, "vault: " + huge}, 1)
@@ -156,7 +173,7 @@ func TestHitBlockUpperBound(t *testing.T) {
 }
 
 func TestHitFieldsStayOnOneLine(t *testing.T) {
-	k := formatKnowledgeHit(store.SearchResult{
+	k := knowledgeBlock(store.SearchResult{
 		Label:   "label\nwith break",
 		Title:   "title\u2028with separator",
 		Content: "body",
@@ -169,7 +186,7 @@ func TestHitFieldsStayOnOneLine(t *testing.T) {
 		Project:     "proj\rect",
 		Snippet:     "line one\nline two",
 	})
-	assert.Equal(t, "--- [session:uuid] ---\n### title\\nnext\nproj\\rect · line 0 · claude-code\n\nline one\nline two", v,
+	assert.Equal(t, "--- [session:uuid] ---\n### title\\nnext\nproj\\rect · chunk from line 0 · claude-code\n\nline one\nline two", v,
 		"metadata is escaped while the passage keeps its line breaks")
 }
 
@@ -253,11 +270,15 @@ func TestSearchReply_SanitizedBoundedFields(t *testing.T) {
 	assert.Contains(t, text, "passageneedle")
 	assert.Contains(t, text, "## 3. runeneedle")
 	assert.Contains(t, text, "runeneedle")
+	headers := 0
 	for _, line := range strings.Split(text, "\n") {
+		line = entryNumberRe.ReplaceAllString(line, "")
 		if strings.HasPrefix(line, "--- [") {
+			headers++
 			assert.LessOrEqual(t, len(line), knowledgeLabelMaxBytes+len("--- [] (knowledge) ---"))
 		}
 	}
+	assert.Equal(t, 3, headers, "every hit header is checked")
 }
 
 func TestSearchReply_LongInvalidKind(t *testing.T) {
@@ -455,7 +476,7 @@ func TestSearchReply_Guidance(t *testing.T) {
 }
 
 func TestFormatKnowledgeHit_ShowsLiteralMarkerBytes(t *testing.T) {
-	got := formatKnowledgeHit(store.SearchResult{
+	got := knowledgeBlock(store.SearchResult{
 		Label:       "doc",
 		Title:       "T",
 		Content:     "head [REDACTED_SECRET]\x02SUFFIX end",
@@ -469,7 +490,7 @@ func TestFormatKnowledgeHit_LiteralMarkerQueryFindsItsExcerpt(t *testing.T) {
 	// The only match lies beyond the passage cap, so the window must come
 	// from the query term, normalized like the displayed content.
 	content := strings.Repeat("x", 3000) + " alpha\x02beta " + strings.Repeat("y", 3000)
-	got := formatKnowledgeHit(store.SearchResult{Label: "doc", Title: "T", Content: content}, "alpha\x02beta")
+	got := knowledgeBlock(store.SearchResult{Label: "doc", Title: "T", Content: content}, "alpha\x02beta")
 	assert.Contains(t, got, "alpha\uFFFDbeta")
 }
 

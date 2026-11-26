@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/sanitize"
+	"github.com/serpro69/capy/internal/terminal"
 	"github.com/serpro69/capy/internal/vault"
 )
 
@@ -151,22 +153,33 @@ func vaultProjectScope(req mcp.CallToolRequest, projectDir string) (project, pro
 	}
 }
 
-// formatVaultHit renders one chunk hit: a session:<uuid> label (so the assistant
-// can pivot to `capy vault show`/the TUI), the session title, its project and end
-// date, the first-line anchor, the producing platform and — for a sub-agent
-// session — its parent, then the pre-windowed chunk snippet.
+// formatVaultHit renders one chunk hit's full block (see renderVaultHit).
+func formatVaultHit(r vault.SearchResult) string {
+	return renderVaultHit(r).block
+}
+
+// renderVaultHit renders one chunk hit: a session:<uuid> label (so the
+// assistant can pivot to `capy vault show`/the TUI), the session title, its
+// project and end date, the raw-JSONL line where the chunk starts, the sidecar
+// holding that line (when not the main transcript), the producing platform and
+// — for a sub-agent session — its parent, then the pre-windowed chunk snippet.
 //
 // The platform is the STORED token ("claude-code", "codex"), the same value
 // `capy vault list --platform` accepts and `--json` emits, so the assistant can
 // pivot without translating a display name. It is appended for every hit,
-// Claude included, so a mixed result set reads uniformly; a Claude hit is
-// otherwise byte-identical to the pre-platform format. The parent marker uses
+// Claude included, so a mixed result set reads uniformly. The parent marker uses
 // the platform's short-id rule (12 chars for Codex) — parent and child always
 // share a platform (see vault.Session.ParentUUID).
 //
 // Every field is redacted on its complete value and bounded, so the block stays
 // within searchHitMaxBytes.
-func formatVaultHit(r vault.SearchResult) string {
+//
+// The hit is citable when its chunk coordinate is known: the full session
+// UUID, sidecar ID, chunk index and first line locate the chunk, the window
+// start and complete snippet place the passage in it, and the complete title,
+// project, platform, parent and end time keep a session renamed or reassigned
+// between queries from citing its old entry.
+func renderVaultHit(r vault.SearchResult) renderedHit {
 	title := r.Title
 	if title == "" {
 		title = "(untitled session)"
@@ -180,7 +193,11 @@ func formatVaultHit(r vault.SearchResult) string {
 	if !r.EndTime.IsZero() {
 		meta = append(meta, r.EndTime.Format("2006-01-02"))
 	}
-	meta = append(meta, fmt.Sprintf("line %d", r.LineIndex), displayField(platform.String(), vaultMetaFieldMaxBytes))
+	meta = append(meta, fmt.Sprintf("chunk from line %d", r.LineIndex))
+	if r.SubagentID != "" {
+		meta = append(meta, sidecarAttribution(r))
+	}
+	meta = append(meta, displayField(platform.String(), vaultMetaFieldMaxBytes))
 	if r.ParentUUID != "" {
 		// Redact the complete ID before shortening it: a secret-shaped value
 		// cut to its short form would no longer be recognized.
@@ -191,9 +208,47 @@ func formatVaultHit(r vault.SearchResult) string {
 		meta = append(meta, "child of "+displayField(parent, vaultMetaFieldMaxBytes))
 	}
 
-	return fmt.Sprintf("--- [session:%s] ---\n### %s\n%s\n\n%s",
+	block := fmt.Sprintf("--- [session:%s] ---\n### %s\n%s\n\n%s",
 		displayField(r.SessionUUID, vaultSessionIDMaxBytes), displayField(title, vaultTitleMaxBytes),
 		strings.Join(meta, " · "), displayPassage(r.Snippet))
+	if !r.HasChunkIndex {
+		return renderedHit{block: block}
+	}
+	return renderedHit{
+		block: block,
+		key: passageKey{
+			corpus: "vault",
+			identity: passageIdentity(nil, r.SessionUUID, r.SubagentID, strconv.Itoa(r.ChunkIndex),
+				strconv.Itoa(r.LineIndex), strconv.Itoa(r.SnippetStart), r.Snippet,
+				r.Title, r.Project, string(r.Platform), r.ParentUUID,
+				r.EndTime.UTC().Format(time.RFC3339Nano)),
+			block: block,
+		},
+		citable: true,
+	}
+}
+
+// sidecarAttribution names the sidecar holding a chunk's first line. When
+// redaction or the length cap alters the ID, it says so and adds the
+// session-wide chunk index, when known, to tell similar previews apart.
+func sidecarAttribution(r vault.SearchResult) string {
+	shown := "sidecar " + displayField(r.SubagentID, vaultSidecarIDMaxBytes)
+	redacted := sanitize.StripSecrets(r.SubagentID)
+	var altered []string
+	if redacted != r.SubagentID {
+		altered = append(altered, "redacted")
+	}
+	if len(terminal.EscapeField(redacted)) > vaultSidecarIDMaxBytes {
+		altered = append(altered, "shortened")
+	}
+	if len(altered) == 0 {
+		return shown
+	}
+	note := " (ID " + strings.Join(altered, " and ")
+	if r.HasChunkIndex {
+		note += fmt.Sprintf("; chunk %d", r.ChunkIndex)
+	}
+	return shown + note + ")"
 }
 
 // parseDateArg parses a before/after argument as either a YYYY-MM-DD date or an

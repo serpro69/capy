@@ -51,17 +51,23 @@ func stripMarkers(highlighted string) string {
 	return markerReplacer.Replace(highlighted)
 }
 
-// ExtractSnippet extracts a relevant snippet from content around query matches.
+// extractSnippet extracts a relevant snippet from content around query matches.
 //
 // It uses FTS5 highlight markers (STX/ETX) when they mark exactly this content,
 // falling back to a case-insensitive search for query terms. Overlapping
 // 300-byte windows are merged and collected up to maxLen bytes, which include
 // the omission markers and joins. Invalid UTF-8 becomes U+FFFD and every cut
 // falls on a rune boundary, so the result is valid UTF-8.
-func ExtractSnippet(content, query string, maxLen int, highlighted string) string {
+//
+// It also returns the selected windows as start/end pairs in content after
+// UTF-8 normalization, before clipping to maxLen. With the content they
+// determine the snippet, so equal snippet text from different selections of
+// one content (a repeated region, or windows clipped to a common prefix) can
+// be told apart.
+func extractSnippet(content, query string, maxLen int, highlighted string) (string, []int) {
 	content = strings.ToValidUTF8(content, "\uFFFD")
 	if len(content) <= maxLen {
-		return content
+		return content, []int{0, len(content)}
 	}
 
 	var positions []int
@@ -76,7 +82,7 @@ func ExtractSnippet(content, query string, maxLen int, highlighted string) strin
 	}
 
 	if len(positions) == 0 {
-		return clipBytes(content, maxLen, "\n…")
+		return clipBytes(content, maxLen, "\n…"), []int{0, len(content)}
 	}
 
 	// Sort positions, merge overlapping windows
@@ -93,6 +99,11 @@ func ExtractSnippet(content, query string, maxLen int, highlighted string) strin
 		} else {
 			windows = append(windows, span{start, end})
 		}
+	}
+
+	spans := make([]int, 0, 2*len(windows))
+	for _, w := range windows {
+		spans = append(spans, w.start, w.end)
 	}
 
 	const marker, join = "…", "\n\n"
@@ -123,7 +134,7 @@ func ExtractSnippet(content, query string, maxLen int, highlighted string) strin
 			b.WriteString(marker)
 		}
 	}
-	return b.String()
+	return b.String(), spans
 }
 
 // termPositions returns the byte offsets in content where each query term

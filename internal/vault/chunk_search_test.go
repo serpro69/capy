@@ -195,6 +195,35 @@ func TestSearchChunks_AnchorAndMetadata(t *testing.T) {
 	assert.Empty(t, r.ParentUUID)
 }
 
+// TestSearchChunks_ChunkCoordinate: chunk hits carry their session-wide chunk
+// index, including zero, and a row without one still produces a hit.
+func TestSearchChunks_ChunkCoordinate(t *testing.T) {
+	s := newChunkSearchVault(t)
+
+	main := searchChunks(t, s, SearchOptions{Query: "timeout"})
+	require.NotEmpty(t, main)
+	assert.Equal(t, chunkSearchUUIDA, main[0].SessionUUID)
+	assert.True(t, main[0].HasChunkIndex)
+	assert.Zero(t, main[0].ChunkIndex, "the session's first main chunk is index zero")
+
+	sidecar := searchChunks(t, s, SearchOptions{Query: "zebrafinch"})
+	require.NotEmpty(t, sidecar)
+	assert.Equal(t, "zebrafinch", sidecar[0].SubagentID)
+	assert.True(t, sidecar[0].HasChunkIndex)
+	assert.Positive(t, sidecar[0].ChunkIndex, "sidecar chunks follow the main transcript's")
+
+	db, err := s.getDB(t.Context())
+	require.NoError(t, err)
+	for _, table := range []string{"vault_chunks", "vault_chunks_trigram"} {
+		_, err = db.ExecContext(t.Context(), "UPDATE "+table+" SET chunk_index = NULL WHERE session_uuid = ?", chunkSearchUUIDB)
+		require.NoError(t, err)
+	}
+	missing := searchChunks(t, s, SearchOptions{Query: "zorbing"})
+	require.NotEmpty(t, missing, "a row without a chunk index still produces a hit")
+	assert.Equal(t, chunkSearchUUIDB, missing[0].SessionUUID)
+	assert.False(t, missing[0].HasChunkIndex)
+}
+
 // TestSearchChunks_PlatformAndParentCarried proves the chunk corpus threads the
 // 0006 columns through the retrieval engine's Meta: a Codex child session's
 // chunk hit reports its platform and parent.
@@ -301,7 +330,7 @@ func TestChunkSnippet(t *testing.T) {
 	// highlighted wraps content's FTS5 highlight() output: content with the
 	// match markers removed.
 	snippet := func(highlighted string) string {
-		return chunkSnippet(strings.NewReplacer("\x02", "", "\x03", "").Replace(highlighted), highlighted)
+		return snippetOnly(chunkSnippet(strings.NewReplacer("\x02", "", "\x03", "").Replace(highlighted), highlighted))
 	}
 
 	t.Run("marks match and windows around it", func(t *testing.T) {
@@ -336,7 +365,7 @@ func TestChunkSnippet(t *testing.T) {
 		// first would leave a fragment too short for the redaction pattern.
 		secret := "sk-ant-" + strings.Repeat("Q", 60)
 		content := strings.Repeat("x", 180) + secret + " tail"
-		snip := chunkSnippet(content, content)
+		snip := snippetOnly(chunkSnippet(content, content))
 		assert.NotContains(t, snip, "sk-ant-")
 		assert.NotContains(t, snip, "QQQQ")
 		assert.Contains(t, snip, "[REDACTED_SECRET]")
@@ -346,7 +375,7 @@ func TestChunkSnippet(t *testing.T) {
 		secret := "sk-ant-" + strings.Repeat("Q", 40)
 		content := "before " + secret + " needle after"
 		highlighted := "before " + secret + " \x02needle\x03 after"
-		snip := chunkSnippet(content, highlighted)
+		snip := snippetOnly(chunkSnippet(content, highlighted))
 		assert.NotContains(t, snip, "sk-ant-")
 		assert.NotContains(t, snip, "[needle]", "stale highlight offsets are not reused")
 		assert.Contains(t, snip, "needle")
@@ -354,7 +383,7 @@ func TestChunkSnippet(t *testing.T) {
 
 	t.Run("content containing marker bytes is not treated as highlighted", func(t *testing.T) {
 		content := "literal \x02bytes\x03 inside"
-		snip := chunkSnippet(content, content)
+		snip := snippetOnly(chunkSnippet(content, content))
 		assert.NotContains(t, snip, "[bytes]")
 		assert.Equal(t, "literal \uFFFDbytes\uFFFD inside", snip, "marker bytes are shown, never deleted")
 	})
@@ -363,7 +392,7 @@ func TestChunkSnippet(t *testing.T) {
 		// Neither fragment is a recognizable secret; deleting the marker would
 		// join them into one.
 		content := "head sk-ant-" + strings.Repeat("A", 10) + "\x02" + strings.Repeat("A", 20) + " tail"
-		snip := chunkSnippet(content, content)
+		snip := snippetOnly(chunkSnippet(content, content))
 		assert.NotContains(t, snip, "sk-ant-"+strings.Repeat("A", 30))
 		assert.Contains(t, snip, "sk-ant-"+strings.Repeat("A", 10)+"\uFFFD")
 	})
@@ -372,7 +401,7 @@ func TestChunkSnippet(t *testing.T) {
 		// As stored after per-message redaction: the placeholder stays
 		// separated from the text after the marker.
 		content := "head [REDACTED_SECRET]\x02SUFFIXTAILXYZ end"
-		snip := chunkSnippet(content, content)
+		snip := snippetOnly(chunkSnippet(content, content))
 		assert.Equal(t, "head [REDACTED_SECRET]\uFFFDSUFFIXTAILXYZ end", snip)
 	})
 
@@ -380,7 +409,7 @@ func TestChunkSnippet(t *testing.T) {
 		// Only redaction of the complete content recognizes the span; the
 		// marker inside the early "</priv\x02ate>" must not close it.
 		content := "head <private>first</priv\x02ate> hiddentail</private> after"
-		snip := chunkSnippet(content, content)
+		snip := snippetOnly(chunkSnippet(content, content))
 		assert.NotContains(t, snip, "hiddentail")
 		assert.NotContains(t, snip, "first")
 		assert.Equal(t, "head [REDACTED] after", snip)
@@ -388,10 +417,39 @@ func TestChunkSnippet(t *testing.T) {
 
 	t.Run("invalid UTF-8 is normalized", func(t *testing.T) {
 		content := "bad \xff byte"
-		snip := chunkSnippet(content, content)
+		snip := snippetOnly(chunkSnippet(content, content))
 		assert.True(t, utf8.ValidString(snip))
 	})
+	t.Run("equal windows at different offsets report their starts", func(t *testing.T) {
+		filler := strings.Repeat("a", 300)
+		content := filler + " needle " + filler + " needle " + filler
+		second := len(filler) + len(" needle ") + len(filler) + 1
+		markFirst := filler + " \x02needle\x03 " + filler + " needle " + filler
+		markSecond := content[:second] + "\x02needle\x03" + content[second+len("needle"):]
+
+		snipA, startA := chunkSnippet(content, markFirst)
+		snipB, startB := chunkSnippet(content, markSecond)
+		assert.Equal(t, snipA, snipB, "the repeated surroundings render identically")
+		assert.NotEqual(t, startA, startB, "the window start tells the two locations apart")
+		for _, w := range []struct {
+			snip  string
+			start int
+		}{{snipA, startA}, {snipB, startB}} {
+			body := strings.NewReplacer("…", "", "[", "", "]", "").Replace(w.snip)
+			assert.True(t, strings.HasPrefix(content[w.start:], body), "start %d indexes the window in the content", w.start)
+		}
+	})
+
+	t.Run("head windows start at zero", func(t *testing.T) {
+		_, start := chunkSnippet(strings.Repeat("x", 500), strings.Repeat("x", 500))
+		assert.Zero(t, start)
+		_, start = chunkSnippet("literal \x02bytes\x03 inside", "literal \x02bytes\x03 inside")
+		assert.Zero(t, start)
+	})
 }
+
+// snippetOnly drops chunkSnippet's window offset.
+func snippetOnly(snippet string, _ int) string { return snippet }
 
 func utf8ValidString(s string) bool {
 	for _, r := range s {

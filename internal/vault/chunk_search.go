@@ -45,12 +45,14 @@ const (
 type chunkMeta struct {
 	subagentID     string
 	firstLineIndex int
-	sessionTitle   string
-	projectPath    string
-	customProject  *string
-	endTime        time.Time
-	platform       Platform
-	parentUUID     string
+	// chunkIndex is the session-wide chunk number; NULL in a row that lacks it.
+	chunkIndex    sql.NullInt64
+	sessionTitle  string
+	projectPath   string
+	customProject *string
+	endTime       time.Time
+	platform      Platform
+	parentUUID    string
 }
 
 // SearchChunks runs a query through the vault chunk corpus via the shared
@@ -158,7 +160,7 @@ func (s *VaultStore) searchChunks(ctx context.Context, opts SearchOptions, onErr
 		// MATCH. The shared project predicate filters both retrieval layers
 		// before candidate limits, fusion and reranking.
 		SelectColumns: "c.session_uuid, c.title, c.content_text, s.rowid, " +
-			"c.subagent_id, c.first_line_index, s.title, n.custom_title, s.project_path, p.custom_project, s.end_time, " +
+			"c.subagent_id, c.first_line_index, c.chunk_index, s.title, n.custom_title, s.project_path, p.custom_project, s.end_time, " +
 			"s.platform, s.parent_uuid",
 		Join: "JOIN vault_sessions s ON s.uuid = c.session_uuid " +
 			"LEFT JOIN vault_session_names n ON n.session_uuid = s.uuid " +
@@ -189,11 +191,15 @@ func (s *VaultStore) searchChunks(ctx context.Context, opts SearchOptions, onErr
 			// programmer error, surfaced loudly rather than skipped.
 			return nil, fmt.Errorf("vault: chunk search result %q carries no chunk metadata (got %T)", r.Title, r.Meta)
 		}
+		snippet, snippetStart := chunkSnippet(r.Content, r.Highlighted)
 		out = append(out, SearchResult{
 			SessionUUID:   r.Label,
 			SubagentID:    meta.subagentID,
 			LineIndex:     meta.firstLineIndex,
-			Snippet:       chunkSnippet(r.Content, r.Highlighted),
+			ChunkIndex:    int(meta.chunkIndex.Int64),
+			HasChunkIndex: meta.chunkIndex.Valid,
+			Snippet:       snippet,
+			SnippetStart:  snippetStart,
 			Title:         meta.sessionTitle,
 			ProjectPath:   meta.projectPath,
 			Project:       effectiveProject(meta.projectPath, meta.customProject),
@@ -220,7 +226,7 @@ func scanChunkSearchRow(rows *sql.Rows) (retrieval.SearchResult, error) {
 	var platform string
 	if err := rows.Scan(
 		&r.Label, &r.Title, &r.Content, &r.SourceID,
-		&meta.subagentID, &meta.firstLineIndex,
+		&meta.subagentID, &meta.firstLineIndex, &meta.chunkIndex,
 		&sessionTitle, &customTitle, &meta.projectPath, &customProject, &endTime,
 		&platform, &parentUUID,
 		&r.Highlighted, &r.Rank,
@@ -249,7 +255,9 @@ var (
 // output: a window around the first match, with matches re-marked as
 // [match] to mirror the per-line Search's snippet() style. The STX/ETX
 // markers are single bytes replaced by single bytes, so byte offsets into the
-// marked string equal offsets into the highlighted one.
+// marked string equal offsets into the highlighted one. It also returns the
+// window's start offset in the redacted content, so equal snippet text from
+// different places in one chunk can be told apart.
 //
 // Known secrets are redacted on the complete content before any cut, so a
 // secret crossing a window edge cannot survive as an unrecognized fragment.
@@ -257,14 +265,15 @@ var (
 // redacted, valid UTF-8 content; otherwise the markers are discarded and the
 // head of the redacted content is shown. Content holding literal marker bytes
 // of its own shows its head with each such byte as U+FFFD.
-func chunkSnippet(content, highlighted string) string {
+func chunkSnippet(content, highlighted string) (string, int) {
 	clean := strings.ToValidUTF8(sanitize.StripSecrets(content), "\uFFFD")
 	if strings.ContainsAny(content, string(rune(stx))+string(rune(etx))) {
 		// Literal marker bytes make the highlight ambiguous: show the head of
 		// the redacted content with each marker byte replaced visibly. They are
 		// never deleted, because removing them could join fragments on either
 		// side into text redaction did not see.
-		return chunkSnippetFrom(chunkMarkerVisible.Replace(clean))
+		snippet, _ := chunkSnippetFrom(chunkMarkerVisible.Replace(clean))
+		return snippet, 0
 	}
 	if chunkMarkerStripper.Replace(highlighted) != clean {
 		highlighted = clean
@@ -273,8 +282,9 @@ func chunkSnippet(content, highlighted string) string {
 }
 
 // chunkSnippetFrom windows highlighted text whose STX/ETX bytes are match
-// markers only.
-func chunkSnippetFrom(highlighted string) string {
+// markers only, returning the window and its start offset in the text with
+// the markers removed.
+func chunkSnippetFrom(highlighted string) (string, int) {
 	marked := chunkMarkerReplacer.Replace(highlighted)
 
 	first := strings.IndexByte(highlighted, stx)
@@ -282,9 +292,9 @@ func chunkSnippetFrom(highlighted string) string {
 		// No match markers — e.g. the match was in the title column. Fall
 		// back to the head of the content.
 		if len(marked) <= 2*chunkSnippetContext {
-			return marked
+			return marked, 0
 		}
-		return marked[:snapRuneStart(marked, 2*chunkSnippetContext)] + "…"
+		return marked[:snapRuneStart(marked, 2*chunkSnippetContext)] + "…", 0
 	}
 
 	start := max(first-chunkSnippetContext, 0)
@@ -305,7 +315,9 @@ func chunkSnippetFrom(highlighted string) string {
 	if end < len(marked) {
 		b.WriteString("…")
 	}
-	return b.String()
+	// No marker precedes the first match, so start also indexes the text
+	// with the markers removed.
+	return b.String(), start
 }
 
 // snapRuneStart moves i back to the nearest UTF-8 rune boundary in s so a

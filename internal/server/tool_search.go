@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -221,28 +222,30 @@ func (s *Server) search(ctx context.Context, req mcp.CallToolRequest, replyMax i
 			vResults = r.Results
 		}
 
-		blocks := federateHits(kResults, vResults, q, effectiveLimit)
+		hits := federateHits(kResults, vResults, effectiveLimit)
 		// A failed pass takes precedence over miss advice: the caller needs the
 		// failure, not advice to widen kinds.
 		if len(errs) > 0 {
 			allClean = false
-		} else if len(blocks) == 0 && runKnowledgePass {
+		} else if len(hits) == 0 && runKnowledgePass {
 			cleanKnowledgeMiss = true
 		}
 
-		w.startGroup(queryFrame(ordinal, q, errs, len(blocks)))
+		w.startGroup(queryFrame(ordinal, q, errs, len(hits)))
 		shown := 0
-		for _, b := range blocks {
-			if !w.addHit(b) {
+		// Render in final rank order only; a repeat of an earlier passage in
+		// this reply is shown as a reference to it.
+		for _, h := range hits {
+			if !w.addHit(h.render(q)) {
 				break
 			}
 			shown++
 		}
-		if len(blocks) > 0 {
+		if len(hits) > 0 {
 			hasResults = true
 		}
-		if shown < len(blocks) {
-			completion = partialNotice(ordinal, len(queryList), shown, len(blocks), effectiveLimit)
+		if shown < len(hits) {
+			completion = partialNotice(ordinal, len(queryList), shown, len(hits), effectiveLimit)
 			allClean = false
 			break
 		}
@@ -346,52 +349,70 @@ func (s *Server) searchHints(in searchHintInput) []string {
 	return hints
 }
 
-// federateHits RRF-merges the knowledge and vault ranked lists for one query
-// into a single ordered slice of formatted result blocks, capped at limit.
-// Each item appears in exactly one list (the two corpora are disjoint), so
-// there is no cross-corpus dedup — the merge is a rank interleave: each hit
-// scores 1/(k+rank) by its position in its own already-ranked list, with rank
-// 0-based (matching the retrieval engine's own convention, so federated weights
-// are on the same scale). Ties keep knowledge before vault (append order) via a
-// stable sort, gently favoring curated durable knowledge over session recall.
-func federateHits(kResults []store.SearchResult, vResults []vault.SearchResult, query string, limit int) []string {
-	type scoredBlock struct {
-		rrf   float64
-		block string
+// rankedHit is one federated hit, kept typed until the final rank order is
+// known; exactly one of knowledge and vault is set.
+type rankedHit struct {
+	knowledge *store.SearchResult
+	vault     *vault.SearchResult
+}
+
+// render formats the hit for query.
+func (h rankedHit) render(query string) renderedHit {
+	if h.knowledge != nil {
+		return renderKnowledgeHit(*h.knowledge, query)
 	}
-	hits := make([]scoredBlock, 0, len(kResults)+len(vResults))
-	for i, r := range kResults {
-		hits = append(hits, scoredBlock{
-			rrf:   1.0 / (federationRRFK + float64(i)),
-			block: formatKnowledgeHit(r, query),
+	return renderVaultHit(*h.vault)
+}
+
+// federateHits RRF-merges the knowledge and vault ranked lists for one query
+// into a single ordered slice, capped at limit. Each item appears in exactly
+// one list (the two corpora are disjoint), so there is no cross-corpus dedup —
+// the merge is a rank interleave: each hit scores 1/(k+rank) by its position in
+// its own already-ranked list, with rank 0-based (matching the retrieval
+// engine's own convention, so federated weights are on the same scale). Ties
+// keep knowledge before vault (append order) via a stable sort, gently favoring
+// curated durable knowledge over session recall.
+func federateHits(kResults []store.SearchResult, vResults []vault.SearchResult, limit int) []rankedHit {
+	type scoredHit struct {
+		rrf float64
+		hit rankedHit
+	}
+	hits := make([]scoredHit, 0, len(kResults)+len(vResults))
+	for i := range kResults {
+		hits = append(hits, scoredHit{
+			rrf: 1.0 / (federationRRFK + float64(i)),
+			hit: rankedHit{knowledge: &kResults[i]},
 		})
 	}
-	for i, r := range vResults {
-		hits = append(hits, scoredBlock{
-			rrf:   1.0 / (federationRRFK + float64(i)),
-			block: formatVaultHit(r),
+	for i := range vResults {
+		hits = append(hits, scoredHit{
+			rrf: 1.0 / (federationRRFK + float64(i)),
+			hit: rankedHit{vault: &vResults[i]},
 		})
 	}
 	sort.SliceStable(hits, func(a, b int) bool { return hits[a].rrf > hits[b].rrf })
 	if limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}
-	out := make([]string, len(hits))
+	out := make([]rankedHit, len(hits))
 	for i, h := range hits {
-		out[i] = h.block
+		out[i] = h.hit
 	}
 	return out
 }
 
-// formatKnowledgeHit renders one knowledge-store hit: a source label header, the
-// chunk title, and a query-highlighted snippet. Extracted from the per-query
-// loop so federation renders knowledge and vault hits through parallel helpers
-// (formatVaultHit is its vault sibling in tool_vault_search.go).
+// renderKnowledgeHit renders one knowledge-store hit: a source label header,
+// the chunk title, and a query-highlighted snippet. renderVaultHit is its vault
+// sibling in tool_vault_search.go.
 //
 // Every field is redacted on its complete value and bounded, so the block stays
 // within searchHitMaxBytes. A label that looks like a vault handle
 // ("session:…") is marked as knowledge so corpus attribution stays explicit.
-func formatKnowledgeHit(r store.SearchResult, query string) string {
+//
+// The hit is citable when retrieval located its row: the layer table and rowid
+// with the source ID locate it (its label and title are fixed for that
+// location), and the selected windows place the passage in it.
+func renderKnowledgeHit(r store.SearchResult, query string) renderedHit {
 	label := displayField(r.Label, knowledgeLabelMaxBytes)
 	header := fmt.Sprintf("--- [%s] ---", label)
 	if strings.HasPrefix(label, "session:") {
@@ -402,9 +423,22 @@ func formatKnowledgeHit(r store.SearchResult, query string) string {
 	// through as invisible control bytes; the content then no longer matches
 	// the highlight, so match positions come from the query terms, which are
 	// normalized the same way.
-	snippet := ExtractSnippet(markerVisible.Replace(sanitize.StripSecrets(r.Content)),
+	snippet, windows := extractSnippet(markerVisible.Replace(sanitize.StripSecrets(r.Content)),
 		markerVisible.Replace(query), searchPassageMaxBytes, r.Highlighted)
-	return fmt.Sprintf("%s\n%s\n\n%s", header, heading, snippet)
+	block := fmt.Sprintf("%s\n%s\n\n%s", header, heading, snippet)
+	if r.Table == "" || r.RowID == 0 {
+		return renderedHit{block: block}
+	}
+	return renderedHit{
+		block: block,
+		key: passageKey{
+			corpus: "knowledge",
+			identity: passageIdentity(windows, r.Table,
+				strconv.FormatInt(r.RowID, 10), strconv.FormatInt(r.SourceID, 10)),
+			block: block,
+		},
+		citable: true,
+	}
 }
 
 // knowledgeKindsWithoutSession returns the kinds the knowledge pass should

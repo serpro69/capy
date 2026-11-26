@@ -26,9 +26,15 @@ func TestPositionsFromHighlight_Empty(t *testing.T) {
 	assert.Empty(t, positionsFromHighlight("no markers here"))
 }
 
+// snippetText returns extractSnippet's text without its windows.
+func snippetText(content, query string, maxLen int, highlighted string) string {
+	snippet, _ := extractSnippet(content, query, maxLen, highlighted)
+	return snippet
+}
+
 func TestExtractSnippet_ShortContent(t *testing.T) {
 	content := "short content"
-	result := ExtractSnippet(content, "anything", 100, "")
+	result := snippetText(content, "anything", 100, "")
 	assert.Equal(t, content, result)
 }
 
@@ -36,7 +42,7 @@ func TestExtractSnippet_WithHighlightMarkers(t *testing.T) {
 	content := strings.Repeat("a", 500) + "MATCH" + strings.Repeat("b", 500)
 	highlighted := strings.Repeat("a", 500) + "\x02MATCH\x03" + strings.Repeat("b", 500)
 
-	result := ExtractSnippet(content, "match", 600, highlighted)
+	result := snippetText(content, "match", 600, highlighted)
 	assert.Contains(t, result, "MATCH")
 	assert.LessOrEqual(t, len(result), 600, "the cap includes ellipsis markers")
 }
@@ -46,19 +52,19 @@ func TestExtractSnippet_ReusesMatchingHighlights(t *testing.T) {
 	// query, so only the highlight can place the window.
 	content := strings.Repeat("a", 2000) + " configure " + strings.Repeat("b", 2000)
 	highlighted := strings.Repeat("a", 2000) + " \x02configure\x03 " + strings.Repeat("b", 2000)
-	result := ExtractSnippet(content, "configuring", 600, highlighted)
+	result := snippetText(content, "configuring", 600, highlighted)
 	assert.Contains(t, result, "configure")
 }
 
 func TestExtractSnippet_FallbackToIndexOf(t *testing.T) {
 	content := strings.Repeat("x", 500) + "findme" + strings.Repeat("y", 500)
-	result := ExtractSnippet(content, "findme", 600, "")
+	result := snippetText(content, "findme", 600, "")
 	assert.Contains(t, result, "findme")
 }
 
 func TestExtractSnippet_NoMatchesReturnsPrefix(t *testing.T) {
 	content := strings.Repeat("a", 1000)
-	result := ExtractSnippet(content, "zzz", 100, "")
+	result := snippetText(content, "zzz", 100, "")
 	// The cap includes the omission marker.
 	assert.LessOrEqual(t, len(result), 100)
 	assert.True(t, strings.HasPrefix(result, strings.Repeat("a", 90)))
@@ -68,7 +74,7 @@ func TestExtractSnippet_NoMatchesReturnsPrefix(t *testing.T) {
 func TestExtractSnippet_OverlappingWindowsMerge(t *testing.T) {
 	// Two matches close together should merge into one window
 	content := strings.Repeat("x", 100) + "MATCH1" + strings.Repeat("y", 50) + "MATCH2" + strings.Repeat("z", 1000)
-	result := ExtractSnippet(content, "MATCH1 MATCH2", 600, "")
+	result := snippetText(content, "MATCH1 MATCH2", 600, "")
 	// Both matches should appear in a single merged window
 	assert.Contains(t, result, "MATCH1")
 	assert.Contains(t, result, "MATCH2")
