@@ -1,7 +1,10 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/serpro69/capy/internal/sanitize"
@@ -33,6 +36,7 @@ const (
 	vaultSessionIDMaxBytes = 128
 	vaultTitleMaxBytes     = 256
 	vaultProjectMaxBytes   = 512
+	vaultSidecarIDMaxBytes = 256
 	// vaultMetaFieldMaxBytes bounds the stored platform token and the short
 	// parent ID, which are short in practice but read from storage.
 	vaultMetaFieldMaxBytes = 64
@@ -68,12 +72,63 @@ func argPreview(s string) string {
 	return clipBytes(quoted, searchArgPreviewMaxBytes, omissionMarker)
 }
 
+// renderedHit is one hit's full block and the identity a later hit must match
+// to cite it instead of repeating it.
+type renderedHit struct {
+	block string
+	key   passageKey
+	// citable is false when the hit's location is unknown; such a hit carries
+	// no key and is always shown in full.
+	citable bool
+}
+
+// passageKey identifies a shown passage by its corpus, its rendered block and
+// a digest of its complete identity fields: location, the windows selected
+// from it and its attribution. Location alone is insufficient — another query
+// can select a different window of the same chunk — and display text alone is
+// insufficient — distinct rows can share titles or clipped prefixes, and a
+// renamed session can keep its clipped preview. The digest keeps the retained
+// key bounded however long those fields are.
+type passageKey struct {
+	corpus   string
+	identity [sha256.Size]byte
+	block    string
+}
+
+// passageIdentity digests identity fields, each length-prefixed, followed by
+// the count and values of the selected window offsets. Offsets are encoded
+// straight into the hash, so a passage selected from many windows needs no
+// input-sized intermediate text.
+func passageIdentity(spans []int, fields ...string) [sha256.Size]byte {
+	h := sha256.New()
+	var buf [binary.MaxVarintLen64]byte
+	for _, f := range fields {
+		h.Write(binary.AppendUvarint(buf[:0], uint64(len(f))))
+		io.WriteString(h, f)
+	}
+	h.Write(binary.AppendUvarint(buf[:0], uint64(len(spans))))
+	for _, s := range spans {
+		h.Write(binary.AppendUvarint(buf[:0], uint64(s)))
+	}
+	var sum [sha256.Size]byte
+	h.Sum(sum[:0])
+	return sum
+}
+
 // replyWriter accumulates query groups for one keyword search reply within
 // the space left after the request-wide notice reserve. It never commits a
 // partial group frame or hit block.
+//
+// Full hit blocks are numbered [n] from one in emission order. A citable hit
+// whose passage this reply already showed is written as a reference to that
+// number instead.
 type replyWriter struct {
 	limit int
 	b     strings.Builder
+	// entries counts committed full blocks; refs maps each committed citable
+	// passage to its number.
+	entries int
+	refs    map[passageKey]int
 }
 
 func newReplyWriter(total int) *replyWriter {
@@ -98,14 +153,43 @@ func (w *replyWriter) startGroup(frame string) {
 	w.b.WriteString(frame)
 }
 
-// addHit commits one whole hit block, or reports false without writing when it
-// does not fit.
-func (w *replyWriter) addHit(block string) bool {
-	if len(hitSeparator)+len(block) > w.remaining() {
+// addHit commits h as a reference to an earlier identical passage or as the
+// next numbered full block. It reports false, writing and registering nothing,
+// when the entry does not fit.
+func (w *replyWriter) addHit(h renderedHit) bool {
+	if h.citable {
+		if n, ok := w.refs[h.key]; ok {
+			return w.write(referenceBlock(n))
+		}
+	}
+	n := w.entries + 1
+	if !w.write(fmt.Sprintf("[%d] %s", n, h.block)) {
+		return false
+	}
+	// Only a committed block can be cited.
+	w.entries = n
+	if h.citable {
+		if w.refs == nil {
+			w.refs = make(map[passageKey]int)
+		}
+		w.refs[h.key] = n
+	}
+	return true
+}
+
+// referenceBlock cites the full block numbered n.
+func referenceBlock(n int) string {
+	return fmt.Sprintf("↑ same passage as [%d]", n)
+}
+
+// write commits one whole entry, or reports false without writing when it does
+// not fit.
+func (w *replyWriter) write(entry string) bool {
+	if len(hitSeparator)+len(entry) > w.remaining() {
 		return false
 	}
 	w.b.WriteString(hitSeparator)
-	w.b.WriteString(block)
+	w.b.WriteString(entry)
 	return true
 }
 

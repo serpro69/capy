@@ -377,11 +377,16 @@ type SearchResult struct {
 	// LineIndex is the raw-JSONL anchor: the matched line for per-line hits,
 	// the chunk's first_line_index for chunk hits.
 	LineIndex int
+	// ChunkIndex is the chunk's session-wide number (chunk hits only); zero is
+	// a valid first index, so HasChunkIndex records whether the row carried one.
+	ChunkIndex    int
+	HasChunkIndex bool
 	// Role is set on per-line hits only; "" for chunk hits — a semantic chunk
 	// spans mixed user/assistant/tool lines, so role is undefined at chunk
 	// granularity (design vault-session-search, Not Doing).
 	Role          string
 	Snippet       string
+	SnippetStart  int // byte offset of Snippet's window in the redacted chunk content (chunk hits only)
 	Title         string
 	ProjectPath   string  // imported filesystem path
 	Project       string  // effective project (per-line and chunk search)

@@ -176,12 +176,13 @@ func TestFormatVaultHit_PlatformAndParent(t *testing.T) {
 		// Platform left empty on purpose: a SearchResult built in memory is
 		// Claude (OrClaude), exactly like a stored default row.
 	}
-	// The pre-Task-11 layout, spelled out by hand: header, title, meta, snippet.
-	legacyPrefix := "--- [session:abcd1234-0000-4000-8000-000000000001] ---\n### Database setup\n/home/u/proj · 2026-05-01 · line 7"
+	// The layout spelled out by hand: header, title, meta (labelling the line
+	// where the chunk starts), snippet.
+	wantPrefix := "--- [session:abcd1234-0000-4000-8000-000000000001] ---\n### Database setup\n/home/u/proj · 2026-05-01 · chunk from line 7"
 	got := formatVaultHit(claude)
-	assert.True(t, strings.HasPrefix(got, legacyPrefix), "everything before the platform label is unchanged:\n%s", got)
-	assert.Equal(t, legacyPrefix+" · claude-code\n\nconfigure the database", got,
-		"a Claude hit gains exactly the platform label and nothing else")
+	assert.True(t, strings.HasPrefix(got, wantPrefix), "header, title and metadata before the platform label:\n%s", got)
+	assert.Equal(t, wantPrefix+" · claude-code\n\nconfigure the database", got,
+		"a Claude hit ends its metadata with the platform label")
 
 	codexChild := vault.SearchResult{
 		SessionUUID: "019e2200-0000-7000-8000-000000000002",
@@ -193,7 +194,7 @@ func TestFormatVaultHit_PlatformAndParent(t *testing.T) {
 		ParentUUID:  "019e2200-0000-7000-8000-000000000001",
 	}
 	assert.Equal(t,
-		"--- [session:019e2200-0000-7000-8000-000000000002] ---\n### Rook · explorer\n2026-05-01 · line 1 · codex · child of 019e2200-000\n\nexplore the scheduler",
+		"--- [session:019e2200-0000-7000-8000-000000000002] ---\n### Rook · explorer\n2026-05-01 · chunk from line 1 · codex · child of 019e2200-000\n\nexplore the scheduler",
 		formatVaultHit(codexChild), "a Codex child names its platform and its parent's 12-char id")
 
 	codexRoot := codexChild
@@ -329,7 +330,7 @@ func TestFormatVaultHit_ProjectLabels(t *testing.T) {
 		t.Run(project, func(t *testing.T) {
 			hit := vault.SearchResult{SessionUUID: "test-session", ProjectPath: "/original/path", Project: project, CustomProject: &project}
 			out := formatVaultHit(hit)
-			assert.Contains(t, out, "\n"+project+" · line 0")
+			assert.Contains(t, out, "\n"+project+" · chunk from line 0")
 			assert.NotContains(t, out, hit.ProjectPath)
 		})
 	}

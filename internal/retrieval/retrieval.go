@@ -35,6 +35,13 @@ type SearchResult struct {
 	Rank        float64
 	FusedScore  float64
 	MatchLayer  string
+	// Table is the physical FTS layer table that produced this row, stamped by
+	// the shared layer query. With RowID it locates the row: the porter and
+	// trigram tables assign rowids independently.
+	Table string
+	// RowID is the row's rowid in Table when the corpus's RowMapper scans it,
+	// zero otherwise.
+	RowID int64
 	// Meta carries an opaque corpus-specific payload attached by the corpus's
 	// RowMapper and passed through the pipeline untouched (e.g. the vault's
 	// chunk anchors: subagent id, first line index, session metadata). The
@@ -209,6 +216,7 @@ func (cfg CorpusConfig) execSearch(ctx context.Context, table, ftsQuery string, 
 			}
 			continue
 		}
+		r.Table = table
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {

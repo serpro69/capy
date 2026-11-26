@@ -148,14 +148,14 @@ func TestCorpusExecSearchEndToEnd(t *testing.T) {
 		DB:            db,
 		PorterTable:   "chunks",
 		TrigramTable:  "chunks_trigram",
-		SelectColumns: "s.label, c.title, c.content, c.source_id",
+		SelectColumns: "s.label, c.title, c.content, c.source_id, c.rowid",
 		Join:          "JOIN src s ON s.id = c.source_id",
 		TitleWeight:   2.0,
 		FilterSQL:     " AND s.label = ?",
 		FilterParams:  []any{"keep"},
 		MapRow: func(rows *sql.Rows) (SearchResult, error) {
 			var r SearchResult
-			err := rows.Scan(&r.Label, &r.Title, &r.Content, &r.SourceID, &r.Highlighted, &r.Rank)
+			err := rows.Scan(&r.Label, &r.Title, &r.Content, &r.SourceID, &r.RowID, &r.Highlighted, &r.Rank)
 			return r, err
 		},
 	})
@@ -167,6 +167,8 @@ func TestCorpusExecSearchEndToEnd(t *testing.T) {
 		assert.Equal(t, "keep", r.Label, "pre-bound filter clause must exclude the filtered source")
 		assert.Equal(t, int64(1), r.SourceID)
 		assert.Contains(t, r.Highlighted, "\x02", "highlight() markers must survive row mapping")
+		assert.Contains(t, []string{"chunks", "chunks_trigram"}, r.Table, "the producing layer table is stamped")
+		assert.Equal(t, int64(1), r.RowID, "the scanned rowid locates the row in its table")
 	}
 	assert.Equal(t, "rrf(porter+trigram)", results[0].MatchLayer,
 		"a term present in both layers must fuse across them")
@@ -218,7 +220,7 @@ func TestSearchWithFallbackNilFuzzySkipsFuzzyPass(t *testing.T) {
 func TestSearchWithFallbackFuzzyPassUsesCorrector(t *testing.T) {
 	// Sparse results + a corrector: the corrected query re-enters the engine,
 	// and its results are tagged with the fuzzy+ layer prefix.
-	hit := SearchResult{SourceID: 1, Title: "Auth", Content: "authentication middleware"}
+	hit := SearchResult{SourceID: 1, Title: "Auth", Content: "authentication middleware", Table: "chunks", RowID: 42}
 	served := false
 	c := Corpus{
 		porterTable:  "chunks",
@@ -244,6 +246,26 @@ func TestSearchWithFallbackFuzzyPassUsesCorrector(t *testing.T) {
 	require.NotEmpty(t, results, "fuzzy-corrected pass should surface results")
 	assert.Contains(t, results[0].MatchLayer, "fuzzy+",
 		"fuzzy-pass results must be tagged with the fuzzy+ layer prefix")
+	assert.Equal(t, "chunks", results[0].Table, "the fuzzy merge keeps the row's location")
+	assert.Equal(t, int64(42), results[0].RowID)
+}
+
+// TestRRFSearchWinnerCarriesItsLocation: when both layers return the same
+// fusion key, the better-ranked version replaces the entry whole, so its
+// content and location stay together.
+func TestRRFSearchWinnerCarriesItsLocation(t *testing.T) {
+	porter := SearchResult{SourceID: 1, Title: "Auth", Content: "porter body", Rank: -1, Table: "chunks", RowID: 5}
+	trigram := SearchResult{SourceID: 1, Title: "Auth", Content: "trigram body", Rank: -2, Table: "chunks_trigram", RowID: 9}
+	c := stubCorpus(t, map[string][]SearchResult{
+		"chunks":         {porter},
+		"chunks_trigram": {trigram},
+	}, nil, nil)
+
+	results := RRFSearch(context.Background(), c, `"auth"`, `"auth"`, "auth", 5)
+	require.Len(t, results, 1)
+	assert.Equal(t, "trigram body", results[0].Content)
+	assert.Equal(t, "chunks_trigram", results[0].Table)
+	assert.Equal(t, int64(9), results[0].RowID)
 }
 
 // --- fuzzyCorrectQuery orchestration ---

@@ -33,6 +33,37 @@ func TestSearchFailOnError(t *testing.T) {
 	}
 }
 
+// TestSearchResultsLocateTheirRow: every hit names the FTS layer table that
+// produced it and its rowid there, which resolve to the hit's own chunk.
+func TestSearchResultsLocateTheirRow(t *testing.T) {
+	s := newTestStore(t)
+	_, err := s.IndexChunked("doc", "located", "plaintext", KindDurable, []Chunk{
+		{Title: "First", Content: "lanternfish first chunk body"},
+		{Title: "Second", Content: "lanternfish second chunk body"},
+	})
+	require.NoError(t, err)
+	db, err := s.getDB()
+	require.NoError(t, err)
+
+	// "lanternfish" matches both layers; "ternfi" only the trigram layer.
+	for _, query := range []string{"lanternfish", "ternfi"} {
+		got, err := s.SearchPartialContext(t.Context(), query, 5, SearchOptions{})
+		require.NoError(t, err)
+		require.Len(t, got.Results, 2, query)
+		for _, r := range got.Results {
+			require.Contains(t, []string{"chunks", "chunks_trigram"}, r.Table)
+			var title, content string
+			require.NoError(t, db.QueryRowContext(t.Context(),
+				"SELECT title, content FROM "+r.Table+" WHERE rowid = ?", r.RowID).Scan(&title, &content))
+			assert.Equal(t, r.Title, title, query)
+			assert.Equal(t, r.Content, content, query)
+			if query == "ternfi" {
+				assert.Equal(t, "chunks_trigram", r.Table)
+			}
+		}
+	}
+}
+
 // TestSearchPartialContext pins the diagnostic entry point beside the existing
 // strict and best-effort policies: losing one FTS layer keeps the surviving
 // ranked rows and access tracking, losing both reports the failure with no
