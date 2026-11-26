@@ -269,7 +269,9 @@ same transaction. An attribution savepoint allows a writable marker to commit
 even if audit allocation or index recount fails; the service retains its refusal
 latch and explicitly volatile context when attribution persistence is unconfirmed.
 Any attribution error triggers one fresh bounded, idempotent marker-only attempt,
-including whole-transaction rollback or deadline expiry. If neither attempt can
+including whole-transaction rollback or deadline expiry. Its bound is longer than
+the ordinary write deadline because an expired write discards the store's only
+connection, so the attempt must first reopen it. If neither attempt can
 commit, the store-wide marker may remain absent while the service latch blocks
 its own work; pending evidence remains available for later reconciliation.
 Attribution-capacity/write/epoch failure permits configured queries to
