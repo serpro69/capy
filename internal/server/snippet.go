@@ -3,6 +3,8 @@ package server
 import (
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -41,6 +43,9 @@ func positionsFromHighlight(highlighted string) []int {
 // markerReplacer strips STX/ETX highlight markers from FTS5 highlighted text.
 var markerReplacer = strings.NewReplacer(string(stx), "", string(etx), "")
 
+// markerVisible shows literal STX/ETX bytes in stored content as U+FFFD.
+var markerVisible = strings.NewReplacer(string(stx), "\uFFFD", string(etx), "\uFFFD")
+
 // stripMarkers removes STX/ETX highlight markers from FTS5 highlighted text.
 func stripMarkers(highlighted string) string {
 	return markerReplacer.Replace(highlighted)
@@ -48,43 +53,30 @@ func stripMarkers(highlighted string) string {
 
 // ExtractSnippet extracts a relevant snippet from content around query matches.
 //
-// It uses FTS5 highlight markers (STX/ETX) when available to locate matches,
-// falling back to strings.Index on query terms. Merges overlapping 300-char
-// windows and collects them up to maxLen.
+// It uses FTS5 highlight markers (STX/ETX) when they mark exactly this content,
+// falling back to a case-insensitive search for query terms. Overlapping
+// 300-byte windows are merged and collected up to maxLen bytes, which include
+// the omission markers and joins. Invalid UTF-8 becomes U+FFFD and every cut
+// falls on a rune boundary, so the result is valid UTF-8.
 func ExtractSnippet(content, query string, maxLen int, highlighted string) string {
+	content = strings.ToValidUTF8(content, "\uFFFD")
 	if len(content) <= maxLen {
 		return content
 	}
 
 	var positions []int
-
-	// Derive match positions from FTS5 highlight markers when available
-	if highlighted != "" {
+	// Highlight offsets index the highlighted text with its markers removed, so
+	// they are only usable when that text is this exact content and the content
+	// carries no marker bytes of its own.
+	if highlighted != "" && !strings.ContainsAny(content, string(stx)+string(etx)) && stripMarkers(highlighted) == content {
 		positions = positionsFromHighlight(highlighted)
 	}
-
-	// Fallback: indexOf on raw query terms
 	if len(positions) == 0 {
-		terms := splitQueryTerms(query)
-		lower := strings.ToLower(content)
-
-		for _, term := range terms {
-			searchFrom := 0
-			for {
-				idx := strings.Index(lower[searchFrom:], term)
-				if idx == -1 {
-					break
-				}
-				absIdx := searchFrom + idx
-				positions = append(positions, absIdx)
-				searchFrom = absIdx + 1
-			}
-		}
+		positions = termPositions(content, query)
 	}
 
-	// No matches — return prefix
 	if len(positions) == 0 {
-		return content[:maxLen] + "\n…"
+		return clipBytes(content, maxLen, "\n…")
 	}
 
 	// Sort positions, merge overlapping windows
@@ -97,34 +89,105 @@ func ExtractSnippet(content, query string, maxLen int, highlighted string) strin
 		start := max(0, pos-window)
 		end := min(len(content), pos+window)
 		if len(windows) > 0 && start <= windows[len(windows)-1].end {
-			windows[len(windows)-1].end = end
+			windows[len(windows)-1].end = max(windows[len(windows)-1].end, end)
 		} else {
 			windows = append(windows, span{start, end})
 		}
 	}
 
-	// Collect windows until maxLen
-	var parts []string
-	total := 0
+	const marker, join = "…", "\n\n"
+	var b strings.Builder
 	for _, w := range windows {
-		if total >= maxLen {
+		sep := ""
+		if b.Len() > 0 {
+			sep = join
+		}
+		start := snapRuneForward(content, w.start)
+		prefix := ""
+		if start > 0 {
+			prefix = marker
+		}
+		// Always leave room for a trailing marker so a cut window can say so.
+		room := maxLen - b.Len() - len(sep) - len(prefix) - len(marker)
+		if room <= 0 {
 			break
 		}
-		end := min(w.end, w.start+(maxLen-total))
-		part := content[w.start:end]
-		prefix := ""
-		suffix := ""
-		if w.start > 0 {
-			prefix = "…"
+		end := snapRuneBack(content, min(w.end, start+room))
+		if end <= start {
+			break
 		}
-		if w.end < len(content) {
-			suffix = "…"
+		b.WriteString(sep)
+		b.WriteString(prefix)
+		b.WriteString(content[start:end])
+		if end < len(content) {
+			b.WriteString(marker)
 		}
-		parts = append(parts, prefix+part+suffix)
-		total += len(part)
 	}
+	return b.String()
+}
 
-	return strings.Join(parts, "\n\n")
+// termPositions returns the byte offsets in content where each query term
+// (see splitQueryTerms) begins, matching case-insensitively. Offsets index the
+// original content even where lowercasing changes a rune's encoded length.
+func termPositions(content, query string) []int {
+	terms := splitQueryTerms(query)
+	if len(terms) == 0 {
+		return nil
+	}
+	var folded strings.Builder
+	folded.Grow(len(content))
+	// origin[i] is the content offset of the rune that produced folded byte i.
+	origin := make([]int, 0, len(content))
+	for i, r := range content {
+		n, _ := folded.WriteRune(unicode.ToLower(r))
+		for range n {
+			origin = append(origin, i)
+		}
+	}
+	lower := folded.String()
+
+	var positions []int
+	for _, term := range terms {
+		for from := 0; from < len(lower); {
+			idx := strings.Index(lower[from:], term)
+			if idx == -1 {
+				break
+			}
+			abs := from + idx
+			positions = append(positions, origin[abs])
+			from = abs + 1
+		}
+	}
+	return positions
+}
+
+// clipBytes returns s when it fits in maxLen bytes; otherwise the longest
+// rune-aligned prefix that fits together with marker, followed by marker.
+func clipBytes(s string, maxLen int, marker string) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	cut := maxLen - len(marker)
+	if cut <= 0 {
+		return marker[:snapRuneBack(marker, maxLen)]
+	}
+	return s[:snapRuneBack(s, cut)] + marker
+}
+
+// snapRuneBack moves i back to the nearest rune start in s.
+func snapRuneBack(s string, i int) int {
+	for i > 0 && i < len(s) && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return i
+}
+
+// snapRuneForward moves i forward to the nearest rune start in s.
+func snapRuneForward(s string, i int) int {
+	for i < len(s) && !utf8.RuneStart(s[i]) {
+		i++
+	}
+	return i
 }
 
 // splitQueryTerms splits a query into lowercase terms > 2 chars.

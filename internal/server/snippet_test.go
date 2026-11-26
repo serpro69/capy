@@ -38,7 +38,16 @@ func TestExtractSnippet_WithHighlightMarkers(t *testing.T) {
 
 	result := ExtractSnippet(content, "match", 600, highlighted)
 	assert.Contains(t, result, "MATCH")
-	assert.True(t, len(result) <= 610) // maxLen + ellipsis overhead
+	assert.LessOrEqual(t, len(result), 600, "the cap includes ellipsis markers")
+}
+
+func TestExtractSnippet_ReusesMatchingHighlights(t *testing.T) {
+	// A stemmed match: the highlighted word does not literally contain the
+	// query, so only the highlight can place the window.
+	content := strings.Repeat("a", 2000) + " configure " + strings.Repeat("b", 2000)
+	highlighted := strings.Repeat("a", 2000) + " \x02configure\x03 " + strings.Repeat("b", 2000)
+	result := ExtractSnippet(content, "configuring", 600, highlighted)
+	assert.Contains(t, result, "configure")
 }
 
 func TestExtractSnippet_FallbackToIndexOf(t *testing.T) {
@@ -50,7 +59,9 @@ func TestExtractSnippet_FallbackToIndexOf(t *testing.T) {
 func TestExtractSnippet_NoMatchesReturnsPrefix(t *testing.T) {
 	content := strings.Repeat("a", 1000)
 	result := ExtractSnippet(content, "zzz", 100, "")
-	assert.True(t, strings.HasPrefix(result, strings.Repeat("a", 100)))
+	// The cap includes the omission marker.
+	assert.LessOrEqual(t, len(result), 100)
+	assert.True(t, strings.HasPrefix(result, strings.Repeat("a", 90)))
 	assert.True(t, strings.HasSuffix(result, "…"))
 }
 

@@ -107,13 +107,13 @@ func TestSearch_VaultAvailabilityFailure(t *testing.T) {
 			assert.NotContains(t, out, "knowledge base is empty")
 			assert.Equal(t, 1, strings.Count(out, "vault availability check failed"), out)
 			assert.Contains(t, out, "CAPY_VAULT_KEY")
-			assert.Contains(t, out, "## unmatchedquasar\nError: vault:", "the actual vault pass must still run")
+			assert.Contains(t, out, "## 2. unmatchedquasar\nError: vault:", "the actual vault pass must still run")
 			if knowledge == "populated knowledge" {
 				assert.False(t, res.IsError, "successful knowledge results stay usable")
 				assert.Contains(t, out, "db-guide")
 				assert.Contains(t, out, "partial results (vault:")
 			} else {
-				assert.Contains(t, out, "## database\nError: vault:")
+				assert.Contains(t, out, "## 1. database\nError: vault:")
 			}
 
 			// Source and kind opt-outs must bypass availability as well as retrieval.

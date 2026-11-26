@@ -50,22 +50,23 @@ func TestSearch_KnowledgeLayerFailure(t *testing.T) {
 	// Control: an intact store yields a clean hit and a clean miss.
 	out := search("database", "unmatchedquasar")
 	assert.Contains(t, out, "db-guide")
-	assert.Contains(t, out, "## unmatchedquasar\nNo results found.")
+	assert.Contains(t, out, "## 2. unmatchedquasar\nNo results found.")
 	assert.NotContains(t, out, "Error:")
 	assert.NotContains(t, out, "partial results")
 
 	dropSearchTables(t, srv.config.Store.Path, store.EncryptionKeyFromEnv(), "chunks_trigram")
 	out = search("database", "unmatchedquasar")
-	assert.Regexp(t, `## database\n\n⚠ partial results \(knowledge: `+layerFailure("chunks_trigram")+`\)`, out)
+	assert.Regexp(t, `## 1\. database\n\n⚠ partial results \(knowledge: `+layerFailure("chunks_trigram")+`\)`, out)
 	assert.Contains(t, out, "--- [db-guide] ---", "the porter layer's hit survives")
-	assert.Regexp(t, `## unmatchedquasar\nError: knowledge: `+layerFailure("chunks_trigram"), out,
+	assert.Regexp(t, `## 2\. unmatchedquasar\nError: knowledge: `+layerFailure("chunks_trigram"), out,
 		"a miss beside a failed layer is not a clean miss")
 	assert.NotContains(t, out, "No results found.")
 
 	dropSearchTables(t, srv.config.Store.Path, store.EncryptionKeyFromEnv(), "chunks")
 	out = search("database")
-	assert.Regexp(t, `## database\nError: knowledge: `+layerFailure("chunks(_trigram)?"), out)
+	assert.Regexp(t, `## 1\. database\nError: knowledge: `+layerFailure("chunks(_trigram)?"), out)
 	assert.NotContains(t, out, "--- [db-guide] ---")
+	assert.NotContains(t, out, "Refine your query terms", "a failed batch makes no whole-batch miss claim")
 }
 
 func TestSearch_VaultLayerFailure(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/sanitize"
 	"github.com/serpro69/capy/internal/store"
 	"github.com/serpro69/capy/internal/vault"
 )
@@ -20,12 +21,14 @@ import (
 // within-corpus fusion weight.
 const federationRRFK = 60.0
 
-const (
-	searchMaxTotalBytes = 40 * 1024
-	searchSnippetMaxLen = 1500
-)
-
 func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.search(ctx, req, searchReplyMaxBytes)
+}
+
+// search serves capy_search within a reply of at most replyMax UTF-8 bytes.
+// handleSearch always passes searchReplyMaxBytes; tests pass a smaller reply to
+// place a budget boundary without depending on exact rendered sizes.
+func (s *Server) search(ctx context.Context, req mcp.CallToolRequest, replyMax int) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 	for _, name := range []string{"query", "source", "project"} {
 		if raw, present := args[name]; present {
@@ -81,13 +84,15 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	budget := s.throttle.advance(limit)
-	respond := func(text string, isError bool) (*mcp.CallToolResult, error) {
-		result := textResult(text + "\n\n" + budget.notice())
+	// Every valid reply ends with the exact admission snapshot; it is charged to
+	// the request-wide notice reserve together with any body notices.
+	respond := func(body string, isError bool) (*mcp.CallToolResult, error) {
+		result := textResult(body + noticeSeparator + budget.notice())
 		result.IsError = isError
 		return s.trackToolResponse("capy_search", result), nil
 	}
 	if budget.limit == 0 {
-		return respond("BLOCKED: shared search budget exhausted. Wait for reset or use batch_execute(commands, queries) for your next research step.", true)
+		return respond("BLOCKED: shared search budget exhausted. Retry after the reset time below; all callers of this MCP server share the window.", true)
 	}
 	effectiveLimit := budget.limit
 
@@ -146,34 +151,39 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return respond(
 			"The knowledge base is empty — nothing has been indexed yet.\n\n"+
 				"To populate it, use:\n"+
-				"  • capy_batch_execute(commands, queries) — run commands, auto-index output, and search in one call\n"+
-				"  • capy_fetch_and_index(url) — fetch a URL, index it, then search with capy_search\n"+
-				"  • capy_index(content, source) — manually index text content\n\n"+
-				"After indexing, capy_search becomes available for follow-up queries.", true)
+				"  • capy_index(content, source) — index text you want to search later\n"+
+				"  • capy_fetch_and_index(url) — fetch a web page and index it\n\n"+
+				"New captured command output is kept in run storage, not knowledge — recover it with capy_runs using its run or batch ID.", true)
 	}
 
-	var sections []string
+	// Request-wide notices share searchNoticeReserve with the footer; query
+	// groups use the rest of the reply (see replyWriter).
+	var leading []string
 	if availabilityErr != nil {
 		// A failed preflight leaves availability unknown. Surface it once and
 		// still attempt both normal passes, preserving any successful results.
-		sections = append(sections, fmt.Sprintf("⚠ vault availability check failed: %v", availabilityErr))
+		leading = append(leading, "⚠ vault availability check failed: "+displayField(availabilityErr.Error(), searchCauseMaxBytes))
 	}
-	totalSize := 0
+
+	w := newReplyWriter(replyMax)
+	completion := ""
+	// hasResults: some query that ran returned a hit, whether or not it fit.
 	hasResults := false
+	// allClean: every query ran and every eligible pass succeeded.
+	allClean := true
+	// cleanKnowledgeMiss: some query completed every eligible pass, including a
+	// knowledge pass, with zero hits.
+	cleanKnowledgeMiss := false
 
-	// Lazily fetched once if any query returns zero results while ephemeral is
-	// excluded. Cached across queries in this request; a concurrent write could
-	// shift the count by ±1 — acceptable, the user-facing number is directional,
-	// not authoritative. -1 = not yet checked. Ephemeral membership is identical
-	// in searchOpts and knowledgeOpts (federation only strips session), so either
-	// works; searchOpts keeps this a knowledge-corpus concern.
-	ephemeralExcluded := !store.KindScopeIncludes(searchOpts, store.KindEphemeral)
-	ephemeralCount := -1
-
-	for _, q := range queryList {
-		if totalSize > searchMaxTotalBytes {
-			sections = append(sections, fmt.Sprintf("## %s\n(output cap reached)\n", q))
-			continue
+	for i, q := range queryList {
+		ordinal := i + 1
+		if !w.canStartGroup() {
+			completion = unsearchedNotice(ordinal, len(queryList))
+			allClean = false
+			break
+		}
+		if s.searchDispatched != nil {
+			s.searchDispatched(ordinal, q)
 		}
 
 		// Best-effort per pass, but NOT silent (fail-loud): a swallowed error is
@@ -212,92 +222,128 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 
 		blocks := federateHits(kResults, vResults, q, effectiveLimit)
-
-		if len(blocks) == 0 {
-			// A pass that errored takes precedence over the ephemeral hint: the
-			// user needs the failure, not advice to widen kinds.
-			if len(errs) > 0 {
-				sections = append(sections, fmt.Sprintf("## %s\nError: %s", q, strings.Join(errs, " | ")))
-				continue
-			}
-			noResults := fmt.Sprintf("## %s\nNo results found.", q)
-			if ephemeralExcluded {
-				if ephemeralCount < 0 {
-					if n, cErr := st.CountSourcesByKind(store.KindEphemeral); cErr == nil {
-						ephemeralCount = n
-					} else {
-						ephemeralCount = 0
-					}
-				}
-				if ephemeralCount > 0 {
-					noResults += fmt.Sprintf(
-						"\n\n%d ephemeral source(s) present but excluded by default. Ephemeral sources include command output (capy_execute / capy_execute_file / capy_batch_execute) and fetched web pages (capy_fetch_and_index). To include them, retry with:\n"+
-							"  • include_kinds: [\"durable\",\"ephemeral\"]  (search across both kinds), or\n"+
-							"  • source: \"<label>\"  (explicit-source filter bypasses kind filtering)",
-						ephemeralCount,
-					)
-				}
-			}
-			sections = append(sections, noResults)
-			continue
-		}
-
-		hasResults = true
-		block := strings.Join(blocks, "\n\n")
-		// Partial results: one corpus failed but the other returned hits. Flag the
-		// degradation so the user knows the result set is incomplete.
+		// A failed pass takes precedence over miss advice: the caller needs the
+		// failure, not advice to widen kinds.
 		if len(errs) > 0 {
-			block = fmt.Sprintf("⚠ partial results (%s)\n\n%s", strings.Join(errs, " | "), block)
+			allClean = false
+		} else if len(blocks) == 0 && runKnowledgePass {
+			cleanKnowledgeMiss = true
 		}
-		sections = append(sections, fmt.Sprintf("## %s\n\n%s", q, block))
-		totalSize += len(block)
+
+		w.startGroup(queryFrame(ordinal, q, errs, len(blocks)))
+		shown := 0
+		for _, b := range blocks {
+			if !w.addHit(b) {
+				break
+			}
+			shown++
+		}
+		if len(blocks) > 0 {
+			hasResults = true
+		}
+		if shown < len(blocks) {
+			completion = partialNotice(ordinal, len(queryList), shown, len(blocks), effectiveLimit)
+			allClean = false
+			break
+		}
 	}
 
-	output := strings.Join(sections, "\n\n---\n\n")
+	trailing := s.searchHints(searchHintInput{
+		st:                 st,
+		searchOpts:         searchOpts,
+		source:             source,
+		sessionInScope:     sessionInScope,
+		vaultEnabled:       vlt != nil,
+		runVaultPass:       runVaultPass,
+		vaultStats:         vaultStats,
+		hasResults:         hasResults,
+		allClean:           allClean,
+		cleanKnowledgeMiss: cleanKnowledgeMiss,
+	})
+	if completion != "" {
+		trailing = append([]string{completion}, trailing...)
+	}
 
-	// Vault session messaging (design §D7, replaces the stale knowledge.db
-	// session-exclusion copy): when a session-scoped search comes back empty,
-	// name the command that makes sessions searchable — CAPY_VAULT_KEY when the
-	// vault is disabled, `capy vault reindex` when a chunk backlog can hide
-	// otherwise-matching sessions. Gated on source=="" so a source-filtered
-	// (knowledge-only) search doesn't get spurious vault advice. Fires at most
-	// once per request (the `!hasResults` gate, not per-query): if any query in
-	// the batch produced hits the vault is clearly usable, so repeating a
-	// setup/backlog nag for the queries that missed would be noise.
-	if !hasResults && source == "" {
+	parts := leading
+	if groups := w.String(); groups != "" {
+		parts = append(parts, groups)
+	}
+	parts = append(parts, trailing...)
+	return respond(strings.Join(parts, noticeSeparator), false)
+}
+
+// searchHintInput carries the request facts searchHints needs.
+type searchHintInput struct {
+	st                 *store.ContentStore
+	searchOpts         store.SearchOptions
+	source             string
+	sessionInScope     bool
+	vaultEnabled       bool
+	runVaultPass       bool
+	vaultStats         *vault.VaultStats
+	hasResults         bool
+	allClean           bool
+	cleanKnowledgeMiss bool
+}
+
+// searchHints returns the request-wide guidance, each hint at most once per
+// reply. Every hint is bounded so that, with the completion notice,
+// availability notice and footer, it fits searchNoticeReserve.
+func (s *Server) searchHints(in searchHintInput) []string {
+	var hints []string
+
+	// Miss guidance, once per reply: new command output lives in run storage,
+	// and retained ephemeral knowledge is excluded unless selected. An explicit
+	// source or an ephemeral-inclusive kind scope opts out of the ephemeral part
+	// (KindScopeIncludes treats an explicit source as including every kind).
+	if in.cleanKnowledgeMiss {
+		hint := "For queries without hits: new captured command output is kept in run storage, not knowledge — use capy_runs with its run or batch ID."
+		if !store.KindScopeIncludes(in.searchOpts, store.KindEphemeral) {
+			if n, err := in.st.CountSourcesByKind(store.KindEphemeral); err == nil && n > 0 {
+				hint += fmt.Sprintf(" %d ephemeral knowledge source(s) — fetched web pages (capy_fetch_and_index) and historical command output — are excluded by default. To include them, retry with include_kinds: [\"durable\",\"ephemeral\"] or with source: \"<label>\" (an explicit source bypasses kind filtering).", n)
+			}
+		}
+		hints = append(hints, hint)
+	}
+
+	// Vault session messaging (design §D7): when the queries that ran found no
+	// hits, name the command that makes sessions searchable — CAPY_VAULT_KEY
+	// when the vault is disabled, `capy vault reindex` when a chunk backlog can
+	// hide otherwise-matching sessions. This also applies when only a prefix of
+	// the batch ran. Gated on source=="" so a source-filtered (knowledge-only)
+	// search doesn't get spurious vault advice. If any query produced hits the
+	// vault is clearly usable, so repeating a setup/backlog nag would be noise.
+	if !in.hasResults && in.source == "" {
 		switch {
-		case sessionInScope && vlt == nil:
-			output += "\n\nPast sessions aren't searchable — set CAPY_VAULT_KEY to archive and search session transcripts."
-		case runVaultPass && vaultStats != nil && vaultStats.OutdatedSessions > 0:
-			output += fmt.Sprintf(
-				"\n\n%d archived session(s) were indexed by an older version (v%d) and may omit newer indexed content — run `capy vault reindex` to update them.",
-				vaultStats.OutdatedSessions, vaultStats.IndexVersion)
+		case in.sessionInScope && !in.vaultEnabled:
+			hints = append(hints, "Past sessions aren't searchable — set CAPY_VAULT_KEY to archive and search session transcripts.")
+		case in.runVaultPass && in.vaultStats != nil && in.vaultStats.OutdatedSessions > 0:
+			hints = append(hints, fmt.Sprintf(
+				"%d archived session(s) were indexed by an older version (v%d) and may omit newer indexed content — run `capy vault reindex` to update them.",
+				in.vaultStats.OutdatedSessions, in.vaultStats.IndexVersion))
 		}
 	}
 
-	// Count sources for each kind within the caller's search scope.
-	// Only *included* kinds are counted here; *excluded* kinds are handled by
-	// the per-query ephemeral hint above. Uses searchOpts (the caller's declared
-	// scope), not knowledgeOpts: this is a knowledge-corpus count, and post-Task-9
-	// knowledge.db holds no session rows, so the searchOpts/knowledgeOpts
-	// distinction for KindSession is moot in the shipped product.
-	if !hasResults {
+	// Whole-batch miss statement: only when every query ran, every eligible
+	// pass succeeded and none returned a hit. Counts only kinds *included* in
+	// the caller's scope; excluded ephemeral sources are covered by the miss
+	// guidance above.
+	if in.allClean && !in.hasResults {
 		countParts := make([]string, 0, 3)
 		for _, kind := range []store.SourceKind{store.KindDurable, store.KindEphemeral, store.KindSession} {
-			if !store.KindScopeIncludes(searchOpts, kind) {
+			if !store.KindScopeIncludes(in.searchOpts, kind) {
 				continue
 			}
-			n, err := st.CountSourcesByKind(kind)
+			n, err := in.st.CountSourcesByKind(kind)
 			if err == nil && n > 0 {
 				countParts = append(countParts, fmt.Sprintf("%d %s", n, kind))
 			}
 		}
 		if len(countParts) > 0 {
-			output += fmt.Sprintf("\n\n%s source(s) indexed. Refine your query terms, or use capy_stats for source details.", strings.Join(countParts, ", "))
+			hints = append(hints, fmt.Sprintf("%s source(s) indexed. Refine your query terms, or use capy_stats for source details.", strings.Join(countParts, ", ")))
 		}
 	}
-
-	return respond(output, false)
+	return hints
 }
 
 // federateHits RRF-merges the knowledge and vault ranked lists for one query
@@ -341,10 +387,23 @@ func federateHits(kResults []store.SearchResult, vResults []vault.SearchResult, 
 // chunk title, and a query-highlighted snippet. Extracted from the per-query
 // loop so federation renders knowledge and vault hits through parallel helpers
 // (formatVaultHit is its vault sibling in tool_vault_search.go).
+//
+// Every field is redacted on its complete value and bounded, so the block stays
+// within searchHitMaxBytes. A label that looks like a vault handle
+// ("session:…") is marked as knowledge so corpus attribution stays explicit.
 func formatKnowledgeHit(r store.SearchResult, query string) string {
-	header := fmt.Sprintf("--- [%s] ---", r.Label)
-	heading := fmt.Sprintf("### %s", r.Title)
-	snippet := ExtractSnippet(r.Content, query, searchSnippetMaxLen, r.Highlighted)
+	label := displayField(r.Label, knowledgeLabelMaxBytes)
+	header := fmt.Sprintf("--- [%s] ---", label)
+	if strings.HasPrefix(label, "session:") {
+		header = fmt.Sprintf("--- [%s] (knowledge) ---", label)
+	}
+	heading := fmt.Sprintf("### %s", displayField(r.Title, knowledgeTitleMaxBytes))
+	// Literal highlight-marker bytes are shown visibly rather than passed
+	// through as invisible control bytes; the content then no longer matches
+	// the highlight, so match positions come from the query terms, which are
+	// normalized the same way.
+	snippet := ExtractSnippet(markerVisible.Replace(sanitize.StripSecrets(r.Content)),
+		markerVisible.Replace(query), searchPassageMaxBytes, r.Highlighted)
 	return fmt.Sprintf("%s\n%s\n\n%s", header, heading, snippet)
 }
 
@@ -384,7 +443,7 @@ func parseIncludeKinds(raw any) ([]store.SourceKind, error) {
 	for _, v := range values {
 		k := store.SourceKind(v)
 		if !k.Valid() {
-			return nil, fmt.Errorf("invalid include_kinds value %q (accepted: \"durable\", \"ephemeral\", \"session\")", v)
+			return nil, fmt.Errorf("invalid include_kinds value %s (accepted: \"durable\", \"ephemeral\", \"session\")", argPreview(v))
 		}
 		if seen[k] {
 			continue
