@@ -327,7 +327,8 @@ func TestSearch_EmptyIndex(t *testing.T) {
 	assert.True(t, r.IsError)
 	text := resultText(r)
 	assert.Contains(t, text, "knowledge base is empty")
-	assert.Contains(t, text, "capy_batch_execute")
+	assert.Contains(t, text, "capy_index")
+	assert.Contains(t, text, "capy_runs")
 	assert.Contains(t, text, "capy_fetch_and_index")
 	assert.Contains(t, text, "capy_index")
 }
@@ -559,7 +560,9 @@ func TestSearch_ZeroResultsNamesRecoveryPaths(t *testing.T) {
 	// Both recovery paths must be named.
 	assert.Contains(t, text, `include_kinds: ["durable","ephemeral"]`)
 	assert.Contains(t, text, `source: "<label>"`)
-	assert.Contains(t, text, "ephemeral source(s) present but excluded")
+	assert.Contains(t, text, "1 ephemeral knowledge source(s)")
+	assert.Contains(t, text, "excluded by default")
+	assert.Contains(t, text, "capy_runs", "new command output lives in run storage")
 }
 
 // Previously captured execute:* rows retain their old knowledge selectors even
@@ -662,7 +665,9 @@ func TestSearch_OutputCap(t *testing.T) {
 	})
 	assert.False(t, r.IsError)
 	text := resultText(r)
-	assert.Contains(t, text, "output cap reached")
+	assert.LessOrEqual(t, len(text), searchReplyMaxBytes)
+	assert.Contains(t, text, "Reply budget reached")
+	assert.Contains(t, text, "(inclusive)")
 }
 
 func indexAs(t *testing.T, srv *Server, content, label string, kind store.SourceKind) {
@@ -725,10 +730,14 @@ func TestSearch_NoResults_EphemeralHintMentionsFetchedContent(t *testing.T) {
 	})
 
 	text := resultText(r)
-	assert.Contains(t, text, "ephemeral source(s) present but excluded")
+	assert.Contains(t, text, "ephemeral knowledge source(s)")
+	assert.Contains(t, text, "excluded by default")
 	assert.Contains(t, text, "fetched web pages")
 	assert.Contains(t, text, "capy_fetch_and_index")
-	assert.Contains(t, text, "capy_execute_file")
+	// New executions no longer produce ephemeral knowledge; their output is in
+	// run storage.
+	assert.NotContains(t, text, "capy_execute_file")
+	assert.Contains(t, text, "capy_runs")
 	assert.Contains(t, text, "source: \"<label>\"")
 }
 

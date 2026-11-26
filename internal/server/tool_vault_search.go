@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/serpro69/capy/internal/sanitize"
 	"github.com/serpro69/capy/internal/vault"
 )
 
@@ -162,6 +163,9 @@ func vaultProjectScope(req mcp.CallToolRequest, projectDir string) (project, pro
 // otherwise byte-identical to the pre-platform format. The parent marker uses
 // the platform's short-id rule (12 chars for Codex) — parent and child always
 // share a platform (see vault.Session.ParentUUID).
+//
+// Every field is redacted on its complete value and bounded, so the block stays
+// within searchHitMaxBytes.
 func formatVaultHit(r vault.SearchResult) string {
 	title := r.Title
 	if title == "" {
@@ -171,18 +175,25 @@ func formatVaultHit(r vault.SearchResult) string {
 	platform := r.Platform.OrClaude()
 	meta := make([]string, 0, 5)
 	if r.Project != "" {
-		meta = append(meta, r.Project)
+		meta = append(meta, displayField(r.Project, vaultProjectMaxBytes))
 	}
 	if !r.EndTime.IsZero() {
 		meta = append(meta, r.EndTime.Format("2006-01-02"))
 	}
-	meta = append(meta, fmt.Sprintf("line %d", r.LineIndex), platform.String())
+	meta = append(meta, fmt.Sprintf("line %d", r.LineIndex), displayField(platform.String(), vaultMetaFieldMaxBytes))
 	if r.ParentUUID != "" {
-		meta = append(meta, "child of "+platform.ShortID(r.ParentUUID))
+		// Redact the complete ID before shortening it: a secret-shaped value
+		// cut to its short form would no longer be recognized.
+		parent := platform.ShortID(r.ParentUUID)
+		if redacted := sanitize.StripSecrets(r.ParentUUID); redacted != r.ParentUUID {
+			parent = redacted
+		}
+		meta = append(meta, "child of "+displayField(parent, vaultMetaFieldMaxBytes))
 	}
 
 	return fmt.Sprintf("--- [session:%s] ---\n### %s\n%s\n\n%s",
-		r.SessionUUID, title, strings.Join(meta, " · "), r.Snippet)
+		displayField(r.SessionUUID, vaultSessionIDMaxBytes), displayField(title, vaultTitleMaxBytes),
+		strings.Join(meta, " · "), displayPassage(r.Snippet))
 }
 
 // parseDateArg parses a before/after argument as either a YYYY-MM-DD date or an

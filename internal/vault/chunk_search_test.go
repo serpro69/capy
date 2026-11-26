@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -297,30 +298,98 @@ func TestSearchChunks_EmptyQueryReturnsNil(t *testing.T) {
 }
 
 func TestChunkSnippet(t *testing.T) {
+	// highlighted wraps content's FTS5 highlight() output: content with the
+	// match markers removed.
+	snippet := func(highlighted string) string {
+		return chunkSnippet(strings.NewReplacer("\x02", "", "\x03", "").Replace(highlighted), highlighted)
+	}
+
 	t.Run("marks match and windows around it", func(t *testing.T) {
 		long := strings.Repeat("a", 300) + " \x02needle\x03 " + strings.Repeat("b", 300)
-		snip := chunkSnippet(long)
+		snip := snippet(long)
 		assert.Contains(t, snip, "[needle]")
 		assert.Less(t, len(snip), 300, "windowed, not the full content")
 		assert.True(t, strings.HasPrefix(snip, "…") && strings.HasSuffix(snip, "…"))
 	})
 
 	t.Run("short content returned whole", func(t *testing.T) {
-		assert.Equal(t, "a [b] c", chunkSnippet("a \x02b\x03 c"))
+		assert.Equal(t, "a [b] c", snippet("a \x02b\x03 c"))
 	})
 
 	t.Run("no markers falls back to head", func(t *testing.T) {
 		long := strings.Repeat("x", 500)
-		snip := chunkSnippet(long)
+		snip := snippet(long)
 		assert.True(t, strings.HasSuffix(snip, "…"))
 		assert.Less(t, len(snip), 500)
 	})
 
 	t.Run("never splits a multi-byte rune", func(t *testing.T) {
 		long := strings.Repeat("é", 200) + "\x02match\x03" + strings.Repeat("ü", 200)
-		snip := chunkSnippet(long)
+		snip := snippet(long)
 		assert.True(t, utf8ValidString(snip))
+		assert.True(t, utf8.ValidString(snip))
 		assert.Contains(t, snip, "[match]")
+	})
+
+	t.Run("redacts a secret crossing the window before cutting", func(t *testing.T) {
+		// The secret starts inside the head window and ends past it: cutting
+		// first would leave a fragment too short for the redaction pattern.
+		secret := "sk-ant-" + strings.Repeat("Q", 60)
+		content := strings.Repeat("x", 180) + secret + " tail"
+		snip := chunkSnippet(content, content)
+		assert.NotContains(t, snip, "sk-ant-")
+		assert.NotContains(t, snip, "QQQQ")
+		assert.Contains(t, snip, "[REDACTED_SECRET]")
+	})
+
+	t.Run("discards highlights that do not reproduce the redacted content", func(t *testing.T) {
+		secret := "sk-ant-" + strings.Repeat("Q", 40)
+		content := "before " + secret + " needle after"
+		highlighted := "before " + secret + " \x02needle\x03 after"
+		snip := chunkSnippet(content, highlighted)
+		assert.NotContains(t, snip, "sk-ant-")
+		assert.NotContains(t, snip, "[needle]", "stale highlight offsets are not reused")
+		assert.Contains(t, snip, "needle")
+	})
+
+	t.Run("content containing marker bytes is not treated as highlighted", func(t *testing.T) {
+		content := "literal \x02bytes\x03 inside"
+		snip := chunkSnippet(content, content)
+		assert.NotContains(t, snip, "[bytes]")
+		assert.Equal(t, "literal \uFFFDbytes\uFFFD inside", snip, "marker bytes are shown, never deleted")
+	})
+
+	t.Run("a marker byte never joins fragments of a split secret", func(t *testing.T) {
+		// Neither fragment is a recognizable secret; deleting the marker would
+		// join them into one.
+		content := "head sk-ant-" + strings.Repeat("A", 10) + "\x02" + strings.Repeat("A", 20) + " tail"
+		snip := chunkSnippet(content, content)
+		assert.NotContains(t, snip, "sk-ant-"+strings.Repeat("A", 30))
+		assert.Contains(t, snip, "sk-ant-"+strings.Repeat("A", 10)+"\uFFFD")
+	})
+
+	t.Run("a marker never joins a redacted value to its suffix", func(t *testing.T) {
+		// As stored after per-message redaction: the placeholder stays
+		// separated from the text after the marker.
+		content := "head [REDACTED_SECRET]\x02SUFFIXTAILXYZ end"
+		snip := chunkSnippet(content, content)
+		assert.Equal(t, "head [REDACTED_SECRET]\uFFFDSUFFIXTAILXYZ end", snip)
+	})
+
+	t.Run("a private span crossing joined messages is redacted whole", func(t *testing.T) {
+		// Only redaction of the complete content recognizes the span; the
+		// marker inside the early "</priv\x02ate>" must not close it.
+		content := "head <private>first</priv\x02ate> hiddentail</private> after"
+		snip := chunkSnippet(content, content)
+		assert.NotContains(t, snip, "hiddentail")
+		assert.NotContains(t, snip, "first")
+		assert.Equal(t, "head [REDACTED] after", snip)
+	})
+
+	t.Run("invalid UTF-8 is normalized", func(t *testing.T) {
+		content := "bad \xff byte"
+		snip := chunkSnippet(content, content)
+		assert.True(t, utf8.ValidString(snip))
 	})
 }
 

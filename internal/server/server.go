@@ -71,7 +71,7 @@ func (t *searchThrottle) advance(limit int) searchBudget {
 func (b searchBudget) notice() string {
 	// Round up so a still-blocked request never advertises a zero wait.
 	remainingMS := (b.remaining + time.Millisecond - 1) / time.Millisecond
-	return fmt.Sprintf("Shared MCP server search budget: search call #%d/%d in this window. Results limited to %d/query. Untapered calls left: %d; calls before block: %d; resets in %d ms (window %d ms; taper after %d; block after %d). Batch queries with search(queries: [\"q1\",\"q2\"]) or use batch_execute.",
+	return fmt.Sprintf("Shared MCP server search budget: search call #%d/%d in this window. Results limited to %d/query. Untapered calls left: %d; calls before block: %d; resets in %d ms (window %d ms; taper after %d; block after %d). Batch related questions in one capy_search queries array.",
 		b.count, b.policy.BlockAfter, b.limit, max(0, b.policy.TaperAfter-b.count), max(0, b.policy.BlockAfter-b.count), remainingMS, b.policy.WindowMS, b.policy.TaperAfter, b.policy.BlockAfter)
 }
 
@@ -93,6 +93,9 @@ type Server struct {
 	projectDir    string
 	// Optional fetch clock, fixed before concurrent use. Nil uses time.Now.
 	fetchNow func() time.Time
+	// Optional test observer called before each capy_search query is
+	// dispatched, fixed before concurrent use. Nil in production.
+	searchDispatched func(ordinal int, query string)
 
 	// Captured before lazy initialization; never re-resolved from files or the
 	// environment during this server's lifetime.

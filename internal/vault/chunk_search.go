@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/serpro69/capy/internal/retrieval"
+	"github.com/serpro69/capy/internal/sanitize"
 )
 
 // chunk_search.go runs the shared retrieval engine (internal/retrieval) over
@@ -192,7 +193,7 @@ func (s *VaultStore) searchChunks(ctx context.Context, opts SearchOptions, onErr
 			SessionUUID:   r.Label,
 			SubagentID:    meta.subagentID,
 			LineIndex:     meta.firstLineIndex,
-			Snippet:       chunkSnippet(r.Highlighted),
+			Snippet:       chunkSnippet(r.Content, r.Highlighted),
 			Title:         meta.sessionTitle,
 			ProjectPath:   meta.projectPath,
 			Project:       effectiveProject(meta.projectPath, meta.customProject),
@@ -236,14 +237,44 @@ func scanChunkSearchRow(rows *sql.Rows) (retrieval.SearchResult, error) {
 	return r, nil
 }
 
+// Highlight-marker replacers: re-mark matches as [match], strip markers, or
+// show literal marker bytes visibly.
+var (
+	chunkMarkerReplacer = strings.NewReplacer(string(rune(stx)), "[", string(rune(etx)), "]")
+	chunkMarkerStripper = strings.NewReplacer(string(rune(stx)), "", string(rune(etx)), "")
+	chunkMarkerVisible  = strings.NewReplacer(string(rune(stx)), "\uFFFD", string(rune(etx)), "\uFFFD")
+)
+
 // chunkSnippet cuts a display snippet out of the skeleton's highlight()
 // output: a window around the first match, with matches re-marked as
 // [match] to mirror the per-line Search's snippet() style. The STX/ETX
 // markers are single bytes replaced by single bytes, so byte offsets into the
 // marked string equal offsets into the highlighted one.
-var chunkMarkerReplacer = strings.NewReplacer(string(rune(stx)), "[", string(rune(etx)), "]")
+//
+// Known secrets are redacted on the complete content before any cut, so a
+// secret crossing a window edge cannot survive as an unrecognized fragment.
+// The highlight is reused only when removing its markers reproduces that
+// redacted, valid UTF-8 content; otherwise the markers are discarded and the
+// head of the redacted content is shown. Content holding literal marker bytes
+// of its own shows its head with each such byte as U+FFFD.
+func chunkSnippet(content, highlighted string) string {
+	clean := strings.ToValidUTF8(sanitize.StripSecrets(content), "\uFFFD")
+	if strings.ContainsAny(content, string(rune(stx))+string(rune(etx))) {
+		// Literal marker bytes make the highlight ambiguous: show the head of
+		// the redacted content with each marker byte replaced visibly. They are
+		// never deleted, because removing them could join fragments on either
+		// side into text redaction did not see.
+		return chunkSnippetFrom(chunkMarkerVisible.Replace(clean))
+	}
+	if chunkMarkerStripper.Replace(highlighted) != clean {
+		highlighted = clean
+	}
+	return chunkSnippetFrom(highlighted)
+}
 
-func chunkSnippet(highlighted string) string {
+// chunkSnippetFrom windows highlighted text whose STX/ETX bytes are match
+// markers only.
+func chunkSnippetFrom(highlighted string) string {
 	marked := chunkMarkerReplacer.Replace(highlighted)
 
 	first := strings.IndexByte(highlighted, stx)
