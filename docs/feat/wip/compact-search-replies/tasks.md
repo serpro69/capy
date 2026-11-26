@@ -4,7 +4,7 @@
 >
 > Implementation: [Implementation plan](implementation.md)
 >
-> Status: pending
+> Status: done
 >
 > Created: 2026-11-23
 >
@@ -115,15 +115,104 @@
 
 ## Task 5. Verify and document the public behavior
 
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 4
 - **Size:** S
 - **Can run in parallel with:** —
 - **Docs:** [Verification](implementation.md#verification)
 
-- [ ] 5.1 Run focused and full FTS5 tests with synthetic knowledge and vault keys. Compare pre/post `make bench-quality` results and record fixed-fixture rank parity, reply bytes saved on duplicates, single-query overhead and timing.
-- [ ] 5.2 Update both tool descriptions and `docs/reference/tools.md` with query numbering, references and retrying the inclusive suffix. Document field omissions and the vault validation change. Walk through a mixed batch with a repeated passage, distinct excerpt, partial failure and interrupted final group, then issue the advertised retry.
-- [ ] 5.3 Review the Go changes and check both shipped handlers against the reply contract before closing the tasks.
+- [x] 5.1 Run focused and full FTS5 tests with synthetic knowledge and vault keys. Compare pre/post `make bench-quality` results and record fixed-fixture rank parity, reply bytes saved on duplicates, single-query overhead and timing.
+- [x] 5.2 Update both tool descriptions and `docs/reference/tools.md` with query numbering, references and retrying the inclusive suffix. Document field omissions and the vault validation change. Walk through a mixed batch with a repeated passage, distinct excerpt, partial failure and interrupted final group, then issue the advertised retry.
+- [x] 5.3 Review the Go changes and check both shipped handlers against the reply contract before closing the tasks.
+
+### Execution context
+
+- 2026-11-26 · observed · base `f9f756e` (branch `compact-search-replies`, clean); pre-feature baseline is the merge base `ae5a4dc` (master), checked out detached at `/tmp/capy-csr-base`. `docs/reference/tools.md` had no reply-format or `capy_vault_search` content (Task 2 and Task 4 deferrals); the `capy_vault_search` description omitted numbering, references, retry, the limit cap of 10 and Codex sessions.
+- 2026-11-26 · verified (author-run, capy runs) · `make bench-quality` on `ae5a4dc` and on `f9f756e` (`bench-results/compact-search-replies-{baseline,candidate}.json`, gitignored): `make bench-compare` shows every retrieval-quality and context-reduction metric unchanged (dataset `sha256:7d45…ba2d` verified). `benchstat` is not installed, so the perf half was skipped.
+- 2026-11-26 · verified (author-run, temporary harness not committed) · the same `internal/server` test file was run in both trees: it indexes five fixed markdown files from `ae5a4dc` (`docs/reference/{tools,runs,vault}.md`, `docs/architecture.md`, `README.md`) as durable knowledge and calls `handleSearch` with `limit: 2`, `include_kinds: ["durable"]`. **Rank parity:** the ordered label/title sequence of six single queries is identical pre/post. **Duplicate savings** (six queries in each batch): identical duplicates 19,152 → 9,947 bytes (6 references, −48%); differently worded duplicates 19,160 → 13,087 bytes (4 references, −32%; two reworded hits selected different windows and are repeated in full, per the Task 3 identity rule); distinct control 17,087 → 17,108 (+21). **Single-query overhead:** −1 to −17 bytes per reply. The added `N. ` heading and `[n] ` markers are offset by a shorter footer sentence and by the snippet cap now counting its own markers and joins. **Timing** (median of 15 calls, three alternating rounds): single query 2.3–2.4 → 3.1–3.2 ms; six-query batch 8.0–11.3 → 13.6–17.4 ms, about +0.9 ms per query. A CPU profile attributes the increase to `renderKnowledgeHit` → `sanitize.StripSecrets` over the complete chunk. This is the accepted Task 2 design (redact the complete field before cutting a window), so no change was made.
+- 2026-11-26 · implemented · `docs/reference/tools.md` § Keyword search replies covers the layout, statuses, references, field limits, U+FFFD for literal STX/ETX, the inclusive retry (with the `capy_search` reduced-limit sentence and the untapered vault limit), a walkthrough and once-per-reply guidance. § Argument validation documents the `capy_vault_search` `queries` change. The `capy_search` and `capy_vault_search` descriptions in `internal/server/tools.go` now describe numbering, references and fresh retries; the vault description also covers string-only arrays, the 3/10 limit, no shared budget and Codex sessions. `TestSearchReply_Guidance/tool_schema` checks both descriptions and pins the documented vault maximum to `vaultSearchMaxLimit`. New `TestVaultSearchReply_DocumentedWalkthrough` replays the documented batch: a repeated passage, another window of the same chunk, a layer failure with a survivor, an interrupted final group, then the advertised retry showing the omitted rank. README links the reference section. `docs/architecture.md` describes `replyWriter` and passage identity.
+- 2026-11-26 · decided (author; superseded by the round-2 fixes below: real retrieval, with the hook pinning only the project path and injecting the failure) · the walkthrough uses `capy_vault_search` with a stubbed corpus. Its `vaultChunkSearch` hook can fail one query; the knowledge pass has no per-query failure injection, and dropping an FTS table fails every query. The section notes that `capy_search` uses the same layout plus its footer.
+- 2026-11-26 · not needed · Task 4's deferral (extract the duplicated per-group loop if 5.3 changed boundary rules): Task 5 changes neither loop. Both handlers' boundary tests still guard their agreement.
+- 2026-11-26 · verified (author-run, capy runs) · full `go test -tags fts5 -count=1 -timeout 40m ./...` on `f9f756e` (started before the Task 5 edits): every package passes except `cmd/capy` (`TestCodexMixedStartupContext`, the known Task 1 failure; package 664 s) and `internal/execution` (`TestServiceQuarantineSurvivesAttributionTransactionLoss`). The execution test then passed 10/10 on `ae5a4dc` and 10/10 on the candidate, and the whole package passed alone. It is a load-dependent flake under the full parallel run and predates this branch (which touches neither `internal/execution` nor `internal/runstore`). Owner: unassigned. Next action: find the timing assumption in that test; verify with `go test -count=20` under `-p` load. Post-edit full `internal/server` passed (327 s). Focused `-race` search tests passed in server/store/vault/retrieval before the edits; after them, `-race` over the changed tests passed.
+- 2026-11-26 · verified (author-run, temporary harness not committed) · federated rank parity, requested by review: the same five docs plus archived sessions on overlapping topics (`setupVaultSweepProject` plus four sessions), default kinds, `limit: 2`. For five queries, the ordered knowledge/vault label and title sequence is identical on `ae5a4dc` and the candidate, with five vault hits interleaved. A four-query identical-duplicate federated batch shrinks from 8,118 to 4,362 bytes, with four references spanning both corpora.
+- 2026-11-26 · reviewed · isolated review: internal `kk:code-reviewer` (COMMENT, P3s only) and clink `codex` (OpenAI, assumed from PAL's shipped manifest; `claude` excluded as the authoring provider; `agy` missing; `gemini` retired; no PAL API providers), which gave REQUEST_CHANGES. Corroborated by both:
+  - the vault validation paragraph overstated parity (blank queries are still accepted; a disabled vault reports before dates are checked);
+  - the walkthrough showed two windows of one chunk in a single ranked list, which retrieval fusion cannot produce, and it relied on an unexplained reduced budget;
+  - the architecture note omitted the rendered block from the reference key;
+  - 5.1 was checked without recorded suite results.
+
+  Codex alone:
+  - P2: `execSearch` dropped rows already read when `rows.Err()` failed. This is inherited from Task 1 and conflicts with its keep-surviving-rows contract.
+  - P3: the README and descriptions promised a citation for every repeat.
+  - P3: the layout presented optional fields as always shown.
+  - P3: "Session hits require CAPY_VAULT_KEY" ignored legacy knowledge session rows.
+  - P3: the schema assertion sliced a fixed byte prefix.
+
+  Code-reviewer alone (P3s):
+  - `chunk from line N` is zero-based (`vault/scanner.go` `LineIndex`);
+  - `…` can also start a passage;
+  - the miss statement is per-kind;
+  - tools.md omitted the `capy_search` limit default.
+- 2026-11-26 · implemented (review fixes) · `retrieval.execSearch` returns the rows read before an iteration failure when `OnError` is set. Strict callers (`FailOnError`, run search) already discard every row once `OnError` fires; best-effort callers without `OnError` still drop the layer. Reachability is narrow: the layer SQL sorts, so SQLite computes every column before emitting a row, and only post-sort failures (cancellation, interrupt, sorter I/O) reach this path. New `TestCorpusKeepsRowsReadBeforeIterationFailure` cancels the context after the first row. `database/sql` then deterministically stops `Next` and reports `context.Canceled`. The test failed before the fix (0 rows) and passes after (`-race -count=3`). Docs and descriptions were corrected for every finding above. The walkthrough now has five queries, each returning at most one window per chunk, with bracketed matches and no editorial elision. It states why the test uses a reduced reply budget, and the test compares its reply byte-for-byte with the doc's code block, so the example cannot drift. The schema test asserts the literal `'↑ same passage as [n]'`.
+- 2026-11-26 · verified (author-run, capy runs) · after the `execSearch` fix (candidate diff `5b131c7f`): full non-race `internal/server` (327 s), `internal/store` (94 s), `internal/vault` (393 s), `internal/retrieval`, `internal/runstore` (457 s) and `internal/execution` pass; focused `-race` search tests pass in server/store/vault/retrieval.
+- 2026-11-26 · reviewed (round 2) · both reviewers confirmed the `execSearch` change keeps the strict, best-effort and partial caller policies, and that the new test is deterministic on Go 1.27.2. Codex: REQUEST_CHANGES. Internal reviewer: COMMENT, P3s only. Corroborated by both: the walkthrough still could not occur, because vault passages are about 100-byte windows around the first match, and they bracket the query's own matched terms, so a reworded query with different terms gets a full entry rather than a reference. Codex alone:
+  - P2: the fixture's rekey procedure contradicted `sqliteutil.SwapAndVerify`. That function renames the original to `.bak`, installs the copy, then verifies it, and returns the `.bak` path.
+  - P3: the `include_kinds` session wording.
+  - P3: citations need unchanged attribution.
+  - P3: the regression test's wait was unbounded.
+  - Evidence request: expanded location parity, and final-candidate suite and bench results.
+
+  Internal reviewer alone: re-run the engine's consumer packages; done above.
+- 2026-11-26 · implemented (round-2 fixes) · the walkthrough now runs real retrieval over six archived test sessions, through `writeWalkthroughSessions` and the vault sweep. Their answers restate behavior in AGENTS.md, `store.go` and `sqliteutil.SwapAndVerify`. The hook only pins the temporary project path to `/src/capy` and injects query 4's failure. The batch uses `limit: 5`, and the reworded query 2 matches the same terms, so both of its hits are references. Query 3's later window is a new entry. Query 5 shows 4 of 5 under the reduced budget, and the retry shows all five. The doc block is the exact reply, still compared byte-for-byte by the test. tools.md now says vault citations need the same matched terms. The descriptions and README qualify citations by location, window, matched terms and attribution. `include_kinds` reads "archived vault sessions require CAPY_VAULT_KEY". The regression test fails after a 5-second deadline instead of spinning.
+- 2026-11-26 · verified (author-run, temporary harness not committed) · expanded location parity (review request): the federated harness now expands every reference into the entry it cites and compares label, title and line coordinate per query, for the five single queries and the four-group duplicate batch. All nine expanded group sequences are identical on `ae5a4dc` and the candidate. The duplicate batch is 8,122 → 4,364 bytes, with four references. It differs by a few bytes from the earlier run because the footer's reset-time digits vary.
+- 2026-11-26 · verified (author-run, capy runs) · on the round-3 candidate (diff `ebc6e587`):
+  - `make bench-quality` → `bench-results/compact-search-replies-final.json`. `make bench-compare` against the `ae5a4dc` baseline shows every retrieval-quality and context-reduction metric unchanged (same verified dataset hash). `benchstat` is not installed.
+  - Full `go test -tags fts5 -count=1 -timeout 40m ./...`: every package passes except `cmd/capy` (`TestCodexMixedStartupContext`, the known Task 1 failure). `internal/execution` passed this time, consistent with the flake noted above.
+  - Focused `-race` search/retrieval tests pass in server/store/vault/retrieval.
+- 2026-11-26 · reviewed (round 3) · internal reviewer: COMMENT ("the code is approvable"), P3s only. Codex: REQUEST_CHANGES. Corroborated by both:
+  - "Five queries always fit" is false in general, because five queries at limit 5 can exceed the reply.
+  - Fixture text overstated `SwapAndVerify` ("live database stays untouched"), and `capy encrypt` calls `sqliteutil.Rekey` only when rotating an existing key.
+
+  Codex alone:
+  - P2: `setupVaultSweepProject` overrode only `HOME`, so an inherited `CLAUDE_CONFIG_DIR` would send fixture transcripts into a real Claude directory. It was unset here, so nothing leaked.
+  - P3: "every handle closes first" overstates `ContentStore.Close`.
+  - P3: redaction can drop highlights, so citing a vault passage does not strictly require matched terms.
+  - Evidence: knowledge entries were compared by label and title only, and split sections share titles.
+
+  Internal reviewer alone: the stale "stubbed corpus" entry, now annotated as superseded.
+- 2026-11-26 · implemented (round-3 fixes) · the shared `setupVaultSweepProject` clears `CLAUDE_CONFIG_DIR`, which protects its existing callers too. The doc and test say "this batch fits". Fixture answers now say: `ContentStore.Close` closes its own pool and then checkpoints on a fresh connection; `Rekey` is shared "when rotating an existing key"; the copy is built in a separate file while `SwapAndVerify` keeps the original as `.bak`. Query 3 is now `readers completing`. Descriptions and README qualify citations by "same stored location, window, passage text and attribution". tools.md says a later query "usually" needs the same matched terms. The walkthrough block was regenerated from the test's reply and is still compared byte-for-byte.
+- 2026-11-26 · verified (author-run, temporary harness not committed) · knowledge chunk identity, requested in review: the federated harness maps each knowledge entry, including entries reached through references, to the `chunks` rowid whose content contains the shown passage. It found no unresolved entry on either revision. All nine expanded sequences match on `ae5a4dc` and the candidate: chunk rowids 41, 41, 83, 83, 41, 83, 26, 131, 59 alongside the vault first-line coordinates.
+- 2026-11-26 · observed (snapshot identity, review request) · the `diffsha` values are the first 12 hex digits of `git diff | sha256sum` at each run's start, against HEAD `f9f756e`. `ebc6e587` (round-3 final suite and bench) differs from the round-3 review artifact (`8b976e9a…`) only by `tasks.md` entries written after that run started. On diff `082563a5` (round-3 fixes): vet clean, focused `-race` (server, retrieval) passes, full `internal/server` (294 s) and `internal/retrieval` pass.
+- 2026-11-26 · reviewed (round 4) · internal reviewer: APPROVE, scoped to the code. Codex: COMMENT. Every round-3 finding is resolved, chunk-identity evidence is accepted, and neither reviewer found a new handler defect.
+
+  Corroborated P3: the README citation sentence omitted the window.
+
+  Codex P3s:
+  - tools.md's citation rule omitted passage text;
+  - "open readers keep a checkpoint from completing" is too strong, since a TRUNCATE checkpoint can finish with a reader that no longer uses the WAL.
+
+  Internal P3s:
+  - my round-3 edit copied the isolation comment into `TestVaultSweep_NoSessionsIsNoOp`, which writes no transcripts;
+  - `setupCodexSweepEnv` (unchanged file, inherited) also isolates only `HOME`, so `CAPY_VAULT_SWEEP_ALL` tests could read a real Claude root.
+- 2026-11-26 · implemented (round-4 fixes) · the README and tools.md now state the full citation rule (location, window, passage text and attribution). The fixture reads "Readers using the WAL can keep a TRUNCATE checkpoint from completing"; the doc block was regenerated and only that line changed. The no-session test comment is corrected. `setupCodexSweepEnv` clears `CLAUDE_CONFIG_DIR`.
+- 2026-11-26 · verified (author-run, capy runs) · final code and tests (diff `ab780dc7`; only markdown changed afterwards): vet clean; focused `-race` passes (server and retrieval search, snippet, reply and corpus tests, plus `TestVaultSweep*`, including the Codex sweep tests); full non-race `internal/server` (330 s) and `internal/retrieval` pass. The last whole-repository run was on `ebc6e587`; changes since then are confined to `internal/server` tests, fixtures, description strings and docs.
+- 2026-11-26 · reviewed (round 5) · both reviewers APPROVE: Codex with every finding resolved; the internal reviewer scoped to the code, with no findings. No P0 or P1 finding was raised in any round, so nothing was indexed as `kk:review-findings`. One new test technique is indexed as `kk:test-patterns:capy:row-then-iteration-failure`.
+- 2026-11-26 · documented · `/kk:document` coverage check:
+  - `docs/architecture.md` § retrieval error policy no longer says MCP calls are best-effort, which had been stale since Task 1. It now describes partial search, including rows read before an iteration failure.
+  - Go document rubric: `cli.md` is N/A, because this feature changes no CLI command, flag or output (design "Not Doing"). `continuous-integration.md` is N/A, because no workflow or pipeline changed.
+  - No ADR was added. The decisions (bounded reply, inclusive retry without rank cursors, references by passage identity) and their rejected alternatives are recorded in `design.md`, which moves with this feature to `docs/feat/done/`, and no architectural boundary changed.
+- 2026-11-26 · release note (owner: unassigned) · rebuild and restart capy MCP servers to activate the new reply format and descriptions. There is no data, schema or CLI change. The feature directory still needs moving to `docs/feat/done/`, as with earlier features.
+
+## Reflection
+
+- **Departures from the plan:**
+  - Verification found an inherited Task 1 gap: `execSearch` dropped rows a layer had already read when its iteration then failed. Task 5 fixed it with a regression test.
+  - The documented walkthrough moved from stubbed hits to real retrieval over archived test sessions. Stub passages had shown vault behavior the engine cannot produce: long windows, two windows of one chunk in a single query, and references across different matched terms. A byte-for-byte test ties the documented reply to the code.
+- **Harder than expected:** keeping examples and fixture text true. Five review rounds were mostly about statements in docs and fixtures, not handler defects.
+- **Surprises for later work:**
+  - Vault passages bracket each query's matched terms. References therefore mostly save bytes for knowledge hits and for vault queries over the same terms; reworded vault queries usually get full entries.
+  - Display-time redaction of the complete chunk costs about 0.9 ms per query.
+  - A `-p`-parallel full run can flake `internal/execution`.
 
 ## Dependency Graph
 

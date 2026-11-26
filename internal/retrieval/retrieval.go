@@ -126,7 +126,9 @@ type CorpusConfig struct {
 	Fuzzy FuzzyCorrector
 	// OnError optionally receives layer query, row-scan and iteration failures
 	// instead of logging them. It may be called concurrently by both layers;
-	// callers must synchronize any captured state. Nil keeps best-effort search.
+	// callers must synchronize any captured state. Rows read before an
+	// iteration failure are still returned when OnError is set. Nil keeps
+	// best-effort search, which drops a layer whose iteration failed.
 	OnError func(error)
 }
 
@@ -222,9 +224,12 @@ func (cfg CorpusConfig) execSearch(ctx context.Context, table, ftsQuery string, 
 	if err := rows.Err(); err != nil {
 		if cfg.OnError != nil {
 			cfg.OnError(fmt.Errorf("search row iteration: %w", err))
-		} else {
-			slog.Warn("search row iteration failed", "error", err)
+			// The caller observes the failure, so keep the rows read before it:
+			// partial searches show them beside the failure, and strict callers
+			// discard every row once OnError fires.
+			return results
 		}
+		slog.Warn("search row iteration failed", "error", err)
 		return nil
 	}
 	return results

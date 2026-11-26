@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -426,4 +427,100 @@ func TestPartialGroupNotice(t *testing.T) {
 		" To continue, retry queries 4–7 (inclusive) with the same selectors and requested limit; numbering restarts at 1 and the retry searches current data from the first rank.", got)
 	assert.True(t, strings.HasPrefix(partialNotice(4, 7, 1, 2, 3), got))
 	assert.Contains(t, partialNotice(4, 7, 1, 2, 3), "reset time")
+}
+
+// TestVaultSearchReply_DocumentedWalkthrough replays the batch shown in
+// docs/reference/tools.md#keyword-search-replies over real archived sessions:
+// a reworded query citing earlier passages, a later window into an already
+// shown chunk, a layer failure beside a surviving hit and an interrupted final
+// group, then the advertised retry. Retrieval, snippets and coordinates are
+// real; the hook only pins the temporary project path for a stable document
+// and injects query 4's layer failure. This batch fits the real 40,960-byte
+// reply, so it also runs under a reduced reply budget to interrupt its last
+// group.
+func TestVaultSearchReply_DocumentedWalkthrough(t *testing.T) {
+	projectDir, _, _ := setupVaultSweepProject(t)
+	t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)
+	sessionDir, err := vault.ProjectSessionDir(projectDir)
+	require.NoError(t, err)
+	writeWalkthroughSessions(t, sessionDir)
+	srv := newTestServerWithProjectDir(t, nil, projectDir)
+	srv.vaultSweep(t.Context())
+
+	search := srv.getVault().SearchChunksPartial
+	srv.vaultChunkSearch = func(ctx context.Context, opts vault.SearchOptions) (vault.PartialChunkSearch, error) {
+		out, err := search(ctx, opts)
+		for i := range out.Results {
+			out.Results[i].Project = "/src/capy"
+		}
+		if opts.Query == "rekey journal" {
+			out.LayerErr = errors.New("search query: no such table: vault_chunks_trigram")
+		}
+		return out, err
+	}
+	call := func(t *testing.T, queries []any, replyMax int) string {
+		t.Helper()
+		before := trackedVaultSearchBytes(srv)
+		res, err := srv.vaultSearch(t.Context(), vaultSearchReq(map[string]any{"queries": queries, "limit": 5}), replyMax)
+		require.NoError(t, err)
+		require.False(t, res.IsError)
+		return assertBoundedToolReply(t, srv, "capy_vault_search", res, before)
+	}
+
+	queries := []any{"wal checkpoint", "checkpoint wal", "readers completing", "rekey journal", "backup copy"}
+	full := call(t, queries, searchReplyMaxBytes)
+	require.NotContains(t, full, "Reply budget reached", "the real budget fits this batch")
+	// Leave room for query 5's frame and first four entries, not its fifth.
+	cut := strings.Index(full, "\n\n[9] ")
+	require.Positive(t, cut, full)
+	omitted := full[cut+len("\n\n[9] "):]
+	batch := call(t, queries, searchNoticeReserve+cut)
+	t.Logf("batch:\n%s", batch)
+
+	assert.Equal(t, []string{"[1]", "[2]", "↑1", "↑2", "[3]", "[4]", "[5]", "[6]", "[7]", "[8]"}, entryMarkers(batch),
+		"query 2 matches the same terms and cites both passages; query 3's later window is a new entry")
+	assert.Contains(t, batch, "## 3. readers completing\n\n[3] --- [session:0b6c2f4e-1111-4c1d-9a51-5e0c3f1d2a01] ---")
+	assert.Contains(t, batch, "## 4. rekey journal\n\n⚠ partial results (vault: search query: no such table: vault_chunks_trigram)")
+	assert.Contains(t, batch, "⚠ Reply budget reached. Query 5 showed 4 of 5 hit(s) returned at limit 5/query."+
+		" To continue, retry query 5 (inclusive)")
+	assert.NotContains(t, batch, omitted)
+
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "reference", "tools.md"))
+	require.NoError(t, err)
+	_, walkthrough, ok := strings.Cut(string(doc), "### Walkthrough\n")
+	require.True(t, ok, "tools.md has a Walkthrough section")
+	_, example, ok := strings.Cut(walkthrough, "```text\n")
+	require.True(t, ok, "the Walkthrough section has a text block")
+	example, _, ok = strings.Cut(example, "\n```")
+	require.True(t, ok)
+	assert.Equal(t, example, batch, "docs/reference/tools.md shows this exact reply")
+
+	retry := call(t, []any{"backup copy"}, searchReplyMaxBytes)
+	assert.Equal(t, []string{"[1]", "[2]", "[3]", "[4]", "[5]"}, entryMarkers(retry), "numbering restarts at 1")
+	assert.Contains(t, retry, "## 1. backup copy")
+	assert.Contains(t, retry, "\n\n[5] "+omitted, "the retry shows the omitted rank")
+	assert.NotContains(t, retry, "Reply budget reached")
+}
+
+// writeWalkthroughSessions archives the sessions behind the documented
+// walkthrough. Their answers restate behavior documented in AGENTS.md and
+// internal/sqliteutil, so the reference page quotes nothing false.
+func writeWalkthroughSessions(t *testing.T, dir string) {
+	t.Helper()
+	for _, s := range []struct{ id, question, answer string }{
+		{"0b6c2f4e-1111-4c1d-9a51-5e0c3f1d2a01", "Why does capy checkpoint the WAL on close?",
+			"ContentStore.Close closes its own connection pool, then runs a TRUNCATE checkpoint on a fresh connection to fold the write-ahead log back into the database. Readers using the WAL can keep a TRUNCATE checkpoint from completing."},
+		{"7d9e1a3b-2222-4f0e-8c62-6a1d4e2b3c02", "How does vault rekey avoid PRAGMA rekey?",
+			"PRAGMA rekey is incompatible with the WAL journal mode, so sqliteutil.Rekey writes a fresh new-key file instead: open the old database, checkpoint it, backup-copy it, then swap and verify."},
+		{"3f5a7c9e-3333-4b2d-8e4f-6a8c0e2f4a03", "Which commands share the backup copy rekey path?",
+			"When rotating an existing key, both capy vault rekey and capy encrypt call sqliteutil.Rekey, so one backup copy routine serves the vault and the knowledge store."},
+		{"5e7a9c1b-4444-4d6f-8a2c-4e6a8c0e2a04", "Does a backup copy rekey keep the original database?",
+			"SwapAndVerify renames the original to a .bak file, moves the copy into place and checks that it opens with the new key. On success it returns the .bak path."},
+		{"9c1e3a5f-5555-4f8b-9c4d-2e4a6c8e0a05", "Can a failed backup copy swap need manual recovery?",
+			"If verification fails and the rollback also fails, SwapAndVerify names the .bak path so the operator can recover manually."},
+		{"2b4d6f8a-6666-4a1c-8e3b-5d7f9a1c3e06", "Why rekey through a backup copy instead of in place?",
+			"The new-key backup copy is built in a separate file; SwapAndVerify then keeps the original as a .bak file while it installs and verifies the copy."},
+	} {
+		writeSessionJSONL(t, dir, s.id, s.question, s.answer)
+	}
 }

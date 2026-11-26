@@ -33,6 +33,9 @@ func setupCodexSweepEnv(t *testing.T) (codexHome string) {
 	t.Helper()
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	// An inherited CLAUDE_CONFIG_DIR would override HOME and give the sweep a
+	// real Claude root.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("CAPY_VAULT_PATH", filepath.Join(t.TempDir(), "vault.db"))
 	t.Setenv("CAPY_MACHINE_ID", "test-machine")
 	t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)

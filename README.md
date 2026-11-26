@@ -133,6 +133,8 @@ Your agent receives the argument schemas when it connects. The eleven tools are:
 | `capy_doctor` | Check the running server's configuration and available capabilities. |
 | `capy_cleanup` | Preview or remove knowledge entries and reclaim storage. |
 
+Both search tools return bounded replies with numbered query groups. A passage repeated from the same stored location and window, with the same text and attribution, cites its earlier entry. An interrupted batch names the query to retry from; see [keyword search replies](docs/reference/tools.md#keyword-search-replies).
+
 Execution supports JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, and Elixir, using runtimes installed on your machine. Commands run from the selected project by default; optional `cwd` changes the execution directory for that call. It does not change the database, credentials, or the base for an `execute_file` input path.
 
 Execution output is captured in a separate encrypted run store and bounded responses apply with or without `intent`. Run indexing is lazy on search, intent, or batch queries. Use `capy_runs` or `capy runs` to recover retained output instead of repeating execution; new execution logs are not knowledge sources. See the [execution contracts](docs/feat/done/routine-command-capture/contracts.md) for response, retention and recovery limits.

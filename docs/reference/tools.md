@@ -10,6 +10,8 @@ MCP boolean arguments accept JSON booleans and trimmed, case-insensitive `"true"
 
 `capy_search` rejects malformed arrays, blank queries, non-string selectors, and nonpositive or fractional limits before consuming its shared server budget. Serialized JSON string arrays and positive integral numeric strings remain accepted. Valid empty, partial, and blocked responses count toward the budget and report its admission-time limits/reset. A requested smaller limit is honored. See [search admission and ranking](../architecture.md#tool-execution-capy_execute--capy_batch_execute).
 
+`capy_vault_search` now applies the same array and member-type checks to a supplied `queries` value, before opening the vault or recording usage. A `null` value, a string that is not a JSON array, and any non-string member are rejected even when `query` is also supplied. Unlike `capy_search`, it still accepts a blank query, which reports a miss. A disabled vault reports that it is disabled before `after`/`before` dates are checked. Earlier versions dropped non-string members of a native array, which shifted every later query number; read a serialized `null` member as a blank query; and fell back to `query` when the string did not parse. Native and serialized string arrays still work, and an absent or empty array still falls back to `query`. Invalid `after`/`before` dates are quoted in the error after redaction, shortened to 128 bytes.
+
 ## Execution and background processes
 
 `capy_execute`, `capy_execute_file`, and `capy_batch_execute` run from the selected project unless `cwd` names another existing directory. Relative overrides resolve from the project; absolute external directories are accepted. Supplied empty, null, non-string, or invalid directories fail before execution. A batch uses one cwd for every worker.
@@ -109,6 +111,150 @@ Each directory scan admits at most 20,000 entries and reads at most 32 MiB, incl
 - CLI indexing exits 0 for success/incomplete scans and 1 for invalid input, credential/policy/storage failures, cancellation, or output/close errors.
 
 Search refresh is bounded: at most 32 backing files per pass, a five-second per-store cooldown, a raw-read budget of `max(8 MiB, store.max_source_bytes + 1)`, and a 100 ms admission window. An already-started operation can finish. Check order persists across restarts. Failed, denied, or deferred refreshes retain cached searchable content; a search result does not certify that its backing file was just checked. See [file ingestion](../architecture.md#file-ingestion) and [refresh scheduling](../architecture.md#bounded-stale-refresh).
+
+## Keyword search replies
+
+`capy_search` and `capy_vault_search` return one text reply of at most 40,960 bytes of valid UTF-8, counted after JSON decoding. The bound covers headings, entries, references, errors, notices and the `capy_search` budget footer. Argument errors, blocked searches and a disabled vault are bounded too.
+
+### Layout
+
+Each query that runs gets a group headed `## N. <query>`, where N is its position in the input, counting from 1. Below the heading, a group shows one of:
+
+| Outcome | Group status |
+| --- | --- |
+| Hits returned | No status line; the entries follow. |
+| Every pass completed with zero hits | `No results found.` |
+| A corpus or FTS layer failed with surviving hits | `⚠ partial results (<corpus>: <cause>)`, then the surviving entries in rank order. |
+| A failure left zero hits | `Error: <corpus>: <cause>`. |
+
+Entries appear in rank order; `capy_search` places knowledge before the vault on a federated tie. The first time a reply shows a passage, its entry is numbered `[n]`. A later hit with the same corpus, location, selected window, passage text and attribution appears as `↑ same passage as [n]` and counts as shown. A different window into the same chunk gets its own entry. So does identical text that a knowledge search reached through the other FTS layer, and a hit whose stored location is unknown. Vault passages bracket the query's matched terms, so a later query usually needs the same matched terms in that chunk to cite it; knowledge passages add no brackets. Numbers last for one reply only.
+
+A knowledge entry is a `--- [<source label>] ---` header, a `### <title>` line and the passage. A label that begins with `session:` is shown as `--- [session:…] (knowledge) ---`, keeping it distinct from vault hits. A vault entry is a `--- [session:<uuid>] ---` header, a `### <title>` line, a metadata line and the passage. The metadata line holds the project and end date when known, `chunk from line N` (the zero-based raw-JSONL line index where the chunk starts) and `sidecar <id>` when that line belongs to a sidecar. It ends with the platform and, for a sub-agent session, `child of <parent>`.
+
+### Shortened fields
+
+Every field is redacted on its complete value before it is shortened. Metadata and query echoes stay on one line, with control characters escaped. Omitted text is marked with `…`, which counts toward the limit; a passage can be shortened at either end:
+
+| Field | Limit (UTF-8 bytes) |
+| --- | ---: |
+| Query in a group heading | 256 |
+| Each failure cause (up to two per group) | 192 |
+| Passage, line breaks kept | 1,500 |
+| Knowledge source label / title | 512 / 256 |
+| Vault session ID / title / project / sidecar ID | 128 / 256 / 512 / 256 |
+
+When the sidecar ID is redacted or shortened, the entry says so and adds the session-wide chunk index when it is known. Literal STX/ETX bytes stored in a passage appear as `�` (U+FFFD). Limits apply to display only: retrieval always uses the complete query and selectors. A shortened field still counts as shown and does not stop the batch.
+
+### Interrupted batches and retries
+
+Before running each query, the reply reserves room for that query's group heading and status. Hits are then added whole. If an entry does not fit, the batch stops without running later queries, and a completion notice names the first unfinished query:
+
+- `Query N showed S of R hit(s) returned at limit L/query` — query N ran, and S of its R ranked hits fit (S can be 0).
+- `Query N was not searched` — no room remained to run query N.
+
+Then the notice counts the following queries that were not searched and gives the retry range. Retry from query N **inclusive** through the last query, with the original selectors and requested limit. The retry is a fresh search: numbering and references restart at 1, ranks start from the top, and the corpus may have changed. A shortened field alone never triggers this notice.
+
+On `capy_search`, the limit defaults to 2 and is capped at 2, then at 1 after the shared budget tapers. Each valid call consumes one admission from that budget, so the retry can have a lower effective limit. When the boundary query returned more than one hit, its notice adds: `If your next call's effective limit is below R, retry after the reset time below to see the omitted ranks.` With defaults, calls 1–3 show two hits per query and calls 4–8 show one. A blocked call reports the reset time. `capy_vault_search` takes no admission and has no footer. Its limit defaults to 3 and is capped at 10. A query's complete group of ten maximum-size hits fits a fresh reply.
+
+### Walkthrough
+
+This `capy_vault_search` batch uses `limit: 5`. It has a reworded query that cites earlier passages, a later window into an already shown chunk, a layer failure and an interrupted final group. `TestVaultSearchReply_DocumentedWalkthrough` produces it from archived test sessions with real retrieval, snippets and coordinates. The test pins the temporary project path to `/src/capy` and injects query 4's failure. This batch fits 40,960 bytes, so the test also runs it under a reduced reply budget to interrupt the last group:
+
+```text
+## 1. wal checkpoint
+
+[1] --- [session:0b6c2f4e-1111-4c1d-9a51-5e0c3f1d2a01] ---
+### Why does capy checkpoint the WAL on close? (turn 1)
+/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+
+Why does capy [checkpoint] the [WAL] on close? (turn 1)
+
+ContentStore.Close closes its own connection pool, then r…
+
+[2] --- [session:7d9e1a3b-2222-4f0e-8c62-6a1d4e2b3c02] ---
+### How does vault rekey avoid PRAGMA rekey? (turn 1)
+/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+
+How does vault rekey avoid PRAGMA rekey? (turn 1)
+
+PRAGMA rekey is incompatible with the [WAL] journal mode, so sqliteutil.Rekey writes a fresh new-key file instead: open the old database, …
+
+---
+
+## 2. checkpoint wal
+
+↑ same passage as [1]
+
+↑ same passage as [2]
+
+---
+
+## 3. readers completing
+
+[3] --- [session:0b6c2f4e-1111-4c1d-9a51-5e0c3f1d2a01] ---
+### Why does capy checkpoint the WAL on close? (turn 1)
+/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+
+…uns a TRUNCATE checkpoint on a fresh connection to fold the write-ahead log back into the database. [Readers] using the WAL can keep a TRUNCATE checkpoint from [completing]. Details for turn 1 with en…
+
+---
+
+## 4. rekey journal
+
+⚠ partial results (vault: search query: no such table: vault_chunks_trigram)
+
+[4] --- [session:7d9e1a3b-2222-4f0e-8c62-6a1d4e2b3c02] ---
+### How does vault rekey avoid PRAGMA rekey? (turn 1)
+/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+
+How does vault [rekey] avoid PRAGMA [rekey]? (turn 1)
+
+PRAGMA [rekey] is incompatible with the WAL [journal] mode, …
+
+---
+
+## 5. backup copy
+
+[5] --- [session:2b4d6f8a-6666-4a1c-8e3b-5d7f9a1c3e06] ---
+### Why rekey through a backup copy instead of in place? (turn 1)
+/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+
+Why rekey through a [backup] [copy] instead of in place? (turn 1)
+
+The new-key [backup] [copy] is built in a separate fi…
+
+[6] --- [session:3f5a7c9e-3333-4b2d-8e4f-6a8c0e2f4a03] ---
+### Which commands share the backup copy rekey path? (turn 1)
+/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+
+Which commands share the [backup] [copy] rekey path? (turn 1)
+
+When rotating an existing key, both capy vault rekey and capy …
+
+[7] --- [session:5e7a9c1b-4444-4d6f-8a2c-4e6a8c0e2a04] ---
+### Does a backup copy rekey keep the original database? (turn 1)
+/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+
+Does a [backup] [copy] rekey keep the original database? (turn 1)
+
+SwapAndVerify renames the original to a …
+
+[8] --- [session:9c1e3a5f-5555-4f8b-9c4d-2e4a6c8e0a05] ---
+### Can a failed backup copy swap need manual recovery? (turn 1)
+/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+
+Can a failed [backup] [copy] swap need manual recovery? (turn 1)
+
+If verification fails and the rollback also fai…
+
+⚠ Reply budget reached. Query 5 showed 4 of 5 hit(s) returned at limit 5/query. To continue, retry query 5 (inclusive) with the same selectors and requested limit; numbering restarts at 1 and the retry searches current data from the first rank.
+```
+
+Query 2 matches the same terms as query 1, so both of its hits are references. Query 3 matches later terms in the first session's chunk; that window is a new entry. Query 4's surviving hit appears beside the injected trigram-layer failure. The advertised retry is `queries: ["backup copy"], limit: 5`. It returns `## 1. backup copy` with ranks `[1]` to `[5]`, including the hit that query 5 omitted. A `capy_search` reply uses the same layout with knowledge entries and ends with the budget footer.
+
+### Guidance and recovery
+
+Request-wide guidance appears at most once per reply. After a clean miss with knowledge in scope, the reply names `capy_runs` for new captured command output. When ephemeral sources are excluded and exist, it also names both ways to include them: `include_kinds: ["durable","ephemeral"]` and `source: "<label>"`. The per-kind miss statement, such as `3 durable, 2 session source(s) indexed.`, appears only when every query ran, every pass succeeded and none returned a hit. If the queries that ran returned no hit, the reply can still report a disabled vault or a reindex backlog, even after a partial batch.
 
 ## Knowledge search from the terminal
 
