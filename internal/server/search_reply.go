@@ -221,16 +221,24 @@ func queryFrame(ordinal int, query string, causes []string, hits int) string {
 	}
 }
 
-// partialNotice reports a batch stopped inside query ordinal (of total), which
-// showed shown of the returned hits at the effective limit.
+// partialNotice reports a capy_search batch stopped inside query ordinal (of
+// total), which showed shown of the returned hits at the effective limit.
 func partialNotice(ordinal, total, shown, returned, limit int) string {
-	head := fmt.Sprintf("Query %d showed %d of %d hit(s) returned at limit %d/query", ordinal, shown, returned, limit)
-	notice := completionNotice(head, ordinal, total)
+	notice := partialGroupNotice(ordinal, total, shown, returned, limit)
 	if returned > 1 {
 		// A retry on a tapered call can return fewer ranks than this call did.
 		notice += fmt.Sprintf(" If your next call's effective limit is below %d, retry after the reset time below to see the omitted ranks.", returned)
 	}
 	return notice
+}
+
+// partialGroupNotice reports a batch stopped inside query ordinal (of total),
+// which showed shown of the returned hits at the effective limit. It is the
+// whole notice for capy_vault_search, whose limit the shared search budget
+// never tapers; partialNotice extends it for capy_search.
+func partialGroupNotice(ordinal, total, shown, returned, limit int) string {
+	head := fmt.Sprintf("Query %d showed %d of %d hit(s) returned at limit %d/query", ordinal, shown, returned, limit)
+	return completionNotice(head, ordinal, total)
 }
 
 // unsearchedNotice reports a batch stopped before query ordinal (of total) was

@@ -308,7 +308,7 @@ func TestSearch_BacklogHintFederated(t *testing.T) {
 }
 
 // Task 11.1: the federated path renders vault hits through the same
-// formatVaultHit, so a Claude session hit in capy_search carries its platform
+// renderVaultHit, so a Claude session hit in capy_search carries its platform
 // token and the session:<uuid> tag is unchanged.
 func TestSearch_FederatedVaultHitCarriesPlatform(t *testing.T) {
 	projectDir, uuid1, _ := setupVaultSweepProject(t)

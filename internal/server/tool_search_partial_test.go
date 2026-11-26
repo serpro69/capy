@@ -123,17 +123,17 @@ func TestVaultSearch_LayerFailure(t *testing.T) {
 
 	out := search()
 	assert.Contains(t, out, "[session:"+uuid1+"]")
-	assert.Contains(t, out, "## zzzzz-no-such-term-anywhere\nNo results found.")
+	assert.Contains(t, out, "## 2. zzzzz-no-such-term-anywhere\nNo results found.")
 	assert.NotContains(t, out, "Error:")
 
 	dropSearchTables(t, vaultPath, testVaultSweepKey, "vault_chunks_trigram")
 	out = search()
-	assert.Regexp(t, `## configure the database\n\n⚠ partial results \(`+layerFailure("vault_chunks_trigram")+`\)`, out)
+	assert.Regexp(t, `## 1\. configure the database\n\n⚠ partial results \(vault: `+layerFailure("vault_chunks_trigram")+`\)`, out)
 	assert.Contains(t, out, "[session:"+uuid1+"]", "rows accompanied by a diagnostic reach the formatter")
-	assert.Regexp(t, `## zzzzz-no-such-term-anywhere\nError: `+layerFailure("vault_chunks_trigram"), out)
+	assert.Regexp(t, `## 2\. zzzzz-no-such-term-anywhere\nError: vault: `+layerFailure("vault_chunks_trigram"), out)
 
 	dropSearchTables(t, vaultPath, testVaultSweepKey, "vault_chunks")
 	out = search()
-	assert.Regexp(t, `## configure the database\nError: `+layerFailure("vault_chunks(_trigram)?"), out)
+	assert.Regexp(t, `## 1\. configure the database\nError: vault: `+layerFailure("vault_chunks(_trigram)?"), out)
 	assert.NotContains(t, out, "[session:")
 }
