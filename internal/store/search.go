@@ -26,6 +26,69 @@ func (s *ContentStore) SearchWithFallback(query string, limit int, opts SearchOp
 // SearchWithFallbackContext propagates cancellation through bounded refresh and
 // retrieval. The contextless entry point remains for existing library callers.
 func (s *ContentStore) SearchWithFallbackContext(ctx context.Context, query string, limit int, opts SearchOptions) ([]SearchResult, error) {
+	var queryErr error
+	var firstError sync.Once
+	var onError func(error)
+	if opts.FailOnError {
+		onError = func(err error) { firstError.Do(func() { queryErr = err }) }
+	}
+	results, err := s.searchWithErrorHandler(ctx, query, limit, opts, onError)
+	if err != nil {
+		return nil, err
+	}
+	// Retrieval has joined every layer worker before returning. Strict callers
+	// cannot mistake an unavailable layer or skipped row for a complete search.
+	if queryErr != nil {
+		return nil, queryErr
+	}
+
+	if len(results) > 0 {
+		s.trackAccess(results)
+	}
+	return results, nil
+}
+
+// PartialSearch is a best-effort search outcome that keeps the failure a
+// best-effort search would otherwise only log.
+type PartialSearch struct {
+	// Results are the ranked rows retrieval produced from the layers and rows
+	// that did not fail; they may be incomplete when LayerErr is set.
+	Results []SearchResult
+	// LayerErr is the first layer query, row-scan or iteration failure observed
+	// during retrieval, or nil when every attempted layer completed. Results may
+	// be non-empty alongside it.
+	LayerErr error
+}
+
+// SearchPartialContext runs the same retrieval as SearchWithFallbackContext but
+// returns surviving ranked rows together with the first layer failure, so a
+// caller can present partial results without mistaking them for a complete
+// search. opts.FailOnError is ignored. The returned error reports setup and
+// cancellation failures, which yield no results.
+func (s *ContentStore) SearchPartialContext(ctx context.Context, query string, limit int, opts SearchOptions) (PartialSearch, error) {
+	var out PartialSearch
+	var firstError sync.Once
+	onError := func(err error) {
+		// Keep the operator log best-effort search emits; the caller reports
+		// only the first failure in-band.
+		slog.Warn("knowledge search layer failed", "error", err)
+		firstError.Do(func() { out.LayerErr = err })
+	}
+	results, err := s.searchWithErrorHandler(ctx, query, limit, opts, onError)
+	if err != nil {
+		return PartialSearch{}, err
+	}
+	out.Results = results
+	if len(results) > 0 {
+		s.trackAccess(results)
+	}
+	return out, nil
+}
+
+// searchWithErrorHandler refreshes stale sources and runs retrieval with the
+// supplied layer error handler (nil logs). It returns only after every layer
+// worker has joined, so state captured by onError is safe to read afterwards.
+func (s *ContentStore) searchWithErrorHandler(ctx context.Context, query string, limit int, opts SearchOptions, onError func(error)) ([]SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -42,12 +105,6 @@ func (s *ContentStore) SearchWithFallbackContext(ctx context.Context, query stri
 		return nil, err
 	}
 
-	var queryErr error
-	var firstError sync.Once
-	var onError func(error)
-	if opts.FailOnError {
-		onError = func(err error) { firstError.Do(func() { queryErr = err }) }
-	}
 	corpus, err := s.searchCorpusWithErrorHandler(opts, onError)
 	if err != nil {
 		return nil, err
@@ -55,15 +112,6 @@ func (s *ContentStore) SearchWithFallbackContext(ctx context.Context, query stri
 	results := retrieval.SearchWithFallback(ctx, corpus, query, limit, opts.MaxPerSource)
 	if err := ctx.Err(); err != nil {
 		return nil, err
-	}
-	// Retrieval has joined every layer worker before returning. Strict callers
-	// cannot mistake an unavailable layer or skipped row for a complete search.
-	if queryErr != nil {
-		return nil, queryErr
-	}
-
-	if len(results) > 0 {
-		s.trackAccess(results)
 	}
 	return results, nil
 }

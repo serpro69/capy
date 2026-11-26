@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -65,6 +67,46 @@ type chunkMeta struct {
 // the retrieval engine owns query sanitization, so raw FTS5 syntax cannot be
 // passed through.
 func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]SearchResult, error) {
+	return s.searchChunks(ctx, opts, nil)
+}
+
+// PartialChunkSearch is a best-effort chunk search outcome that keeps the
+// failure SearchChunks would otherwise only log.
+type PartialChunkSearch struct {
+	// Results are the ranked hits retrieval produced from the layers and rows
+	// that did not fail; they may be incomplete when LayerErr is set.
+	Results []SearchResult
+	// LayerErr is the first layer query, row-scan or iteration failure observed
+	// during retrieval, or nil when every attempted layer completed. Results may
+	// be non-empty alongside it.
+	LayerErr error
+}
+
+// SearchChunksPartial runs the same search as SearchChunks but returns
+// surviving ranked hits together with the first layer failure, so a caller can
+// present partial results without mistaking them for a complete search. The
+// returned error reports validation and setup failures, which yield no results.
+func (s *VaultStore) SearchChunksPartial(ctx context.Context, opts SearchOptions) (PartialChunkSearch, error) {
+	var out PartialChunkSearch
+	var firstError sync.Once
+	onError := func(err error) {
+		// Keep the operator log best-effort search emits; the caller reports
+		// only the first failure in-band.
+		slog.Warn("vault chunk search layer failed", "error", err)
+		firstError.Do(func() { out.LayerErr = err })
+	}
+	results, err := s.searchChunks(ctx, opts, onError)
+	if err != nil {
+		return PartialChunkSearch{}, err
+	}
+	// Retrieval has joined every layer worker before returning.
+	out.Results = results
+	return out, nil
+}
+
+// searchChunks implements SearchChunks with the supplied layer error handler
+// (nil logs).
+func (s *VaultStore) searchChunks(ctx context.Context, opts SearchOptions, onError func(error)) ([]SearchResult, error) {
 	predicate, projectArg, err := projectScopePredicate(opts.Project, opts.ProjectPath)
 	if err != nil {
 		return nil, err
@@ -125,6 +167,7 @@ func (s *VaultStore) SearchChunks(ctx context.Context, opts SearchOptions) ([]Se
 		FilterParams: params,
 		MapRow:       scanChunkSearchRow,
 		Fuzzy:        nil,
+		OnError:      onError,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("building vault chunk corpus: %w", err)

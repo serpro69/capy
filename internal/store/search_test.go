@@ -33,6 +33,55 @@ func TestSearchFailOnError(t *testing.T) {
 	}
 }
 
+// TestSearchPartialContext pins the diagnostic entry point beside the existing
+// strict and best-effort policies: losing one FTS layer keeps the surviving
+// ranked rows and access tracking, losing both reports the failure with no
+// rows, and an intact store reports no diagnostic on a hit or a clean miss.
+func TestSearchPartialContext(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.Index("orchard query", "source", "", KindDurable); err != nil {
+		t.Fatal(err)
+	}
+	db, err := s.getDB()
+	require.NoError(t, err)
+	accessCount := func() int {
+		var n int
+		require.NoError(t, db.QueryRowContext(t.Context(), "SELECT access_count FROM sources WHERE label = 'source'").Scan(&n))
+		return n
+	}
+
+	for _, query := range []string{"orchard", "unmatchedquasar"} {
+		got, err := s.SearchPartialContext(t.Context(), query, 3, SearchOptions{})
+		require.NoError(t, err)
+		require.NoError(t, got.LayerErr, "an intact store reports no diagnostic for %q", query)
+		assert.Equal(t, query == "orchard", len(got.Results) > 0, query)
+	}
+
+	_, err = db.ExecContext(t.Context(), "DROP TABLE chunks_trigram")
+	require.NoError(t, err)
+	before := accessCount()
+	got, err := s.SearchPartialContext(t.Context(), "orchard", 3, SearchOptions{FailOnError: true})
+	require.NoError(t, err)
+	require.ErrorContains(t, got.LayerErr, "chunks_trigram")
+	require.Len(t, got.Results, 1, "the porter layer's hit survives")
+	assert.Equal(t, "source", got.Results[0].Label)
+	assert.Equal(t, before+1, accessCount(), "surviving rows keep access tracking")
+
+	// The existing policies are unchanged: strict rejects, best-effort keeps rows silently.
+	_, err = s.SearchWithFallbackContext(t.Context(), "orchard", 3, SearchOptions{FailOnError: true})
+	require.ErrorContains(t, err, "chunks_trigram")
+	results, err := s.SearchWithFallbackContext(t.Context(), "orchard", 3, SearchOptions{})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	_, err = db.ExecContext(t.Context(), "DROP TABLE chunks")
+	require.NoError(t, err)
+	got, err = s.SearchPartialContext(t.Context(), "orchard", 3, SearchOptions{})
+	require.NoError(t, err)
+	require.Error(t, got.LayerErr)
+	assert.Empty(t, got.Results)
+}
+
 func indexTestContent(t *testing.T, s *ContentStore) {
 	t.Helper()
 	// Index a document about authentication middleware.

@@ -179,29 +179,36 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		// Best-effort per pass, but NOT silent (fail-loud): a swallowed error is
 		// especially dangerous under federation — a knowledge-DB failure yields
 		// zero knowledge hits, yet vault hits keep the merged block non-empty, so
-		// the failure would never surface. Capture each error and report it
-		// in-band (mirrors handleVaultSearch's per-query degradation).
+		// the failure would never surface. Capture each setup or FTS layer error
+		// and report it in-band beside any surviving ranked hits (mirrors
+		// handleVaultSearch's per-query degradation).
 		var errs []string
 		var kResults []store.SearchResult
 		if runKnowledgePass {
-			r, sErr := st.SearchWithFallbackContext(ctx, q, effectiveLimit, knowledgeOpts)
+			r, sErr := st.SearchPartialContext(ctx, q, effectiveLimit, knowledgeOpts)
+			if sErr == nil {
+				sErr = r.LayerErr
+			}
 			if sErr != nil {
 				errs = append(errs, fmt.Sprintf("knowledge: %v", sErr))
 			}
-			kResults = r
+			kResults = r.Results
 		}
 		var vResults []vault.SearchResult
 		if runVaultPass {
-			r, sErr := vlt.SearchChunks(ctx, vault.SearchOptions{
+			r, sErr := vlt.SearchChunksPartial(ctx, vault.SearchOptions{
 				Query:       q,
 				Project:     vaultProject,
 				ProjectPath: vaultProjectPath,
 				Limit:       effectiveLimit,
 			})
+			if sErr == nil {
+				sErr = r.LayerErr
+			}
 			if sErr != nil {
 				errs = append(errs, fmt.Sprintf("vault: %v", sErr))
 			}
-			vResults = r
+			vResults = r.Results
 		}
 
 		blocks := federateHits(kResults, vResults, q, effectiveLimit)

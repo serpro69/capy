@@ -75,7 +75,7 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 	var sections []string
 	hasResults := false
 	for _, q := range queryList {
-		results, err := vlt.SearchChunks(ctx, vault.SearchOptions{
+		search, err := vlt.SearchChunksPartial(ctx, vault.SearchOptions{
 			Query:       q,
 			Project:     project,
 			ProjectPath: projectPath,
@@ -83,14 +83,18 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 			Before:      before,
 			Limit:       limit,
 		})
-		if err != nil {
+		if err == nil {
+			err = search.LayerErr
+		}
+		results := search.Results
+		if len(results) == 0 {
 			// Best-effort batch: a single query's failure is surfaced in-band so
 			// the remaining queries still run, rather than failing the whole call
 			// (mirrors handleSearch's per-query degradation).
-			sections = append(sections, fmt.Sprintf("## %s\nError: %v", q, err))
-			continue
-		}
-		if len(results) == 0 {
+			if err != nil {
+				sections = append(sections, fmt.Sprintf("## %s\nError: %v", q, err))
+				continue
+			}
 			sections = append(sections, fmt.Sprintf("## %s\nNo results found.", q))
 			continue
 		}
@@ -100,7 +104,13 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 		for _, r := range results {
 			formatted = append(formatted, formatVaultHit(r))
 		}
-		sections = append(sections, fmt.Sprintf("## %s\n\n%s", q, strings.Join(formatted, "\n\n")))
+		block := strings.Join(formatted, "\n\n")
+		// A failed FTS layer leaves the surviving ranked hits usable but
+		// incomplete; flag the degradation beside them.
+		if err != nil {
+			block = fmt.Sprintf("⚠ partial results (%v)\n\n%s", err, block)
+		}
+		sections = append(sections, fmt.Sprintf("## %s\n\n%s", q, block))
 	}
 
 	output := strings.Join(sections, "\n\n---\n\n")

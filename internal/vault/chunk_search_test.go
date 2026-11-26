@@ -83,6 +83,43 @@ func searchChunks(t *testing.T, s *VaultStore, opts SearchOptions) []SearchResul
 	return results
 }
 
+// TestSearchChunksPartial pins the diagnostic entry point: losing one FTS layer
+// keeps the surviving ranked hits beside the failure, losing both reports it
+// with no hits, and SearchChunks keeps its best-effort policy.
+func TestSearchChunksPartial(t *testing.T) {
+	s := newChunkSearchVault(t)
+	for _, query := range []string{"zorbing", "unmatchedquasar"} {
+		got, err := s.SearchChunksPartial(t.Context(), SearchOptions{Query: query})
+		require.NoError(t, err)
+		require.NoError(t, got.LayerErr, "an intact vault reports no diagnostic for %q", query)
+		assert.Equal(t, query == "zorbing", len(got.Results) > 0, query)
+	}
+
+	db, err := s.getDB(t.Context())
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), "DROP TABLE vault_chunks_trigram")
+	require.NoError(t, err)
+
+	// "zorbing" is porter-only, so its hit survives the trigram failure.
+	got, err := s.SearchChunksPartial(t.Context(), SearchOptions{Query: "zorbing"})
+	require.NoError(t, err)
+	require.ErrorContains(t, got.LayerErr, "vault_chunks_trigram")
+	require.NotEmpty(t, got.Results)
+	assert.Equal(t, chunkSearchUUIDB, got.Results[0].SessionUUID)
+	assert.NotEmpty(t, searchChunks(t, s, SearchOptions{Query: "zorbing"}), "SearchChunks stays best-effort")
+
+	_, err = db.ExecContext(t.Context(), "DROP TABLE vault_chunks")
+	require.NoError(t, err)
+	got, err = s.SearchChunksPartial(t.Context(), SearchOptions{Query: "zorbing"})
+	require.NoError(t, err)
+	require.Error(t, got.LayerErr)
+	assert.Empty(t, got.Results)
+
+	// Validation errors stay on the error return, not the diagnostic.
+	_, err = s.SearchChunksPartial(t.Context(), SearchOptions{Query: "zorbing", Raw: true})
+	require.Error(t, err)
+}
+
 func TestSearchChunks_PorterOnlyTerm(t *testing.T) {
 	s := newChunkSearchVault(t)
 
