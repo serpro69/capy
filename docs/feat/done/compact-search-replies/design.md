@@ -10,7 +10,7 @@ Every keyword reply from `capy_search` and `capy_vault_search` fits in **40,960 
 
 Number query groups from one in the original input order. Keep hits in their existing rank order, including knowledge before vault on a federated tie. Mark each first passage with a response-local reference such as `[1]`. When a later hit has the same corpus, source, location, attribution and passage, cite the earlier reference at that hit's rank. A different window into the same chunk gets its own entry. A reference counts as a shown hit.
 
-A full vault entry identifies the session and the chunk's starting transcript line, with the sidecar ID when the line belongs to a sidecar. Independently archived children retain their own session UUID and parent attribution. When the vault brief is available, a main-transcript hit with an intact usable ID can offer its latest exchange in the original project scope. A reference leads back to that full hit. [Vault brief](../vault-session-brief/design.md#following-a-search-hit)
+A full vault entry identifies the session and the chunk's starting transcript line, with the sidecar ID when the line belongs to a sidecar. Independently archived children retain their own session UUID and parent attribution. When the vault brief is available, a main-transcript hit with an intact usable ID can offer its latest exchange in the original project scope. A reference leads back to that full hit. [Vault brief](../../wip/vault-session-brief/design.md#following-a-search-hit)
 
 | Query outcome | What appears in its group |
 | --- | --- |
@@ -34,7 +34,7 @@ Direct new captured command output to `capy_runs` with its run or batch ID. Manu
 
 ## Assumptions
 
-References last for one reply. When a formatter cannot establish that two passages came from the same location, repeating the passage preserves the evidence. Compact replies can ship using the current snippet renderer. The proposed match-centered renderer can supply its chosen passage through the same writer. [Match-centered knowledge search](../knowledge-search-excerpts/design.md)
+References last for one reply. When a formatter cannot establish that two passages came from the same location, repeating the passage preserves the evidence. Compact replies can ship using the current snippet renderer. The proposed match-centered renderer can supply its chosen passage through the same writer. [Match-centered knowledge search](../../wip/knowledge-search-excerpts/design.md)
 
 ## Not Doing
 

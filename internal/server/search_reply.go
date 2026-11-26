@@ -11,7 +11,7 @@ import (
 	"github.com/serpro69/capy/internal/terminal"
 )
 
-// Keyword search reply budget (docs/feat/wip/compact-search-replies,
+// Keyword search reply budget (docs/feat/done/compact-search-replies,
 // implementation "Bound the complete reply"). Every limit applies to finished
 // display text in UTF-8 bytes, including markers, line breaks and separators.
 const (

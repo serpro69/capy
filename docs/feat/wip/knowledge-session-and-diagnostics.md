@@ -7,7 +7,7 @@ These eight proposals address distinct operator and developer workflows. Each ha
 | Index a manual or a structured API response | [Structured knowledge sections](structured-knowledge-sections/design.md) | A short fence inside an example preserves its section. An oversized JSON record keeps its identity across bounded pieces. |
 | Find the line that answers a question | [Match-centered knowledge search](knowledge-search-excerpts/design.md) | A late-matching function or JSON record appears in the CLI and MCP excerpt. |
 | Find the next section of a known manual | [Knowledge source browsing](knowledge-source-browsing/design.md) | Open at the beginning from an index or single-URL fetch receipt, or continue immediately after a ranked knowledge hit. |
-| Ask several related questions | [Compact multi-query search replies](compact-search-replies/design.md) | Repeated passages receive references. Omissions identify the first query to retry. |
+| Ask several related questions | [Compact multi-query search replies](../done/compact-search-replies/design.md) | Repeated passages receive references. Omissions identify the first query to retry. |
 | Fetch an article or API reference | [Readable fetched pages](readable-fetched-pages/design.md) | Relative references resolve after redirects. An empty application shell preserves the last good copy. |
 | Pick up an archived conversation | [Vault session brief](vault-session-brief/design.md) | Read the latest indexed request and assistant entry in a named archive, with citations to each message's start. |
 | Explain context consumption | [Session byte accounting](session-byte-accounting/design.md) | Reconcile measured workload bytes, report overhead and cache estimates. |

@@ -2,7 +2,7 @@
 
 **Original assessment — MAJOR_GAPS. Revised design — ready for implementation.** The findings below describe the original proposal. The [resolution after recheck](#resolution-after-recheck) records the scope decision, corrections and encrypted read experiment.
 
-**Scope.** Reviewed the [design](design.md), [implementation plan](implementation.md) and [tasks](tasks.md) against capy `6677d7b`, including the overlapping [compact search reply design](../compact-search-replies/design.md). The original review found seven issues after checking the declared exclusions and the existing fixtures. One is critical, three are high and three are medium.
+**Scope.** Reviewed the [design](design.md), [implementation plan](implementation.md) and [tasks](tasks.md) against capy `6677d7b`, including the overlapping [compact search reply design](../../done/compact-search-replies/design.md). The original review found seven issues after checking the declared exclusions and the existing fixtures. One is critical, three are high and three are medium.
 
 ## Upstream and capy evidence
 
@@ -49,7 +49,7 @@ The design requires the effective project on every brief. A custom label is reda
 
 A caller can discover an archive outside its current imported path using an explicit project label or `all_projects`. Replaying the example brief call with only the UUID and line silently restores the default scope and misses that same archive. The shared hit formatter receives the result alone. Reconstructing the selector from its displayed project also loses the distinction between an imported path and a custom label. **Confidence 9/10.** Standalone scoped reads are specified, but no acceptance case follows the emitted instruction from a widened search. [MCP task](tasks.md#task-2-request-a-scoped-brief-from-mcp-and-from-search) · [Scope resolution and formatter](../../../../internal/server/tool_vault_search.go#L122) · [Project predicates](../../../../internal/vault/session_project.go#L58)
 
-**Recommendation.** Carry the original selector or give one explicit instruction to reuse it. Exercise search → brief on a relabelled archive outside the current directory, through both dedicated and federated search. Keep guidance within the sibling proposal's search response budget. For an ambiguous prefix, a two-candidate probe establishes “at least two.” Today's CLI ambiguity formatter reports the slice length as an exact total. [Compact reply contract](../compact-search-replies/design.md#what-the-caller-receives) · [Existing ambiguity formatter](../../../../cmd/capy/vault.go#L1876)
+**Recommendation.** Carry the original selector or give one explicit instruction to reuse it. Exercise search → brief on a relabelled archive outside the current directory, through both dedicated and federated search. Keep guidance within the sibling proposal's search response budget. For an ambiguous prefix, a two-candidate probe establishes “at least two.” Today's CLI ambiguity formatter reports the slice length as an exact total. [Compact reply contract](../../done/compact-search-replies/design.md#what-the-caller-receives) · [Existing ambiguity formatter](../../../../cmd/capy/vault.go#L1876)
 
 ### 6. A search citation can change meaning between calls · AMBIGUOUS
 
