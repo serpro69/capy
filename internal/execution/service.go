@@ -373,6 +373,19 @@ func (s *Service) reject(err error) runstore.Result {
 	return result
 }
 
+// markerFallbackTimeout bounds the marker-only attempt after attribution fails.
+// It exceeds runstore.WriteTimeout because a deadline-expired write makes
+// database/sql discard the store's only connection (the driver implements no
+// session reset), so this attempt first reopens an encrypted connection; the
+// SQLCipher v4 key derivation alone takes ~130ms on an idle host.
+//
+// TODO: let database/sql keep the connection across a context expiry by wrapping
+// the driver connection with driver.SessionResetter and driver.Validator (in
+// sqliteutil, shared by the knowledge store and vault). Every run-store write
+// timeout currently makes the next caller pay that reconnect. Before doing so,
+// prove that a sqlite3_interrupt-ed SQLCipher connection is safe to reuse.
+const markerFallbackTimeout = 2 * time.Second
+
 func (s *Service) quarantine(st *runstore.Store, row runstore.Admitted, cause runstore.IncidentCause, stage runstore.IncidentStage) error {
 	// Keep one immutable subject, not the admitted program/result or an unbounded
 	// incident list. Concurrent failures still each attempt durable publication.
@@ -393,7 +406,7 @@ func (s *Service) quarantine(st *runstore.Store, row runstore.Admitted, cause ru
 		// attribution savepoint and its marker. Give the existing marker-only
 		// path an independent bounded attempt; never retry execution/finalization
 		// or claim that this fallback made attribution durable.
-		markerCtx, stopMarker := context.WithTimeout(context.Background(), runstore.WriteTimeout)
+		markerCtx, stopMarker := context.WithTimeout(context.Background(), markerFallbackTimeout)
 		markerErr := st.Quarantine(markerCtx)
 		stopMarker()
 		return errors.Join(err, markerErr)
