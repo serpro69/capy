@@ -201,7 +201,8 @@
   - `docs/architecture.md` § retrieval error policy no longer says MCP calls are best-effort, which had been stale since Task 1. It now describes partial search, including rows read before an iteration failure.
   - Go document rubric: `cli.md` is N/A, because this feature changes no CLI command, flag or output (design "Not Doing"). `continuous-integration.md` is N/A, because no workflow or pipeline changed.
   - No ADR was added. The decisions (bounded reply, inclusive retry without rank cursors, references by passage identity) and their rejected alternatives are recorded in `design.md`, which moves with this feature to `docs/feat/done/`, and no architectural boundary changed.
-- 2026-11-26 · release note (owner: unassigned) · rebuild and restart capy MCP servers to activate the new reply format and descriptions. There is no data, schema or CLI change. The feature directory still needs moving to `docs/feat/done/`, as with earlier features.
+- 2026-11-26 · release note (owner: unassigned) · rebuild and restart capy MCP servers to activate the new reply format and descriptions. There is no data, schema or CLI change.
+- 2026-11-26 · archived · moved the feature directory from `docs/feat/wip/` to `docs/feat/done/`. Relative links in both directions and the path in the `search_reply.go` budget comment were updated.
 
 ## Reflection
 

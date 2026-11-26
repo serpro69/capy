@@ -32,7 +32,7 @@ Each call reads one committed snapshot of the current archive. A later call can 
 
 ### Following a search hit
 
-In both `capy_search` and `capy_vault_search`, label a vault hit's line as the **chunk start**. An eligible main-transcript hit offers the **latest exchange in this session**, using the full ID and the original project selectors. For example, after a search with `project: "billing"`, use `capy_vault_brief({"session":"<full ID from the hit>","project":"billing"})`. A term may match later in the chunk or only in its title. A sidecar hit displays its sidecar ID and chunk start without the brief action. Independently archived children use their own UUID. [Chunk windows](../../../../internal/vault/chunker.go#L40) · [Compact search replies](../compact-search-replies/design.md)
+In both `capy_search` and `capy_vault_search`, label a vault hit's line as the **chunk start**. An eligible main-transcript hit offers the **latest exchange in this session**, using the full ID and the original project selectors. For example, after a search with `project: "billing"`, use `capy_vault_brief({"session":"<full ID from the hit>","project":"billing"})`. A term may match later in the chunk or only in its title. A sidecar hit displays its sidecar ID and chunk start without the brief action. Independently archived children use their own UUID. [Chunk windows](../../../../internal/vault/chunker.go#L40) · [Compact search replies](../../done/compact-search-replies/design.md)
 
 ### Outcomes
 
