@@ -90,8 +90,9 @@ func TestCodexMixedStartupContext(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".codex/scripts"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".claude"), 0o755))
-	// The real committed external script only reads these fixture paths.
-	script, err := os.ReadFile("../../.codex/scripts/session-start.sh")
+	// Frozen copy of the claude-toolbox Codex SessionStart script this repo
+	// used before migrating to agentstakk; it only reads these fixture paths.
+	script, err := os.ReadFile("testdata/toolbox-session-start.sh")
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".codex/scripts/session-start.sh"), script, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".claude/CLAUDE.extra.md"), []byte("# Extra fixture\nPreserve extra instructions.\n"), 0o600))
