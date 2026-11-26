@@ -93,9 +93,14 @@ type Server struct {
 	projectDir    string
 	// Optional fetch clock, fixed before concurrent use. Nil uses time.Now.
 	fetchNow func() time.Time
-	// Optional test observer called before each capy_search query is
-	// dispatched, fixed before concurrent use. Nil in production.
+	// Optional test observer called before each capy_search or
+	// capy_vault_search query is dispatched, fixed before concurrent use. Nil
+	// in production.
 	searchDispatched func(ordinal int, query string)
+	// Optional test replacement for capy_vault_search's chunk retrieval, fixed
+	// before concurrent use. Nil in production, which uses
+	// VaultStore.SearchChunksPartial.
+	vaultChunkSearch func(ctx context.Context, opts vault.SearchOptions) (vault.PartialChunkSearch, error)
 
 	// Captured before lazy initialization; never re-resolved from files or the
 	// environment during this server's lifetime.

@@ -1316,7 +1316,7 @@ content, rank inputs, or navigation metadata.
 Both MCP search handlers resolve request scope with `vaultProjectScope`: widening
 (`all_projects` or exact `project: "*"`) first, then a non-empty explicit effective
 project, otherwise the server directory as raw `ProjectPath`. The helper never
-changes `Server.projectDir`. `formatVaultHit` displays the resolved project
+changes `Server.projectDir`. `renderVaultHit` displays the resolved project
 literally for both MCP search tools.
 
 Federated `capy_search` uses `HasSessionsInProject` for its empty-knowledge-store
@@ -1594,7 +1594,7 @@ follow-up.
 collide at 8) and 8 for Claude wherever the CLI or MCP prints a short id; the TUI
 already truncates at 12. Assistant headings use `Platform.DisplayName()`
 (`Claude`/`Codex`); every other surface — `list`, the `show` header, `search`,
-`--json`, MCP hit meta lines (`· <token>[ · child of <short id>]`, `formatVaultHit`),
+`--json`, MCP hit meta lines (`· <token>[ · child of <short id>]`, `renderVaultHit`),
 `stats`, `doctor` — prints the **stored token** (`claude-code`/`codex`), the value
 `--platform` accepts. `capy doctor` and
 `capy_doctor` report each platform root's existence and archived count through

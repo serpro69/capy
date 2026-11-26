@@ -18,18 +18,35 @@ import (
 const vaultSearchMaxLimit = 10
 
 // handleVaultSearch serves capy_vault_search: it runs the shared retrieval
-// engine over the vault's chunk corpus (VaultStore.SearchChunks) and formats
-// chunk-level hits from past sessions. It degrades loudly in two states the
-// caller cannot see: the vault being disabled (no CAPY_VAULT_KEY) and the vault
-// being enabled but holding a reindex backlog that can hide otherwise-matching
-// sessions (design vault-session-search §D5).
+// engine over the vault's chunk corpus (VaultStore.SearchChunksPartial) and
+// formats chunk-level hits from past sessions. It degrades loudly in two states
+// the caller cannot see: the vault being disabled (no CAPY_VAULT_KEY) and the
+// vault being enabled but holding a reindex backlog that can hide
+// otherwise-matching sessions (design vault-session-search §D5).
 func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.vaultSearch(ctx, req, searchReplyMaxBytes)
+}
+
+// vaultSearch serves capy_vault_search within a reply of at most replyMax
+// UTF-8 bytes, under the same reply contract as capy_search: numbered query
+// groups, whole ranked hits or references to an earlier passage, and a
+// completion notice naming the inclusive retry when the budget stops the batch.
+// It takes no shared search admission and has no budget footer.
+// handleVaultSearch always passes searchReplyMaxBytes; tests pass a smaller
+// reply to place a budget boundary without depending on exact rendered sizes.
+func (s *Server) vaultSearch(ctx context.Context, req mcp.CallToolRequest, replyMax int) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 
-	// Normalize: accept both queries (array) and query (string), mirroring capy_search.
+	// Normalize: accept both queries (array) and query (string), mirroring
+	// capy_search. A supplied malformed array is rejected even when a query
+	// fallback is present: dropping a member would shift every later position.
 	var queryList []string
 	if raw, ok := args["queries"]; ok {
-		queryList = coerceStringArray(raw)
+		var err error
+		queryList, err = stringArrayArg(raw, "queries")
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
 	}
 	if len(queryList) == 0 {
 		if q := req.GetString("query", ""); q != "" {
@@ -37,10 +54,11 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 		}
 	}
 	if len(queryList) == 0 {
-		// Early-validation exits (this and the date-parse errors below) return a
-		// bare errorResult without trackToolResponse, matching handleSearch:
-		// malformed calls don't skew per-tool usage stats. Enablement/degrade
-		// paths past this point ARE tracked.
+		// Validation exits (queries/query above and here, project scope and
+		// the date-parse errors below) return a bare errorResult without
+		// trackToolResponse, matching handleSearch: malformed calls don't skew
+		// per-tool usage stats. Enablement/degrade paths past this point ARE
+		// tracked.
 		return errorResult("Error: provide query or queries"), nil
 	}
 
@@ -57,9 +75,8 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 				"Once enabled, run `capy vault reindex` to update already-archived sessions to the current index.")), nil
 	}
 
-	// Bound the limit so a hallucinated `limit: 100` (or a large queries array)
-	// can't flood the context window — the very problem capy exists to prevent.
-	// The sibling handleSearch caps hits + total bytes for the same reason.
+	// Bound the limit so a hallucinated `limit: 100` can't flood the context
+	// window; the reply writer bounds the whole batch.
 	limit := int(req.GetFloat("limit", 3))
 	if limit <= 0 {
 		limit = 3
@@ -75,10 +92,26 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 		return errorResult("Error: " + err.Error()), nil
 	}
 
-	var sections []string
+	searchChunks := s.vaultChunkSearch
+	if searchChunks == nil {
+		searchChunks = vlt.SearchChunksPartial
+	}
+
+	w := newReplyWriter(replyMax)
+	completion := ""
+	// hasResults: some query that ran returned a hit, whether or not it fit.
 	hasResults := false
-	for _, q := range queryList {
-		search, err := vlt.SearchChunksPartial(ctx, vault.SearchOptions{
+	for i, q := range queryList {
+		ordinal := i + 1
+		if !w.canStartGroup() {
+			completion = unsearchedNotice(ordinal, len(queryList))
+			break
+		}
+		if s.searchDispatched != nil {
+			s.searchDispatched(ordinal, q)
+		}
+
+		search, err := searchChunks(ctx, vault.SearchOptions{
 			Query:       q,
 			Project:     project,
 			ProjectPath: projectPath,
@@ -89,47 +122,53 @@ func (s *Server) handleVaultSearch(ctx context.Context, req mcp.CallToolRequest)
 		if err == nil {
 			err = search.LayerErr
 		}
-		results := search.Results
-		if len(results) == 0 {
-			// Best-effort batch: a single query's failure is surfaced in-band so
-			// the remaining queries still run, rather than failing the whole call
-			// (mirrors handleSearch's per-query degradation).
-			if err != nil {
-				sections = append(sections, fmt.Sprintf("## %s\nError: %v", q, err))
-				continue
-			}
-			sections = append(sections, fmt.Sprintf("## %s\nNo results found.", q))
-			continue
-		}
-
-		hasResults = true
-		formatted := make([]string, 0, len(results))
-		for _, r := range results {
-			formatted = append(formatted, formatVaultHit(r))
-		}
-		block := strings.Join(formatted, "\n\n")
-		// A failed FTS layer leaves the surviving ranked hits usable but
-		// incomplete; flag the degradation beside them.
+		// Best-effort batch: a query's failure is reported in-band beside any
+		// surviving ranked hits, so the remaining queries still run.
+		var causes []string
 		if err != nil {
-			block = fmt.Sprintf("⚠ partial results (%v)\n\n%s", err, block)
+			causes = []string{fmt.Sprintf("vault: %v", err)}
 		}
-		sections = append(sections, fmt.Sprintf("## %s\n\n%s", q, block))
+		results := search.Results
+
+		w.startGroup(queryFrame(ordinal, q, causes, len(results)))
+		shown := 0
+		for _, r := range results {
+			if !w.addHit(renderVaultHit(r)) {
+				break
+			}
+			shown++
+		}
+		if len(results) > 0 {
+			hasResults = true
+		}
+		if shown < len(results) {
+			completion = partialGroupNotice(ordinal, len(queryList), shown, len(results), limit)
+			break
+		}
 	}
 
-	output := strings.Join(sections, "\n\n---\n\n")
-
+	// Request-wide notices share searchNoticeReserve; the query groups used
+	// the rest of the reply.
+	var parts []string
+	if groups := w.String(); groups != "" {
+		parts = append(parts, groups)
+	}
+	if completion != "" {
+		parts = append(parts, completion)
+	}
 	// Degrade loudly on the enabled-but-empty state: a manual reindex backlog
 	// (`capy vault reindex` is not automatic) can leave archived sessions missing
-	// newer indexed content, so a zero-hit result names the command that fixes it.
+	// newer indexed content, so a reply whose queries returned no hit names the
+	// command that fixes it, even when only a prefix of the batch ran.
 	if !hasResults {
 		if vs, sErr := vlt.Stats(ctx); sErr == nil && vs.OutdatedSessions > 0 {
-			output += fmt.Sprintf(
-				"\n\n%d archived session(s) were indexed by an older version (v%d) and may omit newer indexed content — run `capy vault reindex` to update them.",
-				vs.OutdatedSessions, vs.IndexVersion)
+			parts = append(parts, fmt.Sprintf(
+				"%d archived session(s) were indexed by an older version (v%d) and may omit newer indexed content — run `capy vault reindex` to update them.",
+				vs.OutdatedSessions, vs.IndexVersion))
 		}
 	}
 
-	return s.trackToolResponse("capy_vault_search", textResult(output)), nil
+	return s.trackToolResponse("capy_vault_search", textResult(strings.Join(parts, noticeSeparator))), nil
 }
 
 // vaultProjectScope resolves the existing MCP selectors without changing the
@@ -151,11 +190,6 @@ func vaultProjectScope(req mcp.CallToolRequest, projectDir string) (project, pro
 	default:
 		return "", projectDir, nil
 	}
-}
-
-// formatVaultHit renders one chunk hit's full block (see renderVaultHit).
-func formatVaultHit(r vault.SearchResult) string {
-	return renderVaultHit(r).block
 }
 
 // renderVaultHit renders one chunk hit: a session:<uuid> label (so the
@@ -269,5 +303,5 @@ func parseDateArg(s string, endOfDay bool) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t, nil
 	}
-	return time.Time{}, fmt.Errorf("invalid date %q (want YYYY-MM-DD or RFC3339)", s)
+	return time.Time{}, fmt.Errorf("invalid date %s (want YYYY-MM-DD or RFC3339)", argPreview(s))
 }

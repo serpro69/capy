@@ -162,7 +162,7 @@ func TestVaultSearch_BacklogHintOnZeroHits(t *testing.T) {
 // and a sub-agent hit is marked with its parent's short id. A Claude hit is
 // otherwise byte-identical to the pre-platform format — pinned by comparing
 // against the old layout spelled out by hand.
-func TestFormatVaultHit_PlatformAndParent(t *testing.T) {
+func TestVaultBlock_PlatformAndParent(t *testing.T) {
 	end := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
 
 	claude := vault.SearchResult{
@@ -179,7 +179,7 @@ func TestFormatVaultHit_PlatformAndParent(t *testing.T) {
 	// The layout spelled out by hand: header, title, meta (labelling the line
 	// where the chunk starts), snippet.
 	wantPrefix := "--- [session:abcd1234-0000-4000-8000-000000000001] ---\n### Database setup\n/home/u/proj · 2026-05-01 · chunk from line 7"
-	got := formatVaultHit(claude)
+	got := vaultBlock(claude)
 	assert.True(t, strings.HasPrefix(got, wantPrefix), "header, title and metadata before the platform label:\n%s", got)
 	assert.Equal(t, wantPrefix+" · claude-code\n\nconfigure the database", got,
 		"a Claude hit ends its metadata with the platform label")
@@ -195,11 +195,11 @@ func TestFormatVaultHit_PlatformAndParent(t *testing.T) {
 	}
 	assert.Equal(t,
 		"--- [session:019e2200-0000-7000-8000-000000000002] ---\n### Rook · explorer\n2026-05-01 · chunk from line 1 · codex · child of 019e2200-000\n\nexplore the scheduler",
-		formatVaultHit(codexChild), "a Codex child names its platform and its parent's 12-char id")
+		vaultBlock(codexChild), "a Codex child names its platform and its parent's 12-char id")
 
 	codexRoot := codexChild
 	codexRoot.ParentUUID = ""
-	assert.NotContains(t, formatVaultHit(codexRoot), "child of", "a top-level session carries no parent marker")
+	assert.NotContains(t, vaultBlock(codexRoot), "child of", "a top-level session carries no parent marker")
 }
 
 // End to end: a Codex parent/child pair swept into the vault comes back from
@@ -235,12 +235,13 @@ func TestVaultSearch_CodexChildHitIsLabeled(t *testing.T) {
 	require.NoError(t, err)
 	out = resultText(res)
 	require.Contains(t, out, "[session:"+parent+"]")
-	parentBlock := out[strings.Index(out, "[session:"+parent+"]"):]
-	if i := strings.Index(parentBlock, "\n\n---"); i >= 0 {
-		parentBlock = parentBlock[:i]
-	}
-	assert.Contains(t, parentBlock, " · codex\n")
-	assert.NotContains(t, parentBlock, "child of")
+	// The block's lines are header, title and metadata; check the parent's
+	// own metadata line, whatever ranks after it.
+	parentLines := strings.SplitN(out[strings.Index(out, "[session:"+parent+"]"):], "\n", 4)
+	require.Len(t, parentLines, 4)
+	parentMeta := parentLines[2]
+	assert.True(t, strings.HasSuffix(parentMeta, " · codex"), parentMeta)
+	assert.NotContains(t, parentMeta, "child of")
 }
 
 func TestVaultSearch_ProjectOverrideScopes(t *testing.T) {
@@ -325,11 +326,11 @@ func TestVaultSearch_ProjectHelp(t *testing.T) {
 	}
 }
 
-func TestFormatVaultHit_ProjectLabels(t *testing.T) {
+func TestVaultBlock_ProjectLabels(t *testing.T) {
 	for _, project := range []string{"named project", "/home/u/project", "~/literal", `Équipe %_\'"`} {
 		t.Run(project, func(t *testing.T) {
 			hit := vault.SearchResult{SessionUUID: "test-session", ProjectPath: "/original/path", Project: project, CustomProject: &project}
-			out := formatVaultHit(hit)
+			out := vaultBlock(hit)
 			assert.Contains(t, out, "\n"+project+" · chunk from line 0")
 			assert.NotContains(t, out, hit.ProjectPath)
 		})

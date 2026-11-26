@@ -43,10 +43,16 @@ func decodedText(t *testing.T, r *mcp.CallToolResult) string {
 // reply budget, and equal to what response stats tracked for this call.
 func assertBoundedReply(t *testing.T, srv *Server, r *mcp.CallToolResult, trackedBefore int64) string {
 	t.Helper()
+	return assertBoundedToolReply(t, srv, "capy_search", r, trackedBefore)
+}
+
+// assertBoundedToolReply is assertBoundedReply for the named tool's stats.
+func assertBoundedToolReply(t *testing.T, srv *Server, tool string, r *mcp.CallToolResult, trackedBefore int64) string {
+	t.Helper()
 	text := decodedText(t, r)
 	assert.True(t, utf8.ValidString(text), "reply must be valid UTF-8")
 	assert.LessOrEqual(t, len(text), searchReplyMaxBytes)
-	assert.Equal(t, int64(len(text)), srv.stats.Snapshot().BytesReturned["capy_search"]-trackedBefore,
+	assert.Equal(t, int64(len(text)), srv.stats.Snapshot().BytesReturned[tool]-trackedBefore,
 		"tracked bytes must equal the decoded text")
 	return text
 }
@@ -57,6 +63,11 @@ var entryNumberRe = regexp.MustCompile(`^\[\d+\] `)
 // knowledgeBlock renders a knowledge hit's full block.
 func knowledgeBlock(r store.SearchResult, query string) string {
 	return renderKnowledgeHit(r, query).block
+}
+
+// vaultBlock renders a vault hit's full block.
+func vaultBlock(r vault.SearchResult) string {
+	return renderVaultHit(r).block
 }
 
 func trackedSearchBytes(srv *Server) int64 {
@@ -146,7 +157,7 @@ func TestHitBlockUpperBound(t *testing.T) {
 	assert.LessOrEqual(t, len(hitSeparator)+len(number)+len(k), searchHitMaxBytes)
 	assert.Contains(t, k, "(knowledge)", "a session:-looking knowledge label keeps explicit attribution")
 
-	v := formatVaultHit(vault.SearchResult{
+	v := vaultBlock(vault.SearchResult{
 		SessionUUID:   huge,
 		SubagentID:    "sk-ant-" + strings.Repeat("Q", 40) + huge,
 		Title:         huge,
@@ -180,7 +191,7 @@ func TestHitFieldsStayOnOneLine(t *testing.T) {
 	}, "body")
 	assert.Equal(t, "--- [label\\nwith break] ---\n### title\\u2028with separator\n\nbody", k)
 
-	v := formatVaultHit(vault.SearchResult{
+	v := vaultBlock(vault.SearchResult{
 		SessionUUID: "uuid",
 		Title:       "title\nnext",
 		Project:     "proj\rect",
@@ -494,9 +505,9 @@ func TestFormatKnowledgeHit_LiteralMarkerQueryFindsItsExcerpt(t *testing.T) {
 	assert.Contains(t, got, "alpha\uFFFDbeta")
 }
 
-func TestFormatVaultHit_RedactsParentBeforeShortening(t *testing.T) {
+func TestVaultBlock_RedactsParentBeforeShortening(t *testing.T) {
 	secret := "sk-ant-" + strings.Repeat("Q", 40)
-	got := formatVaultHit(vault.SearchResult{
+	got := vaultBlock(vault.SearchResult{
 		SessionUUID: "child-session",
 		Platform:    vault.PlatformCodex,
 		ParentUUID:  secret,
@@ -505,7 +516,7 @@ func TestFormatVaultHit_RedactsParentBeforeShortening(t *testing.T) {
 	assert.NotContains(t, got, "sk-ant-")
 	assert.Contains(t, got, "child of [REDACTED_SECRET]")
 
-	ordinary := formatVaultHit(vault.SearchResult{
+	ordinary := vaultBlock(vault.SearchResult{
 		SessionUUID: "child-session",
 		Platform:    vault.PlatformCodex,
 		ParentUUID:  "019a1b2c-3d4e-7f00-8000-000000000000",
