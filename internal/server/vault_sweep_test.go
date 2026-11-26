@@ -23,6 +23,9 @@ func setupVaultSweepProject(t *testing.T) (projectDir, uuid1, uuid2 string) {
 	projectDir = t.TempDir()
 
 	t.Setenv("HOME", tmpHome)
+	// An inherited CLAUDE_CONFIG_DIR would override HOME and send the fixture
+	// transcripts into a real Claude directory.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("CAPY_VAULT_PATH", filepath.Join(t.TempDir(), "vault.db"))
 	t.Setenv("CAPY_MACHINE_ID", "test-machine")              // avoid touching ~/.config/capy
 	t.Setenv("CODEX_HOME", filepath.Join(tmpHome, ".codex")) // absent: the Codex pass must not walk the developer's real home
@@ -91,6 +94,9 @@ func setupVaultSweepMultiProject(t *testing.T) (projectA, uuidA, projectB, uuidB
 	projectB = t.TempDir()
 
 	t.Setenv("HOME", tmpHome)
+	// An inherited CLAUDE_CONFIG_DIR would override HOME and send the fixture
+	// transcripts into a real Claude directory.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("CAPY_VAULT_PATH", filepath.Join(t.TempDir(), "vault.db"))
 	t.Setenv("CAPY_MACHINE_ID", "test-machine")              // avoid touching ~/.config/capy
 	t.Setenv("CODEX_HOME", filepath.Join(tmpHome, ".codex")) // absent: see setupVaultSweepProject
@@ -172,6 +178,8 @@ func TestVaultSweep_DefaultScopesToCurrentProject(t *testing.T) {
 func TestVaultSweep_NoSessionsIsNoOp(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	// An inherited CLAUDE_CONFIG_DIR would point the sweep at a real Claude root.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("CAPY_VAULT_KEY", testVaultSweepKey)
 	t.Setenv("CAPY_VAULT_PATH", filepath.Join(t.TempDir(), "vault.db"))
 	t.Setenv("CAPY_MACHINE_ID", "test-machine")

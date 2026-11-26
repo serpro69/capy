@@ -99,6 +99,18 @@ All callers of one MCP server share the counter. Per-agent isolation remains
 [D1](feat/done/upstream-sync-v1.0.169/upstream-audit.md#d1-per-agent-search-budgets).
 Neither the terminal knowledge search nor vault-only MCP search uses this budget.
 
+Both MCP keyword search tools render through a request-local `replyWriter`
+(`internal/server/search_reply.go`). It reserves 2,048 bytes for request-wide
+notices and requires 1,024 bytes free before dispatching each query. Ranked hits
+are committed whole, and the first one that does not fit stops the batch with an
+inclusive retry notice. `federateHits` keeps hits typed through the rank merge.
+A passage is registered only after its block commits. A later hit with the same
+corpus, identity digest and rendered block becomes a reference. For knowledge,
+the digest covers the winning FTS table, rowid, source ID and windows; for the
+vault, it covers the session, sidecar, chunk index, window and attribution. Hits
+without a known location are never cited. See the
+[reply contract](reference/tools.md#keyword-search-replies).
+
 The retrieval engine is corpus-agnostic (`internal/retrieval`, ADR-028): the same
 two-layer RRF / rerank / entity-boost pipeline runs over any `Corpus` — the knowledge
 store's `chunks`/`chunks_trigram` tables and the vault's `vault_chunks`/`vault_chunks_trigram`
@@ -476,7 +488,10 @@ does not construct an MCP server or access the vault. CLI type selection does
 not add an MCP schema parameter (ADR-012). It enables `SearchOptions.FailOnError`:
 the corpus's optional concurrent error callback collects query/scan/iteration
 failures per search, and the store returns the first after all layer workers join.
-Existing MCP/vault calls retain best-effort behavior. Stale-file admission
+The MCP keyword tools use partial search instead (`SearchPartialContext`,
+`SearchChunksPartial`): the first layer failure is shown beside the surviving
+ranked rows, including rows a layer read before its iteration failed. Callers
+without an error callback stay best-effort and drop a failed layer. Stale-file admission
 failures remain nonfatal; cached content is retained.
 
 ### Bounded stale refresh

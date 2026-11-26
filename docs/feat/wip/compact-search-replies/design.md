@@ -1,6 +1,6 @@
 # Compact multi-query search replies
 
-**Status** Ready for implementation · [Implementation](implementation.md) · [Tasks](tasks.md)
+**Status** Done — Tasks 1–5 implemented, reviewed and verified, 2026-11-26 · [Implementation](implementation.md) · [Tasks](tasks.md)
 
 Agents batch related questions to save round trips. Today two questions can quote the same evidence twice. A batch containing only misses can also exceed the intended limit because the federated handler counts hit bodies and the dedicated vault handler limits hits per query. In a baseline probe, two valid misses with long query headings returned 44,453 and 44,079 bytes respectively. [Knowledge search](../../../../internal/server/tool_search.go) · [Vault search](../../../../internal/server/tool_vault_search.go)
 

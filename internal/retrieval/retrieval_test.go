@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
@@ -57,6 +59,51 @@ func TestCorpusReportsLayerErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCorpusKeepsRowsReadBeforeIterationFailure: when iteration fails after
+// some rows were read, a caller observing failures through OnError still gets
+// those rows (a partial search shows them beside the failure). The failure is
+// a context cancelled after the first row: database/sql then stops Next and
+// reports the cancellation from Err.
+func TestCorpusKeepsRowsReadBeforeIterationFailure(t *testing.T) {
+	cfg := validCorpusConfig(t)
+	_, err := cfg.DB.ExecContext(t.Context(), `
+		CREATE VIRTUAL TABLE chunks USING fts5(title, content);
+		CREATE VIRTUAL TABLE chunks_trigram USING fts5(title, content);
+		INSERT INTO chunks VALUES ('orchard one', 'orchard'), ('orchard two', 'orchard'), ('orchard three', 'orchard');`)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	scan := cfg.MapRow
+	cfg.MapRow = func(rows *sql.Rows) (SearchResult, error) {
+		r, err := scan(rows)
+		cancel()
+		// Wait until database/sql has recorded the cancellation, so the next
+		// Next call deterministically stops iteration. The deadline turns a
+		// lost context (execSearch no longer forwarding ctx) into a failure
+		// instead of a hang.
+		deadline := time.Now().Add(5 * time.Second)
+		for rows.Err() == nil {
+			if time.Now().After(deadline) {
+				t.Fatal("the cancelled context never reached the rows")
+			}
+			runtime.Gosched()
+		}
+		return r, err
+	}
+	var reported []error
+	cfg.OnError = func(err error) { reported = append(reported, err) }
+	corpus, err := NewCorpus(cfg)
+	require.NoError(t, err)
+
+	results := corpus.exec(ctx, "chunks", `"orchard"`, 5)
+	require.Len(t, reported, 1)
+	assert.ErrorIs(t, reported[0], context.Canceled)
+	assert.Contains(t, reported[0].Error(), "search row iteration")
+	require.Len(t, results, 1, "the row read before the failure is kept")
+	assert.Equal(t, "chunks", results[0].Table)
 }
 
 // --- Corpus construction ---

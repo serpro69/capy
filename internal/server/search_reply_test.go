@@ -481,8 +481,14 @@ func TestSearchReply_Guidance(t *testing.T) {
 	t.Run("tool schema", func(t *testing.T) {
 		tool := toolSearch()
 		assert.Contains(t, tool.Description, "capy_runs")
-		assert.Contains(t, tool.Description, "inclusive")
-		assert.Contains(t, tool.Description, "number query groups from 1")
+		for _, search := range []mcp.Tool{toolSearch(), toolVaultSearch()} {
+			assert.Contains(t, search.Description, "inclusive", search.Name)
+			assert.Contains(t, search.Description, "number query groups from 1", search.Name)
+			assert.Contains(t, search.Description, "'↑ same passage as [n]'", search.Name)
+		}
+		limit, ok := toolVaultSearch().InputSchema.Properties["limit"].(map[string]any)
+		require.True(t, ok)
+		assert.Contains(t, limit["description"], fmt.Sprintf("maximum: %d", vaultSearchMaxLimit))
 	})
 }
 
