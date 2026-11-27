@@ -47,7 +47,8 @@ func sessionIDPrefixPattern(prefix string) (string, error) {
 // complete ID is therefore never ambiguous merely because it also begins a
 // longer ID (legacy filename-derived IDs) or because LIKE's ASCII case folding
 // matched an ID differing only in case; without this, such a session could not
-// be selected by any input. Other matches are returned unchanged.
+// be selected by any input. Other matches are returned unchanged. See ADR-038,
+// which also requires callers holding a captured full ID to resolve it exactly.
 // briefReader.resolve applies the same rule in SQL, because its LIMIT 2 prefix
 // query may not return the exact row; keep the two in step.
 func preferExactSession(matches []Session, id string) []Session {
