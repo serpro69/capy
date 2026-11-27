@@ -129,7 +129,7 @@ Each query that runs gets a group headed `## N. <query>`, where N is its positio
 
 Entries appear in rank order; `capy_search` places knowledge before the vault on a federated tie. The first time a reply shows a passage, its entry is numbered `[n]`. A later hit with the same corpus, location, selected window, passage text and attribution appears as `↑ same passage as [n]` and counts as shown. A different window into the same chunk gets its own entry. So does identical text that a knowledge search reached through the other FTS layer, and a hit whose stored location is unknown. Vault passages bracket the query's matched terms, so a later query usually needs the same matched terms in that chunk to cite it; knowledge passages add no brackets. Numbers last for one reply only.
 
-A knowledge entry is a `--- [<source label>] ---` header, a `### <title>` line and the passage. A label that begins with `session:` is shown as `--- [session:…] (knowledge) ---`, keeping it distinct from vault hits. A vault entry is a `--- [session:<uuid>] ---` header, a `### <title>` line, a metadata line and the passage. The metadata line holds the project and end date when known, `chunk from line N` (the zero-based raw-JSONL line index where the chunk starts) and `sidecar <id>` when that line belongs to a sidecar. It ends with the platform and, for a sub-agent session, `child of <parent>`.
+A knowledge entry is a `--- [<source label>] ---` header, a `### <title>` line and the passage. A label that begins with `session:` is shown as `--- [session:…] (knowledge) ---`, keeping it distinct from vault hits. A vault entry is a `--- [session:<uuid>] ---` header, a `### <title>` line, a metadata line and the passage. The metadata line holds the project and end date when known, `chunk starts at line N` (the zero-based raw-JSONL line index where the chunk starts), then `main transcript` or `sidecar <id>` for the transcript holding that line. It ends with the platform and, for a sub-agent session, `child of <parent>`. A main-transcript entry whose complete session ID is shown intact and is at least eight bytes long adds `Latest exchange: call capy_vault_brief with this session ID and the same project/all_projects arguments.` The brief shows that session's latest indexed exchange, not the matched passage. Sidecar entries and shortened or redacted ID previews carry no such line.
 
 ### Shortened fields
 
@@ -165,7 +165,8 @@ This `capy_vault_search` batch uses `limit: 5`. It has a reworded query that cit
 
 [1] --- [session:0b6c2f4e-1111-4c1d-9a51-5e0c3f1d2a01] ---
 ### Why does capy checkpoint the WAL on close? (turn 1)
-/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+/src/capy · 2026-04-05 · chunk starts at line 0 · main transcript · claude-code
+Latest exchange: call capy_vault_brief with this session ID and the same project/all_projects arguments.
 
 Why does capy [checkpoint] the [WAL] on close? (turn 1)
 
@@ -173,7 +174,8 @@ ContentStore.Close closes its own connection pool, then r…
 
 [2] --- [session:7d9e1a3b-2222-4f0e-8c62-6a1d4e2b3c02] ---
 ### How does vault rekey avoid PRAGMA rekey? (turn 1)
-/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+/src/capy · 2026-04-05 · chunk starts at line 0 · main transcript · claude-code
+Latest exchange: call capy_vault_brief with this session ID and the same project/all_projects arguments.
 
 How does vault rekey avoid PRAGMA rekey? (turn 1)
 
@@ -193,7 +195,8 @@ PRAGMA rekey is incompatible with the [WAL] journal mode, so sqliteutil.Rekey wr
 
 [3] --- [session:0b6c2f4e-1111-4c1d-9a51-5e0c3f1d2a01] ---
 ### Why does capy checkpoint the WAL on close? (turn 1)
-/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+/src/capy · 2026-04-05 · chunk starts at line 0 · main transcript · claude-code
+Latest exchange: call capy_vault_brief with this session ID and the same project/all_projects arguments.
 
 …uns a TRUNCATE checkpoint on a fresh connection to fold the write-ahead log back into the database. [Readers] using the WAL can keep a TRUNCATE checkpoint from [completing]. Details for turn 1 with en…
 
@@ -205,7 +208,8 @@ PRAGMA rekey is incompatible with the [WAL] journal mode, so sqliteutil.Rekey wr
 
 [4] --- [session:7d9e1a3b-2222-4f0e-8c62-6a1d4e2b3c02] ---
 ### How does vault rekey avoid PRAGMA rekey? (turn 1)
-/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+/src/capy · 2026-04-05 · chunk starts at line 0 · main transcript · claude-code
+Latest exchange: call capy_vault_brief with this session ID and the same project/all_projects arguments.
 
 How does vault [rekey] avoid PRAGMA [rekey]? (turn 1)
 
@@ -217,7 +221,8 @@ PRAGMA [rekey] is incompatible with the WAL [journal] mode, …
 
 [5] --- [session:2b4d6f8a-6666-4a1c-8e3b-5d7f9a1c3e06] ---
 ### Why rekey through a backup copy instead of in place? (turn 1)
-/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+/src/capy · 2026-04-05 · chunk starts at line 0 · main transcript · claude-code
+Latest exchange: call capy_vault_brief with this session ID and the same project/all_projects arguments.
 
 Why rekey through a [backup] [copy] instead of in place? (turn 1)
 
@@ -225,7 +230,8 @@ The new-key [backup] [copy] is built in a separate fi…
 
 [6] --- [session:3f5a7c9e-3333-4b2d-8e4f-6a8c0e2f4a03] ---
 ### Which commands share the backup copy rekey path? (turn 1)
-/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+/src/capy · 2026-04-05 · chunk starts at line 0 · main transcript · claude-code
+Latest exchange: call capy_vault_brief with this session ID and the same project/all_projects arguments.
 
 Which commands share the [backup] [copy] rekey path? (turn 1)
 
@@ -233,7 +239,8 @@ When rotating an existing key, both capy vault rekey and capy …
 
 [7] --- [session:5e7a9c1b-4444-4d6f-8a2c-4e6a8c0e2a04] ---
 ### Does a backup copy rekey keep the original database? (turn 1)
-/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+/src/capy · 2026-04-05 · chunk starts at line 0 · main transcript · claude-code
+Latest exchange: call capy_vault_brief with this session ID and the same project/all_projects arguments.
 
 Does a [backup] [copy] rekey keep the original database? (turn 1)
 
@@ -241,7 +248,8 @@ SwapAndVerify renames the original to a …
 
 [8] --- [session:9c1e3a5f-5555-4f8b-9c4d-2e4a6c8e0a05] ---
 ### Can a failed backup copy swap need manual recovery? (turn 1)
-/src/capy · 2026-04-05 · chunk from line 0 · claude-code
+/src/capy · 2026-04-05 · chunk starts at line 0 · main transcript · claude-code
+Latest exchange: call capy_vault_brief with this session ID and the same project/all_projects arguments.
 
 Can a failed [backup] [copy] swap need manual recovery? (turn 1)
 

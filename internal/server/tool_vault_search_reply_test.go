@@ -195,7 +195,7 @@ func TestVaultSearchReply_MainAndSidecarAttribution(t *testing.T) {
 		if !strings.Contains(block, "[session:"+uuid1+"]") {
 			continue
 		}
-		assert.Regexp(t, `· chunk from line \d+ ·`, block)
+		assert.Regexp(t, `· chunk starts at line \d+ ·`, block)
 		if strings.Contains(block, " · sidecar helper · ") {
 			sidecar++
 		} else {

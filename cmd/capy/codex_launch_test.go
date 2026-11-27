@@ -163,7 +163,7 @@ func TestCodexMCPLaunchLocations(t *testing.T) {
 				} `json:"tools"`
 			}
 			require.NoError(t, p.request("tools/list", map[string]any{}, &result))
-			require.Len(t, result.Tools, 11)
+			require.Len(t, result.Tools, 12)
 			installed := readInstalledCodexHooks(t, owner)
 			matcher := regexp.MustCompile(installed.Hooks["PreToolUse"][0].Matcher)
 			for _, tool := range result.Tools {

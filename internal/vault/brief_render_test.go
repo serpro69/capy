@@ -12,7 +12,7 @@ import (
 )
 
 func text(v string) BriefField {
-	return BriefField{Value: v, Present: true, Bytes: int64(len(v))}
+	return BriefField{Value: v, Present: true}
 }
 
 func entry(role string, line int64, v string) *BriefEntry {
@@ -109,7 +109,7 @@ Index version 3 predates %d; run "capy vault reindex" to refresh this session's 
 			name: "omitted entry keeps label and citation",
 			build: func(b *Brief) {
 				b.Opening = entry(roleUser, 0, "start")
-				b.Latest = &BriefEntry{Role: roleUser, Line: 7, Text: BriefField{Present: true, Omitted: true, Bytes: 70000}}
+				b.Latest = &BriefEntry{Role: roleUser, Line: 7, Text: BriefField{Present: true, Omitted: true}}
 				b.Assistant = entry(roleAssistant, 8, "done")
 			},
 			want: `Session "48285c38-32fd-46f3-b18f-121cba7471ce" · claude-code
@@ -139,7 +139,7 @@ func TestRenderBrief_IDPreview(t *testing.T) {
 		{name: "needs escaping", id: text(`48285c38-"quoted"`)},
 		{name: "too long", id: text(strings.Repeat("a", briefIDMax))},
 		{name: "redacted", id: text("ghp_" + strings.Repeat("A", 36))},
-		{name: "omitted", id: BriefField{Present: true, Omitted: true, Bytes: 1 << 20}},
+		{name: "omitted", id: BriefField{Present: true, Omitted: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -271,7 +271,7 @@ func TestRenderBrief_Ceiling(t *testing.T) {
 				b.Assistant = &BriefEntry{Role: roleAssistant, Line: r.Int64(), Text: text(big(r, r.IntN(9000)))}
 			}
 			if r.IntN(4) == 0 {
-				b.Latest.Text = BriefField{Present: true, Omitted: true, Bytes: 1 << 20}
+				b.Latest.Text = BriefField{Present: true, Omitted: true}
 			}
 		}
 		out := RenderBrief(b)

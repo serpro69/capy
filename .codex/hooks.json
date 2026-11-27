@@ -8,7 +8,7 @@
             "type": "command"
           }
         ],
-        "matcher": "^(Bash|mcp__[^[:space:]]+__capy_(execute|execute_file|batch_execute|fetch_and_index|index|search|vault_search|stats|doctor|cleanup|runs))$"
+        "matcher": "^(Bash|mcp__[^[:space:]]+__capy_(execute|execute_file|batch_execute|fetch_and_index|index|search|vault_search|vault_brief|stats|doctor|cleanup|runs))$"
       }
     ],
     "SessionStart": [
