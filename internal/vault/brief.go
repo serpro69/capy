@@ -108,7 +108,6 @@ type BriefField struct {
 	Value   string // complete stored value; empty when absent or omitted
 	Present bool   // false for SQL NULL
 	Omitted bool   // the stored value exceeded briefFieldReadLimit and was not read
-	Bytes   int64  // stored size in bytes
 }
 
 // BriefEntry is one cited transcript entry: its stored role, zero-based
@@ -326,9 +325,9 @@ func briefField(size sql.NullInt64, value sql.NullString) BriefField {
 		return BriefField{}
 	}
 	if !value.Valid {
-		return BriefField{Present: true, Omitted: true, Bytes: size.Int64}
+		return BriefField{Present: true, Omitted: true}
 	}
-	return BriefField{Value: value.String, Present: true, Bytes: size.Int64}
+	return BriefField{Value: value.String, Present: true}
 }
 
 // readBriefMetadata loads the selected session's current effective metadata,

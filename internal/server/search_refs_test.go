@@ -163,9 +163,10 @@ func TestRenderVaultHit_ChunkAttribution(t *testing.T) {
 	sidecar.SubagentID, sidecar.ChunkIndex = "agent-explorer", 9
 
 	m, s := renderVaultHit(main), renderVaultHit(sidecar)
-	assert.Contains(t, m.block, "\nchunk from line 4 · claude-code\n")
+	assert.Contains(t, m.block, "\nchunk starts at line 4 · main transcript · claude-code\n"+vaultBriefAction+"\n")
 	assert.NotContains(t, m.block, "sidecar")
-	assert.Contains(t, s.block, "\nchunk from line 4 · sidecar agent-explorer · claude-code\n")
+	assert.Contains(t, s.block, "\nchunk starts at line 4 · sidecar agent-explorer · claude-code\n\n")
+	assert.NotContains(t, s.block, vaultBriefAction, "a sidecar hit offers no brief")
 	assert.True(t, m.citable, "chunk index zero is a valid coordinate")
 	assert.NotEqual(t, m.key, s.key, "main and sidecar hits at the same line are distinct")
 
@@ -365,7 +366,7 @@ func TestSearch_RepeatedVaultPassageCitesEarlierEntry(t *testing.T) {
 	require.False(t, res.IsError)
 	text := resultText(res)
 	require.Contains(t, text, "[session:"+uuid1+"]")
-	assert.Contains(t, text, "chunk from line ")
+	assert.Contains(t, text, "chunk starts at line ")
 
 	markers := entryMarkers(text)
 	require.Len(t, markers, 4, text)
@@ -373,4 +374,6 @@ func TestSearch_RepeatedVaultPassageCitesEarlierEntry(t *testing.T) {
 	groups, _ := replyGroups(t, text)
 	assert.Equal(t, groups[0], groups[1])
 	assert.Equal(t, 1, strings.Count(text, "[session:"+uuid1+"]"), "the session passage is shown once:\n%s", text)
+	assert.Equal(t, []string{uuid1}, briefActionSessions(text),
+		"the federated reference cites the full entry carrying the latest-exchange instruction")
 }

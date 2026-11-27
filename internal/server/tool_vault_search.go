@@ -194,9 +194,17 @@ func vaultProjectScope(req mcp.CallToolRequest, projectDir string) (project, pro
 
 // renderVaultHit renders one chunk hit: a session:<uuid> label (so the
 // assistant can pivot to `capy vault show`/the TUI), the session title, its
-// project and end date, the raw-JSONL line where the chunk starts, the sidecar
-// holding that line (when not the main transcript), the producing platform and
-// — for a sub-agent session — its parent, then the pre-windowed chunk snippet.
+// project and end date, the zero-based raw-JSONL line where the chunk starts
+// and its transcript (the main transcript or the named sidecar), the producing
+// platform and — for a sub-agent session — its parent, then the pre-windowed
+// chunk snippet. It is the one vault-hit formatter for both capy_vault_search
+// and capy_search federation.
+//
+// An eligible main-transcript hit (briefEligible) adds the fixed
+// vaultBriefAction line before the snippet, inside the same block, so a later
+// "same passage" reference still points at a full entry carrying it. The
+// matched term may lie anywhere in the chunk or only in its title; the brief
+// shows the session's latest exchange, not the hit.
 //
 // The platform is the STORED token ("claude-code", "codex"), the same value
 // `capy vault list --platform` accepts and `--json` emits, so the assistant can
@@ -227,9 +235,11 @@ func renderVaultHit(r vault.SearchResult) renderedHit {
 	if !r.EndTime.IsZero() {
 		meta = append(meta, r.EndTime.Format("2006-01-02"))
 	}
-	meta = append(meta, fmt.Sprintf("chunk from line %d", r.LineIndex))
+	meta = append(meta, fmt.Sprintf("chunk starts at line %d", r.LineIndex))
 	if r.SubagentID != "" {
 		meta = append(meta, sidecarAttribution(r))
+	} else {
+		meta = append(meta, "main transcript")
 	}
 	meta = append(meta, displayField(platform.String(), vaultMetaFieldMaxBytes))
 	if r.ParentUUID != "" {
@@ -242,9 +252,13 @@ func renderVaultHit(r vault.SearchResult) renderedHit {
 		meta = append(meta, "child of "+displayField(parent, vaultMetaFieldMaxBytes))
 	}
 
+	metaLines := strings.Join(meta, " · ")
+	if briefEligible(r) {
+		metaLines += "\n" + vaultBriefAction
+	}
 	block := fmt.Sprintf("--- [session:%s] ---\n### %s\n%s\n\n%s",
 		displayField(r.SessionUUID, vaultSessionIDMaxBytes), displayField(title, vaultTitleMaxBytes),
-		strings.Join(meta, " · "), displayPassage(r.Snippet))
+		metaLines, displayPassage(r.Snippet))
 	if !r.HasChunkIndex {
 		return renderedHit{block: block}
 	}
@@ -260,6 +274,17 @@ func renderVaultHit(r vault.SearchResult) renderedHit {
 		},
 		citable: true,
 	}
+}
+
+// briefEligible reports whether a hit may offer capy_vault_brief: a
+// main-transcript hit (a sidecar has no brief of its own; an independently
+// archived child is its own session) whose complete session ID is displayed
+// intact and is a valid brief selector. A redacted, escaped or clipped ID
+// preview cannot be passed back.
+func briefEligible(r vault.SearchResult) bool {
+	return r.SubagentID == "" &&
+		vault.ValidateBriefSession(r.SessionUUID) == nil &&
+		displayField(r.SessionUUID, vaultSessionIDMaxBytes) == r.SessionUUID
 }
 
 // sidecarAttribution names the sidecar holding a chunk's first line. When

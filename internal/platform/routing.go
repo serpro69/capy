@@ -7,6 +7,7 @@ var CapyToolNames = []string{
 	"capy_index",
 	"capy_search",
 	"capy_vault_search",
+	"capy_vault_brief",
 	"capy_fetch_and_index",
 	"capy_batch_execute",
 	"capy_stats",

@@ -273,9 +273,9 @@ func TestReadBrief_OversizedFieldIsOmitted(t *testing.T) {
 	)))
 	b, err := s.ReadBrief(context.Background(), uuid[:8], BriefScope{})
 	require.NoError(t, err)
-	assert.True(t, b.Latest.Text.Omitted)
+	// huge exceeds the limit only through the bytes after its embedded NUL.
+	assert.True(t, b.Latest.Text.Omitted, "size counts bytes past an embedded NUL")
 	assert.Empty(t, b.Latest.Text.Value)
-	assert.Equal(t, int64(len(huge)), b.Latest.Text.Bytes, "size counts bytes past an embedded NUL")
 	assert.False(t, b.Assistant.Text.Omitted, "a value exactly at the limit is read")
 }
 

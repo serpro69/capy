@@ -10,7 +10,7 @@ import (
 	"github.com/serpro69/capy/internal/executor"
 )
 
-// registerTools registers all 11 capy MCP tools on the server.
+// registerTools registers all 12 capy MCP tools on the server.
 func (s *Server) registerTools() {
 	runtimes := s.executor.Runtimes()
 	langList := formatRuntimeList(runtimes)
@@ -36,6 +36,10 @@ func (s *Server) registerTools() {
 		mcpserver.ServerTool{
 			Tool:    toolVaultSearch(),
 			Handler: s.handleVaultSearch,
+		},
+		mcpserver.ServerTool{
+			Tool:    toolVaultBrief(),
+			Handler: s.handleVaultBrief,
 		},
 		mcpserver.ServerTool{
 			Tool:    toolFetchAndIndex(),

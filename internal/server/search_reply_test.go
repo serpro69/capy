@@ -197,7 +197,7 @@ func TestHitFieldsStayOnOneLine(t *testing.T) {
 		Project:     "proj\rect",
 		Snippet:     "line one\nline two",
 	})
-	assert.Equal(t, "--- [session:uuid] ---\n### title\\nnext\nproj\\rect · chunk from line 0 · claude-code\n\nline one\nline two", v,
+	assert.Equal(t, "--- [session:uuid] ---\n### title\\nnext\nproj\\rect · chunk starts at line 0 · main transcript · claude-code\n\nline one\nline two", v,
 		"metadata is escaped while the passage keeps its line breaks")
 }
 

@@ -65,7 +65,7 @@ func TestRoutineGeneratedHooksAndMCPRecovery(t *testing.T) {
 	p.initialize(t)
 	var tools map[string]any
 	require.NoError(t, p.request("tools/list", map[string]any{}, &tools))
-	require.Len(t, tools["tools"], 11)
+	require.Len(t, tools["tools"], 12)
 	var result map[string]any
 	retry["wait_ms"] = 30000
 	require.NoError(t, p.request("tools/call", map[string]any{"name": "capy_execute", "arguments": retry}, &result))
