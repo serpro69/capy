@@ -265,3 +265,35 @@ func TestApp_RawLoadingResizeAndQuit(t *testing.T) {
 	assert.Equal(t, tea.Quit(), quit())
 	assert.ErrorIs(t, cmd().(rawLoadedMsg).err, context.Canceled)
 }
+
+// A selected session deleted elsewhere must not have another archive's
+// transcript shown under its ID, even when a longer ID it prefixes survives.
+func TestApp_StaleSelectionNeverShowsAnotherSession(t *testing.T) {
+	stale := func(t *testing.T) (Model, *stubStore) {
+		t.Helper()
+		m, st := newTestApp(t, Options{})
+		selected, ok := m.list.selected()
+		require.True(t, ok)
+		for i := range st.sessions {
+			if st.sessions[i].UUID == selected.UUID {
+				st.sessions[i].UUID = selected.UUID + "-2" // only a longer prefix match survives
+			}
+		}
+		return m, st
+	}
+	t.Run("raw view", func(t *testing.T) {
+		m, _ := stale(t)
+		next, cmd := m.Update(keyMsg("v"))
+		require.NotNil(t, cmd)
+		next, _ = next.(Model).Update(cmd())
+		m = next.(Model)
+		assert.Contains(t, m.raw.err, "the selected session no longer exists")
+	})
+	t.Run("viewer", func(t *testing.T) {
+		m, _ := stale(t)
+		m = press(t, m, "enter")
+		assert.NotEqual(t, modeView, m.mode)
+		assert.True(t, m.statusErr)
+		assert.Contains(t, m.status, "the selected session no longer exists")
+	})
+}

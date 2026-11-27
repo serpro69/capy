@@ -187,7 +187,7 @@ func (s *VaultStore) ReadBrief(ctx context.Context, session string, scope BriefS
 	// snapshot whose transaction already finished.
 	defer db.Close() //nolint:errcheck
 
-	r := briefReader{pattern: pattern, scopePredicate: scopePredicate, scopeArg: scopeArg}
+	r := briefReader{session: session, pattern: pattern, scopePredicate: scopePredicate, scopeArg: scopeArg}
 	b, err := r.read(ctx, db)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -233,6 +233,7 @@ func briefDSN(path, key string) string {
 // briefReader carries one lookup through its read transaction. resolved holds
 // the session metadata once known, so a later timeout can name the session.
 type briefReader struct {
+	session        string
 	pattern        string
 	scopePredicate string
 	scopeArg       string
@@ -275,18 +276,35 @@ func (r *briefReader) read(ctx context.Context, db *sql.DB) (*Brief, error) {
 }
 
 // resolve applies scope before deciding whether the literal prefix has zero,
-// one or several matches. Two rows establish ambiguity; no count is reported.
+// one or several matches. A scoped session whose ID equals the input wins
+// outright, mirroring preferExactSession in SQL: the LIMIT 2 prefix query below
+// may not return the exact row, so the helper cannot be applied to its result.
+// Otherwise two rows establish ambiguity; no count is reported.
 func (r *briefReader) resolve(ctx context.Context, tx *sql.Tx) (int64, error) {
-	query := `SELECT s.rowid FROM vault_sessions s
+	scoped := func(predicate, arg string) (string, []any) {
+		query := `SELECT s.rowid FROM vault_sessions s
 		LEFT JOIN vault_session_projects p ON p.session_uuid = s.uuid
-		WHERE s.uuid LIKE ? ESCAPE '\'`
-	args := []any{r.pattern}
-	if r.scopePredicate != "" {
-		query += " AND " + r.scopePredicate
-		args = append(args, r.scopeArg)
+		WHERE ` + predicate
+		args := []any{arg}
+		if r.scopePredicate != "" {
+			query += " AND " + r.scopePredicate
+			args = append(args, r.scopeArg)
+		}
+		return query, args
 	}
-	query += " LIMIT 2"
-	rows, err := tx.QueryContext(ctx, query, args...)
+
+	query, args := scoped("s.uuid = ?", r.session)
+	var exact int64
+	err := tx.QueryRowContext(ctx, query, args...).Scan(&exact)
+	switch {
+	case err == nil:
+		return exact, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return 0, fmt.Errorf("resolving session: %w", err)
+	}
+
+	query, args = scoped(`s.uuid LIKE ? ESCAPE '\'`, r.pattern)
+	rows, err := tx.QueryContext(ctx, query+" LIMIT 2", args...)
 	if err != nil {
 		return 0, fmt.Errorf("resolving session: %w", err)
 	}

@@ -121,7 +121,7 @@ func TestApp_ProjectEditorPreservesKeysAndPendingWrite(t *testing.T) {
 	assert.Equal(t, editProject, result.target)
 	assert.Equal(t, 1, st.projectCalls)
 	assert.Zero(t, st.renameCalls)
-	assert.Equal(t, vault.ProjectOptions{Name: "capy"}, st.lastProjectOpts)
+	assert.Equal(t, vault.ProjectOptions{Name: "capy", ExactID: true}, st.lastProjectOpts)
 }
 
 func TestApp_ProjectEditorValidationAndClear(t *testing.T) {
@@ -168,7 +168,7 @@ func TestApp_ProjectEditorValidationAndClear(t *testing.T) {
 				require.NotNil(t, st.sessions[0].ProjectOverride)
 				if strings.TrimSpace(tc.input) == "" {
 					assert.Nil(t, st.sessions[0].ProjectOverride.CustomProject)
-					assert.Equal(t, vault.ProjectOptions{Clear: true}, st.lastProjectOpts)
+					assert.Equal(t, vault.ProjectOptions{Clear: true, ExactID: true}, st.lastProjectOpts)
 					assert.Contains(t, m.status, "cleared custom project")
 					assert.Equal(t, beforePath, result.sess.EffectiveProject())
 				} else {
@@ -468,4 +468,23 @@ func TestApp_ProjectEditorUnicodeSaveStatusFitsWidth(t *testing.T) {
 			assert.LessOrEqual(t, displayWidth(row), width)
 		}
 	}
+}
+
+// A selected session deleted elsewhere before the editor opens must not hand
+// the editor to a longer ID that the selection merely prefixes.
+func TestApp_ProjectEditorSelectedSessionGone(t *testing.T) {
+	m, st := twoProjectApp(t)
+	selected, ok := m.list.selected()
+	require.True(t, ok)
+	survivor := selected.UUID + "-2"
+	for i := range st.sessions {
+		if st.sessions[i].UUID == selected.UUID {
+			st.sessions[i].UUID = survivor // the selection is gone; a prefix match survives
+		}
+	}
+	m = press(t, m, "ctrl+g")
+	assert.False(t, m.renaming)
+	assert.True(t, m.statusErr)
+	assert.Contains(t, m.status, "the selected session no longer exists")
+	assert.Zero(t, st.projectCalls)
 }

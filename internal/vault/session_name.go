@@ -22,6 +22,11 @@ const maxSessionNameRunes = 120 // Shared by custom session names and project la
 type RenameOptions struct {
 	Name  string
 	Clear bool
+	// ExactID selects the session whose ID equals the argument, with no prefix
+	// fallback. Callers holding a known full ID (the TUI) set it so a session
+	// deleted meanwhile is reported missing instead of resolving to a longer
+	// ID it happens to prefix.
+	ExactID bool
 }
 
 // EffectiveTitle resolves the one display title for a session without losing
@@ -94,9 +99,13 @@ func (s *VaultStore) renameSessionAt(
 	now time.Time,
 	machineID string,
 ) (*Session, error) {
-	pattern, err := sessionIDPrefixPattern(prefix)
-	if err != nil {
-		return nil, err
+	where, arg := "s.uuid = ?", prefix
+	if !opts.ExactID {
+		pattern, err := sessionIDPrefixPattern(prefix)
+		if err != nil {
+			return nil, err
+		}
+		where, arg = `s.uuid LIKE ? ESCAPE '\'`, pattern
 	}
 
 	var customTitle *string
@@ -123,8 +132,8 @@ func (s *VaultStore) renameSessionAt(
 	defer tx.Rollback() //nolint:errcheck
 
 	rows, err := tx.QueryContext(ctx,
-		`SELECT `+sessionMetaColumns+sessionMetaJoin+` WHERE s.uuid LIKE ? ESCAPE '\' ORDER BY s.end_time DESC`,
-		pattern,
+		`SELECT `+sessionMetaColumns+sessionMetaJoin+` WHERE `+where+` ORDER BY s.end_time DESC`,
+		arg,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying sessions: %w", err)
@@ -137,7 +146,7 @@ func (s *VaultStore) renameSessionAt(
 	var matches []Session
 	for rows.Next() {
 		var sess Session
-		if err := scanSessionMeta(rows, &sess, nil); err != nil {
+		if err := scanSessionMeta(rows, &sess); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -151,6 +160,7 @@ func (s *VaultStore) renameSessionAt(
 		return nil, fmt.Errorf("closing session rows: %w", err)
 	}
 
+	matches = preferExactSession(matches, prefix)
 	switch len(matches) {
 	case 0:
 		return nil, ErrSessionNotFound

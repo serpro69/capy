@@ -34,7 +34,7 @@ The minimum-size setting applies only to new archives, counting uncompressed tra
 
 ## Delete a session
 
-`capy vault delete <id> [<id> ...]` deletes a reviewed selection in one transaction. Supply full UUIDs or unambiguous prefixes of at least eight characters. Prefixes that resolve to the same UUID select it once. If any argument is too short, missing or ambiguous, the command reports the bad arguments in input order and leaves the entire selection intact.
+`capy vault delete <id> [<id> ...]` deletes a reviewed selection in one transaction. Supply full UUIDs or unambiguous prefixes of at least eight characters; a complete ID of at least eight characters always selects that session. Prefixes that resolve to the same UUID select it once. If any argument is too short, missing or ambiguous, the command reports the bad arguments in input order and leaves the entire selection intact.
 
 ```bash
 capy vault delete 3f8a1c2b 734d92ef
@@ -98,7 +98,7 @@ Plain `show` uses `$PAGER` when available. `--format json` emits the archived JS
 
 List/search JSON contains the displayed `title` and effective `project`, while retaining the imported `project_path`, platform, and parent identity. Stats retains raw-path groups under `projects` and adds effective-label groups under `project_groups`; empty collections are arrays. Effective-project grouping uses exact strings, so `capy` and `Capy` remain separate groups despite case-insensitive filtering. Children count once like other sessions.
 
-Lookups accept unambiguous UUID prefixes of eight or more characters. Codex displays 12-character short IDs because shorter prefixes commonly collide; ambiguous input prints candidates.
+Lookups accept unambiguous UUID prefixes of eight or more characters. A complete session ID of at least eight characters always selects that session, even when it also begins a longer ID or matches another only up to ASCII letter case. Codex displays 12-character short IDs because shorter prefixes commonly collide; ambiguous input prints candidates.
 
 Restore writes Claude transcripts and preserved sidecars beneath the Claude projects directory. Codex restores plain JSONL at the stored relative path under `CODEX_HOME`, even if the source was compressed; an existing compressed twin is left untouched and reported. `--output` changes the restore root. Existing files require confirmation, and unsafe absolute or parent-escaping sidecar paths are skipped.
 
