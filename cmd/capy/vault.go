@@ -646,6 +646,11 @@ transcript.`,
 			if err != nil {
 				return briefLookupError(args[0], err)
 			}
+			// A closed stdout pipe must return its write error (exit 1) rather
+			// than end the process with SIGPIPE. The handler stays registered
+			// until the process exits, so Cobra's report of that error on a
+			// closed stderr (2>&1 into the same pipe) cannot raise SIGPIPE either.
+			signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 			_, err = io.WriteString(cmd.OutOrStdout(), vault.RenderBrief(b))
 			return err
 		},

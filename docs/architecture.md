@@ -19,7 +19,7 @@ the workload and returned bytes, not a universal fixed percentage.
 │  capy MCP Server  (internal/server)                                     │
 │                                                                         │
 │  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
-│  │  11 Tool     │  │  Stats       │  │  Search      │  │  Lifecycle │  │
+│  │  12 Tool     │  │  Stats       │  │  Search      │  │  Lifecycle │  │
 │  │  Handlers    │  │  Tracker     │  │  Throttle    │  │  Guard     │  │
 │  └──────┬──────┘  └──────────────┘  └──────────────┘  └────────────┘  │
 │         │                                                               │
@@ -1238,6 +1238,47 @@ backlog).
 
 Full rationale and the rejected alternatives: [ADR-025](adr/025-vault-index-version-and-reindex.md).
 
+### Session brief
+
+`capy vault brief` and the `capy_vault_brief` MCP tool share one reader
+(`brief.go`, `VaultStore.ReadBrief`) and one renderer (`brief_render.go`,
+`RenderBrief`). The reader bypasses `getDB`, which creates, migrates and may back
+up a corrupt file. Each call stats the path (an absent vault stays absent), then
+opens its own connection with `sqliteutil.EncryptedDSN` + `mode=ro` and a 50 ms
+busy timeout through `OpenWithCanary`. Ordinary WAL locking (not `immutable=1`)
+keeps committed WAL frames visible. The server handler (`tool_vault_brief.go`)
+uses `getVault()` only for opt-in and the selected path, never the lazy writer.
+
+Everything after the open happens in one read transaction under a two-second
+deadline. The first statement reads `sqlite_master` to pin the snapshot. The
+reader then checks `min_reader_version` and the required tables and columns,
+using the migration ledger to tell an outdated predecessor from an inconsistent
+layout. Lookup applies the project scope first, prefers an exact ID
+(see `preferExactSession`, [ADR-038](adr/038-complete-session-id-wins-over-prefix.md)),
+then takes at most two prefix matches to establish ambiguity without a count.
+Metadata uses the same effective title and project precedence as the rest of
+the vault. The exchange comes from one ordered scan of the session's
+main-transcript `user`/`assistant` rows in `vault_fts`, folded with constant
+state, then at most three body reads by rowid. Every displayed text field is
+read only up to 64 KiB (`length(CAST(… AS BLOB))` guards in SQL) and omitted
+whole beyond that, so the brief never redacts a value it clipped itself. Text
+the indexer already shortened (for example long agent prompts) is redacted as
+stored. An oversized or unrecognized stored platform is reported as an
+incompatible archive. `TestReadBrief_OneSnapshotAcrossWriterCommit` commits a
+writer change after resolution, before the metadata read, to pin the
+single-snapshot contract.
+
+`session_uuid` is `UNINDEXED` in FTS5, so the scan visits every `vault_fts`
+row and its cost grows with the vault's total indexed text. The scan-once plan
+measured about 230 ms (one Apple Silicon Mac) and 290–380 ms (one x86-64 Linux
+laptop, about half of it elapsed before the session resolved: open, key
+derivation, layout check and lookup) for 100,000 rows / 25.6 MB of text on a
+warm cache (`brief_workload_test.go`, opt-in via `CAPY_VAULT_BRIEF_WORKLOAD=1`). The
+renderer redacts, escapes and then clips every field so the finished text, including
+its final newline, fits in 4,096 bytes. Keyword-search vault hits
+(`renderVaultHit`) offer the brief on eligible main-transcript hits with a fixed
+instruction line. [Design](feat/wip/vault-session-brief/design.md)
+
 ### Session names & the effective title
 
 `vault_sessions.title` is **imported** metadata — derived by `scanner.go` from the
@@ -1649,6 +1690,7 @@ Both platform startup sweeps pass the server's loaded config to the importer. Ma
 | `capy vault reindex` | Rebuild the FTS index for sessions on an older `index_version` (DB-driven; no disk dependency; batched + WAL-checkpointed; dispatches on the stored platform) |
 | `capy vault list` | List roots by default, all sessions with `--include-children`, or children with `--children-only`. Project, platform and effective-title filters precede the limit. Results sort by descending end time and ascending UUID. Child titles show `↳ <parent id>`. JSON includes `platform` and `parent_uuid`. |
 | `capy vault search` | Full-text search with snippets (PLATFORM column reads `codex (child)` for a child hit; JSON carries `platform`/`parent_uuid`) |
+| `capy vault brief` | Print one session's opening indexed request and latest indexed exchange in at most 4,096 bytes, through a dedicated read-only connection (see [Session brief](#session-brief)) |
 | `capy vault show` | Display full session (pager, `--format` for export). The header prints the platform, a child's parent and a parent's children; the assistant heading is `Claude`/`Codex` |
 | `capy vault restore` | Write JSONL + session files back to disk — under the Claude projects dir as `<uuid>.jsonl` + sidecars, or under `$CODEX_HOME` at the stored relative rollout path (a `.zst` twin is left untouched and noted) |
 | `capy vault resume` | Restore + launch `claude --resume` — Claude Code only; a Codex session fails loudly before anything is restored, naming `capy vault restore` and `codex resume <uuid>` |

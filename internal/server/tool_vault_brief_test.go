@@ -108,7 +108,7 @@ func TestVaultBrief_Validation(t *testing.T) {
 		{"session missing", map[string]any{"project": "x"}, "provide session"},
 		{"session number", map[string]any{"session": 12345678}, `"session": expected a string`},
 		{"session null", map[string]any{"session": nil}, `"session": expected a string`},
-		{"session too short", map[string]any{"session": "sweep-s"}, "at least 8 characters"},
+		{"session too short", map[string]any{"session": "sweep-s"}, "at least 8 bytes"},
 		{"session NUL", map[string]any{"session": "sweep-se\x00ss"}, "must not contain NUL"},
 		{"project number", map[string]any{"session": uuid1, "project": 7}, `"project": expected a string`},
 		{"project NUL", map[string]any{"session": uuid1, "project": "pro\x00ject"}, "project selector must not contain NUL"},
@@ -486,7 +486,10 @@ func TestRenderVaultHit_BriefAction(t *testing.T) {
 		{"main hit, term only in the title", main, true},
 		{"standalone child uses its own ID", child, true},
 		{"legacy filename ID", withID("sweep-sess-aaaa"), true},
-		{"ID at the display limit", withID(strings.Repeat("a", vaultSessionIDMaxBytes)), true},
+		{"longest ID the brief header shows intact", withID(strings.Repeat("a", vaultSessionIDMaxBytes-2)), true},
+		{"ID intact in search but a preview in the brief", withID(strings.Repeat("a", vaultSessionIDMaxBytes-1)), false},
+		{"ID with a quote the brief must escape", withID(`abcdefgh"ijk`), false},
+		{"ID with a backslash the brief must escape", withID(`abcdefgh\ijk`), false},
 		{"sidecar at the same line", sidecar, false},
 		{"ID above the display limit", withID(strings.Repeat("a", vaultSessionIDMaxBytes+1)), false},
 		{"redacted ID", withID("sk-ant-" + strings.Repeat("Q", 40)), false},
@@ -518,7 +521,8 @@ func TestRenderVaultHit_BriefAction(t *testing.T) {
 	t.Run("largest eligible hit fits its allowance", func(t *testing.T) {
 		huge := strings.Repeat("ű", 2000)
 		r := vault.SearchResult{
-			SessionUUID: strings.Repeat("a", vaultSessionIDMaxBytes), Title: huge, Project: huge,
+			// The longest ID the brief's quoted header shows intact.
+			SessionUUID: strings.Repeat("a", vaultSessionIDMaxBytes-2), Title: huge, Project: huge,
 			EndTime: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), LineIndex: 1_000_000_000,
 			ChunkIndex: 1_000_000, HasChunkIndex: true, Platform: vault.Platform(huge), ParentUUID: huge,
 			Snippet: strings.Repeat("passage ", 400),

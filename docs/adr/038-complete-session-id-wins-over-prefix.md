@@ -68,8 +68,8 @@ could be shown, edited, restored, resumed or reindexed in its place.
 - Known limitation: a full ID copied from an older search hit and passed to
   `capy_vault_brief` or `capy vault show` is input, so if that legacy session
   was deleted it can resolve to a longer ID it prefixes. Both outputs name the
-  resolved session. An exact-only selector for hit follow-ups is tracked in
-  `docs/feat/wip/vault-session-brief/tasks.md`.
+  resolved session. The feature kept this limitation (no exact-only selector
+  for hit follow-ups); callers are told to check the returned ID.
 - Nothing is persisted differently; mixed binaries on a shared vault differ
   only in how arguments resolve.
 - Rollback removes the exact-match step and the exact options; the

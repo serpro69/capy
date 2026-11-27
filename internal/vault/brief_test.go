@@ -246,6 +246,132 @@ func TestReadBrief_LookupScopeAndSelectors(t *testing.T) {
 	}
 }
 
+// commitDuringBrief makes the next ReadBrief run write after it has resolved the
+// session and before it reads metadata, while the reader's snapshot is open. The returned
+// function reports whether write ran and its error.
+func commitDuringBrief(t *testing.T, write func() error) func() (bool, error) {
+	t.Helper()
+	var ran bool
+	var err error
+	briefAfterResolve = func() {
+		briefAfterResolve = func() {}
+		ran, err = true, write()
+	}
+	t.Cleanup(func() { briefAfterResolve = func() {} })
+	return func() (bool, error) { return ran, err }
+}
+
+// A brief reads one committed snapshot: a writer commit landing after it has
+// resolved the session changes neither its metadata nor its excerpts, and a
+// fresh call sees the new state.
+func TestReadBrief_OneSnapshotAcrossWriterCommit(t *testing.T) {
+	const uuid = "eeeeeeee-aaaa-bbbb-cccc-00000000000e"
+	original := func() *SessionRecord {
+		return briefRecord(uuid, "/work/alpha",
+			briefRow(roleUser, 0, 0, 0, "old open"),
+			briefRow(roleAssistant, 0, 1, 1, "old first reply"),
+			briefRow(roleUser, 1, 0, 4, "old latest"),
+			briefRow(roleAssistant, 1, 1, 5, "old reply"),
+		)
+	}
+	assertOriginal := func(t *testing.T, b *Brief) {
+		t.Helper()
+		assert.Equal(t, "Sample session", b.Title.Value)
+		assert.Equal(t, "/work/alpha", b.Project.Value)
+		require.NotNil(t, b.Opening)
+		assert.Equal(t, "old open", b.Opening.Text.Value)
+		assert.Equal(t, "old latest", b.Latest.Text.Value)
+		assert.Equal(t, int64(4), b.Latest.Line)
+		require.NotNil(t, b.Assistant)
+		assert.Equal(t, "old reply", b.Assistant.Text.Value)
+	}
+
+	tests := []struct {
+		name  string
+		write func(ctx context.Context, s *VaultStore) error
+		scope BriefScope // used by both the interrupted and the fresh call
+		fresh func(t *testing.T, b *Brief, err error)
+	}{
+		{
+			name: "divergent replacement",
+			write: func(ctx context.Context, s *VaultStore) error {
+				rec := briefRecord(uuid, "/work/alpha",
+					briefRow(roleUser, 0, 0, 0, "new open"),
+					briefRow(roleUser, 1, 0, 2, "new latest"),
+					briefRow(roleAssistant, 1, 1, 3, "new reply"),
+				)
+				rec.Session.Title = "Replaced"
+				rec.Session.ContentHash = "replaced"
+				return s.ReplaceSession(ctx, rec)
+			},
+			fresh: func(t *testing.T, b *Brief, err error) {
+				require.NoError(t, err)
+				assert.Equal(t, "Replaced", b.Title.Value)
+				assert.Equal(t, "new open", b.Opening.Text.Value)
+				assert.Equal(t, "new latest", b.Latest.Text.Value)
+				assert.Equal(t, int64(2), b.Latest.Line)
+				assert.Equal(t, "new reply", b.Assistant.Text.Value)
+			},
+		},
+		{
+			name: "rename",
+			write: func(ctx context.Context, s *VaultStore) error {
+				_, err := s.RenameSession(ctx, uuid, RenameOptions{Name: "Renamed"})
+				return err
+			},
+			fresh: func(t *testing.T, b *Brief, err error) {
+				require.NoError(t, err)
+				assert.Equal(t, "Renamed", b.Title.Value)
+				assert.Equal(t, "old latest", b.Latest.Text.Value)
+			},
+		},
+		{
+			name: "reassignment out of the requested scope",
+			write: func(ctx context.Context, s *VaultStore) error {
+				_, err := s.SetSessionProject(ctx, uuid, ProjectOptions{Name: "billing"})
+				return err
+			},
+			scope: BriefScope{Project: "alpha"},
+			fresh: func(t *testing.T, b *Brief, err error) {
+				require.ErrorIs(t, err, ErrSessionNotFound)
+				assert.Nil(t, b)
+			},
+		},
+		{
+			name: "remembered deletion",
+			write: func(ctx context.Context, s *VaultStore) error {
+				deleted, err := s.DeleteSession(ctx, uuid, true)
+				if err == nil && !deleted {
+					err = errors.New("nothing deleted")
+				}
+				return err
+			},
+			fresh: func(t *testing.T, b *Brief, err error) {
+				require.ErrorIs(t, err, ErrSessionNotFound)
+				assert.Nil(t, b)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := newTestVault(t)
+			require.NoError(t, s.InsertSession(ctx, original()))
+
+			committed := commitDuringBrief(t, func() error { return tt.write(ctx, s) })
+			b, err := s.ReadBrief(ctx, uuid[:8], tt.scope)
+			require.NoError(t, err)
+			ran, writeErr := committed()
+			require.True(t, ran, "the writer must commit inside the brief's read")
+			require.NoError(t, writeErr, "a WAL writer commits while the reader holds its snapshot")
+			assertOriginal(t, b)
+
+			b, err = s.ReadBrief(ctx, uuid[:8], tt.scope)
+			tt.fresh(t, b, err)
+		})
+	}
+}
+
 func TestReadBrief_ChildUsesOwnMainTranscript(t *testing.T) {
 	s := newTestVault(t)
 	ctx := context.Background()

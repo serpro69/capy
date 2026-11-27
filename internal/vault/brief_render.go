@@ -138,6 +138,14 @@ func finishMetadata(f BriefField, budget int) (string, bool) {
 	return finishField(f, budget)
 }
 
+// BriefShowsIDIntact reports whether a brief for session id would display the
+// complete id rather than a "Session ID preview". Search offers the brief only
+// for such ids, so the brief's header can confirm the session a hit named.
+func BriefShowsIDIntact(id string) bool {
+	_, intact := briefIntactID(BriefField{Value: id, Present: true})
+	return intact
+}
+
 // briefIntactID returns the stored session ID when it is displayable without
 // redaction, escaping or clipping within the ID allowance — the only form a
 // diagnostic or navigation hint may offer as a usable selector.

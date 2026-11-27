@@ -43,6 +43,12 @@ var ErrVaultNotFound = errors.New("no vault database")
 // lookup stops at the second match and must not reveal out-of-scope sessions.
 var ErrBriefAmbiguous = errors.New("ambiguous session id")
 
+// briefAfterResolve runs inside the read transaction between session resolution
+// and the metadata read. It is a no-op except in tests, which commit a writer
+// change there to check that resolution, metadata and excerpts all come from
+// the same snapshot.
+var briefAfterResolve = func() {}
+
 // IncompatibleVaultError reports a vault file this binary cannot read without
 // changing it: a newer reader-version marker, a layout predating a required
 // migration, an inconsistent migration ledger, an unrecognized layout or an
@@ -145,7 +151,7 @@ func ValidateBriefSession(session string) error {
 		return errors.New("session id must not contain NUL")
 	}
 	if len(session) < minUUIDPrefix {
-		return fmt.Errorf("session id must be at least %d characters", minUUIDPrefix)
+		return fmt.Errorf("session id must be at least %d bytes", minUUIDPrefix)
 	}
 	return nil
 }
@@ -261,6 +267,7 @@ func (r *briefReader) read(ctx context.Context, db *sql.DB) (*Brief, error) {
 	if err != nil {
 		return nil, err
 	}
+	briefAfterResolve()
 	b, err := readBriefMetadata(ctx, tx, rowid)
 	if err != nil {
 		return nil, err
