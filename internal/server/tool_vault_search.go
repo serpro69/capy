@@ -280,11 +280,14 @@ func renderVaultHit(r vault.SearchResult) renderedHit {
 // main-transcript hit (a sidecar has no brief of its own; an independently
 // archived child is its own session) whose complete session ID is displayed
 // intact and is a valid brief selector. A redacted, escaped or clipped ID
-// preview cannot be passed back.
+// preview cannot be passed back. The brief must also show the complete ID
+// (its quoted header has a tighter budget), so the caller can confirm that
+// the brief describes the session the hit named.
 func briefEligible(r vault.SearchResult) bool {
 	return r.SubagentID == "" &&
 		vault.ValidateBriefSession(r.SessionUUID) == nil &&
-		displayField(r.SessionUUID, vaultSessionIDMaxBytes) == r.SessionUUID
+		displayField(r.SessionUUID, vaultSessionIDMaxBytes) == r.SessionUUID &&
+		vault.BriefShowsIDIntact(r.SessionUUID)
 }
 
 // sidecarAttribution names the sidecar holding a chunk's first line. When

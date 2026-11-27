@@ -98,15 +98,34 @@ Plain `show` uses `$PAGER` when available. `--format json` emits the archived JS
 
 List/search JSON contains the displayed `title` and effective `project`, while retaining the imported `project_path`, platform, and parent identity. Stats retains raw-path groups under `projects` and adds effective-label groups under `project_groups`; empty collections are arrays. Effective-project grouping uses exact strings, so `capy` and `Capy` remain separate groups despite case-insensitive filtering. Children count once like other sessions.
 
-Lookups accept unambiguous UUID prefixes of eight or more characters. A complete session ID of at least eight characters always selects that session, even when it also begins a longer ID or matches another only up to ASCII letter case. Codex displays 12-character short IDs because shorter prefixes commonly collide; ambiguous input prints candidates.
+Lookups accept unambiguous UUID prefixes of eight or more bytes. A complete session ID of at least eight bytes always selects that session, even when it also begins a longer ID or matches another only up to ASCII letter case. Codex displays 12-character short IDs because shorter prefixes commonly collide; ambiguous input prints candidates.
 
 Restore writes Claude transcripts and preserved sidecars beneath the Claude projects directory. Codex restores plain JSONL at the stored relative path under `CODEX_HOME`, even if the source was compressed; an existing compressed twin is left untouched and reported. `--output` changes the restore root. Existing files require confirmation, and unsafe absolute or parent-escaping sidecar paths are skipped.
 
 Claude resume chooses `--dir`, then a usable recorded project path, then the current directory, with an interactive fallback if needed. Codex automatic resume rejects the command before restoring; use the manual steps in the [README](../../README.md#restore-and-resume).
 
+## Session brief
+
+```bash
+capy vault brief 48285c38
+capy vault --path /path/to/vault.db brief 48285c38-32fd-46f3-b18f-121cba7471ce
+```
+
+`brief` helps you decide whether to reopen a conversation. It prints the session's ID, stored platform, current project and title. It quotes the opening indexed user entry, the latest indexed user entry and the last indexed assistant entry in that turn. Each excerpt names its role and the zero-based line where its message starts in the main transcript. A tool-only assistant entry counts. Claude sidecar entries are not used; an independently archived child has its own brief under its own ID. Every field is redacted, escaped and shortened, and the whole brief fits in 4,096 bytes. The agent's `capy_vault_brief` tool returns the same text; see the [tool reference](tools.md#session-brief). There is no JSON form: the brief is a fixed, quoted text layout written to stdout.
+
+`show` prints the full archived transcript, and `resume` restores a Claude Code session and launches Claude. The brief reads only the search index and the session's metadata. It never reads the archived transcript or sidecars, changes the archive or launches anything, so it also works after the original transcript is gone from disk.
+
+**Latest means latest indexed.** Archival can lag a live session. A session whose stored index version is below the current one may lack messages that the current decoder would recover. Such a session is still served, with a hint to run `capy vault reindex`. A session without an indexed user entry reports that fact, and a request without an indexed assistant reply in its turn says so. There is no historical cutoff: `--through-line` is rejected rather than answered with the latest exchange. Use `show` for earlier messages. Lookup time grows with the total indexed text in the vault. With 25.6 MB of indexed text and a warm cache, the implementation workload measured about 230 ms on one Apple Silicon Mac and 290–380 ms on one x86-64 Linux laptop.
+
+The ID is resolved across the selected vault, without a project filter. Supply a complete ID or a literal prefix, at least eight bytes long. A complete ID selects its session even when it begins a longer one. Unlike `show`, an ambiguous prefix asks for a longer ID without listing candidates. Each call reads one committed snapshot, so a later call can show a renamed session, a different latest exchange after an import or merge replaced the archive, or a miss after deletion.
+
+The command exits 0 with a brief, including one that reports no indexed entries, and 1 for any error, with the error on stderr. A closed stdout pipe is reported the same way. If stderr is itself a closed pipe, an error reported before a brief is ready to print can instead end the process with SIGPIPE (shell status 141). A missing `CAPY_VAULT_KEY`, an absent vault file and an incompatible vault are reported separately. The brief opens the vault read-only. It never creates, migrates or repairs it. A vault that predates a required schema migration asks you to open it once with an ordinary command such as `capy vault stats`. That is separate from the per-session reindex hint above. The read has a two-second limit. After a timeout that occurs once the session's metadata has been read, the error suggests `capy vault show` with its ID when the complete ID is displayed intact and is safe to paste into a shell.
+
+On a cleanly closed vault, the read can leave an empty `vault.db-wal` and a 32 KiB `vault.db-shm` beside it. The database file itself is unchanged. The next ordinary vault command normally removes both when it closes the vault, unless another connection still has it open.
+
 ## Viewer search and navigation
 
-`list`, `search`, and `show` accept `--tui`; mutating commands such as `restore`, `resume`, `delete`, and `project` do not. Platform/project launch filters stay active during browsing and live search.
+`list`, `search`, and `show` accept `--tui`; `brief` and mutating commands such as `restore`, `resume`, `delete`, and `project` do not. Platform/project launch filters stay active during browsing and live search.
 
 In the session list, `s` switches between roots and all sessions. From child-only mode it shows all sessions. `S` switches to child-only and back to the previous mode, returning to roots on a direct `--children-only` launch. The fixed launch filters and cap apply on each switch. Visible children group under their parents. Top-level sessions and siblings are each ordered by end time, newest first. If a parent is missing or filtered out, its visible child appears at the top level with the parent's short ID.
 

@@ -117,7 +117,7 @@ Terminal `capy search` searches knowledge only. Use `capy vault search` for conv
 
 ## MCP Tools
 
-Your agent receives the argument schemas when it connects. The eleven tools are:
+Your agent receives the argument schemas when it connects. The twelve tools are:
 
 | Tool | Purpose |
 | --- | --- |
@@ -128,6 +128,7 @@ Your agent receives the argument schemas when it connects. The eleven tools are:
 | `capy_index` | Save text, a file, or a directory as durable knowledge. |
 | `capy_search` | Search project knowledge and archived conversations together. |
 | `capy_vault_search` | Search archived conversations only, with project and date filters. |
+| `capy_vault_brief` | Show one archived conversation's opening request and latest indexed exchange. |
 | `capy_fetch_and_index` | Fetch a URL and index its content for extraction and follow-up searches. |
 | `capy_stats` | Show context savings and usage statistics. |
 | `capy_doctor` | Check the running server's configuration and available capabilities. |
@@ -185,8 +186,11 @@ Keep and reuse that key for the existing vault, then import and browse:
 capy vault import
 capy vault list --tui
 capy vault search "rate limiter"
+capy vault brief 3f8a1c2b
 capy vault show 3f8a1c2b
 ```
+
+`brief` shows the session's opening request and its latest indexed exchange in at most 4,096 bytes; `show` prints the full transcript. The index can lag a live session. See the [session brief](docs/reference/vault.md#session-brief).
 
 Import scans the platform roots present on disk, honoring `CLAUDE_CONFIG_DIR` and `CODEX_HOME`. Use `--dry-run` to preview, `--platform claude-code` or `--platform codex` to restrict it, and `--source <path>` to select another directory or a single transcript. Naming a file bypasses the configured minimum size. Repeated imports skip unchanged sessions, update grown ones, and keep the larger archive when the local transcript is smaller.
 

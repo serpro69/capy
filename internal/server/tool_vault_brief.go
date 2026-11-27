@@ -28,10 +28,10 @@ const vaultBriefAction = "Latest exchange: call capy_vault_brief with this sessi
 func toolVaultBrief() mcp.Tool {
 	return mcp.NewTool(vaultBriefToolName,
 		mcp.WithToolAnnotation(annotationReadOnly),
-		mcp.WithDescription("Show one archived session's opening request and latest indexed exchange. Returns the session's ID, stored platform, current project and title, its opening indexed user entry, its latest indexed user entry and the last indexed assistant entry in that turn, each cited by its zero-based message-start line in the main transcript, in at most 4,096 bytes. \"Latest\" is the latest exchange in the vault's index, which can lag a live session; there is no historical cutoff, so through_line and other line arguments are rejected. Pass a full session ID or a literal prefix of at least 8 characters; an ambiguous prefix asks for a longer ID. Scoped like capy_vault_search (current project by default): after a search hit, pass its full session ID with the same project/all_projects arguments. Requires CAPY_VAULT_KEY. Reads one committed snapshot without creating, migrating or repairing the vault; use `capy vault show` for the full transcript."),
+		mcp.WithDescription("Show one archived session's opening request and latest indexed exchange. Returns the session's ID, stored platform, current project and title, its opening indexed user entry, its latest indexed user entry and the last indexed assistant entry in that turn, each cited by its zero-based message-start line in the main transcript, in at most 4,096 bytes. \"Latest\" is the latest exchange in the vault's index, which can lag a live session; there is no historical cutoff, so through_line and other line arguments are rejected. Pass a full session ID or a literal prefix, at least 8 bytes; an ambiguous prefix asks for a longer ID. Scoped like capy_vault_search (current project by default): after a search hit, pass its full session ID with the same project/all_projects arguments. Requires CAPY_VAULT_KEY. Reads one committed snapshot without creating, migrating or repairing the vault; use `capy vault show` for the full transcript."),
 		mcp.WithString("session",
 			mcp.Required(),
-			mcp.Description("Full session ID or literal prefix of at least 8 characters. Every character matches literally, including % and _."),
+			mcp.Description("Full session ID or literal prefix, at least 8 bytes. Every character matches literally, including % and _."),
 		),
 		mcp.WithString("project",
 			mcp.Description("Match this literal substring against the effective project (custom label when set, otherwise imported path). Omitted or empty scopes by the current directory in the imported path, even after reassignment. Exact \"*\" is reserved for all projects; all_projects: true overrides any project selector."),
@@ -101,7 +101,7 @@ func validateVaultBriefArgs(args map[string]any) (session string, widened bool, 
 
 	raw, ok := args["session"]
 	if !ok {
-		return "", false, errors.New("provide session (a session ID or a literal prefix of at least 8 characters)")
+		return "", false, errors.New("provide session (a session ID or a literal prefix, at least 8 bytes)")
 	}
 	session, ok = raw.(string)
 	if !ok {

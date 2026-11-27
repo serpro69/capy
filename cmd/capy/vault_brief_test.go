@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -97,6 +99,49 @@ Latest assistant · message starts at line 2: "Looking into the timeout now."
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 	assert.Contains(t, stdout, `Session "`+codexChildUUID+`" · codex`)
 	assert.Contains(t, stdout, "No indexed user entry in this session.\n")
+}
+
+// A closed stdout pipe is an output failure: exit 1 with the write error on
+// stderr, not death by SIGPIPE.
+func TestVaultBrief_BrokenStdoutPipe(t *testing.T) {
+	root := setupBriefClaudeVault(t)
+	_, stderr, code := capy(t, "vault", "import", "--source", root)
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+
+	bin := filepath.Join(t.TempDir(), "capy")
+	build := exec.CommandContext(t.Context(), "go", "build", "-tags", "fts5", "-o", bin, ".")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	closedPipe := func(t *testing.T) *os.File {
+		t.Helper()
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		require.NoError(t, r.Close())
+		t.Cleanup(func() { _ = w.Close() })
+		return w
+	}
+
+	t.Run("stdout closed", func(t *testing.T) {
+		cmd := exec.CommandContext(t.Context(), bin, "vault", "brief", briefPendingUUID)
+		var errOut bytes.Buffer
+		cmd.Stdout, cmd.Stderr = closedPipe(t), &errOut
+		var exit *exec.ExitError
+		require.ErrorAs(t, cmd.Run(), &exit)
+		assert.Equal(t, 1, exit.ExitCode(), "stderr: %s", errOut.String())
+		assert.Contains(t, errOut.String(), "broken pipe")
+	})
+
+	// 2>&1 into a pipe whose reader has exited: the error report cannot be
+	// delivered, but the exit status still must be 1.
+	t.Run("stdout and stderr share the closed pipe", func(t *testing.T) {
+		w := closedPipe(t)
+		cmd := exec.CommandContext(t.Context(), bin, "vault", "brief", briefPendingUUID)
+		cmd.Stdout, cmd.Stderr = w, w
+		var exit *exec.ExitError
+		require.ErrorAs(t, cmd.Run(), &exit)
+		assert.Equal(t, 1, exit.ExitCode())
+	})
 }
 
 func TestVaultBrief_Errors(t *testing.T) {

@@ -1,6 +1,6 @@
 # A brief for an archived session
 
-**Status** Ready for implementation · [Implementation](implementation.md) · [Tasks](tasks.md) · [Review resolution](review-design-2026-11-23.md#resolution-after-recheck)
+**Status** Done — Tasks 1–3 implemented, reviewed and verified · [Implementation](implementation.md) · [Tasks](tasks.md) · [Review resolution](review-design-2026-11-23.md#resolution-after-recheck)
 
 A developer deciding whether to reopen a conversation can ask for the opening request and the latest indexed exchange in one named archive. The same brief is available from the terminal and MCP. It works after the original transcript has been removed from disk. The full transcript is available through `vault show`. [Vault workflows](../../../reference/vault.md)
 
@@ -43,7 +43,7 @@ In both `capy_search` and `capy_vault_search`, label a vault hit's line as the *
 | Vault key missing, vault file absent or layout incompatible | Distinct errors. Identify the credential source, absent archive or compatibility problem. An authenticated empty vault gives a scoped miss. |
 | Authentication, storage or deadline failure | Return an error and discard the partial brief. An encrypted file that fails authentication may have the wrong key or be damaged. Use the vault's diagnostic wording and keep credentials and archive content out of errors. |
 
-All error outcomes use CLI exit 1 or MCP `IsError`. CLI reports lookup failures on stderr before writing any brief to stdout and propagates output failures. MCP reports failure when the connection still permits a response. The read has a two-second context deadline, shortened by the caller's deadline. Once the session is resolved, a timeout can point the operator to `capy vault show` with the safely representable identity and the same vault path selection.
+All error outcomes use CLI exit 1 or MCP `IsError`. One accepted exception: if stderr is itself a closed pipe, a CLI error reported before a brief is ready to print can end the process with SIGPIPE instead ([Task 3 decision](tasks.md#task-3-verify-archive-changes-and-publish-the-interface-documentation)). CLI reports lookup failures on stderr before writing any brief to stdout and propagates output failures. MCP reports failure when the connection still permits a response. The read has a two-second context deadline, shortened by the caller's deadline. Once the session is resolved, a timeout can point the operator to `capy vault show` with the safely representable identity and the same vault path selection.
 
 ## Assumptions
 

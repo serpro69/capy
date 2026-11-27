@@ -149,12 +149,16 @@ func TestRenderBrief_IDPreview(t *testing.T) {
 			assert.True(t, strings.HasPrefix(out, "Session ID preview "), out)
 			_, intact := briefIntactID(tt.id)
 			assert.False(t, intact)
+			if !tt.id.Omitted {
+				assert.False(t, BriefShowsIDIntact(tt.id.Value))
+			}
 			requireBriefShape(t, out)
 		})
 	}
 	id, intact := briefIntactID(baseBrief().ID)
 	assert.True(t, intact)
 	assert.Equal(t, "48285c38-32fd-46f3-b18f-121cba7471ce", id)
+	assert.True(t, BriefShowsIDIntact(id))
 }
 
 func TestRenderBrief_UntrustedContent(t *testing.T) {

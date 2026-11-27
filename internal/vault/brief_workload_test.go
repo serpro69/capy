@@ -88,21 +88,27 @@ func TestBriefWorkload(t *testing.T) {
 	t.Logf("fixture built in %s", time.Since(built).Round(time.Millisecond))
 
 	target := workloadUUID(0) // oldest session, rowids 1..100
-	check := func(label string) time.Duration {
+	t.Cleanup(func() { briefAfterResolve = func() {} })
+	// check returns the complete run time and the time at which the session
+	// had resolved (open, layout check and lookup done).
+	check := func(label string) (elapsed, resolved time.Duration) {
 		t.Helper()
 		started := time.Now()
+		briefAfterResolve = func() { resolved = time.Since(started) }
 		b, err := NewVaultStore(path).ReadBrief(ctx, target[:8], BriefScope{})
+		briefAfterResolve = func() {}
 		require.NoError(t, err, label)
 		out := RenderBrief(b)
-		elapsed := time.Since(started)
+		elapsed = time.Since(started)
 		require.Equal(t, int64(0), b.Opening.Line, label)
 		require.Equal(t, int64(98), b.Latest.Line, label)
 		require.NotNil(t, b.Assistant, label)
 		require.Equal(t, int64(99), b.Assistant.Line, label)
 		require.LessOrEqual(t, len(out), BriefMaxBytes, label)
 		require.Less(t, elapsed, briefDeadline, label)
-		t.Logf("%-28s %s (db %d B, wal %d B)", label, elapsed.Round(time.Millisecond), fileSize(path), fileSize(path+"-wal"))
-		return elapsed
+		t.Logf("%-28s %s, resolved at %s (db %d B, wal %d B)", label, elapsed.Round(time.Millisecond),
+			resolved.Round(time.Millisecond), fileSize(path), fileSize(path+"-wal"))
+		return elapsed, resolved
 	}
 
 	db, err := openBriefDB(ctx, path, testVaultKey)
@@ -125,24 +131,30 @@ func TestBriefWorkload(t *testing.T) {
 	t.Logf("indexed rows %d, indexed text bytes %d; scan plan: %s", totalRows, totalBytes, strings.Join(plan, " | "))
 	t.Logf("OS cache: not purged (warm after fixture build)")
 
-	live := check("live WAL (writer open)")
+	fastest, latestResolved := check("live WAL (writer open)")
 	require.NoError(t, writer.Close())
-	check("first reader after close")
-	var last time.Duration
-	for i := range 3 {
-		last = check(fmt.Sprintf("fresh reader %d", i+1))
+	runs := []string{"first reader after close", "fresh reader 1", "fresh reader 2", "fresh reader 3"}
+	for _, label := range runs {
+		elapsed, resolved := check(label)
+		fastest, latestResolved = min(fastest, elapsed), max(latestResolved, resolved)
 	}
 
 	// A shorter caller deadline expiring mid-read returns an error and no brief.
-	for _, deadline := range []time.Duration{max(last/2, time.Millisecond), max(live/2, time.Millisecond)} {
+	// Opening the encrypted file (key derivation) can take most of a run, so the
+	// deadline sits halfway between the latest observed resolution and the
+	// fastest observed completion, not at half a run. It is still derived from
+	// earlier runs; a host with jitter beyond that margin can miss it.
+	require.Less(t, latestResolved, fastest, "resolution must precede completion in every run")
+	deadline := latestResolved + (fastest-latestResolved)/2
+	for range 2 {
 		dctx, cancel := context.WithTimeout(ctx, deadline)
 		b, err := NewVaultStore(path).ReadBrief(dctx, target[:8], BriefScope{})
 		cancel()
 		require.Nil(t, b)
 		require.Error(t, err)
 		require.True(t, errors.Is(err, context.DeadlineExceeded), "deadline %s: %v", deadline, err)
-		// Each deadline is shorter than a measured run, so it expires after the
-		// session resolves: the error names the safe ID for `vault show`.
+		// The deadline expires after the session resolves, so the error names
+		// the safe ID for `vault show`.
 		var timeout *BriefTimeoutError
 		require.ErrorAs(t, err, &timeout, "deadline %s: %v", deadline, err)
 		require.Equal(t, target, timeout.SessionID)

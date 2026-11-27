@@ -129,7 +129,7 @@ Each query that runs gets a group headed `## N. <query>`, where N is its positio
 
 Entries appear in rank order; `capy_search` places knowledge before the vault on a federated tie. The first time a reply shows a passage, its entry is numbered `[n]`. A later hit with the same corpus, location, selected window, passage text and attribution appears as `↑ same passage as [n]` and counts as shown. A different window into the same chunk gets its own entry. So does identical text that a knowledge search reached through the other FTS layer, and a hit whose stored location is unknown. Vault passages bracket the query's matched terms, so a later query usually needs the same matched terms in that chunk to cite it; knowledge passages add no brackets. Numbers last for one reply only.
 
-A knowledge entry is a `--- [<source label>] ---` header, a `### <title>` line and the passage. A label that begins with `session:` is shown as `--- [session:…] (knowledge) ---`, keeping it distinct from vault hits. A vault entry is a `--- [session:<uuid>] ---` header, a `### <title>` line, a metadata line and the passage. The metadata line holds the project and end date when known, `chunk starts at line N` (the zero-based raw-JSONL line index where the chunk starts), then `main transcript` or `sidecar <id>` for the transcript holding that line. It ends with the platform and, for a sub-agent session, `child of <parent>`. A main-transcript entry whose complete session ID is shown intact and is at least eight bytes long adds `Latest exchange: call capy_vault_brief with this session ID and the same project/all_projects arguments.` The brief shows that session's latest indexed exchange, not the matched passage. Sidecar entries and shortened or redacted ID previews carry no such line.
+A knowledge entry is a `--- [<source label>] ---` header, a `### <title>` line and the passage. A label that begins with `session:` is shown as `--- [session:…] (knowledge) ---`, keeping it distinct from vault hits. A vault entry is a `--- [session:<uuid>] ---` header, a `### <title>` line, a metadata line and the passage. The metadata line holds the project and end date when known, `chunk starts at line N` (the zero-based raw-JSONL line index where the chunk starts), then `main transcript` or `sidecar <id>` for the transcript holding that line. It ends with the platform and, for a sub-agent session, `child of <parent>`. A main-transcript entry whose complete session ID is at least eight bytes long and is shown intact, both here and in the brief's header, adds `Latest exchange: call capy_vault_brief with this session ID and the same project/all_projects arguments.` The brief shows that session's latest indexed exchange, not the matched passage. Sidecar entries and shortened or redacted ID previews carry no such line.
 
 ### Shortened fields
 
@@ -263,6 +263,20 @@ Query 2 matches the same terms as query 1, so both of its hits are references. Q
 ### Guidance and recovery
 
 Request-wide guidance appears at most once per reply. After a clean miss with knowledge in scope, the reply names `capy_runs` for new captured command output. When ephemeral sources are excluded and exist, it also names both ways to include them: `include_kinds: ["durable","ephemeral"]` and `source: "<label>"`. The per-kind miss statement, such as `3 durable, 2 session source(s) indexed.`, appears only when every query ran, every pass succeeded and none returned a hit. If the queries that ran returned no hit, the reply can still report a disabled vault or a reindex backlog, even after a partial batch.
+
+## Session brief
+
+`capy_vault_brief` returns the same text as [`capy vault brief`](vault.md#session-brief): one archived session's metadata, its opening indexed request and its latest indexed exchange, in at most 4,096 bytes. "Latest" is the latest exchange in the vault's index, which can lag a live session. A session whose stored index version is below the current one is served with a `capy vault reindex` hint.
+
+```json
+{"session": "48285c38-32fd-46f3-b18f-121cba7471ce", "project": "billing"}
+```
+
+The tool accepts only `session`, `project` and `all_projects`. `session` is required: a complete session ID or a literal prefix, at least eight bytes long, in which `%` and `_` are ordinary characters. Any other argument is rejected before the vault is opened, including `through_line`; the brief has no historical cutoff. Use `capy vault show` for earlier messages.
+
+Scope follows `capy_vault_search`. By default the lookup matches the current project's directory in the imported path, even after reassignment. A server started without a project directory needs an explicit selector. `project` matches a literal substring of the effective project, and exact `"*"` or `all_projects: true` widens to all projects. Scope applies before the prefix is resolved. An ambiguous prefix asks for a longer ID, and a miss names neither out-of-scope candidates nor a count. To follow a hit that offers the brief action, pass its full session ID with the same `project`/`all_projects` arguments as the search. Then check that the brief's `Session` line shows that complete ID; hits offer the action only for IDs the brief can show in full. On a direct call, a `Session ID preview` line cannot confirm the match. If a legacy filename-derived session was deleted after the search, its ID can resolve as a prefix of a longer surviving ID.
+
+A brief, including one that reports no indexed entries, is a success. Invalid arguments, an ambiguous prefix, a scoped miss, a disabled vault, a missing or incompatible vault, an authentication or storage failure and the two-second read limit all return `isError`. A storage or compatibility diagnostic is shortened to 1,024 bytes after its `Error: ` prefix. Each call reads one committed snapshot through its own read-only connection, independent of the server's vault writer.
 
 ## Knowledge search from the terminal
 
