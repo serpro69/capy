@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The brief workload (docs/feat/wip/vault-session-brief/implementation.md
+// The brief workload (docs/feat/done/vault-session-brief/implementation.md
 // § Verification) measures the finished encrypted read path on 1,000 sessions
 // × 100 indexed rows × 256 text bytes. It takes tens of seconds to build, so it
 // runs only when CAPY_VAULT_BRIEF_WORKLOAD=1.
