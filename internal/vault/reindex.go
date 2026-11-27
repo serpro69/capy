@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 )
 
@@ -124,6 +125,12 @@ func rebuildSessionFTS(ctx context.Context, store *VaultStore, uuid string) ([]F
 	sess, err := store.GetSession(ctx, uuid)
 	if err != nil {
 		return nil, nil, err
+	}
+	// uuid was enumerated earlier; the lookup resolves an exact ID first, so a
+	// different ID means this session was deleted meanwhile and only a longer
+	// ID it prefixes remains. Never index that transcript under this UUID.
+	if sess.UUID != uuid {
+		return nil, nil, fmt.Errorf("session %s: %w", uuid, ErrSessionNotFound)
 	}
 	files, err := store.GetFiles(ctx, uuid)
 	if err != nil {

@@ -333,7 +333,7 @@ func TestAppFindAsyncSameSessionReopen(t *testing.T) {
 	old := first()
 	oldEpoch := m.viewer.find.epoch
 	var err error
-	m, err = m.openSession("abcdef01", modeList, "", 0)
+	m, err = m.openSession(m.viewer.sess.UUID, modeList, "", 0) // in-TUI opens pass full IDs
 	require.NoError(t, err)
 	require.Greater(t, m.viewer.find.epoch, oldEpoch)
 	next, current := m.Update(keyMsg("/"))

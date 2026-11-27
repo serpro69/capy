@@ -648,7 +648,7 @@ func readMergeMetadata(rows *sql.Rows, err error) (*Session, error) {
 		return nil, ErrSessionNotFound
 	}
 	var sess Session
-	if err := scanSessionMeta(rows, &sess, nil); err != nil {
+	if err := scanSessionMeta(rows, &sess); err != nil {
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {

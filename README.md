@@ -225,7 +225,7 @@ Codex patches appear as expandable file-change groups with paths, counts, and di
 
 ### Restore and resume
 
-Lookups accept an unambiguous session UUID prefix of at least eight characters; use the longer displayed ID if a prefix is ambiguous.
+Lookups accept an unambiguous session UUID prefix of at least eight characters; use the longer displayed ID if a prefix is ambiguous. A complete session ID of at least eight characters always selects that session.
 
 ```bash
 capy vault restore 3f8a1c2b

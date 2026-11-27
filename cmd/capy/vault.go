@@ -1201,7 +1201,7 @@ of a Codex rollout is never touched.`,
 			}
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close()
-			return restoreVaultSession(cmd, st, args[0], output)
+			return restoreVaultSession(cmd, st, args[0], output, false)
 		},
 	}
 	cmd.Flags().StringVar(&output, "output", "", "restore under this directory (default: the session's Claude projects dir, or the Codex home)")
@@ -1212,10 +1212,10 @@ of a Codex rollout is never touched.`,
 // the `restore` subcommand and the TUI's `r` action (which both resolve the
 // session, pick a root, and report the result identically). An empty output uses
 // the platform's default root (defaultRestoreRoot).
-func restoreVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, output string) error {
-	sess, err := st.GetSession(cmd.Context(), sessionID)
+func restoreVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, output string, exact bool) error {
+	sess, err := lookupVaultSession(cmd.Context(), st, sessionID, exact)
 	if err != nil {
-		return handleLookupError(sessionID, err)
+		return err
 	}
 	files, err := st.GetFiles(cmd.Context(), sess.UUID)
 	if err != nil {
@@ -1308,7 +1308,7 @@ command fails and points at 'capy vault restore' followed by 'codex resume'.`,
 			}
 			st := vault.NewVaultStore(env.dbPath)
 			defer st.Close() // idempotent; resumeVaultSession Closes explicitly before exec
-			return resumeVaultSession(cmd, st, args[0], dir)
+			return resumeVaultSession(cmd, st, args[0], dir, false)
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "working directory to launch claude in (overrides the session's project path)")
@@ -1327,10 +1327,10 @@ command fails and points at 'capy vault restore' followed by 'codex resume'.`,
 // with its own actionable error (resume is Claude-only for now — see
 // implementation.md § Deferred #1) rather than "claude not found", and nothing
 // is restored to disk for it.
-func resumeVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, dir string) error {
-	sess, err := st.GetSession(cmd.Context(), sessionID)
+func resumeVaultSession(cmd *cobra.Command, st *vault.VaultStore, sessionID, dir string, exact bool) error {
+	sess, err := lookupVaultSession(cmd.Context(), st, sessionID, exact)
 	if err != nil {
-		return handleLookupError(sessionID, err)
+		return err
 	}
 	if err := checkResumable(sess); err != nil {
 		return err
@@ -1824,9 +1824,9 @@ func runVaultTUI(cmd *cobra.Command, env *vaultEnv, opts tui.Options, run func(c
 func performTUIAction(cmd *cobra.Command, st *vault.VaultStore, a tui.Action) error {
 	switch a.Kind {
 	case tui.ActionRestore:
-		return restoreVaultSession(cmd, st, a.SessionUUID, "")
+		return restoreVaultSession(cmd, st, a.SessionUUID, "", true)
 	case tui.ActionResume:
-		return resumeVaultSession(cmd, st, a.SessionUUID, "")
+		return resumeVaultSession(cmd, st, a.SessionUUID, "", true)
 	default:
 		return nil
 	}
@@ -1927,6 +1927,23 @@ func promptLine(question string) string {
 
 // handleLookupError turns a GetSession error into a user-facing message, printing
 // disambiguation candidates for an ambiguous partial UUID.
+// lookupVaultSession resolves sessionID for restore/resume. A command-line
+// argument uses the store's lookup: an exact ID first, otherwise an
+// unambiguous prefix. exact is for a full ID captured earlier (the TUI's
+// deferred action): a different resolved ID means that session was deleted
+// meanwhile, so it is reported missing rather than acting on a longer ID it
+// happens to prefix.
+func lookupVaultSession(ctx context.Context, st *vault.VaultStore, sessionID string, exact bool) (*vault.Session, error) {
+	sess, err := st.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, handleLookupError(sessionID, err)
+	}
+	if exact && sess.UUID != sessionID {
+		return nil, handleLookupError(sessionID, vault.ErrSessionNotFound)
+	}
+	return sess, nil
+}
+
 func handleLookupError(id string, err error) error {
 	var amb *vault.AmbiguousUUIDError
 	if errors.As(err, &amb) {

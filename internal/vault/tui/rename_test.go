@@ -175,7 +175,7 @@ func TestApp_RenameSubmitSuccessRefreshesList(t *testing.T) {
 
 	assert.Equal(t, 1, st.renameCalls)
 	assert.Equal(t, "aaaa1111", st.lastRenameID)
-	assert.Equal(t, vault.RenameOptions{Name: "Alpha Renamed"}, st.lastRenameOpts)
+	assert.Equal(t, vault.RenameOptions{Name: "Alpha Renamed", ExactID: true}, st.lastRenameOpts)
 	assert.Equal(t, 0, st.searchCalls, "no active search query → the refresh does not run a search")
 
 	sel, ok := m.list.selected()
@@ -196,7 +196,7 @@ func TestApp_RenameEmptySubmitClears(t *testing.T) {
 	res := renameResult(t, cmd)
 	require.NoError(t, res.err)
 	assert.True(t, res.cleared)
-	assert.Equal(t, vault.RenameOptions{Clear: true}, st.lastRenameOpts,
+	assert.Equal(t, vault.RenameOptions{Clear: true, ExactID: true}, st.lastRenameOpts,
 		"an emptied input submits a clear, not a rename")
 
 	next, _ = m.Update(res)

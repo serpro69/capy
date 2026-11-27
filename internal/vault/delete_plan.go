@@ -112,6 +112,7 @@ func (s *VaultStore) PrepareDelete(ctx context.Context, ids []string, opts Delet
 		if err != nil {
 			return nil, err
 		}
+		matches = preferExactSession(matches, id)
 		switch len(matches) {
 		case 0:
 			invalid = append(invalid, DeleteInputError{id, ErrSessionNotFound})

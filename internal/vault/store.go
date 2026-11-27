@@ -42,6 +42,26 @@ func sessionIDPrefixPattern(prefix string) (string, error) {
 	return pattern.String(), nil
 }
 
+// preferExactSession narrows a literal-prefix lookup that matched several
+// sessions to the one whose ID equals the input byte for byte, if any. A
+// complete ID is therefore never ambiguous merely because it also begins a
+// longer ID (legacy filename-derived IDs) or because LIKE's ASCII case folding
+// matched an ID differing only in case; without this, such a session could not
+// be selected by any input. Other matches are returned unchanged.
+// briefReader.resolve applies the same rule in SQL, because its LIMIT 2 prefix
+// query may not return the exact row; keep the two in step.
+func preferExactSession(matches []Session, id string) []Session {
+	if len(matches) < 2 {
+		return matches
+	}
+	for i := range matches {
+		if matches[i].UUID == id {
+			return matches[i : i+1]
+		}
+	}
+	return matches
+}
+
 // currentIndexVersion stamps the FTS indexer logic. Bump it whenever scanner.go's
 // extraction changes in a way that should re-index already-archived sessions —
 // but ONLY across a released boundary. Within an unreleased version (nothing
@@ -1223,30 +1243,37 @@ func (s *VaultStore) GetSession(ctx context.Context, prefix string) (*Session, e
 	}
 	defer rows.Close()
 
+	// Transcripts stay encoded until one session is selected: a damaged
+	// candidate must not fail the lookup of another, and ambiguity needs only
+	// metadata.
 	var matches []Session
+	blobs := map[string]storedBlob{}
 	for rows.Next() {
 		var sess Session
-		var raw []byte
-		if err := scanSessionMeta(rows, &sess, &raw); err != nil {
+		var blob storedBlob
+		if err := scanSessionMetaBlob(rows, &sess, &blob); err != nil {
 			return nil, err
 		}
-		sess.RawJSONL = raw
+		blobs[sess.UUID] = blob
 		matches = append(matches, sess)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating sessions: %w", err)
 	}
 
+	matches = preferExactSession(matches, prefix)
 	switch len(matches) {
 	case 0:
 		return nil, ErrSessionNotFound
 	case 1:
-		return &matches[0], nil
-	default:
-		// Drop the blobs from candidates — only metadata is needed to disambiguate.
-		for i := range matches {
-			matches[i].RawJSONL = nil
+		sess := matches[0]
+		raw, err := blobs[sess.UUID].decode(sess.UUID)
+		if err != nil {
+			return nil, err
 		}
+		sess.RawJSONL = raw
+		return &sess, nil
+	default:
 		return nil, &AmbiguousUUIDError{Prefix: prefix, Candidates: matches}
 	}
 }
@@ -1340,7 +1367,7 @@ func (s *VaultStore) ListSessions(ctx context.Context, opts ListOptions) ([]Sess
 	out := make([]Session, 0)
 	for rows.Next() {
 		var sess Session
-		if err := scanSessionMeta(rows, &sess, nil); err != nil {
+		if err := scanSessionMeta(rows, &sess); err != nil {
 			return nil, err
 		}
 		if opts.Name != "" && !ContainsFold(sess.EffectiveTitle(), opts.Name) {
@@ -1382,7 +1409,7 @@ func querySessionMetadata(ctx context.Context, q ctxQueryer, clause string, args
 	out := make([]Session, 0)
 	for rows.Next() {
 		var sess Session
-		if err := scanSessionMeta(rows, &sess, nil); err != nil {
+		if err := scanSessionMeta(rows, &sess); err != nil {
 			return nil, err
 		}
 		out = append(out, sess)
@@ -1745,12 +1772,16 @@ func (s *VaultStore) Stats(ctx context.Context) (*VaultStats, error) {
 	return &st, nil
 }
 
-// scanSessionMeta scans the sessionMetaColumns into sess. If raw is non-nil, two
-// extra trailing columns — encoding, raw_jsonl — are scanned and the blob is
-// decoded into *raw (the metadata-only callers, e.g. ListSessions, select neither,
-// so they pay no decode cost). Callers that pass raw must SELECT
-// `sessionMetaColumns, encoding, raw_jsonl` in that order.
-func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
+// scanSessionMeta scans the sessionMetaColumns into sess (metadata only).
+func scanSessionMeta(rows *sql.Rows, sess *Session) error {
+	return scanSessionMetaBlob(rows, sess, nil)
+}
+
+// scanSessionMetaBlob scans the sessionMetaColumns into sess and, when blob is
+// non-nil, the two trailing columns encoding and raw_jsonl without decoding
+// them; such callers must SELECT `sessionMetaColumns, encoding, raw_jsonl` in
+// that order. GetSession decodes only the session it selects (storedBlob.decode).
+func scanSessionMetaBlob(rows *sql.Rows, sess *Session, blob *storedBlob) error {
 	var title, gitBranch, archivedAt sql.NullString
 	var startTime, endTime sql.NullString
 	var customTitle, nameMachineID sql.NullString
@@ -1767,10 +1798,8 @@ func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 		&platform, &parentUUID,
 		&customProject, &projectUpdatedAtNS, &projectMachineID,
 	}
-	var encoding sql.NullString
-	var rawBlob []byte
-	if raw != nil {
-		dest = append(dest, &encoding, &rawBlob)
+	if blob != nil {
+		dest = append(dest, &blob.encoding, &blob.data)
 	}
 	if err := rows.Scan(dest...); err != nil {
 		return fmt.Errorf("scanning session: %w", err)
@@ -1802,14 +1831,21 @@ func scanSessionMeta(rows *sql.Rows, sess *Session, raw *[]byte) error {
 	} else {
 		sess.ProjectOverride = nil
 	}
-	if raw != nil {
-		decoded, err := decodeBlob(encoding.String, rawBlob)
-		if err != nil {
-			return fmt.Errorf("decoding raw_jsonl for %s: %w", sess.UUID, err)
-		}
-		*raw = decoded
-	}
 	return nil
+}
+
+// storedBlob is a session's raw_jsonl column as stored, before decoding.
+type storedBlob struct {
+	encoding sql.NullString
+	data     []byte
+}
+
+func (b storedBlob) decode(uuid string) ([]byte, error) {
+	decoded, err := decodeBlob(b.encoding.String, b.data)
+	if err != nil {
+		return nil, fmt.Errorf("decoding raw_jsonl for %s: %w", uuid, err)
+	}
+	return decoded, nil
 }
 
 // autoQuoteFTS wraps each whitespace-separated token in double quotes so FTS5

@@ -269,7 +269,13 @@ func newModel(ctx context.Context, st dataStore, opts Options) (Model, error) {
 		m.search, cmd = m.search.setQuery(opts.Query)
 		m.initCmd = cmd
 	case "view":
-		loaded, err := m.openSession(opts.SessionID, modeList, "", 0)
+		// opts.SessionID is the operator's argument, so it keeps the store's
+		// prefix lookup; in-TUI opens use full IDs through openSession.
+		sess, err := m.store.GetSession(m.ctx, opts.SessionID)
+		if err != nil {
+			return Model{}, fmt.Errorf("opening session %s: %w", opts.SessionID, err)
+		}
+		loaded, err := m.showSession(sess, modeList, "", 0)
 		if err != nil {
 			return Model{}, err
 		}
@@ -534,7 +540,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		store := m.store
 		return m.startRaw(sess.UUID+" · archived JSONL", func(ctx context.Context) ([]byte, error) {
-			loaded, err := store.GetSession(ctx, sess.UUID)
+			loaded, err := getSession(ctx, store, sess.UUID)
 			if err != nil {
 				return nil, err
 			}
@@ -714,7 +720,7 @@ func (m Model) startProjectEdit() (tea.Model, tea.Cmd) {
 	if uuid == "" {
 		return m, nil
 	}
-	sess, err := m.store.GetSession(m.ctx, uuid)
+	sess, err := getSession(m.ctx, m.store, uuid)
 	if err != nil {
 		return m.withError("opening project editor: " + err.Error()), nil
 	}
@@ -786,15 +792,18 @@ func (m Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // runRename executes the store write off the Update goroutine (the same
 // bubbletea command convention as searchModel.runSearch). uuid is the full
-// session UUID, so the prefix lookup inside RenameSession is exact.
+// session ID the editor was opened for, so the write resolves it exactly: a
+// session deleted meanwhile is reported missing rather than falling back to a
+// longer ID it prefixes.
 func (m Model) runRename(uuid string, opts vault.RenameOptions) tea.Cmd {
 	store, ctx, target := m.store, m.ctx, m.editTarget
 	return func() tea.Msg {
 		var sess *vault.Session
 		var err error
 		if target == editProject {
-			sess, err = store.SetSessionProject(ctx, uuid, vault.ProjectOptions{Name: opts.Name, Clear: opts.Clear})
+			sess, err = store.SetSessionProject(ctx, uuid, vault.ProjectOptions{Name: opts.Name, Clear: opts.Clear, ExactID: true})
 		} else {
+			opts.ExactID = true
 			sess, err = store.RenameSession(ctx, uuid, opts)
 		}
 		return renameResultMsg{target: target, sess: sess, cleared: opts.Clear, err: err}
@@ -932,7 +941,7 @@ func (m Model) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // on the parent and nothing is pushed. Any other store failure is reported in
 // the error style, likewise without mutating the viewer.
 func (m Model) openChild(uuid string) Model {
-	sess, err := m.store.GetSession(m.ctx, uuid)
+	sess, err := getSession(m.ctx, m.store, uuid)
 	if errors.Is(err, vault.ErrSessionNotFound) {
 		return m.withStatus(fmt.Sprintf("child session %s not archived", shortID(uuid)))
 	}
@@ -1041,17 +1050,46 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// openSession loads a session into the viewer and switches to view mode. After
-// loading it jumps to (subagentID, line) so a search hit lands on its match;
-// pass "" / 0 to open at the top. returnTo is the mode the viewer's back key
-// returns to. Value receiver returning the model (the bubbletea value-model
-// convention — consistent with Update/View); on error the model is returned
-// unchanged (mutations happen only after both lookups succeed).
+// errSessionGone reports that a session the TUI selected by its full ID no
+// longer exists. It wraps vault.ErrSessionNotFound so callers that treat a
+// missing session specially (openChild) keep doing so.
+var errSessionGone = fmt.Errorf("the selected session no longer exists: %w", vault.ErrSessionNotFound)
+
+// getSession loads the session whose ID is exactly uuid. Every TUI lookup
+// holds a full ID from the list, a search hit or a launch marker. The store
+// resolves an exact ID first and otherwise falls back to a prefix, so a
+// different returned ID means the selected session is gone (deleted elsewhere)
+// and only a longer ID it prefixes remains: report it missing rather than show
+// or edit that other session.
+func getSession(ctx context.Context, store dataStore, uuid string) (*vault.Session, error) {
+	sess, err := store.GetSession(ctx, uuid)
+	if err != nil {
+		return nil, err
+	}
+	if sess != nil && sess.UUID != uuid {
+		return nil, errSessionGone
+	}
+	return sess, nil
+}
+
+// openSession loads the session with exactly this full ID (from the list or a
+// search hit) into the viewer and switches to view mode. After loading it jumps
+// to (subagentID, line) so a search hit lands on its match; pass "" / 0 to open
+// at the top. returnTo is the mode the viewer's back key returns to. Value
+// receiver returning the model (the bubbletea value-model convention —
+// consistent with Update/View); on error the model is returned unchanged
+// (mutations happen only after both lookups succeed).
 func (m Model) openSession(sessionID string, returnTo mode, subagentID string, line int) (Model, error) {
-	sess, err := m.store.GetSession(m.ctx, sessionID)
+	sess, err := getSession(m.ctx, m.store, sessionID)
 	if err != nil {
 		return m, fmt.Errorf("opening session %s: %w", sessionID, err)
 	}
+	return m.showSession(sess, returnTo, subagentID, line)
+}
+
+// showSession loads an already resolved session's files into the viewer and
+// switches to view mode (see openSession).
+func (m Model) showSession(sess *vault.Session, returnTo mode, subagentID string, line int) (Model, error) {
 	files, err := m.store.GetFiles(m.ctx, sess.UUID)
 	if err != nil {
 		return m, fmt.Errorf("loading session files: %w", err)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -398,7 +399,7 @@ func TestResumeVaultSession_CodexFailsLoudWithoutLaunch(t *testing.T) {
 	cmd.SetContext(ctx)
 
 	for name, run := range map[string]func() error{
-		"cli": func() error { return resumeVaultSession(cmd, st, codexParentUUID[:12], "") },
+		"cli": func() error { return resumeVaultSession(cmd, st, codexParentUUID[:12], "", false) },
 		"tui R": func() error {
 			return performTUIAction(cmd, st, tui.Action{Kind: tui.ActionResume, SessionUUID: codexParentUUID})
 		},
@@ -643,4 +644,38 @@ func mustGetwd(t *testing.T) string {
 	wd, err := os.Getwd()
 	require.NoError(t, err)
 	return wd
+}
+
+// A TUI action carries a full ID captured before the TUI exited. If that
+// session was deleted meanwhile and its ID merely prefixes a surviving one,
+// restore and resume must report it missing instead of acting on the survivor,
+// while a command-line prefix still resolves.
+func TestPerformTUIAction_StaleIDNeverActsOnAnotherSession(t *testing.T) {
+	vaultPath := filepath.Join(t.TempDir(), "vault.db")
+	buildCodexVault(t, vaultPath)
+	t.Setenv("PATH", t.TempDir())
+	freshHome := t.TempDir()
+	t.Setenv("CODEX_HOME", freshHome)
+
+	ctx := context.Background()
+	st := vault.NewVaultStore(vaultPath)
+	defer st.Close()
+	require.NoError(t, st.Open(ctx))
+	cmd := &cobra.Command{}
+	cmd.SetContext(ctx)
+
+	stale := codexParentUUID[:20] // a "full ID" that only prefixes the surviving parent
+	for _, kind := range []tui.ActionKind{tui.ActionRestore, tui.ActionResume} {
+		err := performTUIAction(cmd, st, tui.Action{Kind: kind, SessionUUID: stale})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), fmt.Sprintf("no session matches %q", stale))
+	}
+	entries, err := os.ReadDir(freshHome)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "nothing may be restored for a stale TUI selection")
+
+	// The same text typed on the command line is still an unambiguous prefix.
+	sess, err := lookupVaultSession(ctx, st, stale, false)
+	require.NoError(t, err)
+	assert.Equal(t, codexParentUUID, sess.UUID)
 }
