@@ -15,7 +15,7 @@ import (
 )
 
 // The session brief reads the opening request and the latest indexed exchange
-// of one archived session (docs/feat/wip/vault-session-brief). It deliberately
+// of one archived session (docs/feat/done/vault-session-brief). It deliberately
 // bypasses getDB: the normal open creates, migrates and may back up a corrupt
 // file, while the brief must leave an absent, outdated or damaged vault exactly
 // as it found it. Each call opens a dedicated short-lived read-only connection,

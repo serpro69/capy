@@ -1277,7 +1277,7 @@ warm cache (`brief_workload_test.go`, opt-in via `CAPY_VAULT_BRIEF_WORKLOAD=1`).
 renderer redacts, escapes and then clips every field so the finished text, including
 its final newline, fits in 4,096 bytes. Keyword-search vault hits
 (`renderVaultHit`) offer the brief on eligible main-transcript hits with a fixed
-instruction line. [Design](feat/wip/vault-session-brief/design.md)
+instruction line. [Design](feat/done/vault-session-brief/design.md)
 
 ### Session names & the effective title
 
