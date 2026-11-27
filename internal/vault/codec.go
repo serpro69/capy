@@ -159,6 +159,16 @@ func markMinReaderVersion(ctx context.Context, tx *sql.Tx, version int) error {
 	return nil
 }
 
+// readerVersionError reports a vault marker newer than this binary supports. It
+// is a distinct type so a caller can tell an incompatible format apart from a
+// storage failure while reading the marker; the message is unchanged.
+type readerVersionError struct{ required int }
+
+func (e *readerVersionError) Error() string {
+	return fmt.Sprintf("vault requires reader version %d but this capy binary supports %d; upgrade capy to open it",
+		e.required, supportedReaderVersion)
+}
+
 // checkReaderVersion refuses to open a vault whose min_reader_version exceeds this
 // binary's supportedReaderVersion — a newer on-disk format this binary predates.
 // An absent marker (a v1 vault, or one never written with compression) imposes no
@@ -181,8 +191,7 @@ func checkReaderVersion(ctx context.Context, db rowQueryer) (int, error) {
 		return 0, fmt.Errorf("invalid min_reader_version %q in vault: %w", value, perr)
 	}
 	if required > supportedReaderVersion {
-		return 0, fmt.Errorf("vault requires reader version %d but this capy binary supports %d; upgrade capy to open it",
-			required, supportedReaderVersion)
+		return 0, &readerVersionError{required: required}
 	}
 	return required, nil
 }
