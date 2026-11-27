@@ -68,6 +68,7 @@ Requires CAPY_VAULT_KEY (the vault DB is encrypted at rest).`,
 		newVaultListCmd(env, launchTUI),
 		newVaultSearchCmd(env),
 		newVaultShowCmd(env),
+		newVaultBriefCmd(env),
 		newVaultStatsCmd(env),
 		newVaultCheckpointCmd(env),
 		newVaultCompactCmd(env),
@@ -615,6 +616,57 @@ func newVaultShowCmd(env *vaultEnv) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text|markdown|json")
 	return cmd
+}
+
+// newVaultBriefCmd prints the opening request and the latest indexed exchange of
+// one archived session. It reads through its own read-only connection, so an
+// absent, outdated or damaged vault is reported without being created,
+// migrated or repaired.
+func newVaultBriefCmd(env *vaultEnv) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "brief <session-id>",
+		Short: "Show the opening request and latest indexed exchange of one session",
+		Long: `Show one archived session's ID, platform, current project and title, its
+opening indexed user entry, and its latest indexed user entry with the last
+indexed assistant entry in that turn. Each excerpt cites its zero-based
+message-start line in the main transcript. The brief is at most 4,096 bytes.
+
+"Latest" means the latest exchange in the vault's index, which can lag a live
+session; there is no historical cutoff. Use "capy vault show" for the full
+transcript.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := guardTUI(cmd); err != nil {
+				return err
+			}
+			if cmd.Flags().Changed("through-line") {
+				return errors.New("--through-line is not supported: the brief shows only the latest indexed exchange; use capy vault show for earlier messages")
+			}
+			b, err := vault.NewVaultStore(env.dbPath).ReadBrief(cmd.Context(), args[0], vault.BriefScope{})
+			if err != nil {
+				return briefLookupError(args[0], err)
+			}
+			_, err = io.WriteString(cmd.OutOrStdout(), vault.RenderBrief(b))
+			return err
+		},
+	}
+	// A historical cutoff is a request this command cannot honor; answering it
+	// with the latest exchange would be wrong, so it is rejected explicitly.
+	cmd.Flags().String("through-line", "", "unsupported")
+	_ = cmd.Flags().MarkHidden("through-line")
+	return cmd
+}
+
+// briefLookupError names the input problem without listing candidates: the
+// brief stops at the second match and reports no count.
+func briefLookupError(id string, err error) error {
+	switch {
+	case errors.Is(err, vault.ErrBriefAmbiguous):
+		return fmt.Errorf("session id %q matches more than one session — use a longer ID", id)
+	case errors.Is(err, vault.ErrSessionNotFound):
+		return fmt.Errorf("no session matches %q", id)
+	}
+	return err
 }
 
 // renderShow composes a session's main transcript with each subagent transcript
