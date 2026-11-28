@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"syscall"
@@ -30,6 +31,11 @@ const (
 	fetchMaxBody     = 10 * 1024 * 1024 // 10MB
 	fetchPreviewLen  = 3072
 	fetchUserAgent   = "capy/1.0 (MCP knowledge indexer)"
+
+	// fetchAccept prefers the page a browser would show when a URL offers both
+	// HTML and JSON; the wildcard keeps vendor +json-only APIs from answering
+	// 406. The client copies it, like the User-Agent, to every redirect.
+	fetchAccept = "text/html, application/xhtml+xml;q=0.9, application/json;q=0.8, text/plain;q=0.7, */*;q=0.1"
 
 	// fetchBatchPreviewLen caps each per-URL preview in batch mode so the
 	// aggregate stays small (~3KB for a full 8-URL batch); the single-URL path
@@ -146,18 +152,18 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	}
 
 	// Fetch the remote content (SSRF-safe transport, redirect cap, size limit).
-	content, contentType, validatedAt, outcome, fetchErr := s.fetchRemoteContent(ctx, url)
+	page, outcome, fetchErr := s.fetchRemoteContent(ctx, url)
 	if fetchErr != "" {
 		return errorResult(fetchErr), nil
 	}
 
 	// Track raw bytes
-	s.stats.AddBytesIndexed(int64(len(content)))
+	s.stats.AddBytesIndexed(int64(len(page.content)))
 
-	// Index via the content-type-aware strategy. content becomes the sanitized
-	// (and, for HTML, converted) text used for the preview below.
+	// Index via the content-type-aware strategy. content is the sanitized (and,
+	// for HTML, converted) text used for the preview below.
 	st := s.getStore()
-	content, indexed, err := indexFetchedContent(st, content, contentType, cacheKey, kind, validatedAt)
+	content, indexed, err := indexFetchedContent(st, page, cacheKey, kind)
 	if err != nil {
 		if errors.Is(err, errNoReadableContent) {
 			return errorResult(fmt.Sprintf("No readable content in %s: %s.", url, noReadableContentDetail)), nil
@@ -261,9 +267,20 @@ func truncateRunes(s string, n int) string {
 	return s[:n]
 }
 
+// fetchedPage is an admitted response body with what conversion and indexing
+// need: its Content-Type, the final URL after redirects (the base for relative
+// references; the requested URL stays the cache identity) and the time the body
+// was completely read.
+type fetchedPage struct {
+	content     string
+	contentType string
+	finalURL    *url.URL
+	validatedAt time.Time
+}
+
 // fetchRemoteContent performs the HTTP GET for a single URL using the SSRF-safe
 // transport, redirect cap, and body-size limit, returning the decoded text body
-// and its Content-Type plus the body-admission time and typed cache outcome.
+// as a fetchedPage plus the typed cache outcome.
 // The last return is a non-empty, user-facing error
 // message on any failure (empty means success) — kept as a plain string rather
 // than an error so the pre-formatted messages reach the caller verbatim. Binary
@@ -271,7 +288,7 @@ func truncateRunes(s string, n int) string {
 // invoke it concurrently. The request honors ctx, so a client cancellation aborts
 // the in-flight fetch (in addition to the fetchTimeout ceiling) — important for
 // the batch path, where up to maxFetchBatchRequests fetches may be in flight.
-func (s *Server) fetchRemoteContent(ctx context.Context, url string) (content, contentType string, validatedAt time.Time, outcome fetchCacheOutcome, errMsg string) {
+func (s *Server) fetchRemoteContent(ctx context.Context, url string) (page fetchedPage, outcome fetchCacheOutcome, errMsg string) {
 	// Fetch with timeout, redirect limit, and SSRF-safe transport. The transport's
 	// DialContext resolves DNS and classifies every IP at connect time, so each
 	// redirect to a new host is re-validated (DNS-rebinding defense).
@@ -288,11 +305,12 @@ func (s *Server) fetchRemoteContent(ctx context.Context, url string) (content, c
 
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return "", "", time.Time{}, fetchNotAttempted, fmt.Sprintf("Invalid URL: %v", err)
+		return fetchedPage{}, fetchNotAttempted, fmt.Sprintf("Invalid URL: %v", err)
 	}
 	httpReq.Header.Set("User-Agent", fetchUserAgent)
+	httpReq.Header.Set("Accept", fetchAccept)
 	if err := ctx.Err(); err != nil {
-		return "", "", time.Time{}, fetchNotAttempted, fmt.Sprintf("Fetch canceled: %v", err)
+		return fetchedPage{}, fetchNotAttempted, fmt.Sprintf("Fetch canceled: %v", err)
 	}
 
 	resp, err := client.Do(httpReq)
@@ -307,33 +325,34 @@ func (s *Server) fetchRemoteContent(ctx context.Context, url string) (content, c
 		if retryable {
 			message += fetchRetryHint
 		}
-		return "", "", time.Time{}, outcome, message
+		return fetchedPage{}, outcome, message
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "", time.Time{}, fetchCacheMiss, fmt.Sprintf("Failed to fetch %s: HTTP %d", url, resp.StatusCode)
+		return fetchedPage{}, fetchCacheMiss, fmt.Sprintf("Failed to fetch %s: HTTP %d", url, resp.StatusCode)
 	}
 
 	// Read body with size limit
 	limited := io.LimitReader(resp.Body, fetchMaxBody+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {
-		return "", "", time.Time{}, fetchCacheMiss, fmt.Sprintf("Failed to read response from %s: %v", url, err)
+		return fetchedPage{}, fetchCacheMiss, fmt.Sprintf("Failed to read response from %s: %v", url, err)
 	}
 	if len(body) > fetchMaxBody {
-		return "", "", time.Time{}, fetchCacheMiss, fmt.Sprintf("Response too large (>%dMB)", fetchMaxBody/(1024*1024))
+		return fetchedPage{}, fetchCacheMiss, fmt.Sprintf("Response too large (>%dMB)", fetchMaxBody/(1024*1024))
 	}
 	if len(body) == 0 {
-		return "", "", time.Time{}, fetchCacheMiss, fmt.Sprintf("Fetched %s but got empty content", url)
+		return fetchedPage{}, fetchCacheMiss, fmt.Sprintf("Fetched %s but got empty content", url)
 	}
 
 	ct := resp.Header.Get("Content-Type")
 	if isBinaryContent(ct, body) {
-		return "", "", time.Time{}, fetchCacheMiss, fmt.Sprintf("Cannot index binary content from %s (Content-Type: %s)", url, ct)
+		return fetchedPage{}, fetchCacheMiss, fmt.Sprintf("Cannot index binary content from %s (Content-Type: %s)", url, ct)
 	}
 
-	return string(body), ct, s.fetchTime(), fetchCacheMiss, ""
+	// resp.Request is the last request in the redirect chain.
+	return fetchedPage{content: string(body), contentType: ct, finalURL: resp.Request.URL, validatedAt: s.fetchTime()}, fetchCacheMiss, ""
 }
 
 const fetchRetryHint = "\nThis may be a transient network failure. You may retry the same capy_fetch_and_index call once."
@@ -375,16 +394,18 @@ const noReadableContentDetail = "the page has no visible text after article sele
 // chunks agree. Conversion failures return before any store write, so a failed
 // revalidation keeps the previous copy and its validation time. Validation time
 // stays paired with these bytes even if conversion or the store's write lock
-// delays indexing.
-func indexFetchedContent(st *store.ContentStore, content, contentType, cacheKey string, kind store.SourceKind, validatedAt time.Time) (string, *store.IndexResult, error) {
-	mediaType := fetchMediaType(contentType)
+// delays indexing. HTML links resolve against the final URL, and their
+// destinations share the store's source size limit.
+func indexFetchedContent(st *store.ContentStore, page fetchedPage, cacheKey string, kind store.SourceKind) (string, *store.IndexResult, error) {
+	content := page.content
+	mediaType := fetchMediaType(page.contentType)
 	indexType := "plaintext"
 	switch {
 	case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
 		indexType = "json"
 
 	case mediaType == "text/html" || mediaType == "application/xhtml+xml":
-		md, err := convertHTMLToMarkdown(content, contentType)
+		md, err := convertHTMLToMarkdown(content, page.contentType, page.finalURL, st.MaxSourceBytes())
 		if err != nil {
 			return "", nil, fmt.Errorf("converting fetched HTML: %w", err)
 		}
@@ -393,7 +414,7 @@ func indexFetchedContent(st *store.ContentStore, content, contentType, cacheKey 
 		// section title.
 		content, indexType = md, "markdown"
 	}
-	indexed, err := st.IndexFetched(content, cacheKey, indexType, kind, validatedAt)
+	indexed, err := st.IndexFetched(content, cacheKey, indexType, kind, page.validatedAt)
 	if err != nil {
 		return "", nil, err
 	}
@@ -410,18 +431,16 @@ func fetchMediaType(contentType string) string {
 // fetchItemResult is the per-URL outcome of the concurrent fetch phase in batch
 // mode. Exactly one terminal state is set: errMsg (validation/fetch failure),
 // redirect (git platform URL — not fetched), cacheMeta (TTL cache hit, already
-// indexed), or content (freshly fetched, to be indexed in the serial phase).
+// indexed), or page (freshly fetched, to be indexed in the serial phase).
 type fetchItemResult struct {
-	url         string
-	label       string
-	cacheKey    string
-	errMsg      string
-	redirect    bool
-	cacheMeta   *store.SourceMeta
-	content     string
-	contentType string
-	validatedAt time.Time
-	outcome     fetchCacheOutcome
+	url       string
+	label     string
+	cacheKey  string
+	errMsg    string
+	redirect  bool
+	cacheMeta *store.SourceMeta
+	page      fetchedPage
+	outcome   fetchCacheOutcome
 }
 
 // fetchOne validates, cache-checks, and fetches a single batch request. It only
@@ -467,15 +486,13 @@ func (s *Server) fetchOne(ctx context.Context, st *store.ContentStore, rq fetchR
 		}
 	}
 
-	content, contentType, validatedAt, outcome, errMsg := s.fetchRemoteContent(ctx, rq.URL)
+	page, outcome, errMsg := s.fetchRemoteContent(ctx, rq.URL)
 	res.outcome = outcome
 	if errMsg != "" {
 		res.errMsg = errMsg
 		return res
 	}
-	res.content = content
-	res.contentType = contentType
-	res.validatedAt = validatedAt
+	res.page = page
 	return res
 }
 
@@ -552,8 +569,8 @@ func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, 
 			lines = append(lines, fmt.Sprintf("✓ %s — cache hit (%d chunks)", it.label, it.cacheMeta.ChunkCount))
 
 		default:
-			s.stats.AddBytesIndexed(int64(len(it.content)))
-			finalContent, indexed, err := indexFetchedContent(st, it.content, it.contentType, it.cacheKey, kind, it.validatedAt)
+			s.stats.AddBytesIndexed(int64(len(it.page.content)))
+			finalContent, indexed, err := indexFetchedContent(st, it.page, it.cacheKey, kind)
 			if err != nil {
 				if errors.Is(err, errNoReadableContent) {
 					lines = append(lines, fmt.Sprintf("✗ %s — no readable content: %s", it.url, noReadableContentDetail))

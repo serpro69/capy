@@ -237,8 +237,8 @@ func TestFetchFreshnessMarkerAdmission(t *testing.T) {
 	srv := newTestServer(t, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, at, outcome, errMsg := srv.fetchRemoteContent(ctx, "https://example.com")
+	page, outcome, errMsg := srv.fetchRemoteContent(ctx, "https://example.com")
 	assert.Equal(t, fetchNotAttempted, outcome)
 	assert.NotEmpty(t, errMsg)
-	assert.True(t, at.IsZero())
+	assert.True(t, page.validatedAt.IsZero())
 }

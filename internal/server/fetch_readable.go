@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/base"
@@ -45,7 +48,10 @@ const htmlCharsetPrescanLen = 1024
 // that root a sole top-level visible nonempty <article> wins; several articles
 // keep the outer root. The document title is prepended once when the selected
 // root has no <h1>, but a title alone never makes an empty page readable.
-func convertHTMLToMarkdown(body, contentType string) (string, error) {
+//
+// Links resolve against finalURL, the response URL after redirects; see
+// rewriteReferences for the destination rules and the maxSourceBytes budget.
+func convertHTMLToMarkdown(body, contentType string, finalURL *url.URL, maxSourceBytes int) (string, error) {
 	decoded, err := decodeHTML(body, contentType)
 	if err != nil {
 		return "", err
@@ -74,9 +80,23 @@ func convertHTMLToMarkdown(body, contentType string) (string, error) {
 
 	title := documentTitle(doc)
 	pruneUnreadable(doc)
-	redactTree(doc)
+	// Private regions written as text only, before selection, so text that
+	// redacts to the private placeholder cannot select a root or label a link.
+	// Secret patterns wait for the final pass: an early partial match could
+	// leave a suffix that later joins other text unrecognized.
+	redactTree(doc, sanitize.StripPrivate)
 	root := selectReadableRoot(doc)
 	if root == nil {
+		return "", errNoReadableContent
+	}
+	if err := rewriteReferences(root, finalURL, maxSourceBytes); err != nil {
+		return "", err
+	}
+	// After the rewrite, so text that image replacement and link removal made
+	// adjacent is redacted as the one string the renderer will emit.
+	redactTree(root, sanitize.StripSecrets)
+	// That join can complete a private region, leaving only its placeholder.
+	if !hasVisibleText(root) {
 		return "", errNoReadableContent
 	}
 	if title != "" && findElement(root, atom.H1) == nil {
@@ -284,7 +304,15 @@ var unreadableElements = map[atom.Atom]bool{
 var privateTagRe = regexp.MustCompile(`(?i)</?private[\t\n\f\r />]`)
 
 // renderedAttrs are attributes whose values can reach the Markdown output.
-var renderedAttrs = map[string]bool{"href": true, "src": true, "alt": true, "title": true}
+// Link destinations are absent: rewriteReferences validates each original href
+// and redacts the resolved destination it keeps.
+var renderedAttrs = map[string]bool{"src": true, "alt": true, "title": true}
+
+// codeElements are rendered as their text only, so links inside them never
+// reach the output and are left alone.
+var codeElements = map[atom.Atom]bool{
+	atom.Pre: true, atom.Code: true, atom.Var: true, atom.Samp: true, atom.Kbd: true, atom.Tt: true,
+}
 
 // svgMetadata are SVG children that describe a graphic or define content shown
 // only by reference: an icon's title or sprite definitions must not make an
@@ -381,22 +409,22 @@ func pruneUnreadable(doc *html.Node) {
 	}
 }
 
-// redactTree applies the secret patterns to the pruned tree, before Markdown
-// escaping (which turns "ghp_..." into "ghp\_...") hides tokens from the
-// store's sanitizer. It runs after all removals, so text that pruning made
-// adjacent is coalesced and redacted as one string — the renderer would join it
-// anyway.
-func redactTree(doc *html.Node) {
-	walkElements(doc, func(n *html.Node) bool {
+// redactTree applies redact to the text and rendered attributes under root,
+// before Markdown escaping (which turns "ghp_..." into "ghp\_...") hides
+// tokens from the store's sanitizer. Its secret-pattern run follows all
+// removals and link/image rewriting, so text they made adjacent is coalesced
+// and redacted as one string — the renderer would join it anyway.
+func redactTree(root *html.Node, redact func(string) string) {
+	walkElements(root, func(n *html.Node) bool {
 		for i, a := range n.Attr {
 			if renderedAttrs[a.Key] {
-				n.Attr[i].Val = sanitize.StripSecrets(a.Val)
+				n.Attr[i].Val = redact(a.Val)
 			}
 		}
 		coalesceText(n)
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			if c.Type == html.TextNode {
-				c.Data = sanitize.StripSecrets(c.Data)
+				c.Data = redact(c.Data)
 			}
 		}
 		return true
@@ -529,6 +557,365 @@ func selectReadableRoot(doc *html.Node) *html.Node {
 	return root
 }
 
+// rewriteReferences prepares the selected root's links and images for
+// rendering without dereferencing either. Each image becomes its alt text,
+// never a URL or data URI. Images go first, so a link around an image keeps
+// the alt text as its label. A link without visible text is removed. Any
+// other link stays a link only when linkResolver accepts its destination;
+// otherwise it is replaced by its children. Destinations count against
+// maxSourceBytes: links are the only step that can make the output larger
+// than the body, so exceeding the limit fails before rendering, like any
+// conversion failure. Links inside code elements are left alone because the
+// renderer emits only their text, and a link inside a link is unwrapped, as
+// the renderer would.
+func rewriteReferences(root *html.Node, finalURL *url.URL, maxSourceBytes int) error {
+	var images, links, nested []*html.Node
+	type frame struct {
+		n              *html.Node
+		inLink, inCode bool
+	}
+	stack := []frame{{n: root}}
+	for len(stack) > 0 {
+		f := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for c := f.n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type != html.ElementNode {
+				continue
+			}
+			next := frame{c, f.inLink, f.inCode || codeElements[c.DataAtom]}
+			switch {
+			case c.DataAtom == atom.Img:
+				images = append(images, c)
+			case c.DataAtom != atom.A || next.inCode:
+				// Nothing to rewrite: not a link, or a link rendered as code text.
+			case f.inLink:
+				// Only foreign content such as SVG nests links.
+				nested = append(nested, c)
+			default:
+				links = append(links, c)
+				next.inLink = true
+			}
+			stack = append(stack, next)
+		}
+	}
+	// Unwrapping nested links first keeps the remaining link subtrees disjoint,
+	// so removing textless links below stays linear.
+	for _, a := range nested {
+		unwrapElement(a)
+	}
+	for _, img := range images {
+		if alt := attrValue(img, "alt"); strings.TrimSpace(alt) != "" {
+			img.Parent.InsertBefore(&html.Node{Type: html.TextNode, Data: alt}, img)
+		}
+		img.Parent.RemoveChild(img)
+	}
+
+	visible := visibleElements(root)
+	resolver := newLinkResolver(finalURL)
+	total := 0
+	for _, a := range links {
+		if !visible[a] {
+			removeTextless(a)
+			continue
+		}
+		dest, cost, ok := resolver.resolve(attrValue(a, "href"))
+		total += cost
+		if total > maxSourceBytes {
+			// total stops at the first destination over the limit, so name the
+			// limit rather than a misleading partial size.
+			return fmt.Errorf("resolved link destinations exceed the %d-byte source limit (configure store.max_source_bytes to adjust)", maxSourceBytes)
+		}
+		if !ok {
+			unwrapElement(a)
+			continue
+		}
+		a.Attr = slices.DeleteFunc(a.Attr, func(attr html.Attribute) bool { return attr.Key == "href" })
+		a.Attr = append(a.Attr, html.Attribute{Key: "href", Val: dest})
+	}
+	return nil
+}
+
+// linkResolver resolves a page's link destinations against its final URL (a
+// document <base> is ignored). A destination renders as a link only when it
+// is http(s) with a host, no userinfo — inherited from the final URL included
+// — and no recognized secret in its path or fragment; query fields holding a
+// secret are redacted (see redactQuery), because fragment links inherit the
+// final URL's query.
+//
+// The final URL is untrusted and may be long, so each link's work stays
+// within what it is charged: fragment links extend the page destination
+// computed once, root-relative and absolute references resolve against the
+// origin without reading the base path, path-relative references against the
+// base directory, and query-only references against the full base. The last
+// two are charged at least the base path they read, kept or dropped; that
+// path is part of their destination unless dot segments shorten it.
+type linkResolver struct {
+	base     *url.URL
+	origin   *url.URL // scheme, userinfo and host of base
+	dir      *url.URL // origin plus the base path up to its last "/"
+	pathCost int      // escaped length of the base path
+	queries  map[string]redactedQuery
+	page     *redactedDestination // base without its fragment, computed once
+}
+
+type redactedQuery struct {
+	query string
+	ok    bool
+}
+
+type redactedDestination struct {
+	dest string
+	ok   bool
+	// openPrivate: the decoded original ends inside an unclosed private
+	// region, which a fragment could close after query redaction erased the
+	// opener.
+	openPrivate bool
+}
+
+func newLinkResolver(base *url.URL) *linkResolver {
+	origin := &url.URL{Scheme: base.Scheme, User: base.User, Host: base.Host}
+	escaped := base.EscapedPath()
+	dir := *origin
+	dir.RawPath = escaped[:strings.LastIndex(escaped, "/")+1]
+	// EscapedPath output always unescapes.
+	dir.Path, _ = url.PathUnescape(dir.RawPath)
+	return &linkResolver{
+		base:     base,
+		origin:   origin,
+		dir:      &dir,
+		pathCost: len(escaped),
+		queries:  map[string]redactedQuery{},
+	}
+}
+
+// resolve returns the destination to render for href, its cost against the
+// budget and whether it may be a link. A missing or blank href is not a link.
+func (r *linkResolver) resolve(href string) (dest string, cost int, ok bool) {
+	// Browsers drop surrounding whitespace and embedded tabs and newlines.
+	href = strings.Map(func(c rune) rune {
+		if c == '\t' || c == '\n' || c == '\r' {
+			return -1
+		}
+		return c
+	}, strings.TrimSpace(href))
+	if href == "" {
+		return "", 0, false
+	}
+	ref, err := url.Parse(href)
+	if err != nil {
+		return "", 0, false
+	}
+
+	// A reference without scheme, authority, path or query inherits the page,
+	// query included: "#frag", "#", or a broken "//".
+	if ref.Scheme == "" && ref.Host == "" && ref.User == nil && ref.EscapedPath() == "" && ref.RawQuery == "" && !ref.ForceQuery {
+		page := r.pageDestination()
+		if !page.ok {
+			return "", 0, false
+		}
+		// A bare "#" means the page itself.
+		if ref.Fragment == "" {
+			return page.dest, len(page.dest), true
+		}
+		// Secret patterns cannot cross "#"; a private region can, if the page
+		// left one open.
+		frag := ref.EscapedFragment()
+		decoded := lenientUnescape(frag, false)
+		closes := page.openPrivate && strings.Contains(asciiLower(decoded), "</private>")
+		if hasSecret(frag) || hasSecret(decoded) || closes {
+			return "", 0, false
+		}
+		dest = page.dest + "#" + frag
+		return dest, len(dest), true
+	}
+
+	// Classify by the escaped path, as ResolveReference does: "%2Fx" is
+	// path-relative.
+	base := r.origin
+	if ref.Scheme == "" && ref.Host == "" {
+		switch escaped := ref.EscapedPath(); {
+		case escaped == "":
+			base, cost = r.base, r.pathCost
+		case !strings.HasPrefix(escaped, "/"):
+			base, cost = r.dir, len(r.dir.RawPath)
+		}
+	}
+	dest, ok = r.check(base.ResolveReference(ref))
+	if !ok {
+		return "", cost, false
+	}
+	return dest, max(cost, len(dest)), true
+}
+
+// pageDestination returns the checked final URL without its fragment.
+func (r *linkResolver) pageDestination() redactedDestination {
+	if r.page == nil {
+		u := *r.base
+		u.Fragment, u.RawFragment = "", ""
+		// ASCII folding, as the sanitizer's (?i) pattern matches these letters.
+		lower := asciiLower(lenientUnescape(u.String(), false))
+		open := strings.LastIndex(lower, "<private>") > strings.LastIndex(lower, "</private>")
+		dest, ok := r.check(&u)
+		r.page = &redactedDestination{dest: dest, ok: ok, openPrivate: open}
+	}
+	return *r.page
+}
+
+// check applies the link rules to a resolved URL, which it may modify, and
+// returns the destination to render.
+func (r *linkResolver) check(u *url.URL) (string, bool) {
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+		return "", false
+	}
+	// A private region can span path, query and fragment; check before query
+	// redaction can erase one of its delimiters.
+	if hasPrivate(u.String()) {
+		return "", false
+	}
+	// Paths and fragments rarely carry credentials; one there, raw or decoded,
+	// drops the destination.
+	rest := *u
+	rest.RawQuery, rest.ForceQuery = "", false
+	if s := rest.String(); hasSecret(s) || hasSecret(lenientUnescape(s, false)) {
+		return "", false
+	}
+	if u.RawQuery != "" {
+		q, cached := r.queries[u.RawQuery]
+		if !cached {
+			q.query, q.ok = redactQuery(u.RawQuery)
+			r.queries[u.RawQuery] = q
+		}
+		if !q.ok {
+			return "", false
+		}
+		u.RawQuery = q.query
+	}
+	return u.String(), true
+}
+
+// redactQuery replaces each query field holding a recognized secret, raw or
+// decoded with query semantics, by the placeholder. Replacing the whole field
+// leaves no tail behind a partial match, and decoding catches a credential
+// whose escapes (%2F, '+') the renderer re-encodes rather than decodes. A
+// private region anywhere in the decoded query — it can span fields, and a
+// field replacement could remove one of its delimiters — rejects the query.
+func redactQuery(rawQuery string) (string, bool) {
+	if decoded := lenientUnescape(rawQuery, true); sanitize.StripPrivate(decoded) != decoded {
+		return "", false
+	}
+	fields := strings.Split(rawQuery, "&")
+	for i, f := range fields {
+		if hasSecret(f) || hasSecret(lenientUnescape(f, true)) {
+			fields[i] = sanitize.RedactedSecret
+		}
+	}
+	return strings.Join(fields, "&"), true
+}
+
+func hasSecret(s string) bool {
+	return sanitize.StripSecrets(s) != s
+}
+
+// asciiLower folds ASCII letters only. strings.ToLower would also fold
+// characters such as U+0130 to "i", which the sanitizer's pattern does not.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
+}
+
+// hasPrivate reports a private region in the percent-decoded URL.
+func hasPrivate(rawURL string) bool {
+	decoded := lenientUnescape(rawURL, false)
+	return sanitize.StripPrivate(decoded) != decoded
+}
+
+// lenientUnescape decodes valid %XX escapes, and '+' as a space when
+// plusSpace, leaving malformed escapes as they are, so one stray '%' cannot
+// hide the rest of a string from the secret patterns.
+func lenientUnescape(s string, plusSpace bool) string {
+	if !strings.ContainsAny(s, "%+") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '%' && i+2 < len(s) {
+			if v, err := strconv.ParseUint(s[i+1:i+3], 16, 8); err == nil {
+				b.WriteByte(byte(v))
+				i += 2
+				continue
+			}
+		}
+		if c == '+' && plusSpace {
+			c = ' '
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+// visibleElements returns the elements under root that contain visible text,
+// in one pass: each text node marks its ancestors until one is already marked.
+func visibleElements(root *html.Node) map[*html.Node]bool {
+	visible := map[*html.Node]bool{}
+	stack := []*html.Node{root}
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if isVisibleText(n) {
+			for p := n.Parent; p != nil && !visible[p]; p = p.Parent {
+				visible[p] = true
+				if p == root {
+					break
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			stack = append(stack, c)
+		}
+	}
+	return visible
+}
+
+// attrValue returns the value of n's first attribute named key, or "".
+func attrValue(n *html.Node, key string) string {
+	for _, a := range n.Attr {
+		if a.Key == key {
+			return a.Val
+		}
+	}
+	return ""
+}
+
+// unwrapElement replaces n with its children.
+func unwrapElement(n *html.Node) {
+	for c := n.FirstChild; c != nil; c = n.FirstChild {
+		n.RemoveChild(c)
+		n.Parent.InsertBefore(c, n)
+	}
+	n.Parent.RemoveChild(n)
+}
+
+// removeTextless removes an element without visible text, including any
+// private-region placeholder in it. A space stays where it held whitespace,
+// so the words around it remain apart.
+func removeTextless(n *html.Node) {
+	hasSpace := false
+	walkNodes(n, func(c *html.Node) {
+		hasSpace = hasSpace || (c.Type == html.TextNode && strings.IndexFunc(c.Data, unicode.IsSpace) >= 0)
+	})
+	if hasSpace {
+		n.Parent.InsertBefore(&html.Node{Type: html.TextNode, Data: " "}, n)
+	}
+	n.Parent.RemoveChild(n)
+}
+
 // walkElements visits element nodes under root (root included) in document
 // order; visit returns false to skip a node's descendants.
 func walkElements(root *html.Node, visit func(*html.Node) bool) {
@@ -585,7 +972,7 @@ func hasVisibleText(root *html.Node) bool {
 	for len(stack) > 0 {
 		n := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if n.Type == html.TextNode && strings.TrimSpace(strings.ReplaceAll(n.Data, sanitize.RedactedPrivate, "")) != "" {
+		if isVisibleText(n) {
 			return true
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -593,4 +980,23 @@ func hasVisibleText(root *html.Node) bool {
 		}
 	}
 	return false
+}
+
+// isVisibleText reports a text node with non-whitespace content other than
+// private-region placeholders.
+func isVisibleText(n *html.Node) bool {
+	return n.Type == html.TextNode && strings.TrimSpace(strings.ReplaceAll(n.Data, sanitize.RedactedPrivate, "")) != ""
+}
+
+// walkNodes visits every node under root (root included).
+func walkNodes(root *html.Node, visit func(*html.Node)) {
+	stack := []*html.Node{root}
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		visit(n)
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			stack = append(stack, c)
+		}
+	}
 }

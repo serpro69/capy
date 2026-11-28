@@ -218,7 +218,7 @@ func TestConvertHTMLToMarkdown_ArticleSelection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			md, err := convertHTMLToMarkdown(tt.html, "text/html")
+			md, err := convertHTMLToMarkdown(tt.html, "text/html", testPageURL, store.DefaultMaxSourceBytes)
 			require.NoError(t, err)
 			for _, w := range tt.want {
 				assert.Contains(t, md, w)
@@ -248,7 +248,7 @@ func TestConvertHTMLToMarkdown_AmbiguousPrivate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			md, err := convertHTMLToMarkdown(tt.html, "text/html")
+			md, err := convertHTMLToMarkdown(tt.html, "text/html", testPageURL, store.DefaultMaxSourceBytes)
 			require.ErrorIs(t, err, errPrivateBoundary)
 			assert.Empty(t, md)
 		})
@@ -267,11 +267,12 @@ func TestConvertHTMLToMarkdown_NoReadableContent(t *testing.T) {
 		{"display:none body with title", `<html><head><title>App</title></head><body style="display:none"><p>x</p></body></html>`},
 		{"icon-only shell with svg metadata", `<html><head><title>App</title></head><body><div id="root"><svg><title>logo</title><desc>d</desc></svg></div></body></html>`},
 		{"only private content", `<body><private><p>all of it</p></private></body>`},
+		{"private region completed by removing an image", `<html><head><title>App</title></head><body><main><p>&lt;private&gt;<img src="x.png">hidden&lt;/private&gt;</p></main></body></html>`},
 		{"svg sprite definitions only", `<body><svg><defs><text id="a">defs text</text></defs><symbol id="b"><text>symbol text</text></symbol></svg></body>`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			md, err := convertHTMLToMarkdown(tt.html, "text/html")
+			md, err := convertHTMLToMarkdown(tt.html, "text/html", testPageURL, store.DefaultMaxSourceBytes)
 			require.ErrorIs(t, err, errNoReadableContent)
 			assert.Empty(t, md)
 		})
@@ -309,7 +310,7 @@ func TestConvertHTMLToMarkdown_Charset(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			md, err := convertHTMLToMarkdown(tt.body, tt.contentType)
+			md, err := convertHTMLToMarkdown(tt.body, tt.contentType, testPageURL, store.DefaultMaxSourceBytes)
 			if tt.wantErr != "" {
 				// Exact match: no remote label may be appended.
 				require.EqualError(t, err, tt.wantErr)

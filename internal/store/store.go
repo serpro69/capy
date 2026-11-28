@@ -517,6 +517,12 @@ func (s *ContentStore) Optimize() error {
 	return nil
 }
 
+// MaxSourceBytes returns the effective per-source size limit that indexing
+// enforces, after the default for unset configuration is applied.
+func (s *ContentStore) MaxSourceBytes() int {
+	return s.maxSourceBytes
+}
+
 // FreelistRatio returns the ratio of freelist pages to total pages.
 // Returns 0 if total pages is 0 or on any error.
 func (s *ContentStore) FreelistRatio() float64 {
