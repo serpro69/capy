@@ -92,7 +92,7 @@ func TestFetchFreshnessRenewal(t *testing.T) {
 
 func TestFetchFreshnessFailedRevalidation(t *testing.T) {
 	for _, batch := range []bool{false, true} {
-		for _, failure := range []string{"http", "empty", "binary", "body too large", "read", "index", "transform"} {
+		for _, failure := range []string{"http", "empty", "binary", "body too large", "read", "index", "transform", "shell", "charset", "private"} {
 			t.Run(fmt.Sprintf("batch=%t/%s", batch, failure), func(t *testing.T) {
 				disableSSRFValidation(t)
 				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -114,6 +114,15 @@ func TestFetchFreshnessFailedRevalidation(t *testing.T) {
 					case "transform":
 						w.Header().Set("Content-Type", "text/html")
 						fmt.Fprint(w, strings.Repeat("<div>", 600)+"too deeply nested")
+					case "shell":
+						w.Header().Set("Content-Type", "text/html")
+						fmt.Fprint(w, `<html><head><title>App</title></head><body><div id="root"></div><script>boot()</script></body></html>`)
+					case "private":
+						w.Header().Set("Content-Type", "text/html")
+						fmt.Fprint(w, "<p>public intro</p><private><p>unterminated</p>")
+					case "charset":
+						w.Header().Set("Content-Type", "text/html; charset=x-made-up")
+						fmt.Fprint(w, "<p>undecodable</p>")
 					}
 				}))
 				t.Cleanup(ts.Close)
@@ -228,8 +237,8 @@ func TestFetchFreshnessMarkerAdmission(t *testing.T) {
 	srv := newTestServer(t, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, at, outcome, errMsg := srv.fetchRemoteContent(ctx, "https://example.com")
+	page, outcome, errMsg := srv.fetchRemoteContent(ctx, "https://example.com")
 	assert.Equal(t, fetchNotAttempted, outcome)
 	assert.NotEmpty(t, errMsg)
-	assert.True(t, at.IsZero())
+	assert.True(t, page.validatedAt.IsZero())
 }

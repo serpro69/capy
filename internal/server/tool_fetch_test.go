@@ -596,7 +596,7 @@ func TestFetchRemoteContent_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled before the request starts
 
-	_, _, _, outcome, errMsg := newTestServer(t, nil).fetchRemoteContent(ctx, ts.URL)
+	_, outcome, errMsg := newTestServer(t, nil).fetchRemoteContent(ctx, ts.URL)
 	assert.Equal(t, fetchNotAttempted, outcome)
 	require.NotEmpty(t, errMsg, "cancelled context must produce a fetch error")
 	assert.Contains(t, errMsg, "context canceled")

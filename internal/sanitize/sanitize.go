@@ -47,6 +47,15 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(?:api[_-]?key|secret|token|password|credential|auth[_-]?(?:token|key|secret|credential))\s*[=:]\s*["']?[A-Za-z0-9_\-/.+]{20,}["']?`),
 }
 
+// StripPrivate replaces <private>...</private> blocks in content with the
+// private placeholder, leaving secret patterns alone.
+func StripPrivate(content string) string {
+	if !strings.Contains(strings.ToLower(content), "<private>") {
+		return content
+	}
+	return privateTagRe.ReplaceAllString(content, RedactedPrivate)
+}
+
 // StripSecrets replaces detected secret patterns and private tags in content
 // with redaction placeholders. Returns the sanitized string.
 func StripSecrets(content string) string {
@@ -55,10 +64,8 @@ func StripSecrets(content string) string {
 		return content
 	}
 
-	// Strip private tags first (only if the marker is present).
-	if strings.Contains(strings.ToLower(content), "<private>") {
-		content = privateTagRe.ReplaceAllString(content, RedactedPrivate)
-	}
+	// Strip private tags first.
+	content = StripPrivate(content)
 
 	// NOTE: Each pattern runs a separate scan over the content. For the expected
 	// content sizes (command output, docs) this is fine. If profiling shows this

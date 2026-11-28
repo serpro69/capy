@@ -957,7 +957,7 @@ func TestFetchAndIndex_StatsTracking(t *testing.T) {
 
 func TestConvertHTMLToMarkdown_Basic(t *testing.T) {
 	html := `<h1>Title</h1><p>Paragraph text.</p>`
-	md, err := convertHTMLToMarkdown(html)
+	md, err := convertHTMLToMarkdown(html, "text/html", testPageURL, store.DefaultMaxSourceBytes)
 	require.NoError(t, err)
 	assert.Contains(t, md, "Title")
 	assert.Contains(t, md, "Paragraph text")
@@ -976,7 +976,7 @@ func TestConvertHTMLToMarkdown_StripsElements(t *testing.T) {
 </body>
 </html>`
 
-	md, err := convertHTMLToMarkdown(html)
+	md, err := convertHTMLToMarkdown(html, "text/html", testPageURL, store.DefaultMaxSourceBytes)
 	require.NoError(t, err)
 	assert.Contains(t, md, "Main content")
 	assert.NotContains(t, md, "Nav Link")
@@ -991,7 +991,7 @@ func TestConvertHTMLToMarkdown_PreservesCodeBlocks(t *testing.T) {
     fmt.Println("hello")
 }</code></pre>`
 
-	md, err := convertHTMLToMarkdown(html)
+	md, err := convertHTMLToMarkdown(html, "text/html", testPageURL, store.DefaultMaxSourceBytes)
 	require.NoError(t, err)
 	assert.Contains(t, md, "func main()")
 	assert.Contains(t, md, "fmt.Println")
@@ -1006,7 +1006,7 @@ func TestConvertHTMLToMarkdown_GFMTables(t *testing.T) {
 </tbody>
 </table>`
 
-	md, err := convertHTMLToMarkdown(html)
+	md, err := convertHTMLToMarkdown(html, "text/html", testPageURL, store.DefaultMaxSourceBytes)
 	require.NoError(t, err)
 	assert.Contains(t, md, "Name")
 	assert.Contains(t, md, "Alice")
@@ -1018,7 +1018,7 @@ func TestConvertHTMLToMarkdown_GFMTables(t *testing.T) {
 func TestConvertHTMLToMarkdown_StripsNoscript(t *testing.T) {
 	html := `<p>Visible content</p><noscript><p>JavaScript required</p></noscript>`
 
-	md, err := convertHTMLToMarkdown(html)
+	md, err := convertHTMLToMarkdown(html, "text/html", testPageURL, store.DefaultMaxSourceBytes)
 	require.NoError(t, err)
 	assert.Contains(t, md, "Visible content")
 	assert.NotContains(t, md, "JavaScript required")
@@ -1028,16 +1028,16 @@ func TestConvertHTMLToMarkdown_MalformedHTML(t *testing.T) {
 	// Unclosed tags, missing elements — should not error
 	html := `<h1>Title<p>No closing h1<div><span>Deeply nested</p></div>`
 
-	md, err := convertHTMLToMarkdown(html)
+	md, err := convertHTMLToMarkdown(html, "text/html", testPageURL, store.DefaultMaxSourceBytes)
 	require.NoError(t, err)
 	assert.Contains(t, md, "Title")
 	assert.Contains(t, md, "Deeply nested")
 }
 
 func TestConvertHTMLToMarkdown_EmptyInput(t *testing.T) {
-	md, err := convertHTMLToMarkdown("")
-	require.NoError(t, err)
-	assert.Empty(t, strings.TrimSpace(md))
+	md, err := convertHTMLToMarkdown("", "text/html", testPageURL, store.DefaultMaxSourceBytes)
+	require.ErrorIs(t, err, errNoReadableContent)
+	assert.Empty(t, md)
 }
 
 func TestIsBinaryContent(t *testing.T) {
@@ -1084,6 +1084,11 @@ func TestIsBinaryContent(t *testing.T) {
 		utf16Body := []byte{0x48, 0x00, 0x69, 0x00}
 		assert.False(t, isBinaryContent("text/html; charset=utf-16", utf16Body))
 		assert.False(t, isBinaryContent("text/plain", utf16Body))
+		assert.False(t, isBinaryContent("application/xhtml+xml; charset=utf-16", utf16Body))
+		assert.False(t, isBinaryContent("application/xhtml+xml", append([]byte{0xFF, 0xFE}, utf16Body...)))
+		assert.True(t, isBinaryContent("application/xhtml+xml; charset=utf-8", utf16Body), "NULs in UTF-8 XHTML stay binary")
+		assert.True(t, isBinaryContent("application/xhtml+xml; charset=utf-16", append([]byte{0xEF, 0xBB, 0xBF}, utf16Body...)), "a UTF-8 BOM overrides a UTF-16 header")
+		assert.False(t, isBinaryContent("application/xhtml+xml; charset=ucs-2", utf16Body), "UTF-16 aliases are recognized")
 	})
 
 	t.Run("null byte beyond 512-byte window", func(t *testing.T) {

@@ -266,3 +266,12 @@ func TestStripSecretsIdempotent(t *testing.T) {
 		t.Errorf("StripSecrets not idempotent:\nfirst:  %q\nsecond: %q", first, second)
 	}
 }
+
+func TestStripPrivateLeavesSecretPatterns(t *testing.T) {
+	input := "token=abcdefghij1234567890klmno <PRIVATE>note</PRIVATE>"
+	got := StripPrivate(input)
+	want := "token=abcdefghij1234567890klmno " + RedactedPrivate
+	if got != want {
+		t.Errorf("StripPrivate(%q) = %q, want %q", input, got, want)
+	}
+}

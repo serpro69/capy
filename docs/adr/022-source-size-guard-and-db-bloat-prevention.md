@@ -5,6 +5,21 @@
 **Amends:** ADR-011 (conservative cleanup policy), ADR-017 (source-kind separation)
 **Issue:** [#43](https://github.com/serpro69/capy/issues/43)
 
+## Amendment: fetched HTML is measured after HTML-level redaction (2026-11-28)
+
+`capy_fetch_and_index` redacts `<private>` regions and recognized secrets in
+fetched HTML before rendering it to Markdown, because the renderer's Markdown
+escaping (`ghp_` → `ghp\_`) hides token prefixes from the store's sanitizer.
+The store's `max_source_bytes` gate therefore measures the converted,
+already-redacted Markdown for HTML responses. An over-limit page whose redaction
+savings bring it under the limit is admitted. This is a deliberate exception to
+the measure-before-sanitization rule used for other entry points. Each secret
+replacement changes size by roughly the matched length minus the (escaped)
+placeholder length; a `<private>` region is
+replaced entirely, so a page can be admitted after removing private content
+larger than the limit. Decided in
+[readable fetched pages](../feat/wip/readable-fetched-pages/tasks.md) Task 1.
+
 ## Amendment: admission limits versus stored expansion (2026-10-12)
 
 The historical estimates below are not a universal bound on chunk or database
