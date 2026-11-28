@@ -1,11 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -14,13 +16,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
-	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/base"
-	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/commonmark"
-	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/table"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/serpro69/capy/internal/giturl"
+	"github.com/serpro69/capy/internal/sanitize"
 	"github.com/serpro69/capy/internal/store"
+	"golang.org/x/net/html/charset"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -154,11 +154,14 @@ func (s *Server) handleFetchAndIndex(ctx context.Context, req mcp.CallToolReques
 	// Track raw bytes
 	s.stats.AddBytesIndexed(int64(len(content)))
 
-	// Index via the content-type-aware strategy. content becomes the (possibly
-	// HTML→markdown converted) text used for the preview below.
+	// Index via the content-type-aware strategy. content becomes the sanitized
+	// (and, for HTML, converted) text used for the preview below.
 	st := s.getStore()
 	content, indexed, err := indexFetchedContent(st, content, contentType, cacheKey, kind, validatedAt)
 	if err != nil {
+		if errors.Is(err, errNoReadableContent) {
+			return errorResult(fmt.Sprintf("No readable content in %s: %s.", url, noReadableContentDetail)), nil
+		}
 		return errorResult(fmt.Sprintf("Index error: %v", err)), nil
 	}
 
@@ -360,28 +363,48 @@ func transientFetchError(ctx context.Context, err error) bool {
 	return false
 }
 
+// noReadableContentDetail explains an errNoReadableContent outcome in tool
+// responses.
+const noReadableContentDetail = "the page has no visible text after article selection (possibly a client-rendered shell); " +
+	"any previously indexed copy and its validation time are unchanged"
+
 // indexFetchedContent routes fetched content to the correct index strategy based
-// on its Content-Type and returns the content used for the preview (HTML is
-// converted to markdown) alongside the index result. Validation time stays paired
-// with these bytes even if conversion or the store's write lock delays indexing.
+// on its Content-Type and returns the preview text alongside the index result.
+// The preview is the sanitized form of exactly the text handed to the store,
+// which applies the same sanitizer after its size check, so previews and stored
+// chunks agree. Conversion failures return before any store write, so a failed
+// revalidation keeps the previous copy and its validation time. Validation time
+// stays paired with these bytes even if conversion or the store's write lock
+// delays indexing.
 func indexFetchedContent(st *store.ContentStore, content, contentType, cacheKey string, kind store.SourceKind, validatedAt time.Time) (string, *store.IndexResult, error) {
+	mediaType := fetchMediaType(contentType)
+	indexType := "plaintext"
 	switch {
-	case strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json"):
-		indexed, err := st.IndexFetched(content, cacheKey, "json", kind, validatedAt)
-		return content, indexed, err
+	case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
+		indexType = "json"
 
-	case strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/xhtml"):
-		md, convErr := convertHTMLToMarkdown(content)
-		if convErr != nil {
-			return "", nil, fmt.Errorf("converting fetched HTML: %w", convErr)
+	case mediaType == "text/html" || mediaType == "application/xhtml+xml":
+		md, err := convertHTMLToMarkdown(content, contentType)
+		if err != nil {
+			return "", nil, fmt.Errorf("converting fetched HTML: %w", err)
 		}
-		indexed, err := st.IndexFetched(md, cacheKey, "", kind, validatedAt)
-		return md, indexed, err
-
-	default:
-		indexed, err := st.IndexFetched(content, cacheKey, "plaintext", kind, validatedAt)
-		return content, indexed, err
+		// Rendered output is Markdown by construction; auto-detection would
+		// classify a short page with a single heading as plaintext and drop its
+		// section title.
+		content, indexType = md, "markdown"
 	}
+	indexed, err := st.IndexFetched(content, cacheKey, indexType, kind, validatedAt)
+	if err != nil {
+		return "", nil, err
+	}
+	return sanitize.StripSecrets(content), indexed, nil
+}
+
+// fetchMediaType returns the lowercase media type of a Content-Type header
+// without parameters.
+func fetchMediaType(contentType string) string {
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	return strings.ToLower(strings.TrimSpace(mediaType))
 }
 
 // fetchItemResult is the per-URL outcome of the concurrent fetch phase in batch
@@ -532,7 +555,11 @@ func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, 
 			s.stats.AddBytesIndexed(int64(len(it.content)))
 			finalContent, indexed, err := indexFetchedContent(st, it.content, it.contentType, it.cacheKey, kind, it.validatedAt)
 			if err != nil {
-				lines = append(lines, fmt.Sprintf("✗ %s — index error: %v", it.url, err))
+				if errors.Is(err, errNoReadableContent) {
+					lines = append(lines, fmt.Sprintf("✗ %s — no readable content: %s", it.url, noReadableContentDetail))
+				} else {
+					lines = append(lines, fmt.Sprintf("✗ %s — index error: %v", it.url, err))
+				}
 				continue
 			}
 			okCount++
@@ -568,27 +595,6 @@ func (s *Server) handleFetchBatch(ctx context.Context, requests []fetchRequest, 
 	return s.trackToolResponse("capy_fetch_and_index", textResult(out.String())), nil
 }
 
-// convertHTMLToMarkdown converts HTML to markdown, stripping non-content elements.
-// Removes script, style, noscript (base defaults) plus nav, header, footer.
-// Creates a new converter per call rather than using a singleton — this avoids
-// hidden state and is acceptable since fetch_and_index is not a hot path.
-func convertHTMLToMarkdown(html string) (string, error) {
-	conv := converter.NewConverter(
-		converter.WithPlugins(
-			base.NewBasePlugin(),
-			commonmark.NewCommonmarkPlugin(),
-			table.NewTablePlugin(),
-		),
-	)
-
-	// Strip navigation/chrome elements (script/style/noscript already removed by base)
-	conv.Register.TagType("nav", converter.TagTypeRemove, converter.PriorityStandard)
-	conv.Register.TagType("header", converter.TagTypeRemove, converter.PriorityStandard)
-	conv.Register.TagType("footer", converter.TagTypeRemove, converter.PriorityStandard)
-
-	return conv.ConvertString(html)
-}
-
 // newFetchTransport returns the HTTP transport used to fetch remote content.
 // It is a package-level var so tests can substitute a transport that permits
 // loopback connections (httptest.NewServer binds to 127.0.0.1, which the
@@ -600,8 +606,7 @@ var newFetchTransport = func() http.RoundTripper { return getFetchTransport() }
 // based on Content-Type header and byte content inspection.
 func isBinaryContent(contentType string, body []byte) bool {
 	// Extract media type (strip parameters like charset, boundary, name)
-	ct := strings.ToLower(contentType)
-	mediaType := strings.TrimSpace(strings.SplitN(ct, ";", 2)[0])
+	mediaType := fetchMediaType(contentType)
 
 	binaryTypes := []string{
 		"image/", "audio/", "video/", "application/pdf",
@@ -617,7 +622,8 @@ func isBinaryContent(contentType string, body []byte) bool {
 	// Skip null-byte heuristic when Content-Type explicitly declares a text type —
 	// the header already passed the binary-type check above, so we trust it.
 	// This avoids false positives on UTF-16 encoded text which contains null bytes.
-	if strings.HasPrefix(mediaType, "text/") {
+	// XHTML is exempt only when UTF-16 explains the NULs; the HTML path decodes it.
+	if strings.HasPrefix(mediaType, "text/") || (mediaType == "application/xhtml+xml" && declaresUTF16(contentType, body)) {
 		return false
 	}
 
@@ -630,6 +636,24 @@ func isBinaryContent(contentType string, body []byte) bool {
 	}
 
 	return false
+}
+
+// declaresUTF16 reports whether decodeHTML would read body as UTF-16: a
+// byte-order mark wins (a UTF-8 one rules UTF-16 out), otherwise the
+// canonical encoding of the Content-Type charset, aliases included.
+func declaresUTF16(contentType string, body []byte) bool {
+	switch {
+	case bytes.HasPrefix(body, []byte{0xEF, 0xBB, 0xBF}):
+		return false
+	case bytes.HasPrefix(body, []byte{0xFF, 0xFE}), bytes.HasPrefix(body, []byte{0xFE, 0xFF}):
+		return true
+	}
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil || params["charset"] == "" {
+		return false
+	}
+	_, name := charset.Lookup(params["charset"])
+	return strings.HasPrefix(name, "utf-16")
 }
 
 // gitPlatformRedirectMessage returns the redirect text when capy_fetch_and_index
