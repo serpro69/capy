@@ -50,7 +50,7 @@
 - 2026-11-28 · decided within requirements · Review #8: converted HTML is indexed as `markdown` (not auto-detected) so a short page keeps its heading as the chunk title.
 - 2026-11-28 · decided within requirements · Visibility: `hidden`, `aria-hidden="true"`, inline `display:none`/`visibility:hidden`; navigation = `nav` and `role="navigation"`; `header` is kept only inside an `article`. No CSS engine — stylesheet-hidden content is indexed.
 - 2026-11-28 · observed · `golang.org/x/net/html` v0.55.0 already rejects nesting deeper than 512 elements with a parse error (existing `transform` failure case), so no separate depth limit is added; the pruning walk is iterative.
-- 2026-11-28 · unresolved, deferred to Task 2 (owner: unassigned) · Review #3 (link-expansion byte budget), #5 (fragment/image/unsupported-link Markdown output) and #6 (Accept media ranges and priority) still need decisions before Task 2 edits. Next action: settle them with the user at Task 2 start; verify with the tests named in each review item.
+- 2026-11-28 · unresolved, deferred to Task 2 (owner: unassigned) · Review #3 (link-expansion byte budget), #5 (fragment/image/unsupported-link Markdown output) and #6 (Accept media ranges and priority) still need decisions before Task 2 edits. Next action: settle them with the user at Task 2 start; verify with the tests named in each review item. → Resolved 2026-11-28 in the design docs; see Task 2 execution context.
 
 ## Task 2. Resolve references after redirects
 
@@ -60,9 +60,15 @@
 - **Can run in parallel with:** —
 - **Docs:** [Implementation plan](implementation.md#link-origin-and-negotiation)
 
-- [ ] 2.1 Carry the response's final URL through `fetchRemoteContent` and `fetchItemResult` and set a textual Accept header in request construction.
-- [ ] 2.2 Resolve eligible link destinations during conversion. Keep the requested URL as the cache key and preserve text for unsupported/credential-bearing links.
-- [ ] 2.3 Verify a redirected page in single and batch mode, headers on both requests, a fragment and a subsequent cache hit. Assert conversion makes no additional network request.
+- [ ] 2.1 Carry the response's final URL and the configured `max_source_bytes` through `fetchRemoteContent` and `fetchItemResult` to conversion. Set the design's Accept list (HTML first, then JSON and text, with `*/*;q=0.1`) in request construction.
+- [ ] 2.2 Resolve link destinations against the final URL, ignoring `<base>`, and render fragments as absolute final-page URLs. Keep only http(s) destinations without userinfo and with visible text as links; render other links as text. Render images as alt text only. Redact and count each resolved destination, and fail conversion before the store write once the total exceeds `max_source_bytes`. Keep the requested URL as the cache key.
+- [ ] 2.3 Verify the cases listed in the [implementation plan](implementation.md#link-origin-and-negotiation): redirect in single and batch mode, headers on both requests, fragment, image, unsupported and credential-bearing links, conflicting `<base>`, no embedded fetch, cache hit, Accept-driven representation choice after a redirect, vendor `+json`, and link expansion over a small `max_source_bytes` that keeps the prior copy while the next batch item succeeds.
+
+### Execution context
+
+- 2026-11-28 · explicitly accepted (user) · Review #5: a same-page fragment renders as the absolute final URL with that fragment. Images render their alt text only, never a URL or data URI. Unsupported schemes, credential-bearing destinations and links without visible text are not rendered as links.
+- 2026-11-28 · explicitly accepted (user) · Review #6: `Accept: text/html, application/xhtml+xml;q=0.9, application/json;q=0.8, text/plain;q=0.7, */*;q=0.1` on the initial GET and every redirect. A URL with both HTML and JSON returns HTML, and the wildcard avoids 406 for vendor `+json`-only servers.
+- 2026-11-28 · decided within requirements · Review #3: no new operator setting. The resolved, redacted destination bytes count against `max_source_bytes` while rewriting. Exceeding the limit is a conversion failure before the store write. Resolved destinations are redacted because a fragment inherits the final URL's query. Peak memory remains unmeasured; Task 3 may profile it.
 
 ## Task 3. Verify and document the feature
 
@@ -72,7 +78,7 @@
 - **Can run in parallel with:** —
 - **Docs:** [Implementation plan](implementation.md#verification)
 
-- [ ] 3.1 Run `$kk:test` with FTS5 and the two synthetic test keys. Run fetch freshness, errors, limits and batch cases, the article-search fixture and `make bench-quality` against baseline. Check that secrets disappear from previews as well as stored text.
+- [ ] 3.1 Run `$kk:test` with FTS5 and the two synthetic test keys. Run fetch freshness, errors, limits and batch cases and `make bench-quality` against baseline as a regression check. Add the capy-owned article-search fixture described in the [implementation plan](implementation.md#verification): a file table outside a sole article inside `main`, and an API-table answer inside the article, checked in single and batch previews and with a source-scoped search, plus the two control pages. Add the post-redaction admission cases for a small `max_source_bytes`. Check that secrets disappear from previews as well as stored text.
 - [ ] 3.2 Run `$kk:document`. Update fetch documentation with the article-selection order, relative-link behavior and how shell failures affect freshness.
 - [ ] 3.3 Run `$kk:review-code` with Go as the language and `$kk:review-spec` against this design. Record any unresolved behavior in this task list before closing it.
 
